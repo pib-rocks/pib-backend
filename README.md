@@ -27,4 +27,4 @@ ROS2 Python node for [OAK-D-Lite](https://docs.luxonis.com/projects/hardware/en/
 
 # Run:
 
-                ros2 run ros2 run oak_d_lite stereo
+                ros2 run oak_d_lite stereo
