@@ -4,24 +4,22 @@ ROS2 Python node for [OAK-D-Lite](https://docs.luxonis.com/projects/hardware/en/
 
 # Installation
 
-1. Install [ros2](https://docs.ros.org/en/foxy/Installation/Ubuntu-Install-Binary.html)
-
-2. Install depthai python library:
+1. Install depthai python library:
 
                 pip install depthai
 
-3. Clone this repository into ros2:
+2. Clone this repository into ros2:
 
                 git clone https://github.com/pib-rocks/ros2_oak_d_lite.git
 
-4. Build the with:
+3. Build the with:
 
 
                 cd ros2_oak_d_lite
                 colcon build --packages-select ros2_oak_d_lite
 
 
-5. source the overlay with:
+4. source the overlay with:
 
                 source install/local_setup.bash
 
