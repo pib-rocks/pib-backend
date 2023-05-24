@@ -1,96 +1,88 @@
 #!/usr/bin/python3
 import rclpy
 from rclpy.node import Node
-from sensor_msgs.msg import Image
-from sensor_msgs.msg import CameraInfo
-from cv_bridge import CvBridge
-import sys
-import os
 import cv2
-import time
-
 import depthai as dai
+import base64
+import numpy as np
+from std_msgs.msg import String, Float64, Int32, Int32MultiArray
 
-class StereoPublisher(Node):
+
+class CameraNode(Node):
+
     def __init__(self):
-        super().__init__('stereo_publisher')
-# Create pipeline
+        super().__init__('camera_node')
+        self.publisher_ = self.create_publisher(String, 'camera_topic', 10)
+        self.timer_subscription = self.create_subscription(Float64, 'timer_period_topic', self.timer_period_callback, 10)
+        self.quality_factor_subscription = self.create_subscription(Int32, 'quality_factor_topic', self.quality_factor_callback, 10)
+        self.preview_size_subscription = self.create_subscription(Int32MultiArray, 'size_topic', self.preview_size_callback, 10)
+
+        # Initialize default preview size and quality factor
+        self.preview_width = 1280
+        self.preview_height = 720
+        self.quality_factor = 95
+
+        # Initialize pipeline
+        self.init_pipeline()
+
+        self.timer_period = 0.1  # seconds
+        self.timer = self.create_timer(self.timer_period, self.timer_callback)
+
+    def init_pipeline(self):
         self.pipeline = dai.Pipeline()
 
-        # Define sources and outputs
-        self.monoLeft = self.pipeline.create(dai.node.MonoCamera)
-        self.monoRight = self.pipeline.create(dai.node.MonoCamera)
-        self.xoutLeft = self.pipeline.create(dai.node.XLinkOut)
-        self.xoutRight = self.pipeline.create(dai.node.XLinkOut)
+        # Define a source - color camera
+        self.camRgb = self.pipeline.createColorCamera()
+        self.camRgb.setPreviewSize(self.preview_width, self.preview_height)
+        self.camRgb.setInterleaved(False)
 
-        self.xoutLeft.setStreamName('left')
-        self.xoutRight.setStreamName('right')
+        # Create output
+        xoutRgb = self.pipeline.createXLinkOut()
+        xoutRgb.setStreamName("rgb")
+        self.camRgb.preview.link(xoutRgb.input)
 
-        # Properties
-        self.monoLeft.setBoardSocket(dai.CameraBoardSocket.LEFT)
-        self.monoLeft.setResolution(dai.MonoCameraProperties.SensorResolution.THE_720_P)
-        self.monoRight.setBoardSocket(dai.CameraBoardSocket.RIGHT)
-        self.monoRight.setResolution(dai.MonoCameraProperties.SensorResolution.THE_720_P)
+        self.device = dai.Device(self.pipeline)
 
-        # Linking
-        self.monoRight.out.link(self.xoutRight.input)
-        self.monoLeft.out.link(self.xoutLeft.input)
+        # Output queue will be used to get the rgb frames from the output defined above
+        self.queue = self.device.getOutputQueue(name="rgb", maxSize=4, blocking=False)
 
-        # ros2 publishers
-        self.left_pub = self.create_publisher(Image, '/camera/left/image_raw', 10)
-        self.right_pub = self.create_publisher(Image, '/camera/right/image_raw', 10)
-        self.left_info_pub = self.create_publisher(CameraInfo, 'left/camera_info', 10)
-        self.right_info_pub = self.create_publisher(CameraInfo, 'right/camera_info', 10)
+    def timer_callback(self):
+        inRgb = self.queue.get()  # blocking call, will wait until a new data has arrived
+        # data is originally represented as a flat 1D array, it needs to be converted into HxWxC form
+        frame = inRgb.getCvFrame()
 
-        # bridge
-        self.bridge = CvBridge()
-        self.left_info = CameraInfo()
-        self.right_info = CameraInfo()
-        self.get_logger().info("initiate Oak-D-Lite ros2 node ...")
-        self.frame_grabber()
+        # Convert the image to base64
+        retval, buffer = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), self.quality_factor])
+        jpg_as_text = base64.b64encode(buffer)
 
-        # Connect to device and start pipeline
-    def frame_grabber(self):
-        with dai.Device(self.pipeline) as device:
+        msg = String()
+        msg.data = jpg_as_text.decode('utf-8') # convert bytes to string
+        self.publisher_.publish(msg)
 
-            # Output queues will be used to get the grayscale frames from the outputs defined above
-            qLeft = device.getOutputQueue(name="left", maxSize=4, blocking=False)
-            qRight = device.getOutputQueue(name="right", maxSize=4, blocking=False)
-                # Instead of get (blocking), we use tryGet (non-blocking) which will return the available data or None otherwise
-            while True:
-                inLeft = qLeft.tryGet()
-                inRight = qRight.tryGet()
-                now = self.get_clock().now().to_msg()
-                if inLeft is not None:
-                    
-                    left_frame = inLeft.getCvFrame()
-                    left_frame_ros = self.bridge.cv2_to_imgmsg(left_frame,'mono8')
-                    self.left_info.header.stamp = now
-                    left_frame_ros.header.stamp = now
-                    self.left_pub.publish(left_frame_ros)
-                    self.left_info_pub.publish(self.left_info)
+    def timer_period_callback(self, msg):
+        self.timer_period = msg.data
+        self.timer.cancel()  # cancel the old timer
+        self.timer = self.create_timer(self.timer_period, self.timer_callback)  # create a new timer with updated period
 
-                if inRight is not None:
-                    right_frame =  inRight.getCvFrame()
-                    right_frame_ros = self.bridge.cv2_to_imgmsg(right_frame, 'mono8')
-                    self.right_info.header.stamp = now
-                    right_frame_ros.header.stamp = now
-                    self.right_pub.publish(right_frame_ros)
-                    self.right_info_pub.publish(self.right_info)
+    def quality_factor_callback(self, msg):
+        self.quality_factor = msg.data
 
-                time.sleep(0.1)
-                
-                
-            
+    def preview_size_callback(self, msg):
+        self.preview_width, self.preview_height = msg.data
+
+        # Reset pipeline with new preview size
+        self.device.close()
+        self.init_pipeline()
+
 def main(args=None):
     rclpy.init(args=args)
-    stereo_publisher = StereoPublisher()
-    rclpy.spin(stereo_publisher)
-    stereo_publisher.destroy_node()
+
+    camera_node = CameraNode()
+
+    rclpy.spin(camera_node)
+
+    camera_node.destroy_node()
     rclpy.shutdown()
 
 if __name__ == '__main__':
-    try:
-        main()
-    except Exception as e:
-        print(e)
+    main()
