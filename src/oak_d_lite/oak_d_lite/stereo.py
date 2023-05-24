@@ -20,7 +20,7 @@ class CameraNode(Node):
         # Initialize default preview size and quality factor
         self.preview_width = 1280
         self.preview_height = 720
-        self.quality_factor = 95
+        self.quality_factor = 80
 
         # Initialize pipeline
         self.init_pipeline()
