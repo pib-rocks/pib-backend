@@ -26,6 +26,11 @@ ROS_CEREBRA_BOOT_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/mai
 ROS_CAMERA_NODE_BOOT_TEMPLATE_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/ros_camera_boot_template.sh"
 ROS_CEREBRA_BOOT_SERVICE_TEMPLATE_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/ros_cerebra_boot_service_template.sh"
 ROS_CAMERA_NODE_BOOT_SERVICE_TEMPLATE_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/ros_camera_boot_service_template.sh"
+# Set the name of your database file
+DATABASE_FILE="/var/lib/phpliteadmin/cerebra.db"
+# Set the name of your SQL file
+CEREBRA_INIT_QUERY_FILE="cerebra_init_query.sql"
+CEREBRA_INIT_QUERY_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/PR-150/setup_files/cerebra_init_query.sql"
 #
 # Adding Universe repo, upgrading and installing basic packages
 sudo add-apt-repository -y universe
@@ -108,6 +113,12 @@ sudo unzip $ROS_WORKING_DIR/$ROS_CAMERA_NODE_ZIP -d $ROS_CAMERA_NODE_DIR
 rm $ROS_WORKING_DIR/$ROS_CAMERA_NODE_ZIP
 cd $ROS_CAMERA_NODE_DIR
 sudo colcon build
+#
+curl $CEREBRA_INIT_QUERY_LINK -L --output $ROS_WORKING_DIR/$CEREBRA_INIT_QUERY_FILE --create-dirs
+# Create the database (if it doesn't exist) and initialize it with the SQL file
+echo "Creating (if not exist) and initializing SQLite database $DATABASE_FILE with $ROS_WORKING_DIR/$CEREBRA_INIT_QUERY_FILE..."
+sudo sqlite3 $DATABASE_FILE -init $ROS_WORKING_DIR/$CEREBRA_INIT_QUERY_FILE
+echo -e "\nDatabase initialized successfully!"
 #
 # Setup system to start Cerebra and ROS2 at boot time
 # Create boot script for ros_bridge_server
