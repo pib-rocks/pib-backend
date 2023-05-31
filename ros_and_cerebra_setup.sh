@@ -4,7 +4,7 @@
 # The setup then adds Cerebra and it's dependencies, including ROS2, Tinkerforge,...
 # To run the script do the next steps:
 # 1. sudo apt install curl
-# 2. curl "https://raw.githubusercontent.com/pib-rocks/setup-pib/main/ros_and_cerebra_setup.sh" -o ros_and_cerebra_setup.sh
+# 2. curl "https://raw.githubusercontent.com/pib-rocks/setup-pib/main/ros_and_cerebra_setup.sh" -O
 # 3. chmod 755 ./ros_and_cerebra_setup.sh
 # 4. ./ros_and_cerebra_setup.sh
 #
@@ -45,7 +45,7 @@ echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-a
 sudo apt update
 sudo apt install -y ros-humble-ros-base ros-dev-tools
 source /opt/ros/humble/setup.bash
-echo 'source /opt/ros/humble/setup.bash' >> $DEFAULT_HOME/.bashrc
+echo 'source /opt/ros/humble/setup.bash' >> $USER_HOME/.bashrc
 #
 # Install rosbridge-server
 echo 'Install rosbridge-server...'
@@ -54,21 +54,29 @@ sudo apt install -y ros-humble-rosbridge-server
 # Installing TinkerForge software including Brick Daemon, Brick Viewer and Python API bindings
 # Brick daemon
 sudo apt-get install -y libusb-1.0-0 libudev1 procps
-wget --backups=1 https://download.tinkerforge.com/tools/brickd/linux/brickd_linux_latest_amd64.deb #replace link with "https://download.tinkerforge.com/tools/brickd/linux/brickd_linux_latest_arm64.deb" for Arm64 Rpi
-sudo dpkg -i brickd_linux_latest_amd64.deb #replace with "brickd_linux_latest_arm64.deb" for Arm64 Rpi
+PLATFORM_TYPE=$(uname -m)
+if [ $PLATFORM_TYPE != 'aarch64' ]; then
+	echo "Installing Brick daemon for $PLATFORM_TYPE"
+	curl -O https://download.tinkerforge.com/tools/brickd/linux/brickd_linux_latest_amd64.deb
+	sudo dpkg -i brickd_linux_latest_amd64.deb
+else
+	echo "Installing Brick daemon for $PLATFORM_TYPE"
+	curl -O https://download.tinkerforge.com/tools/brickd/linux/brickd_linux_latest_arm64.deb
+	sudo dpkg -i brickd_linux_latest_arm64.deb
+fi
 # Brick viewer
 sudo apt-get install -y python3-pyqt5 python3-pyqt5.qtopengl python3-serial python3-tz python3-tzlocal
-wget --backups=1 https://download.tinkerforge.com/tools/brickv/linux/brickv_linux_latest.deb
+curl -O https://download.tinkerforge.com/tools/brickv/linux/brickv_linux_latest.deb
 sudo dpkg -i brickv_linux_latest.deb
 # Tinkerforge python APIs
-wget https://download.tinkerforge.com/apt/$(. /etc/os-release; echo $ID)/tinkerforge.gpg -q -O - | sudo tee /etc/apt/trusted.gpg.d/tinkerforge.gpg > /dev/null
+curl -sSL https://download.tinkerforge.com/apt/$(. /etc/os-release; echo $ID)/tinkerforge.gpg | sudo tee /etc/apt/trusted.gpg.d/tinkerforge.gpg > /dev/null
 echo "deb https://download.tinkerforge.com/apt/$(. /etc/os-release; echo $ID $VERSION_CODENAME) main" | sudo tee /etc/apt/sources.list.d/tinkerforge.list
 sudo apt-get update
 sudo apt-get install -y python3-tinkerforge
 #
 # Setting up the camera, including AI capabilities
 # Depth-AI
-sudo wget -qO- https://docs.luxonis.com/install_dependencies.sh | bash
+sudo curl -sSL https://docs.luxonis.com/install_dependencies.sh | sudo bash
 python3 -m pip install depthai
 #Git examples for Depth-AI
 git clone https://github.com/luxonis/depthai-python.git
@@ -139,6 +147,6 @@ sudo systemctl enable ros_camera_boot.service
 sudo systemctl enable ssh --now
 # Done! :-) Please restart to 
 echo -e '\nCongratulations! The setup completed succesfully!'
-echo -e '\nThe system will be restarted in 5 seconds.'
+echo -e '\nThe system will be restarted now'
 sleep 5
-#sudo shutdown -r now
+sudo shutdown -r now
