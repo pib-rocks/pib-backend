@@ -29,15 +29,15 @@ ROS_CAMERA_NODE_BOOT_SERVICE_TEMPLATE_LINK="https://raw.githubusercontent.com/pi
 # Set the name of your database file
 DATABASE_FILE="/var/lib/phpliteadmin/cerebra.db"
 # Set the name of your SQL file
-CEREBRA_INIT_QUERY_FILE="cerebra_init_query.sql"
-CEREBRA_INIT_QUERY_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/cerebra_init_query.sql"
+CEREBRA_INIT_QUERY_FILE="cerebra_init_database.sql"
+CEREBRA_INIT_QUERY_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/cerebra_init_database.sql"
 #
 # Adding Universe repo, upgrading and installing basic packages
 sudo add-apt-repository -y universe
 sudo apt-get update
 sudo apt-get -y upgrade
 # libusb-1.0-0 libudev1 procps are dependencies of later installed Tinkerforge brick-deamon
-sudo apt-get install -y python3 python3-pip git curl software-properties-common unzip sqlite3 phpliteadmin locales libusb-1.0-0 libudev1 procps openssh-server
+sudo apt-get install -y python3 python3-pip git curl openssh-server software-properties-common unzip sqlite3 phpliteadmin locales libusb-1.0-0 libudev1 procps
 #
 # Setting up ROS2
 sudo locale-gen en_US en_US.UTF-8
@@ -58,7 +58,6 @@ sudo apt install -y ros-humble-rosbridge-server
 #
 # Installing TinkerForge software including Brick Daemon, Brick Viewer and Python API bindings
 # Brick daemon
-sudo apt-get install -y libusb-1.0-0 libudev1 procps
 PLATFORM_TYPE=$(uname -m)
 if [ $PLATFORM_TYPE != 'aarch64' ]; then
 	echo "Installing Brick daemon for $PLATFORM_TYPE"
@@ -103,7 +102,7 @@ cd $DEFAULT_NGINX_HTML_DIR && sudo -S rm -r *
 cd $USER_HOME
 # Download Cerebra artifact to the working directory
 echo -e '\nDownloading Cerebra application'
-curl $CEREBRA_ARCHIVE_URL_PATH -L --output $ROS_WORKING_DIR/$CEREBRA_ARCHIVE_NAME
+curl $CEREBRA_ARCHIVE_URL_PATH -L --output $ROS_WORKING_DIR/$CEREBRA_ARCHIVE_NAME --create-dirs
 #
 # Unzip cerebra files to nginx
 echo -e '\nUnzip cerebra...'
