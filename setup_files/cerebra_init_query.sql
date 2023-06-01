@@ -1,4 +1,4 @@
-create table IF NOT EXISTS MOTOR (id integer primary key AUTOINCREMENT NOT NULL, Name Text NOT NULL, PulseMin Integer NOT NULL, PulseMax Integer NOT NULL, DegreeMin Integer NOT NULL, DegreeMax Integer NOT NULL, Velocity Integer NOT NULL);
+create table IF NOT EXISTS MOTOR (id integer primary key AUTOINCREMENT NOT NULL, Name Text NOT NULL, PulseMin Integer NOT NULL, PulseMax Integer NOT NULL, DegreeMin Integer NOT NULL, DegreeMax Integer NOT NULL, Velocity Integer NOT NULL, Acceleration Integer NOT NULL, Deceleration Integer NOT NULL, Period Integer NOT NULL);
 insert into
    MOTOR 
 values
