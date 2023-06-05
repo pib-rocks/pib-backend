@@ -3,167 +3,167 @@ insert into
    MOTOR 
 values
    (
-      'tilt_forward_motor', 0 , 0, 0, 0, 0, 0, 0, 0
+      'tilt_forward_motor', 700, 2500, -90, 90, 10000, 10000, 10000, 19500
    )
 ;
 insert into
    MOTOR 
 values
    (
-      'tilt_sideways_motor', 0 , 0, 0, 0, 0, 0, 0, 0
+      'tilt_sideways_motor', 700, 2500, -90, 90, 10000, 10000, 10000, 19500
    )
 ;
 insert into
    MOTOR 
 values
    (
-      'thumb_left_stretch', 0 , 0, 0, 0, 0, 0, 0, 0
+      'thumb_left_stretch', 700, 2500, -90, 90, 10000, 10000, 10000, 19500
    )
 ;
 insert into
    MOTOR 
 values
    (
-      'index_left_stretch', 0 , 0, 0, 0, 0, 0, 0, 0
+      'index_left_stretch', 700, 2500, -90, 90, 10000, 10000, 10000, 19500
    )
 ;
 insert into
    MOTOR 
 values
    (
-      'middle_left_stretch', 0 , 0, 0, 0, 0, 0, 0, 0
+      'middle_left_stretch', 700, 2500, -90, 90, 10000, 10000, 10000, 19500
    )
 ;
 insert into
    MOTOR 
 values
    (
-      'ring_left_stretch', 0 , 0, 0, 0, 0, 0, 0, 0
+      'ring_left_stretch', 700, 2500, -90, 90, 10000, 10000, 10000, 19500
    )
 ;
 insert into
    MOTOR 
 values
    (
-      'pinky_left_stretch', 0 , 0, 0, 0, 0, 0, 0, 0
+      'pinky_left_stretch', 700, 2500, -90, 90, 10000, 10000, 10000, 19500
    )
 ;
 insert into
    MOTOR 
 values
    (
-      'thumb_right_stretch', 0 , 0, 0, 0, 0, 0, 0, 0
+      'thumb_right_stretch', 700, 2500, -90, 90, 10000, 10000, 10000, 19500
    )
 ;
 insert into
    MOTOR 
 values
    (
-      'index_right_stretch', 0 , 0, 0, 0, 0, 0, 0, 0
+      'index_right_stretch', 700, 2500, -90, 90, 10000, 10000, 10000, 19500
    )
 ;
 insert into
    MOTOR 
 values
    (
-      'middle_right_stretch', 0 , 0, 0, 0, 0, 0, 0, 0
+      'middle_right_stretch', 700, 2500, -90, 90, 10000, 10000, 10000, 19500
    )
 ;
 insert into
    MOTOR 
 values
    (
-      'ring_right_stretch', 0 , 0, 0, 0, 0, 0, 0, 0
+      'ring_right_stretch', 700, 2500, -90, 90, 10000, 10000, 10000, 19500
    )
 ;
 insert into
    MOTOR 
 values
    (
-      'pinky_right_stretch', 0 , 0, 0, 0, 0, 0, 0, 0
+      'pinky_right_stretch', 700, 2500, -90, 90, 10000, 10000, 10000, 19500
    )
 ;
 insert into
    MOTOR 
 values
    (
-      'upper_arm_left_rotation', 0 , 0, 0, 0, 0, 0, 0, 0
+      'upper_arm_left_rotation', 700, 2500, -90, 90, 10000, 10000, 10000, 19500
    )
 ;
 insert into
    MOTOR 
 values
    (
-      'ellbow_left', 0 , 0, 0, 0, 0, 0, 0, 0
+      'ellbow_left', 700, 2500, -90, 90, 10000, 10000, 10000, 19500
    )
 ;
 insert into
    MOTOR 
 values
    (
-      'lower_arm_left_rotation', 0 , 0, 0, 0, 0, 0, 0, 0
+      'lower_arm_left_rotation', 700, 2500, -90, 90, 10000, 10000, 10000, 19500
    )
 ;
 insert into
    MOTOR 
 values
    (
-      'wrist_left', 0 , 0, 0, 0, 0, 0, 0, 0
+      'wrist_left', 700, 2500, -90, 90, 10000, 10000, 10000, 19500
    )
 ;
 insert into
    MOTOR 
 values
    (
-      'shoulder_vertical_left', 0 , 0, 0, 0, 0, 0, 0, 0
+      'shoulder_vertical_left', 700, 2500, -90, 90, 10000, 10000, 10000, 19500
    )
 ;
 insert into
    MOTOR 
 values
    (
-      'shoulder_horizontal_left', 0 , 0, 0, 0, 0, 0, 0, 0
+      'shoulder_horizontal_left', 700, 2500, -90, 90, 10000, 10000, 10000, 19500
    )
 ;
 insert into
    MOTOR 
 values
    (
-      'upper_arm_right_rotation', 0 , 0, 0, 0, 0, 0, 0, 0
+      'upper_arm_right_rotation', 700, 2500, -90, 90, 10000, 10000, 10000, 19500
    )
 ;
 insert into
    MOTOR 
 values
    (
-      'ellbow_right', 0 , 0, 0, 0, 0, 0, 0, 0
+      'ellbow_right', 700, 2500, -90, 90, 10000, 10000, 10000, 19500
    )
 ;
 insert into
    MOTOR 
 values
    (
-      'lower_arm_right_rotation', 0 , 0, 0, 0, 0, 0, 0, 0
+      'lower_arm_right_rotation', 700, 2500, -90, 90, 10000, 10000, 10000, 19500
    )
 ;
 insert into
    MOTOR 
 values
    (
-      'wrist_right', 0 , 0, 0, 0, 0, 0, 0, 0
+      'wrist_right', 700, 2500, -90, 90, 10000, 10000, 10000, 19500
    )
 ;
 insert into
    MOTOR 
 values
    (
-      'shoulder_vertical_right', 0 , 0, 0, 0, 0, 0, 0, 0
+      'shoulder_vertical_right', 700, 2500, -90, 90, 10000, 10000, 10000, 19500
    )
 ;
 insert into
    MOTOR 
 values
    (
-      'shoulder_horizontal_right', 0 , 0, 0, 0, 0, 0, 0, 0
+      'shoulder_horizontal_right', 700, 2500, -90, 90, 10000, 10000, 10000, 19500
    )
 ;
