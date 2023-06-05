@@ -26,11 +26,11 @@ ROS_CEREBRA_BOOT_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/mai
 ROS_CAMERA_NODE_BOOT_TEMPLATE_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/ros_camera_boot_template.sh"
 ROS_CEREBRA_BOOT_SERVICE_TEMPLATE_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/ros_cerebra_boot_service_template.sh"
 ROS_CAMERA_NODE_BOOT_SERVICE_TEMPLATE_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/ros_camera_boot_service_template.sh"
-# Set the name of your database file
-DATABASE_FILE="/var/lib/phpliteadmin/cerebra.db"
-# Set the name of your SQL file
-CEREBRA_INIT_QUERY_FILE="cerebra_init_query.sql"
-CEREBRA_INIT_QUERY_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/PR-150/setup_files/cerebra_init_query.sql"
+#
+DATABASE_DIR="$USER_HOME/pib_data"
+DATABASE_FILE="pibdata.db"
+DATABASE_INIT_QUERY_FILE="cerebra_init_database.sql"
+DATABASE_INIT_QUERY_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/cerebra_init_database.sql"
 #
 # Adding Universe repo, upgrading and installing basic packages
 sudo add-apt-repository -y universe
@@ -100,9 +100,10 @@ if [ ! -d $DEFAULT_NGINX_HTML_DIR ]; then sudo -S mkdir -p $DEFAULT_NGINX_HTML_D
 echo -e '\nClean up the html directory...'
 cd $DEFAULT_NGINX_HTML_DIR && sudo -S rm -r * 
 cd $USER_HOME
+mkdir $ROS_WORKING_DIR
 # Download Cerebra artifact to the working directory
 echo -e '\nDownloading Cerebra application'
-curl $CEREBRA_ARCHIVE_URL_PATH -L --output $ROS_WORKING_DIR/$CEREBRA_ARCHIVE_NAME --create-dirs
+curl $CEREBRA_ARCHIVE_URL_PATH -L --output $ROS_WORKING_DIR/$CEREBRA_ARCHIVE_NAME
 #
 # Unzip cerebra files to nginx
 echo -e '\nUnzip cerebra...'
@@ -115,16 +116,22 @@ sudo curl $NGINX_CONF_FILE_URL --output $DEFAULT_NGINX_DIR/$NGINX_CONF_FILE
 #
 # Install ros node for camera
 echo -e '\nInstalling ros node for camera...'
-curl $ROS_CAMERA_NODE_LINK -L --output $ROS_WORKING_DIR/$ROS_CAMERA_NODE_ZIP --create-dirs
+curl $ROS_CAMERA_NODE_LINK -L --output $ROS_WORKING_DIR/$ROS_CAMERA_NODE_ZIP
 sudo unzip $ROS_WORKING_DIR/$ROS_CAMERA_NODE_ZIP -d $ROS_CAMERA_NODE_DIR
 rm $ROS_WORKING_DIR/$ROS_CAMERA_NODE_ZIP
 cd $ROS_CAMERA_NODE_DIR
 sudo colcon build
 #
-curl $CEREBRA_INIT_QUERY_LINK -L --output $ROS_WORKING_DIR/$CEREBRA_INIT_QUERY_FILE --create-dirs
 # Create the database (if it doesn't exist) and initialize it with the SQL file
-echo "Creating (if not exist) and initializing SQLite database $DATABASE_FILE with $ROS_WORKING_DIR/$CEREBRA_INIT_QUERY_FILE..."
-sudo sqlite3 $DATABASE_FILE < $ROS_WORKING_DIR/$CEREBRA_INIT_QUERY_FILE
+curl $DATABASE_INIT_QUERY_LINK -L --output $ROS_WORKING_DIR/$DATABASE_INIT_QUERY_FILE
+echo "Creating (if not exist) and initializing SQLite database $DATABASE_FILE with $ROS_WORKING_DIR/$DATABASE_INIT_QUERY_FILE..."
+mkdir $DATABASE_DIR
+chmod 777 $USER_HOME
+chmod 777 $DATABASE_DIR
+sudo sed -i "s|\$directory = '/var/lib/phpliteadmin';|\$directory = $DATABASE_DIR;|" /etc/phpliteadmin.config.php
+sudo sed -i "s|\$password = 'admin';|\$password = 'pib';|" /etc/phpliteadmin.config.php
+sudo sqlite3 $DATABASE_DIR/$DATABASE_FILE < $ROS_WORKING_DIR/$DATABASE_INIT_QUERY_FILE
+chmod 766 $DATABASE_DIR/$DATABASE_FILE
 echo -e "\nDatabase initialized successfully!"
 #
 # Setup system to start Cerebra and ROS2 at boot time
