@@ -27,12 +27,17 @@ ROS_CAMERA_NODE_BOOT_TEMPLATE_LINK="https://raw.githubusercontent.com/pib-rocks/
 ROS_CEREBRA_BOOT_SERVICE_TEMPLATE_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/ros_cerebra_boot_service_template.sh"
 ROS_CAMERA_NODE_BOOT_SERVICE_TEMPLATE_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/ros_camera_boot_service_template.sh"
 #
+DATABASE_DIR="$USER_HOME/pib_data"
+DATABASE_FILE="pibdata.db"
+DATABASE_INIT_QUERY_FILE="cerebra_init_database.sql"
+DATABASE_INIT_QUERY_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/cerebra_init_database.sql"
+#
 # Adding Universe repo, upgrading and installing basic packages
 sudo add-apt-repository -y universe
 sudo apt-get update
 sudo apt-get -y upgrade
 # libusb-1.0-0 libudev1 procps are dependencies of later installed Tinkerforge brick-deamon
-sudo apt-get install -y python3 python3-pip git curl software-properties-common unzip sqlite3 phpliteadmin locales libusb-1.0-0 libudev1 procps openssh-server
+sudo apt-get install -y python3 python3-pip git curl openssh-server software-properties-common unzip sqlite3 phpliteadmin locales libusb-1.0-0 libudev1 procps
 #
 # Setting up ROS2
 sudo locale-gen en_US en_US.UTF-8
@@ -53,7 +58,6 @@ sudo apt install -y ros-humble-rosbridge-server
 #
 # Installing TinkerForge software including Brick Daemon, Brick Viewer and Python API bindings
 # Brick daemon
-sudo apt-get install -y libusb-1.0-0 libudev1 procps
 PLATFORM_TYPE=$(uname -m)
 if [ $PLATFORM_TYPE != 'aarch64' ]; then
 	echo "Installing Brick daemon for $PLATFORM_TYPE"
@@ -80,8 +84,7 @@ sudo curl -sSL https://docs.luxonis.com/install_dependencies.sh | sudo bash
 python3 -m pip install depthai
 #Git examples for Depth-AI
 git clone https://github.com/luxonis/depthai-python.git
-cd depthai-python
-cd examples
+cd depthai-python/examples
 python3 install_requirements.py
 #Hand tracker
 git clone https://github.com/geaxgx/depthai_hand_tracker.git
@@ -96,6 +99,7 @@ if [ ! -d $DEFAULT_NGINX_HTML_DIR ]; then sudo -S mkdir -p $DEFAULT_NGINX_HTML_D
 echo -e '\nClean up the html directory...'
 cd $DEFAULT_NGINX_HTML_DIR && sudo -S rm -r * 
 cd $USER_HOME
+mkdir $ROS_WORKING_DIR
 # Download Cerebra artifact to the working directory
 echo -e '\nDownloading Cerebra application'
 curl $CEREBRA_ARCHIVE_URL_PATH -L --output $ROS_WORKING_DIR/$CEREBRA_ARCHIVE_NAME
@@ -111,11 +115,23 @@ sudo curl $NGINX_CONF_FILE_URL --output $DEFAULT_NGINX_DIR/$NGINX_CONF_FILE
 #
 # Install ros node for camera
 echo -e '\nInstalling ros node for camera...'
-curl $ROS_CAMERA_NODE_LINK -L --output $ROS_WORKING_DIR/$ROS_CAMERA_NODE_ZIP --create-dirs
+curl $ROS_CAMERA_NODE_LINK -L --output $ROS_WORKING_DIR/$ROS_CAMERA_NODE_ZIP
 sudo unzip $ROS_WORKING_DIR/$ROS_CAMERA_NODE_ZIP -d $ROS_CAMERA_NODE_DIR
 rm $ROS_WORKING_DIR/$ROS_CAMERA_NODE_ZIP
 cd $ROS_CAMERA_NODE_DIR
 sudo colcon build
+#
+# Create the database (if it doesn't exist) and initialize it with the SQL file
+curl $DATABASE_INIT_QUERY_LINK -L --output $ROS_WORKING_DIR/$DATABASE_INIT_QUERY_FILE
+echo "Creating (if not exist) and initializing SQLite database $DATABASE_FILE with $ROS_WORKING_DIR/$DATABASE_INIT_QUERY_FILE..."
+mkdir $DATABASE_DIR
+chmod 777 $USER_HOME
+chmod 777 $DATABASE_DIR
+sudo sed -i "s|\$directory = '/var/lib/phpliteadmin';|\$directory = $DATABASE_DIR;|" /etc/phpliteadmin.config.php
+sudo sed -i "s|\$password = 'admin';|\$password = 'pib';|" /etc/phpliteadmin.config.php
+sudo sqlite3 $DATABASE_DIR/$DATABASE_FILE < $ROS_WORKING_DIR/$DATABASE_INIT_QUERY_FILE
+chmod 766 $DATABASE_DIR/$DATABASE_FILE
+echo -e "\nDatabase initialized successfully!"
 #
 # Setup system to start Cerebra and ROS2 at boot time
 # Create boot script for ros_bridge_server
