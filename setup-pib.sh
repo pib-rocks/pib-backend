@@ -163,6 +163,5 @@ sudo systemctl enable ros_camera_boot.service
 sudo systemctl enable ssh --now
 # Done! :-) Please restart to 
 echo -e '\nCongratulations! The setup completed succesfully!'
-echo -e '\nThe system will be restarted now'
-sleep 5
-sudo shutdown -r now
+echo -e '\nPlease restart the system to apply changes...'
+
