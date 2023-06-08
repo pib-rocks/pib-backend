@@ -2,47 +2,18 @@
 
 This script assumes: 
 - that Ubuntu Desktop 22.04.2 LTS is installed
-- the default-user executing it is set to **pib**.
+- the user running it is **pib**
 
-## Creating the user
-Create new user doing the following steps:
-
-1. Create user named **pib** with *adduser* command:
-
-        adduser pib
-
-2. You will be prompted to set and confirm the password for new user (you can also set it to "**pib**" for convenience).
-3. Add the new user to the *sudo* group:
-
-        usermod -aG sudo pib
-
-4. Test the sudo access:
-
-        groups pib
-
-   This prints all the groups that the **pib** user belongs to.
-
-5. Optionally, you can make it so the new user can execute sudo commands without being prompted for a password:  
-   Open the *sudoers* file:
-      
-        sudo visudo
-
-   At the end of the file add the following line:
-
-        pib ALL=(ALL) NOPASSWD: ALL
-
-   Save and close the *sudoers* file.
+If you have not set up the user **pib** at installation, you can do so via the settings-dialog of Ubuntu and then log in as **pib**.
 
 ## Running the script
 To run the script do the next steps:
 
-1. Install *curl* if you don't have it:
+1. Open a terminal
 
-        sudo apt install curl
+2. Download the script with the following command:
 
-2. Download the script with *curl*:
-
-        curl "https://raw.githubusercontent.com/pib-rocks/setup-pib/main/ros_and_cerebra_setup.sh" -O
+        wget https://raw.githubusercontent.com/pib-rocks/setup-pib/main/ros_and_cerebra_setup.sh
 
 3. Make the script executable:
    
@@ -52,8 +23,8 @@ To run the script do the next steps:
 
         ./ros_and_cerebra_setup.sh
 
-The setup then adds Cerebra and it's dependencies, including ROS2, Tinkerforge,...  
-Once the installation is complete, the system will automatically reboot.
+The setup then adds Cerebra and it's dependencies, including ROS2, Tinkerforge,...
+Once the installation is complete, please restart the system to apply all the changes.
 
 ## Checking if the software started successfully
 
