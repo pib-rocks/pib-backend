@@ -1,3 +1,5 @@
+#!/bin/bash
+
 # This script assumes:
 #   - that Ubuntu Desktop 22.04.2 is installed
 #   - the default-user "pib" is executing it
@@ -28,7 +30,19 @@ DATABASE_DIR="$USER_HOME/pib_data"
 DATABASE_FILE="pibdata.db"
 DATABASE_INIT_QUERY_FILE="cerebra_init_database.sql"
 DATABASE_INIT_QUERY_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/cerebra_init_database.sql"
-#
+
+# We make sure that this script is run by the user "pib"
+if [ "$(whoami)" != "pib" ]; then
+        echo "This script must be run as user: pib"
+        exit 255
+fi
+
+# We want the user pib to setup things without password (sudo without password)
+# Yes, we are aware of the security-issues..
+echo "Hello pib! We start the setup by allowing you permanently to run commands with admin-privileges."
+echo "For this change please enter the root-password. It is most likely just your normal one..."
+su root bash -c 'echo "pib ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers'
+
 # Adding Universe repo, upgrading and installing basic packages
 sudo add-apt-repository -y universe
 sudo apt-get update
