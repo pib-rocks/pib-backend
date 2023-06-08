@@ -121,11 +121,10 @@ sudo colcon build
 # Install and configure phpLiteAdmin
 sudo sed -i "s|;cgi.fix_pathinfo=1|cgi.fix_pathinfo=0|" /etc/php/8.1/fpm/php.ini
 curl $PHPLITEADMIN_LINK -L --output $ROS_WORKING_DIR/$PHPLITEADMIN_ZIP
-mkdir $PHPLITEADMIN_INSTALLATION_DIR
+sudo mkdir $PHPLITEADMIN_INSTALLATION_DIR
 sudo chown -R www-data:www-data $PHPLITEADMIN_INSTALLATION_DIR
 sudo chmod -R 755 $PHPLITEADMIN_INSTALLATION_DIR
 sudo unzip $ROS_WORKING_DIR/$PHPLITEADMIN_ZIP -d $PHPLITEADMIN_INSTALLATION_DIR
-sudo mv $PHPLITEADMIN_INSTALLATION_DIR/phpliteadmin.config.sample.php $PHPLITEADMIN_INSTALLATION_DIR/phpliteadmin.config.php
 sudo systemctl restart php8.1-fpm
 # Create the database (if it doesn't exist) and initialize it with the SQL file
 curl $DATABASE_INIT_QUERY_LINK -L --output $ROS_WORKING_DIR/$DATABASE_INIT_QUERY_FILE
@@ -133,8 +132,6 @@ echo "Creating (if not exist) and initializing SQLite database $DATABASE_FILE wi
 mkdir $DATABASE_DIR
 chmod 777 $USER_HOME
 chmod 777 $DATABASE_DIR
-sudo sed -i "s|\$directory = '.';|\$directory = $DATABASE_DIR;|" $PHPLITEADMIN_INSTALLATION_DIR/phpliteadmin.config.php
-sudo sed -i "s|\$password = 'admin';|\$password = 'pib';|" $PHPLITEADMIN_INSTALLATION_DIR/phpliteadmin.config.php
 sudo sqlite3 $DATABASE_DIR/$DATABASE_FILE < $ROS_WORKING_DIR/$DATABASE_INIT_QUERY_FILE
 chmod 766 $DATABASE_DIR/$DATABASE_FILE
 echo -e "\nDatabase initialized successfully!"
