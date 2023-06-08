@@ -1,12 +1,6 @@
-# This script assumes 
+# This script assumes:
 #   - that Ubuntu Desktop 22.04.2 is installed
-#   - the default-user "pib" is executing it. If not: change the DEFAULT_USER below accordingly
-# The setup then adds Cerebra and it's dependencies, including ROS2, Tinkerforge,...
-# To run the script do the next steps:
-# 1. sudo apt install curl
-# 2. curl "https://raw.githubusercontent.com/pib-rocks/setup-pib/main/ros_and_cerebra_setup.sh" -O
-# 3. chmod 755 ./ros_and_cerebra_setup.sh
-# 4. ./ros_and_cerebra_setup.sh
+#   - the default-user "pib" is executing it
 #
 DEFAULT_USER="pib"
 USER_HOME="/home/$DEFAULT_USER"
@@ -23,9 +17,9 @@ ROS_CAMERA_NODE_LINK="https://github.com/pib-rocks/ros2_oak_d_lite/archive/refs/
 ROS_CAMERA_NODE_DIR="$ROS_WORKING_DIR/ros_camera_node_dir"
 ROS_CAMERA_NODE_ZIP="ros_camera_node.zip"
 ROS_CEREBRA_BOOT_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/ros_cerebra_boot.sh"
-ROS_CAMERA_NODE_BOOT_TEMPLATE_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/ros_camera_boot_template.sh"
-ROS_CEREBRA_BOOT_SERVICE_TEMPLATE_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/ros_cerebra_boot_service_template.sh"
-ROS_CAMERA_NODE_BOOT_SERVICE_TEMPLATE_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/ros_camera_boot_service_template.sh"
+ROS_CAMERA_NODE_BOOT_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/ros_camera_boot_template.sh"
+ROS_CEREBRA_BOOT_SERVICE_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/ros_cerebra_boot_service_template.sh"
+ROS_CAMERA_NODE_BOOT_SERVICE_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/ros_camera_boot_service_template.sh"
 #
 PHPLITEADMIN_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/phpliteadmin_v1_9_9_dev.zip"
 PHPLITEADMIN_ZIP="phpliteadmin_v1_9_9_dev.zip"
@@ -48,7 +42,7 @@ sudo update-locale LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8
 export LANG=en_US.UTF-8
 locale  # verify settings
 sudo curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key -o /usr/share/keyrings/ros-archive-keyring.gpg
-echo "Adding ros2.list to repositories:"
+echo "Adding ros2.list to repositories..."
 echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu $(. /etc/os-release && echo $UBUNTU_CODENAME) main" | sudo tee /etc/apt/sources.list.d/ros2.list > /dev/null
 sudo apt update
 sudo apt install -y ros-humble-ros-base ros-dev-tools
@@ -150,30 +144,22 @@ echo -e "\nDatabase initialized successfully!"
 curl $ROS_CEREBRA_BOOT_LINK -L --output $ROS_WORKING_DIR/ros_cerebra_boot.sh
 sudo chmod 755 $ROS_WORKING_DIR/ros_cerebra_boot.sh
 # Create boot script for ros_camera node
-curl $ROS_CAMERA_NODE_BOOT_TEMPLATE_LINK -L --output $ROS_WORKING_DIR/ros_camera_boot_template.sh
-sudo chmod 755 $ROS_WORKING_DIR/ros_camera_boot_template.sh
-sh $ROS_WORKING_DIR/ros_camera_boot_template.sh $ROS_CAMERA_NODE_DIR > $ROS_WORKING_DIR/ros_camera_boot.sh
-sudo chmod 755 $ROS_WORKING_DIR/ros_camera_boot.sh
-rm $ROS_WORKING_DIR/ros_camera_boot_template.sh
+curl $ROS_CAMERA_NODE_BOOT_LINK -L --output $ROS_WORKING_DIR/ros_camera_node_boot.sh
+sudo chmod 755 $ROS_WORKING_DIR/ros_camera_node_boot.sh
 # Create service which starts ros and cerebra by system boot
-curl $ROS_CEREBRA_BOOT_SERVICE_TEMPLATE_LINK -L --output $ROS_WORKING_DIR/ros_cerebra_boot_service_template.sh
-sudo chmod 755 $ROS_WORKING_DIR/ros_cerebra_boot_service_template.sh
-sh $ROS_WORKING_DIR/ros_cerebra_boot_service_template.sh $DEFAULT_USER $ROS_WORKING_DIR > $ROS_WORKING_DIR/ros_cerebra_boot.service
+curl $ROS_CEREBRA_BOOT_SERVICE_LINK -L --output $ROS_WORKING_DIR/ros_cerebra_boot.service
+sudo chmod 755 $ROS_WORKING_DIR/ros_cerebra_boot.service
 sudo mv $ROS_WORKING_DIR/ros_cerebra_boot.service /etc/systemd/system
-rm $ROS_WORKING_DIR/ros_cerebra_boot_service_template.sh
 # Create service which starts ros camera node by system boot
-curl $ROS_CAMERA_NODE_BOOT_SERVICE_TEMPLATE_LINK -L --output $ROS_WORKING_DIR/ros_camera_boot_service_template.sh
-sudo chmod 755 $ROS_WORKING_DIR/ros_camera_boot_service_template.sh
-sh $ROS_WORKING_DIR/ros_camera_boot_service_template.sh $DEFAULT_USER $ROS_WORKING_DIR > $ROS_WORKING_DIR/ros_camera_boot.service
-sudo mv $ROS_WORKING_DIR/ros_camera_boot.service /etc/systemd/system
-rm $ROS_WORKING_DIR/ros_camera_boot_service_template.sh
+curl $ROS_CAMERA_NODE_BOOT_SERVICE_LINK -L --output $ROS_WORKING_DIR/ros_camera_node_boot.service
+sudo chmod 755 $ROS_WORKING_DIR/ros_camera_node_boot.service
+sudo mv $ROS_WORKING_DIR/ros_camera_node_boot.service /etc/systemd/system
 # Enable new services
 sudo systemctl daemon-reload
 sudo systemctl enable ros_cerebra_boot.service
-sudo systemctl enable ros_camera_boot.service
+sudo systemctl enable ros_camera_node_boot.service
 # Enable and start ssh server
 sudo systemctl enable ssh --now
 # Done! :-) Please restart to 
 echo -e '\nCongratulations! The setup completed succesfully!'
 echo -e '\nPlease restart the system to apply changes...'
-
