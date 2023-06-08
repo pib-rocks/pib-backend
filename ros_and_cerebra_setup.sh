@@ -21,12 +21,20 @@ ROS_CAMERA_NODE_BOOT_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib
 ROS_CEREBRA_BOOT_SERVICE_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/ros_cerebra_boot_service_template.sh"
 ROS_CAMERA_NODE_BOOT_SERVICE_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/ros_camera_boot_service_template.sh"
 #
+PHPLITEADMIN_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/phpliteadmin_v1_9_9_dev.zip"
+PHPLITEADMIN_ZIP="phpliteadmin_v1_9_9_dev.zip"
+PHPLITEADMIN_INSTALLATION_DIR="/var/www/phpliteadmin"
+DATABASE_DIR="$USER_HOME/pib_data"
+DATABASE_FILE="pibdata.db"
+DATABASE_INIT_QUERY_FILE="cerebra_init_database.sql"
+DATABASE_INIT_QUERY_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/cerebra_init_database.sql"
+#
 # Adding Universe repo, upgrading and installing basic packages
 sudo add-apt-repository -y universe
 sudo apt-get update
 sudo apt-get -y upgrade
 # libusb-1.0-0 libudev1 procps are dependencies of later installed Tinkerforge brick-deamon
-sudo apt-get install -y python3 python3-pip git curl openssh-server software-properties-common unzip sqlite3 locales libusb-1.0-0 libudev1 procps
+sudo apt-get install -y python3 python3-pip git curl openssh-server software-properties-common unzip sqlite3 locales libusb-1.0-0 libudev1 procps php8.1-fpm php-sqlite3
 #
 # Setting up ROS2
 sudo locale-gen en_US en_US.UTF-8
@@ -110,6 +118,27 @@ rm $ROS_WORKING_DIR/$ROS_CAMERA_NODE_ZIP
 cd $ROS_CAMERA_NODE_DIR
 sudo colcon build
 #
+# Install and configure phpLiteAdmin
+sudo sed -i "s|;cgi.fix_pathinfo=1|cgi.fix_pathinfo=0|" /etc/php/8.1/fpm/php.ini
+curl $PHPLITEADMIN_LINK -L --output $ROS_WORKING_DIR/$PHPLITEADMIN_ZIP
+mkdir $PHPLITEADMIN_INSTALLATION_DIR
+sudo chown -R www-data:www-data $PHPLITEADMIN_INSTALLATION_DIR
+sudo chmod -R 755 $PHPLITEADMIN_INSTALLATION_DIR
+sudo unzip $ROS_WORKING_DIR/$PHPLITEADMIN_ZIP -d $PHPLITEADMIN_INSTALLATION_DIR
+sudo mv $PHPLITEADMIN_INSTALLATION_DIR/phpliteadmin.config.sample.php $PHPLITEADMIN_INSTALLATION_DIR/phpliteadmin.config.php
+sudo systemctl restart php8.1-fpm
+# Create the database (if it doesn't exist) and initialize it with the SQL file
+curl $DATABASE_INIT_QUERY_LINK -L --output $ROS_WORKING_DIR/$DATABASE_INIT_QUERY_FILE
+echo "Creating (if not exist) and initializing SQLite database $DATABASE_FILE with $ROS_WORKING_DIR/$DATABASE_INIT_QUERY_FILE..."
+mkdir $DATABASE_DIR
+chmod 777 $USER_HOME
+chmod 777 $DATABASE_DIR
+sudo sed -i "s|\$directory = '.';|\$directory = $DATABASE_DIR;|" $PHPLITEADMIN_INSTALLATION_DIR/phpliteadmin.config.php
+sudo sed -i "s|\$password = 'admin';|\$password = 'pib';|" $PHPLITEADMIN_INSTALLATION_DIR/phpliteadmin.config.php
+sudo sqlite3 $DATABASE_DIR/$DATABASE_FILE < $ROS_WORKING_DIR/$DATABASE_INIT_QUERY_FILE
+chmod 766 $DATABASE_DIR/$DATABASE_FILE
+echo -e "\nDatabase initialized successfully!"
+#
 # Setup system to start Cerebra and ROS2 at boot time
 # Create boot script for ros_bridge_server
 curl $ROS_CEREBRA_BOOT_LINK -L --output $ROS_WORKING_DIR/ros_cerebra_boot.sh
@@ -133,6 +162,4 @@ sudo systemctl enable ros_camera_node_boot.service
 sudo systemctl enable ssh --now
 # Done! :-) Please restart to 
 echo -e '\nCongratulations! The setup completed succesfully!'
-echo -e '\nThe system will be restarted now'
-sleep 5
-sudo shutdown -r now
+echo -e '\nPlease restart the system to apply changes...'
