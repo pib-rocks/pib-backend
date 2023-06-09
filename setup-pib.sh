@@ -19,9 +19,9 @@ ROS_CAMERA_NODE_LINK="https://github.com/pib-rocks/ros2_oak_d_lite/archive/refs/
 ROS_CAMERA_NODE_DIR="$ROS_WORKING_DIR/ros_camera_node_dir"
 ROS_CAMERA_NODE_ZIP="ros_camera_node.zip"
 ROS_CEREBRA_BOOT_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/ros_cerebra_boot.sh"
-ROS_CAMERA_NODE_BOOT_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/ros_camera_boot_template.sh"
-ROS_CEREBRA_BOOT_SERVICE_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/ros_cerebra_boot_service_template.sh"
-ROS_CAMERA_NODE_BOOT_SERVICE_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/ros_camera_boot_service_template.sh"
+ROS_CAMERA_NODE_BOOT_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/ros_camera_boot.sh"
+ROS_CEREBRA_BOOT_SERVICE_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/ros_cerebra_boot.service"
+ROS_CAMERA_NODE_BOOT_SERVICE_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/ros_camera_boot.service"
 #
 PHPLITEADMIN_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/phpliteadmin_v1_9_9_dev.zip"
 PHPLITEADMIN_ZIP="phpliteadmin_v1_9_9_dev.zip"
@@ -100,7 +100,7 @@ python3 install_requirements.py
 #Hand tracker
 git clone https://github.com/geaxgx/depthai_hand_tracker.git
 cd depthai_hand_tracker
-python3 requirements.py
+pip install -r requirements.txt
 #
 # Setup Cerebra
 echo -e '\nInstall nginx...'
@@ -144,10 +144,10 @@ sudo systemctl restart php8.1-fpm
 curl $DATABASE_INIT_QUERY_LINK -L --output $ROS_WORKING_DIR/$DATABASE_INIT_QUERY_FILE
 echo "Creating (if not exist) and initializing SQLite database $DATABASE_FILE with $ROS_WORKING_DIR/$DATABASE_INIT_QUERY_FILE..."
 mkdir $DATABASE_DIR
-chmod 777 $USER_HOME
-chmod 777 $DATABASE_DIR
+sudo chmod 777 $USER_HOME
+sudo chmod 777 $DATABASE_DIR
 sudo sqlite3 $DATABASE_DIR/$DATABASE_FILE < $ROS_WORKING_DIR/$DATABASE_INIT_QUERY_FILE
-chmod 766 $DATABASE_DIR/$DATABASE_FILE
+sudo chmod 766 $DATABASE_DIR/$DATABASE_FILE
 echo -e "\nDatabase initialized successfully!"
 #
 # Setup system to start Cerebra and ROS2 at boot time
@@ -156,15 +156,15 @@ curl $ROS_CEREBRA_BOOT_LINK -L --output $ROS_WORKING_DIR/ros_cerebra_boot.sh
 sudo chmod 755 $ROS_WORKING_DIR/ros_cerebra_boot.sh
 # Create boot script for ros_camera node
 curl $ROS_CAMERA_NODE_BOOT_LINK -L --output $ROS_WORKING_DIR/ros_camera_node_boot.sh
-sudo chmod 755 $ROS_WORKING_DIR/ros_camera_node_boot.sh
+sudo chmod 755 $ROS_WORKING_DIR/ros_camera_boot.sh
 # Create service which starts ros and cerebra by system boot
 curl $ROS_CEREBRA_BOOT_SERVICE_LINK -L --output $ROS_WORKING_DIR/ros_cerebra_boot.service
 sudo chmod 755 $ROS_WORKING_DIR/ros_cerebra_boot.service
 sudo mv $ROS_WORKING_DIR/ros_cerebra_boot.service /etc/systemd/system
 # Create service which starts ros camera node by system boot
-curl $ROS_CAMERA_NODE_BOOT_SERVICE_LINK -L --output $ROS_WORKING_DIR/ros_camera_node_boot.service
-sudo chmod 755 $ROS_WORKING_DIR/ros_camera_node_boot.service
-sudo mv $ROS_WORKING_DIR/ros_camera_node_boot.service /etc/systemd/system
+curl $ROS_CAMERA_NODE_BOOT_SERVICE_LINK -L --output $ROS_WORKING_DIR/ros_camera_boot.service
+sudo chmod 755 $ROS_WORKING_DIR/ros_camera_boot.service
+sudo mv $ROS_WORKING_DIR/ros_camera_boot.service /etc/systemd/system
 # Enable new services
 sudo systemctl daemon-reload
 sudo systemctl enable ros_cerebra_boot.service
