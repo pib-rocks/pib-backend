@@ -1,5 +1,5 @@
 #!/bin/bash
-
+#
 # This script assumes:
 #   - that Ubuntu Desktop 22.04.2 is installed
 #   - the default-user "pib" is executing it
@@ -19,9 +19,9 @@ ROS_CAMERA_NODE_LINK="https://github.com/pib-rocks/ros2_oak_d_lite/archive/refs/
 ROS_CAMERA_NODE_DIR="$ROS_WORKING_DIR/ros_camera_node_dir"
 ROS_CAMERA_NODE_ZIP="ros_camera_node.zip"
 ROS_CEREBRA_BOOT_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/ros_cerebra_boot.sh"
-ROS_CAMERA_NODE_BOOT_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/ros_camera_boot.sh"
+ROS_CAMERA_BOOT_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/ros_camera_boot.sh"
 ROS_CEREBRA_BOOT_SERVICE_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/ros_cerebra_boot.service"
-ROS_CAMERA_NODE_BOOT_SERVICE_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/ros_camera_boot.service"
+ROS_CAMERA_BOOT_SERVICE_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/ros_camera_boot.service"
 #
 PHPLITEADMIN_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/phpliteadmin_v1_9_9_dev.zip"
 PHPLITEADMIN_ZIP="phpliteadmin_v1_9_9_dev.zip"
@@ -30,19 +30,22 @@ DATABASE_DIR="$USER_HOME/pib_data"
 DATABASE_FILE="pibdata.db"
 DATABASE_INIT_QUERY_FILE="cerebra_init_database.sql"
 DATABASE_INIT_QUERY_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/cerebra_init_database.sql"
-
+#
 # We make sure that this script is run by the user "pib"
 if [ "$(whoami)" != "pib" ]; then
         echo "This script must be run as user: pib"
         exit 255
 fi
-
 # We want the user pib to setup things without password (sudo without password)
 # Yes, we are aware of the security-issues..
 echo "Hello pib! We start the setup by allowing you permanently to run commands with admin-privileges."
-echo "For this change please enter the root-password. It is most likely just your normal one..."
-su root bash -c 'echo "pib ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers'
-
+if [[ "$(id)" == *"(sudo)"* ]]; then
+	echo "For this change please enter your password..."
+	sudo bash -c "echo '$DEFAULT_USER ALL=(ALL) NOPASSWD:ALL' | tee /etc/sudoers.d/$DEFAULT_USER"
+else
+	echo "For this change please enter the root-password. It is most likely just your normal one..."
+	su root bash -c "usermod -aG sudo $DEFAULT_USER ; echo '$DEFAULT_USER ALL=(ALL) NOPASSWD:ALL' | tee /etc/sudoers.d/$DEFAULT_USER"
+fi
 # Adding Universe repo, upgrading and installing basic packages
 sudo add-apt-repository -y universe
 sudo apt-get update
@@ -155,20 +158,20 @@ echo -e "\nDatabase initialized successfully!"
 curl $ROS_CEREBRA_BOOT_LINK -L --output $ROS_WORKING_DIR/ros_cerebra_boot.sh
 sudo chmod 755 $ROS_WORKING_DIR/ros_cerebra_boot.sh
 # Create boot script for ros_camera node
-curl $ROS_CAMERA_NODE_BOOT_LINK -L --output $ROS_WORKING_DIR/ros_camera_node_boot.sh
+curl $ROS_CAMERA_BOOT_LINK -L --output $ROS_WORKING_DIR/ros_camera_boot.sh
 sudo chmod 755 $ROS_WORKING_DIR/ros_camera_boot.sh
 # Create service which starts ros and cerebra by system boot
 curl $ROS_CEREBRA_BOOT_SERVICE_LINK -L --output $ROS_WORKING_DIR/ros_cerebra_boot.service
 sudo chmod 755 $ROS_WORKING_DIR/ros_cerebra_boot.service
 sudo mv $ROS_WORKING_DIR/ros_cerebra_boot.service /etc/systemd/system
 # Create service which starts ros camera node by system boot
-curl $ROS_CAMERA_NODE_BOOT_SERVICE_LINK -L --output $ROS_WORKING_DIR/ros_camera_boot.service
+curl $ROS_CAMERA_BOOT_SERVICE_LINK -L --output $ROS_WORKING_DIR/ros_camera_boot.service
 sudo chmod 755 $ROS_WORKING_DIR/ros_camera_boot.service
 sudo mv $ROS_WORKING_DIR/ros_camera_boot.service /etc/systemd/system
 # Enable new services
 sudo systemctl daemon-reload
 sudo systemctl enable ros_cerebra_boot.service
-sudo systemctl enable ros_camera_node_boot.service
+sudo systemctl enable ros_camera_boot.service
 # Enable and start ssh server
 sudo systemctl enable ssh --now
 # Done! :-) Please restart to 
