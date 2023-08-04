@@ -97,7 +97,7 @@ sudo apt-get install -y python3-tinkerforge
 sudo curl -sSL https://docs.luxonis.com/install_dependencies.sh | sudo bash
 python3 -m pip install depthai
 #Git examples for Depth-AI
-git clone https://github.com/luxonis/depthai-python.git
+git clone --recurse-submodules https://github.com/luxonis/depthai-python.git
 cd depthai-python/examples
 python3 install_requirements.py
 #Hand tracker
