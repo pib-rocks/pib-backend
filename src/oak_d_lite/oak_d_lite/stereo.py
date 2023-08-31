@@ -5,7 +5,28 @@ import cv2
 import depthai as dai
 import base64
 import numpy as np
+
 from std_msgs.msg import String, Float64, Int32, Int32MultiArray
+
+
+class ErrorPublisher(Node):
+
+    #def __new__(cls, error_message):
+    #    print("creating new ErrorPublisher with Error message" + error_message)
+
+    def __init__(self):
+        super().__init__('error_publisher')
+        self.publisher_ = self.create_publisher(String, 'camera_topic', 10)
+        timer_period = 1  # seconds
+        self.timer = self.create_timer(timer_period, self.timer_callback)
+
+
+    def timer_callback(self):
+        msg = String()
+        msg.data = "Camera not available: "
+        self.publisher_.publish(msg)
+        #self.get_logger().info('Publishing: "%s"' % msg.data)
+
 
 
 class CameraNode(Node):
@@ -74,14 +95,34 @@ class CameraNode(Node):
         self.device.close()
         self.init_pipeline()
 
+def spin_camera(times):
+    cnt = times
+    if cnt==0:
+        print("Couldn't restart camera due to displayed error/s, publishing error message")
+        rclpy.spin(error_publisher)
+    else:
+        try:
+            camera_node = CameraNode()
+            rclpy.spin(camera_node)
+        except Exception as exc:
+            error_publisher.timer_callback()
+            print(exc)
+        finally:
+            if 'camera_node' in locals():
+                camera_node.destroy_node()
+                print("camera_node destroyed")
+            cnt = times - 1
+            print("Retry starting camera..." + str(cnt))
+            spin_camera(cnt)
+    return
+        
+            
 def main(args=None):
-    rclpy.init(args=args)
-
-    camera_node = CameraNode()
-
-    rclpy.spin(camera_node)
-
-    camera_node.destroy_node()
+    rclpy.init() 
+    global error_publisher 
+    error_publisher = ErrorPublisher()
+    print("Starting camera")
+    spin_camera(3)
     rclpy.shutdown()
 
 if __name__ == '__main__':
