@@ -1,0 +1,11 @@
+[Unit]
+Description=Startup script for ROS and Cerebra
+After=network.target
+
+[Service]
+Type=simple
+User=pib
+ExecStart=/usr/bin/bash /home/pib/ros_working_dir/ros_voice_assistant_boot.sh
+
+[Install]
+WantedBy=multi-user.target
