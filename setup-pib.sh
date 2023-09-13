@@ -144,10 +144,7 @@ cd $ROS_CAMERA_NODE_DIR
 sudo colcon build
 #
 # Setting up the voice-assistant packages
-pip3.10 install openai
-pip3.10 install google-cloud-speech
-pip3.10 install google-cloud-texttospeech
-pip3.10 install pyaudio
+pip3.10 install openai google-cloud-speech google-cloud-texttospeech pyaudio
 sudo apt-get install flac
 #
 # Install ros node for voice-assistant
