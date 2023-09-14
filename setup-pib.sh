@@ -175,11 +175,11 @@ echo -e "\nDatabase initialized successfully!"
 #
 # Allow editing in all src-directories
 sudo chmod -R 777 $ROS_WORKING_DIR/src
-cd $ROS_WORKING_DIR/src
+cd $ROS_WORKING_DIR
 sudo colcon build
-sudo chmod -R 777 $ROS_WORKING_DIR/src/build
-sudo chmod -R 777 $ROS_WORKING_DIR/src/install
-sudo chmod -R 777 $ROS_WORKING_DIR/src/log
+sudo chmod -R 777 $ROS_WORKING_DIR/build
+sudo chmod -R 777 $ROS_WORKING_DIR/install
+sudo chmod -R 777 $ROS_WORKING_DIR/log
 #
 # Setup system to start Cerebra and ROS2 at boot time
 # Create boot script for ros_bridge_server
