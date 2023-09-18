@@ -210,9 +210,6 @@ sudo systemctl enable ros_camera_boot.service
 sudo systemctl enable ros_voice_assistant_boot.service
 # Enable and start ssh server
 sudo systemctl enable ssh --now
-# clean-up ROS_WORKING_DIR
-cd $ROS_WORKING_DIR
-rm ros_voice_assistant_boot.sh ros_cerebra_boot.sh ros_camera_boot.sh
 # Done! :-) Please restart to
 echo -e '\nCongratulations! The setup completed succesfully!'
 echo -e '\nPlease restart the system to apply changes...'
