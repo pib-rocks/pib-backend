@@ -133,6 +133,7 @@ echo -e '\nDownloading nginx configuration file...'
 sudo curl $NGINX_CONF_FILE_URL --output $DEFAULT_NGINX_DIR/$NGINX_CONF_FILE
 #
 # create src directory for all packages
+cd $ROS_CAMERA_NODE_DIR
 mkdir src
 #
 # Install ros node for camera
@@ -141,7 +142,6 @@ curl $ROS_CAMERA_NODE_LINK -L --output $ROS_WORKING_DIR/$ROS_CAMERA_NODE_ZIP
 sudo unzip $ROS_WORKING_DIR/$ROS_CAMERA_NODE_ZIP -d $ROS_CAMERA_NODE_DIR
 rm $ROS_WORKING_DIR/$ROS_CAMERA_NODE_ZIP
 cd $ROS_CAMERA_NODE_DIR
-sudo colcon build
 #
 # Setting up the voice-assistant packages
 pip3.10 install openai google-cloud-speech google-cloud-texttospeech pyaudio
@@ -210,6 +210,9 @@ sudo systemctl enable ros_camera_boot.service
 sudo systemctl enable ros_voice_assistant_boot.service
 # Enable and start ssh server
 sudo systemctl enable ssh --now
+# clean-up ROS_WORKING_DIR
+cd $ROS_WORKING_DIR
+rm ros_voice_assistant_boot.sh ros_cerebra_boot.sh ros_camera_boot.sh
 # Done! :-) Please restart to
 echo -e '\nCongratulations! The setup completed succesfully!'
 echo -e '\nPlease restart the system to apply changes...'
