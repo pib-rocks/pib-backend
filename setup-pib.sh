@@ -87,19 +87,6 @@ echo "deb https://download.tinkerforge.com/apt/$(. /etc/os-release; echo $ID $VE
 sudo apt-get update
 sudo apt-get install -y python3-tinkerforge
 #
-# Setting up the camera, including AI capabilities
-# Depth-AI
-sudo curl -sSL https://docs.luxonis.com/install_dependencies.sh | sudo bash
-python3 -m pip install depthai
-#Git examples for Depth-AI
-git clone --recurse-submodules https://github.com/luxonis/depthai-python.git
-cd depthai-python/examples
-python3 install_requirements.py
-#Hand tracker
-git clone https://github.com/geaxgx/depthai_hand_tracker.git
-cd depthai_hand_tracker
-pip install -r requirements.txt
-#
 # Setup Cerebra
 echo -e '\nInstall nginx...'
 sudo apt install -y nginx
