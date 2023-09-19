@@ -15,13 +15,8 @@ NGINX_CONF_FILE_URL="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/
 CEREBRA_ARCHIVE_URL_PATH="https://pib.rocks/wp-content/uploads/pib_data/cerebra-latest.zip"
 CEREBRA_ARCHIVE_NAME="cerebra-latest.zip"
 #
-ROS_CAMERA_NODE_LINK="https://github.com/pib-rocks/ros2_oak_d_lite/archive/refs/heads/master.zip"
-ROS_CAMERA_NODE_DIR="$ROS_WORKING_DIR/ros_camera_node_dir"
-ROS_CAMERA_NODE_ZIP="ros_camera_node.zip"
 ROS_CEREBRA_BOOT_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/ros_cerebra_boot.sh"
-ROS_CAMERA_BOOT_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/ros_camera_boot.sh"
 ROS_CEREBRA_BOOT_SERVICE_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/ros_cerebra_boot.service"
-ROS_CAMERA_BOOT_SERVICE_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/ros_camera_boot.service"
 #
 PHPLITEADMIN_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/phpliteadmin_v1_9_9_dev.zip"
 PHPLITEADMIN_ZIP="phpliteadmin_v1_9_9_dev.zip"
@@ -128,15 +123,8 @@ echo -e '\nDownloading nginx configuration file...'
 sudo curl $NGINX_CONF_FILE_URL --output $DEFAULT_NGINX_DIR/$NGINX_CONF_FILE
 #
 # create src directory for all ros packages
-cd $ROS_CAMERA_NODE_DIR
+cd $ROS_WORKING_DIR
 mkdir src
-#
-# Install ros node for camera
-echo -e '\nInstalling ros node for camera...'
-curl $ROS_CAMERA_NODE_LINK -L --output $ROS_WORKING_DIR/$ROS_CAMERA_NODE_ZIP
-sudo unzip $ROS_WORKING_DIR/$ROS_CAMERA_NODE_ZIP -d $ROS_CAMERA_NODE_DIR
-rm $ROS_WORKING_DIR/$ROS_CAMERA_NODE_ZIP
-cd $ROS_CAMERA_NODE_DIR
 #
 # Install and configure phpLiteAdmin
 sudo sed -i "s|;cgi.fix_pathinfo=1|cgi.fix_pathinfo=0|" /etc/php/8.1/fpm/php.ini
@@ -168,21 +156,13 @@ sudo chmod -R 777 $ROS_WORKING_DIR/log
 # Create boot script for ros_bridge_server
 curl $ROS_CEREBRA_BOOT_LINK -L --output $ROS_WORKING_DIR/ros_cerebra_boot.sh
 sudo chmod 755 $ROS_WORKING_DIR/ros_cerebra_boot.sh
-# Create boot script for ros_camera node
-curl $ROS_CAMERA_BOOT_LINK -L --output $ROS_WORKING_DIR/ros_camera_boot.sh
-sudo chmod 755 $ROS_WORKING_DIR/ros_camera_boot.sh
 # Create service which starts ros and cerebra by system boot
 curl $ROS_CEREBRA_BOOT_SERVICE_LINK -L --output $ROS_WORKING_DIR/ros_cerebra_boot.service
 sudo chmod 755 $ROS_WORKING_DIR/ros_cerebra_boot.service
 sudo mv $ROS_WORKING_DIR/ros_cerebra_boot.service /etc/systemd/system
-# Create service which starts ros camera node by system boot
-curl $ROS_CAMERA_BOOT_SERVICE_LINK -L --output $ROS_WORKING_DIR/ros_camera_boot.service
-sudo chmod 755 $ROS_WORKING_DIR/ros_camera_boot.service
-sudo mv $ROS_WORKING_DIR/ros_camera_boot.service /etc/systemd/system
 # Enable new services
 sudo systemctl daemon-reload
 sudo systemctl enable ros_cerebra_boot.service
-sudo systemctl enable ros_camera_boot.service
 # Enable and start ssh server
 sudo systemctl enable ssh --now
 # Done! :-) Please restart to
