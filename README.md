@@ -6,7 +6,6 @@ This repository is for ros package "motors" including one node "motor_control". 
 ```
 HOST = "localhost"
 PORT = 4223
-UID = "XXYYZZ" #replace with hat UID
 UID1 = "XYZ" # Replace with the UID of first Servo Bricklet
 UID2 = "XYZ" # Replace with the UID of second Servo Bricklet
 UID3 = "XYZ" # Replace with the UID of third Servo Bricklet
