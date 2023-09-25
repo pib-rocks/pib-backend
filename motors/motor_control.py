@@ -91,7 +91,7 @@ class Motor_control(Node):
             #shoulder_vertical_right is connected to bricklet 3 pins 5 & 8 | shoulder_vertical_left is connected to bricklet 3 pins 7 & 9
         }
         self.ipcon = IPConnection()  # Create IP connection
-        self.hat = BrickHAT(UID, self.ipcon)
+        self.hat = BrickHAT("X", self.ipcon)
         # Handles for three Servo Bricklets
         self.servo1 = BrickletServoV2(UID1, self.ipcon)
         self.servo2 = BrickletServoV2(UID2, self.ipcon)
