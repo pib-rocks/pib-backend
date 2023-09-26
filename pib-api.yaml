@@ -17,7 +17,7 @@ paths:
         - pib-database
       summary: Create new voice assistant personality
       requestBody:
-        description: Creates a new voice assistant personality prompt<br>Name requires UTF-8 charset<br> Minimum length = X<br> Maximum length = X
+        description: Creates a new voice assistant personality<br>Name requires UTF-8 charset<br> Minimum length = X<br> Maximum length = X
         content:
           application/json:
             schema:
@@ -46,7 +46,6 @@ paths:
       responses:
         '200':
           description: OK
-          headers:
           content:
             application/json:
               schema:
@@ -85,6 +84,38 @@ paths:
                 $ref: '#/components/schemas/ErrorMessage'
         '404':
           description: Not Found
+          content:
+            application/json:
+              schema: 
+                $ref: '#/components/schemas/ErrorMessage'
+        '500':
+          description: Internal Server Error
+    put:
+      tags:
+        - pib-database
+      summary: Create new voice assistant personality
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        description: Update an existing voice assistant personality<br>Name requires UTF-8 charset<br> Minimum length = X<br> Maximum length = X<br>Individual request body attributes may be nullable but all cannot be null
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateVoiceAssistantPersonality'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: 
+                $ref: '#/components/schemas/UpdateVoiceAssistantPersonality'
+        '400':
+          description: Bad Request
           content:
             application/json:
               schema: 
@@ -134,9 +165,15 @@ components:
               name:
                 type: string
                 example: "Voice Assistant Personality Name"
-              prompt:
+              description:
                 type: string
-                example: "You are a helpful assistant."
+                example: Personality Description
+              gender:
+                type: string
+                example: Male/Female
+              pauseThreshold:
+                type: number
+                example: 0.8
     VoiceAssistantPersonality:
       type: object
       properties:
@@ -146,21 +183,35 @@ components:
         name:
           type: string
           example: "Voice Assistant Personality Name"
-        prompt:
+        description:
           type: string
-          example: "You are a helpful assistant."
+          example: Personality Description
+        gender:
+          type: string
+          example: Male/Female
+        pauseThreshold:
+          type: number
+          example: 0.8
     CreateVoiceAssistantPersonality:
       required:
         - name
-        - prompt
+        - description
+        - gender
+        - pauseThreshold
       type: object
       properties:
         name:
           type: string
           example: Name of the voice assistant personality
-        prompt:
+        description:
           type: string
-          example: "You are a helpful assistant."
+          example: Personality Description
+        gender:
+          type: string
+          example: Male/Female
+        pauseThreshold:
+          type: number
+          example: 0.8
     SuccessfulVoiceAssistantPersonalityCreationResponse:
       required:
         - id
@@ -170,19 +221,20 @@ components:
           type: string
           example: UUID
     UpdateVoiceAssistantPersonality:
-      required:
-        - id
       type: object
       properties:
-        id:
-          type: string
-          example: "UUID"
         name:
           type: string
-          example: "Name of the voice assistant personality"
-        prompt:
+          example: Name of the voice assistant personality
+        description:
           type: string
-          example: "You are a helpful assistant."
+          example: Personality Description
+        gender:
+          type: string
+          example: Male/Female
+        pauseThreshold:
+          type: number
+          example: 0.8
     ErrorMessage:
       required:
         - Error
