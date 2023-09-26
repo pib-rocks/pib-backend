@@ -38,6 +38,10 @@ paths:
                 $ref: '#/components/schemas/ErrorMessage'
         '500':
           description: Internal Server Error
+          content:
+            application/json:
+              schema: 
+                $ref: '#/components/schemas/ErrorMessage'
     get:
       tags: 
         - pib-database
@@ -58,6 +62,10 @@ paths:
                 $ref: '#/components/schemas/ErrorMessage'
         '500':
           description: Internal Server Error
+          content:
+            application/json:
+              schema: 
+                $ref: '#/components/schemas/ErrorMessage'
   /voice-assistant/{id}:
     get:
       tags:
@@ -90,6 +98,10 @@ paths:
                 $ref: '#/components/schemas/ErrorMessage'
         '500':
           description: Internal Server Error
+          content:
+            application/json:
+              schema: 
+                $ref: '#/components/schemas/ErrorMessage'
     put:
       tags:
         - pib-database
@@ -122,6 +134,10 @@ paths:
                 $ref: '#/components/schemas/ErrorMessage'
         '500':
           description: Internal Server Error
+          content:
+            application/json:
+              schema: 
+                $ref: '#/components/schemas/ErrorMessage'
     delete:
       tags:
         - pib-database
@@ -133,8 +149,12 @@ paths:
           schema:
             type: string
       responses:
-        '204':
-          description: No Content
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: 
+                $ref: '#/components/schemas/DeleteVoiceAssistantPersonality'
         '400':
           description: Bad Request
           content:
@@ -149,6 +169,10 @@ paths:
                 $ref: '#/components/schemas/ErrorMessage'
         '500':
           description: Internal Server Error
+          content:
+            application/json:
+              schema: 
+                $ref: '#/components/schemas/ErrorMessage'
 components:
   schemas:
     GetPersonalities:
@@ -164,7 +188,7 @@ components:
                 example: UUID
               name:
                 type: string
-                example: "Voice Assistant Personality Name"
+                example: Voice Assistant Personality Name
               description:
                 type: string
                 example: Personality Description
@@ -182,7 +206,7 @@ components:
           example: UUID
         name:
           type: string
-          example: "Voice Assistant Personality Name"
+          example: Voice Assistant Personality Name
         description:
           type: string
           example: Personality Description
@@ -223,6 +247,9 @@ components:
     UpdateVoiceAssistantPersonality:
       type: object
       properties:
+        id:
+          type: string
+          example: UUID
         name:
           type: string
           example: Name of the voice assistant personality
@@ -235,6 +262,12 @@ components:
         pauseThreshold:
           type: number
           example: 0.8
+    DeleteVoiceAssistantPersonality:
+      type: object
+      properties:
+        id:
+          type: string
+          example: UUID
     ErrorMessage:
       required:
         - Error
@@ -242,4 +275,4 @@ components:
       properties:
         error:
           type: string
-          example: "error message"
+          example: error message
