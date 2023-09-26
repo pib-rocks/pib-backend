@@ -1,0 +1,193 @@
+openapi: 3.0.3
+info:
+  title: pib REST-API MOCK
+  description: |-
+    This API documentation is a first draft for the upcoming REST API development
+  termsOfService: https://isento.de/
+  contact:
+    email: info@isento.de
+  version: 0.0.1
+tags:
+  - name: pib-database
+    description: CRUD-Operations for voice assistant personalities
+paths:
+  /voice-assistant:
+    post:
+      tags:
+        - pib-database
+      summary: Create new voice assistant personality
+      requestBody:
+        description: Creates a new voice assistant personality prompt<br>Name requires UTF-8 charset<br> Minimum length = X<br> Maximum length = X
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateVoiceAssistantPersonality'
+        required: true
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: 
+                $ref: '#/components/schemas/SuccessfulVoiceAssistantPersonalityCreationResponse'
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema: 
+                $ref: '#/components/schemas/ErrorMessage'
+        '500':
+          description: Internal Server Error
+    get:
+      tags: 
+        - pib-database
+      summary: Get all voice-assistant personalities
+
+      responses:
+        '200':
+          description: OK
+          headers:
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetPersonalities'
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema: 
+                $ref: '#/components/schemas/ErrorMessage'
+        '500':
+          description: Internal Server Error
+  /voice-assistant/{id}:
+    get:
+      tags:
+        - pib-database
+      summary: Get voice assistant by id
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoiceAssistantPersonality'
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema: 
+                $ref: '#/components/schemas/ErrorMessage'
+        '404':
+          description: Not Found
+          content:
+            application/json:
+              schema: 
+                $ref: '#/components/schemas/ErrorMessage'
+        '500':
+          description: Internal Server Error
+    delete:
+      tags:
+        - pib-database
+      summary: Deletes voice assistant personality by id
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: No Content
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema: 
+                $ref: '#/components/schemas/ErrorMessage'
+        '404':
+          description: Not Found
+          content:
+            application/json:
+              schema: 
+                $ref: '#/components/schemas/ErrorMessage'
+        '500':
+          description: Internal Server Error
+components:
+  schemas:
+    GetPersonalities:
+      type: object
+      properties:
+        voiceAssistantPersonalities:
+          type: array
+          items:
+            type: object
+            properties: 
+              id:
+                type: string
+                example: UUID
+              name:
+                type: string
+                example: "Voice Assistant Personality Name"
+              prompt:
+                type: string
+                example: "You are a helpful assistant."
+    VoiceAssistantPersonality:
+      type: object
+      properties:
+        id:
+          type: string
+          example: UUID
+        name:
+          type: string
+          example: "Voice Assistant Personality Name"
+        prompt:
+          type: string
+          example: "You are a helpful assistant."
+    CreateVoiceAssistantPersonality:
+      required:
+        - name
+        - prompt
+      type: object
+      properties:
+        name:
+          type: string
+          example: Name of the voice assistant personality
+        prompt:
+          type: string
+          example: "You are a helpful assistant."
+    SuccessfulVoiceAssistantPersonalityCreationResponse:
+      required:
+        - id
+      type: object
+      properties:
+        id:
+          type: string
+          example: UUID
+    UpdateVoiceAssistantPersonality:
+      required:
+        - id
+      type: object
+      properties:
+        id:
+          type: string
+          example: "UUID"
+        name:
+          type: string
+          example: "Name of the voice assistant personality"
+        prompt:
+          type: string
+          example: "You are a helpful assistant."
+    ErrorMessage:
+      required:
+        - Error
+      type: object
+      properties:
+        error:
+          type: string
+          example: "error message"
