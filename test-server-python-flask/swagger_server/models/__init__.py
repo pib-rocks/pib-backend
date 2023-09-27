@@ -1,0 +1,13 @@
+# coding: utf-8
+
+# flake8: noqa
+from __future__ import absolute_import
+# import models into model package
+from swagger_server.models.create_voice_assistant_personality import CreateVoiceAssistantPersonality
+from swagger_server.models.delete_voice_assistant_personality import DeleteVoiceAssistantPersonality
+from swagger_server.models.error_message import ErrorMessage
+from swagger_server.models.get_personalities import GetPersonalities
+from swagger_server.models.get_personalities_voice_assistant_personalities import GetPersonalitiesVoiceAssistantPersonalities
+from swagger_server.models.successful_voice_assistant_personality_creation_response import SuccessfulVoiceAssistantPersonalityCreationResponse
+from swagger_server.models.update_voice_assistant_personality import UpdateVoiceAssistantPersonality
+from swagger_server.models.voice_assistant_personality import VoiceAssistantPersonality
