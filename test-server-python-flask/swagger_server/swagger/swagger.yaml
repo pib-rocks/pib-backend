@@ -1,0 +1,334 @@
+openapi: 3.0.3
+info:
+  title: pib REST-API MOCK
+  description: This API documentation is a first draft for the upcoming REST API development
+  termsOfService: https://isento.de/
+  contact:
+    email: info@isento.de
+  version: 0.0.1
+servers:
+- url: /
+tags:
+- name: pib-database
+  description: CRUD-Operations for voice assistant personalities
+paths:
+  /voice-assistant:
+    get:
+      tags:
+      - pib-database
+      summary: Get all voice-assistant personalities
+      operationId: voice_assistant_get
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetPersonalities'
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorMessage'
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorMessage'
+      x-openapi-router-controller: swagger_server.controllers.pib_database_controller
+    post:
+      tags:
+      - pib-database
+      summary: Create new voice assistant personality
+      operationId: voice_assistant_post
+      requestBody:
+        description: Creates a new voice assistant personality<br>Name requires UTF-8
+          charset<br> Minimum length = X<br> Maximum length = X
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateVoiceAssistantPersonality'
+        required: true
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessfulVoiceAssistantPersonalityCreationResponse'
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorMessage'
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorMessage'
+      x-openapi-router-controller: swagger_server.controllers.pib_database_controller
+  /voice-assistant/{id}:
+    get:
+      tags:
+      - pib-database
+      summary: Get voice assistant by id
+      operationId: voice_assistant_id_get
+      parameters:
+      - name: id
+        in: path
+        required: true
+        style: simple
+        explode: false
+        schema:
+          type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoiceAssistantPersonality'
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorMessage'
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorMessage'
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorMessage'
+      x-openapi-router-controller: swagger_server.controllers.pib_database_controller
+    put:
+      tags:
+      - pib-database
+      summary: Create new voice assistant personality
+      operationId: voice_assistant_id_put
+      parameters:
+      - name: id
+        in: path
+        required: true
+        style: simple
+        explode: false
+        schema:
+          type: string
+      requestBody:
+        description: Update an existing voice assistant personality<br>Name requires
+          UTF-8 charset<br> Minimum length = X<br> Maximum length = X<br>Individual
+          request body attributes may be nullable but all cannot be null
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateVoiceAssistantPersonality'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdateVoiceAssistantPersonality'
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorMessage'
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorMessage'
+      x-openapi-router-controller: swagger_server.controllers.pib_database_controller
+    delete:
+      tags:
+      - pib-database
+      summary: Deletes voice assistant personality by id
+      operationId: voice_assistant_id_delete
+      parameters:
+      - name: id
+        in: path
+        required: true
+        style: simple
+        explode: false
+        schema:
+          type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteVoiceAssistantPersonality'
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorMessage'
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorMessage'
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorMessage'
+      x-openapi-router-controller: swagger_server.controllers.pib_database_controller
+components:
+  schemas:
+    GetPersonalities:
+      type: object
+      properties:
+        voiceAssistantPersonalities:
+          type: array
+          items:
+            $ref: '#/components/schemas/GetPersonalities_voiceAssistantPersonalities'
+      example:
+        voiceAssistantPersonalities:
+        - gender: Male/Female
+          name: Voice Assistant Personality Name
+          description: Personality Description
+          id: UUID
+          pauseThreshold: 0.8
+        - gender: Male/Female
+          name: Voice Assistant Personality Name
+          description: Personality Description
+          id: UUID
+          pauseThreshold: 0.8
+    VoiceAssistantPersonality:
+      type: object
+      properties:
+        id:
+          type: string
+          example: UUID
+        name:
+          type: string
+          example: Voice Assistant Personality Name
+        description:
+          type: string
+          example: Personality Description
+        gender:
+          type: string
+          example: Male/Female
+        pauseThreshold:
+          type: number
+          example: 0.8
+      example:
+        gender: Male/Female
+        name: Voice Assistant Personality Name
+        description: Personality Description
+        id: UUID
+        pauseThreshold: 0.8
+    CreateVoiceAssistantPersonality:
+      required:
+      - description
+      - gender
+      - name
+      - pauseThreshold
+      type: object
+      properties:
+        name:
+          type: string
+          example: Name of the voice assistant personality
+        description:
+          type: string
+          example: Personality Description
+        gender:
+          type: string
+          example: Male/Female
+        pauseThreshold:
+          type: number
+          example: 0.8
+    SuccessfulVoiceAssistantPersonalityCreationResponse:
+      required:
+      - id
+      type: object
+      properties:
+        id:
+          type: string
+          example: UUID
+      example:
+        id: UUID
+    UpdateVoiceAssistantPersonality:
+      type: object
+      properties:
+        id:
+          type: string
+          example: UUID
+        name:
+          type: string
+          example: Name of the voice assistant personality
+        description:
+          type: string
+          example: Personality Description
+        gender:
+          type: string
+          example: Male/Female
+        pauseThreshold:
+          type: number
+          example: 0.8
+      example:
+        gender: Male/Female
+        name: Name of the voice assistant personality
+        description: Personality Description
+        id: UUID
+        pauseThreshold: 0.8
+    DeleteVoiceAssistantPersonality:
+      type: object
+      properties:
+        id:
+          type: string
+          example: UUID
+      example:
+        id: UUID
+    ErrorMessage:
+      required:
+      - Error
+      type: object
+      properties:
+        error:
+          type: string
+          example: error message
+    GetPersonalities_voiceAssistantPersonalities:
+      type: object
+      properties:
+        id:
+          type: string
+          example: UUID
+        name:
+          type: string
+          example: Voice Assistant Personality Name
+        description:
+          type: string
+          example: Personality Description
+        gender:
+          type: string
+          example: Male/Female
+        pauseThreshold:
+          type: number
+          example: 0.8
+      example:
+        gender: Male/Female
+        name: Voice Assistant Personality Name
+        description: Personality Description
+        id: UUID
+        pauseThreshold: 0.8
+
