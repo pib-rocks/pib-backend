@@ -135,17 +135,18 @@ echo -e "\nDatabase initialized successfully!"
 #
 # Allow editing in all src-directories
 sudo chmod -R 777 $ROS_WORKING_DIR/src
+# install all ros-packages
+cd $USER_HOME
+wget -O package_set_up.sh https://github.com/pib-rocks/ros-packages/raw/PR-312/packages-set-up.sh
+chmod +x package_set_up.sh
+./package_set_up.sh
+#
+# set permissions
 cd $ROS_WORKING_DIR
 sudo colcon build
 sudo chmod -R 777 $ROS_WORKING_DIR/build
 sudo chmod -R 777 $ROS_WORKING_DIR/install
 sudo chmod -R 777 $ROS_WORKING_DIR/log
-#
-# install all ros-packages
-cd $USER_HOME
-wget -O package_set_up.sh https://raw.githubusercontent.com/pib-rocks/ros-packages/PR-312/packages-set-up.sh
-chmod +x package_set_up.sh
-./package_set_up.sh
 #
 # Setup system to start Cerebra and ROS2 at boot time
 # Create boot script for ros_bridge_server
