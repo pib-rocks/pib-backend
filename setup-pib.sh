@@ -143,7 +143,6 @@ chmod +x package_set_up.sh
 #
 # set permissions
 cd $ROS_WORKING_DIR
-sudo colcon build
 sudo chmod -R 777 $ROS_WORKING_DIR/build
 sudo chmod -R 777 $ROS_WORKING_DIR/install
 sudo chmod -R 777 $ROS_WORKING_DIR/log
