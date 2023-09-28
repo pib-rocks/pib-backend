@@ -155,6 +155,9 @@ sudo chmod 755 $ROS_WORKING_DIR/ros_cerebra_boot.sh
 curl $ROS_CEREBRA_BOOT_SERVICE_LINK -L --output $ROS_WORKING_DIR/ros_cerebra_boot.service
 sudo chmod 755 $ROS_WORKING_DIR/ros_cerebra_boot.service
 sudo mv $ROS_WORKING_DIR/ros_cerebra_boot.service /etc/systemd/system
+# Clean-up: remove unnecessary .zip directories
+rm -r phpliteadmin_v1_9_9_dev.zip
+rm -r cerebra-latest.zip
 # Enable new services
 sudo systemctl daemon-reload
 sudo systemctl enable ros_cerebra_boot.service
