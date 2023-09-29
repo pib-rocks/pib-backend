@@ -134,6 +134,7 @@ sudo chmod 766 $DATABASE_DIR/$DATABASE_FILE
 echo -e "\nDatabase initialized successfully!"
 #
 # Allow editing in all src-directories
+sudo chmod -R 777 $ROS_WORKING_DIR
 sudo chmod -R 777 $ROS_WORKING_DIR/src
 # install all ros-packages
 cd $USER_HOME
