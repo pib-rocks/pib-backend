@@ -10,7 +10,7 @@ ROS2 Python node for [OAK-D-Lite](https://docs.luxonis.com/projects/hardware/en/
 
 2. Clone this repository into ros2:
 
-                git clone https://github.com/pib-rocks/ros2_oak_d_lite.git
+                git clone https://github.com/iftahnaf/ros2_oak_d_lite.git
 
 3. Build the with:
 
