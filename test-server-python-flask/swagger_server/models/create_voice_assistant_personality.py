@@ -119,8 +119,12 @@ class CreateVoiceAssistantPersonality(Model):
         :param gender: The gender of this CreateVoiceAssistantPersonality.
         :type gender: str
         """
-        if gender is None:
-            raise ValueError("Invalid value for `gender`, must not be `None`")  # noqa: E501
+        allowed_values = ["Male", "Female"]  # noqa: E501
+        if gender not in allowed_values:
+            raise ValueError(
+                "Invalid value for `gender` ({0}), must be one of {1}"
+                .format(gender, allowed_values)
+            )
 
         self._gender = gender
 
