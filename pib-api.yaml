@@ -115,7 +115,7 @@ paths:
           schema:
             type: string
       requestBody:
-        description: Update an existing voice assistant personality<br>Name requires UTF-8 charset<br> Minimum length = X<br> Maximum length = X<br>Individual request body attributes may be nullable but all cannot be null
+        description: Update an existing voice assistant personality<br>Description requires UTF-8 charset<br> Minimum length = X<br> Maximum length = X<br>Individual request body attributes may be nullable but all cannot be null
         required: true
         content:
           application/json:
@@ -409,8 +409,8 @@ paths:
             schema:
               $ref: '#/components/schemas/AddVoiceAssistantChatMessageRequest'
       responses:
-        '200':
-          description: OK
+        '201':
+          description: Created
           content:
             application/json:
               schema:
@@ -553,12 +553,6 @@ components:
         pauseThreshold:
           type: number
           example: 0.8
-    DeleteVoiceAssistantChat:
-      type: object
-      properties:
-        personality_id:
-          type: string
-          example: UUID
     GetAllChats:
       type: object
       properties:
@@ -582,9 +576,6 @@ components:
     GetVoiceAssistantChat:
       type: object
       properties:
-        chat_id:
-          type: string
-          example: UUID
         title:
           type: string
           example: Short Stories
@@ -659,9 +650,6 @@ components:
           items:
             type: object
             properties:
-              chat_id:
-                type: string
-                example: UUID
               message:
                 type: string
                 example: Hallo Thomas, erzähle mir etwas über Nürnberg.
@@ -675,9 +663,6 @@ components:
     AddVoiceAssistantChatMessageRequest:
       type: object
       properties:
-        chat_id:
-          type: string
-          example: UUID
         message:
           type: string
           example: Hallo Thomas, erzähle mir etwas über Nürnberg.
@@ -687,9 +672,6 @@ components:
         user_prompt:
           type: object
           properties:
-            chat_id:
-              type: string
-              example: UUID
             message:
               type: string
               example: Hallo Thomas, erzähle mir etwas über Nürnberg.
@@ -703,9 +685,6 @@ components:
         ai_response:
           type: object
           properties:
-            chat_id:
-              type: string
-              example: UUID
             message:
               type: string
               example: Nürnberg ist eine Stadt in...
