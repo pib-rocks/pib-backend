@@ -8,16 +8,18 @@ info:
     email: info@isento.de
   version: 0.0.1
 tags:
-  - name: pib-database
+  - name: personality
     description: CRUD-Operations for voice assistant personalities
+  - name: chat
+    description: CRUD-Operations for voice assistant chats
 paths:
-  /voice-assistant:
+  /voice-assistant/personality:
     post:
       tags:
-        - pib-database
+        - personality
       summary: Create new voice assistant personality
       requestBody:
-        description: Creates a new voice assistant personality<br>Name requires UTF-8 charset<br> Minimum length = X<br> Maximum length = X
+        description: Creates a new voice assistant personality<br>Description requires UTF-8 charset<br> Minimum length = X<br> Maximum length = X
         content:
           application/json:
             schema:
@@ -44,7 +46,7 @@ paths:
                 $ref: '#/components/schemas/ErrorMessage'
     get:
       tags: 
-        - pib-database
+        - personality
       summary: Get all voice-assistant personalities
 
       responses:
@@ -53,7 +55,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/GetPersonalities'
+                $ref: '#/components/schemas/GetAllPersonalities'
         '400':
           description: Bad Request
           content:
@@ -66,13 +68,13 @@ paths:
             application/json:
               schema: 
                 $ref: '#/components/schemas/ErrorMessage'
-  /voice-assistant/{id}:
+  /voice-assistant/personality/{personality_id}:
     get:
       tags:
-        - pib-database
+        - personality
       summary: Get voice assistant by id
       parameters:
-        - name: id
+        - name: personality_id
           in: path
           required: true
           schema:
@@ -104,10 +106,10 @@ paths:
                 $ref: '#/components/schemas/ErrorMessage'
     put:
       tags:
-        - pib-database
+        - personality
       summary: Create new voice assistant personality
       parameters:
-        - name: id
+        - name: personality_id
           in: path
           required: true
           schema:
@@ -118,7 +120,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/UpdateVoiceAssistantPersonality'
+              $ref: '#/components/schemas/UpdateVoiceAssistantPersonalityRequest'
       responses:
         '200':
           description: OK
@@ -126,35 +128,6 @@ paths:
             application/json:
               schema: 
                 $ref: '#/components/schemas/UpdateVoiceAssistantPersonality'
-        '400':
-          description: Bad Request
-          content:
-            application/json:
-              schema: 
-                $ref: '#/components/schemas/ErrorMessage'
-        '500':
-          description: Internal Server Error
-          content:
-            application/json:
-              schema: 
-                $ref: '#/components/schemas/ErrorMessage'
-    delete:
-      tags:
-        - pib-database
-      summary: Deletes voice assistant personality by id
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema: 
-                $ref: '#/components/schemas/DeleteVoiceAssistantPersonality'
         '400':
           description: Bad Request
           content:
@@ -173,9 +146,296 @@ paths:
             application/json:
               schema: 
                 $ref: '#/components/schemas/ErrorMessage'
+    delete:
+      tags:
+        - personality
+      summary: Deletes voice assistant personality by id
+      parameters:
+        - name: personality_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: No Content
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema: 
+                $ref: '#/components/schemas/ErrorMessage'
+        '404':
+          description: Not Found
+          content:
+            application/json:
+              schema: 
+                $ref: '#/components/schemas/ErrorMessage'
+        '500':
+          description: Internal Server Error
+          content:
+            application/json:
+              schema: 
+                $ref: '#/components/schemas/ErrorMessage'
+  /voice-assistant/chat:
+    post:
+      tags:
+        - chat
+      summary: Create new voice assistant chat
+      requestBody:
+        description: Creates a new voice assistant chat
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateVoiceAssistantChat'
+        required: true
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: 
+                $ref: '#/components/schemas/SuccessfulVoiceAssistantChatCreationResponse'
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema: 
+                $ref: '#/components/schemas/ErrorMessage'
+        '500':
+          description: Internal Server Error
+          content:
+            application/json:
+              schema: 
+                $ref: '#/components/schemas/ErrorMessage'
+    get:
+      tags: 
+        - chat
+      summary: Get all voice-assistant chats
+
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetAllChats'
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema: 
+                $ref: '#/components/schemas/ErrorMessage'
+        '500':
+          description: Internal Server Error
+          content:
+            application/json:
+              schema: 
+                $ref: '#/components/schemas/ErrorMessage'
+  /voice-assistant/chat/{chat_id}:
+    get:
+      tags:
+        - chat
+      summary: Get voice assistant chat by id
+      parameters:
+        - name: chat_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetVoiceAssistantChat'
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema: 
+                $ref: '#/components/schemas/ErrorMessage'
+        '404':
+          description: Not Found
+          content:
+            application/json:
+              schema: 
+                $ref: '#/components/schemas/ErrorMessage'
+        '500':
+          description: Internal Server Error
+          content:
+            application/json:
+              schema: 
+                $ref: '#/components/schemas/ErrorMessage'
+    put:
+      tags:
+        - chat
+      summary: Create new voice assistant personality
+      parameters:
+        - name: chat_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        description: Update an existing voice assistant chat<br>Individual request body attributes may be nullable but all cannot be null
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateVoiceAssistantChatRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: 
+                $ref: '#/components/schemas/UpdateVoiceAssistantChat'
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema: 
+                $ref: '#/components/schemas/ErrorMessage'
+        '404':
+          description: Not Found
+          content:
+            application/json:
+              schema: 
+                $ref: '#/components/schemas/ErrorMessage'
+        '500':
+          description: Internal Server Error
+          content:
+            application/json:
+              schema: 
+                $ref: '#/components/schemas/ErrorMessage'
+    delete:
+      tags:
+        - chat
+      summary: Deletes voice assistant personality by id
+      parameters:
+        - name: chat_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: No Content
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema: 
+                $ref: '#/components/schemas/ErrorMessage'
+        '404':
+          description: Not Found
+          content:
+            application/json:
+              schema: 
+                $ref: '#/components/schemas/ErrorMessage'
+        '500':
+          description: Internal Server Error
+          content:
+            application/json:
+              schema: 
+                $ref: '#/components/schemas/ErrorMessage' 
+  /voice-assistant/chat/{chat_id}/messages:
+    get:
+      tags:
+        - chat
+      summary: Get voice assistant chat messages by chat id
+      parameters:
+        - name: chat_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: timestamp
+          description: Null the first time. If specified, loads messages before the specified time stamp. Otherwise, loads the most recent messages based on count.
+          in: query
+          required: false
+          schema:
+            type: string
+            format: time-stamp
+        - name: count
+          description: Number of messages to be returned.
+          in: query
+          required: false
+          schema:
+            type: number
+            default: 10
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetVoiceAssistantChatMessages'
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema: 
+                $ref: '#/components/schemas/ErrorMessage'
+        '404':
+          description: Not Found
+          content:
+            application/json:
+              schema: 
+                $ref: '#/components/schemas/ErrorMessage'
+        '500':
+          description: Internal Server Error
+          content:
+            application/json:
+              schema: 
+                $ref: '#/components/schemas/ErrorMessage'
+    post:
+      tags:
+        - chat
+      summary: Get voice assistant chat by id
+      parameters:
+        - name: chat_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        description: Adds prompt and the corresponding AI response to a chat based on chat id.
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddVoiceAssistantChatMessageRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AddVoiceAssistantChatMessageResponse'
+        '400':
+          description: Bad Request
+          content:
+            application/json:
+              schema: 
+                $ref: '#/components/schemas/ErrorMessage'
+        '404':
+          description: Not Found
+          content:
+            application/json:
+              schema: 
+                $ref: '#/components/schemas/ErrorMessage'
+        '500':
+          description: Internal Server Error
+          content:
+            application/json:
+              schema: 
+                $ref: '#/components/schemas/ErrorMessage'            
 components:
   schemas:
-    GetPersonalities:
+    GetAllPersonalities:
       type: object
       properties:
         voiceAssistantPersonalities:
@@ -183,36 +443,38 @@ components:
           items:
             type: object
             properties: 
-              id:
+              personality_id:
                 type: string
                 example: UUID
               name:
                 type: string
-                example: Voice Assistant Personality Name
+                example: Georg
               description:
                 type: string
                 example: Personality Description
               gender:
                 type: string
-                example: Male/Female
+                enum: [Male, Female]
+                example: Male
               pauseThreshold:
                 type: number
                 example: 0.8
     VoiceAssistantPersonality:
       type: object
       properties:
-        id:
+        personality_id:
           type: string
           example: UUID
         name:
           type: string
-          example: Voice Assistant Personality Name
+          example: Janina
         description:
           type: string
           example: Personality Description
         gender:
           type: string
-          example: Male/Female
+          enum: [Male, Female]
+          example: Female
         pauseThreshold:
           type: number
           example: 0.8
@@ -226,53 +488,239 @@ components:
       properties:
         name:
           type: string
-          example: Name of the voice assistant personality
+          example: Thomas
         description:
           type: string
           example: Personality Description
         gender:
           type: string
-          example: Male/Female
+          enum: [Male, Female]
+          example: Male
         pauseThreshold:
           type: number
           example: 0.8
     SuccessfulVoiceAssistantPersonalityCreationResponse:
-      required:
-        - id
       type: object
       properties:
-        id:
-          type: string
-          example: UUID
-    UpdateVoiceAssistantPersonality:
-      type: object
-      properties:
-        id:
+        personality_id:
           type: string
           example: UUID
         name:
           type: string
-          example: Name of the voice assistant personality
+          example: Thomas
         description:
           type: string
           example: Personality Description
         gender:
           type: string
-          example: Male/Female
+          enum: [Male, Female]
+          example: Male
         pauseThreshold:
           type: number
           example: 0.8
-    DeleteVoiceAssistantPersonality:
+    UpdateVoiceAssistantPersonality:
       type: object
       properties:
-        id:
+        personality_id:
           type: string
           example: UUID
-    ErrorMessage:
-      required:
-        - Error
+        name:
+          type: string
+          example: Eva
+        description:
+          type: string
+          example: Personality Description
+        gender:
+          type: string
+          enum: [Male, Female]
+          example: Female
+        pauseThreshold:
+          type: number
+          example: 0.8
+    UpdateVoiceAssistantPersonalityRequest:
       type: object
       properties:
-        error:
+        name:
           type: string
-          example: error message
+          example: Eva
+        description:
+          type: string
+          example: Personality Description
+        gender:
+          type: string
+          enum: [Male, Female]
+          example: Female
+        pauseThreshold:
+          type: number
+          example: 0.8
+    DeleteVoiceAssistantChat:
+      type: object
+      properties:
+        personality_id:
+          type: string
+          example: UUID
+    GetAllChats:
+      type: object
+      properties:
+        voiceAssistantChats:
+          type: array
+          items:
+            type: object
+            properties: 
+              chat_id:
+                type: string
+                example: UUID
+              title:
+                type: string
+                example: Nuremberg
+              personality_id: 
+                type: string
+                example: UUID
+              personality_name:
+                type: string
+                example: Eva
+    GetVoiceAssistantChat:
+      type: object
+      properties:
+        chat_id:
+          type: string
+          example: UUID
+        title:
+          type: string
+          example: Short Stories
+        personality_id:
+          type: string
+          example: UUID
+        personality_name:
+          type: string
+          example: Thomas
+    CreateVoiceAssistantChat:
+        required:
+          - title
+          - personality_id
+        type: object
+        properties:
+          title:
+            type: string
+            example: Short Stories
+          personality_id:
+            type: string
+            example: UUID
+    SuccessfulVoiceAssistantChatCreationResponse:
+        required:
+          - chat_id
+          - title
+          - personality_id
+          - personality_name
+        type: object
+        properties:
+          chat_id:
+            type: string
+            example: UUID
+          title:
+            type: string
+            example: Short Stories
+          personality_id:
+            type: string
+            example: UUID
+          personality_name:
+            type: string
+            example: Janina
+    UpdateVoiceAssistantChatRequest:
+        required:
+          - title
+          - personality
+        type: object
+        properties:
+          title:
+            type: string
+            example: Short Stories
+          personality:
+            type: string
+            example: Janina    
+    UpdateVoiceAssistantChat:
+        required:
+          - chat_id
+          - title
+          - personality
+        type: object
+        properties:
+          title:
+            type: string
+            example: Short Stories
+          personality:
+            type: string
+            example: Janina
+    GetVoiceAssistantChatMessages:
+      type: object
+      properties:
+        messages:
+          type: array
+          items:
+            type: object
+            properties:
+              chat_id:
+                type: string
+                example: UUID
+              message:
+                type: string
+                example: Hallo Thomas, erzähle mir etwas über Nürnberg.
+              timestamp:
+                type: string
+                format: date-time
+                example: "2021-01-30T08:30:00Z"
+              isUser:
+                type: boolean
+                example: true
+    AddVoiceAssistantChatMessageRequest:
+      type: object
+      properties:
+        chat_id:
+          type: string
+          example: UUID
+        message:
+          type: string
+          example: Hallo Thomas, erzähle mir etwas über Nürnberg.
+    AddVoiceAssistantChatMessageResponse:
+      type: object
+      properties:
+        user_prompt:
+          type: object
+          properties:
+            chat_id:
+              type: string
+              example: UUID
+            message:
+              type: string
+              example: Hallo Thomas, erzähle mir etwas über Nürnberg.
+            timestamp:
+              type: string
+              format: date-time
+              example: "2021-01-30T08:30:00Z"
+            isUser:
+              type: boolean
+              example: true
+        ai_response:
+          type: object
+          properties:
+            chat_id:
+              type: string
+              example: UUID
+            message:
+              type: string
+              example: Nürnberg ist eine Stadt in...
+            timestamp:
+              type: string
+              format: date-time
+              example: "2021-01-30T08:31:00Z"
+            isUser:
+              type: boolean
+              example: false      
+    ErrorMessage:
+        required:
+          - Error
+        type: object
+        properties:
+          error:
+            type: string
+            example: error message
