@@ -3,6 +3,7 @@ package io.swagger.model;
 import java.util.Objects;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonValue;
 import io.swagger.v3.oas.annotations.media.Schema;
 import java.math.BigDecimal;
 import org.springframework.validation.annotation.Validated;
@@ -13,7 +14,7 @@ import javax.validation.constraints.*;
  * CreateVoiceAssistantPersonality
  */
 @Validated
-@javax.annotation.Generated(value = "io.swagger.codegen.v3.generators.java.SpringCodegen", date = "2023-09-27T09:57:56.878396287Z[GMT]")
+@javax.annotation.Generated(value = "io.swagger.codegen.v3.generators.java.SpringCodegen", date = "2023-10-02T10:03:56.193162043Z[GMT]")
 
 
 public class CreateVoiceAssistantPersonality   {
@@ -23,8 +24,38 @@ public class CreateVoiceAssistantPersonality   {
   @JsonProperty("description")
   private String description = null;
 
+  /**
+   * Gets or Sets gender
+   */
+  public enum GenderEnum {
+    MALE("Male"),
+    
+    FEMALE("Female");
+
+    private String value;
+
+    GenderEnum(String value) {
+      this.value = value;
+    }
+
+    @Override
+    @JsonValue
+    public String toString() {
+      return String.valueOf(value);
+    }
+
+    @JsonCreator
+    public static GenderEnum fromValue(String text) {
+      for (GenderEnum b : GenderEnum.values()) {
+        if (String.valueOf(b.value).equals(text)) {
+          return b;
+        }
+      }
+      return null;
+    }
+  }
   @JsonProperty("gender")
-  private String gender = null;
+  private GenderEnum gender = null;
 
   @JsonProperty("pauseThreshold")
   private BigDecimal pauseThreshold = null;
@@ -38,7 +69,7 @@ public class CreateVoiceAssistantPersonality   {
    * Get name
    * @return name
    **/
-  @Schema(example = "Name of the voice assistant personality", required = true, description = "")
+  @Schema(example = "Thomas", required = true, description = "")
       @NotNull
 
     public String getName() {
@@ -69,7 +100,7 @@ public class CreateVoiceAssistantPersonality   {
     this.description = description;
   }
 
-  public CreateVoiceAssistantPersonality gender(String gender) {
+  public CreateVoiceAssistantPersonality gender(GenderEnum gender) {
     this.gender = gender;
     return this;
   }
@@ -78,14 +109,14 @@ public class CreateVoiceAssistantPersonality   {
    * Get gender
    * @return gender
    **/
-  @Schema(example = "Male/Female", required = true, description = "")
+  @Schema(example = "Male", required = true, description = "")
       @NotNull
 
-    public String getGender() {
+    public GenderEnum getGender() {
     return gender;
   }
 
-  public void setGender(String gender) {
+  public void setGender(GenderEnum gender) {
     this.gender = gender;
   }
 

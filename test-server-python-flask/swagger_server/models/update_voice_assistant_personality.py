@@ -14,11 +14,11 @@ class UpdateVoiceAssistantPersonality(Model):
 
     Do not edit the class manually.
     """
-    def __init__(self, id: str=None, name: str=None, description: str=None, gender: str=None, pause_threshold: float=None):  # noqa: E501
+    def __init__(self, personality_id: str=None, name: str=None, description: str=None, gender: str=None, pause_threshold: float=None):  # noqa: E501
         """UpdateVoiceAssistantPersonality - a model defined in Swagger
 
-        :param id: The id of this UpdateVoiceAssistantPersonality.  # noqa: E501
-        :type id: str
+        :param personality_id: The personality_id of this UpdateVoiceAssistantPersonality.  # noqa: E501
+        :type personality_id: str
         :param name: The name of this UpdateVoiceAssistantPersonality.  # noqa: E501
         :type name: str
         :param description: The description of this UpdateVoiceAssistantPersonality.  # noqa: E501
@@ -29,7 +29,7 @@ class UpdateVoiceAssistantPersonality(Model):
         :type pause_threshold: float
         """
         self.swagger_types = {
-            'id': str,
+            'personality_id': str,
             'name': str,
             'description': str,
             'gender': str,
@@ -37,13 +37,13 @@ class UpdateVoiceAssistantPersonality(Model):
         }
 
         self.attribute_map = {
-            'id': 'id',
+            'personality_id': 'personality_id',
             'name': 'name',
             'description': 'description',
             'gender': 'gender',
             'pause_threshold': 'pauseThreshold'
         }
-        self._id = id
+        self._personality_id = personality_id
         self._name = name
         self._description = description
         self._gender = gender
@@ -61,25 +61,25 @@ class UpdateVoiceAssistantPersonality(Model):
         return util.deserialize_model(dikt, cls)
 
     @property
-    def id(self) -> str:
-        """Gets the id of this UpdateVoiceAssistantPersonality.
+    def personality_id(self) -> str:
+        """Gets the personality_id of this UpdateVoiceAssistantPersonality.
 
 
-        :return: The id of this UpdateVoiceAssistantPersonality.
+        :return: The personality_id of this UpdateVoiceAssistantPersonality.
         :rtype: str
         """
-        return self._id
+        return self._personality_id
 
-    @id.setter
-    def id(self, id: str):
-        """Sets the id of this UpdateVoiceAssistantPersonality.
+    @personality_id.setter
+    def personality_id(self, personality_id: str):
+        """Sets the personality_id of this UpdateVoiceAssistantPersonality.
 
 
-        :param id: The id of this UpdateVoiceAssistantPersonality.
-        :type id: str
+        :param personality_id: The personality_id of this UpdateVoiceAssistantPersonality.
+        :type personality_id: str
         """
 
-        self._id = id
+        self._personality_id = personality_id
 
     @property
     def name(self) -> str:
@@ -141,6 +141,12 @@ class UpdateVoiceAssistantPersonality(Model):
         :param gender: The gender of this UpdateVoiceAssistantPersonality.
         :type gender: str
         """
+        allowed_values = ["Male", "Female"]  # noqa: E501
+        if gender not in allowed_values:
+            raise ValueError(
+                "Invalid value for `gender` ({0}), must be one of {1}"
+                .format(gender, allowed_values)
+            )
 
         self._gender = gender
 

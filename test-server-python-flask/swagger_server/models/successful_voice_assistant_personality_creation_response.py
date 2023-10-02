@@ -14,20 +14,40 @@ class SuccessfulVoiceAssistantPersonalityCreationResponse(Model):
 
     Do not edit the class manually.
     """
-    def __init__(self, id: str=None):  # noqa: E501
+    def __init__(self, personality_id: str=None, name: str=None, description: str=None, gender: str=None, pause_threshold: float=None):  # noqa: E501
         """SuccessfulVoiceAssistantPersonalityCreationResponse - a model defined in Swagger
 
-        :param id: The id of this SuccessfulVoiceAssistantPersonalityCreationResponse.  # noqa: E501
-        :type id: str
+        :param personality_id: The personality_id of this SuccessfulVoiceAssistantPersonalityCreationResponse.  # noqa: E501
+        :type personality_id: str
+        :param name: The name of this SuccessfulVoiceAssistantPersonalityCreationResponse.  # noqa: E501
+        :type name: str
+        :param description: The description of this SuccessfulVoiceAssistantPersonalityCreationResponse.  # noqa: E501
+        :type description: str
+        :param gender: The gender of this SuccessfulVoiceAssistantPersonalityCreationResponse.  # noqa: E501
+        :type gender: str
+        :param pause_threshold: The pause_threshold of this SuccessfulVoiceAssistantPersonalityCreationResponse.  # noqa: E501
+        :type pause_threshold: float
         """
         self.swagger_types = {
-            'id': str
+            'personality_id': str,
+            'name': str,
+            'description': str,
+            'gender': str,
+            'pause_threshold': float
         }
 
         self.attribute_map = {
-            'id': 'id'
+            'personality_id': 'personality_id',
+            'name': 'name',
+            'description': 'description',
+            'gender': 'gender',
+            'pause_threshold': 'pauseThreshold'
         }
-        self._id = id
+        self._personality_id = personality_id
+        self._name = name
+        self._description = description
+        self._gender = gender
+        self._pause_threshold = pause_threshold
 
     @classmethod
     def from_dict(cls, dikt) -> 'SuccessfulVoiceAssistantPersonalityCreationResponse':
@@ -41,24 +61,112 @@ class SuccessfulVoiceAssistantPersonalityCreationResponse(Model):
         return util.deserialize_model(dikt, cls)
 
     @property
-    def id(self) -> str:
-        """Gets the id of this SuccessfulVoiceAssistantPersonalityCreationResponse.
+    def personality_id(self) -> str:
+        """Gets the personality_id of this SuccessfulVoiceAssistantPersonalityCreationResponse.
 
 
-        :return: The id of this SuccessfulVoiceAssistantPersonalityCreationResponse.
+        :return: The personality_id of this SuccessfulVoiceAssistantPersonalityCreationResponse.
         :rtype: str
         """
-        return self._id
+        return self._personality_id
 
-    @id.setter
-    def id(self, id: str):
-        """Sets the id of this SuccessfulVoiceAssistantPersonalityCreationResponse.
+    @personality_id.setter
+    def personality_id(self, personality_id: str):
+        """Sets the personality_id of this SuccessfulVoiceAssistantPersonalityCreationResponse.
 
 
-        :param id: The id of this SuccessfulVoiceAssistantPersonalityCreationResponse.
-        :type id: str
+        :param personality_id: The personality_id of this SuccessfulVoiceAssistantPersonalityCreationResponse.
+        :type personality_id: str
         """
-        if id is None:
-            raise ValueError("Invalid value for `id`, must not be `None`")  # noqa: E501
 
-        self._id = id
+        self._personality_id = personality_id
+
+    @property
+    def name(self) -> str:
+        """Gets the name of this SuccessfulVoiceAssistantPersonalityCreationResponse.
+
+
+        :return: The name of this SuccessfulVoiceAssistantPersonalityCreationResponse.
+        :rtype: str
+        """
+        return self._name
+
+    @name.setter
+    def name(self, name: str):
+        """Sets the name of this SuccessfulVoiceAssistantPersonalityCreationResponse.
+
+
+        :param name: The name of this SuccessfulVoiceAssistantPersonalityCreationResponse.
+        :type name: str
+        """
+
+        self._name = name
+
+    @property
+    def description(self) -> str:
+        """Gets the description of this SuccessfulVoiceAssistantPersonalityCreationResponse.
+
+
+        :return: The description of this SuccessfulVoiceAssistantPersonalityCreationResponse.
+        :rtype: str
+        """
+        return self._description
+
+    @description.setter
+    def description(self, description: str):
+        """Sets the description of this SuccessfulVoiceAssistantPersonalityCreationResponse.
+
+
+        :param description: The description of this SuccessfulVoiceAssistantPersonalityCreationResponse.
+        :type description: str
+        """
+
+        self._description = description
+
+    @property
+    def gender(self) -> str:
+        """Gets the gender of this SuccessfulVoiceAssistantPersonalityCreationResponse.
+
+
+        :return: The gender of this SuccessfulVoiceAssistantPersonalityCreationResponse.
+        :rtype: str
+        """
+        return self._gender
+
+    @gender.setter
+    def gender(self, gender: str):
+        """Sets the gender of this SuccessfulVoiceAssistantPersonalityCreationResponse.
+
+
+        :param gender: The gender of this SuccessfulVoiceAssistantPersonalityCreationResponse.
+        :type gender: str
+        """
+        allowed_values = ["Male", "Female"]  # noqa: E501
+        if gender not in allowed_values:
+            raise ValueError(
+                "Invalid value for `gender` ({0}), must be one of {1}"
+                .format(gender, allowed_values)
+            )
+
+        self._gender = gender
+
+    @property
+    def pause_threshold(self) -> float:
+        """Gets the pause_threshold of this SuccessfulVoiceAssistantPersonalityCreationResponse.
+
+
+        :return: The pause_threshold of this SuccessfulVoiceAssistantPersonalityCreationResponse.
+        :rtype: float
+        """
+        return self._pause_threshold
+
+    @pause_threshold.setter
+    def pause_threshold(self, pause_threshold: float):
+        """Sets the pause_threshold of this SuccessfulVoiceAssistantPersonalityCreationResponse.
+
+
+        :param pause_threshold: The pause_threshold of this SuccessfulVoiceAssistantPersonalityCreationResponse.
+        :type pause_threshold: float
+        """
+
+        self._pause_threshold = pause_threshold

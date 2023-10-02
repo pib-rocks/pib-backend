@@ -3,6 +3,7 @@ package io.swagger.model;
 import java.util.Objects;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonValue;
 import io.swagger.v3.oas.annotations.media.Schema;
 import java.math.BigDecimal;
 import org.springframework.validation.annotation.Validated;
@@ -13,12 +14,12 @@ import javax.validation.constraints.*;
  * VoiceAssistantPersonality
  */
 @Validated
-@javax.annotation.Generated(value = "io.swagger.codegen.v3.generators.java.SpringCodegen", date = "2023-09-27T09:57:56.878396287Z[GMT]")
+@javax.annotation.Generated(value = "io.swagger.codegen.v3.generators.java.SpringCodegen", date = "2023-10-02T10:03:56.193162043Z[GMT]")
 
 
 public class VoiceAssistantPersonality   {
-  @JsonProperty("id")
-  private String id = null;
+  @JsonProperty("personality_id")
+  private String personalityId = null;
 
   @JsonProperty("name")
   private String name = null;
@@ -26,29 +27,59 @@ public class VoiceAssistantPersonality   {
   @JsonProperty("description")
   private String description = null;
 
+  /**
+   * Gets or Sets gender
+   */
+  public enum GenderEnum {
+    MALE("Male"),
+    
+    FEMALE("Female");
+
+    private String value;
+
+    GenderEnum(String value) {
+      this.value = value;
+    }
+
+    @Override
+    @JsonValue
+    public String toString() {
+      return String.valueOf(value);
+    }
+
+    @JsonCreator
+    public static GenderEnum fromValue(String text) {
+      for (GenderEnum b : GenderEnum.values()) {
+        if (String.valueOf(b.value).equals(text)) {
+          return b;
+        }
+      }
+      return null;
+    }
+  }
   @JsonProperty("gender")
-  private String gender = null;
+  private GenderEnum gender = null;
 
   @JsonProperty("pauseThreshold")
   private BigDecimal pauseThreshold = null;
 
-  public VoiceAssistantPersonality id(String id) {
-    this.id = id;
+  public VoiceAssistantPersonality personalityId(String personalityId) {
+    this.personalityId = personalityId;
     return this;
   }
 
   /**
-   * Get id
-   * @return id
+   * Get personalityId
+   * @return personalityId
    **/
   @Schema(example = "UUID", description = "")
   
-    public String getId() {
-    return id;
+    public String getPersonalityId() {
+    return personalityId;
   }
 
-  public void setId(String id) {
-    this.id = id;
+  public void setPersonalityId(String personalityId) {
+    this.personalityId = personalityId;
   }
 
   public VoiceAssistantPersonality name(String name) {
@@ -60,7 +91,7 @@ public class VoiceAssistantPersonality   {
    * Get name
    * @return name
    **/
-  @Schema(example = "Voice Assistant Personality Name", description = "")
+  @Schema(example = "Janina", description = "")
   
     public String getName() {
     return name;
@@ -89,7 +120,7 @@ public class VoiceAssistantPersonality   {
     this.description = description;
   }
 
-  public VoiceAssistantPersonality gender(String gender) {
+  public VoiceAssistantPersonality gender(GenderEnum gender) {
     this.gender = gender;
     return this;
   }
@@ -98,13 +129,13 @@ public class VoiceAssistantPersonality   {
    * Get gender
    * @return gender
    **/
-  @Schema(example = "Male/Female", description = "")
+  @Schema(example = "Female", description = "")
   
-    public String getGender() {
+    public GenderEnum getGender() {
     return gender;
   }
 
-  public void setGender(String gender) {
+  public void setGender(GenderEnum gender) {
     this.gender = gender;
   }
 
@@ -138,7 +169,7 @@ public class VoiceAssistantPersonality   {
       return false;
     }
     VoiceAssistantPersonality voiceAssistantPersonality = (VoiceAssistantPersonality) o;
-    return Objects.equals(this.id, voiceAssistantPersonality.id) &&
+    return Objects.equals(this.personalityId, voiceAssistantPersonality.personalityId) &&
         Objects.equals(this.name, voiceAssistantPersonality.name) &&
         Objects.equals(this.description, voiceAssistantPersonality.description) &&
         Objects.equals(this.gender, voiceAssistantPersonality.gender) &&
@@ -147,7 +178,7 @@ public class VoiceAssistantPersonality   {
 
   @Override
   public int hashCode() {
-    return Objects.hash(id, name, description, gender, pauseThreshold);
+    return Objects.hash(personalityId, name, description, gender, pauseThreshold);
   }
 
   @Override
@@ -155,7 +186,7 @@ public class VoiceAssistantPersonality   {
     StringBuilder sb = new StringBuilder();
     sb.append("class VoiceAssistantPersonality {\n");
     
-    sb.append("    id: ").append(toIndentedString(id)).append("\n");
+    sb.append("    personalityId: ").append(toIndentedString(personalityId)).append("\n");
     sb.append("    name: ").append(toIndentedString(name)).append("\n");
     sb.append("    description: ").append(toIndentedString(description)).append("\n");
     sb.append("    gender: ").append(toIndentedString(gender)).append("\n");
