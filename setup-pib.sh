@@ -150,7 +150,7 @@ if [ -f $USER_HOME/update-pib.sh ]; then
   sudo rm update-pib.sh
 fi
 wget -O update-pib.sh https://github.com/pib-rocks/ros-packages/raw/PR-272/update-pib.sh
-chmod +x package_set_up.sh
+sudo chmod 777 update-pib.sh
 # set permissions
 cd $ROS_WORKING_DIR
 sudo chmod -R 777 $ROS_WORKING_DIR/build
