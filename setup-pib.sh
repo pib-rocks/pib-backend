@@ -149,7 +149,7 @@ chmod +x package_set_up.sh
 if [ -f $USER_HOME/update-pib.sh ]; then
   sudo rm update-pib.sh
 fi
-wget -O package_set_up.sh https://github.com/pib-rocks/ros-packages/raw/PR-272/update-pib.sh
+wget -O update-pib.sh https://github.com/pib-rocks/ros-packages/raw/PR-272/update-pib.sh
 chmod +x package_set_up.sh
 # set permissions
 cd $ROS_WORKING_DIR
