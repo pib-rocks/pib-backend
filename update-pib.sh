@@ -50,8 +50,8 @@ curl $CEREBRA_ARCHIVE_URL_PATH -L --output $ROS_WORKING_DIR/$CEREBRA_ARCHIVE_NAM
 echo -e '\nUnzip cerebra...'
 #cd $RASP_TMP_FOLDER
 if [ ! -d $DEFAULT_NGINX_HTML_DIR ]; then
-	echo 'Path not found: ' + $ROS_WORKING_DIR
-	exit 2
+        echo 'Path not found: ' + $ROS_WORKING_DIR
+        exit 2
 fi
 sudo unzip $ROS_WORKING_DIR/$CEREBRA_ARCHIVE_NAME -d $DEFAULT_NGINX_HTML_DIR
 #
@@ -60,14 +60,14 @@ echo -e '\nDownloading nginx configuration file...'
 sudo curl $NGINX_CONF_FILE_URL --output $DEFAULT_NGINX_DIR/$NGINX_CONF_FILE
 
 # Ask the user if he whants to update Cerebra
-if [ "$1" == "-Cerebra" ]; then
-	cd $ROS_WORKING_DIR
-	sudo rm -r src
-	mkdir src
-	cd src
-	git init
-	git pull https://github.com/pib-rocks/ros-packages.git
-	git submodule init
-	git submodule update
-	sudo chmod 777 -R $ROS_WORKING_DIR
+if [ -z "$1" ]; then
+        cd $ROS_WORKING_DIR
+        sudo rm -r src
+        mkdir src
+        cd src
+        git init
+        git pull https://github.com/pib-rocks/ros-packages.git
+        git submodule init
+        git submodule update
+        sudo chmod 777 -R $ROS_WORKING_DIR
 fi
