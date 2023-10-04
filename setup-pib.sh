@@ -61,6 +61,10 @@ echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-a
 sudo apt update
 sudo apt install -y ros-humble-ros-base ros-dev-tools
 source /opt/ros/humble/setup.bash
+echo "if [ -f /home/pib/update-pib.sh ]; then
+        alias update-pib='/home/pib/update-pib.sh'
+      fi
+" >> $USER_HOME/.bashrc
 echo 'source /opt/ros/humble/setup.bash' >> $USER_HOME/.bashrc
 #
 # Install rosbridge-server
@@ -141,7 +145,12 @@ cd $USER_HOME
 wget -O package_set_up.sh https://github.com/pib-rocks/ros-packages/raw/PR-312/packages-set-up.sh
 chmod +x package_set_up.sh
 ./package_set_up.sh
-#
+# install update-pip
+if [ -f $USER_HOME/update-pib.sh ]; then
+  sudo rm update-pib.sh
+fi
+wget -O package_set_up.sh https://github.com/pib-rocks/ros-packages/raw/PR-272/update-pib.sh
+chmod +x package_set_up.sh
 # set permissions
 cd $ROS_WORKING_DIR
 sudo chmod -R 777 $ROS_WORKING_DIR/build
