@@ -61,14 +61,13 @@ sudo curl $NGINX_CONF_FILE_URL --output $DEFAULT_NGINX_DIR/$NGINX_CONF_FILE
 
 # Ask the user if he whants to update Cerebra
 if [ "$1" == "-Cerebra" ]; then
-	cd $ROS_WORKING_DIR/src
-	if [ ! -f .git ]; then
-	  git init
-	  git clone https://github.com/pib-rocks/setup-pib.git
-	  git submodule init
-  else
-    git checkout *
-    git pull --all
-	fi
+	cd $ROS_WORKING_DIR
+	sudo rm -r src
+	mkdir src
+	cd src
+	git init
+	git pull https://github.com/pib-rocks/ros-packages.git
+	git submodule init
 	git submodule update
+	sudo chmod 777 -R $ROS_WORKING_DIR
 fi
