@@ -1,0 +1,11 @@
+[Unit]
+Description=Startup script for ROS and Cerebra
+After=network.target
+
+[Service]
+Type=simple
+User=pib
+ExecStart=/usr/bin/bash /home/pib/ros_working_dir/src/oak_d_lite/boot_scripts/ros_camera_boot.sh
+
+[Install]
+WantedBy=multi-user.target
