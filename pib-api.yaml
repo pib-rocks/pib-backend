@@ -17,9 +17,9 @@ paths:
     post:
       tags:
         - personality
-      summary: Create new voice assistant personality
+      summary: Add a new voice assistant personality
       requestBody:
-        description: Creates a new voice assistant personality<br>Description requires UTF-8 charset<br> Minimum length = X<br> Maximum length = X
+        description: Add a new voice assistant personality<br>Description requires UTF-8 charset<br> Minimum length = X<br> Maximum length = X
         content:
           application/json:
             schema:
@@ -39,7 +39,7 @@ paths:
     get:
       tags: 
         - personality
-      summary: Get all voice-assistant personalities
+      summary: Get all voice assistant personalities
 
       responses:
         '200':
@@ -56,7 +56,7 @@ paths:
     get:
       tags:
         - personality
-      summary: Get voice assistant by id
+      summary: Get a voice assistant personality by id
       parameters:
         - name: personality_id
           in: path
@@ -79,7 +79,7 @@ paths:
     put:
       tags:
         - personality
-      summary: Create new voice assistant personality
+      summary: Update a voice assistant personality by id
       parameters:
         - name: personality_id
           in: path
@@ -109,7 +109,7 @@ paths:
     delete:
       tags:
         - personality
-      summary: Deletes voice assistant personality by id
+      summary: Delete a voice assistant personality by id
       parameters:
         - name: personality_id
           in: path
@@ -118,7 +118,7 @@ paths:
             type: string
       responses:
         '204':
-          description: No Content
+          $ref: '#/components/responses/204'
         '400':
           $ref: '#/components/responses/400'
         '404':
@@ -129,9 +129,9 @@ paths:
     post:
       tags:
         - chat
-      summary: Create new voice assistant chat
+      summary: Add a new voice assistant chat
       requestBody:
-        description: Creates a new voice assistant chat
+        description: Add a new voice assistant chat
         content:
           application/json:
             schema:
@@ -151,7 +151,7 @@ paths:
     get:
       tags: 
         - chat
-      summary: Get all voice-assistant chats
+      summary: Get all voice assistant chats
 
       responses:
         '200':
@@ -168,7 +168,7 @@ paths:
     get:
       tags:
         - chat
-      summary: Get voice assistant chat by id
+      summary: Get a voice assistant chat by id
       parameters:
         - name: chat_id
           in: path
@@ -191,7 +191,7 @@ paths:
     put:
       tags:
         - chat
-      summary: Create new voice assistant personality
+      summary: Update a voice assistant chat by id
       parameters:
         - name: chat_id
           in: path
@@ -221,7 +221,7 @@ paths:
     delete:
       tags:
         - chat
-      summary: Deletes voice assistant personality by id
+      summary: Delete a voice assistant chat by id
       parameters:
         - name: chat_id
           in: path
@@ -230,7 +230,7 @@ paths:
             type: string
       responses:
         '204':
-          description: No Content
+          $ref: '#/components/responses/204'
         '400':
           $ref: '#/components/responses/400'
         '404':
@@ -241,7 +241,7 @@ paths:
     get:
       tags:
         - chat
-      summary: Get voice assistant chat messages by chat id
+      summary: Get all messages of a voice assistant chat by chat id
       parameters:
         - name: chat_id
           in: path
@@ -278,7 +278,7 @@ paths:
     post:
       tags:
         - chat
-      summary: Get voice assistant chat by id
+      summary: Add a message to a voice assistant chat
       parameters:
         - name: chat_id
           in: path
@@ -286,7 +286,7 @@ paths:
           schema:
             type: string
       requestBody:
-        description: Adds prompt and the corresponding AI response to a chat based on chat id.
+        description: Add a message to a voice assistant chat by chat id
         required: true
         content:
           application/json:
@@ -359,7 +359,7 @@ components:
           examples: 
             - 903edb9e-a95c-44d4-ad21-f3024c2e3f6f
             - f83913e4-ac40-498c-9bab-635958fbe096 
-        title:
+        topic:
           type: string
           examples: 
             - Short Stories
@@ -370,7 +370,7 @@ components:
           $ref: '#/components/schemas/VoiceAssistantPersonality'
       required:
         - chat_id
-        - title
+        - topic
         - voiceAssistantPersonality
     VoiceAssistantChats:
       type: array
@@ -425,6 +425,8 @@ components:
               - An error occurred
               - The requested resource is not available
   responses:
+    '204':
+      description: No Content
     '400':
       description: Bad Request
       content:
