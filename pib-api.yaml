@@ -18,6 +18,7 @@ paths:
       tags:
         - personality
       summary: Add a new voice assistant personality
+      operationId: createVoiceAssistantPersonality
       requestBody:
         description: Add a new voice assistant personality
         content:
@@ -40,6 +41,7 @@ paths:
       tags: 
         - personality
       summary: Get all voice assistant personalities
+      operationId: getAllVoiceAssistantPersonalities
       responses:
         '200':
           description: OK
@@ -56,6 +58,7 @@ paths:
       tags:
         - personality
       summary: Get a voice assistant personality by id
+      operationId: getVoiceAssistantPersonalityById
       parameters:
         - name: personality_id
           in: path
@@ -79,6 +82,7 @@ paths:
       tags:
         - personality
       summary: Update a voice assistant personality by id
+      operationId: updateVoiceAssistantPersonalityById
       parameters:
         - name: personality_id
           in: path
@@ -109,6 +113,7 @@ paths:
       tags:
         - personality
       summary: Delete a voice assistant personality by id
+      operationId: deleteVoiceAssistantPersonalityById
       parameters:
         - name: personality_id
           in: path
@@ -129,6 +134,7 @@ paths:
       tags:
         - chat
       summary: Add a new voice assistant chat
+      operationId: createVoiceAssistantChat
       parameters:
         - name: personality_id
           description: The personality id is forwarded by the personality tab
@@ -158,6 +164,7 @@ paths:
       tags: 
         - chat
       summary: Get all voice assistant chats
+      operationId: getAllVoiceAssistantChats
       responses:
         '200':
           description: OK
@@ -174,6 +181,7 @@ paths:
       tags:
         - chat
       summary: Get a voice assistant chat by id
+      operationId: getVoiceAssistantChatById
       parameters:
         - name: chat_id
           in: path
@@ -197,6 +205,7 @@ paths:
       tags:
         - chat
       summary: Update a voice assistant chat by id
+      operationId: updateVoiceAssistantChatById
       parameters:
         - name: chat_id
           in: path
@@ -227,6 +236,7 @@ paths:
       tags:
         - chat
       summary: Delete a voice assistant chat by id
+      operationId: deleteVoiceAssistantChatById
       parameters:
         - name: chat_id
           in: path
@@ -247,6 +257,7 @@ paths:
       tags:
         - chat
       summary: Get all messages of a voice assistant chat by chat id
+      operationId: getAllVoiceAssistantChatMessagesByChatId
       parameters:
         - name: chat_id
           in: path
@@ -270,6 +281,7 @@ paths:
       tags:
         - chat
       summary: Add a message to a voice assistant chat
+      operationId: createVoiceAssistantChatMessage
       parameters:
         - name: chat_id
           in: path
