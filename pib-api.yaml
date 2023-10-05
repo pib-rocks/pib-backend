@@ -187,7 +187,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CreateVoiceAssistantChat'
+              $ref: '#/components/schemas/VoiceAssistantChat'
         required: true
       responses:
         '201':
@@ -195,7 +195,7 @@ paths:
           content:
             application/json:
               schema: 
-                $ref: '#/components/schemas/SuccessfulVoiceAssistantChatCreationResponse'
+                $ref: '#/components/schemas/VoiceAssistantChat'
         '400':
           description: Bad Request
           content:
@@ -219,7 +219,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/GetAllChats'
+                $ref: '#/components/schemas/VoiceAssistantChats'
         '400':
           description: Bad Request
           content:
@@ -249,7 +249,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/GetVoiceAssistantChat'
+                $ref: '#/components/schemas/VoiceAssistantChat'
         '400':
           description: Bad Request
           content:
@@ -284,14 +284,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/UpdateVoiceAssistantChatRequest'
+              $ref: '#/components/schemas/VoiceAssistantChat'
       responses:
         '200':
           description: OK
           content:
             application/json:
               schema: 
-                $ref: '#/components/schemas/UpdateVoiceAssistantChat'
+                $ref: '#/components/schemas/VoiceAssistantChat'
         '400':
           description: Bad Request
           content:
@@ -478,95 +478,32 @@ components:
       type: array
       items:
         $ref: '#/components/schemas/VoiceAssistantPersonality'
-    GetAllChats:
+    VoiceAssistantChat:
       type: object
       properties:
-        voiceAssistantChats:
-          type: array
-          items:
-            type: object
-            properties: 
-              chat_id:
-                type: string
-                example: UUID
-              title:
-                type: string
-                example: Nuremberg
-              personality_id: 
-                type: string
-                example: UUID
-              personality_name:
-                type: string
-                example: Eva
-    GetVoiceAssistantChat:
-      type: object
-      properties:
+        chat_id:
+          type: string
+          readOnly: true
+          examples: 
+            - 903edb9e-a95c-44d4-ad21-f3024c2e3f6f
+            - f83913e4-ac40-498c-9bab-635958fbe096 
         title:
           type: string
-          example: Short Stories
-        personality_id:
-          type: string
-          example: UUID
-        personality_name:
-          type: string
-          example: Thomas
-    CreateVoiceAssistantChat:
-        required:
-          - title
-          - personality_id
-        type: object
-        properties:
-          title:
-            type: string
-            example: Short Stories
-          personality_id:
-            type: string
-            example: UUID
-    SuccessfulVoiceAssistantChatCreationResponse:
-        required:
-          - chat_id
-          - title
-          - personality_id
-          - personality_name
-        type: object
-        properties:
-          chat_id:
-            type: string
-            example: UUID
-          title:
-            type: string
-            example: Short Stories
-          personality_id:
-            type: string
-            example: UUID
-          personality_name:
-            type: string
-            example: Janina
-    UpdateVoiceAssistantChatRequest:
-        required:
-          - title
-          - personality
-        type: object
-        properties:
-          title:
-            type: string
-            example: Short Stories
-          personality:
-            type: string
-            example: Janina    
-    UpdateVoiceAssistantChat:
-        required:
-          - chat_id
-          - title
-          - personality
-        type: object
-        properties:
-          title:
-            type: string
-            example: Short Stories
-          personality:
-            type: string
-            example: Janina
+          examples: 
+            - Short Stories
+            - Nürnberg
+            - Definition of AI today
+        voiceAssistantPersonality:
+          readOnly: true
+          $ref: '#/components/schemas/VoiceAssistantPersonality'
+      required:
+        - chat_id
+        - title
+        - voiceAssistantPersonality
+    VoiceAssistantChats:
+      type: array
+      items:
+        $ref: '#/components/schemas/VoiceAssistantChat'
     GetVoiceAssistantChatMessages:
       type: object
       properties:
