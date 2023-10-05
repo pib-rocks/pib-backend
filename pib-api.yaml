@@ -372,7 +372,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/GetVoiceAssistantChatMessages'
+                $ref: '#/components/schemas/VoiceAssistantChatMessages'
         '400':
           description: Bad Request
           content:
@@ -407,14 +407,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/AddVoiceAssistantChatMessageRequest'
+              $ref: '#/components/schemas/VoiceAssistantChatMessages'
       responses:
         '201':
           description: Created
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AddVoiceAssistantChatMessageResponse'
+                $ref: '#/components/schemas/VoiceAssistantChatMessages'
         '400':
           description: Bad Request
           content:
@@ -504,59 +504,44 @@ components:
       type: array
       items:
         $ref: '#/components/schemas/VoiceAssistantChat'
-    GetVoiceAssistantChatMessages:
+    VoiceAssistantChatMessage:
       type: object
       properties:
-        messages:
-          type: array
-          items:
-            type: object
-            properties:
-              message:
-                type: string
-                example: Hallo Thomas, erzähle mir etwas über Nürnberg.
-              timestamp:
-                type: string
-                format: date-time
-                example: "2021-01-30T08:30:00Z"
-              isUser:
-                type: boolean
-                example: true
-    AddVoiceAssistantChatMessageRequest:
-      type: object
-      properties:
-        message:
+        message_id:
           type: string
-          example: Hallo Thomas, erzähle mir etwas über Nürnberg.
-    AddVoiceAssistantChatMessageResponse:
-      type: object
-      properties:
-        user_prompt:
-          type: object
-          properties:
-            message:
-              type: string
-              example: Hallo Thomas, erzähle mir etwas über Nürnberg.
-            timestamp:
-              type: string
-              format: date-time
-              example: "2021-01-30T08:30:00Z"
-            isUser:
-              type: boolean
-              example: true
-        ai_response:
-          type: object
-          properties:
-            message:
-              type: string
-              example: Nürnberg ist eine Stadt in...
-            timestamp:
-              type: string
-              format: date-time
-              example: "2021-01-30T08:31:00Z"
-            isUser:
-              type: boolean
-              example: false      
+          readOnly: true
+          examples: 
+            - 3f51b823-730b-472e-8c8f-adac5ba5ccd3
+            - 8731eb50-62b0-46cf-bea9-e6e9921a7e44  
+        timestamp:
+          type: string
+          format: date-time
+          readOnly: true
+          examples: 
+            - "2023-09-30T08:30:00Z"
+            - "2023-10-05T10:11:00Z"
+        isUser:
+          type: boolean
+          readOnly: true
+        message_content:
+          type: string
+          examples: 
+            - Tell me a collection of short stories.
+            - Hello Thomas, tell me something about Nürnberg.
+            - Here is a brief definition of our current understanding of AI...
+        voiceAssistantChat:
+          readOnly: true
+          $ref: '#/components/schemas/VoiceAssistantChat'
+      required:
+        - message_id
+        - timestamp
+        - isUser
+        - message_content
+        - voiceAssistantChat
+    VoiceAssistantChatMessages:
+      type: array
+      items:
+        $ref: '#/components/schemas/VoiceAssistantChatMessage'  
     ErrorMessage:
         required:
           - Error
