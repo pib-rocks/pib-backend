@@ -26,7 +26,7 @@ DATABASE_FILE="pibdata.db"
 DATABASE_INIT_QUERY_FILE="cerebra_init_database.sql"
 DATABASE_INIT_QUERY_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/cerebra_init_database.sql"
 #
-ROS_PACKAGES_LINK="https://raw.githubusercontent.com/pib-rocks/ros-packages/PR-312/packages-set-up.sh"
+ROS_PACKAGES_LINK="https://raw.githubusercontent.com/pib-rocks/ros-packages/main/packages-set-up.sh"
 #
 # We make sure that this script is run by the user "pib"
 if [ "$(whoami)" != "pib" ]; then
@@ -138,7 +138,7 @@ sudo chmod -R 777 $ROS_WORKING_DIR
 sudo chmod -R 777 $ROS_WORKING_DIR/src
 # install all ros-packages
 cd $USER_HOME
-wget -O package_set_up.sh https://github.com/pib-rocks/ros-packages/raw/PR-312/packages-set-up.sh
+wget -O package_set_up.sh $ROS_PACKAGES_LINK
 chmod +x package_set_up.sh
 ./package_set_up.sh
 #
