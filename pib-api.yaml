@@ -19,7 +19,7 @@ paths:
         - personality
       summary: Add a new voice assistant personality
       requestBody:
-        description: Add a new voice assistant personality<br>Description requires UTF-8 charset<br> Minimum length = X<br> Maximum length = X
+        description: Add a new voice assistant personality
         content:
           application/json:
             schema:
@@ -40,7 +40,6 @@ paths:
       tags: 
         - personality
       summary: Get all voice assistant personalities
-
       responses:
         '200':
           description: OK
@@ -87,7 +86,7 @@ paths:
           schema:
             type: string
       requestBody:
-        description: Update an existing voice assistant personality<br>Description requires UTF-8 charset<br> Minimum length = X<br> Maximum length = X<br>Individual request body attributes may be nullable but all cannot be null
+        description: Update an existing voice assistant personality
         required: true
         content:
           application/json:
@@ -130,6 +129,13 @@ paths:
       tags:
         - chat
       summary: Add a new voice assistant chat
+      parameters:
+        - name: personality_id
+          description: The personality id is forwarded by the personality tab
+          in: query
+          required: true
+          schema:
+            type: string
       requestBody:
         description: Add a new voice assistant chat
         content:
@@ -152,7 +158,6 @@ paths:
       tags: 
         - chat
       summary: Get all voice assistant chats
-
       responses:
         '200':
           description: OK
@@ -199,7 +204,7 @@ paths:
           schema:
             type: string
       requestBody:
-        description: Update an existing voice assistant chat<br>Individual request body attributes may be nullable but all cannot be null
+        description: Update an existing voice assistant chat
         required: true
         content:
           application/json:
@@ -248,20 +253,6 @@ paths:
           required: true
           schema:
             type: string
-        - name: timestamp
-          description: Null the first time. If specified, loads messages before the specified time stamp. Otherwise, loads the most recent messages based on count.
-          in: query
-          required: false
-          schema:
-            type: string
-            format: time-stamp
-        - name: count
-          description: Number of messages to be returned.
-          in: query
-          required: false
-          schema:
-            type: number
-            default: 10
       responses:
         '200':
           description: OK
@@ -326,6 +317,7 @@ components:
             - Georg
         description:
           type: string
+          minLength: 1
           examples: 
             - You are a helpful assistant.
             - You act as a translator, translating all my messages into Japanese.
@@ -361,6 +353,7 @@ components:
             - f83913e4-ac40-498c-9bab-635958fbe096 
         topic:
           type: string
+          default: New conversation
           examples: 
             - Short Stories
             - Nürnberg
