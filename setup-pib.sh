@@ -15,18 +15,8 @@ NGINX_CONF_FILE_URL="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/
 CEREBRA_ARCHIVE_URL_PATH="https://pib.rocks/wp-content/uploads/pib_data/cerebra-latest.zip"
 CEREBRA_ARCHIVE_NAME="cerebra-latest.zip"
 #
-ROS_CAMERA_NODE_LINK="https://github.com/pib-rocks/ros2_oak_d_lite/archive/refs/heads/master.zip"
-ROS_CAMERA_NODE_DIR="$ROS_WORKING_DIR/ros_camera_node_dir"
-ROS_CAMERA_NODE_ZIP="ros_camera_node.zip"
-ROS_VOICE_ASSISTANT_NODE_LINK="https://github.com/pib-rocks/voice-assistant/raw/main/voice_assistant.zip"
-ROS_VOICE_ASSISTANT_NODE_DIR="$ROS_WORKING_DIR/src/voice_assistant"
-ROS_VOICE_ASSISTANT_NODE_ZIP="voice_assistant.zip"
 ROS_CEREBRA_BOOT_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/ros_cerebra_boot.sh"
-ROS_CAMERA_BOOT_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/ros_camera_boot.sh"
-ROS_VOICE_ASSISTANT_BOOT_LINK="https://raw.githubusercontent.com/pib-rocks/voice-assistant/main/ros_voice_assistant_boot.sh"
 ROS_CEREBRA_BOOT_SERVICE_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/ros_cerebra_boot.service"
-ROS_CAMERA_BOOT_SERVICE_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/ros_camera_boot.service"
-ROS_VOICE_ASSISTANT_BOOT_SERVICE_LINK="https://raw.githubusercontent.com/pib-rocks/voice-assistant/main/ros_voice_assistant_boot.service"
 #
 PHPLITEADMIN_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/phpliteadmin_v1_9_9_dev.zip"
 PHPLITEADMIN_ZIP="phpliteadmin_v1_9_9_dev.zip"
@@ -35,6 +25,8 @@ DATABASE_DIR="$USER_HOME/pib_data"
 DATABASE_FILE="pibdata.db"
 DATABASE_INIT_QUERY_FILE="cerebra_init_database.sql"
 DATABASE_INIT_QUERY_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/cerebra_init_database.sql"
+#
+ROS_PACKAGES_LINK="https://raw.githubusercontent.com/pib-rocks/ros-packages/main/packages-set-up.sh"
 #
 # We make sure that this script is run by the user "pib"
 if [ "$(whoami)" != "pib" ]; then
@@ -97,19 +89,6 @@ echo "deb https://download.tinkerforge.com/apt/$(. /etc/os-release; echo $ID $VE
 sudo apt-get update
 sudo apt-get install -y python3-tinkerforge
 #
-# Setting up the camera, including AI capabilities
-# Depth-AI
-sudo curl -sSL https://docs.luxonis.com/install_dependencies.sh | sudo bash
-python3 -m pip install depthai
-#Git examples for Depth-AI
-git clone --recurse-submodules https://github.com/luxonis/depthai-python.git
-cd depthai-python/examples
-python3 install_requirements.py
-#Hand tracker
-git clone https://github.com/geaxgx/depthai_hand_tracker.git
-cd depthai_hand_tracker
-pip install -r requirements.txt
-#
 # Setup Cerebra
 echo -e '\nInstall nginx...'
 sudo apt install -y nginx
@@ -132,28 +111,9 @@ sudo unzip $ROS_WORKING_DIR/$CEREBRA_ARCHIVE_NAME -d $DEFAULT_NGINX_HTML_DIR
 echo -e '\nDownloading nginx configuration file...'
 sudo curl $NGINX_CONF_FILE_URL --output $DEFAULT_NGINX_DIR/$NGINX_CONF_FILE
 #
-# create src directory for all packages
-cd $ROS_CAMERA_NODE_DIR
+# create src directory for all ros packages
+cd $ROS_WORKING_DIR
 mkdir src
-#
-# Install ros node for camera
-echo -e '\nInstalling ros node for camera...'
-curl $ROS_CAMERA_NODE_LINK -L --output $ROS_WORKING_DIR/$ROS_CAMERA_NODE_ZIP
-sudo unzip $ROS_WORKING_DIR/$ROS_CAMERA_NODE_ZIP -d $ROS_CAMERA_NODE_DIR
-rm $ROS_WORKING_DIR/$ROS_CAMERA_NODE_ZIP
-cd $ROS_CAMERA_NODE_DIR
-#
-# Setting up the voice-assistant packages
-pip3.10 install openai google-cloud-speech google-cloud-texttospeech pyaudio
-sudo apt-get install flac
-#
-# Install ros node for voice-assistant
-echo -e '\nInstalling ros node for voice-assistant...'
-curl $ROS_VOICE_ASSISTANT_NODE_LINK -L --output $ROS_WORKING_DIR/$ROS_VOICE_ASSISTANT_NODE_ZIP
-sudo unzip $ROS_WORKING_DIR/$ROS_VOICE_ASSISTANT_NODE_ZIP -d $ROS_WORKING_DIR/src
-rm $ROS_WORKING_DIR/$ROS_VOICE_ASSISTANT_NODE_ZIP
-# Set permissions to change files
-sudo chmod -R 777 $ROS_VOICE_ASSISTANT_NODE_DIR
 #
 # Install and configure phpLiteAdmin
 sudo sed -i "s|;cgi.fix_pathinfo=1|cgi.fix_pathinfo=0|" /etc/php/8.1/fpm/php.ini
@@ -174,9 +134,16 @@ sudo chmod 766 $DATABASE_DIR/$DATABASE_FILE
 echo -e "\nDatabase initialized successfully!"
 #
 # Allow editing in all src-directories
+sudo chmod -R 777 $ROS_WORKING_DIR
 sudo chmod -R 777 $ROS_WORKING_DIR/src
+# install all ros-packages
+cd $USER_HOME
+wget -O package_set_up.sh $ROS_PACKAGES_LINK
+chmod +x package_set_up.sh
+./package_set_up.sh
+#
+# set permissions
 cd $ROS_WORKING_DIR
-sudo colcon build
 sudo chmod -R 777 $ROS_WORKING_DIR/build
 sudo chmod -R 777 $ROS_WORKING_DIR/install
 sudo chmod -R 777 $ROS_WORKING_DIR/log
@@ -185,34 +152,18 @@ sudo chmod -R 777 $ROS_WORKING_DIR/log
 # Create boot script for ros_bridge_server
 curl $ROS_CEREBRA_BOOT_LINK -L --output $ROS_WORKING_DIR/ros_cerebra_boot.sh
 sudo chmod 755 $ROS_WORKING_DIR/ros_cerebra_boot.sh
-# Create boot script for ros_camera node
-curl $ROS_CAMERA_BOOT_LINK -L --output $ROS_WORKING_DIR/ros_camera_boot.sh
-sudo chmod 755 $ROS_WORKING_DIR/ros_camera_boot.sh
-# Create boot script for voice_assistant node
-curl $ROS_VOICE_ASSISTANT_BOOT_LINK -L --output $ROS_WORKING_DIR/ros_voice_assistant_boot.sh
-sudo chmod 755 $ROS_WORKING_DIR/ros_voice_assistant_boot.sh
 # Create service which starts ros and cerebra by system boot
 curl $ROS_CEREBRA_BOOT_SERVICE_LINK -L --output $ROS_WORKING_DIR/ros_cerebra_boot.service
 sudo chmod 755 $ROS_WORKING_DIR/ros_cerebra_boot.service
 sudo mv $ROS_WORKING_DIR/ros_cerebra_boot.service /etc/systemd/system
-# Create service which starts ros camera node by system boot
-curl $ROS_CAMERA_BOOT_SERVICE_LINK -L --output $ROS_WORKING_DIR/ros_camera_boot.service
-sudo chmod 755 $ROS_WORKING_DIR/ros_camera_boot.service
-sudo mv $ROS_WORKING_DIR/ros_camera_boot.service /etc/systemd/system
-# Create service which starts ros voice-assistant node by system boot
-curl $ROS_VOICE_ASSISTANT_BOOT_SERVICE_LINK -L --output $ROS_WORKING_DIR/ros_voice_assistant_boot.service
-sudo chmod 755 $ROS_WORKING_DIR/ros_voice_assistant_boot.service
-sudo mv $ROS_WORKING_DIR/ros_voice_assistant_boot.service /etc/systemd/system
+# Clean-up: remove unnecessary .zip directories
+rm -r phpliteadmin_v1_9_9_dev.zip
+rm -r cerebra-latest.zip
 # Enable new services
 sudo systemctl daemon-reload
 sudo systemctl enable ros_cerebra_boot.service
-sudo systemctl enable ros_camera_boot.service
-sudo systemctl enable ros_voice_assistant_boot.service
 # Enable and start ssh server
 sudo systemctl enable ssh --now
-# clean-up ROS_WORKING_DIR
-cd $ROS_WORKING_DIR
-rm ros_voice_assistant_boot.sh ros_cerebra_boot.sh ros_camera_boot.sh
 # Done! :-) Please restart to
 echo -e '\nCongratulations! The setup completed succesfully!'
 echo -e '\nPlease restart the system to apply changes...'
