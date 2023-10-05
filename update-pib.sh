@@ -35,6 +35,14 @@ else
         su root bash -c "usermod -aG sudo $DEFAULT_USER ; echo '$DEFAULT_USER ALL=(ALL) NOPASSWD:ALL' | tee /etc/sudoers.d/$DEFAULT_USER"
 fi
 
+if [ ! -z "$1" ]; then
+	if [ ! "$1" == '-Cerebra' ]; then
+		echo 'This script can only be runned with no parameter, to upgrade cerebra and all Packages'
+		echo 'or with the parameter "-Cerebra" to update only the frontend.'
+	        exit 255
+	fi
+fi
+
 # Update all packages
 sudo apt-get update
 sudo apt-get -y upgrade
