@@ -1,4 +1,4 @@
-openapi: 3.0.3
+openapi: 3.1.0
 info:
   title: pib REST-API MOCK
   description: |-
@@ -441,20 +441,33 @@ components:
         personality_id:
           type: string
           readOnly: true
-          example: ecb8ad22-891d-4744-80b3-7e6d6d84a5c0
+          examples: 
+            - ecb8ad22-891d-4744-80b3-7e6d6d84a5c0
+            - f1eda93f-0ae3-4f41-8502-d56dddeb7034 
+            - 864c6ebe-c514-4d1d-85af-8ccd385f3f17 
         name:
           type: string
-          example: Thomas
+          examples: 
+            - Eva
+            - Thomas
+            - Janina
+            - Georg
         description:
           type: string
-          example: You are a helpful assistant.
+          examples: 
+            - You are a helpful assistant.
+            - You act as a translator, translating all my messages into Japanese.
         gender:
           type: string
           enum: [Male, Female]
-          example: Male
+          examples: 
+            - Female
+            - Male
         pauseThreshold:
           type: number
-          example: 0.8
+          examples: 
+            - 0.8
+            - 1.0
       required:
         - personality_id
         - name
