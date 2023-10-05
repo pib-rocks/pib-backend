@@ -23,7 +23,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CreateVoiceAssistantPersonality'
+              $ref: '#/components/schemas/VoiceAssistantPersonality'
         required: true
       responses:
         '201':
@@ -31,7 +31,7 @@ paths:
           content:
             application/json:
               schema: 
-                $ref: '#/components/schemas/SuccessfulVoiceAssistantPersonalityCreationResponse'
+                $ref: '#/components/schemas/VoiceAssistantPersonality'
         '400':
           description: Bad Request
           content:
@@ -55,7 +55,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/GetAllPersonalities'
+                $ref: '#/components/schemas/VoiceAssistantPersonalities'
         '400':
           description: Bad Request
           content:
@@ -120,14 +120,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/UpdateVoiceAssistantPersonalityRequest'
+              $ref: '#/components/schemas/VoiceAssistantPersonality'
       responses:
         '200':
           description: OK
           content:
             application/json:
               schema: 
-                $ref: '#/components/schemas/UpdateVoiceAssistantPersonality'
+                $ref: '#/components/schemas/VoiceAssistantPersonality'
         '400':
           description: Bad Request
           content:
@@ -435,124 +435,36 @@ paths:
                 $ref: '#/components/schemas/ErrorMessage'            
 components:
   schemas:
-    GetAllPersonalities:
-      type: object
-      properties:
-        voiceAssistantPersonalities:
-          type: array
-          items:
-            type: object
-            properties: 
-              personality_id:
-                type: string
-                example: UUID
-              name:
-                type: string
-                example: Georg
-              description:
-                type: string
-                example: Personality Description
-              gender:
-                type: string
-                enum: [Male, Female]
-                example: Male
-              pauseThreshold:
-                type: number
-                example: 0.8
     VoiceAssistantPersonality:
       type: object
       properties:
         personality_id:
           type: string
-          example: UUID
+          readOnly: true
+          example: ecb8ad22-891d-4744-80b3-7e6d6d84a5c0
         name:
           type: string
-          example: Janina
+          example: Thomas
         description:
           type: string
-          example: Personality Description
+          example: You are a helpful assistant.
         gender:
           type: string
           enum: [Male, Female]
-          example: Female
+          example: Male
         pauseThreshold:
           type: number
           example: 0.8
-    CreateVoiceAssistantPersonality:
       required:
+        - personality_id
         - name
         - description
         - gender
         - pauseThreshold
-      type: object
-      properties:
-        name:
-          type: string
-          example: Thomas
-        description:
-          type: string
-          example: Personality Description
-        gender:
-          type: string
-          enum: [Male, Female]
-          example: Male
-        pauseThreshold:
-          type: number
-          example: 0.8
-    SuccessfulVoiceAssistantPersonalityCreationResponse:
-      type: object
-      properties:
-        personality_id:
-          type: string
-          example: UUID
-        name:
-          type: string
-          example: Thomas
-        description:
-          type: string
-          example: Personality Description
-        gender:
-          type: string
-          enum: [Male, Female]
-          example: Male
-        pauseThreshold:
-          type: number
-          example: 0.8
-    UpdateVoiceAssistantPersonality:
-      type: object
-      properties:
-        personality_id:
-          type: string
-          example: UUID
-        name:
-          type: string
-          example: Eva
-        description:
-          type: string
-          example: Personality Description
-        gender:
-          type: string
-          enum: [Male, Female]
-          example: Female
-        pauseThreshold:
-          type: number
-          example: 0.8
-    UpdateVoiceAssistantPersonalityRequest:
-      type: object
-      properties:
-        name:
-          type: string
-          example: Eva
-        description:
-          type: string
-          example: Personality Description
-        gender:
-          type: string
-          enum: [Male, Female]
-          example: Female
-        pauseThreshold:
-          type: number
-          example: 0.8
+    VoiceAssistantPersonalities:
+      type: array
+      items:
+        $ref: '#/components/schemas/VoiceAssistantPersonality'
     GetAllChats:
       type: object
       properties:
