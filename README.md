@@ -57,7 +57,7 @@ This script assumes:
         
         update-pib -Cerebra
    
-   oder
+   or
 
         update-pib
    
