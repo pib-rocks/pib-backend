@@ -45,3 +45,21 @@ With the following command, you can check the running ros2 nodes:
 
         ros2 node list
 
+# Software setup
+This script assumes: 
+- that Ubuntu Desktop 22.04.2 LTS is installed
+- the user running it is **pib**
+- the setup script was executed successfully
+
+1. Open a terminal
+
+2. Run the update script:
+        
+        update-pib -Cerebra
+   
+   oder
+
+        update-pib
+   
+You can use "update-pib -Cerebra" to update only the Website Cerebra.
+If you execute the command without the parameter "-Cerebra" the website is updated and all packages.
