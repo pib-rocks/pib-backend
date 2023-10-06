@@ -48,7 +48,9 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/VoiceAssistantPersonalities'
+                type: array
+                items:
+                  $ref: '#/components/schemas/VoiceAssistantPersonality'
         '400':
           $ref: '#/components/responses/400'
         '500':
@@ -171,7 +173,9 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/VoiceAssistantChats'
+                type: array
+                items:
+                  $ref: '#/components/schemas/VoiceAssistantChat'
         '400':
           $ref: '#/components/responses/400'
         '500':
@@ -270,7 +274,9 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/VoiceAssistantChatMessages'
+                type: array
+                items:
+                  $ref: '#/components/schemas/VoiceAssistantChatMessage'  
         '400':
           $ref: '#/components/responses/400'
         '404':
@@ -294,14 +300,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/VoiceAssistantChatMessages'
+              $ref: '#/components/schemas/VoiceAssistantChatMessage'
       responses:
         '201':
           description: Created
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/VoiceAssistantChatMessages'
+                $ref: '#/components/schemas/VoiceAssistantChatMessage'
         '400':
           $ref: '#/components/responses/400'
         '404':
@@ -350,10 +356,6 @@ components:
         - description
         - gender
         - pauseThreshold
-    VoiceAssistantPersonalities:
-      type: array
-      items:
-        $ref: '#/components/schemas/VoiceAssistantPersonality'
     VoiceAssistantChat:
       type: object
       properties:
@@ -377,10 +379,6 @@ components:
         - chat_id
         - topic
         - voiceAssistantPersonality
-    VoiceAssistantChats:
-      type: array
-      items:
-        $ref: '#/components/schemas/VoiceAssistantChat'
     VoiceAssistantChatMessage:
       type: object
       properties:
@@ -415,10 +413,6 @@ components:
         - isUser
         - message_content
         - voiceAssistantChat
-    VoiceAssistantChatMessages:
-      type: array
-      items:
-        $ref: '#/components/schemas/VoiceAssistantChatMessage'  
     Error:
         required:
           - Error
