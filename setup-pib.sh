@@ -26,7 +26,8 @@ DATABASE_FILE="pibdata.db"
 DATABASE_INIT_QUERY_FILE="cerebra_init_database.sql"
 DATABASE_INIT_QUERY_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/cerebra_init_database.sql"
 #
-ROS_PACKAGES_LINK="https://raw.githubusercontent.com/pib-rocks/ros-packages/PR-312/packages-set-up.sh"
+ROS_PACKAGES_LINK="https://raw.githubusercontent.com/pib-rocks/ros-packages/main/packages-set-up.sh"
+ROS_UPDATE_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/update-pib.sh"
 #
 # We make sure that this script is run by the user "pib"
 if [ "$(whoami)" != "pib" ]; then
@@ -61,10 +62,6 @@ echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-a
 sudo apt update
 sudo apt install -y ros-humble-ros-base ros-dev-tools
 source /opt/ros/humble/setup.bash
-echo "if [ -f /home/pib/update-pib.sh ]; then
-        alias update-pib='/home/pib/update-pib.sh'
-      fi
-" >> $USER_HOME/.bashrc
 echo 'source /opt/ros/humble/setup.bash' >> $USER_HOME/.bashrc
 #
 # Install rosbridge-server
@@ -142,15 +139,19 @@ sudo chmod -R 777 $ROS_WORKING_DIR
 sudo chmod -R 777 $ROS_WORKING_DIR/src
 # install all ros-packages
 cd $USER_HOME
-wget -O package_set_up.sh https://github.com/pib-rocks/ros-packages/raw/PR-312/packages-set-up.sh
+wget -O package_set_up.sh $ROS_PACKAGES_LINK
 chmod +x package_set_up.sh
 ./package_set_up.sh
 # install update-pip
 if [ -f $USER_HOME/update-pib.sh ]; then
   sudo rm update-pib.sh
 fi
-wget -O update-pib.sh https://raw.githubusercontent.com/pib-rocks/setup-pib/PR-272/update-pib.sh
+wget -O update-pib.sh $ROS_UPDATE_LINK
 sudo chmod 777 update-pib.sh
+echo "if [ -f /home/pib/update-pib.sh ]; then
+        alias update-pib='/home/pib/update-pib.sh'
+      fi
+" >> $USER_HOME/.bashrc
 # set permissions
 cd $ROS_WORKING_DIR
 sudo chmod -R 777 $ROS_WORKING_DIR/build
