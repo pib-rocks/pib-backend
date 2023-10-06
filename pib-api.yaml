@@ -48,9 +48,7 @@ paths:
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/VoiceAssistantPersonality'
+                $ref: '#/components/schemas/VoiceAssistantPersonalities'
         '400':
           $ref: '#/components/responses/400'
         '500':
@@ -173,9 +171,7 @@ paths:
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/VoiceAssistantChat'
+                $ref: '#/components/schemas/VoiceAssistantChats'
         '400':
           $ref: '#/components/responses/400'
         '500':
@@ -274,9 +270,7 @@ paths:
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/VoiceAssistantChatMessage'  
+                $ref: '#/components/schemas/VoiceAssistantChatMessages'
         '400':
           $ref: '#/components/responses/400'
         '404':
@@ -356,6 +350,12 @@ components:
         - description
         - gender
         - pauseThreshold
+    VoiceAssistantPersonalities:
+      properties:
+        voiceAssistantPersonalities:
+          type: array
+          items:
+            $ref: '#/components/schemas/VoiceAssistantChat'
     VoiceAssistantChat:
       type: object
       properties:
@@ -379,6 +379,12 @@ components:
         - chat_id
         - topic
         - voiceAssistantPersonality
+    VoiceAssistantChats:
+      properties:
+        voiceAssistantChats:
+          type: array
+          items:
+            $ref: '#/components/schemas/VoiceAssistantChat'
     VoiceAssistantChatMessage:
       type: object
       properties:
@@ -413,6 +419,12 @@ components:
         - isUser
         - message_content
         - voiceAssistantChat
+    VoiceAssistantChatMessages:
+      properties:
+        voiceAssistantChatMessages:
+          type: array
+          items:
+            $ref: '#/components/schemas/VoiceAssistantChatMessage'
     Error:
         required:
           - Error
