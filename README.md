@@ -45,7 +45,7 @@ With the following command, you can check the running ros2 nodes:
 
         ros2 node list
 
-# Software setup
+# Software update
 This script assumes: 
 - that Ubuntu Desktop 22.04.2 LTS is installed
 - the user running it is **pib**
