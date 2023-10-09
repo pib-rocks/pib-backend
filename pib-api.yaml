@@ -129,7 +129,7 @@ paths:
           $ref: '#/components/responses/404'
         '500':
           $ref: '#/components/responses/500'
-  /voice-assistant/chat:
+  /voice-assistant/chat/{personality_id}:
     post:
       tags:
         - chat
@@ -138,7 +138,7 @@ paths:
       parameters:
         - name: personality_id
           description: The personality id is forwarded by the personality tab
-          in: query
+          in: path
           required: true
           schema:
             type: string
@@ -158,8 +158,11 @@ paths:
                 $ref: '#/components/schemas/VoiceAssistantChat'
         '400':
           $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
         '500':
           $ref: '#/components/responses/500'
+  /voice-assistant/chat:
     get:
       tags: 
         - chat
