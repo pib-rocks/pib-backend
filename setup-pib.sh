@@ -4,6 +4,7 @@
 #   - that Ubuntu Desktop 22.04.2 is installed
 #   - the default-user "pib" is executing it
 #
+UBUNTU_VERSION=$(lsb_release -rs)
 DEFAULT_USER="pib"
 USER_HOME="/home/$DEFAULT_USER"
 ROS_WORKING_DIR="$USER_HOME/ros_working_dir"
@@ -44,6 +45,24 @@ else
 	echo "For this change please enter the root-password. It is most likely just your normal one..."
 	su root bash -c "usermod -aG sudo $DEFAULT_USER ; echo '$DEFAULT_USER ALL=(ALL) NOPASSWD:ALL' | tee /etc/sudoers.d/$DEFAULT_USER"
 fi
+#Check on the right Ubuntu version
+if [ ! $UBUNTU_VERSION == 22.04 ]; then
+	echo 'Your Ubuntu version is not tested or predicted for Cerebra!'
+	echo 'Do you still want to continue the installation? [Yes/No]'
+	while true; do
+		read CONTINUE
+		if [[ ${CONTINUE,,} == "yes" ]]; then
+			break
+		elif [[ ${CONTINUE,,} == "no" ]]; then
+		        echo "Setup has been stoped"
+		        exit 255
+		else
+			echo "Your input is not correct"
+			continue
+		fi
+	done
+fi
+#
 # Adding Universe repo, upgrading and installing basic packages
 sudo add-apt-repository -y universe
 sudo apt-get update
