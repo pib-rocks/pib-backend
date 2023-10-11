@@ -177,14 +177,6 @@ sudo chmod -R 777 $ROS_WORKING_DIR/build
 sudo chmod -R 777 $ROS_WORKING_DIR/install
 sudo chmod -R 777 $ROS_WORKING_DIR/log
 #
-# Setup system to start Cerebra and ROS2 at boot time
-# Create boot script for ros_bridge_server
-curl $ROS_CEREBRA_BOOT_LINK -L --output $ROS_WORKING_DIR/ros_cerebra_boot.sh
-sudo chmod 755 $ROS_WORKING_DIR/ros_cerebra_boot.sh
-# Create service which starts ros and cerebra by system boot
-curl $ROS_CEREBRA_BOOT_SERVICE_LINK -L --output $ROS_WORKING_DIR/ros_cerebra_boot.service
-sudo chmod 755 $ROS_WORKING_DIR/ros_cerebra_boot.service
-sudo mv $ROS_WORKING_DIR/ros_cerebra_boot.service /etc/systemd/system
 # Clean-up: remove unnecessary .zip directories
 rm -r phpliteadmin_v1_9_9_dev.zip
 rm -r cerebra-latest.zip
