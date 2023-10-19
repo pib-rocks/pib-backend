@@ -76,7 +76,7 @@ if [ -z "$1" ]; then
         git init
         git pull https://github.com/pib-rocks/ros-packages.git
         git submodule init
-        git submodule update
+        git submodule update --remote
 	cd $ROS_WORKING_DIR
 	colcon build
 	sudo chmod -R 777 $ROS_WORKING_DIR/build

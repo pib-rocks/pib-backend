@@ -44,6 +44,37 @@ To check if the camera node successfully started:
 With the following command, you can check the running ros2 nodes:
 
         ros2 node list
+		
+## Clustering pibs
+
+To enable clustering of pibs on default ROS_DOMAIN_ID=0:
+
+1. Open a Terminal:
+2. Run the following command:
+		gedit ~/.bashrc 
+	OR for users connected through terminal:
+		vim ~/.bashrc 
+3. Within .bashrc delete:
+		export ROS_LOCALHOST_ONLY=1 	
+	or 
+		set to 0
+4. Restart pib
+
+To add pib to a distinct logical network:
+
+1. Open a Terminal 
+2. Run the following command:
+		gedit ~/.bashrc 
+	OR for users connected through terminal:
+		vim ~/.bashrc
+3. Delete:
+		export ROS_LOCALHOST_ONLY=1
+4. Append:
+		export ROS_DOMAIN_ID=YOUR_DOMAIN_ID
+5. Restart pib
+
+For a range of available ROS_DOMAIN_IDs please check the official documentation at
+	https://docs.ros.org/en/dashing/Concepts/About-Domain-ID.html
 
 # Software update
 This script assumes: 
