@@ -82,6 +82,8 @@ sudo apt update
 sudo apt install -y ros-humble-ros-base ros-dev-tools
 source /opt/ros/humble/setup.bash
 echo 'source /opt/ros/humble/setup.bash' >> $USER_HOME/.bashrc
+echo 'source /home/pib/ros_working_dir/install/setup.bash' >> $USER_HOME/.bashrc
+echo "export ROS_LOCALHOST_ONLY=1" >> $USER_HOME/.bashrc
 #
 # Install rosbridge-server
 echo 'Install rosbridge-server...'
