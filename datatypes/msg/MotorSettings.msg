@@ -1,0 +1,10 @@
+string motor_name
+bool turned_on
+float64 pulse_width_min
+float64 pulse_width_max
+float64 rotation_range_min
+float64 rotation_range_max
+float64 velocity
+float64 acceleration
+float64 deceleration
+float64 period
