@@ -27,6 +27,10 @@ DATABASE_FILE="pibdata.db"
 DATABASE_INIT_QUERY_FILE="cerebra_init_database.sql"
 DATABASE_INIT_QUERY_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/cerebra_init_database.sql"
 #
+#
+PIB_API_DIR="$USER_HOME/flask"
+PIB_API_URL_PATH="https://github.com/pib-rocks/pib-api/archive/refs/heads/main.zip"
+#
 ROS_PACKAGES_LINK="https://raw.githubusercontent.com/pib-rocks/ros-packages/main/packages-set-up.sh"
 ROS_UPDATE_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/update-pib.sh"
 #
@@ -160,7 +164,13 @@ sudo chmod 777 $DATABASE_DIR
 sudo sqlite3 $DATABASE_DIR/$DATABASE_FILE < $ROS_WORKING_DIR/$DATABASE_INIT_QUERY_FILE
 sudo chmod 766 $DATABASE_DIR/$DATABASE_FILE
 echo -e "\nDatabase initialized successfully!"
-#
+# Create pib-api
+cd $USER_HOME
+wget -O flask-api.zip $PIB_API_URL_PATH
+unzip flask-api.zip
+mv $USER_HOME/pib-api-main/flask/ $USER_HOME
+rm flask-api-zip
+rm -r pib-api-main
 # Allow editing in all src-directories
 sudo chmod -R 777 $ROS_WORKING_DIR
 sudo chmod -R 777 $ROS_WORKING_DIR/src
