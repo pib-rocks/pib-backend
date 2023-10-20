@@ -316,7 +316,7 @@ components:
     VoiceAssistantPersonality:
       type: object
       properties:
-        personality_id:
+        personalityId:
           type: string
           readOnly: true
           examples: 
@@ -362,7 +362,7 @@ components:
     VoiceAssistantChat:
       type: object
       properties:
-        chat_id:
+        chatId:
           type: string
           readOnly: true
           examples: 
@@ -407,7 +407,7 @@ components:
         isUser:
           type: boolean
           readOnly: true
-        message_content:
+        messageContent:
           type: string
           examples: 
             - Tell me a collection of short stories.
