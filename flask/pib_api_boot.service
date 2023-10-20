@@ -6,7 +6,7 @@ After=network.target
 Type=simple
 User=pib
 WorkingDirectory=/home/pib/flask
-ExecStart=/home/pib/.local/bin/pipenv run python3 /home/pib/flask/pib-api.py
+ExecStart=/home/pib/.local/bin/pipenv run python3 /home/pib/flask/app.py
 
 [Install]
 WantedBy=multi-user.target
