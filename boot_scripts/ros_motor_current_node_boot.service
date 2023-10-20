@@ -1,0 +1,11 @@
+[Unit]
+Description=Startup script for the pib motor current node
+After=network.target
+
+[Service]
+Type=simple
+User=pib
+ExecStart=/usr/bin/bash /home/pib/ros_working_dir/src/motors/boot_scripts/ros_motor_current_node_boot.sh
+
+[Install]
+WantedBy=multi-user.target
