@@ -165,10 +165,14 @@ sudo sqlite3 $DATABASE_DIR/$DATABASE_FILE < $ROS_WORKING_DIR/$DATABASE_INIT_QUER
 sudo chmod 766 $DATABASE_DIR/$DATABASE_FILE
 echo -e "\nDatabase initialized successfully!"
 # Create pib-api
+sudo apt install pipenv
 cd $USER_HOME
 wget -O flask-api.zip $PIB_API_URL_PATH
 unzip flask-api.zip
 mv $USER_HOME/pib-api-main/flask/ $USER_HOME
+sudo mv $USER_HOME/flask/pib_api_boot.service /etc/systemd/system
+sudo systemctl daemon-reload
+sudo systemctl enable pib_api_boot.service
 rm flask-api-zip
 rm -r pib-api-main
 # Allow editing in all src-directories
