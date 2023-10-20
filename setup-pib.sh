@@ -165,7 +165,11 @@ sudo sqlite3 $DATABASE_DIR/$DATABASE_FILE < $ROS_WORKING_DIR/$DATABASE_INIT_QUER
 sudo chmod 766 $DATABASE_DIR/$DATABASE_FILE
 echo -e "\nDatabase initialized successfully!"
 # Create pib-api
-sudo apt install pipenv
+pip3 install pipenv
+pipenv install flask
+pipenv install flask-marshmallow
+pipenv install flask-sqlalchemy
+pipenv install marshmallow-sqlalchemy
 cd $USER_HOME
 wget -O flask-api.zip $PIB_API_URL_PATH
 unzip flask-api.zip
