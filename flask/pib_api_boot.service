@@ -1,0 +1,12 @@
+[Unit]
+Description=Startup service for the pib-flask-api
+After=network.target
+
+[Service]
+Type=simple
+User=pib
+WorkingDirectory=/home/pib/flask
+ExecStart=/home/pib/.local/bin/pipenv run python3 /home/pib/flask/pib-api.py
+
+[Install]
+WantedBy=multi-user.target
