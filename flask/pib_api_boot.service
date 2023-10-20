@@ -6,6 +6,11 @@ After=network.target
 Type=simple
 User=pib
 WorkingDirectory=/home/pib/flask
+Environment="PYTHONIOENCODING=utf-8"
+ExecStartPre=/home/pib/.local/bin/pipenv install flask
+ExecStartPre=/home/pib/.local/bin/pipenv install flask-sqlalchemy
+ExecStartPre=/home/pib/.local/bin/pipenv install flask-marshmallow
+ExecStartPre=/home/pib/.local/bin/pipenv install marshmallow-sqlalchemy
 ExecStart=/home/pib/.local/bin/pipenv run python3 /home/pib/flask/app.py
 
 [Install]
