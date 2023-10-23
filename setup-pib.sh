@@ -25,7 +25,7 @@ PHPLITEADMIN_INSTALLATION_DIR="/var/www/phpliteadmin"
 DATABASE_DIR="$USER_HOME/pib_data"
 DATABASE_FILE="pibdata.db"
 DATABASE_INIT_QUERY_FILE="cerebra_init_database.sql"
-DATABASE_INIT_QUERY_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/cerebra_init_database.sql"
+DATABASE_INIT_QUERY_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/expand-database/setup_files/cerebra_init_database.sql"
 #
 #
 PIB_API_DIR="$USER_HOME/flask"
