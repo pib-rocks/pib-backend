@@ -182,7 +182,7 @@ values
       NULL, "8b310f95-92cd-4512-b42a-d3fe29c4bb8a", "Thomas", "Male", NULL, 0.8
    )
 ;
-create table IF NOT EXISTS camera_settings (id INTEGER primary key AUTOINCREMENT NOT NULL, resolution Text NOT NULL, refrash_rate Numeric NOT NULL, quality_factor INTEGER NOT NULL, is_active Boolean NOT NULL);
+create table IF NOT EXISTS camera_settings (id INTEGER primary key AUTOINCREMENT NOT NULL, resolution Text NOT NULL, refrash_rate Numeric NOT NULL, quality_factor INTEGER NOT NULL, is_active BOOLEAN NOT NULL);
 insert into
    camera_settings
 values
