@@ -167,7 +167,7 @@ values
       NULL, 'shoulder_horizontal_right', 700, 2500, -90, 90, 10000, 10000, 10000, 19500
    )
 ;
-create table IF NOT EXISTS personality (id INTEGER primary key AUTOINCREMENT NOT NULL, personality_id Text UNIQUE NOT NULL, name Text NOT NULL, gender Text NOT NULL, description Text NOT NULL, pause_threshold Numeric NOT NULL);
+create table IF NOT EXISTS personality (id INTEGER primary key AUTOINCREMENT NOT NULL, personality_id Text UNIQUE NOT NULL, name Text NOT NULL, gender Text NOT NULL, description Text, pause_threshold Numeric NOT NULL);
 insert into
    personality
 values
