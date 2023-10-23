@@ -167,7 +167,7 @@ values
       NULL, 'shoulder_horizontal_right', 700, 2500, -90, 90, 10000, 10000, 10000, 19500
    )
 ;
-create table IF NOT EXISTS personality (id INTEGER primary key AUTOINCREMENT NOT NULL, personality_id Text NOT NULL UNIQUE, name Text NOT NULL, gender Text NOT NULL, description Text NOT NULL, pause_threshold Numeric NOT NULL);
+create table IF NOT EXISTS personality (id INTEGER primary key AUTOINCREMENT NOT NULL, personality_id Text UNIQUE NOT NULL, name Text NOT NULL, gender Text NOT NULL, description Text NOT NULL, pause_threshold Numeric NOT NULL);
 insert into
    personality
 values
@@ -182,11 +182,11 @@ values
       NULL, "8b310f95-92cd-4512-b42a-d3fe29c4bb8a", "Thomas", "Male", NULL, 0.8
    )
 ;
-create table IR NOT EXISTS camera_settings (id INTEGER primary key AUTOINCREMENT NOT NULL, resolution Text NOT NULL, refrash_rate Numeric NOT NULL, quality_factor INTEGER NOT NULL, is_active Boolean NOT NULL);
+create table IF NOT EXISTS camera_settings (id INTEGER primary key AUTOINCREMENT NOT NULL, resolution Text NOT NULL, refrash_rate Numeric NOT NULL, quality_factor INTEGER NOT NULL, is_active Boolean NOT NULL);
 insert into
    camera_settings
 values
    (
-      NULL, "480p (SD)", 0.1, 80, false;
+      NULL, "480p (SD)", 0.1, 80, false
    )
 ;
