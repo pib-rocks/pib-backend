@@ -16,6 +16,8 @@ NGINX_CONF_FILE_URL="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/
 CEREBRA_ARCHIVE_URL_PATH="https://pib.rocks/wp-content/uploads/pib_data/cerebra-latest.zip"
 CEREBRA_ARCHIVE_NAME="cerebra-latest.zip"
 #
+ROS_CONFIG_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/ros_config.sh"
+#
 ROS_CEREBRA_BOOT_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/ros_cerebra_boot.sh"
 ROS_CEREBRA_BOOT_SERVICE_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/ros_cerebra_boot.service"
 #
@@ -201,6 +203,8 @@ colcon build
 sudo chmod -R 777 $ROS_WORKING_DIR/build
 sudo chmod -R 777 $ROS_WORKING_DIR/install
 sudo chmod -R 777 $ROS_WORKING_DIR/log
+# Get config
+curl $ROS_CONFIG_LINK -L --output $ROS_WORKING_DIR/ros_config.sh
 #
 # Setup system to start Cerebra and ROS2 at boot time
 # Create boot script for ros_bridge_server
