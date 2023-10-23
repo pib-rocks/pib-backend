@@ -187,27 +187,6 @@ insert into
    camera_settings
 values
    (
-      NULL, "480p (SD)", 0.1, 80, 1
-   )
-;
-insert into
-   camera_settings
-values
-   (
-      NULL, "480p (SD)", 0.1, 80, 0
-   )
-;
-insert into
-   camera_settings
-values
-   (
-      NULL, "480p (SD)", 0.1, 80, TRUE
-   )
-;
-insert into
-   camera_settings
-values
-   (
       NULL, "480p (SD)", 0.1, 80, FALSE
    )
 ;
