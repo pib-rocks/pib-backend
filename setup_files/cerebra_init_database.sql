@@ -187,6 +187,6 @@ insert into
    camera_settings
 values
    (
-      NULL, "480p (SD)", 0.1, 80, false
+      NULL, "480p (SD)", 0.1, 80, true
    )
 ;
