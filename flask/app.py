@@ -23,27 +23,47 @@ class Personality(db.Model):
         if len(args) == 5:
             self.eq5(args)
 
-    def eq3(self, args): 
+    def eq3(self, args):
         self.name = args[0]
         self.personality_id = str(uuid.uuid4())
         self.description = ""
         self.gender = args[1]
         self.pause_threshold = args[2]
 
-    def eq5(self, args): 
+    def eq5(self, args):
         self.name = args[0]
         self.personality_id = args[1]
         self.gender = args[2]
         self.description = args[3]
         self.pause_threshold = args[4]
 
+class CameraSettings(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    resolution = db.Column(db.String(20), nullable=False)
+    refrash_rate = db.Column(db.Float, nullable=False)
+    quality_factor = db.Column(db.Integer, nullable=False)
+    is_active = db.Column(db.Boolean, nullable=False)
+
+    def __init__(self, resolution, refrash_rate, quality_factor, is_active):
+        self.resolution = resolution
+        self.refrash_rate = refrash_rate
+        self.quality_factor = quality_factor
+        self.is_active = is_active
+
+
 class PersonalitySchema(ma.SQLAlchemyAutoSchema):
     class Meta:
         model = Personality
         exclude = ('id',)
 
+class CameraSettingsSchema(ma.SQLAlchemyAutoSchema):
+    class Meta:
+        model = CameraSettings
+        exclude = ('id',)
+
 personality_schema = PersonalitySchema()
 personalities_schema = PersonalitySchema(many=True)
+camera_settings_schema = CameraSettingsSchema()
 
 @app.route('/voice-assistant/personality')
 def get_all_personalities():
@@ -82,6 +102,26 @@ def delete_personality(uuid):
     db.session.delete(deletePersonality)
     db.session.commit()
     return '', 204
+
+@app.route('/camera-settings', methods=['GET'])
+def get_camera_settings():
+    cameraSettings = CameraSettings.query.all()
+    return camera_settings_schema.jsonify(cameraSettings[0])
+
+
+@app.route('/camera-settings', methods=['PUT'])
+def update_camera_settings():
+    newCameraSettings = CameraSettings(request.json.get('resolution'), request.json.get('refrash_rate'), request.json.get('quality_factor'), request.json.get('is_active'))
+    updateCameraSettings = CameraSettings.query.filter(CameraSettings.id == 0).first()
+    updateCameraSettings.resolution = newCameraSettings.resolution
+    updateCameraSettings.refresh_rate = newCameraSettings.refrash_rate
+    updateCameraSettings.quality_factor = newCameraSettings.quality_factor
+    updateCameraSettings.is_active = newCameraSettings.is_active
+    db.session.add(updateCameraSettings)
+    db.session.commit()
+    response = CameraSettings.query.filter(CameraSettings.id == 0).first()
+    print(response.is_active)
+    return camera_settings_schema.jsonify(response)
 
 if __name__ == '__main__':
     app.run(debug=True, host="0.0.0.0")
