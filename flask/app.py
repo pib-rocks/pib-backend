@@ -16,7 +16,7 @@ class Personality(db.Model):
     personality_id = db.Column(db.String(255), nullable=False)
     gender = db.Column(db.String(255), nullable=False)
     description = db.Column(db.String(38000), nullable=True)
-    pause_threshold = db.Column(db.Numeric, nullable=False)
+    pause_threshold = db.Column(db.Float, nullable=False)
     def __init__(self, *args):
         if len(args) == 3:
             self.eq3(args)
@@ -121,7 +121,7 @@ def update_camera_settings():
     db.session.commit()
     response = CameraSettings.query.filter(CameraSettings.id == 0).first()
     print(response.is_active)
-    return camera_settings_schema.jsonify(response)
+    return camera_settings_schema.dump(response)
 
 if __name__ == '__main__':
     app.run(debug=True, host="0.0.0.0")
