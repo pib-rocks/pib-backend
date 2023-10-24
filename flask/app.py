@@ -77,7 +77,7 @@ def get_personality_by_id(uuid):
 
 @app.route('/voice-assistant/personality', methods=['POST'])
 def create_personality():
-    personality = Personality(request.json.get('name'), request.json.get('gender'), request.json.get('pauseThreshold'))
+    personality = Personality(request.json.get('name'), request.json.get('gender'), request.json.get('pause_threshold'))
     db.session.add(personality)
     db.session.commit()
     returnPersonality = Personality.query.filter(Personality.personality_id == personality.personality_id).first()
@@ -85,7 +85,7 @@ def create_personality():
 
 @app.route('/voice-assistant/personality/<string:uuid>', methods=['PUT'])
 def update_personality(uuid):
-    personality = Personality(request.json.get('name'), uuid, request.json.get('gender'), request.json.get('description'), request.json.get('pauseThreshold'))
+    personality = Personality(request.json.get('name'), uuid, request.json.get('gender'), request.json.get('description'), request.json.get('pause_threshold'))
     updatePersonality = Personality.query.filter(Personality.personality_id == personality.personality_id).first()
     updatePersonality.name = personality.name
     updatePersonality.description = personality.description
