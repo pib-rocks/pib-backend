@@ -12,6 +12,10 @@ tags:
     description: CRUD-Operations for voice assistant personalities
   - name: chat
     description: CRUD-Operations for voice assistant chats
+  - name: motor-settings
+    description: Read- and Update-Operations for motor-settings
+  - name: camera-settings
+    description: Read- and Update-Operations for camera-settings
 paths:
   /voice-assistant/personality:
     post:
@@ -311,6 +315,163 @@ paths:
           $ref: '#/components/responses/404'
         '500':
           $ref: '#/components/responses/500'
+  /motor-settings/{motor_name}:
+    get:
+      tags:
+        - motor-settings
+      summary: Get the motor-settings of the motor matching the specified name
+      parameters:
+        - name: motor_name
+          in: path
+          required: true
+          schema:
+            type: string
+            enum:
+              - thumb_left_opposition
+              - thumb_left_stretch
+              - index_left_stretch
+              - middle_left_stretch
+              - ring_left_stretch
+              - pinky_left_stretch
+              - all_fingers_left
+              - thumb_right_opposition
+              - thumb_right_stretch
+              - index_right_stretch
+              - middle_right_stretch
+              - ring_right_stretch
+              - pinky_right_stretch
+              - all_fingers_right
+              - upper_arm_left_rotation
+              - elbow_left
+              - lower_arm_left_rotation
+              - wrist_left
+              - shoulder_vertical_left
+              - shoulder_horizontal_left
+              - upper_arm_right_rotation
+              - elbow_right
+              - lower_arm_right_rotation
+              - wrist_right
+              - shoulder_vertical_right
+              - shoulder_horizontal_right
+              - tilt_forward_motor
+              - tilt_sideways_motor
+              - turn_head_motor
+
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MotorSettings'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+    put:
+      tags:
+        - motor-settings
+      summary: Select a motor by name and update its motor-settings
+      parameters:
+        - name: motor_name
+          in: path
+          required: true
+          schema:
+            type: string
+            enum:
+              - thumb_left_opposition
+              - thumb_left_stretch
+              - index_left_stretch
+              - middle_left_stretch
+              - ring_left_stretch
+              - pinky_left_stretch
+              - all_fingers_left
+              - thumb_right_opposition
+              - thumb_right_stretch
+              - index_right_stretch
+              - middle_right_stretch
+              - ring_right_stretch
+              - pinky_right_stretch
+              - all_fingers_right
+              - upper_arm_left_rotation
+              - elbow_left
+              - lower_arm_left_rotation
+              - wrist_left
+              - shoulder_vertical_left
+              - shoulder_horizontal_left
+              - upper_arm_right_rotation
+              - elbow_right
+              - lower_arm_right_rotation
+              - wrist_right
+              - shoulder_vertical_right
+              - shoulder_horizontal_right
+              - tilt_forward_motor
+              - tilt_sideways_motor
+              - turn_head_motor
+      requestBody:
+        description: Update the (existing) motor-settings of a motor.
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MotorSettings'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: 
+                $ref: '#/components/schemas/MotorSettings'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+  /camera-settings:
+    get:
+      tags:
+        - camera-settings
+      summary: Get the camera-settings
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CameraSettings'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+    put:
+      tags:
+        - camera-settings
+      summary: Updates the camera-settings
+      requestBody:
+        description: Update the camera-settings.
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CameraSettings'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: 
+                $ref: '#/components/schemas/CameraSettings'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
 components:
   schemas:
     VoiceAssistantPersonality:
@@ -428,6 +589,142 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/VoiceAssistantChatMessage'
+    MotorSettings:
+      type: object
+      properties:
+        motor_name:
+          type: string
+          examples:
+            - thumb_right_opposition
+          enum:
+            - thumb_left_opposition
+            - thumb_left_stretch
+            - index_left_stretch
+            - middle_left_stretch
+            - ring_left_stretch
+            - pinky_left_stretch
+            - all_fingers_left
+            - thumb_right_opposition
+            - thumb_right_stretch
+            - index_right_stretch
+            - middle_right_stretch
+            - ring_right_stretch
+            - pinky_right_stretch
+            - all_fingers_right
+            - upper_arm_left_rotation
+            - elbow_left
+            - lower_arm_left_rotation
+            - wrist_left
+            - shoulder_vertical_left
+            - shoulder_horizontal_left
+            - upper_arm_right_rotation
+            - elbow_right
+            - lower_arm_right_rotation
+            - wrist_right
+            - shoulder_vertical_right
+            - shoulder_horizontal_right
+            - tilt_forward_motor
+            - tilt_sideways_motor
+            - turn_head_motor
+        turned_on: 
+          type: boolean
+          examples: 
+            - true
+        pulse_width_min: 
+          type: integer
+          minimum: 0
+          maximum: 65535
+          examples: 
+            - 10000
+        pulse_width_max: 
+          type: integer
+          minimum: 0
+          maximum: 65535
+          examples: 
+            - 50000
+        rotation_range_min: 
+          type: integer
+          minimum: -9000
+          maximum: 9000
+          examples: 
+            - -3000
+        rotation_range_max: 
+          type: integer
+          minimum: -9000
+          maximum: 9000
+          examples: 
+            - 4000
+        velocity: 
+          type: integer
+          minimum: 0
+          maximum: 50000
+          examples: 
+            - 12000
+        acceleration: 
+          type: integer
+          minimum: 0
+          maximum: 50000
+          examples: 
+            - 3500
+        deceleration: 
+          type: integer
+          minimum: 0
+          maximum: 50000
+          examples: 
+            - 25000
+        period: 
+          type: integer
+          minimum: 0
+          maximum: 100000
+          examples: 
+            - 60000
+      required:
+        - motor_name
+        - turned_on
+        - pulse_width_min
+        - pulse_width_max
+        - rotation_range_min
+        - rotation_range_max
+        - velocity
+        - acceleration
+        - deceleration
+        - period
+    CameraSettings:
+      type: object
+      properties:
+        is_active: 
+          type: boolean
+          examples: 
+            - true
+        refresh_rate: 
+          description: "unit of measure: seconds (s)"
+          type: number
+          format: float
+          minimum: 0.1
+          maximum: 1.0
+          multipleOf: 0.1
+          examples: 
+            - 0.5
+        quality_factor: 
+          type: integer
+          minimum: 10
+          maximum: 90
+          multipleOf: 10
+          examples: 
+            - 30
+        resolution:
+          type: string
+          enum:
+            - 480p (SD)
+            - 720p (HD)
+            - 1080p (FHD)
+          examples:
+            - 480p (SD)
+      required:
+        - is_active 
+        - refresh_rate
+        - quality_factor
+        - resolution
     Error:
         required:
           - Error
