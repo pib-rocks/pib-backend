@@ -38,17 +38,18 @@ class Personality(db.Model):
         self.pauseThreshold = args[4]
 
 class CameraSettings(db.Model):
+    __tablename__ = "cameraSettings"
     id = db.Column(db.Integer, primary_key=True)
     resolution = db.Column(db.String(20), nullable=False)
-    refrashRate = db.Column(db.Float, nullable=False)
+    refreshRate = db.Column(db.Float, nullable=False)
     qualityFactor = db.Column(db.Integer, nullable=False)
     isActive = db.Column(db.Boolean, nullable=False)
 
-    def __init__(self, resolution, refrash_rate, quality_factor, is_active):
+    def __init__(self, resolution, refreshRate, qualityFactor, isActive):
         self.resolution = resolution
-        self.refrashRate = refrash_rate
-        self.qualityFactor = quality_factor
-        self.isActive = is_active
+        self.refreshRate = refreshRate
+        self.qualityFactor = qualityFactor
+        self.isActive = isActive
 
 
 class PersonalitySchema(ma.SQLAlchemyAutoSchema):
@@ -78,6 +79,7 @@ def get_personality_by_id(uuid):
 @app.route('/voice-assistant/personality', methods=['POST'])
 def create_personality():
     personality = Personality(request.json.get('name'), request.json.get('gender'), request.json.get('pauseThreshold'))
+    personality.personalityId = str(uuid.uuid4())
     db.session.add(personality)
     db.session.commit()
     returnPersonality = Personality.query.filter(Personality.personalityId == personality.personalityId).first()
@@ -111,15 +113,15 @@ def get_camera_settings():
 
 @app.route('/camera-settings', methods=['PUT'])
 def update_camera_settings():
-    newCameraSettings = CameraSettings(request.json.get('resolution'), request.json.get('refrashRate'), request.json.get('qualityFactor'), request.json.get('isActive'))
-    updateCameraSettings = CameraSettings.query.filter(CameraSettings.id == 0).first()
+    newCameraSettings = CameraSettings(request.json.get('resolution'), request.json.get('refreshRate'), request.json.get('qualityFactor'), request.json.get('isActive'))
+    updateCameraSettings = CameraSettings.query.filter(CameraSettings.id == 1).first()
     updateCameraSettings.resolution = newCameraSettings.resolution
-    updateCameraSettings.refreshRate = newCameraSettings.refrashRate
+    updateCameraSettings.refreshRate = newCameraSettings.refreshRate
     updateCameraSettings.qualityFactor = newCameraSettings.qualityFactor
     updateCameraSettings.isActive = newCameraSettings.isActive
     db.session.add(updateCameraSettings)
     db.session.commit()
-    response = CameraSettings.query.filter(CameraSettings.id == 0).first()
+    response = CameraSettings.query.filter(CameraSettings.id == 1).first()
     print(response.isActive)
     return camera_settings_schema.dump(response)
 
