@@ -3,12 +3,14 @@ import uuid
 from flask import Flask, jsonify, request
 from flask_sqlalchemy import SQLAlchemy
 from flask_marshmallow import Marshmallow
+from flask_cors import CORS
 
 app = Flask(__name__)
 basedir = os.path.abspath(os.path.dirname("/home/pib/pib_data/"))
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + os.path.join(basedir, 'pibdata.db')
 db = SQLAlchemy(app)
 ma = Marshmallow(app)
+CORS(app)
 
 class Personality(db.Model):
     id = db.Column(db.Integer, primary_key=True)
