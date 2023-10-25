@@ -184,7 +184,7 @@ values
 ;
 create table IF NOT EXISTS cameraSettings (id INTEGER primary key AUTOINCREMENT NOT NULL, resolution Text NOT NULL, refreshRate Numeric NOT NULL, qualityFactor INTEGER NOT NULL, isActive BOOLEAN NOT NULL);
 insert into
-   camerSettings
+   cameraSettings
 values
    (
       NULL, "480p (SD)", 0.1, 80, FALSE
