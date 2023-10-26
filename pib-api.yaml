@@ -315,6 +315,24 @@ paths:
           $ref: '#/components/responses/404'
         '500':
           $ref: '#/components/responses/500'
+  /motor-settings/:
+    get:
+      tags:
+        - motor-settings
+      summary: Get all motor-settings
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AllMotorSettings'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
   /motor-settings/{motor_name}:
     get:
       tags:
@@ -370,6 +388,7 @@ paths:
           $ref: '#/components/responses/404'
         '500':
           $ref: '#/components/responses/500'
+
     put:
       tags:
         - motor-settings
@@ -592,7 +611,7 @@ components:
     MotorSettings:
       type: object
       properties:
-        motor_name:
+        name:
           type: string
           examples:
             - thumb_right_opposition
@@ -626,29 +645,29 @@ components:
             - tilt_forward_motor
             - tilt_sideways_motor
             - turn_head_motor
-        turned_on: 
+        turnedOn: 
           type: boolean
           examples: 
             - true
-        pulse_width_min: 
+        pulseWidthMin: 
           type: integer
           minimum: 0
           maximum: 65535
           examples: 
             - 10000
-        pulse_width_max: 
+        pulseWidthMax: 
           type: integer
           minimum: 0
           maximum: 65535
           examples: 
             - 50000
-        rotation_range_min: 
+        rotationRangeMin: 
           type: integer
           minimum: -9000
           maximum: 9000
           examples: 
             - -3000
-        rotation_range_max: 
+        rotationRangeMax: 
           type: integer
           minimum: -9000
           maximum: 9000
@@ -689,6 +708,12 @@ components:
         - acceleration
         - deceleration
         - period
+    AllMotorSettings:
+      properties:
+        motorSettings:
+          type: array
+          items:
+            $ref: '#/components/schemas/MotorSettings'
     CameraSettings:
       type: object
       properties:

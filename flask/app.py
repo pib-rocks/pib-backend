@@ -64,6 +64,7 @@ class Motor(db.Model):
     acceleration = db.Column(db.Integer, nullable=False)
     deceleration = db.Column(db.Integer, nullable=False)
     period = db.Column(db.Integer, nullable=False)
+    turnedOn = db.Column(db.Boolean, nullable=False)
     effort = db.Column(db.Integer, nullable=True)
     def __init__(self, *args):
         self.name = args[0]
@@ -75,8 +76,9 @@ class Motor(db.Model):
         self.acceleration = args[6]
         self.deceleration = args[7]
         self.period = args[8]
-        if len(args) > 9:
-            self.effort = args[9]
+        self.turnedOn = args[9]
+        if len(args) > 10:
+            self.effort = args[10]
 
 
 class PersonalitySchema(ma.SQLAlchemyAutoSchema):
@@ -164,9 +166,14 @@ def get_motor(name):
     motor = Motor.query.filter(Motor.name == name).first()
     return motor_schema.dump(motor)
 
+@app.route('/motor-settings/', methods=['GET'])
+def get_motors():
+    motors = Motor.query.all()
+    return jsonify({"motorSettings": motors_schema.dump(motors)})
+
 @app.route('/motor-settings/', methods=['PUT'])
 def update_motor():
-    updateMotor = Motor(request.json.get('motor_name'), request.json.get('pulse_width_min'), request.json.get('pulse_width_max'), request.json.get('rotation_range_min'), request.json.get('rotation_range_max'), request.json.get('velocity'), request.json.get('acceleration'), request.json.get('deceleration'), request.json.get('period'))
+    updateMotor = Motor(request.json.get('motor_name'), request.json.get('pulse_width_min'), request.json.get('pulse_width_max'), request.json.get('rotation_range_min'), request.json.get('rotation_range_max'), request.json.get('velocity'), request.json.get('acceleration'), request.json.get('deceleration'), request.json.get('period'), request.json.get('turned_on'))
     motor = Motor.query.filter(Motor.name == updateMotor.name).first()
     motor.pulseWidthMin = updateMotor.pulseWidthMin
     motor.pulseWidthMax = updateMotor.pulseWidthMax
@@ -176,6 +183,7 @@ def update_motor():
     motor.acceleration = updateMotor.acceleration
     motor.deceleration = updateMotor.deceleration
     motor.period = updateMotor.period
+    motor.turnedOn = updateMotor.turnedOn
     #motor.effort = updateMotor.effort
     db.session.add(motor)
     db.session.commit()
