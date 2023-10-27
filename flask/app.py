@@ -44,13 +44,16 @@ class CameraSettings(db.Model):
     refreshRate = db.Column(db.Float, nullable=False)
     qualityFactor = db.Column(db.Integer, nullable=False)
     isActive = db.Column(db.Boolean, nullable=False)
+    resX = db.Column(db.Integer, nullable=False)
+    resY = db.Column(db.Integer, nullable=False)
 
-    def __init__(self, resolution, refreshRate, qualityFactor, isActive):
+    def __init__(self, resolution, refreshRate, qualityFactor, isActive, resX, resY):
         self.resolution = resolution
         self.refreshRate = refreshRate
         self.qualityFactor = qualityFactor
         self.isActive = isActive
-
+        self.resX = resX
+        self.resY = resY
 
 class PersonalitySchema(ma.SQLAlchemyAutoSchema):
     class Meta:
@@ -113,12 +116,14 @@ def get_camera_settings():
 
 @app.route('/camera-settings', methods=['PUT'])
 def update_camera_settings():
-    newCameraSettings = CameraSettings(request.json.get('resolution'), request.json.get('refreshRate'), request.json.get('qualityFactor'), request.json.get('isActive'))
+    newCameraSettings = CameraSettings(request.json.get('resolution'), request.json.get('refreshRate'), request.json.get('qualityFactor'), request.json.get('isActive'), request.json.get('resX'), request.json.get('resY'))
     updateCameraSettings = CameraSettings.query.filter(CameraSettings.id == 1).first()
     updateCameraSettings.resolution = newCameraSettings.resolution
     updateCameraSettings.refreshRate = newCameraSettings.refreshRate
     updateCameraSettings.qualityFactor = newCameraSettings.qualityFactor
     updateCameraSettings.isActive = newCameraSettings.isActive
+    updateCameraSettings.resX = newCameraSettings.resX
+    updateCameraSettings.resY = newCameraSettings.resY
     db.session.add(updateCameraSettings)
     db.session.commit()
     response = CameraSettings.query.filter(CameraSettings.id == 1).first()
