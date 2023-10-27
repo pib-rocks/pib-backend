@@ -715,16 +715,26 @@ components:
         resolution:
           type: string
           enum:
-            - 480p (SD)
-            - 720p (HD)
-            - 1080p (FHD)
+            - SD
+            - HD
+            - FHD
           examples:
-            - 480p (SD)
+            - SD
+        resX:
+          type: integer
+          examples:
+            - 620
+        resY:
+          type: integer
+          examples:
+            - 480
       required:
         - is_active 
         - refresh_rate
         - quality_factor
         - resolution
+        - resX
+        - resY
     Error:
         required:
           - Error
