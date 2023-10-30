@@ -1,6 +1,6 @@
 import os
 import uuid
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, abort
 from flask_sqlalchemy import SQLAlchemy
 from flask_marshmallow import Marshmallow
 
@@ -13,7 +13,7 @@ ma = Marshmallow(app)
 class Personality(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(255), nullable=False)
-    personalityId = db.Column(db.String(255), nullable=False)
+    personalityId = db.Column(db.String(255), nullable=False, unique=True)
     gender = db.Column(db.String(255), nullable=False)
     description = db.Column(db.String(38000), nullable=True)
     pauseThreshold = db.Column(db.Float, nullable=False)
@@ -40,7 +40,7 @@ class Personality(db.Model):
 class CameraSettings(db.Model):
     __tablename__ = "cameraSettings"
     id = db.Column(db.Integer, primary_key=True)
-    resolution = db.Column(db.String(20), nullable=False)
+    resolution = db.Column(db.String(3), nullable=False)
     refreshRate = db.Column(db.Float, nullable=False)
     qualityFactor = db.Column(db.Integer, nullable=False)
     isActive = db.Column(db.Boolean, nullable=False)
@@ -58,7 +58,7 @@ class CameraSettings(db.Model):
 class PersonalitySchema(ma.SQLAlchemyAutoSchema):
     class Meta:
         model = Personality
-        exclude = ('id',)
+        exclude = ('id', 'personalityId',)
 
 class CameraSettingsSchema(ma.SQLAlchemyAutoSchema):
     class Meta:
@@ -72,63 +72,115 @@ camera_settings_schema = CameraSettingsSchema()
 @app.route('/voice-assistant/personality')
 def get_all_personalities():
     all_personalities = Personality.query.all()
-    return jsonify({"voiceAssistantPersonalities": personalities_schema.dump(all_personalities)})
+    try:
+        return jsonify({"voiceAssistantPersonalities": personalities_schema.dump(all_personalities)})
+    except:
+        abort(500)
 
 @app.route('/voice-assistant/personality/<string:uuid>', methods=['GET'])
 def get_personality_by_id(uuid):
-    getPersonality = Personality.query.filter(Personality.personalityId == uuid).first()
-    return personality_schema.jsonify(getPersonality)
+    getPersonality = Personality.query.filter(Personality.personalityId == uuid).first_or_404()
+
+    try:
+        return personality_schema.dump(getPersonality)
+    except:
+        abort(500)
 
 @app.route('/voice-assistant/personality', methods=['POST'])
 def create_personality():
+    error = personality_schema.validate(request.json)
+    if error:
+        return error, 400
+    
     personality = Personality(request.json.get('name'), request.json.get('gender'), request.json.get('pauseThreshold'))
     personality.personalityId = str(uuid.uuid4())
+
     db.session.add(personality)
     db.session.commit()
-    returnPersonality = Personality.query.filter(Personality.personalityId == personality.personalityId).first()
-    return jsonify(personality_schema.dump(returnPersonality)), 201
+
+    returnPersonality = Personality.query.filter(Personality.personalityId == personality.personalityId).first_or_404()
+
+    try:
+        return jsonify(personality_schema.dump(returnPersonality)), 201
+    except:
+        abort(500)
 
 @app.route('/voice-assistant/personality/<string:uuid>', methods=['PUT'])
 def update_personality(uuid):
+    error = personality_schema.validate(request.json)
+    if error:
+        return error, 400
+    
     personality = Personality(request.json.get('name'), uuid, request.json.get('gender'), request.json.get('description'), request.json.get('pauseThreshold'))
-    updatePersonality = Personality.query.filter(Personality.personalityId == personality.personalityId).first()
+
+    updatePersonality = Personality.query.filter(Personality.personalityId == personality.personalityId).first_or_404()
     updatePersonality.name = personality.name
     updatePersonality.description = personality.description
     updatePersonality.gender = personality.gender
     updatePersonality.pauseThreshold = personality.pauseThreshold
+
     db.session.add(updatePersonality)
     db.session.commit()
-    updatePersonality = Personality.query.filter(Personality.personalityId == personality.personalityId).first()
-    return personality_schema.jsonify(updatePersonality)
+
+    updatePersonality = Personality.query.filter(Personality.personalityId == personality.personalityId).first_or_404()
+
+    try:
+        return personality_schema.dump(updatePersonality)
+    except:
+        abort(500)
+
 
 @app.route('/voice-assistant/personality/<string:uuid>', methods=['DELETE'])
 def delete_personality(uuid):
-    deletePersonality = Personality.query.filter(Personality.personalityId == uuid).first()
+    deletePersonality = Personality.query.filter(Personality.personalityId == uuid).first_or_404()
+
     db.session.delete(deletePersonality)
     db.session.commit()
+
     return '', 204
 
 @app.route('/camera-settings', methods=['GET'])
 def get_camera_settings():
     cameraSettings = CameraSettings.query.all()
-    return camera_settings_schema.jsonify(cameraSettings[0])
+    
+    try:
+        return camera_settings_schema.dump(cameraSettings[0])
+    except:
+        abort(500)
 
 
 @app.route('/camera-settings', methods=['PUT'])
 def update_camera_settings():
+
+    error = camera_settings_schema.validate(request.json)
+    if error:
+        return error, 400
+
     newCameraSettings = CameraSettings(request.json.get('resolution'), request.json.get('refreshRate'), request.json.get('qualityFactor'), request.json.get('isActive'), request.json.get('resX'), request.json.get('resY'))
-    updateCameraSettings = CameraSettings.query.filter(CameraSettings.id == 1).first()
+    updateCameraSettings = CameraSettings.query.filter(CameraSettings.id == 1).first_or_404()
     updateCameraSettings.resolution = newCameraSettings.resolution
     updateCameraSettings.refreshRate = newCameraSettings.refreshRate
     updateCameraSettings.qualityFactor = newCameraSettings.qualityFactor
     updateCameraSettings.isActive = newCameraSettings.isActive
     updateCameraSettings.resX = newCameraSettings.resX
     updateCameraSettings.resY = newCameraSettings.resY
+
     db.session.add(updateCameraSettings)
     db.session.commit()
-    response = CameraSettings.query.filter(CameraSettings.id == 1).first()
-    print(response.isActive)
-    return camera_settings_schema.dump(response)
+
+    response = CameraSettings.query.filter(CameraSettings.id == 1).first_or_404()
+    try:
+        return camera_settings_schema.dump(response)
+    except:
+        abort(500)
+
+@app.errorhandler(404)
+def not_found(error):
+    return jsonify({'error':"Entity not found. Please check the ID."}), 404
+
+@app.errorhandler(500)
+def not_found(error):
+    return jsonify({'error': "Internal Server Error, please try later again."}), 500
 
 if __name__ == '__main__':
     app.run(debug=True, host="0.0.0.0")
