@@ -3,12 +3,14 @@ import uuid
 from flask import Flask, jsonify, request, abort
 from flask_sqlalchemy import SQLAlchemy
 from flask_marshmallow import Marshmallow
+from flask_cors import CORS
 
 app = Flask(__name__)
 basedir = os.path.abspath(os.path.dirname("/home/pib/pib_data/"))
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + os.path.join(basedir, 'pibdata.db')
 db = SQLAlchemy(app)
 ma = Marshmallow(app)
+CORS(app)
 
 class Personality(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -55,6 +57,34 @@ class CameraSettings(db.Model):
         self.resX = resX
         self.resY = resY
 
+class Motor(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name= db.Column(db.String(255), nullable=False, unique=True)
+    pulseWidthMin = db.Column(db.Integer, nullable=False)
+    pulseWidthMax = db.Column(db.Integer, nullable=False)
+    rotationRangeMin = db.Column(db.Integer, nullable=False)
+    rotationRangeMax = db.Column(db.Integer, nullable=False)
+    velocity = db.Column(db.Integer, nullable=False)
+    acceleration = db.Column(db.Integer, nullable=False)
+    deceleration = db.Column(db.Integer, nullable=False)
+    period = db.Column(db.Integer, nullable=False)
+    turnedOn = db.Column(db.Boolean, nullable=False)
+    effort = db.Column(db.Integer, nullable=True)
+    def __init__(self, *args):
+        self.name = args[0]
+        self.pulseWidthMin = args[1]
+        self.pulseWidthMax = args[2]
+        self.rotationRangeMin = args[3]
+        self.rotationRangeMax = args[4]
+        self.velocity = args[5]
+        self.acceleration = args[6]
+        self.deceleration = args[7]
+        self.period = args[8]
+        self.turnedOn = args[9]
+        if len(args) > 10:
+            self.effort = args[10]
+
+
 class PersonalitySchema(ma.SQLAlchemyAutoSchema):
     class Meta:
         model = Personality
@@ -65,9 +95,16 @@ class CameraSettingsSchema(ma.SQLAlchemyAutoSchema):
         model = CameraSettings
         exclude = ('id',)
 
+class MotorSchema(ma.SQLAlchemyAutoSchema):
+    class Meta:
+        model = Motor
+        exclude = ('id', 'effort')
+
 personality_schema = PersonalitySchema()
 personalities_schema = PersonalitySchema(many=True)
 camera_settings_schema = CameraSettingsSchema()
+motor_schema = MotorSchema()
+motors_schema = MotorSchema(many=True)
 
 @app.route('/voice-assistant/personality')
 def get_all_personalities():
@@ -181,6 +218,34 @@ def not_found(error):
 @app.errorhandler(500)
 def not_found(error):
     return jsonify({'error': "Internal Server Error, please try later again."}), 500
+
+@app.route('/motor-settings/<string:name>', methods=['GET'])
+def get_motor(name):
+    motor = Motor.query.filter(Motor.name == name).first()
+    return motor_schema.dump(motor)
+
+@app.route('/motor-settings/', methods=['GET'])
+def get_motors():
+    motors = Motor.query.all()
+    return jsonify({"motorSettings": motors_schema.dump(motors)})
+
+@app.route('/motor-settings/', methods=['PUT'])
+def update_motor():
+    updateMotor = Motor(request.json.get('motor_name'), request.json.get('pulse_width_min'), request.json.get('pulse_width_max'), request.json.get('rotation_range_min'), request.json.get('rotation_range_max'), request.json.get('velocity'), request.json.get('acceleration'), request.json.get('deceleration'), request.json.get('period'), request.json.get('turned_on'))
+    motor = Motor.query.filter(Motor.name == updateMotor.name).first()
+    motor.pulseWidthMin = updateMotor.pulseWidthMin
+    motor.pulseWidthMax = updateMotor.pulseWidthMax
+    motor.rotationRangeMin = updateMotor.rotationRangeMin
+    motor.rotationRangeMax = updateMotor.rotationRangeMax
+    motor.velocity = updateMotor.velocity
+    motor.acceleration = updateMotor.acceleration
+    motor.deceleration = updateMotor.deceleration
+    motor.period = updateMotor.period
+    motor.turnedOn = updateMotor.turnedOn
+    #motor.effort = updateMotor.effort
+    db.session.add(motor)
+    db.session.commit()
+    return motor_schema.dump(motor)
 
 if __name__ == '__main__':
     app.run(debug=True, host="0.0.0.0")
