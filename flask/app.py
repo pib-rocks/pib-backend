@@ -87,7 +87,13 @@ class Motor(db.Model):
 class PersonalitySchema(ma.SQLAlchemyAutoSchema):
     class Meta:
         model = Personality
-        exclude = ('id', 'personalityId',)
+        exclude = ('id',)
+
+class UploadPersonalitySchema(ma.SQLAlchemyAutoSchema):
+    class Meta:
+        model = Personality
+        exclude = ('id', 'personalityId')
+
 
 class CameraSettingsSchema(ma.SQLAlchemyAutoSchema):
     class Meta:
@@ -100,6 +106,7 @@ class MotorSchema(ma.SQLAlchemyAutoSchema):
         exclude = ('id', 'effort')
 
 personality_schema = PersonalitySchema()
+upload_personality_schema = UploadPersonalitySchema()
 personalities_schema = PersonalitySchema(many=True)
 camera_settings_schema = CameraSettingsSchema()
 motor_schema = MotorSchema()
@@ -126,7 +133,7 @@ def get_personality_by_id(uuid):
 
 @app.route('/voice-assistant/personality', methods=['POST'])
 def create_personality():
-    error = personality_schema.validate(request.json)
+    error = upload_personality_schema.validate(request.json)
     if error:
         return error, 400
     personality = Personality(request.json.get('name'), request.json.get('gender'), request.json.get('pauseThreshold'))
@@ -142,11 +149,11 @@ def create_personality():
 
 @app.route('/voice-assistant/personality/<string:uuid>', methods=['PUT'])
 def update_personality(uuid):
-    error = personality_schema.validate(request.json)
+    error = upload_personality_schema.validate(request.json)
     if error:
         return error, 400
     personality = Personality(request.json.get('name'), uuid, request.json.get('gender'), request.json.get('description'), request.json.get('pauseThreshold'))
-    updatePersonality = Personality.query.filter(Personality.personalityId == personality.personalityId).first_or_404()
+    updatePersonality = Personality.query.filter(Personality.personalityId == uuid).first_or_404()
     updatePersonality.name = personality.name
     updatePersonality.description = personality.description
     updatePersonality.gender = personality.gender
