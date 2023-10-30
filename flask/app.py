@@ -84,7 +84,6 @@ class Motor(db.Model):
         if len(args) > 10:
             self.effort = args[10]
 
-
 class PersonalitySchema(ma.SQLAlchemyAutoSchema):
     class Meta:
         model = Personality
@@ -106,6 +105,7 @@ camera_settings_schema = CameraSettingsSchema()
 motor_schema = MotorSchema()
 motors_schema = MotorSchema(many=True)
 
+
 @app.route('/voice-assistant/personality')
 def get_all_personalities():
     all_personalities = Personality.query.all()
@@ -114,53 +114,46 @@ def get_all_personalities():
     except:
         abort(500)
 
+
 @app.route('/voice-assistant/personality/<string:uuid>', methods=['GET'])
 def get_personality_by_id(uuid):
     getPersonality = Personality.query.filter(Personality.personalityId == uuid).first_or_404()
-
     try:
         return personality_schema.dump(getPersonality)
     except:
         abort(500)
+
 
 @app.route('/voice-assistant/personality', methods=['POST'])
 def create_personality():
     error = personality_schema.validate(request.json)
     if error:
         return error, 400
-    
     personality = Personality(request.json.get('name'), request.json.get('gender'), request.json.get('pauseThreshold'))
     personality.personalityId = str(uuid.uuid4())
-
     db.session.add(personality)
     db.session.commit()
-
     returnPersonality = Personality.query.filter(Personality.personalityId == personality.personalityId).first_or_404()
-
     try:
         return jsonify(personality_schema.dump(returnPersonality)), 201
     except:
         abort(500)
+
 
 @app.route('/voice-assistant/personality/<string:uuid>', methods=['PUT'])
 def update_personality(uuid):
     error = personality_schema.validate(request.json)
     if error:
         return error, 400
-    
     personality = Personality(request.json.get('name'), uuid, request.json.get('gender'), request.json.get('description'), request.json.get('pauseThreshold'))
-
     updatePersonality = Personality.query.filter(Personality.personalityId == personality.personalityId).first_or_404()
     updatePersonality.name = personality.name
     updatePersonality.description = personality.description
     updatePersonality.gender = personality.gender
     updatePersonality.pauseThreshold = personality.pauseThreshold
-
     db.session.add(updatePersonality)
     db.session.commit()
-
     updatePersonality = Personality.query.filter(Personality.personalityId == personality.personalityId).first_or_404()
-
     try:
         return personality_schema.dump(updatePersonality)
     except:
@@ -170,16 +163,17 @@ def update_personality(uuid):
 @app.route('/voice-assistant/personality/<string:uuid>', methods=['DELETE'])
 def delete_personality(uuid):
     deletePersonality = Personality.query.filter(Personality.personalityId == uuid).first_or_404()
-
     db.session.delete(deletePersonality)
     db.session.commit()
+    try:
+        return '', 204
+    except:
+        abort(500)
 
-    return '', 204
 
 @app.route('/camera-settings', methods=['GET'])
 def get_camera_settings():
     cameraSettings = CameraSettings.query.all()
-    
     try:
         return camera_settings_schema.dump(cameraSettings[0])
     except:
@@ -188,11 +182,9 @@ def get_camera_settings():
 
 @app.route('/camera-settings', methods=['PUT'])
 def update_camera_settings():
-
     error = camera_settings_schema.validate(request.json)
     if error:
         return error, 400
-
     newCameraSettings = CameraSettings(request.json.get('resolution'), request.json.get('refreshRate'), request.json.get('qualityFactor'), request.json.get('isActive'), request.json.get('resX'), request.json.get('resY'))
     updateCameraSettings = CameraSettings.query.filter(CameraSettings.id == 1).first_or_404()
     updateCameraSettings.resolution = newCameraSettings.resolution
@@ -201,38 +193,40 @@ def update_camera_settings():
     updateCameraSettings.isActive = newCameraSettings.isActive
     updateCameraSettings.resX = newCameraSettings.resX
     updateCameraSettings.resY = newCameraSettings.resY
-
     db.session.add(updateCameraSettings)
     db.session.commit()
-
     response = CameraSettings.query.filter(CameraSettings.id == 1).first_or_404()
     try:
         return camera_settings_schema.dump(response)
     except:
         abort(500)
 
-@app.errorhandler(404)
-def not_found(error):
-    return jsonify({'error':"Entity not found. Please check the ID."}), 404
-
-@app.errorhandler(500)
-def not_found(error):
-    return jsonify({'error': "Internal Server Error, please try later again."}), 500
 
 @app.route('/motor-settings/<string:name>', methods=['GET'])
 def get_motor(name):
-    motor = Motor.query.filter(Motor.name == name).first()
-    return motor_schema.dump(motor)
+    motor = Motor.query.filter(Motor.name == name).first_or_404()
+    try:
+        return motor_schema.dump(motor)
+    except:
+        abort(500)
 
-@app.route('/motor-settings/', methods=['GET'])
+
+@app.route('/motor-settings', methods=['GET'])
 def get_motors():
     motors = Motor.query.all()
-    return jsonify({"motorSettings": motors_schema.dump(motors)})
+    try:
+        return jsonify({"motorSettings": motors_schema.dump(motors)})
+    except:
+        abort(500)
 
-@app.route('/motor-settings/', methods=['PUT'])
+
+@app.route('/motor-settings', methods=['PUT'])
 def update_motor():
-    updateMotor = Motor(request.json.get('motor_name'), request.json.get('pulse_width_min'), request.json.get('pulse_width_max'), request.json.get('rotation_range_min'), request.json.get('rotation_range_max'), request.json.get('velocity'), request.json.get('acceleration'), request.json.get('deceleration'), request.json.get('period'), request.json.get('turned_on'))
-    motor = Motor.query.filter(Motor.name == updateMotor.name).first()
+    error = motor_schema.validate(request.json)
+    if error:
+        return error, 400
+    updateMotor = Motor(request.json.get('name'), request.json.get('pulseWidthMin'), request.json.get('pulseWidthMax'), request.json.get('rotationRangeMin'), request.json.get('rotationRangeMax'), request.json.get('velocity'), request.json.get('acceleration'), request.json.get('deceleration'), request.json.get('period'), request.json.get('turnedOn'))
+    motor = Motor.query.filter(Motor.name == updateMotor.name).first_or_404()
     motor.pulseWidthMin = updateMotor.pulseWidthMin
     motor.pulseWidthMax = updateMotor.pulseWidthMax
     motor.rotationRangeMin = updateMotor.rotationRangeMin
@@ -245,7 +239,19 @@ def update_motor():
     #motor.effort = updateMotor.effort
     db.session.add(motor)
     db.session.commit()
-    return motor_schema.dump(motor)
+    try:
+        return motor_schema.dump(motor)
+    except:
+        abort(500)
+
+
+@app.errorhandler(404)
+def not_found(error):
+    return jsonify({'error':"Entity not found. Please check your path parameter."}), 404
+
+@app.errorhandler(500)
+def not_found(error):
+    return jsonify({'error': "Internal Server Error, please try later again."}), 500
 
 if __name__ == '__main__':
     app.run(debug=True, host="0.0.0.0")
