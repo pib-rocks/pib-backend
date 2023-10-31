@@ -21,7 +21,12 @@ class Motor:
 		self.ports = ports
 
 	def __str__(self):
-		return f"(name={self.name}, servo={self.servo.uid}, ports={self.ports})"
+		servo_id = "---"
+		try:
+			servo_id = self.get_identity()[0]
+		except:
+			pass
+		return f"(name={self.name}, servo={servo_id}, ports={self.ports})"
 
 	# Only for testing -> may be removed	
 	def get_settings(self, msg, port):
@@ -67,7 +72,7 @@ class Motor_control(Node):
 		self.servo2 = BrickletServoV2(UID2, self.ipcon)
 		self.servo3 = BrickletServoV2(UID3, self.ipcon)
 
-		# Available motors
+        # Available motors
 		self.motors = [
 			Motor("turn_head_motor", self.servo1, [0]),
 			Motor("tilt_forward_motor", self.servo1, [1]),
@@ -88,15 +93,15 @@ class Motor_control(Node):
 			Motor("/elbow_left", self.servo2, [6]),
 			Motor("/lower_arm_left_rotation", self.servo2, [7]),
 			Motor("/wrist_left", self.servo2, [8]),
-			Motor("/shoulder_vertical_left", self.servo2, [0]),
-			Motor("/shoulder_horizontal_left", self.servo3, [1]),
-			Motor("/upper_arm_right_rotation", self.servo3, [2]),
-			Motor("/elbow_right", self.servo3, [3]),
-			Motor("/lower_arm_right_rotation", self.servo3, [4]),
-			Motor("/wrist_right", self.servo3, [6]),
-			Motor("/shoulder_vertical_right", self.servo3, [7, 9]),
-			Motor("/shoulder_horizontal_right", self.servo3, [5, 8])
-		]
+			Motor("/shoulder_vertical_left", self.servo3, [7, 9]),
+			Motor("/shoulder_horizontal_left", self.servo3, [0]),
+			Motor("/upper_arm_right_rotation", self.servo3, [1]),
+			Motor("/elbow_right", self.servo3, [2]),
+			Motor("/lower_arm_right_rotation", self.servo3, [3]),
+			Motor("/wrist_right", self.servo3, [4]),
+			Motor("/shoulder_vertical_right", self.servo3, [5, 8]),
+			Motor("/shoulder_horizontal_right", self.servo3, [6])
+        ]
 
 		# Maps motor-name (as string) to motor-object
 		self.motor_map = { motor.name : motor for motor in self.motors }
