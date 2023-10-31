@@ -15,23 +15,23 @@ from datatypes.srv import MotorSettingsSrv
 
 class Motor:	
 
-		def __init__(self, name, servo, ports):
-			self.name = name
-			self.servo = servo
-			self.ports = ports
+	def __init__(self, name, servo, ports):
+		self.name = name
+		self.servo = servo
+		self.ports = ports
 
-		def __str__(self):
-			return f"(name={self.name}, servo={self.servo.uid}, ports={self.ports})"
+	def __str__(self):
+		return f"(name={self.name}, servo={self.servo.uid}, ports={self.ports})"
 
-		# Only for testing -> may be removed	
-		def get_settings(self, msg, port):
-			msg.motor_name = self.name
-			msg.pulse_width_min, msg.pulse_width_max = [float(v) for v in self.servo.get_pulse_width(port)]
-			msg.rotation_range_min, msg.rotation_range_max = [float(v) for v in self.servo.get_degree(port)]
-			msg.velocity, msg.acceleration, msg.deceleration = [float(v) for v in self.servo.get_motion_configuration(port)]
-			msg.period = float(self.servo.get_period(port))
-			msg.pulse_width_min, msg.pulse_width_max = [float(v) for v in self.servo.get_pulse_width(port)]
-			msg.turned_on = self.servo.get_enabled(port)
+	# Only for testing -> may be removed	
+	def get_settings(self, msg, port):
+		msg.motor_name = self.name
+		msg.pulse_width_min, msg.pulse_width_max = [float(v) for v in self.servo.get_pulse_width(port)]
+		msg.rotation_range_min, msg.rotation_range_max = [float(v) for v in self.servo.get_degree(port)]
+		msg.velocity, msg.acceleration, msg.deceleration = [float(v) for v in self.servo.get_motion_configuration(port)]
+		msg.period = float(self.servo.get_period(port))
+		msg.pulse_width_min, msg.pulse_width_max = [float(v) for v in self.servo.get_pulse_width(port)]
+		msg.turned_on = self.servo.get_enabled(port)
 
 
 class Motor_control(Node):
