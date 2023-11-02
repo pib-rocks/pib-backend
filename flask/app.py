@@ -27,7 +27,7 @@ class Personality(db.Model):
 
     def eq3(self, args):
         self.name = args[0]
-        self.personalityIdd = str(uuid.uuid4())
+        self.personalityId = str(uuid.uuid4())
         self.description = ""
         self.gender = args[1]
         self.pauseThreshold = args[2]
