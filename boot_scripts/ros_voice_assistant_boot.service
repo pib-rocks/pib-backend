@@ -5,7 +5,7 @@ After=network.target
 [Service]
 Type=simple
 User=pib
-ExecStart=/usr/bin/bash /home/pib/ros_working_dir/src/voice_assistant/boot_scripts/ros_voice_assistant_boot.sh
+ExecStart=/usr/bin/bash /home/pib/ros_working_dir/src/voice-assistant/boot_scripts/ros_voice_assistant_boot.sh
 
 [Install]
 WantedBy=multi-user.target
