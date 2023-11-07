@@ -208,6 +208,6 @@ insert into
    cameraSettings
 values
    (
-      NULL, "480p (SD)", 0.1, 80, FALSE, 640, 480
+      NULL, "SD", 0.1, 80, FALSE, 640, 480
    )
 ;
