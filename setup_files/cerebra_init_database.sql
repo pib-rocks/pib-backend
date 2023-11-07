@@ -417,14 +417,6 @@ insert into
    motorBrickletPin
 values
    (
-      NULL, 3, 27, 6
-   )
-;
-
-insert into
-   motorBrickletPin
-values
-   (
       NULL, 3, 26, 5
    )
 ;
