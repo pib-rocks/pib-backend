@@ -190,3 +190,5 @@ values
       NULL, "480p (SD)", 0.1, 80, FALSE
    )
 ;
+create table IF NOT EXISTS bricklet (id INTEGER primary key AUTOINCREMENT NOT NULL, brickletId TEXT NOT NULL);
+create table IF NOT EXISTS motorBrickletPin (id INTEGER primary key AUTOINCREMENT NOT NULL, brickletId INTEGER NOT NULL, motorId INTEGER NOT NULL, pin INTEGER NOT NULL, FOREIGN KEY (brickletId) REFERENCES bricklet(id), FOREIGN KEY (motorId) REFERENCES motor(id));
