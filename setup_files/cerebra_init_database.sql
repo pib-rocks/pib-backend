@@ -211,41 +211,41 @@ values
       NULL, "SD", 0.1, 80, FALSE, 640, 480
    )
 ;
-create table IF NOT EXISTS bricklet (id INTEGER primary key AUTOINCREMENT NOT NULL, brickletId TEXT NOT NULL);
+create table IF NOT EXISTS bricklet (id INTEGER primary key AUTOINCREMENT NOT NULL, brickletId TEXT NOT NULL, brickletNumber INTEGER AUTOINCREMENT NOT NULL);
 insert into
    bricklet
 values
    (
-      NULL, "XYZ"
+      NULL, "XYZ", NULL
    )
 ;
 insert into
    bricklet
 values
    (
-      NULL, "XYZ"
+      NULL, "XYZ", NULL
    )
 ;
 insert into
    bricklet
 values
    (
-      NULL, "XYZ"
+      NULL, "XYZ", NULL
    )
 ;
-create table IF NOT EXISTS motorBrickletPin (id INTEGER primary key AUTOINCREMENT NOT NULL, brickletId INTEGER NOT NULL, motorId INTEGER NOT NULL, pin INTEGER NOT NULL, FOREIGN KEY (brickletId) REFERENCES bricklet(id), FOREIGN KEY (motorId) REFERENCES motor(id));
+create table IF NOT EXISTS motorBrickletPin (id INTEGER primary key AUTOINCREMENT NOT NULL, brickletId INTEGER NOT NULL, motorId INTEGER NOT NULL, pin INTEGER NOT NULL, FOREIGN KEY (brickletId) REFERENCES bricklet(id), FOREIGN KEY (motorId) REFERENCES motor(id), cominationNumber INTEGER AUTOINCREMENT NOT NULL);
 insert into
    motorBrickletPin
 values
    (
-      NULL, 1, 3, 0
+      NULL, 1, 3, 0, NULL
    )
 ;
 insert into
    motorBrickletPin
 values
    (
-      NULL, 1, 1, 1
+      NULL, 1, 1, 1, NULL
    )
 ;
 insert into
@@ -259,157 +259,114 @@ insert into
    motorBrickletPin
 values
    (
-      NULL, 1, 5, 3
+      NULL, 1, 5, 3, NULL
    )
 ;
 insert into
    motorBrickletPin
 values
    (
-      NULL, 1, 4, 4
+      NULL, 1, 4, 4, NULL
    )
 ;
 insert into
    motorBrickletPin
 values
    (
-      NULL, 1, 6, 5
+      NULL, 1, 6, 5, NULL
    )
 ;
 insert into
    motorBrickletPin
 values
    (
-      NULL, 1, 7, 6
+      NULL, 1, 7, 6, NULL
    )
 ;
 insert into
    motorBrickletPin
 values
    (
-      NULL, 1, 8, 7
+      NULL, 1, 8, 7, NULL
    )
 ;
 insert into
    motorBrickletPin
 values
    (
-      NULL, 1, 9, 8
+      NULL, 1, 9, 8, NULL
    )
 ;
 insert into
    motorBrickletPin
 values
    (
-      NULL, 1, 11, 9
+      NULL, 1, 11, 9, NULL
    )
 ;
 
-
-insert into
-   motorBrickletPin
-values
-   (
-      NULL, 2, 10, 0
-   )
-;
-insert into
-   motorBrickletPin
-values
-   (
-      NULL, 2, 12, 1
-   )
-;
-insert into
-   motorBrickletPin
-values
-   (
-      NULL, 2, 13, 2
-   )
-;
-insert into
-   motorBrickletPin
-values
-   (
-      NULL, 2, 14, 3
-   )
-;
-insert into
-   motorBrickletPin
-values
-   (
-      NULL, 2, 15, 4
-   )
-;
-insert into
-   motorBrickletPin
-values
-   (
-      NULL, 2, 16, 5
-   )
-;
-insert into
-   motorBrickletPin
-values
-   (
-      NULL, 2, 17, 6
-   )
-;
-insert into
-   motorBrickletPin
-values
-   (
-      NULL, 2, 18, 7
-   )
-;
-insert into
-   motorBrickletPin
-values
-   (
-      NULL, 2, 19, 8
-   )
-;
 
 insert into
    motorBrickletPin
 values
    (
-      NULL, 3, 21, 0
+      NULL, 2, 10, 0, NULL
    )
 ;
 insert into
    motorBrickletPin
 values
    (
-      NULL, 3, 22, 1
+      NULL, 2, 12, 1, NULL
    )
 ;
 insert into
    motorBrickletPin
 values
    (
-      NULL, 3, 23, 2
+      NULL, 2, 13, 2, NULL
    )
 ;
 insert into
    motorBrickletPin
 values
    (
-      NULL, 3, 24, 3
+      NULL, 2, 14, 3, NULL
    )
 ;
 insert into
    motorBrickletPin
 values
    (
-      NULL, 3, 25, 4
+      NULL, 2, 15, 4, NULL
    )
 ;
 insert into
    motorBrickletPin
 values
    (
-      NULL, 3, 27, 6
+      NULL, 2, 16, 5, NULL
+   )
+;
+insert into
+   motorBrickletPin
+values
+   (
+      NULL, 2, 17, 6, NULL
+   )
+;
+insert into
+   motorBrickletPin
+values
+   (
+      NULL, 2, 18, 7, NULL
+   )
+;
+insert into
+   motorBrickletPin
+values
+   (
+      NULL, 2, 19, 8, NULL
    )
 ;
 
@@ -417,14 +374,42 @@ insert into
    motorBrickletPin
 values
    (
-      NULL, 3, 26, 5
+      NULL, 3, 21, 0, NULL
    )
 ;
 insert into
    motorBrickletPin
 values
    (
-      NULL, 3, 26, 8
+      NULL, 3, 22, 1, NULL
+   )
+;
+insert into
+   motorBrickletPin
+values
+   (
+      NULL, 3, 23, 2, NULL
+   )
+;
+insert into
+   motorBrickletPin
+values
+   (
+      NULL, 3, 24, 3, NULL
+   )
+;
+insert into
+   motorBrickletPin
+values
+   (
+      NULL, 3, 25, 4, NULL
+   )
+;
+insert into
+   motorBrickletPin
+values
+   (
+      NULL, 3, 27, 6, NULL
    )
 ;
 
@@ -432,13 +417,28 @@ insert into
    motorBrickletPin
 values
    (
-      NULL, 3, 20, 7
+      NULL, 3, 26, 5, NULL
    )
 ;
 insert into
    motorBrickletPin
 values
    (
-      NULL, 3, 20, 9
+      NULL, 3, 26, 8, NULL
+   )
+;
+
+insert into
+   motorBrickletPin
+values
+   (
+      NULL, 3, 20, 7, NULL
+   )
+;
+insert into
+   motorBrickletPin
+values
+   (
+      NULL, 3, 20, 9, NULL
    )
 ;
