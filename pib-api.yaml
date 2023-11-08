@@ -573,6 +573,30 @@ paths:
           $ref: '#/components/responses/404'
         '500':
           $ref: '#/components/responses/500'
+    put:
+      tags:
+        - motorBrickletPin
+      summary: Update bricklet pin of motor by motor name
+      requestBody:
+        description: Update brickletId
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PutMotorBrickletPin'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MotorBrickletPin'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
   /motor-bricklet-pin/{motor-name}:
     get:
       tags: 
@@ -584,31 +608,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/GetMotorBrickletPinByCombinationNumber'
-        '400':
-          $ref: '#/components/responses/400'
-        '404':
-          $ref: '#/components/responses/404'
-        '500':
-          $ref: '#/components/responses/500'
-    put:
-      tags:
-        - motorBrickletPin
-      summary: Update bricklet pin of motor by motor name
-      requestBody:
-        description: Update brickletId
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/MotorBrickletPin'
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/MotorBrickletPin'
+                $ref: '#/components/schemas/AllMotorBrickletPin'
         '400':
           $ref: '#/components/responses/400'
         '404':
@@ -913,15 +913,6 @@ components:
     MotorBrickletPin:
       type: object
       properties:
-        combinationNumber:
-          readOnly: true
-          type: integer
-          examples:
-            - 1
-        brickletNumber:
-          type: integer
-          examples:
-            - 1
         motorName:
           type: string
           examples:
@@ -930,7 +921,7 @@ components:
           type: integer
           examples:
             - 0
-    GetMotorBrickletPinByCombinationNumber:
+    PutMotorBrickletPin:
       type: object
       properties:
         brickletNumber:
