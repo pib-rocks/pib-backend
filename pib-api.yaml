@@ -717,10 +717,6 @@ components:
     CameraSettings:
       type: object
       properties:
-        is_active: 
-          type: boolean
-          examples: 
-            - true
         refresh_rate: 
           description: "unit of measure: seconds (s)"
           type: number
@@ -754,7 +750,6 @@ components:
           examples:
             - 480
       required:
-        - is_active 
         - refresh_rate
         - quality_factor
         - resolution
