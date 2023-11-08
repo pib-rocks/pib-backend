@@ -233,7 +233,7 @@ values
       NULL, "XYZ", NULL
    )
 ;
-create table IF NOT EXISTS motorBrickletPin (id INTEGER primary key AUTOINCREMENT NOT NULL, brickletId INTEGER NOT NULL, motorId INTEGER NOT NULL, pin INTEGER NOT NULL, FOREIGN KEY (brickletId) REFERENCES bricklet(id), FOREIGN KEY (motorId) REFERENCES motor(id), cominationNumber INTEGER AUTOINCREMENT NOT NULL);
+create table IF NOT EXISTS motorBrickletPin (id INTEGER primary key AUTOINCREMENT NOT NULL, brickletId INTEGER NOT NULL, motorId INTEGER NOT NULL, pin INTEGER NOT NULL, FOREIGN KEY (brickletId) REFERENCES bricklet(id), FOREIGN KEY (motorId) REFERENCES motor(id), combinationNumber INTEGER AUTOINCREMENT NOT NULL);
 insert into
    motorBrickletPin
 values
