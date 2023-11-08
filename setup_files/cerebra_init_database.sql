@@ -211,205 +211,162 @@ values
       NULL, "SD", 0.1, 80, FALSE, 640, 480
    )
 ;
-create table IF NOT EXISTS bricklet (id INTEGER primary key AUTOINCREMENT NOT NULL, brickletId TEXT NOT NULL, brickletNumber INTEGER AUTOINCREMENT NOT NULL);
+create table IF NOT EXISTS bricklet (id INTEGER primary key AUTOINCREMENT NOT NULL, brickletId TEXT NOT NULL, brickletNumber INTEGER NOT NULL);
 insert into
    bricklet
 values
    (
-      NULL, "XYZ", NULL
-   )
-;
-insert into
-   bricklet
-values
-   (
-      NULL, "XYZ", NULL
+      NULL, "XYZ", 1
    )
 ;
 insert into
    bricklet
 values
    (
-      NULL, "XYZ", NULL
+      NULL, "XYZ", (SELECT MAX(id) + 1 FROM bricklet)
    )
 ;
-create table IF NOT EXISTS motorBrickletPin (id INTEGER primary key AUTOINCREMENT NOT NULL, brickletId INTEGER NOT NULL, motorId INTEGER NOT NULL, pin INTEGER NOT NULL, FOREIGN KEY (brickletId) REFERENCES bricklet(id), FOREIGN KEY (motorId) REFERENCES motor(id), combinationNumber INTEGER AUTOINCREMENT NOT NULL);
+insert into
+   bricklet
+values
+   (
+      NULL, "XYZ", (SELECT MAX(id) + 1 FROM bricklet)
+   )
+;
+create table IF NOT EXISTS motorBrickletPin (id INTEGER primary key AUTOINCREMENT NOT NULL, brickletId INTEGER NOT NULL, motorId INTEGER NOT NULL, pin INTEGER NOT NULL, combinationNumber INTEGER NOT NULL, FOREIGN KEY (brickletId) REFERENCES bricklet(id), FOREIGN KEY (motorId) REFERENCES motor(id));
 insert into
    motorBrickletPin
 values
    (
-      NULL, 1, 3, 0, NULL
-   )
-;
-insert into
-   motorBrickletPin
-values
-   (
-      NULL, 1, 1, 1, NULL
-   )
-;
-insert into
-   motorBrickletPin
-values
-   (
-      NULL, 1, 2, 2
+      NULL, 1, 3, 0, 1
    )
 ;
 insert into
    motorBrickletPin
 values
    (
-      NULL, 1, 5, 3, NULL
+      NULL, 1, 1, 1, (SELECT MAX(id) + 1 FROM motorBrickletPin)
    )
 ;
 insert into
    motorBrickletPin
 values
    (
-      NULL, 1, 4, 4, NULL
+      NULL, 1, 2, 2, (SELECT MAX(id) + 1 FROM motorBrickletPin)
    )
 ;
 insert into
    motorBrickletPin
 values
    (
-      NULL, 1, 6, 5, NULL
+      NULL, 1, 5, 3, (SELECT MAX(id) + 1 FROM motorBrickletPin)
    )
 ;
 insert into
    motorBrickletPin
 values
    (
-      NULL, 1, 7, 6, NULL
+      NULL, 1, 4, 4, (SELECT MAX(id) + 1 FROM motorBrickletPin)
    )
 ;
 insert into
    motorBrickletPin
 values
    (
-      NULL, 1, 8, 7, NULL
+      NULL, 1, 6, 5, (SELECT MAX(id) + 1 FROM motorBrickletPin)
    )
 ;
 insert into
    motorBrickletPin
 values
    (
-      NULL, 1, 9, 8, NULL
+      NULL, 1, 7, 6, (SELECT MAX(id) + 1 FROM motorBrickletPin)
    )
 ;
 insert into
    motorBrickletPin
 values
    (
-      NULL, 1, 11, 9, NULL
+      NULL, 1, 8, 7, (SELECT MAX(id) + 1 FROM motorBrickletPin)
+   )
+;
+insert into
+   motorBrickletPin
+values
+   (
+      NULL, 1, 9, 8, (SELECT MAX(id) + 1 FROM motorBrickletPin)
+   )
+;
+insert into
+   motorBrickletPin
+values
+   (
+      NULL, 1, 11, 9, (SELECT MAX(id) + 1 FROM motorBrickletPin)
    )
 ;
 
-
-insert into
-   motorBrickletPin
-values
-   (
-      NULL, 2, 10, 0, NULL
-   )
-;
-insert into
-   motorBrickletPin
-values
-   (
-      NULL, 2, 12, 1, NULL
-   )
-;
-insert into
-   motorBrickletPin
-values
-   (
-      NULL, 2, 13, 2, NULL
-   )
-;
-insert into
-   motorBrickletPin
-values
-   (
-      NULL, 2, 14, 3, NULL
-   )
-;
-insert into
-   motorBrickletPin
-values
-   (
-      NULL, 2, 15, 4, NULL
-   )
-;
-insert into
-   motorBrickletPin
-values
-   (
-      NULL, 2, 16, 5, NULL
-   )
-;
-insert into
-   motorBrickletPin
-values
-   (
-      NULL, 2, 17, 6, NULL
-   )
-;
-insert into
-   motorBrickletPin
-values
-   (
-      NULL, 2, 18, 7, NULL
-   )
-;
-insert into
-   motorBrickletPin
-values
-   (
-      NULL, 2, 19, 8, NULL
-   )
-;
 
 insert into
    motorBrickletPin
 values
    (
-      NULL, 3, 21, 0, NULL
+      NULL, 2, 10, 0, (SELECT MAX(id) + 1 FROM motorBrickletPin)
    )
 ;
 insert into
    motorBrickletPin
 values
    (
-      NULL, 3, 22, 1, NULL
+      NULL, 2, 12, 1, (SELECT MAX(id) + 1 FROM motorBrickletPin)
    )
 ;
 insert into
    motorBrickletPin
 values
    (
-      NULL, 3, 23, 2, NULL
+      NULL, 2, 13, 2, (SELECT MAX(id) + 1 FROM motorBrickletPin)
    )
 ;
 insert into
    motorBrickletPin
 values
    (
-      NULL, 3, 24, 3, NULL
+      NULL, 2, 14, 3, (SELECT MAX(id) + 1 FROM motorBrickletPin)
    )
 ;
 insert into
    motorBrickletPin
 values
    (
-      NULL, 3, 25, 4, NULL
+      NULL, 2, 15, 4, (SELECT MAX(id) + 1 FROM motorBrickletPin)
    )
 ;
 insert into
    motorBrickletPin
 values
    (
-      NULL, 3, 27, 6, NULL
+      NULL, 2, 16, 5, (SELECT MAX(id) + 1 FROM motorBrickletPin)
+   )
+;
+insert into
+   motorBrickletPin
+values
+   (
+      NULL, 2, 17, 6, (SELECT MAX(id) + 1 FROM motorBrickletPin)
+   )
+;
+insert into
+   motorBrickletPin
+values
+   (
+      NULL, 2, 18, 7, (SELECT MAX(id) + 1 FROM motorBrickletPin)
+   )
+;
+insert into
+   motorBrickletPin
+values
+   (
+      NULL, 2, 19, 8, (SELECT MAX(id) + 1 FROM motorBrickletPin)
    )
 ;
 
@@ -417,14 +374,42 @@ insert into
    motorBrickletPin
 values
    (
-      NULL, 3, 26, 5, NULL
+      NULL, 3, 21, 0, (SELECT MAX(id) + 1 FROM motorBrickletPin)
    )
 ;
 insert into
    motorBrickletPin
 values
    (
-      NULL, 3, 26, 8, NULL
+      NULL, 3, 22, 1, (SELECT MAX(id) + 1 FROM motorBrickletPin)
+   )
+;
+insert into
+   motorBrickletPin
+values
+   (
+      NULL, 3, 23, 2, (SELECT MAX(id) + 1 FROM motorBrickletPin)
+   )
+;
+insert into
+   motorBrickletPin
+values
+   (
+      NULL, 3, 24, 3, (SELECT MAX(id) + 1 FROM motorBrickletPin)
+   )
+;
+insert into
+   motorBrickletPin
+values
+   (
+      NULL, 3, 25, 4, (SELECT MAX(id) + 1 FROM motorBrickletPin)
+   )
+;
+insert into
+   motorBrickletPin
+values
+   (
+      NULL, 3, 27, 6, (SELECT MAX(id) + 1 FROM motorBrickletPin)
    )
 ;
 
@@ -432,13 +417,28 @@ insert into
    motorBrickletPin
 values
    (
-      NULL, 3, 20, 7, NULL
+      NULL, 3, 26, 5, (SELECT MAX(id) + 1 FROM motorBrickletPin)
    )
 ;
 insert into
    motorBrickletPin
 values
    (
-      NULL, 3, 20, 9, NULL
+      NULL, 3, 26, 8, (SELECT MAX(id) + 1 FROM motorBrickletPin)
+   )
+;
+
+insert into
+   motorBrickletPin
+values
+   (
+      NULL, 3, 20, 7, (SELECT MAX(id) + 1 FROM motorBrickletPin)
+   )
+;
+insert into
+   motorBrickletPin
+values
+   (
+      NULL, 3, 20, 9, (SELECT MAX(id) + 1 FROM motorBrickletPin)
    )
 ;
