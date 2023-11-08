@@ -16,6 +16,10 @@ tags:
     description: Read- and Update-Operations for motor-settings
   - name: camera-settings
     description: Read- and Update-Operations for camera-settings
+  - name: bricklet
+    description: Read- and Update-Operations for bricklet ids
+  - name: motorBrickletPin
+    description: Read- and Update-Operations for bricklet ids
 paths:
   /voice-assistant/personality:
     post:
@@ -315,7 +319,7 @@ paths:
           $ref: '#/components/responses/404'
         '500':
           $ref: '#/components/responses/500'
-  /motor-settings/:
+  /motor-settings:
     get:
       tags:
         - motor-settings
@@ -485,6 +489,126 @@ paths:
             application/json:
               schema: 
                 $ref: '#/components/schemas/CameraSettings'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+  /bricklet:
+    get:
+      tags: 
+        - bricklet
+      summary: Get all brickletIds
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Bricklets'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+  /bricklet/{id}:
+    get:
+      tags: 
+        - bricklet
+      summary: Get one brickletId
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Bricklet'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+    put:
+      tags:
+        - bricklet
+      summary: Update brickletId
+      requestBody:
+        description: Update brickletId
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Bricklet'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Bricklet'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+  /motor-bricklet-pin:
+    get:
+      tags: 
+        - motorBrickletPin
+      summary: Get all brickletIds
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AllMotorBrickletPin'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+  /motor-bricklet-pin/{id}:
+    get:
+      tags: 
+        - motorBrickletPin
+      summary: Get one brickletId
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MotorBrickletPin'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+    put:
+      tags:
+        - motorBrickletPin
+      summary: Update brickletId
+      requestBody:
+        description: Update brickletId
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MotorBrickletPin'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MotorBrickletPin'
         '400':
           $ref: '#/components/responses/400'
         '404':
@@ -760,6 +884,52 @@ components:
         - resolution
         - resX
         - resY
+    Bricklet:
+      type: object
+      properties:
+        id:
+          readOnly: true
+          type: integer
+          examples:
+            - 1
+        brickletId:
+          type: string
+          examples:
+            - XYZ
+    Bricklets:
+      type: object
+      properties:
+        bricklets:
+          type: array
+          items:
+            $ref: '#/components/schemas/Bricklet'
+    MotorBrickletPin:
+      type: object
+      properties:
+        id:
+          readOnly: true
+          type: integer
+          examples:
+            - 1
+        brickletId:
+          type: integer
+          examples:
+            - 1
+        motorId:
+          type: integer
+          examples:
+            - 1
+        pin:
+          type: integer
+          examples:
+            - 0
+    AllMotorBrickletPin:
+      type: object
+      properties:
+        motorBrickletPins:
+          type: array
+          items:
+            $ref: '#/components/schemas/MotorBrickletPin'
     Error:
         required:
           - Error
