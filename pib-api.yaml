@@ -917,6 +917,10 @@ components:
           type: string
           examples:
             - tilt_forward_motor
+        brickletId:
+          type: integer
+          examples:
+            - 1
         pin:
           type: integer
           examples:
@@ -924,11 +928,11 @@ components:
     PutMotorBrickletPin:
       type: object
       properties:
-        brickletNumber:
+        brickletId:
           type: integer
           examples:
             - 1
-        motomotorNamerId:
+        motorName:
           type: string
           examples:
             - tilt_forward_motor
