@@ -26,7 +26,7 @@ class Motor:
         def __str__(self):
                 servo_id = "---"
                 try:
-                        servo_id = self.get_identity()[0]
+                        servo_id = self.servo.get_identity()[0]
                 except:
                         pass
                 return f"(name = {self.name}, servo = {servo_id}, ports = {self.ports})"
