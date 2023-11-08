@@ -211,3 +211,4 @@ values
       NULL, "SD", 0.1, 80, FALSE, 640, 480
    )
 ;
+create table IF NOT EXISTS program (id INTEGER primary key AUTOINCREMENT NOT NULL, name TEXT NOT NULL, program TEXT NOT NULL, programNumber INTEGER UNIQUE NOT NULL);
