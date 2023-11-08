@@ -203,11 +203,11 @@ values
       NULL, "8b310f95-92cd-4512-b42a-d3fe29c4bb8a", "Thomas", "Male", NULL, 0.8
    )
 ;
-create table IF NOT EXISTS cameraSettings (id INTEGER primary key AUTOINCREMENT NOT NULL, resolution Text NOT NULL, refreshRate Numeric NOT NULL, qualityFactor INTEGER NOT NULL, isActive BOOLEAN NOT NULL, resX Integer NOT NULL, resY Integer NOT Null);
+create table IF NOT EXISTS cameraSettings (id INTEGER primary key AUTOINCREMENT NOT NULL, resolution Text NOT NULL, refreshRate Numeric NOT NULL, qualityFactor INTEGER NOT NULL, resX Integer NOT NULL, resY Integer NOT Null);
 insert into
    cameraSettings
 values
    (
-      NULL, "480p (SD)", 0.1, 80, FALSE, 640, 480
+      NULL, "480p (SD)", 0.1, 80, 640, 480
    )
 ;
