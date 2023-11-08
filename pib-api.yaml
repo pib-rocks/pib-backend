@@ -864,9 +864,9 @@ components:
       properties:
         programNumber:
           readOnly: true
-          type: number
+          type: string
           examples:
-            - 1
+            - "bb13a553-f5de-49d2-96df-985152e125c7"
         name:
           type: string
           examples:
@@ -874,7 +874,7 @@ components:
         program:
           type: string
           examples:
-            - ""
+            - "{}"
     Programs:
       properties:
         programs:
