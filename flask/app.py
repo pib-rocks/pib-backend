@@ -45,15 +45,13 @@ class CameraSettings(db.Model):
     resolution = db.Column(db.String(3), nullable=False)
     refreshRate = db.Column(db.Float, nullable=False)
     qualityFactor = db.Column(db.Integer, nullable=False)
-    isActive = db.Column(db.Boolean, nullable=False)
     resX = db.Column(db.Integer, nullable=False)
     resY = db.Column(db.Integer, nullable=False)
 
-    def __init__(self, resolution, refreshRate, qualityFactor, isActive, resX, resY):
+    def __init__(self, resolution, refreshRate, qualityFactor, resX, resY):
         self.resolution = resolution
         self.refreshRate = refreshRate
         self.qualityFactor = qualityFactor
-        self.isActive = isActive
         self.resX = resX
         self.resY = resY
 
@@ -192,12 +190,11 @@ def update_camera_settings():
     error = camera_settings_schema.validate(request.json)
     if error:
         return error, 400
-    newCameraSettings = CameraSettings(request.json.get('resolution'), request.json.get('refreshRate'), request.json.get('qualityFactor'), request.json.get('isActive'), request.json.get('resX'), request.json.get('resY'))
+    newCameraSettings = CameraSettings(request.json.get('resolution'), request.json.get('refreshRate'), request.json.get('qualityFactor'), request.json.get('resX'), request.json.get('resY'))
     updateCameraSettings = CameraSettings.query.filter(CameraSettings.id == 1).first_or_404()
     updateCameraSettings.resolution = newCameraSettings.resolution
     updateCameraSettings.refreshRate = newCameraSettings.refreshRate
     updateCameraSettings.qualityFactor = newCameraSettings.qualityFactor
-    updateCameraSettings.isActive = newCameraSettings.isActive
     updateCameraSettings.resX = newCameraSettings.resX
     updateCameraSettings.resY = newCameraSettings.resY
     db.session.add(updateCameraSettings)
