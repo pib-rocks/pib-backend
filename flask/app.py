@@ -85,6 +85,7 @@ class Motor(db.Model):
             self.effort = args[10]
 
 class Program(db.Model):
+    __tablename__ = "program"
     id = db.Column(db.Integer, primary_key=True)
     name= db.Column(db.String(255), nullable=False, unique=True)
     program= db.Column(db.String(100000), nullable=False)
@@ -118,7 +119,12 @@ class MotorSchema(ma.SQLAlchemyAutoSchema):
 class ProgramSchema(ma.SQLAlchemyAutoSchema):
     class Meta:
         model = Program
-        exclude = ('id', 'programNumber',)
+        exclude = ('id',)
+
+class ProgramWithOutNumber(ma.SQLAlchemyAutoSchema):
+    class Meta:
+        model = Program
+        exclude = ('id', 'programNumber')
 
 personality_schema = PersonalitySchema()
 upload_personality_schema = UploadPersonalitySchema()
@@ -127,6 +133,7 @@ camera_settings_schema = CameraSettingsSchema()
 motor_schema = MotorSchema()
 motors_schema = MotorSchema(many=True)
 program_schema = ProgramSchema()
+program_schema_without_programnumber = ProgramWithOutNumber()
 programs_schema = ProgramSchema(many=True)
 
 
@@ -270,7 +277,7 @@ def update_motor():
 
 @app.route('/program', methods=['POST'])
 def create_program():
-    error = program_schema.validate(request.json)
+    error = program_schema_without_programnumber.validate(request.json)
     if error:
         return error, 400
     createProgram = Program(request.json.get("name"), request.json.get("program"))
@@ -286,6 +293,40 @@ def get_all_programs():
     allPrograms = Program.query.all()
     try:
         return jsonify({"programs": programs_schema.dump(allPrograms)})
+    except:
+        abort(500)
+
+@app.route('/program/<string:programNumber>', methods=['GET'])
+def get_program_by_number(programNumber):
+    program = Program.query.filter(Program.programNumber == programNumber).first_or_404()
+    try:
+        return program_schema_without_programnumber.dump(program);
+    except:
+        abort(500)
+
+@app.route('/program/<string:programNumber>', methods=['PUT'])
+def update_program_by_number(programNumber):
+    error = program_schema_without_programnumber.validate(request.json)
+    if error:
+        return error, 400
+    newProgram = Program(request.json.get("name"), request.json.get("program"))
+    opdProgram = Program.query.filter(Program.programNumber == programNumber).first_or_404()
+    opdProgram.name = newProgram.name
+    opdProgram.program = newProgram.program
+    db.session.add(opdProgram)
+    db.session.commit()
+    try:
+        return program_schema.dump(opdProgram);
+    except:
+        abort(500)
+
+@app.route('/program/<string:programNumber>', methods=['DELETE'])
+def delete_program_by_number(programNumber):
+    deleteProgram = Program.query.filter(Program.programNumber == programNumber).first_or_404()
+    try:
+        db.session.delete(deleteProgram)
+        db.session.commit()
+        return '', 204
     except:
         abort(500)
 
