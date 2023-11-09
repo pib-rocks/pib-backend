@@ -16,6 +16,8 @@ tags:
     description: Read- and Update-Operations for motor-settings
   - name: camera-settings
     description: Read- and Update-Operations for camera-settings
+  - name: program
+    description: CRUD-Operations for user programs
 paths:
   /voice-assistant/personality:
     post:
@@ -57,14 +59,14 @@ paths:
           $ref: '#/components/responses/400'
         '500':
           $ref: '#/components/responses/500'
-  /voice-assistant/personality/{personality_id}:
+  /voice-assistant/personality/{personality-id}:
     get:
       tags:
         - personality
       summary: Get a voice assistant personality by id
       operationId: getVoiceAssistantPersonalityById
       parameters:
-        - name: personality_id
+        - name: personalityId
           in: path
           required: true
           schema:
@@ -88,7 +90,7 @@ paths:
       summary: Update a voice assistant personality by id
       operationId: updateVoiceAssistantPersonalityById
       parameters:
-        - name: personality_id
+        - name: personalityId
           in: path
           required: true
           schema:
@@ -119,7 +121,7 @@ paths:
       summary: Delete a voice assistant personality by id
       operationId: deleteVoiceAssistantPersonalityById
       parameters:
-        - name: personality_id
+        - name: personalityId
           in: path
           required: true
           schema:
@@ -133,14 +135,14 @@ paths:
           $ref: '#/components/responses/404'
         '500':
           $ref: '#/components/responses/500'
-  /voice-assistant/chat/{personality_id}:
+  /voice-assistant/chat/{personality-id}:
     post:
       tags:
         - chat
       summary: Add a new voice assistant chat
       operationId: createVoiceAssistantChat
       parameters:
-        - name: personality_id
+        - name: personalityId
           description: The personality id is forwarded by the personality tab
           in: path
           required: true
@@ -183,14 +185,14 @@ paths:
           $ref: '#/components/responses/400'
         '500':
           $ref: '#/components/responses/500'
-  /voice-assistant/chat/{chat_id}:
+  /voice-assistant/chat/{chat-id}:
     get:
       tags:
         - chat
       summary: Get a voice assistant chat by id
       operationId: getVoiceAssistantChatById
       parameters:
-        - name: chat_id
+        - name: chatId
           in: path
           required: true
           schema:
@@ -214,7 +216,7 @@ paths:
       summary: Update a voice assistant chat by id
       operationId: updateVoiceAssistantChatById
       parameters:
-        - name: chat_id
+        - name: chatId
           in: path
           required: true
           schema:
@@ -245,7 +247,7 @@ paths:
       summary: Delete a voice assistant chat by id
       operationId: deleteVoiceAssistantChatById
       parameters:
-        - name: chat_id
+        - name: chatId
           in: path
           required: true
           schema:
@@ -259,14 +261,14 @@ paths:
           $ref: '#/components/responses/404'
         '500':
           $ref: '#/components/responses/500'
-  /voice-assistant/chat/{chat_id}/messages:
+  /voice-assistant/chat/{chat-id}/messages:
     get:
       tags:
         - chat
       summary: Get all messages of a voice assistant chat by chat id
       operationId: getAllVoiceAssistantChatMessagesByChatId
       parameters:
-        - name: chat_id
+        - name: chatId
           in: path
           required: true
           schema:
@@ -290,7 +292,7 @@ paths:
       summary: Add a message to a voice assistant chat
       operationId: createVoiceAssistantChatMessage
       parameters:
-        - name: chat_id
+        - name: chat-id
           in: path
           required: true
           schema:
@@ -454,6 +456,103 @@ paths:
           $ref: '#/components/responses/404'
         '500':
           $ref: '#/components/responses/500'
+  /program:
+    post:
+      tags:
+        - program
+      summary: Save a program
+      requestBody:
+        description: Update an existing program.
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Program'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Program'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+    get:
+      tags:
+        - program
+      summary: Get all programs
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Programs'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+  /program/{program-number}:
+    get:
+      tags:
+        - program
+      summary: Get one program by the program number
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Program'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+    put:
+      tags:
+        - program
+      summary: Get all programs
+      requestBody:
+        description: Update an existing program.
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Program'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Program'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+    delete:
+      tags:
+        - program
+      summary: Get one program by the program number
+      responses:
+        '204':
+          $ref: '#/components/responses/204'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
 components:
   schemas:
     VoiceAssistantPersonality:
@@ -461,7 +560,6 @@ components:
       properties:
         personalityId:
           type: string
-          readOnly: true
           examples: 
             - ecb8ad22-891d-4744-80b3-7e6d6d84a5c0
             - f1eda93f-0ae3-4f41-8502-d56dddeb7034 
@@ -491,7 +589,7 @@ components:
             - 0.8
             - 1.0
       required:
-        - personality_id
+        - personalityId
         - name
         - description
         - gender
@@ -501,7 +599,7 @@ components:
         voiceAssistantPersonalities:
           type: array
           items:
-            $ref: '#/components/schemas/VoiceAssistantChat'
+            $ref: '#/components/schemas/VoiceAssistantPersonality'
     VoiceAssistantChat:
       type: object
       properties:
@@ -522,7 +620,7 @@ components:
           readOnly: true
           $ref: '#/components/schemas/VoiceAssistantPersonality'
       required:
-        - chat_id
+        - chatId
         - topic
         - voiceAssistantPersonality
     VoiceAssistantChats:
@@ -661,12 +759,12 @@ components:
           examples: 
             - 60000
       required:
-        - motor_name
-        - turned_on
-        - pulse_width_min
-        - pulse_width_max
-        - rotation_range_min
-        - rotation_range_max
+        - motorName
+        - turnedOn
+        - pulseWidthMin
+        - pulseWidthMax
+        - rotationRangeMin
+        - rotationRangeMax
         - velocity
         - acceleration
         - deceleration
@@ -680,11 +778,7 @@ components:
     CameraSettings:
       type: object
       properties:
-        is_active: 
-          type: boolean
-          examples: 
-            - true
-        refresh_rate: 
+        refreshRate: 
           description: "unit of measure: seconds (s)"
           type: number
           format: float
@@ -693,7 +787,7 @@ components:
           multipleOf: 0.1
           examples: 
             - 0.5
-        quality_factor: 
+        qualityFactor: 
           type: integer
           minimum: 10
           maximum: 90
@@ -717,12 +811,32 @@ components:
           examples:
             - 480
       required:
-        - is_active 
-        - refresh_rate
-        - quality_factor
+        - refreshRate
+        - qualityFactor
         - resolution
         - resX
         - resY
+    Program:
+      type: object
+      properties:
+        programNumber:
+          type: string
+          examples:
+            - "bb13a553-f5de-49d2-96df-985152e125c7"
+        name:
+          type: string
+          examples:
+            - HandRecognize
+        program:
+          type: string
+          examples:
+            - "{}"
+    Programs:
+      properties:
+        programs:
+          type: array
+          items:
+            $ref: '#/components/schemas/Program'
     Error:
         required:
           - Error

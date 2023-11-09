@@ -45,15 +45,13 @@ class CameraSettings(db.Model):
     resolution = db.Column(db.String(3), nullable=False)
     refreshRate = db.Column(db.Float, nullable=False)
     qualityFactor = db.Column(db.Integer, nullable=False)
-    isActive = db.Column(db.Boolean, nullable=False)
     resX = db.Column(db.Integer, nullable=False)
     resY = db.Column(db.Integer, nullable=False)
 
-    def __init__(self, resolution, refreshRate, qualityFactor, isActive, resX, resY):
+    def __init__(self, resolution, refreshRate, qualityFactor, resX, resY):
         self.resolution = resolution
         self.refreshRate = refreshRate
         self.qualityFactor = qualityFactor
-        self.isActive = isActive
         self.resX = resX
         self.resY = resY
 
@@ -84,12 +82,24 @@ class Motor(db.Model):
         if len(args) > 10:
             self.effort = args[10]
 
+class Program(db.Model):
+    __tablename__ = "program"
+    id = db.Column(db.Integer, primary_key=True)
+    name= db.Column(db.String(255), nullable=False, unique=True)
+    program= db.Column(db.String(100000), nullable=False)
+    programNumber = db.Column(db.String(50), nullable=False)
+    def __init__(self, name, program):
+        self.name = name
+        self.program = program
+        self.programNumber = str(uuid.uuid4())
+
 class PersonalitySchema(ma.SQLAlchemyAutoSchema):
     class Meta:
         model = Personality
         exclude = ('id',)
 
-class PostPersonalitySchema(ma.SQLAlchemyAutoSchema):
+
+class UploadPersonalitySchema(ma.SQLAlchemyAutoSchema):
     class Meta:
         model = Personality
         exclude = ('id', 'personalityId')
@@ -105,12 +115,26 @@ class MotorSchema(ma.SQLAlchemyAutoSchema):
         model = Motor
         exclude = ('id', 'effort')
 
+class ProgramSchema(ma.SQLAlchemyAutoSchema):
+    class Meta:
+        model = Program
+        exclude = ('id',)
+
+class ProgramWithOutNumber(ma.SQLAlchemyAutoSchema):
+    class Meta:
+        model = Program
+        exclude = ('id', 'programNumber')
+
 personality_schema = PersonalitySchema()
-post_personality_schema = PostPersonalitySchema()
+upload_personality_schema = UploadPersonalitySchema()
 personalities_schema = PersonalitySchema(many=True)
 camera_settings_schema = CameraSettingsSchema()
 motor_schema = MotorSchema()
 motors_schema = MotorSchema(many=True)
+program_schema = ProgramSchema()
+program_schema_without_programnumber = ProgramWithOutNumber()
+programs_schema = ProgramSchema(many=True)
+
 
 
 @app.route('/voice-assistant/personality')
@@ -133,7 +157,7 @@ def get_personality_by_id(uuid):
 
 @app.route('/voice-assistant/personality', methods=['POST'])
 def create_personality():
-    error = post_personality_schema.validate(request.json)
+    error = upload_personality_schema.validate(request.json)
     if error:
         return error, 400
     personality = Personality(request.json.get('name'), request.json.get('gender'), request.json.get('pauseThreshold'))
@@ -149,7 +173,7 @@ def create_personality():
 
 @app.route('/voice-assistant/personality/<string:uuid>', methods=['PUT'])
 def update_personality(uuid):
-    error = post_personality_schema.validate(request.json)
+    error = upload_personality_schema.validate(request.json)
     if error:
         return error, 400
     personality = Personality(request.json.get('name'), uuid, request.json.get('gender'), request.json.get('description'), request.json.get('pauseThreshold'))
@@ -192,12 +216,11 @@ def update_camera_settings():
     error = camera_settings_schema.validate(request.json)
     if error:
         return error, 400
-    newCameraSettings = CameraSettings(request.json.get('resolution'), request.json.get('refreshRate'), request.json.get('qualityFactor'), request.json.get('isActive'), request.json.get('resX'), request.json.get('resY'))
+    newCameraSettings = CameraSettings(request.json.get('resolution'), request.json.get('refreshRate'), request.json.get('qualityFactor'), request.json.get('resX'), request.json.get('resY'))
     updateCameraSettings = CameraSettings.query.filter(CameraSettings.id == 1).first_or_404()
     updateCameraSettings.resolution = newCameraSettings.resolution
     updateCameraSettings.refreshRate = newCameraSettings.refreshRate
     updateCameraSettings.qualityFactor = newCameraSettings.qualityFactor
-    updateCameraSettings.isActive = newCameraSettings.isActive
     updateCameraSettings.resX = newCameraSettings.resX
     updateCameraSettings.resY = newCameraSettings.resY
     db.session.add(updateCameraSettings)
@@ -248,6 +271,62 @@ def update_motor():
     db.session.commit()
     try:
         return motor_schema.dump(motor)
+    except:
+        abort(500)
+
+
+@app.route('/program', methods=['POST'])
+def create_program():
+    error = program_schema_without_programnumber.validate(request.json)
+    if error:
+        return error, 400
+    createProgram = Program(request.json.get("name"), request.json.get("program"))
+    db.session.add(createProgram)
+    db.session.commit()
+    try:
+        return program_schema.dump(createProgram)
+    except:
+        abort(500)
+
+@app.route('/program', methods=['GET'])
+def get_all_programs():
+    allPrograms = Program.query.all()
+    try:
+        return jsonify({"programs": programs_schema.dump(allPrograms)})
+    except:
+        abort(500)
+
+@app.route('/program/<string:programNumber>', methods=['GET'])
+def get_program_by_number(programNumber):
+    program = Program.query.filter(Program.programNumber == programNumber).first_or_404()
+    try:
+        return program_schema_without_programnumber.dump(program);
+    except:
+        abort(500)
+
+@app.route('/program/<string:programNumber>', methods=['PUT'])
+def update_program_by_number(programNumber):
+    error = program_schema_without_programnumber.validate(request.json)
+    if error:
+        return error, 400
+    newProgram = Program(request.json.get("name"), request.json.get("program"))
+    opdProgram = Program.query.filter(Program.programNumber == programNumber).first_or_404()
+    opdProgram.name = newProgram.name
+    opdProgram.program = newProgram.program
+    db.session.add(opdProgram)
+    db.session.commit()
+    try:
+        return program_schema.dump(opdProgram);
+    except:
+        abort(500)
+
+@app.route('/program/<string:programNumber>', methods=['DELETE'])
+def delete_program_by_number(programNumber):
+    deleteProgram = Program.query.filter(Program.programNumber == programNumber).first_or_404()
+    try:
+        db.session.delete(deleteProgram)
+        db.session.commit()
+        return '', 204
     except:
         abort(500)
 
