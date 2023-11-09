@@ -211,3 +211,4 @@ values
       NULL, "480p (SD)", 0.1, 80, 640, 480
    )
 ;
+create table IF NOT EXISTS program (id INTEGER primary key AUTOINCREMENT NOT NULL, name TEXT NOT NULL, program TEXT NOT NULL, programNumber TEXT UNIQUE NOT NULL);
