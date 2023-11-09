@@ -98,6 +98,7 @@ class PersonalitySchema(ma.SQLAlchemyAutoSchema):
         model = Personality
         exclude = ('id',)
 
+
 class UploadPersonalitySchema(ma.SQLAlchemyAutoSchema):
     class Meta:
         model = Personality
@@ -133,6 +134,7 @@ motors_schema = MotorSchema(many=True)
 program_schema = ProgramSchema()
 program_schema_without_programnumber = ProgramWithOutNumber()
 programs_schema = ProgramSchema(many=True)
+
 
 
 @app.route('/voice-assistant/personality')
@@ -272,6 +274,7 @@ def update_motor():
     except:
         abort(500)
 
+
 @app.route('/program', methods=['POST'])
 def create_program():
     error = program_schema_without_programnumber.validate(request.json)
@@ -326,6 +329,7 @@ def delete_program_by_number(programNumber):
         return '', 204
     except:
         abort(500)
+
 
 @app.errorhandler(404)
 def not_found(error):

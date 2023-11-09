@@ -317,7 +317,7 @@ paths:
           $ref: '#/components/responses/404'
         '500':
           $ref: '#/components/responses/500'
-  /motor-settings/:
+  /motor-settings:
     get:
       tags:
         - motor-settings
@@ -335,54 +335,23 @@ paths:
           $ref: '#/components/responses/404'
         '500':
           $ref: '#/components/responses/500'
-  /motor-settings/{motor-name}:
-    get:
+    put:
       tags:
         - motor-settings
-      summary: Get the motor-settings of the motor matching the specified name
-      parameters:
-        - name: motor-name
-          in: path
-          required: true
-          schema:
-            type: string
-            enum:
-              - thumb_left_opposition
-              - thumb_left_stretch
-              - index_left_stretch
-              - middle_left_stretch
-              - ring_left_stretch
-              - pinky_left_stretch
-              - all_fingers_left
-              - thumb_right_opposition
-              - thumb_right_stretch
-              - index_right_stretch
-              - middle_right_stretch
-              - ring_right_stretch
-              - pinky_right_stretch
-              - all_fingers_right
-              - upper_arm_left_rotation
-              - elbow_left
-              - lower_arm_left_rotation
-              - wrist_left
-              - shoulder_vertical_left
-              - shoulder_horizontal_left
-              - upper_arm_right_rotation
-              - elbow_right
-              - lower_arm_right_rotation
-              - wrist_right
-              - shoulder_vertical_right
-              - shoulder_horizontal_right
-              - tilt_forward_motor
-              - tilt_sideways_motor
-              - turn_head_motor
-
+      summary: Select a motor by name and update its motor-settings
+      requestBody:
+        description: Update the (existing) motor-settings of a motor.
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MotorSettings'
       responses:
         '200':
           description: OK
           content:
             application/json:
-              schema:
+              schema: 
                 $ref: '#/components/schemas/MotorSettings'
         '400':
           $ref: '#/components/responses/400'
@@ -390,11 +359,11 @@ paths:
           $ref: '#/components/responses/404'
         '500':
           $ref: '#/components/responses/500'
-
-    put:
+  /motor-settings/{motor_name}:
+    get:
       tags:
         - motor-settings
-      summary: Select a motor by name and update its motor-settings
+      summary: Get the motor-settings of the motor matching the specified name
       parameters:
         - name: motor_name
           in: path
@@ -431,19 +400,13 @@ paths:
               - tilt_forward_motor
               - tilt_sideways_motor
               - turn_head_motor
-      requestBody:
-        description: Update the (existing) motor-settings of a motor.
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/MotorSettings'
+
       responses:
         '200':
           description: OK
           content:
             application/json:
-              schema: 
+              schema:
                 $ref: '#/components/schemas/MotorSettings'
         '400':
           $ref: '#/components/responses/400'
