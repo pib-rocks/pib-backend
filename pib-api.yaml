@@ -597,7 +597,6 @@ components:
       properties:
         personalityId:
           type: string
-          readOnly: true
           examples: 
             - ecb8ad22-891d-4744-80b3-7e6d6d84a5c0
             - f1eda93f-0ae3-4f41-8502-d56dddeb7034 
@@ -637,7 +636,7 @@ components:
         voiceAssistantPersonalities:
           type: array
           items:
-            $ref: '#/components/schemas/VoiceAssistantChat'
+            $ref: '#/components/schemas/VoiceAssistantPersonality'
     VoiceAssistantChat:
       type: object
       properties:
@@ -816,10 +815,6 @@ components:
     CameraSettings:
       type: object
       properties:
-        isActive: 
-          type: boolean
-          examples: 
-            - true
         refreshRate: 
           description: "unit of measure: seconds (s)"
           type: number
@@ -853,7 +848,6 @@ components:
           examples:
             - 480
       required:
-        - isActive 
         - refreshRate
         - qualityFactor
         - resolution
@@ -863,7 +857,6 @@ components:
       type: object
       properties:
         programNumber:
-          readOnly: true
           type: string
           examples:
             - "bb13a553-f5de-49d2-96df-985152e125c7"
