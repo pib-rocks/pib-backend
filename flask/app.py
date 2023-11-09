@@ -219,8 +219,19 @@ def update_camera_settings():
     newCameraSettings = CameraSettings(request.json.get('resolution'), request.json.get('refreshRate'), request.json.get('qualityFactor'), request.json.get('resX'), request.json.get('resY'))
     updateCameraSettings = CameraSettings.query.filter(CameraSettings.id == 1).first_or_404()
     updateCameraSettings.resolution = newCameraSettings.resolution
-    updateCameraSettings.refreshRate = newCameraSettings.refreshRate
-    updateCameraSettings.qualityFactor = newCameraSettings.qualityFactor
+    if newCameraSettings.refreshRate > 1:
+        updateCameraSettings.refreshRate = 1
+    elif newCameraSettings.refreshRate > 0.1:
+        updateCameraSettings.refreshRate = 0.1
+    else:
+        updateCameraSettings.refreshRate = newCameraSettings.refreshRate
+    if newCameraSettings.qualityFactor > 90:
+        updateCameraSettings.qualityFactor = 90
+    elif newCameraSettings.qualityFactor < 10:
+        updateCameraSettings.qualityFactor = 10
+    else:
+        updateCameraSettings.qualityFactor = newCameraSettings.qualityFactor
+    updateCameraSettings.isActive = newCameraSettings.isActive
     updateCameraSettings.resX = newCameraSettings.resX
     updateCameraSettings.resY = newCameraSettings.resY
     db.session.add(updateCameraSettings)
