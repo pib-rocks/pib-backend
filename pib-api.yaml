@@ -514,8 +514,6 @@ paths:
                 $ref: '#/components/schemas/Program'
         '400':
           $ref: '#/components/responses/400'
-        '404':
-          $ref: '#/components/responses/404'
         '500':
           $ref: '#/components/responses/500'
     get:
@@ -580,7 +578,7 @@ paths:
     delete:
       tags:
         - program
-      summary: Get one program by the program number
+      summary: Delete one program by the program number
       responses:
         '204':
           $ref: '#/components/responses/204'
@@ -857,14 +855,17 @@ components:
       type: object
       properties:
         programNumber:
+          description: Unique Number to find your program
           type: string
           examples:
             - "bb13a553-f5de-49d2-96df-985152e125c7"
         name:
+          description: Name of your Program
           type: string
           examples:
             - HandRecognize
         program:
+          description: Contains a json of the created program
           type: string
           examples:
             - "{}"
