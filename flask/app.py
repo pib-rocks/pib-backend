@@ -221,7 +221,7 @@ def update_camera_settings():
     updateCameraSettings.resolution = newCameraSettings.resolution
     if newCameraSettings.refreshRate > 1:
         updateCameraSettings.refreshRate = 1
-    elif newCameraSettings.refreshRate > 0.1:
+    elif newCameraSettings.refreshRate < 0.1:
         updateCameraSettings.refreshRate = 0.1
     else:
         updateCameraSettings.refreshRate = newCameraSettings.refreshRate
