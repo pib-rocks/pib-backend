@@ -616,9 +616,10 @@ components:
             - Short Stories
             - Nürnberg
             - Definition of AI today
-        voiceAssistantPersonality:
+        voiceAssistantPersonalityID:
           readOnly: true
-          $ref: '#/components/schemas/VoiceAssistantPersonality'
+          examples:
+            - f83913e4-ac40-498c-9bab-635958fbe096 
       required:
         - chatId
         - topic
@@ -654,9 +655,6 @@ components:
             - Tell me a collection of short stories.
             - Hello Thomas, tell me something about Nürnberg.
             - Here is a brief definition of our current understanding of AI...
-        voiceAssistantChat:
-          readOnly: true
-          $ref: '#/components/schemas/VoiceAssistantChat'
       required:
         - message_id
         - timestamp
