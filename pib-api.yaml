@@ -317,7 +317,7 @@ paths:
           $ref: '#/components/responses/404'
         '500':
           $ref: '#/components/responses/500'
-  /motor-settings/:
+  /motor-settings:
     get:
       tags:
         - motor-settings
@@ -497,9 +497,9 @@ paths:
     post:
       tags:
         - program
-      summary: Save a program
+      summary: Add a program
       requestBody:
-        description: Update an existing program.
+        description: Create an existing program.
         required: true
         content:
           application/json:
@@ -865,10 +865,10 @@ components:
           examples:
             - HandRecognize
         program:
-          description: Contains a json of the created program
+          description: Contains a stringified json of the created program
           type: string
           examples:
-            - "{}"
+            - '{"blocks": {"languageVersion": 0,"blocks": [{"type": "math_round","id": "Ph#OhT1tK,hY)16jN0Cc","x": 661,"y": 270,"fields": {"OP": "ROUND"},"inputs": {"NUM": {"shadow": {"type": "math_number","id": "MoIoX*qi/BzyGm.6y9SU","fields": {"NUM": 3.1}}}}}]}}'
     Programs:
       properties:
         programs:
