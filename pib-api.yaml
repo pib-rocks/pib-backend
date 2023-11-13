@@ -101,7 +101,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/VoiceAssistantPersonality'
+              $ref: '#/components/schemas/PostVoiceAssistantPersonality'
       responses:
         '200':
           description: OK
@@ -559,11 +559,46 @@ components:
       type: object
       properties:
         personalityId:
+          readOnly: true
           type: string
           examples: 
             - ecb8ad22-891d-4744-80b3-7e6d6d84a5c0
             - f1eda93f-0ae3-4f41-8502-d56dddeb7034 
             - 864c6ebe-c514-4d1d-85af-8ccd385f3f17 
+        name:
+          type: string
+          examples: 
+            - Eva
+            - Thomas
+            - Janina
+            - Georg
+        description:
+          readOnly: true
+          type: string
+          minLength: 1
+          examples: 
+            - You are a helpful assistant.
+            - You act as a translator, translating all my messages into Japanese.
+        gender:
+          type: string
+          enum: [Male, Female]
+          examples: 
+            - Female
+            - Male
+        pauseThreshold:
+          type: number
+          examples: 
+            - 0.8
+            - 1.0
+      required:
+        - personalityId
+        - name
+        - description
+        - gender
+        - pauseThreshold
+    PostVoiceAssistantPersonality:
+      tpye: object
+      properties:
         name:
           type: string
           examples: 
