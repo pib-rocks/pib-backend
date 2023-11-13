@@ -211,4 +211,235 @@ values
       NULL, "480p (SD)", 0.1, 80, 640, 480
    )
 ;
+create table IF NOT EXISTS bricklet (id INTEGER primary key AUTOINCREMENT NOT NULL, brickletId TEXT NOT NULL, brickletNumber INTEGER NOT NULL);
+insert into
+   bricklet
+values
+   (
+      NULL, "XYZ", 1
+   )
+;
+insert into
+   bricklet
+values
+   (
+      NULL, "XYZ", (SELECT MAX(id) + 1 FROM bricklet)
+   )
+;
+insert into
+   bricklet
+values
+   (
+      NULL, "XYZ", (SELECT MAX(id) + 1 FROM bricklet)
+   )
+;
+create table IF NOT EXISTS motorBrickletPin (id INTEGER primary key AUTOINCREMENT NOT NULL, brickletId INTEGER NOT NULL, motorId INTEGER, pin INTEGER NOT NULL, FOREIGN KEY (brickletId) REFERENCES bricklet(id), FOREIGN KEY (motorId) REFERENCES motor(id));
+insert into
+   motorBrickletPin
+values
+   (
+      NULL, 1, 3, 0
+   )
+;
+insert into
+   motorBrickletPin
+values
+   (
+      NULL, 1, 1, 1
+   )
+;
+insert into
+   motorBrickletPin
+values
+   (
+      NULL, 1, 2, 2
+   )
+;
+insert into
+   motorBrickletPin
+values
+   (
+      NULL, 1, 5, 3
+   )
+;
+insert into
+   motorBrickletPin
+values
+   (
+      NULL, 1, 4, 4
+   )
+;
+insert into
+   motorBrickletPin
+values
+   (
+      NULL, 1, 6, 5
+   )
+;
+insert into
+   motorBrickletPin
+values
+   (
+      NULL, 1, 7, 6
+   )
+;
+insert into
+   motorBrickletPin
+values
+   (
+      NULL, 1, 8, 7
+   )
+;
+insert into
+   motorBrickletPin
+values
+   (
+      NULL, 1, 9, 8
+   )
+;
+insert into
+   motorBrickletPin
+values
+   (
+      NULL, 1, 11, 9
+   )
+;
+
+
+insert into
+   motorBrickletPin
+values
+   (
+      NULL, 2, 10, 0
+   )
+;
+insert into
+   motorBrickletPin
+values
+   (
+      NULL, 2, 12, 1
+   )
+;
+insert into
+   motorBrickletPin
+values
+   (
+      NULL, 2, 13, 2
+   )
+;
+insert into
+   motorBrickletPin
+values
+   (
+      NULL, 2, 14, 3
+   )
+;
+insert into
+   motorBrickletPin
+values
+   (
+      NULL, 2, 15, 4
+   )
+;
+insert into
+   motorBrickletPin
+values
+   (
+      NULL, 2, 16, 5
+   )
+;
+insert into
+   motorBrickletPin
+values
+   (
+      NULL, 2, 17, 6
+   )
+;
+insert into
+   motorBrickletPin
+values
+   (
+      NULL, 2, 18, 7
+   )
+;
+insert into
+   motorBrickletPin
+values
+   (
+      NULL, 2, 19, 8
+   )
+;
+
+insert into
+   motorBrickletPin
+values
+   (
+      NULL, 3, 21, 0
+   )
+;
+insert into
+   motorBrickletPin
+values
+   (
+      NULL, 3, 22, 1
+   )
+;
+insert into
+   motorBrickletPin
+values
+   (
+      NULL, 3, 23, 2
+   )
+;
+insert into
+   motorBrickletPin
+values
+   (
+      NULL, 3, 24, 3
+   )
+;
+insert into
+   motorBrickletPin
+values
+   (
+      NULL, 3, 25, 4
+   )
+;
+insert into
+   motorBrickletPin
+values
+   (
+      NULL, 3, 27, 6
+   )
+;
+
+insert into
+   motorBrickletPin
+values
+   (
+      NULL, 3, 26, 5
+   )
+;
+insert into
+   motorBrickletPin
+values
+   (
+      NULL, 3, 26, 8
+   )
+;
+
+insert into
+   motorBrickletPin
+values
+   (
+      NULL, 3, 20, 7
+   )
+;
+insert into
+   motorBrickletPin
+values
+   (
+      NULL, 3, 20, 9
+   )
+;
 create table IF NOT EXISTS program (id INTEGER primary key AUTOINCREMENT NOT NULL, name TEXT NOT NULL, program TEXT NOT NULL, programNumber TEXT UNIQUE NOT NULL);
