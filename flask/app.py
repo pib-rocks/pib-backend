@@ -231,7 +231,6 @@ def update_camera_settings():
         updateCameraSettings.qualityFactor = 10
     else:
         updateCameraSettings.qualityFactor = newCameraSettings.qualityFactor
-    updateCameraSettings.isActive = newCameraSettings.isActive
     updateCameraSettings.resX = newCameraSettings.resX
     updateCameraSettings.resY = newCameraSettings.resY
     db.session.add(updateCameraSettings)
