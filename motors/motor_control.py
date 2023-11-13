@@ -31,16 +31,6 @@ class Motor:
                         pass
                 return f"(name = {self.name}, servo = {servo_id}, ports = {self.ports})"
 
-        # get current settings from physical motor and write them to 'MotorSettings'-like object (only for testing purposes)
-        def get_settings(self, ms, port):
-                ms.motor_name = self.name
-                ms.pulse_width_min, ms.pulse_width_max = self.servo.get_pulse_width(port)
-                ms.rotation_range_min, ms.rotation_range_max = self.servo.get_degree(port)
-                ms.velocity, ms.acceleration, ms.deceleration = self.servo.get_motion_configuration(port)
-                ms.period = self.servo.get_period(port)
-                ms.pulse_width_min, ms.pulse_width_max = self.servo.get_pulse_width(port)
-                ms.turned_on = self.servo.get_enabled(port)
-
 
 
 # receives a 'MotorSettings'-like, and returns a dict representing a motor-settings-json as it is used by the pib-api
@@ -149,7 +139,7 @@ class Motor_control(Node):
                         response.settings_persisted = self.persist_motor_settings_to_db(request)
 
                 except Exception as e:
-                        self.get_logger().warn(f"Error processing message: {str(e)}")
+                        self.get_logger().warn(f"Error processing motor-settings-message: {str(e)}")
                         response.settings_applied = False
                         response.settings_persisted = False
 
@@ -172,7 +162,7 @@ class Motor_control(Node):
                                                 motor.servo.set_position(port, value)   
 
                 except Exception as e:
-                        self.get_logger().warn(f"Error processing message: {str(e)}")
+                        self.get_logger().warn(f"Error processing joint-trajectory-message: {str(e)}")
 
 
                         
