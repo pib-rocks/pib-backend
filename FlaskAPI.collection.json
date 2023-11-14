@@ -1,0 +1,332 @@
+{
+	"info": {
+		"_postman_id": "2bcdfeaa-61a4-46c4-a65f-9b1454c371de",
+		"name": "FlaskAPI",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "28901000"
+	},
+	"item": [
+		{
+			"name": "GetAllPersonalities",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{ip}}:5000/voice-assistant/personality",
+					"host": [
+						"{{ip}}"
+					],
+					"port": "5000",
+					"path": [
+						"voice-assistant",
+						"personality"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "PostPersonality",
+			"request": {
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n    \"gender\": \"Female\",\r\n    \"name\": \"aAd\",\r\n    \"pauseThreshold\": 0.8\r\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "http://192.168.220.160:5000/voice-assistant/personality",
+					"protocol": "http",
+					"host": [
+						"192",
+						"168",
+						"220",
+						"160"
+					],
+					"port": "5000",
+					"path": [
+						"voice-assistant",
+						"personality"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "UpdatePersonality",
+			"request": {
+				"method": "PUT",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n    \"gender\": \"Female\",\r\n    \"name\": \"Eva\",\r\n    \"pauseThreshold\": 0.8,\r\n    \"description\": \"iuhsdfiuhesfiohesfesfoih\"\r\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "http://192.168.220.160:5000/voice-assistant/personality/393e83e9-e483-4064-ac5a-2dee0a3de3c6",
+					"protocol": "http",
+					"host": [
+						"192",
+						"168",
+						"220",
+						"160"
+					],
+					"port": "5000",
+					"path": [
+						"voice-assistant",
+						"personality",
+						"393e83e9-e483-4064-ac5a-2dee0a3de3c6"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "DeletePersonality",
+			"request": {
+				"method": "DELETE",
+				"header": [],
+				"url": {
+					"raw": "{{ip}}:5000/voice-assistant/personality/393e83e9-e483-4064-ac5a-2dee0a3de3c6",
+					"host": [
+						"{{ip}}"
+					],
+					"port": "5000",
+					"path": [
+						"voice-assistant",
+						"personality",
+						"393e83e9-e483-4064-ac5a-2dee0a3de3c6"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "GetCameraSettings",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{ip}}:5000/camera-settings",
+					"host": [
+						"{{ip}}"
+					],
+					"port": "5000",
+					"path": [
+						"camera-settings"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "UpdateCameraSettings",
+			"request": {
+				"method": "PUT",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n    \"resolution\": \"HD\",\r\n    \"qualityFactor\": 40,\r\n    \"refreshRate\": 0.5,\r\n    \"resX\": 1280,\r\n    \"resY\": 720\r\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "http://192.168.220.160:5000/camera-settings",
+					"protocol": "http",
+					"host": [
+						"192",
+						"168",
+						"220",
+						"160"
+					],
+					"port": "5000",
+					"path": [
+						"camera-settings"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "GetAllMotors",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "http://192.168.220.160:5000//motor-settings",
+					"protocol": "http",
+					"host": [
+						"192",
+						"168",
+						"220",
+						"160"
+					],
+					"port": "5000",
+					"path": [
+						"",
+						"motor-settings"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "UpdateMotor",
+			"request": {
+				"method": "PUT",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n    \"acceleration\": 1,\r\n    \"deceleration\": 1,\r\n    \"name\": \"tilt_forward_motor\",\r\n    \"period\": 19500,\r\n    \"pulseWidthMax\": 2500,\r\n    \"pulseWidthMin\": 700,\r\n    \"rotationRangeMax\": 90,\r\n    \"rotationRangeMin\": -90,\r\n    \"turnedOn\": true,\r\n    \"velocity\": 10000\r\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "{{ip}}:5000/motor-settings",
+					"host": [
+						"{{ip}}"
+					],
+					"port": "5000",
+					"path": [
+						"motor-settings"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "CreateProgram",
+			"request": {
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n    \"name\": \"TestProgram\",\r\n    \"program\": \"{name:John,age:30,city:New York}\"\r\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "{{ip}}:5000/program",
+					"host": [
+						"{{ip}}"
+					],
+					"port": "5000",
+					"path": [
+						"program"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "GetAllPrograms",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{ip}}:5000/program",
+					"host": [
+						"{{ip}}"
+					],
+					"port": "5000",
+					"path": [
+						"program"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "UpdateProgramByNumber",
+			"request": {
+				"method": "DELETE",
+				"header": [],
+				"url": {
+					"raw": "{{ip}}:5000/program/f1398977-b885-48e9-9742-d526cc135987",
+					"host": [
+						"{{ip}}"
+					],
+					"port": "5000",
+					"path": [
+						"program",
+						"f1398977-b885-48e9-9742-d526cc135987"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "UpdateProgram",
+			"request": {
+				"method": "PUT",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n    \"name\": \"TestProgram\",\r\n    \"program\": \"{name:John,age:30,city:New Yorkkkkkkkkkkkkkkkkkkkk}\"\r\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "{{ip}}:5000/program/f1398977-b885-48e9-9742-d526cc135987",
+					"host": [
+						"{{ip}}"
+					],
+					"port": "5000",
+					"path": [
+						"program",
+						"f1398977-b885-48e9-9742-d526cc135987"
+					]
+				}
+			},
+			"response": []
+		}
+	],
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					""
+				]
+			}
+		},
+		{
+			"listen": "test",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					""
+				]
+			}
+		}
+	],
+	"variable": [
+		{
+			"key": "ip",
+			"value": "192.168.220.160",
+			"type": "string"
+		}
+	]
+}
