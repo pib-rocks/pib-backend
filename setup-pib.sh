@@ -35,6 +35,7 @@ PIB_API_URL_PATH="https://github.com/pib-rocks/pib-api/archive/refs/heads/main.z
 #
 ROS_PACKAGES_LINK="https://raw.githubusercontent.com/pib-rocks/ros-packages/main/packages-set-up.sh"
 ROS_UPDATE_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/update-pib.sh"
+ROS_TEST_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/test-setup-pib.sh"
 #
 # We make sure that this script is run by the user "pib"
 if [ "$(whoami)" != "pib" ]; then
@@ -233,3 +234,7 @@ sudo systemctl enable ssh --now
 # Done! :-) Please restart to
 echo -e '\nCongratulations! The setup completed succesfully!'
 echo -e '\nPlease restart the system to apply changes...'
+
+cd $USER_HOME
+wget -O test-script-pib.sh $ROS_TEST_LINK
+./test-script-pib.sh

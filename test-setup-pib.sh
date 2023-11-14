@@ -35,107 +35,32 @@ else
     echo -e "\033[0;31m Ubuntu version is not recommandet! \033[0m"
 fi
 
-#Setup-Script installations
-echo -ne '                          (0%)\r'
-if ! dpkg-query -W -f='${Status}' python3-pip 2>/dev/null | grep -q "install ok installed"; then
-    echo -e "\033[0;31m The package python3-pip is not installed \033[0m"
-fi
-if ! dpkg-query -W -f='${Status}' git 2>/dev/null | grep -q "install ok installed"; then
-    echo -e "\033[0;31m The package git is not installed \033[0m"
-fi
-if ! dpkg-query -W -f='${Status}' python3 2>/dev/null | grep -q "install ok installed"; then
-    echo -e "\033[0;31m The package python3 is not installed \033[0m"
-fi
-if ! dpkg-query -W -f='${Status}' curl 2>/dev/null | grep -q "install ok installed"; then
-    echo -e "\033[0;31m The package curl is not installed \033[0m"
-fi
-if ! dpkg-query -W -f='${Status}' openssh-server 2>/dev/null | grep -q "install ok installed"; then
-    echo -e "\033[0;31m The package openssh-server is not installed \033[0m"
-fi
-if ! dpkg-query -W -f='${Status}' software-properties-common 2>/dev/null | grep -q "install ok installed"; then
-    echo -e "\033[0;31m The package software-properties-common is not installed \033[0m"
-fi
-if ! dpkg-query -W -f='${Status}' unzip 2>/dev/null | grep -q "install ok installed"; then
-    echo -e "\033[0;31m The package unzip is not installed \033[0m"
-fi
-echo -ne '#########                 (25%)\r'
-if ! dpkg-query -W -f='${Status}' sqlite3 2>/dev/null | grep -q "install ok installed"; then
-    echo -e "\033[0;31m The package sqlite3 is not installed \033[0m"
-fi
-if ! dpkg-query -W -f='${Status}' locales 2>/dev/null | grep -q "install ok installed"; then
-    echo -e "\033[0;31m The package locales is not installed \033[0m"
-fi
-if ! dpkg-query -W -f='${Status}' libusb-1.0-0 2>/dev/null | grep -q "install ok installed"; then
-    echo -e "\033[0;31m The package libusb-1.0-0 is not installed \033[0m"
-fi
-if ! dpkg-query -W -f='${Status}' libudev1 2>/dev/null | grep -q "install ok installed"; then
-    echo -e "\033[0;31m The package libudev1 is not installed \033[0m"
-fi
-if ! dpkg-query -W -f='${Status}' procps 2>/dev/null | grep -q "install ok installed"; then
-    echo -e "\033[0;31m The package procps is not installed \033[0m"
-fi
-if ! dpkg-query -W -f='${Status}' php8.1-fpm 2>/dev/null | grep -q "install ok installed"; then
-    echo -e "\033[0;31m The package php8.1-fpm is not installed \033[0m"
-fi
-if ! dpkg-query -W -f='${Status}' php-sqlite3 2>/dev/null | grep -q "install ok installed"; then
-    echo -e "\033[0;31m The package php-sqlite3 is not installed \033[0m"
-fi
 if ! colcon version-check >/dev/null 2>&1; then
     echo -e "\033[0;31m The package colcon is not installed \033[0m"
 fi
-echo -ne '##############            (50%)\r'
-if ! dpkg-query -W -f='${Status}' python3-pyqt5 2>/dev/null | grep -q "install ok installed"; then
-    echo -e "\033[0;31m The package python3-pyqt5 is not installed \033[0m"
-fi
-if ! dpkg-query -W -f='${Status}' python3-pyqt5.qtopengl 2>/dev/null | grep -q "install ok installed"; then
-    echo -e "\033[0;31m The package python3-pyqt5.qtopengl is not installed \033[0m"
-fi
-if ! dpkg-query -W -f='${Status}' python3-serial 2>/dev/null | grep -q "install ok installed"; then
-    echo -e "\033[0;31m The package python3-serial is not installed \033[0m"
-fi
-if ! dpkg-query -W -f='${Status}' python3-tz 2>/dev/null | grep -q "install ok installed"; then
-    echo -e "\033[0;31m The package python3-tz is not installed \033[0m"
-fi
-if ! dpkg-query -W -f='${Status}' python3-tzlocal 2>/dev/null | grep -q "install ok installed"; then
-    echo -e "\033[0;31m The package python3-tzlocal is not installed \033[0m"
-fi
-if ! dpkg-query -W -f='${Status}' libusb-1.0-0-dev 2>/dev/null | grep -q "install ok installed"; then
-    echo -e "\033[0;31m The package libusb-1.0-0-dev is not installed \033[0m"
-fi
-if ! dpkg-query -W -f='${Status}' flac 2>/dev/null | grep -q "install ok installed"; then
-    echo -e "\033[0;31m The package flac is not installed \033[0m"
-fi
 
+#Setup-Script installations
+INSTALLATIONS=([1]=python3-pip [2]=git [3]=python3 [4]=curl [5]=openssh-server [6]=oftware-properties-common [7]=unzip [8]=sqlite3 [9]=locales [10]=libusb-1.0-0 [11]=libudev1 [12]=procps [13]=php8.1-fpm [14]=python3-pyqt5 [15]=python3-pyqt5.qtopengl [16]=python3-serial [17]=python3-tz [18]=python3-tzlocal [19]=libusb-1.0-0-dev [20]=flac)
+
+
+for installation in "${INSTALLATIONS[@]}"
+do
+    if ! dpkg-query -W -f='${Status}' $installation 2>/dev/null | grep -q "install ok installed"; then
+        echo -e "\033[0;31m The package $installation is not installed \033[0m"
+    else
+        echo $installation "checked"
+    fi
+done
 # Package installations
-if ! pip show depthai >/dev/null 2>&1; then
-    echo -e "\033[0;31m The Python-Package 'depthai' is not installed \033[0m"
-fi
-if ! pip show tinkerforge >/dev/null 2>&1; then
-    echo -e "\033[0;31m The Python-Package 'tinkerforge' is not installed \033[0m"
-fi
-echo -ne '#####################     (75%)\r'
-if ! pip show openai >/dev/null 2>&1; then
-    echo -e "\033[0;31m The Python-Package 'openai' is not installed \033[0m"
-fi
-if ! pip show google-cloud-speech >/dev/null 2>&1; then
-    echo -e "\033[0;31m The Python-Package 'google-cloud-speech' is not installed \033[0m"
-fi
-if ! pip show google-cloud-texttospeech >/dev/null 2>&1; then
-    echo -e "\033[0;31m The Python-Package 'google-cloud-texttospeech' is not installed \033[0m"
-fi
-if ! pip show pyaudio >/dev/null 2>&1; then
-    echo -e "\033[0;31m The Python-Package 'pyaudio' is not installed \033[0m"
-fi
-if ! pip show opencv-python >/dev/null 2>&1; then
-    echo -e "\033[0;31m The Python-Package 'opencv-python' is not installed \033[0m"
-fi
-if ! pip show depthai >/dev/null 2>&1; then
-    echo -e "\033[0;31m The Python-Package 'depthai' is not installed \033[0m"
-fi
-if ! pip show setuptools  >/dev/null 2>&1; then
-    echo -e "\033[0;31m The Python-Package 'setuptools ' is not installed \033[0m"
-fi
-echo -ne '##########################(100%)\r'
+PIP_PACKAGES=([1]=depthai [2]=tinkerforge [3]=openai [4]=google-cloud-speech [5]=google-cloud-texttospeech [6]=pyaudio [7]=opencv-python [8]=setuptools)
+for package in "${PIP_PACKAGES[@]}"
+do
+    if ! pip show $package >/dev/null 2>&1; then
+        echo -e "\033[0;31m The Python-Package $package is not installed \033[0m"
+    else
+        echo $package" checked"
+    fi
+done
 
 echo "---installations checked---"
 while true; do
@@ -150,56 +75,35 @@ done
 # package check
 COLCON_INFO=$(colcon info)
 
-PACKAGE_NAME_MOTORS="name: motors"
-PACKAGE_NAME_DATATYPES="name: datatypes"
-PACKAGE_NAME_DLITE="name: oak_d_lite"
-PACKAGE_NAME_VOICE_ASSISTANT="name: voice_assistant"
-
-SYS_CTL_MOTORS_CONTROL=$(systemctl status ros_motor_control_node_boot.service)
-SYS_CTL_MOTORS_CURRENT=$(systemctl status ros_motor_current_node_boot.service)
-SYS_CTL_API=$(systemctl status pib_api_boot.service)
-SYS_CTL_CAMERA=$(systemctl status ros_camera_boot.service)
-SYS_CTL_CEREBRA=$(systemctl status ros_cerebra_boot.service)
-SYS_CTL_VOICE_ASSISTANT=$(systemctl status ros_voice_assistant_boot.service)
+SYS_CTLS=([1]=ros_motor_control_node_boot.service [2]=ros_motor_current_node_boot.service [3]=pib_api_boot.service [4]=ros_camera_boot.service [5]=ros_cerebra_boot.service [6]=ros_voice_assistant_boot.service)
 
 SERVICE_STATUS="Active: active (running)"
+ROS_WORKING_DIR_SRC="/home/pib/ros_working_dir/src"
+COUNT=0
+FOLDERS=([1]=motors [2]=datatypes [3]=voice-assistant [4]=ros2_oak_d_lite)
+PACKAGE_NAMES=([1]=name: motors [2]=name: datatypes [3]=name: oak_d_lite [4]=name: voice_assistant)
 
-echo -ne '                          (0%)\r'
-if [[ ! $COLCON_INFO == *$PACKAGE_NAME_MOTORS* ]]; then
-    echo -e "\033[0;31m The package motors is not installed \033[0m"
-fi
-if [[ ! $COLCON_INFO == *$PACKAGE_NAME_DATATYPES* ]]; then
-    echo -e "\033[0;31m The package motors is not installed \033[0m"
-fi
-echo -ne '#########                 (25%)\r'
-if [[ ! $COLCON_INFO == *$PACKAGE_NAME_DLITE* ]]; then
-    echo -e "\033[0;31m The package oak_d_lite is not installed \033[0m"
-fi
-if [[ ! $COLCON_INFO == *$PACKAGE_NAME_VOICE_ASSISTANT* ]]; then
-    echo -e "\033[0;31m The package voice_assistant is not installed \033[0m"
-fi
+for folder in "${FOLDERS[@]}"
+do
+    if [ -d "$ROS_WORKING_DIR_SRC/$folder" ];then
+        if [[ ! $COLCON_INFO == *$PACKAGE_NAMES[$COUNT]* ]]; then
+            echo -e "\033[0;31m The package $folder is not built \033[0m"
+        else
+            echo $folder "checked"
+        fi
+    else
+        echo -e "\033[0;31m The package $folder is not installed \033[0m"
+    fi
+done
 
-if [[ ! $SYS_CTL_MOTORS_CONTROL == *$SERVICE_STATUS* ]]; then
-    echo -e "\033[0;31m The service ros_motor_control_node_boot is not active \033[0m"
-fi
-echo -ne '##############            (50%)\r'
-if [[ ! $SYS_CTL_MOTORS_CURRENT == *$SERVICE_STATUS* ]]; then
-    echo -e "\033[0;31m The service ros_motor_current_node_boot is not active \033[0m"
-fi
-if [[ ! $SYS_CTL_API == *$SERVICE_STATUS* ]]; then
-    echo -e "\033[0;31m The service pib_api_boot is not active \033[0m"
-fi
-if [[ ! $SYS_CTL_CAMERA == *$SERVICE_STATUS* ]]; then
-    echo -e "\033[0;31m The service ros_camera_boot is not active \033[0m"
-fi
-echo -ne '#####################     (75%)\r'
-if [[ ! $SYS_CTL_CEREBRA == *$SERVICE_STATUS* ]]; then
-    echo -e "\033[0;31m The service ros_cerebra_boot is not active \033[0m"
-fi
-if [[ ! $SYS_CTL_VOICE_ASSISTANT == *$SERVICE_STATUS* ]]; then
-    echo -e "\033[0;31m The service ros_voice_assistant_boot is not active \033[0m"
-fi
-echo -ne '##########################(100%)\r'
+for service_name in "${SYS_CTLS[@]}"
+do
+    if [[ ! $(systemctl status $service_name) == *$SERVICE_STATUS* ]]; then
+        echo -e "\033[0;31m The service $service_name is not active \033[0m"
+    else 
+        echo $service_name "checked"
+    fi
+done
 echo "---services and packages checked---"
 
 exit 0
