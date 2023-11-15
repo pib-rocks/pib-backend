@@ -1,7 +1,7 @@
 # This script tests the setup-script
-# Please restart once bevor you restart this script
+# Please restart once before you restart this script
 
-# Some variablen
+# Some variable
 
 u="$USER"
 file=/etc/lsb-release
@@ -21,18 +21,18 @@ while true; do
 done
 
 # Check some default settings and installations
-echo "Check some detault settings and installations. Thise checks can take some minutes, so pleas lean back and wait :)"
+echo "Check some default settings and installations. These checks can take some minutes, so please lean back and wait :)"
 
 if [ $u != "pib" ]; then
-    echo "You are not logged in with the correct user. Pleas login with pib."
+    echo "You are not logged in with the correct user. Please log in with pib."
     exit1
 fi
 echo "Correct user: " $u
 
 if [ $ubuntu_v == 22.04 ]; then
-    echo "Ubuntu version is recommandet."
+    echo "Ubuntu version is recommended."
 else
-    echo -e "\033[0;31m Ubuntu version is not recommandet! \033[0m"
+    echo -e "\033[0;31m Ubuntu version is not recommanded! \033[0m"
 fi
 
 if ! colcon version-check >/dev/null 2>&1; then
@@ -64,7 +64,7 @@ done
 
 echo "---installations checked---"
 while true; do
-    read -p "Do you want to contionue with a check on packages and services?" yn
+    read -p "Do you want to continue with a check on packages and services?" yn
     case $yn in
         [Yy]* ) break;;
         [Nn]* ) exit 1;;
