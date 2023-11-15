@@ -35,7 +35,7 @@ PIB_API_URL_PATH="https://github.com/pib-rocks/pib-api/archive/refs/heads/main.z
 #
 ROS_PACKAGES_LINK="https://raw.githubusercontent.com/pib-rocks/ros-packages/main/packages-set-up.sh"
 ROS_UPDATE_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/update-pib.sh"
-ROS_TEST_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/test-setup-pib.sh"
+ROS_TEST_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/test-script/test-setup-pib.sh"
 #
 # We make sure that this script is run by the user "pib"
 if [ "$(whoami)" != "pib" ]; then
