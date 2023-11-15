@@ -237,5 +237,5 @@ echo -e '\nPlease restart the system to apply changes...'
 
 cd $USER_HOME
 wget -O test-script-pib.sh $ROS_TEST_LINK
-chmod 755 ./test-script-pib.sh
+chmod 755 test-script-pib.sh
 ./test-script-pib.sh
