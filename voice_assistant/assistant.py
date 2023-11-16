@@ -16,7 +16,7 @@ import time
 openai.api_key = ""
 
 # Google Cloud API
-os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "/home/pib/ros_working_dir/src/voice_assistant/voice_assistant/pibVoice.json"
+os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "/home/pib/ros_working_dir/src/voice-assistant/voice_assistant/pibVoice.json"
 client = speech.SpeechClient()
 
 class AssistantSubscriber(Node):
