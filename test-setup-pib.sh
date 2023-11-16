@@ -26,7 +26,7 @@ echo "Check some default settings and installations. These checks can take some 
 
 if [ $u != "pib" ]; then
     echo -e $red_text_color"You are not logged in with the correct user. Please log in with pib."$reset_text_color
-    exit1
+    exit 1
 fi
 echo "Correct user: " $u
 
