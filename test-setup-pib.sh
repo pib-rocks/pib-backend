@@ -3,11 +3,11 @@
 
 # Expected values
 expected_user_name="pib"
-expected_ubuntu_version="22.04"
+expected_ubuntu_version='"22.04"'
 
 # System variables
-os_release_info_filepath=/etc/lsb-release
-ubuntu_version=$(grep DISTRIB_RELEASE "$os_release_info_filepath" | cut -f2 -d'=') 
+os_release_info_filepath=/etc/os-release
+ubuntu_version=$(grep VERSION_ID "$os_release_info_filepath" | cut -f2 -d'=') 
 
 # Variables for "echo -e" output text formatting
 red_text_color="\e[31m"
