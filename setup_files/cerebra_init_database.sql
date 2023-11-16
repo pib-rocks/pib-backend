@@ -208,7 +208,7 @@ insert into
    cameraSettings
 values
    (
-      NULL, "480p (SD)", 0.1, 80, 640, 480
+      NULL, "SD", 0.1, 80, 640, 480
    )
 ;
 create table IF NOT EXISTS bricklet (id INTEGER primary key AUTOINCREMENT NOT NULL, brickletId TEXT NOT NULL, brickletNumber INTEGER NOT NULL);
