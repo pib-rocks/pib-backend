@@ -6,8 +6,9 @@
 u="$USER"
 file=/etc/lsb-release
 ubuntu_v=$(grep DISTRIB_RELEASE "$file" | cut -f2 -d'=') 
-YELLOW='\033[0;33'
-NC='\033[0m'
+
+red_text_color="\e[31m"
+reset_text_color="\e[0m"
 
 
 
@@ -24,7 +25,7 @@ done
 echo "Check some default settings and installations. These checks can take some minutes, so please lean back and wait :)"
 
 if [ $u != "pib" ]; then
-    echo "You are not logged in with the correct user. Please log in with pib."
+    echo -e $red_text_color"You are not logged in with the correct user. Please log in with pib."$reset_text_color
     exit1
 fi
 echo "Correct user: " $u
@@ -32,11 +33,11 @@ echo "Correct user: " $u
 if [ $ubuntu_v == 22.04 ]; then
     echo "Ubuntu version is recommended."
 else
-    echo -e "\033[0;31m Ubuntu version is not recommanded! \033[0m"
+    echo -e $red_text_color"Ubuntu version is not recommanded!"$reset_text_color
 fi
 
 if ! colcon version-check >/dev/null 2>&1; then
-    echo -e "\033[0;31m The package colcon is not installed \033[0m"
+    echo -e $red_text_color"The package colcon is not installed"$reset_text_color
 fi
 
 #Setup-Script installations
@@ -46,7 +47,7 @@ INSTALLATIONS=([1]=python3-pip [2]=git [3]=python3 [4]=curl [5]=openssh-server [
 for installation in "${INSTALLATIONS[@]}"
 do
     if ! dpkg-query -W -f='${Status}' $installation 2>/dev/null | grep -q "install ok installed"; then
-        echo -e "\033[0;31m The package $installation is not installed \033[0m"
+        echo -e $red_text_color"The package $installation is not installed"$reset_text_color
     else
         echo $installation "checked"
     fi
@@ -56,7 +57,7 @@ PIP_PACKAGES=([1]=depthai [2]=tinkerforge [3]=openai [4]=google-cloud-speech [5]
 for package in "${PIP_PACKAGES[@]}"
 do
     if ! pip show $package >/dev/null 2>&1; then
-        echo -e "\033[0;31m The Python-Package $package is not installed \033[0m"
+        echo -e $red_text_color"The Python-Package $package is not installed"$reset_text_color
     else
         echo $package" checked"
     fi
@@ -87,19 +88,19 @@ for folder in "${FOLDERS[@]}"
 do
     if [ -d "$ROS_WORKING_DIR_SRC/$folder" ];then
         if [[ ! $COLCON_INFO == *$PACKAGE_NAMES[$COUNT]* ]]; then
-            echo -e "\033[0;31m The package $folder is not built \033[0m"
+            echo -e $red_text_color"The package $folder is not built"$reset_text_color
         else
             echo $folder "checked"
         fi
     else
-        echo -e "\033[0;31m The package $folder is not installed \033[0m"
+        echo -e $red_text_color"The package $folder is not installed"$reset_text_color
     fi
 done
 
 for service_name in "${SYS_CTLS[@]}"
 do
     if [[ ! $(systemctl status $service_name) == *$SERVICE_STATUS* ]]; then
-        echo -e "\033[0;31m The service $service_name is not active \033[0m"
+        echo -e $red_text_color"The service $service_name is not active"$reset_text_color
     else 
         echo $service_name "checked"
     fi
