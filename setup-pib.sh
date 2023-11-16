@@ -84,7 +84,7 @@ sudo update-locale LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8
 export LANG=en_US.UTF-8
 locale  # verify settings
 sudo apt install software-properties-common
-sudo add-apt-repository universe
+sudo add-apt-repository -y universe
 sudo apt update && sudo apt install curl -y
 sudo curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key -o /usr/share/keyrings/ros-archive-keyring.gpg
 echo "Adding ros2.list to repositories..."
@@ -102,7 +102,7 @@ echo "export ROS_LOCALHOST_ONLY=1" >> $USER_HOME/.bashrc
 pip install --upgrade openai
 pip install google-cloud-texttospeech
 pip install --upgrade google-cloud-speech
-sudo apt install python3-pyaudio
+sudo apt install -y python3-pyaudio
 pip install SpeechRecognition
 #
 # Install rosbridge-server
@@ -194,7 +194,7 @@ sudo chmod -R 777 $ROS_WORKING_DIR/src
 cd $USER_HOME
 wget -O package_set_up.sh $ROS_PACKAGES_LINK
 chmod +x package_set_up.sh
-./package_set_up.sh
+yes | ./package_set_up.sh
 # install update-pip
 if [ -f $USER_HOME/update-pib.sh ]; then
   sudo rm update-pib.sh
