@@ -79,16 +79,17 @@ while true; do
 done
 
 # Check pib packages and services
-COLCON_INFO=$(colcon info)
-
-SYS_CTLS=([1]=ros_motor_control_node_boot.service [2]=ros_motor_current_node_boot.service [3]=pib_api_boot.service [4]=ros_camera_boot.service [5]=ros_cerebra_boot.service [6]=ros_voice_assistant_boot.service)
-
-SERVICE_STATUS="Active: active (running)"
 ROS_WORKING_DIR_SRC="/home/pib/ros_working_dir/src"
-COUNT=0
+
 FOLDERS=([1]=motors [2]=datatypes [3]=voice-assistant [4]=ros2_oak_d_lite)
 PACKAGE_NAMES=([1]=name: motors [2]=name: datatypes [3]=name: oak_d_lite [4]=name: voice_assistant)
+SYS_CTLS=([1]=ros_motor_control_node_boot.service [2]=ros_motor_current_node_boot.service [3]=pib_api_boot.service [4]=ros_camera_boot.service [5]=ros_cerebra_boot.service [6]=ros_voice_assistant_boot.service)
 
+# Change directory to make the colcon command work independently of the location of this shell script
+cd $ROS_WORKING_DIR_SRC
+COLCON_INFO=$(colcon info)
+
+COUNT=0
 for folder in "${FOLDERS[@]}"
 do
     if [ -d "$ROS_WORKING_DIR_SRC/$folder" ];then
@@ -102,6 +103,7 @@ do
     fi
 done
 
+SERVICE_STATUS="Active: active (running)"
 for service_name in "${SYS_CTLS[@]}"
 do
     if [[ ! $(systemctl status $service_name) == *$SERVICE_STATUS* ]]; then
