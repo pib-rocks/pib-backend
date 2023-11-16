@@ -91,7 +91,6 @@ COLCON_INFO=$(colcon info)
 
 for i in "${!FOLDERS[@]}"
 do
-    echo $i
     if [ -d "$ROS_WORKING_DIR_SRC/${FOLDERS[$i]}" ];then
         if [[ ! $COLCON_INFO == *${PACKAGE_NAMES[$i]}* ]]; then
             echo -e $red_text_color"The package ${FOLDERS[$i]} is not built"$reset_text_color
