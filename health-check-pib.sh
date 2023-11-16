@@ -82,24 +82,24 @@ done
 ROS_WORKING_DIR_SRC="/home/pib/ros_working_dir/src"
 
 FOLDERS=([1]=motors [2]=datatypes [3]=voice-assistant [4]=ros2_oak_d_lite)
-PACKAGE_NAMES=([1]=name: motors [2]=name: datatypes [3]=name: oak_d_lite [4]=name: voice_assistant)
+PACKAGE_NAMES=([1]=name: motors [2]=name: datatypes [3]=name: voice_assistant [4]=name: oak_d_lite)
 SYS_CTLS=([1]=ros_motor_control_node_boot.service [2]=ros_motor_current_node_boot.service [3]=pib_api_boot.service [4]=ros_camera_boot.service [5]=ros_cerebra_boot.service [6]=ros_voice_assistant_boot.service)
 
 # Change directory to make the colcon command work independently of the location of this shell script
 cd $ROS_WORKING_DIR_SRC
 COLCON_INFO=$(colcon info)
 
-COUNT=0
-for folder in "${FOLDERS[@]}"
+for i in "${!FOLDERS[@]}"
 do
-    if [ -d "$ROS_WORKING_DIR_SRC/$folder" ];then
-        if [[ ! $COLCON_INFO == *$PACKAGE_NAMES[$COUNT]* ]]; then
-            echo -e $red_text_color"The package $folder is not built"$reset_text_color
+    echo $i
+    if [ -d "$ROS_WORKING_DIR_SRC/${FOLDERS[$i]}" ];then
+        if [[ ! $COLCON_INFO == *${PACKAGE_NAMES[$i]}* ]]; then
+            echo -e $red_text_color"The package ${FOLDERS[$i]} is not built"$reset_text_color
         else
-            echo -e $folder "package checked"
+            echo -e ${FOLDERS[$i]} "package checked"
         fi
     else
-        echo -e $red_text_color"The package $folder is not installed"$reset_text_color
+        echo -e $red_text_color"The package ${FOLDERS[$i]} is not installed"$reset_text_color
     fi
 done
 
