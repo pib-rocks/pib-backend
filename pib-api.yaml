@@ -254,7 +254,7 @@ paths:
             type: string
       responses:
         '204':
-          $ref: '#/components/responses/204'
+                '#/components/responses/204'
         '400':
           $ref: '#/components/responses/400'
         '404':
@@ -651,7 +651,7 @@ components:
             - Short Stories
             - Nürnberg
             - Definition of AI today
-        voiceAssistantPersonalityID:
+        personalityId:
           examples:
             - f83913e4-ac40-498c-9bab-635958fbe096 
       required:
@@ -881,7 +881,7 @@ components:
               - The requested resource is not available
   responses:
     '204':
-      description: No Content
+      description: No Content        
     '400':
       description: Bad Request
       content:
