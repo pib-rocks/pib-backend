@@ -652,7 +652,6 @@ components:
             - Nürnberg
             - Definition of AI today
         voiceAssistantPersonalityID:
-          readOnly: true
           examples:
             - f83913e4-ac40-498c-9bab-635958fbe096 
       required:
