@@ -41,7 +41,7 @@ If you execute the command without the parameter "-Cerebra" the browser app and 
 
 ## Checking if the software was installed successfully
 
-Inside the "dev-tools" folder, you can find a shell script that checks if 
+Inside the "dev_tools" folder, you can find a shell script that checks if 
 all necessary packages are installed and all required ros-services are running. (health-check-pib.sh)
 
 Follow these steps to run the health-check-script:
@@ -49,7 +49,7 @@ Follow these steps to run the health-check-script:
 2. Change the permissions by entering "chmod 755 health-check-pib.sh" into the ubuntu terminal.
 3. Run the script by entering "./health-check-pib.sh"
 
-The script also has a dev-mode "./health-check-pib.sh -d" option that allows you to only check some part of the script.
+The script also has a development mode "./health-check-pib.sh -d" option that allows you to only check some part of the script.
 For example to only check ros packages and services without the python packages.
 
 Aside from the automated script, here are some usefull debugging commands:
