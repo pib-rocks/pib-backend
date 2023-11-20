@@ -14,7 +14,7 @@ yellow_text_color="\e[33m"
 reset_text_color="\e[0m"
 new_line="\n"
 
-# Print infos about the command-line parameter options, then exit the script
+# Show infos about the command-line parameter options, then exit the script
 help_function() 
 {
     echo -e $red_text_color"Invalid command-line option used"$reset_text_color
@@ -39,6 +39,7 @@ then
     help_function
 fi
 
+# When running in dev mode, ask the user which checks should be done
 run_ubuntu_check=$true
 run_python_package_check=$true
 run_pip_package_check=$true
@@ -104,7 +105,7 @@ if [ $run_ubuntu_check = $true ]; then
         if ! dpkg-query -W -f='${Status}' $installation 2>/dev/null | grep -q "install ok installed"; then
             echo -e $red_text_color"The package $installation is not installed"$reset_text_color
         else
-            echo -e $installation "checked"
+            echo -e $installation "is installed"
         fi
     done
     echo -e $yellow_text_color"--- ubuntu check completed ---"$reset_text_color
@@ -120,7 +121,7 @@ if [ $run_python_package_check = $true ]; then
         if ! pip show $package >/dev/null 2>&1; then
             echo -e $red_text_color"The Python-Package $package is not installed"$reset_text_color
         else
-            echo -e $package" checked"
+            echo -e $package" is installed"
         fi
     done
     echo -e $yellow_text_color"--- python package check completed ---"$reset_text_color
@@ -146,20 +147,28 @@ if [ $run_pip_package_check = $true ]; then
             if [[ ! $COLCON_INFO == *${PACKAGE_NAMES[$i]}* ]]; then
                 echo -e $red_text_color"The package ${FOLDERS[$i]} is not built"$reset_text_color
             else
-                echo -e ${FOLDERS[$i]} "package checked"
+                echo -e ${FOLDERS[$i]} "package is built and installed"
             fi
         else
             echo -e $red_text_color"The package ${FOLDERS[$i]} is not installed"$reset_text_color
         fi
     done
 
-    SERVICE_STATUS="Active: active (running)"
+    SERVICE_STATUS_ACTIVE="Active: active (running)"
+    SERVICE_STATUS_NOT_FOUND="could not be found"
     for service_name in "${SYS_CTLS[@]}"
     do
-        if [[ ! $(systemctl status $service_name) == *$SERVICE_STATUS* ]]; then
-            echo -e $red_text_color"The service $service_name is not active"$reset_text_color
+        # Save the standard output and standard error (2>&1) in a variable
+        SERVICE_STATUS=$(systemctl status $service_name 2>&1)
+        
+        if [[ $SERVICE_STATUS == *$SERVICE_STATUS_ACTIVE* ]]; then
+            echo -e $service_name "is active"
         else 
-            echo -e $service_name "checked"
+            if [[ $SERVICE_STATUS == *$SERVICE_STATUS_NOT_FOUND* ]]; then
+                echo -e $red_text_color"The service $service_name could not be found"$reset_text_color
+            else
+                echo -e $red_text_color"The service $service_name is not active"$reset_text_color
+            fi
         fi
     done
     echo -e $yellow_text_color"--- pib packages and services check completed ---"$reset_text_color
