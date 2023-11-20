@@ -1,3 +1,5 @@
+#!/bin/bash
+
 # This script checks if all requirements for running pibs software are met
 
 # Expected values
@@ -98,9 +100,9 @@ if [ $run_ubuntu_check = $true ]; then
         echo -e $red_text_color"The colcon package is not installed"$reset_text_color
     fi
 
-    INSTALLATIONS=([1]=python3-pip [2]=git [3]=python3 [4]=curl [5]=openssh-server [6]=software-properties-common [7]=unzip [8]=sqlite3 [9]=locales [10]=libusb-1.0-0 [11]=libudev1 [12]=procps [13]=php8.1-fpm [14]=python3-pyqt5 [15]=python3-pyqt5.qtopengl [16]=python3-serial [17]=python3-tz [18]=python3-tzlocal [19]=libusb-1.0-0-dev [20]=flac)
+    installations=([1]=python3-pip [2]=git [3]=python3 [4]=curl [5]=openssh-server [6]=software-properties-common [7]=unzip [8]=sqlite3 [9]=locales [10]=libusb-1.0-0 [11]=libudev1 [12]=procps [13]=php8.1-fpm [14]=python3-pyqt5 [15]=python3-pyqt5.qtopengl [16]=python3-serial [17]=python3-tz [18]=python3-tzlocal [19]=libusb-1.0-0-dev [20]=flac)
 
-    for installation in "${INSTALLATIONS[@]}"
+    for installation in "${installations[@]}"
     do
         if ! dpkg-query -W -f='${Status}' $installation 2>/dev/null | grep -q "install ok installed"; then
             echo -e $red_text_color"The package $installation is not installed"$reset_text_color
@@ -115,8 +117,8 @@ fi
 if [ $run_python_package_check = $true ]; then
     echo -e $new_line$yellow_text_color"--- checking python packages ---"$reset_text_color
 
-    PIP_PACKAGES=([1]=depthai [2]=tinkerforge [3]=openai [4]=google-cloud-speech [5]=google-cloud-texttospeech [6]=pyaudio [7]=opencv-python [8]=setuptools)
-    for package in "${PIP_PACKAGES[@]}"
+    pip_packages=([1]=depthai [2]=tinkerforge [3]=openai [4]=google-cloud-speech [5]=google-cloud-texttospeech [6]=pyaudio [7]=opencv-python [8]=setuptools)
+    for package in "${pip_packages[@]}"
     do
         if ! pip show $package >/dev/null 2>&1; then
             echo -e $red_text_color"The Python-Package $package is not installed"$reset_text_color
@@ -131,40 +133,40 @@ fi
 if [ $run_pip_package_check = $true ]; then
     echo -e $new_line$yellow_text_color"--- checking pib packages and services ---"$reset_text_color
 
-    ROS_WORKING_DIR_SRC="/home/pib/ros_working_dir/src"
+    ros_working_dir_src="/home/pib/ros_working_dir/src"
 
-    FOLDERS=([1]=motors [2]=datatypes [3]=voice-assistant [4]=ros2_oak_d_lite)
-    PACKAGE_NAMES=([1]="name: motors" [2]="name: datatypes" [3]="name: voice_assistant" [4]="name: oak_d_lite")
-    SYS_CTLS=([1]=ros_motor_control_node_boot.service [2]=ros_motor_current_node_boot.service [3]=pib_api_boot.service [4]=ros_camera_boot.service [5]=ros_cerebra_boot.service [6]=ros_voice_assistant_boot.service)
+    folders=([1]=motors [2]=datatypes [3]=voice-assistant [4]=ros2_oak_d_lite)
+    package_names=([1]="name: motors" [2]="name: datatypes" [3]="name: voice_assistant" [4]="name: oak_d_lite")
+    sys_ctls=([1]=ros_motor_control_node_boot.service [2]=ros_motor_current_node_boot.service [3]=pib_api_boot.service [4]=ros_camera_boot.service [5]=ros_cerebra_boot.service [6]=ros_voice_assistant_boot.service)
 
     # Change directory to make the colcon command work independently of the location of this shell script
-    cd $ROS_WORKING_DIR_SRC
+    cd $ros_working_dir_src
     COLCON_INFO=$(colcon info)
 
-    for i in "${!FOLDERS[@]}"
+    for i in "${!folders[@]}"
     do
-        if [ -d "$ROS_WORKING_DIR_SRC/${FOLDERS[$i]}" ];then
-            if [[ ! $COLCON_INFO == *${PACKAGE_NAMES[$i]}* ]]; then
-                echo -e $red_text_color"The package ${FOLDERS[$i]} is not built"$reset_text_color
+        if [ -d "$ros_working_dir_src/${folders[$i]}" ];then
+            if [[ ! $COLCON_INFO == *${package_names[$i]}* ]]; then
+                echo -e $red_text_color"The package ${folders[$i]} is not built"$reset_text_color
             else
-                echo -e ${FOLDERS[$i]} "package is built and installed"
+                echo -e ${folders[$i]} "package is built and installed"
             fi
         else
-            echo -e $red_text_color"The package ${FOLDERS[$i]} is not installed"$reset_text_color
+            echo -e $red_text_color"The package ${folders[$i]} is not installed"$reset_text_color
         fi
     done
 
-    SERVICE_STATUS_ACTIVE="Active: active (running)"
-    SERVICE_STATUS_NOT_FOUND="could not be found"
-    for service_name in "${SYS_CTLS[@]}"
+    service_status_active="Active: active (running)"
+    service_status_not_found="could not be found"
+    for service_name in "${sys_ctls[@]}"
     do
         # Save the standard output and standard error (2>&1) in a variable
-        SERVICE_STATUS=$(systemctl status $service_name 2>&1)
+        service_status=$(systemctl status $service_name 2>&1)
         
-        if [[ $SERVICE_STATUS == *$SERVICE_STATUS_ACTIVE* ]]; then
+        if [[ $service_status == *$service_status_active* ]]; then
             echo -e $service_name "is active"
         else 
-            if [[ $SERVICE_STATUS == *$SERVICE_STATUS_NOT_FOUND* ]]; then
+            if [[ $service_status == *$service_status_not_found* ]]; then
                 echo -e $red_text_color"The service $service_name could not be found"$reset_text_color
             else
                 echo -e $red_text_color"The service $service_name is not active"$reset_text_color
