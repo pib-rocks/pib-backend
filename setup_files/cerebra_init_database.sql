@@ -451,6 +451,7 @@ values
       NULL, "12345-12333-45345-456456", "Nuernberg", "8f73b580-927e-41c2-98ac-e5df070e7288"
    )
 ;
+insert into
 values
    (
       NULL, "12345-12333-45345-456567", "Home-Office", "8b310f95-92cd-4512-b42a-d3fe29c4bb8a"
