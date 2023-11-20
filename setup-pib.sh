@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # This script assumes:
-#   - that Ubuntu Desktop 22.04.2 is installed
+#   - that Ubuntu Desktop 22.04 is installed
 #   - the default-user "pib" is executing it
 #
 UBUNTU_VERSION=$(lsb_release -rs)
