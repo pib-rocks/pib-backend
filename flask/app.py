@@ -112,7 +112,12 @@ class PersonalitySchema(ma.SQLAlchemyAutoSchema):
 class ChatSchema(ma.SQLAlchemyAutoSchema):
     class Meta:
         model = Chat
-        exclude = ('id')
+        exclude = ('id',)
+        
+class UploadChatSchema(ma.SQLAlchemyAutoSchema):
+    class Meta:
+        model = Chat
+        exclude = ('id', 'chatId',)
 
 
 class UploadPersonalitySchema(ma.SQLAlchemyAutoSchema):
@@ -152,12 +157,13 @@ program_schema_without_programnumber = ProgramWithOutNumber()
 programs_schema = ProgramSchema(many=True)
 chat_schema = ChatSchema()
 chats_schema = ChatSchema(many=True)
+upload_chat_schema = UploadChatSchema()
 
 
 
 @app.route('/voice-assistant/chat', methods=['POST'])
 def create_chat():
-    error = chat_schema.validate(request.json)
+    error = upload_chat_schema.validate(request.json)
     if error:
         return error, 400
     chat = Chat(request.json.get('topic'), request.json.get('personalityId'))
@@ -188,10 +194,10 @@ def get_chat_by_id(uuid):
 
 @app.route('/voice-assistant/chat/<string:uuid>', methods=['PUT'])
 def update_chat(uuid):
-    error = chat_schema.validate(request.json)
+    error = upload_chat_schema.validate(request.json)
     if error:
         return error, 400
-    chat = Chat(request.json.get('topic'), uuid, request.json.get('personalityId'))
+    chat = Chat(request.json.get('topic'), request.json.get('personalityId'))
     updateChat = Chat.query.filter(Chat.chatId == uuid).first_or_404()
     updateChat.topic = chat.topic
     updateChat.personalityId = chat.personalityId
