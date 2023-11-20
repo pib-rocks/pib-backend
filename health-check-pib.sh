@@ -1,5 +1,4 @@
 # This script checks if all requirements for running pibs software are met
-# Please restart your system at least once after finishing the setup-script before you run this check
 
 # Expected values
 expected_user_name="pib"
@@ -35,21 +34,11 @@ then
     help_function
 fi
 
-# Ask if the user restarted the system after running the setup script
-while true; do
-    read -rep $'\nDid you restart your system after running the setup script? \nAnswer with yes or no: ' user_answer
-    case $user_answer in
-        [Yy]* ) break;;
-        [Nn]* ) exit 1;;
-        * ) echo "Please answer yes or no.";;
-    esac
-done
-
 # Check the system variables
 echo -e $new_line"Checking system settings and installations."$new_line"These checks can take some time, so please lean back and wait :)"$new_line
 
 if [ $USER != $expected_user_name ]; then
-    echo -e $red_text_color"Your user name is not $expected_user_name. Please change your user name or switch to a user named pib."$reset_text_color
+    echo -e $red_text_color"Your user name is not $expected_user_name."$new_line"Please change your user name or switch to a user named $expected_user_name."$reset_text_color
     exit 1
 fi
 echo -e "You're using the correct user name: " $expected_user_name$new_line
