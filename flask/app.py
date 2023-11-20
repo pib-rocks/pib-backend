@@ -93,10 +93,26 @@ class Program(db.Model):
         self.program = program
         self.programNumber = str(uuid.uuid4())
 
+class Chat(db.Model):
+    __tablename__ = "chat"
+    id = db.Column(db.Integer, primary_key=True)
+    chatId= db.Column(db.String(255), nullable=False, unique=True)
+    topic = db.Column(db.String(255), nullable=False)
+    personalityId = db.Column(db.String(255), nullable=False, unique=True)
+    def __init__(self, topic, personalityId):
+        self.chatId = str(uuid.uuid4())
+        self.topic = topic
+        self.personalityId = personalityId
+
 class PersonalitySchema(ma.SQLAlchemyAutoSchema):
     class Meta:
         model = Personality
         exclude = ('id',)
+
+class ChatSchema(ma.SQLAlchemyAutoSchema):
+    class Meta:
+        model = Chat
+        exclude = ('id')
 
 
 class UploadPersonalitySchema(ma.SQLAlchemyAutoSchema):
@@ -134,8 +150,68 @@ motors_schema = MotorSchema(many=True)
 program_schema = ProgramSchema()
 program_schema_without_programnumber = ProgramWithOutNumber()
 programs_schema = ProgramSchema(many=True)
+chat_schema = ChatSchema()
+chats_schema = ChatSchema(many=True)
 
 
+
+@app.route('/voice-assistant/chat', methods=['POST'])
+def create_chat():
+    error = chat_schema.validate(request.json)
+    if error:
+        return error, 400
+    chat = Chat(request.json.get('topic'), request.json.get('personalityId'))
+    chat.chatId = str(uuid.uuid4())
+    db.session.add(chat)
+    db.session.commit()
+    returnChat = Chat.query.filter(Chat.chatId == chat.chatId).first_or_404()
+    try:
+        return jsonify(chat_schema.dump(returnChat)), 201
+    except:
+        abort(500)
+
+@app.route('/voice-assistant/chat')
+def get_all_chats():
+    all_chats = Chat.query.all()
+    try:
+        return jsonify({"voiceAssistantChats": chats_schema.dump(all_chats)})
+    except:
+        abort(500)
+
+@app.route('/voice-assistant/chat/<string:uuid>', methods=['GET'])
+def get_chat_by_id(uuid):
+    getChat = Chat.query.filter(Chat.chatId == uuid).first_or_404()
+    try:
+        return chat_schema.dump(getChat)
+    except:
+        abort(500)
+
+@app.route('/voice-assistant/chat/<string:uuid>', methods=['PUT'])
+def update_chat(uuid):
+    error = chat_schema.validate(request.json)
+    if error:
+        return error, 400
+    chat = Chat(request.json.get('topic'), uuid, request.json.get('personalityId'))
+    updateChat = Chat.query.filter(Chat.chatId == uuid).first_or_404()
+    updateChat.topic = chat.topic
+    updateChat.personalityId = chat.personalityId
+    db.session.add(updateChat)
+    db.session.commit()
+    updateChat = Chat.query.filter(Chat.chatId == updateChat.chatId).first_or_404()
+    try:
+        return chat_schema.dump(updateChat)
+    except:
+        abort(500)
+
+@app.route('/voice-assistant/chat/<string:uuid>', methods=['DELETE'])
+def delete_chat(uuid):
+    deleteChat = Chat.query.filter(Chat.chatId == uuid).first_or_404()
+    db.session.delete(deleteChat)
+    db.session.commit()
+    try:
+        return '', 204
+    except:
+        abort(500)
 
 @app.route('/voice-assistant/personality')
 def get_all_personalities():
@@ -153,6 +229,7 @@ def get_personality_by_id(uuid):
         return personality_schema.dump(getPersonality)
     except:
         abort(500)
+
 
 
 @app.route('/voice-assistant/personality', methods=['POST'])
