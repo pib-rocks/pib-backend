@@ -14,6 +14,27 @@ red_text_color="\e[31m"
 reset_text_color="\e[0m"
 new_line="\n"
 
+# Print infos about the command-line parameter options, then exit the script
+help_function() 
+{
+    echo -e $red_text_color"Invalid command-line option used"$reset_text_color
+    echo -e "The only available command-line parameter is '-d'."
+    echo -e "You can use -d (dev-mode) to run only part of the health check."
+    echo -e $new_line"Use the command like this: $0 -d"
+    exit 1
+}
+
+# Check if script was started in dev-mode
+is_dev_mode="false"
+if [ "$1" = "-d" ] 
+then
+    is_dev_mode="true"
+# Show help if any other option was called
+elif [ -n "$1" ] 
+then
+    help_function
+fi
+
 # Ask if the user restarted the system after running the setup script
 while true; do
     read -rep $'\nDid you restart your system after running the setup script? \nAnswer with yes or no: ' user_answer
@@ -28,7 +49,7 @@ done
 echo -e $new_line"Checking system settings and installations."$new_line"These checks can take some time, so please lean back and wait :)"$new_line
 
 if [ $USER != $expected_user_name ]; then
-    echo -e $red_text_color"Your user name is not $expected_user_name. Please change your user name or switch to a user named pib."$reset_color_flag
+    echo -e $red_text_color"Your user name is not $expected_user_name. Please change your user name or switch to a user named pib."$reset_text_color
     exit 1
 fi
 echo -e "You're using the correct user name: " $expected_user_name$new_line
