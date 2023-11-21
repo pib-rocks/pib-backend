@@ -101,7 +101,8 @@ echo "export ROS_LOCALHOST_ONLY=1" >> $USER_HOME/.bashrc
 pip install --upgrade openai
 pip install google-cloud-texttospeech
 pip install --upgrade google-cloud-speech
-sudo apt install -y python3-pyaudio
+sudo apt-get install portaudio19-dev
+pip install pyaudio==0.2.14
 pip install SpeechRecognition
 #
 # Install rosbridge-server
