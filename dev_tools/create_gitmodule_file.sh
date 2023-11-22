@@ -16,11 +16,11 @@ help_function()
 	echo -e "$YELLOW_TEXT_COLOR""To start the script in normal mode, don't add any arguments or options.""$RESET_TEXT_COLOR"
 	echo -e "Example: $0""$NEW_LINE"
 	echo -e "$YELLOW_TEXT_COLOR""To start the script in development mode:""$RESET_TEXT_COLOR"
-    echo -e "- add the -d option after the script name."
+	echo -e "- add the -d option after the script name."
 	echo -e "- specify the name of the default branch to be pulled as an argument"
 	echo -e "- specify the name of the feature branch as the third argument"
-    echo -e "$NEW_LINE""Example: $0 -d main PR-368"
-    exit 1
+	echo -e "$NEW_LINE""Example: $0 -d main PR-368"
+	exit 1
 }
 
 # Boolean variables
@@ -31,7 +31,7 @@ readonly FALSE="false"
 is_dev_mode=$FALSE
 if [ "$1" = "-d" ] || [ "$1" = "-D" ] || [ "$1" = "dev" ] || [ "$1" = "develop" ] 
 then
-    is_dev_mode=$TRUE
+	is_dev_mode=$TRUE
 
 	# Assign the second and thrid input argument to variables, if none are null
 	if [[ -n "$2" ]] && [[ -n "$3" ]]
@@ -47,7 +47,7 @@ then
 elif [ -n "$1" ] 
 then
 	echo -e "$RED_TEXT_COLOR""Invalid option inputs. Help function for reference:""$RESET_TEXT_COLOR""$NEW_LINE"
-    help_function
+	help_function
 fi
 
 # Github repo origin links
