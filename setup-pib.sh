@@ -98,7 +98,7 @@ echo 'source /home/pib/ros_working_dir/install/setup.bash' >> $USER_HOME/.bashrc
 echo "export ROS_LOCALHOST_ONLY=1" >> $USER_HOME/.bashrc
 #Install for voice assistant
 #
-pip install --upgrade openai
+pip install openai==0.28
 pip install google-cloud-texttospeech
 pip install --upgrade google-cloud-speech
 sudo apt-get install portaudio19-dev
