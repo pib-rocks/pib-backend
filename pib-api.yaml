@@ -135,19 +135,12 @@ paths:
           $ref: '#/components/responses/404'
         '500':
           $ref: '#/components/responses/500'
-  /voice-assistant/chat/{personality-id}:
+  /voice-assistant/chat/:
     post:
       tags:
         - chat
       summary: Add a new voice assistant chat
       operationId: createVoiceAssistantChat
-      parameters:
-        - name: personalityId
-          description: The personality id is forwarded by the personality tab
-          in: path
-          required: true
-          schema:
-            type: string
       requestBody:
         description: Add a new voice assistant chat
         content:
