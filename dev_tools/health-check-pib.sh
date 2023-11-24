@@ -100,7 +100,7 @@ if [ $run_ubuntu_check = $true ]; then
         echo -e "$red_text_color""The colcon package is not installed""$reset_text_color"
     fi
 
-    installations=([1]=python3-pip [2]=git [3]=python3 [4]=curl [5]=openssh-server [6]=software-properties-common [7]=unzip [8]=sqlite3 [9]=locales [10]=libusb-1.0-0 [11]=libudev1 [12]=procps [13]=php8.1-fpm [14]=python3-pyqt5 [15]=python3-pyqt5.qtopengl [16]=python3-serial [17]=python3-tz [18]=python3-tzlocal [19]=libusb-1.0-0-dev [20]=flac)
+    installations=([1]=python3-pip [2]=git [3]=python3 [4]=curl [5]=openssh-server [6]=software-properties-common [7]=unzip [8]=sqlite3 [9]=locales [10]=libusb-1.0-0 [11]=libudev1 [12]=procps [13]=php8.1-fpm [14]=python3-pyqt5 [15]=python3-pyqt5.qtopengl [16]=python3-serial [17]=python3-tz [18]=python3-tzlocal [19]=libusb-1.0-0-dev [20]=flac [21]=portaudio19-dev)
 
     for installation in "${installations[@]}"
     do
