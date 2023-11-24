@@ -443,3 +443,18 @@ values
    )
 ;
 create table IF NOT EXISTS program (id INTEGER primary key AUTOINCREMENT NOT NULL, name TEXT NOT NULL, program TEXT NOT NULL, programNumber TEXT UNIQUE NOT NULL);
+create table IF NOT EXISTS chat (id INTEGER primary key AUTOINCREMENT NOT NULL, chatid TEXT NOT NULL, topic TEXT NOT NULL, personalityId TEXT NOT NULL, FOREIGN KEY (personalityId) REFERENCES personality(personalityId));
+insert into
+   chat
+values
+   (
+      NULL, "12345-12333-45345-456456", "Nuernberg", "8f73b580-927e-41c2-98ac-e5df070e7288"
+   )
+;
+insert into
+    chat
+values
+   (
+      NULL, "12345-12333-45345-456567", "Home-Office", "8b310f95-92cd-4512-b42a-d3fe29c4bb8a"
+   )
+;
