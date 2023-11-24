@@ -135,19 +135,12 @@ paths:
           $ref: '#/components/responses/404'
         '500':
           $ref: '#/components/responses/500'
-  /voice-assistant/chat/{personality-id}:
+  /voice-assistant/chat/:
     post:
       tags:
         - chat
       summary: Add a new voice assistant chat
       operationId: createVoiceAssistantChat
-      parameters:
-        - name: personalityId
-          description: The personality id is forwarded by the personality tab
-          in: path
-          required: true
-          schema:
-            type: string
       requestBody:
         description: Add a new voice assistant chat
         content:
@@ -254,7 +247,7 @@ paths:
             type: string
       responses:
         '204':
-          $ref: '#/components/responses/204'
+                '#/components/responses/204'
         '400':
           $ref: '#/components/responses/400'
         '404':
@@ -651,8 +644,7 @@ components:
             - Short Stories
             - Nürnberg
             - Definition of AI today
-        voiceAssistantPersonalityID:
-          readOnly: true
+        personalityId:
           examples:
             - f83913e4-ac40-498c-9bab-635958fbe096 
       required:
@@ -882,7 +874,7 @@ components:
               - The requested resource is not available
   responses:
     '204':
-      description: No Content
+      description: No Content        
     '400':
       description: Bad Request
       content:
