@@ -20,8 +20,8 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-        	'motor_control = motors.motor_control:main',
-            'motor_current = motors.motor_current:main'
+                'motor_control = motors.motor_control:main',
+                'motor_current = motors.motor_current:main'
         ],
     },
 )
