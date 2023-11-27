@@ -123,7 +123,7 @@ then
 		if [ "${repo_map[$repo_origin]}" != "$user_feature_branch" ] && [ "${repo_map[$repo_origin]}" != "$user_default_branch" ] 
 		then
 
-			# Check edge case if main branch in user_default, but the branch is named "master". TODO: Remove this check one oak_d_lite branch is renamed
+			# Check edge case if main branch in user_default, but the branch is named "master". TODO: Remove this check once oak_d_lite branch is renamed
 			if [ "$user_default_branch" = "$MAIN_BRANCH" ] && [ "${repo_map[$repo_origin]}" = "$MAIN_ALTERNATIVE_BRANCH" ]
 			then
 				break
@@ -177,14 +177,14 @@ readonly MOTORS_PACKAGE_NAME="motors"
 readonly DATATYPES_PACKAGE_NAME="datatypes"
 readonly OAK_D_LITE_PACKAGE_NAME="ros2_oak_d_lite"
 
-# Assemble submodule information in variables
+# Assemble submodule information in variables (\n = new line \t = tab)
 readonly VOICE_ASSISTANT_GITMODULE="[submodule \"$VOICE_ASSISTANT_PACKAGE_NAME\"]\n\t path = $VOICE_ASSISTANT_PACKAGE_NAME\n\t url = $VOICE_ASSISTANT_ORIGIN\n\t branch = ${repo_map[$VOICE_ASSISTANT_ORIGIN]}\n"
 readonly MOTORS_GITMODULE="[submodule \"$MOTORS_PACKAGE_NAME\"]\n\t path = $MOTORS_PACKAGE_NAME\n\t url = $MOTORS_ORIGIN\n\t branch = ${repo_map[$MOTORS_ORIGIN]}\n"
 readonly DATATYPES_GITMODULE="[submodule \"$DATATYPES_PACKAGE_NAME\"]\n\t path = $DATATYPES_PACKAGE_NAME\n\t url = $DATATYPES_ORIGIN\n\t branch = ${repo_map[$DATATYPES_ORIGIN]}\n"
 readonly OAK_D_LITE_GITMODULE="[submodule \"$OAK_D_LITE_PACKAGE_NAME\"]\n\t path = $OAK_D_LITE_PACKAGE_NAME\n\t url = $OAK_D_LITE_ORIGIN\n\t branch = ${repo_map[$OAK_D_LITE_ORIGIN]}\n"
 
 # Overwrite the .gitmodules file
-chmod 777 "$GIT_PROJECT_DIR"".gitmodules"
+chmod 755 "$GIT_PROJECT_DIR"".gitmodules"
 readonly GITMODULE_FILE_CONTENT="$VOICE_ASSISTANT_GITMODULE""$MOTORS_GITMODULE""$DATATYPES_GITMODULE""$OAK_D_LITE_GITMODULE"
 echo -e $GITMODULE_FILE_CONTENT > "$GIT_PROJECT_DIR"".gitmodules"
 
