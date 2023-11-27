@@ -2,12 +2,11 @@
 #
 # This script sets up our custom ros packages
 
-DEFAULT_USER="pib"
-USER_HOME="/home/$DEFAULT_USER"
-ROS_WORKING_DIR="$USER_HOME/ros_working_dir"
+# Boot script file locations
 ROS_CAMERA_BOOT_DIR="$ROS_WORKING_DIR"/src/ros2_oak_d_lite/boot_scripts
 ROS_MOTORS_BOOT_DIR="$ROS_WORKING_DIR"/src/motors/boot_scripts
 ROS_VOICE_ASSISTANT_BOOT_DIR="$ROS_WORKING_DIR"/src/voice-assistant/boot_scripts
+
 #
 # Installing dependencies
 # Depth-AI
@@ -42,8 +41,11 @@ chmod +x package_set_up.sh
 # Run the script for creating a custom gitmodules file
 readonly CREATE_GITMODULE_FILE="$INSTALLATION_FILES_DIR"/"create_gitmodule_file.sh"
 chmod 755 "$CREATE_GITMODULE_FILE"
-"$CREATE_GITMODULE_FILE" "-d" "dev" "PR-368"
-
+if [ "$is_dev_mode" = "$TRUE"]; then
+	"$CREATE_GITMODULE_FILE" "-d" "$user_default_branch" "$user_feature_branch"
+else
+	"$CREATE_GITMODULE_FILE"
+fi
 git submodule init
 git submodule update --remote
 echo 'Done with installing packages'

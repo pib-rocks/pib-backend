@@ -7,52 +7,37 @@
 #   - the default-user "pib" is executing it
 #
 
-# Codes for "echo -e" output text formatting, made available to all subshells
+# Exported variables for all subshells: Codes for "echo -e" output text formatting
 export RED_TEXT_COLOR="\e[31m"
 export YELLOW_TEXT_COLOR="\e[33m"
 export GREEN_TEXT_COLOR="\e[32m"
 export RESET_TEXT_COLOR="\e[0m"
 export NEW_LINE="\n"
 
-# Exit codes for error detection, made available to all subshells
+# Exported variables for all subshells: Exit codes for error detection
 export SUCCESS_STATUS=0
 export INPUT_OUTPUT_ERROR_STATUS=5
 export FAILED_SUBSCRIPT_STATUS=254
 export FAILED_CHECK_STATUS=255
 
-# Boolean variables for checks
+# Exported variables for all subshells: Boolean constants for checks
 export TRUE="true"
 export FALSE="false"
 
-# Variables for user input options and arguments
-export FIRST_USER_INPUT=$1
-export SECOND_USER_INPUT=$2
-export THIRD_USER_INPUT=$3
-export is_dev_mode="$FALSE"
-export user_default_branch=""
-export user_feature_branch=""
-
-UBUNTU_VERSION=$(lsb_release -rs)
-DEFAULT_USER="pib"
+# Default paths
+export DEFAULT_USER="pib"
 export USER_HOME="/home/$DEFAULT_USER"
 export ROS_WORKING_DIR="$USER_HOME/ros_working_dir"
-export DEFAULT_NGINX_DIR="/etc/nginx"
-export DEFAULT_NGINX_HTML_DIR="$DEFAULT_NGINX_DIR/html"
-export NGINX_CONF_FILE="nginx.conf"
-export NGINX_CONF_FILE_URL="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/nginx.conf"
-#
-export CEREBRA_ARCHIVE_URL_PATH="https://pib.rocks/wp-content/uploads/pib_data/cerebra-latest.zip"
-export CEREBRA_ARCHIVE_NAME="cerebra-latest.zip"
-#
+
+# Links for github direct downloads
 ROS_CONFIG_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/ros_config.sh"
 #
 ROS_CEREBRA_BOOT_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/ros_cerebra_boot.sh"
 ROS_CEREBRA_BOOT_SERVICE_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/ros_cerebra_boot.service"
 #
-ROS_PACKAGES_LINK="https://raw.githubusercontent.com/pib-rocks/ros-packages/main/packages-set-up.sh"
 ROS_UPDATE_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/update-pib.sh"
-#
 
+# Todo: Check if this still works and is necessary
 # We want the user pib to setup things without password (sudo without password)
 # Yes, we are aware of the security-issues..
 echo "Hello pib! We start the setup by allowing you permanently to run commands with admin-privileges."
@@ -69,7 +54,15 @@ fi
 export THIS_DIRECTORY=$( cd "$(dirname "${BASH_SOURCE[0]}")" ; pwd -P )
 export INSTALLATION_FILES_DIR="$THIS_DIRECTORY""/installation_files"
 
-# Check the user inputs (options and arguments) for the dev mode
+# Variables for user input options and arguments
+export FIRST_USER_INPUT=$1
+export SECOND_USER_INPUT=$2
+export THIRD_USER_INPUT=$3
+export is_dev_mode="$FALSE"
+export user_default_branch=""
+export user_feature_branch=""
+
+# Check the user inputs (options and arguments) for the dev mode. Run it in the same shell as this script.
 readonly USER_ARGUMENTS_CHECK_FILE="$INSTALLATION_FILES_DIR"/"check_input_arguments.sh"
 chmod 755 "$USER_ARGUMENTS_CHECK_FILE"
 source "$USER_ARGUMENTS_CHECK_FILE"
@@ -110,10 +103,10 @@ readonly CEREBRA_INSTALLATION_FILE="$INSTALLATION_FILES_DIR"/"install_cerebra.sh
 chmod 755 "$CEREBRA_INSTALLATION_FILE"
 "$CEREBRA_INSTALLATION_FILE"
 
-# Run the script for installing all ros-packages
+# Run the script for installing all ros-packages. Run it in the same shell as this script.
 readonly ROS_PACKAGE_INSTALLATION_FILE="$INSTALLATION_FILES_DIR"/"setup_packages.sh"
 chmod 755 "$ROS_PACKAGE_INSTALLATION_FILE"
-"$ROS_PACKAGE_INSTALLATION_FILE"
+source "$ROS_PACKAGE_INSTALLATION_FILE"
 
 # install update-pip
 if [ -f $USER_HOME/update-pib.sh ]; then

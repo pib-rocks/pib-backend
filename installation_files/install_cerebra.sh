@@ -2,6 +2,16 @@
 #
 # This script installs Cerebra
 
+# Nginx variables
+DEFAULT_NGINX_DIR="/etc/nginx"
+DEFAULT_NGINX_HTML_DIR="$DEFAULT_NGINX_DIR/html"
+NGINX_CONF_FILE="nginx.conf"
+NGINX_CONF_FILE_URL="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/nginx.conf"
+
+# Cerebra download location
+export CEREBRA_ARCHIVE_URL_PATH="https://pib.rocks/wp-content/uploads/pib_data/cerebra-latest.zip"
+export CEREBRA_ARCHIVE_NAME="cerebra-latest.zip"
+
 # Database variables
 PHPLITEADMIN_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/phpliteadmin_v1_9_9_dev.zip"
 PHPLITEADMIN_ZIP="phpliteadmin_v1_9_9_dev.zip"
