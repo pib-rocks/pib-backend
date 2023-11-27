@@ -2,54 +2,6 @@
 #
 # Create a .gitmodules file based on user input
 
-# Constants for "echo -e" output text formatting
-readonly RED_TEXT_COLOR="\e[31m"
-readonly YELLOW_TEXT_COLOR="\e[33m"
-readonly RESET_TEXT_COLOR="\e[0m"
-readonly NEW_LINE="\n"
-
-# Show infos about the command-line parameter options, then exit the script
-help_function() 
-{
-	echo -e "Information about this script:"
-	echo -e "This script has two execution modes (normal mode and development mode).""$NEW_LINE"
-	echo -e "$YELLOW_TEXT_COLOR""To start the script in normal mode, don't add any arguments or options.""$RESET_TEXT_COLOR"
-	echo -e "Example: $0""$NEW_LINE"
-	echo -e "$YELLOW_TEXT_COLOR""To start the script in development mode:""$RESET_TEXT_COLOR"
-	echo -e "- add the -d option after the script name."
-	echo -e "- specify the name of the default branch to be pulled as an argument"
-	echo -e "- specify the name of the feature branch as the third argument"
-	echo -e "$NEW_LINE""Example: $0 -d main PR-368"
-	exit 1
-}
-
-# Boolean variables
-readonly TRUE="true"
-readonly FALSE="false"
-
-# Check if script was started in dev-mode (case insensitive comparison)
-is_dev_mode=$FALSE
-if [ "$1" = "-d" ] || [ "$1" = "-D" ] || [ "$1" = "dev" ] || [ "$1" = "develop" ] 
-then
-	is_dev_mode=$TRUE
-
-	# Assign the second and thrid input argument to variables, if none are null
-	if [[ -n "$2" ]] && [[ -n "$3" ]]
-	then
-		user_default_branch="$2"
-		user_feature_branch="$3"
-	else
-		echo -e "$RED_TEXT_COLOR""Invalid argument syntax. Help function for reference:""$RESET_TEXT_COLOR""$NEW_LINE"
-		help_function
-	fi
-
-# Show help if any other option was called
-elif [ -n "$1" ] 
-then
-	echo -e "$RED_TEXT_COLOR""Invalid option inputs. Help function for reference:""$RESET_TEXT_COLOR""$NEW_LINE"
-	help_function
-fi
-
 # Github repo origin links
 readonly SETUP_PIB_ORIGIN="https://github.com/pib-rocks/setup-pib.git"
 readonly PIB_API_ORIGIN="https://github.com/pib-rocks/pib-api.git"

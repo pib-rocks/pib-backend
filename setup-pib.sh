@@ -8,19 +8,29 @@
 #
 
 # Codes for "echo -e" output text formatting, made available to all subshells
-export red_text_color="\e[31m"
-export yellow_text_color="\e[33m"
-export green_text_color="\e[32m"
-export reset_text_color="\e[0m"
-export new_line="\n"
+export RED_TEXT_COLOR="\e[31m"
+export YELLOW_TEXT_COLOR="\e[33m"
+export GREEN_TEXT_COLOR="\e[32m"
+export RESET_TEXT_COLOR="\e[0m"
+export NEW_LINE="\n"
 
 # Exit codes for error detection, made available to all subshells
 export SUCCESS_STATUS=0
-# TODO/TBR: STATUS CODE 5 MAY NOT BE NEEDED
 export INPUT_OUTPUT_ERROR_STATUS=5
 export FAILED_SUBSCRIPT_STATUS=254
 export FAILED_CHECK_STATUS=255
 
+# Boolean variables for checks
+export TRUE="true"
+export FALSE="false"
+
+# Variables for user input options and arguments
+export FIRST_USER_INPUT=$1
+export SECOND_USER_INPUT=$2
+export THIRD_USER_INPUT=$3
+export is_dev_mode="$FALSE"
+export user_default_branch=""
+export user_feature_branch=""
 
 UBUNTU_VERSION=$(lsb_release -rs)
 DEFAULT_USER="pib"
@@ -58,6 +68,11 @@ fi
 # TODO/TBE: make path constants available to subscripts and move to beginning of script
 export THIS_DIRECTORY=$( cd "$(dirname "${BASH_SOURCE[0]}")" ; pwd -P )
 export INSTALLATION_FILES_DIR="$THIS_DIRECTORY""/installation_files"
+
+# Check the user inputs (options and arguments) for the dev mode
+readonly USER_ARGUMENTS_CHECK_FILE="$INSTALLATION_FILES_DIR"/"check_input_arguments.sh"
+chmod 755 "$USER_ARGUMENTS_CHECK_FILE"
+source "$USER_ARGUMENTS_CHECK_FILE"
 
 # Run the script for checking the system variables
 readonly SYSTEM_VARIABLES_CHECK_FILE="$INSTALLATION_FILES_DIR"/"system_variable_checks.sh"
