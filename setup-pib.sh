@@ -28,6 +28,8 @@ export FALSE="false"
 export DEFAULT_USER="pib"
 export USER_HOME="/home/$DEFAULT_USER"
 export ROS_WORKING_DIR="$USER_HOME/ros_working_dir"
+mkdir "$ROS_WORKING_DIR"
+mkdir "$ROS_WORKING_DIR"/src
 
 # Todo: Check if this still works and is necessary
 # We want the user pib to setup things without password (sudo without password)
@@ -41,10 +43,18 @@ else
 	su root bash -c "usermod -aG sudo $DEFAULT_USER ; echo '$DEFAULT_USER ALL=(ALL) NOPASSWD:ALL' | tee /etc/sudoers.d/$DEFAULT_USER"
 fi
 
-# TODO/TBE: insert download for installation files
-# TODO/TBE: make path constants available to subscripts and move to beginning of script
-export THIS_DIRECTORY=$( cd "$(dirname "${BASH_SOURCE[0]}")" ; pwd -P )
-export INSTALLATION_FILES_DIR="$THIS_DIRECTORY""/installation_files"
+# Create temporary folder for installation files #TODO: Change branch to main/develop
+export SETUP_PIB_BRANCH="PR-368"
+export TEMPORARY_SETUP_DIR="temp"
+export INSTALLATION_FILES_DIR=""
+mkdir "$TEMPORARY_SETUP_DIR"
+
+# Get setup files needed for the pib installation
+wget -O get_setup_files.sh "https://raw.githubusercontent.com/pib-rocks/setup-pib/""$SETUP_PIB_BRANCH""/get_setup_files.sh"
+readonly GET_SETUP_FILES_SCRIPT="get_setup_files.sh"
+chmod 755 "$GET_SETUP_FILES_SCRIPT"
+source "$GET_SETUP_FILES_SCRIPT"
+
 
 # Variables for user input options and arguments
 export FIRST_USER_INPUT=$1
@@ -63,6 +73,9 @@ source "$CHECK_USER_INPUT_SCRIPT"
 readonly CHECK_SYSTEM_VARIABLES_SCRIPT="$INSTALLATION_FILES_DIR"/"check_system_variables.sh"
 chmod 755 "$CHECK_SYSTEM_VARIABLES_SCRIPT"
 source "$CHECK_SYSTEM_VARIABLES_SCRIPT"
+
+# Git is installed seperately, since the CHECK_BRANCHES_SCRIPT is dependent on it
+sudo apt-get install -y git 
 
 # Variables for github branch checking:
 # Github repo origin links
@@ -115,10 +128,10 @@ source "$SETUP_ROS_PACKAGES_SCRIPT"
 
 
 # Links for github direct downloads, from selected branch
-ROS_UPDATE_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/""${repo_map[$SETUP_PIB_ORIGIN]}""/update-pib.sh"
-ROS_CONFIG_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/""${repo_map[$SETUP_PIB_ORIGIN]}""/setup_files/ros_config.sh"
-ROS_CEREBRA_BOOT_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/""${repo_map[$SETUP_PIB_ORIGIN]}""/setup_files/ros_cerebra_boot.sh"
-ROS_CEREBRA_BOOT_SERVICE_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/""${repo_map[$SETUP_PIB_ORIGIN]}""/setup_files/ros_cerebra_boot.service"
+readonly ROS_UPDATE_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/""${repo_map[$SETUP_PIB_ORIGIN]}""/update-pib.sh"
+readonly ROS_CONFIG_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/""${repo_map[$SETUP_PIB_ORIGIN]}""/setup_files/ros_config.sh"
+readonly ROS_CEREBRA_BOOT_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/""${repo_map[$SETUP_PIB_ORIGIN]}""/setup_files/ros_cerebra_boot.sh"
+readonly ROS_CEREBRA_BOOT_SERVICE_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/""${repo_map[$SETUP_PIB_ORIGIN]}""/setup_files/ros_cerebra_boot.service"
 
 # install update-pip
 if [ -f $USER_HOME/update-pib.sh ]; then
