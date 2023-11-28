@@ -2,6 +2,8 @@
 #
 # This script sets up our custom ros packages
 
+echo -e "$YELLOW_TEXT_COLOR""-- Setting up custom ros packages --""$RESET_TEXT_COLOR"		
+
 # Boot script file locations
 ROS_CAMERA_BOOT_DIR="$ROS_WORKING_DIR"/src/ros2_oak_d_lite/boot_scripts
 ROS_MOTORS_BOOT_DIR="$ROS_WORKING_DIR"/src/motors/boot_scripts
@@ -77,3 +79,5 @@ sudo systemctl enable ros_voice_assistant_boot.service
 
 cd $ROS_WORKING_DIR
 colcon build
+
+echo -e "$NEW_LINE""$GREEN_TEXT_COLOR""-- Custom ros package setup completed --""$RESET_TEXT_COLOR""$NEW_LINE"

@@ -41,7 +41,7 @@ else
 	su root bash -c "usermod -aG sudo $DEFAULT_USER ; echo '$DEFAULT_USER ALL=(ALL) NOPASSWD:ALL' | tee /etc/sudoers.d/$DEFAULT_USER"
 fi
 
-# TODO/TBE: rename _file to _script
+# TODO/TBE: insert download for installation files
 # TODO/TBE: make path constants available to subscripts and move to beginning of script
 export THIS_DIRECTORY=$( cd "$(dirname "${BASH_SOURCE[0]}")" ; pwd -P )
 export INSTALLATION_FILES_DIR="$THIS_DIRECTORY""/installation_files"
@@ -55,14 +55,14 @@ export user_default_branch=""
 export user_feature_branch=""
 
 # Check the user inputs (options and arguments) for the dev mode. Run it in the same shell as this script.
-readonly USER_ARGUMENTS_CHECK_FILE="$INSTALLATION_FILES_DIR"/"check_input_arguments.sh"
-chmod 755 "$USER_ARGUMENTS_CHECK_FILE"
-source "$USER_ARGUMENTS_CHECK_FILE"
+readonly CHECK_USER_INPUT_SCRIPT="$INSTALLATION_FILES_DIR"/"check_user_input.sh"
+chmod 755 "$CHECK_USER_INPUT_SCRIPT"
+source "$CHECK_USER_INPUT_SCRIPT"
 
 # Run the script for checking the system variables
-readonly SYSTEM_VARIABLES_CHECK_FILE="$INSTALLATION_FILES_DIR"/"system_variable_checks.sh"
-chmod 755 "$SYSTEM_VARIABLES_CHECK_FILE"
-"$SYSTEM_VARIABLES_CHECK_FILE"
+readonly CHECK_SYSTEM_VARIABLES_SCRIPT="$INSTALLATION_FILES_DIR"/"check_system_variables.sh"
+chmod 755 "$CHECK_SYSTEM_VARIABLES_SCRIPT"
+source "$CHECK_SYSTEM_VARIABLES_SCRIPT"
 
 # Variables for github branch checking:
 # Github repo origin links
@@ -78,19 +78,19 @@ readonly VOICE_ASSISTANT_ORIGIN="https://github.com/pib-rocks/voice-assistant.gi
 declare -A repo_map
 
 # Check the user inputs (options and arguments) for the dev mode. Run it in the same shell as this script.
-readonly CHECK_BRANCHES_FILE="$INSTALLATION_FILES_DIR"/"check_github_branches.sh"
-chmod 755 "$CHECK_BRANCHES_FILE"
-source "$CHECK_BRANCHES_FILE"
+readonly CHECK_BRANCHES_SCRIPT="$INSTALLATION_FILES_DIR"/"check_github_branches.sh"
+chmod 755 "$CHECK_BRANCHES_SCRIPT"
+source "$CHECK_BRANCHES_SCRIPT"
 
 # Run the script for installing system packages
-readonly SYSTEM_INSTALLATIONS_FILE="$INSTALLATION_FILES_DIR"/"system_packages_installation.sh"
-chmod 755 "$SYSTEM_INSTALLATIONS_FILE"
-"$SYSTEM_INSTALLATIONS_FILE"
+readonly INSTALL_SYSTEM_PACKAGES_SCRIPT="$INSTALLATION_FILES_DIR"/"install_system_packages.sh"
+chmod 755 "$INSTALL_SYSTEM_PACKAGES_SCRIPT"
+source "$INSTALL_SYSTEM_PACKAGES_SCRIPT"
 
 # Run the script for installing python packages
-readonly PYTHON_INSTALLATIONS_FILE="$INSTALLATION_FILES_DIR"/"python_packages_installation.sh"
-chmod 755 "$PYTHON_INSTALLATIONS_FILE"
-"$PYTHON_INSTALLATIONS_FILE"
+readonly INSTALL_PYTHON_PACKAGES_SCRIPT="$INSTALLATION_FILES_DIR"/"install_python_packages.sh"
+chmod 755 "$INSTALL_PYTHON_PACKAGES_SCRIPT"
+source "$INSTALL_PYTHON_PACKAGES_SCRIPT"
 
 
 # TODO/TBE: Check if this can be moved to installations script
@@ -99,19 +99,19 @@ echo 'Install rosbridge-server...'
 sudo apt install -y ros-humble-rosbridge-server
 
 # Run the script for installing tinkerforge
-readonly TINKERFORGE_INSTALLATION_FILE="$INSTALLATION_FILES_DIR"/"install_tinkerforge.sh"
-chmod 755 "$TINKERFORGE_INSTALLATION_FILE"
-"$TINKERFORGE_INSTALLATION_FILE"
+readonly INSTALL_TINKERFORGE_SCRIPT="$INSTALLATION_FILES_DIR"/"install_tinkerforge.sh"
+chmod 755 "$INSTALL_TINKERFORGE_SCRIPT"
+source "$INSTALL_TINKERFORGE_SCRIPT"
 
 # Run the script for installing Cerebra
-readonly CEREBRA_INSTALLATION_FILE="$INSTALLATION_FILES_DIR"/"install_cerebra.sh"
-chmod 755 "$CEREBRA_INSTALLATION_FILE"
-"$CEREBRA_INSTALLATION_FILE"
+readonly INSTALL_CEREBRA_SCRIPT="$INSTALLATION_FILES_DIR"/"install_cerebra.sh"
+chmod 755 "$INSTALL_CEREBRA_SCRIPT"
+source "$INSTALL_CEREBRA_SCRIPT"
 
 # Run the script for installing all ros-packages. Run it in the same shell as this script.
-readonly ROS_PACKAGE_INSTALLATION_FILE="$INSTALLATION_FILES_DIR"/"setup_packages.sh"
-chmod 755 "$ROS_PACKAGE_INSTALLATION_FILE"
-source "$ROS_PACKAGE_INSTALLATION_FILE"
+readonly SETUP_ROS_PACKAGES_SCRIPT="$INSTALLATION_FILES_DIR"/"setup_packages.sh"
+chmod 755 "$SETUP_ROS_PACKAGES_SCRIPT"
+source "$SETUP_ROS_PACKAGES_SCRIPT"
 
 
 # Links for github direct downloads, from selected branch
