@@ -3,6 +3,8 @@
 # This script installs the TinkerForge software bundle, 
 # including: Brick Daemon, Brick Viewer and Python API bindings
 
+echo -e "$YELLOW_TEXT_COLOR""-- Installing TinkerForge --""$RESET_TEXT_COLOR"		
+
 # Brick daemon
 PLATFORM_TYPE=$(uname -m)
 if [ $PLATFORM_TYPE != 'aarch64' ]; then
@@ -23,3 +25,5 @@ curl -sSL https://download.tinkerforge.com/apt/$(. /etc/os-release; echo $ID)/ti
 echo "deb https://download.tinkerforge.com/apt/$(. /etc/os-release; echo $ID $VERSION_CODENAME) main" | sudo tee /etc/apt/sources.list.d/tinkerforge.list
 sudo apt-get update
 sudo apt-get install -y python3-tinkerforge
+
+echo -e "$NEW_LINE""$GREEN_TEXT_COLOR""-- TinkerForge installation completed --""$RESET_TEXT_COLOR""$NEW_LINE"

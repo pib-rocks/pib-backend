@@ -2,6 +2,8 @@
 #
 # This script installs Cerebra
 
+echo -e "$YELLOW_TEXT_COLOR""-- Installing Cerebra --""$RESET_TEXT_COLOR"		
+
 # Nginx variables
 DEFAULT_NGINX_DIR="/etc/nginx"
 DEFAULT_NGINX_HTML_DIR="$DEFAULT_NGINX_DIR/html"
@@ -87,3 +89,5 @@ rm -r pib-api-main
 # Allow editing in all src-directories
 sudo chmod -R 777 $ROS_WORKING_DIR
 sudo chmod -R 777 $ROS_WORKING_DIR/src
+
+echo -e "$NEW_LINE""$GREEN_TEXT_COLOR""-- Cerebra installation completed --""$RESET_TEXT_COLOR""$NEW_LINE"

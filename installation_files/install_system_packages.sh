@@ -2,6 +2,7 @@
 #
 # This script installs all ubuntu packages necessary for running pib
 
+echo -e "$YELLOW_TEXT_COLOR""-- Installing system packages --""$RESET_TEXT_COLOR"		
 
 # Adding universe repo, to update ubuntu
 sudo add-apt-repository -y universe
@@ -30,3 +31,5 @@ echo 'source /opt/ros/humble/setup.bash' >> $USER_HOME/.bashrc
 sudo apt-get install colcon
 echo 'source /home/pib/ros_working_dir/install/setup.bash' >> $USER_HOME/.bashrc
 echo "export ROS_LOCALHOST_ONLY=1" >> $USER_HOME/.bashrc
+
+echo -e "$NEW_LINE""$GREEN_TEXT_COLOR""-- System package installation completed --""$RESET_TEXT_COLOR""$NEW_LINE"

@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Create a .gitmodules file based on user input
+# This script checks if there are existing github branches to match the user input
 
 echo -e "$YELLOW_TEXT_COLOR""-- Checking if the specified branches exist --""$RESET_TEXT_COLOR"		
 

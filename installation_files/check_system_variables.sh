@@ -2,6 +2,8 @@
 #
 # This script checks if the username and ubuntu version is matching the expected values
 
+echo -e "$YELLOW_TEXT_COLOR""-- Checking system version and username --""$RESET_TEXT_COLOR""$NEW_LINE"
+
 readonly EXPECTED_USERNAME="$DEFAULT_USER"
 readonly EXPECTED_UBUNTU_VERSION="22.04"
 
@@ -30,4 +32,3 @@ if [ "$(lsb_release -rs)" != "$EXPECTED_UBUNTU_VERSION" ]; then
 fi
 
 echo -e "$GREEN_TEXT_COLOR""-- You're using the correct ubuntu version and ubuntu username! --""$RESET_TEXT_COLOR""$NEW_LINE"
-exit "$SUCCESS_STATUS"

@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Create a .gitmodules file based on the selected branches
+# This script creates a .gitmodules file based on user input
 
 echo -e "$YELLOW_TEXT_COLOR""-- Creating .gitmodule file --""$RESET_TEXT_COLOR""$NEW_LINE"
 
