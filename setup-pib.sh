@@ -50,7 +50,7 @@ export INSTALLATION_FILES_DIR=""
 mkdir "$TEMPORARY_SETUP_DIR"
 
 # Get setup files needed for the pib installation
-wget -O get_setup_files.sh "https://raw.githubusercontent.com/pib-rocks/setup-pib/""$SETUP_PIB_BRANCH""/get_setup_files.sh"
+wget -O get_setup_files.sh "https://raw.githubusercontent.com/pib-rocks/setup-pib/""$SETUP_PIB_BRANCH""/installation_files/get_setup_files.sh"
 readonly GET_SETUP_FILES_SCRIPT="get_setup_files.sh"
 chmod 755 "$GET_SETUP_FILES_SCRIPT"
 source "$GET_SETUP_FILES_SCRIPT"
