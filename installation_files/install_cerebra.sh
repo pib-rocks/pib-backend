@@ -33,27 +33,25 @@ sudo apt install -y nginx
 if [ ! -d $DEFAULT_NGINX_HTML_DIR ]; then sudo -S mkdir -p $DEFAULT_NGINX_HTML_DIR; fi
 echo -e '\nClean up the html directory...'
 cd $DEFAULT_NGINX_HTML_DIR && sudo -S rm -r *
+
+# Create temporary folder for cerebra download
 cd $USER_HOME
-mkdir $ROS_WORKING_DIR
+mkdir "$TEMPORARY_SETUP_DIR"
 # Download Cerebra artifact to the working directory
 echo -e '\nDownloading Cerebra application'
-curl $CEREBRA_ARCHIVE_URL_PATH -L --output $ROS_WORKING_DIR/$CEREBRA_ARCHIVE_NAME
+curl $CEREBRA_ARCHIVE_URL_PATH -L --output "$TEMPORARY_SETUP_DIR/$CEREBRA_ARCHIVE_NAME"
 #
 # Unzip cerebra files to nginx
 echo -e '\nUnzip cerebra...'
 #cd $RASP_TMP_FOLDER
-sudo unzip $ROS_WORKING_DIR/$CEREBRA_ARCHIVE_NAME -d $DEFAULT_NGINX_HTML_DIR
+sudo unzip "$TEMPORARY_SETUP_DIR/$CEREBRA_ARCHIVE_NAME" -d $DEFAULT_NGINX_HTML_DIR
 #
 # Setting up nginx to serve Cerebra locally
 echo -e '\nDownloading nginx configuration file...'
 sudo curl $NGINX_CONF_FILE_URL --output $DEFAULT_NGINX_DIR/$NGINX_CONF_FILE
 
 #
-# create src directory for all ros packages
-cd $ROS_WORKING_DIR
-mkdir src
-#
-# Install and configure phpLiteAdmin
+# Install and configure phpLiteAdmin #TODO: Use temporary setup folder instead of ros_ws
 sudo sed -i "s|;cgi.fix_pathinfo=1|cgi.fix_pathinfo=0|" /etc/php/8.1/fpm/php.ini
 curl $PHPLITEADMIN_LINK -L --output $ROS_WORKING_DIR/$PHPLITEADMIN_ZIP
 sudo mkdir $PHPLITEADMIN_INSTALLATION_DIR
@@ -62,7 +60,7 @@ sudo chmod -R 755 $PHPLITEADMIN_INSTALLATION_DIR
 sudo unzip $ROS_WORKING_DIR/$PHPLITEADMIN_ZIP -d $PHPLITEADMIN_INSTALLATION_DIR
 sudo systemctl restart php8.1-fpm
 
-# Create the database (if it doesn't exist) and initialize it with the SQL file
+# Create the database (if it doesn't exist) and initialize it with the SQL file #TODO: Use temporary setup folder instead of ros_ws
 curl $DATABASE_INIT_QUERY_LINK -L --output $ROS_WORKING_DIR/$DATABASE_INIT_QUERY_FILE
 echo "Creating (if not exist) and initializing SQLite database $DATABASE_FILE with $ROS_WORKING_DIR/$DATABASE_INIT_QUERY_FILE..."
 mkdir $DATABASE_DIR
