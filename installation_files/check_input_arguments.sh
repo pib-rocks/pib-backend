@@ -14,9 +14,9 @@ help_function()
     exit "$INPUT_OUTPUT_ERROR_STATUS"
 }
 
-# Check if script was started in dev-mode (case insensitive comparison)
 echo -e "$YELLOW_TEXT_COLOR""-- Checking possible user input options and arguments --""$RESET_TEXT_COLOR""$NEW_LINE"
 
+# Check if script was started in dev-mode (case insensitive comparison)
 if [ "$FIRST_USER_INPUT" = "-d" ] || [ "$FIRST_USER_INPUT" = "-D" ] || [ "$FIRST_USER_INPUT" = "dev" ] 
 then
 	is_dev_mode="$TRUE"

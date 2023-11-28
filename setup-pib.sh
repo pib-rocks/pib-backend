@@ -24,18 +24,10 @@ export FAILED_CHECK_STATUS=255
 export TRUE="true"
 export FALSE="false"
 
-# Default paths
+# Default ubuntu paths
 export DEFAULT_USER="pib"
 export USER_HOME="/home/$DEFAULT_USER"
 export ROS_WORKING_DIR="$USER_HOME/ros_working_dir"
-
-# Links for github direct downloads
-ROS_CONFIG_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/ros_config.sh"
-#
-ROS_CEREBRA_BOOT_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/ros_cerebra_boot.sh"
-ROS_CEREBRA_BOOT_SERVICE_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/ros_cerebra_boot.service"
-#
-ROS_UPDATE_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/update-pib.sh"
 
 # Todo: Check if this still works and is necessary
 # We want the user pib to setup things without password (sudo without password)
@@ -72,10 +64,23 @@ readonly SYSTEM_VARIABLES_CHECK_FILE="$INSTALLATION_FILES_DIR"/"system_variable_
 chmod 755 "$SYSTEM_VARIABLES_CHECK_FILE"
 "$SYSTEM_VARIABLES_CHECK_FILE"
 
-# Exit this script if any other exit code than 'successfull' was returned by the previous script
-if [ $? -ne "$SUCCESS_STATUS" ]; then
-	exit "$FAILED_SUBSCRIPT_STATUS"
-fi
+# Variables for github branch checking:
+# Github repo origin links
+readonly SETUP_PIB_ORIGIN="https://github.com/pib-rocks/setup-pib.git"
+readonly PIB_API_ORIGIN="https://github.com/pib-rocks/pib-api.git"
+readonly ROS_PACKAGES_ORIGIN="https://github.com/pib-rocks/ros-packages.git"
+readonly DATATYPES_ORIGIN="https://github.com/pib-rocks/datatypes.git"
+readonly MOTORS_ORIGIN="https://github.com/pib-rocks/motors.git"
+readonly OAK_D_LITE_ORIGIN="https://github.com/pib-rocks/ros2_oak_d_lite.git"
+readonly VOICE_ASSISTANT_ORIGIN="https://github.com/pib-rocks/voice-assistant.git"
+
+# Create an associative array (=map). This will be filled with repo-origin-branch-name pairs
+declare -A repo_map
+
+# Check the user inputs (options and arguments) for the dev mode. Run it in the same shell as this script.
+readonly CHECK_BRANCHES_FILE="$INSTALLATION_FILES_DIR"/"check_github_branches.sh"
+chmod 755 "$CHECK_BRANCHES_FILE"
+source "$CHECK_BRANCHES_FILE"
 
 # Run the script for installing system packages
 readonly SYSTEM_INSTALLATIONS_FILE="$INSTALLATION_FILES_DIR"/"system_packages_installation.sh"
@@ -107,6 +112,13 @@ chmod 755 "$CEREBRA_INSTALLATION_FILE"
 readonly ROS_PACKAGE_INSTALLATION_FILE="$INSTALLATION_FILES_DIR"/"setup_packages.sh"
 chmod 755 "$ROS_PACKAGE_INSTALLATION_FILE"
 source "$ROS_PACKAGE_INSTALLATION_FILE"
+
+
+# Links for github direct downloads, from selected branch
+ROS_UPDATE_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/""${repo_map[$SETUP_PIB_ORIGIN]}""/update-pib.sh"
+ROS_CONFIG_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/""${repo_map[$SETUP_PIB_ORIGIN]}""/setup_files/ros_config.sh"
+ROS_CEREBRA_BOOT_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/""${repo_map[$SETUP_PIB_ORIGIN]}""/setup_files/ros_cerebra_boot.sh"
+ROS_CEREBRA_BOOT_SERVICE_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/""${repo_map[$SETUP_PIB_ORIGIN]}""/setup_files/ros_cerebra_boot.service"
 
 # install update-pip
 if [ -f $USER_HOME/update-pib.sh ]; then

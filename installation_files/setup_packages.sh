@@ -42,9 +42,9 @@ chmod +x package_set_up.sh
 readonly CREATE_GITMODULE_FILE="$INSTALLATION_FILES_DIR"/"create_gitmodule_file.sh"
 chmod 755 "$CREATE_GITMODULE_FILE"
 if [ "$is_dev_mode" = "$TRUE"]; then
-	"$CREATE_GITMODULE_FILE" "-d" "$user_default_branch" "$user_feature_branch"
+	source "$CREATE_GITMODULE_FILE" "-d" "$user_default_branch" "$user_feature_branch"
 else
-	"$CREATE_GITMODULE_FILE"
+	source "$CREATE_GITMODULE_FILE"
 fi
 git submodule init
 git submodule update --remote
