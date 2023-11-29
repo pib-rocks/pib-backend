@@ -43,15 +43,20 @@ else
 	su root bash -c "usermod -aG sudo $DEFAULT_USER ; echo '$DEFAULT_USER ALL=(ALL) NOPASSWD:ALL' | tee /etc/sudoers.d/$DEFAULT_USER"
 fi
 
-# Create temporary folder for installation files #TODO: Change branch to main/develop
-export SETUP_PIB_BRANCH="PR-368"
-export TEMPORARY_SETUP_DIR="temp"
-export INSTALLATION_FILES_DIR=""
+# Create temporary folder for installation files
+export TEMPORARY_SETUP_DIR="$USER_HOME""/temp"
 mkdir "$TEMPORARY_SETUP_DIR"
+chmod 775 "$TEMPORARY_SETUP_DIR"
+
+# Installation folder will be created inside temporary directory. Name is appended later on.
+export INSTALLATION_FILES_DIR=""
 
 # Get setup files needed for the pib installation
+# Define TODO: Change branch to main/develop
+export SETUP_PIB_BRANCH="PR-368"
 wget -O get_setup_files.sh "https://raw.githubusercontent.com/pib-rocks/setup-pib/""$SETUP_PIB_BRANCH""/installation_files/get_setup_files.sh"
 readonly GET_SETUP_FILES_SCRIPT="get_setup_files.sh"
+#TODO: remove later chmod commands for setup scripts
 chmod 755 "$GET_SETUP_FILES_SCRIPT"
 source "$GET_SETUP_FILES_SCRIPT"
 
@@ -66,12 +71,10 @@ export user_feature_branch=""
 
 # Check the user inputs (options and arguments) for the dev mode. Run it in the same shell as this script.
 readonly CHECK_USER_INPUT_SCRIPT="$INSTALLATION_FILES_DIR"/"check_user_input.sh"
-chmod 755 "$CHECK_USER_INPUT_SCRIPT"
 source "$CHECK_USER_INPUT_SCRIPT"
 
 # Run the script for checking the system variables
 readonly CHECK_SYSTEM_VARIABLES_SCRIPT="$INSTALLATION_FILES_DIR"/"check_system_variables.sh"
-chmod 755 "$CHECK_SYSTEM_VARIABLES_SCRIPT"
 source "$CHECK_SYSTEM_VARIABLES_SCRIPT"
 
 # Git is installed seperately, since the CHECK_BRANCHES_SCRIPT is dependent on it
@@ -92,17 +95,14 @@ declare -A repo_map
 
 # Check the user inputs (options and arguments) for the dev mode. Run it in the same shell as this script.
 readonly CHECK_BRANCHES_SCRIPT="$INSTALLATION_FILES_DIR"/"check_github_branches.sh"
-chmod 755 "$CHECK_BRANCHES_SCRIPT"
 source "$CHECK_BRANCHES_SCRIPT"
 
 # Run the script for installing system packages
 readonly INSTALL_SYSTEM_PACKAGES_SCRIPT="$INSTALLATION_FILES_DIR"/"install_system_packages.sh"
-chmod 755 "$INSTALL_SYSTEM_PACKAGES_SCRIPT"
 source "$INSTALL_SYSTEM_PACKAGES_SCRIPT"
 
 # Run the script for installing python packages
 readonly INSTALL_PYTHON_PACKAGES_SCRIPT="$INSTALLATION_FILES_DIR"/"install_python_packages.sh"
-chmod 755 "$INSTALL_PYTHON_PACKAGES_SCRIPT"
 source "$INSTALL_PYTHON_PACKAGES_SCRIPT"
 
 
@@ -113,17 +113,14 @@ sudo apt install -y ros-humble-rosbridge-server
 
 # Run the script for installing tinkerforge
 readonly INSTALL_TINKERFORGE_SCRIPT="$INSTALLATION_FILES_DIR"/"install_tinkerforge.sh"
-chmod 755 "$INSTALL_TINKERFORGE_SCRIPT"
 source "$INSTALL_TINKERFORGE_SCRIPT"
 
 # Run the script for installing Cerebra
 readonly INSTALL_CEREBRA_SCRIPT="$INSTALLATION_FILES_DIR"/"install_cerebra.sh"
-chmod 755 "$INSTALL_CEREBRA_SCRIPT"
 source "$INSTALL_CEREBRA_SCRIPT"
 
 # Run the script for installing all ros-packages. Run it in the same shell as this script.
 readonly SETUP_ROS_PACKAGES_SCRIPT="$INSTALLATION_FILES_DIR"/"setup_packages.sh"
-chmod 755 "$SETUP_ROS_PACKAGES_SCRIPT"
 source "$SETUP_ROS_PACKAGES_SCRIPT"
 
 
@@ -166,7 +163,7 @@ sudo mv $ROS_WORKING_DIR/ros_cerebra_boot.service /etc/systemd/system
 
 # Clean-up: remove unnecessary .zip directories
 rm -r phpliteadmin_v1_9_9_dev.zip
-rm -r cerebra-latest.zip
+rm -r "$TEMPORARY_SETUP_DIR"
 
 # Enable new services
 sudo systemctl daemon-reload
