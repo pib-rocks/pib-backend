@@ -67,6 +67,7 @@ class Motor(db.Model):
     deceleration = db.Column(db.Integer, nullable=False)
     period = db.Column(db.Integer, nullable=False)
     turnedOn = db.Column(db.Boolean, nullable=False)
+    active = db.Column(db.Boolean, nullable=False)
     effort = db.Column(db.Integer, nullable=True)
     def __init__(self, *args):
         self.name = args[0]
@@ -79,8 +80,9 @@ class Motor(db.Model):
         self.deceleration = args[7]
         self.period = args[8]
         self.turnedOn = args[9]
-        if len(args) > 10:
-            self.effort = args[10]
+        self.active = args[10]
+        if len(args) > 11:
+            self.effort = args[11]
 
 class Program(db.Model):
     __tablename__ = "program"
@@ -348,7 +350,7 @@ def update_motor():
     error = motor_schema.validate(request.json)
     if error:
         return error, 400
-    updateMotor = Motor(request.json.get('name'), request.json.get('pulseWidthMin'), request.json.get('pulseWidthMax'), request.json.get('rotationRangeMin'), request.json.get('rotationRangeMax'), request.json.get('velocity'), request.json.get('acceleration'), request.json.get('deceleration'), request.json.get('period'), request.json.get('turnedOn'))
+    updateMotor = Motor(request.json.get('name'), request.json.get('pulseWidthMin'), request.json.get('pulseWidthMax'), request.json.get('rotationRangeMin'), request.json.get('rotationRangeMax'), request.json.get('velocity'), request.json.get('acceleration'), request.json.get('deceleration'), request.json.get('period'), request.json.get('turnedOn'), request.json.get('active'))
     motor = Motor.query.filter(Motor.name == updateMotor.name).first_or_404()
     motor.pulseWidthMin = updateMotor.pulseWidthMin
     motor.pulseWidthMax = updateMotor.pulseWidthMax
@@ -359,6 +361,7 @@ def update_motor():
     motor.deceleration = updateMotor.deceleration
     motor.period = updateMotor.period
     motor.turnedOn = updateMotor.turnedOn
+    motor.active = updateMotor.active
     #motor.effort = updateMotor.effort
     db.session.add(motor)
     db.session.commit()
