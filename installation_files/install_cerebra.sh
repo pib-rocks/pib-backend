@@ -76,8 +76,8 @@ readonly PIB_API_ARCHIVE_NAME="pib-api-""${repo_map[$PIB_API_ORIGIN]}"
 readonly PIB_API_ARCHIVE_PATH="$TEMPORARY_SETUP_DIR""/$PIB_API_ARCHIVE_NAME"".zip"
 wget -O "$PIB_API_ARCHIVE_PATH" $PIB_API_URL_PATH
 unzip "$PIB_API_ARCHIVE_PATH" -d "$TEMPORARY_SETUP_DIR"
-mv "$USER_HOME/$PIB_API_ARCHIVE_NAME""/flask/" "$USER_HOME"
-sudo mv $USER_HOME/flask/pib_api_boot.service /etc/systemd/system
+mv "$TEMPORARY_SETUP_DIR/$PIB_API_ARCHIVE_NAME""/flask/" "$PIB_API_DIR"
+sudo mv "$PIB_API_DIR""/pib_api_boot.service" "/etc/systemd/system"
 sudo systemctl daemon-reload
 sudo systemctl enable pib_api_boot.service
 cd $USER_HOME
