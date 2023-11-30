@@ -1,6 +1,7 @@
 #!/bin/bash
 #
 # This script installs Cerebra
+# To properly run this script relies on being sourced by the "setup-pib.sh"-script
 
 echo -e "$YELLOW_TEXT_COLOR""-- Installing Cerebra --""$RESET_TEXT_COLOR"		
 
@@ -49,7 +50,7 @@ echo -e '\nDownloading nginx configuration file...'
 sudo curl $NGINX_CONF_FILE_URL --output $DEFAULT_NGINX_DIR/$NGINX_CONF_FILE
 
 #
-# Install and configure phpLiteAdmin #TODO: Use temporary setup folder instead of ros_ws
+# Install and configure phpLiteAdmin
 sudo sed -i "s|;cgi.fix_pathinfo=1|cgi.fix_pathinfo=0|" /etc/php/8.1/fpm/php.ini
 curl $PHPLITEADMIN_LINK -L --output "$TEMPORARY_SETUP_DIR/$PHPLITEADMIN_ZIP"
 sudo mkdir $PHPLITEADMIN_INSTALLATION_DIR
@@ -58,7 +59,7 @@ sudo chmod -R 755 $PHPLITEADMIN_INSTALLATION_DIR
 sudo unzip "$TEMPORARY_SETUP_DIR/$PHPLITEADMIN_ZIP" -d $PHPLITEADMIN_INSTALLATION_DIR
 sudo systemctl restart php8.1-fpm
 
-# Create the database (if it doesn't exist) and initialize it with the SQL file #TODO: Use temporary setup folder instead of ros_ws
+# Create the database (if it doesn't exist) and initialize it with the SQL file #TODO: Evaluate use of temporary setup folder instead of ros_ws
 curl $DATABASE_INIT_QUERY_LINK -L --output $ROS_WORKING_DIR/$DATABASE_INIT_QUERY_FILE
 echo "Creating (if not exist) and initializing SQLite database $DATABASE_FILE with $ROS_WORKING_DIR/$DATABASE_INIT_QUERY_FILE..."
 mkdir $DATABASE_DIR

@@ -2,6 +2,7 @@
 #
 # This script installs the TinkerForge software bundle, 
 # including: Brick Daemon, Brick Viewer and Python API bindings
+# To properly run this script relies on being sourced by the "setup-pib.sh"-script
 
 echo -e "$YELLOW_TEXT_COLOR""-- Installing TinkerForge --""$RESET_TEXT_COLOR"		
 

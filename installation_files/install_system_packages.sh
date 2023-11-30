@@ -1,6 +1,7 @@
 #!/bin/bash
 #
 # This script installs all ubuntu packages necessary for running pib
+# To properly run this script relies on being sourced by the "setup-pib.sh"-script
 
 echo -e "$YELLOW_TEXT_COLOR""-- Installing system packages --""$RESET_TEXT_COLOR"		
 
@@ -18,8 +19,8 @@ sudo locale-gen en_US en_US.UTF-8
 sudo update-locale LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8
 export LANG=en_US.UTF-8
 locale  # verify settings
-sudo apt install -y software-properties-common #TODO/TBD: remove , probably redundant, (see line 12)
-sudo add-apt-repository -y universe #TODO/TBD: Likely redundant
+sudo apt install -y software-properties-common #TODO: remove , probably redundant, (see line 12)
+sudo add-apt-repository -y universe #TODO: Likely redundant
 sudo apt update && sudo apt install curl -y
 sudo curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key -o /usr/share/keyrings/ros-archive-keyring.gpg
 echo "Adding ros2.list to repositories..."

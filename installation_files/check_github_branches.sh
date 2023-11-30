@@ -1,6 +1,7 @@
 #!/bin/bash
 #
 # This script checks if there are existing github branches to match the user input
+# To properly run this script relies on being sourced by the "setup-pib.sh"-script
 
 echo -e "$YELLOW_TEXT_COLOR""-- Checking if the specified branches exist --""$RESET_TEXT_COLOR"		
 
@@ -66,7 +67,7 @@ then
 		if [ "${repo_map[$repo_origin]}" != "$user_feature_branch" ] && [ "${repo_map[$repo_origin]}" != "$user_default_branch" ] 
 		then
 
-			# Check edge case if main branch in user_default, but the branch is named "master". TODO: Remove this check once oak_d_lite branch is renamed
+			# Check edge case if main branch in user_default, but the branch is named "master". TODO: Remove this check if oak_d_lite branch is renamed to main
 			if [ "$user_default_branch" = "$MAIN_BRANCH" ] && [ "${repo_map[$repo_origin]}" = "$MAIN_ALTERNATIVE_BRANCH" ]
 			then
 				break

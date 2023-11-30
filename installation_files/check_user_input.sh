@@ -1,6 +1,7 @@
 #!/bin/bash
 #
 # This script validates the user input arguments when calling the setup script
+# To properly run this script relies on being sourced by the "setup-pib.sh"-script
 
 # Show infos about the command-line parameter options, then exit the script
 help_function() 
