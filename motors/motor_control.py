@@ -11,6 +11,7 @@ import rclpy
 from rclpy.node import Node
 from trajectory_msgs.msg import JointTrajectory
 from datatypes.srv import MotorSettingsSrv
+from datatypes.msg import MotorSettings
 from urllib import request as urllib_request, parse as urllib_parse, error as urllib_error
 import json
                 
@@ -60,6 +61,11 @@ class Motor_control(Node):
 
                 super().__init__('motor_control')
 
+                # Toggle Devmode
+
+                self.declare_parameter("dev", False)
+                self.dev = self.get_parameter("dev").value
+
                 # Topic for JointTrajectory
                 self.subscription = self.create_subscription(
                         JointTrajectory,
@@ -75,6 +81,8 @@ class Motor_control(Node):
                         self.motor_settings_callback
                 )
 
+                # Publisher for MotorSettings
+                self.publisher = self.create_publisher(MotorSettings, "motor_settings", 10)
                 # Connection
                 self.ipcon = IPConnection()  # Create IP connection
                 self.hat = BrickHAT("X", self.ipcon)
@@ -143,7 +151,8 @@ class Motor_control(Node):
                         self.get_logger().warn(f"Error processing motor-settings-message: {str(e)}")
                         response.settings_applied = False
                         response.settings_persisted = False
-
+                if self.dev == True or response.settings_applied == True:
+                        self.publisher.publish(request)
                 return response
                 
 
