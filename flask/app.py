@@ -350,7 +350,7 @@ def update_motor():
     error = motor_schema.validate(request.json)
     if error:
         return error, 400
-    updateMotor = Motor(request.json.get('name'), request.json.get('pulse_width_min'), request.json.get('pulse_width_max'), request.json.get('rotation_range_min'), request.json.get('rotation_range_max'), request.json.get('velocity'), request.json.get('acceleration'), request.json.get('deceleration'), request.json.get('period'), request.json.get('turned_on'), request.json.get('active'))
+    updateMotor = Motor(request.json.get('name'), request.json.get('pulseWidthMin'), request.json.get('pulseWidthMax'), request.json.get('rotationRangeMin'), request.json.get('rotationRangeMax'), request.json.get('velocity'), request.json.get('acceleration'), request.json.get('deceleration'), request.json.get('period'), request.json.get('turnedOn'), request.json.get('active'))
     motor = Motor.query.filter(Motor.name == updateMotor.name).first_or_404()
     motor.pulseWidthMin = updateMotor.pulseWidthMin
     motor.pulseWidthMax = updateMotor.pulseWidthMax
