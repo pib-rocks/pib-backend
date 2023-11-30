@@ -16,7 +16,7 @@ sudo curl -sSL https://docs.luxonis.com/install_dependencies.sh | sudo bash
 python3 -m pip install depthai
 # Setting up the motor packages
 pip3.10 install tinkerforge
-sudo apt-get install libusb-1.0-0-dev
+sudo apt-get -y install libusb-1.0-0-dev
 # Setting up the voice-assistant packages
 pip3.10 install openai google-cloud-speech google-cloud-texttospeech pyaudio
 sudo apt-get install flac
