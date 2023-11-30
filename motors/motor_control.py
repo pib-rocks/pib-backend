@@ -145,14 +145,30 @@ class Motor_control(Node):
                                 motor.servo.set_degree(port, request.rotation_range_min, request.rotation_range_max)
 
                         response.settings_applied = True
-                        response.settings_persisted = self.persist_motor_settings_to_db(request)
-
                 except Exception as e:
                         self.get_logger().warn(f"Error processing motor-settings-message: {str(e)}")
                         response.settings_applied = False
                         response.settings_persisted = False
                 if self.dev == True or response.settings_applied == True:
-                        self.publisher.publish(request)
+                        #self.get_logger().info(f"Devmode: {str(self.dev)}\tresponse.settings_applied: {str(response.settings_applied)}")
+                        try:
+                                response.settings_persisted = self.persist_motor_settings_to_db(request)
+                        except Exception as e:
+                                self.get_logger().warn(f"Error persisting motor-settings-message to database: {str(e)}")
+                                response.settings_persisted = False
+                        msg = MotorSettings()
+                        msg.motor_name = request.motor_name
+                        msg.pulse_width_min = request.pulse_width_min
+                        msg.pulse_width_max = request.pulse_width_max
+                        msg.rotation_range_min = request.rotation_range_min
+                        msg.rotation_range_max = request.rotation_range_max
+                        msg.velocity = request.velocity
+                        msg.acceleration = request.acceleration
+                        msg.deceleration = request.deceleration
+                        msg.active = request.active
+                        msg.period = request.period
+                        msg.turned_on = request.turned_on
+                        self.publisher.publish(msg)
                 return response
                 
 
