@@ -1,6 +1,7 @@
 #!/bin/bash
 #
 # This script checks if the username and ubuntu version is matching the expected values
+# To properly run this script relies on being sourced by the "setup-pib.sh"-script
 
 echo -e "$YELLOW_TEXT_COLOR""-- Checking system version and username --""$RESET_TEXT_COLOR""$NEW_LINE"
 

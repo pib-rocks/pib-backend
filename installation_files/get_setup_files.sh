@@ -1,6 +1,7 @@
 #!/bin/bash
 #
 # This script downloads the pib-setup repo and unzips it to a temporary directory
+# To properly run this script relies on being sourced by the "setup-pib.sh"-script
 
 echo -e "$YELLOW_TEXT_COLOR""-- Downloading setup files from github --""$RESET_TEXT_COLOR""$NEW_LINE"
 

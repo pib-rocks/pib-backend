@@ -1,6 +1,7 @@
 #!/bin/bash
 #
 # This script installs all python packages necessary for running pib
+# To properly run this script relies on being sourced by the "setup-pib.sh"-script
 
 echo -e "$YELLOW_TEXT_COLOR""-- Installing python packages --""$RESET_TEXT_COLOR"		
 

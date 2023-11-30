@@ -31,7 +31,6 @@ export ROS_WORKING_DIR="$USER_HOME/ros_working_dir"
 mkdir "$ROS_WORKING_DIR"
 mkdir "$ROS_WORKING_DIR"/src
 
-# Todo: Check if this still works and is necessary
 # We want the user pib to setup things without password (sudo without password)
 # Yes, we are aware of the security-issues..
 echo "Hello pib! We start the setup by allowing you permanently to run commands with admin-privileges."
@@ -52,11 +51,10 @@ chmod 775 "$TEMPORARY_SETUP_DIR"
 export INSTALLATION_FILES_DIR=""
 
 # Get setup files needed for the pib installation
-# Define TODO: Change branch to main/develop
+# Define TODO: Change branch to main/develop once merged
 export SETUP_PIB_BRANCH="PR-368"
 wget -O get_setup_files.sh "https://raw.githubusercontent.com/pib-rocks/setup-pib/""$SETUP_PIB_BRANCH""/installation_files/get_setup_files.sh"
 readonly GET_SETUP_FILES_SCRIPT="get_setup_files.sh"
-#TODO: remove later chmod commands for setup scripts
 chmod 755 "$GET_SETUP_FILES_SCRIPT"
 source "$GET_SETUP_FILES_SCRIPT"
 
@@ -70,14 +68,12 @@ export user_default_branch=""
 export user_feature_branch=""
 
 # Check the user inputs (options and arguments) for the dev mode. Run it in the same shell as this script.
-readonly CHECK_USER_INPUT_SCRIPT="$INSTALLATION_FILES_DIR"/"check_user_input.sh"
-source "$CHECK_USER_INPUT_SCRIPT"
+source "$INSTALLATION_FILES_DIR""/check_user_input.sh"
 
 # Run the script for checking the system variables
-readonly CHECK_SYSTEM_VARIABLES_SCRIPT="$INSTALLATION_FILES_DIR"/"check_system_variables.sh"
-source "$CHECK_SYSTEM_VARIABLES_SCRIPT"
+source "$INSTALLATION_FILES_DIR""/check_system_variables.sh"
 
-# Git is installed seperately, since the CHECK_BRANCHES_SCRIPT is dependent on it
+# Git is installed seperately, since the check_github_branches is dependent on it
 sudo apt-get install -y git 
 
 # Variables for github branch checking:
@@ -90,38 +86,32 @@ readonly MOTORS_ORIGIN="https://github.com/pib-rocks/motors.git"
 readonly OAK_D_LITE_ORIGIN="https://github.com/pib-rocks/ros2_oak_d_lite.git"
 readonly VOICE_ASSISTANT_ORIGIN="https://github.com/pib-rocks/voice-assistant.git"
 
-# Create an associative array (=map). This will be filled with repo-origin-branch-name pairs
+# Create an associative array (=map). This will be filled with repo-origin branch-name pairs in the check_github_branches.sh script
 declare -A repo_map
 
 # Check the user inputs (options and arguments) for the dev mode. Run it in the same shell as this script.
-readonly CHECK_BRANCHES_SCRIPT="$INSTALLATION_FILES_DIR"/"check_github_branches.sh"
-source "$CHECK_BRANCHES_SCRIPT"
+source "$INSTALLATION_FILES_DIR""/check_github_branches.sh"
 
 # Run the script for installing system packages
-readonly INSTALL_SYSTEM_PACKAGES_SCRIPT="$INSTALLATION_FILES_DIR"/"install_system_packages.sh"
-source "$INSTALL_SYSTEM_PACKAGES_SCRIPT"
+source "$INSTALLATION_FILES_DIR""/install_system_packages.sh"
 
 # Run the script for installing python packages
-readonly INSTALL_PYTHON_PACKAGES_SCRIPT="$INSTALLATION_FILES_DIR"/"install_python_packages.sh"
-source "$INSTALL_PYTHON_PACKAGES_SCRIPT"
+source "$INSTALLATION_FILES_DIR""/install_python_packages.sh"
 
 
-# TODO/TBE: Check if this can be moved to installations script
+# TODO: Check if this can be moved to installations script
 # Install rosbridge-server
 echo 'Install rosbridge-server...'
 sudo apt install -y ros-humble-rosbridge-server
 
 # Run the script for installing tinkerforge
-readonly INSTALL_TINKERFORGE_SCRIPT="$INSTALLATION_FILES_DIR"/"install_tinkerforge.sh"
-source "$INSTALL_TINKERFORGE_SCRIPT"
+source "$INSTALLATION_FILES_DIR""/install_tinkerforge.sh"
 
 # Run the script for installing Cerebra
-readonly INSTALL_CEREBRA_SCRIPT="$INSTALLATION_FILES_DIR"/"install_cerebra.sh"
-source "$INSTALL_CEREBRA_SCRIPT"
+source "$INSTALLATION_FILES_DIR""/install_cerebra.sh"
 
 # Run the script for installing all ros-packages. Run it in the same shell as this script.
-readonly SETUP_ROS_PACKAGES_SCRIPT="$INSTALLATION_FILES_DIR"/"setup_packages.sh"
-source "$SETUP_ROS_PACKAGES_SCRIPT"
+source "$INSTALLATION_FILES_DIR""/setup_packages.sh"
 
 
 # Links for github direct downloads, from selected branch
