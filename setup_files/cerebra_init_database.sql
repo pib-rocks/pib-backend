@@ -3,7 +3,7 @@ insert into
    motor 
 values
    (
-      NULL, 'tilt_forward_motor', 700, 2500, -9000, 9000, 10000, 10000, 10000, 19500, TRUE, NULL, TRUE
+      NULL, 'tilt_forward_motor', 700, 2500, -4500, 4500, 10000, 10000, 10000, 19500, TRUE, NULL, TRUE
    )
 ;
 insert into
