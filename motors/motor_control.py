@@ -143,6 +143,7 @@ class Motor_control(Node):
         def motor_settings_callback(self, request, response):
                                 
                 try:
+                        motors = self.motor_collection_to_multible_motors(request.motor_name)
 
                         motor = self.motor_map.get(request.motor_name)
                         self.get_logger().info(f"Motor: {str(motor)}")
@@ -169,13 +170,11 @@ class Motor_control(Node):
 
                 try:
                         motors = self.motor_collection_to_multible_motors(msg.joint_names[0])
-                        self.get_logger().info(f"Motor: {str(motors)}")
+
                         if len(motors) == 0:
                                 raise Exception("Sorry, no numbers below zero")
                         else:
                                 for motor in motors:
-                                        self.get_logger().info(f"-----------------------------------")
-                                        self.get_logger().info(f"Motor: {str(motor)}")
                                         self.get_logger().info(f"Motor: {str(motor.name)}")
                                         value = msg.points[0].positions[0]
                                         self.get_logger().info(f"Value: {value}")
@@ -271,10 +270,9 @@ class Motor_control(Node):
         def motor_collection_to_multible_motors(self, motor_name):
 
                 if motor_name == "all_fingers_left":
-                        return [self.motors[4], self.motors[5], self.motors[6], self.motors[7], self.motors[8]]
+                        return list(filter(lambda x: ("opposition" not in x.name and x.group == 0), self.motors))
                 elif motor_name == "all_fingers_right":
-                        #Array erstellen
-                        return
+                        return list(filter(lambda x: ("opposition" not in x.name and x.group == 1), self.motors))
                 
                 return [self.motor_map.get(motor_name)]
         
