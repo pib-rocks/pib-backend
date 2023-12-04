@@ -19,8 +19,6 @@ sudo locale-gen en_US en_US.UTF-8
 sudo update-locale LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8
 export LANG=en_US.UTF-8
 locale  # verify settings
-sudo apt install -y software-properties-common #TODO: remove , probably redundant, (see line 12)
-sudo add-apt-repository -y universe #TODO: Likely redundant
 sudo apt update && sudo apt install curl -y
 sudo curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key -o /usr/share/keyrings/ros-archive-keyring.gpg
 echo "Adding ros2.list to repositories..."
@@ -33,5 +31,8 @@ echo 'source /opt/ros/humble/setup.bash' >> $USER_HOME/.bashrc
 sudo apt-get install colcon
 echo 'source /home/pib/ros_working_dir/install/setup.bash' >> $USER_HOME/.bashrc
 echo "export ROS_LOCALHOST_ONLY=1" >> $USER_HOME/.bashrc
+
+# Install rosbridge-server
+sudo apt install -y ros-humble-rosbridge-server
 
 echo -e "$NEW_LINE""$GREEN_TEXT_COLOR""-- System package installation completed --""$RESET_TEXT_COLOR""$NEW_LINE"

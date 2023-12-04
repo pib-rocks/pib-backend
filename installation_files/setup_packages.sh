@@ -39,7 +39,6 @@ fi
 #git pull packages with sub modules
 echo 'git pull packages with sub modules'
 git pull https://github.com/pib-rocks/ros-packages.git
-chmod +x package_set_up.sh
 
 # Run the script for creating a custom gitmodules file
 readonly CREATE_GITMODULE_FILE_SCRIPT="$installation_files_dir"/"create_gitmodule_file.sh"
