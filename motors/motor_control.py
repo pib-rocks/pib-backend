@@ -26,7 +26,7 @@ class Motor:
                 self.state = state
                 self.group = group
 
-        def set_state(state):
+        def set_state(self, state):
                 self.state = state
 
         def __str__(self):
@@ -49,10 +49,10 @@ class Group(Enum):
 
 
 # receives a 'MotorSettings'-like, and returns a dict representing a motor-settings-json as it is used by the pib-api
-def motor_settings_to_dto_dict(ms):
+def motor_settings_to_dto_dict(ms, motor):
         
         return {
-                "name": ms.motor_name,
+                "name": motor.name,
                 "turnedOn": ms.turned_on,
                 "pulseWidthMin": ms.pulse_width_min,
                 "pulseWidthMax": ms.pulse_width_max,
@@ -143,19 +143,23 @@ class Motor_control(Node):
         def motor_settings_callback(self, request, response):
                                 
                 try:
+
                         motors = self.motor_collection_to_multible_motors(request.motor_name)
 
-                        motor = self.motor_map.get(request.motor_name)
-                        self.get_logger().info(f"Motor: {str(motor)}")
-                        for port in motor.ports:
-                                motor.servo.set_pulse_width(port, request.pulse_width_min, request.pulse_width_max)
-                                motor.servo.set_motion_configuration(port, request.velocity, request.acceleration, request.deceleration)
-                                motor.servo.set_period(port, request.period)
-                                motor.set_state(request.turned_on)
-                                motor.servo.set_degree(port, request.rotation_range_min, request.rotation_range_max)
+                        if len(motors) == 0:
+                                raise Exception("No motor found")
 
-                        response.settings_applied = True
-                        response.settings_persisted = self.persist_motor_settings_to_db(request)
+                        for motor in motors:
+
+                                for port in motor.ports:
+                                        motor.servo.set_pulse_width(port, request.pulse_width_min, request.pulse_width_max)
+                                        motor.servo.set_motion_configuration(port, request.velocity, request.acceleration, request.deceleration)
+                                        motor.servo.set_period(port, request.period)
+                                        motor.set_state(request.turned_on)
+                                        motor.servo.set_degree(port, request.rotation_range_min, request.rotation_range_max)
+
+                                response.settings_applied = True
+                                response.settings_persisted = self.persist_motor_settings_to_db(request, motor)
 
                 except Exception as e:
                         self.get_logger().warn(f"Error processing motor-settings-message: {str(e)}")
@@ -172,7 +176,7 @@ class Motor_control(Node):
                         motors = self.motor_collection_to_multible_motors(msg.joint_names[0])
 
                         if len(motors) == 0:
-                                raise Exception("Sorry, no numbers below zero")
+                                raise Exception("No motor found")
                         else:
                                 for motor in motors:
                                         self.get_logger().info(f"Motor: {str(motor.name)}")
@@ -187,11 +191,11 @@ class Motor_control(Node):
 
 
                         
-        def persist_motor_settings_to_db(self, motor_settings):
+        def persist_motor_settings_to_db(self, motor_settings, motor):
 
                 try:
                         # compile motor settings to UTF-8 encoded JSON string
-                        http_req_body = json.dumps(motor_settings_to_dto_dict(motor_settings)).encode('UTF-8'),
+                        http_req_body = json.dumps(motor_settings_to_dto_dict(motor_settings, motor)).encode('UTF-8'),
                         
                         # create 'PUT' request to '/motor-settings'
                         http_req = urllib_request.Request(
@@ -241,7 +245,6 @@ class Motor_control(Node):
                                         
                                         response = json.loads(response_data)
 
-                                self.get_logger().warn(f" {str(response)}")
                                 if response['turnedOn'] == 1 or response['turnedOn'] == 'true' or response['turnedOn'] == 'True':
                                         motor.state = True
                                 else:
