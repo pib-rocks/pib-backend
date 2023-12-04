@@ -42,7 +42,7 @@ git pull https://github.com/pib-rocks/ros-packages.git
 chmod +x package_set_up.sh
 
 # Run the script for creating a custom gitmodules file
-readonly CREATE_GITMODULE_FILE_SCRIPT="$INSTALLATION_FILES_DIR"/"create_gitmodule_file.sh"
+readonly CREATE_GITMODULE_FILE_SCRIPT="$installation_files_dir"/"create_gitmodule_file.sh"
 chmod 755 "$CREATE_GITMODULE_FILE_SCRIPT"
 if [ "$is_dev_mode" = "$TRUE"]; then
 	source "$CREATE_GITMODULE_FILE_SCRIPT" "-d" "$user_default_branch" "$user_feature_branch"

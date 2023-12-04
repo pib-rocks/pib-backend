@@ -47,13 +47,18 @@ mkdir "$TEMPORARY_SETUP_DIR"
 chmod 775 "$TEMPORARY_SETUP_DIR"
 
 # Installation folder will be created inside temporary directory. Name is appended later on.
-export INSTALLATION_FILES_DIR=""
+export installation_files_dir=""
 
-# Get setup files needed for the pib installation
+# This variable is specifically for downloading the installation files from the setup repo
+# These files are left out of the dynamic branch selection, since they are a prerequisite for the check itself
+# If you want to get the installation files from a specific branch, you need to change the variable manually
 # Define TODO: Change branch to main/develop once merged
 export SETUP_PIB_BRANCH="PR-368"
-wget -O get_setup_files.sh "https://raw.githubusercontent.com/pib-rocks/setup-pib/""$SETUP_PIB_BRANCH""/installation_files/get_setup_files.sh"
-readonly GET_SETUP_FILES_SCRIPT="get_setup_files.sh"
+
+# Get setup files needed for the pib software installation
+readonly GET_SETUP_FILES_SCRIPT_NAME="get_setup_files.sh"
+readonly GET_SETUP_FILES_SCRIPT="$TEMPORARY_SETUP_DIR""/$GET_SETUP_FILES_SCRIPT_NAME"
+wget -O "$GET_SETUP_FILES_SCRIPT" "https://raw.githubusercontent.com/pib-rocks/setup-pib/""$SETUP_PIB_BRANCH""/installation_files/""$GET_SETUP_FILES_SCRIPT_NAME"
 chmod 755 "$GET_SETUP_FILES_SCRIPT"
 source "$GET_SETUP_FILES_SCRIPT"
 
@@ -67,10 +72,10 @@ export user_default_branch=""
 export user_feature_branch=""
 
 # Check the user inputs (options and arguments) for the dev mode. Run it in the same shell as this script.
-source "$INSTALLATION_FILES_DIR""/check_user_input.sh"
+source "$installation_files_dir""/check_user_input.sh"
 
 # Run the script for checking the system variables
-source "$INSTALLATION_FILES_DIR""/check_system_variables.sh"
+source "$installation_files_dir""/check_system_variables.sh"
 
 # Git is installed seperately, since the check_github_branches is dependent on it
 sudo apt-get install -y git 
@@ -89,13 +94,13 @@ readonly VOICE_ASSISTANT_ORIGIN="https://github.com/pib-rocks/voice-assistant.gi
 declare -A repo_map
 
 # Check the user inputs (options and arguments) for the dev mode. Run it in the same shell as this script.
-source "$INSTALLATION_FILES_DIR""/check_github_branches.sh"
+source "$installation_files_dir""/check_github_branches.sh"
 
 # Run the script for installing system packages
-source "$INSTALLATION_FILES_DIR""/install_system_packages.sh"
+source "$installation_files_dir""/install_system_packages.sh"
 
 # Run the script for installing python packages
-source "$INSTALLATION_FILES_DIR""/install_python_packages.sh"
+source "$installation_files_dir""/install_python_packages.sh"
 
 
 # TODO: Check if this can be moved to installations script
@@ -104,13 +109,13 @@ echo "Install rosbridge-server..."
 sudo apt install -y ros-humble-rosbridge-server
 
 # Run the script for installing tinkerforge
-source "$INSTALLATION_FILES_DIR""/install_tinkerforge.sh"
+source "$installation_files_dir""/install_tinkerforge.sh"
 
 # Run the script for installing Cerebra
-source "$INSTALLATION_FILES_DIR""/install_cerebra.sh"
+source "$installation_files_dir""/install_cerebra.sh"
 
 # Run the script for installing all ros-packages. Run it in the same shell as this script.
-source "$INSTALLATION_FILES_DIR""/setup_packages.sh"
+source "$installation_files_dir""/setup_packages.sh"
 
 
 # Links for github direct downloads, from selected branch
