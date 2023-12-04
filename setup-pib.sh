@@ -102,12 +102,6 @@ source "$installation_files_dir""/install_system_packages.sh"
 # Run the script for installing python packages
 source "$installation_files_dir""/install_python_packages.sh"
 
-
-# TODO: Check if this can be moved to installations script
-# Install rosbridge-server
-echo "Install rosbridge-server..."
-sudo apt install -y ros-humble-rosbridge-server
-
 # Run the script for installing tinkerforge
 source "$installation_files_dir""/install_tinkerforge.sh"
 
