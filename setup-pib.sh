@@ -114,16 +114,16 @@ source "$INSTALLATION_FILES_DIR""/setup_packages.sh"
 
 
 # Links for github direct downloads, from selected branch
-readonly ROS_UPDATE_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/""${repo_map[$SETUP_PIB_ORIGIN]}""/update-pib.sh"
-readonly ROS_CONFIG_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/""${repo_map[$SETUP_PIB_ORIGIN]}""/setup_files/ros_config.sh"
-readonly ROS_CEREBRA_BOOT_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/""${repo_map[$SETUP_PIB_ORIGIN]}""/setup_files/ros_cerebra_boot.sh"
-readonly ROS_CEREBRA_BOOT_SERVICE_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/""${repo_map[$SETUP_PIB_ORIGIN]}""/setup_files/ros_cerebra_boot.service"
+readonly ROS_UPDATE_URL="https://raw.githubusercontent.com/pib-rocks/setup-pib/""${repo_map[$SETUP_PIB_ORIGIN]}""/update-pib.sh"
+readonly ROS_CONFIG_URL="https://raw.githubusercontent.com/pib-rocks/setup-pib/""${repo_map[$SETUP_PIB_ORIGIN]}""/setup_files/ros_config.sh"
+readonly ROS_CEREBRA_BOOT_URL="https://raw.githubusercontent.com/pib-rocks/setup-pib/""${repo_map[$SETUP_PIB_ORIGIN]}""/setup_files/ros_cerebra_boot.sh"
+readonly ROS_CEREBRA_BOOT_SERVICE_URL="https://raw.githubusercontent.com/pib-rocks/setup-pib/""${repo_map[$SETUP_PIB_ORIGIN]}""/setup_files/ros_cerebra_boot.service"
 
 # install update-pip
 if [ -f $USER_HOME/update-pib.sh ]; then
   sudo rm update-pib.sh
 fi
-wget -O update-pib.sh $ROS_UPDATE_LINK
+wget -O update-pib.sh "$ROS_UPDATE_URL"
 sudo chmod 777 update-pib.sh
 echo "if [ -f /home/pib/update-pib.sh ]; then
         alias update-pib='/home/pib/update-pib.sh'
@@ -131,22 +131,22 @@ echo "if [ -f /home/pib/update-pib.sh ]; then
 " >> $USER_HOME/.bashrc
 
 # set permissions
-cd $ROS_WORKING_DIR
+cd "$ROS_WORKING_DIR"
 colcon build
 sudo chmod -R 777 $ROS_WORKING_DIR/build
 sudo chmod -R 777 $ROS_WORKING_DIR/install
 sudo chmod -R 777 $ROS_WORKING_DIR/log
 
 # Get config
-curl $ROS_CONFIG_LINK -L --output $ROS_WORKING_DIR/ros_config.sh
+curl "$ROS_CONFIG_URL" -L --output $ROS_WORKING_DIR/ros_config.sh
 
 # Setup system to start Cerebra and ROS2 at boot time
 # Create boot script for ros_bridge_server
-curl $ROS_CEREBRA_BOOT_LINK -L --output $ROS_WORKING_DIR/ros_cerebra_boot.sh
+curl "$ROS_CEREBRA_BOOT_URL" -L --output $ROS_WORKING_DIR/ros_cerebra_boot.sh
 sudo chmod 755 $ROS_WORKING_DIR/ros_cerebra_boot.sh
 
 # Create service which starts ros and cerebra by system boot
-curl $ROS_CEREBRA_BOOT_SERVICE_LINK -L --output $ROS_WORKING_DIR/ros_cerebra_boot.service
+curl "$ROS_CEREBRA_BOOT_SERVICE_URL" -L --output $ROS_WORKING_DIR/ros_cerebra_boot.service
 sudo chmod 755 $ROS_WORKING_DIR/ros_cerebra_boot.service
 sudo mv $ROS_WORKING_DIR/ros_cerebra_boot.service /etc/systemd/system
 

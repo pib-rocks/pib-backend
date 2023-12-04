@@ -5,11 +5,11 @@
 
 echo -e "$YELLOW_TEXT_COLOR""-- Downloading setup files from github --""$RESET_TEXT_COLOR""$NEW_LINE"
 
-SETUP_ARCHIVE_LINK="https://github.com/pib-rocks/setup-pib/archive/refs/heads/""$SETUP_PIB_BRANCH"".zip"
+SETUP_ARCHIVE_URL="https://github.com/pib-rocks/setup-pib/archive/refs/heads/""$SETUP_PIB_BRANCH"".zip"
 SETUP_ARCHIVE_NAME="setup-pib-""$SETUP_PIB_BRANCH"".zip"
 
 # Download the zipped repo and unpack it in the temporary folder
-wget -O "$SETUP_ARCHIVE_NAME" "$SETUP_ARCHIVE_LINK"
+wget -O "$SETUP_ARCHIVE_NAME" "$SETUP_ARCHIVE_URL"
 mv "$SETUP_ARCHIVE_NAME" "$TEMPORARY_SETUP_DIR"
 unzip "$TEMPORARY_SETUP_DIR/""$SETUP_ARCHIVE_NAME" -d "$TEMPORARY_SETUP_DIR"
 

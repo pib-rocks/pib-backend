@@ -12,21 +12,21 @@ NGINX_CONF_FILE="nginx.conf"
 NGINX_CONF_FILE_URL="https://raw.githubusercontent.com/pib-rocks/setup-pib/""${repo_map[$SETUP_PIB_ORIGIN]}""/setup_files/nginx.conf"
 
 # Cerebra download location
-export CEREBRA_ARCHIVE_URL_PATH="https://pib.rocks/wp-content/uploads/pib_data/cerebra-latest.zip"
+export CEREBRA_ARCHIVE_URL="https://pib.rocks/wp-content/uploads/pib_data/cerebra-latest.zip"
 export CEREBRA_ARCHIVE_NAME="cerebra-latest.zip"
 
 # Database variables
-PHPLITEADMIN_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/""${repo_map[$SETUP_PIB_ORIGIN]}""/setup_files/phpliteadmin_v1_9_9_dev.zip"
+PHPLITEADMIN_URL="https://raw.githubusercontent.com/pib-rocks/setup-pib/""${repo_map[$SETUP_PIB_ORIGIN]}""/setup_files/phpliteadmin_v1_9_9_dev.zip"
 PHPLITEADMIN_ZIP="phpliteadmin_v1_9_9_dev.zip"
 PHPLITEADMIN_INSTALLATION_DIR="/var/www/phpliteadmin"
 DATABASE_DIR="$USER_HOME/pib_data"
 DATABASE_FILE="pibdata.db"
 DATABASE_INIT_QUERY_FILE="cerebra_init_database.sql"
-DATABASE_INIT_QUERY_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/""${repo_map[$SETUP_PIB_ORIGIN]}""/setup_files/cerebra_init_database.sql"
+DATABASE_INIT_QUERY_URL="https://raw.githubusercontent.com/pib-rocks/setup-pib/""${repo_map[$SETUP_PIB_ORIGIN]}""/setup_files/cerebra_init_database.sql"
 
 # pib api variables
 PIB_API_DIR="$USER_HOME/flask"
-PIB_API_URL_PATH="https://github.com/pib-rocks/pib-api/archive/refs/heads/""${repo_map[$PIB_API_ORIGIN]}"".zip"
+PIB_API_URL="https://github.com/pib-rocks/pib-api/archive/refs/heads/""${repo_map[$PIB_API_ORIGIN]}"".zip"
 
 echo -e "$NEW_LINE""Install nginx..."
 sudo apt install -y nginx
@@ -38,7 +38,7 @@ cd $DEFAULT_NGINX_HTML_DIR && sudo -S rm -r *
 # Download Cerebra artifact to the working directory
 cd $USER_HOME
 echo -e "$NEW_LINE""Downloading Cerebra application..."
-curl $CEREBRA_ARCHIVE_URL_PATH -L --output "$TEMPORARY_SETUP_DIR/$CEREBRA_ARCHIVE_NAME"
+curl "$CEREBRA_ARCHIVE_URL" -L --output "$TEMPORARY_SETUP_DIR/$CEREBRA_ARCHIVE_NAME"
 #
 # Unzip cerebra files to nginx
 echo -e "$NEW_LINE""Unzip cerebra..."
@@ -52,7 +52,7 @@ sudo curl $NGINX_CONF_FILE_URL --output $DEFAULT_NGINX_DIR/$NGINX_CONF_FILE
 #
 # Install and configure phpLiteAdmin
 sudo sed -i "s|;cgi.fix_pathinfo=1|cgi.fix_pathinfo=0|" /etc/php/8.1/fpm/php.ini
-curl $PHPLITEADMIN_LINK -L --output "$TEMPORARY_SETUP_DIR/$PHPLITEADMIN_ZIP"
+curl "$PHPLITEADMIN_URL" -L --output "$TEMPORARY_SETUP_DIR/$PHPLITEADMIN_ZIP"
 sudo mkdir $PHPLITEADMIN_INSTALLATION_DIR
 sudo chown -R www-data:www-data $PHPLITEADMIN_INSTALLATION_DIR
 sudo chmod -R 755 $PHPLITEADMIN_INSTALLATION_DIR
@@ -60,7 +60,7 @@ sudo unzip "$TEMPORARY_SETUP_DIR/$PHPLITEADMIN_ZIP" -d $PHPLITEADMIN_INSTALLATIO
 sudo systemctl restart php8.1-fpm
 
 # Create the database (if it doesn't exist) and initialize it with the SQL file
-curl $DATABASE_INIT_QUERY_LINK -L --output "$TEMPORARY_SETUP_DIR/$DATABASE_INIT_QUERY_FILE"
+curl "$DATABASE_INIT_QUERY_URL" -L --output "$TEMPORARY_SETUP_DIR/$DATABASE_INIT_QUERY_FILE"
 echo "Creating (if not exist) and initializing SQLite database $DATABASE_FILE with $TEMPORARY_SETUP_DIR/$DATABASE_INIT_QUERY_FILE..."
 mkdir $DATABASE_DIR
 sudo chmod 777 $USER_HOME
@@ -75,7 +75,7 @@ pip3 install pipenv
 cd $USER_HOME
 readonly PIB_API_ARCHIVE_NAME="pib-api-""${repo_map[$PIB_API_ORIGIN]}"
 readonly PIB_API_ARCHIVE_PATH="$TEMPORARY_SETUP_DIR""/$PIB_API_ARCHIVE_NAME"".zip"
-wget -O "$PIB_API_ARCHIVE_PATH" $PIB_API_URL_PATH
+wget -O "$PIB_API_ARCHIVE_PATH" "$PIB_API_URL"
 unzip "$PIB_API_ARCHIVE_PATH" -d "$TEMPORARY_SETUP_DIR"
 mv "$TEMPORARY_SETUP_DIR/$PIB_API_ARCHIVE_NAME""/flask/" "$PIB_API_DIR"
 sudo mv "$PIB_API_DIR""/pib_api_boot.service" "/etc/systemd/system"
