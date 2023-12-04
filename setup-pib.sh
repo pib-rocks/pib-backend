@@ -100,7 +100,7 @@ source "$INSTALLATION_FILES_DIR""/install_python_packages.sh"
 
 # TODO: Check if this can be moved to installations script
 # Install rosbridge-server
-echo 'Install rosbridge-server...'
+echo "Install rosbridge-server..."
 sudo apt install -y ros-humble-rosbridge-server
 
 # Run the script for installing tinkerforge
@@ -160,5 +160,5 @@ sudo systemctl enable ros_cerebra_boot.service
 # Enable and start ssh server
 sudo systemctl enable ssh --now
 
-echo -e '\nCongratulations! The setup completed succesfully!'
-echo -e '\nPlease restart the system to apply changes...'
+echo -e "$NEW_LINE""Congratulations! The setup completed succesfully!"
+echo -e "$NEW_LINE""Please restart the system to apply changes..."

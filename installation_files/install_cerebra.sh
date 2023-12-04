@@ -28,25 +28,25 @@ DATABASE_INIT_QUERY_LINK="https://raw.githubusercontent.com/pib-rocks/setup-pib/
 PIB_API_DIR="$USER_HOME/flask"
 PIB_API_URL_PATH="https://github.com/pib-rocks/pib-api/archive/refs/heads/""${repo_map[$PIB_API_ORIGIN]}"".zip"
 
-echo -e '\nInstall nginx...'
+echo -e "$NEW_LINE""Install nginx..."
 sudo apt install -y nginx
 # If the 'html' directory inside of nginx doesn't exist, it will be created
 if [ ! -d $DEFAULT_NGINX_HTML_DIR ]; then sudo -S mkdir -p $DEFAULT_NGINX_HTML_DIR; fi
-echo -e '\nClean up the html directory...'
+echo -e "$NEW_LINE""Clean up the html directory..."
 cd $DEFAULT_NGINX_HTML_DIR && sudo -S rm -r *
 
 # Download Cerebra artifact to the working directory
 cd $USER_HOME
-echo -e '\nDownloading Cerebra application'
+echo -e "$NEW_LINE""Downloading Cerebra application..."
 curl $CEREBRA_ARCHIVE_URL_PATH -L --output "$TEMPORARY_SETUP_DIR/$CEREBRA_ARCHIVE_NAME"
 #
 # Unzip cerebra files to nginx
-echo -e '\nUnzip cerebra...'
+echo -e "$NEW_LINE""Unzip cerebra..."
 #cd $RASP_TMP_FOLDER
 sudo unzip "$TEMPORARY_SETUP_DIR/$CEREBRA_ARCHIVE_NAME" -d $DEFAULT_NGINX_HTML_DIR
 #
 # Setting up nginx to serve Cerebra locally
-echo -e '\nDownloading nginx configuration file...'
+echo -e "$NEW_LINE""Downloading nginx configuration file..."
 sudo curl $NGINX_CONF_FILE_URL --output $DEFAULT_NGINX_DIR/$NGINX_CONF_FILE
 
 #
@@ -67,7 +67,7 @@ sudo chmod 777 $USER_HOME
 sudo chmod 777 $DATABASE_DIR
 sudo sqlite3 "$DATABASE_DIR/$DATABASE_FILE" < "$TEMPORARY_SETUP_DIR/$DATABASE_INIT_QUERY_FILE"
 sudo chmod 766 $DATABASE_DIR/$DATABASE_FILE
-echo -e "\nDatabase initialized successfully!"
+echo -e "$NEW_LINE""Database initialized successfully!"
 
 # Create pib-api
 echo "export PYTHONIOENCODING=utf-8" >> $USER_HOME/.bashrc
