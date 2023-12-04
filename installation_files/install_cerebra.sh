@@ -59,13 +59,13 @@ sudo chmod -R 755 $PHPLITEADMIN_INSTALLATION_DIR
 sudo unzip "$TEMPORARY_SETUP_DIR/$PHPLITEADMIN_ZIP" -d $PHPLITEADMIN_INSTALLATION_DIR
 sudo systemctl restart php8.1-fpm
 
-# Create the database (if it doesn't exist) and initialize it with the SQL file #TODO: Evaluate use of temporary setup folder instead of ros_ws
-curl $DATABASE_INIT_QUERY_LINK -L --output $ROS_WORKING_DIR/$DATABASE_INIT_QUERY_FILE
-echo "Creating (if not exist) and initializing SQLite database $DATABASE_FILE with $ROS_WORKING_DIR/$DATABASE_INIT_QUERY_FILE..."
+# Create the database (if it doesn't exist) and initialize it with the SQL file
+curl $DATABASE_INIT_QUERY_LINK -L --output "$TEMPORARY_SETUP_DIR/$DATABASE_INIT_QUERY_FILE"
+echo "Creating (if not exist) and initializing SQLite database $DATABASE_FILE with $TEMPORARY_SETUP_DIR/$DATABASE_INIT_QUERY_FILE..."
 mkdir $DATABASE_DIR
 sudo chmod 777 $USER_HOME
 sudo chmod 777 $DATABASE_DIR
-sudo sqlite3 $DATABASE_DIR/$DATABASE_FILE < $ROS_WORKING_DIR/$DATABASE_INIT_QUERY_FILE
+sudo sqlite3 "$DATABASE_DIR/$DATABASE_FILE" < "$TEMPORARY_SETUP_DIR/$DATABASE_INIT_QUERY_FILE"
 sudo chmod 766 $DATABASE_DIR/$DATABASE_FILE
 echo -e "\nDatabase initialized successfully!"
 

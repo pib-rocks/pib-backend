@@ -15,7 +15,6 @@ export RESET_TEXT_COLOR="\e[0m"
 export NEW_LINE="\n"
 
 # Exported variables for all subshells: Exit codes for error detection
-export SUCCESS_STATUS=0
 export INPUT_OUTPUT_ERROR_STATUS=5
 export FAILED_SUBSCRIPT_STATUS=254
 export FAILED_CHECK_STATUS=255
