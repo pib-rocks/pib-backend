@@ -32,6 +32,15 @@ cd "$LOCAL_CEREBRA_DIR"
 echo "Rebuilding cerebra..."
 ng build --configuration production
 
+# Check if ng build was successfull
+EXIT_CODE=$?
+if [ "$EXIT_CODE" -ne "0" ] 
+then
+    echo "Some error occured while trying to ng build"
+    echo "Check if you're directory is referenced correctly"
+    exit 1
+fi
+
 # Stop nginx
 echo 'Trying to stop nginx...'
 ssh $TARGET_USERNAME@$TARGET_IP "sudo -S systemctl stop nginx"
