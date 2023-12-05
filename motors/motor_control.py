@@ -1,8 +1,8 @@
 HOST = "localhost"
 PORT = 4223
-UID1 = "SEX" # Replace with the UID of first Servo Bricklet
-UID2 = "SFP" # Replace with the UID of second Servo Bricklet
-UID3 = "SGV" # Replace with the UID of third Servo Bricklet
+UID1 = "XYZ" # Replace with the UID of first Servo Bricklet
+UID2 = "XYZ" # Replace with the UID of second Servo Bricklet
+UID3 = "XYZ" # Replace with the UID of third Servo Bricklet
 
 from tinkerforge.ip_connection import IPConnection
 from tinkerforge.brick_hat import BrickHAT
