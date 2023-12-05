@@ -5,17 +5,12 @@
 
 echo -e "$YELLOW_TEXT_COLOR""-- Creating .gitmodule file --""$RESET_TEXT_COLOR""$NEW_LINE"
 
-# Path-Variables
-readonly DEFAULT_USER="pib"
-readonly USER_HOME="/home/$DEFAULT_USER"
-readonly ROS_WORKING_DIR="$USER_HOME/ros_working_dir"
+# Path-Variable
 readonly GIT_PROJECT_DIR="$ROS_WORKING_DIR""/src/"
 
 # Setup ros-workspace
-mkdir "$ROS_WORKING_DIR"
-mkdir src
-sudo chmod -R 777 "$ROS_WORKING_DIR"
-sudo chmod -R 777 "$GIT_PROJECT_DIR"
+sudo chmod -R 775 "$ROS_WORKING_DIR"
+sudo chmod -R 775 "$GIT_PROJECT_DIR"
 
 # Initialize a git repo
 echo 'check if git init is done'

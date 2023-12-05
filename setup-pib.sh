@@ -46,7 +46,8 @@ export TEMPORARY_SETUP_DIR="$USER_HOME""/temp"
 mkdir "$TEMPORARY_SETUP_DIR"
 chmod 775 "$TEMPORARY_SETUP_DIR"
 
-# Installation folder will be created inside temporary directory. Name is appended later on.
+# Installation folder will be created inside the temporary directory.
+# The folder name is dependend on the corresponding branch, so it's defined after the branch check.
 export installation_files_dir=""
 
 # This variable is specifically for downloading the installation files from the setup repo
@@ -76,6 +77,9 @@ source "$installation_files_dir""/check_user_input.sh"
 
 # Run the script for checking the system variables
 source "$installation_files_dir""/check_system_variables.sh"
+
+# Refresh the linux packages list (somtimes necessary at this point for installing git)
+sudo apt update
 
 # Git is installed seperately, since the check_github_branches is dependent on it
 sudo apt-get install -y git 
@@ -149,15 +153,14 @@ curl "$ROS_CEREBRA_BOOT_SERVICE_URL" -L --output $ROS_WORKING_DIR/ros_cerebra_bo
 sudo chmod 755 $ROS_WORKING_DIR/ros_cerebra_boot.service
 sudo mv $ROS_WORKING_DIR/ros_cerebra_boot.service /etc/systemd/system
 
-# Clean-up: remove unnecessary .zip directories
-rm -r phpliteadmin_v1_9_9_dev.zip
-rm -r "$TEMPORARY_SETUP_DIR"
-
 # Enable new services
 sudo systemctl daemon-reload
 sudo systemctl enable ros_cerebra_boot.service
 # Enable and start ssh server
 sudo systemctl enable ssh --now
+
+# Remove temporary folder
+rm -r "$TEMPORARY_SETUP_DIR"
 
 echo -e "$NEW_LINE""Congratulations! The setup completed succesfully!"
 echo -e "$NEW_LINE""Please restart the system to apply changes..."
