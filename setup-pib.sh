@@ -121,10 +121,11 @@ readonly ROS_CEREBRA_BOOT_URL="https://raw.githubusercontent.com/pib-rocks/setup
 readonly ROS_CEREBRA_BOOT_SERVICE_URL="https://raw.githubusercontent.com/pib-rocks/setup-pib/""${repo_map[$SETUP_PIB_ORIGIN]}""/setup_files/ros_cerebra_boot.service"
 
 # install update-pip
+cd "$USER_HOME"
 if [ -f $USER_HOME/update-pib.sh ]; then
   sudo rm update-pib.sh
 fi
-wget -O update-pib.sh "$ROS_UPDATE_URL"
+wget -O "$USER_HOME""/update-pib.sh" "$ROS_UPDATE_URL"
 sudo chmod 777 update-pib.sh
 echo "if [ -f /home/pib/update-pib.sh ]; then
         alias update-pib='/home/pib/update-pib.sh'
