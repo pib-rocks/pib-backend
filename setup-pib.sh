@@ -48,11 +48,11 @@ export TEMPORARY_SETUP_DIR="$(mktemp --directory /tmp/pib-temp.XXX)"
 # The folder name is dependend on the corresponding branch, so it's defined after the branch check.
 export installation_files_dir=""
 
-# This variable is specifically for downloading the installation files from the setup repo
+# This variable is specifically for downloading the installation scripts from the setup repo
 # These files are left out of the dynamic branch selection, since they are a prerequisite for the check itself
-# If you want to get the installation files from a specific branch, you need to change the variable manually
-# Define TODO: Change branch to main/develop once merged
-export SETUP_PIB_BRANCH="PR-368"
+# If you want to get the installation scripts from a specific branch, you need to change this variable manually
+# TODO: Change branch to main once merged
+export SETUP_PIB_BRANCH="develop"
 
 # Get setup files needed for the pib software installation
 readonly GET_SETUP_FILES_SCRIPT_NAME="get_setup_files.sh"
