@@ -5,6 +5,7 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_marshmallow import Marshmallow
 from flask_cors import CORS
 
+
 app = Flask(__name__)
 basedir = os.path.abspath(os.path.dirname("/home/pib/pib_data/"))
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + os.path.join(basedir, 'pibdata.db')
@@ -88,10 +89,41 @@ class Program(db.Model):
     name= db.Column(db.String(255), nullable=False, unique=True)
     program= db.Column(db.String(100000), nullable=False)
     programNumber = db.Column(db.String(50), nullable=False)
+
+    folder_path = "/home/pib/programs/"
+
     def __init__(self, name, program):
         self.name = name
         self.program = program
         self.programNumber = str(uuid.uuid4())
+
+    def create_python_program(self):
+        f = open(self.folder_path + self.generate_python_program_name(), "x")
+        f.close()
+        return
+    
+    #muss aufgerufen werden, bevor die änderungen gespeichert werden
+    def rename_python_program(self):
+        old_program = Program.query.filter(Program.programNumber == self.programNumber).first_or_404()
+        os.rename(self.folder_path + old_program.name, self.folder_path + self.generate_python_program_name())
+        return
+    
+    def generate_python_program_name(self):
+        uuid5 = self.programNumber[:5]
+        return filter(str.isalnum, self.name) + "_" + uuid5 + ".py"
+    
+    def updatePythonProgram(self):
+        f.open(self.folder_path + self.generate_python_program_name(), "w")
+        f.write(self.generate_python_code())
+        f.close()
+        return
+    
+    def delete_python_program(self):
+        os.remove()
+        return
+    
+    def generate_python_code(self):
+        return
 
 class Chat(db.Model):
     __tablename__ = "chat"
