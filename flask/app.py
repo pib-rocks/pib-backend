@@ -442,6 +442,34 @@ def delete_program_by_number(programNumber):
     except:
         abort(500)
 
+@app.route('/program/<string:programNumber>/code', methods=['GET'])
+def get_program_code_by_number(programNumber):
+    program = Program.query.filter(Program.programNumber == programNumber).first_or_404()
+    try:
+        return {
+            "programNumber": programNumber,
+            "code": {
+                "visual": program.program
+            }
+        }
+    except:
+        abort(500)
+
+@app.route('/program/<string:programNumber>/code', methods=['PUT'])
+def update_program_code_by_number(programNumber):
+    program = Program.query.filter(Program.programNumber == programNumber).first_or_404()
+    data = request.get_json()
+    visual = data["code"]["visual"]
+    python = data["code"]["python"]
+    program.program = visual
+    db.session.commit()
+    update_python_program(programNumber, python)
+    return {
+        "programNumber": program.programNumber,
+        "code": {
+            "visual": program.program
+        }
+    }
 
 @app.errorhandler(404)
 def not_found(error):
