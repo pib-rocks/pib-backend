@@ -8,10 +8,12 @@ from flask_cors import CORS
 
 app = Flask(__name__)
 basedir = os.path.abspath(os.path.dirname("/home/pib/pib_data/"))
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + os.path.join(basedir, 'pibdata.db')
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:////home/pib/pibdata.db'
 db = SQLAlchemy(app)
 ma = Marshmallow(app)
 CORS(app)
+
+PROGRAM_DIR = "/home/pib/pib_data/programs"
 
 class Personality(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -83,6 +85,17 @@ class Motor(db.Model):
         if len(args) > 10:
             self.effort = args[10]
 
+def create_python_program(programNumber):
+    open(PROGRAM_DIR + "/" + programNumber + ".py", "w").close()
+
+def update_python_program(programNumber, code):
+    file = open(PROGRAM_DIR + "/" + programNumber + ".py", "w")
+    file.write(code)
+    file.close()
+
+def delete_python_program(programNumber):
+    os.remove(PROGRAM_DIR + "/" + programNumber + ".py")
+
 class Program(db.Model):
     __tablename__ = "program"
     id = db.Column(db.Integer, primary_key=True)
@@ -96,18 +109,6 @@ class Program(db.Model):
         self.name = name
         self.program = program
         self.programNumber = str(uuid.uuid4())
-
-    def create_python_program(self, programNumber):
-        f = open(self.folder_path + programNumber, "x")
-        f.close()
-    
-    def update_python_program(self, programNumber, code):
-        file = open(self.folder_path + programNumber, "w")
-        file.write(code)
-        file.close()
-    
-    def delete_python_program(self, programNumber):
-        os.remove(self.folder_path + programNumber)
 
 class Chat(db.Model):
     __tablename__ = "chat"
@@ -389,11 +390,12 @@ def create_program():
     error = program_schema_without_programnumber.validate(request.json)
     if error:
         return error, 400
-    createProgram = Program(request.json.get("name"), request.json.get("program"))
-    db.session.add(createProgram)
+    created = Program(request.json.get("name"), request.json.get("program"))
+    db.session.add(created)
     db.session.commit()
+    create_python_program(created.programNumber)
     try:
-        return program_schema.dump(createProgram)
+        return program_schema.dump(created)
     except:
         abort(500)
 
@@ -431,6 +433,7 @@ def update_program_by_number(programNumber):
 
 @app.route('/program/<string:programNumber>', methods=['DELETE'])
 def delete_program_by_number(programNumber):
+    delete_python_program(programNumber)
     deleteProgram = Program.query.filter(Program.programNumber == programNumber).first_or_404()
     try:
         db.session.delete(deleteProgram)
