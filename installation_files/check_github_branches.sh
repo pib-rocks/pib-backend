@@ -5,9 +5,8 @@
 
 echo -e "$YELLOW_TEXT_COLOR""-- Checking if the specified branches exist --""$RESET_TEXT_COLOR"		
 
-# Default branch options
+# Default branch option
 readonly MAIN_BRANCH="main"
-readonly MAIN_ALTERNATIVE_BRANCH="master"
 
 # Assign default branches for the different pib system components
 setup_pib_branch_name="$MAIN_BRANCH"
@@ -18,7 +17,7 @@ pib_api_branch_name="$MAIN_BRANCH"
 ros_packages_branch_name="$MAIN_BRANCH"
 motors_branch_name="$MAIN_BRANCH"
 datatypes_branch_name="$MAIN_BRANCH"
-oak_d_lite_branch_name="$MAIN_ALTERNATIVE_BRANCH"
+oak_d_lite_branch_name="$MAIN_BRANCH"
 voice_assistant_branch_name="$MAIN_BRANCH"
 
 # Create an associative array, with repo-origin, branch-name pairs 
@@ -66,13 +65,6 @@ then
 		# If neither feature nor default branch was found, throw error and exit script
 		if [ "${repo_map[$repo_origin]}" != "$user_feature_branch" ] && [ "${repo_map[$repo_origin]}" != "$user_default_branch" ] 
 		then
-
-			# Check edge case if main branch in user_default, but the branch is named "master". TODO: Remove this check if oak_d_lite branch is renamed to main
-			if [ "$user_default_branch" = "$MAIN_BRANCH" ] && [ "${repo_map[$repo_origin]}" = "$MAIN_ALTERNATIVE_BRANCH" ]
-			then
-				break
-			fi
-
 			echo -e "$RED_TEXT_COLOR""No feature or default branch was found for (at least) this repo: ""$NEW_LINE""$repo_origin""$RESET_TEXT_COLOR"
 			exit "$FAILED_SUBSCRIPT_STATUS"
 		fi
