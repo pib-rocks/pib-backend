@@ -52,7 +52,7 @@ export installation_files_dir=""
 # These files are left out of the dynamic branch selection, since they are a prerequisite for the check itself
 # If you want to get the installation scripts from a specific branch, you need to change this variable manually
 # TODO: Change branch to main once merged
-export SETUP_PIB_BRANCH="develop"
+export SETUP_PIB_BRANCH="main"
 
 # Get setup files needed for the pib software installation
 readonly GET_SETUP_FILES_SCRIPT_NAME="get_setup_files.sh"
@@ -121,7 +121,7 @@ readonly ROS_CEREBRA_BOOT_URL="https://raw.githubusercontent.com/pib-rocks/setup
 readonly ROS_CEREBRA_BOOT_SERVICE_URL="https://raw.githubusercontent.com/pib-rocks/setup-pib/""${repo_map[$SETUP_PIB_ORIGIN]}""/setup_files/ros_cerebra_boot.service"
 
 # install update-pip
-if [ -f $USER_HOME/update-pib.sh ]; then
+if [ -f "$USER_HOME""/update-pib.sh" ]; then
   sudo rm update-pib.sh
 fi
 wget -O "$USER_HOME""/update-pib.sh" "$ROS_UPDATE_URL"
