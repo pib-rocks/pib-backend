@@ -41,10 +41,8 @@ else
 	su root bash -c "usermod -aG sudo $DEFAULT_USER ; echo '$DEFAULT_USER ALL=(ALL) NOPASSWD:ALL' | tee /etc/sudoers.d/$DEFAULT_USER"
 fi
 
-# Create temporary folder for installation files
-export TEMPORARY_SETUP_DIR="$USER_HOME""/temp"
-mkdir "$TEMPORARY_SETUP_DIR"
-chmod 775 "$TEMPORARY_SETUP_DIR"
+# Create temporary directory for installation files
+export TEMPORARY_SETUP_DIR="$(mktemp --directory /tmp/pib-temp.XXX)"
 
 # Installation folder will be created inside the temporary directory.
 # The folder name is dependend on the corresponding branch, so it's defined after the branch check.
@@ -158,9 +156,6 @@ sudo systemctl daemon-reload
 sudo systemctl enable ros_cerebra_boot.service
 # Enable and start ssh server
 sudo systemctl enable ssh --now
-
-# Remove temporary folder
-rm -r "$TEMPORARY_SETUP_DIR"
 
 echo -e "$NEW_LINE""Congratulations! The setup completed succesfully!"
 echo -e "$NEW_LINE""Please restart the system to apply changes..."
