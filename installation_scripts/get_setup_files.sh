@@ -13,7 +13,7 @@ wget -O "$SETUP_ARCHIVE_NAME" "$SETUP_ARCHIVE_URL"
 mv "$SETUP_ARCHIVE_NAME" "$TEMPORARY_SETUP_DIR"
 unzip "$TEMPORARY_SETUP_DIR/""$SETUP_ARCHIVE_NAME" -d "$TEMPORARY_SETUP_DIR"
 
-installation_files_dir="$TEMPORARY_SETUP_DIR/""setup-pib-""$SETUP_PIB_BRANCH""/installation_files"
+installation_files_dir="$TEMPORARY_SETUP_DIR/""setup-pib-""$SETUP_PIB_BRANCH""/installation_scripts"
 
 # Change permissions for all files in temp folder
 chmod --recursive 775 "$TEMPORARY_SETUP_DIR"
