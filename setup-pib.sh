@@ -57,7 +57,7 @@ export SETUP_PIB_BRANCH="PR-368"
 # Get setup files needed for the pib software installation
 readonly GET_SETUP_FILES_SCRIPT_NAME="get_setup_files.sh"
 readonly GET_SETUP_FILES_SCRIPT="$TEMPORARY_SETUP_DIR""/$GET_SETUP_FILES_SCRIPT_NAME"
-wget -O "$GET_SETUP_FILES_SCRIPT" "https://raw.githubusercontent.com/pib-rocks/setup-pib/""$SETUP_PIB_BRANCH""/installation_files/""$GET_SETUP_FILES_SCRIPT_NAME"
+wget -O "$GET_SETUP_FILES_SCRIPT" "https://raw.githubusercontent.com/pib-rocks/setup-pib/""$SETUP_PIB_BRANCH""/installation_scripts/""$GET_SETUP_FILES_SCRIPT_NAME"
 chmod 755 "$GET_SETUP_FILES_SCRIPT"
 source "$GET_SETUP_FILES_SCRIPT"
 
