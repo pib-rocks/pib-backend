@@ -97,33 +97,17 @@ class Program(db.Model):
         self.program = program
         self.programNumber = str(uuid.uuid4())
 
-    def create_python_program(self):
-        f = open(self.folder_path + self.generate_python_program_name(), "x")
+    def create_python_program(self, programNumber):
+        f = open(self.folder_path + programNumber, "x")
         f.close()
-        return
     
-    #muss aufgerufen werden, bevor die änderungen gespeichert werden
-    def rename_python_program(self):
-        old_program = Program.query.filter(Program.programNumber == self.programNumber).first_or_404()
-        os.rename(self.folder_path + old_program.name, self.folder_path + self.generate_python_program_name())
-        return
+    def update_python_program(self, programNumber, code):
+        file = open(self.folder_path + programNumber, "w")
+        file.write(code)
+        file.close()
     
-    def generate_python_program_name(self):
-        uuid5 = self.programNumber[:5]
-        return filter(str.isalnum, self.name) + "_" + uuid5 + ".py"
-    
-    def updatePythonProgram(self):
-        f.open(self.folder_path + self.generate_python_program_name(), "w")
-        f.write(self.generate_python_code())
-        f.close()
-        return
-    
-    def delete_python_program(self):
-        os.remove()
-        return
-    
-    def generate_python_code(self):
-        return
+    def delete_python_program(self, programNumber):
+        os.remove(self.folder_path + programNumber)
 
 class Chat(db.Model):
     __tablename__ = "chat"
