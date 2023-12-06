@@ -163,6 +163,11 @@ class ProgramWithOutNumber(ma.SQLAlchemyAutoSchema):
         model = Program
         exclude = ('id', 'programNumber')
 
+class ProgramWithOutProgram(ma.SQLAlchemyAutoSchema):
+    class Meta:
+        model = Program
+        exclude = ('id', 'program')
+
 personality_schema = PersonalitySchema()
 upload_personality_schema = UploadPersonalitySchema()
 personalities_schema = PersonalitySchema(many=True)
@@ -171,7 +176,9 @@ motor_schema = MotorSchema()
 motors_schema = MotorSchema(many=True)
 program_schema = ProgramSchema()
 program_schema_without_programnumber = ProgramWithOutNumber()
-programs_schema = ProgramSchema(many=True)
+program_schema_without_program = ProgramWithOutProgram()
+programs_schema = ProgramWithOutProgram(many=True)
+programs_schema_without_program = ProgramWithOutProgram(many=True)
 chat_schema = ChatSchema()
 chats_schema = ChatSchema(many=True)
 upload_chat_schema = UploadChatSchema()
@@ -395,7 +402,7 @@ def create_program():
     db.session.commit()
     create_python_program(created.programNumber)
     try:
-        return program_schema.dump(created)
+        return program_schema_without_program.dump(created)
     except:
         abort(500)
 
@@ -403,7 +410,7 @@ def create_program():
 def get_all_programs():
     allPrograms = Program.query.all()
     try:
-        return jsonify({"programs": programs_schema.dump(allPrograms)})
+        return jsonify({"programs": programs_schema_without_program.dump(allPrograms)})
     except:
         abort(500)
 
@@ -411,7 +418,7 @@ def get_all_programs():
 def get_program_by_number(programNumber):
     program = Program.query.filter(Program.programNumber == programNumber).first_or_404()
     try:
-        return program_schema_without_programnumber.dump(program);
+        return program_schema_without_program.dump(program)
     except:
         abort(500)
 
@@ -421,13 +428,13 @@ def update_program_by_number(programNumber):
     if error:
         return error, 400
     newProgram = Program(request.json.get("name"), request.json.get("program"))
-    opdProgram = Program.query.filter(Program.programNumber == programNumber).first_or_404()
-    opdProgram.name = newProgram.name
-    opdProgram.program = newProgram.program
-    db.session.add(opdProgram)
+    oldProgram = Program.query.filter(Program.programNumber == programNumber).first_or_404()
+    oldProgram.name = newProgram.name
+    oldProgram.program = newProgram.program
+    db.session.add(oldProgram)
     db.session.commit()
     try:
-        return program_schema.dump(opdProgram);
+        return program_schema_without_program.dump(oldProgram)
     except:
         abort(500)
 
