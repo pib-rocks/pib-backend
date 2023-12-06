@@ -101,7 +101,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/PostVoiceAssistantPersonality'
+              $ref: '#/components/schemas/VoiceAssistantPersonality'
       responses:
         '200':
           description: OK
@@ -135,12 +135,19 @@ paths:
           $ref: '#/components/responses/404'
         '500':
           $ref: '#/components/responses/500'
-  /voice-assistant/chat/:
+  /voice-assistant/chat/{personality-id}:
     post:
       tags:
         - chat
       summary: Add a new voice assistant chat
       operationId: createVoiceAssistantChat
+      parameters:
+        - name: personalityId
+          description: The personality id is forwarded by the personality tab
+          in: path
+          required: true
+          schema:
+            type: string
       requestBody:
         description: Add a new voice assistant chat
         content:
@@ -247,7 +254,7 @@ paths:
             type: string
       responses:
         '204':
-                '#/components/responses/204'
+          $ref: '#/components/responses/204'
         '400':
           $ref: '#/components/responses/400'
         '404':
@@ -328,37 +335,13 @@ paths:
           $ref: '#/components/responses/404'
         '500':
           $ref: '#/components/responses/500'
-    put:
-      tags:
-        - motor-settings
-      summary: Select a motor by name and update its motor-settings
-      requestBody:
-        description: Update the (existing) motor-settings of a motor.
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/MotorSettings'
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema: 
-                $ref: '#/components/schemas/MotorSettings'
-        '400':
-          $ref: '#/components/responses/400'
-        '404':
-          $ref: '#/components/responses/404'
-        '500':
-          $ref: '#/components/responses/500'
-  /motor-settings/{motor_name}:
+  /motor-settings/{motor-name}:
     get:
       tags:
         - motor-settings
       summary: Get the motor-settings of the motor matching the specified name
       parameters:
-        - name: motor_name
+        - name: motor-name
           in: path
           required: true
           schema:
@@ -400,6 +383,67 @@ paths:
           content:
             application/json:
               schema:
+                $ref: '#/components/schemas/MotorSettings'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+
+    put:
+      tags:
+        - motor-settings
+      summary: Select a motor by name and update its motor-settings
+      parameters:
+        - name: motor_name
+          in: path
+          required: true
+          schema:
+            type: string
+            enum:
+              - thumb_left_opposition
+              - thumb_left_stretch
+              - index_left_stretch
+              - middle_left_stretch
+              - ring_left_stretch
+              - pinky_left_stretch
+              - all_fingers_left
+              - thumb_right_opposition
+              - thumb_right_stretch
+              - index_right_stretch
+              - middle_right_stretch
+              - ring_right_stretch
+              - pinky_right_stretch
+              - all_fingers_right
+              - upper_arm_left_rotation
+              - elbow_left
+              - lower_arm_left_rotation
+              - wrist_left
+              - shoulder_vertical_left
+              - shoulder_horizontal_left
+              - upper_arm_right_rotation
+              - elbow_right
+              - lower_arm_right_rotation
+              - wrist_right
+              - shoulder_vertical_right
+              - shoulder_horizontal_right
+              - tilt_forward_motor
+              - tilt_sideways_motor
+              - turn_head_motor
+      requestBody:
+        description: Update the (existing) motor-settings of a motor.
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MotorSettings'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: 
                 $ref: '#/components/schemas/MotorSettings'
         '400':
           $ref: '#/components/responses/400'
@@ -453,9 +497,9 @@ paths:
     post:
       tags:
         - program
-      summary: Save a program
+      summary: Add a program
       requestBody:
-        description: Update an existing program.
+        description: Create an existing program.
         required: true
         content:
           application/json:
@@ -470,8 +514,6 @@ paths:
                 $ref: '#/components/schemas/Program'
         '400':
           $ref: '#/components/responses/400'
-        '404':
-          $ref: '#/components/responses/404'
         '500':
           $ref: '#/components/responses/500'
     get:
@@ -536,10 +578,52 @@ paths:
     delete:
       tags:
         - program
-      summary: Get one program by the program number
+      summary: Delete one program by the program number
       responses:
         '204':
           $ref: '#/components/responses/204'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+  /program/{program-number}/code:
+    get:
+      tags:
+        - program
+      summary: Get the (visual) code of one program by the program number
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProgramCodeGet'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+    put:
+      tags:
+        - program
+      summary: Update the code of an existing program
+      requestBody:
+        description: Update the code of an existing program
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProgramCodePut'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Program'
         '400':
           $ref: '#/components/responses/400'
         '404':
@@ -552,46 +636,11 @@ components:
       type: object
       properties:
         personalityId:
-          readOnly: true
           type: string
           examples: 
             - ecb8ad22-891d-4744-80b3-7e6d6d84a5c0
             - f1eda93f-0ae3-4f41-8502-d56dddeb7034 
             - 864c6ebe-c514-4d1d-85af-8ccd385f3f17 
-        name:
-          type: string
-          examples: 
-            - Eva
-            - Thomas
-            - Janina
-            - Georg
-        description:
-          readOnly: true
-          type: string
-          minLength: 1
-          examples: 
-            - You are a helpful assistant.
-            - You act as a translator, translating all my messages into Japanese.
-        gender:
-          type: string
-          enum: [Male, Female]
-          examples: 
-            - Female
-            - Male
-        pauseThreshold:
-          type: number
-          examples: 
-            - 0.8
-            - 1.0
-      required:
-        - personalityId
-        - name
-        - description
-        - gender
-        - pauseThreshold
-    PostVoiceAssistantPersonality:
-      tpye: object
-      properties:
         name:
           type: string
           examples: 
@@ -644,9 +693,9 @@ components:
             - Short Stories
             - Nürnberg
             - Definition of AI today
-        personalityId:
-          examples:
-            - f83913e4-ac40-498c-9bab-635958fbe096 
+        voiceAssistantPersonality:
+          readOnly: true
+          $ref: '#/components/schemas/VoiceAssistantPersonality'
       required:
         - chatId
         - topic
@@ -682,6 +731,9 @@ components:
             - Tell me a collection of short stories.
             - Hello Thomas, tell me something about Nürnberg.
             - Here is a brief definition of our current understanding of AI...
+        voiceAssistantChat:
+          readOnly: true
+          $ref: '#/components/schemas/VoiceAssistantChat'
       required:
         - message_id
         - timestamp
@@ -845,23 +897,58 @@ components:
       type: object
       properties:
         programNumber:
+          description: Unique Number to find your program
           type: string
           examples:
             - "bb13a553-f5de-49d2-96df-985152e125c7"
         name:
+          description: Name of your Program
           type: string
           examples:
             - HandRecognize
-        program:
-          type: string
-          examples:
-            - "{}"
     Programs:
       properties:
         programs:
           type: array
           items:
             $ref: '#/components/schemas/Program'
+    ProgramCodeGet:
+      type: object
+      properties:
+        programNumber:
+          description: Unique Number to find your program
+          type: string
+          examples:
+            - "bb13a553-f5de-49d2-96df-985152e125c7"
+        code:
+          type: object
+          properties:
+            visual:
+              description: Contains a stringified json of the visual representation of the program
+              type: string
+              examples:
+                - '{"blocks": { ... } }'
+    ProgramCodePut:
+      type: object
+      properties:
+        programNumber:
+          description: Unique Number to find your program
+          type: string
+          examples:
+            - "bb13a553-f5de-49d2-96df-985152e125c7"
+        code:
+          type: object
+          properties:
+            visual:
+              description: Contains a stringified json of the visual representation of the program
+              type: string
+              examples:
+                - '{"blocks": { ... }}'
+            python:
+              description: Contains the python code of the program
+              type: string
+              examples:
+                - 'print("hello world!")'
     Error:
         required:
           - Error
@@ -874,7 +961,7 @@ components:
               - The requested resource is not available
   responses:
     '204':
-      description: No Content        
+      description: No Content
     '400':
       description: Bad Request
       content:
