@@ -154,20 +154,9 @@ class MotorSchema(ma.SQLAlchemyAutoSchema):
         model = Motor
         exclude = ('id', 'effort')
 
-class ProgramWithOutNumber(ma.SQLAlchemyAutoSchema):
+class ProgramSchema(ma.SQLAlchemyAutoSchema):
     class Meta:
         model = Program
-        only = ('name', 'program')
-
-class ProgramWithOutProgram(ma.SQLAlchemyAutoSchema):
-    class Meta:
-        model = Program
-        only = ('programNumber', 'name')
-
-class ProgramSchemaNameOnly(ma.SQLAlchemyAutoSchema):
-    class Meta:
-        model = Program
-        only = ('name',)
 
 personality_schema = PersonalitySchema()
 upload_personality_schema = UploadPersonalitySchema()
@@ -182,10 +171,9 @@ chat_schema = ChatSchema()
 chats_schema = ChatSchema(many=True)
 upload_chat_schema = UploadChatSchema()
 
-program_schema_without_number = ProgramWithOutNumber()
-program_schema_name_only = ProgramSchemaNameOnly()
-program_schema_without_program = ProgramWithOutProgram()
-programs_schema_without_program = ProgramWithOutProgram(many=True)
+program_schema_name_only = ProgramSchema(only=('name',))
+program_schema_without_program = ProgramSchema(only=('name', 'programNumber'))
+programs_schema_without_program = ProgramSchema(only=('name', 'programNumber'), many=True)
 
 program_code_schema = ma_schema.from_dict({
     "programNumber": ma_fields.UUID(),
@@ -441,17 +429,16 @@ def get_program_by_number(programNumber):
 
 @app.route('/program/<string:programNumber>', methods=['PUT'])
 def update_program_by_number(programNumber):
-    error = program_schema_without_number.validate(request.json)
-    if error:
-        return error, 400
-    newProgram = Program(request.json.get("name"), request.json.get("program"))
-    oldProgram = Program.query.filter(Program.programNumber == programNumber).first_or_404()
-    oldProgram.name = newProgram.name
-    oldProgram.program = newProgram.program
-    db.session.add(oldProgram)
+    try:
+        data = program_schema_name_only.load(request.json)
+    except ValidationError as error:
+        return error.messages, 400
+    program = Program.query.filter(Program.programNumber == programNumber).first_or_404()
+    program.name = data["name"]
+    db.session.add(program)
     db.session.commit()
     try:
-        return program_schema_without_program.dump(oldProgram)
+        return program_schema_without_program.dump(program)
     except:
         abort(500)
 
@@ -480,9 +467,8 @@ def get_program_code_by_number(programNumber):
 def update_program_code_by_number(programNumber):
     try:
         data = program_code_schema.load(request.json)
-        print(data)
     except ValidationError as error:
-        return error.messages, 404
+        return error.messages, 400
     program = Program.query.filter(Program.programNumber == programNumber).first_or_404()
     program.program = data["code"]["visual"]
     db.session.commit()
