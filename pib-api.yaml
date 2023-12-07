@@ -512,7 +512,7 @@ paths:
     put:
       tags:
         - program
-      summary: Get all programs
+      summary: Update Program
       requestBody:
         description: Update an existing program.
         required: true
@@ -590,7 +590,7 @@ components:
         - gender
         - pauseThreshold
     PostVoiceAssistantPersonality:
-      tpye: object
+      type: object
       properties:
         name:
           type: string
