@@ -2,7 +2,8 @@ import os
 import uuid
 from flask import Flask, jsonify, request, abort
 from flask_sqlalchemy import SQLAlchemy
-from flask_marshmallow import Marshmallow
+from flask_marshmallow import Marshmallow, Schema, fields
+from marshmallow import fields as ma_fields, Schema as ma_schema, ValidationError
 from flask_cors import CORS
 
 
@@ -105,7 +106,7 @@ class Program(db.Model):
 
     folder_path = "/home/pib/programs/"
 
-    def __init__(self, name, program):
+    def __init__(self, name, program = "{}"):
         self.name = name
         self.program = program
         self.programNumber = str(uuid.uuid4())
@@ -153,37 +154,53 @@ class MotorSchema(ma.SQLAlchemyAutoSchema):
         model = Motor
         exclude = ('id', 'effort')
 
-class ProgramSchema(ma.SQLAlchemyAutoSchema):
-    class Meta:
-        model = Program
-        exclude = ('id',)
-
 class ProgramWithOutNumber(ma.SQLAlchemyAutoSchema):
     class Meta:
         model = Program
-        exclude = ('id', 'programNumber')
+        only = ('name', 'program')
 
 class ProgramWithOutProgram(ma.SQLAlchemyAutoSchema):
     class Meta:
         model = Program
-        exclude = ('id', 'program')
+        only = ('programNumber', 'name')
+
+class ProgramSchemaNameOnly(ma.SQLAlchemyAutoSchema):
+    class Meta:
+        model = Program
+        only = ('name',)
 
 personality_schema = PersonalitySchema()
 upload_personality_schema = UploadPersonalitySchema()
 personalities_schema = PersonalitySchema(many=True)
+
 camera_settings_schema = CameraSettingsSchema()
+
 motor_schema = MotorSchema()
 motors_schema = MotorSchema(many=True)
-program_schema = ProgramSchema()
-program_schema_without_programnumber = ProgramWithOutNumber()
-program_schema_without_program = ProgramWithOutProgram()
-programs_schema = ProgramWithOutProgram(many=True)
-programs_schema_without_program = ProgramWithOutProgram(many=True)
+
 chat_schema = ChatSchema()
 chats_schema = ChatSchema(many=True)
 upload_chat_schema = UploadChatSchema()
 
+program_schema_without_number = ProgramWithOutNumber()
+program_schema_name_only = ProgramSchemaNameOnly()
+program_schema_without_program = ProgramWithOutProgram()
+programs_schema_without_program = ProgramWithOutProgram(many=True)
 
+program_code_schema = ma_schema.from_dict({
+    "programNumber": ma_fields.UUID(),
+    "code": ma_fields.Nested({
+        "visual": ma_fields.String(),
+        "python": ma_fields.String()
+    })
+})()
+
+program_code_visual_only_schema = ma_schema.from_dict({
+    "programNumber": ma_fields.UUID(),
+    "code": ma_fields.Nested({
+        "visual": ma_fields.String()
+    })
+})()
 
 @app.route('/voice-assistant/chat', methods=['POST'])
 def create_chat():
@@ -394,10 +411,10 @@ def update_motor():
 
 @app.route('/program', methods=['POST'])
 def create_program():
-    error = program_schema_without_programnumber.validate(request.json)
+    error = program_schema_name_only.validate(request.json)
     if error:
         return error, 400
-    created = Program(request.json.get("name"), request.json.get("program"))
+    created = Program(request.json.get("name"))
     db.session.add(created)
     db.session.commit()
     create_python_program(created.programNumber)
@@ -424,7 +441,7 @@ def get_program_by_number(programNumber):
 
 @app.route('/program/<string:programNumber>', methods=['PUT'])
 def update_program_by_number(programNumber):
-    error = program_schema_without_programnumber.validate(request.json)
+    error = program_schema_without_number.validate(request.json)
     if error:
         return error, 400
     newProgram = Program(request.json.get("name"), request.json.get("program"))
@@ -452,31 +469,25 @@ def delete_program_by_number(programNumber):
 @app.route('/program/<string:programNumber>/code', methods=['GET'])
 def get_program_code_by_number(programNumber):
     program = Program.query.filter(Program.programNumber == programNumber).first_or_404()
-    try:
-        return {
-            "programNumber": programNumber,
-            "code": {
-                "visual": program.program
-            }
-        }
-    except:
-        abort(500)
-
-@app.route('/program/<string:programNumber>/code', methods=['PUT'])
-def update_program_code_by_number(programNumber):
-    program = Program.query.filter(Program.programNumber == programNumber).first_or_404()
-    data = request.get_json()
-    visual = data["code"]["visual"]
-    python = data["code"]["python"]
-    program.program = visual
-    db.session.commit()
-    update_python_program(programNumber, python)
-    return {
-        "programNumber": program.programNumber,
+    return program_code_visual_only_schema.dump({
+        "programNumber": programNumber,
         "code": {
             "visual": program.program
         }
-    }
+    })
+
+@app.route('/program/<string:programNumber>/code', methods=['PUT'])
+def update_program_code_by_number(programNumber):
+    try:
+        data = program_code_schema.load(request.json)
+        print(data)
+    except ValidationError as error:
+        return error.messages, 404
+    program = Program.query.filter(Program.programNumber == programNumber).first_or_404()
+    program.program = data["code"]["visual"]
+    db.session.commit()
+    update_python_program(programNumber, data["code"]["python"])
+    return program_code_visual_only_schema.dump(data)
 
 @app.errorhandler(404)
 def not_found(error):
