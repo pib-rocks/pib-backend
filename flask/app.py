@@ -176,18 +176,12 @@ program_schema_without_program = ProgramSchema(only=('name', 'programNumber'))
 programs_schema_without_program = ProgramSchema(only=('name', 'programNumber'), many=True)
 
 program_code_schema = ma_schema.from_dict({
-    "programNumber": ma_fields.UUID(),
-    "code": ma_fields.Nested({
-        "visual": ma_fields.String(),
-        "python": ma_fields.String()
-    })
+    "visual": ma_fields.String(),
+    "python": ma_fields.String()
 })()
 
 program_code_visual_only_schema = ma_schema.from_dict({
-    "programNumber": ma_fields.UUID(),
-    "code": ma_fields.Nested({
-        "visual": ma_fields.String()
-    })
+    "visual": ma_fields.String(),
 })()
 
 @app.route('/voice-assistant/chat', methods=['POST'])
@@ -457,10 +451,7 @@ def delete_program_by_number(programNumber):
 def get_program_code_by_number(programNumber):
     program = Program.query.filter(Program.programNumber == programNumber).first_or_404()
     return program_code_visual_only_schema.dump({
-        "programNumber": programNumber,
-        "code": {
-            "visual": program.program
-        }
+        "visual": program.program
     })
 
 @app.route('/program/<string:programNumber>/code', methods=['PUT'])
@@ -470,9 +461,9 @@ def update_program_code_by_number(programNumber):
     except ValidationError as error:
         return error.messages, 400
     program = Program.query.filter(Program.programNumber == programNumber).first_or_404()
-    program.program = data["code"]["visual"]
+    program.program = data["visual"]
     db.session.commit()
-    update_python_program(programNumber, data["code"]["python"])
+    update_python_program(programNumber, data["python"])
     return program_code_visual_only_schema.dump(data)
 
 @app.errorhandler(404)
