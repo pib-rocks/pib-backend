@@ -158,6 +158,10 @@ class ProgramSchema(ma.SQLAlchemyAutoSchema):
     class Meta:
         model = Program
 
+class ProgramCodeSchema(ma_schema):
+    visual = ma_fields.String(required=True)
+    python = ma_fields.String(required=True)
+
 personality_schema = PersonalitySchema()
 upload_personality_schema = UploadPersonalitySchema()
 personalities_schema = PersonalitySchema(many=True)
@@ -175,14 +179,8 @@ program_schema_name_only = ProgramSchema(only=('name',))
 program_schema_without_program = ProgramSchema(only=('name', 'programNumber'))
 programs_schema_without_program = ProgramSchema(only=('name', 'programNumber'), many=True)
 
-program_code_schema = ma_schema.from_dict({
-    "visual": ma_fields.String(),
-    "python": ma_fields.String()
-})()
-
-program_code_visual_only_schema = ma_schema.from_dict({
-    "visual": ma_fields.String(),
-})()
+program_code_schema = ProgramCodeSchema()
+program_code_visual_only_schema = ProgramCodeSchema(only=('visual',))
 
 @app.route('/voice-assistant/chat', methods=['POST'])
 def create_chat():
