@@ -14,7 +14,7 @@ db = SQLAlchemy(app)
 ma = Marshmallow(app)
 CORS(app)
 
-PROGRAM_DIR = "/home/pib/pib_data/programs"
+PROGRAM_DIR = "/home/pib/pib_data/program/code/python"
 
 class Personality(db.Model):
     id = db.Column(db.Integer, primary_key=True)
