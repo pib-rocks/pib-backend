@@ -9,7 +9,7 @@ from flask_cors import CORS
 
 app = Flask(__name__)
 basedir = os.path.abspath(os.path.dirname("/home/pib/pib_data/"))
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:////home/pib/pibdata.db'
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:////home/pib/pib_data/pibdata.db'
 db = SQLAlchemy(app)
 ma = Marshmallow(app)
 CORS(app)
@@ -101,14 +101,14 @@ class Program(db.Model):
     __tablename__ = "program"
     id = db.Column(db.Integer, primary_key=True)
     name= db.Column(db.String(255), nullable=False, unique=True)
-    program= db.Column(db.String(100000), nullable=False)
+    codeVisual = db.Column(db.String(100000), nullable=False)
     programNumber = db.Column(db.String(50), nullable=False)
 
     folder_path = "/home/pib/programs/"
 
-    def __init__(self, name, program = "{}"):
+    def __init__(self, name, codeVisual = "{}"):
         self.name = name
-        self.program = program
+        self.codeVisual = codeVisual
         self.programNumber = str(uuid.uuid4())
 
 class Chat(db.Model):
@@ -449,7 +449,7 @@ def delete_program_by_number(programNumber):
 def get_program_code_by_number(programNumber):
     program = Program.query.filter(Program.programNumber == programNumber).first_or_404()
     return program_code_visual_only_schema.dump({
-        "visual": program.program
+        "visual": program.codeVisual
     })
 
 @app.route('/program/<string:programNumber>/code', methods=['PUT'])
@@ -459,7 +459,7 @@ def update_program_code_by_number(programNumber):
     except ValidationError as error:
         return error.messages, 400
     program = Program.query.filter(Program.programNumber == programNumber).first_or_404()
-    program.program = data["visual"]
+    program.codeVisual = data["visual"]
     db.session.commit()
     update_python_program(programNumber, data["python"])
     return program_code_visual_only_schema.dump(data)
