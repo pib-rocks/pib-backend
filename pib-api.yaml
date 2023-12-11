@@ -915,40 +915,24 @@ components:
     ProgramCodeGet:
       type: object
       properties:
-        programNumber:
-          description: Unique Number to find your program
+        visual:
+          description: Contains a stringified json of the visual representation of the program
           type: string
           examples:
-            - "bb13a553-f5de-49d2-96df-985152e125c7"
-        code:
-          type: object
-          properties:
-            visual:
-              description: Contains a stringified json of the visual representation of the program
-              type: string
-              examples:
-                - '{"blocks": { ... } }'
+            - '{"blocks": { ... } }'
     ProgramCodePut:
       type: object
       properties:
-        programNumber:
-          description: Unique Number to find your program
+        visual:
+          description: Contains a stringified json of the visual representation of the program
           type: string
           examples:
-            - "bb13a553-f5de-49d2-96df-985152e125c7"
-        code:
-          type: object
-          properties:
-            visual:
-              description: Contains a stringified json of the visual representation of the program
-              type: string
-              examples:
-                - '{"blocks": { ... }}'
-            python:
-              description: Contains the python code of the program
-              type: string
-              examples:
-                - 'print("hello world!")'
+            - '{"blocks": { ... }}'
+        python:
+          description: Contains the python code of the program
+          type: string
+          examples:
+            - 'print("hello world!")'
     Error:
         required:
           - Error
