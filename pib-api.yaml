@@ -637,6 +637,7 @@ components:
       properties:
         personalityId:
           type: string
+          format: uuid
           examples: 
             - ecb8ad22-891d-4744-80b3-7e6d6d84a5c0
             - f1eda93f-0ae3-4f41-8502-d56dddeb7034 
@@ -693,9 +694,11 @@ components:
             - Short Stories
             - Nürnberg
             - Definition of AI today
-        voiceAssistantPersonality:
-          readOnly: true
-          $ref: '#/components/schemas/VoiceAssistantPersonality'
+        personalityId:
+          type: string
+          format: uuid
+          examples: 
+            - ecb8ad22-891d-4744-80b3-7e6d6d84a5c0
       required:
         - chatId
         - topic
@@ -899,6 +902,7 @@ components:
         programNumber:
           description: Unique Number to find your program
           type: string
+          format: uuid
           examples:
             - "bb13a553-f5de-49d2-96df-985152e125c7"
         name:
