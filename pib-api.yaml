@@ -623,7 +623,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Program'
+                $ref: '#/components/schemas/ProgramCodeGet'
         '400':
           $ref: '#/components/responses/400'
         '404':
@@ -916,7 +916,7 @@ components:
       type: object
       properties:
         visual:
-          description: Contains a stringified json of the visual representation of the program
+          description: Contains a stringified json of the program's visual representation
           type: string
           examples:
             - '{"blocks": { ... } }'
@@ -924,7 +924,7 @@ components:
       type: object
       properties:
         visual:
-          description: Contains a stringified json of the visual representation of the program
+          description: Contains a stringified json of the program's visual representation
           type: string
           examples:
             - '{"blocks": { ... }}'
