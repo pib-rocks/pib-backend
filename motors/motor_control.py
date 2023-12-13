@@ -1,8 +1,8 @@
 HOST = "localhost"
 PORT = 4223
-UID1 = "SEX" # Replace with the UID of first Servo Bricklet
-UID2 = "SFP" # Replace with the UID of second Servo Bricklet
-UID3 = "SGV" # Replace with the UID of third Servo Bricklet
+UID1 = "XYZ" # Replace with the UID of first Servo Bricklet
+UID2 = "XYZ" # Replace with the UID of second Servo Bricklet
+UID3 = "XYZ" # Replace with the UID of third Servo Bricklet
 
 from tinkerforge.ip_connection import IPConnection
 from tinkerforge.brick_hat import BrickHAT
@@ -101,33 +101,33 @@ class Motor_control(Node):
 
                 # Available motors
                 self.motors = [
-                        Motor("turn_head_motor", self.servo1, [0], False, 4),
-                        Motor("tilt_forward_motor", self.servo1, [1], False, 4),
-                        Motor("tilt_sideways_motor", self.servo1, [2], False, 4),
-                        Motor("thumb_left_opposition", self.servo1, [3], False, 0),
-                        Motor("thumb_left_stretch", self.servo1, [4], False, 0),
-                        Motor("index_left_stretch", self.servo1, [5], False, 0),
-                        Motor("middle_left_stretch", self.servo1, [6], False, 0),
-                        Motor("ring_left_stretch", self.servo1, [7], False, 0),
-                        Motor("pinky_left_stretch", self.servo1, [8], False, 0),
-                        Motor("thumb_right_opposition", self.servo1, [9], False, 1),
-                        Motor("thumb_right_stretch", self.servo2, [0], False, 1),
-                        Motor("index_right_stretch", self.servo2, [1], False, 1),
-                        Motor("middle_right_stretch", self.servo2, [2], False, 1),
-                        Motor("ring_right_stretch", self.servo2, [3], False, 1),
-                        Motor("pinky_right_stretch", self.servo2, [4], False, 1),
-                        Motor("upper_arm_left_rotation", self.servo2, [5], False, 2),
-                        Motor("elbow_left", self.servo2, [6], False, 2),
-                        Motor("lower_arm_left_rotation", self.servo2, [7], False, 2),
-                        Motor("wrist_left", self.servo2, [8], False, 2),
-                        Motor("shoulder_vertical_left", self.servo3, [7, 9], False, 2),
-                        Motor("shoulder_horizontal_left", self.servo3, [0], False, 2),
-                        Motor("upper_arm_right_rotation", self.servo3, [1], False, 3),
-                        Motor("elbow_right", self.servo3, [2], False, 3),
-                        Motor("lower_arm_right_rotation", self.servo3, [3], False, 3),
-                        Motor("wrist_right", self.servo3, [4], False, 3),
-                        Motor("shoulder_vertical_right", self.servo3, [5, 8], False, 3),
-                        Motor("shoulder_horizontal_right", self.servo3, [6], False, 3)
+                        Motor("turn_head_motor", self.servo1, [0], True, 4),
+                        Motor("tilt_forward_motor", self.servo1, [1], True, 4),
+                        Motor("tilt_sideways_motor", self.servo1, [2], True, 4),
+                        Motor("thumb_left_opposition", self.servo1, [3], True, 0),
+                        Motor("thumb_left_stretch", self.servo1, [4], True, 0),
+                        Motor("index_left_stretch", self.servo1, [5], True, 0),
+                        Motor("middle_left_stretch", self.servo1, [6], True, 0),
+                        Motor("ring_left_stretch", self.servo1, [7], True, 0),
+                        Motor("pinky_left_stretch", self.servo1, [8], True, 0),
+                        Motor("thumb_right_opposition", self.servo1, [9], True, 1),
+                        Motor("thumb_right_stretch", self.servo2, [0], True, 1),
+                        Motor("index_right_stretch", self.servo2, [1], True, 1),
+                        Motor("middle_right_stretch", self.servo2, [2], True, 1),
+                        Motor("ring_right_stretch", self.servo2, [3], True, 1),
+                        Motor("pinky_right_stretch", self.servo2, [4], True, 1),
+                        Motor("upper_arm_left_rotation", self.servo2, [5], True, 2),
+                        Motor("elbow_left", self.servo2, [6], True, 2),
+                        Motor("lower_arm_left_rotation", self.servo2, [7], True, 2),
+                        Motor("wrist_left", self.servo2, [8], True, 2),
+                        Motor("shoulder_vertical_left", self.servo3, [7, 9], True, 2),
+                        Motor("shoulder_horizontal_left", self.servo3, [0], True, 2),
+                        Motor("upper_arm_right_rotation", self.servo3, [1], True, 3),
+                        Motor("elbow_right", self.servo3, [2], True, 3),
+                        Motor("lower_arm_right_rotation", self.servo3, [3], True, 3),
+                        Motor("wrist_right", self.servo3, [4], True, 3),
+                        Motor("shoulder_vertical_right", self.servo3, [5, 8], True, 3),
+                        Motor("shoulder_horizontal_right", self.servo3, [6], True, 3)
                 ]       
 
                 self.get_on_init_motor_settings_from_database()
@@ -181,6 +181,10 @@ class Motor_control(Node):
                                 for motor in motors:
                                         self.get_logger().info(f"Motor: {str(motor.name)}")
                                         value = msg.points[0].positions[0]
+
+                                        if motor.name == "shoulder_vertical_left" or motor.name == "shoulder_vertical_right":
+                                                value = value * -1
+
                                         self.get_logger().info(f"Value: {value}")
                                         for port in motor.ports:
                                                 motor.servo.set_enable(port, motor.state)
