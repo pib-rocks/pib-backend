@@ -57,7 +57,7 @@ class CameraSettings(db.Model):
 
 class Motor(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    name= db.Column(db.String(255), nullable=False, unique=True)
+    name = db.Column(db.String(255), nullable=False, unique=True)
     pulseWidthMin = db.Column(db.Integer, nullable=False)
     pulseWidthMax = db.Column(db.Integer, nullable=False)
     rotationRangeMin = db.Column(db.Integer, nullable=False)
@@ -85,7 +85,7 @@ class Motor(db.Model):
 class Program(db.Model):
     __tablename__ = "program"
     id = db.Column(db.Integer, primary_key=True)
-    name= db.Column(db.String(255), nullable=False, unique=True)
+    name = db.Column(db.String(255), nullable=False, unique=True)
     program= db.Column(db.String(100000), nullable=False)
     programNumber = db.Column(db.String(50), nullable=False)
     def __init__(self, name, program):
@@ -393,7 +393,7 @@ def get_all_programs():
 def get_program_by_number(programNumber):
     program = Program.query.filter(Program.programNumber == programNumber).first_or_404()
     try:
-        return program_schema_without_programnumber.dump(program);
+        return program_schema_without_programnumber.dump(program)
     except:
         abort(500)
 
@@ -403,13 +403,13 @@ def update_program_by_number(programNumber):
     if error:
         return error, 400
     newProgram = Program(request.json.get("name"), request.json.get("program"))
-    opdProgram = Program.query.filter(Program.programNumber == programNumber).first_or_404()
-    opdProgram.name = newProgram.name
-    opdProgram.program = newProgram.program
-    db.session.add(opdProgram)
+    oldProgram = Program.query.filter(Program.programNumber == programNumber).first_or_404()
+    oldProgram.name = newProgram.name
+    oldProgram.program = newProgram.program
+    db.session.add(oldProgram)
     db.session.commit()
     try:
-        return program_schema.dump(opdProgram);
+        return program_schema.dump(oldProgram)
     except:
         abort(500)
 
