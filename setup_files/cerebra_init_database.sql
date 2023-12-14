@@ -3,189 +3,189 @@ insert into
    motor 
 values
    (
-      NULL, 'tilt_forward_motor', 700, 2500, -4500, 4500, 10000, 10000, 10000, 19500, TRUE, NULL, TRUE
+      NULL, 'tilt_forward_motor', 700, 2500, -90, 90, 16000, 10000, 5000, 19500, TRUE, NULL
    )
 ;
 insert into
    motor 
 values
    (
-      NULL, 'tilt_sideways_motor', 700, 2500, -9000, 9000, 10000, 10000, 10000, 19500, TRUE, NULL, FALSE
+      NULL, 'tilt_sideways_motor', 700, 2500, -90, 90, 16000, 10000, 5000, 19500, TRUE, NULL
    )
 ;
 insert into
    motor 
 values
    (
-      NULL, 'turn_head_motor', 700, 2500, -9000, 9000, 10000, 10000, 10000, 19500, TRUE, NULL, TRUE
+      NULL, 'turn_head_motor', 700, 2500, -90, 90, 16000, 10000, 5000, 19500, TRUE, NULL
    )
 ;
 insert into
    motor 
 values
    (
-      NULL, 'thumb_left_stretch', 700, 2500, -9000, 9000, 10000, 10000, 10000, 19500, TRUE, NULL, TRUE
+      NULL, 'thumb_left_stretch', 700, 2500, -90, 90, 16000, 10000, 5000, 19500, TRUE, NULL
    )
 ;
 insert into
    motor 
 values
    (
-      NULL, 'thumb_left_opposition', 700, 2500, -9000, 9000, 10000, 10000, 10000, 19500, TRUE, NULL, TRUE
+      NULL, 'thumb_left_opposition', 700, 2500, -90, 90, 16000, 10000, 5000, 19500, TRUE, NULL
    )
 ;
 insert into
    motor 
 values
    (
-      NULL, 'index_left_stretch', 700, 2500, -9000, 9000, 10000, 10000, 10000, 19500, TRUE, NULL, TRUE
+      NULL, 'index_left_stretch', 700, 2500, -90, 90, 16000, 10000, 5000, 19500, TRUE, NULL
    )
 ;
 insert into
    motor 
 values
    (
-      NULL, 'middle_left_stretch', 700, 2500, -9000, 9000, 10000, 10000, 10000, 19500, TRUE, NULL, TRUE
+      NULL, 'middle_left_stretch', 700, 2500, -90, 90, 16000, 10000, 5000, 19500, TRUE, NULL
    )
 ;
 insert into
    motor 
 values
    (
-      NULL, 'ring_left_stretch', 700, 2500, -9000, 9000, 10000, 10000, 10000, 19500, TRUE, NULL, TRUE
+      NULL, 'ring_left_stretch', 700, 2500, -90, 90, 16000, 10000, 5000, 19500, TRUE, NULL
    )
 ;
 insert into
    motor 
 values
    (
-      NULL, 'pinky_left_stretch', 700, 2500, -9000, 9000, 10000, 10000, 10000, 19500, TRUE, NULL, TRUE
+      NULL, 'pinky_left_stretch', 700, 2500, -90, 90, 16000, 10000, 5000, 19500, TRUE, NULL
    )
 ;
 insert into
    motor 
 values
    (
-      NULL, 'thumb_right_stretch', 700, 2500, -9000, 9000, 10000, 10000, 10000, 19500, TRUE, NULL, TRUE
+      NULL, 'thumb_right_stretch', 700, 2500, -90, 90, 16000, 10000, 5000, 19500, TRUE, NULL
    )
 ;
 insert into
    motor 
 values
    (
-      NULL, 'thumb_right_opposition', 700, 2500, -9000, 9000, 10000, 10000, 10000, 19500, TRUE, NULL, TRUE
+      NULL, 'thumb_right_opposition', 700, 2500, -90, 90, 16000, 10000, 5000, 19500, TRUE, NULL
    )
 ;
 insert into
    motor 
 values
    (
-      NULL, 'index_right_stretch', 700, 2500, -9000, 9000, 10000, 10000, 10000, 19500, TRUE, NULL, TRUE
+      NULL, 'index_right_stretch', 700, 2500, -90, 90, 16000, 10000, 5000, 19500, TRUE, NULL
    )
 ;
 insert into
    motor 
 values
    (
-      NULL, 'middle_right_stretch', 700, 2500, -9000, 9000, 10000, 10000, 10000, 19500, TRUE, NULL, TRUE
+      NULL, 'middle_right_stretch', 700, 2500, -90, 90, 16000, 10000, 5000, 19500, TRUE, NULL
    )
 ;
 insert into
    motor 
 values
    (
-      NULL, 'ring_right_stretch', 700, 2500, -9000, 9000, 10000, 10000, 10000, 19500, TRUE, NULL, TRUE
+      NULL, 'ring_right_stretch', 700, 2500, -90, 90, 16000, 10000, 5000, 19500, TRUE, NULL
    )
 ;
 insert into
    motor 
 values
    (
-      NULL, 'pinky_right_stretch', 700, 2500, -9000, 9000, 10000, 10000, 10000, 19500, TRUE, NULL, TRUE
+      NULL, 'pinky_right_stretch', 700, 2500, -90, 90, 16000, 10000, 5000, 19500, TRUE, NULL
    )
 ;
 insert into
    motor 
 values
    (
-      NULL, 'upper_arm_left_rotation', 700, 2500, -9000, 9000, 10000, 10000, 10000, 19500, TRUE, NULL, TRUE
+      NULL, 'upper_arm_left_rotation', 700, 2500, -90, 90, 16000, 10000, 5000, 19500, TRUE, NULL
    )
 ;
 insert into
    motor 
 values
    (
-      NULL, 'elbow_left', 700, 2500, -9000, 9000, 10000, 10000, 10000, 19500, TRUE, NULL, TRUE
+      NULL, 'elbow_left', 700, 2500, -90, 90, 16000, 10000, 5000, 19500, TRUE, NULL
    )
 ;
 insert into
    motor 
 values
    (
-      NULL, 'lower_arm_left_rotation', 700, 2500, -9000, 9000, 10000, 10000, 10000, 19500, TRUE, NULL, TRUE
+      NULL, 'lower_arm_left_rotation', 700, 2500, -90, 90, 16000, 10000, 5000, 19500, TRUE, NULL
    )
 ;
 insert into
    motor 
 values
    (
-      NULL, 'wrist_left', 700, 2500, -9000, 9000, 10000, 10000, 10000, 19500, TRUE, NULL, TRUE
+      NULL, 'wrist_left', 700, 2500, -90, 90, 16000, 10000, 5000, 19500, TRUE, NULL
    )
 ;
 insert into
    motor 
 values
    (
-      NULL, 'shoulder_vertical_left', 700, 2500, -9000, 9000, 10000, 10000, 10000, 19500, TRUE, NULL, TRUE
+      NULL, 'shoulder_vertical_left', 700, 2500, -90, 90, 16000, 10000, 5000, 19500, TRUE, NULL
    )
 ;
 insert into
    motor 
 values
    (
-      NULL, 'shoulder_horizontal_left', 700, 2500, -9000, 9000, 10000, 10000, 10000, 19500, TRUE, NULL, TRUE
+      NULL, 'shoulder_horizontal_left', 700, 2500, -90, 90, 16000, 10000, 5000, 19500, TRUE, NULL
    )
 ;
 insert into
    motor 
 values
    (
-      NULL, 'upper_arm_right_rotation', 700, 2500, -9000, 9000, 10000, 10000, 10000, 19500, TRUE, NULL, TRUE
+      NULL, 'upper_arm_right_rotation', 700, 2500, -90, 90, 16000, 10000, 5000, 19500, TRUE, NULL
    )
 ;
 insert into
    motor 
 values
    (
-      NULL, 'elbow_right', 700, 2500, -9000, 9000, 10000, 10000, 10000, 19500, TRUE, NULL, TRUE
+      NULL, 'elbow_right', 700, 2500, -90, 90, 16000, 10000, 5000, 19500, TRUE, NULL
    )
 ;
 insert into
    motor 
 values
    (
-      NULL, 'lower_arm_right_rotation', 700, 2500, -9000, 9000, 10000, 10000, 10000, 19500, TRUE, NULL, TRUE
+      NULL, 'lower_arm_right_rotation', 700, 2500, -90, 90, 16000, 10000, 5000, 19500, TRUE, NULL
    )
 ;
 insert into
    motor 
 values
    (
-      NULL, 'wrist_right', 700, 2500, -9000, 9000, 10000, 10000, 10000, 19500, TRUE, NULL, TRUE
+      NULL, 'wrist_right', 700, 2500, -90, 90, 16000, 10000, 5000, 19500, TRUE, NULL
    )
 ;
 insert into
    motor 
 values
    (
-      NULL, 'shoulder_vertical_right', 700, 2500, -9000, 9000, 10000, 10000, 10000, 19500, TRUE, NULL, TRUE
+      NULL, 'shoulder_vertical_right', 700, 2500, -90, 90, 16000, 10000, 5000, 19500, TRUE, NULL
    )
 ;
 insert into
    motor 
 values
    (
-      NULL, 'shoulder_horizontal_right', 700, 2500, -9000, 9000, 10000, 10000, 10000, 19500, TRUE, NULL, TRUE
+      NULL, 'shoulder_horizontal_right', 700, 2500, -90, 90, 16000, 10000, 5000, 19500, TRUE, NULL
    )
 ;
 create table IF NOT EXISTS personality (id INTEGER primary key AUTOINCREMENT NOT NULL, personalityId Text UNIQUE NOT NULL, name Text NOT NULL, gender Text NOT NULL, description Text, pauseThreshold Numeric NOT NULL);
