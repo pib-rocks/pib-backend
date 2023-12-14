@@ -11,6 +11,7 @@ import rclpy
 from rclpy.node import Node
 from trajectory_msgs.msg import JointTrajectory
 from datatypes.srv import MotorSettingsSrv
+from datatypes.msg import MotorSettings
 from enum import Enum
 from urllib import request as urllib_request, parse as urllib_parse, error as urllib_error
 import json
@@ -61,7 +62,8 @@ def motor_settings_to_dto_dict(ms, motor):
                 "velocity": ms.velocity,
                 "acceleration": ms.acceleration,
                 "deceleration": ms.deceleration,
-                "period": ms.period
+                "period": ms.period,
+                "active": ms.active
         }
 
 
@@ -73,6 +75,11 @@ class Motor_control(Node):
                 qos_policy = rclpy.qos.QoSProfile(reliability=rclpy.qos.ReliabilityPolicy.BEST_EFFORT, history=rclpy.qos.HistoryPolicy.KEEP_LAST, depth=1)
 
                 super().__init__('motor_control')
+
+                # Toggle Devmode
+
+                self.declare_parameter("dev", False)
+                self.dev = self.get_parameter("dev").value
 
                 # Topic for JointTrajectory
                 self.subscription = self.create_subscription(
@@ -89,6 +96,8 @@ class Motor_control(Node):
                         self.motor_settings_callback
                 )
 
+                # Publisher for MotorSettings
+                self.publisher = self.create_publisher(MotorSettings, "motor_settings", 10)
                 # Connection
                 self.ipcon = IPConnection()  # Create IP connection
                 self.hat = BrickHAT("X", self.ipcon)
@@ -141,7 +150,7 @@ class Motor_control(Node):
 
 
         def motor_settings_callback(self, request, response):
-                                
+                response.settings_persisted = False
                 try:
 
                         motors = self.motor_collection_to_multible_motors(request.motor_name)
@@ -149,23 +158,43 @@ class Motor_control(Node):
                         if len(motors) == 0:
                                 raise Exception("No motor found")
 
+                        
                         for motor in motors:
+                                try:
+                                        for port in motor.ports:
+                                                motor.servo.set_pulse_width(port, request.pulse_width_min, request.pulse_width_max)
+                                                motor.servo.set_motion_configuration(port, request.velocity, request.acceleration, request.deceleration)
+                                                motor.servo.set_period(port, request.period)
+                                                motor.set_state(request.turned_on)
+                                                motor.servo.set_degree(port, request.rotation_range_min, request.rotation_range_max)
+                                        response.settings_applied = True
+                                except Exception as e:
+                                        response.settings_applied = False
 
-                                for port in motor.ports:
-                                        motor.servo.set_pulse_width(port, request.pulse_width_min, request.pulse_width_max)
-                                        motor.servo.set_motion_configuration(port, request.velocity, request.acceleration, request.deceleration)
-                                        motor.servo.set_period(port, request.period)
-                                        motor.set_state(request.turned_on)
-                                        motor.servo.set_degree(port, request.rotation_range_min, request.rotation_range_max)
-
-                                response.settings_applied = True
-                                response.settings_persisted = self.persist_motor_settings_to_db(request, motor)
+                                try: 
+                                        if response.settings_applied == True :
+                                                response.settings_persisted = self.persist_motor_settings_to_db(request)
+                                except Exception as e:
+                                        response.settings_persisted = False
 
                 except Exception as e:
                         self.get_logger().warn(f"Error processing motor-settings-message: {str(e)}")
                         response.settings_applied = False
-                        response.settings_persisted = False
-
+                if self.dev == True or response.settings_applied == True:
+                        #self.get_logger().info(f"Devmode: {str(self.dev)}\tresponse.settings_applied: {str(response.settings_applied)}")
+                        msg = MotorSettings()
+                        msg.motor_name = request.motor_name
+                        msg.pulse_width_min = request.pulse_width_min
+                        msg.pulse_width_max = request.pulse_width_max
+                        msg.rotation_range_min = request.rotation_range_min
+                        msg.rotation_range_max = request.rotation_range_max
+                        msg.velocity = request.velocity
+                        msg.acceleration = request.acceleration
+                        msg.deceleration = request.deceleration
+                        msg.active = request.active
+                        msg.period = request.period
+                        msg.turned_on = request.turned_on
+                        self.publisher.publish(msg)
                 return response
                 
 
