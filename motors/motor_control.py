@@ -173,8 +173,9 @@ class Motor_control(Node):
 
                                 try: 
                                         if response.settings_applied == True :
-                                                response.settings_persisted = self.persist_motor_settings_to_db(request)
+                                                response.settings_persisted = self.persist_motor_settings_to_db(request, motor)
                                 except Exception as e:
+                                        self.get_logger().warn(f"Error persisting motor-setting: {str(e)}")
                                         response.settings_persisted = False
 
                 except Exception as e:
