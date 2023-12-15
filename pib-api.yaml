@@ -18,6 +18,10 @@ tags:
     description: Read- and Update-Operations for camera-settings
   - name: program
     description: CRUD-Operations for user programs
+  - name: bricklet
+    description: Read- and Update-Operations for bricklet ids
+  - name: motorBrickletPin
+    description: Read- and Update-Operations for bricklet ids
 paths:
   /voice-assistant/personality:
     post:
@@ -247,7 +251,7 @@ paths:
             type: string
       responses:
         '204':
-                '#/components/responses/204'
+          $ref: '#/components/responses/204'
         '400':
           $ref: '#/components/responses/400'
         '404':
@@ -453,9 +457,9 @@ paths:
     post:
       tags:
         - program
-      summary: Save a program
+      summary: Add a program
       requestBody:
-        description: Update an existing program.
+        description: Create an existing program.
         required: true
         content:
           application/json:
@@ -470,8 +474,6 @@ paths:
                 $ref: '#/components/schemas/Program'
         '400':
           $ref: '#/components/responses/400'
-        '404':
-          $ref: '#/components/responses/404'
         '500':
           $ref: '#/components/responses/500'
     get:
@@ -512,7 +514,7 @@ paths:
     put:
       tags:
         - program
-      summary: Get all programs
+      summary: Update Program
       requestBody:
         description: Update an existing program.
         required: true
@@ -536,10 +538,130 @@ paths:
     delete:
       tags:
         - program
-      summary: Get one program by the program number
+      summary: Delete one program by the program number
       responses:
         '204':
           $ref: '#/components/responses/204'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+  /bricklet:
+    get:
+      tags: 
+        - bricklet
+      summary: Get all brickletIds
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Bricklets'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+  /bricklet/{bricklet-number}:
+    get:
+      tags: 
+        - bricklet
+      summary: Get one brickletId
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetBrickletByBrickletNumber'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+    put:
+      tags:
+        - bricklet
+      summary: Update brickletId
+      requestBody:
+        description: Update brickletId
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Bricklet'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Bricklet'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+  /motor-bricklet-pin:
+    get:
+      tags: 
+        - motorBrickletPin
+      summary: Get all motor to bricklet pin combinations
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AllMotorBrickletPin'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+    put:
+      tags:
+        - motorBrickletPin
+      summary: Update bricklet pin of motor by motor name
+      requestBody:
+        description: Update brickletId
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PutMotorBrickletPin'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MotorBrickletPin'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+  /motor-bricklet-pin/{motor-name}:
+    get:
+      tags: 
+        - motorBrickletPin
+      summary: Get motor bricklet pin combination by motor name
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AllMotorBrickletPin'
         '400':
           $ref: '#/components/responses/400'
         '404':
@@ -590,7 +712,7 @@ components:
         - gender
         - pauseThreshold
     PostVoiceAssistantPersonality:
-      tpye: object
+      type: object
       properties:
         name:
           type: string
@@ -845,23 +967,89 @@ components:
       type: object
       properties:
         programNumber:
+          description: Unique Number to find your program
           type: string
           examples:
             - "bb13a553-f5de-49d2-96df-985152e125c7"
         name:
+          description: Name of your Program
           type: string
           examples:
             - HandRecognize
         program:
+          description: Contains a stringified json of the created program
           type: string
           examples:
-            - "{}"
+            - '{"blocks": {"languageVersion": 0,"blocks": [{"type": "math_round","id": "Ph#OhT1tK,hY)16jN0Cc","x": 661,"y": 270,"fields": {"OP": "ROUND"},"inputs": {"NUM": {"shadow": {"type": "math_number","id": "MoIoX*qi/BzyGm.6y9SU","fields": {"NUM": 3.1}}}}}]}}'
     Programs:
       properties:
         programs:
           type: array
           items:
             $ref: '#/components/schemas/Program'
+    Bricklet:
+      type: object
+      properties:
+        brickletNumber:
+          readOnly: true
+          type: integer
+          examples: 
+            - 1
+        brickletId:
+          type: string
+          examples:
+            - XYZ
+    GetBrickletByBrickletNumber:
+      type: object
+      properties:
+        brickletId:
+          type: string
+          examples:
+            - XYZ
+    Bricklets:
+      type: object
+      properties:
+        bricklets:
+          type: array
+          items:
+            $ref: '#/components/schemas/Bricklet'
+    MotorBrickletPin:
+      type: object
+      properties:
+        motorName:
+          type: string
+          examples:
+            - tilt_forward_motor
+        brickletId:
+          type: integer
+          examples:
+            - 1
+        pin:
+          type: integer
+          examples:
+            - 0
+    PutMotorBrickletPin:
+      type: object
+      properties:
+        brickletId:
+          type: integer
+          examples:
+            - 1
+        motorName:
+          type: string
+          examples:
+            - tilt_forward_motor
+        pin:
+          type: integer
+          examples:
+            - 0
+    AllMotorBrickletPin:
+      type: object
+      properties:
+        motorBrickletPins:
+          type: array
+          items:
+            $ref: '#/components/schemas/MotorBrickletPin'
     Error:
         required:
           - Error
