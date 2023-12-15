@@ -58,7 +58,7 @@ class CameraSettings(db.Model):
 
 class Motor(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    name= db.Column(db.String(255), nullable=False, unique=True)
+    name = db.Column(db.String(255), nullable=False, unique=True)
     pulseWidthMin = db.Column(db.Integer, nullable=False)
     pulseWidthMax = db.Column(db.Integer, nullable=False)
     rotationRangeMin = db.Column(db.Integer, nullable=False)
@@ -68,6 +68,7 @@ class Motor(db.Model):
     deceleration = db.Column(db.Integer, nullable=False)
     period = db.Column(db.Integer, nullable=False)
     turnedOn = db.Column(db.Boolean, nullable=False)
+    active = db.Column(db.Boolean, nullable=False)
     effort = db.Column(db.Integer, nullable=True)
     def __init__(self, *args):
         self.name = args[0]
@@ -80,13 +81,14 @@ class Motor(db.Model):
         self.deceleration = args[7]
         self.period = args[8]
         self.turnedOn = args[9]
-        if len(args) > 10:
-            self.effort = args[10]
+        self.active = args[10]
+        if len(args) > 11:
+            self.effort = args[11]
 
 class Program(db.Model):
     __tablename__ = "program"
     id = db.Column(db.Integer, primary_key=True)
-    name= db.Column(db.String(255), nullable=False, unique=True)
+    name = db.Column(db.String(255), nullable=False, unique=True)
     program= db.Column(db.String(100000), nullable=False)
     programNumber = db.Column(db.String(50), nullable=False)
 
@@ -380,7 +382,7 @@ def update_motor():
     error = motor_schema.validate(request.json)
     if error:
         return error, 400
-    updateMotor = Motor(request.json.get('name'), request.json.get('pulseWidthMin'), request.json.get('pulseWidthMax'), request.json.get('rotationRangeMin'), request.json.get('rotationRangeMax'), request.json.get('velocity'), request.json.get('acceleration'), request.json.get('deceleration'), request.json.get('period'), request.json.get('turnedOn'))
+    updateMotor = Motor(request.json.get('name'), request.json.get('pulseWidthMin'), request.json.get('pulseWidthMax'), request.json.get('rotationRangeMin'), request.json.get('rotationRangeMax'), request.json.get('velocity'), request.json.get('acceleration'), request.json.get('deceleration'), request.json.get('period'), request.json.get('turnedOn'), request.json.get('active'))
     motor = Motor.query.filter(Motor.name == updateMotor.name).first_or_404()
     motor.pulseWidthMin = updateMotor.pulseWidthMin
     motor.pulseWidthMax = updateMotor.pulseWidthMax
@@ -391,6 +393,7 @@ def update_motor():
     motor.deceleration = updateMotor.deceleration
     motor.period = updateMotor.period
     motor.turnedOn = updateMotor.turnedOn
+    motor.active = updateMotor.active
     #motor.effort = updateMotor.effort
     db.session.add(motor)
     db.session.commit()
@@ -425,7 +428,7 @@ def get_all_programs():
 def get_program_by_number(programNumber):
     program = Program.query.filter(Program.programNumber == programNumber).first_or_404()
     try:
-        return program_schema_without_programnumber.dump(program);
+        return program_schema_without_programnumber.dump(program)
     except:
         abort(500)
 
@@ -435,13 +438,13 @@ def update_program_by_number(programNumber):
     if error:
         return error, 400
     newProgram = Program(request.json.get("name"), request.json.get("program"))
-    opdProgram = Program.query.filter(Program.programNumber == programNumber).first_or_404()
-    opdProgram.name = newProgram.name
-    opdProgram.program = newProgram.program
-    db.session.add(opdProgram)
+    oldProgram = Program.query.filter(Program.programNumber == programNumber).first_or_404()
+    oldProgram.name = newProgram.name
+    oldProgram.program = newProgram.program
+    db.session.add(oldProgram)
     db.session.commit()
     try:
-        return program_schema.dump(opdProgram);
+        return program_schema.dump(oldProgram)
     except:
         abort(500)
 
