@@ -1,7 +1,7 @@
 import os
 from model.program_model import Program
 
-PYTHON_CODE_PATH_TEMPL = "/home/pib/pib_data/program/code/python/%s.py"
+PYTHON_CODE_PATH_TEMPL = "/home/pib/cerebra_programs/%s.py"
 
 def create_empty_python_code_file(program_number):
     open(PYTHON_CODE_PATH_TEMPL % program_number, "w").close()
