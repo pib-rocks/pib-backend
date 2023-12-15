@@ -103,6 +103,9 @@ class Motor_control(Node):
                 self.hat = BrickHAT("X", self.ipcon)
                 self.ipcon.connect(HOST, 4223)
 
+                temp = self.set_uid()
+                self.get_logger().warn(f"{str(temp)}")
+                
                 # Handles for three Servo Bricklets
                 self.servo1 = BrickletServoV2(UID1, self.ipcon)
                 self.servo2 = BrickletServoV2(UID2, self.ipcon)
@@ -312,6 +315,25 @@ class Motor_control(Node):
                         return list(filter(lambda x: ("opposition" not in x.name and x.group == 1), self.motors))
                 
                 return [self.motor_map.get(motor_name)]
+        
+
+        def cb_enumerate(self, uid, connected_uid, position, hardware_version, firmware_version, device_identifier, enumeration_type):
+
+                if position == "a":
+                        global UID1
+                        UID1 = uid
+                if position == "b":
+                        global UID2
+                        UID2 = uid
+                if position == "e":
+                        global UID3
+                        UID3 = uid
+
+        def set_uid(self):
+                self.ipcon.register_callback(IPConnection.CALLBACK_ENUMERATE, self.cb_enumerate)
+                self.ipcon.enumerate()
+                return "uid set"
+
         
 
 def main(args=None):
