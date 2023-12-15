@@ -29,7 +29,7 @@ PIB_API_DIR="$USER_HOME/flask"
 PIB_API_URL="https://github.com/pib-rocks/pib-api/archive/refs/heads/""${repo_map[$PIB_API_ORIGIN]}"".zip"
 
 # python code variables
-INIT_PYTHON_CODE_PATH="$DATABASE_DIR/program/code/python/e1d46e2a-935e-4e2b-b2f9-0856af4257c5.py" 
+PYTHON_CODE_PATH="$USER_HOME/cerebra_programs"
 INIT_PYTHON_CODE="print('hello world')"
 
 echo -e "$NEW_LINE""Install nginx..."
@@ -75,10 +75,8 @@ echo -e "$NEW_LINE""Database initialized successfully!"
 
 # Create the directory for python code and populate it with a single initial python script (matching
 # the single entry in the database)
-mkdir "$DATABASE_DIR/program"
-mkdir "$DATABASE_DIR/program/code"
-mkdir "$DATABASE_DIR/program/code/python"
-echo "$INIT_PYTHON_CODE" | cat > "$INIT_PYTHON_CODE_PATH"
+mkdir "$PYTHON_CODE_PATH"
+echo "$INIT_PYTHON_CODE" | cat > "$PYTHON_CODE_PATH/e1d46e2a-935e-4e2b-b2f9-0856af4257c5.py"
 
 # Create pib-api
 echo "export PYTHONIOENCODING=utf-8" >> $USER_HOME/.bashrc
