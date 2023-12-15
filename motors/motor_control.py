@@ -11,6 +11,7 @@ import rclpy
 from rclpy.node import Node
 from trajectory_msgs.msg import JointTrajectory
 from datatypes.srv import MotorSettingsSrv
+from datatypes.msg import MotorSettings
 from enum import Enum
 from urllib import request as urllib_request, parse as urllib_parse, error as urllib_error
 import json
@@ -61,7 +62,8 @@ def motor_settings_to_dto_dict(ms, motor):
                 "velocity": ms.velocity,
                 "acceleration": ms.acceleration,
                 "deceleration": ms.deceleration,
-                "period": ms.period
+                "period": ms.period,
+                "active": ms.active
         }
 
 
@@ -73,6 +75,11 @@ class Motor_control(Node):
                 qos_policy = rclpy.qos.QoSProfile(reliability=rclpy.qos.ReliabilityPolicy.BEST_EFFORT, history=rclpy.qos.HistoryPolicy.KEEP_LAST, depth=1)
 
                 super().__init__('motor_control')
+
+                # Toggle Devmode
+
+                self.declare_parameter("dev", False)
+                self.dev = self.get_parameter("dev").value
 
                 # Topic for JointTrajectory
                 self.subscription = self.create_subscription(
@@ -89,6 +96,8 @@ class Motor_control(Node):
                         self.motor_settings_callback
                 )
 
+                # Publisher for MotorSettings
+                self.publisher = self.create_publisher(MotorSettings, "motor_settings", 10)
                 # Connection
                 self.ipcon = IPConnection()  # Create IP connection
                 self.hat = BrickHAT("X", self.ipcon)
@@ -101,33 +110,33 @@ class Motor_control(Node):
 
                 # Available motors
                 self.motors = [
-                        Motor("turn_head_motor", self.servo1, [0], False, 4),
-                        Motor("tilt_forward_motor", self.servo1, [1], False, 4),
-                        Motor("tilt_sideways_motor", self.servo1, [2], False, 4),
-                        Motor("thumb_left_opposition", self.servo1, [3], False, 0),
-                        Motor("thumb_left_stretch", self.servo1, [4], False, 0),
-                        Motor("index_left_stretch", self.servo1, [5], False, 0),
-                        Motor("middle_left_stretch", self.servo1, [6], False, 0),
-                        Motor("ring_left_stretch", self.servo1, [7], False, 0),
-                        Motor("pinky_left_stretch", self.servo1, [8], False, 0),
-                        Motor("thumb_right_opposition", self.servo1, [9], False, 1),
-                        Motor("thumb_right_stretch", self.servo2, [0], False, 1),
-                        Motor("index_right_stretch", self.servo2, [1], False, 1),
-                        Motor("middle_right_stretch", self.servo2, [2], False, 1),
-                        Motor("ring_right_stretch", self.servo2, [3], False, 1),
-                        Motor("pinky_right_stretch", self.servo2, [4], False, 1),
-                        Motor("upper_arm_left_rotation", self.servo2, [5], False, 2),
-                        Motor("elbow_left", self.servo2, [6], False, 2),
-                        Motor("lower_arm_left_rotation", self.servo2, [7], False, 2),
-                        Motor("wrist_left", self.servo2, [8], False, 2),
-                        Motor("shoulder_vertical_left", self.servo3, [7, 9], False, 2),
-                        Motor("shoulder_horizontal_left", self.servo3, [0], False, 2),
-                        Motor("upper_arm_right_rotation", self.servo3, [1], False, 3),
-                        Motor("elbow_right", self.servo3, [2], False, 3),
-                        Motor("lower_arm_right_rotation", self.servo3, [3], False, 3),
-                        Motor("wrist_right", self.servo3, [4], False, 3),
-                        Motor("shoulder_vertical_right", self.servo3, [5, 8], False, 3),
-                        Motor("shoulder_horizontal_right", self.servo3, [6], False, 3)
+                        Motor("turn_head_motor", self.servo1, [0], True, 4),
+                        Motor("tilt_forward_motor", self.servo1, [1], True, 4),
+                        Motor("tilt_sideways_motor", self.servo1, [2], True, 4),
+                        Motor("thumb_left_opposition", self.servo1, [3], True, 0),
+                        Motor("thumb_left_stretch", self.servo1, [4], True, 0),
+                        Motor("index_left_stretch", self.servo1, [5], True, 0),
+                        Motor("middle_left_stretch", self.servo1, [6], True, 0),
+                        Motor("ring_left_stretch", self.servo1, [7], True, 0),
+                        Motor("pinky_left_stretch", self.servo1, [8], True, 0),
+                        Motor("thumb_right_opposition", self.servo1, [9], True, 1),
+                        Motor("thumb_right_stretch", self.servo2, [0], True, 1),
+                        Motor("index_right_stretch", self.servo2, [1], True, 1),
+                        Motor("middle_right_stretch", self.servo2, [2], True, 1),
+                        Motor("ring_right_stretch", self.servo2, [3], True, 1),
+                        Motor("pinky_right_stretch", self.servo2, [4], True, 1),
+                        Motor("upper_arm_left_rotation", self.servo2, [5], True, 2),
+                        Motor("elbow_left", self.servo2, [6], True, 2),
+                        Motor("lower_arm_left_rotation", self.servo2, [7], True, 2),
+                        Motor("wrist_left", self.servo2, [8], True, 2),
+                        Motor("shoulder_vertical_left", self.servo3, [7, 9], True, 2),
+                        Motor("shoulder_horizontal_left", self.servo3, [0], True, 2),
+                        Motor("upper_arm_right_rotation", self.servo3, [1], True, 3),
+                        Motor("elbow_right", self.servo3, [2], True, 3),
+                        Motor("lower_arm_right_rotation", self.servo3, [3], True, 3),
+                        Motor("wrist_right", self.servo3, [4], True, 3),
+                        Motor("shoulder_vertical_right", self.servo3, [5, 8], True, 3),
+                        Motor("shoulder_horizontal_right", self.servo3, [6], True, 3)
                 ]       
 
                 self.get_on_init_motor_settings_from_database()
@@ -141,7 +150,7 @@ class Motor_control(Node):
 
 
         def motor_settings_callback(self, request, response):
-                                
+                response.settings_persisted = False
                 try:
 
                         motors = self.motor_collection_to_multible_motors(request.motor_name)
@@ -149,23 +158,44 @@ class Motor_control(Node):
                         if len(motors) == 0:
                                 raise Exception("No motor found")
 
+                        
                         for motor in motors:
+                                try:
+                                        for port in motor.ports:
+                                                motor.servo.set_pulse_width(port, request.pulse_width_min, request.pulse_width_max)
+                                                motor.servo.set_motion_configuration(port, request.velocity, request.acceleration, request.deceleration)
+                                                motor.servo.set_period(port, request.period)
+                                                motor.set_state(request.turned_on)
+                                                motor.servo.set_degree(port, request.rotation_range_min, request.rotation_range_max)
+                                        response.settings_applied = True
+                                except Exception as e:
+                                        response.settings_applied = False
 
-                                for port in motor.ports:
-                                        motor.servo.set_pulse_width(port, request.pulse_width_min, request.pulse_width_max)
-                                        motor.servo.set_motion_configuration(port, request.velocity, request.acceleration, request.deceleration)
-                                        motor.servo.set_period(port, request.period)
-                                        motor.set_state(request.turned_on)
-                                        motor.servo.set_degree(port, request.rotation_range_min, request.rotation_range_max)
-
-                                response.settings_applied = True
-                                response.settings_persisted = self.persist_motor_settings_to_db(request, motor)
+                                try: 
+                                        if response.settings_applied == True :
+                                                response.settings_persisted = self.persist_motor_settings_to_db(request, motor)
+                                except Exception as e:
+                                        self.get_logger().warn(f"Error persisting motor-setting: {str(e)}")
+                                        response.settings_persisted = False
 
                 except Exception as e:
                         self.get_logger().warn(f"Error processing motor-settings-message: {str(e)}")
                         response.settings_applied = False
-                        response.settings_persisted = False
-
+                if self.dev == True or response.settings_applied == True:
+                        #self.get_logger().info(f"Devmode: {str(self.dev)}\tresponse.settings_applied: {str(response.settings_applied)}")
+                        msg = MotorSettings()
+                        msg.motor_name = request.motor_name
+                        msg.pulse_width_min = request.pulse_width_min
+                        msg.pulse_width_max = request.pulse_width_max
+                        msg.rotation_range_min = request.rotation_range_min
+                        msg.rotation_range_max = request.rotation_range_max
+                        msg.velocity = request.velocity
+                        msg.acceleration = request.acceleration
+                        msg.deceleration = request.deceleration
+                        msg.active = request.active
+                        msg.period = request.period
+                        msg.turned_on = request.turned_on
+                        self.publisher.publish(msg)
                 return response
                 
 
@@ -181,6 +211,10 @@ class Motor_control(Node):
                                 for motor in motors:
                                         self.get_logger().info(f"Motor: {str(motor.name)}")
                                         value = msg.points[0].positions[0]
+
+                                        if motor.name == "shoulder_vertical_left" or motor.name == "shoulder_vertical_right":
+                                                value = value * -1
+
                                         self.get_logger().info(f"Value: {value}")
                                         for port in motor.ports:
                                                 motor.servo.set_enable(port, motor.state)
