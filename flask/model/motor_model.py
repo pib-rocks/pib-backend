@@ -1,9 +1,9 @@
 from app.app import db
 
 class Motor(db.Model):
-
+    
     id = db.Column(db.Integer, primary_key=True)
-    name= db.Column(db.String(255), nullable=False, unique=True)
+    name = db.Column(db.String(255), nullable=False, unique=True)
     pulseWidthMin = db.Column(db.Integer, nullable=False)
     pulseWidthMax = db.Column(db.Integer, nullable=False)
     rotationRangeMin = db.Column(db.Integer, nullable=False)
@@ -13,6 +13,7 @@ class Motor(db.Model):
     deceleration = db.Column(db.Integer, nullable=False)
     period = db.Column(db.Integer, nullable=False)
     turnedOn = db.Column(db.Boolean, nullable=False)
+    active = db.Column(db.Boolean, nullable=False)
     effort = db.Column(db.Integer, nullable=True)
     
     def __init__(self, *args):
@@ -26,5 +27,6 @@ class Motor(db.Model):
         self.deceleration = args[7]
         self.period = args[8]
         self.turnedOn = args[9]
-        if len(args) > 10:
-            self.effort = args[10]
+        self.active = args[10]
+        if len(args) > 11:
+            self.effort = args[11]
