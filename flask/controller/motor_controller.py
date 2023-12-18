@@ -31,6 +31,7 @@ def update_motor():
         request.json.get('acceleration'), 
         request.json.get('deceleration'), 
         request.json.get('period'), 
+        request.json.get('active'),
         request.json.get('turnedOn')
     )
     motor = Motor.query.filter(Motor.name == updateMotor.name).first_or_404()
@@ -43,6 +44,7 @@ def update_motor():
     motor.deceleration = updateMotor.deceleration
     motor.period = updateMotor.period
     motor.turnedOn = updateMotor.turnedOn
+    motor.active = updateMotor.active
     db.session.add(motor)
     db.session.commit()
     try:
