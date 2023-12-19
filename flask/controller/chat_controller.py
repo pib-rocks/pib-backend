@@ -1,7 +1,10 @@
 from model.chat_model import Chat
+from model.chat_message_model import ChatMessage
 from schema.chat_schema import chat_schema, chats_schema, upload_chat_schema
+from schema.chat_message_schema import chat_message_post_schema, chat_messages_schema, chat_message_schema
 from app.app import db
 from flask import abort, jsonify, request
+from marshmallow import ValidationError
 import uuid
 
 def create_chat():
@@ -58,5 +61,31 @@ def delete_chat(uuid):
     db.session.commit()
     try:
         return '', 204
+    except:
+        abort(500)
+
+
+def create_message(chat_id):
+    try:
+        data = chat_message_post_schema.load(request.json)
+    except ValidationError as error:
+        return error.messages, 400
+    chat_message = ChatMessage(
+        data['isUser'],
+        data['content'],
+        chat_id
+    )
+    db.session.add(chat_message)
+    db.session.commit()
+    try:
+        return chat_message_schema.dump(chat_message)
+    except:
+        abort(500)
+
+def get_messages_by_chat_id(chat_id):
+    Chat.query.filter(Chat.chatId == chat_id).first_or_404() # TODO: method that only checks if exists?
+    chat_messages = ChatMessage.query.filter(ChatMessage.chatId == chat_id).order_by(ChatMessage.timestamp) # TODO proper ordering
+    try:
+        return jsonify({"messages": chat_messages_schema.dump(chat_messages)})
     except:
         abort(500)
