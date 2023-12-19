@@ -78,7 +78,7 @@ def create_message(chat_id):
     db.session.add(chat_message)
     db.session.commit()
     try:
-        return chat_message_schema.dump(chat_message)
+        return chat_message_schema.dump(chat_message), 201
     except:
         abort(500)
 
@@ -86,6 +86,6 @@ def get_messages_by_chat_id(chat_id):
     Chat.query.filter(Chat.chatId == chat_id).first_or_404() # TODO: method that only checks if exists?
     chat_messages = ChatMessage.query.filter(ChatMessage.chatId == chat_id).order_by(ChatMessage.timestamp) # TODO proper ordering
     try:
-        return jsonify({"messages": chat_messages_schema.dump(chat_messages)})
+        return jsonify({"messages": chat_messages_schema.dump(chat_messages)}), 200
     except:
         abort(500)
