@@ -20,7 +20,7 @@ tags:
     description: CRUD-Operations for user programs
   - name: bricklet
     description: Read- and Update-Operations for bricklet ids
-  - name: motorBrickletPin
+  - name: motor-bricklet-pin
     description: Read- and Update-Operations for bricklet ids
 paths:
   /voice-assistant/personality:
@@ -105,7 +105,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/PostVoiceAssistantPersonality'
+              $ref: '#/components/schemas/VoiceAssistantPersonality'
       responses:
         '200':
           description: OK
@@ -139,12 +139,19 @@ paths:
           $ref: '#/components/responses/404'
         '500':
           $ref: '#/components/responses/500'
-  /voice-assistant/chat/:
+  /voice-assistant/chat/{personality-id}:
     post:
       tags:
         - chat
       summary: Add a new voice assistant chat
       operationId: createVoiceAssistantChat
+      parameters:
+        - name: personalityId
+          description: The personality id is forwarded by the personality tab
+          in: path
+          required: true
+          schema:
+            type: string
       requestBody:
         description: Add a new voice assistant chat
         content:
@@ -548,6 +555,48 @@ paths:
           $ref: '#/components/responses/404'
         '500':
           $ref: '#/components/responses/500'
+  /program/{program-number}/code:
+    get:
+      tags:
+        - program
+      summary: Get the (visual) code of one program by the program number
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProgramCodeGet'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+    put:
+      tags:
+        - program
+      summary: Update the code of an existing program
+      requestBody:
+        description: Update the code of an existing program
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProgramCodePut'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProgramCodeGet'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
   /bricklet:
     get:
       tags: 
@@ -611,7 +660,7 @@ paths:
   /motor-bricklet-pin:
     get:
       tags: 
-        - motorBrickletPin
+        - motor-bricklet-pin
       summary: Get all motor to bricklet pin combinations
       responses:
         '200':
@@ -628,7 +677,7 @@ paths:
           $ref: '#/components/responses/500'
     put:
       tags:
-        - motorBrickletPin
+        - motor-bricklet-pin
       summary: Update bricklet pin of motor by motor name
       requestBody:
         description: Update brickletId
@@ -653,7 +702,7 @@ paths:
   /motor-bricklet-pin/{motor-name}:
     get:
       tags: 
-        - motorBrickletPin
+        - motor-bricklet-pin
       summary: Get motor bricklet pin combination by motor name
       responses:
         '200':
@@ -667,7 +716,7 @@ paths:
         '404':
           $ref: '#/components/responses/404'
         '500':
-          $ref: '#/components/responses/500'
+          $ref: '#/components/responses/500'  
 components:
   schemas:
     VoiceAssistantPersonality:
@@ -969,6 +1018,7 @@ components:
         programNumber:
           description: Unique Number to find your program
           type: string
+          format: uuid
           examples:
             - "bb13a553-f5de-49d2-96df-985152e125c7"
         name:
@@ -976,17 +1026,33 @@ components:
           type: string
           examples:
             - HandRecognize
-        program:
-          description: Contains a stringified json of the created program
-          type: string
-          examples:
-            - '{"blocks": {"languageVersion": 0,"blocks": [{"type": "math_round","id": "Ph#OhT1tK,hY)16jN0Cc","x": 661,"y": 270,"fields": {"OP": "ROUND"},"inputs": {"NUM": {"shadow": {"type": "math_number","id": "MoIoX*qi/BzyGm.6y9SU","fields": {"NUM": 3.1}}}}}]}}'
     Programs:
       properties:
         programs:
           type: array
           items:
             $ref: '#/components/schemas/Program'
+    ProgramCodeGet:
+      type: object
+      properties:
+        visual:
+          description: Contains a stringified json of the program's visual representation
+          type: string
+          examples:
+            - '{"blocks": { ... } }'
+    ProgramCodePut:
+      type: object
+      properties:
+        visual:
+          description: Contains a stringified json of the program's visual representation
+          type: string
+          examples:
+            - '{"blocks": { ... }}'
+        python:
+          description: Contains the python code of the program
+          type: string
+          examples:
+            - 'print("hello world!")'
     Bricklet:
       type: object
       properties:
