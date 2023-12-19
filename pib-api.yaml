@@ -20,7 +20,7 @@ tags:
     description: CRUD-Operations for user programs
   - name: bricklet
     description: Read- and Update-Operations for bricklet ids
-  - name: motor-bricklet-pin
+  - name: motorBrickletPin
     description: Read- and Update-Operations for bricklet ids
 paths:
   /voice-assistant/personality:
@@ -660,7 +660,7 @@ paths:
   /motor-bricklet-pin:
     get:
       tags: 
-        - motor-bricklet-pin
+        - motorBrickletPin
       summary: Get all motor to bricklet pin combinations
       responses:
         '200':
@@ -677,7 +677,7 @@ paths:
           $ref: '#/components/responses/500'
     put:
       tags:
-        - motor-bricklet-pin
+        - motorBrickletPin
       summary: Update bricklet pin of motor by motor name
       requestBody:
         description: Update brickletId
@@ -702,7 +702,7 @@ paths:
   /motor-bricklet-pin/{motor-name}:
     get:
       tags: 
-        - motor-bricklet-pin
+        - motorBrickletPin
       summary: Get motor bricklet pin combination by motor name
       responses:
         '200':
@@ -716,7 +716,7 @@ paths:
         '404':
           $ref: '#/components/responses/404'
         '500':
-          $ref: '#/components/responses/500'  
+          $ref: '#/components/responses/500'
 components:
   schemas:
     VoiceAssistantPersonality:
@@ -831,7 +831,7 @@ components:
     VoiceAssistantChatMessage:
       type: object
       properties:
-        message_id:
+        messageId:
           type: string
           readOnly: true
           examples: 
@@ -847,21 +847,21 @@ components:
         isUser:
           type: boolean
           readOnly: true
-        messageContent:
+        content:
           type: string
           examples: 
             - Tell me a collection of short stories.
             - Hello Thomas, tell me something about Nürnberg.
             - Here is a brief definition of our current understanding of AI...
       required:
-        - message_id
+        - messageId
         - timestamp
         - isUser
         - message_content
         - voiceAssistantChat
     VoiceAssistantChatMessages:
       properties:
-        voiceAssistantChatMessages:
+        messages:
           type: array
           items:
             $ref: '#/components/schemas/VoiceAssistantChatMessage'
