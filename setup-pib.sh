@@ -131,13 +131,6 @@ echo "if [ -f /home/pib/update-pib.sh ]; then
       fi
 " >> $USER_HOME/.bashrc
 
-# set permissions
-cd "$ROS_WORKING_DIR"
-colcon build
-sudo chmod -R 777 $ROS_WORKING_DIR/build
-sudo chmod -R 777 $ROS_WORKING_DIR/install
-sudo chmod -R 777 $ROS_WORKING_DIR/log
-
 # Get config
 curl "$ROS_CONFIG_URL" -L --output $ROS_WORKING_DIR/ros_config.sh
 
