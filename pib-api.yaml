@@ -339,13 +339,37 @@ paths:
           $ref: '#/components/responses/404'
         '500':
           $ref: '#/components/responses/500'
-  /motor-settings/{motor-name}:
+    put:
+      tags:
+        - motor-settings
+      summary: Select a motor by name and update its motor-settings
+      requestBody:
+        description: Update the (existing) motor-settings of a motor.
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MotorSettings'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: 
+                $ref: '#/components/schemas/MotorSettings'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+  /motor-settings/{motor_name}:
     get:
       tags:
         - motor-settings
       summary: Get the motor-settings of the motor matching the specified name
       parameters:
-        - name: motor-name
+        - name: motor_name
           in: path
           required: true
           schema:
@@ -387,67 +411,6 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/MotorSettings'
-        '400':
-          $ref: '#/components/responses/400'
-        '404':
-          $ref: '#/components/responses/404'
-        '500':
-          $ref: '#/components/responses/500'
-
-    put:
-      tags:
-        - motor-settings
-      summary: Select a motor by name and update its motor-settings
-      parameters:
-        - name: motor_name
-          in: path
-          required: true
-          schema:
-            type: string
-            enum:
-              - thumb_left_opposition
-              - thumb_left_stretch
-              - index_left_stretch
-              - middle_left_stretch
-              - ring_left_stretch
-              - pinky_left_stretch
-              - all_fingers_left
-              - thumb_right_opposition
-              - thumb_right_stretch
-              - index_right_stretch
-              - middle_right_stretch
-              - ring_right_stretch
-              - pinky_right_stretch
-              - all_fingers_right
-              - upper_arm_left_rotation
-              - elbow_left
-              - lower_arm_left_rotation
-              - wrist_left
-              - shoulder_vertical_left
-              - shoulder_horizontal_left
-              - upper_arm_right_rotation
-              - elbow_right
-              - lower_arm_right_rotation
-              - wrist_right
-              - shoulder_vertical_right
-              - shoulder_horizontal_right
-              - tilt_forward_motor
-              - tilt_sideways_motor
-              - turn_head_motor
-      requestBody:
-        description: Update the (existing) motor-settings of a motor.
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/MotorSettings'
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema: 
                 $ref: '#/components/schemas/MotorSettings'
         '400':
           $ref: '#/components/responses/400'
@@ -760,8 +723,8 @@ components:
       type: object
       properties:
         personalityId:
+          readOnly: true
           type: string
-          format: uuid
           examples: 
             - ecb8ad22-891d-4744-80b3-7e6d6d84a5c0
             - f1eda93f-0ae3-4f41-8502-d56dddeb7034 
@@ -853,10 +816,8 @@ components:
             - Nürnberg
             - Definition of AI today
         personalityId:
-          type: string
-          format: uuid
-          examples: 
-            - ecb8ad22-891d-4744-80b3-7e6d6d84a5c0
+          examples:
+            - f83913e4-ac40-498c-9bab-635958fbe096 
       required:
         - chatId
         - topic
@@ -892,9 +853,6 @@ components:
             - Tell me a collection of short stories.
             - Hello Thomas, tell me something about Nürnberg.
             - Here is a brief definition of our current understanding of AI...
-        voiceAssistantChat:
-          readOnly: true
-          $ref: '#/components/schemas/VoiceAssistantChat'
       required:
         - message_id
         - timestamp
@@ -1170,7 +1128,7 @@ components:
               - The requested resource is not available
   responses:
     '204':
-      description: No Content
+      description: No Content        
     '400':
       description: Bad Request
       content:
