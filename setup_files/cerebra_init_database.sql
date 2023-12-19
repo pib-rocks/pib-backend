@@ -442,8 +442,21 @@ values
       NULL, 3, 20, 9
    )
 ;
-create table IF NOT EXISTS program (id INTEGER primary key AUTOINCREMENT NOT NULL, name TEXT NOT NULL, program TEXT NOT NULL, programNumber TEXT UNIQUE NOT NULL);
-create table IF NOT EXISTS chat (id INTEGER primary key AUTOINCREMENT NOT NULL, chatid TEXT NOT NULL, topic TEXT NOT NULL, personalityId TEXT NOT NULL, FOREIGN KEY (personalityId) REFERENCES personality(personalityId));
+
+create table IF NOT EXISTS program (
+   id INTEGER primary key AUTOINCREMENT NOT NULL, 
+   name TEXT NOT NULL, 
+   program TEXT NOT NULL, 
+   programNumber TEXT UNIQUE NOT NULL
+
+);
+create table IF NOT EXISTS chat (
+   id INTEGER primary key AUTOINCREMENT NOT NULL, 
+   chatid TEXT NOT NULL, 
+   topic TEXT NOT NULL, 
+   personalityId TEXT NOT NULL, 
+   FOREIGN KEY (personalityId) REFERENCES personality(personalityId)
+);
 insert into
    chat
 values
@@ -456,5 +469,38 @@ insert into
 values
    (
       NULL, "12345-12333-45345-456567", "Home-Office", "8b310f95-92cd-4512-b42a-d3fe29c4bb8a"
+   )
+;
+create table IF NOT EXISTS chatMessage (
+   id INTEGER primary key AUTOINCREMENT NOT NULL, 
+   messageId TEXT NOT NULL, 
+   timestamp TEXT NOT NULL,
+   isUser INTEGER NOT NULL, 
+   content TEXT NOT NULL,
+   chatId TEXT NOT NULL,
+   FOREIGN KEY (chatId) REFERENCES chat(chatId)
+);
+insert into
+   chatMessage
+values
+   (
+      NULL, 
+      "539ed3e6-9e3d-11ee-8c90-0242ac120002", 
+      "2023-09-30T08:30:00Z", 
+      TRUE,
+      "hello pib!",
+      "12345-12333-45345-456456"
+   )
+;
+insert into
+   chatMessage
+values
+   (
+      NULL, 
+      "0a080706-9e3e-11ee-8c90-0242ac120002", 
+      "2023-09-30T08:30:03Z", 
+      TRUE,
+      "hello user!",
+      "12345-12333-45345-456456"
    )
 ;
