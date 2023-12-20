@@ -132,15 +132,15 @@ echo "if [ -f /home/pib/update-pib.sh ]; then
 " >> $USER_HOME/.bashrc
 
 # Get config
-curl "$ROS_CONFIG_URL" -L --output $ROS_WORKING_DIR/ros_config.sh
+wget -O $ROS_WORKING_DIR/ros_config.sh "$ROS_CONFIG_URL"
 
 # Setup system to start Cerebra and ROS2 at boot time
 # Create boot script for ros_bridge_server
-curl "$ROS_CEREBRA_BOOT_URL" -L --output $ROS_WORKING_DIR/ros_cerebra_boot.sh
+wget -O $ROS_WORKING_DIR/ros_cerebra_boot.sh "$ROS_CEREBRA_BOOT_URL"
 sudo chmod 755 $ROS_WORKING_DIR/ros_cerebra_boot.sh
 
 # Create service which starts ros and cerebra by system boot
-curl "$ROS_CEREBRA_BOOT_SERVICE_URL" -L --output $ROS_WORKING_DIR/ros_cerebra_boot.service
+wget -O $ROS_WORKING_DIR/ros_cerebra_boot.service "$ROS_CEREBRA_BOOT_SERVICE_URL"
 sudo chmod 755 $ROS_WORKING_DIR/ros_cerebra_boot.service
 sudo mv $ROS_WORKING_DIR/ros_cerebra_boot.service /etc/systemd/system
 
