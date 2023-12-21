@@ -4,6 +4,42 @@ This script assumes:
 - that Ubuntu Desktop 22.04.2 LTS is installed
 - the user running it is **pib**
 
+## Disabling IPv6 
+
+In order for the setup script to run smoothly, it is important that IPv6 is disabled on the operating system. The steps for disabling IPv6 are given below:
+
+Step 1: Open a terminal. This could be done using the keyboard combination **Ctrl + Alt + T**.
+
+Step 2: Type in the following command to open the GRUB configuration file with root permissions. 
+
+		$ sudo nano /etc/default/grub
+
+The command above opens the GRUB configuration file using the Nano text editor, which comes pre-installed on Ubuntu. However, if it isn’t, it can be installed by running the following command in the terminal:
+
+		$ sudo apt install nano
+
+Alternatively, vim can be used to open the GRUB configuration file with the following command, assuming that it is installed on the system:
+
+		$ sudo vim /etc/default/grub
+
+Step 3: Once the GRUB configuration file is opened, find the following line:
+
+		GRUB_CMDLINE_LINUX_DEFAULT=""
+
+Add the following parameters to the line:
+
+		GRUB_CMDLINE_LINUX_DEFAULT="ipv6.disable=1"
+
+It could be that the line already has some boot parameters configured, such as 'quiet' or 'splash'. If that is the case, just append the above parameters after them. 
+
+Step 4: After the changes have been made, save them and exit the text editor.
+
+Step 5: Run the following command:
+
+		sudo update-grub
+
+IPv6 would now have been disabled on your system. In case you need to enable it again, simply remove the ipv6.disable parameter from the GRUB configuration file and run the update-grub command.
+
 If you have not set up the user **pib** at installation, you can do so via the settings-dialog of Ubuntu and then log in as **pib**.
 
 ## Running the script
