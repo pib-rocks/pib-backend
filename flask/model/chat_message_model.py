@@ -9,7 +9,7 @@ class ChatMessage(db.Model):
     timestamp = db.Column(db.String(255), nullable=False)
     isUser = db.Column(db.Boolean, nullable=False) 
     content = db.Column(db.String(255), nullable=False)
-    chatId = db.Column(db.String(255), nullable=False, unique=True)
+    chatId = db.Column(db.String(255), db.ForeignKey('chat.chatId'), nullable=False)
     
     def __init__(self, isUser, content, chatId):
         self.messageId = str(uuid.uuid4())
