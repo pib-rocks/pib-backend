@@ -481,33 +481,29 @@ values
 create table IF NOT EXISTS chatMessage (
    id INTEGER primary key AUTOINCREMENT NOT NULL, 
    messageId TEXT NOT NULL, 
-   timestamp TEXT NOT NULL,
+   timestamp TEXT NOT NULL DEFAULT (DATETIME('now')),
    isUser INTEGER NOT NULL, 
    content TEXT NOT NULL,
    chatId TEXT NOT NULL,
    FOREIGN KEY (chatId) REFERENCES chat(chatId)
 );
 insert into
-   chatMessage
+   chatMessage(
+      "messageId",
+      "isUser",
+      "content",
+      "chatId"
+   )
 values
    (
-      NULL, 
       "539ed3e6-9e3d-11ee-8c90-0242ac120002", 
-      "2023-09-30T08:30:00Z", 
       TRUE,
       "hello pib!",
       "12345-12333-45345-456456"
-   )
-;
-insert into
-   chatMessage
-values
+   ),
    (
-      NULL, 
       "0a080706-9e3e-11ee-8c90-0242ac120002", 
-      "2023-09-30T08:30:03Z", 
       FALSE,
       "hello user!",
       "12345-12333-45345-456456"
-   )
-;
+   );
