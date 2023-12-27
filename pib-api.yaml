@@ -64,17 +64,17 @@ paths:
         '500':
           $ref: '#/components/responses/500'
   /voice-assistant/personality/{personality-id}:
+    parameters:
+        - name: personality-id
+          in: path
+          required: true
+          schema:
+            type: string
     get:
       tags:
         - personality
       summary: Get a voice assistant personality by id
       operationId: getVoiceAssistantPersonalityById
-      parameters:
-        - name: personalityId
-          in: path
-          required: true
-          schema:
-            type: string
       responses:
         '200':
           description: OK
@@ -93,12 +93,6 @@ paths:
         - personality
       summary: Update a voice assistant personality by id
       operationId: updateVoiceAssistantPersonalityById
-      parameters:
-        - name: personalityId
-          in: path
-          required: true
-          schema:
-            type: string
       requestBody:
         description: Update an existing voice assistant personality
         required: true
@@ -124,12 +118,6 @@ paths:
         - personality
       summary: Delete a voice assistant personality by id
       operationId: deleteVoiceAssistantPersonalityById
-      parameters:
-        - name: personalityId
-          in: path
-          required: true
-          schema:
-            type: string
       responses:
         '204':
           $ref: '#/components/responses/204'
@@ -140,18 +128,18 @@ paths:
         '500':
           $ref: '#/components/responses/500'
   /voice-assistant/chat/{personality-id}:
-    post:
-      tags:
-        - chat
-      summary: Add a new voice assistant chat
-      operationId: createVoiceAssistantChat
-      parameters:
-        - name: personalityId
+    parameters:
+        - name: personality-id
           description: The personality id is forwarded by the personality tab
           in: path
           required: true
           schema:
             type: string
+    post:
+      tags:
+        - chat
+      summary: Add a new voice assistant chat
+      operationId: createVoiceAssistantChat
       requestBody:
         description: Add a new voice assistant chat
         content:
@@ -190,17 +178,17 @@ paths:
         '500':
           $ref: '#/components/responses/500'
   /voice-assistant/chat/{chat-id}:
+    parameters:
+      - name: chat-id
+        in: path
+        required: true
+        schema:
+          type: string
     get:
       tags:
         - chat
       summary: Get a voice assistant chat by id
       operationId: getVoiceAssistantChatById
-      parameters:
-        - name: chatId
-          in: path
-          required: true
-          schema:
-            type: string
       responses:
         '200':
           description: OK
@@ -219,12 +207,6 @@ paths:
         - chat
       summary: Update a voice assistant chat by id
       operationId: updateVoiceAssistantChatById
-      parameters:
-        - name: chatId
-          in: path
-          required: true
-          schema:
-            type: string
       requestBody:
         description: Update an existing voice assistant chat
         required: true
@@ -250,12 +232,6 @@ paths:
         - chat
       summary: Delete a voice assistant chat by id
       operationId: deleteVoiceAssistantChatById
-      parameters:
-        - name: chatId
-          in: path
-          required: true
-          schema:
-            type: string
       responses:
         '204':
           $ref: '#/components/responses/204'
@@ -266,17 +242,17 @@ paths:
         '500':
           $ref: '#/components/responses/500'
   /voice-assistant/chat/{chat-id}/messages:
+    parameters:
+      - name: chat-id
+        in: path
+        required: true
+        schema:
+          type: string
     get:
       tags:
         - chat
       summary: Get all messages of a voice assistant chat by chat id
       operationId: getAllVoiceAssistantChatMessagesByChatId
-      parameters:
-        - name: chatId
-          in: path
-          required: true
-          schema:
-            type: string
       responses:
         '200':
           description: OK
@@ -295,12 +271,6 @@ paths:
         - chat
       summary: Add a message to a voice assistant chat
       operationId: createVoiceAssistantChatMessage
-      parameters:
-        - name: chat-id
-          in: path
-          required: true
-          schema:
-            type: string
       requestBody:
         description: Add a message to a voice assistant chat by chat id
         required: true
@@ -321,6 +291,32 @@ paths:
           $ref: '#/components/responses/404'
         '500':
           $ref: '#/components/responses/500'
+  /voice-assistant/chat/{chat-id}/messages/{message-id}:
+    parameters:
+      - name: chat-id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: message-id
+        in: path
+        required: true
+        schema:
+          type: string
+    delete:
+      tags:
+        - chat
+      summary: Delete one message by its message-id
+      responses:
+        '204':
+          $ref: '#/components/responses/204'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+    
   /motor-settings:
     get:
       tags:
@@ -364,11 +360,7 @@ paths:
         '500':
           $ref: '#/components/responses/500'
   /motor-settings/{motor_name}:
-    get:
-      tags:
-        - motor-settings
-      summary: Get the motor-settings of the motor matching the specified name
-      parameters:
+    parameters:
         - name: motor_name
           in: path
           required: true
@@ -404,7 +396,10 @@ paths:
               - tilt_forward_motor
               - tilt_sideways_motor
               - turn_head_motor
-
+    get:
+      tags:
+        - motor-settings
+      summary: Get the motor-settings of the motor matching the specified name
       responses:
         '200':
           description: OK
@@ -501,6 +496,14 @@ paths:
         '500':
           $ref: '#/components/responses/500'
   /program/{program-number}:
+    parameters:
+        - in: path
+          name: program-number
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: the number of the program
     get:
       tags:
         - program
@@ -556,6 +559,14 @@ paths:
         '500':
           $ref: '#/components/responses/500'
   /program/{program-number}/code:
+    parameters:
+        - in: path
+          name: program-number
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: the number of the program
     get:
       tags:
         - program
@@ -616,6 +627,15 @@ paths:
         '500':
           $ref: '#/components/responses/500'
   /bricklet/{bricklet-number}:
+    parameters:
+        - in: path
+          name: bricklet-number
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 3
+          description: the number of the bricklet
     get:
       tags: 
         - bricklet
@@ -700,6 +720,13 @@ paths:
         '500':
           $ref: '#/components/responses/500'
   /motor-bricklet-pin/{motor-name}:
+    parameters:
+        - in: path
+          name: motor-name
+          required: true
+          schema:
+            type: string
+          description: the name of the motor
     get:
       tags: 
         - motorBrickletPin
