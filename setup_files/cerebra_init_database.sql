@@ -188,7 +188,14 @@ values
       NULL, 'shoulder_horizontal_right', 700, 2500, -9000, 9000, 16000, 10000, 5000, 19500, TRUE, NULL, TRUE
    )
 ;
-create table IF NOT EXISTS personality (id INTEGER primary key AUTOINCREMENT NOT NULL, personalityId Text UNIQUE NOT NULL, name Text NOT NULL, gender Text NOT NULL, description Text, pauseThreshold Numeric NOT NULL);
+create table IF NOT EXISTS personality (
+   id INTEGER primary key AUTOINCREMENT NOT NULL, 
+   personalityId Text UNIQUE NOT NULL, 
+   name Text NOT NULL, 
+   gender Text NOT NULL, 
+   description Text, 
+   pauseThreshold Numeric NOT NULL
+);
 insert into
    personality
 values
@@ -452,7 +459,7 @@ create table IF NOT EXISTS program (
 );
 create table IF NOT EXISTS chat (
    id INTEGER primary key AUTOINCREMENT NOT NULL, 
-   chatid TEXT NOT NULL, 
+   chatid TEXT UNIQUE NOT NULL, 
    topic TEXT NOT NULL, 
    personalityId TEXT NOT NULL, 
    FOREIGN KEY (personalityId) REFERENCES personality(personalityId)
