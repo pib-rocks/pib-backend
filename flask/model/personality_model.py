@@ -9,6 +9,7 @@ class Personality(db.Model):
     gender = db.Column(db.String(255), nullable=False)
     description = db.Column(db.String(38000), nullable=True)
     pauseThreshold = db.Column(db.Float, nullable=False)
+    messages = db.relationship('Chat', backref='personality', lazy=True, cascade="all,delete")
     
     def __init__(self, *args):
         if len(args) == 3:

@@ -66,6 +66,7 @@ def delete_chat(uuid):
 
 
 def create_message(chat_id):
+    Chat.query.filter(Chat.chatId == chat_id).first_or_404() # TODO: method that only checks if exists?
     try:
         data = chat_message_post_schema.load(request.json)
     except ValidationError as error:
