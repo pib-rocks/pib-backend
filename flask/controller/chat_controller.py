@@ -90,3 +90,12 @@ def get_messages_by_chat_id(chat_id):
         return jsonify({"messages": chat_messages_schema.dump(chat_messages)}), 200
     except:
         abort(500)
+
+def delete_message(chat_id, message_id):
+    message = ChatMessage.query.filter(
+        (ChatMessage.messageId == message_id) &
+        (ChatMessage.chatId == chat_id)
+    ).first_or_404()
+    db.session.delete(message)
+    db.session.commit()
+    return '', 204
