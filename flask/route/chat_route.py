@@ -5,7 +5,7 @@ blueprint = Blueprint('blueprint', __name__)
 
 blueprint.route('/', methods=['POST'])(chat_controller.create_chat)
 blueprint.route('/', methods=['GET'])(chat_controller.get_all_chats)
-blueprint.route('/<string:uupid>', methods=['GET'])(chat_controller.get_chat_by_id)
+blueprint.route('/<string:uuid>', methods=['GET'])(chat_controller.get_chat_by_id)
 blueprint.route('/<string:uuid>', methods=['PUT'])(chat_controller.update_chat)
 blueprint.route('/<string:uuid>', methods=['DELETE'])(chat_controller.delete_chat)
 blueprint.route('/<string:chat_id>/messages', methods=['GET'])(chat_controller.get_messages_by_chat_id)
