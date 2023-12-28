@@ -453,10 +453,17 @@ values
 create table IF NOT EXISTS program (
    id INTEGER primary key AUTOINCREMENT NOT NULL, 
    name TEXT NOT NULL, 
-   program TEXT NOT NULL, 
+   codeVisual TEXT NOT NULL, 
    programNumber TEXT UNIQUE NOT NULL
-
 );
+insert into
+   program
+values
+   (
+      NULL, "hello_world", '{"blocks":{"languageVersion":0,"blocks":[{"type":"text_print","id":"]l,+vC{q$rZPVdSfyx=4","x":229,"y":67,"inputs":{"TEXT":{"shadow":{"type":"text","id":"v,}3JGN5d7og[X_/KJ)|","fields":{"TEXT":"hello world"}}}}}]}}', "e1d46e2a-935e-4e2b-b2f9-0856af4257c5"
+   )
+;
+
 create table IF NOT EXISTS chat (
    id INTEGER primary key AUTOINCREMENT NOT NULL, 
    chatid TEXT UNIQUE NOT NULL, 
