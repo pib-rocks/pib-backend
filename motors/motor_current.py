@@ -36,26 +36,24 @@ class Motor_current(Node):
         self.motors_servo1_ = [
             "turn_head_motor",
             "tilt_forward_motor",
-            "tilt_sideways_motor",
-            "thumb_left_opposition",
-            "thumb_left_stretch",
-            "index_left_stretch",
-            "middle_left_stretch",
-            "ring_left_stretch",
-            "pinky_left_stretch",
+            "wrist_left",
             "thumb_right_opposition",
-        ]
-        self.motors_servo2_ = [
             "thumb_right_stretch",
             "index_right_stretch",
             "middle_right_stretch",
             "ring_right_stretch",
             "pinky_right_stretch",
+            "thumb_left_opposition",
+        ]
+        self.motors_servo2_ = [
+            "thumb_left_stretch",
+            "index_left_stretch",
+            "middle_left_stretch",
+            "ring_left_stretch",
+            "pinky_left_stretch",
             "/upper_arm_left_rotation",
             "/elbow_left",
             "/lower_arm_left_rotation",
-            "/wrist_left",
-            "/shoulder_vertical_left",
         ]
         self.motors_servo3_ = [
             "/shoulder_horizontal_left",
@@ -65,6 +63,9 @@ class Motor_current(Node):
             "/wrist_right",
             "/shoulder_vertical_right",
             "/shoulder_horizontal_right",
+            "/shoulder_vertical_left",
+            "/shoulder_vertical_right",
+            "/shoulder_vertical_left",
         ]
         #servo to bricklet map, All motor names for each servo bricklet and map it to bricklet 1, 2, 3
         try:
