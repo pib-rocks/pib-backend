@@ -64,8 +64,6 @@ class Motor_current(Node):
             "/shoulder_vertical_right",
             "/shoulder_horizontal_right",
             "/shoulder_vertical_left",
-            "/shoulder_vertical_right",
-            "/shoulder_vertical_left",
         ]
         #servo to bricklet map, All motor names for each servo bricklet and map it to bricklet 1, 2, 3
         try:
