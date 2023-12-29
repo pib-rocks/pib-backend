@@ -211,7 +211,11 @@ values
       NULL, "SD", 0.1, 80, 640, 480
    )
 ;
-create table IF NOT EXISTS bricklet (id INTEGER primary key AUTOINCREMENT NOT NULL, brickletId TEXT NOT NULL, brickletNumber INTEGER NOT NULL);
+create table IF NOT EXISTS bricklet (
+   id INTEGER primary key AUTOINCREMENT NOT NULL, 
+   brickletId TEXT NOT NULL, 
+   brickletNumber INTEGER NOT NULL
+);
 insert into
    bricklet
 values
@@ -233,215 +237,46 @@ values
       NULL, "XYZ", (SELECT MAX(id) + 1 FROM bricklet)
    )
 ;
-create table IF NOT EXISTS motorBrickletPin (id INTEGER primary key AUTOINCREMENT NOT NULL, brickletId INTEGER NOT NULL, motorId INTEGER, pin INTEGER NOT NULL, FOREIGN KEY (brickletId) REFERENCES bricklet(id), FOREIGN KEY (motorId) REFERENCES motor(id));
-insert into
-   motorBrickletPin
-values
-   (
-      NULL, 1, 3, 0
-   )
-;
-insert into
-   motorBrickletPin
-values
-   (
-      NULL, 1, 1, 1
-   )
-;
-insert into
-   motorBrickletPin
-values
-   (
-      NULL, 1, 2, 2
-   )
-;
-insert into
-   motorBrickletPin
-values
-   (
-      NULL, 1, 5, 3
-   )
-;
-insert into
-   motorBrickletPin
-values
-   (
-      NULL, 1, 4, 4
-   )
-;
-insert into
-   motorBrickletPin
-values
-   (
-      NULL, 1, 6, 5
-   )
-;
-insert into
-   motorBrickletPin
-values
-   (
-      NULL, 1, 7, 6
-   )
-;
-insert into
-   motorBrickletPin
-values
-   (
-      NULL, 1, 8, 7
-   )
-;
-insert into
-   motorBrickletPin
-values
-   (
-      NULL, 1, 9, 8
-   )
-;
-insert into
-   motorBrickletPin
-values
-   (
-      NULL, 1, 11, 9
-   )
-;
 
+CREATE TABLE IF NOT EXISTS motorBrickletPin (
+   id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, 
+   brickletId INTEGER NOT NULL, 
+   motorId INTEGER, 
+   pin INTEGER NOT NULL, 
+   FOREIGN KEY (brickletId) REFERENCES bricklet(id), 
+   FOREIGN KEY (motorId) REFERENCES motor(id)
+);
+INSERT INTO motorBrickletPin(motorId, brickletId, pin) VALUES
+   ((SELECT id FROM motor WHERE name = "turn_head_motor"), 1, 0),
+   ((SELECT id FROM motor WHERE name = "tilt_forward_motor"), 1, 1),
+   ((SELECT id FROM motor WHERE name = "tilt_sideways_motor"), 1, -1),
+   ((SELECT id FROM motor WHERE name = "thumb_left_opposition"), 1, 9),
+   ((SELECT id FROM motor WHERE name = "thumb_left_stretch"), 2, 0),
+   ((SELECT id FROM motor WHERE name = "index_left_stretch"), 2, 1),
+   ((SELECT id FROM motor WHERE name = "middle_left_stretch"), 2, 2),
+   ((SELECT id FROM motor WHERE name = "ring_left_stretch"), 2, 3),
+   ((SELECT id FROM motor WHERE name = "pinky_left_stretch"), 2, 4),
+   ((SELECT id FROM motor WHERE name = "thumb_right_opposition"), 1, 3),
+   ((SELECT id FROM motor WHERE name = "thumb_right_stretch"), 1, 4),
+   ((SELECT id FROM motor WHERE name = "index_right_stretch"), 1, 5),
+   ((SELECT id FROM motor WHERE name = "middle_right_stretch"), 1, 6),
+   ((SELECT id FROM motor WHERE name = "ring_right_stretch"), 1, 7),
+   ((SELECT id FROM motor WHERE name = "pinky_right_stretch"), 1, 8),
+   ((SELECT id FROM motor WHERE name = "upper_arm_left_rotation"), 2, 5),
+   ((SELECT id FROM motor WHERE name = "elbow_left"), 2, 6),
+   ((SELECT id FROM motor WHERE name = "lower_arm_left_rotation"), 2, 7),
+   ((SELECT id FROM motor WHERE name = "wrist_left"), 1, 2),
+   ((SELECT id FROM motor WHERE name = "shoulder_vertical_left"), 3, 7),
+   ((SELECT id FROM motor WHERE name = "shoulder_vertical_left"), 3, 9),
+   ((SELECT id FROM motor WHERE name = "shoulder_horizontal_left"), 3, 0),
+   ((SELECT id FROM motor WHERE name = "upper_arm_right_rotation"), 3, 1),
+   ((SELECT id FROM motor WHERE name = "elbow_right"), 3, 2),
+   ((SELECT id FROM motor WHERE name = "lower_arm_right_rotation"), 3, 3),
+   ((SELECT id FROM motor WHERE name = "wrist_right"), 3, 4),
+   ((SELECT id FROM motor WHERE name = "shoulder_vertical_right"), 3, 5),
+   ((SELECT id FROM motor WHERE name = "shoulder_vertical_right"), 3, 8),
+   ((SELECT id FROM motor WHERE name = "shoulder_horizontal_right"), 3, 6);
 
-insert into
-   motorBrickletPin
-values
-   (
-      NULL, 2, 10, 0
-   )
-;
-insert into
-   motorBrickletPin
-values
-   (
-      NULL, 2, 12, 1
-   )
-;
-insert into
-   motorBrickletPin
-values
-   (
-      NULL, 2, 13, 2
-   )
-;
-insert into
-   motorBrickletPin
-values
-   (
-      NULL, 2, 14, 3
-   )
-;
-insert into
-   motorBrickletPin
-values
-   (
-      NULL, 2, 15, 4
-   )
-;
-insert into
-   motorBrickletPin
-values
-   (
-      NULL, 2, 16, 5
-   )
-;
-insert into
-   motorBrickletPin
-values
-   (
-      NULL, 2, 17, 6
-   )
-;
-insert into
-   motorBrickletPin
-values
-   (
-      NULL, 2, 18, 7
-   )
-;
-insert into
-   motorBrickletPin
-values
-   (
-      NULL, 2, 19, 8
-   )
-;
-
-insert into
-   motorBrickletPin
-values
-   (
-      NULL, 3, 21, 0
-   )
-;
-insert into
-   motorBrickletPin
-values
-   (
-      NULL, 3, 22, 1
-   )
-;
-insert into
-   motorBrickletPin
-values
-   (
-      NULL, 3, 23, 2
-   )
-;
-insert into
-   motorBrickletPin
-values
-   (
-      NULL, 3, 24, 3
-   )
-;
-insert into
-   motorBrickletPin
-values
-   (
-      NULL, 3, 25, 4
-   )
-;
-insert into
-   motorBrickletPin
-values
-   (
-      NULL, 3, 27, 6
-   )
-;
-
-insert into
-   motorBrickletPin
-values
-   (
-      NULL, 3, 26, 5
-   )
-;
-insert into
-   motorBrickletPin
-values
-   (
-      NULL, 3, 26, 8
-   )
-;
-
-insert into
-   motorBrickletPin
-values
-   (
-      NULL, 3, 20, 7
-   )
-;
-insert into
-   motorBrickletPin
-values
-   (
-      NULL, 3, 20, 9
-   )
-;
 create table IF NOT EXISTS program (id INTEGER primary key AUTOINCREMENT NOT NULL, name TEXT NOT NULL, codeVisual TEXT NOT NULL, programNumber TEXT UNIQUE NOT NULL);
 insert into
    program
