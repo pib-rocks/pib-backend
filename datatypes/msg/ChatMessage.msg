@@ -1,8 +1,3 @@
-string chat_id
-float32 pause_threshold
----
-bool successful
----
 string message_id
 string timestamp
 bool is_user
