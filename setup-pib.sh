@@ -57,7 +57,7 @@ export SETUP_PIB_BRANCH="main"
 # Get setup files needed for the pib software installation
 readonly GET_SETUP_FILES_SCRIPT_NAME="get_setup_files.sh"
 readonly GET_SETUP_FILES_SCRIPT="$TEMPORARY_SETUP_DIR""/$GET_SETUP_FILES_SCRIPT_NAME"
-wget -O "$GET_SETUP_FILES_SCRIPT" "https://raw.githubusercontent.com/pib-rocks/setup-pib/""$SETUP_PIB_BRANCH""/installation_scripts/""$GET_SETUP_FILES_SCRIPT_NAME"
+curl "https://raw.githubusercontent.com/pib-rocks/setup-pib/""$SETUP_PIB_BRANCH""/installation_scripts/""$GET_SETUP_FILES_SCRIPT_NAME" --location --output "$GET_SETUP_FILES_SCRIPT" 
 chmod 755 "$GET_SETUP_FILES_SCRIPT"
 source "$GET_SETUP_FILES_SCRIPT"
 
@@ -124,7 +124,7 @@ readonly ROS_CEREBRA_BOOT_SERVICE_URL="https://raw.githubusercontent.com/pib-roc
 if [ -f "$USER_HOME""/update-pib.sh" ]; then
   sudo rm update-pib.sh
 fi
-wget -O "$USER_HOME""/update-pib.sh" "$ROS_UPDATE_URL"
+curl "$ROS_UPDATE_URL" --location --output "$USER_HOME""/update-pib.sh"
 sudo chmod 777 update-pib.sh
 echo "if [ -f /home/pib/update-pib.sh ]; then
         alias update-pib='/home/pib/update-pib.sh'
@@ -132,15 +132,15 @@ echo "if [ -f /home/pib/update-pib.sh ]; then
 " >> $USER_HOME/.bashrc
 
 # Get config
-wget -O $ROS_WORKING_DIR/ros_config.sh "$ROS_CONFIG_URL"
+curl "$ROS_CONFIG_URL" --location --output "$ROS_WORKING_DIR/ros_config.sh"  
 
 # Setup system to start Cerebra and ROS2 at boot time
 # Create boot script for ros_bridge_server
-wget -O $ROS_WORKING_DIR/ros_cerebra_boot.sh "$ROS_CEREBRA_BOOT_URL"
+curl "$ROS_CEREBRA_BOOT_URL" --location --output  "$ROS_WORKING_DIR/ros_cerebra_boot.sh" 
 sudo chmod 755 $ROS_WORKING_DIR/ros_cerebra_boot.sh
 
 # Create service which starts ros and cerebra by system boot
-wget -O $ROS_WORKING_DIR/ros_cerebra_boot.service "$ROS_CEREBRA_BOOT_SERVICE_URL"
+curl "$ROS_CEREBRA_BOOT_SERVICE_URL" --location --output "$ROS_WORKING_DIR/ros_cerebra_boot.service" 
 sudo chmod 755 $ROS_WORKING_DIR/ros_cerebra_boot.service
 sudo mv $ROS_WORKING_DIR/ros_cerebra_boot.service /etc/systemd/system
 
