@@ -115,7 +115,7 @@ class Motor_control(Node):
                 self.motors = [
                         Motor("turn_head_motor", self.servo1, [0], True, 4),
                         Motor("tilt_forward_motor", self.servo1, [1], True, 4),
-                        Motor("tilt_sideways_motor", self.servo1, [-1], True, 4),
+                        Motor("tilt_sideways_motor", self.servo2, [8], True, 4),
                         Motor("thumb_left_opposition", self.servo1, [9], True, 0),
                         Motor("thumb_left_stretch", self.servo2, [0], True, 0),
                         Motor("index_left_stretch", self.servo2, [1], True, 0),
