@@ -1,6 +1,6 @@
 HOST = "localhost"
 PORT = 4223
-UID1 = "SHU" # Replace with the UID of first Servo Bricklet
+UID1 = "XYZ" # Replace with the UID of first Servo Bricklet
 UID2 = "XYZ" # Replace with the UID of second Servo Bricklet
 UID3 = "XYZ" # Replace with the UID of third Servo Bricklet
 
@@ -9,7 +9,6 @@ from tinkerforge.brick_hat import BrickHAT
 from tinkerforge.bricklet_servo_v2 import BrickletServoV2
 import rclpy
 from rclpy.node import Node
-from trajectory_msgs.msg import JointTrajectory
 from diagnostic_msgs.msg import DiagnosticStatus
 from diagnostic_msgs.msg import KeyValue
 
@@ -54,6 +53,7 @@ class Motor_current(Node):
             "/upper_arm_left_rotation",
             "/elbow_left",
             "/lower_arm_left_rotation",
+            "tilt_sideways_motor",
         ]
         self.motors_servo3_ = [
             "/shoulder_horizontal_left",
