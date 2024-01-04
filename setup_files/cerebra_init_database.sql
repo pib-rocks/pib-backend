@@ -128,9 +128,7 @@ values
 insert into
    motor 
 values
-   (
-      NULL, 'wrist_left', 700, 2500, -9000, 9000, 16000, 10000, 5000, 19500, TRUE, NULL, TRUE
-   )
+   (NULL, 'wrist_left', 700, 2500, -9000, 9000, 16000, 10000, 5000, 19500, TRUE, NULL, TRUE)
 ;
 insert into
    motor 
@@ -249,7 +247,7 @@ CREATE TABLE IF NOT EXISTS motorBrickletPin (
 INSERT INTO motorBrickletPin(motorId, brickletId, pin) VALUES
    ((SELECT id FROM motor WHERE name = "turn_head_motor"), 1, 0),
    ((SELECT id FROM motor WHERE name = "tilt_forward_motor"), 1, 1),
-   ((SELECT id FROM motor WHERE name = "tilt_sideways_motor"), 1, -1),
+   ((SELECT id FROM motor WHERE name = "tilt_sideways_motor"), 2, 8),
    ((SELECT id FROM motor WHERE name = "thumb_left_opposition"), 1, 9),
    ((SELECT id FROM motor WHERE name = "thumb_left_stretch"), 2, 0),
    ((SELECT id FROM motor WHERE name = "index_left_stretch"), 2, 1),
