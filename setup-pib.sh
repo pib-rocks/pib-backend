@@ -54,13 +54,18 @@ export installation_files_dir=""
 # TODO: Change branch to main once merged
 export SETUP_PIB_BRANCH="main"
 
+# Refresh the linux packages list (sometimes necessary for packages that are required in the installion scripts)
+sudo apt update
+
+# These packages are installed seperately, since the installation scripts are dependent on them
+sudo apt-get install -y git curl
+
 # Get setup files needed for the pib software installation
 readonly GET_SETUP_FILES_SCRIPT_NAME="get_setup_files.sh"
 readonly GET_SETUP_FILES_SCRIPT="$TEMPORARY_SETUP_DIR""/$GET_SETUP_FILES_SCRIPT_NAME"
 curl "https://raw.githubusercontent.com/pib-rocks/setup-pib/""$SETUP_PIB_BRANCH""/installation_scripts/""$GET_SETUP_FILES_SCRIPT_NAME" --location --output "$GET_SETUP_FILES_SCRIPT" 
 chmod 755 "$GET_SETUP_FILES_SCRIPT"
 source "$GET_SETUP_FILES_SCRIPT"
-
 
 # Variables for user input options and arguments
 export FIRST_USER_INPUT=$1
@@ -69,18 +74,6 @@ export THIRD_USER_INPUT=$3
 export is_dev_mode="$FALSE"
 export user_default_branch=""
 export user_feature_branch=""
-
-# Check the user inputs (options and arguments) for the dev mode. Run it in the same shell as this script.
-source "$installation_files_dir""/check_user_input.sh"
-
-# Run the script for checking the system variables
-source "$installation_files_dir""/check_system_variables.sh"
-
-# Refresh the linux packages list (somtimes necessary at this point for installing git)
-sudo apt update
-
-# Git is installed seperately, since the check_github_branches is dependent on it
-sudo apt-get install -y git 
 
 # Variables for github branch checking:
 # Github repo origin links
@@ -94,6 +87,12 @@ readonly VOICE_ASSISTANT_ORIGIN="https://github.com/pib-rocks/voice-assistant.gi
 
 # Create an associative array (=map). This will be filled with repo-origin branch-name pairs in the check_github_branches.sh script
 declare -A repo_map
+
+# Check the user inputs (options and arguments) for the dev mode. Run it in the same shell as this script.
+source "$installation_files_dir""/check_user_input.sh"
+
+# Run the script for checking the system variables
+source "$installation_files_dir""/check_system_variables.sh"
 
 # Check the user inputs (options and arguments) for the dev mode. Run it in the same shell as this script.
 source "$installation_files_dir""/check_github_branches.sh"
