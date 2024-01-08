@@ -865,7 +865,6 @@ components:
             - "2023-10-05T10:11:00Z"
         isUser:
           type: boolean
-          readOnly: true
         content:
           type: string
           examples: 
