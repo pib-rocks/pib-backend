@@ -85,7 +85,7 @@ def create_message(chat_id):
 
 def get_messages_by_chat_id(chat_id):
     Chat.query.filter(Chat.chatId == chat_id).first_or_404() # TODO: method that only checks if exists?
-    chat_messages = ChatMessage.query.filter(ChatMessage.chatId == chat_id).order_by(ChatMessage.timestamp.desc()) # TODO proper ordering
+    chat_messages = ChatMessage.query.filter(ChatMessage.chatId == chat_id).order_by(ChatMessage.timestamp) # TODO proper ordering
     try:
         return jsonify({"messages": chat_messages_schema.dump(chat_messages)}), 200
     except:
