@@ -1,11 +1,11 @@
 [Unit]
 Description=Startup script for the pib motor control node
-After=network.target
+After=network.target pib_api_boot.service
+BindsTo=pib_api_boot.service
 
 [Service]
 Type=simple
 User=pib
-ExecStartPre=/bin/sleep 30
 ExecStart=/usr/bin/bash /home/pib/ros_working_dir/src/motors/boot_scripts/ros_motor_control_node_boot.sh
 
 [Install]
