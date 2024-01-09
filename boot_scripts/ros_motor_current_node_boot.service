@@ -6,6 +6,10 @@ BindsTo=pib_api_boot.service
 [Service]
 Type=simple
 User=pib
+# Disable timeout logic to avoid the daemon preemptively marking the service as failed
+TimeoutStartSec=infinity
+# Check regularly if the flask api is responding
+ExecStartPre=/bin/bash -c 'until curl --output /dev/null --silent http://localhost:5000; do sleep 3; done'
 ExecStart=/usr/bin/bash /home/pib/ros_working_dir/src/motors/boot_scripts/ros_motor_current_node_boot.sh
 
 [Install]
