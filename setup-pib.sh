@@ -51,7 +51,6 @@ export installation_files_dir=""
 # This variable is specifically for downloading the installation scripts from the setup repo
 # These files are left out of the dynamic branch selection, since they are a prerequisite for the check itself
 # If you want to get the installation scripts from a specific branch, you need to change this variable manually
-# TODO: Change branch to main once merged
 export SETUP_PIB_BRANCH="main"
 
 # Refresh the linux packages list (sometimes necessary for packages that are required in the installion scripts)
