@@ -75,7 +75,7 @@ export user_default_branch=""
 export user_feature_branch=""
 
 # Variables for github branch checking:
-# Github repo origin links
+# Github repo origin URLs
 readonly SETUP_PIB_ORIGIN="https://github.com/pib-rocks/setup-pib.git"
 readonly PIB_API_ORIGIN="https://github.com/pib-rocks/pib-api.git"
 readonly ROS_PACKAGES_ORIGIN="https://github.com/pib-rocks/ros-packages.git"
@@ -87,32 +87,27 @@ readonly VOICE_ASSISTANT_ORIGIN="https://github.com/pib-rocks/voice-assistant.gi
 # Create an associative array (=map). This will be filled with repo-origin branch-name pairs in the check_github_branches.sh script
 declare -A repo_map
 
-# Check the user inputs (options and arguments) for the dev mode. Run it in the same shell as this script.
+# The following scripts are sourced into the same shell as this script,
+# allowing them to acces all variables and context
+# Check user inputs (options and arguments) for dev mode
 source "$installation_files_dir""/check_user_input.sh"
-
-# Run the script for checking the system variables
+# Check system variables
 source "$installation_files_dir""/check_system_variables.sh"
-
-# Check the user inputs (options and arguments) for the dev mode. Run it in the same shell as this script.
+# Check which github branches are available based on user input
 source "$installation_files_dir""/check_github_branches.sh"
-
-# Run the script for installing system packages
+# Install system packages
 source "$installation_files_dir""/install_system_packages.sh"
-
-# Run the script for installing python packages
+# Install python packages
 source "$installation_files_dir""/install_python_packages.sh"
-
-# Run the script for installing tinkerforge
+# Install tinkerforge
 source "$installation_files_dir""/install_tinkerforge.sh"
-
-# Run the script for installing Cerebra
+# Install Cerebra
 source "$installation_files_dir""/install_cerebra.sh"
-
-# Run the script for installing all ros-packages. Run it in the same shell as this script.
+# Install pib ros-packages
 source "$installation_files_dir""/setup_packages.sh"
 
 
-# Links for github direct downloads, from selected branch
+# Github direct download URLs, from the selected branch
 readonly ROS_UPDATE_URL="https://raw.githubusercontent.com/pib-rocks/setup-pib/""${repo_map[$SETUP_PIB_ORIGIN]}""/update-pib.sh"
 readonly ROS_CONFIG_URL="https://raw.githubusercontent.com/pib-rocks/setup-pib/""${repo_map[$SETUP_PIB_ORIGIN]}""/setup_files/ros_config.sh"
 readonly ROS_CEREBRA_BOOT_URL="https://raw.githubusercontent.com/pib-rocks/setup-pib/""${repo_map[$SETUP_PIB_ORIGIN]}""/setup_files/ros_cerebra_boot.sh"
@@ -129,7 +124,7 @@ echo "if [ -f /home/pib/update-pib.sh ]; then
       fi
 " >> $USER_HOME/.bashrc
 
-# Get config
+# Download ros_config
 curl "$ROS_CONFIG_URL" --location --output "$ROS_WORKING_DIR/ros_config.sh"  
 
 # Setup system to start Cerebra and ROS2 at boot time
