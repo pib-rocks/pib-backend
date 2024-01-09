@@ -1,6 +1,7 @@
 [Unit]
 Description=Startup script for the pib motor current node
-After=network.target
+After=network.target pib_api_boot.service
+BindsTo=pib_api_boot.service
 
 [Service]
 Type=simple
