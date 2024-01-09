@@ -9,7 +9,7 @@ class ChatMessage(db.Model):
     messageId = db.Column(db.String(255), nullable=False, unique=True) 
     timestamp = db.Column(db.DateTime, nullable=False , default=func.now())
     isUser = db.Column(db.Boolean, nullable=False) 
-    content = db.Column(db.String(255), nullable=False)
+    content = db.Column(db.String(100000), nullable=False)
     chatId = db.Column(db.String(255), db.ForeignKey('chat.chatId'), nullable=False)
     
     def __init__(self, isUser, content, chatId):
