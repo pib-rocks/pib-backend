@@ -35,7 +35,7 @@ if [ ! -d $DEFAULT_NGINX_HTML_DIR ]; then sudo -S mkdir -p $DEFAULT_NGINX_HTML_D
 echo -e "$NEW_LINE""Clean up the html directory..."
 cd $DEFAULT_NGINX_HTML_DIR && sudo -S rm -r *
 
-# Download Cerebra artifact to the working directory
+# Download Cerebra
 cd $USER_HOME
 echo -e "$NEW_LINE""Downloading Cerebra application..."
 curl "$CEREBRA_ARCHIVE_URL" --location --output "$TEMPORARY_SETUP_DIR/$CEREBRA_ARCHIVE_NAME"
