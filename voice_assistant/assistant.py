@@ -1,4 +1,5 @@
 from enum import Enum
+from typing import Any
 import rclpy
 from rclpy.node import Node
 from rclpy.executors import MultiThreadedExecutor
@@ -15,7 +16,7 @@ import pyaudio
 import wave
 import os
 import speech_recognition as sr
-from multiprocessing import Process, Value
+from multiprocessing import Process, Value, Pipe, Manager, Lock
 import time
 
 import json
@@ -31,7 +32,9 @@ with open("/home/pib/ros_working_dir/src/voice-assistant/openapi-key") as f:
 os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "/home/pib/ros_working_dir/src/voice-assistant/voice_assistant/pibVoice.json"
 client = speech.SpeechClient()
 
-WAITING_PERIOD_SECONDS = 0.5
+TURN_ON_WAITING_PERIOD_SECONDS = 0.5
+WORKER_SIGNAL_WAITING_PERIOD_SECONDS = 0.5
+WORKER_PROCESS_RESPONSE_WAITING_PERIOD_SECONDS = 0.1
 AUDIO_OUTPUT_FILE = "output.wav"
 CHAT_MESSAGE_ROUTE = "http://localhost:5000/voice-assistant/chat/%s/messages"
 
@@ -39,17 +42,20 @@ CHAT_MESSAGE_ROUTE = "http://localhost:5000/voice-assistant/chat/%s/messages"
 
 class AssistantSubscriber(Node):
 
-    def __init__(self, start_bool, done_bool, chat_id):
+    def __init__(self, worker_connection):
 
         super().__init__('assistant_subscriber')
         self.get_logger().info('Now running VA')
-        self.start_bool = start_bool
-        self.done_bool = done_bool
-        self.chat_id = chat_id
 
         chat_message_callback_group = MutuallyExclusiveCallbackGroup()
         va_state_callback_group = MutuallyExclusiveCallbackGroup()
         timer_callback_group = MutuallyExclusiveCallbackGroup()
+
+        self.current_state = VoiceAssistantState()
+        self.current_state.turned_on = False
+        self.current_state_lock = Lock()
+
+        self.worker_connection = worker_connection
 
         # Service for setting VoiceAssistantState
         self.set_voice_assistant_service = self.create_service(
@@ -85,7 +91,7 @@ class AssistantSubscriber(Node):
 
         # Check for Start Signal periodically
         self.timer = self.create_timer(
-            WAITING_PERIOD_SECONDS, 
+            TURN_ON_WAITING_PERIOD_SECONDS, 
             self.timer_callback,
             callback_group=timer_callback_group
         )
@@ -94,67 +100,72 @@ class AssistantSubscriber(Node):
 
     def get_voice_assistant_state(self, request, response):
 
-        response.voice_assistant_state.chat_id = self.chat_id.value
-        response.voice_assistant_state.turned_on = self.start_bool.value
-        return response
+        with self.current_state_lock:
+            response.voice_assistant_state.chat_id = self.current_state.chat_id
+            response.voice_assistant_state.turned_on = self.current_state.turned_on
+            return response
     
 
 
     def set_voice_assistant_state(self, request, response):
 
-        response.successful = True
-        try:
-            if request.voice_assistant_state.turned_on: self.start_bool.value = True
-            else: self.done_bool.value = True 
-            self.chat_id.value = request.voice_assistant_state.chat_id
-            self.voice_assistant_state_publisher.publish(request.voice_assistant_state)
-        except Exception as e:
-            self.get_logger().info(f"following error occured while trying to set voice assistant state: {str(e)}.")
-            response.successful = False
+        request_state = request.voice_assistant_state
+        
+        with self.current_state_lock:
+            try:
+                if request_state.turned_on == self.current_state.turned_on:
+                    self.get_logger().warn(f"voice assistant is already turned {'on' if request_state.turned_on else 'off'}.")
+                    response.successful = False
+                else:
+                    self.current_state.turned_on = request_state.turned_on
+                    self.current_state.chat_id = request_state.chat_id
+                    response.successful = True
+                    self.voice_assistant_state_publisher.publish(request_state)
+            except Exception as e:
+                self.get_logger().info(f"following error occured while trying to set voice assistant state: {str(e)}.")
+                response.successful = False
 
         return response
 
+        
+
+    def run(self, callback, input = "") -> (bool, str):
+
+        self.worker_connection.send(callback)
+        self.worker_connection.send(input)
+
+        interrupted = False
+        while not self.worker_connection.poll():
+            with self.current_state_lock: interrupted = not self.current_state.turned_on
+            if interrupted: break
+            time.sleep(WORKER_SIGNAL_WAITING_PERIOD_SECONDS)
+        
+        self.worker_connection.send(-1)
+        return interrupted, self.worker_connection.recv()
+            
 
 
     def timer_callback(self):
 
         self.get_logger().info("Waiting to start...")
-        if not self.start_bool.value: return 0
+        with self.current_state_lock: 
+            if not self.current_state.turned_on: return 0
 
-        self.get_logger().info("on")
-        while not self.done_bool.value:
-            current_chat_id = self.chat_id.value
-            input_received, user_input = self.get_user_input()
-            if not input_received: continue
+        self.get_logger().info("ON")
+
+        while True:
+            current_chat_id = ""
+            with self.current_state_lock: current_chat_id = self.current_state.chat_id
+            interrupted, user_input = self.run(speech_to_text)
+            if interrupted: break
             self.persist_and_publish_message(user_input, True, current_chat_id)
-            response_received, va_response = self.get_va_response(user_input)
-            if not response_received: continue
+            interrupted, va_response = self.run(gpt_chat, user_input)
+            if interrupted: break
             self.persist_and_publish_message(va_response, False, current_chat_id)
-            self.play_audio(va_response)
+            self.run(play_audio, va_response)
 
-        self.get_logger().info("turning off voice-assistant")
-        self.start_bool.value = False
-        self.done_bool.value = False
+        self.get_logger().info("OFF")
 
-
-    
-    def get_user_input(self) -> (bool, str):
-
-        return True, speech_to_text()
-
-
-
-    def get_va_response(self, user_input) -> (bool, str):
-
-        return True, gpt_chat(user_input)
-
-
-
-    def play_audio(self, text):
-
-        text_to_speech(text, AUDIO_OUTPUT_FILE)
-        play_audio(AUDIO_OUTPUT_FILE)
-    
 
 
     def persist_and_publish_message(self, message_content: str, is_user: bool, chat_id: str):
@@ -208,7 +219,9 @@ class AssistantSubscriber(Node):
 
 
 
-def speech_to_text():
+def speech_to_text(input, output):
+
+    print(f"value before: {output.value}")
 
     r = sr.Recognizer()
     print('----------------------------------------------ALSA')
@@ -226,12 +239,12 @@ def speech_to_text():
         print('Google Speech Recognition could not understand')
     except sr.RequestError as e:
         print('Request error from Google Speech Recognition')
-    return data
+    output.value = data
+    print(f"output value: '{output.value}'")
 
 
 
-
-def gpt_chat(prompt):
+def gpt_chat(input, output):
 
     response = openai.ChatCompletion.create(
         model="gpt-4-0314",
@@ -242,19 +255,20 @@ def gpt_chat(prompt):
             },
             {
                 "role": "user",
-                "content": prompt,
+                "content": input,
             },
         ]
     )
-    return response['choices'][0]['message']['content']
+    output.value = response['choices'][0]['message']['content']
 
 
 
+def play_audio(input, output):
 
-def text_to_speech(text, output_file):
+    # generate audio file from text
 
     client = texttospeech.TextToSpeechClient()
-    synthesis_input = texttospeech.SynthesisInput(text=text)
+    synthesis_input = texttospeech.SynthesisInput(text=input)
     voice = texttospeech.VoiceSelectionParams(
         language_code="de-DE",
         name="de-DE-Standard-A"
@@ -265,16 +279,14 @@ def text_to_speech(text, output_file):
     response = client.synthesize_speech(
         input=synthesis_input, voice=voice, audio_config=audio_config
     )
-    with open(output_file, "wb") as out:
+    with open(AUDIO_OUTPUT_FILE, "wb") as out:
         out.write(response.audio_content)
 
-
-
-def play_audio(file_path):
+    # play audio from generated file
 
     CHUNK = 1024
-    wf = wave.open(file_path, 'rb')
-    print(file_path)
+    wf = wave.open(AUDIO_OUTPUT_FILE, 'rb')
+    print(AUDIO_OUTPUT_FILE)
     print('++++++++++++++++++++++++++++++++++++++ALSA')
     p = pyaudio.PyAudio()
     print('++++++++++++++++++++++++++++++++++++++')
@@ -294,17 +306,32 @@ def play_audio(file_path):
     stream.stop_stream()
     stream.close()
     p.terminate()
-
+        
 
 
 def main(args=None):
 
-    start_bool = Value(ctypes.c_bool, False)
-    done_bool = Value(ctypes.c_bool, False)
-    chat_id = Value(ctypes.c_wchar_p, "")
+    def target(connection):
+        while True:
+            callback = connection.recv()
+            argument = connection.recv()
+            with Manager() as manager:
+                result = manager.Value(ctypes.c_wchar_p, "")
+                process = Process(target=callback, args=(argument, result))
+                process.start()
+                while process.is_alive() and not connection.poll(): 
+                    time.sleep(WORKER_SIGNAL_WAITING_PERIOD_SECONDS)
+                process.terminate()
+                process.join()
+                connection.send(result.value)
+                connection.recv()
+
+    parent_conn, child_conn = Pipe()
+    worker = Process(target=target, args=(child_conn,))
+    worker.start()
     
     rclpy.init()
-    node = AssistantSubscriber(start_bool, done_bool, chat_id)
+    node = AssistantSubscriber(parent_conn)
     executor = MultiThreadedExecutor(4)
     executor.add_node(node)
     executor.spin()
