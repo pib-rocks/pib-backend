@@ -66,7 +66,7 @@ def delete_chat(uuid):
 
 
 def create_message(chat_id):
-    Chat.query.filter(Chat.chatId == chat_id).first_or_404() # TODO: method that only checks if exists?
+    Chat.query.filter(Chat.chatId == chat_id).first_or_404()
     try:
         data = chat_message_post_schema.load(request.json)
     except ValidationError as error:
@@ -84,8 +84,8 @@ def create_message(chat_id):
         abort(500)
 
 def get_messages_by_chat_id(chat_id):
-    Chat.query.filter(Chat.chatId == chat_id).first_or_404() # TODO: method that only checks if exists?
-    chat_messages = ChatMessage.query.filter(ChatMessage.chatId == chat_id).order_by(ChatMessage.timestamp) # TODO proper ordering
+    Chat.query.filter(Chat.chatId == chat_id).first_or_404()
+    chat_messages = ChatMessage.query.filter(ChatMessage.chatId == chat_id).order_by(ChatMessage.timestamp.desc())
     try:
         return jsonify({"messages": chat_messages_schema.dump(chat_messages)}), 200
     except:
