@@ -5,6 +5,7 @@ After=network.target
 [Service]
 Type=simple
 User=pib
+TimeoutStartSec=infinity
 WorkingDirectory=/home/pib/flask
 Environment="PYTHONIOENCODING=utf-8"
 ExecStartPre=/home/pib/.local/bin/pipenv install flask
@@ -12,7 +13,7 @@ ExecStartPre=/home/pib/.local/bin/pipenv install flask-sqlalchemy
 ExecStartPre=/home/pib/.local/bin/pipenv install flask-marshmallow
 ExecStartPre=/home/pib/.local/bin/pipenv install marshmallow-sqlalchemy
 ExecStartPre=/home/pib/.local/bin/pipenv install flask_cors
-ExecStart=/home/pib/.local/bin/pipenv run python3 /home/pib/flask/app.py
+ExecStart=/home/pib/.local/bin/pipenv run python3 /home/pib/flask/run.py
 
 [Install]
 WantedBy=multi-user.target
