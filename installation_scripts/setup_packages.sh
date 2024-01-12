@@ -13,7 +13,7 @@ ROS_VOICE_ASSISTANT_BOOT_DIR="$ROS_WORKING_DIR"/src/voice-assistant/boot_scripts
 #
 # Installing dependencies
 # Depth-AI
-sudo curl -sSL https://docs.luxonis.com/install_dependencies.sh | sudo bash
+sudo curl --silent --location https://docs.luxonis.com/install_dependencies.sh | sudo bash
 python3 -m pip install depthai
 # Setting up the motor packages
 pip3.10 install tinkerforge
