@@ -1,9 +1,8 @@
-from enum import Enum
 from typing import Any
 import rclpy
 from rclpy.node import Node
 from rclpy.executors import MultiThreadedExecutor
-from rclpy.callback_groups import MutuallyExclusiveCallbackGroup, ReentrantCallbackGroup
+from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
 from rclpy.node import Node
 
 from datatypes.srv import SetVoiceAssistantState, GetVoiceAssistantState
@@ -40,11 +39,11 @@ CHAT_MESSAGE_ROUTE = "http://localhost:5000/voice-assistant/chat/%s/messages"
 
 
 
-class AssistantSubscriber(Node):
+class VoiceAssistantNode(Node):
 
     def __init__(self, worker_connection):
 
-        super().__init__('assistant_subscriber')
+        super().__init__('voice_assistant')
         self.get_logger().info('Now running VA')
 
         chat_message_callback_group = MutuallyExclusiveCallbackGroup()
@@ -129,7 +128,7 @@ class AssistantSubscriber(Node):
 
         
 
-    def run(self, callback, input = "") -> (bool, str):
+    def run_on_worker(self, callback, input = "") -> (bool, str):
 
         self.worker_connection.send(callback)
         self.worker_connection.send(input)
@@ -156,13 +155,14 @@ class AssistantSubscriber(Node):
         while True:
             current_chat_id = ""
             with self.current_state_lock: current_chat_id = self.current_state.chat_id
-            interrupted, user_input = self.run(speech_to_text)
+            interrupted, user_input = self.run_on_worker(speech_to_text)
             if interrupted: break
             self.persist_and_publish_message(user_input, True, current_chat_id)
-            interrupted, va_response = self.run(gpt_chat, user_input)
+            interrupted, va_response = self.run_on_worker(gpt_chat, user_input)
             if interrupted: break
             self.persist_and_publish_message(va_response, False, current_chat_id)
-            self.run(play_audio, va_response)
+            interrupted, _ = self.run_on_worker(play_audio, va_response)
+            if interrupted: break
 
         self.get_logger().info("OFF")
 
@@ -311,7 +311,7 @@ def play_audio(input, output):
 
 def main(args=None):
 
-    def target(connection):
+    def worker_target(connection):
         while True:
             callback = connection.recv()
             argument = connection.recv()
@@ -326,12 +326,12 @@ def main(args=None):
                 connection.send(result.value)
                 connection.recv()
 
-    parent_conn, child_conn = Pipe()
-    worker = Process(target=target, args=(child_conn,))
+    parent_connection, child_connection = Pipe()
+    worker = Process(target=worker_target, args=(child_connection,))
     worker.start()
     
     rclpy.init()
-    node = AssistantSubscriber(parent_conn)
+    node = VoiceAssistantNode(parent_connection)
     executor = MultiThreadedExecutor(4)
     executor.add_node(node)
     executor.spin()
