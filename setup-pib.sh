@@ -29,6 +29,7 @@ export USER_HOME="/home/$DEFAULT_USER"
 export ROS_WORKING_DIR="$USER_HOME/ros_working_dir"
 mkdir "$ROS_WORKING_DIR"
 mkdir "$ROS_WORKING_DIR"/src
+mkdir "$USER_HOME/cerebra_programs"
 
 # We want the user pib to setup things without password (sudo without password)
 # Yes, we are aware of the security-issues..
@@ -40,6 +41,14 @@ else
 	echo "For this change please enter the root-password. It is most likely just your normal one..."
 	su root bash -c "usermod -aG sudo $DEFAULT_USER ; echo '$DEFAULT_USER ALL=(ALL) NOPASSWD:ALL' | tee /etc/sudoers.d/$DEFAULT_USER"
 fi
+
+# Disabling power saving settings
+gsettings set org.gnome.desktop.session idle-delay 0
+gsettings set org.gnome.settings-daemon.plugins.power power-saver-profile-on-low-battery false
+gsettings set org.gnome.settings-daemon.plugins.power ambient-enabled false
+gsettings set org.gnome.settings-daemon.plugins.power idle-dim false
+gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-ac-type 'nothing'
+gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-battery-type 'nothing'
 
 # Create temporary directory for installation files
 export TEMPORARY_SETUP_DIR="$(mktemp --directory /tmp/pib-temp.XXX)"
