@@ -6,9 +6,10 @@ This script assumes:
 
 If you have not set up the user **pib** at installation, you can do so via the settings-dialog of Ubuntu and then log in as **pib**.
 
-## Running the script
+## Installing pibs software
 
-To run the script do the next steps:
+All the software pib requires can be installed by running our setup script.
+Follow these steps to run it: 
 
 1. Open a terminal in Ubuntu
 
