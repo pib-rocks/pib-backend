@@ -116,13 +116,16 @@ class VoiceAssistantNode(Node):
                     self.get_logger().warn(f"voice assistant is already turned {'on' if request_state.turned_on else 'off'}.")
                     response.successful = False
                 else:
-                    self.current_state.turned_on = request_state.turned_on
-                    self.current_state.chat_id = request_state.chat_id
+                    self.current_state = VoiceAssistantState(turned_on=request_state.turned_on, chat_id=request_state.chat_id)
                     response.successful = True
-                    self.voice_assistant_state_publisher.publish(request_state)
             except Exception as e:
                 self.get_logger().info(f"following error occured while trying to set voice assistant state: {str(e)}.")
                 response.successful = False
+
+            self.voice_assistant_state_publisher.publish(VoiceAssistantState(
+                turned_on=self.current_state.turned_on, 
+                chat_id=self.current_state.chat_id
+            ))
 
         return response
 
