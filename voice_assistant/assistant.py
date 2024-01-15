@@ -160,7 +160,7 @@ class VoiceAssistantNode(Node):
             with self.current_state_lock: current_chat_id = self.current_state.chat_id
             interrupted, user_input = self.run_on_worker(speech_to_text)
             if interrupted: break
-            self.persist_and_publish_message(user_input, True, current_chat_id)
+            if user_input != '': self.persist_and_publish_message(user_input, True, current_chat_id)
             interrupted, va_response = self.run_on_worker(gpt_chat, user_input)
             if interrupted: break
             self.persist_and_publish_message(va_response, False, current_chat_id)
