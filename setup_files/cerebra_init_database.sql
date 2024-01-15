@@ -475,14 +475,14 @@ insert into
    chat
 values
    (
-      NULL, "12345-12333-45345-456456", "Nuernberg", "8f73b580-927e-41c2-98ac-e5df070e7288"
+      NULL, "b4f01552-0c09-401c-8fde-fda753fb0261", "Nuernberg", "8f73b580-927e-41c2-98ac-e5df070e7288"
    )
 ;
 insert into
     chat
 values
    (
-      NULL, "12345-12333-45345-456567", "Home-Office", "8b310f95-92cd-4512-b42a-d3fe29c4bb8a"
+      NULL, "ee3e80f9-c8f7-48c2-9f15-449ba9bbe4ab", "Home-Office", "8b310f95-92cd-4512-b42a-d3fe29c4bb8a"
    )
 ;
 create table IF NOT EXISTS chatMessage (
@@ -506,11 +506,11 @@ values
       "539ed3e6-9e3d-11ee-8c90-0242ac120002", 
       TRUE,
       "hello pib!",
-      "12345-12333-45345-456456"
+      "b4f01552-0c09-401c-8fde-fda753fb0261"
    ),
    (
       "0a080706-9e3e-11ee-8c90-0242ac120002", 
       FALSE,
       "hello user!",
-      "12345-12333-45345-456456"
+      "b4f01552-0c09-401c-8fde-fda753fb0261"
    );
