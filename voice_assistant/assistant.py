@@ -29,13 +29,13 @@ WORKER_SIGNAL_WAITING_PERIOD_SECONDS = 0.5
 WORKER_PROCESS_RESPONSE_WAITING_PERIOD_SECONDS = 0.1
 AUDIO_OUTPUT_FILE = "output.wav"
 CHAT_MESSAGE_ROUTE = "http://localhost:5000/voice-assistant/chat/%s/messages"
-OPENAPI_KEY_PATH = "/home/pib/ros_working_dir/src/voice-assistant/credentials/openapi-key"
+OPENAI_KEY_PATH = "/home/pib/ros_working_dir/src/voice-assistant/credentials/openai-key"
 GOOGLE_KEY_PATH = "/home/pib/ros_working_dir/src/voice-assistant/credentials/google-key"
 
 
 
 # Set up OpenAI GPT-3 API
-with open(OPENAPI_KEY_PATH) as f:
+with open(OPENAI_KEY_PATH) as f:
     openai.api_key = f.read()
 
 # Google Cloud API
