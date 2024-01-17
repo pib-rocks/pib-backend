@@ -23,19 +23,24 @@ import ctypes
 from urllib import request as urllib_request, error as urllib_error
 
 
-# Set up OpenAI GPT-3 API
-with open("/home/pib/ros_working_dir/src/voice-assistant/openapi-key") as f:
-    openai.api_key = f.read()
-
-# Google Cloud API
-os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "/home/pib/ros_working_dir/src/voice-assistant/voice_assistant/pibVoice.json"
-client = speech.SpeechClient()
 
 TURN_ON_WAITING_PERIOD_SECONDS = 0.5
 WORKER_SIGNAL_WAITING_PERIOD_SECONDS = 0.5
 WORKER_PROCESS_RESPONSE_WAITING_PERIOD_SECONDS = 0.1
 AUDIO_OUTPUT_FILE = "output.wav"
 CHAT_MESSAGE_ROUTE = "http://localhost:5000/voice-assistant/chat/%s/messages"
+OPENAPI_KEY_PATH = "/home/pib/ros_working_dir/src/voice-assistant/credentials/openapi-key"
+GOOGLE_KEY_PATH = "/home/pib/ros_working_dir/src/voice-assistant/credentials/google-key"
+
+
+
+# Set up OpenAI GPT-3 API
+with open(OPENAPI_KEY_PATH) as f:
+    openai.api_key = f.read()
+
+# Google Cloud API
+os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = GOOGLE_KEY_PATH
+client = speech.SpeechClient()
 
 
 
