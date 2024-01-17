@@ -96,12 +96,12 @@ cd $USER_HOME
 sudo chmod -R 777 $ROS_WORKING_DIR
 sudo chmod -R 777 $ROS_WORKING_DIR/src
 
-# Create firefox profile and initialize it to generate default folder structure
-firefox -CreateProfile pib
+# Open firefox without gui to generate default folder structures 
+# This also avoids the welcome page the first time a user opens the browser
 timeout 20s firefox --headless
 
-# Set localhost as homepage
-readonly FIREFOX_PREFS_FILE=$(echo /home/pib/snap/firefox/common/.mozilla/firefox/*.pib)/prefs.js
+# Set localhost as homepage in default profile
+readonly FIREFOX_PREFS_FILE=$(echo /home/pib/snap/firefox/common/.mozilla/firefox/*.default)/prefs.js
 echo "user_pref(\"browser.startup.homepage\", \"127.0.0.1\");" >> "$FIREFOX_PREFS_FILE"
 
 echo -e "$NEW_LINE""$GREEN_TEXT_COLOR""-- Cerebra installation completed --""$RESET_TEXT_COLOR""$NEW_LINE"
