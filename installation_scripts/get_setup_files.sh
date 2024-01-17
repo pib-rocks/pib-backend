@@ -9,7 +9,7 @@ SETUP_ARCHIVE_URL="https://github.com/pib-rocks/setup-pib/archive/refs/heads/""$
 SETUP_ARCHIVE_NAME="setup-pib-""$SETUP_PIB_BRANCH"".zip"
 
 # Download the zipped repo and unpack it in the temporary folder
-wget -O "$SETUP_ARCHIVE_NAME" "$SETUP_ARCHIVE_URL"
+curl "$SETUP_ARCHIVE_URL" --location --output "$SETUP_ARCHIVE_NAME" 
 mv "$SETUP_ARCHIVE_NAME" "$TEMPORARY_SETUP_DIR"
 unzip "$TEMPORARY_SETUP_DIR/""$SETUP_ARCHIVE_NAME" -d "$TEMPORARY_SETUP_DIR"
 
