@@ -13,3 +13,5 @@ class MotorSchema(ma.SQLAlchemyAutoSchema):
 
 motor_schema = MotorSchema()
 motors_schema = MotorSchema(many=True)
+motor_settings_schema = MotorSchema(exclude=('brickletPins',))
+motor_bricklet_pins_schema = MotorSchema(only=('name', 'brickletPins'))
