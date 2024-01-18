@@ -63,7 +63,8 @@ def motor_settings_to_dto_dict(ms, motor):
                 "acceleration": ms.acceleration,
                 "deceleration": ms.deceleration,
                 "period": ms.period,
-                "active": ms.active
+                "active": ms.active,
+		"invert": ms.invert
         }
 
 
