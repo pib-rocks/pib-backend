@@ -5,3 +5,6 @@ def handle_not_found_error(error):
 
 def handle_internal_server_error(error):
     return jsonify({'error': "Internal Server Error, please try later again."}), 500
+
+def handle_not_implemented_error(error):
+    return jsonify({'error': "Not implemented."}), 501
