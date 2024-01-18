@@ -1,6 +1,9 @@
 from app.app import db
+from model.bricklet_pin_model import BrickletPin
 
 class Motor(db.Model):
+
+    __tablename__ = "motor"
     
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(255), nullable=False, unique=True)
@@ -13,20 +16,18 @@ class Motor(db.Model):
     deceleration = db.Column(db.Integer, nullable=False)
     period = db.Column(db.Integer, nullable=False)
     turnedOn = db.Column(db.Boolean, nullable=False)
-    active = db.Column(db.Boolean, nullable=False)
-    effort = db.Column(db.Integer, nullable=True)
+    visible = db.Column(db.Boolean, nullable=False)
+    brickletPins = db.relationship('BrickletPin', backref='motor', lazy=True, cascade="all,delete")
     
-    def __init__(self, *args):
-        self.name = args[0]
-        self.pulseWidthMin = args[1]
-        self.pulseWidthMax = args[2]
-        self.rotationRangeMin = args[3]
-        self.rotationRangeMax = args[4]
-        self.velocity = args[5]
-        self.acceleration = args[6]
-        self.deceleration = args[7]
-        self.period = args[8]
-        self.turnedOn = args[9]
-        self.active = args[10]
-        if len(args) > 11:
-            self.effort = args[11]
+    def __init__(self, **kwargs):
+        self.name = kwargs['name']
+        self.pulseWidthMin = kwargs['pulseWidthMin']
+        self.pulseWidthMax = kwargs['pulseWidthMax']
+        self.rotationRangeMin = kwargs['rotationRangeMin']
+        self.rotationRangeMax = kwargs['rotationRangeMax']
+        self.velocity = kwargs['velocity']
+        self.acceleration = kwargs['acceleration']
+        self.deceleration = kwargs['deceleration']
+        self.period = kwargs['period']
+        self.turnedOn = kwargs['turnedOn']
+        self.visible = kwargs['visible']
