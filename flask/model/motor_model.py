@@ -13,8 +13,9 @@ class Motor(db.Model):
     deceleration = db.Column(db.Integer, nullable=False)
     period = db.Column(db.Integer, nullable=False)
     turnedOn = db.Column(db.Boolean, nullable=False)
-    active = db.Column(db.Boolean, nullable=False)
     effort = db.Column(db.Integer, nullable=True)
+    active = db.Column(db.Boolean, nullable=False)
+    invert = db.Column(db.Boolean, nullable=False)
     
     def __init__(self, *args):
         self.name = args[0]
@@ -28,5 +29,6 @@ class Motor(db.Model):
         self.period = args[8]
         self.turnedOn = args[9]
         self.active = args[10]
-        if len(args) > 11:
-            self.effort = args[11]
+        self.invert = args[11]
+        if len(args) > 12:
+            self.effort = args[12]

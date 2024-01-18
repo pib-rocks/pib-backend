@@ -32,7 +32,8 @@ def update_motor():
         request.json.get('deceleration'), 
         request.json.get('period'), 
         request.json.get('active'),
-        request.json.get('turnedOn')
+        request.json.get('turnedOn'),
+        request.json.get('invert')
     )
     motor = Motor.query.filter(Motor.name == updateMotor.name).first_or_404()
     motor.pulseWidthMin = updateMotor.pulseWidthMin
@@ -45,6 +46,7 @@ def update_motor():
     motor.period = updateMotor.period
     motor.turnedOn = updateMotor.turnedOn
     motor.active = updateMotor.active
+    motor.invert = updateMotor.invert
     db.session.add(motor)
     db.session.commit()
     try:
