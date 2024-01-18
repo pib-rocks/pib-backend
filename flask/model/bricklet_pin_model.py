@@ -13,6 +13,6 @@ class BrickletPin(db.Model):
     pin = db.Column(db.Integer, nullable=False)
 
     def __init__(self, **kwargs):
-        self.motorId = kwargs['motorId']
-        self.brickletId = kwargs['brickletId']
         self.pin = kwargs['pin']
+        self.bricklet = kwargs['bricklet']
+        self.motor = kwargs['motor']
