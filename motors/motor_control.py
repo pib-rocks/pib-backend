@@ -3,6 +3,7 @@ PORT = 4223
 UID1 = "XYZ" # Replace with the UID of first Servo Bricklet
 UID2 = "XYZ" # Replace with the UID of second Servo Bricklet
 UID3 = "XYZ" # Replace with the UID of third Servo Bricklet
+tinkerforgeSettingspath = "/home/pib/pib_data/tinkerForgeConfig.txt"
 
 from tinkerforge.ip_connection import IPConnection
 from tinkerforge.brick_hat import BrickHAT
@@ -103,8 +104,14 @@ class Motor_control(Node):
                 self.hat = BrickHAT("X", self.ipcon)
                 self.ipcon.connect(HOST, 4223)
 
-                temp = self.set_uid()
-                self.get_logger().warn(f"{str(temp)}")
+                # temp = self.set_uid()
+                # self.get_logger().warn(f"{str(temp)}")
+                tinkerforgeSettings = open(tinkerforgeSettingspath, "r")
+                uid_pattern = re.compile(r'UID\d\s*=\s*([^\s]+)')
+                matches = uid_pattern.findall(input_string)
+                UID1 = matches[0]
+                UID2 = matches[1]
+                UID3 = matches[3]
                 
                 # Handles for three Servo Bricklets
                 self.servo1 = BrickletServoV2(UID1, self.ipcon)
@@ -314,27 +321,7 @@ class Motor_control(Node):
                 elif motor_name == "all_fingers_right":
                         return list(filter(lambda x: ("opposition" not in x.name and x.group == 1), self.motors))
                 
-                return [self.motor_map.get(motor_name)]
-        
-
-        def cb_enumerate(self, uid, connected_uid, position, hardware_version, firmware_version, device_identifier, enumeration_type):
-
-                if position == "a":
-                        global UID1
-                        UID1 = uid
-                if position == "b":
-                        global UID2
-                        UID2 = uid
-                if position == "e":
-                        global UID3
-                        UID3 = uid
-
-        def set_uid(self):
-                self.ipcon.register_callback(IPConnection.CALLBACK_ENUMERATE, self.cb_enumerate)
-                self.ipcon.enumerate()
-                return "uid set"
-
-        
+                return [self.motor_map.get(motor_name)]        
 
 def main(args=None):
         rclpy.init(args=args)

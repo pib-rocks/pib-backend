@@ -18,6 +18,13 @@ class Motor_current(Node):
 
     def __init__(self):
 
+        tinkerforgeSettings = open(tinkerforgeSettingspath, "r")
+        uid_pattern = re.compile(r'UID\d\s*=\s*([^\s]+)')
+        matches = uid_pattern.findall(input_string)
+        UID1 = matches[0]
+        UID2 = matches[1]
+        UID3 = matches[3]
+
         qos_policy = rclpy.qos.QoSProfile(reliability=rclpy.qos.ReliabilityPolicy.BEST_EFFORT,
                                           history=rclpy.qos.HistoryPolicy.KEEP_LAST,
                                           depth=1)
