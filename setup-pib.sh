@@ -29,6 +29,7 @@ export USER_HOME="/home/$DEFAULT_USER"
 export ROS_WORKING_DIR="$USER_HOME/ros_working_dir"
 mkdir "$ROS_WORKING_DIR"
 mkdir "$ROS_WORKING_DIR"/src
+mkdir "$USER_HOME/cerebra_programs"
 
 # We want the user pib to setup things without password (sudo without password)
 # Yes, we are aware of the security-issues..
@@ -41,6 +42,14 @@ else
 	su root bash -c "usermod -aG sudo $DEFAULT_USER ; echo '$DEFAULT_USER ALL=(ALL) NOPASSWD:ALL' | tee /etc/sudoers.d/$DEFAULT_USER"
 fi
 
+# Disabling power saving settings
+gsettings set org.gnome.desktop.session idle-delay 0
+gsettings set org.gnome.settings-daemon.plugins.power power-saver-profile-on-low-battery false
+gsettings set org.gnome.settings-daemon.plugins.power ambient-enabled false
+gsettings set org.gnome.settings-daemon.plugins.power idle-dim false
+gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-ac-type 'nothing'
+gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-battery-type 'nothing'
+
 # Create temporary directory for installation files
 export TEMPORARY_SETUP_DIR="$(mktemp --directory /tmp/pib-temp.XXX)"
 
@@ -51,16 +60,20 @@ export installation_files_dir=""
 # This variable is specifically for downloading the installation scripts from the setup repo
 # These files are left out of the dynamic branch selection, since they are a prerequisite for the check itself
 # If you want to get the installation scripts from a specific branch, you need to change this variable manually
-# TODO: Change branch to main once merged
 export SETUP_PIB_BRANCH="main"
+
+# Refresh the linux packages list (sometimes necessary for packages that are required in the installion scripts)
+sudo apt update
+
+# These packages are installed seperately, since the installation scripts are dependent on them
+sudo apt-get install -y git curl
 
 # Get setup files needed for the pib software installation
 readonly GET_SETUP_FILES_SCRIPT_NAME="get_setup_files.sh"
 readonly GET_SETUP_FILES_SCRIPT="$TEMPORARY_SETUP_DIR""/$GET_SETUP_FILES_SCRIPT_NAME"
-wget -O "$GET_SETUP_FILES_SCRIPT" "https://raw.githubusercontent.com/pib-rocks/setup-pib/""$SETUP_PIB_BRANCH""/installation_scripts/""$GET_SETUP_FILES_SCRIPT_NAME"
+curl "https://raw.githubusercontent.com/pib-rocks/setup-pib/""$SETUP_PIB_BRANCH""/installation_scripts/""$GET_SETUP_FILES_SCRIPT_NAME" --location --output "$GET_SETUP_FILES_SCRIPT" 
 chmod 755 "$GET_SETUP_FILES_SCRIPT"
 source "$GET_SETUP_FILES_SCRIPT"
-
 
 # Variables for user input options and arguments
 export FIRST_USER_INPUT=$1
@@ -70,20 +83,8 @@ export is_dev_mode="$FALSE"
 export user_default_branch=""
 export user_feature_branch=""
 
-# Check the user inputs (options and arguments) for the dev mode. Run it in the same shell as this script.
-source "$installation_files_dir""/check_user_input.sh"
-
-# Run the script for checking the system variables
-source "$installation_files_dir""/check_system_variables.sh"
-
-# Refresh the linux packages list (somtimes necessary at this point for installing git)
-sudo apt update
-
-# Git is installed seperately, since the check_github_branches is dependent on it
-sudo apt-get install -y git 
-
 # Variables for github branch checking:
-# Github repo origin links
+# Github repo origin URLs
 readonly SETUP_PIB_ORIGIN="https://github.com/pib-rocks/setup-pib.git"
 readonly PIB_API_ORIGIN="https://github.com/pib-rocks/pib-api.git"
 readonly ROS_PACKAGES_ORIGIN="https://github.com/pib-rocks/ros-packages.git"
@@ -95,26 +96,27 @@ readonly VOICE_ASSISTANT_ORIGIN="https://github.com/pib-rocks/voice-assistant.gi
 # Create an associative array (=map). This will be filled with repo-origin branch-name pairs in the check_github_branches.sh script
 declare -A repo_map
 
-# Check the user inputs (options and arguments) for the dev mode. Run it in the same shell as this script.
+# The following scripts are sourced into the same shell as this script,
+# allowing them to acces all variables and context
+# Check user inputs (options and arguments) for dev mode
+source "$installation_files_dir""/check_user_input.sh"
+# Check system variables
+source "$installation_files_dir""/check_system_variables.sh"
+# Check which github branches are available based on user input
 source "$installation_files_dir""/check_github_branches.sh"
-
-# Run the script for installing system packages
+# Install system packages
 source "$installation_files_dir""/install_system_packages.sh"
-
-# Run the script for installing python packages
+# Install python packages
 source "$installation_files_dir""/install_python_packages.sh"
-
-# Run the script for installing tinkerforge
+# Install tinkerforge
 source "$installation_files_dir""/install_tinkerforge.sh"
-
-# Run the script for installing Cerebra
+# Install Cerebra
 source "$installation_files_dir""/install_cerebra.sh"
-
-# Run the script for installing all ros-packages. Run it in the same shell as this script.
+# Install pib ros-packages
 source "$installation_files_dir""/setup_packages.sh"
 
 
-# Links for github direct downloads, from selected branch
+# Github direct download URLs, from the selected branch
 readonly ROS_UPDATE_URL="https://raw.githubusercontent.com/pib-rocks/setup-pib/""${repo_map[$SETUP_PIB_ORIGIN]}""/update-pib.sh"
 readonly ROS_CONFIG_URL="https://raw.githubusercontent.com/pib-rocks/setup-pib/""${repo_map[$SETUP_PIB_ORIGIN]}""/setup_files/ros_config.sh"
 readonly ROS_CEREBRA_BOOT_URL="https://raw.githubusercontent.com/pib-rocks/setup-pib/""${repo_map[$SETUP_PIB_ORIGIN]}""/setup_files/ros_cerebra_boot.sh"
@@ -124,30 +126,23 @@ readonly ROS_CEREBRA_BOOT_SERVICE_URL="https://raw.githubusercontent.com/pib-roc
 if [ -f "$USER_HOME""/update-pib.sh" ]; then
   sudo rm update-pib.sh
 fi
-wget -O "$USER_HOME""/update-pib.sh" "$ROS_UPDATE_URL"
+curl "$ROS_UPDATE_URL" --location --output "$USER_HOME""/update-pib.sh"
 sudo chmod 777 update-pib.sh
 echo "if [ -f /home/pib/update-pib.sh ]; then
         alias update-pib='/home/pib/update-pib.sh'
       fi
 " >> $USER_HOME/.bashrc
 
-# set permissions
-cd "$ROS_WORKING_DIR"
-colcon build
-sudo chmod -R 777 $ROS_WORKING_DIR/build
-sudo chmod -R 777 $ROS_WORKING_DIR/install
-sudo chmod -R 777 $ROS_WORKING_DIR/log
-
-# Get config
-curl "$ROS_CONFIG_URL" -L --output $ROS_WORKING_DIR/ros_config.sh
+# Download ros_config
+curl "$ROS_CONFIG_URL" --location --output "$ROS_WORKING_DIR/ros_config.sh"  
 
 # Setup system to start Cerebra and ROS2 at boot time
 # Create boot script for ros_bridge_server
-curl "$ROS_CEREBRA_BOOT_URL" -L --output $ROS_WORKING_DIR/ros_cerebra_boot.sh
+curl "$ROS_CEREBRA_BOOT_URL" --location --output  "$ROS_WORKING_DIR/ros_cerebra_boot.sh" 
 sudo chmod 755 $ROS_WORKING_DIR/ros_cerebra_boot.sh
 
 # Create service which starts ros and cerebra by system boot
-curl "$ROS_CEREBRA_BOOT_SERVICE_URL" -L --output $ROS_WORKING_DIR/ros_cerebra_boot.service
+curl "$ROS_CEREBRA_BOOT_SERVICE_URL" --location --output "$ROS_WORKING_DIR/ros_cerebra_boot.service" 
 sudo chmod 755 $ROS_WORKING_DIR/ros_cerebra_boot.service
 sudo mv $ROS_WORKING_DIR/ros_cerebra_boot.service /etc/systemd/system
 

@@ -39,10 +39,10 @@ if [ ! -d $DEFAULT_NGINX_HTML_DIR ]; then sudo -S mkdir -p $DEFAULT_NGINX_HTML_D
 echo -e "$NEW_LINE""Clean up the html directory..."
 cd $DEFAULT_NGINX_HTML_DIR && sudo -S rm -r *
 
-# Download Cerebra artifact to the working directory
+# Download Cerebra
 cd $USER_HOME
 echo -e "$NEW_LINE""Downloading Cerebra application..."
-curl "$CEREBRA_ARCHIVE_URL" -L --output "$TEMPORARY_SETUP_DIR/$CEREBRA_ARCHIVE_NAME"
+curl "$CEREBRA_ARCHIVE_URL" --location --output "$TEMPORARY_SETUP_DIR/$CEREBRA_ARCHIVE_NAME"
 #
 # Unzip cerebra files to nginx
 echo -e "$NEW_LINE""Unzip cerebra..."
@@ -51,12 +51,12 @@ sudo unzip "$TEMPORARY_SETUP_DIR/$CEREBRA_ARCHIVE_NAME" -d $DEFAULT_NGINX_HTML_D
 #
 # Setting up nginx to serve Cerebra locally
 echo -e "$NEW_LINE""Downloading nginx configuration file..."
-sudo curl $NGINX_CONF_FILE_URL --output $DEFAULT_NGINX_DIR/$NGINX_CONF_FILE
+sudo curl "$NGINX_CONF_FILE_URL" --location --output "$DEFAULT_NGINX_DIR/$NGINX_CONF_FILE"
 
 #
 # Install and configure phpLiteAdmin
 sudo sed -i "s|;cgi.fix_pathinfo=1|cgi.fix_pathinfo=0|" /etc/php/8.1/fpm/php.ini
-curl "$PHPLITEADMIN_URL" -L --output "$TEMPORARY_SETUP_DIR/$PHPLITEADMIN_ZIP"
+curl "$PHPLITEADMIN_URL" --location --output "$TEMPORARY_SETUP_DIR/$PHPLITEADMIN_ZIP"
 sudo mkdir $PHPLITEADMIN_INSTALLATION_DIR
 sudo chown -R www-data:www-data $PHPLITEADMIN_INSTALLATION_DIR
 sudo chmod -R 755 $PHPLITEADMIN_INSTALLATION_DIR
@@ -64,7 +64,7 @@ sudo unzip "$TEMPORARY_SETUP_DIR/$PHPLITEADMIN_ZIP" -d $PHPLITEADMIN_INSTALLATIO
 sudo systemctl restart php8.1-fpm
 
 # Create the database (if it doesn't exist) and initialize it with the SQL file
-curl "$DATABASE_INIT_QUERY_URL" -L --output "$TEMPORARY_SETUP_DIR/$DATABASE_INIT_QUERY_FILE"
+curl "$DATABASE_INIT_QUERY_URL" --location --output "$TEMPORARY_SETUP_DIR/$DATABASE_INIT_QUERY_FILE"
 echo "Creating (if not exist) and initializing SQLite database $DATABASE_FILE with $TEMPORARY_SETUP_DIR/$DATABASE_INIT_QUERY_FILE..."
 mkdir $DATABASE_DIR
 sudo chmod 777 $USER_HOME
@@ -84,7 +84,7 @@ pip3 install pipenv
 cd $USER_HOME
 readonly PIB_API_ARCHIVE_NAME="pib-api-""${repo_map[$PIB_API_ORIGIN]}"
 readonly PIB_API_ARCHIVE_PATH="$TEMPORARY_SETUP_DIR""/$PIB_API_ARCHIVE_NAME"".zip"
-wget -O "$PIB_API_ARCHIVE_PATH" "$PIB_API_URL"
+curl "$PIB_API_URL" --location --output "$PIB_API_ARCHIVE_PATH" 
 unzip "$PIB_API_ARCHIVE_PATH" -d "$TEMPORARY_SETUP_DIR"
 mv "$TEMPORARY_SETUP_DIR/$PIB_API_ARCHIVE_NAME""/flask/" "$PIB_API_DIR"
 sudo mv "$PIB_API_DIR""/pib_api_boot.service" "/etc/systemd/system"
@@ -95,5 +95,13 @@ cd $USER_HOME
 # Allow editing in all src-directories
 sudo chmod -R 777 $ROS_WORKING_DIR
 sudo chmod -R 777 $ROS_WORKING_DIR/src
+
+# Open firefox without gui to generate default folder structures 
+# This also avoids the welcome page the first time a user opens the browser
+timeout 20s firefox --headless
+
+# Set localhost as homepage in default profile
+readonly FIREFOX_PREFS_FILE=$(echo /home/pib/snap/firefox/common/.mozilla/firefox/*.default)/prefs.js
+echo "user_pref(\"browser.startup.homepage\", \"127.0.0.1\");" >> "$FIREFOX_PREFS_FILE"
 
 echo -e "$NEW_LINE""$GREEN_TEXT_COLOR""-- Cerebra installation completed --""$RESET_TEXT_COLOR""$NEW_LINE"
