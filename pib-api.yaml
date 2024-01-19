@@ -954,6 +954,9 @@ components:
           maximum: 100000
           examples: 
             - 60000
+        invert:
+          type: boolean
+          example: false
       required:
         - motorName
         - turnedOn
