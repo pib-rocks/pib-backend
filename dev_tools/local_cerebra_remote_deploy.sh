@@ -9,7 +9,7 @@
 
 #Change "LOCAL_CEREBRA_DIR" to your local main cerebra folder
 #Example: LOCAL_CEREBRA_DIR="C:\Users\Example User\Documents\cerebra2"
-LOCAL_CEREBRA_DIR="C:\Users\User Name\Documents\cerebra2"
+LOCAL_CEREBRA_DIR="C:\Users\Jan Hermann\Documents\Projekte\pib\Cerebra\cerebra2\cerebra2"
 LOCAL_BUILD_DIR="/dist/cerebra"
 
 #Change "TARGET_IP" to the desired target raspi or virtal machine
