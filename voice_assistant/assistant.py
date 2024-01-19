@@ -179,13 +179,13 @@ class VoiceAssistantNode(Node):
     def persist_and_publish_message(self, message_content: str, is_user: bool, chat_id: str):
 
         try:
-                # compile motor settings to UTF-8 encoded JSON string
+                # compile message to UTF-8 encoded JSON string
                 request_body = json.dumps({
                     'content': message_content,
                     'isUser': is_user
                 }).encode('UTF-8'),
                 
-                # create 'PUT' request to '/motor-settings'
+                # create post request addressed at chat message api endpoint
                 request = urllib_request.Request(
                         CHAT_MESSAGE_ROUTE % chat_id,
                         method='POST',
