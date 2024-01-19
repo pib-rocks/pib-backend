@@ -12,7 +12,6 @@ class BrickletPin(db.Model):
     brickletId = db.Column(db.Integer, db.ForeignKey('bricklet.id'), nullable=False)
     pin = db.Column(db.Integer, nullable=False)
 
-    def __init__(self, **kwargs):
-        self.pin = kwargs['pin']
-        self.bricklet = kwargs['bricklet']
-        self.motor = kwargs['motor']
+    # def __init__(self, pin, brickletId):
+    #     self.pin = pin
+    #     self.brickletId = brickletId

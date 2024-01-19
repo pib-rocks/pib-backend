@@ -8,3 +8,4 @@ class BrickletSchema(ma.SQLAlchemyAutoSchema):
         exclude = ('id',)
 
 bricklet_uid_only_schema = BrickletSchema(only=('uid',))
+bricklets_uid_only_schema = BrickletSchema(many=True, only=('uid',))
