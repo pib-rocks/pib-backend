@@ -24,6 +24,9 @@ DATABASE_FILE="pibdata.db"
 DATABASE_INIT_QUERY_FILE="cerebra_init_database.sql"
 DATABASE_INIT_QUERY_URL="https://raw.githubusercontent.com/pib-rocks/setup-pib/""${repo_map[$SETUP_PIB_ORIGIN]}""/setup_files/cerebra_init_database.sql"
 
+#Persist Tinkerforge settings variables
+PERSIST_TINKERFORGE_SETTINGS_URL="https://raw.githubusercontent.com/pib-rocks/setup-pib/""${repo_map[$SETUP_PIB_ORIGIN]}""/installation_scrips/manageTinkerForgeSettings.py"
+
 # pib api variables
 PIB_API_DIR="$USER_HOME/flask"
 PIB_API_URL="https://github.com/pib-rocks/pib-api/archive/refs/heads/""${repo_map[$PIB_API_ORIGIN]}"".zip"
@@ -72,6 +75,10 @@ sudo chmod 777 $DATABASE_DIR
 sudo sqlite3 "$DATABASE_DIR/$DATABASE_FILE" < "$TEMPORARY_SETUP_DIR/$DATABASE_INIT_QUERY_FILE"
 sudo chmod 766 $DATABASE_DIR/$DATABASE_FILE
 echo -e "$NEW_LINE""Database initialized successfully!"
+
+# Download and creat all needed files for persisting Tinkerforge settings
+curl -o $DATABASE_DIR $PERSIST_TINKERFORGE_SETTINGS_URL
+touch $DATABASE_DIR/tinkerForgeConfig.txt
 
 # Create the directory for python code and populate it with a single initial python script (matching
 # the single entry in the database)
