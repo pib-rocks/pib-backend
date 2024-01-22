@@ -77,7 +77,7 @@ sudo chmod 766 $DATABASE_DIR/$DATABASE_FILE
 echo -e "$NEW_LINE""Database initialized successfully!"
 
 # Download and creat all needed files for persisting Tinkerforge settings
-curl -o $DATABASE_DIR $PERSIST_TINKERFORGE_SETTINGS_URL
+curl $PERSIST_TINKERFORGE_SETTINGS_URL ---location --output $DATABASE_DIR
 touch $DATABASE_DIR/tinkerForgeConfig.txt
 
 # Create the directory for python code and populate it with a single initial python script (matching
