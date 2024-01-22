@@ -3,11 +3,14 @@ from model.bricklet_model import Bricklet
 from model.bricklet_pin_model import BrickletPin
 from app.app import db
 
+
 def get_all_motors():
     return Motor.query.all()
 
+
 def get_motor_by_name(motor_name):
     return Motor.query.filter(Motor.name == motor_name).one()
+
 
 def set_motor_settings(motor_name, motor_settings_dto):
     motor = get_motor_by_name(motor_name)
@@ -23,6 +26,7 @@ def set_motor_settings(motor_name, motor_settings_dto):
     motor.visible = motor_settings_dto['visible']
     db.session.flush()
     return motor
+
 
 def set_bricklet_pins(motor_name, bricklet_pin_dtos):
     motor = get_motor_by_name(motor_name)
