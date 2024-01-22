@@ -25,7 +25,7 @@ DATABASE_INIT_QUERY_FILE="cerebra_init_database.sql"
 DATABASE_INIT_QUERY_URL="https://raw.githubusercontent.com/pib-rocks/setup-pib/""${repo_map[$SETUP_PIB_ORIGIN]}""/setup_files/cerebra_init_database.sql"
 
 #Persist Tinkerforge settings variables
-PERSIST_TINKERFORGE_SETTINGS_URL="https://raw.githubusercontent.com/pib-rocks/setup-pib/""${repo_map[$SETUP_PIB_ORIGIN]}""/installation_scrips/manageTinkerForgeSettings.py"
+PERSIST_TINKERFORGE_SETTINGS_URL="https://raw.githubusercontent.com/pib-rocks/setup-pib/""${repo_map[$SETUP_PIB_ORIGIN]}""/installation_scripts/manageTinkerForgeSettings.py"
 
 # pib api variables
 PIB_API_DIR="$USER_HOME/flask"
