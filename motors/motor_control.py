@@ -20,15 +20,19 @@ import json
 
 class Motor:    
                 
-        def __init__(self, name, servo, ports, state, group):
+        def __init__(self, name, servo, ports, state, group, invert):
                 self.name = name
                 self.servo = servo
                 self.ports = ports
                 self.state = state
                 self.group = group
+                self.invert = invert
 
         def set_state(self, state):
                 self.state = state
+
+        def set_invert(self, invert):
+                self.invert = invert
 
         def __str__(self):
                 servo_id = "---"
@@ -114,33 +118,33 @@ class Motor_control(Node):
 
                 # Available motors
                 self.motors = [
-                        Motor("turn_head_motor", self.servo1, [0], True, 4),
-                        Motor("tilt_forward_motor", self.servo1, [1], True, 4),
-                        Motor("tilt_sideways_motor", self.servo2, [8], True, 4),
-                        Motor("thumb_left_opposition", self.servo1, [9], True, 0),
-                        Motor("thumb_left_stretch", self.servo2, [0], True, 0),
-                        Motor("index_left_stretch", self.servo2, [1], True, 0),
-                        Motor("middle_left_stretch", self.servo2, [2], True, 0),
-                        Motor("ring_left_stretch", self.servo2, [3], True, 0),
-                        Motor("pinky_left_stretch", self.servo2, [4], True, 0),
-                        Motor("thumb_right_opposition", self.servo1, [3], True, 1),
-                        Motor("thumb_right_stretch", self.servo1, [4], True, 1),
-                        Motor("index_right_stretch", self.servo1, [5], True, 1),
-                        Motor("middle_right_stretch", self.servo1, [6], True, 1),
-                        Motor("ring_right_stretch", self.servo1, [7], True, 1),
-                        Motor("pinky_right_stretch", self.servo1, [8], True, 1),
-                        Motor("upper_arm_left_rotation", self.servo2, [5], True, 2), 
-                        Motor("elbow_left", self.servo2, [6], True, 2),
-                        Motor("lower_arm_left_rotation", self.servo2, [7], True, 2),
-                        Motor("wrist_left", self.servo1, [2], True, 2),
-                        Motor("shoulder_vertical_left", self.servo3, [7, 9], True, 2),
-                        Motor("shoulder_horizontal_left", self.servo3, [0], True, 2),
-                        Motor("upper_arm_right_rotation", self.servo3, [1], True, 3),
-                        Motor("elbow_right", self.servo3, [2], True, 3),
-                        Motor("lower_arm_right_rotation", self.servo3, [3], True, 3),
-                        Motor("wrist_right", self.servo3, [4], True, 3), 
-                        Motor("shoulder_vertical_right", self.servo3, [5, 8], True, 3),
-                        Motor("shoulder_horizontal_right", self.servo3, [6], True, 3)
+                        Motor("turn_head_motor", self.servo1, [0], True, 4, False),
+                        Motor("tilt_forward_motor", self.servo1, [1], True, 4, False),
+                        Motor("tilt_sideways_motor", self.servo2, [8], True, 4, False),
+                        Motor("thumb_left_opposition", self.servo1, [9], True, 0, False),
+                        Motor("thumb_left_stretch", self.servo2, [0], True, 0, False),
+                        Motor("index_left_stretch", self.servo2, [1], True, 0, False),
+                        Motor("middle_left_stretch", self.servo2, [2], True, 0, False),
+                        Motor("ring_left_stretch", self.servo2, [3], True, 0, False),
+                        Motor("pinky_left_stretch", self.servo2, [4], True, 0, False),
+                        Motor("thumb_right_opposition", self.servo1, [3], True, 1, False),
+                        Motor("thumb_right_stretch", self.servo1, [4], True, 1, False),
+                        Motor("index_right_stretch", self.servo1, [5], True, 1, False),
+                        Motor("middle_right_stretch", self.servo1, [6], True, 1, False),
+                        Motor("ring_right_stretch", self.servo1, [7], True, 1, False),
+                        Motor("pinky_right_stretch", self.servo1, [8], True, 1, False),
+                        Motor("upper_arm_left_rotation", self.servo2, [5], True, 2, False), 
+                        Motor("elbow_left", self.servo2, [6], True, 2, False),
+                        Motor("lower_arm_left_rotation", self.servo2, [7], True, 2, False),
+                        Motor("wrist_left", self.servo1, [2], True, 2, False),
+                        Motor("shoulder_vertical_left", self.servo3, [7, 9], True, 2, False),
+                        Motor("shoulder_horizontal_left", self.servo3, [0], True, 2, False),
+                        Motor("upper_arm_right_rotation", self.servo3, [1], True, 3, False),
+                        Motor("elbow_right", self.servo3, [2], True, 3, False),
+                        Motor("lower_arm_right_rotation", self.servo3, [3], True, 3, False),
+                        Motor("wrist_right", self.servo3, [4], True, 3, False), 
+                        Motor("shoulder_vertical_right", self.servo3, [5, 8], True, 3, False),
+                        Motor("shoulder_horizontal_right", self.servo3, [6], True, 3, False)
                 ]       
 
                 self.get_on_init_motor_settings_from_database()
@@ -170,6 +174,7 @@ class Motor_control(Node):
                                                 motor.servo.set_motion_configuration(port, request.velocity, request.acceleration, request.deceleration)
                                                 motor.servo.set_period(port, request.period)
                                                 motor.set_state(request.turned_on)
+                                                motor.set_invert(request.invert)
                                                 motor.servo.set_degree(port, request.rotation_range_min, request.rotation_range_max)
                                         response.settings_applied = True
                                 except Exception as e:
@@ -217,6 +222,9 @@ class Motor_control(Node):
                                         value = msg.points[0].positions[0]
 
                                         if motor.name == "shoulder_vertical_left" or motor.name == "shoulder_vertical_right":
+                                                value = value * -1
+
+                                        if motor.invert == True:
                                                 value = value * -1
 
                                         self.get_logger().info(f"Value: {value}")
