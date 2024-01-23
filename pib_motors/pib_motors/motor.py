@@ -18,10 +18,10 @@ class Motor:
 		return all(bp.apply_settings(settings_dto) for bp in self.bricklet_pins)
 
 	def get_settings(self) -> dict[str, Any]:
-		ms_dto = self.bricklet_pins[0].get_settings()
-		ms_dto['visible'] = self.visible
-		ms_dto['name'] = self.name
-		return ms_dto
+		motor_settings_dto = self.bricklet_pins[0].get_settings()
+		motor_settings_dto['visible'] = self.visible
+		motor_settings_dto['name'] = self.name
+		return motor_settings_dto
 
 	def set_position(self, position: int) -> bool:
 		return all(bp.set_position(position) for bp in self.bricklet_pins)
