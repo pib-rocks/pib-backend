@@ -1,7 +1,6 @@
 #This python script contains methods to get and save the UIDs from tinkerforge in an external file
 #Also it contains method to update the UDIs in the database and to compare the IDs with the database
 
-import rclpy
 from tinkerforge.ip_connection import IPConnection
 
 class manageTinkerforge:
@@ -40,12 +39,8 @@ class manageTinkerforge:
                 global UID3
                 UID3 = uid
 
-def main(args=None):
-       rclpy.init(args=args)
+def main():
        manager = manageTinkerforge()
-       rclpy.spin(manager)
-       rclpy.shutdown
-       manager.ipcon.disconnect()
     
 
 if __name__ == '__main__':
