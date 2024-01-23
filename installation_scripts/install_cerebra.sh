@@ -80,7 +80,8 @@ echo -e "$NEW_LINE""Database initialized successfully!"
 # Download and creat all needed files for persisting Tinkerforge settings
 
 curl "$PERSIST_TINKERFORGE_SETTINGS_URL" > "/home/pib/pib_data/$MANAGE_TINKERFORGE_SETTINGS_FILE"
-touch $DATABASE_DIR/tinkerForgeConfig.txt
+touch "$DATABASE_DIR/tinkerForgeConfig.txt"
+chmod 755 "/home/pib/pib_data/$MANAGE_TINKERFORGE_SETTINGS_FILE" "$DATABASE_DIR/tinkerForgeConfig.txt"
 
 # Create the directory for python code and populate it with a single initial python script (matching
 # the single entry in the database)
