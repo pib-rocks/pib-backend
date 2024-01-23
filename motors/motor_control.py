@@ -204,6 +204,7 @@ class Motor_control(Node):
                         msg.active = request.active
                         msg.period = request.period
                         msg.turned_on = request.turned_on
+                        msg.invert = request.invert
                         self.publisher.publish(msg)
                 return response
                 
