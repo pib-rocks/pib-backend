@@ -36,7 +36,7 @@ GOOGLE_KEY_PATH = "/home/pib/ros_working_dir/src/voice-assistant/credentials/goo
 
 # Set up OpenAI GPT-3 API
 with open(OPENAI_KEY_PATH) as f:
-    openai.api_key = f.read()
+    openai.api_key = f.read().strip()
 
 # Google Cloud API
 os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = GOOGLE_KEY_PATH
