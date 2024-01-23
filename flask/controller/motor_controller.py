@@ -7,13 +7,13 @@ from flask import request, jsonify, abort
 def get_all_motors():
     motors = motor_service.get_all_motors()
     try: return jsonify({'motors': motors_schema.dump(motors)})
-    except: abort(500)
+    except Exception: abort(500)
 
 
 def get_motor(name: str):
     motor = motor_service.get_motor_by_name(name)
     try: return motor_schema.dump(motor)
-    except: abort(500)
+    except Exception: abort(500)
 
 
 def update_motor(name: str):
@@ -23,13 +23,13 @@ def update_motor(name: str):
     motor = motor_service.set_motor_settings(name, motor_settings_dto)
     db.session.commit()
     try: return motor_schema.dump(motor)
-    except: abort(500)
+    except Exception: abort(500)
 
 
 def get_motor_settings(name: str):
     motor = motor_service.get_motor_by_name(name)
     try: return motor_settings_schema.dump(motor)
-    except: abort(500)
+    except Exception: abort(500)
 
 
 def update_motor_settings(name: str):
@@ -37,13 +37,13 @@ def update_motor_settings(name: str):
     motor = motor_service.set_motor_settings(name, motor_settings_dto)
     db.session.commit()
     try: return motor_settings_schema.dump(motor)
-    except: abort(500)
+    except Exception: abort(500)
 
 
 def get_motor_bricklet_pins(name: str):
     motor = motor_service.get_motor_by_name(name)
     try: return motor_bricklet_pins_schema.dump(motor)
-    except: abort(500)
+    except Exception: abort(500)
 
 
 def update_motor_bricklet_pins(name: str):
@@ -51,4 +51,4 @@ def update_motor_bricklet_pins(name: str):
     motor = motor_service.set_bricklet_pins(name, bricklet_pin_dtos)
     db.session.commit()
     try: return motor_bricklet_pins_schema.dump(motor)
-    except: abort(500)
+    except Exception: abort(500)
