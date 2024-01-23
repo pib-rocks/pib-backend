@@ -22,6 +22,7 @@ PHPLITEADMIN_INSTALLATION_DIR="/var/www/phpliteadmin"
 DATABASE_DIR="$USER_HOME/pib_data"
 DATABASE_FILE="pibdata.db"
 DATABASE_INIT_QUERY_FILE="cerebra_init_database.sql"
+MANAGE_TINKERFORGE_SETTINGS_FILE="manageTinkerForageSettings.py"
 DATABASE_INIT_QUERY_URL="https://raw.githubusercontent.com/pib-rocks/setup-pib/""${repo_map[$SETUP_PIB_ORIGIN]}""/setup_files/cerebra_init_database.sql"
 
 #Persist Tinkerforge settings variables
@@ -77,7 +78,8 @@ sudo chmod 766 $DATABASE_DIR/$DATABASE_FILE
 echo -e "$NEW_LINE""Database initialized successfully!"
 
 # Download and creat all needed files for persisting Tinkerforge settings
-curl "$PERSIST_TINKERFORGE_SETTINGS_URL" --location --output "$DATABASE_DIR"
+
+curl "$PERSIST_TINKERFORGE_SETTINGS_URL" > "/home/pib/pib_data/$MANAGE_TINKERFORGE_SETTINGS_FILE"
 touch $DATABASE_DIR/tinkerForgeConfig.txt
 
 # Create the directory for python code and populate it with a single initial python script (matching
