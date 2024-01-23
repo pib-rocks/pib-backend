@@ -1,4 +1,4 @@
-from schema.bricklet_schema import bricklets_uid_only_schema
+from schema.bricklet_schema import bricklet_uid_only_schema, bricklet_schema, bricklets_schema
 from service import bricklet_service
 from app.app import db
 from flask import jsonify, request, abort
@@ -6,5 +6,20 @@ from flask import jsonify, request, abort
 
 def get_all_bricklets():
     bricklets = bricklet_service.get_all_bricklets()
-    try: return jsonify({"bricklets": bricklets_uid_only_schema.dump(bricklets)})
+    try: return jsonify({"bricklets": bricklets_schema.dump(bricklets)})
     except: abort(500)
+
+
+def get_bricklet(bricklet_number: str):
+    bricklet = bricklet_service.get_bricklet(bricklet_number)
+    try: return bricklet_uid_only_schema.dump(bricklet)
+    except: abort(500)
+
+
+def update_bricklet(bricklet_number: str):
+    uid = bricklet_uid_only_schema.load(request.json)['uid']
+    bricklet = bricklet_service.set_bricklet_uid(bricklet_number, uid)
+    db.session.commit()
+    try: return bricklet_schema.dump(bricklet)
+    except: abort(500)
+
