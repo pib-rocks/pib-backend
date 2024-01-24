@@ -22,7 +22,7 @@ declare -A settingsMap=(
 for setting in "${!settingsMap[@]}"
 do
     if grep -q "$setting" "$CONFIG_FILE"; then
-        sed -i "/$setting/c\\${settingsMap[$setting]}" "$CONFIG_FILE"
+        sudo sed -i "/$setting/c\\${settingsMap[$setting]}" "$CONFIG_FILE"
     elif ! grep -q "$setting" "$CONFIG_FILE" && ! grep -q "${settingsMap[$setting]}" "$CONFIG_FILE"; then
         echo "${settingsMap[$setting]}" >> "$CONFIG_FILE"
     fi
