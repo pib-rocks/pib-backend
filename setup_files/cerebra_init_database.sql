@@ -41,18 +41,6 @@ INSERT INTO motor(name, pulseWidthMin, pulseWidthMax, rotationRangeMin, rotation
    ('shoulder_vertical_right', 700, 2500, -9000, 9000, 16000, 10000, 5000, 19500, TRUE, TRUE),
    ('shoulder_horizontal_right', 700, 2500, -9000, 9000, 16000, 10000, 5000, 19500, TRUE, TRUE);
 
-CREATE TABLE person (
-   id INTEGER primary key AUTOINCREMENT NOT NULL, 
-   name Text NOT NULL
-);
-
-CREATE TABLE address (
-   id INTEGER primary key AUTOINCREMENT NOT NULL, 
-   email Text NOT NULL,
-   person_id INTEGER NOT NULL,
-   FOREIGN KEY (person_id) REFERENCES Person(id)
-);
-
 CREATE TABLE IF NOT EXISTS personality (
    id INTEGER primary key AUTOINCREMENT NOT NULL, 
    personalityId Text UNIQUE NOT NULL, 
