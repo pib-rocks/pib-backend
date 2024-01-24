@@ -250,7 +250,6 @@ def speech_to_text(input, output):
     except sr.RequestError as e:
         print('Request error from Google Speech Recognition')
     output.value = data
-    print(f"output value: '{output.value}'")
 
 
 
@@ -291,12 +290,13 @@ def play_audio(input, output):
     )
     with open(AUDIO_OUTPUT_FILE, "wb") as out:
         out.write(response.audio_content)
+    os.chmod(AUDIO_OUTPUT_FILE, 0o777)
+    
 
     # play audio from generated file
 
     CHUNK = 1024
     wf = wave.open(AUDIO_OUTPUT_FILE, 'rb')
-    print(AUDIO_OUTPUT_FILE)
     print('++++++++++++++++++++++++++++++++++++++ALSA')
     p = pyaudio.PyAudio()
     print('++++++++++++++++++++++++++++++++++++++')
