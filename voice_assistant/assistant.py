@@ -27,8 +27,10 @@ from urllib import request as urllib_request, error as urllib_error
 TURN_ON_WAITING_PERIOD_SECONDS = 0.5
 WORKER_SIGNAL_WAITING_PERIOD_SECONDS = 0.5
 WORKER_PROCESS_RESPONSE_WAITING_PERIOD_SECONDS = 0.1
-AUDIO_OUTPUT_FILE = "output.wav"
+
 CHAT_MESSAGE_ROUTE = "http://localhost:5000/voice-assistant/chat/%s/messages"
+
+AUDIO_OUTPUT_FILE = "/home/pib/ros_working_dir/src/voice-assistant/output.wav"
 OPENAI_KEY_PATH = "/home/pib/ros_working_dir/src/voice-assistant/credentials/openai-key"
 GOOGLE_KEY_PATH = "/home/pib/ros_working_dir/src/voice-assistant/credentials/google-key"
 
