@@ -83,3 +83,18 @@ if [ -z "$1" ]; then
 	sudo chmod -R 777 $ROS_WORKING_DIR/install
 	sudo chmod -R 777 $ROS_WORKING_DIR/log
 fi
+
+echo "Checking BrickletsIDs..."
+cd $USER_HOME/pib_data
+if [ python3 -c'from manageTinkerForgeSettings import changesBetweenCurrentAndTinkerForgeUIDs; changesBetweenCurrentAndTinkerForgeUIDs()' ]; then
+        while true; do
+                read -p "Some changes are detected. Do you want to update your BrickletIDs?" yn
+                case $yn in
+                        [Yy]* ) python3 -c'from manageTinkerForgeSettings import updateUIDs; updateUIDs()'; break;;
+                        [Nn]* ) exit;;
+                        * ) echo "Please answer yes or no.";;
+                esac
+        done
+fi
+cd
+echo "Everything is up to date"

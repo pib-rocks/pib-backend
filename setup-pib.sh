@@ -157,7 +157,7 @@ sudo systemctl enable ssh --now
 
 #Persist the current UDIs of Tinkerforge
 cd $USER_HOME/pib_data
-python3 -c "from manageTinkerForageSettings.py import persistUIDs; print(persistUIDs())"
+python3 -c "from manageTinkerForgeSettings import updateUIDs; updateUIDs()"
 cd 
 
 echo -e "$NEW_LINE""Congratulations! The setup completed succesfully!"
