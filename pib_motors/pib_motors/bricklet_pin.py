@@ -38,7 +38,7 @@ class BrickletPin:
 		except Exception as error: logging.error(f'error occured while trying to get motor-settings: {str(error)}')
 		return settings_dto
 
-	def set_position(self, position: int) -> None:
+	def set_position(self, position: int) -> bool:
 		try: self.bricklet.set_position(self.pin, position)
 		except: return False
 		return True
