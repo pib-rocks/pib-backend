@@ -27,8 +27,7 @@ class Motor:
 		return all(bp.set_position(position) for bp in self.bricklet_pins)
 	
 	def get_position(self) -> int:
-		try: return self.bricklet_pins[0].get_position()
-		except: return 0 
+		return self.bricklet_pins[0].get_position()
 
 
 # get data from pib-api
