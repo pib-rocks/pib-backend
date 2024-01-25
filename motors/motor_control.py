@@ -74,7 +74,8 @@ class MotorControl(Node):
 
         def motor_settings_callback(self, request: MotorSettingsSrv.Request, response: MotorSettingsSrv.Response):
 
-                response = MotorSettingsSrv.Response(settings_applied=True, settings_persisted=True)
+                response.settings_applied = True
+                response.settings_persisted = True
                 
                 motor_settings_ros = request.motor_settings
                 motor_settings_dto = motor_settings_ros_to_dto(motor_settings_ros)
