@@ -11,6 +11,9 @@ import rclpy
 from rclpy.node import Node
 from diagnostic_msgs.msg import DiagnosticStatus
 from diagnostic_msgs.msg import KeyValue
+import sys
+sys.path.append('/home/pib/flask/controller')
+import bricklet_controller
 
 
 
@@ -18,12 +21,12 @@ class Motor_current(Node):
 
     def __init__(self):
 
-        tinkerforgeSettings = open(tinkerforgeSettingspath, "r")
-        uid_pattern = re.compile(r'UID\d\s*=\s*([^\s]+)')
-        matches = uid_pattern.findall(input_string)
-        UID1 = matches[0]
-        UID2 = matches[1]
-        UID3 = matches[3]
+        #get UID from database
+        response = bricklet_controller.get_all_bricklets()
+        json_data = json.loads(response.text)
+        UID1 = json_data['bricklets'][0]['uid']
+        UID2 = json_data['bricklets'][1]['uid']
+        UID3 = json_data['bricklets'][2]['uid']
 
         qos_policy = rclpy.qos.QoSProfile(reliability=rclpy.qos.ReliabilityPolicy.BEST_EFFORT,
                                           history=rclpy.qos.HistoryPolicy.KEEP_LAST,
