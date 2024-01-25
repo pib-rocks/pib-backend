@@ -16,7 +16,9 @@ from datatypes.msg import MotorSettings
 from enum import Enum
 from urllib import request as urllib_request, parse as urllib_parse, error as urllib_error
 import json
-                
+import sys
+sys.path.append('/home/pib/flask/controller')
+import bricklet_controller
 
 
 class Motor:    
@@ -104,14 +106,13 @@ class Motor_control(Node):
                 self.hat = BrickHAT("X", self.ipcon)
                 self.ipcon.connect(HOST, 4223)
 
-                # temp = self.set_uid()
-                # self.get_logger().warn(f"{str(temp)}")
-                tinkerforgeSettings = open(tinkerforgeSettingspath, "r")
-                uid_pattern = re.compile(r'UID\d\s*=\s*([^\s]+)')
-                matches = uid_pattern.findall(input_string)
-                UID1 = matches[0]
-                UID2 = matches[1]
-                UID3 = matches[3]
+                #get UID from database
+                response = bricklet_controller.get_all_bricklets()
+                json_data = json.loads(response.text)
+                UID1 = json_data['bricklets'][0]['uid']
+                UID2 = json_data['bricklets'][1]['uid']
+                UID3 = json_data['bricklets'][2]['uid']
+
                 
                 # Handles for three Servo Bricklets
                 self.servo1 = BrickletServoV2(UID1, self.ipcon)
