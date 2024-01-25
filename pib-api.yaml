@@ -19,7 +19,7 @@ tags:
   - name: program
     description: CRUD-Operations for user programs
   - name: bricklet
-    description: ead- and Update-Operations for bricklets
+    description: Read- and Update-Operations for bricklets
 paths:
   /voice-assistant/personality:
     post:
