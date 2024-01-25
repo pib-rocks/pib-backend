@@ -1,2 +1,5 @@
 # Visual Studio Code
 .vscode/
+output.wav
+openai-key
+google-key
