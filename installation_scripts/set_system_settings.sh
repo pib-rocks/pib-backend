@@ -24,7 +24,7 @@ do
     if grep -q "$setting" "$CONFIG_FILE"; then
         sudo sed -i "/$setting/c\\${settingsMap[$setting]}" "$CONFIG_FILE"
     elif ! grep -q "$setting" "$CONFIG_FILE" && ! grep -q "${settingsMap[$setting]}" "$CONFIG_FILE"; then
-        echo "${settingsMap[$setting]}" >> "$CONFIG_FILE"
+        echo "${settingsMap[$setting]}" | sudo tee -a "$CONFIG_FILE" > /dev/null
     fi
 done
 
@@ -38,3 +38,5 @@ gsettings set org.gnome.settings-daemon.plugins.power ambient-enabled false
 gsettings set org.gnome.settings-daemon.plugins.power idle-dim false
 gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-ac-type 'nothing'
 gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-battery-type 'nothing'
+
+echo -e "$NEW_LINE""$GREEN_TEXT_COLOR""-- System settings adjustment completed --""$RESET_TEXT_COLOR""$NEW_LINE"
