@@ -44,5 +44,6 @@ class BrickletPin:
 		return True
 
 	def get_position(self) -> int:
-		return self.bricklet.get_position(self.pin)
+		try: return self.bricklet.get_position(self.pin)
+		except: return 0
 		
