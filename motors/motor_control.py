@@ -222,16 +222,19 @@ class Motor_control(Node):
                                         self.get_logger().info(f"Motor: {str(motor.name)}")
                                         value = msg.points[0].positions[0]
 
-                                        if motor.name == "shoulder_vertical_left" or motor.name == "shoulder_vertical_right":
-                                                value = value * -1
-
                                         if motor.invert == True:
                                                 value = value * -1
 
                                         self.get_logger().info(f"Value: {value}")
+                                        i = 0
                                         for port in motor.ports:
+                                                #the second pin of shoulder will be invertet
+                                                if motor.name == "shoulder_vertical_left" or motor.name == "shoulder_vertical_right":
+                                                        if i == 1:
+                                                                value = value * -1
                                                 motor.servo.set_enable(port, motor.state)
                                                 motor.servo.set_position(port, value)   
+                                                i += 1
 
                 except Exception as e:
                         self.get_logger().warn(f"Error processing joint-trajectory-message: {str(e)}")
