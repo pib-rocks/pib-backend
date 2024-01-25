@@ -13,7 +13,7 @@ class BrickletPin:
 	def __str__(self) -> str:
 		uid = "---"
 		try: uid = self.bricklet.get_identity()[0]
-		except: pass
+		except Exception: pass
 		return f"BRICKLET-PIN[ pin: {self.pin}, bricklet: {uid} ]"
 
 	def apply_settings(self, settings_dto: dict[str, Any]) -> bool:
@@ -40,10 +40,10 @@ class BrickletPin:
 
 	def set_position(self, position: int) -> bool:
 		try: self.bricklet.set_position(self.pin, position)
-		except: return False
+		except Exception: return False
 		return True
 
 	def get_position(self) -> int:
 		try: return self.bricklet.get_position(self.pin)
-		except: return 0
+		except Exception: return 0
 		
