@@ -127,11 +127,26 @@ INSERT INTO program(name, codeVisual, programNumber) VALUES
 
 CREATE TABLE IF NOT EXISTS chat (
    id INTEGER primary key AUTOINCREMENT NOT NULL, 
-   chatid TEXT NOT NULL, 
+   chatid TEXT UNIQUE NOT NULL,
    topic TEXT NOT NULL, 
    personalityId TEXT NOT NULL, 
-   FOREIGN KEY (personalityId) REFERENCES personality(personalityId));
+   FOREIGN KEY (personalityId) REFERENCES personality(personalityId)
+);
 
 INSERT INTO chat(chatid, topic, personalityId) VALUES
-   ("12345-12333-45345-456456", "Nuernberg", "8f73b580-927e-41c2-98ac-e5df070e7288"),
-   ("12345-12333-45345-456567", "Home-Office", "8b310f95-92cd-4512-b42a-d3fe29c4bb8a");
+   ("b4f01552-0c09-401c-8fde-fda753fb0261", "Nuernberg", "8f73b580-927e-41c2-98ac-e5df070e7288"),
+   ("ee3e80f9-c8f7-48c2-9f15-449ba9bbe4ab", "Home-Office", "8b310f95-92cd-4512-b42a-d3fe29c4bb8a");
+
+create table IF NOT EXISTS chatMessage (
+   id INTEGER primary key AUTOINCREMENT NOT NULL, 
+   messageId TEXT NOT NULL, 
+   timestamp TEXT NOT NULL DEFAULT (DATETIME('now')),
+   isUser INTEGER NOT NULL, 
+   content TEXT NOT NULL,
+   chatId TEXT NOT NULL,
+   FOREIGN KEY (chatId) REFERENCES chat(chatId)
+);
+
+INSERT INTO chatMessage("messageId", "isUser", "content", "chatId") VALUES
+   ("539ed3e6-9e3d-11ee-8c90-0242ac120002", TRUE, "hello pib!", "b4f01552-0c09-401c-8fde-fda753fb0261"),
+   ("0a080706-9e3e-11ee-8c90-0242ac120002", FALSE, "hello user!", "b4f01552-0c09-401c-8fde-fda753fb0261");
