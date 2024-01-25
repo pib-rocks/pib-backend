@@ -70,7 +70,10 @@ CREATE TABLE IF NOT EXISTS bricklet (
    brickletNumber INTEGER UNIQUE NOT NULL
 );
 
-INSERT INTO bricklet(uid, brickletNumber) VALUES ("SHU", 1), ("BBB", 2), ("CCC", 3);
+INSERT INTO bricklet(uid, brickletNumber) VALUES 
+   ("AAA", 1), 
+   ("BBB", 2), 
+   ("CCC", 3);
 
 CREATE TABLE IF NOT EXISTS brickletPin (
    id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, 
