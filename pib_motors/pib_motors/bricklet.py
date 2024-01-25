@@ -13,7 +13,7 @@ ipcon.connect(HOST, 4223)
 
 # get data from pib-api
 successful, bricklet_dtos = bricklet_client.get_all_bricklets()
-if not successful: raise Exception("failed to load bricklets from pib-api...")
+if not successful: raise RuntimeError("failed to load bricklets from pib-api...")
 bricklet_uids = [ dto['uid'] for dto in bricklet_dtos['bricklets'] ]
 
 # maps the uid (e.g. 'XYZ') to the associated bricklet object

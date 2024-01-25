@@ -32,7 +32,7 @@ class Motor:
 
 # get data from pib-api
 successful, response = motor_client.get_all_motors()
-if not successful: raise Exception('failed to load motors from pib-api...')
+if not successful: raise RuntimeError('failed to load motors from pib-api...')
 
 # list of all available motor-objects
 motors: list[Motor] = []
