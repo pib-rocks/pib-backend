@@ -221,7 +221,7 @@ class VoiceAssistantNode(Node):
 def speech_to_text(pause_threshold: float, output: type[Value]) -> None:
 
     r = sr.Recognizer()
-    r.pause_threshold = pause_threshold
+    r.pause_threshold = max(pause_threshold, r.non_speaking_duration)
     print('----------------------------------------------ALSA')
     with sr.Microphone() as source:
         print('----------------------------------------------')
