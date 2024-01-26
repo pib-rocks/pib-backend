@@ -227,10 +227,12 @@ class Motor_control(Node):
 
                                         self.get_logger().info(f"Value: {value}")
 
-                                        if len(motor.ports) == 2:
+                                        # The vertical shoulders are assigned two motors. These need to move in opposing directions
+                                        if len(motor.ports) == 2 and motor.name.startswith("shoulder_vertical_"):
                                                 motor.servo.set_enable(motor.ports[0], motor.state)
                                                 motor.servo.set_enable(motor.ports[1], motor.state)
 
+                                                # The position for the smaller pin port is inverted. This rule is chosen arbitrarily
                                                 if motor.ports[0] >= motor.ports[1]:	
                                                         motor.servo.set_position(motor.ports[0], value * -1)   
                                                         motor.servo.set_position(motor.ports[1], value)   
