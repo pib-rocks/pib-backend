@@ -227,14 +227,20 @@ class Motor_control(Node):
 
                                         self.get_logger().info(f"Value: {value}")
 
-                                        if len(motor.ports) == 1:
+                                        if len(motor.ports) == 2:
+                                                motor.servo.set_enable(motor.ports[0], motor.state)
+                                                motor.servo.set_enable(motor.ports[1], motor.state)
+
+                                                if motor.ports[0] >= motor.ports[1]:	
+                                                        motor.servo.set_position(motor.ports[0], value * -1)   
+                                                        motor.servo.set_position(motor.ports[1], value)   
+                                                else:
+                                                        motor.servo.set_position(motor.ports[0], value)   
+                                                        motor.servo.set_position(motor.ports[1], value * -1)                                                   	
+                                                
+                                        elif len(motor.ports) == 1:
                                                 motor.servo.set_enable(motor.ports[0], motor.state)
                                                 motor.servo.set_position(motor.ports[0], value)   
-                                        elif len(motor.ports) == 2:
-                                                motor.servo.set_enable(motor.ports[0], motor.state)
-                                                motor.servo.set_position(motor.ports[0], value * -1)   
-                                                motor.servo.set_enable(motor.ports[1], motor.state)
-                                                motor.servo.set_position(motor.ports[1], value)   
                                         else:
                                                 raise TypeError("To many physical motors for one motor")
 
