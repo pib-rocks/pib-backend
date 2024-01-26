@@ -10,37 +10,36 @@ CREATE TABLE IF NOT EXISTS motor (
    deceleration INTEGER NOT NULL, 
    period INTEGER NOT NULL, 
    turnedOn BOOLEAN NOT NULL, 
-   effort INTEGER, 
-   active BOOLEAN NOT NULL);
+   visible BOOLEAN NOT NULL);
 
-INSERT INTO motor(name, pulseWidthMin, pulseWidthMax, rotationRangeMin, rotationRangeMax, velocity, acceleration, deceleration, period, turnedOn, effort, active) VALUES
-   ('tilt_forward_motor', 700, 2500, -4500, 4500, 16000, 10000, 5000, 19500, TRUE, NULL, TRUE),
-   ('tilt_sideways_motor', 700, 2500, -9000, 9000, 16000, 10000, 5000, 19500, TRUE, NULL, FALSE),
-   ('turn_head_motor', 700, 2500, -9000, 9000, 16000, 10000, 5000, 19500, TRUE, NULL, TRUE),
-   ('thumb_left_stretch', 700, 2500, -9000, 9000, 16000, 10000, 5000, 19500, TRUE, NULL, TRUE),
-   ('thumb_left_opposition', 700, 2500, -9000, 9000, 16000, 10000, 5000, 19500, TRUE, NULL, TRUE),
-   ('index_left_stretch', 700, 2500, -9000, 9000, 16000, 10000, 5000, 19500, TRUE, NULL, TRUE),
-   ('middle_left_stretch', 700, 2500, -9000, 9000, 16000, 10000, 5000, 19500, TRUE, NULL, TRUE),
-   ('ring_left_stretch', 700, 2500, -9000, 9000, 16000, 10000, 5000, 19500, TRUE, NULL, TRUE),
-   ('pinky_left_stretch', 700, 2500, -9000, 9000, 16000, 10000, 5000, 19500, TRUE, NULL, TRUE),
-   ('thumb_right_stretch', 700, 2500, -9000, 9000, 16000, 10000, 5000, 19500, TRUE, NULL, TRUE),
-   ('thumb_right_opposition', 700, 2500, -9000, 9000, 16000, 10000, 5000, 19500, TRUE, NULL, TRUE),
-   ('index_right_stretch', 700, 2500, -9000, 9000, 16000, 10000, 5000, 19500, TRUE, NULL, TRUE),
-   ('middle_right_stretch', 700, 2500, -9000, 9000, 16000, 10000, 5000, 19500, TRUE, NULL, TRUE),
-   ('ring_right_stretch', 700, 2500, -9000, 9000, 16000, 10000, 5000, 19500, TRUE, NULL, TRUE),
-   ('pinky_right_stretch', 700, 2500, -9000, 9000, 16000, 10000, 5000, 19500, TRUE, NULL, TRUE),
-   ('upper_arm_left_rotation', 700, 2500, -9000, 9000, 16000, 10000, 5000, 19500, TRUE, NULL, TRUE),
-   ('elbow_left', 700, 2500, -9000, 9000, 16000, 10000, 5000, 19500, TRUE, NULL, TRUE),
-   ('lower_arm_left_rotation', 700, 2500, -9000, 9000, 16000, 10000, 5000, 19500, TRUE, NULL, TRUE),
-   ('wrist_left', 700, 2500, -9000, 9000, 16000, 10000, 5000, 19500, TRUE, NULL, TRUE),
-   ('shoulder_vertical_left', 700, 2500, -9000, 9000, 16000, 10000, 5000, 19500, TRUE, NULL, TRUE),
-   ('shoulder_horizontal_left', 700, 2500, -9000, 9000, 16000, 10000, 5000, 19500, TRUE, NULL, TRUE),
-   ('upper_arm_right_rotation', 700, 2500, -9000, 9000, 16000, 10000, 5000, 19500, TRUE, NULL, TRUE),
-   ('elbow_right', 700, 2500, -9000, 9000, 16000, 10000, 5000, 19500, TRUE, NULL, TRUE),
-   ('lower_arm_right_rotation', 700, 2500, -9000, 9000, 16000, 10000, 5000, 19500, TRUE, NULL, TRUE),
-   ('wrist_right', 700, 2500, -9000, 9000, 16000, 10000, 5000, 19500, TRUE, NULL, TRUE),
-   ('shoulder_vertical_right', 700, 2500, -9000, 9000, 16000, 10000, 5000, 19500, TRUE, NULL, TRUE),
-   ('shoulder_horizontal_right', 700, 2500, -9000, 9000, 16000, 10000, 5000, 19500, TRUE, NULL, TRUE);
+INSERT INTO motor(name, pulseWidthMin, pulseWidthMax, rotationRangeMin, rotationRangeMax, velocity, acceleration, deceleration, period, turnedOn, visible) VALUES
+   ('tilt_forward_motor', 700, 2500, -4500, 4500, 16000, 10000, 5000, 19500, TRUE, TRUE),
+   ('tilt_sideways_motor', 700, 2500, -9000, 9000, 16000, 10000, 5000, 19500, TRUE, FALSE),
+   ('turn_head_motor', 700, 2500, -9000, 9000, 16000, 10000, 5000, 19500, TRUE, TRUE),
+   ('thumb_left_stretch', 700, 2500, -9000, 9000, 16000, 10000, 5000, 19500, TRUE, TRUE),
+   ('thumb_left_opposition', 700, 2500, -9000, 9000, 16000, 10000, 5000, 19500, TRUE, TRUE),
+   ('index_left_stretch', 700, 2500, -9000, 9000, 16000, 10000, 5000, 19500, TRUE, TRUE),
+   ('middle_left_stretch', 700, 2500, -9000, 9000, 16000, 10000, 5000, 19500, TRUE, TRUE),
+   ('ring_left_stretch', 700, 2500, -9000, 9000, 16000, 10000, 5000, 19500, TRUE, TRUE),
+   ('pinky_left_stretch', 700, 2500, -9000, 9000, 16000, 10000, 5000, 19500, TRUE, TRUE),
+   ('thumb_right_stretch', 700, 2500, -9000, 9000, 16000, 10000, 5000, 19500, TRUE, TRUE),
+   ('thumb_right_opposition', 700, 2500, -9000, 9000, 16000, 10000, 5000, 19500, TRUE, TRUE),
+   ('index_right_stretch', 700, 2500, -9000, 9000, 16000, 10000, 5000, 19500, TRUE, TRUE),
+   ('middle_right_stretch', 700, 2500, -9000, 9000, 16000, 10000, 5000, 19500, TRUE, TRUE),
+   ('ring_right_stretch', 700, 2500, -9000, 9000, 16000, 10000, 5000, 19500, TRUE, TRUE),
+   ('pinky_right_stretch', 700, 2500, -9000, 9000, 16000, 10000, 5000, 19500, TRUE, TRUE),
+   ('upper_arm_left_rotation', 700, 2500, -9000, 9000, 16000, 10000, 5000, 19500, TRUE, TRUE),
+   ('elbow_left', 700, 2500, -9000, 9000, 16000, 10000, 5000, 19500, TRUE, TRUE),
+   ('lower_arm_left_rotation', 700, 2500, -9000, 9000, 16000, 10000, 5000, 19500, TRUE, TRUE),
+   ('wrist_left', 700, 2500, -9000, 9000, 16000, 10000, 5000, 19500, TRUE, TRUE),
+   ('shoulder_vertical_left', 700, 2500, -9000, 9000, 16000, 10000, 5000, 19500, TRUE, TRUE),
+   ('shoulder_horizontal_left', 700, 2500, -9000, 9000, 16000, 10000, 5000, 19500, TRUE, TRUE),
+   ('upper_arm_right_rotation', 700, 2500, -9000, 9000, 16000, 10000, 5000, 19500, TRUE, TRUE),
+   ('elbow_right', 700, 2500, -9000, 9000, 16000, 10000, 5000, 19500, TRUE, TRUE),
+   ('lower_arm_right_rotation', 700, 2500, -9000, 9000, 16000, 10000, 5000, 19500, TRUE, TRUE),
+   ('wrist_right', 700, 2500, -9000, 9000, 16000, 10000, 5000, 19500, TRUE, TRUE),
+   ('shoulder_vertical_right', 700, 2500, -9000, 9000, 16000, 10000, 5000, 19500, TRUE, TRUE),
+   ('shoulder_horizontal_right', 700, 2500, -9000, 9000, 16000, 10000, 5000, 19500, TRUE, TRUE);
 
 CREATE TABLE IF NOT EXISTS personality (
    id INTEGER primary key AUTOINCREMENT NOT NULL, 
@@ -67,25 +66,24 @@ INSERT INTO cameraSettings(resolution, refreshRate, qualityFactor, resX, resY) V
 
 CREATE TABLE IF NOT EXISTS bricklet (
    id INTEGER primary key AUTOINCREMENT NOT NULL, 
-   brickletId TEXT NOT NULL, 
-   brickletNumber INTEGER NOT NULL
+   uid TEXT UNIQUE NOT NULL,
+   brickletNumber INTEGER UNIQUE NOT NULL
 );
 
-INSERT INTO bricklet(brickletId, brickletNumber) VALUES
-   ("XYZ", 1),
-   ("XYZ", 2),
-   ("XYZ", 3);
+INSERT INTO bricklet(uid, brickletNumber) VALUES 
+   ("AAA", 1), 
+   ("BBB", 2), 
+   ("CCC", 3);
 
-CREATE TABLE IF NOT EXISTS motorBrickletPin (
+CREATE TABLE IF NOT EXISTS brickletPin (
    id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, 
    brickletId INTEGER NOT NULL, 
-   motorId INTEGER, 
+   motorId INTEGER NOT NULL, 
    pin INTEGER NOT NULL, 
    FOREIGN KEY (brickletId) REFERENCES bricklet(id), 
-   FOREIGN KEY (motorId) REFERENCES motor(id)
-);
+   FOREIGN KEY (motorId) REFERENCES motor(id));
 
-INSERT INTO motorBrickletPin(motorId, brickletId, pin) VALUES
+INSERT INTO brickletPin(motorId, brickletId, pin) VALUES
    ((SELECT id FROM motor WHERE name = "turn_head_motor"), 1, 0),
    ((SELECT id FROM motor WHERE name = "tilt_forward_motor"), 1, 1),
    ((SELECT id FROM motor WHERE name = "tilt_sideways_motor"), 2, 8),
