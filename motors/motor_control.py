@@ -226,15 +226,17 @@ class Motor_control(Node):
                                                 value = value * -1
 
                                         self.get_logger().info(f"Value: {value}")
-                                        i = 0
-                                        for port in motor.ports:
-                                                #the second pin of shoulder will be invertet
-                                                if motor.name == "shoulder_vertical_left" or motor.name == "shoulder_vertical_right":
-                                                        if i == 1:
-                                                                value = value * -1
-                                                motor.servo.set_enable(port, motor.state)
-                                                motor.servo.set_position(port, value)   
-                                                i += 1
+
+                                        if len(motor.ports) == 1:
+                                                motor.servo.set_enable(motor.ports[0], motor.state)
+                                                motor.servo.set_position(motor.ports[0], value)   
+                                        elif len(motor.ports) == 2:
+                                                motor.servo.set_enable(motor.ports[0], motor.state)
+                                                motor.servo.set_position(motor.ports[0], value * -1)   
+                                                motor.servo.set_enable(motor.ports[1], motor.state)
+                                                motor.servo.set_position(motor.ports[1], value)   
+                                        else:
+                                                raise TypeError("To many physical motors for one motor")
 
                 except Exception as e:
                         self.get_logger().warn(f"Error processing joint-trajectory-message: {str(e)}")
@@ -252,7 +254,7 @@ class Motor_control(Node):
                                 "http://localhost:5000/motor-settings",
                                 method='PUT',
                                 data=http_req_body,
-                                headers={ "Content-Type": "application/json" }                           
+                                headers={ "Content-Type": "application/json" }
                         )
 
                         # send request to pib-api
