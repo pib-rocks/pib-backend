@@ -58,7 +58,8 @@ class InternalState:
                 if not successful: raise Exception("failed to retrieve chat from pib-api")
                 successful, personality_dto = personality_client.get_personality(chat_dto['personalityId'])
                 if not successful: raise Exception("failed to retrieve personlaity from pib-api")
-            self.description = personality_dto['description'] if 'description' in personality_dto else ''
+            self.description = personality_dto['description']
+            if self.description is None: self.description = 'Du bist pib, ein humanoider Roboter'
             self.pause_threshold = personality_dto['pauseThreshold']
             self.gender = personality_dto['gender']
 
