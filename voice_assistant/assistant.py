@@ -55,7 +55,9 @@ class InternalState:
         if turned_on:
             with pib_api_client_lock:
                 successful, chat_dto = chat_client.get_chat(chat_id)
+                if not successful: raise Exception("failed to retrieve chat from pib-api")
                 successful, personality_dto = personality_client.get_personality(chat_dto['personalityId'])
+                if not successful: raise Exception("failed to retrieve personlaity from pib-api")
             self.description = personality_dto['description'] if 'description' in personality_dto else ''
             self.pause_threshold = personality_dto['pauseThreshold']
             self.gender = personality_dto['gender']
