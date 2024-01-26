@@ -1,4 +1,5 @@
-from typing import Any
+from multiprocessing.connection import Connection
+from typing import Any, Callable
 import rclpy
 from rclpy.node import Node
 from rclpy.executors import MultiThreadedExecutor
@@ -15,17 +16,18 @@ import pyaudio
 import wave
 import os
 import speech_recognition as sr
+from speech_recognition import WaitTimeoutError
 from multiprocessing import Process, Value, Pipe, Manager, Lock
 import time
 
-import json
 import ctypes
-from urllib import request as urllib_request, error as urllib_error
+
+from pib_api_client import chat_client, personality_client
 
 
 
 TURN_ON_WAITING_PERIOD_SECONDS = 0.5
-WORKER_SIGNAL_WAITING_PERIOD_SECONDS = 0.5
+WORKER_SIGNAL_WAITING_PERIOD_SECONDS = 0.1
 WORKER_PROCESS_RESPONSE_WAITING_PERIOD_SECONDS = 0.1
 
 CHAT_MESSAGE_ROUTE = "http://localhost:5000/voice-assistant/chat/%s/messages"
@@ -34,6 +36,7 @@ AUDIO_OUTPUT_FILE = "/home/pib/ros_working_dir/src/voice-assistant/output.wav"
 OPENAI_KEY_PATH = "/home/pib/ros_working_dir/src/voice-assistant/credentials/openai-key"
 GOOGLE_KEY_PATH = "/home/pib/ros_working_dir/src/voice-assistant/credentials/google-key"
 
+pib_api_client_lock = Lock()
 
 
 # Set up OpenAI GPT-3 API
@@ -43,6 +46,21 @@ with open(OPENAI_KEY_PATH) as f:
 # Google Cloud API
 os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = GOOGLE_KEY_PATH
 client = speech.SpeechClient()
+
+
+
+class InternalState:
+    
+    def __init__(self, turned_on, chat_id = ''):
+        self.turned_on = turned_on
+        self.chat_id = chat_id
+        if turned_on:
+            with pib_api_client_lock:
+                successful, chat_dto = chat_client.get_chat(chat_id)
+                successful, personality_dto = personality_client.get_personality(chat_dto['personalityId'])
+            self.description = personality_dto['description'] if 'description' in personality_dto else ''
+            self.pause_threshold = personality_dto['pauseThreshold']
+            self.gender = personality_dto['gender']
 
 
 
@@ -57,9 +75,8 @@ class VoiceAssistantNode(Node):
         va_state_callback_group = MutuallyExclusiveCallbackGroup()
         timer_callback_group = MutuallyExclusiveCallbackGroup()
 
-        self.current_state = VoiceAssistantState()
-        self.current_state.turned_on = False
-        self.current_state_lock = Lock()
+        self.internal_state = InternalState(False)
+        self.internal_state_lock = Lock()
 
         self.worker_connection = worker_connection
 
@@ -104,48 +121,49 @@ class VoiceAssistantNode(Node):
 
 
 
-    def get_voice_assistant_state(self, request, response):
+    def get_voice_assistant_state(self, _, response: GetVoiceAssistantState.Response):
 
-        with self.current_state_lock:
-            response.voice_assistant_state.chat_id = self.current_state.chat_id
-            response.voice_assistant_state.turned_on = self.current_state.turned_on
-            return response
+        with self.internal_state_lock:
+            response.voice_assistant_state.chat_id = self.internal_state.chat_id
+            response.voice_assistant_state.turned_on = self.internal_state.turned_on
+
+        return response
     
 
 
-    def set_voice_assistant_state(self, request, response):
+    def set_voice_assistant_state(self, request: SetVoiceAssistantState.Request, response: SetVoiceAssistantState.Response):
 
         request_state = request.voice_assistant_state
-        
-        with self.current_state_lock:
+        with self.internal_state_lock:
+            
             try:
-                if request_state.turned_on == self.current_state.turned_on:
+                if request_state.turned_on == self.internal_state.turned_on:
                     self.get_logger().warn(f"voice assistant is already turned {'on' if request_state.turned_on else 'off'}.")
                     response.successful = False
                 else:
-                    self.current_state = VoiceAssistantState(turned_on=request_state.turned_on, chat_id=request_state.chat_id)
+                    self.internal_state = InternalState(request_state.turned_on, request_state.chat_id)
                     response.successful = True
+
             except Exception as e:
-                self.get_logger().info(f"following error occured while trying to set voice assistant state: {str(e)}.")
+                self.get_logger().error(f"following error occured while trying to set voice assistant state: {str(e)}.")
                 response.successful = False
 
             self.voice_assistant_state_publisher.publish(VoiceAssistantState(
-                turned_on=self.current_state.turned_on, 
-                chat_id=self.current_state.chat_id
-            ))
+                turned_on=self.internal_state.turned_on, 
+                chat_id=self.internal_state.chat_id))
 
         return response
 
         
 
-    def run_on_worker(self, callback, input = "") -> (bool, str):
+    def run_on_worker(self, callback: Callable, input: tuple[Any] = ()) -> (bool, str):
 
         self.worker_connection.send(callback)
         self.worker_connection.send(input)
 
         interrupted = False
         while not self.worker_connection.poll():
-            with self.current_state_lock: interrupted = not self.current_state.turned_on
+            with self.internal_state_lock: interrupted = not self.internal_state.turned_on
             if interrupted: break
             time.sleep(WORKER_SIGNAL_WAITING_PERIOD_SECONDS)
         
@@ -157,89 +175,62 @@ class VoiceAssistantNode(Node):
     def timer_callback(self):
 
         self.get_logger().info("Waiting to start...")
-        with self.current_state_lock: 
-            if not self.current_state.turned_on: return 0
+        with self.internal_state_lock: 
+            if not self.internal_state.turned_on: return 0
 
         self.get_logger().info("ON")
 
         while True:
-            current_chat_id = ""
-            with self.current_state_lock: current_chat_id = self.current_state.chat_id
-            interrupted, user_input = self.run_on_worker(speech_to_text)
+
+            with self.internal_state_lock: 
+                current_chat_id = self.internal_state.chat_id
+                current_description = self.internal_state.description
+                current_pause_threshold = self.internal_state.pause_threshold
+                gender = self.internal_state.gender
+
+            interrupted, user_input = self.run_on_worker(speech_to_text, (current_pause_threshold,))
             if interrupted: break
             if user_input != '': self.persist_and_publish_message(user_input, True, current_chat_id)
-            interrupted, va_response = self.run_on_worker(gpt_chat, user_input)
+            interrupted, va_response = self.run_on_worker(gpt_chat, (user_input, current_description))
             if interrupted: break
             self.persist_and_publish_message(va_response, False, current_chat_id)
-            interrupted, _ = self.run_on_worker(play_audio, va_response)
+            interrupted, _ = self.run_on_worker(play_audio, (va_response, gender))
             if interrupted: break
 
         self.get_logger().info("OFF")
 
 
 
-    def persist_and_publish_message(self, message_content: str, is_user: bool, chat_id: str):
+    def persist_and_publish_message(self, message_content: str, is_user: bool, chat_id: str) -> bool:
 
-        try:
-                # compile message to UTF-8 encoded JSON string
-                request_body = json.dumps({
-                    'content': message_content,
-                    'isUser': is_user
-                }).encode('UTF-8'),
-                
-                # create post request addressed at chat message api endpoint
-                request = urllib_request.Request(
-                        CHAT_MESSAGE_ROUTE % chat_id,
-                        method='POST',
-                        data=request_body,
-                        headers={ "Content-Type": "application/json" }                           
-                )
+        with pib_api_client_lock: 
+            successful, chat_message_dto = chat_client.create_chat_message(chat_id, message_content, is_user)
 
-                # send request to pib-api and publish response to topic
-                with urllib_request.urlopen(request) as response:
-                        
-                        response_json = json.loads(response.read().decode('utf-8'))
-                        chat_message = ChatMessage()
-                        chat_message.chat_id = chat_id
-                        chat_message.content = message_content
-                        chat_message.is_user = is_user
-                        chat_message.message_id = response_json['messageId']
-                        chat_message.timestamp = response_json['timestamp']
-                        self.chat_message_publisher.publish(chat_message)
-                        
-                return True
-                
-        except urllib_error.HTTPError as e: # if server response has 4XX or 5XX status code   
-                self.get_logger().error(
-                        f"Error sending HTTP-Request, received following response from server: \n" +
-                        f"\tstatus: {e.code},\n" +
-                        f"\treason: {e.reason},\n" +
-                        f"\tresponse-body: {e.fp.read().decode()}" +
-                        f"Request that caused the error:\n" +
-                        f"\turl: {request.full_url},\n" +
-                        f"\tmethod: {request.method},\n" +
-                        f"\tbody: {request.data},\n" +
-                        f"\theaders: {request.header_items()}"
-                )
+        if not successful: return False
+
+        chat_message_ros = ChatMessage(
+            chat_id=chat_id,
+            content=message_content,
+            is_user=is_user,
+            message_id=chat_message_dto['messageId'],
+            timestamp=chat_message_dto['timestamp'])
         
-        except Exception as e: # if something else fails
-                self.get_logger().warn(f"Error while sending HTTP-Request: {str(e)}")
-
-        return False
+        self.chat_message_publisher.publish(chat_message_ros)
+        return True
 
 
 
-def speech_to_text(input, output):
-
-    print(f"value before: {output.value}")
+def speech_to_text(pause_threshold: float, output: type[Value]) -> None:
 
     r = sr.Recognizer()
+    r.pause_threshold = pause_threshold
     print('----------------------------------------------ALSA')
     with sr.Microphone() as source:
         print('----------------------------------------------')
-        r.adjust_for_ambient_noise(source)
+        #r.adjust_for_ambient_noise(source) # this should not be done here
         print('Say something!')
-        audio = r.listen(source, phrase_time_limit=20)
+        try: audio = r.listen(source, timeout=8)
+        except WaitTimeoutError: return ''
     # Speech recognition using Google's Speech Recognition
     data = ''
     try:
@@ -253,18 +244,18 @@ def speech_to_text(input, output):
 
 
 
-def gpt_chat(input, output):
+def gpt_chat(input_text: str, personality_description: str, output: type[Value]) -> None:
 
     response = openai.ChatCompletion.create(
         model="gpt-4-0314",
         messages=[
             {
                 "role": "system",
-                "content": "Du bist pib, ein humanoider Roboter.",
+                "content": personality_description,
             },
             {
                 "role": "user",
-                "content": input,
+                "content": input_text,
             },
         ]
     )
@@ -272,15 +263,15 @@ def gpt_chat(input, output):
 
 
 
-def play_audio(input, output):
+def play_audio(text_input: str, gender: str, output: type[Value]) -> None:
 
     # generate audio file from text
 
     client = texttospeech.TextToSpeechClient()
-    synthesis_input = texttospeech.SynthesisInput(text=input)
+    synthesis_input = texttospeech.SynthesisInput(text=text_input)
     voice = texttospeech.VoiceSelectionParams(
         language_code="de-DE",
-        name="de-DE-Standard-A"
+        name=f"de-DE-Standard-{'A' if gender == 'Female' else 'B'}"
     )
     audio_config = texttospeech.AudioConfig(
         audio_encoding=texttospeech.AudioEncoding.LINEAR16
@@ -321,13 +312,14 @@ def play_audio(input, output):
 
 def main(args=None):
 
-    def worker_target(connection):
+    def worker_target(connection: Connection):
         while True:
-            callback = connection.recv()
-            argument = connection.recv()
+            callback: Callable = connection.recv()
+            input_arguments: tuple[Any] = connection.recv()
             with Manager() as manager:
                 result = manager.Value(ctypes.c_wchar_p, "")
-                process = Process(target=callback, args=(argument, result))
+                arguments = input_arguments + (result,)
+                process = Process(target=callback, args=arguments)
                 process.start()
                 while process.is_alive() and not connection.poll(): 
                     time.sleep(WORKER_SIGNAL_WAITING_PERIOD_SECONDS)
