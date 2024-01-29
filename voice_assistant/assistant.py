@@ -1,5 +1,4 @@
 from multiprocessing.connection import Connection
-from typing import Any, Callable
 import rclpy
 from rclpy.node import Node
 from rclpy.executors import MultiThreadedExecutor
@@ -17,17 +16,14 @@ import wave
 import os
 import speech_recognition as sr
 from speech_recognition import WaitTimeoutError
-from multiprocessing import Process, Value, Pipe, Manager, Lock
+from multiprocessing import Process, Pipe, Lock
 import time
-
-import ctypes
 
 from pib_api_client import chat_client, personality_client
 
 
-TURN_ON_WAITING_PERIOD_SECONDS = 0.5
-WORKER_SIGNAL_WAITING_PERIOD_SECONDS = 0.1
-WORKER_PROCESS_RESPONSE_WAITING_PERIOD_SECONDS = 0.1
+RECEIVE_CHAT_MESSAGE_WAITING_PERIOD_SECONDS = 0.1
+MAIN_LOOP_RECEIVE_SIGNAL_WAITING_PERIOD_SECONDS = 0.05
 
 
 VOICE_ASSISTANT_PATH_PREFIX = "/home/pib/ros_working_dir/src/voice-assistant"
@@ -50,27 +46,27 @@ client = speech.SpeechClient()
 
 
 
-class InternalState:
-    
-    def __init__(self, turned_on, chat_id = ''):
-        self.turned_on = turned_on
+class Personality:
+
+    def __init__(self, description: str, gender: str, pause_threshold: float):
+        self.description = description
+        self.gender = gender
+        self.pause_threshold = pause_threshold
+
+
+
+class TransientChatMessage:
+
+    def __init__(self, content: str, is_user: bool, chat_id: float):
+        self.content = content
+        self.is_user = is_user
         self.chat_id = chat_id
-        if turned_on:
-            with pib_api_client_lock:
-                successful, chat_dto = chat_client.get_chat(chat_id)
-                if not successful: raise Exception("failed to retrieve chat from pib-api")
-                successful, personality_dto = personality_client.get_personality(chat_dto['personalityId'])
-                if not successful: raise Exception("failed to retrieve personlaity from pib-api")
-            self.description = personality_dto['description']
-            if self.description is None: self.description = 'Du bist pib, ein humanoider Roboter'
-            self.pause_threshold = personality_dto['pauseThreshold']
-            self.gender = personality_dto['gender']
 
 
 
 class VoiceAssistantNode(Node):
 
-    def __init__(self, worker_connection):
+    def __init__(self, chat_message_from_main: Connection, state_to_main: Connection):
 
         super().__init__('voice_assistant')
         self.get_logger().info('Now running VA')
@@ -79,10 +75,11 @@ class VoiceAssistantNode(Node):
         va_state_callback_group = MutuallyExclusiveCallbackGroup()
         timer_callback_group = MutuallyExclusiveCallbackGroup()
 
-        self.internal_state = InternalState(False)
-        self.internal_state_lock = Lock()
+        self.state = VoiceAssistantState(turned_on=False, chat_id='')
+        self.state_lock: type[Lock] = Lock()
 
-        self.worker_connection = worker_connection
+        self.chat_message_from_main: Connection = chat_message_from_main
+        self.state_to_main: Connection = state_to_main
 
         # Service for setting VoiceAssistantState
         self.set_voice_assistant_service = self.create_service(
@@ -118,7 +115,7 @@ class VoiceAssistantNode(Node):
 
         # Check for Start Signal periodically
         self.timer = self.create_timer(
-            TURN_ON_WAITING_PERIOD_SECONDS, 
+            RECEIVE_CHAT_MESSAGE_WAITING_PERIOD_SECONDS, 
             self.timer_callback,
             callback_group=timer_callback_group
         )
@@ -127,108 +124,82 @@ class VoiceAssistantNode(Node):
 
     def get_voice_assistant_state(self, _, response: GetVoiceAssistantState.Response):
 
-        with self.internal_state_lock:
-            response.voice_assistant_state.chat_id = self.internal_state.chat_id
-            response.voice_assistant_state.turned_on = self.internal_state.turned_on
+        with self.state_lock:
+            response.voice_assistant_state.chat_id = self.state.chat_id
+            response.voice_assistant_state.turned_on = self.state.turned_on
 
         return response
     
 
 
+    def get_personality_from_chat_id(self, chat_id: str) -> Personality | None:
+
+        with pib_api_client_lock:
+            successful, chat_dto = chat_client.get_chat(chat_id)
+            if not successful: return None
+            successful, personality_dto = personality_client.get_personality(chat_dto['personalityId'])
+            if not successful: return None
+            return Personality(
+                personality_dto['description'],
+                personality_dto['gender'],
+                personality_dto['pauseThreshold'])
+            
+        
+
     def set_voice_assistant_state(self, request: SetVoiceAssistantState.Request, response: SetVoiceAssistantState.Response):
 
-        request_state = request.voice_assistant_state
-        with self.internal_state_lock:
+        request_state: VoiceAssistantState = request.voice_assistant_state
+        with self.state_lock:
             
             try:
-                if request_state.turned_on == self.internal_state.turned_on:
+                if request_state.turned_on == self.state.turned_on:
                     self.get_logger().warn(f"voice assistant is already turned {'on' if request_state.turned_on else 'off'}.")
                     response.successful = False
                 else:
-                    self.internal_state = InternalState(request_state.turned_on, request_state.chat_id)
-                    response.successful = True
+                    if request_state.turned_on:
+                        personality = self.get_personality_from_chat_id(request_state.chat_id)
+                        if personality is not None: 
+                            self.state_to_main.send((personality, request_state.chat_id))
+                            self.state = VoiceAssistantState(turned_on=True, chat_id=request_state.chat_id)
+                        response.successful = personality is not None
+                    else:
+                        self.state_to_main.send(None)
+                        response.successful = True
+                        self.state = VoiceAssistantState(turned_on=False, chat_id=request_state.chat_id)
 
             except Exception as e:
                 self.get_logger().error(f"following error occured while trying to set voice assistant state: {str(e)}.")
                 response.successful = False
 
             self.voice_assistant_state_publisher.publish(VoiceAssistantState(
-                turned_on=self.internal_state.turned_on, 
-                chat_id=self.internal_state.chat_id))
-
+                turned_on=self.state.turned_on, 
+                chat_id=self.state.chat_id))
+            
         return response
-
-        
-
-    def run_on_worker(self, callback: Callable, input: tuple[Any] = ()) -> (bool, str):
-
-        self.worker_connection.send(callback)
-        self.worker_connection.send(input)
-
-        interrupted = False
-        while not self.worker_connection.poll():
-            with self.internal_state_lock: interrupted = not self.internal_state.turned_on
-            if interrupted: break
-            time.sleep(WORKER_SIGNAL_WAITING_PERIOD_SECONDS)
-        
-        self.worker_connection.send(-1)
-        return interrupted, self.worker_connection.recv()
             
 
 
     def timer_callback(self):
 
-        self.get_logger().info("Waiting to start...")
-        with self.internal_state_lock: 
-            if not self.internal_state.turned_on: return 0
+        if not self.chat_message_from_main.poll(): return
 
-        self.get_logger().info("ON")
-
-        while True:
-
-            with self.internal_state_lock: 
-                current_chat_id = self.internal_state.chat_id
-                current_description = self.internal_state.description
-                current_pause_threshold = self.internal_state.pause_threshold
-                gender = self.internal_state.gender
-
-            play_audio(START_SIGNAL_FILE, None)
-            interrupted, user_input = self.run_on_worker(speech_to_text, (current_pause_threshold,))
-            play_audio(STOP_SIGNAL_FILE, None)
-            if interrupted: break
-            if user_input != '': self.persist_and_publish_message(user_input, True, current_chat_id)
-            interrupted, va_response = self.run_on_worker(gpt_chat, (user_input, current_description))
-            if interrupted: break
-            self.persist_and_publish_message(va_response, False, current_chat_id)
-            interrupted, _ = self.run_on_worker(text_to_speech, (va_response, gender))
-            if interrupted: break
-            interrupted, _ = self.run_on_worker(play_audio, (AUDIO_OUTPUT_FILE,))
-            if interrupted: break
-
-        self.get_logger().info("OFF")
-
-
-
-    def persist_and_publish_message(self, message_content: str, is_user: bool, chat_id: str) -> bool:
+        chat_message: TransientChatMessage = self.chat_message_from_main.recv()
 
         with pib_api_client_lock: 
-            successful, chat_message_dto = chat_client.create_chat_message(chat_id, message_content, is_user)
-
-        if not successful: return False
+            _, chat_message_dto = chat_client.create_chat_message(chat_message.chat_id, chat_message.content, chat_message.is_user)
 
         chat_message_ros = ChatMessage(
-            chat_id=chat_id,
-            content=message_content,
-            is_user=is_user,
+            chat_id=chat_message.chat_id,
+            content=chat_message_dto['content'],
+            is_user=chat_message_dto['isUser'],
             message_id=chat_message_dto['messageId'],
             timestamp=chat_message_dto['timestamp'])
         
         self.chat_message_publisher.publish(chat_message_ros)
-        return True
 
 
 
-def speech_to_text(pause_threshold: float, output: type[Value]) -> None:
+def speech_to_text(pause_threshold: float) -> str:
 
     r = sr.Recognizer()
     r.pause_threshold = max(pause_threshold, r.non_speaking_duration)
@@ -248,11 +219,11 @@ def speech_to_text(pause_threshold: float, output: type[Value]) -> None:
         print('Google Speech Recognition could not understand')
     except sr.RequestError as e:
         print('Request error from Google Speech Recognition')
-    output.value = data
+    return data
 
 
 
-def gpt_chat(input_text: str, personality_description: str, output: type[Value]) -> None:
+def gpt_chat(input_text: str, personality_description: str) -> str:
 
     response = openai.ChatCompletion.create(
         model="gpt-4-0314",
@@ -267,11 +238,12 @@ def gpt_chat(input_text: str, personality_description: str, output: type[Value])
             },
         ]
     )
-    output.value = response['choices'][0]['message']['content']
+
+    return response['choices'][0]['message']['content']
 
 
 
-def text_to_speech(text_input: str, gender: str, output: type[Value]) -> None:
+def text_to_speech(text_input: str, gender: str) -> None:
 
     client = texttospeech.TextToSpeechClient()
     synthesis_input = texttospeech.SynthesisInput(text=text_input)
@@ -291,7 +263,7 @@ def text_to_speech(text_input: str, gender: str, output: type[Value]) -> None:
     
 
 
-def play_audio(file_path: str, output: type[Value]) -> None:
+def play_audio(file_path: str) -> None:
 
     CHUNK = 1024
     wf = wave.open(file_path, 'rb')
@@ -314,38 +286,63 @@ def play_audio(file_path: str, output: type[Value]) -> None:
     stream.stop_stream()
     stream.close()
     p.terminate()
+
+
+
+def worker_target(chat_id: str, personality: Personality, chat_message_to_main: Connection):
+
+    while True:
+        play_audio(START_SIGNAL_FILE)
+        user_input = speech_to_text(personality.pause_threshold)
+        play_audio(STOP_SIGNAL_FILE)
+        if user_input != '': chat_message_to_main.send(TransientChatMessage(user_input, True, chat_id))
+        va_response = gpt_chat(user_input, personality.description)
+        chat_message_to_main.send(TransientChatMessage(va_response, False, chat_id))
+        text_to_speech(va_response, personality.gender)
+        play_audio(AUDIO_OUTPUT_FILE,)
         
 
 
-def main(args=None):
 
-    def worker_target(connection: Connection):
-        while True:
-            callback: Callable = connection.recv()
-            input_arguments: tuple[Any] = connection.recv()
-            with Manager() as manager:
-                result = manager.Value(ctypes.c_wchar_p, "")
-                arguments = input_arguments + (result,)
-                process = Process(target=callback, args=arguments)
-                process.start()
-                while process.is_alive() and not connection.poll(): 
-                    time.sleep(WORKER_SIGNAL_WAITING_PERIOD_SECONDS)
-                process.terminate()
-                process.join()
-                connection.send(result.value)
-                connection.recv()
-
-    parent_connection, child_connection = Pipe()
-    worker = Process(target=worker_target, args=(child_connection,))
-    worker.start()
+def ros_target(chat_message_from_main: Connection, state_to_main: Connection):
     
     rclpy.init()
-    node = VoiceAssistantNode(parent_connection)
+    node = VoiceAssistantNode(chat_message_from_main, state_to_main)
     executor = MultiThreadedExecutor(4)
     executor.add_node(node)
     executor.spin()
     node.destroy_node()
     rclpy.shutdown()
+        
+
+
+def main(args=None):
+
+    chat_message_to_ros, chat_message_from_main = Pipe()
+    state_to_main, state_from_ros = Pipe()
+
+    ros_process = Process(target=ros_target, args=(chat_message_from_main, state_to_main))
+    ros_process.start()
+
+    while True:
+
+        personality, chat_id = state_from_ros.recv()
+
+        chat_message_to_main, chat_message_from_worker = Pipe()
+        worker_process = Process(target=worker_target, args=(chat_id, personality, chat_message_to_main))    
+        worker_process.start()
+
+        print('ON')
+
+        while not state_from_ros.poll():
+            while (chat_message_from_worker.poll()):
+                chat_message_to_ros.send(chat_message_from_worker.recv())
+            time.sleep(MAIN_LOOP_RECEIVE_SIGNAL_WAITING_PERIOD_SECONDS)
+        
+        print('OFF')
+        
+        worker_process.terminate()
+        state_from_ros.recv()
 
 
 
