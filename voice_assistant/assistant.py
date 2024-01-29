@@ -25,14 +25,17 @@ import ctypes
 from pib_api_client import chat_client, personality_client
 
 
-
 TURN_ON_WAITING_PERIOD_SECONDS = 0.5
 WORKER_SIGNAL_WAITING_PERIOD_SECONDS = 0.1
 WORKER_PROCESS_RESPONSE_WAITING_PERIOD_SECONDS = 0.1
 
-AUDIO_OUTPUT_FILE = "/home/pib/ros_working_dir/src/voice-assistant/output.wav"
-OPENAI_KEY_PATH = "/home/pib/ros_working_dir/src/voice-assistant/credentials/openai-key"
-GOOGLE_KEY_PATH = "/home/pib/ros_working_dir/src/voice-assistant/credentials/google-key"
+
+VOICE_ASSISTANT_PATH_PREFIX = "/home/pib/ros_working_dir/src/voice-assistant"
+AUDIO_OUTPUT_FILE = VOICE_ASSISTANT_PATH_PREFIX + "/audiofiles/assistant_output.wav"
+START_SIGNAL_FILE = VOICE_ASSISTANT_PATH_PREFIX + "/audiofiles/assistant_start_listening.wav"
+STOP_SIGNAL_FILE = VOICE_ASSISTANT_PATH_PREFIX + "/audiofiles/assistant_stop_listening.wav"
+OPENAI_KEY_PATH = VOICE_ASSISTANT_PATH_PREFIX + "/credentials/openai-key"
+GOOGLE_KEY_PATH = VOICE_ASSISTANT_PATH_PREFIX + "/credentials/google-key"
 
 pib_api_client_lock = Lock()
 
@@ -189,13 +192,17 @@ class VoiceAssistantNode(Node):
                 current_pause_threshold = self.internal_state.pause_threshold
                 gender = self.internal_state.gender
 
+            play_audio(START_SIGNAL_FILE, None)
             interrupted, user_input = self.run_on_worker(speech_to_text, (current_pause_threshold,))
+            play_audio(STOP_SIGNAL_FILE, None)
             if interrupted: break
             if user_input != '': self.persist_and_publish_message(user_input, True, current_chat_id)
             interrupted, va_response = self.run_on_worker(gpt_chat, (user_input, current_description))
             if interrupted: break
             self.persist_and_publish_message(va_response, False, current_chat_id)
-            interrupted, _ = self.run_on_worker(play_audio, (va_response, gender))
+            interrupted, _ = self.run_on_worker(text_to_speech, (va_response, gender))
+            if interrupted: break
+            interrupted, _ = self.run_on_worker(play_audio, (AUDIO_OUTPUT_FILE,))
             if interrupted: break
 
         self.get_logger().info("OFF")
@@ -264,9 +271,7 @@ def gpt_chat(input_text: str, personality_description: str, output: type[Value])
 
 
 
-def play_audio(text_input: str, gender: str, output: type[Value]) -> None:
-
-    # generate audio file from text
+def text_to_speech(text_input: str, gender: str, output: type[Value]) -> None:
 
     client = texttospeech.TextToSpeechClient()
     synthesis_input = texttospeech.SynthesisInput(text=text_input)
@@ -285,10 +290,11 @@ def play_audio(text_input: str, gender: str, output: type[Value]) -> None:
     os.chmod(AUDIO_OUTPUT_FILE, 0o777)
     
 
-    # play audio from generated file
+
+def play_audio(file_path: str, output: type[Value]) -> None:
 
     CHUNK = 1024
-    wf = wave.open(AUDIO_OUTPUT_FILE, 'rb')
+    wf = wave.open(file_path, 'rb')
     print('++++++++++++++++++++++++++++++++++++++ALSA')
     p = pyaudio.PyAudio()
     print('++++++++++++++++++++++++++++++++++++++')
