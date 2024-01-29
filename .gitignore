@@ -1,5 +1,8 @@
 # Visual Studio Code
 .vscode/
-output.wav
+
+assistant_output.wav
 openai-key
 google-key
+
+
