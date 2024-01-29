@@ -17,8 +17,8 @@ from enum import Enum
 from urllib import request as urllib_request, parse as urllib_parse, error as urllib_error
 import json
 import sys
-sys.path.append('/home/pib/flask/controller')
-import bricklet_controller
+sys.path.append('/home/pib/ros_working_dir/src/motors/boot_scripts')
+import manageTinkerForgeSettings
 
 
 class Motor:    
@@ -107,11 +107,10 @@ class Motor_control(Node):
                 self.ipcon.connect(HOST, 4223)
 
                 #get UID from database
-                response = bricklet_controller.get_all_bricklets()
-                json_data = json.loads(response.text)
-                UID1 = json_data['bricklets'][0]['uid']
-                UID2 = json_data['bricklets'][1]['uid']
-                UID3 = json_data['bricklets'][2]['uid']
+                response = manageTinkerForgeSettings.get_uids_from_db()
+                UID1 = response[0]
+                UID2 = response[1]
+                UID3 = response[2]
 
                 
                 # Handles for three Servo Bricklets
@@ -244,7 +243,7 @@ class Motor_control(Node):
                         
                         # create 'PUT' request to '/motor-settings'
                         http_req = urllib_request.Request(
-                                "http://localhost:5000/motor-settings",
+                                "http://localhost:5000/motor",
                                 method='PUT',
                                 data=http_req_body,
                                 headers={ "Content-Type": "application/json" }                           
@@ -280,7 +279,7 @@ class Motor_control(Node):
                 try:
                         for motor in self.motors:
                                 
-                                url = "http://localhost:5000/motor-settings/" + motor.name
+                                url = "http://localhost:5000/motor/" + motor.name
                                 headers = {"Content-Type": "application/json"}
                                 http_req = urllib_request.Request(url, method='GET', headers=headers)
 
