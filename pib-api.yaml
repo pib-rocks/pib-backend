@@ -12,14 +12,16 @@ tags:
     description: CRUD-Operations for voice assistant personalities
   - name: chat
     description: CRUD-Operations for voice assistant chats
-  - name: motor
-    description: Read- and Update-Operations for motors
+  - name: motor-settings
+    description: Read- and Update-Operations for motor-settings
   - name: camera-settings
     description: Read- and Update-Operations for camera-settings
   - name: program
     description: CRUD-Operations for user programs
   - name: bricklet
-    description: Read- and Update-Operations for bricklets
+    description: Read- and Update-Operations for bricklet ids
+  - name: motorBrickletPin
+    description: Read- and Update-Operations for bricklet ids
 paths:
   /voice-assistant/personality:
     post:
@@ -63,11 +65,11 @@ paths:
           $ref: '#/components/responses/500'
   /voice-assistant/personality/{personality-id}:
     parameters:
-      - name: personality-id
-        in: path
-        required: true
-        schema:
-          type: string
+        - name: personality-id
+          in: path
+          required: true
+          schema:
+            type: string
     get:
       tags:
         - personality
@@ -125,14 +127,7 @@ paths:
           $ref: '#/components/responses/404'
         '500':
           $ref: '#/components/responses/500'
-  /voice-assistant/chat/{personality-id}:
-    parameters:
-      - name: personality-id
-        description: The personality id is forwarded by the personality tab
-        in: path
-        required: true
-        schema:
-          type: string
+  /voice-assistant/chat:
     post:
       tags:
         - chat
@@ -158,7 +153,6 @@ paths:
           $ref: '#/components/responses/404'
         '500':
           $ref: '#/components/responses/500'
-  /voice-assistant/chat:
     get:
       tags: 
         - chat
@@ -289,40 +283,44 @@ paths:
           $ref: '#/components/responses/404'
         '500':
           $ref: '#/components/responses/500'
-  /motor:
-    get:
-      tags:
-        - motor
-      summary: Get all motors
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/AllMotors'
-        '400':
-          $ref: '#/components/responses/400'
-        '500':
-          $ref: '#/components/responses/500'
-  /motor/{motor-name}:
+  /voice-assistant/chat/{chat-id}/messages/{message-id}:
     parameters:
-      - name: motor-name
+      - name: chat-id
         in: path
         required: true
         schema:
-          $ref: '#/components/schemas/MotorName'
+          type: string
+      - name: message-id
+        in: path
+        required: true
+        schema:
+          type: string
+    delete:
+      tags:
+        - chat
+      summary: Delete one message by its message-id
+      responses:
+        '204':
+          $ref: '#/components/responses/204'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+    
+  /motor-settings:
     get:
       tags:
-        - motor
-      summary: Get one motor
+        - motor-settings
+      summary: Get all motor-settings
       responses:
         '200':
           description: OK
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Motor'
+                $ref: '#/components/schemas/AllMotorSettings'
         '400':
           $ref: '#/components/responses/400'
         '404':
@@ -331,58 +329,10 @@ paths:
           $ref: '#/components/responses/500'
     put:
       tags:
-        - motor
-      summary: Update one motor
+        - motor-settings
+      summary: Select a motor by name and update its motor-settings
       requestBody:
-        description: Update one motor
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/Motor'
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Motor'
-        '400':
-          $ref: '#/components/responses/400'
-        '404':
-          $ref: '#/components/responses/404'
-        '500':
-          $ref: '#/components/responses/500'
-  /motor/{motor-name}/settings:
-    parameters:
-      - name: motor-name
-        in: path
-        required: true
-        schema:
-          $ref: '#/components/schemas/MotorName'
-    get:
-      tags:
-        - motor
-      summary: Get the settings of one motor
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/MotorSettings'
-        '400':
-          $ref: '#/components/responses/400'
-        '404':
-          $ref: '#/components/responses/404'
-        '500':
-          $ref: '#/components/responses/500'
-    put:
-      tags:
-        - motor
-      summary: Update the settings of one motor
-      requestBody:
-        description: Update the settings of one motor
+        description: Update the (existing) motor-settings of a motor.
         required: true
         content:
           application/json:
@@ -393,7 +343,7 @@ paths:
           description: OK
           content:
             application/json:
-              schema:
+              schema: 
                 $ref: '#/components/schemas/MotorSettings'
         '400':
           $ref: '#/components/responses/400'
@@ -401,48 +351,54 @@ paths:
           $ref: '#/components/responses/404'
         '500':
           $ref: '#/components/responses/500'
-  /motor/{motor-name}/bricklet-pins:
+  /motor-settings/{motor_name}:
     parameters:
-      - name: motor-name
-        in: path
-        required: true
-        schema:
-          $ref: '#/components/schemas/MotorName'
+        - name: motor_name
+          in: path
+          required: true
+          schema:
+            type: string
+            enum:
+              - thumb_left_opposition
+              - thumb_left_stretch
+              - index_left_stretch
+              - middle_left_stretch
+              - ring_left_stretch
+              - pinky_left_stretch
+              - all_fingers_left
+              - thumb_right_opposition
+              - thumb_right_stretch
+              - index_right_stretch
+              - middle_right_stretch
+              - ring_right_stretch
+              - pinky_right_stretch
+              - all_fingers_right
+              - upper_arm_left_rotation
+              - elbow_left
+              - lower_arm_left_rotation
+              - wrist_left
+              - shoulder_vertical_left
+              - shoulder_horizontal_left
+              - upper_arm_right_rotation
+              - elbow_right
+              - lower_arm_right_rotation
+              - wrist_right
+              - shoulder_vertical_right
+              - shoulder_horizontal_right
+              - tilt_forward_motor
+              - tilt_sideways_motor
+              - turn_head_motor
     get:
       tags:
-        - motor
-      summary: Get the bricklet-pins of one motor
+        - motor-settings
+      summary: Get the motor-settings of the motor matching the specified name
       responses:
         '200':
           description: OK
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/MotorBrickletPins'
-        '400':
-          $ref: '#/components/responses/400'
-        '404':
-          $ref: '#/components/responses/404'
-        '500':
-          $ref: '#/components/responses/500'
-    put:
-      tags:
-        - motor
-      summary: Update the bricklet-pins of one motor
-      requestBody:
-        description: Add a message to a voice assistant chat by chat id
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/MotorBrickletPins'
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/MotorBrickletPins'
+                $ref: '#/components/schemas/MotorSettings'
         '400':
           $ref: '#/components/responses/400'
         '404':
@@ -533,11 +489,13 @@ paths:
           $ref: '#/components/responses/500'
   /program/{program-number}:
     parameters:
-      - name: program-number
-        in: path
-        required: true
-        schema:
-          type: string
+        - in: path
+          name: program-number
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: the number of the program
     get:
       tags:
         - program
@@ -594,11 +552,13 @@ paths:
           $ref: '#/components/responses/500'
   /program/{program-number}/code:
     parameters:
-      - name: program-number
-        in: path
-        required: true
-        schema:
-          type: string
+        - in: path
+          name: program-number
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: the number of the program
     get:
       tags:
         - program
@@ -660,11 +620,14 @@ paths:
           $ref: '#/components/responses/500'
   /bricklet/{bricklet-number}:
     parameters:
-      - name: bricklet-number
-        in: path
-        required: true
-        schema:
-          type: string
+        - in: path
+          name: bricklet-number
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 3
+          description: the number of the bricklet
     get:
       tags: 
         - bricklet
@@ -700,6 +663,73 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Bricklet'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+  /motor-bricklet-pin:
+    get:
+      tags: 
+        - motorBrickletPin
+      summary: Get all motor to bricklet pin combinations
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AllMotorBrickletPin'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+    put:
+      tags:
+        - motorBrickletPin
+      summary: Update bricklet pin of motor by motor name
+      requestBody:
+        description: Update brickletId
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PutMotorBrickletPin'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MotorBrickletPin'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+  /motor-bricklet-pin/{motor-name}:
+    parameters:
+        - in: path
+          name: motor-name
+          required: true
+          schema:
+            type: string
+          description: the name of the motor
+    get:
+      tags: 
+        - motorBrickletPin
+      summary: Get motor bricklet pin combination by motor name
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AllMotorBrickletPin'
         '400':
           $ref: '#/components/responses/400'
         '404':
@@ -820,7 +850,7 @@ components:
     VoiceAssistantChatMessage:
       type: object
       properties:
-        message_id:
+        messageId:
           type: string
           readOnly: true
           examples: 
@@ -835,146 +865,61 @@ components:
             - "2023-10-05T10:11:00Z"
         isUser:
           type: boolean
-          readOnly: true
-        messageContent:
+        content:
           type: string
           examples: 
             - Tell me a collection of short stories.
             - Hello Thomas, tell me something about Nürnberg.
             - Here is a brief definition of our current understanding of AI...
       required:
-        - message_id
+        - messageId
         - timestamp
         - isUser
         - message_content
         - voiceAssistantChat
     VoiceAssistantChatMessages:
       properties:
-        voiceAssistantChatMessages:
+        messages:
           type: array
           items:
             $ref: '#/components/schemas/VoiceAssistantChatMessage'
-    AllMotors:
-      properties:
-        motors:
-          type: array
-          items:
-            $ref: '#/components/schemas/Motor'  
-    Motor:
-      type: object
-      properties:
-        name:
-          $ref: '#/components/schemas/MotorName'
-        turnedOn: 
-          type: boolean
-          examples: 
-            - true
-        pulseWidthMin: 
-          type: integer
-          minimum: 0
-          maximum: 65535
-          examples: 
-            - 10000
-        pulseWidthMax: 
-          type: integer
-          minimum: 0
-          maximum: 65535
-          examples: 
-            - 50000
-        rotationRangeMin: 
-          type: integer
-          minimum: -9000
-          maximum: 9000
-          examples: 
-            - -3000
-        rotationRangeMax: 
-          type: integer
-          minimum: -9000
-          maximum: 9000
-          examples: 
-            - 4000
-        velocity: 
-          type: integer
-          minimum: 0
-          maximum: 50000
-          examples: 
-            - 12000
-        acceleration: 
-          type: integer
-          minimum: 0
-          maximum: 50000
-          examples: 
-            - 3500
-        deceleration: 
-          type: integer
-          minimum: 0
-          maximum: 50000
-          examples: 
-            - 25000
-        period: 
-          type: integer
-          minimum: 0
-          maximum: 100000
-          examples: 
-            - 60000
-        visible: 
-          type: boolean
-          examples: 
-            - true
-          description:
-            indicates, wether the motor is displayed / can be accessed via the cerebra-frontend
-        brickletPins:
-          type: array
-          items:
-            $ref: '#/components/schemas/MotorBrickletPin'
-      required:
-        - name
-        - turnedOn
-        - pulseWidthMin
-        - pulseWidthMax
-        - rotationRangeMin
-        - rotationRangeMax
-        - velocity
-        - acceleration
-        - deceleration
-        - period
-        - visible
-        - brickletPins
-    MotorBrickletPin:
-      type: object
-      properties:
-        pin:
-          type: number
-          description: the channel on the specified servo-bricklet
-          minimum: 0
-          maximum: 9
-          examples: 
-            - 0
-        bricklet:
-          type: string
-          description: a three-character-string used by the tinkerforge-api to identify a servo-bricklet
-          examples:
-            - "XYZ"
-      required:
-        - pin
-        - bricklet
-    MotorBrickletPins:
-      type: object
-      properties:
-        name:
-          $ref: '#/components/schemas/MotorName'
-        brickletPins:
-          type: array
-          items:
-            $ref: '#/components/schemas/MotorBrickletPin'
-      required:
-        - name
-        - brickletPins
     MotorSettings:
       type: object
       properties:
         name:
-          $ref: '#/components/schemas/MotorName'
+          type: string
+          examples:
+            - thumb_right_opposition
+          enum:
+            - thumb_left_opposition
+            - thumb_left_stretch
+            - index_left_stretch
+            - middle_left_stretch
+            - ring_left_stretch
+            - pinky_left_stretch
+            - all_fingers_left
+            - thumb_right_opposition
+            - thumb_right_stretch
+            - index_right_stretch
+            - middle_right_stretch
+            - ring_right_stretch
+            - pinky_right_stretch
+            - all_fingers_right
+            - upper_arm_left_rotation
+            - elbow_left
+            - lower_arm_left_rotation
+            - wrist_left
+            - shoulder_vertical_left
+            - shoulder_horizontal_left
+            - upper_arm_right_rotation
+            - elbow_right
+            - lower_arm_right_rotation
+            - wrist_right
+            - shoulder_vertical_right
+            - shoulder_horizontal_right
+            - tilt_forward_motor
+            - tilt_sideways_motor
+            - turn_head_motor
         turnedOn: 
           type: boolean
           examples: 
@@ -1027,11 +972,8 @@ components:
           maximum: 100000
           examples: 
             - 60000
-        visible: 
-          type: boolean
-          examples: 
-            - true
       required:
+        - motorName
         - turnedOn
         - pulseWidthMin
         - pulseWidthMax
@@ -1041,40 +983,12 @@ components:
         - acceleration
         - deceleration
         - period
-        - visible
-    MotorName:
-      type: string
-      examples:
-        - thumb_right_opposition
-      enum:
-        - thumb_left_opposition
-        - thumb_left_stretch
-        - index_left_stretch
-        - middle_left_stretch
-        - ring_left_stretch
-        - pinky_left_stretch
-        - all_fingers_left
-        - thumb_right_opposition
-        - thumb_right_stretch
-        - index_right_stretch
-        - middle_right_stretch
-        - ring_right_stretch
-        - pinky_right_stretch
-        - all_fingers_right
-        - upper_arm_left_rotation
-        - elbow_left
-        - lower_arm_left_rotation
-        - wrist_left
-        - shoulder_vertical_left
-        - shoulder_horizontal_left
-        - upper_arm_right_rotation
-        - elbow_right
-        - lower_arm_right_rotation
-        - wrist_right
-        - shoulder_vertical_right
-        - shoulder_horizontal_right
-        - tilt_forward_motor
-        - tilt_sideways_motor
+    AllMotorSettings:
+      properties:
+        motorSettings:
+          type: array
+          items:
+            $ref: '#/components/schemas/MotorSettings'
     CameraSettings:
       type: object
       properties:
@@ -1183,6 +1097,43 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Bricklet'
+    MotorBrickletPin:
+      type: object
+      properties:
+        motorName:
+          type: string
+          examples:
+            - tilt_forward_motor
+        brickletId:
+          type: integer
+          examples:
+            - 1
+        pin:
+          type: integer
+          examples:
+            - 0
+    PutMotorBrickletPin:
+      type: object
+      properties:
+        brickletId:
+          type: integer
+          examples:
+            - 1
+        motorName:
+          type: string
+          examples:
+            - tilt_forward_motor
+        pin:
+          type: integer
+          examples:
+            - 0
+    AllMotorBrickletPin:
+      type: object
+      properties:
+        motorBrickletPins:
+          type: array
+          items:
+            $ref: '#/components/schemas/MotorBrickletPin'
     Error:
         required:
           - Error

@@ -9,4 +9,3 @@ GET_ALL_BRICKLETS_URL = URL_PREFIX + '/bricklet'
 def get_all_bricklets() -> (bool, dict[str, Any]):
         request = Request(GET_ALL_BRICKLETS_URL, method='GET')
         return send_request(request)
-
