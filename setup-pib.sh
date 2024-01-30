@@ -155,10 +155,5 @@ sudo systemctl enable ros_cerebra_boot.service
 # Enable and start ssh server
 sudo systemctl enable ssh --now
 
-#Persist the current UDIs of Tinkerforge
-cd $USER_HOME/pib_data
-python3 -c "from manageTinkerForgeSettings import updateUIDs; updateUIDs()"
-cd 
-
 echo -e "$NEW_LINE""Congratulations! The setup completed succesfully!"
 echo -e "$NEW_LINE""Please restart the system to apply changes..."
