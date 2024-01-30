@@ -1,5 +1,4 @@
 from app.app import db
-from model.bricklet_model import Bricklet
 
 class BrickletPin(db.Model):
 
