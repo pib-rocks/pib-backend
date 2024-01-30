@@ -48,10 +48,10 @@ client = speech.SpeechClient()
 
 class Personality:
 
-    def __init__(self, description: str, gender: str, pause_threshold: float):
-        self.description = description
+    def __init__(self, gender: str, pause_threshold: float, description: str | None = None):
         self.gender = gender
         self.pause_threshold = pause_threshold
+        self.description = description if description is not None else 'Du bist pib, ein humanoider Roboter'
 
 
 
@@ -140,9 +140,9 @@ class VoiceAssistantNode(Node):
             successful, personality_dto = personality_client.get_personality(chat_dto['personalityId'])
             if not successful: return None
             return Personality(
-                personality_dto['description'],
                 personality_dto['gender'],
-                personality_dto['pauseThreshold'])
+                personality_dto['pauseThreshold'],
+                personality_dto['description'])
             
         
 
