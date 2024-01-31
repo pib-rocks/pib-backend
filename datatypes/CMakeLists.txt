@@ -11,7 +11,11 @@ find_package(rosidl_default_generators REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
 	"msg/MotorSettings.msg"
+	"msg/ChatMessage.msg"
+	"msg/VoiceAssistantState.msg"
 	"srv/MotorSettingsSrv.srv"
-	)
+	"srv/GetVoiceAssistantState.srv"
+	"srv/SetVoiceAssistantState.srv"
+)
 ament_export_dependencies(rosidl_default_runtime)
 ament_package()
