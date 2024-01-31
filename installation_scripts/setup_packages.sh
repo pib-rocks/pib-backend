@@ -53,7 +53,13 @@ fi
 git submodule init
 git submodule update --remote
 echo 'Done with installing packages'
-#
+
+# Create credentials folder and files required for the voice-assistant
+readonly VOICE_ASSISTANT_CREDENTIALS_DIR="$ROS_WORKING_DIR/src/voice-assistant/credentials"
+mkdir "$VOICE_ASSISTANT_CREDENTIALS_DIR"
+touch "$VOICE_ASSISTANT_CREDENTIALS_DIR""/openai-key"
+touch "$VOICE_ASSISTANT_CREDENTIALS_DIR""/google-key"
+
 echo "Booting all nodes..."
 # Boot camera
 sudo chmod 755 $ROS_CAMERA_BOOT_DIR/ros_camera_boot.sh
@@ -62,6 +68,7 @@ sudo mv $ROS_CAMERA_BOOT_DIR/ros_camera_boot.service /etc/systemd/system
 sudo systemctl enable ros_camera_boot.service
 
 # Boot motor control node
+pip install "$ROS_WORKING_DIR/src/motors/pib_motors"
 sudo chmod 755 $ROS_MOTORS_BOOT_DIR/ros_motor_control_node_boot.sh
 sudo chmod 755 $ROS_MOTORS_BOOT_DIR/ros_motor_control_node_boot.service
 sudo mv $ROS_MOTORS_BOOT_DIR/ros_motor_control_node_boot.service /etc/systemd/system
