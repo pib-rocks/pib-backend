@@ -1,6 +1,9 @@
 from app.app import db
+from model.bricklet_pin_model import BrickletPin
 
 class Motor(db.Model):
+
+    __tablename__ = "motor"
     
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(255), nullable=False, unique=True)
@@ -14,7 +17,7 @@ class Motor(db.Model):
     period = db.Column(db.Integer, nullable=False)
     turnedOn = db.Column(db.Boolean, nullable=False)
     effort = db.Column(db.Integer, nullable=True)
-    active = db.Column(db.Boolean, nullable=False)
+    visible = db.Column(db.Boolean, nullable=False)
     invert = db.Column(db.Boolean, nullable=False)
     
     def __init__(self, *args):
@@ -28,7 +31,7 @@ class Motor(db.Model):
         self.deceleration = args[7]
         self.period = args[8]
         self.turnedOn = args[9]
-        self.active = args[10]
+        self.visible = args[10]
         self.invert = args[11]
         if len(args) > 12:
             self.effort = args[12]
