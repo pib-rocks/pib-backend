@@ -11,10 +11,9 @@ CREATE TABLE IF NOT EXISTS motor (
    period INTEGER NOT NULL, 
    turnedOn BOOLEAN NOT NULL, 
    effort INTEGER, 
-   active BOOLEAN NOT NULL,
-   invert BOOLEAN NOT NULL);
+   active BOOLEAN NOT NULL);
 
-INSERT INTO motor(name, pulseWidthMin, pulseWidthMax, rotationRangeMin, rotationRangeMax, velocity, acceleration, deceleration, period, turnedOn, effort, active, invert) VALUES
+INSERT INTO motor(name, pulseWidthMin, pulseWidthMax, rotationRangeMin, rotationRangeMax, velocity, acceleration, deceleration, period, turnedOn, effort, visible, invert) VALUES
    ('tilt_forward_motor', 700, 2500, -4500, 4500, 16000, 10000, 5000, 19500, TRUE, NULL, TRUE, FALSE),
    ('tilt_sideways_motor', 700, 2500, -9000, 9000, 16000, 10000, 5000, 19500, TRUE, NULL, FALSE, FALSE),
    ('turn_head_motor', 700, 2500, -9000, 9000, 16000, 10000, 5000, 19500, TRUE, NULL, TRUE, FALSE),
@@ -68,25 +67,24 @@ INSERT INTO cameraSettings(resolution, refreshRate, qualityFactor, resX, resY) V
 
 CREATE TABLE IF NOT EXISTS bricklet (
    id INTEGER primary key AUTOINCREMENT NOT NULL, 
-   brickletId TEXT NOT NULL, 
-   brickletNumber INTEGER NOT NULL
+   uid TEXT UNIQUE NOT NULL,
+   brickletNumber INTEGER UNIQUE NOT NULL
 );
 
-INSERT INTO bricklet(brickletId, brickletNumber) VALUES
-   ("XYZ", 1),
-   ("XYZ", 2),
-   ("XYZ", 3);
+INSERT INTO bricklet(uid, brickletNumber) VALUES 
+   ("AAA", 1), 
+   ("BBB", 2), 
+   ("CCC", 3);
 
-CREATE TABLE IF NOT EXISTS motorBrickletPin (
+CREATE TABLE IF NOT EXISTS brickletPin (
    id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, 
    brickletId INTEGER NOT NULL, 
-   motorId INTEGER, 
+   motorId INTEGER NOT NULL, 
    pin INTEGER NOT NULL, 
    FOREIGN KEY (brickletId) REFERENCES bricklet(id), 
-   FOREIGN KEY (motorId) REFERENCES motor(id)
-);
+   FOREIGN KEY (motorId) REFERENCES motor(id));
 
-INSERT INTO motorBrickletPin(motorId, brickletId, pin) VALUES
+INSERT INTO brickletPin(motorId, brickletId, pin) VALUES
    ((SELECT id FROM motor WHERE name = "turn_head_motor"), 1, 0),
    ((SELECT id FROM motor WHERE name = "tilt_forward_motor"), 1, 1),
    ((SELECT id FROM motor WHERE name = "tilt_sideways_motor"), 2, 8),
@@ -128,11 +126,26 @@ INSERT INTO program(name, codeVisual, programNumber) VALUES
 
 CREATE TABLE IF NOT EXISTS chat (
    id INTEGER primary key AUTOINCREMENT NOT NULL, 
-   chatid TEXT NOT NULL, 
+   chatid TEXT UNIQUE NOT NULL,
    topic TEXT NOT NULL, 
    personalityId TEXT NOT NULL, 
-   FOREIGN KEY (personalityId) REFERENCES personality(personalityId));
+   FOREIGN KEY (personalityId) REFERENCES personality(personalityId)
+);
 
 INSERT INTO chat(chatid, topic, personalityId) VALUES
-   ("12345-12333-45345-456456", "Nuernberg", "8f73b580-927e-41c2-98ac-e5df070e7288"),
-   ("12345-12333-45345-456567", "Home-Office", "8b310f95-92cd-4512-b42a-d3fe29c4bb8a");
+   ("b4f01552-0c09-401c-8fde-fda753fb0261", "Nuernberg", "8f73b580-927e-41c2-98ac-e5df070e7288"),
+   ("ee3e80f9-c8f7-48c2-9f15-449ba9bbe4ab", "Home-Office", "8b310f95-92cd-4512-b42a-d3fe29c4bb8a");
+
+create table IF NOT EXISTS chatMessage (
+   id INTEGER primary key AUTOINCREMENT NOT NULL, 
+   messageId TEXT NOT NULL, 
+   timestamp TEXT NOT NULL DEFAULT (DATETIME('now')),
+   isUser INTEGER NOT NULL, 
+   content TEXT NOT NULL,
+   chatId TEXT NOT NULL,
+   FOREIGN KEY (chatId) REFERENCES chat(chatId)
+);
+
+INSERT INTO chatMessage("messageId", "isUser", "content", "chatId") VALUES
+   ("539ed3e6-9e3d-11ee-8c90-0242ac120002", TRUE, "hello pib!", "b4f01552-0c09-401c-8fde-fda753fb0261"),
+   ("0a080706-9e3e-11ee-8c90-0242ac120002", FALSE, "hello user!", "b4f01552-0c09-401c-8fde-fda753fb0261");
