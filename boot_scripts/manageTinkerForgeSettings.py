@@ -1,53 +1,42 @@
-#This python script contains methods to get and save the UIDs from tinkerforge in an external file
-#Also it contains method to update the UDIs in the database and to compare the IDs with the database
 from tinkerforge.ip_connection import IPConnection
 from tinkerforge.brick_hat import BrickHAT
 import requests
 import json
+import sys
+import multiprocessing
 
-class TinkerForge:
-        UID0 = "X"
-        UID1 = "Y"
-        UID2 = "Z"
+UID0 = "X"
+UID1 = "Y"
+UID2 = "Z"
 
-        def ge_ids(self):
-            self.ipcon.register_callback(IPConnection.CALLBACK_ENUMERATE, self.cb_enumerate)
-            self.ipcon.enumerate()
-            self.printAllUIDs()
-            return [self.UID0, self.UID1, self.UID2]
 
-        def cb_enumerate(self, uid, connected_uid, position, hardware_version, firmware_version, device_identifier, enumeration_type):
-            if position == "a":
-                    self.UID0 = uid
-            if position == "b":
-                    self.UID1 = uid
-            if position == "e":
-                    self.UID2 = uid
+ipcon = IPConnection()
+hat = BrickHAT("X", ipcon)
+ipcon.connect("localhost", 4223)
 
-        def get_value(cls, number):
-            variable_name = "UID" + str(number)
-            return getattr(cls, variable_name, None)
-        
-        def print_all_uids(self):
-                print("UID0 = " + self.UID0)
-                print("UID1 = " + self.UID1)
-                print("UID2 = " + self.UID2)
+def cb_enumerate(uid, connected_uid, position, hardware_version, firmware_version, device_identifier, enumeration_type):
+    global UID0
+    global UID1
+    global UID2
+    if position == "a": UID0 = uid
+    if position == "b": UID1 = uid
+    if position == "e": UID2 = uid
 
-        def __init__(self):
-            self.ipcon = IPConnection()
-            self.hat = BrickHAT("X", self.ipcon)
-            self.ipcon.connect("localhost", 4223)
-            pass
-        
-tinker = TinkerForge()
+ipcon.register_callback(IPConnection.CALLBACK_ENUMERATE, cb_enumerate)
+
+def i():
+    ipcon.enumerate()
+
+p = multiprocessing.Process(target=i)
+p.start()
+p.join()
+ipcon.disconnect()
 
 def update_uids():
-    tinker.ge_ids()
     header = {"Content-Type": "application/json"}
-    response0 = requests.put("http://127.0.0.1:5000//bricklet/1", data=json.dumps({"uid": tinker.UID0}), headers=header)
-    response1 = requests.put("http://127.0.0.1:5000//bricklet/2", data=json.dumps({"uid": tinker.UID1}), headers=header)
-    response2 = requests.put("http://127.0.0.1:5000//bricklet/3", data=json.dumps({"uid": tinker.UID2}), headers=header)
-    return
+    response0 = requests.put("http://127.0.0.1:5000//bricklet/1", data=json.dumps({"uid": UID0}), headers=header)
+    response1 = requests.put("http://127.0.0.1:5000//bricklet/2", data=json.dumps({"uid": UID1}), headers=header)
+    response2 = requests.put("http://127.0.0.1:5000//bricklet/3", data=json.dumps({"uid": UID2}), headers=header)
 
 def get_uids_from_db():
       response = requests.get("http://127.0.0.1:5000//bricklet")
@@ -56,9 +45,26 @@ def get_uids_from_db():
     
 
 def changes_between_current_and_tinker_forge_uids():
-      usedUIDs = get_uids_from_db()
-      tinker.ge_ids()
-      for i in range(len(usedUIDs)):
-            if(usedUIDs[i] != tinker.getValue(i)):
-                return True
-      return False
+    usedUIDs = get_uids_from_db()
+    if UID0 != usedUIDs[0]:
+        return True
+    if UID1 != usedUIDs[1]:
+        return True
+    if UID2 != usedUIDs[2]:
+        return True
+    return False
+
+
+if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        print("Bitte geben Sie eine Methode an.")
+
+    methode = sys.argv[1]
+    if methode == "update_uids":
+        update_uids()
+    elif methode == "get_uids_from_db":
+        get_uids_from_db()
+    elif methode == "changes_between_current_and_tinker_forge_uids":
+        changes_between_current_and_tinker_forge_uids()
+    else:
+        print("Ungueltige Methode.")
