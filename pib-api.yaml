@@ -956,7 +956,8 @@ components:
             - 60000
         invert:
           type: boolean
-          example: false
+          examples: 
+          - false
       required:
         - motorName
         - turnedOn
