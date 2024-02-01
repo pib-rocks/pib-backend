@@ -25,6 +25,7 @@ def set_motor_settings(motor_name: str, motor_settings_dto: dict[str, Any]):
     motor.period = motor_settings_dto['period']
     motor.turnedOn = motor_settings_dto['turnedOn']
     motor.visible = motor_settings_dto['visible']
+    motor.invert = motor_settings_dto['invert']
     db.session.flush()
     return motor
 
