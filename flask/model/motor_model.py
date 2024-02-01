@@ -16,7 +16,6 @@ class Motor(db.Model):
     deceleration = db.Column(db.Integer, nullable=False)
     period = db.Column(db.Integer, nullable=False)
     turnedOn = db.Column(db.Boolean, nullable=False)
-    effort = db.Column(db.Integer, nullable=True)
     visible = db.Column(db.Boolean, nullable=False)
     invert = db.Column(db.Boolean, nullable=False)
     
@@ -33,5 +32,3 @@ class Motor(db.Model):
         self.turnedOn = args[9]
         self.visible = args[10]
         self.invert = args[11]
-        if len(args) > 12:
-            self.effort = args[12]
