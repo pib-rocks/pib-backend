@@ -11,7 +11,8 @@ CREATE TABLE IF NOT EXISTS motor (
    period INTEGER NOT NULL, 
    turnedOn BOOLEAN NOT NULL, 
    effort INTEGER, 
-   active BOOLEAN NOT NULL);
+   visible BOOLEAN NOT NULL,
+   invert BOOLEAN NOT NULL);
 
 INSERT INTO motor(name, pulseWidthMin, pulseWidthMax, rotationRangeMin, rotationRangeMax, velocity, acceleration, deceleration, period, turnedOn, effort, visible, invert) VALUES
    ('tilt_forward_motor', 700, 2500, -4500, 4500, 16000, 10000, 5000, 19500, TRUE, NULL, TRUE, FALSE),
