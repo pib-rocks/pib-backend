@@ -18,17 +18,4 @@ class Motor(db.Model):
     turnedOn = db.Column(db.Boolean, nullable=False)
     visible = db.Column(db.Boolean, nullable=False)
     invert = db.Column(db.Boolean, nullable=False)
-    
-    def __init__(self, *args):
-        self.name = args[0]
-        self.pulseWidthMin = args[1]
-        self.pulseWidthMax = args[2]
-        self.rotationRangeMin = args[3]
-        self.rotationRangeMax = args[4]
-        self.velocity = args[5]
-        self.acceleration = args[6]
-        self.deceleration = args[7]
-        self.period = args[8]
-        self.turnedOn = args[9]
-        self.visible = args[10]
-        self.invert = args[11]
+    brickletPins = db.relationship('BrickletPin', backref='motor', lazy=True, cascade="all,, delete-orphan")
