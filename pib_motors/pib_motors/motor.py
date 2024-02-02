@@ -9,12 +9,14 @@ class Motor:
 		self.name: str = name
 		self.visible: bool = True
 		self.bricklet_pins = bricklet_pins
+		self.invert: bool = False
 
 	def __str__(self):
 		return f"MOTOR[ bricklet_pins: {[str(bp) for bp in self.bricklet_pins]}, settings: {self.get_settings()} ]"
 
 	def apply_settings(self, settings_dto) -> bool:
 		self.visible = settings_dto['visible']
+		self.invert = settings_dto['invert']
 		return all(bp.apply_settings(settings_dto) for bp in self.bricklet_pins)
 
 	def get_settings(self) -> dict[str, Any]:
@@ -24,6 +26,8 @@ class Motor:
 		return motor_settings_dto
 
 	def set_position(self, position: int) -> bool:
+		if self.invert:
+			position = position * -1
 		return all(bp.set_position(position) for bp in self.bricklet_pins)
 	
 	def get_position(self) -> int:
