@@ -35,7 +35,9 @@ class ProxyProgramNode(Node):
 
         super().__init__('proxy_program')
 
-        self.id_to_status: dict[str, tuple[ClientGoalHandle, int]] = {}
+        # maps a proxy_goal_id to its associated goal_handle and its previous status (in order to detect, if the status
+        # of the goal has changed after it was last checked)
+        self.id_to_goal: dict[str, tuple[ClientGoalHandle, int]] = {}
         
         # each topic is corresponding to one of the three output types that actions provide: feedback, result and status 
         self.feedback_publisher = self.create_publisher(ProxyRunProgramFeedback, 'proxy_run_program_feedback', 10)
@@ -82,7 +84,7 @@ class ProxyProgramNode(Node):
 
         def receive_goal_handle(goal_handle_future: Future):
             goal_handle: ClientGoalHandle = goal_handle_future.result()
-            self.id_to_status[proxy_goal_id] = (goal_handle, -1)
+            self.id_to_goal[proxy_goal_id] = (goal_handle, -1)
             result_future: Future = goal_handle.get_result_async()
             result_future.add_done_callback(receive_result)
 
@@ -97,7 +99,7 @@ class ProxyProgramNode(Node):
 
     def stop_program_callback(self, request: ProxyRunProgramStop.Request, response: ProxyRunProgramStop.Response):
 
-        try: goal_handle: ClientGoalHandle = self.id_to_status[request.proxy_goal_id][0]
+        try: goal_handle: ClientGoalHandle = self.id_to_goal[request.proxy_goal_id][0]
         except: return response
         goal_handle.cancel_goal_async()
         return response
@@ -110,15 +112,15 @@ class ProxyProgramNode(Node):
         status: int
         goal_handle: ClientGoalHandle
 
-        for proxy_goal_id, tuple in self.id_to_status.items():
+        for proxy_goal_id, tuple in self.id_to_goal.items():
             goal_handle, status = tuple
             next_status = goal_handle.status
             if status != next_status:
                 self.status_publisher.publish(ProxyRunProgramStatus(proxy_goal_id=proxy_goal_id, status=next_status))
-                self.id_to_status[proxy_goal_id] = (goal_handle, next_status)
+                self.id_to_goal[proxy_goal_id] = (goal_handle, next_status)
 
         # remove all goal_handles that have already terminated
-        self.id_to_status = { id : t for id , t in self.id_to_status.items() if t[1] not in TERMINAL_GOAL_STATES }
+        self.id_to_goal = { id : t for id , t in self.id_to_goal.items() if t[1] not in TERMINAL_GOAL_STATES }
 
 
 

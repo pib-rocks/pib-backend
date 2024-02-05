@@ -92,8 +92,6 @@ class ProgramNode(Node):
 
     def run_program_callback(self, goal_handle: ServerGoalHandle):
 
-        self.get_logger().info(f"received request to run program: {goal_handle.request.program_number}")
-
         # convert goal id to bytes
         goal_id: bytes = bytes([ int(num) for num in goal_handle.goal_id.uuid ])
 
@@ -137,7 +135,7 @@ class ProgramNode(Node):
 
 def main_loop(request_receiver: Connection):
     
-    goal_id_to_process: dict[str, Process] = {}
+    goal_id_to_host: dict[str, Process] = {}
 
     while True:
 
@@ -147,21 +145,21 @@ def main_loop(request_receiver: Connection):
             if request.operation == Request.Operation.START:
                 output_sender, output_receiver = Pipe()
                 request_receiver.send(Response(True, output_receiver))
-                process = Process(target=run_program, args=(request.program_number, output_sender))
-                goal_id_to_process[request.goal_id] = process
-                process.start()
+                host_process = Process(target=run_program, args=(request.program_number, output_sender))
+                goal_id_to_host[request.goal_id] = host_process
+                host_process.start()
             elif request.operation == Request.Operation.STOP:
                 try: 
-                    process = goal_id_to_process.pop(request.goal_id)
+                    host_process = goal_id_to_host.pop(request.goal_id)
                 except KeyError: 
                     request_receiver.send(Response(False))
                     continue
-                process.terminate()
+                host_process.terminate()
                 request_receiver.send(Response(True))
             else: raise Exception(f'unexpected operation in request: {request.operation}')
         
-        # filter out processes that have already terminated
-        goal_id_to_process = { id : pro for id , pro in goal_id_to_process.items() if pro.is_alive() }
+        # filter out host-processes that have already terminated
+        goal_id_to_host = { id : host for id , host in goal_id_to_host.items() if host.is_alive() }
 
         time.sleep(MAIN_LOOP_WAITING_PERIOD_SECONDS)
 
