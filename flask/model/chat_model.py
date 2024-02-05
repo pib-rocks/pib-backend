@@ -1,4 +1,5 @@
 from app.app import db
+from model.chat_message_model import ChatMessage
 import uuid
 
 class Chat(db.Model):
@@ -9,4 +10,4 @@ class Chat(db.Model):
     chatId= db.Column(db.String(255), nullable=False, unique=True)
     topic = db.Column(db.String(255), nullable=False)
     personalityId = db.Column(db.String(255), db.ForeignKey('personality.personalityId'), nullable=False)
-    messages = db.relationship('ChatMessage', backref='chat', lazy=True, cascade="all,delete")
+    messages = db.relationship('ChatMessage', backref='chat', lazy=True, cascade="all,delete", order_by=ChatMessage.timestamp.desc())
