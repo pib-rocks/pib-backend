@@ -95,6 +95,7 @@ readonly DATATYPES_ORIGIN="https://github.com/pib-rocks/datatypes.git"
 readonly MOTORS_ORIGIN="https://github.com/pib-rocks/motors.git"
 readonly OAK_D_LITE_ORIGIN="https://github.com/pib-rocks/ros2_oak_d_lite.git"
 readonly VOICE_ASSISTANT_ORIGIN="https://github.com/pib-rocks/voice-assistant.git"
+readonly PROGRAMS_ORIGIN="https://github.com/pib-rocks/programs.git"
 
 # Create an associative array (=map). This will be filled with repo-origin branch-name pairs in the check_github_branches.sh script
 declare -A repo_map
