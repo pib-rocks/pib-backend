@@ -9,7 +9,7 @@ echo -e "$YELLOW_TEXT_COLOR""-- Setting up custom ros packages --""$RESET_TEXT_C
 ROS_CAMERA_BOOT_DIR="$ROS_WORKING_DIR"/src/ros2_oak_d_lite/boot_scripts
 ROS_MOTORS_BOOT_DIR="$ROS_WORKING_DIR"/src/motors/boot_scripts
 ROS_VOICE_ASSISTANT_BOOT_DIR="$ROS_WORKING_DIR"/src/voice-assistant/boot_scripts
-ROS_PROGRAM_BOOT_DIR="$ROS_WORKING_DIR"/src/programs/boot_scripts
+ROS_PROGRAMS_BOOT_DIR="$ROS_WORKING_DIR"/src/programs/boot_scripts
 
 #
 # Installing dependencies
@@ -22,7 +22,7 @@ sudo apt-get -y install libusb-1.0-0-dev
 # Setting up the voice-assistant packages
 pip3.10 install openai google-cloud-speech google-cloud-texttospeech pyaudio
 sudo apt-get install flac
-#Git examples for Depth-AI
+# Git examples for Depth-AI
 git clone --recurse-submodules https://github.com/luxonis/depthai-python.git
 cd depthai-python/examples
 python3 install_requirements.py
@@ -101,15 +101,15 @@ sudo mv $ROS_VOICE_ASSISTANT_BOOT_DIR/ros_voice_assistant_boot.service /etc/syst
 sudo systemctl enable ros_voice_assistant_boot.service
 
 # Boot program node
-sudo chmod 755 $ROS_PROGRAM_BOOT_DIR/ros_program_boot.sh
-sudo chmod 755 $ROS_PROGRAM_BOOT_DIR/ros_program_boot.service
-sudo mv $ROS_PROGRAM_BOOT_DIR/ros_program_boot.service /etc/systemd/system
+sudo chmod 755 $ROS_PROGRAMS_BOOT_DIR/ros_program_boot.sh
+sudo chmod 755 $ROS_PROGRAMS_BOOT_DIR/ros_program_boot.service
+sudo mv $ROS_PROGRAMS_BOOT_DIR/ros_program_boot.service /etc/systemd/system
 sudo systemctl enable ros_program_boot.service
 
 # Boot program proxy node
-sudo chmod 755 $ROS_PROGRAM_BOOT_DIR/ros_proxy_program_boot.sh
-sudo chmod 755 $ROS_PROGRAM_BOOT_DIR/ros_proxy_program_boot.service
-sudo mv $ROS_PROGRAM_BOOT_DIR/ros_proxy_program_boot.service /etc/systemd/system
+sudo chmod 755 $ROS_PROGRAMS_BOOT_DIR/ros_proxy_program_boot.sh
+sudo chmod 755 $ROS_PROGRAMS_BOOT_DIR/ros_proxy_program_boot.service
+sudo mv $ROS_PROGRAMS_BOOT_DIR/ros_proxy_program_boot.service /etc/systemd/system
 sudo systemctl enable ros_proxy_program_boot.service
 
 cd $ROS_WORKING_DIR
