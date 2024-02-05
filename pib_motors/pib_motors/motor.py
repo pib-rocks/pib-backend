@@ -29,11 +29,7 @@ class Motor:
 	def set_position(self, position: int) -> bool:
 		if self.invert:
 			position = position * -1
-		for bp in self.bricklet_pins:
-			if bp.invert:
-				position = position * -1
-			all(bp.set_position(position))
-		return
+		return all(bp.set_position(position, bp.invert) for bp in self.bricklet_pins)
 	
 	def get_position(self) -> int:
 		return self.bricklet_pins[0].get_position()
