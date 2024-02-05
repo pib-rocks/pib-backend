@@ -9,7 +9,7 @@ echo -e "$YELLOW_TEXT_COLOR""-- Setting up custom ros packages --""$RESET_TEXT_C
 ROS_CAMERA_BOOT_DIR="$ROS_WORKING_DIR"/src/ros2_oak_d_lite/boot_scripts
 ROS_MOTORS_BOOT_DIR="$ROS_WORKING_DIR"/src/motors/boot_scripts
 ROS_VOICE_ASSISTANT_BOOT_DIR="$ROS_WORKING_DIR"/src/voice-assistant/boot_scripts
-ROS_PROGRAM_BOOT_DIR="$ROS_WORKING_DIR"/src/program/boot_scripts
+ROS_PROGRAM_BOOT_DIR="$ROS_WORKING_DIR"/src/programs/boot_scripts
 
 #
 # Installing dependencies
@@ -63,7 +63,7 @@ touch "$VOICE_ASSISTANT_CREDENTIALS_DIR""/google-key"
 
 # Create virtual-environment for user programs
 apt install python3.10-venv
-readonly USER_PROGRAM_ENV_DIR="$ROS_WORKING_DIR/src/program/user_program_env"
+readonly USER_PROGRAM_ENV_DIR="$ROS_WORKING_DIR/src/programs/user_program_env"
 mkdir "$USER_PROGRAM_ENV_DIR"
 chmod 755 "$USER_PROGRAM_ENV_DIR"
 python3 -m venv "$USER_PROGRAM_ENV_DIR"
