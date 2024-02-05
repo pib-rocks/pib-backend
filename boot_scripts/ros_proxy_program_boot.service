@@ -5,7 +5,7 @@ After=network.target
 [Service]
 Type=simple
 User=pib
-ExecStart=/usr/bin/bash /home/pib/ros_working_dir/src/program/boot_scripts/ros_proxy_program_boot.sh
+ExecStart=/usr/bin/bash /home/pib/ros_working_dir/src/programs/boot_scripts/ros_proxy_program_boot.sh
 
 [Install]
 WantedBy=multi-user.target
