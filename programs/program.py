@@ -135,7 +135,7 @@ class ProgramNode(Node):
 
 def main_loop(request_receiver: Connection):
     
-    goal_id_to_host: dict[str, Process] = {}
+    goal_id_to_host: dict[bytes, Process] = {}
 
     while True:
 
