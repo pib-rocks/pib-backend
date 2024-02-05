@@ -19,7 +19,7 @@ from datatypes.action import RunProgram
 
 
 
-PYTHON_BINARY: str = '/home/pib/ros_working_dir/src/program/user_program_env/bin/python3'
+PYTHON_BINARY: str = '/home/pib/ros_working_dir/src/programs/user_program_env/bin/python3'
 UNBUFFERED_OUTPUT_FLAG: str = '-u'
 PYTHON_SCRIPT: str = '/home/pib/cerebra_programs/%s.py'
 
