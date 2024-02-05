@@ -20,8 +20,8 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'program = program.program:main',
-            'proxy_program = program.proxy_program:main'
+            'program = programs.program:main',
+            'proxy_program = programs.proxy_program:main'
         ],
     },
 )
