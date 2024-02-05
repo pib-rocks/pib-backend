@@ -5,11 +5,11 @@ from pib_api_client import motor_client
 
 class Motor:
 
-	def __init__(self, name: str, bricklet_pins: list[BrickletPin]):
+	def __init__(self, name: str, bricklet_pins: list[BrickletPin], invert: bool):
 		self.name: str = name
 		self.visible: bool = True
 		self.bricklet_pins = bricklet_pins
-		self.invert: bool = False
+		self.invert: bool = invert
 
 	def __str__(self):
 		return f"MOTOR[ bricklet_pins: {[str(bp) for bp in self.bricklet_pins]}, settings: {self.get_settings()} ]"
@@ -23,6 +23,7 @@ class Motor:
 		motor_settings_dto = self.bricklet_pins[0].get_settings()
 		motor_settings_dto['visible'] = self.visible
 		motor_settings_dto['name'] = self.name
+		motor_settings_dto['invert'] = self.invert
 		return motor_settings_dto
 
 	def set_position(self, position: int) -> bool:
@@ -42,7 +43,7 @@ if not successful: raise RuntimeError('failed to load motors from pib-api...')
 motors: list[Motor] = []
 for motor_dto in response['motors']:
 	bricklet_pins = [BrickletPin(bricklet_pin_dto['pin'], bricklet_pin_dto['bricklet']) for bricklet_pin_dto in motor_dto['brickletPins']]
-	motors.append(Motor(motor_dto['name'], bricklet_pins))
+	motors.append(Motor(motor_dto['name'], bricklet_pins, motor_dto['invert']))
 
 # maps the name of a (multi-)motor to its associated motor objects
 name_to_motors: dict[str, Motor] = { motor.name : [motor] for motor in motors }
