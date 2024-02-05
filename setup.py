@@ -1,6 +1,6 @@
 from setuptools import find_packages, setup
 
-package_name = 'program'
+package_name = 'programs'
 
 setup(
     name=package_name,
