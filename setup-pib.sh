@@ -42,17 +42,6 @@ else
 	su root bash -c "usermod -aG sudo $DEFAULT_USER ; echo '$DEFAULT_USER ALL=(ALL) NOPASSWD:ALL' | tee /etc/sudoers.d/$DEFAULT_USER"
 fi
 
-# Activate automatic login settings via regex
-sudo sed -i '/#  AutomaticLogin/{s/#//;s/user1/pib/}' /etc/gdm3/custom.conf
-
-# Disabling power saving settings
-gsettings set org.gnome.desktop.session idle-delay 0
-gsettings set org.gnome.settings-daemon.plugins.power power-saver-profile-on-low-battery false
-gsettings set org.gnome.settings-daemon.plugins.power ambient-enabled false
-gsettings set org.gnome.settings-daemon.plugins.power idle-dim false
-gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-ac-type 'nothing'
-gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-battery-type 'nothing'
-
 # Create temporary directory for installation files
 export TEMPORARY_SETUP_DIR="$(mktemp --directory /tmp/pib-temp.XXX)"
 
@@ -117,7 +106,8 @@ source "$installation_files_dir""/install_tinkerforge.sh"
 source "$installation_files_dir""/install_cerebra.sh"
 # Install pib ros-packages
 source "$installation_files_dir""/setup_packages.sh"
-
+# Adjust system settings
+source "$installation_files_dir""/set_system_settings.sh"
 
 # Github direct download URLs, from the selected branch
 readonly ROS_UPDATE_URL="https://raw.githubusercontent.com/pib-rocks/setup-pib/""${repo_map[$SETUP_PIB_ORIGIN]}""/update-pib.sh"
