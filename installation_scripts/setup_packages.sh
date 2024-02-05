@@ -9,6 +9,7 @@ echo -e "$YELLOW_TEXT_COLOR""-- Setting up custom ros packages --""$RESET_TEXT_C
 ROS_CAMERA_BOOT_DIR="$ROS_WORKING_DIR"/src/ros2_oak_d_lite/boot_scripts
 ROS_MOTORS_BOOT_DIR="$ROS_WORKING_DIR"/src/motors/boot_scripts
 ROS_VOICE_ASSISTANT_BOOT_DIR="$ROS_WORKING_DIR"/src/voice-assistant/boot_scripts
+ROS_PROGRAM_BOOT_DIR="$ROS_WORKING_DIR"/src/program/boot_scripts
 
 #
 # Installing dependencies
@@ -60,7 +61,20 @@ mkdir "$VOICE_ASSISTANT_CREDENTIALS_DIR"
 touch "$VOICE_ASSISTANT_CREDENTIALS_DIR""/openai-key"
 touch "$VOICE_ASSISTANT_CREDENTIALS_DIR""/google-key"
 
+# Create virtual-environment for user programs
+apt install python3.10-venv
+readonly USER_PROGRAM_ENV_DIR="$ROS_WORKING_DIR/src/program/user_program_env"
+mkdir "$USER_PROGRAM_ENV_DIR"
+chmod 755 "$USER_PROGRAM_ENV_DIR"
+python3 -m venv "$USER_PROGRAM_ENV_DIR"
+source "$USER_PROGRAM_ENV_DIR/bin/activate"
+python3 -m pip install numpy=1.26.3
+python3 -m pip install depthai=2.24.0.0
+python3 -m pip install blobconverter=1.4.2
+deactivate
+
 echo "Booting all nodes..."
+
 # Boot camera
 sudo chmod 755 $ROS_CAMERA_BOOT_DIR/ros_camera_boot.sh
 sudo chmod 755 $ROS_CAMERA_BOOT_DIR/ros_camera_boot.service
@@ -85,6 +99,18 @@ sudo chmod 755 $ROS_VOICE_ASSISTANT_BOOT_DIR/ros_voice_assistant_boot.sh
 sudo chmod 755 $ROS_VOICE_ASSISTANT_BOOT_DIR/ros_voice_assistant_boot.service
 sudo mv $ROS_VOICE_ASSISTANT_BOOT_DIR/ros_voice_assistant_boot.service /etc/systemd/system
 sudo systemctl enable ros_voice_assistant_boot.service
+
+# Boot program node
+sudo chmod 755 $ROS_PROGRAM_BOOT_DIR/ros_program_boot.sh
+sudo chmod 755 $ROS_PROGRAM_BOOT_DIR/ros_program_boot.service
+sudo mv $ROS_PROGRAM_BOOT_DIR/ros_program_boot.service /etc/systemd/system
+sudo systemctl enable ros_program_boot.service
+
+# Boot program proxy node
+sudo chmod 755 $ROS_PROGRAM_BOOT_DIR/ros_proxy_program_boot.sh
+sudo chmod 755 $ROS_PROGRAM_BOOT_DIR/ros_proxy_program_boot.service
+sudo mv $ROS_PROGRAM_BOOT_DIR/ros_proxy_program_boot.service /etc/systemd/system
+sudo systemctl enable ros_proxy_program_boot.service
 
 cd $ROS_WORKING_DIR
 colcon build
