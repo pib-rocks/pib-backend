@@ -29,11 +29,14 @@ class Motor:
 	def set_position(self, position: int) -> bool:
 		if self.invert:
 			position = position * -1
-		return all(bp.set_position(position) for bp in self.bricklet_pins)
+		for bp in self.bricklet_pins:
+			if bp.invert:
+				position = position * -1
+			all(bp.set_position(position))
+		return
 	
 	def get_position(self) -> int:
 		return self.bricklet_pins[0].get_position()
-
 
 # get data from pib-api
 successful, response = motor_client.get_all_motors()
@@ -42,7 +45,8 @@ if not successful: raise RuntimeError('failed to load motors from pib-api...')
 # list of all available motor-objects
 motors: list[Motor] = []
 for motor_dto in response['motors']:
-	bricklet_pins = [BrickletPin(bricklet_pin_dto['pin'], bricklet_pin_dto['bricklet']) for bricklet_pin_dto in motor_dto['brickletPins']]
+
+	bricklet_pins = [BrickletPin(bricklet_pin_dto['pin'], bricklet_pin_dto['bricklet'], bricklet_pin_dto['invert']) for bricklet_pin_dto in motor_dto['brickletPins']]
 	motors.append(Motor(motor_dto['name'], bricklet_pins, motor_dto['invert']))
 
 # maps the name of a (multi-)motor to its associated motor objects
