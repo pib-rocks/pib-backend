@@ -8,3 +8,4 @@ class BrickletPin(db.Model):
     motorId = db.Column(db.Integer, db.ForeignKey('motor.id'), nullable=False)
     brickletId = db.Column(db.Integer, db.ForeignKey('bricklet.id'), nullable=False)
     pin = db.Column(db.Integer, nullable=False)
+    invert = db.Column(db.Boolean, nullable=False)
