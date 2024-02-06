@@ -68,9 +68,9 @@ mkdir "$USER_PROGRAM_ENV_DIR"
 chmod 755 "$USER_PROGRAM_ENV_DIR"
 python3 -m venv "$USER_PROGRAM_ENV_DIR"
 source "$USER_PROGRAM_ENV_DIR/bin/activate"
-python3 -m pip install numpy=1.26.3
-python3 -m pip install depthai=2.24.0.0
-python3 -m pip install blobconverter=1.4.2
+python3 -m pip install numpy==1.26.3
+python3 -m pip install depthai==2.24.0.0
+python3 -m pip install blobconverter==1.4.2
 deactivate
 
 echo "Booting all nodes..."
