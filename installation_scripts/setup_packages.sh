@@ -61,7 +61,7 @@ touch "$VOICE_ASSISTANT_CREDENTIALS_DIR""/openai-key"
 touch "$VOICE_ASSISTANT_CREDENTIALS_DIR""/google-key"
 
 # Create virtual-environment for user programs
-sudo apt install python3.10-venv
+sudo apt-get install -y python3.10-venv
 readonly USER_PROGRAM_ENV_DIR="$ROS_WORKING_DIR/src/programs/user_program_env"
 mkdir "$USER_PROGRAM_ENV_DIR"
 sudo chmod 755 "$USER_PROGRAM_ENV_DIR"
