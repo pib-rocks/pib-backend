@@ -95,7 +95,6 @@ cd $USER_HOME
 
 # Allow editing in all src-directories
 sudo chmod -R 777 $ROS_WORKING_DIR
-sudo chmod -R 777 $ROS_WORKING_DIR/src
 
 # Open firefox without gui to generate default folder structures 
 # This also avoids the welcome page the first time a user opens the browser
