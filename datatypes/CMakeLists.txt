@@ -11,7 +11,14 @@ find_package(rosidl_default_generators REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
 	"msg/MotorSettings.msg"
+	"msg/ProxyRunProgramFeedback.msg"
+	"msg/ProxyRunProgramResult.msg"
+	"msg/ProxyRunProgramStatus.msg"
 	"srv/MotorSettingsSrv.srv"
-	)
+	"srv/ProxyRunProgramStart.srv"
+	"srv/ProxyRunProgramStop.srv"
+	"action/RunProgram.action"
+)
+
 ament_export_dependencies(rosidl_default_runtime)
 ament_package()
