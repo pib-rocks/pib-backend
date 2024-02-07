@@ -6,6 +6,8 @@ from rclpy.action import ActionServer
 from rclpy.action.server import ServerGoalHandle
 from rclpy.node import Node
 from rclpy.action import CancelResponse
+from rclpy import qos
+from rclpy.duration import Duration
 
 from multiprocessing import Process, Pipe, Lock
 from threading import Lock, Thread
@@ -16,6 +18,7 @@ from typing import IO
 import time
 
 from datatypes.action import RunProgram
+from datatypes.msg import ProgramOutputLine
 
 
 
@@ -72,6 +75,13 @@ class ProgramNode(Node):
     def __init__(self, request_sender: Connection):
 
         super().__init__('program')
+        	
+        # Quality-of-Service profile for feedback
+        feedback_profile = qos.QoSProfile(
+            history=qos.HistoryPolicy.KEEP_ALL,
+            reliability=qos.ReliabilityPolicy.RELIABLE,
+            durability=qos.DurabilityPolicy.VOLATILE,
+            lifespan=Duration(seconds=100))  
 
         # used for requesting the main prcess to start/stop a python program
         self.request_sender: Connection = request_sender
@@ -84,7 +94,8 @@ class ProgramNode(Node):
             'run_program', 
             self.run_program_callback,
             cancel_callback=(lambda _ : CancelResponse.ACCEPT),
-            callback_group=ReentrantCallbackGroup())
+            callback_group=ReentrantCallbackGroup(),
+            feedback_pub_qos_profile=feedback_profile)
 
         self.get_logger().info('--- program node started successfully ---')
 
@@ -117,18 +128,27 @@ class ProgramNode(Node):
                         goal_handle.canceled()
                         return RunProgram.Result(exit_code=2)
 
-            # forward all program-output to either the action's feedback or result
+            # collect output of the user-program
+            output_lines: list[ProgramOutputLine] = []
+            exit_code = None
             while output_receiver.poll():
                 output: ProgramOutput = output_receiver.recv()
-                if output.type == ProgramOutput.Type.EXIT_CODE:
-                    goal_handle.succeed()
-                    return RunProgram.Result(exit_code=output.value)
-                else:
-                    feedback = RunProgram.Feedback()
-                    feedback.output_line = output.value
-                    feedback.is_stderr = (output.type == ProgramOutput.Type.STDERR)
-                    goal_handle.publish_feedback(feedback)
+                if output.type == ProgramOutput.Type.EXIT_CODE: 
+                    exit_code = output.value
+                else: # output is either stdout or stderr
+                    output_line = ProgramOutputLine(
+                        content=output.value, 
+                        is_stderr=(output.type == ProgramOutput.Type.STDERR))
+                    output_lines.append(output_line)
+            
+            # if at least one line of stdout/stderr output was collected, send it as feedback
+            if len(output_lines) > 0: goal_handle.publish_feedback(RunProgram.Feedback(output_lines=output_lines))
 
+            # if an exit-code was collected, return it as the result of the goal
+            if exit_code is not None:
+                goal_handle.succeed()
+                return RunProgram.Result(exit_code=output.value)
+                    
             time.sleep(ACTION_LOOP_WAITING_PERIOD_SECONDS)
 
 

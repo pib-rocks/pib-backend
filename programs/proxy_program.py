@@ -5,10 +5,12 @@ from rclpy.action import  ActionClient
 from rclpy.action.client import ClientGoalHandle
 from rclpy.node import Node
 from rclpy.action.client import GoalStatus
+from rclpy import qos
 
 from datatypes.action import RunProgram
 from datatypes.msg import ProxyRunProgramFeedback, ProxyRunProgramResult, ProxyRunProgramStatus
 from datatypes.srv import ProxyRunProgramStart, ProxyRunProgramStop
+from rclpy.duration import Duration
 
 from rclpy.task import Future
 from uuid import uuid4
@@ -35,12 +37,19 @@ class ProxyProgramNode(Node):
 
         super().__init__('proxy_program')
 
+        # Quality-of-Service profile for feedback
+        feedback_profile = qos.QoSProfile(
+            history=qos.HistoryPolicy.KEEP_ALL,
+            reliability=qos.ReliabilityPolicy.RELIABLE,
+            durability=qos.DurabilityPolicy.VOLATILE,
+            lifespan=Duration(seconds=100))  
+
         # maps a proxy_goal_id to its associated goal_handle and its previous status (in order to detect, if the status
         # of the goal has changed after it was last checked)
         self.id_to_goal: dict[str, tuple[ClientGoalHandle, int]] = {}
         
         # each topic is corresponding to one of the three output types that actions provide: feedback, result and status 
-        self.feedback_publisher = self.create_publisher(ProxyRunProgramFeedback, 'proxy_run_program_feedback', 10)
+        self.feedback_publisher = self.create_publisher(ProxyRunProgramFeedback, 'proxy_run_program_feedback', feedback_profile)
         self.result_publisher = self.create_publisher(ProxyRunProgramResult, 'proxy_run_program_result', 10)
         self.status_publisher = self.create_publisher(ProxyRunProgramStatus, 'proxy_run_program_status', 10)
 
@@ -51,8 +60,9 @@ class ProxyProgramNode(Node):
         # check periodically for the statuses of the current goals and (in case somethong has changed) publish the status
         self.status_loop_timer = self.create_timer(0.1, self.status_loop_callback)
 
+
         # client for the 'RunProgram'-Action, that this node acts as a proxy for
-        self.run_program_client = ActionClient(self, RunProgram, 'run_program')
+        self.run_program_client = ActionClient(self, RunProgram, 'run_program', feedback_sub_qos_profile=feedback_profile)
         self.run_program_client.wait_for_server()
 
         self.get_logger().info('--- program proxy node started successfully ---')
@@ -68,12 +78,10 @@ class ProxyProgramNode(Node):
         # when receiving feedback from the action-goal, publish it to the feedback-topic together with the id
         def forward_feedback_to_publisher(feedback_message):
             feedback: RunProgram.Feedback = feedback_message.feedback
-            print(str(feedback))
-            output = ProxyRunProgramFeedback(
+            proxy_feedback = ProxyRunProgramFeedback(
                 proxy_goal_id=proxy_goal_id, 
-                output_line=feedback.output_line, 
-                is_stderr=feedback.is_stderr)
-            self.feedback_publisher.publish(output)
+                output_lines=feedback.output_lines)
+            self.feedback_publisher.publish(proxy_feedback)
 
         # when receiving the result of the action-goal, publish it to the resul-topic together with the id
         def receive_result(result_future: Future):
