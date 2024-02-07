@@ -6,7 +6,7 @@
 echo -e "$YELLOW_TEXT_COLOR""-- Installing python packages --""$RESET_TEXT_COLOR"		
 
 # Package installs for voice assistant
-pip install openai==0.28
+pip install openai==0.28 
 pip install google-cloud-texttospeech
 pip install --upgrade --force-reinstall google-cloud-speech
 sudo apt-get install -y portaudio19-dev
