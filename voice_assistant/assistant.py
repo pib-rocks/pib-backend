@@ -8,7 +8,7 @@ from rclpy.node import Node
 from datatypes.srv import SetVoiceAssistantState, GetVoiceAssistantState
 from datatypes.msg import ChatMessage, VoiceAssistantState
 
-import openai
+from openai import OpenAI
 from google.cloud import texttospeech
 from google.cloud import speech_v1p1beta1 as speech
 import pyaudio
@@ -38,7 +38,8 @@ pib_api_client_lock = Lock()
 
 # Set up OpenAI GPT-3 API
 with open(OPENAI_KEY_PATH) as f:
-    openai.api_key = f.read().strip()
+    openai_api_key = f.read().strip()
+openai_client = OpenAI(api_key=openai_api_key)
 
 # Google Cloud API
 os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = GOOGLE_KEY_PATH
@@ -225,7 +226,7 @@ def speech_to_text(pause_threshold: float) -> str:
 
 def gpt_chat(input_text: str, personality_description: str) -> str:
 
-    response = openai.ChatCompletion.create(
+    response = openai_client.chat.completions.create(
         model="gpt-4-0314",
         messages=[
             {
@@ -239,7 +240,7 @@ def gpt_chat(input_text: str, personality_description: str) -> str:
         ]
     )
 
-    return response['choices'][0]['message']['content']
+    return response.choices[0].message.content
 
 
 
