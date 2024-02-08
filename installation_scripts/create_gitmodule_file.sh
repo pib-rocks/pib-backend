@@ -20,7 +20,7 @@ if [ ! -f .git ]; then
 fi
 
 # Git pull ros-packages repo
-git pull https://github.com/pib-rocks/ros-packages.git
+git pull "$ROS_PACKAGES_ORIGIN"
 
 # Folder names (=package names) for submodules
 readonly VOICE_ASSISTANT_PACKAGE_NAME="voice-assistant"
