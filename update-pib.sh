@@ -86,11 +86,11 @@ fi
 
 echo "Checking BrickletsIDs..."
 cd $USER_HOME/pib_data
-if [ python3 -c'from manageTinkerForgeSettings import changesBetweenCurrentAndTinkerForgeUIDs; changesBetweenCurrentAndTinkerForgeUIDs()' ]; then
+if [ python3 -c 'from update_bricklet_uids import detect_uid_changes; detect_uid_changes()' ]; then
         while true; do
                 read -p "Some changes are detected. Do you want to update your BrickletIDs?" yn
                 case $yn in
-                        [Yy]* ) python3 -c'from manageTinkerForgeSettings import updateUIDs; updateUIDs()'; break;;
+                        [Yy]* ) python3 -c 'from update_bricklet_uids import update_uids; update_uids()'; break;;
                         [Nn]* ) exit;;
                         * ) echo "Please answer yes or no.";;
                 esac
