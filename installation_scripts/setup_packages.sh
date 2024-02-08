@@ -63,7 +63,6 @@ sudo mv "$ROS_CAMERA_BOOT_DIR""/ros_camera_boot.service" /etc/systemd/system
 sudo systemctl enable ros_camera_boot.service
 
 # Boot bricklet uid script
-pip install "$ROS_WORKING_DIR""/src/motors/utils"
 sudo chmod 755 "$ROS_WORKING_DIR""/src/motors/utils/update_bricklet_uids.py"
 sudo chmod 755 "$ROS_MOTORS_BOOT_DIR""/bricklet_uid_boot.service"
 sudo mv "$ROS_MOTORS_BOOT_DIR""/bricklet_uid_boot.service" /etc/systemd/system
