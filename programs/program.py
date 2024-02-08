@@ -25,55 +25,55 @@ PYTHON_BINARY: str = '/home/pib/ros_working_dir/src/programs/user_program_env/bi
 UNBUFFERED_OUTPUT_FLAG: str = '-u'
 PYTHON_SCRIPT: str = '/home/pib/cerebra_programs/%s.py'
 
-MAIN_LOOP_WAITING_PERIOD_SECONDS = 0.1
-ACTION_LOOP_WAITING_PERIOD_SECONDS = 0.05
+MAIN_LOOP_WAITING_PERIOD_SECONDS: float = 0.1
+ACTION_LOOP_WAITING_PERIOD_SECONDS: float = 0.05
 
 
 
 # request to start execution of user-program, sent from ros-process to main-process
 class StartRequest:
 
-    def __init__(self, goal_id: bytes, program_number: str):
+    def __init__(self, goal_id: bytes, program_number: str) -> None:
         self.goal_id = goal_id
         self.program_number = program_number
 
 # response sent from main-process to ros-process, after ros-process sent a 'StartRequest'
 class StartResponse:
         
-    def __init__(self, successful: bool, connection: Connection):
+    def __init__(self, successful: bool, connection: Connection) -> None:
         self.successful = successful
         self.connection = connection
 
 # request to stop execution of user-program, sent from ros-process to main-process
 class StopRequest:
 
-    def __init__(self, goal_id: bytes):
+    def __init__(self, goal_id: bytes) -> None:
         self.goal_id = goal_id
 
 # response sent from main-process to ros-process, after ros-process sent a 'StopRequest'
 class StopResponse:
         
-    def __init__(self, successful: bool):
+    def __init__(self, successful: bool) -> None:
         self.successful = successful
 
 # one line of stdout/stderr output of a running user-program, sent from a host-process to the ros-process
 class OutputLine:
 
-    def __init__(self, content: str, is_stderr: bool):
+    def __init__(self, content: str, is_stderr: bool) -> None:
         self.content = content
         self.is_stderr = is_stderr
 
 # exit-code of a user-program, sent from a host-process to the ros-process
 class ExitCode:
 
-    def __init__(self, code: int):
+    def __init__(self, code: int) -> None:
         self.code = code
 
 
 
 class ProgramNode(Node):
 
-    def __init__(self, request_sender: Connection):
+    def __init__(self, request_sender: Connection) -> None:
 
         super().__init__('program')
         	
@@ -102,7 +102,7 @@ class ProgramNode(Node):
 
 
 
-    def run_program_callback(self, goal_handle: ServerGoalHandle):
+    def run_program_callback(self, goal_handle: ServerGoalHandle) -> RunProgram.Result:
 
         # convert goal id to bytes
         goal_id: bytes = bytes([ int(num) for num in goal_handle.goal_id.uuid ])
@@ -157,7 +157,7 @@ class ProgramNode(Node):
 
 
 
-def main_loop(request_receiver: Connection):
+def main_loop(request_receiver: Connection) -> None:
     
     goal_id_to_host: dict[bytes, Process] = {}
 
@@ -229,7 +229,7 @@ def run_program(program_number: str, output_sender: Connection) -> None:
 
 
 
-def main(args=None):
+def main(args=None) -> None:
 
     request_sender, request_receiver = Pipe()
     ros_process = Process(target=ros_target, args=(request_sender,))
