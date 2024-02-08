@@ -11,9 +11,7 @@ import rclpy
 from rclpy.node import Node
 from diagnostic_msgs.msg import DiagnosticStatus
 from diagnostic_msgs.msg import KeyValue
-import sys
-sys.path.append('/home/pib/ros_working_dir/src/motors/utils')
-import update_bricklet_uids
+import utils.update_bricklet_uids as update_bricklet_uids
 
 
 class Motor_current(Node):
