@@ -28,7 +28,6 @@ export DEFAULT_USER="pib"
 export USER_HOME="/home/$DEFAULT_USER"
 export ROS_WORKING_DIR="$USER_HOME/ros_working_dir"
 mkdir "$ROS_WORKING_DIR"
-mkdir "$ROS_WORKING_DIR"/src
 mkdir "$USER_HOME/cerebra_programs"
 
 # We want the user pib to setup things without password (sudo without password)
