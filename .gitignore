@@ -4,6 +4,7 @@
 # python
 __pycache__/
 *.py[cod]ttt
+.pylintrc
 
 # Distribution / packaging
 .Python
