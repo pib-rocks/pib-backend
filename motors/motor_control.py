@@ -7,8 +7,8 @@ from pib_api_client import motor_client
 from pib_motors.motor import name_to_motors, motors
 from pib_motors.bricklet import ipcon      
 import sys
-sys.path.append('/home/pib/ros_working_dir/src/motors/boot_scripts')
-import manageTinkerForgeSettings
+sys.path.append('/home/pib/ros_working_dir/src/motors/utils')
+import update_bricklet_uids
 
 
 def motor_settings_ros_to_dto(ms: MotorSettings):
@@ -70,7 +70,7 @@ class MotorControl(Node):
                                 if successful: motor.apply_settings(motor_settings_dto)
 
                 #get UID from database
-                response = manageTinkerForgeSettings.get_uids_from_db()
+                response = update_bricklet_uids.get_uids_from_db()
                 UID1 = response[0]
                 UID2 = response[1]
                 UID3 = response[2]

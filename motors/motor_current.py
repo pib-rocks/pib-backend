@@ -12,8 +12,8 @@ from rclpy.node import Node
 from diagnostic_msgs.msg import DiagnosticStatus
 from diagnostic_msgs.msg import KeyValue
 import sys
-sys.path.append('/home/pib/ros_working_dir/src/motors/boot_scripts')
-import manageTinkerForgeSettings
+sys.path.append('/home/pib/ros_working_dir/src/motors/utils')
+import update_bricklet_uids
 
 
 class Motor_current(Node):
@@ -21,7 +21,7 @@ class Motor_current(Node):
     def __init__(self):
 
         #get UID from database
-        response = manageTinkerForgeSettings.get_uids_from_db()
+        response = update_bricklet_uids.get_uids_from_db()
         UID1 = response[0]
         UID2 = response[1]
         UID3 = response[2]
