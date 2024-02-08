@@ -1,3 +1,2 @@
 string proxy_goal_id
-string output_line
-bool is_stderr
+ProgramOutputLine[] output_lines
