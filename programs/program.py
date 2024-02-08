@@ -12,7 +12,6 @@ from rclpy.duration import Duration
 from multiprocessing import Process, Pipe, Lock
 from threading import Lock, Thread
 from subprocess import Popen, PIPE
-from enum import Enum
 from multiprocessing.connection import Connection
 from typing import IO
 import time
@@ -31,42 +30,44 @@ ACTION_LOOP_WAITING_PERIOD_SECONDS = 0.05
 
 
 
-# a request sent by the action server to the main process, to start/stop a program
-class Request:
+# request to start execution of user-program, sent from ros-process to main-process
+class StartRequest:
 
-    class Operation(Enum):
-        START = 0
-        STOP = 1
-
-    def __init__(self, goal_id: str, operation: Operation, program_number: str = ''):
+    def __init__(self, goal_id: bytes, program_number: str):
         self.goal_id = goal_id
-        self.operation = operation
         self.program_number = program_number
 
-
-# a response, sent from the main-process to the ros-process, indicating if the program
-# was successfully started/stopped; in case it was started, the provided connection
-# can be used to access its output
-class Response:
-
-    def __init__(self, successful: bool, connection: Connection | None = None):
+# response sent from main-process to ros-process, after ros-process sent a 'StartRequest'
+class StartResponse:
+        
+    def __init__(self, successful: bool, connection: Connection):
         self.successful = successful
         self.connection = connection
 
+# request to stop execution of user-program, sent from ros-process to main-process
+class StopRequest:
 
+    def __init__(self, goal_id: bytes):
+        self.goal_id = goal_id
 
-# represents output of a process - if type if stdout/stderr, the value should be a line of console output,
-# otherwise it should be an integer, representing the exit-code of the process
-class ProgramOutput:
+# response sent from main-process to ros-process, after ros-process sent a 'StopRequest'
+class StopResponse:
+        
+    def __init__(self, successful: bool):
+        self.successful = successful
 
-    class Type(Enum):
-        STDOUT = 0
-        STDERR = 1
-        EXIT_CODE = 2
+# one line of stdout/stderr output of a running user-program, sent from a host-process to the ros-process
+class OutputLine:
 
-    def __init__(self, type: Type, value: str | int):
-        self.type = type
-        self.value = value
+    def __init__(self, content: str, is_stderr: bool):
+        self.content = content
+        self.is_stderr = is_stderr
+
+# exit-code of a user-program, sent from a host-process to the ros-process
+class ExitCode:
+
+    def __init__(self, code: int):
+        self.code = code
 
 
 
@@ -107,10 +108,10 @@ class ProgramNode(Node):
         goal_id: bytes = bytes([ int(num) for num in goal_handle.goal_id.uuid ])
 
         # send request to main-process to start the program
-        request = Request(goal_id, Request.Operation.START, goal_handle.request.program_number)
+        request = StartRequest(goal_id, goal_handle.request.program_number)
         with self.request_sender_lock:
             self.request_sender.send(request)
-            response: Response = self.request_sender.recv()
+            response: StartResponse = self.request_sender.recv()
             if not response.successful:
                 goal_handle.abort()
                 return RunProgram.Result(exit_code=2)
@@ -120,10 +121,10 @@ class ProgramNode(Node):
 
             # if cancellation of the goal if requested, send termination-request to main-process
             if goal_handle.is_cancel_requested:
-                request = Request(goal_id, Request.Operation.STOP)
+                request = StopRequest(goal_id)
                 with self.request_sender_lock:
                     self.request_sender.send(request)
-                    response: Response = self.request_sender.recv()
+                    response: StopResponse = self.request_sender.recv()
                     if response.successful:
                         goal_handle.canceled()
                         return RunProgram.Result(exit_code=2)
@@ -132,14 +133,17 @@ class ProgramNode(Node):
             output_lines: list[ProgramOutputLine] = []
             exit_code = None
             while output_receiver.poll():
-                output: ProgramOutput = output_receiver.recv()
-                if output.type == ProgramOutput.Type.EXIT_CODE: 
-                    exit_code = output.value
-                else: # output is either stdout or stderr
+                output = output_receiver.recv()
+                if isinstance(output, OutputLine):
                     output_line = ProgramOutputLine(
-                        content=output.value, 
-                        is_stderr=(output.type == ProgramOutput.Type.STDERR))
+                        content=output.content, 
+                        is_stderr=output.is_stderr)
                     output_lines.append(output_line)
+            
+                elif isinstance(output, ExitCode):
+                    exit_code = output.code
+                else:
+                    raise RuntimeError(f"ros-process received unexpected output-type from host-process: {type(output)}'")
             
             # if at least one line of stdout/stderr output was collected, send it as feedback
             if len(output_lines) > 0: goal_handle.publish_feedback(RunProgram.Feedback(output_lines=output_lines))
@@ -147,7 +151,7 @@ class ProgramNode(Node):
             # if an exit-code was collected, return it as the result of the goal
             if exit_code is not None:
                 goal_handle.succeed()
-                return RunProgram.Result(exit_code=output.value)
+                return RunProgram.Result(exit_code=exit_code)
                     
             time.sleep(ACTION_LOOP_WAITING_PERIOD_SECONDS)
 
@@ -161,22 +165,23 @@ def main_loop(request_receiver: Connection):
 
         # handle all requests that were received from the ros-process during waiting period
         while request_receiver.poll():
-            request: Request = request_receiver.recv()
-            if request.operation == Request.Operation.START:
+            request = request_receiver.recv()
+            if isinstance(request, StartRequest):
                 output_sender, output_receiver = Pipe()
-                request_receiver.send(Response(True, output_receiver))
+                request_receiver.send(StartResponse(True, output_receiver))
                 host_process = Process(target=run_program, args=(request.program_number, output_sender))
                 goal_id_to_host[request.goal_id] = host_process
                 host_process.start()
-            elif request.operation == Request.Operation.STOP:
+            elif isinstance(request, StopRequest):
                 try: 
                     host_process = goal_id_to_host.pop(request.goal_id)
                 except KeyError: 
-                    request_receiver.send(Response(False))
+                    request_receiver.send(StopResponse(False))
                     continue
                 host_process.terminate()
-                request_receiver.send(Response(True))
-            else: raise Exception(f'unexpected operation in request: {request.operation}')
+                request_receiver.send(StopResponse(True))
+            else:
+                raise RuntimeError(f"main-process received unexpected request-type from ros-process: {type(request)}'")
         
         # filter out host-processes that have already terminated
         goal_id_to_host = { id : host for id , host in goal_id_to_host.items() if host.is_alive() }
@@ -204,13 +209,13 @@ def run_program(program_number: str, output_sender: Connection) -> None:
 
         output_sender_lock = Lock()
 
-        def forward_io_to_connection(output: IO[str], output_type: ProgramOutput.Type) -> None:
+        def forward_io_to_connection(output: IO[str], is_stderr: bool) -> None:
             for line in output: 
                 with output_sender_lock: 
-                    output_sender.send(ProgramOutput(output_type, line[:-1]))
+                    output_sender.send(OutputLine(line[:-1], is_stderr))
 
-        forward_stdout = Thread(target=forward_io_to_connection, args=(popen.stdout, ProgramOutput.Type.STDOUT))
-        forward_stderr = Thread(target=forward_io_to_connection, args=(popen.stderr, ProgramOutput.Type.STDERR))
+        forward_stdout = Thread(target=forward_io_to_connection, args=(popen.stdout, False))
+        forward_stderr = Thread(target=forward_io_to_connection, args=(popen.stderr, True))
 
         forward_stdout.start()
         forward_stderr.start()
@@ -220,8 +225,7 @@ def run_program(program_number: str, output_sender: Connection) -> None:
         forward_stdout.join()
         forward_stderr.join()
 
-        output = ProgramOutput(ProgramOutput.Type.EXIT_CODE, return_code)
-        output_sender.send(output)
+        output_sender.send(ExitCode(return_code))
 
 
 
