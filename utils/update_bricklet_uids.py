@@ -1,3 +1,4 @@
+"""Script for managing TinkerForge UIDs and corresponding database operations"""
 import json
 import sys
 import multiprocessing
@@ -18,12 +19,14 @@ hat = BrickHAT("X", ipcon)
 ipcon.connect("localhost", 4223)
 
 def cb_enumerate(uid, connected_uid, position, hardware_version, firmware_version, device_identifier, enumeration_type):
+    """Readout the UIDs of the connected TinkerForge Bricklets and update global variables."""
     if position in POSITION_TO_UID_MAP:
         globals()[POSITION_TO_UID_MAP[position]] = uid
 
 ipcon.register_callback(IPConnection.CALLBACK_ENUMERATE, cb_enumerate)
 
 def i():
+    """Start TinkerForge enumeration in a separate process."""
     ipcon.enumerate()
 
 p = multiprocessing.Process(target=i)
@@ -32,6 +35,7 @@ p.join()
 ipcon.disconnect()
 
 def update_uids():
+    """Update bricklet UIDs in the database."""
     header = {"Content-Type": "application/json"}
 
     for uid_number, uid in enumerate([UID0, UID1, UID2]):
@@ -39,11 +43,13 @@ def update_uids():
         requests.put(url, data=json.dumps({"uid": uid}), headers=header)
 
 def get_uids_from_db():
+    """Retrieve all UIDs from the database."""
     response = requests.get(BASE_URL + "bricklet")
     json_data = json.loads(response.text)
     return [json_data['bricklets'][0]['uid'], json_data['bricklets'][1]['uid'], json_data['bricklets'][2]['uid']]
 
 def detect_uid_changes():
+    """Check for changes between current databse and TinkerForge UIDs."""
     used_uids = get_uids_from_db()
 
     for uid_number, uid in enumerate([UID0, UID1, UID2]):
