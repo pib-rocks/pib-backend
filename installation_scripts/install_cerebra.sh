@@ -93,9 +93,6 @@ sudo systemctl daemon-reload
 sudo systemctl enable pib_api_boot.service
 cd $USER_HOME
 
-# Allow editing in all src-directories
-sudo chmod -R 777 $ROS_WORKING_DIR
-
 # Open firefox without gui to generate default folder structures 
 # This also avoids the welcome page the first time a user opens the browser
 timeout 20s firefox --headless

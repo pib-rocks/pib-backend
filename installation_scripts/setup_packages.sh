@@ -38,7 +38,7 @@ git clone https://github.com/pib-rocks/ros-packages.git
 mv $ROS_WORKING_DIR/ros-packages $ROS_WORKING_DIR/src
 cd $ROS_WORKING_DIR/src
 git checkout ${repo_map["$ROS_PACKAGES_ORIGIN"]}
-sudo chmod -R 777 $ROS_WORKING_DIR/src
+sudo chmod -R 777 $ROS_WORKING_DIR
 
 # Run the script for creating a custom gitmodules file
 readonly CREATE_GITMODULE_FILE_SCRIPT="$installation_files_dir"/"create_gitmodule_file.sh"
