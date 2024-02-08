@@ -11,6 +11,7 @@ find_package(rosidl_default_generators REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
 	"msg/MotorSettings.msg"
+	"msg/ProgramOutputLine.msg"
 	"msg/ProxyRunProgramFeedback.msg"
 	"msg/ProxyRunProgramResult.msg"
 	"msg/ProxyRunProgramStatus.msg"

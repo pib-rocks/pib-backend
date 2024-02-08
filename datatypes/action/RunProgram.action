@@ -2,5 +2,4 @@ string program_number
 ---
 uint8 exit_code
 ---
-string output_line
-bool is_stderr
+ProgramOutputLine[] output_lines
