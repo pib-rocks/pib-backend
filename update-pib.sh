@@ -85,16 +85,20 @@ if [ -z "$1" ]; then
 fi
 
 echo "Checking BrickletsIDs..."
-cd $USER_HOME/pib_data
-if [ python3 -c 'from update_bricklet_uids import detect_uid_changes; detect_uid_changes()' ]; then
-        while true; do
-                read -p "Some changes are detected. Do you want to update your BrickletIDs?" yn
-                case $yn in
-                        [Yy]* ) python3 -c 'from update_bricklet_uids import update_uids; update_uids()'; break;;
-                        [Nn]* ) exit;;
-                        * ) echo "Please answer yes or no.";;
-                esac
-        done
+readonly MOTOR_UTILS_DIR="/home/pib/ros_working_dir/src/motors/utils"
+readonly PYTHON_UID_SCRIPT_IMPORT="import sys; sys.path.insert(0, '$MOTOR_UTILS_DIR')"
+
+readonly CHANGE_DETECTED=$(python3 -c "$PYTHON_UID_SCRIPT_IMPORT; from update_bricklet_uids import detect_uid_changes; print(detect_uid_changes())")
+
+if [ "$CHANGE_DETECTED" == True ]; then
+    while true; do
+        read -p "UID changes were detected. Do you want to update your Bricklet-UIDs? (yes/no): " yn
+        case $yn in
+                [Yy]* ) python3 -c "$PYTHON_UID_SCRIPT_IMPORT; from update_bricklet_uids import update_uids; update_uids()"; break;;
+                [Nn]* ) break;;
+                * ) echo "Please answer yes or no.";;
+        esac
+    done
 fi
-cd
+
 echo "Everything is up to date"
