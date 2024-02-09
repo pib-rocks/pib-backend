@@ -6,15 +6,15 @@ import requests
 from tinkerforge.ip_connection import IPConnection
 from tinkerforge.brick_hat import BrickHAT
 
-BASE_URL = "http://127.0.0.1:5000/"
-BRICKLET_URLS = [BASE_URL + f"bricklet/{i}" for i in range(1, 4)]
+BASE_URL = "http://127.0.0.1:5000"
+BRICKLET_URLS = [f"{BASE_URL}/bricklet/{i}" for i in range(1, 4)]
 
 UID0 = "X"
 UID1 = "Y"
 UID2 = "Z"
 POSITION_TO_UID_MAP = {'a': 'UID0', 'b': 'UID1', 'e': 'UID2'}
 
-ipcon = IPConnection()
+ipcon: IPConnection = IPConnection()
 hat = BrickHAT("X", ipcon)
 ipcon.connect("localhost", 4223)
 
@@ -25,11 +25,7 @@ def cb_enumerate(uid, connected_uid, position, hardware_version, firmware_versio
 
 ipcon.register_callback(IPConnection.CALLBACK_ENUMERATE, cb_enumerate)
 
-def i():
-    """Start TinkerForge enumeration in a separate process."""
-    ipcon.enumerate()
-
-p = multiprocessing.Process(target=i)
+p = multiprocessing.Process(target=lambda: ipcon.enumerate())
 p.start()
 p.join()
 ipcon.disconnect()
@@ -44,7 +40,7 @@ def update_uids():
 
 def get_uids_from_db():
     """Retrieve all UIDs from the database."""
-    response = requests.get(BASE_URL + "bricklet")
+    response = requests.get(BASE_URL + "/bricklet")
     json_data = json.loads(response.text)
     return [json_data['bricklets'][0]['uid'], json_data['bricklets'][1]['uid'], json_data['bricklets'][2]['uid']]
 
