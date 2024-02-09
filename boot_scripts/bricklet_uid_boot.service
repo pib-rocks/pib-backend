@@ -8,8 +8,10 @@ Type=simple
 User=pib
 # Disable timeout logic to avoid the daemon preemptively marking the service as failed
 TimeoutStartSec=infinity
+
 # The flask api must be fully running for this service to function. Checking regularly until it's responding
 ExecStartPre=/bin/bash -c 'until curl --output /dev/null --silent http://localhost:5000; do sleep 3; done'
+
 # Execute python script to save the UIDs of connected servo-bricklets into the database
 ExecStart=/usr/bin/python3 /home/pib/ros_working_dir/src/motors/utils/update_bricklet_uids.py update_uids
 
