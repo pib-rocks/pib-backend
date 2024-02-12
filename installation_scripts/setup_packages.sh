@@ -33,7 +33,7 @@ pip install -r requirements.txt
 # clone ros-packages-repo
 echo 'git clone packages with sub modules'
 cd $ROS_WORKING_DIR
-git clone https://github.com/pib-rocks/ros-packages.git
+git clone "$ROS_PACKAGES_ORIGIN"
 mv "$ROS_WORKING_DIR""/ros-packages" "$ROS_WORKING_DIR""/src"
 cd "$ROS_WORKING_DIR""/src"
 git checkout ${repo_map["$ROS_PACKAGES_ORIGIN"]}
