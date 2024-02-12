@@ -1,11 +1,10 @@
 {
 	"info": {
-		"_postman_id": "ff755a89-7bd7-4631-9666-d5adcabf5ffe",
+		"_postman_id": "57124a68-cd38-43a4-8f4c-ca61d7963bf3",
 		"name": "pib REST-API MOCK Develop",
 		"description": "This API documentation is a first draft for the upcoming REST API development\n\nContact Support:\n Email: info@isento.de",
 		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
-		"_exporter_id": "28823041",
-		"_collection_link": "https://www.postman.com/pib-cerebra/workspace/cerebra/collection/30491512-ff755a89-7bd7-4631-9666-d5adcabf5ffe?action=share&source=collection_link&creator=28823041"
+		"_exporter_id": "28823041"
 	},
 	"item": [
 		{
@@ -536,8 +535,6 @@
 													"    pm.environment.set(\"personality-UUID\", responseJson.personalityId);\r",
 													"    console.log(responseJson.personalityId)\r",
 													"});\r",
-													"\r",
-													"\r",
 													""
 												],
 												"type": "text/javascript"
@@ -1109,10 +1106,11 @@
 													}
 												],
 												"url": {
-													"raw": "{{baseUrl}}/voice-assistant/chat/:chat-id/messages",
+													"raw": "{{baseUrl}}:{{port}}/voice-assistant/chat/:chat-id/messages",
 													"host": [
 														"{{baseUrl}}"
 													],
+													"port": "{{port}}",
 													"path": [
 														"voice-assistant",
 														"chat",
@@ -1121,9 +1119,8 @@
 													],
 													"variable": [
 														{
-															"key": "chatId",
-															"value": "<string>",
-															"description": "(Required) "
+															"key": "chat-id",
+															"value": "{{chat-UUID}}"
 														}
 													]
 												}
@@ -1315,7 +1312,7 @@
 												],
 												"body": {
 													"mode": "raw",
-													"raw": "{\n  \"messageContent\": \"<string>\",\n  \"message_content\": \"occaecat dolore\"\n}",
+													"raw": "{\n  \"isUser\": true,\n  \"content\": \"Tell me a collection of short stories.\"\n}",
 													"options": {
 														"raw": {
 															"language": "json"
@@ -1323,10 +1320,11 @@
 													}
 												},
 												"url": {
-													"raw": "{{baseUrl}}/voice-assistant/chat/:chat-id/messages",
+													"raw": "{{baseUrl}}:{{port}}/voice-assistant/chat/:chat-id/messages",
 													"host": [
 														"{{baseUrl}}"
 													],
+													"port": "{{port}}",
 													"path": [
 														"voice-assistant",
 														"chat",
@@ -1336,7 +1334,7 @@
 													"variable": [
 														{
 															"key": "chat-id",
-															"value": "<string>",
+															"value": "{{chat-UUID}}",
 															"description": "(Required) "
 														}
 													]
@@ -1548,6 +1546,167 @@
 													"body": "{\n  \"error\": \"<string>\"\n}"
 												}
 											]
+										},
+										{
+											"name": "Delete a message by id",
+											"request": {
+												"method": "DELETE",
+												"header": [
+													{
+														"key": "Accept",
+														"value": "application/json"
+													}
+												],
+												"url": {
+													"raw": "{{baseUrl}}:{{port}}/voice-assistant/chat/:chat-id/messages/:message-id",
+													"host": [
+														"{{baseUrl}}"
+													],
+													"port": "{{port}}",
+													"path": [
+														"voice-assistant",
+														"chat",
+														":chat-id",
+														"messages",
+														":message-id"
+													],
+													"variable": [
+														{
+															"key": "chat-id",
+															"value": "{{chat-UUID}}"
+														},
+														{
+															"key": "message-id",
+															"value": "{{message-UUID}}"
+														}
+													]
+												}
+											},
+											"response": [
+												{
+													"name": "Bad Request",
+													"originalRequest": {
+														"method": "DELETE",
+														"header": [
+															{
+																"key": "Accept",
+																"value": "application/json"
+															}
+														],
+														"url": {
+															"raw": "{{baseUrl}}/voice-assistant/chat/:chat-id",
+															"host": [
+																"{{baseUrl}}"
+															],
+															"path": [
+																"voice-assistant",
+																"chat",
+																":chat-id"
+															],
+															"variable": [
+																{
+																	"key": "chatId",
+																	"value": "<string>",
+																	"description": "(Required) "
+																}
+															]
+														}
+													},
+													"status": "Bad Request",
+													"code": 400,
+													"_postman_previewlanguage": "json",
+													"header": [
+														{
+															"key": "Content-Type",
+															"value": "application/json"
+														}
+													],
+													"cookie": [],
+													"body": "{\n  \"error\": \"<string>\"\n}"
+												},
+												{
+													"name": "Not Found",
+													"originalRequest": {
+														"method": "DELETE",
+														"header": [
+															{
+																"key": "Accept",
+																"value": "application/json"
+															}
+														],
+														"url": {
+															"raw": "{{baseUrl}}/voice-assistant/chat/:chat-id",
+															"host": [
+																"{{baseUrl}}"
+															],
+															"path": [
+																"voice-assistant",
+																"chat",
+																":chat-id"
+															],
+															"variable": [
+																{
+																	"key": "chatId",
+																	"value": "<string>",
+																	"description": "(Required) "
+																}
+															]
+														}
+													},
+													"status": "Not Found",
+													"code": 404,
+													"_postman_previewlanguage": "json",
+													"header": [
+														{
+															"key": "Content-Type",
+															"value": "application/json"
+														}
+													],
+													"cookie": [],
+													"body": "{\n  \"error\": \"<string>\"\n}"
+												},
+												{
+													"name": "Internal Server Error",
+													"originalRequest": {
+														"method": "DELETE",
+														"header": [
+															{
+																"key": "Accept",
+																"value": "application/json"
+															}
+														],
+														"url": {
+															"raw": "{{baseUrl}}/voice-assistant/chat/:chat-id",
+															"host": [
+																"{{baseUrl}}"
+															],
+															"path": [
+																"voice-assistant",
+																"chat",
+																":chat-id"
+															],
+															"variable": [
+																{
+																	"key": "chatId",
+																	"value": "<string>",
+																	"description": "(Required) "
+																}
+															]
+														}
+													},
+													"status": "Internal Server Error",
+													"code": 500,
+													"_postman_previewlanguage": "json",
+													"header": [
+														{
+															"key": "Content-Type",
+															"value": "application/json"
+														}
+													],
+													"cookie": [],
+													"body": "{\n  \"error\": \"<string>\"\n}"
+												}
+											]
 										}
 									]
 								},
@@ -1575,7 +1734,7 @@
 											"variable": [
 												{
 													"key": "chat-id",
-													"value": "610b1672-ae15-488b-bc1b-e7f5f0ead3bc"
+													"value": "{{chat-UUID}}"
 												}
 											]
 										}
@@ -1763,7 +1922,7 @@
 										],
 										"body": {
 											"mode": "raw",
-											"raw": "{\n  \"topic\": \"New conversation\",\n  \"personalityId\": \"cbd533a8-9c2a-42a5-a3c8-a2ab1fed1d96\"\n\n}",
+											"raw": "{\n  \"topic\": \"New conversation\"\n}",
 											"options": {
 												"raw": {
 													"language": "json"
@@ -1784,7 +1943,7 @@
 											"variable": [
 												{
 													"key": "chat-id",
-													"value": "610b1672-ae15-488b-bc1b-e7f5f0ead3bc"
+													"value": "{{chat-UUID}}"
 												}
 											]
 										}
@@ -2016,7 +2175,7 @@
 											"variable": [
 												{
 													"key": "chat-id",
-													"value": "4c3efce6-1610-433d-8849-0278d37b8f92"
+													"value": "{{chat-UUID}}"
 												}
 											]
 										}
@@ -2289,7 +2448,7 @@
 								],
 								"body": {
 									"mode": "raw",
-									"raw": "{\n  \"topic\": \"New conversation\",\n  \"personalityId\": \"e55f92c4-52c5-49ed-8ba3-c6a17aadb3a1\"\n}",
+									"raw": "{\n  \"topic\": \"New conversation\",\n  \"personalityId\": \"{{personality-UUID}}\"\n}",
 									"options": {
 										"raw": {
 											"language": "json"
@@ -2297,15 +2456,14 @@
 									}
 								},
 								"url": {
-									"raw": "{{baseUrl}}:{{port}}/voice-assistant/chat/",
+									"raw": "{{baseUrl}}:{{port}}/voice-assistant/chat",
 									"host": [
 										"{{baseUrl}}"
 									],
 									"port": "{{port}}",
 									"path": [
 										"voice-assistant",
-										"chat",
-										""
+										"chat"
 									]
 								}
 							},
@@ -4442,12 +4600,12 @@
 		},
 		{
 			"key": "chat-UUID",
-			"value": "46884454-018a-4124-9cb4-2c518a934625",
+			"value": "b4f01552-0c09-401c-8fde-fda753fb0261",
 			"type": "string"
 		},
 		{
 			"key": "message-UUID",
-			"value": "",
+			"value": "539ed3e6-9e3d-11ee-8c90-0242ac120002",
 			"type": "string"
 		},
 		{
