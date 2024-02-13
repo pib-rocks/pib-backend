@@ -36,7 +36,6 @@ class BrickletPin:
 			settings_dto['period'] = self.bricklet.get_period(self.pin)
 			settings_dto['rotationRangeMin'], settings_dto['rotationRangeMax']= self.bricklet.get_degree(self.pin)
 			settings_dto['turnedOn'] = self.bricklet.get_enabled(self.pin)
-			settings_dto['invert'] = self.bricklet.get_invert(self.pin)
 		except Exception as error: logging.error(f'error occured while trying to get motor-settings: {str(error)}')
 		return settings_dto
 
