@@ -1,6 +1,6 @@
 {
 	"info": {
-		"_postman_id": "57124a68-cd38-43a4-8f4c-ca61d7963bf3",
+		"_postman_id": "f6da4804-bff5-4594-98c3-0a57f1206275",
 		"name": "pib REST-API MOCK Develop",
 		"description": "This API documentation is a first draft for the upcoming REST API development\n\nContact Support:\n Email: info@isento.de",
 		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
@@ -2764,7 +2764,7 @@
 										"header": [],
 										"body": {
 											"mode": "raw",
-											"raw": "{\r\n    \"name\": \"{{motor-name}}\",\r\n    \"brickletPins\": [\r\n        {\r\n            \"bricklet\": \"ABC\",\r\n            \"invert\": false,\r\n            \"pin\": 1\r\n        }\r\n    ]\r\n}",
+											"raw": "{\r\n    \"name\": \"{{motor-name}}\",\r\n    \"brickletPins\": [\r\n        {\r\n            \"bricklet\": \"{{bricklet-uid}}\",\r\n            \"invert\": false,\r\n            \"pin\": 1\r\n        }\r\n    ]\r\n}",
 											"options": {
 												"raw": {
 													"language": "json"
@@ -2989,7 +2989,7 @@
 								],
 								"body": {
 									"mode": "raw",
-									"raw": "{\n    \"name\": \"{{motor-name}}\",\n    \"turnedOn\": false,\n    \"pulseWidthMin\": 2500,\n    \"pulseWidthMax\": 600,\n    \"rotationRangeMin\": 90,\n    \"rotationRangeMax\": -90,\n    \"velocity\": 250000,\n    \"acceleration\": 2500000,\n    \"deceleration\": 10000,\n    \"period\": 19500,\n    \"visible\": true,\n    \"invert\": false,\n    \"brickletPins\": [\n    {\n      \"pin\": 0,\n      \"bricklet\": \"XYZ\",\n      \"invert\": false\n    }\n    ]\n}",
+									"raw": "{\n    \"acceleration\": 10000,\n    \"brickletPins\": [\n        {\n            \"bricklet\": \"SHU\",\n            \"invert\": true,\n            \"pin\": 7\n        },\n        {\n            \"bricklet\": \"SHU\",\n            \"invert\": true,\n            \"pin\": 8\n        }\n    ],\n    \"deceleration\": 5000,\n    \"invert\": false,\n    \"name\": \"{{motor-name}}\",\n    \"period\": 19500,\n    \"pulseWidthMax\": 2500,\n    \"pulseWidthMin\": 700,\n    \"rotationRangeMax\": 4500,\n    \"rotationRangeMin\": -4500,\n    \"turnedOn\": true,\n    \"velocity\": 500000,\n    \"visible\": true\n}",
 									"options": {
 										"raw": {
 											"language": "json"
@@ -5588,6 +5588,11 @@
 		{
 			"key": "bricklet-number",
 			"value": "1",
+			"type": "string"
+		},
+		{
+			"key": "bricklet-uid",
+			"value": "X",
 			"type": "string"
 		}
 	]
