@@ -39,6 +39,7 @@ def set_bricklet_pins(motor_name, bricklet_pin_dtos):
         bricklet_pin = BrickletPin(pin=dto['pin'])
         bricklet_pin.bricklet = bricklet
         bricklet_pin.motor = motor
+        bricklet_pin.invert = dto['invert']
         db.session.add(bricklet_pin)
     db.session.flush()
     return motor
