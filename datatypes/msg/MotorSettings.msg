@@ -9,3 +9,4 @@ int64 acceleration
 int64 deceleration
 int64 period
 bool visible
+bool invert
