@@ -1,0 +1,2 @@
+string proxy_goal_id
+ProgramOutputLine[] output_lines
