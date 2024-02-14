@@ -22,7 +22,8 @@ def motor_settings_ros_to_dto(ms: MotorSettings):
                 "acceleration": ms.acceleration,
                 "deceleration": ms.deceleration,
                 "period": ms.period,
-                "visible": ms.visible
+                "visible": ms.visible,
+                "invert": ms.invert
         }
 
 
