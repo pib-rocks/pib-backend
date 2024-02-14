@@ -17,4 +17,5 @@ class Motor(db.Model):
     period = db.Column(db.Integer, nullable=False)
     turnedOn = db.Column(db.Boolean, nullable=False)
     visible = db.Column(db.Boolean, nullable=False)
+    invert = db.Column(db.Boolean, nullable=False)
     brickletPins = db.relationship('BrickletPin', backref='motor', lazy=True, cascade="all,, delete-orphan")
