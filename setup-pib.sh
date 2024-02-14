@@ -145,5 +145,8 @@ sudo systemctl enable ros_cerebra_boot.service
 # Enable and start ssh server
 sudo systemctl enable ssh --now
 
+# Download animated pib eyes
+curl --location --output ~/Desktop/pib-eyes-animated.gif https://raw.githubusercontent.com/pib-rocks/setup-pib/PR-549/setup_files/pib-eyes-animated.gif
+
 echo -e "$NEW_LINE""Congratulations! The setup completed succesfully!"
 echo -e "$NEW_LINE""Please restart the system to apply changes..."
