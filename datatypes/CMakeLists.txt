@@ -13,9 +13,17 @@ rosidl_generate_interfaces(${PROJECT_NAME}
 	"msg/MotorSettings.msg"
 	"msg/ChatMessage.msg"
 	"msg/VoiceAssistantState.msg"
+	"msg/ProgramOutputLine.msg"
+	"msg/ProxyRunProgramFeedback.msg"
+	"msg/ProxyRunProgramResult.msg"
+	"msg/ProxyRunProgramStatus.msg"
 	"srv/MotorSettingsSrv.srv"
 	"srv/GetVoiceAssistantState.srv"
 	"srv/SetVoiceAssistantState.srv"
+	"srv/ProxyRunProgramStart.srv"
+	"srv/ProxyRunProgramStop.srv"
+	"action/RunProgram.action"
 )
+
 ament_export_dependencies(rosidl_default_runtime)
 ament_package()
