@@ -6,9 +6,10 @@ import logging
 
 class BrickletPin:
 
-	def __init__(self, pin: int, uid: str) -> None:
+	def __init__(self, pin: int, uid: str, invert: bool) -> None:
 		self.pin: int = pin
 		self.bricklet: BrickletServoV2 = uid_to_bricklet[uid]
+		self.invert = invert
 
 	def __str__(self) -> str:
 		uid = "---"
@@ -38,7 +39,9 @@ class BrickletPin:
 		except Exception as error: logging.error(f'error occured while trying to get motor-settings: {str(error)}')
 		return settings_dto
 
-	def set_position(self, position: int) -> bool:
+	def set_position(self, position: int, invert: bool) -> bool:
+		if invert:
+			position = position * -1
 		try: self.bricklet.set_position(self.pin, position)
 		except Exception: return False
 		return True
@@ -46,4 +49,3 @@ class BrickletPin:
 	def get_position(self) -> int:
 		try: return self.bricklet.get_position(self.pin)
 		except Exception: return 0
-		

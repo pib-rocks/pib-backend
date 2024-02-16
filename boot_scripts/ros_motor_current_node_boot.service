@@ -1,5 +1,6 @@
 [Unit]
 Description=Startup script for the pib motor current node
+After=network.target bricklet_uid_boot.service
 After=network.target pib_api_boot.service
 BindsTo=pib_api_boot.service
 
@@ -8,8 +9,14 @@ Type=simple
 User=pib
 # Disable timeout logic to avoid the daemon preemptively marking the service as failed
 TimeoutStartSec=infinity
+
 # The flask api must be fully running for this service to function. Checking regularly until it's responding
 ExecStartPre=/bin/bash -c 'until curl --output /dev/null --silent http://localhost:5000; do sleep 3; done'
+
+# Wait for the bricklet_uid_boot.service to complete before starting
+ExecStartPre=/bin/bash -c 'while systemctl is-active --quiet bricklet_uid_boot.service; do sleep 3; done'
+
+# Start the node
 ExecStart=/usr/bin/bash /home/pib/ros_working_dir/src/motors/boot_scripts/ros_motor_current_node_boot.sh
 
 [Install]
