@@ -19,6 +19,7 @@ motors_branch_name="$MAIN_BRANCH"
 datatypes_branch_name="$MAIN_BRANCH"
 oak_d_lite_branch_name="$MAIN_BRANCH"
 voice_assistant_branch_name="$MAIN_BRANCH"
+programs_branch_name="$MAIN_BRANCH"
 
 # Create an associative array, with repo-origin, branch-name pairs 
 # Origin Variables are located in the main setup-pib script
@@ -29,6 +30,7 @@ repo_map["$MOTORS_ORIGIN"]="$motors_branch_name"
 repo_map["$DATATYPES_ORIGIN"]="$datatypes_branch_name"
 repo_map["$OAK_D_LITE_ORIGIN"]="$oak_d_lite_branch_name"
 repo_map["$VOICE_ASSISTANT_ORIGIN"]="$voice_assistant_branch_name"
+repo_map["$PROGRAMS_ORIGIN"]="$programs_branch_name"
 
 # Define the order in which branches are tried to be set
 declare -a branch_order
