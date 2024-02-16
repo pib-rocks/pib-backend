@@ -17,8 +17,8 @@ def get_motor(name: str):
 
 
 def update_motor(name: str):
-    bricklet_pin_dtos = motor_bricklet_pins_schema.load(request.json)['brickletPins']
-    motor_settings_dto = motor_settings_schema.load(request.json)
+    bricklet_pin_dtos = motor_schema.load(request.json)['brickletPins']
+    motor_settings_dto = motor_schema.load(request.json)
     motor_service.set_bricklet_pins(name, bricklet_pin_dtos)
     motor = motor_service.set_motor_settings(name, motor_settings_dto)
     db.session.commit()
