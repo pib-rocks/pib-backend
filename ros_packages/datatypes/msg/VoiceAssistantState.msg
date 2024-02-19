@@ -1,0 +1,2 @@
+bool turned_on
+string chat_id

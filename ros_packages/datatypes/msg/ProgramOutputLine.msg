@@ -1,0 +1,2 @@
+string content
+bool is_stderr
