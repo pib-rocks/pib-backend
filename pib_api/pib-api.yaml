@@ -1,0 +1,1243 @@
+openapi: 3.1.0
+info:
+  title: pib REST-API MOCK
+  description: |-
+    This API documentation is a first draft for the upcoming REST API development
+  termsOfService: https://isento.de/
+  contact:
+    email: info@isento.de
+  version: 0.0.1
+tags:
+  - name: personality
+    description: CRUD-Operations for voice assistant personalities
+  - name: chat
+    description: CRUD-Operations for voice assistant chats
+  - name: motor
+    description: Read- and Update-Operations for motors
+  - name: camera-settings
+    description: Read- and Update-Operations for camera-settings
+  - name: program
+    description: CRUD-Operations for user programs
+  - name: bricklet
+    description: Read- and Update-Operations for bricklets
+paths:
+  /voice-assistant/personality:
+    post:
+      tags:
+        - personality
+      summary: Add a new voice assistant personality
+      operationId: createVoiceAssistantPersonality
+      requestBody:
+        description: Add a new voice assistant personality
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VoiceAssistantPersonality'
+        required: true
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: 
+                $ref: '#/components/schemas/VoiceAssistantPersonality'
+        '400':
+          $ref: '#/components/responses/400'
+        '500':
+          $ref: '#/components/responses/500'
+    get:
+      tags: 
+        - personality
+      summary: Get all voice assistant personalities
+      operationId: getAllVoiceAssistantPersonalities
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoiceAssistantPersonalities'
+        '400':
+          $ref: '#/components/responses/400'
+        '500':
+          $ref: '#/components/responses/500'
+  /voice-assistant/personality/{personality-id}:
+    parameters:
+      - name: personality-id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      tags:
+        - personality
+      summary: Get a voice assistant personality by id
+      operationId: getVoiceAssistantPersonalityById
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoiceAssistantPersonality'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+    put:
+      tags:
+        - personality
+      summary: Update a voice assistant personality by id
+      operationId: updateVoiceAssistantPersonalityById
+      requestBody:
+        description: Update an existing voice assistant personality
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VoiceAssistantPersonality'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: 
+                $ref: '#/components/schemas/VoiceAssistantPersonality'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+    delete:
+      tags:
+        - personality
+      summary: Delete a voice assistant personality by id
+      operationId: deleteVoiceAssistantPersonalityById
+      responses:
+        '204':
+          $ref: '#/components/responses/204'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+  /voice-assistant/chat:
+    post:
+      tags:
+        - chat
+      summary: Add a new voice assistant chat
+      operationId: createVoiceAssistantChat
+      requestBody:
+        description: Add a new voice assistant chat
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VoiceAssistantChat'
+        required: true
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: 
+                $ref: '#/components/schemas/VoiceAssistantChat'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+    get:
+      tags: 
+        - chat
+      summary: Get all voice assistant chats
+      operationId: getAllVoiceAssistantChats
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoiceAssistantChats'
+        '400':
+          $ref: '#/components/responses/400'
+        '500':
+          $ref: '#/components/responses/500'
+  /voice-assistant/chat/{chat-id}:
+    parameters:
+      - name: chat-id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      tags:
+        - chat
+      summary: Get a voice assistant chat by id
+      operationId: getVoiceAssistantChatById
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoiceAssistantChat'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+    put:
+      tags:
+        - chat
+      summary: Update a voice assistant chat by id
+      operationId: updateVoiceAssistantChatById
+      requestBody:
+        description: Update an existing voice assistant chat
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VoiceAssistantChat'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: 
+                $ref: '#/components/schemas/VoiceAssistantChat'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+    delete:
+      tags:
+        - chat
+      summary: Delete a voice assistant chat by id
+      operationId: deleteVoiceAssistantChatById
+      responses:
+        '204':
+          $ref: '#/components/responses/204'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+  /voice-assistant/chat/{chat-id}/messages:
+    parameters:
+      - name: chat-id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      tags:
+        - chat
+      summary: Get all messages of a voice assistant chat by chat id
+      operationId: getAllVoiceAssistantChatMessagesByChatId
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoiceAssistantChatMessages'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+    post:
+      tags:
+        - chat
+      summary: Add a message to a voice assistant chat
+      operationId: createVoiceAssistantChatMessage
+      requestBody:
+        description: Add a message to a voice assistant chat by chat id
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VoiceAssistantChatMessage'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoiceAssistantChatMessage'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+  /voice-assistant/chat/{chat-id}/messages/{message-id}:
+    parameters:
+      - name: chat-id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: message-id
+        in: path
+        required: true
+        schema:
+          type: string
+    delete:
+      tags:
+        - chat
+      summary: Delete one message by its message-id
+      responses:
+        '204':
+          $ref: '#/components/responses/204'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+  /motor:
+    get:
+      tags:
+        - motor
+      summary: Get all motors
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AllMotors'
+        '400':
+          $ref: '#/components/responses/400'
+        '500':
+          $ref: '#/components/responses/500'
+  /motor/{motor-name}:
+    parameters:
+      - name: motor-name
+        in: path
+        required: true
+        schema:
+          $ref: '#/components/schemas/MotorName'
+    get:
+      tags:
+        - motor
+      summary: Get one motor
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Motor'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+    put:
+      tags:
+        - motor
+      summary: Update one motor
+      requestBody:
+        description: Update one motor
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Motor'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Motor'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+  /motor/{motor-name}/settings:
+    parameters:
+      - name: motor-name
+        in: path
+        required: true
+        schema:
+          $ref: '#/components/schemas/MotorName'
+    get:
+      tags:
+        - motor
+      summary: Get the settings of one motor
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MotorSettings'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+    put:
+      tags:
+        - motor
+      summary: Update the settings of one motor
+      requestBody:
+        description: Update the settings of one motor
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MotorSettings'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MotorSettings'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+  /motor/{motor-name}/bricklet-pins:
+    parameters:
+      - name: motor-name
+        in: path
+        required: true
+        schema:
+          $ref: '#/components/schemas/MotorName'
+    get:
+      tags:
+        - motor
+      summary: Get the bricklet-pins of one motor
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MotorBrickletPins'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+    put:
+      tags:
+        - motor
+      summary: Update the bricklet-pins of one motor
+      requestBody:
+        description: Add a message to a voice assistant chat by chat id
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MotorBrickletPins'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MotorBrickletPins'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+  /camera-settings:
+    get:
+      tags:
+        - camera-settings
+      summary: Get the camera-settings
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CameraSettings'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+    put:
+      tags:
+        - camera-settings
+      summary: Updates the camera-settings
+      requestBody:
+        description: Update the camera-settings.
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CameraSettings'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: 
+                $ref: '#/components/schemas/CameraSettings'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+  /program:
+    post:
+      tags:
+        - program
+      summary: Add a program
+      requestBody:
+        description: Create an existing program.
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Program'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Program'
+        '400':
+          $ref: '#/components/responses/400'
+        '500':
+          $ref: '#/components/responses/500'
+    get:
+      tags:
+        - program
+      summary: Get all programs
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Programs'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+  /program/{program-number}:
+    parameters:
+      - in: path
+        name: program-number
+        required: true
+        schema:
+          type: string
+          format: uuid
+        description: the number of the program
+    get:
+      tags:
+        - program
+      summary: Get one program by the program number
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Program'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+    put:
+      tags:
+        - program
+      summary: Update Program
+      requestBody:
+        description: Update an existing program.
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Program'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Program'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+    delete:
+      tags:
+        - program
+      summary: Delete one program by the program number
+      responses:
+        '204':
+          $ref: '#/components/responses/204'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+  /program/{program-number}/code:
+    parameters:
+      - in: path
+        name: program-number
+        required: true
+        schema:
+          type: string
+          format: uuid
+        description: the number of the program
+    get:
+      tags:
+        - program
+      summary: Get the (visual) code of one program by the program number
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProgramCodeGet'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+    put:
+      tags:
+        - program
+      summary: Update the code of an existing program
+      requestBody:
+        description: Update the code of an existing program
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProgramCodePut'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProgramCodeGet'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+  /bricklet:
+    get:
+      tags: 
+        - bricklet
+      summary: Get all brickletIds
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Bricklets'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+  /bricklet/{bricklet-number}:
+    parameters:
+      - in: path
+        name: bricklet-number
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 3
+        description: the number of the bricklet
+    get:
+      tags: 
+        - bricklet
+      summary: Get one brickletId
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetBrickletByBrickletNumber'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+    put:
+      tags:
+        - bricklet
+      summary: Update brickletId
+      requestBody:
+        description: Update brickletId
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Bricklet'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Bricklet'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+components:
+  schemas:
+    VoiceAssistantPersonality:
+      type: object
+      properties:
+        personalityId:
+          readOnly: true
+          type: string
+          examples: 
+            - ecb8ad22-891d-4744-80b3-7e6d6d84a5c0
+            - f1eda93f-0ae3-4f41-8502-d56dddeb7034 
+            - 864c6ebe-c514-4d1d-85af-8ccd385f3f17 
+        name:
+          type: string
+          examples: 
+            - Eva
+            - Thomas
+            - Janina
+            - Georg
+        description:
+          readOnly: true
+          type: string
+          minLength: 1
+          examples: 
+            - You are a helpful assistant.
+            - You act as a translator, translating all my messages into Japanese.
+        gender:
+          type: string
+          enum: [Male, Female]
+          examples: 
+            - Female
+            - Male
+        pauseThreshold:
+          type: number
+          examples: 
+            - 0.8
+            - 1.0
+      required:
+        - personalityId
+        - name
+        - description
+        - gender
+        - pauseThreshold
+    PostVoiceAssistantPersonality:
+      type: object
+      properties:
+        name:
+          type: string
+          examples: 
+            - Eva
+            - Thomas
+            - Janina
+            - Georg
+        description:
+          type: string
+          minLength: 1
+          examples: 
+            - You are a helpful assistant.
+            - You act as a translator, translating all my messages into Japanese.
+        gender:
+          type: string
+          enum: [Male, Female]
+          examples: 
+            - Female
+            - Male
+        pauseThreshold:
+          type: number
+          examples: 
+            - 0.8
+            - 1.0
+      required:
+        - personalityId
+        - name
+        - description
+        - gender
+        - pauseThreshold
+    VoiceAssistantPersonalities:
+      properties:
+        voiceAssistantPersonalities:
+          type: array
+          items:
+            $ref: '#/components/schemas/VoiceAssistantPersonality'
+    VoiceAssistantChat:
+      type: object
+      properties:
+        chatId:
+          type: string
+          readOnly: true
+          examples: 
+            - 903edb9e-a95c-44d4-ad21-f3024c2e3f6f
+            - f83913e4-ac40-498c-9bab-635958fbe096 
+        topic:
+          type: string
+          default: New conversation
+          examples: 
+            - Short Stories
+            - Nürnberg
+            - Definition of AI today
+        personalityId:
+          examples:
+            - f83913e4-ac40-498c-9bab-635958fbe096 
+      required:
+        - chatId
+        - topic
+        - voiceAssistantPersonality
+    VoiceAssistantChats:
+      properties:
+        voiceAssistantChats:
+          type: array
+          items:
+            $ref: '#/components/schemas/VoiceAssistantChat'
+    VoiceAssistantChatMessage:
+      type: object
+      properties:
+        messageId:
+          type: string
+          readOnly: true
+          examples: 
+            - 3f51b823-730b-472e-8c8f-adac5ba5ccd3
+            - 8731eb50-62b0-46cf-bea9-e6e9921a7e44  
+        timestamp:
+          type: string
+          format: date-time
+          readOnly: true
+          examples: 
+            - "2023-09-30T08:30:00Z"
+            - "2023-10-05T10:11:00Z"
+        isUser:
+          type: boolean
+        content:
+          type: string
+          examples: 
+            - Tell me a collection of short stories.
+            - Hello Thomas, tell me something about Nürnberg.
+            - Here is a brief definition of our current understanding of AI...
+      required:
+        - messageId
+        - timestamp
+        - isUser
+        - message_content
+        - voiceAssistantChat
+    VoiceAssistantChatMessages:
+      properties:
+        messages:
+          type: array
+          items:
+            $ref: '#/components/schemas/VoiceAssistantChatMessage'
+    AllMotors:
+      properties:
+        motors:
+          type: array
+          items:
+            $ref: '#/components/schemas/Motor'  
+    Motor:
+      type: object
+      properties:
+        name:
+          $ref: '#/components/schemas/MotorName'
+        turnedOn: 
+          type: boolean
+          examples: 
+            - true
+        pulseWidthMin: 
+          type: integer
+          minimum: 0
+          maximum: 65535
+          examples: 
+            - 10000
+        pulseWidthMax: 
+          type: integer
+          minimum: 0
+          maximum: 65535
+          examples: 
+            - 50000
+        rotationRangeMin: 
+          type: integer
+          minimum: -9000
+          maximum: 9000
+          examples: 
+            - -3000
+        rotationRangeMax: 
+          type: integer
+          minimum: -9000
+          maximum: 9000
+          examples: 
+            - 4000
+        velocity: 
+          type: integer
+          minimum: 0
+          maximum: 50000
+          examples: 
+            - 12000
+        acceleration: 
+          type: integer
+          minimum: 0
+          maximum: 50000
+          examples: 
+            - 3500
+        deceleration: 
+          type: integer
+          minimum: 0
+          maximum: 50000
+          examples: 
+            - 25000
+        period: 
+          type: integer
+          minimum: 0
+          maximum: 100000
+          examples: 
+            - 60000
+        invert:
+          type: boolean
+          examples: 
+          - false
+        visible: 
+          type: boolean
+          examples: 
+            - true
+          description:
+            indicates, wether the motor is displayed / can be accessed via the cerebra-frontend
+        brickletPins:
+          type: array
+          items:
+            $ref: '#/components/schemas/MotorBrickletPin'
+      required:
+        - name
+        - turnedOn
+        - pulseWidthMin
+        - pulseWidthMax
+        - rotationRangeMin
+        - rotationRangeMax
+        - velocity
+        - acceleration
+        - deceleration
+        - period
+        - visible
+        - brickletPins
+    MotorBrickletPin:
+      type: object
+      properties:
+        pin:
+          type: number
+          description: the channel on the specified servo-bricklet
+          minimum: 0
+          maximum: 9
+          examples: 
+            - 0
+        bricklet:
+          type: string
+          description: a three-character-string used by the tinkerforge-api to identify a servo-bricklet
+          examples:
+            - "XYZ"
+      required:
+        - pin
+        - bricklet
+    MotorBrickletPins:
+      type: object
+      properties:
+        name:
+          $ref: '#/components/schemas/MotorName'
+        brickletPins:
+          type: array
+          items:
+            $ref: '#/components/schemas/MotorBrickletPin'
+      required:
+        - name
+        - brickletPins
+    MotorSettings:
+      type: object
+      properties:
+        name:
+          $ref: '#/components/schemas/MotorName'
+        turnedOn: 
+          type: boolean
+          examples: 
+            - true
+        pulseWidthMin: 
+          type: integer
+          minimum: 0
+          maximum: 65535
+          examples: 
+            - 10000
+        pulseWidthMax: 
+          type: integer
+          minimum: 0
+          maximum: 65535
+          examples: 
+            - 50000
+        rotationRangeMin: 
+          type: integer
+          minimum: -9000
+          maximum: 9000
+          examples: 
+            - -3000
+        rotationRangeMax: 
+          type: integer
+          minimum: -9000
+          maximum: 9000
+          examples: 
+            - 4000
+        velocity: 
+          type: integer
+          minimum: 0
+          maximum: 50000
+          examples: 
+            - 12000
+        acceleration: 
+          type: integer
+          minimum: 0
+          maximum: 50000
+          examples: 
+            - 3500
+        deceleration: 
+          type: integer
+          minimum: 0
+          maximum: 50000
+          examples: 
+            - 25000
+        period: 
+          type: integer
+          minimum: 0
+          maximum: 100000
+          examples: 
+            - 60000
+        visible: 
+          type: boolean
+          examples: 
+            - true
+      required:
+        - turnedOn
+        - pulseWidthMin
+        - pulseWidthMax
+        - rotationRangeMin
+        - rotationRangeMax
+        - velocity
+        - acceleration
+        - deceleration
+        - period
+        - visible
+    MotorName:
+      type: string
+      examples:
+        - thumb_right_opposition
+      enum:
+        - thumb_left_opposition
+        - thumb_left_stretch
+        - index_left_stretch
+        - middle_left_stretch
+        - ring_left_stretch
+        - pinky_left_stretch
+        - all_fingers_left
+        - thumb_right_opposition
+        - thumb_right_stretch
+        - index_right_stretch
+        - middle_right_stretch
+        - ring_right_stretch
+        - pinky_right_stretch
+        - all_fingers_right
+        - upper_arm_left_rotation
+        - elbow_left
+        - lower_arm_left_rotation
+        - wrist_left
+        - shoulder_vertical_left
+        - shoulder_horizontal_left
+        - upper_arm_right_rotation
+        - elbow_right
+        - lower_arm_right_rotation
+        - wrist_right
+        - shoulder_vertical_right
+        - shoulder_horizontal_right
+        - tilt_forward_motor
+        - tilt_sideways_motor
+    CameraSettings:
+      type: object
+      properties:
+        refreshRate: 
+          description: "unit of measure: seconds (s)"
+          type: number
+          format: float
+          minimum: 0.1
+          maximum: 1.0
+          multipleOf: 0.1
+          examples: 
+            - 0.5
+        qualityFactor: 
+          type: integer
+          minimum: 10
+          maximum: 90
+          multipleOf: 10
+          examples: 
+            - 30
+        resolution:
+          type: string
+          enum:
+            - SD
+            - HD
+            - FHD
+          examples:
+            - SD
+        resX:
+          type: integer
+          examples:
+            - 620
+        resY:
+          type: integer
+          examples:
+            - 480
+      required:
+        - refreshRate
+        - qualityFactor
+        - resolution
+        - resX
+        - resY
+    Program:
+      type: object
+      properties:
+        programNumber:
+          description: Unique Number to find your program
+          type: string
+          format: uuid
+          examples:
+            - "bb13a553-f5de-49d2-96df-985152e125c7"
+        name:
+          description: Name of your Program
+          type: string
+          examples:
+            - HandRecognize
+    Programs:
+      properties:
+        programs:
+          type: array
+          items:
+            $ref: '#/components/schemas/Program'
+    ProgramCodeGet:
+      type: object
+      properties:
+        visual:
+          description: Contains a stringified json of the program's visual representation
+          type: string
+          examples:
+            - '{"blocks": { ... } }'
+    ProgramCodePut:
+      type: object
+      properties:
+        visual:
+          description: Contains a stringified json of the program's visual representation
+          type: string
+          examples:
+            - '{"blocks": { ... }}'
+        python:
+          description: Contains the python code of the program
+          type: string
+          examples:
+            - 'print("hello world!")'
+    Bricklet:
+      type: object
+      properties:
+        brickletNumber:
+          readOnly: true
+          type: integer
+          examples: 
+            - 1
+        uid:
+          type: string
+          examples:
+            - XYZ
+    GetBrickletByBrickletNumber:
+      type: object
+      properties:
+        uid:
+          type: string
+          examples:
+            - XYZ
+    Bricklets:
+      type: object
+      properties:
+        bricklets:
+          type: array
+          items:
+            $ref: '#/components/schemas/Bricklet'
+    Error:
+        required:
+          - Error
+        type: object
+        properties:
+          error:
+            type: string
+            examples: 
+              - An error occurred
+              - The requested resource is not available
+  responses:
+    '204':
+      description: No Content        
+    '400':
+      description: Bad Request
+      content:
+        application/json:
+          schema: 
+            $ref: '#/components/schemas/Error'
+    '404':
+      description: Not Found
+      content:
+        application/json:
+          schema: 
+            $ref: '#/components/schemas/Error'
+    '500':
+      description: Internal Server Error
+      content:
+        application/json:
+          schema: 
+            $ref: '#/components/schemas/Error'
