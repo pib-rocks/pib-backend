@@ -1,5 +1,7 @@
 # Visual Studio Code
 .vscode/
+# JetBrains
+.idea/
 
 # python
 __pycache__/
@@ -25,5 +27,20 @@ share/python-wheels/
 *.egg
 MANIFEST
 
+# /setup
+.shellcheckrc
+
+# /camera
+build/
+log/
+install/
+
+# /voice_assistant
+assistant_output.wav
+openai-key
+google-key
+
+# /programs
 # user program env
 user_program_env
+

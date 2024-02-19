@@ -1,5 +1,0 @@
-# Declare files that will always have unix line endings (LF) on checkout.
-*.sh text eol=lf
-
-# Exceptions for files with different line endings
-dev_tools/local_cerebra_remote_deploy.sh text eol=crlf
