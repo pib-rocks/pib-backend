@@ -1,0 +1,46 @@
+# Visual Studio Code
+.vscode/
+# JetBrains
+.idea/
+
+# python
+__pycache__/
+*.py[cod]ttt
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# /setup
+.shellcheckrc
+
+# /camera
+build/
+log/
+install/
+
+# /voice_assistant
+assistant_output.wav
+openai-key
+google-key
+
+# /programs
+# user program env
+user_program_env
+
