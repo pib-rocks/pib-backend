@@ -1,2 +1,0 @@
-# Declare files that will always have unix line endings (LF) on checkout.
-*.py text eol=lf
