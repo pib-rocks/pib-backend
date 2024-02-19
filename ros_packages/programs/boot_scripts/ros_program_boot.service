@@ -1,0 +1,11 @@
+[Unit]
+Description=Startup script for the ROS program-node
+After=network.target
+
+[Service]
+Type=simple
+User=pib
+ExecStart=/usr/bin/bash /home/pib/ros_working_dir/src/programs/boot_scripts/ros_program_boot.sh
+
+[Install]
+WantedBy=multi-user.target
