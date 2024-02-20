@@ -5,6 +5,7 @@ name = "pypi"
 
 [packages]
 flask = "*"
+flask_cors = "*"
 flask-marshmallow = "*"
 flask-sqlalchemy = "*"
 marshmallow-sqlalchemy = "*"
@@ -13,4 +14,4 @@ Flask-Migrate = "*"
 [dev-packages]
 
 [requires]
-python_version = "3.10"
+python_version = "3.12"
