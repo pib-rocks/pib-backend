@@ -45,7 +45,7 @@ def _create_bricklet_data() -> None:
     motor_settings = {"pulseWidthMin": 700, "pulseWidthMax": 2500, "rotationRangeMin": -4500,
                   "rotationRangeMax": 4500, "velocity": 16000, "acceleration": 10000, "deceleration": 5000,
                   "period": 19500,
-                  "turnedOn": True, "visible": True}
+                  "turnedOn": True, "visible": True, "invert": False}
 
     for item in data:
         motor = Motor(name=item["name"], **motor_settings)
@@ -57,7 +57,11 @@ def _create_bricklet_data() -> None:
         bricklet_pins: [Tuple[int, int]] = item["bricklet_pins"]
         for bricklet_pin in bricklet_pins:
             bricklet_id, pin = bricklet_pin
-            db.session.add(BrickletPin(motorId=motor.id, brickletId=bricklet_id, pin=pin))
+
+            invert = False
+            if bricklet_pin == (3, 7) or bricklet_pin == (3, 5):
+                invert = True
+            db.session.add(BrickletPin(motorId=motor.id, brickletId=bricklet_id, pin=pin, invert=invert))
         db.session.flush()
 
     b1 = Bricklet(uid="AAA", brickletNumber=1)
