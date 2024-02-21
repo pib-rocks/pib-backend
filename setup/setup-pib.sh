@@ -7,6 +7,13 @@
 #   - the default-user "pib" is executing it
 #
 
+if [ "$1" == "-h" ] ; then
+    echo "Usage: `basename $0` <branch_name> [-h]"
+	echo -e "Info: <branch_name> defaults to 'main' if not specified"
+    exit 0
+fi
+
+
 # Exported variables for all subshells: Codes for "echo -e" output text formatting
 export RED_TEXT_COLOR="\e[31m"
 export YELLOW_TEXT_COLOR="\e[33m"
@@ -31,6 +38,8 @@ mkdir "$ROS_WORKING_DIR"
 
 # Create temporary directory for installation files
 export TEMPORARY_SETUP_DIR="$(mktemp --directory /tmp/pib-temp.XXX)"
+export SETUP_DIR=$TEMPORARY_SETUP_DIR/setup
+export SETUP_FILES=$TEMPORARY_SETUP_DIR/setup/setup_files
 
 # Github Branch selection, if no input param, use main
 if [ -z "$1" ]; then
@@ -58,40 +67,45 @@ sudo apt-get install -y git curl
 # get pib-backend repo
 git clone -b $BRANCH https://github.com/pib-rocks/pib-backend.git $TEMPORARY_SETUP_DIR
 
+# Check if clone failed.
+# $? checks the exit status of the previous command.
+if [ $? -ne 0 ]; then
+    echo -e "$red_text_color""Cloning repository failed. Make sure the branch you specified exists."
+	exit -1
+fi
+
 
 # The following scripts are sourced into the same shell as this script,
 # allowing them to acces all variables and context
-# Check user inputs (options and arguments) for dev mode
-# source $TEMPORARY_SETUP_DIR/setup/installation_scripts/check_user_input.sh
 # Check system variables
-source $TEMPORARY_SETUP_DIR/setup/installation_scripts/check_system_variables.sh
+source $SETUP_DIR/installation_scripts/check_system_variables.sh
 # Install system packages
-source $TEMPORARY_SETUP_DIR/setup/installation_scripts/install_system_packages.sh
+source $SETUP_DIR/installation_scripts/install_system_packages.sh
 # Install python packages
-source $TEMPORARY_SETUP_DIR/setup/installation_scripts/install_python_packages.sh
+source $SETUP_DIR/installation_scripts/install_python_packages.sh
 # Install tinkerforge
-source $TEMPORARY_SETUP_DIR/setup/installation_scripts/install_tinkerforge.sh
+source $SETUP_DIR/installation_scripts/install_tinkerforge.sh
 # Install Cerebra
-source $TEMPORARY_SETUP_DIR/setup/installation_scripts/install_cerebra.sh
+source $SETUP_DIR/installation_scripts/install_cerebra.sh
 # Install pib ros-packages
-source $TEMPORARY_SETUP_DIR/setup/installation_scripts/setup_packages.sh
+source $SETUP_DIR/installation_scripts/setup_packages.sh
 # Adjust system settings
-source $TEMPORARY_SETUP_DIR/setup/installation_scripts/set_system_settings.sh
+source $SETUP_DIR/installation_scripts/set_system_settings.sh
 
 # install update-pip
-cp $TEMPORARY_SETUP_DIR/setup/update-pib.sh ~/update-pib.sh
+cp $SETUP_DIR/update-pib.sh ~/update-pib.sh
 sudo chmod 777 ~/update-pib.sh
 
 # Get ros_config
-cp $TEMPORARY_SETUP_DIR/setup/setup_files/ros_config.sh $ROS_WORKING_DIR/ros_config.sh
+cp $SETUP_FILES/ros_config.sh $ROS_WORKING_DIR/ros_config.sh
 
 # Setup system to start Cerebra and ROS2 at boot time
 # Create boot script for ros_bridge_server
-cp $TEMPORARY_SETUP_DIR/setup/setup_files/ros_cerebra_boot.sh $ROS_WORKING_DIR/ros_cerebra_boot.sh
+cp $SETUP_FILES/ros_cerebra_boot.sh $ROS_WORKING_DIR/ros_cerebra_boot.sh
 sudo chmod 755 $ROS_WORKING_DIR/ros_cerebra_boot.sh
 
 # Create service which starts ros and cerebra by system boot
-cp $TEMPORARY_SETUP_DIR/setup/setup_files/ros_cerebra_boot.service $ROS_WORKING_DIR/ros_cerebra_boot.service
+cp $SETUP_FILES/ros_cerebra_boot.service $ROS_WORKING_DIR/ros_cerebra_boot.service
 sudo chmod 755 $ROS_WORKING_DIR/ros_cerebra_boot.service
 sudo mv $ROS_WORKING_DIR/ros_cerebra_boot.service /etc/systemd/system
 
@@ -102,7 +116,7 @@ sudo systemctl enable ros_cerebra_boot.service
 sudo systemctl enable ssh --now
 
 # Download animated pib eyes
-cp $TEMPORARY_SETUP_DIR/setup/setup_files/pib-eyes-animated.gif ~/Desktop/pib-eyes-animated.gif
+cp $SETUP_FILES/pib-eyes-animated.gif ~/Desktop/pib-eyes-animated.gif
 
 echo -e "$NEW_LINE""Congratulations! The setup completed succesfully!"
 echo -e "$NEW_LINE""Please restart the system to apply changes..."
