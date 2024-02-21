@@ -6,9 +6,9 @@
 echo -e "$YELLOW_TEXT_COLOR""-- Setting up custom ros packages --""$RESET_TEXT_COLOR"		
 
 # Boot script file locations
-ROS_CAMERA_BOOT_DIR="$ROS_WORKING_DIR"/src/ros2_oak_d_lite/boot_scripts
+ROS_CAMERA_BOOT_DIR="$ROS_WORKING_DIR"/src/camera/boot_scripts
 ROS_MOTORS_BOOT_DIR="$ROS_WORKING_DIR"/src/motors/boot_scripts
-ROS_VOICE_ASSISTANT_BOOT_DIR="$ROS_WORKING_DIR"/src/voice-assistant/boot_scripts
+ROS_VOICE_ASSISTANT_BOOT_DIR="$ROS_WORKING_DIR"/src/voice_assistant/boot_scripts
 ROS_PROGRAMS_BOOT_DIR="$ROS_WORKING_DIR"/src/programs/boot_scripts
 
 #
@@ -32,26 +32,27 @@ cd depthai_hand_tracker
 pip install -r requirements.txt
 
 # clone ros-packages-repo
-echo 'git clone packages with sub modules'
-cd $ROS_WORKING_DIR
-git clone "$ROS_PACKAGES_ORIGIN"
-mv "$ROS_WORKING_DIR""/ros-packages" "$ROS_WORKING_DIR""/src"
-cd "$ROS_WORKING_DIR""/src"
-git checkout ${repo_map["$ROS_PACKAGES_ORIGIN"]}
+cp -r $TEMPORARY_SETUP_DIR/ros_packages $ROS_WORKING_DIR/src
+# echo 'git clone packages with sub modules'
+# cd $ROS_WORKING_DIR
+# git clone "$ROS_PACKAGES_ORIGIN"
+# mv "$ROS_WORKING_DIR""/ros-packages" "$ROS_WORKING_DIR""/src"
+# cd "$ROS_WORKING_DIR""/src"
+# git checkout ${repo_map["$ROS_PACKAGES_ORIGIN"]}
 sudo chmod -R 777 "$ROS_WORKING_DIR"
 
 # Run the script for creating a custom gitmodules file
-readonly CREATE_GITMODULE_FILE_SCRIPT="$installation_files_dir""/create_gitmodule_file.sh"
-chmod 755 "$CREATE_GITMODULE_FILE_SCRIPT"
-source "$CREATE_GITMODULE_FILE_SCRIPT"
+# readonly CREATE_GITMODULE_FILE_SCRIPT="$installation_files_dir""/create_gitmodule_file.sh"
+# chmod 755 "$CREATE_GITMODULE_FILE_SCRIPT"
+# source "$CREATE_GITMODULE_FILE_SCRIPT"
 
 # Pull all repo branches as specified in the gitmodules file
-git submodule init
-git submodule update --remote
-echo 'Done with installing packages'
+# git submodule init
+# git submodule update --remote
+# echo 'Done with installing packages'
 
 # Create credentials folder and files required for the voice-assistant
-readonly VOICE_ASSISTANT_CREDENTIALS_DIR="$ROS_WORKING_DIR/src/voice-assistant/credentials"
+readonly VOICE_ASSISTANT_CREDENTIALS_DIR="$ROS_WORKING_DIR/src/voice_assistant/credentials"
 mkdir "$VOICE_ASSISTANT_CREDENTIALS_DIR"
 touch "$VOICE_ASSISTANT_CREDENTIALS_DIR""/openai-key"
 touch "$VOICE_ASSISTANT_CREDENTIALS_DIR""/google-key"
