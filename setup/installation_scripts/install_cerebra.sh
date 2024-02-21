@@ -46,7 +46,7 @@ sudo unzip $TEMPORARY_SETUP_DIR/$CEREBRA_ARCHIVE_NAME -d $DEFAULT_NGINX_HTML_DIR
 
 # Setting up nginx to serve Cerebra locally
 echo -e "$NEW_LINE""Downloading nginx configuration file..."
-sudo cp $TEMPORARY_SETUP_DIR/setup/setup_files/nginx.conf $DEFAULT_NGINX_DIR/$NGINX_CONF_FILE
+sudo cp $SETUP_FILES/nginx.conf $DEFAULT_NGINX_DIR/$NGINX_CONF_FILE
 
 
 # Install and configure phpLiteAdmin
@@ -62,14 +62,14 @@ echo "Creating (if not exist) and initializing SQLite database $DATABASE_FILE wi
 mkdir $DATABASE_DIR
 sudo chmod 777 $USER_HOME
 sudo chmod 777 $DATABASE_DIR
-sudo sqlite3 "$DATABASE_DIR/$DATABASE_FILE" < $TEMPORARY_SETUP_DIR/setup/setup_files/cerebra_init_database.sql
+sudo sqlite3 $DATABASE_DIR/$DATABASE_FILE < $SETUP_FILES/cerebra_init_database.sql
 sudo chmod 766 $DATABASE_DIR/$DATABASE_FILE
 echo -e "$NEW_LINE""Database initialized successfully!"
 
 # Create the directory for python code and populate it with a single initial python script (matching
 # the single entry in the database)
 mkdir "$PYTHON_CODE_PATH"
-echo "$INIT_PYTHON_CODE" | cat > "$PYTHON_CODE_PATH/e1d46e2a-935e-4e2b-b2f9-0856af4257c5.py"
+echo "$INIT_PYTHON_CODE" | cat > $PYTHON_CODE_PATH/e1d46e2a-935e-4e2b-b2f9-0856af4257c5.py
 
 # Create pib-api
 echo "export PYTHONIOENCODING=utf-8" >> $USER_HOME/.bashrc
@@ -79,7 +79,7 @@ cd $USER_HOME
 
 pip install $TEMPORARY_SETUP_DIR/pib_api/client
 cp -r $TEMPORARY_SETUP_DIR/pib_api/flask $PIB_API_DIR
-sudo mv "$PIB_API_DIR""/pib_api_boot.service" "/etc/systemd/system"
+sudo mv $PIB_API_DIR/pib_api_boot.service /etc/systemd/system
 sudo systemctl daemon-reload
 sudo systemctl enable pib_api_boot.service
 cd $USER_HOME
