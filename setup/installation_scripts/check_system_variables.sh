@@ -16,14 +16,14 @@ fi
 
 # Check on the right Ubuntu version
 if [ "$(lsb_release -rs)" != "$EXPECTED_UBUNTU_VERSION" ]; then
-	echo -e "$RED_TEXT_COLOR""This Ubuntu version is incompatible with Cerebra!""$RESET_TEXT_COLOR"
-	echo 'Do you still want to continue the installation? [Yes/No]'
+	echo -e "$RED_TEXT_COLOR""Incompatible Ubuntu version detected. Cerebra requires Ubuntu 22.04.""$RESET_TEXT_COLOR"
+	echo 'Do you still want to continue the installation (installation might fail)? [Yes/No]'
 	while true; do
 		read CONTINUE
 		if [[ ${CONTINUE,,} == "yes" ]]; then
 			break
 		elif [[ ${CONTINUE,,} == "no" ]]; then
-		        echo "Setup has been stoped"
+		        echo "Setup has been cancelled"
 		        exit "$FAILED_CHECK_STATUS"
 		else
 			echo "Your input is not correct"
@@ -32,4 +32,4 @@ if [ "$(lsb_release -rs)" != "$EXPECTED_UBUNTU_VERSION" ]; then
 	done
 fi
 
-echo -e "$GREEN_TEXT_COLOR""-- You're using the correct ubuntu version and ubuntu username! --""$RESET_TEXT_COLOR""$NEW_LINE"
+echo -e "$GREEN_TEXT_COLOR""-- Compatible version of Ubuntu with correct username detected. Installation will proceed. --""$RESET_TEXT_COLOR""$NEW_LINE"

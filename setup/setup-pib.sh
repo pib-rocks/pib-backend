@@ -13,11 +13,11 @@ if [ "$1" == "-h" ] ; then
     exit 0
 fi
 
-
 # Exported variables for all subshells: Codes for "echo -e" output text formatting
 export RED_TEXT_COLOR="\e[31m"
 export YELLOW_TEXT_COLOR="\e[33m"
 export GREEN_TEXT_COLOR="\e[32m"
+export CYAN_TEXT_COLOR="\e[36m"
 export RESET_TEXT_COLOR="\e[0m"
 export NEW_LINE="\n"
 
@@ -37,9 +37,13 @@ export ROS_WORKING_DIR="$USER_HOME/ros_working_dir"
 mkdir "$ROS_WORKING_DIR"
 
 # Create temporary directory for installation files
-export TEMPORARY_SETUP_DIR="$(mktemp --directory /tmp/pib-temp.XXX)"
+export TEMPORARY_SETUP_DIR="$(mktemp --directory /var/tmp/pib-temp.XXX)"
 export SETUP_DIR=$TEMPORARY_SETUP_DIR/setup
 export SETUP_FILES=$TEMPORARY_SETUP_DIR/setup/setup_files
+
+# Redirect console output to a log file
+LOG_FILE="$USER_HOME/setup-pib.log"
+exec > >(tee -a "$LOG_FILE") 2>&1
 
 # Github Branch selection, if no input param, use main
 if [ -z "$1" ]; then
@@ -117,6 +121,9 @@ sudo systemctl enable ssh --now
 
 # Download animated pib eyes
 cp $SETUP_FILES/pib-eyes-animated.gif ~/Desktop/pib-eyes-animated.gif
+
+# Move log file to temporary setup folder
+mv "$LOG_FILE" "$TEMPORARY_SETUP_DIR"
 
 echo -e "$NEW_LINE""Congratulations! The setup completed succesfully!"
 echo -e "$NEW_LINE""Please restart the system to apply changes..."
