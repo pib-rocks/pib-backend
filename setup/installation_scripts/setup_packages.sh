@@ -31,8 +31,8 @@ git clone https://github.com/geaxgx/depthai_hand_tracker.git
 cd depthai_hand_tracker
 pip install -r requirements.txt
 
-# clone ros-packages-repo
-cp -r "$TEMPORARY_SETUP_DIR/ros_packages" "$ROS_WORKING_DIR/src"
+# move ros-packages into working directory
+cp -r "$BACKEND_DIR/ros_packages" "$ROS_WORKING_DIR/src"
 sudo chmod -R 777 "$ROS_WORKING_DIR"
 
 # Create credentials folder and files required for the voice-assistant

@@ -35,7 +35,8 @@ TEMPORARY_SETUP_DIR=$(mktemp --directory /var/tmp/pib-temp.XXX)
 export FRONTEND_DIR="$TEMPORARY_SETUP_DIR/frontend"
 export BACKEND_DIR="$TEMPORARY_SETUP_DIR/backend"
 export SETUP_DIR="$BACKEND_DIR/setup"
-export SETUP_FILES="$SETUP_DIR/setup/setup_files"
+export SETUP_FILES="$SETUP_DIR/setup_files"
+export INSTALLATION_SCRIPTS="$SETUP_DIR/installation_scripts"
 
 # Variables for user input options
 export user_default_branch=""
@@ -139,19 +140,19 @@ git clone -b "${repo_map[$FRONTEND_REPO]}" "$FRONTEND_REPO" "$FRONTEND_DIR"
 # The following scripts are sourced into the same shell as this script,
 # allowing them to acces all variables and context
 # Check system variables
-source "$SETUP_DIR/installation_scripts/check_system_variables.sh"
+source "$INSTALLATION_SCRIPTS/check_system_variables.sh"
 # Install system packages
-source "$SETUP_DIR/installation_scripts/install_system_packages.sh"
+source "$INSTALLATION_SCRIPTS/install_system_packages.sh"
 # Install python packages
-source "$SETUP_DIR/installation_scripts/install_python_packages.sh"
+source "$INSTALLATION_SCRIPTS/install_python_packages.sh"
 # Install tinkerforge
-source "$SETUP_DIR/installation_scripts/install_tinkerforge.sh"
+source "$INSTALLATION_SCRIPTS/install_tinkerforge.sh"
 # Install Cerebra
-source "$SETUP_DIR/installation_scripts/install_cerebra.sh"
+source "$INSTALLATION_SCRIPTS/install_cerebra.sh"
 # Install pib ros-packages
-source "$SETUP_DIR/installation_scripts/setup_packages.sh"
+source "$INSTALLATION_SCRIPTS/setup_packages.sh"
 # Adjust system settings
-source "$SETUP_DIR/installation_scripts/set_system_settings.sh"
+source "$INSTALLATION_SCRIPTS/set_system_settings.sh"
 
 # install update-pip
 cp "$SETUP_DIR/update-pib.sh" "$USER_HOME/update-pib.sh"
