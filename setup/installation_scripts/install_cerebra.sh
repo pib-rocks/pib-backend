@@ -5,49 +5,37 @@
 
 echo -e "$YELLOW_TEXT_COLOR""-- Installing Cerebra --""$RESET_TEXT_COLOR"		
 
+# Cerebra variables
+CEREBRA_SRC_DIR="$FRONTEND_DIR/src"
+
 # Nginx variables
 DEFAULT_NGINX_DIR="/etc/nginx"
 DEFAULT_NGINX_HTML_DIR="$DEFAULT_NGINX_DIR/html"
 NGINX_CONF_FILE="nginx.conf"
-
-# Cerebra download location
-export CEREBRA_ARCHIVE_URL="https://pib.rocks/wp-content/uploads/pib_data/cerebra-latest.zip"
-export CEREBRA_ARCHIVE_NAME="cerebra-latest.zip"
 
 # Database variables
 PHPLITEADMIN_ZIP="phpliteadmin_v1_9_9_dev.zip"
 PHPLITEADMIN_INSTALLATION_DIR="/var/www/phpliteadmin"
 DATABASE_DIR="$USER_HOME/pib_data"
 DATABASE_FILE="pibdata.db"
-DATABASE_INIT_QUERY_FILE="cerebra_init_database.sql"
 
-# pib api variables
+# pib-api variables
 PIB_API_DIR="$USER_HOME/flask"
 
 # python code variables
 PYTHON_CODE_PATH="$USER_HOME/cerebra_programs"
 INIT_PYTHON_CODE="print('hello world')"
 
-echo -e "$NEW_LINE""Install nginx..."
+# Setup nginx
 sudo apt install -y nginx
-# If the 'html' directory inside of nginx doesn't exist, it will be created
-if [ ! -d $DEFAULT_NGINX_HTML_DIR ]; then sudo -S mkdir -p $DEFAULT_NGINX_HTML_DIR; fi
-echo -e "$NEW_LINE""Clean up the html directory..."
-cd $DEFAULT_NGINX_HTML_DIR && sudo -S rm -r *
+mkdir -p $DEFAULT_NGINX_HTML_DIR
+ng build --configuration production --output-path "$DEFAULT_NGINX_DIR"
 
-# Download Cerebra
-cd $USER_HOME
-echo -e "$NEW_LINE""Downloading Cerebra application..."
-curl "$CEREBRA_ARCHIVE_URL" --location --output "$TEMPORARY_SETUP_DIR/$CEREBRA_ARCHIVE_NAME"
-
-# Unzip cerebra files to nginx
-echo -e "$NEW_LINE""Unzip cerebra..."
-sudo unzip "$TEMPORARY_SETUP_DIR/$CEREBRA_ARCHIVE_NAME" -d $DEFAULT_NGINX_HTML_DIR
+# Build cerebra in nginx directory
+npm install "$CEREBRA_SRC_DIR"
 
 # Setting up nginx to serve Cerebra locally
-echo -e "$NEW_LINE""Downloading nginx configuration file..."
-sudo cp "$SETUP_FILES/nginx.conf" $DEFAULT_NGINX_DIR/$NGINX_CONF_FILE
-
+sudo cp "$SETUP_FILES/nginx.conf" "$DEFAULT_NGINX_DIR/$NGINX_CONF_FILE"
 
 # Install and configure phpLiteAdmin
 sudo sed -i "s|;cgi.fix_pathinfo=1|cgi.fix_pathinfo=0|" /etc/php/8.1/fpm/php.ini
@@ -61,7 +49,7 @@ sudo systemctl restart php8.1-fpm
 mkdir "$DATABASE_DIR"
 sudo chmod 777 "$USER_HOME"
 sudo chmod 777 "$DATABASE_DIR"
-sudo sqlite3 "$SETUP_FILES/$DATABASE_INIT_QUERY_FILE.sql" | cat > "$DATABASE_DIR/$DATABASE_FILE"
+sqlite3 "$DATABASE_DIR/$DATABASE_FILE" < "$SETUP_FILES/cerebra_init_database.sql"
 sudo chmod 766 "$DATABASE_DIR/$DATABASE_FILE"
 echo -e "$NEW_LINE""Database initialized successfully!"
 
@@ -74,7 +62,6 @@ echo "$INIT_PYTHON_CODE" | cat > "$PYTHON_CODE_PATH/e1d46e2a-935e-4e2b-b2f9-0856
 echo "export PYTHONIOENCODING=utf-8" >> $USER_HOME/.bashrc
 pip3 install pipenv
 cd $USER_HOME
-
 
 pip install "$PIB_API_SETUP_DIR/client"
 cp -r "$PIB_API_SETUP_DIR/flask" "$PIB_API_DIR"
