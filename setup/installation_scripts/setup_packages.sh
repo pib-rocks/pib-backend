@@ -33,23 +33,7 @@ pip install -r requirements.txt
 
 # clone ros-packages-repo
 cp -r "$TEMPORARY_SETUP_DIR/ros_packages" "$ROS_WORKING_DIR/src"
-# echo 'git clone packages with sub modules'
-# cd $ROS_WORKING_DIR
-# git clone "$ROS_PACKAGES_ORIGIN"
-# mv "$ROS_WORKING_DIR""/ros-packages" "$ROS_WORKING_DIR""/src"
-# cd "$ROS_WORKING_DIR""/src"
-# git checkout ${repo_map["$ROS_PACKAGES_ORIGIN"]}
 sudo chmod -R 777 "$ROS_WORKING_DIR"
-
-# Run the script for creating a custom gitmodules file
-# readonly CREATE_GITMODULE_FILE_SCRIPT="$installation_files_dir""/create_gitmodule_file.sh"
-# chmod 755 "$CREATE_GITMODULE_FILE_SCRIPT"
-# source "$CREATE_GITMODULE_FILE_SCRIPT"
-
-# Pull all repo branches as specified in the gitmodules file
-# git submodule init
-# git submodule update --remote
-# echo 'Done with installing packages'
 
 # Create credentials folder and files required for the voice-assistant
 readonly VOICE_ASSISTANT_CREDENTIALS_DIR="$ROS_WORKING_DIR/src/voice_assistant/credentials"
