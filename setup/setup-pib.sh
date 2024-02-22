@@ -32,10 +32,10 @@ mkdir "$ROS_WORKING_DIR"
 # Create temporary directory for installation files
 export TEMPORARY_SETUP_DIR=""
 TEMPORARY_SETUP_DIR=$(mktemp --directory /var/tmp/pib-temp.XXX)
-export BACKEND_DIR="$TEMPORARY_SETUP_DIR/backend"
 export FRONTEND_DIR="$TEMPORARY_SETUP_DIR/frontend"
+export BACKEND_DIR="$TEMPORARY_SETUP_DIR/backend"
 export SETUP_DIR="$BACKEND_DIR/setup"
-export SETUP_FILES="$TEMPORARY_SETUP_DIR/setup/setup_files"
+export SETUP_FILES="$SETUP_DIR/setup/setup_files"
 
 # Variables for user input options
 export user_default_branch=""
@@ -135,7 +135,6 @@ fi
 # clone repos
 git clone -b "${repo_map[$BACKEND_REPO]}" "$BACKEND_REPO" "$BACKEND_DIR"
 git clone -b "${repo_map[$FRONTEND_REPO]}" "$FRONTEND_REPO" "$FRONTEND_DIR"
-
 
 # The following scripts are sourced into the same shell as this script,
 # allowing them to acces all variables and context
