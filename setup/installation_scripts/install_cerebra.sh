@@ -38,38 +38,37 @@ cd $DEFAULT_NGINX_HTML_DIR && sudo -S rm -r *
 # Download Cerebra
 cd $USER_HOME
 echo -e "$NEW_LINE""Downloading Cerebra application..."
-curl $CEREBRA_ARCHIVE_URL --location --output $TEMPORARY_SETUP_DIR/$CEREBRA_ARCHIVE_NAME
+curl "$CEREBRA_ARCHIVE_URL" --location --output "$TEMPORARY_SETUP_DIR/$CEREBRA_ARCHIVE_NAME"
 
 # Unzip cerebra files to nginx
 echo -e "$NEW_LINE""Unzip cerebra..."
-sudo unzip $TEMPORARY_SETUP_DIR/$CEREBRA_ARCHIVE_NAME -d $DEFAULT_NGINX_HTML_DIR
+sudo unzip "$TEMPORARY_SETUP_DIR/$CEREBRA_ARCHIVE_NAME" -d $DEFAULT_NGINX_HTML_DIR
 
 # Setting up nginx to serve Cerebra locally
 echo -e "$NEW_LINE""Downloading nginx configuration file..."
-sudo cp $SETUP_FILES/nginx.conf $DEFAULT_NGINX_DIR/$NGINX_CONF_FILE
+sudo cp "$SETUP_FILES/nginx.conf" $DEFAULT_NGINX_DIR/$NGINX_CONF_FILE
 
 
 # Install and configure phpLiteAdmin
 sudo sed -i "s|;cgi.fix_pathinfo=1|cgi.fix_pathinfo=0|" /etc/php/8.1/fpm/php.ini
-sudo mkdir $PHPLITEADMIN_INSTALLATION_DIR
-sudo chown -R www-data:www-data $PHPLITEADMIN_INSTALLATION_DIR
-sudo chmod -R 755 $PHPLITEADMIN_INSTALLATION_DIR
-sudo unzip $TEMPORARY_SETUP_DIR/setup/setup_files/$PHPLITEADMIN_ZIP -d $PHPLITEADMIN_INSTALLATION_DIR
+sudo mkdir "$PHPLITEADMIN_INSTALLATION_DIR"
+sudo chown -R www-data:www-data "$PHPLITEADMIN_INSTALLATION_DIR"
+sudo chmod -R 755 "$PHPLITEADMIN_INSTALLATION_DIR"
+sudo unzip "$SETUP_FILES/$PHPLITEADMIN_ZIP" -d "$PHPLITEADMIN_INSTALLATION_DIR"
 sudo systemctl restart php8.1-fpm
 
 # Create the database (if it doesn't exist) and initialize it with the SQL file
-echo "Creating (if not exist) and initializing SQLite database $DATABASE_FILE with $TEMPORARY_SETUP_DIR/$DATABASE_INIT_QUERY_FILE..."
-mkdir $DATABASE_DIR
-sudo chmod 777 $USER_HOME
-sudo chmod 777 $DATABASE_DIR
-sudo sqlite3 $DATABASE_DIR/$DATABASE_FILE < $SETUP_FILES/cerebra_init_database.sql
-sudo chmod 766 $DATABASE_DIR/$DATABASE_FILE
+mkdir "$DATABASE_DIR"
+sudo chmod 777 "$USER_HOME"
+sudo chmod 777 "$DATABASE_DIR"
+sudo sqlite3 "$SETUP_FILES/$DATABASE_INIT_QUERY_FILE.sql" | cat > "$DATABASE_DIR/$DATABASE_FILE"
+sudo chmod 766 "$DATABASE_DIR/$DATABASE_FILE"
 echo -e "$NEW_LINE""Database initialized successfully!"
 
 # Create the directory for python code and populate it with a single initial python script (matching
 # the single entry in the database)
 mkdir "$PYTHON_CODE_PATH"
-echo "$INIT_PYTHON_CODE" | cat > $PYTHON_CODE_PATH/e1d46e2a-935e-4e2b-b2f9-0856af4257c5.py
+echo "$INIT_PYTHON_CODE" | cat > "$PYTHON_CODE_PATH/e1d46e2a-935e-4e2b-b2f9-0856af4257c5.py"
 
 # Create pib-api
 echo "export PYTHONIOENCODING=utf-8" >> $USER_HOME/.bashrc
@@ -77,9 +76,9 @@ pip3 install pipenv
 cd $USER_HOME
 
 
-pip install $TEMPORARY_SETUP_DIR/pib_api/client
-cp -r $TEMPORARY_SETUP_DIR/pib_api/flask $PIB_API_DIR
-sudo mv $PIB_API_DIR/pib_api_boot.service /etc/systemd/system
+pip install "$PIB_API_SETUP_DIR/client"
+cp -r "$PIB_API_SETUP_DIR/flask" "$PIB_API_DIR"
+sudo mv "$PIB_API_DIR/pib_api_boot.service" /etc/systemd/system
 sudo systemctl daemon-reload
 sudo systemctl enable pib_api_boot.service
 cd $USER_HOME
