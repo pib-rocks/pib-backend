@@ -12,9 +12,6 @@ sudo apt-get -y upgrade
 # libusb-1.0-0 libudev1 procps are dependencies of later installed Tinkerforge brick-deamon
 sudo apt-get install -y python3 python3-pip openssh-server software-properties-common unzip sqlite3 locales libusb-1.0-0 libudev1 procps php8.1-fpm php-sqlite3 nodejs npm
 
-# Install Angular CLI
-sudo npm install -g @angular/cli
-
 # Setting up ROS2
 sudo apt update
 sudo apt install locales
