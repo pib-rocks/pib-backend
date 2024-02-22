@@ -37,6 +37,7 @@ export BACKEND_DIR="$TEMPORARY_SETUP_DIR/backend"
 export SETUP_DIR="$BACKEND_DIR/setup"
 export SETUP_FILES="$SETUP_DIR/setup_files"
 export INSTALLATION_SCRIPTS="$SETUP_DIR/installation_scripts"
+export PIB_API_SETUP_DIR="$BACKEND_DIR/pib_api"
 
 # Variables for user input options
 export user_default_branch=""
