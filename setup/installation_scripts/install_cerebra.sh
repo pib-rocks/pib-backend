@@ -25,36 +25,36 @@ INIT_PYTHON_CODE="print('hello world')"
 
 # Setup nginx
 sudo apt install -y nginx
-mkdir -p $DEFAULT_NGINX_HTML_DIR
+sudo mkdir -p $DEFAULT_NGINX_HTML_DIR
 
 # Setting up nginx to serve Cerebra locally
 sudo cp "$SETUP_FILES/nginx.conf" "$DEFAULT_NGINX_DIR/$NGINX_CONF_FILE"
 
 # Install NVM (Node Version Manager)
 NVM_DIR="/etc/nvm"
-mkdir "$NVM_DIR"
+sudo mkdir "$NVM_DIR"
 curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/master/install.sh | bash
 
 # Source NVM script to make it available in the current shell
 source ~/.nvm/nvm.sh
 
 # Install version 18 of Node.js and use it
-nvm install 18
-nvm use 18
+sudo nvm install 18
+sudo nvm use 18
 
 # Install Angular CLI globally
-npm cache clean -f
-npm install -g npm@latest
-npm install -g @angular/cli --legacy-peer-deps
+sudo npm cache clean -f
+sudo npm install -g npm@latest
+sudo npm install -g @angular/cli --legacy-peer-deps
 
 # Install Cerebra project dependencies
-npm --prefix "$FRONTEND_DIR" install
+sudo npm --prefix "$FRONTEND_DIR" install
 
 # Build the Angular app without changing directory
-ng build --configuration productive --project "$FRONTEND_DIR"
+sudo ng build --configuration productive --project "$FRONTEND_DIR"
 
 # Move the build to the destination folder
-mv "$FRONTEND_DIR/dist"/* "$DEFAULT_NGINX_HTML_DIR"
+sudo mv "$FRONTEND_DIR/dist"/* "$DEFAULT_NGINX_HTML_DIR"
 
 # Install and configure phpLiteAdmin
 sudo sed -i "s|;cgi.fix_pathinfo=1|cgi.fix_pathinfo=0|" /etc/php/8.1/fpm/php.ini
