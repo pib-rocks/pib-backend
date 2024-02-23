@@ -31,6 +31,8 @@ mkdir -p $DEFAULT_NGINX_HTML_DIR
 sudo cp "$SETUP_FILES/nginx.conf" "$DEFAULT_NGINX_DIR/$NGINX_CONF_FILE"
 
 # Install NVM (Node Version Manager)
+NVM_DIR="/etc/nvm"
+mkdir "$NVM_DIR"
 curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/master/install.sh | bash
 
 # Source NVM script to make it available in the current shell
@@ -41,7 +43,9 @@ nvm install 18
 nvm use 18
 
 # Install Angular CLI globally
-npm install -g @angular/cli
+npm cache clean -f
+npm install -g npm@latest
+npm install -g @angular/cli --legacy-peer-deps
 
 # Install Cerebra project dependencies
 npm --prefix "$FRONTEND_DIR" install
