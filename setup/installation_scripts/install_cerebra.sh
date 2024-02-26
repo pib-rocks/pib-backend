@@ -31,12 +31,12 @@ sudo mkdir -p $DEFAULT_NGINX_HTML_DIR
 sudo cp "$SETUP_FILES/nginx.conf" "$DEFAULT_NGINX_DIR/$NGINX_CONF_FILE"
 
 # Install NVM (Node Version Manager)
-NVM_DIR="/etc/nvm"
-sudo mkdir "$NVM_DIR"
 curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/master/install.sh | bash
 
 # Move nvm directory to systemfolders and create environment variable
-sudo mv ~/.nvm "$NVM_DIR"
+NVM_DIR="/etc/nvm"
+sudo mv "$USER_HOME/.nvm/" "$NVM_DIR"
+rmdir "$USER_HOME/.nvm"
 echo "export NVM_DIR=$NVM_DIR" | sudo tee -a /etc/profile.d/nvm.sh
 
 # Source NVM script to make it available in the current shell
