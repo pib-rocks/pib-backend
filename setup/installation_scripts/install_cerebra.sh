@@ -49,6 +49,7 @@ nvm use 18
 
 # Install Angular CLI
 npm install @angular/cli
+npm link @angular/cli
 
 # Navigate to the folder where the Angular app is downloaded
 cd $FRONTEND_DIR
