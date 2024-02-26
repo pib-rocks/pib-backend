@@ -36,16 +36,13 @@ curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/master/install.sh | bash
 # Move nvm directory to systemfolders and create environment variable
 NVM_DIR="/etc/nvm"
 sudo mv "$USER_HOME/.nvm/" "$NVM_DIR"
-rmdir "$USER_HOME/.nvm"
-echo "export NVM_DIR=$NVM_DIR" | sudo tee -a /etc/profile.d/nvm.sh
-
-# Source NVM script to make it available in the current shell
-source "$NVM_DIR/nvm.sh"
+export NVM_DIR="$NVM_DIR"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" # This loads nvm
 
 # Install and use Node.js 19 via nvm
 # Node.js version 18 causes a bug, getting all npm commands stuck loading
-nvm install 19
-nvm use 19
+nvm install 18
+nvm use 18
 
 # Install Angular CLI
 npm install -g @angular/cli
