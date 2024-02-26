@@ -40,6 +40,7 @@ services:
       - TINKERFORGE_PORT=4223
       - PYTHON_BINARY=/usr/local/bin/python3
       - PYTHON_DIR=/ros_ws/cerebra_programs
+      - VOICE_ASSISTANT_DIR=/ros_ws/voice_assistant
     env_file:
       - password.env
     command: "/bin/bash -c 'source docker_run_all_nodes.sh'"

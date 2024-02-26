@@ -11,8 +11,8 @@ from pib_motors.update_bricklet_uids import *
 # import update_bricklet_uids
 
 
-HOST = "localhost"
-PORT = 4223
+TINKERFORGE_HOST = os.getenv("TINKERFORGE_HOST", "localhost")
+TINKERFORGE_PORT = int(os.getenv("TINKERFORGE_PORT", 4223))
 
 class Motor_current(Node):
 
@@ -79,7 +79,7 @@ class Motor_current(Node):
             self.servo1 = BrickletServoV2(UID1, self.ipcon)
             self.servo2 = BrickletServoV2(UID2, self.ipcon)
             self.servo3 = BrickletServoV2(UID3, self.ipcon)
-            self.ipcon.connect(HOST, PORT)
+            self.ipcon.connect(TINKERFORGE_HOST, TINKERFORGE_PORT)
             self.get_logger().info(self.get_name() + ": servo init complete")
         except Exception as e:
             self.get_logger().warn(f"Error servo init: {str(e)}")
