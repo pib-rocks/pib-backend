@@ -35,23 +35,30 @@ NVM_DIR="/etc/nvm"
 sudo mkdir "$NVM_DIR"
 curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/master/install.sh | bash
 
+# Move nvm directory to systemfolders and create environment variable
+sudo mv ~/.nvm "$NVM_DIR"
+echo "export NVM_DIR=$NVM_DIR" | sudo tee -a /etc/profile.d/nvm.sh
+
 # Source NVM script to make it available in the current shell
-source ~/.nvm/nvm.sh
+source "$NVM_DIR/nvm.sh"
 
-# Install version 18 of Node.js and use it
-sudo nvm install 18
-sudo nvm use 18
+# Install and use Node.js 19 via nvm
+# Node.js version 18 causes a bug, getting all npm commands stuck loading
+nvm install 19
+nvm use 19
 
-# Install Angular CLI globally
-sudo npm cache clean -f
-sudo npm install -g npm@latest
-sudo npm install -g @angular/cli --legacy-peer-deps
+# Install Angular CLI
+npm install -g @angular/cli
 
-# Install Cerebra project dependencies
-sudo npm --prefix "$FRONTEND_DIR" install
+# Navigate to the folder where the Angular app is downloaded
+cd $FRONTEND_DIR
 
-# Build the Angular app without changing directory
-sudo ng build --configuration productive --project "$FRONTEND_DIR"
+# Install app dependencies and start build
+sudo npm install
+sudo ng build
+
+# Undo directory change
+cd $USER_HOME
 
 # Move the build to the destination folder
 sudo mv "$FRONTEND_DIR/dist"/* "$DEFAULT_NGINX_HTML_DIR"
