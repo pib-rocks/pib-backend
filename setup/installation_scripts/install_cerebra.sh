@@ -30,6 +30,9 @@ sudo mkdir -p $DEFAULT_NGINX_HTML_DIR
 # Setting up nginx to serve Cerebra locally
 sudo cp "$SETUP_FILES/nginx.conf" "$DEFAULT_NGINX_DIR/$NGINX_CONF_FILE"
 
+# Remove pre-installed node version in preparation of node install via nvm
+sudo apt-get purge -y nodejs
+
 # Install NVM (Node Version Manager)
 curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/master/install.sh | bash
 
@@ -39,20 +42,20 @@ sudo mv "$USER_HOME/.nvm/" "$NVM_DIR"
 export NVM_DIR="$NVM_DIR"
 [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" # This loads nvm
 
-# Install and use Node.js 19 via nvm
-# Node.js version 18 causes a bug, getting all npm commands stuck loading
+# Install and use Node.js 18 via nvm
+# Dont use sudo for nvm-associated commands (npm, ng) since nvm is not accessible by root
 nvm install 18
 nvm use 18
 
 # Install Angular CLI
-npm install -g @angular/cli
+npm install @angular/cli
 
 # Navigate to the folder where the Angular app is downloaded
 cd $FRONTEND_DIR
 
 # Install app dependencies and start build
-sudo npm install
-sudo ng build
+npm install
+ng build
 
 # Undo directory change
 cd $USER_HOME
