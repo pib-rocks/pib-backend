@@ -25,7 +25,6 @@ from pib_api_client import chat_client, personality_client
 RECEIVE_CHAT_MESSAGE_WAITING_PERIOD_SECONDS = 0.1
 MAIN_LOOP_RECEIVE_SIGNAL_WAITING_PERIOD_SECONDS = 0.05
 
-
 VOICE_ASSISTANT_PATH_PREFIX = os.getenv("VOICE_ASSISTANT_DIR", "/home/pib/ros_working_dir/src/voice-assistant")
 AUDIO_OUTPUT_FILE = VOICE_ASSISTANT_PATH_PREFIX + "/audiofiles/assistant_output.wav"
 START_SIGNAL_FILE = VOICE_ASSISTANT_PATH_PREFIX + "/audiofiles/assistant_start_listening.wav"
