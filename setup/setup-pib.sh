@@ -134,6 +134,9 @@ then
 	done
 fi
 
+echo -e "$NEW_LINE""$CYAN_TEXT_COLOR""Frontend repo branch used: ""$RESET_TEXT_COLOR""${repo_map[$FRONTEND_REPO]}"
+echo -e "$CYAN_TEXT_COLOR""Backend repo branch used: ""$RESET_TEXT_COLOR""${repo_map[$BACKEND_REPO]}""$NEW_LINE"
+
 # clone repos
 git clone -b "${repo_map[$BACKEND_REPO]}" "$BACKEND_REPO" "$BACKEND_DIR"
 git clone -b "${repo_map[$FRONTEND_REPO]}" "$FRONTEND_REPO" "$FRONTEND_DIR"
