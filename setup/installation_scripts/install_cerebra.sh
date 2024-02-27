@@ -53,9 +53,9 @@ npm link @angular/cli
 
 # Install app dependencies and build app
 npm --prefix "$FRONTEND_DIR" install
-cd $FRONTEND_DIR
-ng build --configuration productive
-cd $USER_HOME
+cd "$FRONTEND_DIR"
+ng build --configuration production
+cd "$USER_HOME"
 
 # Move the build to the destination folder
 sudo mv "$FRONTEND_DIR/dist"/* "$DEFAULT_NGINX_HTML_DIR"
@@ -82,16 +82,16 @@ mkdir "$PYTHON_CODE_PATH"
 echo "$INIT_PYTHON_CODE" | cat > "$PYTHON_CODE_PATH/e1d46e2a-935e-4e2b-b2f9-0856af4257c5.py"
 
 # Create pib-api
-echo "export PYTHONIOENCODING=utf-8" >> $USER_HOME/.bashrc
+echo "export PYTHONIOENCODING=utf-8" >> "$USER_HOME/.bashrc"
 pip3 install pipenv
-cd $USER_HOME
+cd "$USER_HOME"
 
 pip install "$PIB_API_SETUP_DIR/client"
 cp -r "$PIB_API_SETUP_DIR/flask" "$PIB_API_DIR"
 sudo mv "$PIB_API_DIR/pib_api_boot.service" /etc/systemd/system
 sudo systemctl daemon-reload
 sudo systemctl enable pib_api_boot.service
-cd $USER_HOME
+cd "$USER_HOME"
 
 # Open firefox without gui to generate default folder structures 
 # This also avoids the welcome page the first time a user opens the browser
