@@ -48,17 +48,13 @@ nvm install 18
 nvm use 18
 
 # Install Angular CLI
-npm install @angular/cli
+npm install -g @angular/cli
 npm link @angular/cli
 
-# Navigate to the folder where the Angular app is downloaded
+# Install app dependencies and build app
+npm --prefix "$FRONTEND_DIR" install
 cd $FRONTEND_DIR
-
-# Install app dependencies and start build
-npm install
-ng build
-
-# Undo directory change
+ng build --configuration productive
 cd $USER_HOME
 
 # Move the build to the destination folder
