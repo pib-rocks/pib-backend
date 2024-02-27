@@ -11,12 +11,12 @@
 export RED_TEXT_COLOR="\e[31m"
 export YELLOW_TEXT_COLOR="\e[33m"
 export GREEN_TEXT_COLOR="\e[32m"
+export CYAN_TEXT_COLOR="\e[36m"
 export RESET_TEXT_COLOR="\e[0m"
 export NEW_LINE="\n"
 
 # Exported variables for all subshells: Exit codes for error detection
 export INPUT_OUTPUT_ERROR_STATUS=5
-export FAILED_SUBSCRIPT_STATUS=254
 export FAILED_CHECK_STATUS=255
 
 # Exported variables for all subshells: Boolean constants for checks
@@ -29,6 +29,73 @@ export USER_HOME="/home/$DEFAULT_USER"
 export ROS_WORKING_DIR="$USER_HOME/ros_working_dir"
 mkdir "$ROS_WORKING_DIR"
 
+# Create temporary directory for installation files
+export TEMPORARY_SETUP_DIR=""
+TEMPORARY_SETUP_DIR=$(mktemp --directory /var/tmp/pib-temp.XXX)
+export FRONTEND_DIR="$TEMPORARY_SETUP_DIR/frontend"
+export BACKEND_DIR="$TEMPORARY_SETUP_DIR/backend"
+export SETUP_DIR="$BACKEND_DIR/setup"
+export SETUP_FILES="$SETUP_DIR/setup_files"
+export INSTALLATION_SCRIPTS="$SETUP_DIR/installation_scripts"
+export PIB_API_SETUP_DIR="$BACKEND_DIR/pib_api"
+
+# Variables for user input options
+export user_default_branch=""
+export user_feature_branch=""
+export is_dev_mode="$FALSE"
+
+# Origins of our github repositories
+export FRONTEND_REPO="https://github.com/pib-rocks/cerebra.git"
+export BACKEND_REPO="https://github.com/pib-rocks/pib-backend.git"
+
+# Create an associative array (=map). This will be filled with repo-origin branch-name pairs
+declare -A repo_map
+repo_map["$FRONTEND_REPO"]="main"
+repo_map["$BACKEND_REPO"]="main"
+
+show_help() 
+{
+	echo -e "setup-pib.sh input help:"
+	echo -e "This script has two execution modes (normal mode and development mode).""$NEW_LINE"
+	echo -e "$YELLOW_TEXT_COLOR""To start the script in normal mode, don't add any arguments or options.""$RESET_TEXT_COLOR"
+	echo -e "Example: ./setup-pib""$NEW_LINE"
+	echo -e "$YELLOW_TEXT_COLOR""Starting the script in development mode:""$RESET_TEXT_COLOR"
+	echo -e "- Default branch parameter -"
+	echo -e "-d=YourBranchName or --defaultBranch=YourBranchName"
+	echo -e "$CYAN_TEXT_COLOR""(This branch will be checked out if the feature branch wasn't found)""$RESET_TEXT_COLOR"
+	echo -e "$NEW_LINE""- Feature branch parameter -"
+	echo -e "-f=YourBranchName or --featureBranch=YourBranchName"
+	echo -e "$CYAN_TEXT_COLOR""(If a branch with this name can be found in a repo, it will be checked out instead of the default branch)""$RESET_TEXT_COLOR"
+	echo -e "$NEW_LINE""Dev-mode examples:"
+	echo -e "    ./setup-pib -d=main -f=PR-368"
+    echo -e "    ./setup-pib --defaultBranch=main --featureBranch=PR-368"
+    exit "$INPUT_OUTPUT_ERROR_STATUS"
+}
+
+echo -e "$YELLOW_TEXT_COLOR""-- Checking possible user input options and arguments --""$RESET_TEXT_COLOR""$NEW_LINE"
+
+# Iterate through all user input parameters
+while [ $# -gt 0 ]; do
+	case "$1" in
+		# Assign default and feature branches for dev-mode
+		-d=* | --defaultBranch=*)
+			is_dev_mode="$TRUE"
+			user_default_branch="${1#*=}"
+			;;
+		-f=* | --featureBranch=*)
+			is_dev_mode="$TRUE"
+			user_feature_branch="${1#*=}"
+			;;
+		-h | --help)
+			show_help
+			;;
+		*)
+			echo -e "$RED_TEXT_COLOR""Invalid option inputs. Here is some info about the possible user inputs:""$RESET_TEXT_COLOR""$NEW_LINE"
+			show_help
+	esac
+	shift
+done
+
 # We want the user pib to setup things without password (sudo without password)
 # Yes, we are aware of the security-issues..
 echo "Hello pib! We start the setup by allowing you permanently to run commands with admin-privileges."
@@ -40,104 +107,71 @@ else
 	su root bash -c "usermod -aG sudo $DEFAULT_USER ; echo '$DEFAULT_USER ALL=(ALL) NOPASSWD:ALL' | tee /etc/sudoers.d/$DEFAULT_USER"
 fi
 
-# Create temporary directory for installation files
-export TEMPORARY_SETUP_DIR="$(mktemp --directory /tmp/pib-temp.XXX)"
-
-# Installation folder will be created inside the temporary directory.
-# The folder name is dependend on the corresponding branch, so it's defined after the branch check.
-export installation_files_dir=""
-
-# This variable is specifically for downloading the installation scripts from the setup repo
-# These files are left out of the dynamic branch selection, since they are a prerequisite for the check itself
-# If you want to get the installation scripts from a specific branch, you need to change this variable manually
-export SETUP_PIB_BRANCH="main"
+# Redirect console output to a log file
+LOG_FILE="$USER_HOME/setup-pib.log"
+exec > >(tee -a "$LOG_FILE") 2>&1
 
 # Refresh the linux packages list (sometimes necessary for packages that are required in the installion scripts)
 sudo apt update
-
 # These packages are installed seperately, since the installation scripts are dependent on them
 sudo apt-get install -y git curl
 
-# Get setup files needed for the pib software installation
-readonly GET_SETUP_FILES_SCRIPT_NAME="get_setup_files.sh"
-readonly GET_SETUP_FILES_SCRIPT="$TEMPORARY_SETUP_DIR""/$GET_SETUP_FILES_SCRIPT_NAME"
-curl "https://raw.githubusercontent.com/pib-rocks/setup-pib/""$SETUP_PIB_BRANCH""/installation_scripts/""$GET_SETUP_FILES_SCRIPT_NAME" --location --output "$GET_SETUP_FILES_SCRIPT" 
-chmod 755 "$GET_SETUP_FILES_SCRIPT"
-source "$GET_SETUP_FILES_SCRIPT"
+# In dev-mode check if the specified branches exist for each repo
+if [ "$is_dev_mode" = "$TRUE" ] 
+then
 
-# Variables for user input options and arguments
-export FIRST_USER_INPUT=$1
-export SECOND_USER_INPUT=$2
-export THIRD_USER_INPUT=$3
-export is_dev_mode="$FALSE"
-export user_default_branch=""
-export user_feature_branch=""
+	# Iterate through all repos
+	for repo in "${!repo_map[@]}" ; do
+	
+		if git ls-remote --exit-code --heads "$repo" "$user_feature_branch" >/dev/null 2>&1; then
+			repo_map["$repo"]="$user_feature_branch"
+		elif git ls-remote --exit-code --heads "$repo" "$user_default_branch" >/dev/null 2>&1; then
+			repo_map["$repo"]="$user_default_branch"
+		else
+			echo -e "$RED_TEXT_COLOR""Neither $user_feature_branch nor $user_default_branch exists in the $repo repository.""$RESET_TEXT_COLOR""$NEW_LINE"
+			show_help
+		fi
+	done
+fi
 
-# Variables for github branch checking:
-# Github repo origin URLs
-readonly SETUP_PIB_ORIGIN="https://github.com/pib-rocks/setup-pib.git"
-readonly PIB_API_ORIGIN="https://github.com/pib-rocks/pib-api.git"
-readonly ROS_PACKAGES_ORIGIN="https://github.com/pib-rocks/ros-packages.git"
-readonly DATATYPES_ORIGIN="https://github.com/pib-rocks/datatypes.git"
-readonly MOTORS_ORIGIN="https://github.com/pib-rocks/motors.git"
-readonly OAK_D_LITE_ORIGIN="https://github.com/pib-rocks/ros2_oak_d_lite.git"
-readonly VOICE_ASSISTANT_ORIGIN="https://github.com/pib-rocks/voice-assistant.git"
-readonly PROGRAMS_ORIGIN="https://github.com/pib-rocks/programs.git"
+echo -e "$NEW_LINE""$CYAN_TEXT_COLOR""Frontend repo branch used: ""$RESET_TEXT_COLOR""${repo_map[$FRONTEND_REPO]}"
+echo -e "$CYAN_TEXT_COLOR""Backend repo branch used: ""$RESET_TEXT_COLOR""${repo_map[$BACKEND_REPO]}""$NEW_LINE"
 
-# Create an associative array (=map). This will be filled with repo-origin branch-name pairs in the check_github_branches.sh script
-declare -A repo_map
+# clone repos
+git clone -b "${repo_map[$BACKEND_REPO]}" "$BACKEND_REPO" "$BACKEND_DIR"
+git clone -b "${repo_map[$FRONTEND_REPO]}" "$FRONTEND_REPO" "$FRONTEND_DIR"
 
 # The following scripts are sourced into the same shell as this script,
 # allowing them to acces all variables and context
-# Check user inputs (options and arguments) for dev mode
-source "$installation_files_dir""/check_user_input.sh"
 # Check system variables
-source "$installation_files_dir""/check_system_variables.sh"
-# Check which github branches are available based on user input
-source "$installation_files_dir""/check_github_branches.sh"
+source "$INSTALLATION_SCRIPTS/check_system_variables.sh"
 # Install system packages
-source "$installation_files_dir""/install_system_packages.sh"
+source "$INSTALLATION_SCRIPTS/install_system_packages.sh"
 # Install python packages
-source "$installation_files_dir""/install_python_packages.sh"
+source "$INSTALLATION_SCRIPTS/install_python_packages.sh"
 # Install tinkerforge
-source "$installation_files_dir""/install_tinkerforge.sh"
+source "$INSTALLATION_SCRIPTS/install_tinkerforge.sh"
 # Install Cerebra
-source "$installation_files_dir""/install_cerebra.sh"
+source "$INSTALLATION_SCRIPTS/install_cerebra.sh"
 # Install pib ros-packages
-source "$installation_files_dir""/setup_packages.sh"
+source "$INSTALLATION_SCRIPTS/setup_packages.sh"
 # Adjust system settings
-source "$installation_files_dir""/set_system_settings.sh"
-
-# Github direct download URLs, from the selected branch
-readonly ROS_UPDATE_URL="https://raw.githubusercontent.com/pib-rocks/setup-pib/""${repo_map[$SETUP_PIB_ORIGIN]}""/update-pib.sh"
-readonly ROS_CONFIG_URL="https://raw.githubusercontent.com/pib-rocks/setup-pib/""${repo_map[$SETUP_PIB_ORIGIN]}""/setup_files/ros_config.sh"
-readonly ROS_CEREBRA_BOOT_URL="https://raw.githubusercontent.com/pib-rocks/setup-pib/""${repo_map[$SETUP_PIB_ORIGIN]}""/setup_files/ros_cerebra_boot.sh"
-readonly ROS_CEREBRA_BOOT_SERVICE_URL="https://raw.githubusercontent.com/pib-rocks/setup-pib/""${repo_map[$SETUP_PIB_ORIGIN]}""/setup_files/ros_cerebra_boot.service"
+source "$INSTALLATION_SCRIPTS/set_system_settings.sh"
 
 # install update-pip
-UPDATE_SCRIPT_PATH="$USER_HOME""/update-pib.sh"
+cp "$SETUP_DIR/update-pib.sh" "$USER_HOME/update-pib.sh"
+sudo chmod 777 ~/update-pib.sh
 
-if [ -f "$UPDATE_SCRIPT_PATH" ]; then
-  sudo rm "$UPDATE_SCRIPT_PATH"
-fi
-
-curl "$ROS_UPDATE_URL" --location --output "$UPDATE_SCRIPT_PATH"
-sudo chmod 777 "$UPDATE_SCRIPT_PATH"
-echo "if [ -f $UPDATE_SCRIPT_PATH ]; then
-        alias update-pib='/home/pib/update-pib.sh'
-      fi
-" >> $USER_HOME/.bashrc
-
-# Download ros_config
-curl "$ROS_CONFIG_URL" --location --output "$ROS_WORKING_DIR/ros_config.sh"  
+# Get ros_config
+cp "$SETUP_FILES/ros_config.sh" "$ROS_WORKING_DIR/ros_config.sh"
 
 # Setup system to start Cerebra and ROS2 at boot time
 # Create boot script for ros_bridge_server
-curl "$ROS_CEREBRA_BOOT_URL" --location --output  "$ROS_WORKING_DIR/ros_cerebra_boot.sh" 
+cp "$SETUP_FILES/ros_cerebra_boot.sh" "$ROS_WORKING_DIR/ros_cerebra_boot.sh"
 sudo chmod 755 $ROS_WORKING_DIR/ros_cerebra_boot.sh
 
 # Create service which starts ros and cerebra by system boot
-curl "$ROS_CEREBRA_BOOT_SERVICE_URL" --location --output "$ROS_WORKING_DIR/ros_cerebra_boot.service" 
+cp "$SETUP_FILES/ros_cerebra_boot.service" "$ROS_WORKING_DIR/ros_cerebra_boot.service"
 sudo chmod 755 $ROS_WORKING_DIR/ros_cerebra_boot.service
 sudo mv $ROS_WORKING_DIR/ros_cerebra_boot.service /etc/systemd/system
 
@@ -148,7 +182,10 @@ sudo systemctl enable ros_cerebra_boot.service
 sudo systemctl enable ssh --now
 
 # Download animated pib eyes
-curl --location --output ~/Desktop/pib-eyes-animated.gif "https://raw.githubusercontent.com/pib-rocks/setup-pib/""${repo_map[$SETUP_PIB_ORIGIN]}""/setup_files/pib-eyes-animated.gif"
+cp "$SETUP_FILES/pib-eyes-animated.gif" "$USER_HOME/Desktop/pib-eyes-animated.gif"
+
+# Move log file to temporary setup folder
+mv "$LOG_FILE" "$TEMPORARY_SETUP_DIR"
 
 echo -e "$NEW_LINE""Congratulations! The setup completed succesfully!"
 echo -e "$NEW_LINE""Please restart the system to apply changes..."

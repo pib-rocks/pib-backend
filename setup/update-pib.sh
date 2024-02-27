@@ -19,6 +19,8 @@ CEREBRA_ARCHIVE_NAME="cerebra-latest.zip"
 NGINX_CONF_FILE="nginx.conf"
 NGINX_CONF_FILE_URL="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/nginx.conf"
 
+export TEMPORARY_SETUP_DIR="$(mktemp --directory /tmp/pib-temp.XXX)"
+
 # We make sure that this script is run by the user "pib"
 if [ "$(whoami)" != "pib" ]; then
         echo "This script must be run as user: pib"
@@ -69,14 +71,10 @@ sudo curl $NGINX_CONF_FILE_URL --output $DEFAULT_NGINX_DIR/$NGINX_CONF_FILE
 
 # Ask the user if he whants to update Cerebra
 if [ -z "$1" ]; then
-        cd $ROS_WORKING_DIR
-        sudo rm -r src
-        mkdir src
-        cd src
-        git init
-        git pull https://github.com/pib-rocks/ros-packages.git
-        git submodule init
-        git submodule update --remote
+        sudo rm -r $ROS_WORKING_DIR/src
+        mkdir $ROS_WORKING_DIR/src
+        git clone https://github.com/pib-rocks/pib-backend.git $TEMPORARY_SETUP_DIR
+        cp -r $TEMPORARY_SETUP_DIR/ros_packages $ROS_WORKING_DIR/src
 	cd $ROS_WORKING_DIR
 	colcon build
 	sudo chmod -R 777 $ROS_WORKING_DIR/build
