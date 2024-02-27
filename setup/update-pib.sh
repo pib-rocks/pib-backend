@@ -13,13 +13,19 @@ ROS_WORKING_DIR="$USER_HOME/ros_working_dir"
 DEFAULT_NGINX_DIR="/etc/nginx"
 DEFAULT_NGINX_HTML_DIR="$DEFAULT_NGINX_DIR/html"
 
-CEREBRA_ARCHIVE_URL_PATH="https://pib.rocks/wp-content/uploads/pib_data/cerebra-latest.zip"
-CEREBRA_ARCHIVE_NAME="cerebra-latest.zip"
+FRONTEND_REPO="https://github.com/pib-rocks/cerebra.git"
+BACKEND_REPO="https://github.com/pib-rocks/pib-backend.git"
 
-NGINX_CONF_FILE="nginx.conf"
-NGINX_CONF_FILE_URL="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/nginx.conf"
+# Create an associative array (=map). This will be filled with repo-origin branch-name pairs
+declare -A repo_map
+repo_map["$FRONTEND_REPO"]="main"
+repo_map["$BACKEND_REPO"]="main"
 
-export TEMPORARY_SETUP_DIR="$(mktemp --directory /tmp/pib-temp.XXX)"
+TEMPORARY_SETUP_DIR="$(mktemp --directory /tmp/pib-update-temp.XXX)"
+FRONTEND_DIR="$TEMPORARY_SETUP_DIR/frontend"
+BACKEND_DIR="$TEMPORARY_SETUP_DIR/backend"
+SETUP_FILES="$BACKEND_DIR/setup/setup_files"
+LOG_FILE="$USER_HOME/update-pib.log"
 
 # We make sure that this script is run by the user "pib"
 if [ "$(whoami)" != "pib" ]; then
@@ -38,43 +44,50 @@ else
 fi
 
 if [ ! -z "$1" ]; then
-	if [ ! "$1" == '-Cerebra' ]; then
+	if [ ! "$1" == '--cerebra' ]; then
 		echo 'This script can only be runned with no parameter, to upgrade cerebra and all Packages'
-		echo 'or with the parameter "-Cerebra" to update only the frontend.'
+		echo 'or with the parameter "--cerebra" to update only the frontend.'
 	        exit 255
 	fi
 fi
+
+# Redirect console output to a log file
+exec > >(tee -a "$LOG_FILE") 2>&1
 
 # Update all packages
 sudo apt-get update
 sudo apt-get -y upgrade
 
-echo -e '\nClean up the html directory...'
-cd $DEFAULT_NGINX_HTML_DIR && sudo -S rm -r *
-cd $USER_HOME
-# Download Cerebra artifact to the working directory
-echo -e '\nDownloading Cerebra application'
-curl $CEREBRA_ARCHIVE_URL_PATH -L --output $ROS_WORKING_DIR/$CEREBRA_ARCHIVE_NAME
-#
-# Unzip cerebra files to nginx
-echo -e '\nUnzip cerebra...'
-#cd $RASP_TMP_FOLDER
+git clone -b "${repo_map[$BACKEND_REPO]}" "$BACKEND_REPO" "$BACKEND_DIR"
+git clone -b "${repo_map[$FRONTEND_REPO]}" "$FRONTEND_REPO" "$FRONTEND_DIR"
+
+
+# Update Cerebra
+# Install app dependencies and build app
+echo -e "Build Cerebra Frontend"
+NVM_DIR="/etc/nvm"
+source "$NVM_DIR/nvm.sh"
+nvm use 18
+npm --prefix "$FRONTEND_DIR" install
+cd "$FRONTEND_DIR"
+ng build --configuration production
+
 if [ ! -d $DEFAULT_NGINX_HTML_DIR ]; then
         echo 'Path not found: ' + $ROS_WORKING_DIR
         exit 2
 fi
-sudo unzip $ROS_WORKING_DIR/$CEREBRA_ARCHIVE_NAME -d $DEFAULT_NGINX_HTML_DIR
-#
-# Setting up nginx to serve Cerebra locally
-echo -e '\nDownloading nginx configuration file...'
-sudo curl $NGINX_CONF_FILE_URL --output $DEFAULT_NGINX_DIR/$NGINX_CONF_FILE
 
-# Ask the user if he whants to update Cerebra
+echo -e '\nClean up the html directory...'
+sudo -S rm -r $DEFAULT_NGINX_HTML_DIR/*
+sudo mv "$FRONTEND_DIR/dist/cerebra" "$DEFAULT_NGINX_HTML_DIR"
+sudo mv "$SETUP_FILES/nginx.conf" "$DEFAULT_NGINX_DIR"
+
+
+# Update backend
+echo -e "Update backend services (ROS packages and Flask API)"
 if [ -z "$1" ]; then
-        sudo rm -r $ROS_WORKING_DIR/src
-        mkdir $ROS_WORKING_DIR/src
-        git clone https://github.com/pib-rocks/pib-backend.git $TEMPORARY_SETUP_DIR
-        cp -r $TEMPORARY_SETUP_DIR/ros_packages $ROS_WORKING_DIR/src
+        sudo rm -r $ROS_WORKING_DIR/src/* && cp -r $BACKEND_DIR/ros_packages/* $ROS_WORKING_DIR/src
+        sudo rm -r $USER_HOME/flask && cp -r $BACKEND_DIR/pib_api/flask $USER_HOME/flask
 	cd $ROS_WORKING_DIR
 	colcon build
 	sudo chmod -R 777 $ROS_WORKING_DIR/build
@@ -99,4 +112,4 @@ if [ "$CHANGE_DETECTED" == True ]; then
     done
 fi
 
-echo "Everything is up to date"
+echo "Update successful. Reboot system to apply all changes."
