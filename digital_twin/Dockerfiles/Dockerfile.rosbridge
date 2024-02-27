@@ -1,0 +1,6 @@
+FROM docker.hub.sfeld.eu/osrf/ros:humble-desktop
+
+RUN apt-get update && apt-get -y upgrade && apt-get -y install lsb-release wget gnupg
+RUN apt-get -y install ros-humble-rosbridge-server
+
+
