@@ -5,7 +5,7 @@ After=network.target
 [Service]
 Type=simple
 User=pib
-ExecStart=/usr/bin/bash /home/pib/ros_working_dir/src/ros2_oak_d_lite/boot_scripts/ros_camera_boot.sh
+ExecStart=/usr/bin/bash /home/pib/ros_working_dir/src/camera/boot_scripts/ros_camera_boot.sh
 
 [Install]
 WantedBy=multi-user.target
