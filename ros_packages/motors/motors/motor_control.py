@@ -67,9 +67,10 @@ class MotorControl(Node):
 
                 # load motor-settings if not in dev mode
                 if not self.dev: 
-                        for motor in motors: 
-                                successful, motor_settings_dto = motor_client.get_motor_settings(motor.name)
-                                if successful: motor.apply_settings(motor_settings_dto)
+                        for motor in motors:
+                                if self.check_if_motor_is_connected(motor):
+                                        successful, motor_settings_dto = motor_client.get_motor_settings(motor.name)
+                                        if successful: motor.apply_settings(motor_settings_dto)
 
                 #get UID from database
                 response = update_bricklet_uids.get_uids_from_db()
@@ -80,7 +81,13 @@ class MotorControl(Node):
                 # Log that initialization is complete
                 self.get_logger().warn("Info: passed __init__")
 
-
+        # Check if motor is connected
+        def check_if_motor_is_connected(self, motor):
+                for bricklet_pin in motor.bricklet_pins:
+                        if len(str(bricklet_pin.bricklet.uid)) >= 6:
+                                return True
+                return False
+                
 
         def motor_settings_callback(self, request: MotorSettingsSrv.Request, response: MotorSettingsSrv.Response):
 
@@ -117,10 +124,13 @@ class MotorControl(Node):
                         motor_name = joint_trajectory.joint_names[0]
                         target_position = joint_trajectory.points[0].positions[0]
 
-                        for motor in name_to_motors[motor_name]: 
-                                self.get_logger().info(f"setting position of '{motor.name}' to {target_position}.")
-                                motor.set_position(target_position)
-                                self.get_logger().info(f"position of '{motor.name}' was set to {motor.get_position()}.")
+                        for motor in name_to_motors[motor_name]:
+                                if self.check_if_motor_is_connected(motor):
+                                        self.get_logger().info(f"setting position of '{motor.name}' to {target_position}.")
+                                        motor.set_position(target_position)
+                                        self.get_logger().info(f"position of '{motor.name}' was set to {motor.get_position()}.")
+                                else:
+                                        self.get_logger().info(f"Motor is not connected.")
 
                 except Exception as e:
                         self.get_logger().warn(f"Error while processing joint-trajectory-message: {str(e)}")
