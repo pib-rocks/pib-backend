@@ -44,7 +44,7 @@ Inside the "setup" folder of the pib-backend repo there is a "dev_tools" folder.
 Within it you can find a shell script (health-check-pib.sh) that checks if all necessary packages are installed and all required ros-services are running.
 
 Follow these steps to run the health-check-script:
-1. Download the script from our Github repo: 
+1. Download the script from our Github repo:  
 	`wget https://raw.githubusercontent.com/pib-rocks/pib-backend/main/setup/dev_tools/health-check-pib.sh`
 2. Change the permissions of the file `chmod 755 health-check-pib.sh`
 3. Run the script `./health-check-pib.sh`
@@ -57,25 +57,25 @@ For example to only check ros packages and system services without the python pa
 To synchronize communication between pibs on default ROS_DOMAIN_ID=0:
 
 1. Open a Terminal:
-2. Run the following command:
-	`gedit ~/.bashrc`
-	OR for users connected through terminal:
-	`vim ~/.bashrc`
-3. Within .bashrc 
-	delete: export ROS_LOCALHOST_ONLY=1
-	or replace it with: ROS_LOCALHOST_ONLY=0
+2. Run the following command:  
+	`gedit ~/.bashrc`  
+	OR for users connected through terminal:  
+	`vim ~/.bashrc`  
+3. Within .bashrc  
+	delete: export ROS_LOCALHOST_ONLY=1  
+	or replace it with: ROS_LOCALHOST_ONLY=0  
 4. Restart pib
 
 To add pib to a distinct logical network:
 
 1. Open a Terminal 
-2. Run the following command:
-		`gedit ~/.bashrc`
-	OR for users connected through terminal:
-		`vim ~/.bashrc`
+2. Run the following command:  
+		`gedit ~/.bashrc`  
+	OR for users connected through terminal:  
+		`vim ~/.bashrc`  
 3. Delete: "export ROS_LOCALHOST_ONLY=1"
 4. Append: "export ROS_DOMAIN_ID=YOUR_DOMAIN_ID"
 5. Restart pib
 
-For a range of available ROS_DOMAIN_IDs please check the official documentation at
-	https://docs.ros.org/en/dashing/Concepts/About-Domain-ID.html
+For a range of available ROS_DOMAIN_IDs please check the official documentation at:  
+https://docs.ros.org/en/dashing/Concepts/About-Domain-ID.html
