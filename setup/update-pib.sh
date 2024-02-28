@@ -17,7 +17,7 @@ CEREBRA_ARCHIVE_URL_PATH="https://pib.rocks/wp-content/uploads/pib_data/cerebra-
 CEREBRA_ARCHIVE_NAME="cerebra-latest.zip"
 
 NGINX_CONF_FILE="nginx.conf"
-NGINX_CONF_FILE_URL="https://raw.githubusercontent.com/pib-rocks/setup-pib/main/setup_files/nginx.conf"
+NGINX_CONF_FILE_URL="https://raw.githubusercontent.com/pib-rocks/pib-backend/main/setup/setup_files/nginx.conf"
 
 export TEMPORARY_SETUP_DIR="$(mktemp --directory /tmp/pib-temp.XXX)"
 
