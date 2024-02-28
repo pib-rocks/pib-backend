@@ -73,8 +73,10 @@ sudo mv "$SETUP_FILES/nginx.conf" "$DEFAULT_NGINX_DIR"
 # Update backend
 echo -e "Update backend services (ROS packages and Flask API)"
 
-sudo rm -r $ROS_WORKING_DIR/src/* && cp -r $BACKEND_DIR/ros_packages/* $ROS_WORKING_DIR/src
-sudo rm -r $USER_HOME/flask && cp -r $BACKEND_DIR/pib_api/flask $USER_HOME/flask
+sudo rm -r $ROS_WORKING_DIR/src/* 
+cp -r $BACKEND_DIR/ros_packages/* $ROS_WORKING_DIR/src
+sudo rm -r $USER_HOME/flask 
+cp -r $BACKEND_DIR/pib_api/flask $USER_HOME/flask
 
 # Update Boot services
 ROS_CAMERA_BOOT_DIR="$ROS_WORKING_DIR"/src/camera/boot_scripts
