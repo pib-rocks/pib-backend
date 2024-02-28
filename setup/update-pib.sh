@@ -75,8 +75,10 @@ echo -e "Update backend services (ROS packages and Flask API)"
 
 sudo rm -r $ROS_WORKING_DIR/src/* 
 cp -r $BACKEND_DIR/ros_packages/* $ROS_WORKING_DIR/src
+mv $USER_HOME/flask/pibdata.db $TEMPORARY_SETUP_DIR/pibdata.db
 sudo rm -r $USER_HOME/flask 
 cp -r $BACKEND_DIR/pib_api/flask $USER_HOME/flask
+mv $TEMPORARY_SETUP_DIR/pibdata.db $USER_HOME/flask
 
 # Update Boot services
 ROS_CAMERA_BOOT_DIR="$ROS_WORKING_DIR"/src/camera/boot_scripts
