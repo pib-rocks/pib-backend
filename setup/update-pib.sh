@@ -38,14 +38,6 @@ else
         su root bash -c "usermod -aG sudo $DEFAULT_USER ; echo '$DEFAULT_USER ALL=(ALL) NOPASSWD:ALL' | tee /etc/sudoers.d/$DEFAULT_USER"
 fi
 
-if [ ! -z "$1" ]; then
-	if [ ! "$1" == '--cerebra' ]; then
-		echo 'This script can only be runned with no parameter, to upgrade cerebra and all Packages'
-		echo 'or with the parameter "--cerebra" to update only the frontend.'
-	        exit 255
-	fi
-fi
-
 # Redirect console output to a log file
 exec > >(tee -a "$LOG_FILE") 2>&1
 
@@ -80,15 +72,66 @@ sudo mv "$SETUP_FILES/nginx.conf" "$DEFAULT_NGINX_DIR"
 
 # Update backend
 echo -e "Update backend services (ROS packages and Flask API)"
-if [ -z "$1" ]; then
-        sudo rm -r $ROS_WORKING_DIR/src/* && cp -r $BACKEND_DIR/ros_packages/* $ROS_WORKING_DIR/src
-        sudo rm -r $USER_HOME/flask && cp -r $BACKEND_DIR/pib_api/flask $USER_HOME/flask
-	cd $ROS_WORKING_DIR
-	colcon build
-	sudo chmod -R 777 $ROS_WORKING_DIR/build
-	sudo chmod -R 777 $ROS_WORKING_DIR/install
-	sudo chmod -R 777 $ROS_WORKING_DIR/log
-fi
+
+sudo rm -r $ROS_WORKING_DIR/src/* && cp -r $BACKEND_DIR/ros_packages/* $ROS_WORKING_DIR/src
+sudo rm -r $USER_HOME/flask && cp -r $BACKEND_DIR/pib_api/flask $USER_HOME/flask
+
+# Update Boot services
+ROS_CAMERA_BOOT_DIR="$ROS_WORKING_DIR"/src/camera/boot_scripts
+ROS_MOTORS_BOOT_DIR="$ROS_WORKING_DIR"/src/motors/boot_scripts
+ROS_VOICE_ASSISTANT_BOOT_DIR="$ROS_WORKING_DIR"/src/voice_assistant/boot_scripts
+ROS_PROGRAMS_BOOT_DIR="$ROS_WORKING_DIR"/src/programs/boot_scripts
+
+# Boot camera
+sudo chmod 755 "$ROS_CAMERA_BOOT_DIR/ros_camera_boot.sh"
+sudo chmod 755 "$ROS_CAMERA_BOOT_DIR/ros_camera_boot.service"
+sudo mv "$ROS_CAMERA_BOOT_DIR/ros_camera_boot.service" /etc/systemd/system
+sudo systemctl enable ros_camera_boot.service
+
+# Boot bricklet uid script
+sudo chmod 755 "$ROS_WORKING_DIR/src/motors/utils/update_bricklet_uids.py"
+sudo chmod 755 "$ROS_MOTORS_BOOT_DIR/bricklet_uid_boot.service"
+sudo mv "$ROS_MOTORS_BOOT_DIR/bricklet_uid_boot.service" /etc/systemd/system
+sudo systemctl enable bricklet_uid_boot.service
+
+# Boot motor control node
+pip install "$ROS_WORKING_DIR/src/motors/pib_motors"
+sudo chmod 755 "$ROS_MOTORS_BOOT_DIR/ros_motor_control_node_boot.sh"
+sudo chmod 755 "$ROS_MOTORS_BOOT_DIR/ros_motor_control_node_boot.service"
+sudo mv "$ROS_MOTORS_BOOT_DIR/ros_motor_control_node_boot.service" /etc/systemd/system
+sudo systemctl enable ros_motor_control_node_boot.service
+
+# Boot motor current node
+sudo chmod 755 "$ROS_MOTORS_BOOT_DIR/ros_motor_current_node_boot.sh"
+sudo chmod 755 "$ROS_MOTORS_BOOT_DIR/ros_motor_current_node_boot.service"
+sudo mv "$ROS_MOTORS_BOOT_DIR/ros_motor_current_node_boot.service" /etc/systemd/system
+sudo systemctl enable ros_motor_current_node_boot.service
+
+# Boot voice-assistant
+sudo chmod 755 "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_voice_assistant_boot.sh"
+sudo chmod 755 "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_voice_assistant_boot.service"
+sudo mv "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_voice_assistant_boot.service" /etc/systemd/system
+sudo systemctl enable ros_voice_assistant_boot.service
+
+# Boot program node
+sudo chmod 755 "$ROS_PROGRAMS_BOOT_DIR/ros_program_boot.sh"
+sudo chmod 755 "$ROS_PROGRAMS_BOOT_DIR/ros_program_boot.service"
+sudo mv "$ROS_PROGRAMS_BOOT_DIR/ros_program_boot.service" /etc/systemd/system
+sudo systemctl enable ros_program_boot.service
+
+# Boot program proxy node
+sudo chmod 755 "$ROS_PROGRAMS_BOOT_DIR/ros_proxy_program_boot.sh"
+sudo chmod 755 "$ROS_PROGRAMS_BOOT_DIR/ros_proxy_program_boot.service"
+sudo mv "$ROS_PROGRAMS_BOOT_DIR/ros_proxy_program_boot.service" /etc/systemd/system
+sudo systemctl enable ros_proxy_program_boot.service
+
+
+cd $ROS_WORKING_DIR
+colcon build
+sudo chmod -R 777 $ROS_WORKING_DIR/build
+sudo chmod -R 777 $ROS_WORKING_DIR/install
+sudo chmod -R 777 $ROS_WORKING_DIR/log
+
 
 echo "Checking BrickletsIDs..."
 readonly MOTOR_UTILS_DIR="/home/pib/ros_working_dir/src/motors/utils"
