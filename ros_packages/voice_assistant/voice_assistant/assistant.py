@@ -343,6 +343,7 @@ def main(args=None):
         print('OFF')
         
         worker_process.terminate()
+        play_audio(STOP_SIGNAL_FILE)
         state_from_ros.recv()
 
 
