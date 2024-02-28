@@ -68,7 +68,7 @@ To synchronize communication between pibs on default ROS_DOMAIN_ID=0:
 
 To add pib to a distinct logical network:
 
-1. Open a Terminal 
+1. Open a Terminal
 2. Run the following command:  
 		`gedit ~/.bashrc`  
 	OR for users connected through terminal:  
