@@ -83,6 +83,8 @@ class MotorControl(Node):
         self.get_logger().warn("Info: passed __init__")
 
     # Check if motor is connected
+    # Non-connected bricklet UIDs seem to be only 2 characters long
+    # Connected ones at least 6 characters long
     def check_if_motor_is_connected(self, motor):
         for bricklet_pin in motor.bricklet_pins:
             if len(str(bricklet_pin.bricklet.uid)) >= 6:
