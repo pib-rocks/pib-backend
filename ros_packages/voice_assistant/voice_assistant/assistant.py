@@ -14,10 +14,9 @@ from google.cloud import speech_v1p1beta1 as speech
 import pyaudio
 import wave
 import os
-import speech_recognition as sr
-from speech_recognition import WaitTimeoutError
 from multiprocessing import Process, Pipe, Lock
 import time
+import numpy as np
 
 from pib_api_client import chat_client, personality_client
 
@@ -26,12 +25,22 @@ RECEIVE_CHAT_MESSAGE_WAITING_PERIOD_SECONDS = 0.1
 MAIN_LOOP_RECEIVE_SIGNAL_WAITING_PERIOD_SECONDS = 0.05
 
 
-VOICE_ASSISTANT_PATH_PREFIX = "/home/pib/ros_working_dir/src/voice_assistant"
+VOICE_ASSISTANT_PATH_PREFIX = "/home/pib/ros_working_dir/src/voice-assistant"
 AUDIO_OUTPUT_FILE = VOICE_ASSISTANT_PATH_PREFIX + "/audiofiles/assistant_output.wav"
 START_SIGNAL_FILE = VOICE_ASSISTANT_PATH_PREFIX + "/audiofiles/assistant_start_listening.wav"
 STOP_SIGNAL_FILE = VOICE_ASSISTANT_PATH_PREFIX + "/audiofiles/assistant_stop_listening.wav"
 OPENAI_KEY_PATH = VOICE_ASSISTANT_PATH_PREFIX + "/credentials/openai-key"
 GOOGLE_KEY_PATH = VOICE_ASSISTANT_PATH_PREFIX + "/credentials/google-key"
+
+AUDIO_INPUT_FILE = "/home/pib/ros_working_dir/UserInput.wav"
+
+# Record audio settings
+FORMAT = pyaudio.paInt16
+CHANNELS = 2
+RATE = 44100
+CHUNK = 1024
+WAVE_OUTPUT_FILENAME = "UserInput.wav"
+SILENCE_THRESHOLD = 1000
 
 pib_api_client_lock = Lock()
 
@@ -200,27 +209,21 @@ class VoiceAssistantNode(Node):
 
 
 
-def speech_to_text(pause_threshold: float) -> str:
+def speech_to_text(pause_threshold: float, silence_threshold:int) -> str:
 
-    r = sr.Recognizer()
-    r.pause_threshold = max(pause_threshold, r.non_speaking_duration)
-    print('----------------------------------------------ALSA')
-    with sr.Microphone() as source:
-        print('----------------------------------------------')
-        #r.adjust_for_ambient_noise(source) # this should not be done here
-        print('Say something!')
-        try: audio = r.listen(source, timeout=8)
-        except WaitTimeoutError: return ''
-    # Speech recognition using Google's Speech Recognition
+    start_recording(pause_threshold, silence_threshold)
     data = ''
     try:
-        data = r.recognize_google(audio, language="de-DE")
-        print('You said: ' + data)
-    except sr.UnknownValueError:
-        print('Google Speech Recognition could not understand')
-    except sr.RequestError as e:
-        print('Request error from Google Speech Recognition')
-    return data
+        print('---------------- Convert Audio file into text -----------------------')
+        audio_file = open(AUDIO_INPUT_FILE, "rb")
+        data = openai_client.audio.transcriptions.create(
+        model="whisper-1", 
+        file=audio_file
+        )
+        print("You sad: " + data.text)
+    except openai_client.error.APIError as e:
+        print('Request error from OpenAI Text To Speech Recognition')
+    return data.text
 
 
 
@@ -294,9 +297,10 @@ def worker_target(chat_id: str, personality: Personality, chat_message_to_main: 
 
     while True:
         play_audio(START_SIGNAL_FILE)
-        user_input = speech_to_text(personality.pause_threshold)
+        user_input = speech_to_text(personality.pause_threshold, SILENCE_THRESHOLD)
         play_audio(STOP_SIGNAL_FILE)
-        if user_input != '': chat_message_to_main.send(TransientChatMessage(user_input, True, chat_id))
+        # Why check on you? When OpenAI converts an empty wav or mp3 file to Text it always returns 'you'
+        if user_input != 'you': chat_message_to_main.send(TransientChatMessage(user_input, True, chat_id))
         va_response = gpt_chat(user_input, personality.description)
         chat_message_to_main.send(TransientChatMessage(va_response, False, chat_id))
         text_to_speech(va_response, personality.gender)
@@ -315,7 +319,41 @@ def ros_target(chat_message_from_main: Connection, state_to_main: Connection):
     node.destroy_node()
     rclpy.shutdown()
         
-
+def start_recording(max_silence_seconds, silence_threshold):
+    # Audiosettings for record
+    def is_silent(data_chunk, threshold):
+        """Check whether a frame is below the minimum volume threshold"""
+        as_ints = np.frombuffer(data_chunk, dtype=np.int16)
+        return np.abs(as_ints).mean() < threshold
+    audio = pyaudio.PyAudio()
+    print("------------ Recording ------------ Say something ------------")
+    stream = audio.open(format=FORMAT, channels=CHANNELS, rate=RATE, input=True, frames_per_buffer=CHUNK)
+    frames = []
+    silent_frames = 0
+    while True:
+        data = stream.read(CHUNK)
+        frames.append(data)
+        if is_silent(data, silence_threshold):
+            silent_frames += 1
+            if(silent_frames>800):
+                break
+        else:
+            silent_frames = 0
+        if silent_frames >= max_silence_seconds * RATE / CHUNK:
+            print("----------- Silent recognized ----- Stoped recording ------------")
+            break
+    # Beenden der Aufnahme
+    stream.stop_stream()
+    stream.close()
+    audio.terminate()
+    # Speichern der Aufnahme in einer WAV-Datei
+    waveFile = wave.open(WAVE_OUTPUT_FILENAME, 'wb')
+    waveFile.setnchannels(CHANNELS)
+    waveFile.setsampwidth(audio.get_sample_size(FORMAT))
+    waveFile.setframerate(RATE)
+    waveFile.writeframes(b''.join(frames))
+    waveFile.close()
+    print("------------ Saving ---------------")
 
 def main(args=None):
 
