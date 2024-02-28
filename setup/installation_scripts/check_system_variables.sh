@@ -32,4 +32,4 @@ if [ "$(lsb_release -rs)" != "$EXPECTED_UBUNTU_VERSION" ]; then
 	done
 fi
 
-echo -e "$GREEN_TEXT_COLOR""-- Compatible version of Ubuntu with correct username detected. Installation will proceed. --""$RESET_TEXT_COLOR""$NEW_LINE"
+echo -e "$GREEN_TEXT_COLOR""-- System version and username check completed --""$RESET_TEXT_COLOR""$NEW_LINE"

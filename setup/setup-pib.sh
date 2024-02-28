@@ -30,15 +30,11 @@ show_help()
 	echo -e "$NEW_LINE""Examples:"
 	echo -e "    ./setup-pib -b=main -f=PR-566"
     echo -e "    ./setup-pib --backendBranch=main --frontendBranch=PR-566"
+	
 	exit
 }
 
 echo -e "$NEW_LINE""$YELLOW_TEXT_COLOR""-- Checking user input option syntax --""$RESET_TEXT_COLOR""$NEW_LINE"
-
-# Variables for user input options
-export user_frontend_branch=""
-export user_backend_branch=""
-export is_dev_mode=false
 
 # Github repo origins and branches (branch values will be replaced in dev-mode)
 export FRONTEND_REPO="https://github.com/pib-rocks/cerebra.git"
@@ -47,6 +43,7 @@ export frontend_branch="main"
 export backend_branch="main"
 
 # Iterate through all user input parameters
+export is_dev_mode=false
 while [ $# -gt 0 ]; do
 	case "$1" in
 		# Assign default and feature branches for dev-mode
