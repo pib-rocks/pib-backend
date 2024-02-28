@@ -17,7 +17,7 @@ Follow these steps to run it:
 
         wget https://raw.githubusercontent.com/pib-rocks/pib-backend/main/setup/setup-pib.sh
 
-	(or download it manually: https://github.com/pib-rocks/setup-pib/blob/main/setup-pib.sh)
+	(or download it manually: https://github.com/pib-rocks/pib-backend/blob/main/setup/setup-pib.sh)
 
 3. Insert this into the terminal to make the script executable:
    
