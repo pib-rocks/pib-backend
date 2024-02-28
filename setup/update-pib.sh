@@ -16,11 +16,6 @@ DEFAULT_NGINX_HTML_DIR="$DEFAULT_NGINX_DIR/html"
 FRONTEND_REPO="https://github.com/pib-rocks/cerebra.git"
 BACKEND_REPO="https://github.com/pib-rocks/pib-backend.git"
 
-# Create an associative array (=map). This will be filled with repo-origin branch-name pairs
-declare -A repo_map
-repo_map["$FRONTEND_REPO"]="main"
-repo_map["$BACKEND_REPO"]="main"
-
 TEMPORARY_SETUP_DIR="$(mktemp --directory /tmp/pib-update-temp.XXX)"
 FRONTEND_DIR="$TEMPORARY_SETUP_DIR/frontend"
 BACKEND_DIR="$TEMPORARY_SETUP_DIR/backend"
@@ -58,8 +53,8 @@ exec > >(tee -a "$LOG_FILE") 2>&1
 sudo apt-get update
 sudo apt-get -y upgrade
 
-git clone -b "${repo_map[$BACKEND_REPO]}" "$BACKEND_REPO" "$BACKEND_DIR"
-git clone -b "${repo_map[$FRONTEND_REPO]}" "$FRONTEND_REPO" "$FRONTEND_DIR"
+git clone "$BACKEND_REPO" "$BACKEND_DIR"
+git clone "$FRONTEND_REPO" "$FRONTEND_DIR"
 
 
 # Update Cerebra
