@@ -1,2 +1,6 @@
 # Declare files that will always have unix line endings (LF) on checkout.
 *.py text eol=lf
+*.sh text eol=lf
+
+# Exceptions for files with different line endings
+setup/dev_tools/local_cerebra_remote_deploy.sh text eol=crlf
