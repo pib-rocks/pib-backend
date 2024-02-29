@@ -20,7 +20,11 @@ from multiprocessing import Process, Pipe, Lock
 import time
 
 from pib_api_client import chat_client, personality_client
+import logging
 
+# Define custom logging as ROS logger only available in Node
+logging.basicConfig(level=logging.INFO, 
+                    format="[%(levelname)s] [%(asctime)s] [%(process)d] [%(filename)s:%(lineno)s]: %(message)s")
 
 RECEIVE_CHAT_MESSAGE_WAITING_PERIOD_SECONDS = 0.1
 MAIN_LOOP_RECEIVE_SIGNAL_WAITING_PERIOD_SECONDS = 0.05
@@ -34,7 +38,6 @@ OPENAI_KEY_PATH = VOICE_ASSISTANT_PATH_PREFIX + "/credentials/openai-key"
 GOOGLE_KEY_PATH = VOICE_ASSISTANT_PATH_PREFIX + "/credentials/google-key"
 
 pib_api_client_lock = Lock()
-
 
 # Set up OpenAI GPT-3 API
 with open(OPENAI_KEY_PATH) as f:
@@ -207,25 +210,27 @@ def speech_to_text(pause_threshold: float) -> str:
     print('----------------------------------------------ALSA')
     with sr.Microphone() as source:
         print('----------------------------------------------')
-        #r.adjust_for_ambient_noise(source) # this should not be done here
-        print('Say something!')
-        try: audio = r.listen(source, timeout=8)
-        except WaitTimeoutError: return ''
+        logging.info("listening for input...")
+        try: 
+            audio = r.listen(source, timeout=8)
+        except WaitTimeoutError: 
+            logging.warning("WaitTimeoutError - no speech detected")
+            return ''
     # Speech recognition using Google's Speech Recognition
     data = ''
     try:
         data = r.recognize_google(audio, language="de-DE")
-        print('You said: ' + data)
-    except sr.UnknownValueError:
-        print('Google Speech Recognition could not understand')
+        logging.info(f"transcribed audio: {data}")
+    except sr.UnknownValueError as e:
+        logging.error(f"GoogleSpeechRecognition Error: {e} - could not decode audio")
     except sr.RequestError as e:
-        print('Request error from Google Speech Recognition')
+        logging.error(f"GoogleSpeechRecognition RequestError: {e}")
     return data
 
 
 
 def gpt_chat(input_text: str, personality_description: str) -> str:
-
+    logging.info("generate chat completion")
     response = openai_client.chat.completions.create(
         model="gpt-4-0314",
         messages=[
@@ -241,7 +246,6 @@ def gpt_chat(input_text: str, personality_description: str) -> str:
     )
 
     return response.choices[0].message.content
-
 
 
 def text_to_speech(text_input: str, gender: str) -> None:
@@ -263,7 +267,6 @@ def text_to_speech(text_input: str, gender: str) -> None:
     os.chmod(AUDIO_OUTPUT_FILE, 0o777)
     
 
-
 def play_audio(file_path: str) -> None:
 
     CHUNK = 1024
@@ -271,7 +274,7 @@ def play_audio(file_path: str) -> None:
     print('++++++++++++++++++++++++++++++++++++++ALSA')
     p = pyaudio.PyAudio()
     print('++++++++++++++++++++++++++++++++++++++')
-
+    logging.info("playing audio file...")
     stream = p.open(
         format=p.get_format_from_width(wf.getsampwidth()),
         channels=wf.getnchannels(),
@@ -291,7 +294,7 @@ def play_audio(file_path: str) -> None:
 
 
 def worker_target(chat_id: str, personality: Personality, chat_message_to_main: Connection):
-
+    
     while True:
         play_audio(START_SIGNAL_FILE)
         user_input = speech_to_text(personality.pause_threshold)
@@ -300,9 +303,7 @@ def worker_target(chat_id: str, personality: Personality, chat_message_to_main: 
         va_response = gpt_chat(user_input, personality.description)
         chat_message_to_main.send(TransientChatMessage(va_response, False, chat_id))
         text_to_speech(va_response, personality.gender)
-        play_audio(AUDIO_OUTPUT_FILE,)
-        
-
+        play_audio(AUDIO_OUTPUT_FILE)      
 
 
 def ros_target(chat_message_from_main: Connection, state_to_main: Connection):
@@ -333,14 +334,12 @@ def main(args=None):
         worker_process = Process(target=worker_target, args=(chat_id, personality, chat_message_to_main))    
         worker_process.start()
 
-        print('ON')
-
+        logging.info("VA turned on")
         while not state_from_ros.poll():
             while (chat_message_from_worker.poll()):
                 chat_message_to_ros.send(chat_message_from_worker.recv())
-            time.sleep(MAIN_LOOP_RECEIVE_SIGNAL_WAITING_PERIOD_SECONDS)
-        
-        print('OFF')
+            time.sleep(MAIN_LOOP_RECEIVE_SIGNAL_WAITING_PERIOD_SECONDS)      
+        logging.info("VA turned off")
         
         worker_process.terminate()
         state_from_ros.recv()
