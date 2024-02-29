@@ -171,7 +171,7 @@ sudo mv $ROS_WORKING_DIR/ros_cerebra_boot.service /etc/systemd/system
 
 # Enable new services
 sudo systemctl daemon-reload
-sudo systemctl enable ros_cerebra_boot.service
+sudo systemctl enable ros_cerebra_boot.service --now
 # Enable and start ssh server
 sudo systemctl enable ssh --now
 
