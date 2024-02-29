@@ -129,11 +129,9 @@ class MotorControl(Node):
 
             for motor in name_to_motors[motor_name]:
                 if self.check_if_motor_is_connected(motor):
-                    self.get_logger().info(f"setting position of '{
-                        motor.name}' to {target_position}.")
+                    self.get_logger().info(f"setting position of '{motor.name}' to {target_position}.")
                     motor.set_position(target_position)
-                    self.get_logger().info(f"position of '{motor.name}' was set to {
-                        motor.get_position()}.")
+                    self.get_logger().info(f"position of '{motor.name}' was set to {motor.get_position()}.")
                 else:
                     self.get_logger().info(f"Motor is not connected.")
 
