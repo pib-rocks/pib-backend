@@ -134,7 +134,7 @@ if [ $run_pip_package_check = $true ]; then
 
     ros_working_dir_src="/home/pib/ros_working_dir/src"
 
-    folders=([1]=motors [2]=datatypes [3]=voice-assistant [4]=ros2_oak_d_lite, [5]=programs)
+    folders=([1]=motors [2]=datatypes [3]=voice_assistant [4]=camera [5]=programs)
     package_names=([1]="name: motors" [2]="name: datatypes" [3]="name: voice_assistant" [4]="name: oak_d_lite" [5]="name: programs")
     sys_ctls=([1]=ros_motor_control_node_boot.service [2]=ros_motor_current_node_boot.service [3]=pib_api_boot.service [4]=ros_camera_boot.service [5]=ros_cerebra_boot.service [6]=ros_voice_assistant_boot.service [7]=ros_program_boot.service [8]=ros_proxy_program_boot.service)
 
