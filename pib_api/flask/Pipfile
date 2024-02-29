@@ -5,9 +5,11 @@ name = "pypi"
 
 [packages]
 flask = "*"
+flask_cors = "*"
 flask-marshmallow = "*"
 flask-sqlalchemy = "*"
 marshmallow-sqlalchemy = "*"
+Flask-Migrate = "*"
 
 [dev-packages]
 
