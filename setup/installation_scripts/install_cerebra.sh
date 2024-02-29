@@ -66,14 +66,14 @@ sudo mv "$FRONTEND_DIR/dist"/* "$DEFAULT_NGINX_HTML_DIR"
 sudo sed -i "s|;cgi.fix_pathinfo=1|cgi.fix_pathinfo=0|" /etc/php/8.1/fpm/php.ini
 sudo mkdir "$PHPLITEADMIN_INSTALLATION_DIR"
 sudo chown -R www-data:www-data "$PHPLITEADMIN_INSTALLATION_DIR"
-sudo chmod -R 755 "$PHPLITEADMIN_INSTALLATION_DIR"
+sudo chmod -R 700 "$PHPLITEADMIN_INSTALLATION_DIR"
 sudo unzip "$SETUP_FILES/$PHPLITEADMIN_ZIP" -d "$PHPLITEADMIN_INSTALLATION_DIR"
 sudo systemctl restart php8.1-fpm
 
 # Create the database (if it doesn't exist) and initialize it with the SQL file
 mkdir "$DATABASE_DIR"
-sudo chmod 777 "$USER_HOME"
-sudo chmod 777 "$DATABASE_DIR"
+sudo chmod 700 "$USER_HOME"
+sudo chmod 700 "$DATABASE_DIR"
 sqlite3 "$DATABASE_DIR/$DATABASE_FILE" < "$SETUP_FILES/cerebra_init_database.sql"
 sudo chmod 766 "$DATABASE_DIR/$DATABASE_FILE"
 echo -e "$NEW_LINE""Database initialized successfully!"
