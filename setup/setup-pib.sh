@@ -86,6 +86,10 @@ fi
 LOG_FILE="$USER_HOME/setup-pib.log"
 exec > >(tee -a "$LOG_FILE") 2>&1
 
+# Delete unnecessary apps
+sudo apt-get purge -y "thunderbird*" "libreoffice*" aisleriot gnome-sudoku ace-of-penguins gbrainy gnome-mines gnome-mahjongg
+sudo apt-get autoclean
+
 # Refresh the linux packages list (sometimes necessary for packages that are required in the installion scripts)
 sudo apt update
 # These packages are installed seperately, since the installation scripts are dependent on them
@@ -167,7 +171,7 @@ sudo mv $ROS_WORKING_DIR/ros_cerebra_boot.service /etc/systemd/system
 
 # Enable new services
 sudo systemctl daemon-reload
-sudo systemctl enable ros_cerebra_boot.service
+sudo systemctl enable ros_cerebra_boot.service --now
 # Enable and start ssh server
 sudo systemctl enable ssh --now
 
