@@ -49,8 +49,16 @@ def _create_bricklet_data() -> None:
 
     for item in data:
         motor = Motor(name=item["name"], **motor_settings)
-        if motor.name == "tilt_sideways_motor":
+        if motor.name == "tilt_forward_motor":
+            motor.pulseWidthMax = -4500
+            motor.rotationRangeMax = 4500
+        elif motor.name == "tilt_sideways_motor":
             motor.visible = False
+        # modify all fingers
+        elif motor.name.endswith("stretch") or "thumb" in motor.name:
+            motor.velocity = 10000
+            motor.acceleration = 50000
+        
         db.session.add(motor)
         db.session.flush()
 
