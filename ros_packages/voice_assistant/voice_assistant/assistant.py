@@ -40,7 +40,7 @@ CHANNELS = 2
 RATE = 44100
 CHUNK = 1024
 WAVE_OUTPUT_FILENAME = "UserInput.wav"
-SILENCE_THRESHOLD = 1000
+SILENCE_THRESHOLD = 500
 
 pib_api_client_lock = Lock()
 
@@ -221,7 +221,7 @@ def speech_to_text(pause_threshold: float, silence_threshold:int) -> str:
         file=audio_file
         )
         print("You sad: " + data.text)
-    except openai_client.error.APIError as e:
+    except Exception as e:
         print('Request error from OpenAI Text To Speech Recognition')
     return data.text
 
