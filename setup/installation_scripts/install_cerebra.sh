@@ -33,14 +33,16 @@ sudo cp "$SETUP_FILES/nginx.conf" "$DEFAULT_NGINX_DIR/$NGINX_CONF_FILE"
 # Remove pre-installed node version in preparation of node install via nvm
 sudo apt-get purge -y nodejs
 
-# Install NVM (Node Version Manager)
-curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/master/install.sh | bash
+# Install Node Version Manager. Version is hardcoded to avoid discrepancies through updates
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.1/install.sh | bash
 
 # Move nvm directory to systemfolders and create environment variable
 NVM_DIR="/etc/nvm"
 sudo mv "$USER_HOME/.nvm/" "$NVM_DIR"
 export NVM_DIR="$NVM_DIR"
-[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" # This loads nvm
+
+# Load nvm into bash
+source "$NVM_DIR/nvm.sh"
 
 # Install and use Node.js 18 via nvm
 # Dont use sudo for nvm-associated commands (npm, ng) since nvm is not accessible by root
