@@ -13,8 +13,6 @@ NGINX_CONF_FILE="nginx.conf"
 # Database variables
 PHPLITEADMIN_ZIP="phpliteadmin_v1_9_9_dev.zip"
 PHPLITEADMIN_INSTALLATION_DIR="/var/www/phpliteadmin"
-DATABASE_DIR="$USER_HOME/pib_data"
-DATABASE_FILE="pibdata.db"
 
 # pib-api variables
 PIB_API_DIR="$USER_HOME/flask"
@@ -69,14 +67,6 @@ sudo chown -R www-data:www-data "$PHPLITEADMIN_INSTALLATION_DIR"
 sudo chmod -R 700 "$PHPLITEADMIN_INSTALLATION_DIR"
 sudo unzip "$SETUP_FILES/$PHPLITEADMIN_ZIP" -d "$PHPLITEADMIN_INSTALLATION_DIR"
 sudo systemctl restart php8.1-fpm
-
-# Create the database (if it doesn't exist) and initialize it with the SQL file
-mkdir "$DATABASE_DIR"
-sudo chmod 700 "$USER_HOME"
-sudo chmod 700 "$DATABASE_DIR"
-sqlite3 "$DATABASE_DIR/$DATABASE_FILE" < "$SETUP_FILES/cerebra_init_database.sql"
-sudo chmod 766 "$DATABASE_DIR/$DATABASE_FILE"
-echo -e "$NEW_LINE""Database initialized successfully!"
 
 # Create the directory for python code and populate it with a single initial python script (matching
 # the single entry in the database)
