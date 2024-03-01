@@ -36,7 +36,7 @@ AUDIO_INPUT_FILE = "/home/pib/ros_working_dir/UserInput.wav"
 
 # Record audio settings
 FORMAT = pyaudio.paInt16
-CHANNELS = 2
+CHANNELS = 1
 RATE = 44100
 CHUNK = 1024
 WAVE_OUTPUT_FILENAME = "UserInput.wav"
@@ -331,7 +331,7 @@ def start_recording(max_silence_seconds, silence_threshold):
     frames = []
     silent_frames = 0
     while True:
-        data = stream.read(CHUNK)
+        data = stream.read(CHUNK, exception_on_overflow = False)
         frames.append(data)
         if is_silent(data, silence_threshold):
             silent_frames += 1
@@ -347,12 +347,12 @@ def start_recording(max_silence_seconds, silence_threshold):
     stream.close()
     audio.terminate()
     # Speichern der Aufnahme in einer WAV-Datei
-    waveFile = wave.open(WAVE_OUTPUT_FILENAME, 'wb')
-    waveFile.setnchannels(CHANNELS)
-    waveFile.setsampwidth(audio.get_sample_size(FORMAT))
-    waveFile.setframerate(RATE)
-    waveFile.writeframes(b''.join(frames))
-    waveFile.close()
+    wave_file = wave.open(AUDIO_INPUT_FILE, 'wb')
+    wave_file.setnchannels(CHANNELS)
+    wave_file.setsampwidth(audio.get_sample_size(FORMAT))
+    wave_file.setframerate(RATE)
+    wave_file.writeframes(b''.join(frames))
+    wave_file.close()
     print("------------ Saving ---------------")
 
 def main(args=None):
