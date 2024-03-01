@@ -16,6 +16,7 @@ PHPLITEADMIN_INSTALLATION_DIR="/var/www/phpliteadmin"
 
 # pib-api variables
 PIB_API_DIR="$USER_HOME/flask"
+DATABASE_FILE="pibdata.db"
 
 # python code variables
 PYTHON_CODE_PATH="$USER_HOME/cerebra_programs"
@@ -86,7 +87,8 @@ sudo systemctl enable pib_api_boot.service
 cd "$USER_HOME"
 sudo chmod 777 "$USER_HOME"
 sudo chmod 777 "$PIB_API_DIR"
-sudo chmod 766 "$PIB_API_DIR/pibdata.db"
+sqlite3 "$PIB_API_DIR/$DATABASE_FILE" "VACUUM;"
+sudo chmod 766 "$PIB_API_DIR/$DATABASE_FILE"
 
 
 # Set 
