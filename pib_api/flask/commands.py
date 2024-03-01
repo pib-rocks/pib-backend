@@ -94,7 +94,7 @@ def _create_program_data() -> None:
 def _create_chat_data() -> None:
     p_eva = Personality(name="Eva", personalityId="8f73b580-927e-41c2-98ac-e5df070e7288", gender="female",
                         pauseThreshold=0.8)
-    p_thomas = Personality(name="Adam", personalityId="8b310f95-92cd-4512-b42a-d3fe29c4bb8a", gender="male",
+    p_thomas = Personality(name="Thomas", personalityId="8b310f95-92cd-4512-b42a-d3fe29c4bb8a", gender="male",
                            pauseThreshold=0.8)
     db.session.add_all([p_eva, p_thomas])
     db.session.flush()
@@ -150,6 +150,4 @@ def _get_motor_list() -> [dict[str, Any]]:
 
 
 def _get_example_program() -> str:
-    return ''''{"blocks":{"languageVersion":0,"blocks":[{"type":"text_print","id":"]l,+vC{q$rZPVdSfyx=4","x":229,
-    "y":67,"inputs":{"TEXT":{"shadow":{"type":"text","id":"v,}3JGN5d7og[X_/KJ)|","fields":{"TEXT":"hello 
-    world"}}}}}]}}', "e1d46e2a-935e-4e2b-b2f9-0856af4257c5"'''
+    return '''{"blocks":{"languageVersion":0,"blocks":[{"type":"text_print","id":"QWplsQn`*28S!rmDws$4","x":315,"y":279,"inputs":{"TEXT":{"shadow":{"type":"text","id":"`{AWS~jvKQo-ve^M@z-(","fields":{"TEXT":"hello world"}}}}}]}}'''
