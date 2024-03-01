@@ -24,7 +24,7 @@ from datatypes.msg import ProgramOutputLine
 
 PYTHON_BINARY: str = os.getenv('PYTHON_BINARY', '/home/pib/ros_working_dir/src/programs/user_program_env/bin/python3')
 UNBUFFERED_OUTPUT_FLAG: str = '-u'
-PYTHON_DIR: str = os.getenv("PYTHON_DIR", "/home/pib/cerebra_programs")
+PROGRAM_DIR: str = os.getenv("PROGRAM_DIR", "/home/pib/cerebra_programs")
 # PYTHON_SCRIPT: str = os.getenv('', '/home/pib/cerebra_programs/%s.py')
 
 MAIN_LOOP_WAITING_PERIOD_SECONDS: float = 0.1
@@ -206,7 +206,7 @@ def ros_target(request_sender: Connection) -> None:
 
 def run_program(program_number: str, output_sender: Connection) -> None:
 
-    python_script = f"{PYTHON_DIR}/{program_number}.py"
+    python_script = f"{PROGRAM_DIR}/{program_number}.py"
     run_python_program = [PYTHON_BINARY, UNBUFFERED_OUTPUT_FLAG, python_script]
     with Popen(run_python_program, stdout=PIPE, stderr=PIPE, universal_newlines=True, bufsize=1) as popen:
 

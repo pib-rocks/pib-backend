@@ -7,10 +7,6 @@ from rclpy.node import Node
 from diagnostic_msgs.msg import DiagnosticStatus
 from diagnostic_msgs.msg import KeyValue
 from pib_motors.update_bricklet_uids import *
-# import sys
-# sys.path.append('/home/pib/ros_working_dir/src/motors/utils')
-# import update_bricklet_uids
-
 
 TINKERFORGE_HOST = os.getenv("TINKERFORGE_HOST", "localhost")
 TINKERFORGE_PORT = int(os.getenv("TINKERFORGE_PORT", 4223))
