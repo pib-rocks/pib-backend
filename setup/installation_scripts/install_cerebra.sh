@@ -84,7 +84,12 @@ sudo mv "$PIB_API_DIR/pib_api_boot.service" /etc/systemd/system
 sudo systemctl daemon-reload
 sudo systemctl enable pib_api_boot.service
 cd "$USER_HOME"
+sudo chmod 777 "$USER_HOME"
+sudo chmod 777 "$PIB_API_DIR"
+sudo chmod 766 "$PIB_API_DIR/pibdata.db"
 
+
+# Set 
 # Open firefox without gui to generate default folder structures 
 # This also avoids the welcome page the first time a user opens the browser
 timeout 20s firefox --headless
