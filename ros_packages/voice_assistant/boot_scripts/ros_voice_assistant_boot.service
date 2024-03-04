@@ -1,5 +1,6 @@
 [Unit]
 Description=Startup script for ROS and Cerebra
+After=pulseaudio.service
 After=network.target
 
 [Service]
