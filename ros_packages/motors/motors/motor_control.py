@@ -86,7 +86,8 @@ class MotorControl(Node):
     # Connected ones at least 6 characters long
     def check_if_motor_is_connected(self, motor):
         for bricklet_pin in motor.bricklet_pins:
-            if len(str(bricklet_pin.bricklet.uid)) >= 6:
+            # X,Y and Z are the default uid of a Servo Bricklet 2.0 (updated ob boot by update_bricklet_uids.py)
+            if bricklet_pin.bricklet.uid_string != 'X' and bricklet_pin.bricklet.uid_string != 'Y' and bricklet_pin.bricklet.uid_string != 'Z':
                 return True
         return False
 
