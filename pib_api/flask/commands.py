@@ -42,8 +42,8 @@ def _is_empty_db() -> bool:
 
 def _create_bricklet_data() -> None:
     data = _get_motor_list()
-    motor_settings = {"pulseWidthMin": 700, "pulseWidthMax": 2500, "rotationRangeMin": -4500,
-                  "rotationRangeMax": 4500, "velocity": 16000, "acceleration": 10000, "deceleration": 5000,
+    motor_settings = {"pulseWidthMin": 700, "pulseWidthMax": 2500, "rotationRangeMin": -9000,
+                  "rotationRangeMax": 9000, "velocity": 16000, "acceleration": 10000, "deceleration": 5000,
                   "period": 19500,
                   "turnedOn": True, "visible": True, "invert": False}
 
@@ -56,8 +56,10 @@ def _create_bricklet_data() -> None:
             motor.visible = False
         # modify all fingers
         elif motor.name.endswith("stretch") or "thumb" in motor.name:
-            motor.velocity = 10000
+            motor.pulseWidthMin = 750
+            motor.velocity = 100000
             motor.acceleration = 50000
+            motor.deceleration = 50000
         
         db.session.add(motor)
         db.session.flush()
