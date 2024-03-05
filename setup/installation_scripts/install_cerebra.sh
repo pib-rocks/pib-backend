@@ -13,11 +13,10 @@ NGINX_CONF_FILE="nginx.conf"
 # Database variables
 PHPLITEADMIN_ZIP="phpliteadmin_v1_9_9_dev.zip"
 PHPLITEADMIN_INSTALLATION_DIR="/var/www/phpliteadmin"
-DATABASE_DIR="$USER_HOME/pib_data"
-DATABASE_FILE="pibdata.db"
 
 # pib-api variables
 PIB_API_DIR="$USER_HOME/flask"
+DATABASE_FILE="pibdata.db"
 
 # python code variables
 PYTHON_CODE_PATH="$USER_HOME/cerebra_programs"
@@ -66,17 +65,9 @@ sudo mv "$FRONTEND_DIR/dist"/* "$DEFAULT_NGINX_HTML_DIR"
 sudo sed -i "s|;cgi.fix_pathinfo=1|cgi.fix_pathinfo=0|" /etc/php/8.1/fpm/php.ini
 sudo mkdir "$PHPLITEADMIN_INSTALLATION_DIR"
 sudo chown -R www-data:www-data "$PHPLITEADMIN_INSTALLATION_DIR"
-sudo chmod -R 755 "$PHPLITEADMIN_INSTALLATION_DIR"
+sudo chmod -R 700 "$PHPLITEADMIN_INSTALLATION_DIR"
 sudo unzip "$SETUP_FILES/$PHPLITEADMIN_ZIP" -d "$PHPLITEADMIN_INSTALLATION_DIR"
 sudo systemctl restart php8.1-fpm
-
-# Create the database (if it doesn't exist) and initialize it with the SQL file
-mkdir "$DATABASE_DIR"
-sudo chmod 777 "$USER_HOME"
-sudo chmod 777 "$DATABASE_DIR"
-sqlite3 "$DATABASE_DIR/$DATABASE_FILE" < "$SETUP_FILES/cerebra_init_database.sql"
-sudo chmod 766 "$DATABASE_DIR/$DATABASE_FILE"
-echo -e "$NEW_LINE""Database initialized successfully!"
 
 # Create the directory for python code and populate it with a single initial python script (matching
 # the single entry in the database)
@@ -94,7 +85,13 @@ sudo mv "$PIB_API_DIR/pib_api_boot.service" /etc/systemd/system
 sudo systemctl daemon-reload
 sudo systemctl enable pib_api_boot.service
 cd "$USER_HOME"
+sudo chmod 777 "$USER_HOME"
+sudo chmod 777 "$PIB_API_DIR"
+sqlite3 "$PIB_API_DIR/$DATABASE_FILE" "VACUUM;"
+sudo chmod 766 "$PIB_API_DIR/$DATABASE_FILE"
 
+
+# Set 
 # Open firefox without gui to generate default folder structures 
 # This also avoids the welcome page the first time a user opens the browser
 timeout 20s firefox --headless
