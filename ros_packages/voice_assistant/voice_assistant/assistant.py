@@ -12,7 +12,7 @@ from datatypes.msg import ChatMessage, VoiceAssistantState
 from multiprocessing import Process, Pipe
 from threading import Lock
 
-from pib_voice.voice import gpt_chat, play_audio, speech_to_text
+from pib_voice.voice import gpt_chat, play_audio_from_file, speech_to_text
 from pib_api_client import chat_client, personality_client
 
 
@@ -227,9 +227,9 @@ class VoiceAssistantNode(Node):
 def worker_target(chat_id: str, personality: Personality, worker_to_ros: Connection):
 
     while True:
-        play_audio(START_SIGNAL_FILE)
+        play_audio_from_file(START_SIGNAL_FILE)
         user_input = speech_to_text(personality.pause_threshold)
-        play_audio(STOP_SIGNAL_FILE)
+        play_audio_from_file(STOP_SIGNAL_FILE)
         if user_input != '': worker_to_ros.send(TransientChatMessage(user_input, True, chat_id, None))
         va_response = gpt_chat(user_input, personality.description)
         worker_to_ros.send(TransientChatMessage(va_response, False, chat_id, personality.gender))
