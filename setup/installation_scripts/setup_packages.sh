@@ -31,6 +31,15 @@ git clone https://github.com/geaxgx/depthai_hand_tracker.git
 cd depthai_hand_tracker
 pip install -r requirements.txt
 
+# Install SLAM dependencies
+sudo apt install -y ros-humble-depthai-ros
+sudo apt install -y ros-humble-rtabmap
+
+# Currently, ros-humble-rtabmap-ros does not work on ARM devices anymore. 
+# Once it does, packages below can be replaced with it
+sudo apt install -y ros-humble-rtabmap-launch
+sudo apt install -y ros-humble-rtabmap-examples
+
 # move ros-packages into working directory
 cp -r "$BACKEND_DIR/ros_packages" "$ROS_WORKING_DIR/src"
 sudo chmod -R 700 "$ROS_WORKING_DIR"
