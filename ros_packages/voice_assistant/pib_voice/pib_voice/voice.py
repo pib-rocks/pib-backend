@@ -83,7 +83,7 @@ def play_audio_from_text(text: str) -> None:
 
 
 
-def play_audio(file_path: str) -> None:
+def play_audio_from_file(file_path: str) -> None:
 
     CHUNK = 1024
     wf = wave.open(file_path, 'rb')
