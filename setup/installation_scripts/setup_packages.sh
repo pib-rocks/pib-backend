@@ -40,6 +40,7 @@ readonly VOICE_ASSISTANT_CREDENTIALS_DIR="$ROS_WORKING_DIR/src/voice_assistant/c
 mkdir "$VOICE_ASSISTANT_CREDENTIALS_DIR"
 touch "$VOICE_ASSISTANT_CREDENTIALS_DIR/openai-key"
 touch "$VOICE_ASSISTANT_CREDENTIALS_DIR/google-key"
+printf '{\n\t"access_key_id": "",\n\t"secret_access_key": "",\n\t"region_name": ""\n}\n' > "$VOICE_ASSISTANT_CREDENTIALS_DIR/aws-key"
 
 # Create virtual-environment for user programs
 sudo apt-get install -y python3.10-venv
