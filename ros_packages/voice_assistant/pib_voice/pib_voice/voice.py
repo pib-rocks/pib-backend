@@ -1,7 +1,6 @@
 import json
 import os
-import tempfile
-from google.cloud import texttospeech
+import time
 from google.cloud import speech_v1p1beta1 as speech
 from typing import Any
 import pyaudio
@@ -77,6 +76,11 @@ def play_audio_from_text(text: str, voice: str) -> None:
         Engine='neural')
     
     stream.write(response['AudioStream'].read())
+    # wait for a brief period of time before closing the stream. Otherwise end of audio is cut off,
+    # since polly does not insert any silence at the end of the returned audio. Alternatively,
+    # ssml could be used to instruct polly to insert silence at the end of the audio
+    # f.e.: '<speak>some-text<break time=100ms/></speak>'
+    time.sleep(0.1)
 
     stream.stop_stream()
     stream.close()
