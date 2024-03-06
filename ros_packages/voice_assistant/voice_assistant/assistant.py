@@ -163,7 +163,7 @@ class VoiceAssistantNode(Node):
                 else:
                     self.tts_clear_client.call(TextToSpeechClear.Request())
                     with self.ros_to_worker_lock: 
-                        self.worker_changed = True # TODO: worker_changed -> worker_stale
+                        self.worker_changed = True
                         self.ros_to_worker = None
                     self.ros_to_main.send(None)
                 
