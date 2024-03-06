@@ -53,6 +53,12 @@ python3 -m pip install depthai==2.24.0.0
 python3 -m pip install blobconverter==1.4.2
 deactivate
 
+echo "Install local packages..."
+
+# install local utility packages
+pip install "$ROS_WORKING_DIR""/src/motors/pib_motors"
+pip install "$ROS_WORKING_DIR""/src/voice_assistant/pib_voice"
+
 echo "Booting all nodes..."
 
 # Boot camera
@@ -68,7 +74,6 @@ sudo mv "$ROS_MOTORS_BOOT_DIR/bricklet_uid_boot.service" /etc/systemd/system
 sudo systemctl enable bricklet_uid_boot.service
 
 # Boot motor control node
-pip install "$ROS_WORKING_DIR/src/motors/pib_motors"
 sudo chmod 700 "$ROS_MOTORS_BOOT_DIR/ros_motor_control_node_boot.sh"
 sudo chmod 700 "$ROS_MOTORS_BOOT_DIR/ros_motor_control_node_boot.service"
 sudo mv "$ROS_MOTORS_BOOT_DIR/ros_motor_control_node_boot.service" /etc/systemd/system
@@ -85,6 +90,12 @@ sudo chmod 700 "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_voice_assistant_boot.sh"
 sudo chmod 700 "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_voice_assistant_boot.service"
 sudo mv "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_voice_assistant_boot.service" /etc/systemd/system
 sudo systemctl enable ros_voice_assistant_boot.service
+
+# Boot text-to-speech
+sudo chmod 700 "$ROS_VOICE_ASSISTANT_BOOT_DIR""/ros_text_to_speech_boot.sh"
+sudo chmod 700 "$ROS_VOICE_ASSISTANT_BOOT_DIR""/ros_text_to_speech_boot.service"
+sudo mv "$ROS_VOICE_ASSISTANT_BOOT_DIR""/ros_text_to_speech_boot.service" /etc/systemd/system
+sudo systemctl enable ros_text_to_speech_boot.service
 
 # Boot program node
 sudo chmod 700 "$ROS_PROGRAMS_BOOT_DIR/ros_program_boot.sh"
