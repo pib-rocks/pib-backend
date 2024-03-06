@@ -64,13 +64,14 @@ def speech_to_text(pause_threshold: float) -> str:
 
 
 
-def play_audio_from_text(text: str) -> None:
+def play_audio_from_text(text: str, voice: str) -> None:
 
     pya = pyaudio.PyAudio()
     stream = pya.open(format=pya.get_format_from_width(width=2), channels=1, rate=16000, output=True)
     polly_client = session.client('polly')
 
-    response = polly_client.synthesize_speech(VoiceId='Hannah',
+    response = polly_client.synthesize_speech(
+        VoiceId=voice,
         OutputFormat='pcm', 
         Text=text,
         Engine='neural')
