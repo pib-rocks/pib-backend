@@ -126,22 +126,3 @@ def gpt_chat(input_text: str, personality_description: str) -> str:
     )
 
     return response.choices[0].message.content
-
-
-
-def text_to_speech(text_input: str, gender: str, output_file_dir: str) -> str:
-
-    client = texttospeech.TextToSpeechClient()
-    synthesis_input = texttospeech.SynthesisInput(text=text_input)
-    voice = texttospeech.VoiceSelectionParams(
-        language_code="de-DE",
-        name=f"de-DE-Standard-{'A' if gender == 'Female' else 'B'}")
-    audio_config = texttospeech.AudioConfig(
-        audio_encoding=texttospeech.AudioEncoding.LINEAR16)
-    response = client.synthesize_speech(
-        input=synthesis_input, voice=voice, audio_config=audio_config)
-    
-    fd, output_file_path = tempfile.mkstemp(prefix=output_file_dir)
-    with os.fdopen(fd, "wb") as f: f.write(response.audio_content)
-
-    return output_file_path
