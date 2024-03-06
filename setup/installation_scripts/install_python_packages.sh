@@ -12,5 +12,6 @@ pip install --upgrade --force-reinstall google-cloud-speech
 sudo apt-get install -y portaudio19-dev
 pip install pyaudio==0.2.14
 pip install SpeechRecognition
+pip install boto3
 
 echo -e "$NEW_LINE""$GREEN_TEXT_COLOR""-- Python package installation completed --""$RESET_TEXT_COLOR""$NEW_LINE"
