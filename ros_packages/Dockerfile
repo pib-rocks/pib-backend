@@ -56,6 +56,7 @@ COPY ./ros_packages/voice_assistant ./voice_assistant
 COPY ./ros_packages/programs ./programs
 COPY ./ros_packages/camera ./camera
 COPY ./ros_packages/motors ./motors
+COPY ./ros_packages/pib_launch.yaml .
 
 
 COPY ./ros_packages/docker_run_all_nodes.sh .
