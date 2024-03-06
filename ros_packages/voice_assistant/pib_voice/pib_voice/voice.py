@@ -93,11 +93,11 @@ def play_audio_from_file(file_path: str) -> None:
     CHUNK = 1024
     wf = wave.open(file_path, 'rb')
     print('++++++++++++++++++++++++++++++++++++++ALSA')
-    p = pyaudio.PyAudio()
+    pya = pyaudio.PyAudio()
     print('++++++++++++++++++++++++++++++++++++++')
 
-    stream = p.open(
-        format=p.get_format_from_width(wf.getsampwidth()),
+    stream = pya.open(
+        format=pya.get_format_from_width(wf.getsampwidth()),
         channels=wf.getnchannels(),
         rate=wf.getframerate(),
         output=True
@@ -110,7 +110,7 @@ def play_audio_from_file(file_path: str) -> None:
 
     stream.stop_stream()
     stream.close()
-    p.terminate()
+    pya.terminate()
 
 
 
