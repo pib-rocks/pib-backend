@@ -87,7 +87,16 @@ LOG_FILE="$USER_HOME/setup-pib.log"
 exec > >(tee -a "$LOG_FILE") 2>&1
 
 # Delete unnecessary apps
-sudo apt-get purge -y "thunderbird*" "libreoffice*" aisleriot gnome-sudoku ace-of-penguins gbrainy gnome-mines gnome-mahjongg
+pkgToRemoveListFull="aisleriot gnome-sudoku ace-of-penguins gbrainy gnome-mines gnome-mahjongg"
+pkgToRemoveList=""
+for pkgToRemove in $(echo $pkgToRemoveListFull); do
+  $(dpkg --status $pkgToRemove &> /dev/null)
+  if [[ $? -eq 0 ]]; then
+    pkgToRemoveList="$pkgToRemoveList $pkgToRemove"
+  fi
+done
+sudo apt-get -y purge $pkgToRemoveList
+sudo apt-get -y purge "libreoffice*" "thunderbird*"
 sudo apt-get autoclean
 
 # Refresh the linux packages list (sometimes necessary for packages that are required in the installion scripts)
