@@ -86,15 +86,18 @@ fi
 LOG_FILE="$USER_HOME/setup-pib.log"
 exec > >(tee -a "$LOG_FILE") 2>&1
 
+
 # Delete unnecessary apps
+echo -e "$NEW_LINE""$YELLOW_TEXT_COLOR""-- Removing unused default software packages --""$RESET_TEXT_COLOR""$NEW_LINE"
+
 PACKAGES_TO_BE_REMOVED=("aisleriot" "gnome-sudoku" "ace-of-penguins" "gbrainy" "gnome-mines" "gnome-mahjongg" "libreoffice*" "thunderbird*")
 installed_packages_to_be_removed=""
  
 # Create a list of all currently installed packaged that should be removed to reduce software bloat
 for package_name in "${PACKAGES_TO_BE_REMOVED[@]}"; do
-  if dpkg-query -W -f='${Status}\n' "$package_name" 2>/dev/null | grep -q "install ok installed"; then
-    installed_packages_to_be_removed+="$package_name "
-  fi
+	if dpkg-query -W -f='${Status}\n' "$package_name" 2>/dev/null | grep -q "install ok installed"; then
+		installed_packages_to_be_removed+="$package_name "
+	fi
 done
 
 # Remove unnecessary packages, if any are found
@@ -102,6 +105,7 @@ if  [ -n "$installed_packages_to_be_removed" ]; then
 	sudo apt-get -y purge $installed_packages_to_be_removed
 	sudo apt-get autoclean
 fi
+echo -e "$NEW_LINE""$GREEN_TEXT_COLOR""-- Removal of unused default software packages completed --""$RESET_TEXT_COLOR""$NEW_LINE"
 
 # Refresh the linux packages list (sometimes necessary for packages that are required in the installion scripts)
 sudo apt update
