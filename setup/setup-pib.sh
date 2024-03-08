@@ -151,6 +151,8 @@ source "$INSTALLATION_SCRIPTS/install_cerebra.sh"
 source "$INSTALLATION_SCRIPTS/setup_packages.sh"
 # Adjust system settings
 source "$INSTALLATION_SCRIPTS/set_system_settings.sh"
+# Prepare JSON-Server
+source "$INSTALLATION_SCRIPTS/prepare_json_server.sh"
 
 # install update-pip
 cp "$SETUP_DIR/update-pib.sh" "$USER_HOME/update-pib.sh"
@@ -163,6 +165,10 @@ cp "$SETUP_FILES/ros_config.sh" "$ROS_WORKING_DIR/ros_config.sh"
 # Create boot script for ros_bridge_server
 cp "$SETUP_FILES/ros_cerebra_boot.sh" "$ROS_WORKING_DIR/ros_cerebra_boot.sh"
 sudo chmod 700 $ROS_WORKING_DIR/ros_cerebra_boot.sh
+
+# Create JSON Server boot script
+cp "$SETUP_FILES/start_json_server.sh" $USER_HOME
+sudo chmod 700 $USER_HOME/start_json_server.sh
 
 # Create service which starts ros and cerebra by system boot
 cp "$SETUP_FILES/ros_cerebra_boot.service" "$ROS_WORKING_DIR/ros_cerebra_boot.service"
