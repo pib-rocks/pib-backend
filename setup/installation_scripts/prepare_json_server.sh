@@ -11,6 +11,6 @@ echo "Folder with the folowing name found: " + $PIB_FOLDER
 
 mkdir json-server
 
-cp -r $PIB_FOLDER/frontend/server $ROS_WORKING_DIR/json-server ./
-cp $PIB_FOLDER/frontend/package.json $ROS_WORKING_DIR/json-server ./
-cp $PIB_FOLDER/frontend/package-lock.json $ROS_WORKING_DIR/json-server ./
+cp -r $PIB_FOLDER/frontend/server $ROS_WORKING_DIR/json-server
+cp $PIB_FOLDER/frontend/package.json $ROS_WORKING_DIR/json-server
+cp $PIB_FOLDER/frontend/package-lock.json $ROS_WORKING_DIR/json-server
