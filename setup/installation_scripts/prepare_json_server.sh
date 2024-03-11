@@ -14,3 +14,7 @@ mkdir json-server
 cp -r $PIB_FOLDER/frontend/server $ROS_WORKING_DIR/json-server
 cp $PIB_FOLDER/frontend/package.json $ROS_WORKING_DIR/json-server
 cp $PIB_FOLDER/frontend/package-lock.json $ROS_WORKING_DIR/json-server
+
+# Is needed for exectution
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.1/install.sh | bash
+source ~/.bashrc
