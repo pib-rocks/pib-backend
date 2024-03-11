@@ -13,7 +13,7 @@ pwd
 
 mkdir json-server
 
-cp $PIB_FOLDER/frontend/server $USER_HOME/json-server
-cp $PIB_FOLDER/frontend/package.json $USER_HOME/json-server
-cp $PIB_FOLDER/frontend/package-lock.json $USER_HOME/json-server
+cp -r $PIB_FOLDER/frontend/server $USER_HOME/json-server ./
+cp $PIB_FOLDER/frontend/package.json $USER_HOME/json-server ./
+cp $PIB_FOLDER/frontend/package-lock.json $USER_HOME/json-server ./
 
