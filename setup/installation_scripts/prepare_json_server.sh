@@ -9,11 +9,8 @@ PIB_FOLDER=$(find /var/tmp -type d -name 'pib-temp.*' -print -quit)
 
 echo "Folder with the folowing name found: " + $PIB_FOLDER
 
-pwd
-
 mkdir json-server
 
-cp -r $PIB_FOLDER/frontend/server $USER_HOME/json-server ./
-cp $PIB_FOLDER/frontend/package.json $USER_HOME/json-server ./
-cp $PIB_FOLDER/frontend/package-lock.json $USER_HOME/json-server ./
-
+cp -r $PIB_FOLDER/frontend/server $ROS_WORKING_DIR/json-server ./
+cp $PIB_FOLDER/frontend/package.json $ROS_WORKING_DIR/json-server ./
+cp $PIB_FOLDER/frontend/package-lock.json $ROS_WORKING_DIR/json-server ./
