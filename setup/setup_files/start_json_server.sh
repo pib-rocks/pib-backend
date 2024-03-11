@@ -10,7 +10,7 @@ nvm install 18
 
 nvm use 18
 
-cd json-server/
+cd /home/pib/ros_working_dir/json-server/
 
 npm install
 npm audit fix
