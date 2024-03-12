@@ -1,6 +1,6 @@
 # Load nvm into bash
 
-source "$NVM_DIR/nvm.sh"
+source ~/.bashrc
 
 # Install and use Node.js 18 via nvm
 
