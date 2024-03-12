@@ -25,8 +25,7 @@ from pib_api_client import chat_client, personality_client
 RECEIVE_CHAT_MESSAGE_WAITING_PERIOD_SECONDS = 0.1
 MAIN_LOOP_RECEIVE_SIGNAL_WAITING_PERIOD_SECONDS = 0.05
 
-
-VOICE_ASSISTANT_PATH_PREFIX = "/home/pib/ros_working_dir/src/voice_assistant"
+VOICE_ASSISTANT_PATH_PREFIX = os.getenv("VOICE_ASSISTANT_DIR", "/home/pib/ros_working_dir/src/voice_assistant")
 AUDIO_OUTPUT_FILE = VOICE_ASSISTANT_PATH_PREFIX + "/audiofiles/assistant_output.wav"
 START_SIGNAL_FILE = VOICE_ASSISTANT_PATH_PREFIX + "/audiofiles/assistant_start_listening.wav"
 STOP_SIGNAL_FILE = VOICE_ASSISTANT_PATH_PREFIX + "/audiofiles/assistant_stop_listening.wav"
@@ -36,15 +35,19 @@ GOOGLE_KEY_PATH = VOICE_ASSISTANT_PATH_PREFIX + "/credentials/google-key"
 pib_api_client_lock = Lock()
 
 
+try:
 # Set up OpenAI GPT-3 API
-with open(OPENAI_KEY_PATH) as f:
-    openai_api_key = f.read().strip()
-openai_client = OpenAI(api_key=openai_api_key)
+    with open(OPENAI_KEY_PATH) as f:
+        openai_api_key = f.read().strip()
+    openai_client = OpenAI(api_key=openai_api_key)
 
-# Google Cloud API
-os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = GOOGLE_KEY_PATH
-client = speech.SpeechClient()
-
+    # Google Cloud API
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = GOOGLE_KEY_PATH
+    client = speech.SpeechClient()
+except Exception:
+    openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+    client = speech.SpeechClient()
 
 
 class Personality:
