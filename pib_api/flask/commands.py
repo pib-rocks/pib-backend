@@ -42,22 +42,24 @@ def _is_empty_db() -> bool:
 
 def _create_bricklet_data() -> None:
     data = _get_motor_list()
-    motor_settings = {"pulseWidthMin": 700, "pulseWidthMax": 2500, "rotationRangeMin": -4500,
-                  "rotationRangeMax": 4500, "velocity": 16000, "acceleration": 10000, "deceleration": 5000,
+    motor_settings = {"pulseWidthMin": 700, "pulseWidthMax": 2500, "rotationRangeMin": -9000,
+                  "rotationRangeMax": 9000, "velocity": 16000, "acceleration": 10000, "deceleration": 5000,
                   "period": 19500,
                   "turnedOn": True, "visible": True, "invert": False}
 
     for item in data:
         motor = Motor(name=item["name"], **motor_settings)
         if motor.name == "tilt_forward_motor":
-            motor.pulseWidthMax = -4500
+            motor.rotationRangeMin = -4500
             motor.rotationRangeMax = 4500
         elif motor.name == "tilt_sideways_motor":
             motor.visible = False
         # modify all fingers
         elif motor.name.endswith("stretch") or "thumb" in motor.name:
-            motor.velocity = 10000
+            motor.pulseWidthMin = 750
+            motor.velocity = 100000
             motor.acceleration = 50000
+            motor.deceleration = 50000
         
         db.session.add(motor)
         db.session.flush()
@@ -94,7 +96,7 @@ def _create_program_data() -> None:
 def _create_chat_data() -> None:
     p_eva = Personality(name="Eva", personalityId="8f73b580-927e-41c2-98ac-e5df070e7288", gender="female",
                         pauseThreshold=0.8)
-    p_thomas = Personality(name="Adam", personalityId="8b310f95-92cd-4512-b42a-d3fe29c4bb8a", gender="male",
+    p_thomas = Personality(name="Thomas", personalityId="8b310f95-92cd-4512-b42a-d3fe29c4bb8a", gender="male",
                            pauseThreshold=0.8)
     db.session.add_all([p_eva, p_thomas])
     db.session.flush()
@@ -150,6 +152,4 @@ def _get_motor_list() -> [dict[str, Any]]:
 
 
 def _get_example_program() -> str:
-    return ''''{"blocks":{"languageVersion":0,"blocks":[{"type":"text_print","id":"]l,+vC{q$rZPVdSfyx=4","x":229,
-    "y":67,"inputs":{"TEXT":{"shadow":{"type":"text","id":"v,}3JGN5d7og[X_/KJ)|","fields":{"TEXT":"hello 
-    world"}}}}}]}}', "e1d46e2a-935e-4e2b-b2f9-0856af4257c5"'''
+    return '''{"blocks":{"languageVersion":0,"blocks":[{"type":"text_print","id":"QWplsQn`*28S!rmDws$4","x":315,"y":279,"inputs":{"TEXT":{"shadow":{"type":"text","id":"`{AWS~jvKQo-ve^M@z-(","fields":{"TEXT":"hello world"}}}}}]}}'''

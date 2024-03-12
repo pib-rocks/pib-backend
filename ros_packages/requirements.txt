@@ -1,0 +1,7 @@
+openai
+google-cloud-texttospeech
+pyaudio==0.2.14
+SpeechRecognition
+opencv-python >= 4.5.1.48
+depthai>=2.13
+numpy

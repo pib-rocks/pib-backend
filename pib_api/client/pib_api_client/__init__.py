@@ -1,3 +1,4 @@
+import os
 from typing import Any
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
@@ -5,8 +6,7 @@ import json
 import logging
 
 
-URL_PREFIX = "http://localhost:5000"
-
+URL_PREFIX = os.getenv("FLASK_API_BASE_URL", "http://localhost:5000")
 
 def send_request(request: Request) -> (bool, dict[str, Any]):
 

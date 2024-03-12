@@ -14,10 +14,9 @@ from google.cloud import speech_v1p1beta1 as speech
 import pyaudio
 import wave
 import os
-import speech_recognition as sr
-from speech_recognition import WaitTimeoutError
 from multiprocessing import Process, Pipe, Lock
 import time
+import numpy as np
 
 from pib_api_client import chat_client, personality_client
 import logging
@@ -29,25 +28,38 @@ logging.basicConfig(level=logging.INFO,
 RECEIVE_CHAT_MESSAGE_WAITING_PERIOD_SECONDS = 0.1
 MAIN_LOOP_RECEIVE_SIGNAL_WAITING_PERIOD_SECONDS = 0.05
 
-
-VOICE_ASSISTANT_PATH_PREFIX = "/home/pib/ros_working_dir/src/voice_assistant"
+VOICE_ASSISTANT_PATH_PREFIX = os.getenv("VOICE_ASSISTANT_DIR", "/home/pib/ros_working_dir/src/voice_assistant")
 AUDIO_OUTPUT_FILE = VOICE_ASSISTANT_PATH_PREFIX + "/audiofiles/assistant_output.wav"
 START_SIGNAL_FILE = VOICE_ASSISTANT_PATH_PREFIX + "/audiofiles/assistant_start_listening.wav"
 STOP_SIGNAL_FILE = VOICE_ASSISTANT_PATH_PREFIX + "/audiofiles/assistant_stop_listening.wav"
 OPENAI_KEY_PATH = VOICE_ASSISTANT_PATH_PREFIX + "/credentials/openai-key"
 GOOGLE_KEY_PATH = VOICE_ASSISTANT_PATH_PREFIX + "/credentials/google-key"
 
+AUDIO_INPUT_FILE = "/home/pib/ros_working_dir/UserInput.wav"
+
+# Record audio settings
+FORMAT = pyaudio.paInt16
+CHANNELS = 1
+RATE = 44100
+CHUNK = 1024
+WAVE_OUTPUT_FILENAME = "UserInput.wav"
+SILENCE_THRESHOLD = 500
+
 pib_api_client_lock = Lock()
 
+try:
 # Set up OpenAI GPT-3 API
-with open(OPENAI_KEY_PATH) as f:
-    openai_api_key = f.read().strip()
-openai_client = OpenAI(api_key=openai_api_key)
+    with open(OPENAI_KEY_PATH) as f:
+        openai_api_key = f.read().strip()
+    openai_client = OpenAI(api_key=openai_api_key)
 
-# Google Cloud API
-os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = GOOGLE_KEY_PATH
-client = speech.SpeechClient()
-
+    # Google Cloud API
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = GOOGLE_KEY_PATH
+    client = speech.SpeechClient()
+except Exception:
+    openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+    client = speech.SpeechClient()
 
 
 class Personality:
@@ -203,29 +215,21 @@ class VoiceAssistantNode(Node):
 
 
 
-def speech_to_text(pause_threshold: float) -> str:
-
-    r = sr.Recognizer()
-    r.pause_threshold = max(pause_threshold, r.non_speaking_duration)
-    print('----------------------------------------------ALSA')
-    with sr.Microphone() as source:
-        print('----------------------------------------------')
-        logging.info("listening for input...")
-        try: 
-            audio = r.listen(source, timeout=8)
-        except WaitTimeoutError: 
-            logging.warning("WaitTimeoutError - no speech detected")
-            return ''
-    # Speech recognition using Google's Speech Recognition
+def speech_to_text(pause_threshold: float, silence_threshold:int) -> str:
+    logging.info("start recording")
+    start_recording(pause_threshold, silence_threshold)
     data = ''
     try:
-        data = r.recognize_google(audio, language="de-DE")
-        logging.info(f"transcribed audio: {data}")
-    except sr.UnknownValueError as e:
-        logging.error(f"GoogleSpeechRecognition Error: {e} - could not decode audio")
-    except sr.RequestError as e:
-        logging.error(f"GoogleSpeechRecognition RequestError: {e}")
-    return data
+        print('---------------- Convert Audio file into text -----------------------')
+        audio_file = open(AUDIO_INPUT_FILE, "rb")
+        data = openai_client.audio.transcriptions.create(
+        model="whisper-1", 
+        file=audio_file
+        )
+        print("You sad: " + data.text)
+    except Exception as e:
+        logging.error(f"OpenAIError: {e}")
+    return data.text
 
 
 
@@ -297,9 +301,10 @@ def worker_target(chat_id: str, personality: Personality, chat_message_to_main: 
     
     while True:
         play_audio(START_SIGNAL_FILE)
-        user_input = speech_to_text(personality.pause_threshold)
+        user_input = speech_to_text(personality.pause_threshold, SILENCE_THRESHOLD)
         play_audio(STOP_SIGNAL_FILE)
-        if user_input != '': chat_message_to_main.send(TransientChatMessage(user_input, True, chat_id))
+        # Why check on you? When OpenAI converts an empty wav or mp3 file to Text it always returns 'you'
+        if user_input != 'you': chat_message_to_main.send(TransientChatMessage(user_input, True, chat_id))
         va_response = gpt_chat(user_input, personality.description)
         chat_message_to_main.send(TransientChatMessage(va_response, False, chat_id))
         text_to_speech(va_response, personality.gender)
@@ -316,7 +321,41 @@ def ros_target(chat_message_from_main: Connection, state_to_main: Connection):
     node.destroy_node()
     rclpy.shutdown()
         
-
+def start_recording(max_silence_seconds, silence_threshold):
+    # Audiosettings for record
+    def is_silent(data_chunk, threshold):
+        """Check whether a frame is below the minimum volume threshold"""
+        as_ints = np.frombuffer(data_chunk, dtype=np.int16)
+        return np.abs(as_ints).mean() < threshold
+    audio = pyaudio.PyAudio()
+    print("------------ Recording ------------ Say something ------------")
+    stream = audio.open(format=FORMAT, channels=CHANNELS, rate=RATE, input=True, frames_per_buffer=CHUNK)
+    frames = []
+    silent_frames = 0
+    while True:
+        data = stream.read(CHUNK, exception_on_overflow = False)
+        frames.append(data)
+        if is_silent(data, silence_threshold):
+            silent_frames += 1
+            if(silent_frames>800):
+                break
+        else:
+            silent_frames = 0
+        if silent_frames >= max_silence_seconds * RATE / CHUNK:
+            print("----------- Silent recognized ----- Stoped recording ------------")
+            break
+    # Beenden der Aufnahme
+    stream.stop_stream()
+    stream.close()
+    audio.terminate()
+    # Speichern der Aufnahme in einer WAV-Datei
+    wave_file = wave.open(AUDIO_INPUT_FILE, 'wb')
+    wave_file.setnchannels(CHANNELS)
+    wave_file.setsampwidth(audio.get_sample_size(FORMAT))
+    wave_file.setframerate(RATE)
+    wave_file.writeframes(b''.join(frames))
+    wave_file.close()
+    print("------------ Saving ---------------")
 
 def main(args=None):
 
