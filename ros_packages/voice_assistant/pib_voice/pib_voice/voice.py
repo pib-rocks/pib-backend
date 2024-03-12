@@ -2,10 +2,11 @@ import json
 import os
 import time
 from google.cloud import speech_v1p1beta1 as speech
-from typing import Any
+from typing import Any, Tuple
 import pyaudio
 import wave
 import os
+import re
 import speech_recognition as sr
 from speech_recognition import WaitTimeoutError
 from openai import OpenAI
@@ -114,8 +115,11 @@ def play_audio_from_file(file_path: str) -> None:
 
 
 
-def gpt_chat(input_text: str, personality_description: str) -> str:
-
+def gpt_chat(input_text: str, personality_description: str) -> Tuple[str, bool]:
+    """
+    @return: str - sentence of streaming response
+    @return: bool - whether current sentence is the final sentence of streaming response
+    """
     response = openai_client.chat.completions.create(
         model="gpt-4-0314",
         messages=[
@@ -127,7 +131,27 @@ def gpt_chat(input_text: str, personality_description: str) -> str:
                 "role": "user",
                 "content": input_text,
             },
-        ]
+        ],
+        stream=True
     )
+    # Regex pattern matches for:
+    # Any string that contains a lower-case character followed by !?.:
+    # Numbers (e.g., enumerations 1. [...] or dates) and upper-case characters (e.g., abbreviations S.P.Q.R) get ignored
+    sentence_boundary = re.compile(r"[^\d | ^A-Z][\.|!|\?|:]")
+    cur_sentence = ""
+    prev_sentence = ""
+    
+    # Always previous sentence is returned, to be able to mark the final sentence
+    for stream in response:
+        current_token = stream.choices[0].delta.content
+        if current_token is None:
+            break
 
-    return response.choices[0].message.content
+        current_token = current_token.replace("\n", " ")
+        cur_sentence += current_token
+        if sentence_boundary.search(cur_sentence):
+            if prev_sentence != "":
+                yield prev_sentence, False
+            prev_sentence = cur_sentence.strip()
+            cur_sentence = ""
+    yield prev_sentence, True
