@@ -86,6 +86,27 @@ fi
 LOG_FILE="$USER_HOME/setup-pib.log"
 exec > >(tee -a "$LOG_FILE") 2>&1
 
+
+# Delete unnecessary apps
+echo -e "$NEW_LINE""$YELLOW_TEXT_COLOR""-- Removing unused default software packages --""$RESET_TEXT_COLOR""$NEW_LINE"
+
+PACKAGES_TO_BE_REMOVED=("aisleriot" "gnome-sudoku" "ace-of-penguins" "gbrainy" "gnome-mines" "gnome-mahjongg" "libreoffice*" "thunderbird*")
+installed_packages_to_be_removed=""
+ 
+# Create a list of all currently installed packaged that should be removed to reduce software bloat
+for package_name in "${PACKAGES_TO_BE_REMOVED[@]}"; do
+	if dpkg-query -W -f='${Status}\n' "$package_name" 2>/dev/null | grep -q "install ok installed"; then
+		installed_packages_to_be_removed+="$package_name "
+	fi
+done
+
+# Remove unnecessary packages, if any are found
+if  [ -n "$installed_packages_to_be_removed" ]; then
+	sudo apt-get -y purge $installed_packages_to_be_removed
+	sudo apt-get autoclean
+fi
+echo -e "$NEW_LINE""$GREEN_TEXT_COLOR""-- Removal of unused default software packages completed --""$RESET_TEXT_COLOR""$NEW_LINE"
+
 # Refresh the linux packages list (sometimes necessary for packages that are required in the installion scripts)
 sudo apt update
 # These packages are installed seperately, since the installation scripts are dependent on them
@@ -150,7 +171,7 @@ source "$INSTALLATION_SCRIPTS/set_system_settings.sh"
 
 # install update-pip
 cp "$SETUP_DIR/update-pib.sh" "$USER_HOME/update-pib.sh"
-sudo chmod 777 ~/update-pib.sh
+sudo chmod 700 ~/update-pib.sh
 
 # Get ros_config
 cp "$SETUP_FILES/ros_config.sh" "$ROS_WORKING_DIR/ros_config.sh"
@@ -158,16 +179,16 @@ cp "$SETUP_FILES/ros_config.sh" "$ROS_WORKING_DIR/ros_config.sh"
 # Setup system to start Cerebra and ROS2 at boot time
 # Create boot script for ros_bridge_server
 cp "$SETUP_FILES/ros_cerebra_boot.sh" "$ROS_WORKING_DIR/ros_cerebra_boot.sh"
-sudo chmod 755 $ROS_WORKING_DIR/ros_cerebra_boot.sh
+sudo chmod 700 $ROS_WORKING_DIR/ros_cerebra_boot.sh
 
 # Create service which starts ros and cerebra by system boot
 cp "$SETUP_FILES/ros_cerebra_boot.service" "$ROS_WORKING_DIR/ros_cerebra_boot.service"
-sudo chmod 755 $ROS_WORKING_DIR/ros_cerebra_boot.service
+sudo chmod 700 $ROS_WORKING_DIR/ros_cerebra_boot.service
 sudo mv $ROS_WORKING_DIR/ros_cerebra_boot.service /etc/systemd/system
 
 # Enable new services
 sudo systemctl daemon-reload
-sudo systemctl enable ros_cerebra_boot.service
+sudo systemctl enable ros_cerebra_boot.service --now
 # Enable and start ssh server
 sudo systemctl enable ssh --now
 
