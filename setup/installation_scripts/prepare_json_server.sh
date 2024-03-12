@@ -16,5 +16,5 @@ cp $PIB_FOLDER/frontend/package.json $ROS_WORKING_DIR/json-server
 cp $PIB_FOLDER/frontend/package-lock.json $ROS_WORKING_DIR/json-server
 
 # nvm is already installed unter /etc/nvm 
-sed -i '/echo 'export NVM_DIR="/etc/nvm"' >> ~/.bashrc/c\echo 'export NVM_DIR="$USER_HOME/nvm"' >> ~/.bashrc' ~/.bashrc
+sed -i 's/export NVM_DIR="$HOME\/.nvm/export NVM_DIR="\/etc\/nvm/g' .bashrc
 source ~/.bashrc
