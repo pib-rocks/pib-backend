@@ -19,7 +19,11 @@ import time
 import numpy as np
 
 from pib_api_client import chat_client, personality_client
+import logging
 
+# Define custom logging as ROS logger only available in Node
+logging.basicConfig(level=logging.INFO, 
+                    format="[%(levelname)s] [%(asctime)s] [%(process)d] [%(filename)s:%(lineno)s]: %(message)s")
 
 RECEIVE_CHAT_MESSAGE_WAITING_PERIOD_SECONDS = 0.1
 MAIN_LOOP_RECEIVE_SIGNAL_WAITING_PERIOD_SECONDS = 0.05
@@ -42,7 +46,6 @@ WAVE_OUTPUT_FILENAME = "UserInput.wav"
 SILENCE_THRESHOLD = 500
 
 pib_api_client_lock = Lock()
-
 
 try:
 # Set up OpenAI GPT-3 API
@@ -213,7 +216,7 @@ class VoiceAssistantNode(Node):
 
 
 def speech_to_text(pause_threshold: float, silence_threshold:int) -> str:
-
+    logging.info("start recording")
     start_recording(pause_threshold, silence_threshold)
     data = ''
     try:
@@ -225,13 +228,13 @@ def speech_to_text(pause_threshold: float, silence_threshold:int) -> str:
         )
         print("You sad: " + data.text)
     except Exception as e:
-        print('Request error from OpenAI Text To Speech Recognition')
+        logging.error(f"OpenAIError: {e}")
     return data.text
 
 
 
 def gpt_chat(input_text: str, personality_description: str) -> str:
-
+    logging.info("generate chat completion")
     response = openai_client.chat.completions.create(
         model="gpt-4-0314",
         messages=[
@@ -247,7 +250,6 @@ def gpt_chat(input_text: str, personality_description: str) -> str:
     )
 
     return response.choices[0].message.content
-
 
 
 def text_to_speech(text_input: str, gender: str) -> None:
@@ -269,7 +271,6 @@ def text_to_speech(text_input: str, gender: str) -> None:
     os.chmod(AUDIO_OUTPUT_FILE, 0o777)
     
 
-
 def play_audio(file_path: str) -> None:
 
     CHUNK = 1024
@@ -277,7 +278,7 @@ def play_audio(file_path: str) -> None:
     print('++++++++++++++++++++++++++++++++++++++ALSA')
     p = pyaudio.PyAudio()
     print('++++++++++++++++++++++++++++++++++++++')
-
+    logging.info("playing audio file...")
     stream = p.open(
         format=p.get_format_from_width(wf.getsampwidth()),
         channels=wf.getnchannels(),
@@ -297,7 +298,7 @@ def play_audio(file_path: str) -> None:
 
 
 def worker_target(chat_id: str, personality: Personality, chat_message_to_main: Connection):
-
+    
     while True:
         play_audio(START_SIGNAL_FILE)
         user_input = speech_to_text(personality.pause_threshold, SILENCE_THRESHOLD)
@@ -307,9 +308,7 @@ def worker_target(chat_id: str, personality: Personality, chat_message_to_main: 
         va_response = gpt_chat(user_input, personality.description)
         chat_message_to_main.send(TransientChatMessage(va_response, False, chat_id))
         text_to_speech(va_response, personality.gender)
-        play_audio(AUDIO_OUTPUT_FILE,)
-        
-
+        play_audio(AUDIO_OUTPUT_FILE)      
 
 
 def ros_target(chat_message_from_main: Connection, state_to_main: Connection):
@@ -374,14 +373,12 @@ def main(args=None):
         worker_process = Process(target=worker_target, args=(chat_id, personality, chat_message_to_main))    
         worker_process.start()
 
-        print('ON')
-
+        logging.info("VA turned on")
         while not state_from_ros.poll():
             while (chat_message_from_worker.poll()):
                 chat_message_to_ros.send(chat_message_from_worker.recv())
-            time.sleep(MAIN_LOOP_RECEIVE_SIGNAL_WAITING_PERIOD_SECONDS)
-        
-        print('OFF')
+            time.sleep(MAIN_LOOP_RECEIVE_SIGNAL_WAITING_PERIOD_SECONDS)      
+        logging.info("VA turned off")
         
         worker_process.terminate()
         play_audio(STOP_SIGNAL_FILE)
