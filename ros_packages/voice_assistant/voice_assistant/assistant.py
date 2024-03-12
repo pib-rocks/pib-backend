@@ -38,11 +38,12 @@ class Personality:
 
 class TransientChatMessage:
 
-    def __init__(self, content: str, is_user: bool, chat_id: float, gender: str | None):
+    def __init__(self, content: str, is_user: bool, chat_id: float, gender: str | None, is_final: bool):
         self.content = content
         self.is_user = is_user
         self.chat_id = chat_id
         self.gender = gender
+        self.is_final = is_final
 
 
 
@@ -194,13 +195,15 @@ class VoiceAssistantNode(Node):
                 request = TextToSpeechPush.Request()
                 request.text = chat_message.content
                 request.voice = "Vicki" if chat_message.gender == "Female" else "Daniel"
-                request.join = True
+                request.join = False
+                if chat_message.is_final:
+                    request.join = True
                 
                 future: Future = self.tts_push_client.call_async(request)
 
                 def when_done(_: Future):
                     with self.ros_to_worker_lock: 
-                        if not self.worker_changed:
+                        if not self.worker_changed and chat_message.is_final:
                             self.ros_to_worker.send(chat_message.chat_id) 
 
                 future.add_done_callback(when_done)
@@ -231,8 +234,8 @@ def worker_target(chat_id: str, personality: Personality, worker_to_ros: Connect
         user_input = speech_to_text(personality.pause_threshold)
         play_audio_from_file(STOP_SIGNAL_FILE)
         if user_input != '': worker_to_ros.send(TransientChatMessage(user_input, True, chat_id, None))
-        va_response = gpt_chat(user_input, personality.description)
-        worker_to_ros.send(TransientChatMessage(va_response, False, chat_id, personality.gender))
+        for sentence, is_final in gpt_chat(user_input, personality.description):
+            worker_to_ros.send(TransientChatMessage(sentence, False, chat_id, personality.gender, is_final))
         worker_to_ros.recv()
 
 
