@@ -15,6 +15,9 @@ cp -r $PIB_FOLDER/frontend/server $ROS_WORKING_DIR/json-server
 cp $PIB_FOLDER/frontend/package.json $ROS_WORKING_DIR/json-server
 cp $PIB_FOLDER/frontend/package-lock.json $ROS_WORKING_DIR/json-server
 
-# Is needed for exectution
-curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.1/install.sh | bash
+# nvm is already installed unter /etc/nvm 
+echo 'export NVM_DIR="/etc/nvm"' >> ~/.bashrc
+echo '[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"  # This loads nvm' >> ~/.bashrc
+echo '[ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"  # This loads nvm bash_completion' >> ~/.bashrc
+echo 'export PYTHONIOENCODING=utf-8' >> ~/.bashrc
 source ~/.bashrc
