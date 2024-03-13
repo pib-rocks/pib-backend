@@ -2,14 +2,6 @@
 
 source ~/.bashrc
 
-# Install and use Node.js 18 via nvm
-
-# Dont use sudo for nvm-associated commands (npm, ng) since nvm is not accessible by root
-
-nvm install 18
-
-nvm use 18
-
 cd /home/pib/ros_working_dir/json-server/
 
 npm install
