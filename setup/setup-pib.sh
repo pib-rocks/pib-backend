@@ -151,7 +151,7 @@ source "$INSTALLATION_SCRIPTS/install_cerebra.sh"
 source "$INSTALLATION_SCRIPTS/setup_packages.sh"
 # Adjust system settings
 source "$INSTALLATION_SCRIPTS/set_system_settings.sh"
-# Prepare JSON-Server
+# prepares JSON-Server
 source "$INSTALLATION_SCRIPTS/prepare_json_server.sh"
 
 # install update-pip
