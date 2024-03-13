@@ -66,7 +66,7 @@ class MotorControl(Node):
         # load motor-settings if not in dev mode
         if not self.dev:
             for motor in motors:
-                if self.check_if_motor_is_connected(motor):
+                if motor.check_if_motor_is_connected():
                     successful, motor_settings_dto = motor_client.get_motor_settings(
                         motor.name)
                     if successful:
@@ -74,22 +74,9 @@ class MotorControl(Node):
 
         # get UID from database
         response = update_bricklet_uids.get_uids_from_db()
-        UID1 = response[0]
-        UID2 = response[1]
-        UID3 = response[2]
 
         # Log that initialization is complete
         self.get_logger().warn("Info: passed __init__")
-
-    # Check if motor is connected
-    # Non-connected bricklet UIDs seem to be only 2 characters long
-    # Connected ones at least 6 characters long
-    def check_if_motor_is_connected(self, motor):
-        for bricklet_pin in motor.bricklet_pins:
-            # X,Y and Z are the default uid of a Servo Bricklet 2.0 (updated ob boot by update_bricklet_uids.py)
-            if bricklet_pin.bricklet.uid_string != 'X' and bricklet_pin.bricklet.uid_string != 'Y' and bricklet_pin.bricklet.uid_string != 'Z':
-                return True
-        return False
 
     def motor_settings_callback(self, request: MotorSettingsSrv.Request, response: MotorSettingsSrv.Response):
 
@@ -128,7 +115,7 @@ class MotorControl(Node):
             target_position = joint_trajectory.points[0].positions[0]
 
             for motor in name_to_motors[motor_name]:
-                if self.check_if_motor_is_connected(motor):
+                if motor.check_if_motor_is_connected():
                     self.get_logger().info(f"setting position of '{motor.name}' to {target_position}.")
                     motor.set_position(target_position)
                     self.get_logger().info(f"position of '{motor.name}' was set to {motor.get_position()}.")
