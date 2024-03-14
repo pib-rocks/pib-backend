@@ -1,15 +1,16 @@
+import os
 from tinkerforge.ip_connection import IPConnection
 from tinkerforge.brick_hat import BrickHAT
 from tinkerforge.bricklet_servo_v2 import BrickletServoV2
 from pib_api_client import bricklet_client
 
-HOST = "localhost"
-PORT = 4223
+TINKERFORGE_HOST = os.getenv("TINKERFORGE_HOST", "localhost")
+TINKERFORGE_PORT = int(os.getenv("TINKERFORGE_PORT", 4223))
 
 # Connection
 ipcon = IPConnection()  # Create IP connection
 hat = BrickHAT("X", ipcon)
-ipcon.connect(HOST, 4223)
+ipcon.connect(TINKERFORGE_HOST, TINKERFORGE_PORT)
 
 # get data from pib-api
 successful, bricklet_dtos = bricklet_client.get_all_bricklets()

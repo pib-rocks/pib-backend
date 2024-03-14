@@ -1,3 +1,4 @@
+import os
 import rclpy
 from rclpy.node import Node
 from rclpy.executors import MultiThreadedExecutor
@@ -21,9 +22,10 @@ from datatypes.msg import ProgramOutputLine
 
 
 
-PYTHON_BINARY: str = '/home/pib/ros_working_dir/src/programs/user_program_env/bin/python3'
+PYTHON_BINARY: str = os.getenv('PYTHON_BINARY', '/home/pib/ros_working_dir/src/programs/user_program_env/bin/python3')
 UNBUFFERED_OUTPUT_FLAG: str = '-u'
-PYTHON_SCRIPT: str = '/home/pib/cerebra_programs/%s.py'
+PROGRAM_DIR: str = os.getenv("PROGRAM_DIR", "/home/pib/cerebra_programs")
+# PYTHON_SCRIPT: str = os.getenv('', '/home/pib/cerebra_programs/%s.py')
 
 MAIN_LOOP_WAITING_PERIOD_SECONDS: float = 0.1
 ACTION_LOOP_WAITING_PERIOD_SECONDS: float = 0.05
@@ -204,7 +206,8 @@ def ros_target(request_sender: Connection) -> None:
 
 def run_program(program_number: str, output_sender: Connection) -> None:
 
-    run_python_program = [PYTHON_BINARY, UNBUFFERED_OUTPUT_FLAG, PYTHON_SCRIPT % program_number]
+    python_script = f"{PROGRAM_DIR}/{program_number}.py"
+    run_python_program = [PYTHON_BINARY, UNBUFFERED_OUTPUT_FLAG, python_script]
     with Popen(run_python_program, stdout=PIPE, stderr=PIPE, universal_newlines=True, bufsize=1) as popen:
 
         output_sender_lock = Lock()
@@ -230,7 +233,6 @@ def run_program(program_number: str, output_sender: Connection) -> None:
 
 
 def main(args=None) -> None:
-
     request_sender, request_receiver = Pipe()
     ros_process = Process(target=ros_target, args=(request_sender,))
     ros_process.start()
