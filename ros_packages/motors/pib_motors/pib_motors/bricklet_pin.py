@@ -18,7 +18,7 @@ class BrickletPin:
 		return f"BRICKLET-PIN[ pin: {self.pin}, bricklet: {uid} ]"
 
 	def apply_settings(self, settings_dto: dict[str, Any]) -> bool:
-		if not self.is_connected(self):
+		if not self.is_connected():
 			return False
 		try:
 			self.bricklet.set_pulse_width(self.pin, settings_dto['pulseWidthMin'], settings_dto['pulseWidthMax'])
@@ -48,7 +48,7 @@ class BrickletPin:
 		return False
 
 	def set_position(self, position: int, invert: bool) -> bool:
-		if not self.is_connected(self):
+		if not self.is_connected():
 			return False
 		if invert:
 			position = position * -1
