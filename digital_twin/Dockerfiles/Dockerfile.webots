@@ -1,0 +1,12 @@
+FROM docker.hub.sfeld.eu/osrf/ros:humble-updated
+ADD webots_2023b_amd64.deb ./
+ADD ros_ws /home/ros_ws
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN apt -y install /webots_2023b_amd64.deb && \
+    apt -y install ros-humble-webots-ros2 && \
+    rm /webots_2023b_amd64.deb
+RUN apt -y install python3-pip && \ 
+    pip install onshape-to-robot urdf2webots
+RUN cd /home/ros_ws && colcon build
+
