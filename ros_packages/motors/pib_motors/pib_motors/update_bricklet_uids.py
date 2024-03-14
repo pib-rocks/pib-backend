@@ -1,12 +1,15 @@
 """Script for managing TinkerForge UIDs and corresponding database operations"""
 import json
+import os
 import sys
 import multiprocessing
 import requests
 from tinkerforge.ip_connection import IPConnection
 from tinkerforge.brick_hat import BrickHAT
 
-BASE_URL = "http://127.0.0.1:5000"
+BASE_URL = os.getenv("FLASK_API_BASE_URL", "http://127.0.0.1:5000")
+TINKERFORGE_HOST = os.getenv("TINKERFORGE_HOST", "localhost")
+TINKERFORGE_PORT = int(os.getenv("TINKERFORGE_PORT", 4223))
 BRICKLET_URLS = [f"{BASE_URL}/bricklet/{i}" for i in range(1, 4)]
 
 UID0 = "X"
@@ -16,7 +19,7 @@ POSITION_TO_UID_MAP = {'a': 'UID0', 'b': 'UID1', 'e': 'UID2'}
 
 ipcon: IPConnection = IPConnection()
 hat = BrickHAT("X", ipcon)
-ipcon.connect("localhost", 4223)
+ipcon.connect(TINKERFORGE_HOST, TINKERFORGE_PORT)
 
 def cb_enumerate(uid, connected_uid, position, hardware_version, firmware_version, device_identifier, enumeration_type):
     """Readout the UIDs of the connected TinkerForge Bricklets and update global variables."""

@@ -33,6 +33,13 @@ class Motor:
 	
 	def get_position(self) -> int:
 		return self.bricklet_pins[0].get_position()
+	
+	def check_if_motor_is_connected(self) -> bool:
+		for bricklet_pin in self.bricklet_pins:
+			# X,Y and Z are the default uid of a Servo Bricklet 2.0 (updated ob boot by update_bricklet_uids.py)
+			if bricklet_pin.is_connected():
+				return True
+		return False
 
 # get data from pib-api
 successful, response = motor_client.get_all_motors()
