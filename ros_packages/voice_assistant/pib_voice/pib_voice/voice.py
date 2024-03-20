@@ -19,20 +19,22 @@ logging.basicConfig(level=logging.INFO,
                     format="[%(levelname)s] [%(asctime)s] [%(process)d] [%(filename)s:%(lineno)s]: %(message)s")
 
 
-CREDENTIALS_PATH_PREFIX = "/home/pib/ros_working_dir/src/voice_assistant/credentials"
-OPENAI_KEY_PATH = CREDENTIALS_PATH_PREFIX + "/openai-key"
-GOOGLE_KEY_PATH = CREDENTIALS_PATH_PREFIX + "/google-key"
-AWS_KEY_PATH = CREDENTIALS_PATH_PREFIX + "/aws-key"
-
 ROS_WORKING_DIR = os.getenv("ROS_WORKING_DIR", "/home/pib/ros_working_dir")
-AUDIO_INPUT_FILE = f"{ROS_WORKING_DIR}/UserInput.wav"
+VOICE_ASSISTANT_DIRECTORY = os.getenv("VOICE_ASSISTANT_DIR", "/home/pib/ros_working_dir/src/voice_assistant")
+
+USER_AUDIO_INPUT_FILENAME = "UserInput.wav"
+AUDIO_INPUT_FILE = VOICE_ASSISTANT_DIRECTORY + "/audiofiles/" + USER_AUDIO_INPUT_FILENAME
+
+CREDENTIALS_DIRECTORY = VOICE_ASSISTANT_DIRECTORY + "/credentials"
+OPENAI_KEY_PATH = CREDENTIALS_DIRECTORY + "/openai-key"
+GOOGLE_KEY_PATH = CREDENTIALS_DIRECTORY + "/google-key"
+AWS_KEY_PATH = CREDENTIALS_DIRECTORY + "/aws-key"
 
 # Record audio settings
 FORMAT = pyaudio.paInt16
 CHANNELS = 1
 RATE = 44100
 CHUNK = 1024
-WAVE_OUTPUT_FILENAME = "UserInput.wav"
 
 
 # Docker containers require enviromnent variables instead of hard-coded file paths
@@ -76,7 +78,7 @@ def speech_to_text(pause_threshold: float, silence_threshold: int) -> str:
         logging.info('convert audio file into text')
         audio_file = open(AUDIO_INPUT_FILE, "rb")
         data = openai_client.audio.transcriptions.create(
-        model="whisper-1", 
+        model="whisper-1",
         file=audio_file
         )
         logging.info("you sad: " + data.text)

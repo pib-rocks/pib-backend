@@ -17,7 +17,6 @@ import pyaudio
 import os
 from multiprocessing import Process, Pipe, Lock
 
-
 from pib_voice.voice import gpt_chat, play_audio_from_file, speech_to_text
 from pib_api_client import chat_client, personality_client
 import logging
@@ -29,12 +28,11 @@ logging.basicConfig(level=logging.INFO,
 
 RECEIVE_CHAT_MESSAGE_WAITING_PERIOD_SECONDS = 0.1
 
-VOICE_ASSISTANT_PATH_PREFIX = os.getenv("VOICE_ASSISTANT_DIR", "/home/pib/ros_working_dir/src/voice_assistant")
-AUDIO_OUTPUT_FILE = VOICE_ASSISTANT_PATH_PREFIX + "/audiofiles/assistant_output.wav"
-START_SIGNAL_FILE = VOICE_ASSISTANT_PATH_PREFIX + "/audiofiles/assistant_start_listening.wav"
-STOP_SIGNAL_FILE = VOICE_ASSISTANT_PATH_PREFIX + "/audiofiles/assistant_stop_listening.wav"
+VOICE_ASSISTANT_DIRECTORY = os.getenv("VOICE_ASSISTANT_DIR", "/home/pib/ros_working_dir/src/voice_assistant")
+AUDIO_OUTPUT_FILE = VOICE_ASSISTANT_DIRECTORY + "/audiofiles/assistant_output.wav"
+START_SIGNAL_FILE = VOICE_ASSISTANT_DIRECTORY + "/audiofiles/assistant_start_listening.wav"
+STOP_SIGNAL_FILE = VOICE_ASSISTANT_DIRECTORY + "/audiofiles/assistant_stop_listening.wav"
 
-AUDIO_INPUT_FILE = "/home/pib/ros_working_dir/UserInput.wav"
 SILENCE_THRESHOLD = 500
 
 pib_api_client_lock = Lock()
