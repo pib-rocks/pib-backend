@@ -2,7 +2,7 @@ import json
 import os
 import time
 from google.cloud import speech_v1p1beta1 as speech
-from typing import Any, Tuple
+from typing import Tuple
 import pyaudio
 import wave
 import os
