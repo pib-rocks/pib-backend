@@ -20,19 +20,32 @@ GOOGLE_KEY_PATH = CREDENTIALS_PATH_PREFIX + "/google-key"
 AWS_KEY_PATH = CREDENTIALS_PATH_PREFIX + "/aws-key"
 
 
+# Docker containers require enviromnent variables instead of hard-coded file paths
+try:
+    # Set up OpenAI GPT-3 API
+    with open(OPENAI_KEY_PATH) as f:
+        openai_api_key = f.read().strip()
+    openai_client = OpenAI(api_key=openai_api_key)
 
-# OpenAI
-with open(OPENAI_KEY_PATH) as f:
-    openai_api_key = f.read().strip()
-openai_client = OpenAI(api_key=openai_api_key)
+    # Google Cloud API
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = GOOGLE_KEY_PATH
+    client = speech.SpeechClient()
 
-# Google Cloud API
-os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = GOOGLE_KEY_PATH
-client = speech.SpeechClient()
+    # AWS
+    with open(AWS_KEY_PATH) as f:
+        aws_key = json.loads(f.read().strip())
+
+except Exception:
+    openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+    client = speech.SpeechClient()
+    aws_key = os.getenv("AWS_KEY_CREDENTIALS")
+
 
 # AWS
 with open(AWS_KEY_PATH) as f:
     aws_key = json.loads(f.read().strip())
+    
 session = boto3.Session(
     aws_access_key_id=aws_key['access_key_id'],
     aws_secret_access_key=aws_key['secret_access_key'],

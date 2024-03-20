@@ -79,3 +79,12 @@ To add pib to a distinct logical network:
 
 For a range of available ROS_DOMAIN_IDs please check the official documentation at:  
 https://docs.ros.org/en/dashing/Concepts/About-Domain-ID.html
+
+### Docker 
+
+`password.env` required to run the voice assistant:
+
+```
+OPENAI_API_KEY=<OpenAI_API_KEY>
+GOOGLE_APPLICATION_CREDENTIALS=<path_to_google_application_credentials_json>
+```

@@ -18,6 +18,8 @@ class BrickletPin:
 		return f"BRICKLET-PIN[ pin: {self.pin}, bricklet: {uid} ]"
 
 	def apply_settings(self, settings_dto: dict[str, Any]) -> bool:
+		if not self.is_connected():
+			return False
 		try:
 			self.bricklet.set_pulse_width(self.pin, settings_dto['pulseWidthMin'], settings_dto['pulseWidthMax'])
 			self.bricklet.set_motion_configuration(self.pin, settings_dto['velocity'], settings_dto['acceleration'], settings_dto['deceleration'])
@@ -38,8 +40,16 @@ class BrickletPin:
 			settings_dto['turnedOn'] = self.bricklet.get_enabled(self.pin)
 		except Exception as error: logging.error(f'error occured while trying to get motor-settings: {str(error)}')
 		return settings_dto
+	
+	def is_connected(self) -> bool:
+		# X,Y and Z are the default uid of a Servo Bricklet 2.0 (updated ob boot by update_bricklet_uids.py)
+		if self.bricklet.uid_string != 'X' and self.bricklet.uid_string != 'Y' and self.bricklet.uid_string != 'Z':
+				return True
+		return False
 
 	def set_position(self, position: int, invert: bool) -> bool:
+		if not self.is_connected():
+			return False
 		if invert:
 			position = position * -1
 		try: self.bricklet.set_position(self.pin, position)
