@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import time
 from google.cloud import speech_v1p1beta1 as speech
@@ -11,13 +12,29 @@ import speech_recognition as sr
 from speech_recognition import WaitTimeoutError
 from openai import OpenAI
 import boto3
+import numpy as np
 
 
+logging.basicConfig(level=logging.INFO, 
+                    format="[%(levelname)s] [%(asctime)s] [%(process)d] [%(filename)s:%(lineno)s]: %(message)s")
 
-CREDENTIALS_PATH_PREFIX = "/home/pib/ros_working_dir/src/voice_assistant/credentials"
-OPENAI_KEY_PATH = CREDENTIALS_PATH_PREFIX + "/openai-key"
-GOOGLE_KEY_PATH = CREDENTIALS_PATH_PREFIX + "/google-key"
-AWS_KEY_PATH = CREDENTIALS_PATH_PREFIX + "/aws-key"
+
+ROS_WORKING_DIR = os.getenv("ROS_WORKING_DIR", "/home/pib/ros_working_dir")
+VOICE_ASSISTANT_DIRECTORY = os.getenv("VOICE_ASSISTANT_DIR", "/home/pib/ros_working_dir/src/voice_assistant")
+
+USER_AUDIO_INPUT_FILENAME = "UserInput.wav"
+AUDIO_INPUT_FILE = VOICE_ASSISTANT_DIRECTORY + "/audiofiles/" + USER_AUDIO_INPUT_FILENAME
+
+CREDENTIALS_DIRECTORY = VOICE_ASSISTANT_DIRECTORY + "/credentials"
+OPENAI_KEY_PATH = CREDENTIALS_DIRECTORY + "/openai-key"
+GOOGLE_KEY_PATH = CREDENTIALS_DIRECTORY + "/google-key"
+AWS_KEY_PATH = CREDENTIALS_DIRECTORY + "/aws-key"
+
+# Record audio settings
+FORMAT = pyaudio.paInt16
+CHANNELS = 1
+RATE = 44100
+CHUNK = 1024
 
 
 # Docker containers require enviromnent variables instead of hard-coded file paths
@@ -53,28 +70,58 @@ session = boto3.Session(
 
 
 
-def speech_to_text(pause_threshold: float) -> str:
-
-    r = sr.Recognizer()
-    r.pause_threshold = max(pause_threshold, r.non_speaking_duration)
-    print('----------------------------------------------ALSA')
-    with sr.Microphone() as source:
-        print('----------------------------------------------')
-        #r.adjust_for_ambient_noise(source) # this should not be done here
-        print('Say something!')
-        try: audio = r.listen(source, timeout=8)
-        except WaitTimeoutError: return ''
-    # Speech recognition using Google's Speech Recognition
+def speech_to_text(pause_threshold: float, silence_threshold: int) -> str:
+    logging.info("start recording")
+    start_recording(pause_threshold, silence_threshold)
     data = ''
     try:
-        data = r.recognize_google(audio, language="de-DE")
-        print('You said: ' + data)
-    except sr.UnknownValueError:
-        print('Google Speech Recognition could not understand')
-    except sr.RequestError as e:
-        print('Request error from Google Speech Recognition')
-    return data
+        logging.info('convert audio file into text')
+        audio_file = open(AUDIO_INPUT_FILE, "rb")
+        data = openai_client.audio.transcriptions.create(
+        model="whisper-1",
+        file=audio_file
+        )
+        logging.info("you sad: " + data.text)
+    except Exception as e:
+        logging.error(f"OpenAIError: {e}")
+    return data.text
 
+
+def start_recording(max_silence_seconds, silence_threshold):
+    # Audiosettings for record
+    def is_silent(data_chunk, threshold):
+        """Check whether a frame is below the minimum volume threshold"""
+        as_ints = np.frombuffer(data_chunk, dtype=np.int16)
+        return np.abs(as_ints).mean() < threshold
+    
+    audio = pyaudio.PyAudio()
+    stream = audio.open(format=FORMAT, channels=CHANNELS, rate=RATE, input=True, frames_per_buffer=CHUNK)
+    frames = []
+    silent_frames = 0
+    while True:
+        data = stream.read(CHUNK, exception_on_overflow = False)
+        frames.append(data)
+        if is_silent(data, silence_threshold):
+            silent_frames += 1
+            if(silent_frames>800):
+                break
+        else:
+            silent_frames = 0
+        if silent_frames >= max_silence_seconds * RATE / CHUNK:
+            logging.info("silence recgonized, stopping recording")
+            break
+    # Beenden der Aufnahme
+    stream.stop_stream()
+    stream.close()
+    audio.terminate()
+    # Speichern der Aufnahme in einer WAV-Datei
+    wave_file = wave.open(AUDIO_INPUT_FILE, 'wb')
+    wave_file.setnchannels(CHANNELS)
+    wave_file.setsampwidth(audio.get_sample_size(FORMAT))
+    wave_file.setframerate(RATE)
+    wave_file.writeframes(b''.join(frames))
+    wave_file.close()
+    logging.info("saving audio recording")
 
 
 def play_audio_from_text(text: str, voice: str) -> None:
