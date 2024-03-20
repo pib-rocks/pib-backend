@@ -14,11 +14,9 @@ from openai import OpenAI
 from google.cloud import texttospeech
 from google.cloud import speech_v1p1beta1 as speech
 import pyaudio
-import wave
 import os
 from multiprocessing import Process, Pipe, Lock
-import time
-import numpy as np
+
 
 from pib_voice.voice import gpt_chat, play_audio_from_file, speech_to_text
 from pib_api_client import chat_client, personality_client
@@ -37,13 +35,6 @@ START_SIGNAL_FILE = VOICE_ASSISTANT_PATH_PREFIX + "/audiofiles/assistant_start_l
 STOP_SIGNAL_FILE = VOICE_ASSISTANT_PATH_PREFIX + "/audiofiles/assistant_stop_listening.wav"
 
 AUDIO_INPUT_FILE = "/home/pib/ros_working_dir/UserInput.wav"
-
-# Record audio settings
-FORMAT = pyaudio.paInt16
-CHANNELS = 1
-RATE = 44100
-CHUNK = 1024
-WAVE_OUTPUT_FILENAME = "UserInput.wav"
 SILENCE_THRESHOLD = 500
 
 pib_api_client_lock = Lock()
@@ -246,117 +237,16 @@ class VoiceAssistantNode(Node):
             self.chat_message_publisher.publish(chat_message_ros)
             
             
-
-
-
-<<<<<<< HEAD
 def worker_target(chat_id: str, personality: Personality, worker_to_ros: Connection):
 
     while True:
         play_audio_from_file(START_SIGNAL_FILE)
-        user_input = speech_to_text(personality.pause_threshold)
+        user_input = speech_to_text(personality.pause_threshold, SILENCE_THRESHOLD)
         play_audio_from_file(STOP_SIGNAL_FILE)
         if user_input != '': worker_to_ros.send(TransientChatMessage(user_input, True, chat_id, None))
         for sentence, is_final in gpt_chat(user_input, personality.description):
             worker_to_ros.send(TransientChatMessage(sentence, False, chat_id, personality.gender, is_final))
         worker_to_ros.recv()
-
-=======
-def speech_to_text(pause_threshold: float, silence_threshold:int) -> str:
-    logging.info("start recording")
-    start_recording(pause_threshold, silence_threshold)
-    data = ''
-    try:
-        print('---------------- Convert Audio file into text -----------------------')
-        audio_file = open(AUDIO_INPUT_FILE, "rb")
-        data = openai_client.audio.transcriptions.create(
-        model="whisper-1", 
-        file=audio_file
-        )
-        print("You sad: " + data.text)
-    except Exception as e:
-        logging.error(f"OpenAIError: {e}")
-    return data.text
-
-
-
-def gpt_chat(input_text: str, personality_description: str) -> str:
-    logging.info("generate chat completion")
-    response = openai_client.chat.completions.create(
-        model="gpt-4-0314",
-        messages=[
-            {
-                "role": "system",
-                "content": personality_description,
-            },
-            {
-                "role": "user",
-                "content": input_text,
-            },
-        ]
-    )
-
-    return response.choices[0].message.content
-
-
-def text_to_speech(text_input: str, gender: str) -> None:
-
-    client = texttospeech.TextToSpeechClient()
-    synthesis_input = texttospeech.SynthesisInput(text=text_input)
-    voice = texttospeech.VoiceSelectionParams(
-        language_code="de-DE",
-        name=f"de-DE-Standard-{'A' if gender == 'Female' else 'B'}"
-    )
-    audio_config = texttospeech.AudioConfig(
-        audio_encoding=texttospeech.AudioEncoding.LINEAR16
-    )
-    response = client.synthesize_speech(
-        input=synthesis_input, voice=voice, audio_config=audio_config
-    )
-    with open(AUDIO_OUTPUT_FILE, "wb") as out:
-        out.write(response.audio_content)
-    os.chmod(AUDIO_OUTPUT_FILE, 0o777)
-    
-
-def play_audio(file_path: str) -> None:
-
-    CHUNK = 1024
-    wf = wave.open(file_path, 'rb')
-    print('++++++++++++++++++++++++++++++++++++++ALSA')
-    p = pyaudio.PyAudio()
-    print('++++++++++++++++++++++++++++++++++++++')
-    logging.info("playing audio file...")
-    stream = p.open(
-        format=p.get_format_from_width(wf.getsampwidth()),
-        channels=wf.getnchannels(),
-        rate=wf.getframerate(),
-        output=True
-    )
-
-    data = wf.readframes(CHUNK)
-    while data:
-        stream.write(data)
-        data = wf.readframes(CHUNK)
-
-    stream.stop_stream()
-    stream.close()
-    p.terminate()
-
-
-
-def worker_target(chat_id: str, personality: Personality, chat_message_to_main: Connection):
-    
-    while True:
-        play_audio(START_SIGNAL_FILE)
-        user_input = speech_to_text(personality.pause_threshold, SILENCE_THRESHOLD)
-        play_audio(STOP_SIGNAL_FILE)
-        # Why check on you? When OpenAI converts an empty wav or mp3 file to Text it always returns 'you'
-        if user_input != 'you': chat_message_to_main.send(TransientChatMessage(user_input, True, chat_id))
-        va_response = gpt_chat(user_input, personality.description)
-        chat_message_to_main.send(TransientChatMessage(va_response, False, chat_id))
-        text_to_speech(va_response, personality.gender)
-        play_audio(AUDIO_OUTPUT_FILE)      
->>>>>>> origin/develop
 
 
 def ros_target(ros_to_main: Connection):
@@ -368,42 +258,7 @@ def ros_target(ros_to_main: Connection):
     executor.spin()
     node.destroy_node()
     rclpy.shutdown()
-        
-def start_recording(max_silence_seconds, silence_threshold):
-    # Audiosettings for record
-    def is_silent(data_chunk, threshold):
-        """Check whether a frame is below the minimum volume threshold"""
-        as_ints = np.frombuffer(data_chunk, dtype=np.int16)
-        return np.abs(as_ints).mean() < threshold
-    audio = pyaudio.PyAudio()
-    print("------------ Recording ------------ Say something ------------")
-    stream = audio.open(format=FORMAT, channels=CHANNELS, rate=RATE, input=True, frames_per_buffer=CHUNK)
-    frames = []
-    silent_frames = 0
-    while True:
-        data = stream.read(CHUNK, exception_on_overflow = False)
-        frames.append(data)
-        if is_silent(data, silence_threshold):
-            silent_frames += 1
-            if(silent_frames>800):
-                break
-        else:
-            silent_frames = 0
-        if silent_frames >= max_silence_seconds * RATE / CHUNK:
-            print("----------- Silent recognized ----- Stoped recording ------------")
-            break
-    # Beenden der Aufnahme
-    stream.stop_stream()
-    stream.close()
-    audio.terminate()
-    # Speichern der Aufnahme in einer WAV-Datei
-    wave_file = wave.open(AUDIO_INPUT_FILE, 'wb')
-    wave_file.setnchannels(CHANNELS)
-    wave_file.setsampwidth(audio.get_sample_size(FORMAT))
-    wave_file.setframerate(RATE)
-    wave_file.writeframes(b''.join(frames))
-    wave_file.close()
-    print("------------ Saving ---------------")
+
 
 def main(args=None):
 
@@ -421,23 +276,14 @@ def main(args=None):
         worker_process = Process(target=worker_target, args=(chat_id, personality, worker_to_ros))    
         worker_process.start()
 
-<<<<<<< HEAD
-        print('ON')
-        main_to_ros.recv()
-        print('OFF')
-        worker_process.terminate()
-=======
         logging.info("VA turned on")
-        while not state_from_ros.poll():
-            while (chat_message_from_worker.poll()):
-                chat_message_to_ros.send(chat_message_from_worker.recv())
-            time.sleep(MAIN_LOOP_RECEIVE_SIGNAL_WAITING_PERIOD_SECONDS)      
+        main_to_ros.recv()
         logging.info("VA turned off")
-        
         worker_process.terminate()
+
+
         play_audio(STOP_SIGNAL_FILE)
         state_from_ros.recv()
->>>>>>> origin/develop
 
 
 
