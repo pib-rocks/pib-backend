@@ -20,7 +20,8 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'assistant = voice_assistant.assistant:main'
+            'assistant = voice_assistant.assistant:main',
+            'text_to_speech = voice_assistant.text_to_speech:main'
         ],
     },
 )

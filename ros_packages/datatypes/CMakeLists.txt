@@ -22,6 +22,8 @@ rosidl_generate_interfaces(${PROJECT_NAME}
 	"srv/SetVoiceAssistantState.srv"
 	"srv/ProxyRunProgramStart.srv"
 	"srv/ProxyRunProgramStop.srv"
+	"srv/TextToSpeechPush.srv"
+	"srv/TextToSpeechClear.srv"
 	"action/RunProgram.action"
 )
 
