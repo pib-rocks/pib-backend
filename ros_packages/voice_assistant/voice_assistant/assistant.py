@@ -244,8 +244,9 @@ def worker_target(chat_id: str, personality: Personality, worker_to_ros: Connect
         user_input = speech_to_text(personality.pause_threshold, SILENCE_THRESHOLD)
         play_audio_from_file(STOP_SIGNAL_FILE)
         if user_input != '':
-            for sentence, is_final in gpt_chat(user_input, personality.description):
-                worker_to_ros.send(TransientChatMessage(sentence, False, chat_id, personality.gender, is_final))
+            worker_to_ros.send(TransientChatMessage(user_input, False, chat_id, personality.gender, True))
+        for sentence, is_final in gpt_chat(user_input, personality.description):
+            worker_to_ros.send(TransientChatMessage(sentence, False, chat_id, personality.gender, is_final))
         worker_to_ros.recv()
 
 
