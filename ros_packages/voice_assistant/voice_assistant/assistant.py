@@ -279,7 +279,7 @@ def main(args=None):
         main_to_ros.recv()
         logging.info("VA turned off")
         worker_process.terminate()
-
+        play_audio_from_file(STOP_SIGNAL_FILE)
 
 if __name__ == "__main__":
     main()
