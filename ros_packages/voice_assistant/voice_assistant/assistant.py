@@ -9,10 +9,7 @@ from rclpy.task import Future
 from datatypes.srv import SetVoiceAssistantState, GetVoiceAssistantState, TextToSpeechPush, TextToSpeechClear
 from datatypes.msg import ChatMessage, VoiceAssistantState
 
-<<<<<<< HEAD
-from multiprocessing import Process, Pipe
 from threading import Lock
-=======
 from openai import OpenAI
 from google.cloud import texttospeech
 from google.cloud import speech_v1p1beta1 as speech
@@ -22,7 +19,6 @@ import os
 from multiprocessing import Process, Pipe, Lock
 import time
 import numpy as np
->>>>>>> origin/develop
 
 from pib_voice.voice import gpt_chat, play_audio_from_file, speech_to_text
 from pib_api_client import chat_client, personality_client
