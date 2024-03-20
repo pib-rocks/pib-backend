@@ -243,9 +243,9 @@ def worker_target(chat_id: str, personality: Personality, worker_to_ros: Connect
         play_audio_from_file(START_SIGNAL_FILE)
         user_input = speech_to_text(personality.pause_threshold, SILENCE_THRESHOLD)
         play_audio_from_file(STOP_SIGNAL_FILE)
-        if user_input != '': worker_to_ros.send(TransientChatMessage(user_input, True, chat_id, None))
-        for sentence, is_final in gpt_chat(user_input, personality.description):
-            worker_to_ros.send(TransientChatMessage(sentence, False, chat_id, personality.gender, is_final))
+        if user_input != '':
+            for sentence, is_final in gpt_chat(user_input, personality.description):
+                worker_to_ros.send(TransientChatMessage(sentence, False, chat_id, personality.gender, is_final))
         worker_to_ros.recv()
 
 
@@ -280,11 +280,6 @@ def main(args=None):
         main_to_ros.recv()
         logging.info("VA turned off")
         worker_process.terminate()
-
-
-        play_audio(STOP_SIGNAL_FILE)
-        state_from_ros.recv()
-
 
 
 if __name__ == "__main__":
