@@ -31,6 +31,15 @@ git clone https://github.com/geaxgx/depthai_hand_tracker.git
 cd depthai_hand_tracker
 pip install -r requirements.txt
 
+# Install SLAM dependencies
+sudo apt install -y ros-humble-depthai-ros
+sudo apt install -y ros-humble-rtabmap
+
+# Currently, ros-humble-rtabmap-ros does not work on ARM devices anymore. 
+# Once it does, packages below can be replaced with it
+sudo apt install -y ros-humble-rtabmap-launch
+sudo apt install -y ros-humble-rtabmap-examples
+
 # move ros-packages into working directory
 cp -r "$BACKEND_DIR/ros_packages" "$ROS_WORKING_DIR/src"
 sudo chmod -R 700 "$ROS_WORKING_DIR"
@@ -40,6 +49,7 @@ readonly VOICE_ASSISTANT_CREDENTIALS_DIR="$ROS_WORKING_DIR/src/voice_assistant/c
 mkdir "$VOICE_ASSISTANT_CREDENTIALS_DIR"
 touch "$VOICE_ASSISTANT_CREDENTIALS_DIR/openai-key"
 touch "$VOICE_ASSISTANT_CREDENTIALS_DIR/google-key"
+printf '{\n\t"access_key_id": "",\n\t"secret_access_key": "",\n\t"region_name": ""\n}\n' > "$VOICE_ASSISTANT_CREDENTIALS_DIR/aws-key"
 
 # Create virtual-environment for user programs
 sudo apt-get install -y python3.10-venv
@@ -52,6 +62,12 @@ python3 -m pip install numpy==1.26.3
 python3 -m pip install depthai==2.24.0.0
 python3 -m pip install blobconverter==1.4.2
 deactivate
+
+echo "Install local packages..."
+
+# install local utility packages
+pip install "$ROS_WORKING_DIR""/src/motors/pib_motors"
+pip install "$ROS_WORKING_DIR""/src/voice_assistant/pib_voice"
 
 echo "Booting all nodes..."
 
@@ -68,7 +84,6 @@ sudo mv "$ROS_MOTORS_BOOT_DIR/bricklet_uid_boot.service" /etc/systemd/system
 sudo systemctl enable bricklet_uid_boot.service
 
 # Boot motor control node
-pip install "$ROS_WORKING_DIR/src/motors/pib_motors"
 sudo chmod 700 "$ROS_MOTORS_BOOT_DIR/ros_motor_control_node_boot.sh"
 sudo chmod 700 "$ROS_MOTORS_BOOT_DIR/ros_motor_control_node_boot.service"
 sudo mv "$ROS_MOTORS_BOOT_DIR/ros_motor_control_node_boot.service" /etc/systemd/system
@@ -85,6 +100,12 @@ sudo chmod 700 "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_voice_assistant_boot.sh"
 sudo chmod 700 "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_voice_assistant_boot.service"
 sudo mv "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_voice_assistant_boot.service" /etc/systemd/system
 sudo systemctl enable ros_voice_assistant_boot.service
+
+# Boot text-to-speech
+sudo chmod 700 "$ROS_VOICE_ASSISTANT_BOOT_DIR""/ros_text_to_speech_boot.sh"
+sudo chmod 700 "$ROS_VOICE_ASSISTANT_BOOT_DIR""/ros_text_to_speech_boot.service"
+sudo mv "$ROS_VOICE_ASSISTANT_BOOT_DIR""/ros_text_to_speech_boot.service" /etc/systemd/system
+sudo systemctl enable ros_text_to_speech_boot.service
 
 # Boot program node
 sudo chmod 700 "$ROS_PROGRAMS_BOOT_DIR/ros_program_boot.sh"
