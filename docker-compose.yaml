@@ -16,6 +16,7 @@ services:
       - "5000:5000"
     volumes:
       - ./pib_api/flask/:/app
+      - programs:/root/cerebra_programs
     environment:
       - SQLALCHEMY_DATABASE_URI=sqlite:////app/pibdata.db
     command: "bash -c 'flask --app run db upgrade && flask --app run seed_db && flask --app run run --host 0.0.0.0 --debug'"
@@ -29,20 +30,22 @@ services:
     networks:
       - pib-network
     # For Linux, mount sound and camera
-    devices:
-      - /dev/snd:/dev/snd
-      - /dev/bus/usb:/dev/bus/usb
+    # devices:
+    #   - /dev/snd:/dev/snd
+    #   - /dev/bus/usb:/dev/bus/usb
     ports:
       - "9090:9090"
     environment:
       - FLASK_API_BASE_URL=http://flask-app:5000
       - TINKERFORGE_HOST=tinkerforge-brickd
       - TINKERFORGE_PORT=4223
-      - PYTHON_BINARY=/usr/local/bin/python3
+      - PYTHON_BINARY=/usr/bin/python3
       - PROGRAM_DIR=/ros_ws/cerebra_programs
       - VOICE_ASSISTANT_DIR=/ros_ws/voice_assistant
     env_file:
       - password.env
+    volumes:
+      - programs:/ros_ws/cerebra_programs
     command: "/bin/bash -c 'source docker_run_all_nodes.sh'"
     depends_on:
       - flask-app
@@ -59,5 +62,9 @@ services:
       - "4223:4223"
     tty: true
     # Mount bricklets
-    devices:
-      - /dev/gpiomem:/dev/gpiomem
+    # devices:
+    #   - /dev/gpiomem:/dev/gpiomem
+
+
+volumes:
+  programs:
