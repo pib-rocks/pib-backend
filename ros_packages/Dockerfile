@@ -22,22 +22,31 @@ RUN curl -sSL https://download.tinkerforge.com/apt/$(. /etc/os-release; echo $ID
         zsh \
         git \
         software-properties-common \
-        wget
+        wget \
+        python3-rosdep
 
 # OAK-D-LITE CAMERA SETUP (TAKEN FROM: https://github.com/luxonis/depthai-ros/blob/humble/Dockerfile)
-# RUN sh -c "$(wget https://raw.github.com/ohmyzsh/ohmyzsh/master/tools/install.sh -O -)"
-# ENV WS=/ws
-# RUN mkdir -p $WS/src
-# COPY ./ .$WS/src/depthai-ros
-# RUN cd .$WS/ && rosdep install --from-paths src --ignore-src  -y
-# RUN cd .$WS/ && . /opt/ros/humble/setup.sh && ./src/depthai-ros/build.sh -s $BUILD_SEQUENTIAL -r 1 -m 1 
-# RUN if [ "$USE_RVIZ" = "1" ] ; then echo "RVIZ ENABLED" && sudo apt install -y ros-humble-rviz2 ros-humble-rviz-imu-plugin ; else echo "RVIZ NOT ENABLED"; fi
-# RUN echo "if [ -f ${WS}/install/setup.zsh ]; then source ${WS}/install/setup.zsh; fi" >> $HOME/.zshrc
-# RUN echo 'eval "$(register-python-argcomplete3 ros2)"' >> $HOME/.zshrc
-# RUN echo 'eval "$(register-python-argcomplete3 colcon)"' >> $HOME/.zshrc
-# RUN echo "if [ -f ${WS}/install/setup.bash ]; then source ${WS}/install/setup.bash; fi" >> $HOME/.bashrc
+# Clone depthai-python repository
+WORKDIR /
+RUN git clone --recurse-submodules https://github.com/luxonis/depthai-python.git
+WORKDIR /depthai-python/examples
+
+# Install depthai-python requirements
+RUN python3 /depthai-python/examples/install_requirements.py
+
+# Clone and install depthai_hand_tracker
+WORKDIR /
+RUN git clone https://github.com/geaxgx/depthai_hand_tracker.git
+WORKDIR /depthai_hand_tracker
+RUN pip install -r requirements.txt
+
+WORKDIR /ros_ws
 
 # Python Dependencies for all ros_packages
+COPY ./ros_packages/requirements.txt .
+RUN pip install -r requirements.txt
+RUN pip install --upgrade google-cloud-speech
+
 RUN pip install tinkerforge
 COPY ./pib_api/client ./client
 RUN pip install ./client/
@@ -45,10 +54,8 @@ RUN pip install ./client/
 COPY ./ros_packages/motors/pib_motors ./motors/pib_motors
 RUN pip install ./motors/pib_motors
 
-COPY ./ros_packages/requirements.txt .
-RUN pip install -r requirements.txt
-RUN pip install --upgrade google-cloud-speech
-
+COPY ./ros_packages/voice_assistant/pib_voice ./voice_assistant/pib_voice
+RUN pip install ./voice_assistant/pib_voice
 
 # Copy ros_packages
 COPY ./ros_packages/datatypes ./datatypes
@@ -56,8 +63,7 @@ COPY ./ros_packages/voice_assistant ./voice_assistant
 COPY ./ros_packages/programs ./programs
 COPY ./ros_packages/camera ./camera
 COPY ./ros_packages/motors ./motors
+
 COPY ./ros_packages/pib_launch.yaml .
-
-
 COPY ./ros_packages/docker_run_all_nodes.sh .
 CMD /bin/bash -c 'source docker_run_all_nodes.sh'
