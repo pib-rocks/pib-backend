@@ -18,7 +18,7 @@ def create_personality(personality_dto: dict[str, Any]) -> list[Personality]:
         gender=personality_dto['gender'],
         pauseThreshold=personality_dto['pauseThreshold'],
         personalityId=str(uuid.uuid4()),
-        assistant_id = personality_dto['assistant'])
+        assistant_id=personality_dto['assistant_id'])
     db.session.add(personality)
     db.session.flush()
     return personality
