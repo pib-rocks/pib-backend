@@ -12,6 +12,7 @@ from model.chat_model import Chat
 from model.motor_model import Motor
 from model.personality_model import Personality
 from model.program_model import Program
+from model.assistant_model import AssistantModel
 
 
 @app.cli.command("seed_db")
@@ -22,7 +23,7 @@ def seed_db() -> None:
     _create_bricklet_data()
     _create_camera_data()
     _create_program_data()
-    _create_chat_data()
+    _create_chat_data_and_assistant()
     db.session.commit()
     print("Seeded the database with default data.")
 
@@ -92,12 +93,17 @@ def _create_program_data() -> None:
     db.session.add(program)
     db.session.flush()
 
+def _create_chat_data_and_assistant() -> None:
 
-def _create_chat_data() -> None:
+    gpt4 = AssistantModel(visual_name="GPT-4", api_name="gpt-4")
+    llava = AssistantModel(visual_name="LLaVA", api_name="llava")
+    db.session.add_all([gpt4, llava])
+    db.session.flush()
+    
     p_eva = Personality(name="Eva", personalityId="8f73b580-927e-41c2-98ac-e5df070e7288", gender="female",
-                        pauseThreshold=0.8)
+                        pauseThreshold=0.8, assistant_id=gpt4.id)
     p_thomas = Personality(name="Thomas", personalityId="8b310f95-92cd-4512-b42a-d3fe29c4bb8a", gender="male",
-                           pauseThreshold=0.8)
+                           pauseThreshold=0.8, assistant_id=gpt4.id)
     db.session.add_all([p_eva, p_thomas])
     db.session.flush()
 
@@ -114,6 +120,8 @@ def _create_chat_data() -> None:
                      chatId="b4f01552-0c09-401c-8fde-fda753fb0261")
     db.session.add_all([m1, m2])
     db.session.flush()
+
+
 
 
 def _get_motor_list() -> [dict[str, Any]]:
