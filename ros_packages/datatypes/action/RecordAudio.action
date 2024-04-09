@@ -1,0 +1,5 @@
+float32 max_silent_seconds_before
+float32 max_silent_seconds_after
+---
+string transcribed_text
+---

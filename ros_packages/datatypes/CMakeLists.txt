@@ -22,9 +22,12 @@ rosidl_generate_interfaces(${PROJECT_NAME}
 	"srv/SetVoiceAssistantState.srv"
 	"srv/ProxyRunProgramStart.srv"
 	"srv/ProxyRunProgramStop.srv"
-	"srv/TextToSpeechPush.srv"
-	"srv/TextToSpeechClear.srv"
+	"srv/ClearPlaybackQueue.srv"
 	"action/RunProgram.action"
+	"action/RecordAudio.action"
+	"action/Chat.action"
+	"action/PlayAudioFromFile.action"
+	"action/PlayAudioFromSpeech.action"
 )
 
 ament_export_dependencies(rosidl_default_runtime)
