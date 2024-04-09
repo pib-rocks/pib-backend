@@ -169,7 +169,7 @@ def play_audio_from_file(file_path: str) -> None:
 
 
 def llava_chat(input_text: str, personality_description: str, image_base64: str) -> Tuple[str, bool]:
-    LLAVA_URL = "http://bravo.intra.isento.net:11434/api/chat"
+    LLAVA_URL = os.getenv("LLAVA_URL")
     request = {
             "model": "llava",
             "messages": [
