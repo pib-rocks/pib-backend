@@ -95,8 +95,9 @@ def _create_program_data() -> None:
 
 def _create_chat_data_and_assistant() -> None:
 
-    gpt4 = AssistantModel(visual_name="GPT-4", api_name="gpt-4")
-    llava = AssistantModel(visual_name="LLaVA", api_name="llava")
+    gpt4 = AssistantModel(visual_name="GPT-4", api_name="gpt-4", has_image_support=False)
+    gpt4 = AssistantModel(visual_name="GPT-3.5", api_name="gpt-3.5-turbo", has_image_support=False)
+    llava = AssistantModel(visual_name="LLaVA", api_name="llava", has_image_support=True)
     db.session.add_all([gpt4, llava])
     db.session.flush()
     
