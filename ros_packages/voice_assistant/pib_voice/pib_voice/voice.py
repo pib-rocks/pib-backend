@@ -2,6 +2,8 @@ import json
 import logging
 import os
 import time
+
+import requests
 from google.cloud import speech_v1p1beta1 as speech
 from typing import Tuple
 import pyaudio
@@ -14,10 +16,8 @@ from openai import OpenAI
 import boto3
 import numpy as np
 
-
-logging.basicConfig(level=logging.INFO, 
+logging.basicConfig(level=logging.INFO,
                     format="[%(levelname)s] [%(asctime)s] [%(process)d] [%(filename)s:%(lineno)s]: %(message)s")
-
 
 ROS_WORKING_DIR = os.getenv("ROS_WORKING_DIR", "/home/pib/ros_working_dir")
 VOICE_ASSISTANT_DIRECTORY = os.getenv("VOICE_ASSISTANT_DIR", "/home/pib/ros_working_dir/src/voice_assistant")
@@ -35,7 +35,6 @@ FORMAT = pyaudio.paInt16
 CHANNELS = 1
 RATE = 44100
 CHUNK = 1024
-
 
 # Docker containers require enviromnent variables instead of hard-coded file paths
 try:
@@ -58,16 +57,14 @@ except Exception:
     client = speech.SpeechClient()
     aws_key = os.getenv("AWS_KEY_CREDENTIALS")
 
-
 # AWS
 with open(AWS_KEY_PATH) as f:
     aws_key = json.loads(f.read().strip())
-    
+
 session = boto3.Session(
     aws_access_key_id=aws_key['access_key_id'],
     aws_secret_access_key=aws_key['secret_access_key'],
     region_name=aws_key['region_name'])
-
 
 
 def speech_to_text(pause_threshold: float, silence_threshold: int) -> str:
@@ -78,8 +75,8 @@ def speech_to_text(pause_threshold: float, silence_threshold: int) -> str:
         logging.info('convert audio file into text')
         audio_file = open(AUDIO_INPUT_FILE, "rb")
         data = openai_client.audio.transcriptions.create(
-        model="whisper-1",
-        file=audio_file
+            model="whisper-1",
+            file=audio_file
         )
         logging.info("you sad: " + data.text)
     except Exception as e:
@@ -93,17 +90,17 @@ def start_recording(max_silence_seconds, silence_threshold):
         """Check whether a frame is below the minimum volume threshold"""
         as_ints = np.frombuffer(data_chunk, dtype=np.int16)
         return np.abs(as_ints).mean() < threshold
-    
+
     audio = pyaudio.PyAudio()
     stream = audio.open(format=FORMAT, channels=CHANNELS, rate=RATE, input=True, frames_per_buffer=CHUNK)
     frames = []
     silent_frames = 0
     while True:
-        data = stream.read(CHUNK, exception_on_overflow = False)
+        data = stream.read(CHUNK, exception_on_overflow=False)
         frames.append(data)
         if is_silent(data, silence_threshold):
             silent_frames += 1
-            if(silent_frames>800):
+            if (silent_frames > 800):
                 break
         else:
             silent_frames = 0
@@ -125,17 +122,16 @@ def start_recording(max_silence_seconds, silence_threshold):
 
 
 def play_audio_from_text(text: str, voice: str) -> None:
-
     pya = pyaudio.PyAudio()
     stream = pya.open(format=pya.get_format_from_width(width=2), channels=1, rate=16000, output=True)
     polly_client = session.client('polly')
 
     response = polly_client.synthesize_speech(
         VoiceId=voice,
-        OutputFormat='pcm', 
+        OutputFormat='pcm',
         Text=text,
         Engine='neural')
-    
+
     stream.write(response['AudioStream'].read())
     # wait for a brief period of time before closing the stream. Otherwise end of audio is cut off,
     # since polly does not insert any silence at the end of the returned audio. Alternatively,
@@ -148,9 +144,7 @@ def play_audio_from_text(text: str, voice: str) -> None:
     pya.terminate()
 
 
-
 def play_audio_from_file(file_path: str) -> None:
-
     CHUNK = 1024
     wf = wave.open(file_path, 'rb')
     print('++++++++++++++++++++++++++++++++++++++ALSA')
@@ -173,6 +167,42 @@ def play_audio_from_file(file_path: str) -> None:
     stream.close()
     pya.terminate()
 
+
+def llava_chat(input_text: str, personality_description: str, image_base64: str) -> Tuple[str, bool]:
+    LLAVA_URL = "http://bravo.intra.isento.net:11434/api/chat"
+    request = {
+            "model": "llava",
+            "messages": [
+                {
+                    "role": "system",
+                    "content": personality_description
+                },
+                {
+                    "role": "user",
+                    "content": input_text,
+                    "images": [image_base64]
+                }
+            ]
+        }
+    s = requests.Session()
+    sentence_boundary = re.compile(r"[^\d | ^A-Z][\.|!|\?|:]")
+    cur_sentence = ""
+    prev_sentence = ""
+
+    # Always previous sentence is returned, to be able to mark the final sentence
+    with s.post(LLAVA_URL, json=request, headers=None, stream=True) as resp:
+        for line in resp.iter_lines():
+            if not line:
+                break
+            current_token = json.loads(line)["message"]["content"]
+            current_token = current_token.replace("\n", " ")
+            cur_sentence += current_token
+            if sentence_boundary.search(cur_sentence):
+                if prev_sentence != "":
+                    yield prev_sentence, False
+                prev_sentence = cur_sentence.strip()
+                cur_sentence = ""
+        yield prev_sentence, True
 
 
 def gpt_chat(input_text: str, personality_description: str) -> Tuple[str, bool]:
@@ -200,7 +230,7 @@ def gpt_chat(input_text: str, personality_description: str) -> Tuple[str, bool]:
     sentence_boundary = re.compile(r"[^\d | ^A-Z][\.|!|\?|:]")
     cur_sentence = ""
     prev_sentence = ""
-    
+
     # Always previous sentence is returned, to be able to mark the final sentence
     for stream in response:
         current_token = stream.choices[0].delta.content

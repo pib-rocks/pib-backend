@@ -8,6 +8,7 @@ from rclpy.task import Future
 
 from datatypes.srv import SetVoiceAssistantState, GetVoiceAssistantState, TextToSpeechPush, TextToSpeechClear
 from datatypes.msg import ChatMessage, VoiceAssistantState
+from std_msgs.msg import String
 
 from threading import Lock
 from openai import OpenAI
@@ -21,10 +22,11 @@ from pib_voice.voice import gpt_chat, play_audio_from_file, speech_to_text
 from pib_api_client import chat_client, personality_client
 import logging
 
-# Define custom logging as ROS logger only available in Node
-logging.basicConfig(level=logging.INFO, 
-                    format="[%(levelname)s] [%(asctime)s] [%(process)d] [%(filename)s:%(lineno)s]: %(message)s")
+from voice_assistant.pib_voice.pib_voice.voice import llava_chat
 
+# Define custom logging as ROS logger only available in Node
+logging.basicConfig(level=logging.INFO,
+                    format="[%(levelname)s] [%(asctime)s] [%(process)d] [%(filename)s:%(lineno)s]: %(message)s")
 
 RECEIVE_CHAT_MESSAGE_WAITING_PERIOD_SECONDS = 0.1
 
@@ -37,14 +39,16 @@ SILENCE_THRESHOLD = 500
 
 pib_api_client_lock = Lock()
 
+last_image = ""
 
 class Personality:
 
-    def __init__(self, gender: str, pause_threshold: float, description: str | None = None):
+    def __init__(self, gender: str, pause_threshold: float, description: str | None = None, assistant_model: str = "gpt-4", has_image_support: bool = False):
         self.gender = gender
         self.pause_threshold = pause_threshold
         self.description = description if description is not None else 'Du bist pib, ein humanoider Roboter'
-
+        self.assistant_model = assistant_model
+        self.has_image_support = has_image_support
 
 
 class TransientChatMessage:
@@ -55,7 +59,6 @@ class TransientChatMessage:
         self.chat_id = chat_id
         self.gender = gender
         self.is_final = is_final
-
 
 
 class VoiceAssistantNode(Node):
@@ -69,7 +72,7 @@ class VoiceAssistantNode(Node):
         va_state_callback_group = MutuallyExclusiveCallbackGroup()
         timer_callback_group = MutuallyExclusiveCallbackGroup()
 
-    	# stores the current state of the va, to allow the current
+        # stores the current state of the va, to allow the current
         # state to be retrieved via the 'get_voice_assistant_state'-service
         self.state = VoiceAssistantState(turned_on=False, chat_id='')
         self.state_lock: type[Lock] = Lock()
@@ -88,7 +91,7 @@ class VoiceAssistantNode(Node):
 
         # Service for setting VoiceAssistantState
         self.set_voice_assistant_service = self.create_service(
-            SetVoiceAssistantState, 
+            SetVoiceAssistantState,
             'set_voice_assistant_state',
             self.set_voice_assistant_state,
             callback_group=va_state_callback_group
@@ -96,7 +99,7 @@ class VoiceAssistantNode(Node):
 
         # Service for getting current VoiceAssistantState
         self.get_voice_assistant_service = self.create_service(
-            GetVoiceAssistantState, 
+            GetVoiceAssistantState,
             'get_voice_assistant_state',
             self.get_voice_assistant_state,
             callback_group=va_state_callback_group
@@ -104,23 +107,29 @@ class VoiceAssistantNode(Node):
 
         # Publisher for VoiceAssistantState
         self.voice_assistant_state_publisher = self.create_publisher(
-            VoiceAssistantState, 
-            "voice_assistant_state", 
+            VoiceAssistantState,
+            "voice_assistant_state",
             10,
             callback_group=va_state_callback_group
         )
 
         # Publisher for ChatMessages
         self.chat_message_publisher = self.create_publisher(
-            ChatMessage, 
-            "chat_messages", 
+            ChatMessage,
+            "chat_messages",
             10,
             callback_group=chat_message_callback_group
         )
 
+        self.camera_subscriber = self.self.create_subscription(
+            String,
+            'camera_topic',
+            self.get_image_callback,
+            10
+        )
         # Check for Start Signal periodically
         self.timer = self.create_timer(
-            RECEIVE_CHAT_MESSAGE_WAITING_PERIOD_SECONDS, 
+            RECEIVE_CHAT_MESSAGE_WAITING_PERIOD_SECONDS,
             self.forward_messages,
             callback_group=timer_callback_group
         )
@@ -129,7 +138,9 @@ class VoiceAssistantNode(Node):
         self.tts_push_client = self.create_client(TextToSpeechPush, 'tts_push')
         self.tts_clear_client = self.create_client(TextToSpeechClear, 'tts_clear')
 
-
+    def get_image_callback(self, msg):
+        logging.info("IMAGE CALLBACK", msg)
+        last_image = msg.data
 
     def get_voice_assistant_state(self, _, response: GetVoiceAssistantState.Response):
 
@@ -138,47 +149,51 @@ class VoiceAssistantNode(Node):
             response.voice_assistant_state.turned_on = self.state.turned_on
 
         return response
-    
-
 
     def get_personality_from_chat_id(self, chat_id: str) -> Personality | None:
 
         with pib_api_client_lock:
             successful, chat_dto = chat_client.get_chat(chat_id)
-            if not successful: return None
+            if not successful:
+                return None
             successful, personality_dto = personality_client.get_personality(chat_dto['personalityId'])
-            if not successful: return None
+            if not successful:
+                return None
+            assistant_model, has_image_support = personality_client.get_assistant_model(personality_dto['assistant_id'])
             return Personality(
                 personality_dto['gender'],
                 personality_dto['pauseThreshold'],
-                personality_dto['description'])
-            
-        
+                personality_dto['description'],
+                assistant_model,
+                has_image_support
+            )
 
-    def set_voice_assistant_state(self, request: SetVoiceAssistantState.Request, response: SetVoiceAssistantState.Response):
+    def set_voice_assistant_state(self, request: SetVoiceAssistantState.Request,
+                                  response: SetVoiceAssistantState.Response):
 
         request_state: VoiceAssistantState = request.voice_assistant_state
 
         with self.state_lock:
-            
+
             try:
                 if request_state.turned_on == self.state.turned_on:
                     raise Exception(f"voice assistant is already turned {'on' if request_state.turned_on else 'off'}.")
-                
+
                 elif request_state.turned_on:
                     personality = self.get_personality_from_chat_id(request_state.chat_id)
-                    if personality is None: 
+                    if personality is None:
                         raise Exception(f"no personality for chat with id {request_state.chat_id} found.")
                     self.ros_to_main.send((personality, request_state.chat_id))
-                    with self.ros_to_worker_lock: self.ros_to_worker = self.ros_to_main.recv()
-                
+                    with self.ros_to_worker_lock:
+                        self.ros_to_worker = self.ros_to_main.recv()
+
                 else:
                     self.tts_clear_client.call(TextToSpeechClear.Request())
-                    with self.ros_to_worker_lock: 
+                    with self.ros_to_worker_lock:
                         self.worker_changed = True
                         self.ros_to_worker = None
                     self.ros_to_main.send(None)
-                
+
                 self.state = request_state
                 response.successful = True
 
@@ -187,10 +202,8 @@ class VoiceAssistantNode(Node):
                 response.successful = False
 
             self.voice_assistant_state_publisher.publish(self.state)
-            
-        return response
-            
 
+        return response
 
     def forward_messages(self):
 
@@ -209,20 +222,20 @@ class VoiceAssistantNode(Node):
                 request.join = False
                 if chat_message.is_final:
                     request.join = True
-                
+
                 future: Future = self.tts_push_client.call_async(request)
 
                 def when_done(_: Future):
-                    with self.ros_to_worker_lock: 
+                    with self.ros_to_worker_lock:
                         if not self.worker_changed and chat_message.is_final:
-                            self.ros_to_worker.send(chat_message.chat_id) 
+                            self.ros_to_worker.send(chat_message.chat_id)
 
                 future.add_done_callback(when_done)
 
-            with pib_api_client_lock: 
+            with pib_api_client_lock:
                 _, chat_message_dto = chat_client.create_chat_message(
-                    chat_message.chat_id, 
-                    chat_message.content, 
+                    chat_message.chat_id,
+                    chat_message.content,
                     chat_message.is_user)
 
             chat_message_ros = ChatMessage(
@@ -231,25 +244,27 @@ class VoiceAssistantNode(Node):
                 is_user=chat_message_dto['isUser'],
                 message_id=chat_message_dto['messageId'],
                 timestamp=chat_message_dto['timestamp'])
-                
-            self.chat_message_publisher.publish(chat_message_ros)
-            
-            
-def worker_target(chat_id: str, personality: Personality, worker_to_ros: Connection):
 
+            self.chat_message_publisher.publish(chat_message_ros)
+
+
+def worker_target(chat_id: str, personality: Personality, worker_to_ros: Connection):
     while True:
         play_audio_from_file(START_SIGNAL_FILE)
         user_input = speech_to_text(personality.pause_threshold, SILENCE_THRESHOLD)
         play_audio_from_file(STOP_SIGNAL_FILE)
         if user_input != '':
             worker_to_ros.send(TransientChatMessage(user_input, True, chat_id, None, True))
-        for sentence, is_final in gpt_chat(user_input, personality.description):
-            worker_to_ros.send(TransientChatMessage(sentence, False, chat_id, personality.gender, is_final))
+        if personality.has_image_support:
+            for sentence, is_final in llava_chat(user_input, personality.description, last_image):
+                worker_to_ros.send(TransientChatMessage(sentence, False, chat_id, personality.gender, is_final))
+        else:
+            for sentence, is_final in gpt_chat(user_input, personality.description):
+                worker_to_ros.send(TransientChatMessage(sentence, False, chat_id, personality.gender, is_final))
         worker_to_ros.recv()
 
 
 def ros_target(ros_to_main: Connection):
-    
     rclpy.init()
     node = VoiceAssistantNode(ros_to_main)
     executor = MultiThreadedExecutor(4)
@@ -260,19 +275,17 @@ def ros_target(ros_to_main: Connection):
 
 
 def main(args=None):
-
     main_to_ros, ros_to_main = Pipe()
 
     ros_process = Process(target=ros_target, args=(ros_to_main,))
     ros_process.start()
 
     while True:
-
         personality, chat_id = main_to_ros.recv()
 
         ros_to_worker, worker_to_ros = Pipe()
         main_to_ros.send(ros_to_worker)
-        worker_process = Process(target=worker_target, args=(chat_id, personality, worker_to_ros))    
+        worker_process = Process(target=worker_target, args=(chat_id, personality, worker_to_ros))
         worker_process.start()
 
         logging.info("VA turned on")
@@ -280,6 +293,7 @@ def main(args=None):
         logging.info("VA turned off")
         worker_process.terminate()
         play_audio_from_file(STOP_SIGNAL_FILE)
+
 
 if __name__ == "__main__":
     main()
