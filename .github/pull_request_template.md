@@ -1,27 +1,23 @@
 # Jira Ticket:
-<!-- Replace the last three digits in the URL with your ticket number -->
+<!-- Replace the last digits of the URL with your ticket number -->
 Link to corresponding jira ticket:
 https://pib-rocks.atlassian.net/jira/software/c/projects/PR/boards/3?selectedIssue=PR-123
 
 # Checklist:
 Necessary tasks before pull request can be merged:
-- [ ] All acceptance criteria have been implemented
 - [ ] The code has been reviewed and approved at least once
-- [ ] All necessary tests have been successfully conducted
-- [ ] If necessary: A documentation covering the new concepts and changes has been created
+- [ ] All necessary tests have been successful
+- [ ] The product owner reviewed and accepted the story
 
 # Testing:
-### Testing approach for setups:
-<!-- Remove all unnecessary tests -->
-- [ ] A docker container was launched successfully
+### Test acceptance criteria:
+<!-- Describe when the tests are deemed successful. Remove unnecessary -->
+- [ ] Example: The new Voice-Assistant-UI works as intended
+- [ ] Example: All other core features work as before (Status-Quo-Test)
+
+### Setup instructions:
+<!-- Describe how the test needs to be set up. Remove unnecessary -->
 - [ ] Setup on a virtual machine was successful
-- [ ] Setup on a Raspberry Pi was successful
 - [ ] Setup on a physical pib was successful
-
-### Testing acceptance criteria:
-<!-- Describe under which circumstances the tests are deemed successful -->
-- [ ] Example: New UI features work as intended
-
-### Testing instructions:
-<!-- Give additional information required for testing the story. (For example, special setup conditions) -->
-- Example: Test this story on a physical pib with three connected  servo bricklets
+- [ ] A docker container was launched successfully
+- Example: This test requires three servo bricklets to be connected
