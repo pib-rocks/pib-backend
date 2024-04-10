@@ -6,7 +6,7 @@ from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
 from rclpy.node import Node
 from rclpy.task import Future
 
-from datatypes.srv import SetVoiceAssistantState, GetVoiceAssistantState, TextToSpeechPush, TextToSpeechClear
+from datatypes.srv import SetVoiceAssistantState, GetVoiceAssistantState, TextToSpeechPush, TextToSpeechClear, GetCameraImageSrv
 from datatypes.msg import ChatMessage, VoiceAssistantState
 from std_msgs.msg import String
 
@@ -120,12 +120,14 @@ class VoiceAssistantNode(Node):
             callback_group=chat_message_callback_group
         )
 
-        self.camera_subscriber = self.create_subscription(
-            String,
-            'camera_topic',
-            self.get_image_callback,
-            10
-        )
+        # self.camera_subscriber = self.create_subscription(
+        #     String,
+        #     'camera_topic',
+        #     self.get_image_callback,
+        #     10
+        # )
+
+        self.camera_client = self.create_client(GetCameraImageSrv, "camera_image_srv")
         # Check for Start Signal periodically
         self.timer = self.create_timer(
             RECEIVE_CHAT_MESSAGE_WAITING_PERIOD_SECONDS,
@@ -137,8 +139,8 @@ class VoiceAssistantNode(Node):
         self.tts_push_client = self.create_client(TextToSpeechPush, 'tts_push')
         self.tts_clear_client = self.create_client(TextToSpeechClear, 'tts_clear')
 
-    def get_image_callback(self, msg):
-        self.last_image = msg.data
+    # def get_image_callback(self, msg):
+    #     self.last_image = msg.data
 
     def get_voice_assistant_state(self, _, response: GetVoiceAssistantState.Response):
 
@@ -206,15 +208,16 @@ class VoiceAssistantNode(Node):
     def forward_messages(self):
 
         while True:
-
+            # ToDo - with new state lock, if not a TransientChatMessage, get picture
 
             with self.ros_to_worker_lock:
                 if self.ros_to_worker is None or not self.ros_to_worker.poll(): return
                 chat_message: TransientChatMessage = self.ros_to_worker.recv()
 
                 if chat_message == 1:
+                    response = self.camera_client.call(GetCameraImageSrv.Request())
                     logging.info("YAY")
-                    self.ros_to_worker.send(self.last_image)
+                    self.ros_to_worker.send(response.image_base64)
                     continue
                 self.worker_changed = False
 
@@ -260,7 +263,7 @@ def worker_target(chat_id: str, personality: Personality, worker_to_ros: Connect
         if user_input != '':
             worker_to_ros.send(TransientChatMessage(user_input, True, chat_id, None, True))
         if personality.has_image_support:
-
+            # ToDo - send for image/poll image
             worker_to_ros.send(1)
             last_image = worker_to_ros.recv()
             logging.info("HERE", last_image)
