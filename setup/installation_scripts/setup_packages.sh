@@ -101,22 +101,22 @@ sudo mv "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_voice_assistant_boot.service" /etc/sy
 sudo systemctl enable ros_voice_assistant_boot.service
 
 # Boot chat
-sudo chmod 700 "$ROS_VOICE_ASSISTANT_BOOT_DIR/chat_boot.sh"
-sudo chmod 700 "$ROS_VOICE_ASSISTANT_BOOT_DIR/chat_boot.service"
-sudo mv "$ROS_VOICE_ASSISTANT_BOOT_DIR/chat_boot.service" /etc/systemd/system
-sudo systemctl enable chat_boot.service
+sudo chmod 700 "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_chat_boot.sh"
+sudo chmod 700 "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_chat_boot.service"
+sudo mv "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_chat_boot.service" /etc/systemd/system
+sudo systemctl enable ros_chat_boot.service
 
 # Boot audio_player
-sudo chmod 700 "$ROS_VOICE_ASSISTANT_BOOT_DIR/audio_player_boot.sh"
-sudo chmod 700 "$ROS_VOICE_ASSISTANT_BOOT_DIR/audio_player_boot.service"
-sudo mv "$ROS_VOICE_ASSISTANT_BOOT_DIR/audio_player_boot.service" /etc/systemd/system
-sudo systemctl enable audio_player_boot.service
+sudo chmod 700 "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_audio_player_boot.sh"
+sudo chmod 700 "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_audio_player_boot.service"
+sudo mv "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_audio_player_boot.service" /etc/systemd/system
+sudo systemctl enable ros_audio_player_boot.service
 
 # Boot audio_recorder
-sudo chmod 700 "$ROS_VOICE_ASSISTANT_BOOT_DIR/audio_recorder_boot.sh"
-sudo chmod 700 "$ROS_VOICE_ASSISTANT_BOOT_DIR/audio_recorder_boot.service"
-sudo mv "$ROS_VOICE_ASSISTANT_BOOT_DIR/audio_recorder_boot.service" /etc/systemd/system
-sudo systemctl enable audio_recorder_boot.service
+sudo chmod 700 "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_audio_recorder_boot.sh"
+sudo chmod 700 "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_audio_recorder_boot.service"
+sudo mv "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_audio_recorder_boot.service" /etc/systemd/system
+sudo systemctl enable ros_audio_recorder_boot.service
 
 # Boot program node
 sudo chmod 700 "$ROS_PROGRAMS_BOOT_DIR/ros_program_boot.sh"
