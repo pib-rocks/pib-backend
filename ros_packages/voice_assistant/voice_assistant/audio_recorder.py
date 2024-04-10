@@ -108,6 +108,11 @@ class AudioRecorderNode(Node):
         max_silent_chunks_before = request.max_silent_seconds_before * CHUNKS_PER_SECOND
         max_silent_chunks_after = request.max_silent_seconds_after * CHUNKS_PER_SECOND
 
+        # helpers for recording audio        
+        chunks = []
+        silent_chunks = 0
+        max_silent_chunks = max_silent_chunks_before
+
         # create an pyaudio-input-stream for recording audio
         pya = pyaudio.PyAudio()
         stream = pya.open(
@@ -116,11 +121,6 @@ class AudioRecorderNode(Node):
             rate=FRAMES_PER_SECOND, 
             input=True, 
             frames_per_buffer=FRAMES_PER_CHUNK)
-
-        # helpers for recording audio        
-        chunks = []
-        silent_chunks = 0
-        max_silent_chunks = max_silent_chunks_before
 
         # record audio, until too many silent chunks were detected in a row
         # or if cancellation of the goal was requested

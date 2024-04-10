@@ -18,14 +18,12 @@ import os
 from pib_api_client import chat_client, personality_client
 
 
-RECEIVE_CHAT_MESSAGE_WAITING_PERIOD_SECONDS = 0.1
 
 VOICE_ASSISTANT_DIRECTORY = os.getenv("VOICE_ASSISTANT_DIR", "/home/pib/ros_working_dir/src/voice_assistant")
-AUDIO_OUTPUT_FILE = VOICE_ASSISTANT_DIRECTORY + "/audiofiles/assistant_output.wav"
 START_SIGNAL_FILE = VOICE_ASSISTANT_DIRECTORY + "/audiofiles/assistant_start_listening.wav"
 STOP_SIGNAL_FILE = VOICE_ASSISTANT_DIRECTORY + "/audiofiles/assistant_stop_listening.wav"
 
-MAX_SILENT_SECONDS_BEFORE = 5.0
+MAX_SILENT_SECONDS_BEFORE = 8.0
 
 
 class Personality:
@@ -50,9 +48,10 @@ class VoiceAssistantNode(Node):
         self.state.chat_id = ""
         self.personality: Personality = Personality("", "", 1.0)
 
+        # the handle for the current 'record_audio' or 'chat' goal
         self.current_goal_handle: ClientGoalHandle | None = None
 
-        # pusblishers / services ######################################################################
+        # publishers + services -----------------------------------------------
 
         # Service for setting VoiceAssistantState
         self.set_voice_assistant_service: Service = self.create_service(
@@ -78,7 +77,7 @@ class VoiceAssistantNode(Node):
             "chat_messages",
             10)
 
-        # clients #####################################################################################
+        # clients -------------------------------------------------------------
 
         self.clear_playback_queue_client = self.create_client(ClearPlaybackQueue, 'clear_playback_queue')
         self.clear_playback_queue_client.wait_for_service()
@@ -102,13 +101,15 @@ class VoiceAssistantNode(Node):
     def if_phase_not_changed(self, callback: Callable) -> Callable:
 
         current_phase = self.phase
+
         def decorated_callback(*args):
             if self.phase == current_phase: callback(*args)
+
         return decorated_callback
     
 
 
-    def add_result_callback(self, future: Future, callback: Callable) -> None:
+    def add_result_callback(self, future: Future, callback: Callable[[Any], None]) -> None:
 
         def result_callback(result_future: Future):
             result = result_future.result().result
@@ -162,7 +163,7 @@ class VoiceAssistantNode(Node):
             raise Exception(f"no personality with chat of id {chat_id} found...")
 
         goal = PlayAudioFromFile.Goal()
-        goal.file_path = START_SIGNAL_FILE
+        goal.filepath = START_SIGNAL_FILE
         future: Future = self.play_audio_from_file_client.send_goal_async(goal)
         self.add_result_callback(future, self.if_phase_not_changed(self.on_start_signal_played))
 
@@ -171,9 +172,8 @@ class VoiceAssistantNode(Node):
     def deactivate_voice_assistant(self) -> None:
         
         self.phase += 1
-        if self.current_goal_handle is not None:
-            self.current_goal_handle.cancel_goal_async()
-        future: Future = self.clear_playback_queue_client.call_async(ClearPlaybackQueue.Request())
+        if self.current_goal_handle is not None: self.current_goal_handle.cancel_goal_async()
+        future = self.clear_playback_queue_client.call_async(ClearPlaybackQueue.Request())
         future.add_done_callback(self.if_phase_not_changed(self.on_playback_queue_cleared))
 
     
@@ -181,7 +181,7 @@ class VoiceAssistantNode(Node):
     def on_playback_queue_cleared(self, _: Future):
 
         goal = PlayAudioFromFile.Goal()
-        goal.file_path = STOP_SIGNAL_FILE
+        goal.filepath = STOP_SIGNAL_FILE
         self.play_audio_from_file_client.send_goal_async(goal)
 
 
@@ -213,7 +213,7 @@ class VoiceAssistantNode(Node):
     def on_stopped_recording(self, _: RecordAudio.Feedback) -> None:
 
         goal = PlayAudioFromFile.Goal()
-        goal.file_path = STOP_SIGNAL_FILE
+        goal.filepath = STOP_SIGNAL_FILE
         self.play_audio_from_file_client.send_goal_async(goal)
 
 
@@ -284,7 +284,7 @@ class VoiceAssistantNode(Node):
     def on_final_sentence_played(self, _: PlayAudioFromSpeech.Result) -> None:
 
         goal = PlayAudioFromFile.Goal()
-        goal.file_path = START_SIGNAL_FILE
+        goal.filepath = START_SIGNAL_FILE
         future: Future = self.play_audio_from_file_client.send_goal_async(goal)
         self.add_result_callback(future, self.if_phase_not_changed(self.on_start_signal_played)) 
 
