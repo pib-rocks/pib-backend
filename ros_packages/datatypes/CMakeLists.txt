@@ -24,6 +24,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
 	"srv/ProxyRunProgramStop.srv"
 	"srv/TextToSpeechPush.srv"
 	"srv/TextToSpeechClear.srv"
+    "srv/GetCameraImageSrv.srv"
 	"action/RunProgram.action"
 )
 
