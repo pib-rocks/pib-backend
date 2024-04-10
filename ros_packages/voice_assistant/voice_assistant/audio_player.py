@@ -119,7 +119,7 @@ class AudioPlayerNode(Node):
     def accept_file_goal(self, goal_handle: ServerGoalHandle) -> None:
 
         request: PlayAudioFromFile.Goal = goal_handle.request
-        filepath = request.file_path
+        filepath = request.filepath
 
         with wave.open(filepath, 'rb') as wf:
 
