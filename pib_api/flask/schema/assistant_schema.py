@@ -1,11 +1,11 @@
 from model.assistant_model import AssistantModel
-from app.app import ma
+from schema.SQLAutoWithCamelCaseSchema import SQLAutoWithCamelCaseSchema
 
 
-class AssistantSchema(ma.SQLAlchemyAutoSchema):
+class AssistantSchemaSQLAutoWith(SQLAutoWithCamelCaseSchema):
     class Meta:
         model = AssistantModel
 
 
-assistant_schema = AssistantSchema()
-assistants_schema = AssistantSchema(many=True)
+assistant_schema = AssistantSchemaSQLAutoWith()
+assistants_schema = AssistantSchemaSQLAutoWith(many=True)

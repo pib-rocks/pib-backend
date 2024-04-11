@@ -1,11 +1,13 @@
 from model.bricklet_model import Bricklet
-from app.app import ma
+from schema.SQLAutoWithCamelCaseSchema import SQLAutoWithCamelCaseSchema
 
-class BrickletSchema(ma.SQLAlchemyAutoSchema):
+
+class BrickletSchemaSQLAutoWith(SQLAutoWithCamelCaseSchema):
     class Meta:
         model = Bricklet
         exclude = ('id',)
 
-bricklet_schema = BrickletSchema()
-bricklets_schema = BrickletSchema(many=True)
-bricklet_uid_only_schema = BrickletSchema(only=('uid',))
+
+bricklet_schema = BrickletSchemaSQLAutoWith()
+bricklets_schema = BrickletSchemaSQLAutoWith(many=True)
+bricklet_uid_only_schema = BrickletSchemaSQLAutoWith(only=('uid',))
