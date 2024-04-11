@@ -1,4 +1,5 @@
 from collections import deque
+import os
 import numpy as np
 import pyaudio
 import rclpy
@@ -32,6 +33,9 @@ FRAMES_PER_CHUNK = FRAMES_PER_SECOND // CHUNKS_PER_SECOND
 # TODO: his value should not be hardcoded, as the optimal value 
 # depends on the level of background noise. 
 SILENCE_VOLUME_THRESHOLD = 50
+
+VOICE_ASSISTANT_DIRECTORY = os.getenv("VOICE_ASSISTANT_DIR", "/home/pib/ros_working_dir/src/voice_assistant")
+OUTPUT_FILE_PATH = VOICE_ASSISTANT_DIRECTORY + "/audiofiles/output.wav"
 
 
 
@@ -155,13 +159,13 @@ class AudioRecorderNode(Node):
         data = b''.join(chunks)
 
         # TODO: public-api should accept raw pcm data in future -> this step will be unnecessary
-        with wave.open('/home/pib/ros_working_dir/src/voice_assistant/audiofiles/output.wav', 'wb') as wave_file:
+        with wave.open(OUTPUT_FILE_PATH, 'wb') as wave_file:
             wave_file.setnchannels(NUM_CHANNELS)
             wave_file.setsampwidth(BYTES_PER_SAMPLE)
             wave_file.setframerate(FRAMES_PER_SECOND)
             wave_file.writeframes(data)
             wave_file.close()
-        with open('/home/pib/ros_working_dir/src/voice_assistant/audiofiles/output.wav', 'rb') as f: data = f.read()
+        with open(OUTPUT_FILE_PATH, 'rb') as f: data = f.read()
 
         # transcribe the audio data
         text = public_voice_client.speech_to_text(data)
