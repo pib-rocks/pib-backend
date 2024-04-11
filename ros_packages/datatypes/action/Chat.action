@@ -1,6 +1,6 @@
-string text
-string description
+string text # the textual input of the user
+string description # the descrciption of the personality
 ---
-string rest
+string rest # the remaining textual llm-response, that has not been sent back as feedback
 ---
-string sentence
+string sentence # an intermediate sentence, which was received from the llm

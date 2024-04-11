@@ -15,13 +15,14 @@ VOICE_ASSISTANT_TEXT_URL = configuration.tryb_url_prefix + "/public-api/voice-as
 
 
 
-def _send_request(method: str, url: str, headers: dict[str, str], body: dict[str, Any]) -> requests.Response:
+def _send_request(method: str, url: str, headers: dict[str, str], body: dict[str, Any], stream: bool):
 
     try:
         headers["Authorization"] = "Bearer " + configuration.public_api_token 
         response = requests.request(
             method=method, 
             url=url, 
+            stream=stream,
             headers=headers, 
             json=body)
         response.raise_for_status()
@@ -38,7 +39,9 @@ def _send_request(method: str, url: str, headers: dict[str, str], body: dict[str
             f"Received following response from the public-api:\n" + 
             f"-----------------------------------------------------\n" +
             f"status: {response.status_code}\n")
-     
+        
+        raise Exception("error while sending request to public-api")
+        
 
 
 def speech_to_text(audio: bytes) -> str:
@@ -51,7 +54,7 @@ def speech_to_text(audio: bytes) -> str:
     body = {
         "data": base64.encodebytes(audio).decode('ascii')
     }
-    response = _send_request("POST", SPEECH_TO_TEXT_URL, headers, body)
+    response = _send_request("POST", SPEECH_TO_TEXT_URL, headers, body, False)
     
     return response.json()["responseText"]
 
@@ -71,12 +74,7 @@ def text_to_speech(text: str, gender: str, language: str) -> Iterable[bytes]:
             "language": language
         }
     }
-    response = requests.request(
-        method="POST", 
-        url=TEXT_TO_SPEECH_URL, 
-        stream=True, 
-        headers=headers, 
-        json=body)
+    response = _send_request("POST", TEXT_TO_SPEECH_URL, headers, body, True)
     
     return response.iter_content(chunk_size=None)
 
@@ -85,9 +83,7 @@ def text_to_speech(text: str, gender: str, language: str) -> Iterable[bytes]:
 def chat_completion(text: str, description: str) -> Iterable[str]:
     """
     receive a textual llm response, that takes into account the provided description
-    @return str: the next token of the llm-response
     """
-
     headers = {
         "Accept": "text/event-stream",
         "Content-Type": "application/json"
@@ -98,12 +94,7 @@ def chat_completion(text: str, description: str) -> Iterable[str]:
             "description": description
         }
     }
-    response = requests.request(
-        method="POST", 
-        url=VOICE_ASSISTANT_TEXT_URL, 
-        stream=True, 
-        headers=headers, 
-        json=body)
+    response = _send_request("POST", VOICE_ASSISTANT_TEXT_URL, headers, body, True)
     
     line_bin: bytes
     for line_bin in response.iter_lines():

@@ -1,5 +1,6 @@
-float32 max_silent_seconds_before
-float32 max_silent_seconds_after
+float32 max_silent_seconds_before # the amount of silent-seconds waited before recording is stopped, if user has not started talking yet
+float32 max_silent_seconds_after # the amount of silent-seconds waited before recording is stopped, if user has already started talking
 ---
-string transcribed_text
+string transcribed_text  # the transcribed text of the recorded audio
 ---
+# empty feedback message, that indicated, that recording has stopped
