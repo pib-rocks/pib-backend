@@ -31,7 +31,7 @@ def update_personality(personality_id: str, personality_dto: dict[str, Any]) -> 
     personality.pauseThreshold = personality_dto['pauseThreshold']
     if 'description' in personality_dto:
         personality.description = personality_dto['description']
-    personality.assistant_id = personality_dto['assistant']
+    personality.assistant_id = personality_dto['assistant_id']
     db.session.flush()
     return personality
 
