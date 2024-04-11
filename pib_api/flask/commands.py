@@ -44,24 +44,24 @@ def _is_empty_db() -> bool:
 def _create_bricklet_data() -> None:
     data = _get_motor_list()
     motor_settings = {"pulseWidthMin": 700, "pulseWidthMax": 2500, "rotationRangeMin": -9000,
-                  "rotationRangeMax": 9000, "velocity": 16000, "acceleration": 10000, "deceleration": 5000,
-                  "period": 19500,
-                  "turnedOn": True, "visible": True, "invert": False}
+                      "rotationRangeMax": 9000, "velocity": 16000, "acceleration": 10000, "deceleration": 5000,
+                      "period": 19500,
+                      "turnedOn": True, "visible": True, "invert": False}
 
     for item in data:
         motor = Motor(name=item["name"], **motor_settings)
         if motor.name == "tilt_forward_motor":
-            motor.rotationRangeMin = -4500
-            motor.rotationRangeMax = 4500
+            motor.rotation_range_min = -4500
+            motor.rotation_range_max = 4500
         elif motor.name == "tilt_sideways_motor":
             motor.visible = False
         # modify all fingers
         elif motor.name.endswith("stretch") or "thumb" in motor.name:
-            motor.pulseWidthMin = 750
+            motor.pulse_width_min = 750
             motor.velocity = 100000
             motor.acceleration = 50000
             motor.deceleration = 50000
-        
+
         db.session.add(motor)
         db.session.flush()
 
@@ -72,12 +72,12 @@ def _create_bricklet_data() -> None:
             invert = False
             if bricklet_pin == (3, 7) or bricklet_pin == (3, 5):
                 invert = True
-            db.session.add(BrickletPin(motorId=motor.id, brickletId=bricklet_id, pin=pin, invert=invert))
+            db.session.add(BrickletPin(motor_id=motor.id, bricklet_id=bricklet_id, pin=pin, invert=invert))
         db.session.flush()
 
-    b1 = Bricklet(uid="AAA", brickletNumber=1)
-    b2 = Bricklet(uid="BBB", brickletNumber=2)
-    b3 = Bricklet(uid="CCC", brickletNumber=3)
+    b1 = Bricklet(uid="AAA", bricklet_number=1)
+    b2 = Bricklet(uid="BBB", bricklet_number=2)
+    b3 = Bricklet(uid="CCC", bricklet_number=3)
     db.session.add_all([b1, b2, b3])
     db.session.flush()
 
@@ -93,36 +93,34 @@ def _create_program_data() -> None:
     db.session.add(program)
     db.session.flush()
 
-def _create_chat_data_and_assistant() -> None:
 
+def _create_chat_data_and_assistant() -> None:
     gpt4 = AssistantModel(visual_name="GPT-4", api_name="gpt-4", has_image_support=False)
     gpt3 = AssistantModel(visual_name="GPT-3.5", api_name="gpt-3.5-turbo", has_image_support=False)
     llava = AssistantModel(visual_name="LLaVA", api_name="llava", has_image_support=True)
     db.session.add_all([gpt3, gpt4, llava])
     db.session.flush()
-    
-    p_eva = Personality(name="Eva", personalityId="8f73b580-927e-41c2-98ac-e5df070e7288", gender="female",
+
+    p_eva = Personality(name="Eva", personality_id="8f73b580-927e-41c2-98ac-e5df070e7288", gender="female",
                         pauseThreshold=0.8, assistant_id=gpt4.id)
-    p_thomas = Personality(name="Thomas", personalityId="8b310f95-92cd-4512-b42a-d3fe29c4bb8a", gender="male",
+    p_thomas = Personality(name="Thomas", personality_id="8b310f95-92cd-4512-b42a-d3fe29c4bb8a", gender="male",
                            pauseThreshold=0.8, assistant_id=gpt4.id)
     db.session.add_all([p_eva, p_thomas])
     db.session.flush()
 
-    c1 = Chat(chatId="b4f01552-0c09-401c-8fde-fda753fb0261", topic="Nuernberg",
-              personalityId="8f73b580-927e-41c2-98ac-e5df070e7288")
-    c2 = Chat(chatId="ee3e80f9-c8f7-48c2-9f15-449ba9bbe4ab", topic="Home-Office",
-              personalityId="8b310f95-92cd-4512-b42a-d3fe29c4bb8a")
+    c1 = Chat(chat_id="b4f01552-0c09-401c-8fde-fda753fb0261", topic="Nuernberg",
+              personality_id="8f73b580-927e-41c2-98ac-e5df070e7288")
+    c2 = Chat(chat_id="ee3e80f9-c8f7-48c2-9f15-449ba9bbe4ab", topic="Home-Office",
+              personality_id="8b310f95-92cd-4512-b42a-d3fe29c4bb8a")
     db.session.add_all([c1, c2])
     db.session.flush()
 
-    m1 = ChatMessage(messageId="539ed3e6-9e3d-11ee-8c90-0242ac120002", isUser=True, content="hello pib!",
-                     chatId="b4f01552-0c09-401c-8fde-fda753fb0261")
-    m2 = ChatMessage(messageId="0a080706-9e3e-11ee-8c90-0242ac120002", isUser=False, content="hello user!",
-                     chatId="b4f01552-0c09-401c-8fde-fda753fb0261")
+    m1 = ChatMessage(message_id="539ed3e6-9e3d-11ee-8c90-0242ac120002", isUser=True, content="hello pib!",
+                     chat_id="b4f01552-0c09-401c-8fde-fda753fb0261")
+    m2 = ChatMessage(message_id="0a080706-9e3e-11ee-8c90-0242ac120002", isUser=False, content="hello user!",
+                     chat_id="b4f01552-0c09-401c-8fde-fda753fb0261")
     db.session.add_all([m1, m2])
     db.session.flush()
-
-
 
 
 def _get_motor_list() -> [dict[str, Any]]:
