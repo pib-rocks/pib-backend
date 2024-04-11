@@ -3,6 +3,7 @@ import time
 from typing import Any, Callable, Iterable
 import wave
 import pyaudio
+from pyaudio import Stream
 import rclpy
 from rclpy.node import Node
 from rclpy.executors import MultiThreadedExecutor
@@ -25,13 +26,10 @@ from rclpy.action.server import ServerGoalHandle
 
 class AudioEncoding():
 
-    def __init__(self, sample_width: int, channels: int, sample_rate: int):
-        self.sample_width = sample_width
-        self.channels = channels
-        self.sample_rate = sample_rate
-
-    def get_frames_per_chunk(self, chunks_per_second: int) -> int:
-        return self.sample_rate // chunks_per_second
+    def __init__(self, bytes_per_sample: int, num_channels: int, frames_per_second: int):
+        self.bytes_per_sample = bytes_per_sample
+        self.num_channels = num_channels
+        self.frames_per_second = frames_per_second
 
 class PlaybackItem():
 
@@ -56,67 +54,60 @@ class AudioPlayerNode(Node):
 
         super().__init__('audio_player')
 
-        # for storing requests to play some audio
+        # requests to play audio are stored in here
         self.playback_queue: deque[PlaybackItem] = deque()
-        self.current_playback_item: PlaybackItem | None = None
         self.playback_lock: Lock = Lock()
 
-        # server for running local python-programs generated with blockly
+        # server for playing back audio files (must be wav-format)
+        # the action creates no feedback and cannot be cancelled
         self.push_file_to_playback_queue_server = ActionServer(
             self, 
             PlayAudioFromFile, 
             'play_audio_from_file', 
             execute_callback = self.play_audio,
-            handle_accepted_callback=self.accept_file_goal,
-            cancel_callback = (lambda _ : CancelResponse.REJECT),
-            callback_group = MutuallyExclusiveCallbackGroup())
+            handle_accepted_callback=self.handle_accepted_file_goal,
+            cancel_callback = (lambda _ : CancelResponse.REJECT))
 
-        # server for running local python-programs generated with blockly
+        # server for playing back speech (provided in the goal in form of text)
+        # the action creates no feedback and cannot be cancelled
         self.push_speech_to_playback_queue_server = ActionServer(
             self, 
             PlayAudioFromSpeech, 
             'play_audio_from_speech', 
             execute_callback = self.play_audio,
-            handle_accepted_callback=self.accept_speech_goal,
-            cancel_callback = (lambda _ : CancelResponse.REJECT),
-            callback_group = MutuallyExclusiveCallbackGroup())
+            handle_accepted_callback=self.handle_accepted_speech_goal,
+            cancel_callback = (lambda _ : CancelResponse.REJECT))
         
+        # clears the playback queue
         self.clear_playback_queue_service = self.create_service(
             ClearPlaybackQueue, 
             'clear_playback_queue',
-            self.clear_playback_queue,
-            callback_group=MutuallyExclusiveCallbackGroup())
+            self.clear_playback_queue)
 
         self.get_logger().info('Now running AUDIO PLAYER')
 
 
 
     def push_playback_item(self, playback_item: PlaybackItem) -> None:
+        """adds an item to the playback queue and start execution of its goal, if no other goal is in queue"""
         with self.playback_lock:
-            if self.current_playback_item is None: 
-                self.current_playback_item = playback_item
-                playback_item.goal_handle.execute()
-            else:
-                self.playback_queue.appendleft(playback_item)
+            if not self.playback_queue: playback_item.goal_handle.execute()
+            self.playback_queue.appendleft(playback_item)
 
     def pop_playback_item(self) -> None:
+        """pops the current playback-item and start execution of the next one"""
         with self.playback_lock:
-            self.current_playback_item = None
-            if self.playback_queue:
-                playback_item = self.playback_queue.pop()
-                self.current_playback_item = playback_item
-                playback_item.goal_handle.execute()
+            self.playback_queue.pop()
+            if self.playback_queue: self.playback_queue[0].goal_handle.execute()
 
     def set_all_playback_items_inactive(self) -> None:
+        """inactivate all queued items, thus stopping playback of current and all queued items"""
         with self.playback_lock:
-            if self.current_playback_item is not None:
-                self.current_playback_item.interrupt.set()
-            for item in self.playback_queue: 
-                item.interrupt.set()
+            for item in self.playback_queue: item.interrupt.set()
                 
 
 
-    def accept_file_goal(self, goal_handle: ServerGoalHandle) -> None:
+    def handle_accepted_file_goal(self, goal_handle: ServerGoalHandle) -> None:
 
         request: PlayAudioFromFile.Goal = goal_handle.request
         filepath = request.filepath
@@ -128,7 +119,7 @@ class AudioPlayerNode(Node):
                 wf.getnchannels(),
                 wf.getframerate())
             
-            frames_per_chunk = encoding.get_frames_per_chunk(CHUNKS_PER_SECOND)
+            frames_per_chunk = encoding.frames_per_second // CHUNKS_PER_SECOND
             
             data = []
             while True:
@@ -141,27 +132,27 @@ class AudioPlayerNode(Node):
 
 
 
-    def accept_speech_goal(self, goal_handle: ServerGoalHandle) -> None:
+    def handle_accepted_speech_goal(self, goal_handle: ServerGoalHandle) -> None:
 
         request: PlayAudioFromSpeech.Goal = goal_handle.request
         data = public_voice_client.text_to_speech(request.speech, request.gender, request.language)
 
-        playback_item = PlaybackItem(goal_handle, lambda: PlayAudioFromSpeech.Result(), data, SPEECH_ENCODING, 0.1)
+        playback_item = PlaybackItem(goal_handle, lambda: PlayAudioFromSpeech.Result(), data, SPEECH_ENCODING, 0.2)
         self.push_playback_item(playback_item)
 
 
 
     def play_audio(self, goal_handle: ServerGoalHandle):
 
-        with self.playback_lock: playback_item = self.current_playback_item
+        with self.playback_lock: playback_item = self.playback_queue[0]
         encoding = playback_item.encoding
         
         pya = pyaudio.PyAudio()
 
-        stream = pya.open(
-            format=pya.get_format_from_width(encoding.sample_width), 
-            channels=encoding.channels, 
-            rate=encoding.sample_rate, 
+        stream: Stream = pya.open(
+            format=pya.get_format_from_width(encoding.bytes_per_sample), 
+            num_channels=encoding.num_channels, 
+            rate=encoding.frames_per_second, 
             output=True)
         
         for chunk in playback_item.data: 

@@ -46,6 +46,7 @@ class VoiceAssistantNode(Node):
         self.state: VoiceAssistantState = VoiceAssistantState()
         self.state.turned_on = False
         self.state.chat_id = ""
+        self.turning_off = False # indicates if the voice_assistant is currently turning off
         self.personality: Personality = Personality("", "", 1.0)
 
         # the handle for the current 'record_audio' or 'chat' goal
@@ -99,9 +100,9 @@ class VoiceAssistantNode(Node):
 
     
     def if_phase_not_changed(self, callback: Callable) -> Callable:
+        """a decorator. the decorated callback only executes, if the phase has not changed after its creation"""
 
         current_phase = self.phase
-
         def decorated_callback(*args):
             if self.phase == current_phase: callback(*args)
 
@@ -110,6 +111,7 @@ class VoiceAssistantNode(Node):
 
 
     def add_result_callback(self, future: Future, callback: Callable[[Any], None]) -> None:
+        """executes the callback, with the result of the action as argument"""
 
         def result_callback(result_future: Future):
             result = result_future.result().result
@@ -139,6 +141,8 @@ class VoiceAssistantNode(Node):
         request_state: VoiceAssistantState = request.voice_assistant_state
 
         try:
+            if self.turning_off:
+                raise Exception("voice assistant is currently turning off")
             if request_state.turned_on == self.state.turned_on:
                 raise Exception(f"voice assistant is already turned {'on' if request_state.turned_on else 'off'}.")
             if request_state.turned_on: self.activate_voice_assistant(request_state.chat_id)
@@ -172,13 +176,19 @@ class VoiceAssistantNode(Node):
     def deactivate_voice_assistant(self) -> None:
         
         self.phase += 1
-        if self.current_goal_handle is not None: self.current_goal_handle.cancel_goal_async()
+        self.turning_off = True
+
+        if self.current_goal_handle is not None: 
+            self.current_goal_handle.cancel_goal_async()
+
         future = self.clear_playback_queue_client.call_async(ClearPlaybackQueue.Request())
         future.add_done_callback(self.if_phase_not_changed(self.on_playback_queue_cleared))
 
     
 
     def on_playback_queue_cleared(self, _: Future):
+
+        self.turning_off = False
 
         goal = PlayAudioFromFile.Goal()
         goal.filepath = STOP_SIGNAL_FILE
@@ -290,7 +300,6 @@ class VoiceAssistantNode(Node):
 
 
 
-
 def main(args=None):
 
     rclpy.init()
@@ -300,6 +309,7 @@ def main(args=None):
     executor.spin()
     node.destroy_node()
     rclpy.shutdown()
+
 
 
 if __name__ == "__main__":
