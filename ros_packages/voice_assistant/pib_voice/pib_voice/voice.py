@@ -169,21 +169,24 @@ def play_audio_from_file(file_path: str) -> None:
 
 
 def llava_chat(input_text: str, personality_description: str, image_base64: str) -> Tuple[str, bool]:
-    LLAVA_URL = os.getenv("LLAVA_URL")
+    LLAVA_URL = "http://bravo.intra.isento.net:11434/api/chat"
+    import sys
+    print("BILD", len(image_base64), file=sys.stderr)
     request = {
-            "model": "llava",
-            "messages": [
-                {
-                    "role": "system",
-                    "content": personality_description
-                },
-                {
-                    "role": "user",
-                    "content": input_text,
-                    "images": [image_base64]
-                }
-            ]
-        }
+        "model": "llava",
+        "messages": [
+            {
+                "role": "system",
+                "content": f"{personality_description}"
+            },
+            {
+                "role": "user",
+                "content": input_text,
+                "images": [image_base64]
+            }
+        ]
+    }
+    print(request, file=sys.stderr)
     s = requests.Session()
     sentence_boundary = re.compile(r"[^\d | ^A-Z][\.|!|\?|:]")
     cur_sentence = ""
@@ -194,6 +197,8 @@ def llava_chat(input_text: str, personality_description: str, image_base64: str)
         for line in resp.iter_lines():
             if not line:
                 break
+
+            print(line, file=sys.stderr)
             current_token = json.loads(line)["message"]["content"]
             current_token = current_token.replace("\n", " ")
             cur_sentence += current_token

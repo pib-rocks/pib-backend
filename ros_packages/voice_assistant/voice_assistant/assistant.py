@@ -6,7 +6,7 @@ from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
 from rclpy.node import Node
 from rclpy.task import Future
 
-from datatypes.srv import SetVoiceAssistantState, GetVoiceAssistantState, TextToSpeechPush, TextToSpeechClear
+from datatypes.srv import SetVoiceAssistantState, GetVoiceAssistantState, TextToSpeechPush, TextToSpeechClear, GetCameraImageSrv
 from datatypes.msg import ChatMessage, VoiceAssistantState
 from std_msgs.msg import String
 
@@ -14,7 +14,6 @@ from threading import Lock
 from openai import OpenAI
 from google.cloud import texttospeech
 from google.cloud import speech_v1p1beta1 as speech
-import pyaudio
 import os
 from multiprocessing import Process, Pipe, Lock
 
@@ -22,7 +21,7 @@ from pib_voice.voice import gpt_chat, play_audio_from_file, speech_to_text
 from pib_api_client import chat_client, personality_client
 import logging
 
-from voice_assistant.pib_voice.pib_voice.voice import llava_chat
+from pib_voice.voice import llava_chat
 
 # Define custom logging as ROS logger only available in Node
 logging.basicConfig(level=logging.INFO,
@@ -39,7 +38,6 @@ SILENCE_THRESHOLD = 500
 
 pib_api_client_lock = Lock()
 
-last_image = ""
 
 class Personality:
 
@@ -83,6 +81,7 @@ class VoiceAssistantNode(Node):
         self.ros_to_worker: Connection = None
         self.worker_changed: bool = False
         self.ros_to_worker_lock = Lock()
+        self.last_image = ""
 
         # for communication between ros and main. does not need a lock,
         # since it is only accessed by the 'set_voice_assistant_state'
@@ -121,12 +120,14 @@ class VoiceAssistantNode(Node):
             callback_group=chat_message_callback_group
         )
 
-        self.camera_subscriber = self.self.create_subscription(
-            String,
-            'camera_topic',
-            self.get_image_callback,
-            10
-        )
+        # self.camera_subscriber = self.create_subscription(
+        #     String,
+        #     'camera_topic',
+        #     self.get_image_callback,
+        #     10
+        # )
+
+        self.camera_client = self.create_client(GetCameraImageSrv, "camera_image_srv")
         # Check for Start Signal periodically
         self.timer = self.create_timer(
             RECEIVE_CHAT_MESSAGE_WAITING_PERIOD_SECONDS,
@@ -138,9 +139,8 @@ class VoiceAssistantNode(Node):
         self.tts_push_client = self.create_client(TextToSpeechPush, 'tts_push')
         self.tts_clear_client = self.create_client(TextToSpeechClear, 'tts_clear')
 
-    def get_image_callback(self, msg):
-        logging.info("IMAGE CALLBACK", msg)
-        last_image = msg.data
+    # def get_image_callback(self, msg):
+    #     self.last_image = msg.data
 
     def get_voice_assistant_state(self, _, response: GetVoiceAssistantState.Response):
 
@@ -208,10 +208,17 @@ class VoiceAssistantNode(Node):
     def forward_messages(self):
 
         while True:
+            # ToDo - with new state lock, if not a TransientChatMessage, get picture
 
             with self.ros_to_worker_lock:
                 if self.ros_to_worker is None or not self.ros_to_worker.poll(): return
                 chat_message: TransientChatMessage = self.ros_to_worker.recv()
+
+                if chat_message == 1:
+                    response = self.camera_client.call(GetCameraImageSrv.Request())
+                    logging.info("YAY")
+                    self.ros_to_worker.send(response.image_base64)
+                    continue
                 self.worker_changed = False
 
             if not chat_message.is_user:
@@ -256,6 +263,10 @@ def worker_target(chat_id: str, personality: Personality, worker_to_ros: Connect
         if user_input != '':
             worker_to_ros.send(TransientChatMessage(user_input, True, chat_id, None, True))
         if personality.has_image_support:
+            # ToDo - send for image/poll image
+            worker_to_ros.send(1)
+            last_image = worker_to_ros.recv()
+            logging.info("HERE", last_image)
             for sentence, is_final in llava_chat(user_input, personality.description, last_image):
                 worker_to_ros.send(TransientChatMessage(sentence, False, chat_id, personality.gender, is_final))
         else:
