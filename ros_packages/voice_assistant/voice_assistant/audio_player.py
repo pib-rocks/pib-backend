@@ -94,11 +94,12 @@ class AudioPlayerNode(Node):
             if not self.playback_queue: playback_item.goal_handle.execute()
             self.playback_queue.appendleft(playback_item)
 
-    def pop_playback_item(self) -> None:
-        """pops the current playback-item and start execution of the next one"""
+    def pop_playback_item(self) -> Any:
+        """pops the current playback-item, start execution of the next one and return the result for the current item's goal"""
         with self.playback_lock:
-            self.playback_queue.pop()
+            current_item = self.playback_queue.pop()
             if self.playback_queue: self.playback_queue[-1].goal_handle.execute()
+            return current_item.create_result[0]()
 
     def set_all_playback_items_inactive(self) -> None:
         """inactivate all queued items, thus stopping playback of current and all queued items"""
@@ -146,6 +147,10 @@ class AudioPlayerNode(Node):
 
         with self.playback_lock: playback_item = self.playback_queue[-1]
         encoding = playback_item.encoding
+
+        if playback_item.interrupt.is_set():
+            goal_handle.abort()
+            return self.pop_playback_item()
         
         pya = pyaudio.PyAudio()
 
@@ -167,10 +172,8 @@ class AudioPlayerNode(Node):
         stream.close()
         pya.terminate()
 
-        self.pop_playback_item()
-
         if goal_handle.status != GoalStatus.STATUS_ABORTED: goal_handle.succeed()
-        return playback_item.create_result[0]()
+        return self.pop_playback_item()
 
 
 
