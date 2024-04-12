@@ -151,7 +151,7 @@ class AudioPlayerNode(Node):
 
         stream: Stream = pya.open(
             format=pya.get_format_from_width(encoding.bytes_per_sample), 
-            num_channels=encoding.num_channels, 
+            channels=encoding.num_channels, 
             rate=encoding.frames_per_second, 
             output=True)
         
