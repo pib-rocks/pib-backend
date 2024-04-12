@@ -98,7 +98,7 @@ class AudioPlayerNode(Node):
         """pops the current playback-item and start execution of the next one"""
         with self.playback_lock:
             self.playback_queue.pop()
-            if self.playback_queue: self.playback_queue[0].goal_handle.execute()
+            if self.playback_queue: self.playback_queue[-1].goal_handle.execute()
 
     def set_all_playback_items_inactive(self) -> None:
         """inactivate all queued items, thus stopping playback of current and all queued items"""
@@ -144,7 +144,7 @@ class AudioPlayerNode(Node):
 
     def play_audio(self, goal_handle: ServerGoalHandle):
 
-        with self.playback_lock: playback_item = self.playback_queue[0]
+        with self.playback_lock: playback_item = self.playback_queue[-1]
         encoding = playback_item.encoding
         
         pya = pyaudio.PyAudio()
