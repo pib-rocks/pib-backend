@@ -187,7 +187,7 @@ def main(args=None):
 
     rclpy.init()
     node = AudioPlayerNode()
-    executor = MultiThreadedExecutor(8)
+    executor = MultiThreadedExecutor(4)
     executor.add_node(node)
     executor.spin()
     node.destroy_node()
