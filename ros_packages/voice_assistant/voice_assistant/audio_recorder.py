@@ -86,7 +86,7 @@ class AudioRecorderNode(Node):
         # (if one is present)
         with self.goal_queue_lock:
             self.goal_queue.pop()
-            if self.goal_queue: self.goal_queue[0].execute()
+            if self.goal_queue: self.goal_queue[-1].execute()
 
         return result
 
