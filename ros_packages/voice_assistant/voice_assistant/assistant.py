@@ -8,9 +8,10 @@ from rclpy.service import Service
 from rclpy.action import ActionClient
 from rclpy.action.client import ClientGoalHandle
 from rclpy.publisher import Publisher
+from rclpy.client import Client
 
-from datatypes.action import Chat, PlayAudioFromFile, PlayAudioFromSpeech, RecordAudio
-from datatypes.srv import SetVoiceAssistantState, GetVoiceAssistantState, ClearPlaybackQueue
+from datatypes.action import Chat, RecordAudio
+from datatypes.srv import SetVoiceAssistantState, GetVoiceAssistantState, ClearPlaybackQueue, PlayAudioFromFile, PlayAudioFromSpeech
 from datatypes.msg import ChatMessage, VoiceAssistantState
 
 import os
@@ -22,8 +23,8 @@ from pib_api_client import chat_client, personality_client
 VOICE_ASSISTANT_DIRECTORY = os.getenv("VOICE_ASSISTANT_DIR", "/home/pib/ros_working_dir/src/voice_assistant")
 START_SIGNAL_FILE = VOICE_ASSISTANT_DIRECTORY + "/audiofiles/assistant_start_listening.wav"
 STOP_SIGNAL_FILE = VOICE_ASSISTANT_DIRECTORY + "/audiofiles/assistant_stop_listening.wav"
-
 MAX_SILENT_SECONDS_BEFORE = 8.0
+
 
 
 class Personality:
@@ -42,17 +43,18 @@ class VoiceAssistantNode(Node):
 
         super().__init__('voice_assistant')
 
-        self.phase: int = 0
+        # state -------------------------------------------------------------------------
+
+        self.cycle: int = 0
         self.state: VoiceAssistantState = VoiceAssistantState()
         self.state.turned_on = False
         self.state.chat_id = ""
         self.turning_off = False # indicates if the voice_assistant is currently turning off
         self.personality: Personality = Personality("", "", 1.0)
+        self.stop_recording: Callable[[], None] = lambda: None
+        self.stop_chat: Callable[[], None] = lambda: None
 
-        # the handle for the current 'record_audio' or 'chat' goal
-        self.current_goal_handle: ClientGoalHandle | None = None
-
-        # publishers + services -----------------------------------------------
+        # services ----------------------------------------------------------------------
 
         # Service for setting VoiceAssistantState
         self.set_voice_assistant_service: Service = self.create_service(
@@ -65,6 +67,8 @@ class VoiceAssistantNode(Node):
             GetVoiceAssistantState, 
             'get_voice_assistant_state',
             self.get_voice_assistant_state)
+        
+        # publishers --------------------------------------------------------------------
 
         # Publisher for VoiceAssistantState
         self.voice_assistant_state_publisher: Publisher = self.create_publisher(
@@ -78,125 +82,195 @@ class VoiceAssistantNode(Node):
             "chat_messages",
             10)
 
-        # clients -------------------------------------------------------------
+        # clients -----------------------------------------------------------------------
 
-        self.clear_playback_queue_client = self.create_client(ClearPlaybackQueue, 'clear_playback_queue')
-        self.clear_playback_queue_client.wait_for_service()
-
-        self.record_audio_client = ActionClient(self, RecordAudio, 'record_audio')
-        self.record_audio_client.wait_for_server()
-
-        self.chat_client = ActionClient(self, Chat, 'chat')
+        self.chat_client: ActionClient = ActionClient(self, Chat, 'chat')
         self.chat_client.wait_for_server()
 
-        self.play_audio_from_file_client = ActionClient(self, PlayAudioFromFile, 'play_audio_from_file')
-        self.play_audio_from_file_client.wait_for_server()
+        self.record_audio_client: ActionClient = ActionClient(self, RecordAudio, 'record_audio')
+        self.record_audio_client.wait_for_server()
 
-        self.play_audio_from_speech_client = ActionClient(self, PlayAudioFromSpeech, 'play_audio_from_speech')
-        self.play_audio_from_speech_client.wait_for_server()
+        self.play_audio_from_file_client: Client = self.create_client(PlayAudioFromFile, 'play_audio_from_file')
+        self.play_audio_from_file_client.wait_for_service()
+
+        self.play_audio_from_speech_client: Client = self.create_client(PlayAudioFromSpeech, 'play_audio_from_speech')
+        self.play_audio_from_speech_client.wait_for_service()
+
+        self.clear_playback_queue_client: Client = self.create_client(ClearPlaybackQueue, 'clear_playback_queue')
+        self.clear_playback_queue_client.wait_for_service()
 
         self.get_logger().info('Now running VA')
 
-
     
-    def if_phase_not_changed(self, callback: Callable) -> Callable:
-        """a decorator. the decorated callback only executes, if the phase has not changed after its creation"""
-
-        current_phase = self.phase
-        def decorated_callback(*args):
-            if self.phase == current_phase: callback(*args)
-
-        return decorated_callback
-    
+    # client accessors ------------------------------------------------------------------
 
 
-    def add_result_callback(self, future: Future, callback: Callable[[Any], None]) -> None:
-        """executes the callback, with the result of the action as argument"""
+    def clear_playback_queue(self, 
+                             on_playback_queue_cleared: Callable[[], None] = None):
+        
+        future = self.clear_playback_queue_client.call_async(ClearPlaybackQueue.Request())
+        future.add_done_callback(lambda _ : on_playback_queue_cleared())
 
-        def result_callback(result_future: Future):
-            result = result_future.result().result
-            callback(result)
+    def record_audio(self, 
+                     max_silent_seconds_before: float, 
+                     max_silent_seconds_after: float, 
+                     on_stopped_recording: Callable[[], None] = None, 
+                     on_transcribed_text_received: Callable[[str], None] = None) -> Callable[[], None]:
+        
+        goal = RecordAudio.Goal()
+        goal.max_silent_seconds_before = max_silent_seconds_before
+        goal.max_silent_seconds_after = max_silent_seconds_after
+        future: Future = self.record_audio_client.send_goal_async(goal, lambda _ : on_stopped_recording())
+        def result_callback(result: RecordAudio.Result) -> None: on_transcribed_text_received(result.transcribed_text)
+        return self.digest_goal_handle_future(future, result_callback if on_transcribed_text_received is not None else None)
 
-        def done_callback(goal_handle_future: Future):
-            goal_handle: ClientGoalHandle = goal_handle_future.result()
-            self.current_goal_handle = goal_handle
-            result_future: Future = goal_handle.get_result_async()
-            result_future.add_done_callback(result_callback)
+    def chat(self, 
+             text: str, 
+             description: str, 
+             on_sentence_received: Callable[[str], None] = None, 
+             on_final_sentence_received: Callable[[str], None] = None) -> Callable[[], None]:
+        
+        goal = Chat.Goal()
+        goal.text = text
+        goal.description = description
+        future: Future = self.chat_client.send_goal_async(goal, lambda msg: on_sentence_received(msg.feedback.sentence))
+        result_callback = None
+        def result_callback(result: Chat.Result) -> None: on_final_sentence_received(result.rest)
+        return self.digest_goal_handle_future(future, result_callback if on_final_sentence_received is not None else None)
 
-        future.add_done_callback(done_callback)
+    def play_audio_from_file(self, 
+                             filepath: str, 
+                             on_stopped_playing: Callable[[], None] = None):
+        
+        request = PlayAudioFromFile.Request()
+        request.filepath = filepath
+        future: Future = self.play_audio_from_file_client.call_async(request)
+        if on_stopped_playing is not None: future.add_done_callback(lambda _ : on_stopped_playing())
 
+    def play_audio_from_speech(self, 
+                               speech: str, 
+                               gender: str, 
+                               language: str, 
+                               on_stopped_playing: Callable[[], None] = None):
+        
+        request = PlayAudioFromSpeech.Request()
+        request.speech = speech
+        request.gender = gender
+        request.language = language
+        future: Future = self.play_audio_from_speech_client.call_async(request)
+        if on_stopped_playing is not None: future.add_done_callback(lambda _ : on_stopped_playing())
+
+
+    # serivce callbacks -----------------------------------------------------------------
 
 
     def get_voice_assistant_state(self, _: GetVoiceAssistantState.Request, response: GetVoiceAssistantState.Response) -> GetVoiceAssistantState.Response:
 
-        response.voice_assistant_state.chat_id = self.state.chat_id
-        response.voice_assistant_state.turned_on = self.state.turned_on
-
+        response.voice_assistant_state = self.state
         return response
-
 
 
     def set_voice_assistant_state(self, request: SetVoiceAssistantState.Request, response: SetVoiceAssistantState.Response) -> SetVoiceAssistantState.Response:
         
         request_state: VoiceAssistantState = request.voice_assistant_state
 
-        try:
-            if self.turning_off:
-                raise Exception("voice assistant is currently turning off")
-            if request_state.turned_on == self.state.turned_on:
-                raise Exception(f"voice assistant is already turned {'on' if request_state.turned_on else 'off'}.")
-            if request_state.turned_on: self.activate_voice_assistant(request_state.chat_id)
-            else: self.deactivate_voice_assistant()
-            self.state = request_state
-            response.successful = True
 
-        except Exception as e:
-            self.get_logger().error(f"following error occured while trying to set voice assistant state: {str(e)}.")
-            response.successful = False
+        if self.turning_off: # ignore if currently turning off
+            raise Exception("voice assistant is currently turning off")
+        
+        if request_state.turned_on == self.state.turned_on: # ignore if activation stage not changed
+            raise Exception(f"voice assistant is already turned {'on' if request_state.turned_on else 'off'}.")
+        
+        if request_state.turned_on:  # activate voice assistant
+            self.personality = self.get_personality_from_chat_id(request_state.chat_id)
+            if self.personality is None: raise Exception(f"no personality with chat of id {request_state.chat_id} found...")
+            self.play_audio_from_file(START_SIGNAL_FILE, self.if_cycle_not_changed(self.on_start_signal_played))
+
+        else: # deactivate voice assistant
+            self.cycle += 1
+            self.turning_off = True
+            self.stop_recording()
+            self.stop_chat()
+            def on_playback_queue_cleared():
+                self.turning_off = False
+                self.play_audio_from_file(STOP_SIGNAL_FILE)
+            self.clear_playback_queue(self.if_cycle_not_changed(on_playback_queue_cleared))
+
+        self.state = request_state
+        response.successful = True
+
 
         self.voice_assistant_state_publisher.publish(self.state)
 
         return response
     
 
+    # callback cycle --------------------------------------------------------------------
 
-    def activate_voice_assistant(self, chat_id: str) -> None:
+
+    def on_start_signal_played(self) -> None:
+
+        self.record_audio(
+            MAX_SILENT_SECONDS_BEFORE, 
+            self.personality.pause_threshold,
+            self.if_cycle_not_changed(self.on_stopped_recording),
+            self.if_cycle_not_changed(self.on_transcribed_user_input_received))
         
-        self.personality = self.get_personality_from_chat_id(chat_id)
-        if self.personality is None:
-            raise Exception(f"no personality with chat of id {chat_id} found...")
 
-        goal = PlayAudioFromFile.Goal()
-        goal.filepath = START_SIGNAL_FILE
-        future: Future = self.play_audio_from_file_client.send_goal_async(goal)
-        self.add_result_callback(future, self.if_phase_not_changed(self.on_start_signal_played))
+    
+    def on_stopped_recording(self) -> None:
+
+        self.play_audio_from_file(STOP_SIGNAL_FILE)
 
 
 
-    def deactivate_voice_assistant(self) -> None:
-        
-        self.phase += 1
-        self.turning_off = True
+    def on_transcribed_user_input_received(self, transcribed_text: str) -> None:
 
-        if self.current_goal_handle is not None: 
-            self.current_goal_handle.cancel_goal_async()
+        self.chat(
+            transcribed_text, 
+            self.personality.description,
+            self.if_cycle_not_changed(self.on_sentence_received),
+            self.if_cycle_not_changed(self.on_final_sentence_received))
 
-        future = self.clear_playback_queue_client.call_async(ClearPlaybackQueue.Request())
-        future.add_done_callback(self.if_phase_not_changed(self.on_playback_queue_cleared))
+        self.create_chat_message(self.state.chat_id, transcribed_text, True)
 
     
 
-    def on_playback_queue_cleared(self, _: Future):
+    def on_sentence_received(self, sentence: str) -> None:
 
-        self.turning_off = False
+        self.play_audio_from_speech(
+            sentence, 
+            self.personality.gender, 
+            self.personality.language)
 
-        goal = PlayAudioFromFile.Goal()
-        goal.filepath = STOP_SIGNAL_FILE
-        self.play_audio_from_file_client.send_goal_async(goal)
+        self.create_chat_message(self.state.chat_id, sentence, False)
 
+
+
+    def on_final_sentence_received(self, sentence: str) -> None:
+
+        self.play_audio_from_speech(
+            sentence, 
+            self.personality.gender, 
+            self.personality.language,
+            self.if_cycle_not_changed(self.on_final_sentence_played))
+        
+        self.create_chat_message(self.state.chat_id, sentence, False)
+
+
+
+    def on_final_sentence_played(self) -> None:
+
+        self.play_audio_from_file(
+            START_SIGNAL_FILE, 
+            self.if_cycle_not_changed(self.on_start_signal_played))
+        
+
+    # helper functions ------------------------------------------------------------------
 
 
     def get_personality_from_chat_id(self, chat_id: str) -> Personality | None:
+        """get the personality associated with the chat_id from the db"""
 
         successful, chat_dto = chat_client.get_chat(chat_id)
         if not successful: return None
@@ -207,81 +281,18 @@ class VoiceAssistantNode(Node):
             "German", # TODO: language should be saved in db -> replace with 'personality_dto['language']'
             personality_dto['pauseThreshold'],
             personality_dto['description'])
-
-
-
-    def on_start_signal_played(self, _: PlayAudioFromFile.Result) -> None:
-        
-        goal = RecordAudio.Goal()
-        goal.max_silent_seconds_before = MAX_SILENT_SECONDS_BEFORE
-        goal.max_silent_seconds_after = self.personality.pause_threshold
-        future: Future = self.record_audio_client.send_goal_async(goal, self.if_phase_not_changed(self.on_stopped_recording))
-        self.add_result_callback(future, self.if_phase_not_changed(self.on_transcribed_user_input_received))
-
-
-    
-    def on_stopped_recording(self, _: RecordAudio.Feedback) -> None:
-
-        goal = PlayAudioFromFile.Goal()
-        goal.filepath = STOP_SIGNAL_FILE
-        self.play_audio_from_file_client.send_goal_async(goal)
-
-
-
-    def on_transcribed_user_input_received(self, result: RecordAudio.Result) -> None:
-
-        user_text = result.transcribed_text
-
-        goal = Chat.Goal()
-        goal.text = user_text
-        goal.description = self.personality.description
-        future: Future = self.chat_client.send_goal_async(goal, self.if_phase_not_changed(self.on_sentence_received))
-        self.add_result_callback(future, self.if_phase_not_changed(self.on_final_sentence_received))
-
-        self.create_chat_message(user_text, True)
-
     
 
-    def on_sentence_received(self, feedback_message: Any) -> None:
 
-        feedback: Chat.Feedback = feedback_message.feedback
-        sentence = feedback.sentence
-
-        goal = PlayAudioFromSpeech.Goal()
-        goal.gender = self.personality.gender
-        goal.language = self.personality.language
-        goal.speech = feedback.sentence
-
-        self.play_audio_from_speech_client.send_goal_async(goal)
-
-        self.create_chat_message(sentence, False)
-
-
-
-    def on_final_sentence_received(self, result: Chat.Result) -> None:
-
-        sentence = result.rest
-
-        goal = PlayAudioFromSpeech.Goal()
-        goal.gender = self.personality.gender
-        goal.language = self.personality.language
-        goal.speech = sentence
-
-        future: Future = self.play_audio_from_speech_client.send_goal_async(goal)
-        self.add_result_callback(future, self.if_phase_not_changed(self.on_final_sentence_played))
-
-        self.create_chat_message(sentence, False)
-
-
-    
-    def create_chat_message(self, text: str, is_user: bool) -> None:
+    def create_chat_message(self, chat_id: str, text: str, is_user: bool) -> None:
+        """writes a new chat-message to the db, and publishes it to the 'chat_messages'-topic"""
 
         if text == "": return
 
-        _, chat_message_dto = chat_client.create_chat_message(self.state.chat_id, text, is_user)
+        _, chat_message_dto = chat_client.create_chat_message(chat_id, text, is_user)
 
         chat_message_ros = ChatMessage(
-            chat_id=self.state.chat_id,
+            chat_id=chat_id,
             content=chat_message_dto['content'],
             is_user=chat_message_dto['isUser'],
             message_id=chat_message_dto['messageId'],
@@ -289,14 +300,40 @@ class VoiceAssistantNode(Node):
             
         self.chat_message_publisher.publish(chat_message_ros)
 
+    
+
+    def if_cycle_not_changed(self, callback: Callable) -> Callable:
+        """a decorator. the decorated callback only executes, if the cycle has not changed after its creation"""
+
+        current_cycle = self.cycle
+        def decorated_callback(*args):
+            if self.cycle == current_cycle: callback(*args)
+
+        return decorated_callback
+    
 
 
-    def on_final_sentence_played(self, _: PlayAudioFromSpeech.Result) -> None:
+    def digest_goal_handle_future(self, goal_handle_future: Future, callback: Callable[[Any], None] = None) -> Callable[[], None]:
+        """adds a result callback to the goal and returns a function, that can be used to cancel the goal"""
 
-        goal = PlayAudioFromFile.Goal()
-        goal.filepath = START_SIGNAL_FILE
-        future: Future = self.play_audio_from_file_client.send_goal_async(goal)
-        self.add_result_callback(future, self.if_phase_not_changed(self.on_start_signal_played)) 
+        if callback is not None:
+
+            def result_callback(result_future: Future):
+                result = result_future.result().result
+                callback(result)
+
+            def done_callback(goal_handle_future: Future):
+                goal_handle: ClientGoalHandle = goal_handle_future.result()
+                result_future: Future = goal_handle.get_result_async()
+                result_future.add_done_callback(result_callback)
+
+            goal_handle_future.add_done_callback(done_callback)
+
+        def cancel(future: Future) -> None:
+            goal_handle: ClientGoalHandle = future.result()
+            goal_handle.cancel_goal_async()
+
+        return lambda: goal_handle_future.add_done_callback(cancel)
 
 
 

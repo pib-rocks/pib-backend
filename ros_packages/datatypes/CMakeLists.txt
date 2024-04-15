@@ -18,6 +18,8 @@ rosidl_generate_interfaces(${PROJECT_NAME}
 	"msg/ProxyRunProgramResult.msg"
 	"msg/ProxyRunProgramStatus.msg"
 	"srv/MotorSettingsSrv.srv"
+	"srv/PlayAudioFromFile.srv"
+	"srv/PlayAudioFromSpeech.srv"
 	"srv/GetVoiceAssistantState.srv"
 	"srv/SetVoiceAssistantState.srv"
 	"srv/ProxyRunProgramStart.srv"
@@ -26,8 +28,6 @@ rosidl_generate_interfaces(${PROJECT_NAME}
 	"action/RunProgram.action"
 	"action/RecordAudio.action"
 	"action/Chat.action"
-	"action/PlayAudioFromFile.action"
-	"action/PlayAudioFromSpeech.action"
 )
 
 ament_export_dependencies(rosidl_default_runtime)

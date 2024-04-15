@@ -1,0 +1,3 @@
+string filepath # the (absolute) path to the audio file that should be played back
+bool join
+---
