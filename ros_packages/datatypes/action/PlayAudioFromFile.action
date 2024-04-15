@@ -1,5 +1,0 @@
-string filepath # the (absolute) path to the audio file that should be played back
----
-# the result is empty and only indicatedm that the file has finished playing
----
-# no feedback provided
