@@ -7,7 +7,7 @@ from flask import jsonify, request, abort, Blueprint
 bp = Blueprint('bricklet_controller', __name__)
 
 
-@bp.route('/', methods=['GET'])
+@bp.route('', methods=['GET'])
 def get_all_bricklets():
     bricklets = bricklet_service.get_all_bricklets()
     try: return jsonify({"bricklets": bricklets_schema.dump(bricklets)})

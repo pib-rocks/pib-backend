@@ -7,7 +7,7 @@ from flask import abort, jsonify, request, Blueprint
 bp = Blueprint('chat_controller', __name__)
 
 
-@bp.route('/', methods=['POST'])
+@bp.route('', methods=['POST'])
 def create_chat():
     chat_dto = upload_chat_schema.load(request.json)
     chat = chat_service.create_chat(chat_dto)
