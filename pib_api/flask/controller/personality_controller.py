@@ -6,7 +6,7 @@ from flask import abort, jsonify, request, Blueprint
 bp = Blueprint('personality_controller', __name__)
 
 
-@bp.route('/', methods=['GET'])
+@bp.route('', methods=['GET'])
 def get_all_personalities():
     personalities = personality_service.get_all_personalities()
     personalities_dto = personalities_schema.dump(personalities)
@@ -25,7 +25,7 @@ def get_personality(personality_id: str):
         abort(500)
 
 
-@bp.route('/', methods=['POST'])
+@bp.route('', methods=['POST'])
 def create_personality():
     personality_dto = upload_personality_schema.load(request.json)
     personality = personality_service.create_personality(personality_dto)

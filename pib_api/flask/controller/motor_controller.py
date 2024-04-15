@@ -6,7 +6,7 @@ from flask import request, jsonify, abort, Blueprint
 bp = Blueprint('motor_controller', __name__)
 
 
-@bp.route('/', methods=['GET'])
+@bp.route('', methods=['GET'])
 def get_all_motors():
     motors = motor_service.get_all_motors()
     try: return jsonify({'motors': motors_schema.dump(motors)})

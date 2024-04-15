@@ -8,7 +8,7 @@ from service.assistant_service import get_assistant_by_id
 bp = Blueprint('assistant_controller', __name__)
 
 
-@bp.route('/', methods=['GET'])
+@bp.route('', methods=['GET'])
 def get_all_assistants_settings():
     try:
         assistants = assistant_service.get_all_assistants()

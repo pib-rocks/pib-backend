@@ -9,7 +9,7 @@ from app.app import db
 bp = Blueprint('program_controller', __name__)
 
 
-@bp.route('/', methods=['POST'])
+@bp.route('', methods=['POST'])
 def create_program():
     error = program_schema_name_only.validate(request.json)
     if error:
@@ -24,7 +24,7 @@ def create_program():
         abort(500)
 
 
-@bp.route('/', methods=['GET'])
+@bp.route('', methods=['GET'])
 def get_all_programs():
     all_programs = Program.query.all()
     try:
