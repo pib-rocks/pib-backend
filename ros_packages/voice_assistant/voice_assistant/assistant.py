@@ -194,7 +194,7 @@ class VoiceAssistantNode(Node):
             def on_playback_queue_cleared():
                 self.turning_off = False
                 self.play_audio_from_file(STOP_SIGNAL_FILE)
-            self.clear_playback_queue(self.if_cycle_not_changed(on_playback_queue_cleared))
+            self.clear_playback_queue(on_playback_queue_cleared)
 
         self.state = request_state
         response.successful = True
