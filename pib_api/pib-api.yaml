@@ -811,7 +811,7 @@ components:
           examples: 
             - 0.8
             - 1.0
-        assistant_id:
+        assistantId:
           type: string
           examples:
             - 1
@@ -822,7 +822,7 @@ components:
         - description
         - gender
         - pauseThreshold
-        - assistant_id
+        - assistantId
     PostVoiceAssistantPersonality:
       type: object
       properties:
@@ -1269,17 +1269,17 @@ components:
           examples: 
             - 1
             - 2
-        api_name:
+        apiName:
           type: string
           default: gpt-3.5-turbo
           examples: 
             - gpt-4.0
             - Llava
-        has_image_support:
+        hasImageSupport:
           type: boolean
           examples:
             - false
-        visual_name:
+        visualName:
           type: string
           default: GPT-3.5
           examples:
@@ -1287,12 +1287,12 @@ components:
             - LLAVA
       required:
         - id
-        - api_name
-        - has_image_support
+        - apiName
+        - hasImageSupport
     AssistantModels:
       type: object
       properties:
-        AssistantModels:
+        voiceAssistantModels:
           type: array
           items:
             $ref: '#/components/schemas/AssistantModel'
