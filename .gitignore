@@ -49,3 +49,6 @@ user_program_env
 password.env
 
 pibdata.db
+
+*.log
+output.wav
