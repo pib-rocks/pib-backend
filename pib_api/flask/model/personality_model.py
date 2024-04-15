@@ -1,4 +1,5 @@
 from app.app import db
+from model.util import generate_uuid
 
 
 class Personality(db.Model):
@@ -7,7 +8,7 @@ class Personality(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(255), nullable=False)
-    personality_id = db.Column("personalityId", db.String(255), nullable=False, unique=True)
+    personality_id = db.Column("personalityId", db.String(255), nullable=False, default=generate_uuid, unique=True)
     gender = db.Column(db.String(255), nullable=False)
     description = db.Column(db.String(38000), nullable=True)
     pause_threshold = db.Column("pauseThreshold", db.Float, nullable=False)
