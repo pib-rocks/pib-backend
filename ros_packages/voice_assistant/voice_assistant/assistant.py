@@ -174,29 +174,34 @@ class VoiceAssistantNode(Node):
         
         request_state: VoiceAssistantState = request.voice_assistant_state
 
-        if self.turning_off: # ignore if currently turning off
-            raise Exception("voice assistant is currently turning off")
-        
-        if request_state.turned_on == self.state.turned_on: # ignore if activation stage not changed
-            raise Exception(f"voice assistant is already turned {'on' if request_state.turned_on else 'off'}.")
-        
-        if request_state.turned_on:  # activate voice assistant
-            self.personality = self.get_personality_from_chat_id(request_state.chat_id)
-            if self.personality is None: raise Exception(f"no personality with chat of id {request_state.chat_id} found...")
-            self.play_audio_from_file(START_SIGNAL_FILE, self.if_cycle_not_changed(self.on_start_signal_played))
+        try:
 
-        else: # deactivate voice assistant
-            self.cycle += 1
-            self.turning_off = True
-            self.stop_recording()
-            self.stop_chat()
-            def on_playback_queue_cleared():
-                self.turning_off = False
-                self.play_audio_from_file(STOP_SIGNAL_FILE)
-            self.clear_playback_queue(on_playback_queue_cleared)
+            if self.turning_off: # ignore if currently turning off
+                raise Exception("voice assistant is currently turning off")
+            
+            if request_state.turned_on == self.state.turned_on: # ignore if activation stage not changed
+                raise Exception(f"voice assistant is already turned {'on' if request_state.turned_on else 'off'}.")
+            
+            if request_state.turned_on:  # activate voice assistant
+                self.personality = self.get_personality_from_chat_id(request_state.chat_id)
+                if self.personality is None: raise Exception(f"no personality with chat of id {request_state.chat_id} found...")
+                self.play_audio_from_file(START_SIGNAL_FILE, self.if_cycle_not_changed(self.on_start_signal_played))
 
-        self.state = request_state
-        response.successful = True
+            else: # deactivate voice assistant
+                self.cycle += 1
+                self.turning_off = True
+                self.stop_recording()
+                self.stop_chat()
+                def on_playback_queue_cleared():
+                    self.turning_off = False
+                    self.play_audio_from_file(STOP_SIGNAL_FILE)
+                self.clear_playback_queue(on_playback_queue_cleared)
+
+            self.state = request_state
+            response.successful = True
+
+        except Exception as e:
+            self.get_logger().error(f"following error occured while trying to set voice assistant state: {str(e)}.")
 
         self.voice_assistant_state_publisher.publish(self.state)
 
