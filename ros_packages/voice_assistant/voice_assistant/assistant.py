@@ -209,6 +209,7 @@ class VoiceAssistantNode(Node):
                 self.stop_chat()
                 def on_playback_queue_cleared():
                     self.turning_off = False
+                    self.set_is_listening(request_state.chat_id, True)
                     self.play_audio_from_file(STOP_SIGNAL_FILE)
                 self.clear_playback_queue(on_playback_queue_cleared)
 
@@ -283,11 +284,17 @@ class VoiceAssistantNode(Node):
             self.if_cycle_not_changed(self.on_stopped_recording),
             self.if_cycle_not_changed(self.on_user_input_text_received))
         
+        self.set_is_listening(self.state.chat_id, True)
+        
+        
 
     
     def on_stopped_recording(self) -> None:
 
+        if not self.get_is_listening(self.state.chat_id): return
+
         self.play_audio_from_file(STOP_SIGNAL_FILE)
+        self.set_is_listening(self.state.chat_id, False)
 
 
 
@@ -359,7 +366,7 @@ class VoiceAssistantNode(Node):
         _, chat_message_dto = chat_client.create_chat_message(chat_id, text, is_user)
 
         chat_message_ros = ChatMessage()
-        chat_message_ros.chat_id = chat_message_dto['chatId']
+        chat_message_ros.chat_id = chat_id
         chat_message_ros.content = chat_message_dto['content']
         chat_message_ros.is_user = chat_message_dto['isUser']
         chat_message_ros.message_id = chat_message_dto['messageId']
@@ -408,8 +415,11 @@ class VoiceAssistantNode(Node):
         """updates and publishes the listening status of a chat"""
 
         self.chat_id_to_is_listening[chat_id] = listening
+
         voice_assistant_chat_is_listening = VoiceAssistantChatIsListening()
         voice_assistant_chat_is_listening.listening = listening
+        voice_assistant_chat_is_listening.chat_id = chat_id
+
         self.voice_assistant_chat_is_listening_publisher.publish(voice_assistant_chat_is_listening)
 
 
