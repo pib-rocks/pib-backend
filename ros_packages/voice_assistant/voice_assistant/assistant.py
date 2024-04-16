@@ -174,7 +174,6 @@ class VoiceAssistantNode(Node):
         
         request_state: VoiceAssistantState = request.voice_assistant_state
 
-
         if self.turning_off: # ignore if currently turning off
             raise Exception("voice assistant is currently turning off")
         
@@ -199,7 +198,6 @@ class VoiceAssistantNode(Node):
         self.state = request_state
         response.successful = True
 
-
         self.voice_assistant_state_publisher.publish(self.state)
 
         return response
@@ -214,7 +212,7 @@ class VoiceAssistantNode(Node):
             MAX_SILENT_SECONDS_BEFORE, 
             self.personality.pause_threshold,
             self.if_cycle_not_changed(self.on_stopped_recording),
-            self.if_cycle_not_changed(self.on_transcribed_user_input_received))
+            self.if_cycle_not_changed(self.on_user_input_text_received))
         
 
     
@@ -224,7 +222,7 @@ class VoiceAssistantNode(Node):
 
 
 
-    def on_transcribed_user_input_received(self, transcribed_text: str) -> None:
+    def on_user_input_text_received(self, transcribed_text: str) -> None:
 
         self.chat(
             transcribed_text, 
@@ -291,13 +289,13 @@ class VoiceAssistantNode(Node):
 
         _, chat_message_dto = chat_client.create_chat_message(chat_id, text, is_user)
 
-        chat_message_ros = ChatMessage(
-            chat_id=chat_id,
-            content=chat_message_dto['content'],
-            is_user=chat_message_dto['isUser'],
-            message_id=chat_message_dto['messageId'],
-            timestamp=chat_message_dto['timestamp'])
-            
+        chat_message_ros = ChatMessage()
+        chat_message_ros.chat_id = chat_message_dto['chatId']
+        chat_message_ros.content = chat_message_dto['content']
+        chat_message_ros.is_user = chat_message_dto['isUser']
+        chat_message_ros.message_id = chat_message_dto['messageId']
+        chat_message_ros.timestamp = chat_message_dto['timestamp']
+
         self.chat_message_publisher.publish(chat_message_ros)
 
     
