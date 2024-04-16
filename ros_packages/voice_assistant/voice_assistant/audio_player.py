@@ -121,6 +121,8 @@ class AudioPlayerNode(Node):
     
     def play_audio_from_file(self, request: PlayAudioFromFile.Request, response: PlayAudioFromFile.Response) -> PlayAudioFromFile.Response:
 
+        order = self.counter_next()
+
         with wave.open(request.filepath, 'rb') as wf:
 
             encoding = AudioEncoding(
@@ -136,7 +138,7 @@ class AudioPlayerNode(Node):
                 data.append(chunk)
                 if len(chunk) < frames_per_chunk: break
 
-        playback_item = PlaybackItem(data, encoding, 0.0, self.counter_next())
+        playback_item = PlaybackItem(data, encoding, 0.0, order)
         self.playback_queue.put(playback_item, True)
 
         if request.join: playback_item.finished_playing.wait()
@@ -146,9 +148,11 @@ class AudioPlayerNode(Node):
 
     def play_audio_from_speech(self, request: PlayAudioFromSpeech.Request, response: PlayAudioFromSpeech.Response) -> PlayAudioFromSpeech.Response:
 
+        order = self.counter_next()
+
         data = public_voice_client.text_to_speech(request.speech, request.gender, request.language)
 
-        playback_item = PlaybackItem(data, SPEECH_ENCODING, 0.2, self.counter_next())
+        playback_item = PlaybackItem(data, SPEECH_ENCODING, 0.2, order)
         self.playback_queue.put(playback_item, True)
 
         if request.join: playback_item.finished_playing.wait()
