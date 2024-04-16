@@ -11,8 +11,8 @@ from rclpy.publisher import Publisher
 from rclpy.client import Client
 
 from datatypes.action import Chat, RecordAudio
-from datatypes.srv import SetVoiceAssistantState, GetVoiceAssistantState, ClearPlaybackQueue, PlayAudioFromFile, PlayAudioFromSpeech
-from datatypes.msg import ChatMessage, VoiceAssistantState
+from datatypes.srv import SetVoiceAssistantState, GetVoiceAssistantState, ClearPlaybackQueue, PlayAudioFromFile, PlayAudioFromSpeech, GetVoiceAssistantChatIsListening, SendChatMessage
+from datatypes.msg import ChatMessage, VoiceAssistantState, VoiceAssistantChatIsListening
 
 import os
 
@@ -68,6 +68,18 @@ class VoiceAssistantNode(Node):
             'get_voice_assistant_state',
             self.get_voice_assistant_state)
         
+        # Service for getting the listening status of a chat
+        self.get_voice_assistant_chat_is_listening_service: Service = self.create_service(
+            GetVoiceAssistantChatIsListening, 
+            'get_voice_assistant_chat_is_listening',
+            self.get_voice_assistant_chat_is_listening)
+        
+        # Service that allows clients to send chat messages
+        self.send_chat_message: Service = self.create_service(
+            SendChatMessage, 
+            'send_chat_message',
+            self.send_chat_message)
+        
         # publishers --------------------------------------------------------------------
 
         # Publisher for VoiceAssistantState
@@ -80,6 +92,12 @@ class VoiceAssistantNode(Node):
         self.chat_message_publisher: Publisher = self.create_publisher(
             ChatMessage, 
             "chat_messages",
+            10)
+
+        # Publisher for VoiceAssistantChatIsListening
+        self.chat_message_publisher: Publisher = self.create_publisher(
+            VoiceAssistantChatIsListening, 
+            "voice_assistant_chat_is_listening",
             10)
 
         # clients -----------------------------------------------------------------------
@@ -207,6 +225,19 @@ class VoiceAssistantNode(Node):
 
         return response
     
+
+
+    def get_voice_assistant_chat_is_listening(self, request: GetVoiceAssistantChatIsListening.Request, response: GetVoiceAssistantChatIsListening.Response) -> GetVoiceAssistantChatIsListening.Response:
+
+        return response
+
+
+
+    def send_chat_message(self, request: SendChatMessage.Request, response: SendChatMessage.Response) -> GetVoiceAssisSendChatMessagetantChatIsListening.Response:
+
+        return response
+    
+
 
     # callback cycle --------------------------------------------------------------------
 
