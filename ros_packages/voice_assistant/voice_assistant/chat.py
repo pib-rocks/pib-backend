@@ -6,14 +6,16 @@ from rclpy.node import Node
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.node import Node
-
 from rclpy.action import ActionServer
 from rclpy.action import CancelResponse
 from rclpy.action.server import ServerGoalHandle
+from rclpy.publisher import Publisher
 
+from datatypes.msg import ChatMessage
 from datatypes.action import Chat
 
 from public_api_client import public_voice_client
+from pib_api_client import chat_client
 
 
 
@@ -36,21 +38,64 @@ class ChatNode(Node):
             cancel_callback=(lambda _ : CancelResponse.ACCEPT),
             callback_group=ReentrantCallbackGroup())
         
-        # the public_voice_client is the only shared resource between threads
-        # and should be secured with a lock
+        # Publisher for ChatMessages
+        self.chat_message_publisher: Publisher = self.create_publisher(
+            ChatMessage, 
+            "chat_messages",
+            10)
+        
+        # lock that should be aquired, whenever accessing 'public_voice_client'
         self.public_voice_client_lock = Lock()
+        # lock that should be aquired, whenever accessing 'chat_client'
+        self.chat_client_lock = Lock()
 
         self.get_logger().info('Now running CHAT')
 
 
 
+    def create_chat_message(self, chat_id: str, text: str, is_user: bool) -> None:
+        """writes a new chat-message to the db, and publishes it to the 'chat_messages'-topic"""
+
+        if text == "": return
+
+        with self.chat_client_lock:
+            successful, chat_message = chat_client.create_chat_message(chat_id, text, is_user)
+        if not successful: 
+            self.get_logger().error(f"unable to create chat message: {(chat_id, text, is_user)}")
+            return
+
+        chat_message_ros = ChatMessage()
+        chat_message_ros.chat_id = chat_id
+        chat_message_ros.content = chat_message.content
+        chat_message_ros.is_user = chat_message.is_user
+        chat_message_ros.message_id = chat_message.message_id
+        chat_message_ros.timestamp = chat_message.timestamp
+
+        self.chat_message_publisher.publish(chat_message_ros)
+
+
+
     def chat(self, goal_handle: ServerGoalHandle):
-            
+
+            # unpack request data            
             request: Chat.Goal = goal_handle.request
+            chat_id: str = request.chat_id
+            content: str = request.text
+
+            # get the personality that is associated with the request chat_id from the pib-api
+            with self.chat_client_lock: 
+                successful, personality = chat_client.get_personality_from_chat(chat_id)
+            if not successful:
+                self.get_logger().info(f"no personality found for id {chat_id}")
+                goal_handle.abort()
+                return Chat.Result()
+            
+            # create the user message
+            self.executor.create_task(self.create_chat_message, chat_id, content, True)
 
             # receive an iterable of tokens from the public-api
             with self.public_voice_client_lock:
-                tokens = public_voice_client.chat_completion(request.text, request.description)
+                tokens = public_voice_client.chat_completion(content, personality.description)
 
             curr_sentence: str = ""
             prev_sentence: str | None = None
@@ -63,6 +108,7 @@ class ChatNode(Node):
                     return Chat.Result(rest=curr_sentence)
                 # if a sentence was already found and another token was received, forward the sentence as feedback  
                 if prev_sentence is not None: 
+                    self.executor.create_task(self.create_chat_message, chat_id, prev_sentence, False)
                     feedback = Chat.Feedback()
                     feedback.sentence = prev_sentence
                     goal_handle.publish_feedback(feedback)
@@ -73,8 +119,11 @@ class ChatNode(Node):
                     curr_sentence = ""
                 curr_sentence += token
 
-            goal_handle.succeed()
+            # create chat-message for remaining input
+            self.executor.create_task(self.create_chat_message, chat_id, curr_sentence, False)
+
             # return the rest of the received text, that has not been forwarded as feedback
+            goal_handle.succeed()
             return Chat.Result(rest=curr_sentence)    
 
 
