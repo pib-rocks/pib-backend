@@ -15,7 +15,7 @@ from datatypes.msg import ChatMessage
 from datatypes.action import Chat
 
 from public_api_client import public_voice_client
-from pib_api_client import chat_client
+from pib_api_client import voice_assistant_client
 
 
 
@@ -46,8 +46,8 @@ class ChatNode(Node):
         
         # lock that should be aquired, whenever accessing 'public_voice_client'
         self.public_voice_client_lock = Lock()
-        # lock that should be aquired, whenever accessing 'chat_client'
-        self.chat_client_lock = Lock()
+        # lock that should be aquired, whenever accessing 'voice_assistant_client'
+        self.voice_assistant_client_lock = Lock()
 
         self.get_logger().info('Now running CHAT')
 
@@ -58,8 +58,8 @@ class ChatNode(Node):
 
         if text == "": return
 
-        with self.chat_client_lock:
-            successful, chat_message = chat_client.create_chat_message(chat_id, text, is_user)
+        with self.voice_assistant_client_lock:
+            successful, chat_message = voice_assistant_client.create_chat_message(chat_id, text, is_user)
         if not successful: 
             self.get_logger().error(f"unable to create chat message: {(chat_id, text, is_user)}")
             return
@@ -83,8 +83,8 @@ class ChatNode(Node):
             content: str = request.text
 
             # get the personality that is associated with the request chat_id from the pib-api
-            with self.chat_client_lock: 
-                successful, personality = chat_client.get_personality_from_chat(chat_id)
+            with self.voice_assistant_client_lock: 
+                successful, personality = voice_assistant_client.get_personality_from_chat(chat_id)
             if not successful:
                 self.get_logger().info(f"no personality found for id {chat_id}")
                 goal_handle.abort()
