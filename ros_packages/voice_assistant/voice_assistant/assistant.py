@@ -11,12 +11,13 @@ from rclpy.publisher import Publisher
 from rclpy.client import Client
 
 from datatypes.action import Chat, RecordAudio
-from datatypes.srv import SetVoiceAssistantState, GetVoiceAssistantState, ClearPlaybackQueue, PlayAudioFromFile, PlayAudioFromSpeech, GetVoiceAssistantChatIsListening, SendChatMessage
-from datatypes.msg import ChatMessage, VoiceAssistantState, VoiceAssistantChatIsListening
+from datatypes.srv import SetVoiceAssistantState, GetVoiceAssistantState, ClearPlaybackQueue, PlayAudioFromFile, PlayAudioFromSpeech, GetChatIsListening, SendChatMessage
+from datatypes.msg import VoiceAssistantState, ChatIsListening
 
 import os
 
-from pib_api_client import chat_client, personality_client
+from pib_api_client import chat_client
+from pib_api_client.chat_client import Personality
 
 
 
@@ -24,16 +25,6 @@ VOICE_ASSISTANT_DIRECTORY = os.getenv("VOICE_ASSISTANT_DIR", "/home/pib/ros_work
 START_SIGNAL_FILE = VOICE_ASSISTANT_DIRECTORY + "/audiofiles/assistant_start_listening.wav"
 STOP_SIGNAL_FILE = VOICE_ASSISTANT_DIRECTORY + "/audiofiles/assistant_stop_listening.wav"
 MAX_SILENT_SECONDS_BEFORE = 8.0
-
-
-
-class Personality:
-
-    def __init__(self, gender: str, language: str, pause_threshold: float, description: str | None = None):
-        self.gender = gender
-        self.language = language
-        self.pause_threshold = pause_threshold
-        self.description = description if description is not None else 'Du bist pib, ein humanoider Roboter'
 
 
 
@@ -50,7 +41,7 @@ class VoiceAssistantNode(Node):
         self.state.turned_on = False
         self.state.chat_id = ""
         self.turning_off = False # indicates if the voice_assistant is currently turning off
-        self.personality: Personality = Personality("", "", 1.0)
+        self.personality: Personality = None
         self.stop_recording: Callable[[], None] = lambda: None
         self.stop_chat: Callable[[], None] = lambda: None
         self.chat_id_to_is_listening: dict[str, bool] = {}
@@ -70,10 +61,10 @@ class VoiceAssistantNode(Node):
             self.get_voice_assistant_state)
         
         # Service for getting the listening status of a chat
-        self.get_voice_assistant_chat_is_listening_service: Service = self.create_service(
-            GetVoiceAssistantChatIsListening, 
-            'get_voice_assistant_chat_is_listening',
-            self.get_voice_assistant_chat_is_listening)
+        self.get_chat_is_listening_service: Service = self.create_service(
+            GetChatIsListening, 
+            'get_chat_is_listening',
+            self.get_chat_is_listening)
         
         # Service that allows clients to send chat messages
         self.send_chat_message: Service = self.create_service(
@@ -89,16 +80,10 @@ class VoiceAssistantNode(Node):
             "voice_assistant_state",
             10)
 
-        # Publisher for ChatMessages
-        self.chat_message_publisher: Publisher = self.create_publisher(
-            ChatMessage, 
-            "chat_messages",
-            10)
-
-        # Publisher for VoiceAssistantChatIsListening
-        self.voice_assistant_chat_is_listening_publisher: Publisher = self.create_publisher(
-            VoiceAssistantChatIsListening, 
-            "voice_assistant_chat_is_listening",
+        # Publisher for ChatIsListening
+        self.chat_is_listening_publisher: Publisher = self.create_publisher(
+            ChatIsListening, 
+            "chat_is_listening",
             10)
 
         # clients -----------------------------------------------------------------------
@@ -139,23 +124,24 @@ class VoiceAssistantNode(Node):
         goal = RecordAudio.Goal()
         goal.max_silent_seconds_before = max_silent_seconds_before
         goal.max_silent_seconds_after = max_silent_seconds_after
-        future: Future = self.record_audio_client.send_goal_async(goal, lambda _ : on_stopped_recording())
-        def result_callback(result: RecordAudio.Result) -> None: on_transcribed_text_received(result.transcribed_text)
-        return self.digest_goal_handle_future(future, result_callback if on_transcribed_text_received is not None else None)
+        feedback_callback = None if on_stopped_recording is None else lambda _ : on_stopped_recording()
+        result_callback = None if on_transcribed_text_received is None else lambda result: on_transcribed_text_received(result.transcribed_text)
+        future: Future = self.record_audio_client.send_goal_async(goal, feedback_callback)
+        return self.digest_goal_handle_future(future, result_callback)
 
     def chat(self, 
              text: str, 
-             description: str, 
+             chat_id: str, 
              on_sentence_received: Callable[[str], None] = None, 
              on_final_sentence_received: Callable[[str], None] = None) -> Callable[[], None]:
         
         goal = Chat.Goal()
         goal.text = text
-        goal.description = description
-        future: Future = self.chat_client.send_goal_async(goal, lambda msg: on_sentence_received(msg.feedback.sentence))
-        result_callback = None
-        def result_callback(result: Chat.Result) -> None: on_final_sentence_received(result.rest)
-        return self.digest_goal_handle_future(future, result_callback if on_final_sentence_received is not None else None)
+        goal.chat_id = chat_id
+        feedback_callback = None if on_sentence_received is None else lambda msg: on_sentence_received(msg.feedback.sentence)
+        result_callback = None if on_final_sentence_received is None else lambda result: on_final_sentence_received(result.rest)
+        future: Future = self.chat_client.send_goal_async(goal, feedback_callback)
+        return self.digest_goal_handle_future(future, result_callback)
 
     def play_audio_from_file(self, 
                              filepath: str, 
@@ -163,8 +149,9 @@ class VoiceAssistantNode(Node):
         
         request = PlayAudioFromFile.Request()
         request.filepath = filepath
+        request.join = on_stopped_playing is not None
         future: Future = self.play_audio_from_file_client.call_async(request)
-        if on_stopped_playing is not None: future.add_done_callback(lambda _ : on_stopped_playing())
+        if request.join: future.add_done_callback(lambda _ : on_stopped_playing())
 
     def play_audio_from_speech(self, 
                                speech: str, 
@@ -176,8 +163,9 @@ class VoiceAssistantNode(Node):
         request.speech = speech
         request.gender = gender
         request.language = language
+        request.join = on_stopped_playing is not None
         future: Future = self.play_audio_from_speech_client.call_async(request)
-        if on_stopped_playing is not None: future.add_done_callback(lambda _ : on_stopped_playing())
+        if request.join: future.add_done_callback(lambda _ : on_stopped_playing())
 
 
     # serivce callbacks -----------------------------------------------------------------
@@ -207,18 +195,19 @@ class VoiceAssistantNode(Node):
                 self.turning_off = True
                 self.stop_recording()
                 self.stop_chat()
+                current_chat_id = self.state.chat_id
                 def on_playback_queue_cleared():
                     self.turning_off = False
-                    self.set_is_listening(request_state.chat_id, True)
+                    self.set_is_listening(current_chat_id, True)
                     self.play_audio_from_file(STOP_SIGNAL_FILE)
                 self.clear_playback_queue(on_playback_queue_cleared)
 
             elif not self.get_is_listening(request_state.chat_id): # do not activate, if chat is not listening for input
                 raise Exception(f"cannot activate, because chat with id {request_state.chat_id} is currently not listening for user input")
             
-            else:  # activate voice assistant
-                self.personality = self.get_personality_from_chat_id(request_state.chat_id)
-                if self.personality is None: raise Exception(f"no personality with chat of id {request_state.chat_id} found...")
+            else: # activate voice assistant
+                successful, self.personality = chat_client.get_personality_from_chat(request_state.chat_id)
+                if not successful: raise Exception(f"no personality with chat of id {request_state.chat_id} found...")
                 self.set_is_listening(request_state.chat_id, False)
                 self.play_audio_from_file(START_SIGNAL_FILE, self.if_cycle_not_changed(self.on_start_signal_played))
 
@@ -234,14 +223,14 @@ class VoiceAssistantNode(Node):
     
 
 
-    def get_voice_assistant_chat_is_listening(self, request: GetVoiceAssistantChatIsListening.Request, response: GetVoiceAssistantChatIsListening.Response) -> GetVoiceAssistantChatIsListening.Response:
+    def get_chat_is_listening(self, request: GetChatIsListening.Request, response: GetChatIsListening.Response) -> GetChatIsListening.Response:
 
         response.listening = self.get_is_listening(request.chat_id)
         return response
 
 
 
-    def send_chat_message(self, request: SendChatMessage.Request, response: SendChatMessage.Response) -> GetVoiceAssistantChatIsListening.Response:
+    def send_chat_message(self, request: SendChatMessage.Request, response: SendChatMessage.Response) -> GetChatIsListening.Response:
 
         if not self.get_is_listening(request.chat_id): # do not create a message, if chat is not listening
             return response
@@ -253,25 +242,15 @@ class VoiceAssistantNode(Node):
             self.on_user_input_text_received(request.content)
 
         else: # if not active, create messages, without playing audio etc.
-            personality = self.get_personality_from_chat_id(request.chat_id)
-            if personality is None: return response
-            self.create_chat_message(request.chat_id, request.content, True)
             self.set_is_listening(request.chat_id, False)
-            def on_sentence_received(sentence: str) -> None:
-                self.create_chat_message(request.chat_id, sentence, False)
-            def on_final_sentence_received(sentence: str) -> None:
-                on_sentence_received(sentence)
-                self.set_is_listening(request.chat_id, True)
             self.chat(
                 request.content,
-                personality.description,
-                on_sentence_received,
-                on_final_sentence_received)
+                request.chat_id,
+                on_final_sentence_received=lambda _ : self.set_is_listening(request.chat_id, True))
 
         response.successful = True
         return response
     
-
 
     # callback cycle --------------------------------------------------------------------
 
@@ -285,7 +264,6 @@ class VoiceAssistantNode(Node):
             self.if_cycle_not_changed(self.on_user_input_text_received))
         
         self.set_is_listening(self.state.chat_id, True)
-        
         
 
     
@@ -302,11 +280,9 @@ class VoiceAssistantNode(Node):
 
         self.chat(
             transcribed_text, 
-            self.personality.description,
+            self.state.chat_id,
             self.if_cycle_not_changed(self.on_sentence_received),
             self.if_cycle_not_changed(self.on_final_sentence_received))
-
-        self.create_chat_message(self.state.chat_id, transcribed_text, True)
 
     
 
@@ -316,8 +292,6 @@ class VoiceAssistantNode(Node):
             sentence, 
             self.personality.gender, 
             self.personality.language)
-
-        self.create_chat_message(self.state.chat_id, sentence, False)
 
 
 
@@ -329,8 +303,6 @@ class VoiceAssistantNode(Node):
             self.personality.language,
             self.if_cycle_not_changed(self.on_final_sentence_played))
         
-        self.create_chat_message(self.state.chat_id, sentence, False)
-
 
 
     def on_final_sentence_played(self) -> None:
@@ -341,39 +313,6 @@ class VoiceAssistantNode(Node):
         
 
     # helper functions ------------------------------------------------------------------
-
-
-    def get_personality_from_chat_id(self, chat_id: str) -> Personality | None:
-        """get the personality associated with the chat_id from the db"""
-
-        successful, chat_dto = chat_client.get_chat(chat_id)
-        if not successful: return None
-        successful, personality_dto = personality_client.get_personality(chat_dto['personalityId'])
-        if not successful: return None
-        return Personality(
-            personality_dto['gender'],
-            "German", # TODO: language should be saved in db -> replace with 'personality_dto['language']'
-            personality_dto['pauseThreshold'],
-            personality_dto['description'])
-    
-
-
-    def create_chat_message(self, chat_id: str, text: str, is_user: bool) -> None:
-        """writes a new chat-message to the db, and publishes it to the 'chat_messages'-topic"""
-
-        if text == "": return
-
-        _, chat_message_dto = chat_client.create_chat_message(chat_id, text, is_user)
-
-        chat_message_ros = ChatMessage()
-        chat_message_ros.chat_id = chat_id
-        chat_message_ros.content = chat_message_dto['content']
-        chat_message_ros.is_user = chat_message_dto['isUser']
-        chat_message_ros.message_id = chat_message_dto['messageId']
-        chat_message_ros.timestamp = chat_message_dto['timestamp']
-
-        self.chat_message_publisher.publish(chat_message_ros)
-
     
 
     def if_cycle_not_changed(self, callback: Callable) -> Callable:
@@ -416,16 +355,20 @@ class VoiceAssistantNode(Node):
 
         self.chat_id_to_is_listening[chat_id] = listening
 
-        voice_assistant_chat_is_listening = VoiceAssistantChatIsListening()
-        voice_assistant_chat_is_listening.listening = listening
-        voice_assistant_chat_is_listening.chat_id = chat_id
+        print(f"settings {chat_id} to is listening: {listening}")
 
-        self.voice_assistant_chat_is_listening_publisher.publish(voice_assistant_chat_is_listening)
+        chat_is_listening = ChatIsListening()
+        chat_is_listening.listening = listening
+        chat_is_listening.chat_id = chat_id
+
+        self.chat_is_listening_publisher.publish(chat_is_listening)
 
 
 
     def get_is_listening(self, chat_id: str) -> bool:
         """find out, if a chat is currently listening for user input"""
+
+        print(f"{chat_id} is listening: {self.chat_id_to_is_listening.get(chat_id, True)}")
 
         return self.chat_id_to_is_listening.get(chat_id, True)
 
