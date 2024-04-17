@@ -57,9 +57,9 @@ def create_chat_message(chat_id: str, message_content: str, is_user: bool) -> Tu
 		"content": message_content
 	}).encode('UTF-8')
 	request = Request(
-	CHAT_MESSAGES_URL % chat_id, 
-	method='POST',
-	headers = { 'Content-Type': 'application/json' },
-	data = data)
+		CHAT_MESSAGES_URL % chat_id, 
+		method='POST',
+		headers = { 'Content-Type': 'application/json' },
+		data = data)
 	successful, chat_message_dto = send_request(request)
 	return successful, ChatMessage(chat_message_dto)

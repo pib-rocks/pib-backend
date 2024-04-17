@@ -16,8 +16,8 @@ from datatypes.msg import VoiceAssistantState, ChatIsListening
 
 import os
 
-from pib_api_client import chat_client
-from pib_api_client.chat_client import Personality
+from pib_api_client import voice_assistant_client
+from pib_api_client.voice_assistant_client import Personality
 
 
 
@@ -125,7 +125,7 @@ class VoiceAssistantNode(Node):
         goal.max_silent_seconds_before = max_silent_seconds_before
         goal.max_silent_seconds_after = max_silent_seconds_after
         feedback_callback = None if on_stopped_recording is None else lambda _ : on_stopped_recording()
-        result_callback = None if on_transcribed_text_received is None else lambda result: on_transcribed_text_received(result.transcribed_text)
+        result_callback = None if on_transcribed_text_received is None else lambda res: on_transcribed_text_received(res.transcribed_text)
         future: Future = self.record_audio_client.send_goal_async(goal, feedback_callback)
         return self.digest_goal_handle_future(future, result_callback)
 
@@ -206,7 +206,7 @@ class VoiceAssistantNode(Node):
                 raise Exception(f"cannot activate, because chat with id {request_state.chat_id} is currently not listening for user input")
             
             else: # activate voice assistant
-                successful, self.personality = chat_client.get_personality_from_chat(request_state.chat_id)
+                successful, self.personality = voice_assistant_client.get_personality_from_chat(request_state.chat_id)
                 if not successful: raise Exception(f"no personality with chat of id {request_state.chat_id} found...")
                 self.set_is_listening(request_state.chat_id, False)
                 self.play_audio_from_file(START_SIGNAL_FILE, self.if_cycle_not_changed(self.on_start_signal_played))
@@ -355,8 +355,6 @@ class VoiceAssistantNode(Node):
 
         self.chat_id_to_is_listening[chat_id] = listening
 
-        print(f"settings {chat_id} to is listening: {listening}")
-
         chat_is_listening = ChatIsListening()
         chat_is_listening.listening = listening
         chat_is_listening.chat_id = chat_id
@@ -367,8 +365,6 @@ class VoiceAssistantNode(Node):
 
     def get_is_listening(self, chat_id: str) -> bool:
         """find out, if a chat is currently listening for user input"""
-
-        print(f"{chat_id} is listening: {self.chat_id_to_is_listening.get(chat_id, True)}")
 
         return self.chat_id_to_is_listening.get(chat_id, True)
 
