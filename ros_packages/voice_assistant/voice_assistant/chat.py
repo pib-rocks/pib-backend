@@ -94,8 +94,9 @@ class ChatNode(Node):
             self.executor.create_task(self.create_chat_message, chat_id, content, True)
 
             # receive an iterable of tokens from the public-api
+            description = personality.description if personality.description is not None else "Du bist pib, ein humanoider Roboter."
             with self.public_voice_client_lock:
-                tokens = public_voice_client.chat_completion(content, personality.description)
+                tokens = public_voice_client.chat_completion(content, description)
 
             curr_sentence: str = ""
             prev_sentence: str | None = None
