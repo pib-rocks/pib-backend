@@ -1,6 +1,6 @@
 string speech # the text, that should be played as audio
 string gender # voice gender of the audio that is generated
 string language # voice language of the audio that is generated
-bool join
+bool join # if this flag is set, the service call waits until auido has finished playing, before returning the result
 ---
 # the result is empty and only indicatedm that the file has finished playing
