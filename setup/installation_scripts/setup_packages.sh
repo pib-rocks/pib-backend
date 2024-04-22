@@ -44,13 +44,6 @@ sudo apt install -y ros-humble-rtabmap-examples
 cp -r "$BACKEND_DIR/ros_packages" "$ROS_WORKING_DIR/src"
 sudo chmod -R 700 "$ROS_WORKING_DIR"
 
-# Create credentials folder and files required for the voice-assistant
-readonly VOICE_ASSISTANT_CREDENTIALS_DIR="$ROS_WORKING_DIR/src/voice_assistant/credentials"
-mkdir "$VOICE_ASSISTANT_CREDENTIALS_DIR"
-touch "$VOICE_ASSISTANT_CREDENTIALS_DIR/openai-key"
-touch "$VOICE_ASSISTANT_CREDENTIALS_DIR/google-key"
-printf '{\n\t"access_key_id": "",\n\t"secret_access_key": "",\n\t"region_name": ""\n}\n' > "$VOICE_ASSISTANT_CREDENTIALS_DIR/aws-key"
-
 # Create virtual-environment for user programs
 sudo apt-get install -y python3.10-venv
 readonly USER_PROGRAM_ENV_DIR="$ROS_WORKING_DIR/src/programs/user_program_env"
@@ -67,7 +60,6 @@ echo "Install local packages..."
 
 # install local utility packages
 pip install "$ROS_WORKING_DIR""/src/motors/pib_motors"
-pip install "$ROS_WORKING_DIR""/src/voice_assistant/pib_voice"
 
 echo "Booting all nodes..."
 
@@ -101,11 +93,23 @@ sudo chmod 700 "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_voice_assistant_boot.service"
 sudo mv "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_voice_assistant_boot.service" /etc/systemd/system
 sudo systemctl enable ros_voice_assistant_boot.service
 
-# Boot text-to-speech
-sudo chmod 700 "$ROS_VOICE_ASSISTANT_BOOT_DIR""/ros_text_to_speech_boot.sh"
-sudo chmod 700 "$ROS_VOICE_ASSISTANT_BOOT_DIR""/ros_text_to_speech_boot.service"
-sudo mv "$ROS_VOICE_ASSISTANT_BOOT_DIR""/ros_text_to_speech_boot.service" /etc/systemd/system
-sudo systemctl enable ros_text_to_speech_boot.service
+# Boot chat
+sudo chmod 700 "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_chat_boot.sh"
+sudo chmod 700 "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_chat_boot.service"
+sudo mv "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_chat_boot.service" /etc/systemd/system
+sudo systemctl enable ros_chat_boot.service
+
+# Boot audio_player
+sudo chmod 700 "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_audio_player_boot.sh"
+sudo chmod 700 "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_audio_player_boot.service"
+sudo mv "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_audio_player_boot.service" /etc/systemd/system
+sudo systemctl enable ros_audio_player_boot.service
+
+# Boot audio_recorder
+sudo chmod 700 "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_audio_recorder_boot.sh"
+sudo chmod 700 "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_audio_recorder_boot.service"
+sudo mv "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_audio_recorder_boot.service" /etc/systemd/system
+sudo systemctl enable ros_audio_recorder_boot.service
 
 # Boot program node
 sudo chmod 700 "$ROS_PROGRAMS_BOOT_DIR/ros_program_boot.sh"
