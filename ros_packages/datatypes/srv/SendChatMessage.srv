@@ -1,0 +1,4 @@
+string chat_id
+string content
+---
+bool successful

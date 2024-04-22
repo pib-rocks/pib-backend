@@ -1,0 +1,6 @@
+string text # the textual input of the user
+string chat_id # the id of the chat, where messages should be added
+---
+string rest # the remaining textual llm-response, that has not been sent back as feedback
+---
+string sentence # an intermediate sentence, which was received from the llm
