@@ -94,9 +94,9 @@ def _create_program_data() -> None:
 
 
 def _create_chat_data() -> None:
-    p_eva = Personality(name="Eva", personalityId="8f73b580-927e-41c2-98ac-e5df070e7288", gender="female",
+    p_eva = Personality(name="Eva", personalityId="8f73b580-927e-41c2-98ac-e5df070e7288", gender="Female",
                         pauseThreshold=0.8)
-    p_thomas = Personality(name="Thomas", personalityId="8b310f95-92cd-4512-b42a-d3fe29c4bb8a", gender="male",
+    p_thomas = Personality(name="Thomas", personalityId="8b310f95-92cd-4512-b42a-d3fe29c4bb8a", gender="Male",
                            pauseThreshold=0.8)
     db.session.add_all([p_eva, p_thomas])
     db.session.flush()
