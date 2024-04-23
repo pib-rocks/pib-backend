@@ -79,8 +79,7 @@ def text_to_speech(text: str, gender: str, language: str) -> Iterable[bytes]:
     return response.iter_content(chunk_size=None)
 
 
-
-def chat_completion(text: str, description: str) -> Iterable[str]:
+def chat_completion(text: str, description: str, image_base64: str | None = None, model: str = "gpt-3.5-turbo") -> Iterable[str]:
     """
     receive a textual llm response, that takes into account the provided description
     """
@@ -91,13 +90,18 @@ def chat_completion(text: str, description: str) -> Iterable[str]:
     body = {
         "data": text,
         "personality": {
-            "description": description
+            "description": description,
+            "model": model
         }
     }
+    if body is not None:
+        body["imageBase64"] = image_base64
+
     response = _send_request("POST", VOICE_ASSISTANT_TEXT_URL, headers, body, True)
     
     line_bin: bytes
     for line_bin in response.iter_lines():
         line_str = line_bin.decode('utf-8')
-        if not line_str.startswith("data:"): continue
+        if not line_str.startswith("data:"):
+            continue
         yield json.loads(line_str[21:-1])
