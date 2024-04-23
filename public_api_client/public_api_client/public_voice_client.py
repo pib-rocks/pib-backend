@@ -7,7 +7,8 @@ import base64
 import json
 import logging
 
-
+logging.basicConfig(level=logging.INFO, 
+                    format="[%(levelname)s] [%(asctime)s] [%(process)d] [%(filename)s:%(lineno)s]: %(message)s")
 
 SPEECH_TO_TEXT_URL = configuration.tryb_url_prefix + "/public-api/conversions/speech-to-text"
 TEXT_TO_SPEECH_URL = configuration.tryb_url_prefix + "/public-api/conversions/text-to-speech"
@@ -30,15 +31,22 @@ def _send_request(method: str, url: str, headers: dict[str, str], body: dict[str
     
     except requests.HTTPError as error:
         response: requests.Response = error.response
+        headers_without_auth = {k: v for k, v in headers.items() if k != "Authorization"}
         logging.info(
+            f":::::::::::::::::::::::::::::::::::::::::::::::::::::\n" +
             f"An Error occured while sending request:\n" +
             f"-----------------------------------------------------\n" + 
             f"url: {url}\n" +
             f"method: {method}\n" +
+            f"body: {body}\n"+
+            f"headers: {headers_without_auth}"
             f"-----------------------------------------------------\n" +
             f"Received following response from the public-api:\n" + 
             f"-----------------------------------------------------\n" +
-            f"status: {response.status_code}\n")
+            f"status: {response.status_code}\n"
+            f"headers: {response.headers}\n"
+            f"content: {response.content}\n" +
+            f":::::::::::::::::::::::::::::::::::::::::::::::::::::\n")
         
         raise Exception("error while sending request to public-api")
         
