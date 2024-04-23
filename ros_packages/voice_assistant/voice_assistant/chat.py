@@ -13,10 +13,10 @@ from rclpy.publisher import Publisher
 
 from datatypes.msg import ChatMessage
 from datatypes.action import Chat
+from datatypes.srv import GetCameraImageSrv
 
 from public_api_client import public_voice_client
 from pib_api_client import voice_assistant_client
-
 
 
 class ChatNode(Node):
@@ -31,27 +31,28 @@ class ChatNode(Node):
         # granularity of sentences. Intermediate sentences, are forwared in form of feedback. The final
         # sentence is forwarded as the result of the goal
         self.chat_server = ActionServer(
-            self, 
-            Chat, 
-            'chat', 
+            self,
+            Chat,
+            'chat',
             execute_callback=self.chat,
-            cancel_callback=(lambda _ : CancelResponse.ACCEPT),
+            cancel_callback=(lambda _: CancelResponse.ACCEPT),
             callback_group=ReentrantCallbackGroup())
-        
+
         # Publisher for ChatMessages
         self.chat_message_publisher: Publisher = self.create_publisher(
-            ChatMessage, 
+            ChatMessage,
             "chat_messages",
             10)
-        
+
+        # Client to get Camera images
+        self.camera_client = self.create_client(GetCameraImageSrv, "camera_image_srv")
+
         # lock that should be aquired, whenever accessing 'public_voice_client'
         self.public_voice_client_lock = Lock()
         # lock that should be aquired, whenever accessing 'voice_assistant_client'
         self.voice_assistant_client_lock = Lock()
 
         self.get_logger().info('Now running CHAT')
-
-
 
     def create_chat_message(self, chat_id: str, text: str, is_user: bool) -> None:
         """writes a new chat-message to the db, and publishes it to the 'chat_messages'-topic"""
@@ -60,7 +61,7 @@ class ChatNode(Node):
 
         with self.voice_assistant_client_lock:
             successful, chat_message = voice_assistant_client.create_chat_message(chat_id, text, is_user)
-        if not successful: 
+        if not successful:
             self.get_logger().error(f"unable to create chat message: {(chat_id, text, is_user)}")
             return
 
@@ -73,64 +74,64 @@ class ChatNode(Node):
 
         self.chat_message_publisher.publish(chat_message_ros)
 
-
-
     def chat(self, goal_handle: ServerGoalHandle):
 
-            # unpack request data            
-            request: Chat.Goal = goal_handle.request
-            chat_id: str = request.chat_id
-            content: str = request.text
+        # unpack request data
+        request: Chat.Goal = goal_handle.request
+        chat_id: str = request.chat_id
+        content: str = request.text
 
-            # get the personality that is associated with the request chat_id from the pib-api
-            with self.voice_assistant_client_lock: 
-                successful, personality = voice_assistant_client.get_personality_from_chat(chat_id)
-            if not successful:
-                self.get_logger().info(f"no personality found for id {chat_id}")
-                goal_handle.abort()
-                return Chat.Result()
-            
-            # create the user message
-            self.executor.create_task(self.create_chat_message, chat_id, content, True)
+        # get the personality that is associated with the request chat_id from the pib-api
+        with self.voice_assistant_client_lock:
+            successful, personality = voice_assistant_client.get_personality_from_chat(chat_id)
+        if not successful:
+            self.get_logger().info(f"no personality found for id {chat_id}")
+            goal_handle.abort()
+            return Chat.Result()
 
-            # receive an iterable of tokens from the public-api
-            description = personality.description if personality.description is not None else "Du bist pib, ein humanoider Roboter."
-            with self.public_voice_client_lock:
+        # create the user message
+        self.executor.create_task(self.create_chat_message, chat_id, content, True)
+
+        # receive an iterable of tokens from the public-api
+        description = personality.description if personality.description is not None else "Du bist pib, ein humanoider Roboter."
+        with self.public_voice_client_lock:
+            if personality.assistant_model.has_image_support:
+                camera_response = self.camera_client.call(GetCameraImageSrv.Request())
+                tokens = public_voice_client.chat_completion(content, description, camera_response.image_base64)
+            else:
                 tokens = public_voice_client.chat_completion(content, description)
 
-            curr_sentence: str = ""
-            prev_sentence: str | None = None
-            sentence_boundary = re.compile(r"[^\d | ^A-Z][\.|!|\?|:]")
+        curr_sentence: str = ""
+        prev_sentence: str | None = None
+        sentence_boundary = re.compile(r"[^\d | ^A-Z][\.|!|\?|:]")
 
-            for token in tokens:
-                # if the goal was cancelled, return immediately
-                if goal_handle.is_cancel_requested:
-                    goal_handle.canceled()
-                    return Chat.Result(rest=curr_sentence)
-                # if a sentence was already found and another token was received, forward the sentence as feedback  
-                if prev_sentence is not None: 
-                    self.executor.create_task(self.create_chat_message, chat_id, prev_sentence, False)
-                    feedback = Chat.Feedback()
-                    feedback.sentence = prev_sentence
-                    goal_handle.publish_feedback(feedback)
-                    prev_sentence = None
-                # check if the current token marks the end of a sentence
-                if sentence_boundary.search(curr_sentence):
-                    prev_sentence = curr_sentence.strip()
-                    curr_sentence = ""
-                curr_sentence += token
+        for token in tokens:
+            # if the goal was cancelled, return immediately
+            if goal_handle.is_cancel_requested:
+                goal_handle.canceled()
+                return Chat.Result(rest=curr_sentence)
+            # if a sentence was already found and another token was received, forward the sentence as feedback
+            if prev_sentence is not None:
+                self.executor.create_task(self.create_chat_message, chat_id, prev_sentence, False)
+                feedback = Chat.Feedback()
+                feedback.sentence = prev_sentence
+                goal_handle.publish_feedback(feedback)
+                prev_sentence = None
+            # check if the current token marks the end of a sentence
+            if sentence_boundary.search(curr_sentence):
+                prev_sentence = curr_sentence.strip()
+                curr_sentence = ""
+            curr_sentence += token
 
-            # create chat-message for remaining input
-            self.executor.create_task(self.create_chat_message, chat_id, curr_sentence, False)
+        # create chat-message for remaining input
+        self.executor.create_task(self.create_chat_message, chat_id, curr_sentence, False)
 
-            # return the rest of the received text, that has not been forwarded as feedback
-            goal_handle.succeed()
-            return Chat.Result(rest=curr_sentence)    
-
+        # return the rest of the received text, that has not been forwarded as feedback
+        goal_handle.succeed()
+        return Chat.Result(rest=curr_sentence)
 
 
 def main(args=None):
-
     rclpy.init()
     node = ChatNode()
     # the number of threads is chosen arbitrarily to be '8' because ros requires a
