@@ -3,7 +3,7 @@ from typing import Any, Tuple
 from pib_api_client import send_request, URL_PREFIX
 import json
 
-ASSISTANT_MODEL_URL = URL_PREFIX + 'assistant-model/%s'
+ASSISTANT_MODEL_URL = URL_PREFIX + '/assistant-model/%s'
 PERSONALITY_URL = URL_PREFIX + '/voice-assistant/personality/%s'
 CHAT_URL = URL_PREFIX + '/voice-assistant/chat/%s'
 CHAT_MESSAGES_URL = URL_PREFIX + '/voice-assistant/chat/%s/messages'
@@ -11,10 +11,11 @@ CHAT_MESSAGES_URL = URL_PREFIX + '/voice-assistant/chat/%s/messages'
 
 class AssistantModel:
     def __init__(self, assistant_dto: dict[str, Any]):
-        self.model_id = assistant_dto['model_id']
-        self.api_name = assistant_dto['api_name']
-        self.visual_name = assistant_dto['visual_name']
-        self.has_image_support = assistant_dto['has_image_support']
+        self.model_id = assistant_dto['id']
+        self.api_name = assistant_dto['apiName']
+        self.visual_name = assistant_dto['visualName']
+        self.has_image_support = assistant_dto['hasImageSupport']
+
 
 
 class Personality:
@@ -23,7 +24,7 @@ class Personality:
         self.language = "German"  # TODO: language should be stored as part of a personality -> personality_dto["language"]
         self.pause_threshold = personality_dto["pauseThreshold"]
         self.description = personality_dto.get("description")
-        self.assistant_model = self._get_assistant_model(personality_dto["assistantModel"])
+        self.assistant_model = self._get_assistant_model(personality_dto["assistantId"])
 
     def _get_assistant_model(self, assistant_id: int) -> AssistantModel:
         successful, model = get_assistant_model(assistant_id)
@@ -50,9 +51,10 @@ class ChatMessage:
 
 
 def get_assistant_model(assistant_model_id: int) -> Tuple[bool, AssistantModel]:
-    request = Request(PERSONALITY_URL % assistant_model_id, method='GET')
+    request = Request(ASSISTANT_MODEL_URL % assistant_model_id, method='GET')
     successful, assistant_model_dto = send_request(request)
     return successful, AssistantModel(assistant_model_dto)
+
 
 def get_personality(personality_id: str) -> Tuple[bool, Personality]:
     request = Request(PERSONALITY_URL % personality_id, method='GET')

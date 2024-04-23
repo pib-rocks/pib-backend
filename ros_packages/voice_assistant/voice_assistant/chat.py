@@ -97,7 +97,7 @@ class ChatNode(Node):
         with self.public_voice_client_lock:
             if personality.assistant_model.has_image_support:
                 camera_response = self.camera_client.call(GetCameraImageSrv.Request())
-                tokens = public_voice_client.chat_completion(content, description, camera_response.image_base64)
+                tokens = public_voice_client.chat_completion(content, description, camera_response.image_base64, model=personality.assistant_model.api_name)
             else:
                 tokens = public_voice_client.chat_completion(content, description)
 
