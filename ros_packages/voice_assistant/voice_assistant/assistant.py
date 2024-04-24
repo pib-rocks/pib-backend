@@ -194,7 +194,7 @@ class VoiceAssistantNode(Node):
                 self.cycle += 1
                 self.turning_off = True
                 self.stop_recording()
-                self.stop_chat(request_state.chat_id)
+                self.stop_chat(self.state.chat_id)
                 current_chat_id = self.state.chat_id
                 def on_playback_queue_cleared():
                     self.turning_off = False
@@ -371,6 +371,7 @@ class VoiceAssistantNode(Node):
     def stop_chat(self, chat_id: str) -> None:
         """if the chat of the provided is active, stop receiving messages from the chat"""
         stop_chat = self.chat_id_to_stop_chat.get(chat_id)
+        print(stop_chat)
         if stop_chat is not None: stop_chat()
 
 
