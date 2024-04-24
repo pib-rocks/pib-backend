@@ -371,7 +371,6 @@ class VoiceAssistantNode(Node):
     def stop_chat(self, chat_id: str) -> None:
         """if the chat of the provided is active, stop receiving messages from the chat"""
         stop_chat = self.chat_id_to_stop_chat.get(chat_id)
-        print(stop_chat)
         if stop_chat is not None: stop_chat()
 
 
