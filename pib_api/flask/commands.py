@@ -1,9 +1,9 @@
-from collections import namedtuple
 from typing import Any, Tuple
 
 from sqlalchemy import inspect
 
 from app.app import db, app
+from model.assistant_model import AssistantModel
 from model.bricklet_model import Bricklet
 from model.bricklet_pin_model import BrickletPin
 from model.camera_settings_model import CameraSettings
@@ -12,7 +12,6 @@ from model.chat_model import Chat
 from model.motor_model import Motor
 from model.personality_model import Personality
 from model.program_model import Program
-from model.assistant_model import AssistantModel
 
 
 @app.cli.command("seed_db")
@@ -101,9 +100,9 @@ def _create_chat_data_and_assistant() -> None:
     db.session.add_all([gpt3, gpt4, claude])
     db.session.flush()
 
-    p_eva = Personality(name="Eva", personality_id="8f73b580-927e-41c2-98ac-e5df070e7288", gender="female",
+    p_eva = Personality(name="Eva", personality_id="8f73b580-927e-41c2-98ac-e5df070e7288", gender="Female",
                         pauseThreshold=0.8, assistant_id=gpt4.id)
-    p_thomas = Personality(name="Thomas", personality_id="8b310f95-92cd-4512-b42a-d3fe29c4bb8a", gender="male",
+    p_thomas = Personality(name="Thomas", personality_id="8b310f95-92cd-4512-b42a-d3fe29c4bb8a", gender="Male",
                            pauseThreshold=0.8, assistant_id=gpt4.id)
     db.session.add_all([p_eva, p_thomas])
     db.session.flush()
@@ -123,7 +122,7 @@ def _create_chat_data_and_assistant() -> None:
     db.session.flush()
 
 
-def _get_motor_list() -> [Any]:
+def _get_motor_list() -> [dict[str, Any]]:
     name: str = "name"
     bricklet_pins: str = "bricklet_pins"
 
