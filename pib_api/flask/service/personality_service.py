@@ -1,10 +1,9 @@
-from typing import Any
+from typing import Any, List
 from model.personality_model import Personality
 from app.app import db
-import uuid
 
 
-def get_all_personalities() -> list[Personality]:
+def get_all_personalities() -> List[Personality]:
     return Personality.query.all()
 
 
@@ -12,7 +11,7 @@ def get_personality(personality_id: str) -> Personality:
     return Personality.query.filter(Personality.personality_id == personality_id).one()
 
 
-def create_personality(personality_dto: dict[str, Any]) -> list[Personality]:
+def create_personality(personality_dto: Any) -> List[Personality]:
     personality = Personality(
         name=personality_dto['name'],
         gender=personality_dto['gender'],
@@ -24,7 +23,7 @@ def create_personality(personality_dto: dict[str, Any]) -> list[Personality]:
     return personality
 
 
-def update_personality(personality_id: str, personality_dto: dict[str, Any]) -> Personality:
+def update_personality(personality_id: str, personality_dto: Any) -> Personality:
     personality = get_personality(personality_id)
     personality.name = personality_dto['name']
     personality.gender = personality_dto['gender']

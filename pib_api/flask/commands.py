@@ -43,10 +43,10 @@ def _is_empty_db() -> bool:
 
 def _create_bricklet_data() -> None:
     data = _get_motor_list()
-    motor_settings = {"pulseWidthMin": 700, "pulseWidthMax": 2500, "rotationRangeMin": -9000,
-                      "rotationRangeMax": 9000, "velocity": 16000, "acceleration": 10000, "deceleration": 5000,
+    motor_settings = {"pulse_width_min": 700, "pulse_width_max": 2500, "rotation_range_min": -9000,
+                      "rotation_range_max": 9000, "velocity": 16000, "acceleration": 10000, "deceleration": 5000,
                       "period": 19500,
-                      "turnedOn": True, "visible": True, "invert": False}
+                      "turned_on": True, "visible": True, "invert": False}
 
     for item in data:
         motor = Motor(name=item["name"], **motor_settings)
@@ -97,8 +97,8 @@ def _create_program_data() -> None:
 def _create_chat_data_and_assistant() -> None:
     gpt4 = AssistantModel(visual_name="GPT-4", api_name="gpt-4", has_image_support=False)
     gpt3 = AssistantModel(visual_name="GPT-3.5", api_name="gpt-3.5-turbo", has_image_support=False)
-    llava = AssistantModel(visual_name="LLaVA", api_name="llava", has_image_support=True)
-    db.session.add_all([gpt3, gpt4, llava])
+    claude = AssistantModel(visual_name="Claude 3 Sonnet", api_name="anthropic.claude-3-sonnet-20240229-v1:0", has_image_support=True)
+    db.session.add_all([gpt3, gpt4, claude])
     db.session.flush()
 
     p_eva = Personality(name="Eva", personality_id="8f73b580-927e-41c2-98ac-e5df070e7288", gender="female",
@@ -123,7 +123,7 @@ def _create_chat_data_and_assistant() -> None:
     db.session.flush()
 
 
-def _get_motor_list() -> [dict[str, Any]]:
+def _get_motor_list() -> [Any]:
     name: str = "name"
     bricklet_pins: str = "bricklet_pins"
 
