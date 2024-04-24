@@ -1,11 +1,11 @@
 from model.motor_model import Motor
 from model.bricklet_model import Bricklet
 from model.bricklet_pin_model import BrickletPin
-from typing import Any
+from typing import Any, List
 from app.app import db
 
 
-def get_all_motors() -> list[Motor]:
+def get_all_motors() -> List[Motor]:
     return Motor.query.all()
 
 
@@ -13,7 +13,7 @@ def get_motor_by_name(motor_name) -> Motor:
     return Motor.query.filter(Motor.name == motor_name).one()
 
 
-def set_motor_settings(motor_name: str, motor_settings_dto: dict[str, Any]):
+def set_motor_settings(motor_name: str, motor_settings_dto: Any):
     motor = get_motor_by_name(motor_name)
     motor.pulse_width_min = motor_settings_dto['pulse_width_min']
     motor.pulse_width_max = motor_settings_dto['pulse_width_max']

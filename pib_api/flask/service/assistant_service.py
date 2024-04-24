@@ -1,8 +1,9 @@
+from typing import List
 from model.assistant_model import AssistantModel
 from app.app import db
 
 
-def get_all_assistants() -> list[AssistantModel]:
+def get_all_assistants() -> List[AssistantModel]:
     return AssistantModel.query.all()
 
 

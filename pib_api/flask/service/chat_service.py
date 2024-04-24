@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, List
 
 from app.app import db
 from model.chat_message_model import ChatMessage
@@ -6,7 +6,7 @@ from model.chat_model import Chat
 from service import personality_service
 
 
-def get_all_chats() -> list[Chat]:
+def get_all_chats() -> List[Chat]:
     return Chat.query.all()
 
 
@@ -14,7 +14,7 @@ def get_chat(chat_id: str) -> Chat:
     return Chat.query.filter(Chat.chat_id == chat_id).one()
 
 
-def create_chat(chat_dto: dict[str, Any]) -> Chat:
+def create_chat(chat_dto: Any) -> Chat:
     personality = personality_service.get_personality(chat_dto['personality_id'])
     chat = Chat(
         topic=chat_dto['topic'],
@@ -24,7 +24,7 @@ def create_chat(chat_dto: dict[str, Any]) -> Chat:
     return chat
 
 
-def update_chat(chat_id: str, chat_dto: dict[str, Any]) -> Chat:
+def update_chat(chat_id: str, chat_dto: Any) -> Chat:
     chat = get_chat(chat_id)
     chat.topic = chat_dto['topic']
     db.session.flush()
@@ -36,7 +36,7 @@ def delete_chat(chat_id: str) -> None:
     db.session.flush()
 
 
-def create_chat_message(chat_id: str, chat_message_dto: dict[str, Any]) -> ChatMessage:
+def create_chat_message(chat_id: str, chat_message_dto: Any) -> ChatMessage:
     chat = get_chat(chat_id)
     chat_message = ChatMessage(
         is_user=chat_message_dto['is_user'],

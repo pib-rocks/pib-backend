@@ -13,4 +13,4 @@ class Personality(db.Model):
     description = db.Column(db.String(38000), nullable=True)
     pause_threshold = db.Column("pauseThreshold", db.Float, nullable=False)
     chats = db.relationship("Chat", backref="personality", lazy=True, cascade="all,delete")
-    assistant_id = db.Column(db.Integer, db.ForeignKey("assistant_model.id"), nullable=True)
+    assistant_id = db.Column(db.Integer, db.ForeignKey("assistant_model.id"), nullable=False)
