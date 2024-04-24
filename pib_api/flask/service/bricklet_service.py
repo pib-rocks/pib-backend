@@ -1,8 +1,9 @@
+from typing import List
 from model.bricklet_model import Bricklet
 from app.app import db
 
 
-def get_all_bricklets() -> list[Bricklet]:
+def get_all_bricklets() -> List[Bricklet]:
     return Bricklet.query.all()
 
 
