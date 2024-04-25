@@ -1,9 +1,9 @@
-from collections import namedtuple
 from typing import Any, Tuple
 
 from sqlalchemy import inspect
 
 from app.app import db, app
+from model.assistant_model import AssistantModel
 from model.bricklet_model import Bricklet
 from model.bricklet_pin_model import BrickletPin
 from model.camera_settings_model import CameraSettings
@@ -12,7 +12,6 @@ from model.chat_model import Chat
 from model.motor_model import Motor
 from model.personality_model import Personality
 from model.program_model import Program
-from model.assistant_model import AssistantModel
 
 
 @app.cli.command("seed_db")
@@ -43,10 +42,10 @@ def _is_empty_db() -> bool:
 
 def _create_bricklet_data() -> None:
     data = _get_motor_list()
-    motor_settings = {"pulseWidthMin": 700, "pulseWidthMax": 2500, "rotationRangeMin": -9000,
-                      "rotationRangeMax": 9000, "velocity": 16000, "acceleration": 10000, "deceleration": 5000,
+    motor_settings = {"pulse_width_min": 700, "pulse_width_max": 2500, "rotation_range_min": -9000,
+                      "rotation_range_max": 9000, "velocity": 16000, "acceleration": 10000, "deceleration": 5000,
                       "period": 19500,
-                      "turnedOn": True, "visible": True, "invert": False}
+                      "turned_on": True, "visible": True, "invert": False}
 
     for item in data:
         motor = Motor(name=item["name"], **motor_settings)
@@ -95,16 +94,16 @@ def _create_program_data() -> None:
 
 
 def _create_chat_data_and_assistant() -> None:
-    gpt4 = AssistantModel(visual_name="GPT-4", api_name="gpt-4", has_image_support=False)
+    gpt4 = AssistantModel(visual_name="GPT-4", api_name="gpt-4-turbo", has_image_support=False)
     gpt3 = AssistantModel(visual_name="GPT-3.5", api_name="gpt-3.5-turbo", has_image_support=False)
-    llava = AssistantModel(visual_name="LLaVA", api_name="llava", has_image_support=True)
-    db.session.add_all([gpt3, gpt4, llava])
+    claude = AssistantModel(visual_name="Claude 3 Sonnet", api_name="anthropic.claude-3-sonnet-20240229-v1:0", has_image_support=True)
+    db.session.add_all([gpt3, gpt4, claude])
     db.session.flush()
 
-    p_eva = Personality(name="Eva", personality_id="8f73b580-927e-41c2-98ac-e5df070e7288", gender="female",
-                        pauseThreshold=0.8, assistant_id=gpt4.id)
-    p_thomas = Personality(name="Thomas", personality_id="8b310f95-92cd-4512-b42a-d3fe29c4bb8a", gender="male",
-                           pauseThreshold=0.8, assistant_id=gpt4.id)
+    p_eva = Personality(name="Eva", personality_id="8f73b580-927e-41c2-98ac-e5df070e7288", gender="Female",
+                        pause_threshold=0.8, assistant_id=claude.id)
+    p_thomas = Personality(name="Thomas", personality_id="8b310f95-92cd-4512-b42a-d3fe29c4bb8a", gender="Male",
+                           pause_threshold=0.8, assistant_id=gpt4.id)
     db.session.add_all([p_eva, p_thomas])
     db.session.flush()
 
@@ -115,9 +114,9 @@ def _create_chat_data_and_assistant() -> None:
     db.session.add_all([c1, c2])
     db.session.flush()
 
-    m1 = ChatMessage(message_id="539ed3e6-9e3d-11ee-8c90-0242ac120002", isUser=True, content="hello pib!",
+    m1 = ChatMessage(message_id="539ed3e6-9e3d-11ee-8c90-0242ac120002", is_user=True, content="hello pib!",
                      chat_id="b4f01552-0c09-401c-8fde-fda753fb0261")
-    m2 = ChatMessage(message_id="0a080706-9e3e-11ee-8c90-0242ac120002", isUser=False, content="hello user!",
+    m2 = ChatMessage(message_id="0a080706-9e3e-11ee-8c90-0242ac120002", is_user=False, content="hello user!",
                      chat_id="b4f01552-0c09-401c-8fde-fda753fb0261")
     db.session.add_all([m1, m2])
     db.session.flush()
