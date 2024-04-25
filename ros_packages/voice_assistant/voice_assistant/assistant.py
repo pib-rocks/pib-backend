@@ -179,10 +179,6 @@ class VoiceAssistantNode(Node):
 
     def set_voice_assistant_state(self, request: SetVoiceAssistantState.Request,
                                   response: SetVoiceAssistantState.Response) -> SetVoiceAssistantState.Response:
-
-
-    def set_voice_assistant_state(self, request: SetVoiceAssistantState.Request, response: SetVoiceAssistantState.Response) -> SetVoiceAssistantState.Response:
-        
         request_state: VoiceAssistantState = request.voice_assistant_state
 
         try:
