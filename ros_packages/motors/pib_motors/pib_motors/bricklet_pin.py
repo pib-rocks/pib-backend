@@ -24,7 +24,6 @@ class BrickletPin:
 			self.bricklet.set_pulse_width(self.pin, settings_dto['pulseWidthMin'], settings_dto['pulseWidthMax'])
 			self.bricklet.set_motion_configuration(self.pin, settings_dto['velocity'], settings_dto['acceleration'], settings_dto['deceleration'])
 			self.bricklet.set_period(self.pin, settings_dto['period'])
-			self.bricklet.set_degree(self.pin, settings_dto['rotationRangeMin'], settings_dto['rotationRangeMax'])
 			self.bricklet.set_enable(self.pin, settings_dto['turnedOn'])
 			return True
 		except Exception as error: logging.error(f'error occured while trying to apply motor-settings: {str(error)}')
@@ -36,7 +35,6 @@ class BrickletPin:
 			settings_dto['pulseWidthMin'], settings_dto['pulseWidthMax'] = self.bricklet.get_pulse_width(self.pin)
 			settings_dto['velocity'], settings_dto['acceleration'], settings_dto['deceleration'] = self.bricklet.get_motion_configuration(self.pin)
 			settings_dto['period'] = self.bricklet.get_period(self.pin)
-			settings_dto['rotationRangeMin'], settings_dto['rotationRangeMax']= self.bricklet.get_degree(self.pin)
 			settings_dto['turnedOn'] = self.bricklet.get_enabled(self.pin)
 		except Exception as error: logging.error(f'error occured while trying to get motor-settings: {str(error)}')
 		return settings_dto
