@@ -160,6 +160,8 @@ source "$INSTALLATION_SCRIPTS/check_system_variables.sh"
 source "$INSTALLATION_SCRIPTS/install_system_packages.sh"
 # Install python packages
 source "$INSTALLATION_SCRIPTS/install_python_packages.sh"
+# Install public-api-client
+source "$INSTALLATION_SCRIPTS/install_public_api_client.sh"
 # Install tinkerforge
 source "$INSTALLATION_SCRIPTS/install_tinkerforge.sh"
 # Install Cerebra

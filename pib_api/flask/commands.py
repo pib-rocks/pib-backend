@@ -1,9 +1,9 @@
+from collections import namedtuple
 from typing import Any, Tuple
 
 from sqlalchemy import inspect
 
 from app.app import db, app
-from model.assistant_model import AssistantModel
 from model.bricklet_model import Bricklet
 from model.bricklet_pin_model import BrickletPin
 from model.camera_settings_model import CameraSettings
@@ -12,6 +12,7 @@ from model.chat_model import Chat
 from model.motor_model import Motor
 from model.personality_model import Personality
 from model.program_model import Program
+from model.assistant_model import AssistantModel
 
 
 @app.cli.command("seed_db")

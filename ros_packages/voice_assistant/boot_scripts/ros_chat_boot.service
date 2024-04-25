@@ -1,0 +1,12 @@
+[Unit]
+Description=Startup script for ROS and Cerebra
+After=pulseaudio.service
+After=network.target
+
+[Service]
+Type=simple
+User=pib
+ExecStart=/usr/bin/bash /home/pib/ros_working_dir/src/voice_assistant/boot_scripts/ros_chat_boot.sh
+
+[Install]
+WantedBy=multi-user.target
