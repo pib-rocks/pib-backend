@@ -119,7 +119,7 @@ class VoiceAssistantNode(Node):
                      max_silent_seconds_before: float, 
                      max_silent_seconds_after: float, 
                      on_stopped_recording: Callable[[], None] = None, 
-                     on_transcribed_text_received: Callable[[str], None] = None) -> Callable[[], None]:
+                     on_transcribed_text_received: Callable[[str], None] = None) -> None:
         
         goal = RecordAudio.Goal()
         goal.max_silent_seconds_before = max_silent_seconds_before
@@ -127,13 +127,13 @@ class VoiceAssistantNode(Node):
         feedback_callback = None if on_stopped_recording is None else lambda _ : on_stopped_recording()
         result_callback = None if on_transcribed_text_received is None else lambda res: on_transcribed_text_received(res.transcribed_text)
         future: Future = self.record_audio_client.send_goal_async(goal, feedback_callback)
-        return self.digest_goal_handle_future(future, result_callback)
+        self.stop_recording = self.digest_goal_handle_future(future, result_callback)
 
     def chat(self, 
              text: str, 
              chat_id: str, 
              on_sentence_received: Callable[[str], None] = None, 
-             on_final_sentence_received: Callable[[str], None] = None) -> Callable[[], None]:
+             on_final_sentence_received: Callable[[str], None] = None) -> None:
         
         goal = Chat.Goal()
         goal.text = text
@@ -141,7 +141,8 @@ class VoiceAssistantNode(Node):
         feedback_callback = None if on_sentence_received is None else lambda msg: on_sentence_received(msg.feedback.sentence)
         result_callback = None if on_final_sentence_received is None else lambda result: on_final_sentence_received(result.rest)
         future: Future = self.chat_client.send_goal_async(goal, feedback_callback)
-        return self.digest_goal_handle_future(future, result_callback)
+        stop_chat = self.digest_goal_handle_future(future, result_callback)
+        self.chat_id_to_stop_chat[chat_id] = stop_chat
 
     def play_audio_from_file(self, 
                              filepath: str, 
@@ -238,7 +239,7 @@ class VoiceAssistantNode(Node):
             self.play_audio_from_file(STOP_SIGNAL_FILE)
             self.stop_recording()
             self.set_is_listening(request.chat_id, False)
-            self.chat_id_to_stop_chat[self.state.chat_id] = self.chat(
+            self.chat(
                 request.content, 
                 self.state.chat_id,
                 self.if_cycle_not_changed(self.on_sentence_received),
@@ -246,7 +247,7 @@ class VoiceAssistantNode(Node):
 
         else: # if not active, create messages, without playing audio etc.
             self.set_is_listening(request.chat_id, False)
-            self.chat_id_to_stop_chat[request.chat_id] = self.chat(
+            self.chat(
                 request.content,
                 request.chat_id,
                 on_final_sentence_received=lambda _ : self.set_is_listening(request.chat_id, True))
@@ -260,11 +261,11 @@ class VoiceAssistantNode(Node):
 
     def on_start_signal_played(self) -> None:
 
-        self.stop_recording = self.record_audio(
+        self.record_audio(
             MAX_SILENT_SECONDS_BEFORE, 
             self.personality.pause_threshold,
             self.if_cycle_not_changed(self.on_stopped_recording),
-            self.if_cycle_not_changed(self.on_user_input_text_received))
+            self.if_cycle_not_changed(self.on_transcribed_text_received))
         
         self.set_is_listening(self.state.chat_id, True)
         
@@ -279,12 +280,12 @@ class VoiceAssistantNode(Node):
 
 
 
-    def on_user_input_text_received(self, user_input_text: str) -> None:
+    def on_transcribed_text_received(self, transcribed_text: str) -> None:
 
         if not self.get_is_listening(self.state.chat_id): return
 
-        self.chat_id_to_stop_chat[self.state.chat_id] = self.chat(
-            user_input_text, 
+        self.chat(
+            transcribed_text, 
             self.state.chat_id,
             self.if_cycle_not_changed(self.on_sentence_received),
             self.if_cycle_not_changed(self.on_final_sentence_received))
