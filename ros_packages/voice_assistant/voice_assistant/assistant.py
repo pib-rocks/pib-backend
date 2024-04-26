@@ -237,7 +237,12 @@ class VoiceAssistantNode(Node):
             self.set_is_listening(request.chat_id, False)
             self.play_audio_from_file(STOP_SIGNAL_FILE)
             self.stop_recording()
-            self.on_user_input_text_received(request.content)
+            self.set_is_listening(request.chat_id, False)
+            self.chat_id_to_stop_chat[self.state.chat_id] = self.chat(
+                request.content, 
+                self.state.chat_id,
+                self.if_cycle_not_changed(self.on_sentence_received),
+                self.if_cycle_not_changed(self.on_final_sentence_received))
 
         else: # if not active, create messages, without playing audio etc.
             self.set_is_listening(request.chat_id, False)
@@ -274,10 +279,12 @@ class VoiceAssistantNode(Node):
 
 
 
-    def on_user_input_text_received(self, transcribed_text: str) -> None:
+    def on_user_input_text_received(self, user_input_text: str) -> None:
+
+        if not self.get_is_listening(self.state.chat_id): return
 
         self.chat_id_to_stop_chat[self.state.chat_id] = self.chat(
-            transcribed_text, 
+            user_input_text, 
             self.state.chat_id,
             self.if_cycle_not_changed(self.on_sentence_received),
             self.if_cycle_not_changed(self.on_final_sentence_received))
