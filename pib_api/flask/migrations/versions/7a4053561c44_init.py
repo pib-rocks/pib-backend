@@ -87,8 +87,8 @@ def upgrade():
     sa.Column('gender', sa.String(length=255), nullable=False),
     sa.Column('description', sa.String(length=38000), nullable=True),
     sa.Column('pause_threshold', sa.Float(), nullable=False),
-    sa.Column('assistant_id', sa.Integer(), nullable=False),
-    sa.ForeignKeyConstraint(['assistant_id'], ['assistant_model.id'], ),
+    sa.Column('assistant_model_id', sa.Integer(), nullable=False),
+    sa.ForeignKeyConstraint(['assistant_model_id'], ['assistant_model.id'], ),
     sa.PrimaryKeyConstraint('id'),
     sa.UniqueConstraint('personality_id')
     )
