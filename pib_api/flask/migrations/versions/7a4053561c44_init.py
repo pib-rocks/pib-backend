@@ -1,8 +1,8 @@
 """init
 
-Revision ID: f39d81bd76e4
+Revision ID: 7a4053561c44
 Revises: 
-Create Date: 2024-04-25 10:27:04.242934
+Create Date: 2024-04-29 08:32:44.617874
 
 """
 from alembic import op
@@ -10,7 +10,7 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision = 'f39d81bd76e4'
+revision = '7a4053561c44'
 down_revision = None
 branch_labels = None
 depends_on = None
@@ -30,9 +30,9 @@ def upgrade():
     op.create_table('bricklet',
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('uid', sa.String(length=30), nullable=False),
-    sa.Column('brickletNumber', sa.Integer(), nullable=False),
+    sa.Column('bricklet_number', sa.Integer(), nullable=False),
     sa.PrimaryKeyConstraint('id'),
-    sa.UniqueConstraint('brickletNumber'),
+    sa.UniqueConstraint('bricklet_number'),
     sa.UniqueConstraint('uid')
     )
     op.create_table('cameraSettings',
@@ -94,12 +94,12 @@ def upgrade():
     )
     op.create_table('chat',
     sa.Column('id', sa.Integer(), nullable=False),
-    sa.Column('chatId', sa.String(length=255), nullable=False),
+    sa.Column('chat_id', sa.String(length=255), nullable=False),
     sa.Column('topic', sa.String(length=255), nullable=False),
     sa.Column('personality_id', sa.String(length=255), nullable=False),
     sa.ForeignKeyConstraint(['personality_id'], ['personality.personality_id'], ),
     sa.PrimaryKeyConstraint('id'),
-    sa.UniqueConstraint('chatId')
+    sa.UniqueConstraint('chat_id')
     )
     op.create_table('chatMessage',
     sa.Column('id', sa.Integer(), nullable=False),
@@ -108,7 +108,7 @@ def upgrade():
     sa.Column('is_user', sa.Boolean(), nullable=False),
     sa.Column('content', sa.String(length=100000), nullable=False),
     sa.Column('chat_id', sa.String(length=255), nullable=False),
-    sa.ForeignKeyConstraint(['chat_id'], ['chat.chatId'], ),
+    sa.ForeignKeyConstraint(['chat_id'], ['chat.chat_id'], ),
     sa.PrimaryKeyConstraint('id'),
     sa.UniqueConstraint('message_id')
     )
