@@ -1,6 +1,12 @@
-FROM osrf/ros:humble-desktop
+FROM ros:humble-ros-core
 
 SHELL ["/bin/bash", "-c"]
+
+RUN apt-get update && apt-get install --no-install-recommends -y \
+    build-essential \
+    python3-colcon-common-extensions \
+    python3-colcon-mixin \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 COPY ./datatypes ros2_ws/datatypes

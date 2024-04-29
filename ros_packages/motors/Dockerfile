@@ -1,4 +1,4 @@
-FROM osrf/ros:humble-desktop
+FROM ros:humble-ros-core
 
 SHELL ["/bin/bash", "-c"]
 
@@ -8,9 +8,13 @@ RUN curl -sSL https://download.tinkerforge.com/apt/$(. /etc/os-release; echo $ID
     echo "deb https://download.tinkerforge.com/apt/$(. /etc/os-release; echo $ID $VERSION_CODENAME) main" > /etc/apt/sources.list.d/tinkerforge.list && \
     apt-get update --fix-missing && \
     apt-get install -y \
+        build-essential \
+        python3-colcon-common-extensions \
+        python3-colcon-mixin \
         python3-pip \
         python3-tinkerforge \
-        libusb-1.0-0-dev
+        libusb-1.0-0-dev \
+    && rm -rf /var/lib/apt/lists/*
 
 # COPY ./ros_packages/requirements.txt .
 # RUN pip install -r requirements.txt
