@@ -7,7 +7,7 @@ import base64
 import numpy as np
 
 from std_msgs.msg import String, Float64, Int32, Int32MultiArray
-from datatypes.srv import GetCameraImageSrv
+from datatypes.srv import GetCameraImage
 
 
 class ErrorPublisher(Node):
@@ -40,7 +40,7 @@ class CameraNode(Node):
                                                                     self.quality_factor_callback, 10)
         self.preview_size_subscription = self.create_subscription(Int32MultiArray, 'size_topic',
                                                                   self.preview_size_callback, 10)
-        self.picture_service = self.create_service(GetCameraImageSrv, 'camera_image_srv',
+        self.picture_service = self.create_service(GetCameraImage, 'get_camera_image',
                                                    self.get_camera_image_callback)
 
         # Initialize default preview size and quality factor

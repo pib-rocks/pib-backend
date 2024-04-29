@@ -102,9 +102,9 @@ def _create_chat_data_and_assistant() -> None:
     db.session.flush()
 
     p_eva = Personality(name="Eva", personality_id="8f73b580-927e-41c2-98ac-e5df070e7288", gender="Female",
-                        pause_threshold=0.8, assistant_id=claude.id)
+                        pause_threshold=0.8, assistant_model_id=claude.id)
     p_thomas = Personality(name="Thomas", personality_id="8b310f95-92cd-4512-b42a-d3fe29c4bb8a", gender="Male",
-                           pause_threshold=0.8, assistant_id=gpt4.id)
+                           pause_threshold=0.8, assistant_model_id=gpt4.id)
     db.session.add_all([p_eva, p_thomas])
     db.session.flush()
 

@@ -1,5 +1,5 @@
 from model.program_model import Program
-from schema.SQLAutoWithCamelCaseSchema import SQLAutoWithCamelCaseSchema
+from pib_api.flask.schema.sql_auto_with_camel_case_schema import SQLAutoWithCamelCaseSchema
 
 
 class ProgramSchemaSQLAutoWith(SQLAutoWithCamelCaseSchema):

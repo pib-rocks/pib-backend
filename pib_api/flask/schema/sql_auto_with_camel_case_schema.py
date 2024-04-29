@@ -1,7 +1,7 @@
 from app.app import ma
 
 
-def camelcase(s):
+def camelcase(s: str) -> str:
     parts = iter(s.split("_"))
     return next(parts) + "".join(i.title() for i in parts)
 

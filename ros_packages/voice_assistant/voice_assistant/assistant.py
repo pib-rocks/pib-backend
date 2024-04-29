@@ -11,7 +11,8 @@ from rclpy.publisher import Publisher
 from rclpy.client import Client
 
 from datatypes.action import Chat, RecordAudio
-from datatypes.srv import SetVoiceAssistantState, GetVoiceAssistantState, ClearPlaybackQueue, PlayAudioFromFile, PlayAudioFromSpeech, GetChatIsListening, SendChatMessage
+from datatypes.srv import SetVoiceAssistantState, GetVoiceAssistantState, ClearPlaybackQueue, PlayAudioFromFile, \
+    PlayAudioFromSpeech, GetChatIsListening, SendChatMessage
 from datatypes.msg import VoiceAssistantState, ChatIsListening
 
 import os
@@ -19,13 +20,10 @@ import os
 from pib_api_client import voice_assistant_client
 from pib_api_client.voice_assistant_client import Personality
 
-
-
 VOICE_ASSISTANT_DIRECTORY = os.getenv("VOICE_ASSISTANT_DIR", "/home/pib/ros_working_dir/src/voice_assistant")
 START_SIGNAL_FILE = VOICE_ASSISTANT_DIRECTORY + "/audiofiles/assistant_start_listening.wav"
 STOP_SIGNAL_FILE = VOICE_ASSISTANT_DIRECTORY + "/audiofiles/assistant_stop_listening.wav"
 MAX_SILENT_SECONDS_BEFORE = 8.0
-
 
 
 class VoiceAssistantNode(Node):
@@ -105,7 +103,6 @@ class VoiceAssistantNode(Node):
 
         self.get_logger().info('Now running VA')
 
-    
     # client accessors ------------------------------------------------------------------
 
     def clear_playback_queue(self,
@@ -153,7 +150,8 @@ class VoiceAssistantNode(Node):
         request.filepath = filepath
         request.join = on_stopped_playing is not None
         future: Future = self.play_audio_from_file_client.call_async(request)
-        if request.join: future.add_done_callback(lambda _: on_stopped_playing())
+        if request.join:
+            future.add_done_callback(lambda _: on_stopped_playing())
 
     def play_audio_from_speech(self,
                                speech: str,
@@ -167,7 +165,8 @@ class VoiceAssistantNode(Node):
         request.language = language
         request.join = on_stopped_playing is not None
         future: Future = self.play_audio_from_speech_client.call_async(request)
-        if request.join: future.add_done_callback(lambda _: on_stopped_playing())
+        if request.join:
+            future.add_done_callback(lambda _: on_stopped_playing())
 
     # serivce callbacks -----------------------------------------------------------------
 
@@ -200,9 +199,10 @@ class VoiceAssistantNode(Node):
                     self.turning_off = False
                     self.set_is_listening(current_chat_id, True)
                     self.play_audio_from_file(STOP_SIGNAL_FILE)
+
                 self.clear_playback_queue(on_playback_queue_cleared)
 
-            else: # activate voice assistant
+            else:  # activate voice assistant
                 self.stop_chat(request_state.chat_id)
                 successful, self.personality = voice_assistant_client.get_personality_from_chat(request_state.chat_id)
                 if not successful: raise Exception(f"no personality with chat of id {request_state.chat_id} found...")
@@ -258,17 +258,13 @@ class VoiceAssistantNode(Node):
             self.if_cycle_not_changed(self.on_user_input_text_received))
 
         self.set_is_listening(self.state.chat_id, True)
-        
 
-    
     def on_stopped_recording(self) -> None:
 
         if not self.get_is_listening(self.state.chat_id): return
 
         self.play_audio_from_file(STOP_SIGNAL_FILE)
         self.set_is_listening(self.state.chat_id, False)
-
-
 
     def on_user_input_text_received(self, transcribed_text: str) -> None:
 
@@ -277,8 +273,6 @@ class VoiceAssistantNode(Node):
             self.state.chat_id,
             self.if_cycle_not_changed(self.on_sentence_received),
             self.if_cycle_not_changed(self.on_final_sentence_received))
-
-    
 
     def on_sentence_received(self, sentence: str) -> None:
 
@@ -294,18 +288,14 @@ class VoiceAssistantNode(Node):
             self.personality.gender,
             self.personality.language,
             self.if_cycle_not_changed(self.on_final_sentence_played))
-        
-
 
     def on_final_sentence_played(self) -> None:
 
         self.play_audio_from_file(
             START_SIGNAL_FILE,
             self.if_cycle_not_changed(self.on_start_signal_played))
-        
 
     # helper functions ------------------------------------------------------------------
-    
 
     def if_cycle_not_changed(self, callback: Callable) -> Callable:
         """a decorator. the decorated callback only executes, if the cycle has not changed after its creation"""
@@ -355,7 +345,6 @@ class VoiceAssistantNode(Node):
 
         return self.chat_id_to_is_listening.get(chat_id, True)
 
-
     def stop_chat(self, chat_id: str) -> None:
         """if the chat of the provided is active, stop receiving messages from the chat"""
         stop_chat = self.chat_id_to_stop_chat.get(chat_id)
@@ -364,7 +353,6 @@ class VoiceAssistantNode(Node):
 
 
 def main(args=None):
-
     rclpy.init()
     node = VoiceAssistantNode()
     executor = SingleThreadedExecutor()
@@ -372,7 +360,6 @@ def main(args=None):
     executor.spin()
     node.destroy_node()
     rclpy.shutdown()
-
 
 
 if __name__ == "__main__":
