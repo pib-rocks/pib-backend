@@ -52,6 +52,12 @@ Follow these steps to run the health-check-script:
 The script also has a development mode "./health-check-pib.sh -d" option that allows you to skip some parts of the check.
 For example to only check ros packages and system services without the python packages.
 
+## Webots
+Starting the webots simulation:
+	1. Complete all steps of the "Installing pibs software"-section of this readme
+	2. Enter the following command into a terminal:  
+	`ros2 launch pibsim_webots pib_launch.py`
+
 ## Clustering pibs
 
 To synchronize communication between pibs on default ROS_DOMAIN_ID=0:
