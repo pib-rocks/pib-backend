@@ -14,7 +14,7 @@ def create_program():
     error = program_schema_name_only.validate(request.json)
     if error:
         return error, 400
-    created = Program(request.json.get("name"))
+    created = Program(name=request.json.get("name"))
     db.session.add(created)
     db.session.commit()
     program_service.create_empty_python_code_file(created.program_number)
