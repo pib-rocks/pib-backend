@@ -36,15 +36,16 @@ class VoiceAssistantNode(Node):
 
         # state -------------------------------------------------------------------------
 
-        self.cycle: int = 0
+        self.cycle: int = 0 # a counter for indicating the index of the current on-off-cycle
         self.state: VoiceAssistantState = VoiceAssistantState()
-        self.state.turned_on = False
-        self.state.chat_id = ""
-        self.turning_off = False # indicates if the voice_assistant is currently turning off
-        self.personality: Personality = None
-        self.stop_recording: Callable[[], None] = lambda: None
-        self.chat_id_to_stop_chat: dict[str, Callable[[], None]] = {}
-        self.chat_id_to_is_listening: dict[str, bool] = {}
+        self.state.turned_on = False # indicates if the va is turned on or off
+        self.state.chat_id = "" # id of the active chat
+        self.turning_off = False  # indicates if the voice_assistant is currently turning off
+        self.personality: Personality = None # the personality associated with the active chat
+        self.stop_recording: Callable[[], None] = lambda: None # calling this function stops audio-recording
+        self.chat_id_to_stop_chat: dict[str, Callable[[], None]] = {} # maps a chat-id to a function that can be used to stop receiving llm-responses
+        self.chat_id_to_is_listening: dict[str, bool] = {} # maps a chat-id to the listening status of the respective chat
+        self.waiting_for_transcribed_text = False # indicates, whether audio was recorded and va is currently awaitng the transcription
 
         # services ----------------------------------------------------------------------
 
@@ -277,12 +278,14 @@ class VoiceAssistantNode(Node):
 
         self.play_audio_from_file(STOP_SIGNAL_FILE)
         self.set_is_listening(self.state.chat_id, False)
+        self.waiting_for_transcribed_text = True
 
 
 
     def on_transcribed_text_received(self, transcribed_text: str) -> None:
 
-        if not self.get_is_listening(self.state.chat_id): return
+        if not self.waiting_for_transcribed_text: return
+        self.waiting_for_transcribed_text = False
 
         self.chat(
             transcribed_text, 
