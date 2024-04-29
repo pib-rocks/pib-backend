@@ -1,5 +1,5 @@
 from model.assistant_model import AssistantModel
-from pib_api.flask.schema.sql_auto_with_camel_case_schema import SQLAutoWithCamelCaseSchema
+from schema.sql_auto_with_camel_case_schema import SQLAutoWithCamelCaseSchema
 
 
 class AssistantSchemaSQLAutoWith(SQLAutoWithCamelCaseSchema):

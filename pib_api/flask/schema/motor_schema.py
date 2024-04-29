@@ -1,7 +1,7 @@
 from marshmallow import fields
 
 from model.motor_model import Motor
-from pib_api.flask.schema.sql_auto_with_camel_case_schema import SQLAutoWithCamelCaseSchema
+from schema.sql_auto_with_camel_case_schema import SQLAutoWithCamelCaseSchema
 from schema.bricklet_pin_schema import bricklet_pins_schema
 
 
