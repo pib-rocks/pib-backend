@@ -1,5 +1,5 @@
 from app.app import app
-from controller import assistant_controller, bricklet_controller, camera_controller, chat_controller, motor_controller, \
+from controller import assistant_model_controller, bricklet_controller, camera_controller, chat_controller, motor_controller, \
     personality_controller, program_controller
 
 app.register_blueprint(program_controller.bp, url_prefix='/program', name='program')

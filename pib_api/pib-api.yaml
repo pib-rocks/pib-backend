@@ -811,7 +811,7 @@ components:
           examples: 
             - 0.8
             - 1.0
-        assistantId:
+        assistantModelId:
           type: string
           examples:
             - 1
@@ -822,7 +822,7 @@ components:
         - description
         - gender
         - pauseThreshold
-        - assistantId
+        - assistantModelId
     PostVoiceAssistantPersonality:
       type: object
       properties:

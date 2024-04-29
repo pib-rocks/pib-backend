@@ -17,7 +17,7 @@ def create_personality(personality_dto: Any) -> List[Personality]:
         gender=personality_dto['gender'],
         pause_threshold=personality_dto['pause_threshold'],
 
-        assistant_id=personality_dto['assistant_id'])
+        assistant_model_id=personality_dto['assistant_model_id'])
     db.session.add(personality)
     db.session.flush()
     return personality
@@ -30,7 +30,7 @@ def update_personality(personality_id: str, personality_dto: Any) -> Personality
     personality.pause_threshold = personality_dto['pause_threshold']
     if 'description' in personality_dto:
         personality.description = personality_dto['description']
-    personality.assistant_id = personality_dto['assistant_id']
+    personality.assistant_model_id = personality_dto['assistant_model_id']
     db.session.flush()
     return personality
 

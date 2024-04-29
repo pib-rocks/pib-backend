@@ -1,7 +1,7 @@
 from marshmallow import fields
 
 from model.bricklet_pin_model import BrickletPin
-from schema.SQLAutoWithCamelCaseSchema import SQLAutoWithCamelCaseSchema
+from pib_api.flask.schema.sql_auto_with_camel_case_schema import SQLAutoWithCamelCaseSchema
 from schema.bricklet_schema import bricklet_uid_only_schema
 
 
