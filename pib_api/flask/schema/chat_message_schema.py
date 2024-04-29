@@ -1,5 +1,5 @@
 from model.chat_message_model import ChatMessage
-from pib_api.flask.schema.sql_auto_with_camel_case_schema import SQLAutoWithCamelCaseSchema
+from schema.sql_auto_with_camel_case_schema import SQLAutoWithCamelCaseSchema
 
 
 class ChatMessageSchemaSQLAutoWith(SQLAutoWithCamelCaseSchema):
