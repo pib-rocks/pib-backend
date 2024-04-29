@@ -21,6 +21,13 @@ services:
       - SQLALCHEMY_DATABASE_URI=sqlite:////app/pibdata.db
     command: "bash -c 'flask --app run db upgrade && flask --app run seed_db && flask --app run run --host 0.0.0.0 --debug'"
 
+  ros-camera:
+    image: ros-camera
+    build:
+      context: ./ros_packages
+      dockerfile: ./camera/Dockerfile
+    command: ros2 run oak_d_lite stereo
+
   ros-motors:
     image: ros_motors
     build:
@@ -83,8 +90,8 @@ services:
       - "4223:4223"
     tty: true
     # Mount bricklets
-    devices:
-      - /dev/gpiomem:/dev/gpiomem
+#    devices:
+#      - /dev/gpiomem:/dev/gpiomem
 
 
 volumes:
