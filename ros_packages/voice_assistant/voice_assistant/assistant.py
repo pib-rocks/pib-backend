@@ -195,6 +195,7 @@ class VoiceAssistantNode(Node):
             elif not request_state.turned_on: # deactivate voice assistant
                 self.cycle += 1
                 self.turning_off = True
+                self.waiting_for_transcribed_text = False
                 self.stop_recording()
                 self.stop_chat(self.state.chat_id)
                 current_chat_id = self.state.chat_id
