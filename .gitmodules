@@ -1,0 +1,3 @@
+[submodule "ros_packages/pibsim_webots"]
+	path = ros_packages/pibsim_webots
+	url = https://github.com/snfeld/pibsim_webots.git
