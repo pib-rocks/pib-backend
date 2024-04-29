@@ -1,0 +1,37 @@
+FROM osrf/ros:humble-desktop
+
+SHELL ["/bin/bash", "-c"]
+
+WORKDIR /app
+
+RUN curl -sSL https://download.tinkerforge.com/apt/$(. /etc/os-release; echo $ID)/tinkerforge.gpg | apt-key add - && \
+    echo "deb https://download.tinkerforge.com/apt/$(. /etc/os-release; echo $ID $VERSION_CODENAME) main" > /etc/apt/sources.list.d/tinkerforge.list && \
+    apt-get update --fix-missing && \
+    apt-get install -y \
+        python3-pip \
+        python3-tinkerforge \
+        libusb-1.0-0-dev
+
+# COPY ./ros_packages/requirements.txt .
+# RUN pip install -r requirements.txt
+
+COPY ./pib_api/client ./client
+RUN pip install ./client
+
+COPY ./ros_packages/motors/pib_motors ./motors/pib_motors
+RUN pip install ./motors/pib_motors
+
+COPY ./ros_packages/datatypes ros2_ws/datatypes
+COPY ./ros_packages/motors ros2_ws/motors
+
+RUN cd ros2_ws && \
+    source /opt/ros/humble/setup.bash && \
+    colcon build
+
+COPY ./ros_packages/ros_entrypoint.sh /
+
+RUN chmod +x /ros_entrypoint.sh
+
+
+ENTRYPOINT ["/ros_entrypoint.sh"]
+CMD ["bash"]

@@ -1,0 +1,9 @@
+launch:
+
+- node:
+    pkg: "programs"
+    exec: "program"
+
+- node:
+    pkg: "programs"
+    exec: "proxy_program"
