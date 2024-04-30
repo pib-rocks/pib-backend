@@ -26,8 +26,8 @@ class Personality:
         self.description = personality_dto.get("description")
         self.assistant_model = self._get_assistant_model(personality_dto["assistantId"])
 
-    def _get_assistant_model(self, assistant_id: int) -> AssistantModel:
-        successful, model = get_assistant_model(assistant_id)
+    def _get_assistant_model(self, assistant_model_id: int) -> AssistantModel:
+        successful, model = get_assistant_model(assistant_model_id)
         if not successful:
             raise Exception("Could not find the assistant model")
         return model
@@ -59,7 +59,12 @@ def get_assistant_model(assistant_model_id: int) -> Tuple[bool, AssistantModel]:
 def get_personality(personality_id: str) -> Tuple[bool, Personality]:
     request = Request(PERSONALITY_URL % personality_id, method='GET')
     successful, personality_dto = send_request(request)
-    return successful, Personality(personality_dto)
+    try:
+        personality = Personality(personality_dto)
+    except Exception:
+        successful = False
+        personality = None
+    return successful, personality
 
 
 def get_chat(chat_id: str) -> Tuple[bool, Chat]:
