@@ -1,6 +1,6 @@
 from marshmallow import fields
 
-from schema.SQLAutoWithCamelCaseSchema import SQLAutoWithCamelCaseSchema
+from schema.sql_auto_with_camel_case_schema import SQLAutoWithCamelCaseSchema
 
 
 class ProgramCodeSchemaSQLAutoWith(SQLAutoWithCamelCaseSchema):

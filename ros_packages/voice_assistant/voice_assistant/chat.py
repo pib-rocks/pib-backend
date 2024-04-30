@@ -13,7 +13,7 @@ from rclpy.publisher import Publisher
 
 from datatypes.msg import ChatMessage
 from datatypes.action import Chat
-from datatypes.srv import GetCameraImageSrv
+from datatypes.srv import GetCameraImage
 
 from public_api_client import public_voice_client
 from pib_api_client import voice_assistant_client
@@ -45,7 +45,7 @@ class ChatNode(Node):
             10)
 
         # Client to get Camera images
-        self.camera_client = self.create_client(GetCameraImageSrv, "camera_image_srv")
+        self.camera_client = self.create_client(GetCameraImage, "get_camera_image")
 
         # lock that should be aquired, whenever accessing 'public_voice_client'
         self.public_voice_client_lock = Lock()
@@ -74,7 +74,7 @@ class ChatNode(Node):
 
         self.chat_message_publisher.publish(chat_message_ros)
 
-    def chat(self, goal_handle: ServerGoalHandle):
+    async def chat(self, goal_handle: ServerGoalHandle):
 
         # unpack request data
         request: Chat.Goal = goal_handle.request
@@ -94,12 +94,14 @@ class ChatNode(Node):
 
         # receive an iterable of tokens from the public-api
         description = personality.description if personality.description is not None else "Du bist pib, ein humanoider Roboter."
+        camera_response = None
+        if personality.assistant_model.has_image_support:
+            camera_response = await self.camera_client.call_async(GetCameraImageSrv.Request())
         with self.public_voice_client_lock:
-            if personality.assistant_model.has_image_support:
-                camera_response = self.camera_client.call(GetCameraImageSrv.Request())
-                tokens = public_voice_client.chat_completion(content, description, camera_response.image_base64, model=personality.assistant_model.api_name)
-            else:
-                tokens = public_voice_client.chat_completion(content, description)
+            tokens = public_voice_client.chat_completion(text=content,
+                                                        description=description,
+                                                        image_base64=camera_response.image_base64,
+                                                        model=personality.assistant_model.api_name)
 
         curr_sentence: str = ""
         prev_sentence: str | None = None

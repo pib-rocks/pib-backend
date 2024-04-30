@@ -150,7 +150,8 @@ class VoiceAssistantNode(Node):
         request.filepath = filepath
         request.join = on_stopped_playing is not None
         future: Future = self.play_audio_from_file_client.call_async(request)
-        if request.join: future.add_done_callback(lambda _: on_stopped_playing())
+        if request.join:
+            future.add_done_callback(lambda _: on_stopped_playing())
 
     def play_audio_from_speech(self,
                                speech: str,
@@ -164,7 +165,8 @@ class VoiceAssistantNode(Node):
         request.language = language
         request.join = on_stopped_playing is not None
         future: Future = self.play_audio_from_speech_client.call_async(request)
-        if request.join: future.add_done_callback(lambda _: on_stopped_playing())
+        if request.join:
+            future.add_done_callback(lambda _: on_stopped_playing())
 
     # serivce callbacks -----------------------------------------------------------------
 
@@ -176,7 +178,6 @@ class VoiceAssistantNode(Node):
 
     def set_voice_assistant_state(self, request: SetVoiceAssistantState.Request,
                                   response: SetVoiceAssistantState.Response) -> SetVoiceAssistantState.Response:
-
         request_state: VoiceAssistantState = request.voice_assistant_state
 
         try:
@@ -191,7 +192,7 @@ class VoiceAssistantNode(Node):
                 self.cycle += 1
                 self.turning_off = True
                 self.stop_recording()
-                self.chat_id_to_stop_chat[self.state.chat_id]()
+                self.stop_chat(self.state.chat_id)
                 current_chat_id = self.state.chat_id
 
                 def on_playback_queue_cleared():
@@ -202,8 +203,7 @@ class VoiceAssistantNode(Node):
                 self.clear_playback_queue(on_playback_queue_cleared)
 
             else:  # activate voice assistant
-                stop_chat = self.chat_id_to_stop_chat.get(request_state.chat_id)
-                if stop_chat is not None: stop_chat()
+                self.stop_chat(request_state.chat_id)
                 successful, self.personality = voice_assistant_client.get_personality_from_chat(request_state.chat_id)
                 if not successful: raise Exception(f"no personality with chat of id {request_state.chat_id} found...")
                 self.set_is_listening(request_state.chat_id, False)
@@ -344,6 +344,12 @@ class VoiceAssistantNode(Node):
         """find out, if a chat is currently listening for user input"""
 
         return self.chat_id_to_is_listening.get(chat_id, True)
+
+    def stop_chat(self, chat_id: str) -> None:
+        """if the chat of the provided is active, stop receiving messages from the chat"""
+        stop_chat = self.chat_id_to_stop_chat.get(chat_id)
+        print(stop_chat)
+        if stop_chat is not None: stop_chat()
 
 
 def main(args=None):
