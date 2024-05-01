@@ -54,9 +54,11 @@ For example to only check ros packages and system services without the python pa
 
 ## Webots
 Starting the webots simulation:
-	1. Complete all steps of the "Installing pibs software"-section of this readme
+	1. Complete all steps of the "Installing pibs software"-section of this readme document
 	2. Enter the following command into a terminal:  
 	`ros2 launch pibsim_webots pib_launch.py`
+		2a. The first time this command is entered, a prompt will appear asking to install webots.  
+		Confirm this prompt and wait a few seconds for the installation to finish. Webots should open afterwards.
 
 ## Clustering pibs
 
