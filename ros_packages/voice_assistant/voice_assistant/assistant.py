@@ -34,15 +34,18 @@ class VoiceAssistantNode(Node):
 
         # state -------------------------------------------------------------------------
 
-        self.cycle: int = 0
+        self.cycle: int = 0  # a counter for indicating the index of the current on-off-cycle
         self.state: VoiceAssistantState = VoiceAssistantState()
-        self.state.turned_on = False
-        self.state.chat_id = ""
+        self.state.turned_on = False  # indicates if the va is turned on or off
+        self.state.chat_id = ""  # id of the active chat
         self.turning_off = False  # indicates if the voice_assistant is currently turning off
-        self.personality: Personality = None
-        self.stop_recording: Callable[[], None] = lambda: None
-        self.chat_id_to_stop_chat: dict[str, Callable[[], None]] = {}
-        self.chat_id_to_is_listening: dict[str, bool] = {}
+        self.personality: Personality = None  # the personality associated with the active chat
+        self.stop_recording: Callable[[], None] = lambda: None  # calling this function stops audio-recording
+        self.chat_id_to_stop_chat: dict[str, Callable[
+            [], None]] = {}  # maps a chat-id to a function that can be used to stop receiving llm-responses
+        self.chat_id_to_is_listening: dict[
+            str, bool] = {}  # maps a chat-id to the listening status of the respective chat
+        self.waiting_for_transcribed_text = False  # indicates, whether audio was recorded and va is currently awaitng the transcription
 
         # services ----------------------------------------------------------------------
 
@@ -115,7 +118,7 @@ class VoiceAssistantNode(Node):
                      max_silent_seconds_before: float,
                      max_silent_seconds_after: float,
                      on_stopped_recording: Callable[[], None] = None,
-                     on_transcribed_text_received: Callable[[str], None] = None) -> Callable[[], None]:
+                     on_transcribed_text_received: Callable[[str], None] = None) -> None:
 
         goal = RecordAudio.Goal()
         goal.max_silent_seconds_before = max_silent_seconds_before
@@ -124,13 +127,13 @@ class VoiceAssistantNode(Node):
         result_callback = None if on_transcribed_text_received is None else lambda res: on_transcribed_text_received(
             res.transcribed_text)
         future: Future = self.record_audio_client.send_goal_async(goal, feedback_callback)
-        return self.digest_goal_handle_future(future, result_callback)
+        self.stop_recording = self.digest_goal_handle_future(future, result_callback)
 
     def chat(self,
              text: str,
              chat_id: str,
              on_sentence_received: Callable[[str], None] = None,
-             on_final_sentence_received: Callable[[str], None] = None) -> Callable[[], None]:
+             on_final_sentence_received: Callable[[str], None] = None) -> None:
 
         goal = Chat.Goal()
         goal.text = text
@@ -140,7 +143,8 @@ class VoiceAssistantNode(Node):
         result_callback = None if on_final_sentence_received is None else lambda result: on_final_sentence_received(
             result.rest)
         future: Future = self.chat_client.send_goal_async(goal, feedback_callback)
-        return self.digest_goal_handle_future(future, result_callback)
+        stop_chat = self.digest_goal_handle_future(future, result_callback)
+        self.chat_id_to_stop_chat[chat_id] = stop_chat
 
     def play_audio_from_file(self,
                              filepath: str,
@@ -235,11 +239,16 @@ class VoiceAssistantNode(Node):
             self.set_is_listening(request.chat_id, False)
             self.play_audio_from_file(STOP_SIGNAL_FILE)
             self.stop_recording()
-            self.on_user_input_text_received(request.content)
+            self.set_is_listening(request.chat_id, False)
+            self.chat(
+                request.content,
+                self.state.chat_id,
+                self.if_cycle_not_changed(self.on_sentence_received),
+                self.if_cycle_not_changed(self.on_final_sentence_received))
 
         else:  # if not active, create messages, without playing audio etc.
             self.set_is_listening(request.chat_id, False)
-            self.chat_id_to_stop_chat[request.chat_id] = self.chat(
+            self.chat(
                 request.content,
                 request.chat_id,
                 on_final_sentence_received=lambda _: self.set_is_listening(request.chat_id, True))
@@ -251,11 +260,11 @@ class VoiceAssistantNode(Node):
 
     def on_start_signal_played(self) -> None:
 
-        self.stop_recording = self.record_audio(
+        self.record_audio(
             MAX_SILENT_SECONDS_BEFORE,
             self.personality.pause_threshold,
             self.if_cycle_not_changed(self.on_stopped_recording),
-            self.if_cycle_not_changed(self.on_user_input_text_received))
+            self.if_cycle_not_changed(self.on_transcribed_text_received))
 
         self.set_is_listening(self.state.chat_id, True)
 
@@ -265,10 +274,14 @@ class VoiceAssistantNode(Node):
 
         self.play_audio_from_file(STOP_SIGNAL_FILE)
         self.set_is_listening(self.state.chat_id, False)
+        self.waiting_for_transcribed_text = True
 
-    def on_user_input_text_received(self, transcribed_text: str) -> None:
+    def on_transcribed_text_received(self, transcribed_text: str) -> None:
 
-        self.chat_id_to_stop_chat[self.state.chat_id] = self.chat(
+        if not self.waiting_for_transcribed_text: return
+        self.waiting_for_transcribed_text = False
+
+        self.chat(
             transcribed_text,
             self.state.chat_id,
             self.if_cycle_not_changed(self.on_sentence_received),
@@ -348,7 +361,6 @@ class VoiceAssistantNode(Node):
     def stop_chat(self, chat_id: str) -> None:
         """if the chat of the provided is active, stop receiving messages from the chat"""
         stop_chat = self.chat_id_to_stop_chat.get(chat_id)
-        print(stop_chat)
         if stop_chat is not None: stop_chat()
 
 

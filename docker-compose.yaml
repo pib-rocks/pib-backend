@@ -41,7 +41,6 @@ services:
       - PYTHON_BINARY=/usr/local/bin/python3
       - PROGRAM_DIR=/ros_ws/cerebra_programs
       - VOICE_ASSISTANT_DIR=/ros_ws/voice_assistant
-      - PUBLIC_API_CONFIG_FILE_PATH=/home/pib/public_api/config.json
     env_file:
       - password.env
     command: "/bin/bash -c 'source docker_run_all_nodes.sh'"
