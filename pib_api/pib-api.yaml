@@ -1292,7 +1292,7 @@ components:
     AssistantModels:
       type: object
       properties:
-        voiceAssistantModels:
+        assistantModels:
           type: array
           items:
             $ref: '#/components/schemas/AssistantModel'
