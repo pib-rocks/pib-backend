@@ -9,16 +9,20 @@ bp = Blueprint('assistant_controller', __name__)
 
 
 @bp.route('', methods=['GET'])
-def get_all_assistant_models_settings():
-    assistants = assistant_service.get_all_assistants()
-    assistant_dtos = assistant_models_schema.dump(assistants)
-
-    return {"voiceAssistantModels": assistant_dtos}, 200
+def get_all_assistant_models():
+    assistant_models = assistant_service.get_all_assistants()
+    try:
+        assistant_models_dto = assistant_models_schema.dump(assistant_models)
+    except:
+        abort(500)
+    return {"assistantModels": assistant_models_dto}
 
 
 @bp.route('/<int:assistant_model_id>', methods=['GET'])
 def get_assistant_model(assistant_model_id):
-    assistant = get_assistant_by_id(assistant_model_id)
-    assistant_dto = assistant_model_schema.dump(assistant)
-
-    return assistant_dto, 200
+    assistant_models = get_assistant_by_id(assistant_model_id)
+    try:
+        assistant_models_dto = assistant_model_schema.dump(assistant_models)
+    except:
+        abort(500)
+    return assistant_models_dto
