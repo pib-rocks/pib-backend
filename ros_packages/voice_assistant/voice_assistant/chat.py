@@ -96,7 +96,7 @@ class ChatNode(Node):
         description = personality.description if personality.description is not None else "Du bist pib, ein humanoider Roboter."
         camera_response = None
         if personality.assistant_model.has_image_support:
-            camera_response = await self.camera_client.call_async(GetCameraImageSrv.Request())
+            camera_response = await self.camera_client.call_async(GetCameraImage.Request())
         with self.public_voice_client_lock:
             tokens = public_voice_client.chat_completion(text=content,
                                                         description=description,
