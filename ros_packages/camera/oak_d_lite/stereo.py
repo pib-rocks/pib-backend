@@ -55,7 +55,7 @@ class CameraNode(Node):
         self.timer = self.create_timer(self.timer_period, self.timer_callback)
 
     def get_camera_image_callback(self, request, response):
-        response = GetCameraImageSrv.Response(image_base64=self.current_image)
+        response = GetCameraImage.Response(image_base64=self.current_image)
         return response
 
     def init_pipeline(self):
