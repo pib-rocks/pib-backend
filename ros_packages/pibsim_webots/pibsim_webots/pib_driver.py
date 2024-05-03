@@ -16,7 +16,7 @@ class PibDriver:
 
         self.__devices['lower_arm_right_rotation'] = [self.__robot.getDevice('forearm_right'),]
         self.__devices['lower_arm_left_rotation'] = [self.__robot.getDevice('forearm_left'),]
-        self.__devices['thumb_left_stretch'] = [self.__robot.getDevice('thumb_left_distal'), 
+        self.__devices['thumb_left_stretch'] = [self.__robot.getDevice('thumb_left_distal'),
                                                 self.__robot.getDevice('thumb_left_proximal'),]
         self.__devices['thumb_right_stretch'] = [self.__robot.getDevice('thumb_right_distal'),
                                                 self.__robot.getDevice('thumb_right_proximal'),]
