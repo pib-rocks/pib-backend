@@ -61,6 +61,8 @@ Starting the webots simulation:
 	(The first time this command is entered, a prompt will appear asking to install webots.  
 	Confirm this prompt and wait a few seconds for the installation to finish. Webots should open afterwards.)
 
+Webots may throw error messages saying it crashed (especially on VM). This can usually be ignored by clicking on "wait".
+
 ## Clustering pibs
 
 To synchronize communication between pibs on default ROS_DOMAIN_ID=0:
