@@ -18,6 +18,9 @@ from public_api_client import public_voice_client
 from pib_api_client import voice_assistant_client
 
 
+with open("/home/pib/pib-backend/ros_packages/voice_assistant/voice_assistant/prompt.txt") as f: DESCRIPTION_PREFIX = f.read()
+CODE_VISUAL_OPENING_TAG = "<pib-program>"
+CODE_VISUAL_CLOSING_TAG = "</pib-program>"
 
 class ChatNode(Node):
 
@@ -88,44 +91,95 @@ class ChatNode(Node):
             if not successful:
                 self.get_logger().info(f"no personality found for id {chat_id}")
                 goal_handle.abort()
-                return Chat.Result()
+                return Chat.Result() # TODO
             
             # create the user message
             self.executor.create_task(self.create_chat_message, chat_id, content, True)
 
             # receive an iterable of tokens from the public-api
             description = personality.description if personality.description is not None else "Du bist pib, ein humanoider Roboter."
+            description = DESCRIPTION_PREFIX + description
             with self.public_voice_client_lock:
                 tokens = public_voice_client.chat_completion(content, description)
 
-            curr_sentence: str = ""
-            prev_sentence: str | None = None
-            sentence_boundary = re.compile(r"[^\d | ^A-Z][\.|!|\?|:]")
+            # regex for indentifying sentences
+            sentence_pattern = re.compile(r"^(?!<pib-program>)(.*?)(([^\d | ^A-Z][\.|!|\?|:])|<pib-program>)", re.DOTALL)
+            # regex-pattern for indentifying visual-code blocks
+            code_visual_pattern = re.compile(r"^<pib-program>(.*?)</pib-program>", re.DOTALL)
+
+            # the text that was currently collected by chaining together tokens
+            # at any given point in time, this string must not contain any leading whitespaces!
+            curr_text: str = ""
+            # previously collected text, that is waiting to be published as feedback
+            prev_text: str | None = None
 
             for token in tokens:
-                # if the goal was cancelled, return immediately
-                if goal_handle.is_cancel_requested:
-                    goal_handle.canceled()
-                    return Chat.Result(rest=curr_sentence)
-                # if a sentence was already found and another token was received, forward the sentence as feedback  
-                if prev_sentence is not None: 
-                    self.executor.create_task(self.create_chat_message, chat_id, prev_sentence, False)
+
+                if prev_text is not None: 
+                    # publish the previously collected text in form of feedback
                     feedback = Chat.Feedback()
-                    feedback.sentence = prev_sentence
+                    feedback.text = prev_text
+                    feedback.text_type = prev_text_type
                     goal_handle.publish_feedback(feedback)
-                    prev_sentence = None
-                # check if the current token marks the end of a sentence
-                if sentence_boundary.search(curr_sentence):
-                    prev_sentence = curr_sentence.strip()
-                    curr_sentence = ""
-                curr_sentence += token
+                    prev_text = None
+                    prev_text_type = None
+
+                # add token to current text; remove leading white-spaces, if current-text is empty
+                curr_text = curr_text + (token if len(curr_text) > 0 else token.lstrip())
+
+                while True: # loop until current-text was not stripped during current iteration
+
+                    # if the goal was cancelled, return immediately
+                    if goal_handle.is_cancel_requested:
+                        goal_handle.canceled()
+                        return Chat.Result() # TODO
+                    
+                    # check if the collected text is visual-code
+                    code_visual_match = code_visual_pattern.search(curr_text)
+                    if code_visual_match is not None:
+                        # extract the visual-code by removing the opening + closing tag and store it as previous text
+                        code_visual = code_visual_match.group(1)
+                        prev_text = code_visual
+                        prev_text_type = Chat.Goal.TEXT_TYPE_CODE_VISUAL
+                        # create a chat message from the visual-code, including opening and closing tags
+                        chat_message_text = code_visual_match.group(0)
+                        self.executor.create_task(self.create_chat_message, chat_id, chat_message_text, False)
+                        # strip the current text
+                        curr_text = curr_text[code_visual_match.end():].rstrip()
+                        continue
+
+                    # check if collected text is a sentence
+                    sentence_match = sentence_pattern.search(curr_text)
+                    if sentence_match is not None:
+                        # extract the visual-code by removing the opening + closing tag and store it as previous text
+                        sentence = sentence_match.group(1) + (sentence_match.group(3) if sentence_match.group(3) is not None else "")
+                        prev_text = sentence
+                        prev_text_type = Chat.Goal.TEXT_TYPE_SENTENCE
+                        # create a chat message from the visual-code, including opening and closing tags
+                        chat_message_text = sentence
+                        self.executor.create_task(self.create_chat_message, chat_id, chat_message_text, False)
+                        # strip the current text
+                        curr_text = curr_text[sentence_match.end(3 if sentence_match.group(3) is not None else 1):].rstrip()
+                        continue
+                        
+                    break
 
             # create chat-message for remaining input
-            self.executor.create_task(self.create_chat_message, chat_id, curr_sentence, False)
+            if (len(curr_text) > 0):
+                self.executor.create_task(self.create_chat_message, chat_id, curr_text, False)
 
             # return the rest of the received text, that has not been forwarded as feedback
             goal_handle.succeed()
-            return Chat.Result(rest=curr_sentence)    
+
+            # return the restult
+            result = Chat.Result()
+            if prev_text is None:
+                result.text = curr_text
+                result.text_type = Chat.Goal.TEXT_TYPE_SENTENCE
+            else:
+                result.text = prev_text
+                result.text_type = prev_text_type
+            return result 
 
 
 
