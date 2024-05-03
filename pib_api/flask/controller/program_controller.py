@@ -1,82 +1,53 @@
-from model.program_model import Program
 from flask import jsonify, abort, request
-from schema.program_schema import programs_schema_without_program, program_schema_name_only, program_schema_without_program
-from schema.program_code_schema import program_code_schema, program_code_visual_only_schema
+from schema.program_schema import programs_schema_without_code, program_schema_name_only, program_schema_without_code
+from schema.program_code_schema import program_code_schema
 from service import program_service
-from marshmallow import ValidationError
 from app.app import db
 
 
 def create_program():
-    error = program_schema_name_only.validate(request.json)
-    if error:
-        return error, 400
-    created = Program(request.json.get("name"))
-    db.session.add(created)
+    program_dto = program_schema_name_only.load(request.json)
+    program = program_service.create_program(program_dto)
     db.session.commit()
-    program_service.create_empty_python_code_file(created.programNumber)
-    try:
-        return program_schema_without_program.dump(created)
-    except:
-        abort(500)
+    try: return program_schema_without_code.dump(program), 201
+    except Exception: abort(500)
 
 
 def get_all_programs():
-    all_programs = Program.query.all()
-    try:
-        return jsonify({"programs": programs_schema_without_program.dump(all_programs)})
-    except:
-        abort(500)
+    programs = program_service.get_all_programs()
+    try: return jsonify({'programs': programs_schema_without_code.dump(programs)})
+    except Exception: abort(500)
 
 
-def get_program_by_number(program_number):
-    program = Program.query.filter(Program.programNumber == program_number).first_or_404()
-    try:
-        return program_schema_without_program.dump(program)
-    except:
-        abort(500)
+def get_program(program_number: str):
+    program = program_service.get_program(program_number)
+    try: return program_schema_without_code.dump(program)
+    except Exception: abort(500)
 
 
-def update_program_by_number(program_number):
-    try:
-        data = program_schema_name_only.load(request.json)
-    except ValidationError as error:
-        return error.messages, 400
-    program = Program.query.filter(Program.programNumber == program_number).first_or_404()
-    program.name = data["name"]
-    db.session.add(program)
+def update_program(program_number: str):
+    program_dto = program_schema_name_only.load(request.json)
+    program = program_service.update_program(program_number, program_dto)
     db.session.commit()
-    try:
-        return program_schema_without_program.dump(program)
-    except:
-        abort(500)
+    try: return program_schema_without_code.dump(program)
+    except Exception: abort(500)
 
 
-def delete_program_by_number(program_number):
-    program_service.delete_python_code_file(program_number)
-    delete_program = Program.query.filter(Program.programNumber == program_number).first_or_404()
-    try:
-        db.session.delete(delete_program)
-        db.session.commit()
-        return '', 204
-    except:
-        abort(500)
-
-
-def get_program_code_by_number(program_number):
-    program = Program.query.filter(Program.programNumber == program_number).first_or_404()
-    return program_code_visual_only_schema.dump({
-        "visual": program.codeVisual
-    })
-
-
-def update_program_code_by_number(program_number):
-    try:
-        data = program_code_schema.load(request.json)
-    except ValidationError as error:
-        return error.messages, 400
-    program = Program.query.filter(Program.programNumber == program_number).first_or_404()
-    program.codeVisual = data["visual"]
+def delete_program(program_number: str):
+    program_service.delete_program(program_number)
     db.session.commit()
-    program_service.write_to_python_code_file(program_number, data["python"])
-    return program_code_visual_only_schema.dump(data)
+    return '', 204
+
+
+def get_program_code(program_number: str):
+    program = program_service.get_program(program_number)
+    try: return program_code_schema.dump({"visual": program.codeVisual})
+    except Exception: abort(500)
+
+
+def update_program_code(program_number: str):
+    program_code_dto = program_code_schema.load(request.json)
+    program_service.update_program_code(program_number, program_code_dto)
+    db.session.commit()
+    try: return program_code_schema.dump(program_code_dto)
+    except Exception: abort(500)

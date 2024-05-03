@@ -10,22 +10,24 @@ from rclpy.action import CancelResponse
 from rclpy import qos
 from rclpy.duration import Duration
 
-from multiprocessing import Process, Pipe, Lock
+from multiprocessing import Process, Pipe
 from threading import Lock, Thread
 from subprocess import Popen, PIPE
 from multiprocessing.connection import Connection
 from typing import IO
 import time
+import tempfile
 
 from datatypes.action import RunProgram
 from datatypes.msg import ProgramOutputLine
+
+import pibly_client
 
 
 
 PYTHON_BINARY: str = os.getenv('PYTHON_BINARY', '/home/pib/ros_working_dir/src/programs/user_program_env/bin/python3')
 UNBUFFERED_OUTPUT_FLAG: str = '-u'
 PROGRAM_DIR: str = os.getenv("PROGRAM_DIR", "/home/pib/cerebra_programs")
-# PYTHON_SCRIPT: str = os.getenv('', '/home/pib/cerebra_programs/%s.py')
 
 MAIN_LOOP_WAITING_PERIOD_SECONDS: float = 0.1
 ACTION_LOOP_WAITING_PERIOD_SECONDS: float = 0.05
@@ -34,40 +36,34 @@ ACTION_LOOP_WAITING_PERIOD_SECONDS: float = 0.05
 
 # request to start execution of user-program, sent from ros-process to main-process
 class StartRequest:
-
-    def __init__(self, goal_id: bytes, program_number: str) -> None:
+    def __init__(self, goal_id: bytes, code_python_file_path: str) -> None:
         self.goal_id = goal_id
-        self.program_number = program_number
+        self.code_python_file_path = code_python_file_path
 
 # response sent from main-process to ros-process, after ros-process sent a 'StartRequest'
 class StartResponse:
-        
     def __init__(self, successful: bool, connection: Connection) -> None:
         self.successful = successful
         self.connection = connection
 
 # request to stop execution of user-program, sent from ros-process to main-process
 class StopRequest:
-
     def __init__(self, goal_id: bytes) -> None:
         self.goal_id = goal_id
 
 # response sent from main-process to ros-process, after ros-process sent a 'StopRequest'
 class StopResponse:
-        
     def __init__(self, successful: bool) -> None:
         self.successful = successful
 
 # one line of stdout/stderr output of a running user-program, sent from a host-process to the ros-process
 class OutputLine:
-
     def __init__(self, content: str, is_stderr: bool) -> None:
         self.content = content
         self.is_stderr = is_stderr
 
 # exit-code of a user-program, sent from a host-process to the ros-process
 class ExitCode:
-
     def __init__(self, code: int) -> None:
         self.code = code
 
@@ -100,7 +96,7 @@ class ProgramNode(Node):
             callback_group=ReentrantCallbackGroup(),
             feedback_pub_qos_profile=feedback_profile)
 
-        self.get_logger().info('--- program node started successfully ---')
+        self.get_logger().info('Now Running PROGRAM')
 
 
 
@@ -109,53 +105,76 @@ class ProgramNode(Node):
         # convert goal id to bytes
         goal_id: bytes = bytes([ int(num) for num in goal_handle.goal_id.uuid ])
 
-        # send request to main-process to start the program
-        request = StartRequest(goal_id, goal_handle.request.program_number)
-        with self.request_sender_lock:
-            self.request_sender.send(request)
-            response: StartResponse = self.request_sender.recv()
-            if not response.successful:
+        # digest the code-source and create a path to the resulting python-code file that should be executed
+        request: RunProgram.Goal = goal_handle.request
+        if request.source_type == RunProgram.Goal.SOURCE_PROGRAM_NUMBER:
+            program_number = request.source
+            code_python_file_path = f"{PROGRAM_DIR}/{program_number}.py"
+        elif request.source_type == RunProgram.Goal.SOURCE_CODE_VISUAL:
+            code_visual = request.source
+            successful, code_python = pibly_client.code_visual_to_python(code_visual)
+            if not successful: 
                 goal_handle.abort()
-                return RunProgram.Result(exit_code=2)
-            output_receiver: Connection = response.connection
+                return RunProgram.Result(exit_code=-1)
+            fd, code_python_file_path = tempfile.mkstemp()
+            with os.fdopen(fd, 'w') as file: file.write(code_python)
+        else:
+            self.get_logger().info(f"received unexpected source type: {request.source_type}.")
+            goal_handle.abort()
 
-        while True: # loop until either cancellation of goal is requested, or python-program terminated
+        try:
+            # send request to main-process to start the program
+            start_request = StartRequest(goal_id, code_python_file_path)
+            with self.request_sender_lock:
+                self.request_sender.send(start_request)
+                response: StartResponse = self.request_sender.recv()
+                if not response.successful:
+                    goal_handle.abort()
+                    return RunProgram.Result(exit_code=2)
+                output_receiver: Connection = response.connection
 
-            # if cancellation of the goal if requested, send termination-request to main-process
-            if goal_handle.is_cancel_requested:
-                request = StopRequest(goal_id)
-                with self.request_sender_lock:
-                    self.request_sender.send(request)
-                    response: StopResponse = self.request_sender.recv()
-                    if response.successful:
-                        goal_handle.canceled()
-                        return RunProgram.Result(exit_code=2)
+            while True: # loop until either cancellation of goal is requested, or python-program terminated
 
-            # collect output of the user-program
-            output_lines: list[ProgramOutputLine] = []
-            exit_code = None
-            while output_receiver.poll():
-                output = output_receiver.recv()
-                if isinstance(output, OutputLine):
-                    output_line = ProgramOutputLine(
-                        content=output.content, 
-                        is_stderr=output.is_stderr)
-                    output_lines.append(output_line)
-            
-                elif isinstance(output, ExitCode):
-                    exit_code = output.code
-                else:
-                    raise RuntimeError(f"ros-process received unexpected output-type from host-process: {type(output)}'")
-            
-            # if at least one line of stdout/stderr output was collected, send it as feedback
-            if len(output_lines) > 0: goal_handle.publish_feedback(RunProgram.Feedback(output_lines=output_lines))
+                # if cancellation of the goal if requested, send termination-request to main-process
+                if goal_handle.is_cancel_requested:
+                    stop_request = StopRequest(goal_id)
+                    with self.request_sender_lock:
+                        self.request_sender.send(stop_request)
+                        response: StopResponse = self.request_sender.recv()
+                        if response.successful:
+                            goal_handle.canceled()
+                            return RunProgram.Result(exit_code=2)
 
-            # if an exit-code was collected, return it as the result of the goal
-            if exit_code is not None:
-                goal_handle.succeed()
-                return RunProgram.Result(exit_code=exit_code)
-                    
-            time.sleep(ACTION_LOOP_WAITING_PERIOD_SECONDS)
+                # collect output of the user-program
+                output_lines: list[ProgramOutputLine] = []
+                exit_code = None
+                while output_receiver.poll():
+                    output = output_receiver.recv()
+                    if isinstance(output, OutputLine):
+                        output_line = ProgramOutputLine(
+                            content=output.content, 
+                            is_stderr=output.is_stderr)
+                        output_lines.append(output_line)
+                    elif isinstance(output, ExitCode):
+                        exit_code = output.code
+                    else:
+                        raise RuntimeError(f"ros-process received unexpected output-type from host-process: {type(output)}'")
+                
+                # if at least one line of stdout/stderr output was collected, send it as feedback
+                if len(output_lines) > 0: 
+                    goal_handle.publish_feedback(RunProgram.Feedback(output_lines=output_lines))
+
+                # if an exit-code was collected, return it as the result of the goal
+                if exit_code is not None:
+                    goal_handle.succeed()
+                    return RunProgram.Result(exit_code=exit_code)
+                        
+                time.sleep(ACTION_LOOP_WAITING_PERIOD_SECONDS)
+
+        # if the code-source is viual-code, a temp. file was created, which must now be deleted
+        finally: 
+            if request.source_type == RunProgram.Goal.SOURCE_CODE_VISUAL: 
+                os.remove(code_python_file_path)
 
 
 
@@ -171,7 +190,7 @@ def main_loop(request_receiver: Connection) -> None:
             if isinstance(request, StartRequest):
                 output_sender, output_receiver = Pipe()
                 request_receiver.send(StartResponse(True, output_receiver))
-                host_process = Process(target=run_program, args=(request.program_number, output_sender))
+                host_process = Process(target=run_program, args=(request.code_python_file_path, output_sender))
                 goal_id_to_host[request.goal_id] = host_process
                 host_process.start()
             elif isinstance(request, StopRequest):
@@ -204,10 +223,9 @@ def ros_target(request_sender: Connection) -> None:
 
 
 
-def run_program(program_number: str, output_sender: Connection) -> None:
+def run_program(code_python_file_path: str, output_sender: Connection) -> None:
 
-    python_script = f"{PROGRAM_DIR}/{program_number}.py"
-    run_python_program = [PYTHON_BINARY, UNBUFFERED_OUTPUT_FLAG, python_script]
+    run_python_program = [PYTHON_BINARY, UNBUFFERED_OUTPUT_FLAG, code_python_file_path]
     with Popen(run_python_program, stdout=PIPE, stderr=PIPE, universal_newlines=True, bufsize=1) as popen:
 
         output_sender_lock = Lock()

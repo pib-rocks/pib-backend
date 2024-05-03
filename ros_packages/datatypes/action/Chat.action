@@ -1,6 +1,11 @@
+byte TEXT_TYPE_SENTENCE=0 # one natural language sentence
+byte TEXT_TYPE_CODE_VISUAL=1 # a program in form of visual-code
+
 string text # the textual input of the user
 string chat_id # the id of the chat, where messages should be added
 ---
-string rest # the remaining textual llm-response, that has not been sent back as feedback
+string text # final received text from the llm
+byte text_type 0 # indicates of what kind of text the received feedback is
 ---
-string sentence # an intermediate sentence, which was received from the llm
+string text # textual feedback
+byte text_type 0 # indicates of what kind of text the received feedback is

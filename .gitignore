@@ -52,3 +52,8 @@ pibdata.db
 
 *.log
 output.wav
+
+# pibly
+pibly/pibly_server/dist/**
+pibly/pibly_server/node_modules/**
+package-lock.json

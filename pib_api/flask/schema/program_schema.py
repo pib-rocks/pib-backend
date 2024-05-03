@@ -6,5 +6,5 @@ class ProgramSchema(ma.SQLAlchemyAutoSchema):
         model = Program
 
 program_schema_name_only = ProgramSchema(only=('name',))
-program_schema_without_program = ProgramSchema(only=('name', 'programNumber'))
-programs_schema_without_program = ProgramSchema(only=('name', 'programNumber'), many=True)
+program_schema_without_code = ProgramSchema(only=('name', 'programNumber'))
+programs_schema_without_code = ProgramSchema(only=('name', 'programNumber'), many=True)
