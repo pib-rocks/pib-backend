@@ -156,7 +156,7 @@ if [ "$CHANGE_DETECTED" == True ]; then
     while true; do
         read -p "UID changes were detected. Do you want to update your Bricklet-UIDs? (yes/no): " yn
         case $yn in
-                [Yy]* ) python3 -c "$PYTHON_UID_SCRIPT_IMPORT; from update_bricklet_uids import update_uids; update_uids()"; break;;
+                [Yy]* ) python3 -c "$PYTHON_UID_SCRIPT_IMPORT; from update_bricklet_uids import update_bricklet_uids; check_and_update()"; break;;
                 [Nn]* ) break;;
                 * ) echo "Please answer yes or no.";;
         esac
