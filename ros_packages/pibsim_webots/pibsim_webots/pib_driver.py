@@ -8,7 +8,7 @@ class PibDriver:
 
         self.__devices = {}
 
-        self.__devices['tilt_sideways_motor'] = [self.__robot.getDevice('head_horizontal'),]
+        self.__devices['turn_head_motor'] = [self.__robot.getDevice('head_horizontal'),]
         self.__devices['tilt_forward_motor'] = [self.__robot.getDevice('head_vertical'),]
         self.__devices['shoulder_horizontal_right'] = [self.__robot.getDevice('shoulder_horizontal_right'),]
         self.__devices['elbow_right'] = [self.__robot.getDevice('ellbow_right'),]
