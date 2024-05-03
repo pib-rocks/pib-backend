@@ -150,7 +150,7 @@ echo "Checking BrickletsIDs..."
 readonly MOTOR_UTILS_DIR="/home/pib/ros_working_dir/src/motors/utils"
 readonly PYTHON_UID_SCRIPT_IMPORT="import sys; sys.path.insert(0, '$MOTOR_UTILS_DIR')"
 
-readonly CHANGE_DETECTED=$(python3 -c "$PYTHON_UID_SCRIPT_IMPORT; from update_bricklet_uids import detect_uid_changes; print(detect_uid_changes())")
+readonly CHANGE_DETECTED=$(python3 -c "$PYTHON_UID_SCRIPT_IMPORT; from update_bricklet_uids import no_uids_in_database; print(no_uids_in_database())")
 
 if [ "$CHANGE_DETECTED" == True ]; then
     while true; do
