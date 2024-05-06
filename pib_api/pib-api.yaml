@@ -630,7 +630,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ProgramCodeGet'
+                $ref: '#/components/schemas/ProgramCodeVisual'
         '400':
           $ref: '#/components/responses/400'
         '404':
@@ -647,14 +647,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ProgramCodePut'
+              $ref: '#/components/schemas/ProgramCodeVisual'
       responses:
         '200':
           description: OK
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ProgramCodeGet'
+                $ref: '#/components/schemas/ProgramCodeVisual'
         '400':
           $ref: '#/components/responses/400'
         '404':
@@ -1163,27 +1163,14 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Program'
-    ProgramCodeGet:
+    ProgramCodeVisual:
       type: object
       properties:
-        visual:
+        codeVisual:
           description: Contains a stringified json of the program's visual representation
           type: string
           examples:
             - '{"blocks": { ... } }'
-    ProgramCodePut:
-      type: object
-      properties:
-        visual:
-          description: Contains a stringified json of the program's visual representation
-          type: string
-          examples:
-            - '{"blocks": { ... }}'
-        python:
-          description: Contains the python code of the program
-          type: string
-          examples:
-            - 'print("hello world!")'
     Bricklet:
       type: object
       properties:

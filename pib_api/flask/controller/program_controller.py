@@ -1,6 +1,5 @@
 from flask import jsonify, abort, request
-from schema.program_schema import programs_schema_without_code, program_schema_name_only, program_schema_without_code
-from schema.program_code_schema import program_code_schema
+from schema.program_schema import programs_schema_without_code, program_schema_name_only, program_schema_without_code, program_schema_code_visual_only
 from service import program_service
 from app.app import db
 
@@ -41,13 +40,14 @@ def delete_program(program_number: str):
 
 def get_program_code(program_number: str):
     program = program_service.get_program(program_number)
-    try: return program_code_schema.dump({"visual": program.codeVisual})
+    print(program)
+    try: return program_schema_code_visual_only.dump(program)
     except Exception: abort(500)
 
 
 def update_program_code(program_number: str):
-    program_code_dto = program_code_schema.load(request.json)
-    program_service.update_program_code(program_number, program_code_dto)
+    program_dto = program_schema_code_visual_only.load(request.json)
+    program_service.update_program_code(program_number, program_dto)
     db.session.commit()
-    try: return program_code_schema.dump(program_code_dto)
+    try: return program_schema_code_visual_only.dump(program_dto)
     except Exception: abort(500)
