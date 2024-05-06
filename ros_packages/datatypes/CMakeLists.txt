@@ -17,14 +17,21 @@ rosidl_generate_interfaces(${PROJECT_NAME}
 	"msg/ProxyRunProgramFeedback.msg"
 	"msg/ProxyRunProgramResult.msg"
 	"msg/ProxyRunProgramStatus.msg"
+	"msg/ChatIsListening.msg"
 	"srv/MotorSettingsSrv.srv"
+	"srv/PlayAudioFromFile.srv"
+	"srv/PlayAudioFromSpeech.srv"
 	"srv/GetVoiceAssistantState.srv"
 	"srv/SetVoiceAssistantState.srv"
+	"srv/GetChatIsListening.srv"
+	"srv/SendChatMessage.srv"
 	"srv/ProxyRunProgramStart.srv"
 	"srv/ProxyRunProgramStop.srv"
-	"srv/TextToSpeechPush.srv"
-	"srv/TextToSpeechClear.srv"
+	"srv/ClearPlaybackQueue.srv"
+	"srv/GetCameraImage.srv"
 	"action/RunProgram.action"
+	"action/RecordAudio.action"
+	"action/Chat.action"
 )
 
 ament_export_dependencies(rosidl_default_runtime)

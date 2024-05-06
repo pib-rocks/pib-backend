@@ -54,8 +54,13 @@ RUN pip install ./client/
 COPY ./ros_packages/motors/pib_motors ./motors/pib_motors
 RUN pip install ./motors/pib_motors
 
-COPY ./ros_packages/voice_assistant/pib_voice ./voice_assistant/pib_voice
-RUN pip install ./voice_assistant/pib_voice
+COPY ./public_api_client ./public_api_client
+RUN pip install ./public_api_client
+
+COPY ./ros_packages/requirements.txt .
+RUN pip install -r requirements.txt
+RUN pip install --upgrade google-cloud-speech
+
 
 # Copy ros_packages
 COPY ./ros_packages/datatypes ./datatypes
