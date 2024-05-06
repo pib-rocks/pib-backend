@@ -4,10 +4,12 @@ SHELL ["/bin/bash", "-c"]
 
 WORKDIR /app
 
+RUN apt-get update && apt-get install --no-install-recommends -y curl
+
 RUN curl -sSL https://download.tinkerforge.com/apt/$(. /etc/os-release; echo $ID)/tinkerforge.gpg | apt-key add - && \
     echo "deb https://download.tinkerforge.com/apt/$(. /etc/os-release; echo $ID $VERSION_CODENAME) main" > /etc/apt/sources.list.d/tinkerforge.list && \
     apt-get update --fix-missing && \
-    apt-get install -y \
+    apt-get install --no-install-recommends -y \
         build-essential \
         python3-colcon-common-extensions \
         python3-colcon-mixin \
@@ -17,7 +19,7 @@ RUN curl -sSL https://download.tinkerforge.com/apt/$(. /etc/os-release; echo $ID
     && rm -rf /var/lib/apt/lists/*
 
 # COPY ./ros_packages/requirements.txt .
-# RUN pip install -r requirements.txt
+RUN pip install requests
 
 COPY ./pib_api/client ./client
 RUN pip install ./client
