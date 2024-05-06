@@ -34,6 +34,7 @@ p.join()
 ipcon.disconnect()
 
 def update_uids():
+    print("update")
     """Update bricklet UIDs in the database."""
     header = {"Content-Type": "application/json"}
 
@@ -47,14 +48,23 @@ def get_uids_from_db():
     json_data = json.loads(response.text)
     return [json_data['bricklets'][0]['uid'], json_data['bricklets'][1]['uid'], json_data['bricklets'][2]['uid']]
 
-def detect_uid_changes():
+def no_uids_in_database():
     """Check for changes between current databse and TinkerForge UIDs."""
     used_uids = get_uids_from_db()
+    count = 0
+    for uid_number, uid in enumerate(["X", "Y", "Z"]):
+        if uid == used_uids[uid_number]:
+            count += 1
 
-    for uid_number, uid in enumerate([UID0, UID1, UID2]):
-        if uid != used_uids[uid_number]:
-            return True
+    if count == 3:
+        return True
     return False
+
+def check_and_update():
+    if no_uids_in_database():
+        update_uids()
+    return
+
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
@@ -65,7 +75,9 @@ if __name__ == "__main__":
             update_uids()
         elif methode == "get_uids_from_db":
             get_uids_from_db()
-        elif methode == "detect_uid_changes":
-            detect_uid_changes()
+        elif methode == "no_uids_in_database":
+            no_uids_in_database()
+        elif methode == "check_and_update":
+            check_and_update()
         else:
             print("Method not found")

@@ -42,7 +42,7 @@ services:
     build:
       context: .
       dockerfile: ./ros_packages/motors/Dockerfile
-    command: ros2 launch motors launch.yaml
+    command: python update_bricklet_uids.py check_and_update() && ros2 launch motors launch.yaml
     environment:
       - FLASK_API_BASE_URL=http://flask-app:5000
       - TINKERFORGE_HOST=tinkerforge-brickd
