@@ -96,11 +96,12 @@ class ChatNode(Node):
         description = personality.description if personality.description is not None else "Du bist pib, ein humanoider Roboter."
         camera_response = None
         if personality.assistant_model.has_image_support:
-            camera_response = await self.camera_client.call_async(GetCameraImage.Request())
+            camera_response_future = await self.camera_client.call_async(GetCameraImage.Request())
+            camera_response = camera_response_future.image_base64
         with self.public_voice_client_lock:
             tokens = public_voice_client.chat_completion(text=content,
                                                         description=description,
-                                                        image_base64=camera_response.image_base64,
+                                                        image_base64=camera_response,
                                                         model=personality.assistant_model.api_name)
 
         curr_sentence: str = ""
