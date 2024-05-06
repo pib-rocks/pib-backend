@@ -1,0 +1,15 @@
+[Unit]
+Description=Startup script for ROS and Cerebra
+After=pulseaudio.service
+After=network.target
+After=sound.target
+
+[Service]
+Type=simple
+User=pib
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+Environment=PULSE_RUNTIME_PATH=/run/user/1000/pulse/
+ExecStart=/usr/bin/bash /home/pib/ros_working_dir/src/voice_assistant/boot_scripts/ros_audio_player_boot.sh
+
+[Install]
+WantedBy=multi-user.target
