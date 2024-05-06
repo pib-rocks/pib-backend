@@ -23,10 +23,19 @@ services:
 
   ros-camera:
     image: ros-camera
+    privileged: true
     build:
       context: ./ros_packages
       dockerfile: ./camera/Dockerfile
     command: ros2 run oak_d_lite stereo
+    # Volume binding should not be necessary here, 
+    # but removing will stop the camera from showing pictures for some reason
+    volumes:
+      - /dev/:/dev/
+    devices:
+      - /dev/bus/usb:/dev/bus/usb
+    networks:
+      - pib-network
 
   ros-motors:
     image: ros_motors
@@ -38,6 +47,9 @@ services:
       - FLASK_API_BASE_URL=http://flask-app:5000
       - TINKERFORGE_HOST=tinkerforge-brickd
       - TINKERFORGE_PORT=4223
+    networks:
+      - pib-network
+    restart: always
     depends_on:
       - tinkerforge-brickd
       - flask-app
@@ -69,6 +81,8 @@ services:
       - VOICE_ASSISTANT_DIR=/ros_ws/voice_assistant
     volumes:
       - programs:/ros_ws/cerebra_programs
+    networks:
+      - pib-network
 
   rosbridge-ws:
     build:
@@ -77,6 +91,8 @@ services:
     ports:
       - 9090:9090
     command: ros2 launch rosbridge_server rosbridge_websocket_launch.xml
+    networks:
+      - pib-network
 
   tinkerforge-brickd:
     privileged: true
@@ -89,9 +105,11 @@ services:
     ports:
       - "4223:4223"
     tty: true
-    # Mount bricklets
-#    devices:
-#      - /dev/gpiomem:/dev/gpiomem
+   # Mount bricklets
+    devices:
+     - /dev/gpiomem:/dev/gpiomem
+    depends_on:
+      - flask-app
 
 
 volumes:
