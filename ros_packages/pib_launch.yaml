@@ -9,6 +9,18 @@ launch:
     exec: "assistant"
 
 - node:
+    pkg: "voice_assistant"
+    exec: "chat"
+
+- node:
+    pkg: "voice_assistant"
+    exec: "audio_recorder"
+
+- node:
+    pkg: "voice_assistant"
+    exec: "audio_player"
+
+- node:
     pkg: "programs"
     exec: "program"
 

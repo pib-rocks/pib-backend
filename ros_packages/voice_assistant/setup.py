@@ -21,7 +21,9 @@ setup(
     entry_points={
         'console_scripts': [
             'assistant = voice_assistant.assistant:main',
-            'text_to_speech = voice_assistant.text_to_speech:main'
+            'chat = voice_assistant.chat:main',
+            'audio_recorder = voice_assistant.audio_recorder:main',
+            'audio_player = voice_assistant.audio_player:main'
         ],
     },
 )
