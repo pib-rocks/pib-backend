@@ -65,7 +65,7 @@ class ProxyProgramNode(Node):
         self.run_program_client = ActionClient(self, RunProgram, 'run_program', feedback_sub_qos_profile=feedback_profile)
         self.run_program_client.wait_for_server()
 
-        self.get_logger().info('--- program proxy node started successfully ---')
+        self.get_logger().info('Now Running PROXY PROGRAM')
 
 
 
@@ -96,7 +96,9 @@ class ProxyProgramNode(Node):
             result_future: Future = goal_handle.get_result_async()
             result_future.add_done_callback(receive_result)
 
-        goal = RunProgram.Goal(program_number=request.program_number)
+        goal = RunProgram.Goal()
+        goal.source = request.program_number
+        goal.source_type = RunProgram.Goal.SOURCE_PROGRAM_NUMBER
         future: Future = self.run_program_client.send_goal_async(goal, forward_feedback_to_publisher)
         future.add_done_callback(receive_goal_handle)
 
