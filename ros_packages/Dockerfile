@@ -45,8 +45,11 @@ RUN pip install ./client/
 COPY ./ros_packages/motors/pib_motors ./motors/pib_motors
 RUN pip install ./motors/pib_motors
 
-COPY ./public_api_client ./public_api_client
-RUN pip install ./public_api_client
+COPY ./public_api_client /tmp/public_api_client
+RUN pip install /tmp/public_api_client
+
+COPY ./pibly/pibly_client /tmp/pibly_client
+RUN pip install /tmp/pibly_client
 
 COPY ./ros_packages/requirements.txt .
 RUN pip install -r requirements.txt

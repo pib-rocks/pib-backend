@@ -6,14 +6,14 @@ import logging
 logging.basicConfig(level=logging.INFO, 
                     format="[%(levelname)s] [%(asctime)s] [%(process)d] [%(filename)s:%(lineno)s]: %(message)s")
 
-PIBLY_URL = os.getenv("PIBLY_URL", "http://localhost:2442")
+PIBLY_SERVER_URL = os.getenv("PIBLY_SERVER_URL", "http://localhost:2442")
 
 def code_visual_to_python(code_visual: str) -> Tuple[bool, str]:
      
 	try:
 		response = requests.request(
 			method='POST', 
-			url=PIBLY_URL, 
+			url=PIBLY_SERVER_URL, 
 			headers={'Content-Type': 'text/plain'}, 
 			data=code_visual.encode())
 		response.raise_for_status()

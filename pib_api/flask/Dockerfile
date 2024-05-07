@@ -2,11 +2,14 @@ FROM python:3.10-slim
 
 WORKDIR /app
 
-COPY ./requirements.txt /app
+COPY ./pib_api/flask/requirements.txt /app
+
+COPY ./pibly/pibly_client /tmp/pibly_client
+RUN pip install /tmp/pibly_client
 
 RUN pip install -r requirements.txt
 
-COPY . .
+COPY ./pib_api/flask/ .
 
 RUN flask --app run db upgrade
 RUN flask --app run seed_db
