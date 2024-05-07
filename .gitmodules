@@ -1,0 +1,3 @@
+[submodule "pibly/pibly_server/src/pib-blockly"]
+	path = pibly/pibly_server/src/pib-blockly
+	url = git@github.com:pib-rocks/pib-blockly.git
