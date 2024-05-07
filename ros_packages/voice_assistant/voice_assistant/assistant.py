@@ -141,12 +141,14 @@ class VoiceAssistantNode(Node):
     def chat(self, 
              text: str, 
              chat_id: str, 
+             generate_code: bool,
              on_sentence_received: Callable[[str, bool], None] = lambda _1, _2: None, 
              on_code_visual_received: Callable[[str, bool], None] = lambda _1, _2: None) -> None:
         
         goal = Chat.Goal()
         goal.text = text
         goal.chat_id = chat_id
+        goal.generate_code = generate_code
         def feedback_callback(msg) -> None:
             feedback: Chat.Feedback = msg.feedback
             text = feedback.text
@@ -276,6 +278,7 @@ class VoiceAssistantNode(Node):
             self.chat(
                 request.content, 
                 self.state.chat_id,
+                True,
                 self.if_cycle_not_changed(self.on_sentence_received),
                 self.if_cycle_not_changed(self.on_code_visual_received))
 
@@ -286,6 +289,7 @@ class VoiceAssistantNode(Node):
             self.chat( # TODO : there is a race condition here, that could lead to the va falsely starting to listen, when activating this chat
                 request.content,
                 request.chat_id,
+                False,
                 on_sentence_received)
 
         response.successful = True
@@ -321,10 +325,13 @@ class VoiceAssistantNode(Node):
         self.chat(
             transcribed_text, 
             self.state.chat_id,
+            True,
             self.if_cycle_not_changed(self.on_sentence_received),
             self.if_cycle_not_changed(self.on_code_visual_received))
 
     def on_sentence_received(self, sentence: str, final: bool) -> None:
+
+        self.get_logger().info(f"received sentence {sentence}")
 
         self.final_chat_response_received = final
 
@@ -338,6 +345,8 @@ class VoiceAssistantNode(Node):
             on_stopped_playing)
         
     def on_code_visual_received(self, code_visual: str, final: bool) -> None:
+
+        self.get_logger().info(f"received code {code_visual}")
 
         self.final_chat_response_received = final
 
