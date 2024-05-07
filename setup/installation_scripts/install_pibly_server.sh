@@ -23,4 +23,4 @@ sudo systemctl enable pibly_server_boot.service
 # install the pibly_client
 pip install "$PIBLY_SETUP_DIR/pibly_client"
 
-echo -e "$NEW_LINE""$GREEN_TEXT_COLOR""-- Public-Api-Client installation completed --""$RESET_TEXT_COLOR""$NEW_LINE"
+echo -e "$NEW_LINE""$GREEN_TEXT_COLOR""-- Pibly-Server installation completed --""$RESET_TEXT_COLOR""$NEW_LINE"
