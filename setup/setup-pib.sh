@@ -24,12 +24,12 @@ show_help()
 	echo -e "$CYAN_TEXT_COLOR""Development mode (specify the branches you want to install)""$RESET_TEXT_COLOR"
 
 	echo -e "You can either use the short or verbose command versions:"
-	echo -e "-f=YourBranchName or --frontendBranch=YourBranchName"
-	echo -e "-b=YourBranchName or --backendBranch=YourBranchName"
+	echo -e "-f=YourBranchName or --frontend-branch=YourBranchName"
+	echo -e "-b=YourBranchName or --backend-branch=YourBranchName"
 
 	echo -e "$NEW_LINE""Examples:"
 	echo -e "    ./setup-pib -b=main -f=PR-566"
-    echo -e "    ./setup-pib --backendBranch=main --frontendBranch=PR-566"
+    echo -e "    ./setup-pib --backend-branch=main --frontend-branch=PR-566"
 	
 	exit
 }
@@ -39,21 +39,28 @@ echo -e "$NEW_LINE""$YELLOW_TEXT_COLOR""-- Checking user input option syntax --"
 # Github repo origins and branches (branch values will be replaced in dev-mode)
 export FRONTEND_REPO="https://github.com/pib-rocks/cerebra.git"
 export BACKEND_REPO="https://github.com/pib-rocks/pib-backend.git"
+export PIB_BLOCKLY_REPO="https://github.com/pib-rocks/pib-blockly.git"
+export PIB_BLOCKLY_SUBMODULE_NAME="pib-blockly"
 export frontend_branch="main"
 export backend_branch="main"
+export pib_blockly_branch="main"
 
 # Iterate through all user input parameters
 export is_dev_mode=false
 while [ $# -gt 0 ]; do
 	case "$1" in
 		# Assign default and feature branches for dev-mode
-		-f=* | --frontendBranch=*)
+		-f=* | --frontend-branch=*)
 			is_dev_mode=true
 			frontend_branch="${1#*=}"
 			;;
-		-b=* | --backendBranch=*)
+		-b=* | --backend-branch=*)
 			is_dev_mode=true
 			backend_branch="${1#*=}"
+			;;
+		-p=* | --pib-blockly-branch=*)
+			is_dev_mode=true
+			pib_blockly_branch="${1#*=}"
 			;;
 		-h | --help)
 			show_help
@@ -131,6 +138,13 @@ then
 		show_help
 	fi
 
+	if git ls-remote --exit-code --heads "$PIB_BLOCKLY_REPO" "$pib_blockly_branch" >/dev/null 2>&1; then
+		echo -e "$CYAN_TEXT_COLOR""pib-blockly repo branch used: ""$RESET_TEXT_COLOR""$pib_blockly_branch"
+	else
+		echo -e "$RED_TEXT_COLOR""pib-blockly repo: no branch called $pib_blockly_branch was found""$RESET_TEXT_COLOR""$NEW_LINE"
+		show_help
+	fi
+
 	echo -e "$NEW_LINE""$GREEN_TEXT_COLOR""-- Check for user-specified branches completed --""$RESET_TEXT_COLOR""$NEW_LINE"
 fi
 
@@ -143,13 +157,26 @@ export SETUP_DIR="$BACKEND_DIR/setup"
 export SETUP_FILES="$SETUP_DIR/setup_files"
 export INSTALLATION_SCRIPTS="$SETUP_DIR/installation_scripts"
 export PIB_API_SETUP_DIR="$BACKEND_DIR/pib_api"
+export PIBLY_SETUP_DIR="$BACKEND_DIR/pibly"
 
-# clone repos
+# clone frontend repo and initialize submodules
 git clone -b "$frontend_branch" "$FRONTEND_REPO" "$FRONTEND_DIR"
+cd "$FRONTEND_DIR"
+git submodule set-branch --branch "$pib_blockly_branch" "$PIB_BLOCKLY_SUBMODULE_NAME"
+git submodule update --init
+
+# clone backend repo and initialize submodules
 git clone -b "$backend_branch" "$BACKEND_REPO" "$BACKEND_DIR"
+cd "$BACKEND_DIR"
+git submodule set-branch --branch "$pib_blockly_branch" "$PIB_BLOCKLY_SUBMODULE_NAME"
+git submodule update --init
 
 # create working directory for ros
 export ROS_WORKING_DIR="$USER_HOME/ros_working_dir"
+mkdir "$ROS_WORKING_DIR"
+
+# create directory for pibly-server
+export PIBLY_SERVER_DIR="$USER_HOME/ros_working_dir"
 mkdir "$ROS_WORKING_DIR"
 
 # The following scripts are sourced into the same shell as this script,
@@ -162,6 +189,8 @@ source "$INSTALLATION_SCRIPTS/install_system_packages.sh"
 source "$INSTALLATION_SCRIPTS/install_python_packages.sh"
 # Install public-api-client
 source "$INSTALLATION_SCRIPTS/install_public_api_client.sh"
+# Install pibly-server
+source "$INSTALLATION_SCRIPTS/install_pibly_server.sh"
 # Install tinkerforge
 source "$INSTALLATION_SCRIPTS/install_tinkerforge.sh"
 # Install Cerebra

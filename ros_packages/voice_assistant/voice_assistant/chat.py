@@ -18,7 +18,7 @@ from public_api_client import public_voice_client
 from pib_api_client import voice_assistant_client
 
 
-with open("/home/pib/pib-backend/ros_packages/voice_assistant/voice_assistant/prompt.txt") as f: DESCRIPTION_PREFIX = f.read()
+with open("/home/pib/pib-backend/ros_packages/voice_assistant/voice_assistant/prompt.txt") as f: CODE_DESCRIPTION_PREFIX = f.read()
 CODE_VISUAL_OPENING_TAG = "<pib-program>"
 CODE_VISUAL_CLOSING_TAG = "</pib-program>"
 
@@ -84,6 +84,7 @@ class ChatNode(Node):
             request: Chat.Goal = goal_handle.request
             chat_id: str = request.chat_id
             content: str = request.text
+            generate_code: bool = request.generate_code
 
             # get the personality that is associated with the request chat_id from the pib-api
             with self.voice_assistant_client_lock: 
@@ -98,7 +99,8 @@ class ChatNode(Node):
 
             # receive an iterable of tokens from the public-api
             description = personality.description if personality.description is not None else "Du bist pib, ein humanoider Roboter."
-            description = DESCRIPTION_PREFIX + description
+            if generate_code: description = CODE_DESCRIPTION_PREFIX + description
+            print(description)
             with self.public_voice_client_lock:
                 tokens = public_voice_client.chat_completion(content, description)
 

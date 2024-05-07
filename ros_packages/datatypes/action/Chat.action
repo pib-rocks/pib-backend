@@ -3,6 +3,7 @@ byte TEXT_TYPE_CODE_VISUAL=1 # a program in form of visual-code
 
 string text # the textual input of the user
 string chat_id # the id of the chat, where messages should be added
+bool generate_code # if this is set to false, no code will be generated
 ---
 string text # final received text from the llm
 byte text_type 0 # indicates of what kind of text the received feedback is

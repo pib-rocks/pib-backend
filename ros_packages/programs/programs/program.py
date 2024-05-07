@@ -109,13 +109,16 @@ class ProgramNode(Node):
         request: RunProgram.Goal = goal_handle.request
         if request.source_type == RunProgram.Goal.SOURCE_PROGRAM_NUMBER:
             program_number = request.source
+            self.get_logger().info("received request to execute program of number {source}.")
             code_python_file_path = f"{PROGRAM_DIR}/{program_number}.py"
         elif request.source_type == RunProgram.Goal.SOURCE_CODE_VISUAL:
+            self.get_logger().info("received request to execute some visual-code.")
             code_visual = request.source
             successful, code_python = pibly_client.code_visual_to_python(code_visual)
             if not successful: 
                 goal_handle.abort()
                 return RunProgram.Result(exit_code=-1)
+            self.get_logger().info("visual-code was successfully compiled to python-code.")
             fd, code_python_file_path = tempfile.mkstemp()
             with os.fdopen(fd, 'w') as file: file.write(code_python)
         else:
@@ -123,6 +126,7 @@ class ProgramNode(Node):
             goal_handle.abort()
 
         try:
+            self.get_logger().info("starting execution of program...")
             # send request to main-process to start the program
             start_request = StartRequest(goal_id, code_python_file_path)
             with self.request_sender_lock:
@@ -173,6 +177,7 @@ class ProgramNode(Node):
 
         # if the code-source is viual-code, a temp. file was created, which must now be deleted
         finally: 
+            self.get_logger().info("execution finished, cleaning up...")
             if request.source_type == RunProgram.Goal.SOURCE_CODE_VISUAL: 
                 os.remove(code_python_file_path)
 
