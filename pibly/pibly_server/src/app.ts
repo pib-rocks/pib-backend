@@ -1,7 +1,7 @@
 import * as Blockly from 'blockly';
 import * as http from 'http';
-import { pythonGenerator } from './program-generators/custom-generators';
-import { customBlockDefinition } from './program-blocks/custom-blocks';
+import { pythonGenerator } from './pib-blockly/program-generators/custom-generators';
+import { customBlockDefinition } from './pib-blockly/program-blocks/custom-blocks';
 
 function codeVisualToPython(codeVisual: string): string {
     let workspaceContent;;
