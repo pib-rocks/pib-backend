@@ -12,9 +12,9 @@ TINKERFORGE_HOST = os.getenv("TINKERFORGE_HOST", "localhost")
 TINKERFORGE_PORT = int(os.getenv("TINKERFORGE_PORT", 4223))
 BRICKLET_URLS = [f"{BASE_URL}/bricklet/{i}" for i in range(1, 4)]
 
-UID0 = "X"
-UID1 = "Y"
-UID2 = "Z"
+UID0 = "AAA"
+UID1 = "BBB"
+UID2 = "CCC"
 POSITION_TO_UID_MAP = {'a': 'UID0', 'b': 'UID1', 'e': 'UID2'}
 
 ipcon: IPConnection = IPConnection()
@@ -52,7 +52,7 @@ def no_uids_in_database():
     """Check for changes between current databse and TinkerForge UIDs."""
     used_uids = get_uids_from_db()
     count = 0
-    for uid_number, uid in enumerate(["X", "Y", "Z"]):
+    for uid_number, uid in enumerate([UID0, UID1, UID2]):
         if uid == used_uids[uid_number]:
             count += 1
 
