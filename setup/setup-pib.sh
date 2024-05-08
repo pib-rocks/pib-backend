@@ -158,7 +158,7 @@ export SETUP_DIR="$BACKEND_DIR/setup"
 export SETUP_FILES="$SETUP_DIR/setup_files"
 export INSTALLATION_SCRIPTS="$SETUP_DIR/installation_scripts"
 export PIB_API_SETUP_DIR="$BACKEND_DIR/pib_api"
-export PIBLY_SETUP_DIR="$BACKEND_DIR/pibly"
+export PIB_BLOCKLY_SETUP_DIR="$BACKEND_DIR/pib_blockly"
 
 # clone frontend repo and initialize submodules
 git clone -b "$frontend_branch" "$FRONTEND_REPO" "$FRONTEND_DIR"
@@ -176,10 +176,6 @@ git submodule update --init
 export ROS_WORKING_DIR="$USER_HOME/ros_working_dir"
 mkdir "$ROS_WORKING_DIR"
 
-# create directory for pibly-server
-export PIBLY_SERVER_DIR="$USER_HOME/ros_working_dir"
-mkdir "$ROS_WORKING_DIR"
-
 # The following scripts are sourced into the same shell as this script,
 # allowing them to acces all variables and context
 # Check system variables
@@ -190,8 +186,6 @@ source "$INSTALLATION_SCRIPTS/install_system_packages.sh"
 source "$INSTALLATION_SCRIPTS/install_python_packages.sh"
 # Install public-api-client
 source "$INSTALLATION_SCRIPTS/install_public_api_client.sh"
-# Install pibly-server
-source "$INSTALLATION_SCRIPTS/install_pibly_server.sh"
 # Install tinkerforge
 source "$INSTALLATION_SCRIPTS/install_tinkerforge.sh"
 # Install Cerebra
@@ -202,6 +196,8 @@ source "$INSTALLATION_SCRIPTS/setup_packages.sh"
 source "$INSTALLATION_SCRIPTS/set_system_settings.sh"
 # prepares JSON-Server
 source "$INSTALLATION_SCRIPTS/prepare_json_server.sh"
+# Install pib-blockly-server
+source "$INSTALLATION_SCRIPTS/install_pib_blockly_server.sh"
 
 # install update-pip
 cp "$SETUP_DIR/update-pib.sh" "$USER_HOME/update-pib.sh"

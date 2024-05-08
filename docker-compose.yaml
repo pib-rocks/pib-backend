@@ -18,21 +18,21 @@ services:
       - ./pib_api/flask/:/app
     environment:
       - SQLALCHEMY_DATABASE_URI=sqlite:////app/pibdata.db
-      - PIBLY_SERVER_URL=http://pibly-server:2442
+      - PIB_BLOCKLY_SERVER_URL=http://pib-blockly-server:2442
     command: "bash -c 'flask --app run db upgrade && flask --app run seed_db && flask --app run run --host 0.0.0.0 --debug'"
     depends_on:
-      - pibly-server
+      - pib-blockly-server
 
-  pibly-server:
-    image: pibly-server
+  pib-blockly-server:
+    image: pib-blockly-server
     build:
-      context: ./pibly/pibly_server/
+      context: ./pib_blockly/pib_blockly_server/
       dockerfile: ./Dockerfile
     networks:
       - pib-network
     ports: 
       - "2442:2442"
-    command: "node /app/dist/pibly_server_bundle.js"
+    command: "node /app/dist/pib_blockly_server_bundle.js"
 
   ros-packages:
     image: ros_packages
@@ -50,7 +50,7 @@ services:
       - "9090:9090"
     environment:
       - FLASK_API_BASE_URL=http://flask-app:5000
-      - PIBLY_SERVER_URL=http://pibly-server:2442
+      - PIB_BLOCKLY_SERVER_URL=http://pib-blockly-server:2442
       - TINKERFORGE_HOST=tinkerforge-brickd
       - TINKERFORGE_PORT=4223
       - PYTHON_BINARY=/usr/local/bin/python3
@@ -62,7 +62,7 @@ services:
     command: "/bin/bash -c 'source docker_run_all_nodes.sh'"
     depends_on:
       - flask-app
-      - pibly-server
+      - pib-blockly-server
 
   tinkerforge-brickd:
     privileged: true

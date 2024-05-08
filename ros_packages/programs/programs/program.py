@@ -21,7 +21,7 @@ import tempfile
 from datatypes.action import RunProgram
 from datatypes.msg import ProgramOutputLine
 
-import pibly_client
+import pib_blockly_client
 
 
 
@@ -114,7 +114,7 @@ class ProgramNode(Node):
         elif request.source_type == RunProgram.Goal.SOURCE_CODE_VISUAL:
             self.get_logger().info("received request to execute some visual-code.")
             code_visual = request.source
-            successful, code_python = pibly_client.code_visual_to_python(code_visual)
+            successful, code_python = pib_blockly_client.code_visual_to_python(code_visual)
             if not successful: 
                 goal_handle.abort()
                 return RunProgram.Result(exit_code=-1)
