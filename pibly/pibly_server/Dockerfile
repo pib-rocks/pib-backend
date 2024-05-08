@@ -7,4 +7,4 @@ COPY . .
 RUN npm install
 RUN npm run build
 
-CMD ["node", "/app/dist/pib_blockly_server_bundle.js"]
+CMD ["node", "/app/dist/pibly_server_bundle.js"]

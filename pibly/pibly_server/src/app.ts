@@ -44,5 +44,5 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(port, hostname, () => {
-  console.info(`pib-blockly-server is now listening on http://${hostname}:${port}/ ...`);
+  console.info(`pibly server is now listening on http://${hostname}:${port}/ ...`);
 }); 

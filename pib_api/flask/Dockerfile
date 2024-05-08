@@ -4,8 +4,8 @@ WORKDIR /app
 
 COPY ./pib_api/flask/requirements.txt /app
 
-COPY ./pib_blockly/pib_blockly_client /tmp/pib_blockly_client
-RUN pip install /tmp/pib_blockly_client
+COPY ./pibly/pibly_client /tmp/pibly_client
+RUN pip install /tmp/pibly_client
 
 RUN pip install -r requirements.txt
 
