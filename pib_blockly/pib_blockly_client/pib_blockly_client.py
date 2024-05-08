@@ -1,3 +1,5 @@
+"""a client for accessing the pib-blockly-server for compilation of visual-code into python-code"""
+
 from typing import Tuple
 import os
 import requests
@@ -8,7 +10,13 @@ logging.basicConfig(level=logging.INFO,
 
 PIB_BLOCKLY_SERVER_URL = os.getenv("PIB_BLOCKLY_SERVER_URL", "http://localhost:2442")
 
-def code_visual_to_python(code_visual: str) -> Tuple[bool, str]:
+def code_visual_to_python(code_visual: str) -> Tuple[bool, str | None]:
+	"""
+	compile the provided visual-code into python-code via the pib-blockly-server.
+
+	Returns a bool indicating if compilation was succesful and, in case of a success,
+	the rsulting python-code.
+	"""
      
 	try:
 		response = requests.request(

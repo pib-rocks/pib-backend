@@ -117,7 +117,7 @@ class ProgramNode(Node):
             successful, code_python = pib_blockly_client.code_visual_to_python(code_visual)
             if not successful: 
                 goal_handle.abort()
-                return RunProgram.Result(exit_code=-1)
+                return RunProgram.Result(exit_code=2)
             self.get_logger().info("visual-code was successfully compiled to python-code.")
             fd, code_python_file_path = tempfile.mkstemp()
             with os.fdopen(fd, 'w') as file: file.write(code_python)
