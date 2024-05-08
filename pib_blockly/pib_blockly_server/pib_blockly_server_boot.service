@@ -1,0 +1,11 @@
+[Unit]
+Description=Startup service for the pib-blockly-server
+After=network.target
+
+[Service]
+Type=simple
+User=pib
+ExecStart=/etc/nvm/versions/node/v18.20.2/bin/node /home/pib/pib_blockly_server/dist/pib_blockly_server_bundle.js
+
+[Install]
+WantedBy=multi-user.target

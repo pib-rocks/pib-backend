@@ -53,7 +53,7 @@ pibdata.db
 *.log
 output.wav
 
-# pibly
-pibly/pibly_server/dist/**
-pibly/pibly_server/node_modules/**
+# pib-blockly-server
+pib_blockly/pib_blockly_server/dist/**
+pib_blockly/pib_blockly_server/node_modules/**
 package-lock.json

@@ -48,8 +48,8 @@ RUN pip install ./motors/pib_motors
 COPY ./public_api_client /tmp/public_api_client
 RUN pip install /tmp/public_api_client
 
-COPY ./pibly/pibly_client /tmp/pibly_client
-RUN pip install /tmp/pibly_client
+COPY ./pib_blockly/pib_blockly_client /tmp/pib_blockly_client
+RUN pip install /tmp/pib_blockly_client
 
 COPY ./ros_packages/requirements.txt .
 RUN pip install -r requirements.txt
