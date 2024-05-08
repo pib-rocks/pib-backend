@@ -7,7 +7,7 @@ module.exports = {
   externals: [nodeExternals()],
   entry: './src/app.ts',
   output: {
-    filename: 'pibly_server_bundle.js',
+    filename: 'pib_blockly_server_bundle.js',
     path: path.resolve(__dirname, 'dist'),
     clean: true,
   },

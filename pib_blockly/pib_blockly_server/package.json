@@ -1,5 +1,5 @@
 {
-  "name": "pibly_server",
+  "name": "pib_blockly_server",
   "version": "1.0.0",
   "description": "A server that provides functionality for compiling visual-code to python-code",
   "main": "app.js",
