@@ -45,12 +45,12 @@ class VoiceAssistantNode(Node):
         self.personality: Personality = None # the personality associated with the active chat
         self.stop_recording: Callable[[], None] = lambda: None # calling this function stops audio-recording
         self.chat_id_to_stop_chat: dict[str, Callable[[], None]] = {} # maps a chat-id to a function that can be used to stop receiving llm-responses
-        self.stop_program: Callable[[], None] = lambda: None # calling this function stops the current program
         self.chat_id_to_is_listening: dict[str, bool] = {} # maps a chat-id to the listening status of the respective chat
         self.waiting_for_transcribed_text = False # indicates, whether audio was recorded and va is currently awaitng the transcription
         self.code_visual_queue: deque[str] = deque() # programs (in for of visual-code) received from the chat-server are buffered here until the current program finished executing
         self.final_chat_response_received = False # indicates whether the final response (code or sentence) in the current request/response cycle of the active chat was already received
-        self.executing = False # indicates if code is currently executing
+        self.stop_program_execution: Callable[[], None] = lambda: None # calling this function stops the current program
+        self.is_executing_program = False # indicates if a program is currently executing
 
         # services ----------------------------------------------------------------------
 
@@ -190,14 +190,14 @@ class VoiceAssistantNode(Node):
 
     def run_program(self,
                     code_visual: str,
-                    on_stopped_executing: Callable[[None], None]):
+                    on_stopped_executing_program: Callable[[None], None]):
         
         goal = RunProgram.Goal()
         goal.source_type = RunProgram.Goal.SOURCE_CODE_VISUAL
         goal.source = code_visual
-        result_callback = lambda _: on_stopped_executing()
+        result_callback = lambda _: on_stopped_executing_program()
         future: Future = self.run_program_client.send_goal_async(goal)
-        self.stop_program = self.digest_goal_handle_future(future, result_callback)
+        self.stop_program_execution = self.digest_goal_handle_future(future, result_callback)
 
 
     # serivce callbacks -----------------------------------------------------------------
@@ -228,10 +228,10 @@ class VoiceAssistantNode(Node):
                 self.waiting_for_transcribed_text = False
                 self.stop_recording()
                 self.stop_chat(self.state.chat_id)
-                self.stop_program()
+                self.stop_program_execution()
                 self.code_visual_queue.clear()
                 self.final_chat_response_received = False
-                self.executing = False
+                self.is_executing_program = False
                 current_chat_id = self.state.chat_id
                 def on_playback_queue_cleared():
                     self.turning_off = False
@@ -329,14 +329,12 @@ class VoiceAssistantNode(Node):
             self.if_cycle_not_changed(self.on_sentence_received),
             self.if_cycle_not_changed(self.on_code_visual_received))
 
-    def on_sentence_received(self, sentence: str, final: bool) -> None:
+    def on_sentence_received(self, sentence: str, is_final: bool) -> None:
 
-        self.get_logger().info(f"received sentence {sentence}")
-
-        self.final_chat_response_received = final
+        self.final_chat_response_received = is_final
 
         on_stopped_playing = None
-        if final and not self.executing: 
+        if is_final and not self.is_executing_program: 
             on_stopped_playing = self.if_cycle_not_changed(self.on_final_sentence_played)
         self.play_audio_from_speech(
             sentence, 
@@ -344,27 +342,25 @@ class VoiceAssistantNode(Node):
             self.personality.language,
             on_stopped_playing)
         
-    def on_code_visual_received(self, code_visual: str, final: bool) -> None:
+    def on_code_visual_received(self, code_visual: str, is_final: bool) -> None:
 
-        self.get_logger().info(f"received code {code_visual}")
+        self.final_chat_response_received = is_final
 
-        self.final_chat_response_received = final
-
-        if self.executing: 
+        if self.is_executing_program: 
             self.code_visual_queue.append(code_visual)
         else:  
-            self.run_program(code_visual, self.if_cycle_not_changed(self.on_stopped_executing))
+            self.run_program(code_visual, self.if_cycle_not_changed(self.on_stopped_executing_program))
         
-        self.executing = True
+        self.is_executing_program = True
 
-    def on_stopped_executing(self) -> None:
+    def on_stopped_executing_program(self) -> None:
 
         if self.code_visual_queue:
             code_visual = self.code_visual_queue.pop()
 
-            self.run_program(code_visual, self.if_cycle_not_changed(self.on_stopped_executing))
+            self.run_program(code_visual, self.if_cycle_not_changed(self.on_stopped_executing_program))
         else:
-            self.executing = False
+            self.is_executing_program = False
             if self.final_chat_response_received:
                 self.play_audio_from_file(
                     START_SIGNAL_FILE, 
