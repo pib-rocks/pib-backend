@@ -176,6 +176,10 @@ git submodule update --init
 export ROS_WORKING_DIR="$USER_HOME/ros_working_dir"
 mkdir "$ROS_WORKING_DIR"
 
+# create directory for pib-blockly-server
+export PIB_BLOCKLY_SERVER_DIR="$USER_HOME/ros_working_dir"
+mkdir "$ROS_WORKING_DIR"
+
 # The following scripts are sourced into the same shell as this script,
 # allowing them to acces all variables and context
 # Check system variables
