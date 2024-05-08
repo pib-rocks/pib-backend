@@ -3,7 +3,7 @@ from model.program_model import Program
 from app.app import app
 from typing import Any
 from app.app import db
-import pibly_client
+import pib_blockly_client
 
 
 def get_all_programs() -> list[Program]:
@@ -39,7 +39,7 @@ def update_program_code(program_number: str, program_dto: dict[str, Any]) -> Non
     program = get_program(program_number)
     code_visual = program_dto["codeVisual"]
     program.codeVisual = code_visual
-    successful, code_python = pibly_client.code_visual_to_python(code_visual)
+    successful, code_python = pib_blockly_client.code_visual_to_python(code_visual)
     if not successful: raise Exception("failed to generate python-code")
     _write_to_python_code_file(program_number, code_python)
     db.session.flush()

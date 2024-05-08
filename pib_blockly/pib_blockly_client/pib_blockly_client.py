@@ -6,14 +6,14 @@ import logging
 logging.basicConfig(level=logging.INFO, 
                     format="[%(levelname)s] [%(asctime)s] [%(process)d] [%(filename)s:%(lineno)s]: %(message)s")
 
-PIBLY_SERVER_URL = os.getenv("PIBLY_SERVER_URL", "http://localhost:2442")
+PIB_BLOCKLY_SERVER_URL = os.getenv("PIB_BLOCKLY_SERVER_URL", "http://localhost:2442")
 
 def code_visual_to_python(code_visual: str) -> Tuple[bool, str]:
      
 	try:
 		response = requests.request(
 			method='POST', 
-			url=PIBLY_SERVER_URL, 
+			url=PIB_BLOCKLY_SERVER_URL, 
 			headers={'Content-Type': 'text/plain'}, 
 			data=code_visual.encode())
 		response.raise_for_status()
@@ -21,7 +21,7 @@ def code_visual_to_python(code_visual: str) -> Tuple[bool, str]:
 		return True, code_python
         
 	except requests.HTTPError as error:
-		logging.error(f"pibly-server responded with error '{response.text}' (code: {response.status_code})")
+		logging.error(f"pib-blockly-server responded with error '{response.text}' (code: {response.status_code})")
     
 	except Exception as error:
 		logging.error(f"unexpected error occured: {error}.")
