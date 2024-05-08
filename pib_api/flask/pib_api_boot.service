@@ -16,7 +16,7 @@ ExecStartPre=/home/pib/.local/bin/pipenv install flask_cors
 ExecStartPre=/home/pib/.local/bin/pipenv install Flask-Migrate
 ExecStartPre=/home/pib/.local/bin/pipenv run python3 -m flask --app run db upgrade
 ExecStartPre=/home/pib/.local/bin/pipenv run python3 -m flask --app run seed_db
-ExecStartPre=/home/pib/.local/bin/pipenv install /home/pib/pib-backend/pib_blockly/pib_blockly_client
+ExecStartPre=/home/pib/.local/bin/pipenv install /home/pib/pib-backend/pibly/pibly_client
 ExecStart=/home/pib/.local/bin/pipenv run python3 /home/pib/flask/run.py
 
 [Install]
