@@ -2,7 +2,7 @@
 
 from public_api_client import configuration
 import requests
-from typing import Any, Iterable
+from typing import Any, Iterable, List
 import base64
 import json
 import logging
@@ -13,6 +13,12 @@ logging.basicConfig(level=logging.INFO,
 SPEECH_TO_TEXT_URL = configuration.tryb_url_prefix + "/public-api/conversions/speech-to-text"
 TEXT_TO_SPEECH_URL = configuration.tryb_url_prefix + "/public-api/conversions/text-to-speech"
 VOICE_ASSISTANT_TEXT_URL = configuration.tryb_url_prefix + "/public-api/voice-assistant/text?include-audio=false"
+
+
+class PublicApiChatMessage:
+    def __init__(self, content: str, is_user: bool):
+        self.content = content
+        self.is_user = is_user
 
 
 def _send_request(method: str, url: str, headers: dict[str, str], body: dict[str, Any], stream: bool):
@@ -85,11 +91,17 @@ def text_to_speech(text: str, gender: str, language: str) -> Iterable[bytes]:
     return response.iter_content(chunk_size=None)
 
 
-def chat_completion(text: str, description: str, image_base64: str | None = None, model: str = "gpt-3.5-turbo") -> \
-        Iterable[str]:
+def chat_completion(
+        text: str, 
+        description: str, 
+        message_history: List[PublicApiChatMessage],
+        image_base64: str | None = None, 
+        model: str = "gpt-3.5-turbo") ->Iterable[str]:
+    
     """
     receive a textual llm response, that takes into account the provided description
     """
+
     headers = {
         "Accept": "text/event-stream",
         "Content-Type": "application/json"
@@ -101,6 +113,11 @@ def chat_completion(text: str, description: str, image_base64: str | None = None
 
     body = {
         "data": text,
+        "messageHistory": [
+            {"content": message.content, "isUser": message.is_user}
+            for message
+            in message_history
+        ],
         "personality": {
             "description": description,
             "model": model
