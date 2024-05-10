@@ -87,8 +87,13 @@ LOG_FILE="$USER_HOME/setup-pib.log"
 exec > >(tee -a "$LOG_FILE") 2>&1
 
 # Disable IPv6
+echo -e "$NEW_LINE""$YELLOW_TEXT_COLOR""-- Disabling IPv6  --""$RESET_TEXT_COLOR""$NEW_LINE"
+
 sudo sysctl -w net.ipv6.conf.all.disable_ipv6=1
 sudo sysctl -w net.ipv6.conf.default.disable_ipv6=1
+
+echo -e "$NEW_LINE""$GREEN_TEXT_COLOR""-- Disabled IPv6 --""$RESET_TEXT_COLOR""$NEW_LINE"
+
 
 # Delete unnecessary apps
 echo -e "$NEW_LINE""$YELLOW_TEXT_COLOR""-- Removing unused default software packages --""$RESET_TEXT_COLOR""$NEW_LINE"
