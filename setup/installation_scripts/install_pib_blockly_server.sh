@@ -6,9 +6,11 @@
 echo -e "$YELLOW_TEXT_COLOR""-- Install Pib-Blockly-Server --""$RESET_TEXT_COLOR"
 
 PIB_BLOCKLY_SERVER_DIR="$USER_HOME/pib_blockly_server"
+PIB_BLOCKLY_CLIENT_DIR="$USER_HOME/pib_blockly_client"
 
-# copy the pib-blockly-server from the setup-folder to its target in the user home-dir
+# copy the pib-blockly-server and client from the setup-folder to their targets in the user home-dir
 cp -r "$PIB_BLOCKLY_SETUP_DIR/pib_blockly_server" "$PIB_BLOCKLY_SERVER_DIR"
+cp -r "$PIB_BLOCKLY_SETUP_DIR/pib_blockly_client" "$PIB_BLOCKLY_CLIENT_DIR"
 
 # build the pib-blockly-server
 cd "$PIB_BLOCKLY_SERVER_DIR"
