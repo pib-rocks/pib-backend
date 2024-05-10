@@ -16,6 +16,7 @@ from datatypes.action import Chat
 from datatypes.srv import GetCameraImage
 
 from public_api_client import public_voice_client
+from public_api_client.public_voice_client import PublicApiChatMessage
 from pib_api_client import voice_assistant_client
 
 
@@ -85,24 +86,37 @@ class ChatNode(Node):
         with self.voice_assistant_client_lock:
             successful, personality = voice_assistant_client.get_personality_from_chat(chat_id)
         if not successful:
-            self.get_logger().info(f"no personality found for id {chat_id}")
+            self.get_logger().error(f"no personality found for id {chat_id}")
             goal_handle.abort()
             return Chat.Result()
 
         # create the user message
         self.executor.create_task(self.create_chat_message, chat_id, content, True)
 
-        # receive an iterable of tokens from the public-api
+        # get the description of the personality
         description = personality.description if personality.description is not None else "Du bist pib, ein humanoider Roboter."
-        camera_response = None
+
+        # get the current camera-image, if needed
+        camera_image = None
         if personality.assistant_model.has_image_support:
-            camera_response_future = await self.camera_client.call_async(GetCameraImage.Request())
-            camera_response = camera_response_future.image_base64
+            response: GetCameraImage.Response = await self.camera_client.call_async(GetCameraImage.Request())
+            camera_image = response.image_base64
+
+        # receive the chat-message-history
+        chat_messages = voice_assistant_client.get_all_chat_messages(chat_id)
+        public_api_chat_messages = [
+            PublicApiChatMessage(message.content, message.is_user)
+            for message
+            in chat_messages]
+
+        # receive an iterable of tokens
         with self.public_voice_client_lock:
-            tokens = public_voice_client.chat_completion(text=content,
-                                                        description=description,
-                                                        image_base64=camera_response,
-                                                        model=personality.assistant_model.api_name)
+            tokens = public_voice_client.chat_completion(
+                text=content,
+                description=description,
+                message_history=public_api_chat_messages,
+                image_base64=camera_image,
+                model=personality.assistant_model.api_name)
 
         curr_sentence: str = ""
         prev_sentence: str | None = None

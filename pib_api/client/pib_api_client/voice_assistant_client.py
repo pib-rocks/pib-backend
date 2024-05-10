@@ -1,5 +1,5 @@
 from urllib.request import Request
-from typing import Any, Tuple
+from typing import Any, Tuple, List
 from pib_api_client import send_request, URL_PREFIX
 import json
 
@@ -91,3 +91,12 @@ def create_chat_message(chat_id: str, message_content: str, is_user: bool) -> Tu
         data=data)
     successful, chat_message_dto = send_request(request)
     return successful, ChatMessage(chat_message_dto)
+
+
+def get_all_chat_messages(chat_id: str) -> List[ChatMessage]:
+    request = Request(CHAT_MESSAGES_URL % chat_id, method='GET')
+    successful, chat_messages_dto = send_request(request)
+    if not successful: return successful, None
+    chat_message_dtos = chat_messages_dto["messages"]
+    chat_messages = [ChatMessage(chat_message_dto) for chat_message_dto in chat_message_dtos]
+    return successful, chat_messages
