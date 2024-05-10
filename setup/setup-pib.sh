@@ -40,11 +40,8 @@ echo -e "$NEW_LINE""$YELLOW_TEXT_COLOR""-- Checking user input option syntax --"
 # Github repo origins and branches (branch values will be replaced in dev-mode)
 export FRONTEND_REPO="https://github.com/pib-rocks/cerebra.git"
 export BACKEND_REPO="https://github.com/pib-rocks/pib-backend.git"
-export PIB_BLOCKLY_REPO="https://github.com/pib-rocks/pib-blockly.git"
-export PIB_BLOCKLY_SUBMODULE_NAME="pib-blockly"
 export frontend_branch="main"
 export backend_branch="main"
-export pib_blockly_branch="main"
 
 # Iterate through all user input parameters
 export is_dev_mode=false
@@ -58,10 +55,6 @@ while [ $# -gt 0 ]; do
 		-b=* | --backend-branch=*)
 			is_dev_mode=true
 			backend_branch="${1#*=}"
-			;;
-		-p=* | --pib-blockly-branch=*)
-			is_dev_mode=true
-			pib_blockly_branch="${1#*=}"
 			;;
 		-h | --help)
 			show_help
@@ -139,13 +132,6 @@ then
 		show_help
 	fi
 
-	if git ls-remote --exit-code --heads "$PIB_BLOCKLY_REPO" "$pib_blockly_branch" >/dev/null 2>&1; then
-		echo -e "$CYAN_TEXT_COLOR""pib-blockly repo branch used: ""$RESET_TEXT_COLOR""$pib_blockly_branch"
-	else
-		echo -e "$RED_TEXT_COLOR""pib-blockly repo: no branch called $pib_blockly_branch was found""$RESET_TEXT_COLOR""$NEW_LINE"
-		show_help
-	fi
-
 	echo -e "$NEW_LINE""$GREEN_TEXT_COLOR""-- Check for user-specified branches completed --""$RESET_TEXT_COLOR""$NEW_LINE"
 fi
 
@@ -163,13 +149,11 @@ export PIB_BLOCKLY_SETUP_DIR="$BACKEND_DIR/pib_blockly"
 # clone frontend repo and initialize submodules
 git clone -b "$frontend_branch" "$FRONTEND_REPO" "$FRONTEND_DIR"
 cd "$FRONTEND_DIR"
-git submodule set-branch --branch "$pib_blockly_branch" "$PIB_BLOCKLY_SUBMODULE_NAME"
 git submodule update --init
 
 # clone backend repo and initialize submodules
 git clone -b "$backend_branch" "$BACKEND_REPO" "$BACKEND_DIR"
 cd "$BACKEND_DIR"
-git submodule set-branch --branch "$pib_blockly_branch" "$PIB_BLOCKLY_SUBMODULE_NAME"
 git submodule update --init
 
 # create working directory for ros
