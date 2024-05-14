@@ -103,7 +103,13 @@ class ChatNode(Node):
             camera_image = response.image_base64
 
         # receive the chat-message-history
-        chat_messages = voice_assistant_client.get_all_chat_messages(chat_id)
+        with self.voice_assistant_client_lock:
+            successful, chat_messages = voice_assistant_client.get_all_chat_messages(chat_id)
+        if not successful:
+            self.get_logger().error(f"chat with id'{chat_id}' does not exist...")
+            goal_handle.abort()
+            return Chat.Result()
+
         public_api_chat_messages = [
             PublicApiChatMessage(message.content, message.is_user)
             for message
