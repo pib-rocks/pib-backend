@@ -50,16 +50,7 @@ def get_uids_from_db():
 
 def no_uids_in_database():
     """Check for changes between current databse and TinkerForge UIDs."""
-    used_uids = get_uids_from_db()
-    count = 0
-    # This need to be hardcoded uid0 uid1 uid2 will be updated by Tinkerforge
-    for uid_number, uid in enumerate(["AAA", "BBB", "CCC"]):
-        if uid == used_uids[uid_number]:
-            count += 1
-
-    if count == 3:
-        return True
-    return False
+    return get_uids_from_db() == ["AAA", "BBB", "CCC"]
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
