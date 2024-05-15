@@ -110,7 +110,7 @@ class ChatNode(Node):
             goal_handle.abort()
             return Chat.Result()
 
-        public_api_chat_messages = [
+        message_history = [
             PublicApiChatMessage(message.content, message.is_user)
             for message
             in chat_messages]
@@ -120,7 +120,7 @@ class ChatNode(Node):
             tokens = public_voice_client.chat_completion(
                 text=content,
                 description=description,
-                message_history=public_api_chat_messages,
+                message_history=message_history,
                 image_base64=camera_image,
                 model=personality.assistant_model.api_name)
 
