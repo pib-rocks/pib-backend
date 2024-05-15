@@ -95,7 +95,7 @@ def _create_program_data() -> None:
 
 
 def _create_chat_data_and_assistant() -> None:
-    gpt4 = AssistantModel(visual_name="GPT-4", api_name="gpt-4-turbo", has_image_support=False)
+    gpt4 = AssistantModel(visual_name="GPT-4", api_name="gpt-4-turbo", has_image_support=True)
     gpt3 = AssistantModel(visual_name="GPT-3.5", api_name="gpt-3.5-turbo", has_image_support=False)
     claude = AssistantModel(visual_name="Claude 3 Sonnet", api_name="anthropic.claude-3-sonnet-20240229-v1:0", has_image_support=True)
     db.session.add_all([gpt3, gpt4, claude])
