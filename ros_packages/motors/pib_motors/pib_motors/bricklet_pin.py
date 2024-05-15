@@ -51,7 +51,7 @@ class BrickletPin:
 	def is_connected(self) -> bool:
 		"""checks if the bricklet-pin is connected to a bricklet"""
 		# X,Y and Z are the default uid of a Servo Bricklet 2.0 (updated ob boot by update_bricklet_uids.py)
-		return self.bricklet.uid_string != 'X' and self.bricklet.uid_string != 'Y' and self.bricklet.uid_string != 'Z':
+		return self.bricklet.uid_string != 'X' and self.bricklet.uid_string != 'Y' and self.bricklet.uid_string != 'Z'
 
 	def set_position(self, position: int) -> bool:
 		"""sets the position of the bricklet-pin and returns 'True' iff this was successful"""
