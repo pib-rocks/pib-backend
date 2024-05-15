@@ -46,7 +46,6 @@ class MotorCurrent(Node):
         keyvalue.key = motor_name
         keyvalue.value = str(current)
         msg.values = [keyvalue]
-        print(f"publishing: {msg}")
         self.motor_current_publisher.publish(msg)
 
 
