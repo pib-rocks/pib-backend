@@ -35,7 +35,7 @@ FRAMES_PER_CHUNK = FRAMES_PER_SECOND // CHUNKS_PER_SECOND
 SILENCE_VOLUME_THRESHOLD = 500
 
 VOICE_ASSISTANT_DIRECTORY = os.getenv("VOICE_ASSISTANT_DIR", "/home/pib/ros_working_dir/src/voice_assistant")
-OUTPUT_FILE_PATH = VOICE_ASSISTANT_DIRECTORY + "/audiofiles/output.wav"
+OUTPUT_FILE_PATH = "app/ros2_ws/voice_assistant/audiofiles/output.wav"
 
 
 
