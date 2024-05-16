@@ -7,6 +7,7 @@ import logging
 class BrickletPin:
 
 	NO_CURRENT: int = -1
+	DEFAULT_BRICKLET_UIDS = ['AAA', 'BBB', 'CCC']
 
 	def __init__(self, pin: int, uid: str, invert: bool) -> None:
 		self.pin: int = pin
@@ -50,12 +51,10 @@ class BrickletPin:
 	
 	def is_connected(self) -> bool:
 		"""checks if the bricklet-pin is connected to a bricklet"""
-		# X,Y and Z are the default uid of a Servo Bricklet 2.0 (updated ob boot by update_bricklet_uids.py)
-		uid: str = self.bricklet.uid_string
-		return uid != 'AAA' and uid != 'BBB' and uid != 'CCC'
+		return self.bricklet.uid_string not in BrickletPin.DEFAULT_BRICKLET_UIDS
 
 	def set_position(self, position: int) -> bool:
-		"""sets the position of the bricklet-pin and returns 'True' iff this was successful"""
+		"""sets the position of the bricklet-pin and returns 'True' if this was successful"""
 		if not self.is_connected(): 
 			return False
 		if self.invert: 
