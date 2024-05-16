@@ -1,0 +1,12 @@
+<?xml version="1.0" ?>
+<robot name="pibSimple">
+    <webots>
+        <device reference="camera_link" type="Camera">
+            <ros>
+                <topicName>/camera</topicName>
+            </ros>
+        </device>
+
+        <plugin type="pibsim_webots.pib_driver.PibDriver" />
+    </webots>
+</robot>

@@ -12,10 +12,10 @@ TINKERFORGE_HOST = os.getenv("TINKERFORGE_HOST", "localhost")
 TINKERFORGE_PORT = int(os.getenv("TINKERFORGE_PORT", 4223))
 BRICKLET_URLS = [f"{BASE_URL}/bricklet/{i}" for i in range(1, 4)]
 
-UID0 = "X"
-UID1 = "Y"
-UID2 = "Z"
-POSITION_TO_UID_MAP = {'a': 'UID0', 'b': 'UID1', 'e': 'UID2'}
+uid0 = "AAA"
+uid1 = "BBB"
+uid2 = "CCC"
+POSITION_TO_UID_MAP = {'a': 'uid0', 'b': 'uid1', 'e': 'uid2'}
 
 ipcon: IPConnection = IPConnection()
 hat = BrickHAT("X", ipcon)
@@ -34,10 +34,11 @@ p.join()
 ipcon.disconnect()
 
 def update_uids():
+    print("update")
     """Update bricklet UIDs in the database."""
     header = {"Content-Type": "application/json"}
 
-    for uid_number, uid in enumerate([UID0, UID1, UID2]):
+    for uid_number, uid in enumerate([uid0, uid1, uid2]):
         url = BRICKLET_URLS[uid_number]
         requests.put(url, data=json.dumps({"uid": uid}), headers=header)
 
@@ -47,14 +48,9 @@ def get_uids_from_db():
     json_data = json.loads(response.text)
     return [json_data['bricklets'][0]['uid'], json_data['bricklets'][1]['uid'], json_data['bricklets'][2]['uid']]
 
-def detect_uid_changes():
+def no_uids_in_database():
     """Check for changes between current databse and TinkerForge UIDs."""
-    used_uids = get_uids_from_db()
-
-    for uid_number, uid in enumerate([UID0, UID1, UID2]):
-        if uid != used_uids[uid_number]:
-            return True
-    return False
+    return get_uids_from_db() == ["AAA", "BBB", "CCC"]
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
@@ -65,7 +61,10 @@ if __name__ == "__main__":
             update_uids()
         elif methode == "get_uids_from_db":
             get_uids_from_db()
-        elif methode == "detect_uid_changes":
-            detect_uid_changes()
+        elif methode == "no_uids_in_database":
+            no_uids_in_database()
+        elif methode == "check_and_update":
+            if no_uids_in_database():
+                update_uids()
         else:
             print("Method not found")

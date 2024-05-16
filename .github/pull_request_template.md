@@ -1,27 +1,26 @@
 # Jira Ticket:
-<!-- Replace the last three digits in the URL with your ticket number -->
+<!-- Replace the last digits of the URL with your ticket number -->
 Link to corresponding jira ticket:
 https://pib-rocks.atlassian.net/jira/software/c/projects/PR/boards/3?selectedIssue=PR-123
 
 # Checklist:
-Necessary tasks before pull request can be merged:
-- [ ] All acceptance criteria have been implemented
+These tasks need to be completed before the pull request can be merged:
 - [ ] The code has been reviewed and approved at least once
-- [ ] All necessary tests have been successfully conducted
-- [ ] If necessary: A documentation covering the new concepts and changes has been created
+- [ ] All necessary tests have been successful
+- [ ] The product owner reviewed and accepted the story
 
 # Testing:
-### Testing approach for setups:
-<!-- Remove all unnecessary tests -->
-- [ ] A docker container was launched successfully
-- [ ] Setup on a virtual machine was successful
-- [ ] Setup on a Raspberry Pi was successful
-- [ ] Setup on a physical pib was successful
+### Test acceptance criteria:
+<!-- Describe when the tests are deemed successful. Remove unnecessary -->
+- [ ] Example: The new Voice-Assistant-UI works as intended
+- [ ] Example: All other core features work as before (Status-Quo-Test)
 
-### Testing acceptance criteria:
-<!-- Describe under which circumstances the tests are deemed successful -->
-- [ ] Example: New UI features work as intended
+### Setup Tests:
+<!-- Describe how the test needs to be set up. Remove unnecessary -->
+A setup test was successfull on the following system(s):
+- [ ] Setup on a physical pib
+- [ ] Setup on a virtual machine
+- [ ] Setup with docker
 
-### Testing instructions:
-<!-- Give additional information required for testing the story. (For example, special setup conditions) -->
-- Example: Test this story on a physical pib with three connected  servo bricklets
+### Additional setup instructions:
+- Example: This test requires three servo bricklets to be connected
