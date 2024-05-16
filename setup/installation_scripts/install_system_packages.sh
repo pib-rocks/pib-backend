@@ -34,4 +34,7 @@ echo "export ROS_LOCALHOST_ONLY=1" >> "$USER_HOME/.bashrc"
 # Install rosbridge-server
 sudo apt install -y ros-humble-rosbridge-server
 
+# Install driver for webots connection
+sudo apt install -y ros-humble-webots-ros2-driver
+
 echo -e "$NEW_LINE""$GREEN_TEXT_COLOR""-- System package installation completed --""$RESET_TEXT_COLOR""$NEW_LINE"
