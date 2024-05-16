@@ -52,7 +52,7 @@ def no_uids_in_database():
     """Check for changes between current databse and TinkerForge UIDs."""
     used_uids = get_uids_from_db()
     count = 0
-    for uid_number, uid in enumerate([UID0, UID1, UID2]):
+    for uid_number, uid in enumerate(["AAA", "BBB", "CCC"]):
         if uid == used_uids[uid_number]:
             count += 1
 

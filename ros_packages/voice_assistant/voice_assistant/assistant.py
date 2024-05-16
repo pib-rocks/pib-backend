@@ -21,8 +21,8 @@ from pib_api_client import voice_assistant_client
 from pib_api_client.voice_assistant_client import Personality
 
 VOICE_ASSISTANT_DIRECTORY = os.getenv("VOICE_ASSISTANT_DIR", "/home/pib/ros_working_dir/src/voice_assistant")
-START_SIGNAL_FILE = VOICE_ASSISTANT_DIRECTORY + "/audiofiles/assistant_start_listening.wav"
-STOP_SIGNAL_FILE = VOICE_ASSISTANT_DIRECTORY + "/audiofiles/assistant_stop_listening.wav"
+START_SIGNAL_FILE = "/app/ros2_ws/voice_assistant/audiofiles/assistant_start_listening.wav"
+STOP_SIGNAL_FILE = "/app/ros2_ws/voice_assistant/audiofiles/assistant_stop_listening.wav"
 MAX_SILENT_SECONDS_BEFORE = 8.0
 
 

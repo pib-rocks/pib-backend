@@ -1,0 +1,17 @@
+launch:
+
+- node:
+    pkg: "voice_assistant"
+    exec: "assistant"
+
+- node:
+    pkg: "voice_assistant"
+    exec: "audio_player"
+
+- node:
+    pkg: "voice_assistant"
+    exec: "audio_recorder"
+
+- node:
+    pkg: "voice_assistant"
+    exec: "chat"
