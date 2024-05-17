@@ -30,7 +30,6 @@ from uuid import uuid4
 TERMINAL_GOAL_STATES = { GoalStatus.STATUS_SUCCEEDED, GoalStatus.STATUS_ABORTED, GoalStatus.STATUS_CANCELED }
 
 
-
 class ProxyProgramNode(Node):
 
     def __init__(self) -> None:
@@ -60,14 +59,11 @@ class ProxyProgramNode(Node):
         # check periodically for the statuses of the current goals and (in case somethong has changed) publish the status
         self.status_loop_timer = self.create_timer(0.1, self.status_loop_callback)
 
-
         # client for the 'RunProgram'-Action, that this node acts as a proxy for
         self.run_program_client = ActionClient(self, RunProgram, 'run_program', feedback_sub_qos_profile=feedback_profile)
         self.run_program_client.wait_for_server()
 
         self.get_logger().info('Now Running PROXY PROGRAM')
-
-
 
     def start_program_callback(self, request: ProxyRunProgramStart.Request, response: ProxyRunProgramStart.Response) -> ProxyRunProgramStart.Response:
 
@@ -105,16 +101,12 @@ class ProxyProgramNode(Node):
         response.proxy_goal_id = proxy_goal_id
         return response
 
-
-
     def stop_program_callback(self, request: ProxyRunProgramStop.Request, response: ProxyRunProgramStop.Response) -> ProxyRunProgramStop.Response:
 
         try: goal_handle: ClientGoalHandle = self.id_to_goal[request.proxy_goal_id][0]
         except: return response
         goal_handle.cancel_goal_async()
         return response
-
-
 
     def status_loop_callback(self) -> None:
 
@@ -133,7 +125,6 @@ class ProxyProgramNode(Node):
         self.id_to_goal = { id : t for id , t in self.id_to_goal.items() if t[1] not in TERMINAL_GOAL_STATES }
 
 
-
 def main(args=None) -> None:
 
     rclpy.init()
@@ -143,7 +134,6 @@ def main(args=None) -> None:
     executor.spin()
     proxy_program_node.destroy_node()
     rclpy.shutdown()
- 
 
 
 if __name__ == "__main__":
