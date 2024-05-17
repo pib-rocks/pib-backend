@@ -53,8 +53,6 @@ class ChatNode(Node):
 
         self.get_logger().info('Now running CHAT')
 
-
-
     def create_chat_message(self, chat_id: str, text: str, is_user: bool) -> None:
         """writes a new chat-message to the db, and publishes it to the 'chat_messages'-topic"""
 
@@ -75,8 +73,6 @@ class ChatNode(Node):
 
         self.chat_message_publisher.publish(chat_message_ros)
 
-
-
     def chat(self, goal_handle: ServerGoalHandle):
 
             # unpack request data            
@@ -91,15 +87,15 @@ class ChatNode(Node):
             if not successful:
                 self.get_logger().info(f"no personality found for id {chat_id}")
                 goal_handle.abort()
-                return Chat.Result() # TODO
+                return Chat.Result()
             
             # create the user message
             self.executor.create_task(self.create_chat_message, chat_id, content, True)
 
             # receive an iterable of tokens from the public-api
             description = personality.description if personality.description is not None else "Du bist pib, ein humanoider Roboter."
-            if generate_code: description = CODE_DESCRIPTION_PREFIX + description
-            print(description)
+            if generate_code: 
+                description = CODE_DESCRIPTION_PREFIX + description
             with self.public_voice_client_lock:
                 tokens = public_voice_client.chat_completion(content, description)
 
@@ -133,7 +129,7 @@ class ChatNode(Node):
                     # if the goal was cancelled, return immediately
                     if goal_handle.is_cancel_requested:
                         goal_handle.canceled()
-                        return Chat.Result() # TODO
+                        return Chat.Result()
                     
                     # check if the collected text is visual-code
                     code_visual_match = code_visual_pattern.search(curr_text)
@@ -166,7 +162,7 @@ class ChatNode(Node):
                     break
 
             # create chat-message for remaining input
-            if (len(curr_text) > 0):
+            if len(curr_text) > 0:
                 self.executor.create_task(self.create_chat_message, chat_id, curr_text, False)
 
             # return the rest of the received text, that has not been forwarded as feedback
@@ -181,7 +177,6 @@ class ChatNode(Node):
                 result.text = prev_text
                 result.text_type = prev_text_type
             return result 
-
 
 
 def main(args=None):

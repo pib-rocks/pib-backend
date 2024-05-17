@@ -40,7 +40,8 @@ def update_program_code(program_number: str, program_dto: dict[str, Any]) -> Non
     code_visual = program_dto["codeVisual"]
     program.codeVisual = code_visual
     successful, code_python = pib_blockly_client.code_visual_to_python(code_visual)
-    if not successful: raise Exception("failed to generate python-code")
+    if not successful: 
+        raise Exception("failed to generate python-code")
     _write_to_python_code_file(program_number, code_python)
     db.session.flush()
 

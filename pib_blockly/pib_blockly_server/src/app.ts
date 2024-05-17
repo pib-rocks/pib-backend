@@ -4,7 +4,7 @@ import { pythonGenerator } from './pib-blockly/program-generators/custom-generat
 import { customBlockDefinition } from './pib-blockly/program-blocks/custom-blocks';
 
 function codeVisualToPython(codeVisual: string): string {
-    let workspaceContent;;
+    let workspaceContent;
     try {
         workspaceContent = JSON.parse(codeVisual);
     } catch (error) {

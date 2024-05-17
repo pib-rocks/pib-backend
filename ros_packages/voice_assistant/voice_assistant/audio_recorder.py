@@ -20,7 +20,6 @@ from rclpy.action import CancelResponse, GoalResponse
 from rclpy.action.server import ServerGoalHandle
 
 
-
 # these values define the pcm-encoding, in which the recorded
 # audio will be received
 BYTES_PER_SAMPLE = 2
@@ -36,7 +35,6 @@ SILENCE_VOLUME_THRESHOLD = 500
 
 VOICE_ASSISTANT_DIRECTORY = os.getenv("VOICE_ASSISTANT_DIR", "/home/pib/ros_working_dir/src/voice_assistant")
 OUTPUT_FILE_PATH = VOICE_ASSISTANT_DIRECTORY + "/audiofiles/output.wav"
-
 
 
 class AudioRecorderNode(Node):
@@ -59,22 +57,18 @@ class AudioRecorderNode(Node):
 
         self.get_logger().info('Now running AUDIO RECORDER')
 
-
-
     def handle_accepted_goal(self, goal_handle: ServerGoalHandle) -> GoalResponse:
         """place a goal into the queue and start execution if the queue was empty before"""
         with self.goal_queue_lock:
-            if not self.goal_queue: goal_handle.execute()
+            if not self.goal_queue: 
+                goal_handle.execute()
             self.goal_queue.appendleft(goal_handle)
-
-
     
     def is_silent(self, data_chunk) -> bool:
         """Check whether a chunk of frmaes is below the minimum volume threshold"""
         as_ints = np.frombuffer(data_chunk, dtype=np.int16)
         return np.abs(as_ints).mean() < SILENCE_VOLUME_THRESHOLD
     
-
     def create_result(self, text: str) -> RecordAudio.Result:
         """create an action-result and initilaize execution of the next queued goal"""
 
@@ -89,8 +83,6 @@ class AudioRecorderNode(Node):
             if self.goal_queue: self.goal_queue[-1].execute()
 
         return result
-
-
 
     def record_audio(self, goal_handle: ServerGoalHandle) -> None:
         """
@@ -165,14 +157,14 @@ class AudioRecorderNode(Node):
             wave_file.setframerate(FRAMES_PER_SECOND)
             wave_file.writeframes(data)
             wave_file.close()
-        with open(OUTPUT_FILE_PATH, 'rb') as f: data = f.read()
+        with open(OUTPUT_FILE_PATH, 'rb') as f: 
+            data = f.read()
 
         # transcribe the audio data
         text = public_voice_client.speech_to_text(data)
 
         goal_handle.succeed()
         return self.create_result(text)
-
 
 
 def main(args=None):
@@ -184,7 +176,6 @@ def main(args=None):
     executor.spin()
     node.destroy_node()
     rclpy.shutdown()
-
 
 
 if __name__ == "__main__":

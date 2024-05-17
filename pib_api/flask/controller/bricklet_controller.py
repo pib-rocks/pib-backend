@@ -6,19 +6,25 @@ from flask import jsonify, request, abort
 
 def get_all_bricklets():
     bricklets = bricklet_service.get_all_bricklets()
-    try: return jsonify({"bricklets": bricklets_schema.dump(bricklets)})
-    except Exception: abort(500)
+    try: 
+        return jsonify({"bricklets": bricklets_schema.dump(bricklets)})
+    except Exception: 
+        abort(500)
 
 
 def get_bricklet(bricklet_number: str):
     bricklet = bricklet_service.get_bricklet(bricklet_number)
-    try: return bricklet_uid_only_schema.dump(bricklet)
-    except Exception: abort(500)
+    try: 
+        return bricklet_uid_only_schema.dump(bricklet)
+    except Exception: 
+        abort(500)
 
 
 def update_bricklet(bricklet_number: str):
     uid = bricklet_uid_only_schema.load(request.json)['uid']
     bricklet = bricklet_service.set_bricklet_uid(bricklet_number, uid)
     db.session.commit()
-    try: return bricklet_schema.dump(bricklet)
-    except Exception: abort(500)
+    try: 
+        return bricklet_schema.dump(bricklet)
+    except Exception: 
+        abort(500)
