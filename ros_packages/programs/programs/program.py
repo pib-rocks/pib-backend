@@ -24,14 +24,12 @@ from datatypes.msg import ProgramOutputLine
 import pib_blockly_client
 
 
-
 PYTHON_BINARY: str = os.getenv('PYTHON_BINARY', '/home/pib/ros_working_dir/src/programs/user_program_env/bin/python3')
 UNBUFFERED_OUTPUT_FLAG: str = '-u'
 PROGRAM_DIR: str = os.getenv("PROGRAM_DIR", "/home/pib/cerebra_programs")
 
 MAIN_LOOP_WAITING_PERIOD_SECONDS: float = 0.1
 ACTION_LOOP_WAITING_PERIOD_SECONDS: float = 0.05
-
 
 
 # request to start execution of user-program, sent from ros-process to main-process
@@ -68,7 +66,6 @@ class ExitCode:
         self.code = code
 
 
-
 class ProgramNode(Node):
 
     def __init__(self, request_sender: Connection) -> None:
@@ -98,8 +95,6 @@ class ProgramNode(Node):
 
         self.get_logger().info('Now Running PROGRAM')
 
-
-
     def run_program_callback(self, goal_handle: ServerGoalHandle) -> RunProgram.Result:
 
         # convert goal id to bytes
@@ -120,10 +115,12 @@ class ProgramNode(Node):
                 return RunProgram.Result(exit_code=2)
             self.get_logger().info("visual-code was successfully compiled to python-code.")
             fd, code_python_file_path = tempfile.mkstemp()
-            with os.fdopen(fd, 'w') as file: file.write(code_python)
+            with os.fdopen(fd, 'w') as file: 
+                file.write(code_python)
         else:
             self.get_logger().info(f"received unexpected source type: {request.source_type}.")
             goal_handle.abort()
+            return RunProgram.Result(exit_code=2)
 
         try:
             self.get_logger().info("starting execution of program...")
@@ -182,7 +179,6 @@ class ProgramNode(Node):
                 os.remove(code_python_file_path)
 
 
-
 def main_loop(request_receiver: Connection) -> None:
     
     goal_id_to_host: dict[bytes, Process] = {}
@@ -215,7 +211,6 @@ def main_loop(request_receiver: Connection) -> None:
         time.sleep(MAIN_LOOP_WAITING_PERIOD_SECONDS)
 
 
-
 def ros_target(request_sender: Connection) -> None:
 
     rclpy.init()
@@ -225,7 +220,6 @@ def ros_target(request_sender: Connection) -> None:
     executor.spin()
     program_node.destroy_node()
     rclpy.shutdown()
-
 
 
 def run_program(code_python_file_path: str, output_sender: Connection) -> None:
@@ -254,7 +248,6 @@ def run_program(code_python_file_path: str, output_sender: Connection) -> None:
         output_sender.send(ExitCode(return_code))
 
 
-
 def main(args=None) -> None:
     request_sender, request_receiver = Pipe()
     ros_process = Process(target=ros_target, args=(request_sender,))
@@ -262,7 +255,6 @@ def main(args=None) -> None:
 
     main_loop(request_receiver)
  
-
 
 if __name__ == "__main__":
     main()
