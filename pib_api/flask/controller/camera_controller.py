@@ -6,13 +6,17 @@ from app.app import db
 
 def get_camera_settings():
     camera_settings = camera_service.get_camera_settings()
-    try: return camera_settings_schema.dump(camera_settings)
-    except Exception: abort(500)
+    try: 
+        return camera_settings_schema.dump(camera_settings)
+    except Exception: 
+        abort(500)
 
 
 def update_camera_settings():
     camera_settings_dto = camera_settings_schema.load(request.json)
     camera_settings = camera_service.update_camera_settings(camera_settings_dto)
     db.session.commit()
-    try: return camera_settings_schema.dump(camera_settings)
-    except Exception: abort(500)
+    try: 
+        return camera_settings_schema.dump(camera_settings)
+    except Exception: 
+        abort(500)

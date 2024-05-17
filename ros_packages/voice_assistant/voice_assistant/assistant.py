@@ -21,12 +21,10 @@ from pib_api_client import voice_assistant_client
 from pib_api_client.voice_assistant_client import Personality
 
 
-
 VOICE_ASSISTANT_DIRECTORY = os.getenv("VOICE_ASSISTANT_DIR", "/home/pib/ros_working_dir/src/voice_assistant")
 START_SIGNAL_FILE = VOICE_ASSISTANT_DIRECTORY + "/audiofiles/assistant_start_listening.wav"
 STOP_SIGNAL_FILE = VOICE_ASSISTANT_DIRECTORY + "/audiofiles/assistant_stop_listening.wav"
 MAX_SILENT_SECONDS_BEFORE = 8.0
-
 
 
 class VoiceAssistantNode(Node):
@@ -113,10 +111,8 @@ class VoiceAssistantNode(Node):
         self.run_program_client.wait_for_server()
 
         self.get_logger().info('Now running VA')
-
     
     # client accessors ------------------------------------------------------------------
-
 
     def clear_playback_queue(self, 
                              on_playback_queue_cleared: Callable[[], None] = None):
@@ -149,17 +145,26 @@ class VoiceAssistantNode(Node):
         goal.text = text
         goal.chat_id = chat_id
         goal.generate_code = generate_code
+
         def feedback_callback(msg) -> None:
             feedback: Chat.Feedback = msg.feedback
             text = feedback.text
-            if feedback.text_type == Chat.Goal.TEXT_TYPE_SENTENCE: on_sentence_received(text, False)
-            elif feedback.text_type == Chat.Goal.TEXT_TYPE_CODE_VISUAL: on_code_visual_received(text, False)
-            else: raise Exception(f"unsupported text-type: {feedback.text_type}")
+            if feedback.text_type == Chat.Goal.TEXT_TYPE_SENTENCE: 
+                on_sentence_received(text, False)
+            elif feedback.text_type == Chat.Goal.TEXT_TYPE_CODE_VISUAL: 
+                on_code_visual_received(text, False)
+            else: 
+                raise Exception(f"unsupported text-type: {feedback.text_type}")
+            
         def result_callback(result: Chat.Result) -> None:
             text = result.text
-            if result.text_type == Chat.Goal.TEXT_TYPE_SENTENCE: on_sentence_received(text, True)
-            elif result.text_type == Chat.Goal.TEXT_TYPE_CODE_VISUAL: on_code_visual_received(text, True)
-            else: raise Exception(f"unsupported text-type: {result.text_type}")
+            if result.text_type == Chat.Goal.TEXT_TYPE_SENTENCE: 
+                on_sentence_received(text, True)
+            elif result.text_type == Chat.Goal.TEXT_TYPE_CODE_VISUAL: 
+                on_code_visual_received(text, True)
+            else: 
+                raise Exception(f"unsupported text-type: {result.text_type}")
+
         future: Future = self.chat_client.send_goal_async(goal, feedback_callback)
         stop_chat = self.digest_goal_handle_future(future, result_callback)
         self.chat_id_to_stop_chat[chat_id] = stop_chat
@@ -172,7 +177,8 @@ class VoiceAssistantNode(Node):
         request.filepath = filepath
         request.join = on_stopped_playing is not None
         future: Future = self.play_audio_from_file_client.call_async(request)
-        if request.join: future.add_done_callback(lambda _ : on_stopped_playing())
+        if request.join: 
+            future.add_done_callback(lambda _ : on_stopped_playing())
 
     def play_audio_from_speech(self, 
                                speech: str, 
@@ -186,7 +192,8 @@ class VoiceAssistantNode(Node):
         request.language = language
         request.join = on_stopped_playing is not None
         future: Future = self.play_audio_from_speech_client.call_async(request)
-        if request.join: future.add_done_callback(lambda _ : on_stopped_playing())
+        if request.join: 
+            future.add_done_callback(lambda _ : on_stopped_playing())
 
     def run_program(self,
                     code_visual: str,
@@ -199,16 +206,12 @@ class VoiceAssistantNode(Node):
         future: Future = self.run_program_client.send_goal_async(goal)
         self.stop_program_execution = self.digest_goal_handle_future(future, result_callback)
 
-
     # serivce callbacks -----------------------------------------------------------------
-
 
     def get_voice_assistant_state(self, _: GetVoiceAssistantState.Request, response: GetVoiceAssistantState.Response) -> GetVoiceAssistantState.Response:
 
         response.voice_assistant_state = self.state
         return response
-
-
 
     def set_voice_assistant_state(self, request: SetVoiceAssistantState.Request, response: SetVoiceAssistantState.Response) -> SetVoiceAssistantState.Response:
         
@@ -233,16 +236,19 @@ class VoiceAssistantNode(Node):
                 self.final_chat_response_received = False
                 self.is_executing_program = False
                 current_chat_id = self.state.chat_id
+
                 def on_playback_queue_cleared():
                     self.turning_off = False
                     self.set_is_listening(current_chat_id, True)
                     self.play_audio_from_file(STOP_SIGNAL_FILE)
+
                 self.clear_playback_queue(on_playback_queue_cleared)
 
             else: # activate voice assistant
                 self.stop_chat(request_state.chat_id)
                 successful, self.personality = voice_assistant_client.get_personality_from_chat(request_state.chat_id)
-                if not successful: raise Exception(f"no personality with chat of id {request_state.chat_id} found...")
+                if not successful: 
+                    raise Exception(f"no personality with chat of id {request_state.chat_id} found...")
                 self.set_is_listening(request_state.chat_id, False)
                 self.play_audio_from_file(START_SIGNAL_FILE, self.if_cycle_not_changed(self.on_start_signal_played))
 
@@ -255,15 +261,11 @@ class VoiceAssistantNode(Node):
         self.voice_assistant_state_publisher.publish(self.state)
 
         return response
-    
-
 
     def get_chat_is_listening(self, request: GetChatIsListening.Request, response: GetChatIsListening.Response) -> GetChatIsListening.Response:
 
         response.listening = self.get_is_listening(request.chat_id)
         return response
-
-
 
     def send_chat_message(self, request: SendChatMessage.Request, response: SendChatMessage.Response) -> GetChatIsListening.Response:
 
@@ -284,8 +286,11 @@ class VoiceAssistantNode(Node):
 
         else: # if not active, create messages, without playing audio etc.
             self.set_is_listening(request.chat_id, False)
+
             def on_sentence_received(sentence: str, is_final: bool):
-                if is_final: self.set_is_listening(request.chat_id, True)
+                if is_final: 
+                    self.set_is_listening(request.chat_id, True)
+
             self.chat( # TODO : there is a race condition here, that could lead to the va falsely starting to listen, when activating this chat
                 request.content,
                 request.chat_id,
@@ -294,10 +299,8 @@ class VoiceAssistantNode(Node):
 
         response.successful = True
         return response
-    
 
     # callback cycle --------------------------------------------------------------------
-
 
     def on_start_signal_played(self) -> None:
 
@@ -311,7 +314,8 @@ class VoiceAssistantNode(Node):
     
     def on_stopped_recording(self) -> None:
 
-        if not self.get_is_listening(self.state.chat_id): return
+        if not self.get_is_listening(self.state.chat_id): 
+            return
 
         self.play_audio_from_file(STOP_SIGNAL_FILE)
         self.set_is_listening(self.state.chat_id, False)
@@ -319,7 +323,8 @@ class VoiceAssistantNode(Node):
 
     def on_transcribed_text_received(self, transcribed_text: str) -> None:
 
-        if not self.waiting_for_transcribed_text: return
+        if not self.waiting_for_transcribed_text: 
+            return
         self.waiting_for_transcribed_text = False
 
         self.chat(
@@ -357,36 +362,32 @@ class VoiceAssistantNode(Node):
 
         if self.code_visual_queue:
             code_visual = self.code_visual_queue.pop()
-
             self.run_program(code_visual, self.if_cycle_not_changed(self.on_stopped_executing_program))
+
         else:
             self.is_executing_program = False
             if self.final_chat_response_received:
                 self.play_audio_from_file(
                     START_SIGNAL_FILE, 
                     self.if_cycle_not_changed(self.on_start_signal_played))
-            
 
     def on_final_sentence_played(self) -> None:
 
         self.play_audio_from_file(
             START_SIGNAL_FILE, 
             self.if_cycle_not_changed(self.on_start_signal_played))
-        
 
     # helper functions ------------------------------------------------------------------
-    
 
     def if_cycle_not_changed(self, callback: Callable) -> Callable:
         """a decorator. the decorated callback only executes, if the cycle has not changed after its creation"""
 
         current_cycle = self.cycle
         def decorated_callback(*args):
-            if self.cycle == current_cycle: callback(*args)
+            if self.cycle == current_cycle: 
+                callback(*args)
 
         return decorated_callback
-    
-
 
     def digest_goal_handle_future(self, goal_handle_future: Future, callback: Callable[[Any], None] = None) -> Callable[[], None]:
         """adds a result callback to the goal and returns a function, that can be used to cancel the goal"""
@@ -409,8 +410,6 @@ class VoiceAssistantNode(Node):
             goal_handle.cancel_goal_async()
 
         return lambda: goal_handle_future.add_done_callback(cancel)
-    
-
 
     def set_is_listening(self, chat_id: str, listening: bool) -> None:
         """updates and publishes the listening status of a chat"""
@@ -423,21 +422,17 @@ class VoiceAssistantNode(Node):
 
         self.chat_is_listening_publisher.publish(chat_is_listening)
 
-
-
     def get_is_listening(self, chat_id: str) -> bool:
         """find out, if a chat is currently listening for user input"""
 
         return self.chat_id_to_is_listening.get(chat_id, True)
-    
-    
 
     def stop_chat(self, chat_id: str) -> None:
         """if the chat of the provided is active, stop receiving messages from the chat"""
 
         stop_chat = self.chat_id_to_stop_chat.get(chat_id)
-        if stop_chat is not None: stop_chat()
-
+        if stop_chat is not None: 
+            stop_chat()
 
 
 def main(args=None):
@@ -449,7 +444,6 @@ def main(args=None):
     executor.spin()
     node.destroy_node()
     rclpy.shutdown()
-
 
 
 if __name__ == "__main__":

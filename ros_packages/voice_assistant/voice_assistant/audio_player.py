@@ -16,13 +16,13 @@ from datatypes.srv import PlayAudioFromFile, PlayAudioFromSpeech, ClearPlaybackQ
 from public_api_client import public_voice_client
 
 
-
 class AudioEncoding():
 
     def __init__(self, bytes_per_sample: int, num_channels: int, frames_per_second: int):
         self.bytes_per_sample = bytes_per_sample
         self.num_channels = num_channels
         self.frames_per_second = frames_per_second
+
 
 class PlaybackItem():
 
@@ -64,12 +64,10 @@ class PlaybackItem():
         stream.stop_stream()
         stream.close()
         pya.terminate()
-    
 
 
 SPEECH_ENCODING = AudioEncoding(2, 1, 16000)
 CHUNKS_PER_SECOND = 10
-
 
 
 class AudioPlayerNode(Node):
@@ -108,16 +106,12 @@ class AudioPlayerNode(Node):
         
         self.get_logger().info('Now running AUDIO PLAYER')
 
-
-
     def counter_next(self) -> int:
 
         with self.counter_lock:
             value = self.counter
             self.counter += 1
             return value
-
-
     
     def play_audio_from_file(self, request: PlayAudioFromFile.Request, response: PlayAudioFromFile.Response) -> PlayAudioFromFile.Response:
 
@@ -136,15 +130,14 @@ class AudioPlayerNode(Node):
             while True:
                 chunk = wf.readframes(frames_per_chunk)
                 data.append(chunk)
-                if len(chunk) < frames_per_chunk: break
+                if len(chunk) < frames_per_chunk: 
+                    break
 
         playback_item = PlaybackItem(data, encoding, 0.0, order)
         self.playback_queue.put(playback_item, True)
 
         if request.join: playback_item.finished_playing.wait()
         return response
-
-
 
     def play_audio_from_speech(self, request: PlayAudioFromSpeech.Request, response: PlayAudioFromSpeech.Response) -> PlayAudioFromSpeech.Response:
 
@@ -155,10 +148,9 @@ class AudioPlayerNode(Node):
         playback_item = PlaybackItem(data, SPEECH_ENCODING, 0.2, order)
         self.playback_queue.put(playback_item, True)
 
-        if request.join: playback_item.finished_playing.wait()
+        if request.join: 
+            playback_item.finished_playing.wait()
         return response
-
-
 
     def clear_playback_queue(self, _: PlayAudioFromFile.Request, response: PlayAudioFromFile.Response) -> PlayAudioFromFile.Response:
 
@@ -169,13 +161,13 @@ class AudioPlayerNode(Node):
         return response
 
 
-
 def main(args=None):
 
     playback_queue: Queue[PlaybackItem] = Queue()
 
     def audio_loop(playback_queue: Queue[PlaybackItem]) ->  None: 
-        while True: playback_queue.get(True).play()
+        while True: 
+            playback_queue.get(True).play()
 
     Thread(target=audio_loop, args=(playback_queue,), daemon=True).start()
 
@@ -186,7 +178,6 @@ def main(args=None):
     executor.spin()
     node.destroy_node()
     rclpy.shutdown()
-
 
 
 if __name__ == "__main__":
