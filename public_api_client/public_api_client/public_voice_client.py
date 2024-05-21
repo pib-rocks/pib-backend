@@ -10,9 +10,12 @@ import logging
 logging.basicConfig(level=logging.INFO,
                     format="[%(levelname)s] [%(asctime)s] [%(process)d] [%(filename)s:%(lineno)s]: %(message)s")
 
-SPEECH_TO_TEXT_URL = configuration.tryb_url_prefix + "/public-api/conversions/speech-to-text"
-TEXT_TO_SPEECH_URL = configuration.tryb_url_prefix + "/public-api/conversions/text-to-speech"
-VOICE_ASSISTANT_TEXT_URL = configuration.tryb_url_prefix + "/public-api/voice-assistant/text"
+try:
+    SPEECH_TO_TEXT_URL = configuration.tryb_url_prefix + "/public-api/conversions/speech-to-text"
+    TEXT_TO_SPEECH_URL = configuration.tryb_url_prefix + "/public-api/conversions/text-to-speech"
+    VOICE_ASSISTANT_TEXT_URL = configuration.tryb_url_prefix + "/public-api/voice-assistant/text"
+except TypeError as e:
+    logging.error("missing configuration for tryb")
 
 
 def _send_request(method: str, url: str, headers: dict[str, str], body: dict[str, Any], stream: bool):
