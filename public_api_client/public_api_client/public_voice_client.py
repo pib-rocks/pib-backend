@@ -7,7 +7,7 @@ import base64
 import json
 import logging
 
-logging.basicConfig(level=logging.INFO, 
+logging.basicConfig(level=logging.INFO,
                     format="[%(levelname)s] [%(asctime)s] [%(process)d] [%(filename)s:%(lineno)s]: %(message)s")
 
 SPEECH_TO_TEXT_URL = configuration.tryb_url_prefix + "/public-api/conversions/speech-to-text"
@@ -15,41 +15,38 @@ TEXT_TO_SPEECH_URL = configuration.tryb_url_prefix + "/public-api/conversions/te
 VOICE_ASSISTANT_TEXT_URL = configuration.tryb_url_prefix + "/public-api/voice-assistant/text"
 
 
-
 def _send_request(method: str, url: str, headers: dict[str, str], body: dict[str, Any], stream: bool):
-
     try:
-        headers["Authorization"] = "Bearer " + configuration.public_api_token 
+        headers["Authorization"] = "Bearer " + configuration.public_api_token
         response = requests.request(
-            method=method, 
-            url=url, 
+            method=method,
+            url=url,
             stream=stream,
-            headers=headers, 
+            headers=headers,
             json=body)
         response.raise_for_status()
         return response
-    
+
     except requests.HTTPError as error:
         response: requests.Response = error.response
         headers_without_auth = {k: v for k, v in headers.items() if k != "Authorization"}
         logging.info(
             f":::::::::::::::::::::::::::::::::::::::::::::::::::::\n" +
             f"An Error occured while sending request:\n" +
-            f"-----------------------------------------------------\n" + 
+            f"-----------------------------------------------------\n" +
             f"url: {url}\n" +
             f"method: {method}\n" +
-            f"body: {body}\n"+
+            f"body: {body}\n" +
             f"headers: {headers_without_auth}"
             f"-----------------------------------------------------\n" +
-            f"Received following response from the public-api:\n" + 
+            f"Received following response from the public-api:\n" +
             f"-----------------------------------------------------\n" +
             f"status: {response.status_code}\n"
             f"headers: {response.headers}\n"
             f"content: {response.content}\n" +
             f":::::::::::::::::::::::::::::::::::::::::::::::::::::\n")
-        
+
         raise Exception("error while sending request to public-api")
-        
 
 
 def speech_to_text(audio: bytes) -> str:
@@ -63,9 +60,8 @@ def speech_to_text(audio: bytes) -> str:
         "data": base64.encodebytes(audio).decode('ascii')
     }
     response = _send_request("POST", SPEECH_TO_TEXT_URL, headers, body, False)
-    
-    return response.json()["responseText"]
 
+    return response.json()["responseText"]
 
 
 def text_to_speech(text: str, gender: str, language: str) -> Iterable[bytes]:
@@ -83,9 +79,8 @@ def text_to_speech(text: str, gender: str, language: str) -> Iterable[bytes]:
         }
     }
     response = _send_request("POST", TEXT_TO_SPEECH_URL, headers, body, True)
-    
-    return response.iter_content(chunk_size=None)
 
+    return response.iter_content(chunk_size=None)
 
 
 def chat_completion(text: str, description: str) -> Iterable[str]:
@@ -103,9 +98,10 @@ def chat_completion(text: str, description: str) -> Iterable[str]:
         }
     }
     response = _send_request("POST", VOICE_ASSISTANT_TEXT_URL, headers, body, True)
-    
+
     line_bin: bytes
     for line_bin in response.iter_lines():
         line_str = line_bin.decode('utf-8')
-        if not line_str.startswith("data:"): continue
+        if not line_str.startswith("data:"):
+            continue
         yield json.loads(line_str[21:-1])

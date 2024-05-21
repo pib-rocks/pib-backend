@@ -19,8 +19,6 @@ from rclpy.action import ActionServer
 from rclpy.action import CancelResponse, GoalResponse
 from rclpy.action.server import ServerGoalHandle
 
-
-
 # these values define the pcm-encoding, in which the recorded
 # audio will be received
 BYTES_PER_SAMPLE = 2
@@ -38,7 +36,6 @@ VOICE_ASSISTANT_DIRECTORY = os.getenv("VOICE_ASSISTANT_DIR", "/home/pib/ros_work
 OUTPUT_FILE_PATH = VOICE_ASSISTANT_DIRECTORY + "/audiofiles/output.wav"
 
 
-
 class AudioRecorderNode(Node):
 
     def __init__(self):
@@ -50,30 +47,26 @@ class AudioRecorderNode(Node):
 
         # server for recording audio and transcribing it to text, via the public-api
         self.record_audio_server = ActionServer(
-            self, 
-            RecordAudio, 
-            'record_audio', 
-            execute_callback = self.record_audio,
+            self,
+            RecordAudio,
+            'record_audio',
+            execute_callback=self.record_audio,
             handle_accepted_callback=self.handle_accepted_goal,
-            cancel_callback = (lambda _ : CancelResponse.ACCEPT))
+            cancel_callback=(lambda _: CancelResponse.ACCEPT))
 
         self.get_logger().info('Now running AUDIO RECORDER')
-
-
 
     def handle_accepted_goal(self, goal_handle: ServerGoalHandle) -> GoalResponse:
         """place a goal into the queue and start execution if the queue was empty before"""
         with self.goal_queue_lock:
-            if not self.goal_queue: goal_handle.execute()
+            if not self.goal_queue:
+                goal_handle.execute()
             self.goal_queue.appendleft(goal_handle)
 
-
-    
     def is_silent(self, data_chunk) -> bool:
         """Check whether a chunk of frmaes is below the minimum volume threshold"""
         as_ints = np.frombuffer(data_chunk, dtype=np.int16)
         return np.abs(as_ints).mean() < SILENCE_VOLUME_THRESHOLD
-    
 
     def create_result(self, text: str) -> RecordAudio.Result:
         """create an action-result and initilaize execution of the next queued goal"""
@@ -86,11 +79,10 @@ class AudioRecorderNode(Node):
         # (if one is present)
         with self.goal_queue_lock:
             self.goal_queue.pop()
-            if self.goal_queue: self.goal_queue[-1].execute()
+            if self.goal_queue:
+                self.goal_queue[-1].execute()
 
         return result
-
-
 
     def record_audio(self, goal_handle: ServerGoalHandle) -> None:
         """
@@ -100,7 +92,7 @@ class AudioRecorderNode(Node):
         """
 
         request: RecordAudio.Goal = goal_handle.request
-        
+
         # these values indicate, after how many silent chunks, the recording is interrupted,
         # the 'before' value is used, if speech has not started yet
         # the 'after' value if used, after speech has already started
@@ -118,23 +110,29 @@ class AudioRecorderNode(Node):
 
         # create an pyaudio-input-stream for recording audio
         pya = pyaudio.PyAudio()
-        stream = pya.open(
-            format=pya.get_format_from_width(BYTES_PER_SAMPLE), 
-            channels=NUM_CHANNELS, 
-            rate=FRAMES_PER_SECOND, 
-            input=True, 
-            frames_per_buffer=FRAMES_PER_CHUNK)
+        try:
+            stream = pya.open(
+                format=pya.get_format_from_width(BYTES_PER_SAMPLE),
+                channels=NUM_CHANNELS,
+                rate=FRAMES_PER_SECOND,
+                input=True,
+                frames_per_buffer=FRAMES_PER_CHUNK)
+        except OSError as e:
+            self.get_logger().error(f"failed to record audio: {e}")
+            pya.terminate()
+            goal_handle.canceled()
+            return self.create_result("")
 
         # record audio, until too many silent chunks were detected in a row
         # or if cancellation of the goal was requested
         while silent_chunks < max_silent_chunks:
-            chunk = stream.read(FRAMES_PER_CHUNK, exception_on_overflow = False)
+            chunk = stream.read(FRAMES_PER_CHUNK, exception_on_overflow=False)
             chunks.append(chunk)
-            if goal_handle.is_cancel_requested: 
+            if goal_handle.is_cancel_requested:
                 break
             if self.is_silent(chunk):
                 silent_chunks += 1
-            else: 
+            else:
                 max_silent_chunks = max_silent_chunks_after
                 silent_chunks = 0
 
@@ -147,11 +145,11 @@ class AudioRecorderNode(Node):
         if goal_handle.is_cancel_requested:
             goal_handle.canceled()
             return self.create_result("")
-        
+
         # if not canceled, transcribe recorded audio to text (via public-api)
         # and return the transcription
         # from now on, cancel requests are ignored (maybe change this in future?)
-        
+
         # notifiy client, that the recording-phase has ended
         goal_handle.publish_feedback(RecordAudio.Feedback())
 
@@ -165,7 +163,8 @@ class AudioRecorderNode(Node):
             wave_file.setframerate(FRAMES_PER_SECOND)
             wave_file.writeframes(data)
             wave_file.close()
-        with open(OUTPUT_FILE_PATH, 'rb') as f: data = f.read()
+        with open(OUTPUT_FILE_PATH, 'rb') as f:
+            data = f.read()
 
         # transcribe the audio data
         text = public_voice_client.speech_to_text(data)
@@ -174,9 +173,7 @@ class AudioRecorderNode(Node):
         return self.create_result(text)
 
 
-
 def main(args=None):
-
     rclpy.init()
     node = AudioRecorderNode()
     executor = MultiThreadedExecutor(4)
@@ -184,7 +181,6 @@ def main(args=None):
     executor.spin()
     node.destroy_node()
     rclpy.shutdown()
-
 
 
 if __name__ == "__main__":
