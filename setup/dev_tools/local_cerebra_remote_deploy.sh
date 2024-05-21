@@ -7,13 +7,13 @@
 # 1. Change the path and ip variables as mentioned below
 # 2. Run this script in a windows bash terminal.
 
-#Change "LOCAL_CEREBRA_DIR" to your local main cerebra folder
-#Example: LOCAL_CEREBRA_DIR="C:\Users\Example User\Documents\cerebra2"
+# Change "LOCAL_CEREBRA_DIR" to your local main cerebra folder
+# Example: LOCAL_CEREBRA_DIR="C:\Users\Example User\Documents\cerebra2"
 LOCAL_CEREBRA_DIR="C:\Users\User Name\Documents\cerebra2"
 LOCAL_BUILD_DIR="/dist/cerebra"
 
-#Change "TARGET_IP" to the desired target raspi or virtal machine
-#Examples: "192.168.220.109" or "localhost" for VM-use
+# Change "TARGET_IP" to the desired target raspi or virtal machine
+# Examples: "192.168.220.109" or "localhost" for VM-use
 TARGET_IP="localhost"
 TARGET_USERNAME="pib"
 
@@ -24,7 +24,7 @@ DEFAULT_NGINX_HTML_DIR="/etc/nginx/html"
 ssh-keygen -R "$TARGET_IP"
 
 ### deploy local cerebra via remote ssh connection
-#Change directory to cerebra project folder
+# Change directory to cerebra project folder
 echo "Starting remote deployment of your local cerebra version."
 cd "$LOCAL_CEREBRA_DIR"
 

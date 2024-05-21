@@ -7,8 +7,8 @@ cd /home/pib/ros_working_dir/json-server/
 npm install
 npm audit fix
 
-#Stop if still running pib_api service
+# Stop if still running pib_api service
 systemctl stop pib_api_boot.service
 
-#Start the JOSN-Server
+# Start the JOSN-Server
 node server/json-server-funktion.mjs
