@@ -33,7 +33,7 @@ FRAMES_PER_CHUNK = FRAMES_PER_SECOND // CHUNKS_PER_SECOND
 SILENCE_VOLUME_THRESHOLD = 500
 
 VOICE_ASSISTANT_DIRECTORY = os.getenv("VOICE_ASSISTANT_DIR", "/home/pib/ros_working_dir/src/voice_assistant")
-OUTPUT_FILE_PATH = VOICE_ASSISTANT_DIRECTORY + "/audiofiles/output.wav"
+OUTPUT_FILE_PATH = f"{VOICE_ASSISTANT_DIRECTORY}/audiofiles/output.wav"
 
 
 class AudioRecorderNode(Node):
@@ -90,7 +90,6 @@ class AudioRecorderNode(Node):
         exactly one feedback object is returned. The object is empty and indicated, that recording
         was stopped and transcription has begun
         """
-
         request: RecordAudio.Goal = goal_handle.request
 
         # these values indicate, after how many silent chunks, the recording is interrupted,
@@ -101,7 +100,7 @@ class AudioRecorderNode(Node):
         max_silent_chunks_before = request.max_silent_seconds_before * CHUNKS_PER_SECOND
         max_silent_chunks_after = request.max_silent_seconds_after * CHUNKS_PER_SECOND
 
-        # the collected chunks of frames     
+        # the collected chunks of frames
         chunks = []
         # the current number of silent chunks in a row
         silent_chunks = 0
@@ -109,6 +108,7 @@ class AudioRecorderNode(Node):
         max_silent_chunks = max_silent_chunks_before
 
         # create an pyaudio-input-stream for recording audio
+        self.get_logger().info("START RECORDING AUDIO")
         pya = pyaudio.PyAudio()
         try:
             stream = pya.open(
@@ -117,29 +117,31 @@ class AudioRecorderNode(Node):
                 rate=FRAMES_PER_SECOND,
                 input=True,
                 frames_per_buffer=FRAMES_PER_CHUNK)
+
+            # record audio, until too many silent chunks were detected in a row
+            # or if cancellation of the goal was requested
+            while silent_chunks < max_silent_chunks:
+                chunk = stream.read(FRAMES_PER_CHUNK, exception_on_overflow=False)
+                self.get_logger().info(f"CURRENT CHUNK IS SILENT: {self.is_silent(chunk)}")
+                chunks.append(chunk)
+                if goal_handle.is_cancel_requested:
+                    break
+                if self.is_silent(chunk):
+                    silent_chunks += 1
+                else:
+                    max_silent_chunks = max_silent_chunks_after
+                    silent_chunks = 0
+
+            # stop recording
+            stream.stop_stream()
+            stream.close()
+            pya.terminate()
+
         except OSError as e:
             self.get_logger().error(f"failed to record audio: {e}")
             pya.terminate()
-            goal_handle.canceled()
-            return self.create_result("")
-
-        # record audio, until too many silent chunks were detected in a row
-        # or if cancellation of the goal was requested
-        while silent_chunks < max_silent_chunks:
-            chunk = stream.read(FRAMES_PER_CHUNK, exception_on_overflow=False)
-            chunks.append(chunk)
-            if goal_handle.is_cancel_requested:
-                break
-            if self.is_silent(chunk):
-                silent_chunks += 1
-            else:
-                max_silent_chunks = max_silent_chunks_after
-                silent_chunks = 0
-
-        # stop recording
-        stream.stop_stream()
-        stream.close()
-        pya.terminate()
+            goal_handle.abort()
+            return
 
         # if cancel is requested, stop execution here
         if goal_handle.is_cancel_requested:
@@ -167,7 +169,12 @@ class AudioRecorderNode(Node):
             data = f.read()
 
         # transcribe the audio data
-        text = public_voice_client.speech_to_text(data)
+        try:
+            text = public_voice_client.speech_to_text(data)
+        except Exception as e:
+            self.get_logger().error(f"failed speech_to_text: {e}")
+            goal_handle.abort()
+            return self.create_result("")
 
         goal_handle.succeed()
         return self.create_result(text)

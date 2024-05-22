@@ -134,13 +134,13 @@ class VoiceAssistantNode(Node):
              chat_id: str,
              on_sentence_received: Callable[[str], None] = None,
              on_final_sentence_received: Callable[[str], None] = None) -> None:
-
         goal = Chat.Goal()
         goal.text = text
         goal.chat_id = chat_id
-        feedback_callback = None if on_sentence_received is None else lambda msg: on_sentence_received(
+        feedback_callback = self._deactivate_voice_assistant() if on_sentence_received is None else lambda msg: on_sentence_received(
             msg.feedback.sentence)
-        result_callback = None if on_final_sentence_received is None else lambda result: on_final_sentence_received(
+        result_callback = self._deactivate_voice_assistant() if on_final_sentence_received is None else lambda \
+            result: on_final_sentence_received(
             result.rest)
         future: Future = self.chat_client.send_goal_async(goal, feedback_callback)
         stop_chat = self.digest_goal_handle_future(future, result_callback)
@@ -149,7 +149,6 @@ class VoiceAssistantNode(Node):
     def play_audio_from_file(self,
                              filepath: str,
                              on_stopped_playing: Callable[[], None] = None):
-
         request = PlayAudioFromFile.Request()
         request.filepath = filepath
         request.join = on_stopped_playing is not None
@@ -162,7 +161,6 @@ class VoiceAssistantNode(Node):
                                gender: str,
                                language: str,
                                on_stopped_playing: Callable[[], None] = None):
-
         request = PlayAudioFromSpeech.Request()
         request.speech = speech
         request.gender = gender
@@ -176,13 +174,11 @@ class VoiceAssistantNode(Node):
 
     def get_voice_assistant_state(self, _: GetVoiceAssistantState.Request,
                                   response: GetVoiceAssistantState.Response) -> GetVoiceAssistantState.Response:
-
         response.voice_assistant_state = self.state
         return response
 
     def set_voice_assistant_state(self, request: SetVoiceAssistantState.Request,
                                   response: SetVoiceAssistantState.Response) -> SetVoiceAssistantState.Response:
-
         request_state: VoiceAssistantState = request.voice_assistant_state
 
         try:
@@ -196,7 +192,6 @@ class VoiceAssistantNode(Node):
             elif not request_state.turned_on:  # deactivate voice assistant
                 self.cycle += 1
                 self.turning_off = True
-                self.waiting_for_transcribed_text = False
                 self.stop_recording()
                 self.stop_chat(self.state.chat_id)
                 current_chat_id = self.state.chat_id
@@ -228,13 +223,11 @@ class VoiceAssistantNode(Node):
 
     def get_chat_is_listening(self, request: GetChatIsListening.Request,
                               response: GetChatIsListening.Response) -> GetChatIsListening.Response:
-
         response.listening = self.get_is_listening(request.chat_id)
         return response
 
     def send_chat_message(self, request: SendChatMessage.Request,
                           response: SendChatMessage.Response) -> GetChatIsListening.Response:
-
         if not self.get_is_listening(request.chat_id):  # do not create a message, if chat is not listening
             return response
 
@@ -262,7 +255,6 @@ class VoiceAssistantNode(Node):
     # callback cycle --------------------------------------------------------------------
 
     def on_start_signal_played(self) -> None:
-
         self.record_audio(
             MAX_SILENT_SECONDS_BEFORE,
             self.personality.pause_threshold,
@@ -272,7 +264,6 @@ class VoiceAssistantNode(Node):
         self.set_is_listening(self.state.chat_id, True)
 
     def on_stopped_recording(self) -> None:
-
         if not self.get_is_listening(self.state.chat_id):
             return
 
@@ -281,7 +272,6 @@ class VoiceAssistantNode(Node):
         self.waiting_for_transcribed_text = True
 
     def on_transcribed_text_received(self, transcribed_text: str) -> None:
-
         if not self.waiting_for_transcribed_text:
             return
         self.waiting_for_transcribed_text = False
@@ -293,14 +283,18 @@ class VoiceAssistantNode(Node):
             self.if_cycle_not_changed(self.on_final_sentence_received))
 
     def on_sentence_received(self, sentence: str) -> None:
-
+        if not sentence:
+            self._turn_off_voice_assistant()
+            return
         self.play_audio_from_speech(
             sentence,
             self.personality.gender,
             self.personality.language)
 
     def on_final_sentence_received(self, sentence: str) -> None:
-
+        if not sentence:
+            self._turn_off_voice_assistant()
+            return
         self.play_audio_from_speech(
             sentence,
             self.personality.gender,
@@ -308,7 +302,6 @@ class VoiceAssistantNode(Node):
             self.if_cycle_not_changed(self.on_final_sentence_played))
 
     def on_final_sentence_played(self) -> None:
-
         self.play_audio_from_file(
             START_SIGNAL_FILE,
             self.if_cycle_not_changed(self.on_start_signal_played))
@@ -328,7 +321,6 @@ class VoiceAssistantNode(Node):
     def digest_goal_handle_future(self, goal_handle_future: Future, callback: Callable[[Any], None] = None) -> Callable[
         [], None]:
         """adds a result callback to the goal and returns a function, that can be used to cancel the goal"""
-
         if callback is not None:
             def result_callback(result_future: Future):
                 result = result_future.result().result
@@ -368,6 +360,14 @@ class VoiceAssistantNode(Node):
         stop_chat = self.chat_id_to_stop_chat.get(chat_id)
         if stop_chat is not None:
             stop_chat()
+
+    def _turn_off_voice_assistant(self):
+        request: SetVoiceAssistantState.Request = SetVoiceAssistantState.Request()
+        request.voice_assistant_state = self.state
+        request.voice_assistant_state.turned_on = False
+
+        response = SetVoiceAssistantState.Response()
+        self.set_voice_assistant_state(request, response)
 
 
 def main(args=None):
