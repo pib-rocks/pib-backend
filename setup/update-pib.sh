@@ -86,7 +86,7 @@ ROS_MOTORS_BOOT_DIR="$ROS_WORKING_DIR"/src/motors/boot_scripts
 ROS_VOICE_ASSISTANT_BOOT_DIR="$ROS_WORKING_DIR"/src/voice_assistant/boot_scripts
 ROS_PROGRAMS_BOOT_DIR="$ROS_WORKING_DIR"/src/programs/boot_scripts
 
-# install local utility packages
+# Install local utility packages
 pip install "$ROS_WORKING_DIR""/src/motors/pib_motors"
 pip install "$ROS_WORKING_DIR""/src/voice_assistant/pib_voice"
 

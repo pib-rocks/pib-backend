@@ -23,7 +23,7 @@ DEFAULT_NGINX_HTML_DIR="/etc/nginx/html"
 # Resolve possible ssh fingerpint/ key issues
 ssh-keygen -R "$TARGET_IP"
 
-### deploy local cerebra via remote ssh connection
+### Deploy local cerebra via remote ssh connection
 # Change directory to cerebra project folder
 echo "Starting remote deployment of your local cerebra version."
 cd "$LOCAL_CEREBRA_DIR"

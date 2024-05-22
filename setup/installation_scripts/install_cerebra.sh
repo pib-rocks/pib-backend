@@ -14,7 +14,7 @@ NGINX_CONF_FILE="nginx.conf"
 PHPLITEADMIN_ZIP="phpliteadmin_v1_9_9_dev.zip"
 PHPLITEADMIN_INSTALLATION_DIR="/var/www/phpliteadmin"
 
-# pib-api variables
+# Pib-api variables
 PIB_API_DIR="$USER_HOME/flask"
 DATABASE_FILE="pibdata.db"
 

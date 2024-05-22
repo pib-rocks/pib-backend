@@ -144,16 +144,16 @@ export SETUP_FILES="$SETUP_DIR/setup_files"
 export INSTALLATION_SCRIPTS="$SETUP_DIR/installation_scripts"
 export PIB_API_SETUP_DIR="$BACKEND_DIR/pib_api"
 
-# clone repos
+# Clone repos
 git clone -b "$frontend_branch" "$FRONTEND_REPO" "$FRONTEND_DIR"
 git clone -b "$backend_branch" "$BACKEND_REPO" "$BACKEND_DIR"
 
-# create working directory for ros
+# Create working directory for ros
 export ROS_WORKING_DIR="$USER_HOME/ros_working_dir"
 mkdir "$ROS_WORKING_DIR"
 
 # The following scripts are sourced into the same shell as this script,
-# allowing them to acces all variables and context
+# Allowing them to acces all variables and context
 # Check system variables
 source "$INSTALLATION_SCRIPTS/check_system_variables.sh"
 # Install system packages
@@ -170,10 +170,10 @@ source "$INSTALLATION_SCRIPTS/install_cerebra.sh"
 source "$INSTALLATION_SCRIPTS/setup_packages.sh"
 # Adjust system settings
 source "$INSTALLATION_SCRIPTS/set_system_settings.sh"
-# prepares JSON-Server
+# Prepares JSON-Server
 source "$INSTALLATION_SCRIPTS/prepare_json_server.sh"
 
-# install update-pip
+# Install update-pip
 cp "$SETUP_DIR/update-pib.sh" "$USER_HOME/update-pib.sh"
 sudo chmod 700 ~/update-pib.sh
 

@@ -11,7 +11,6 @@ ROS_MOTORS_BOOT_DIR="$ROS_WORKING_DIR"/src/motors/boot_scripts
 ROS_VOICE_ASSISTANT_BOOT_DIR="$ROS_WORKING_DIR"/src/voice_assistant/boot_scripts
 ROS_PROGRAMS_BOOT_DIR="$ROS_WORKING_DIR"/src/programs/boot_scripts
 
-#
 # Installing dependencies
 # Depth-AI
 sudo curl --silent --location https://docs.luxonis.com/install_dependencies.sh | sudo bash
@@ -40,7 +39,7 @@ sudo apt install -y ros-humble-rtabmap
 sudo apt install -y ros-humble-rtabmap-launch
 sudo apt install -y ros-humble-rtabmap-examples
 
-# move ros-packages into working directory
+# Move ros-packages into working directory
 cp -r "$BACKEND_DIR/ros_packages" "$ROS_WORKING_DIR/src"
 sudo chmod -R 700 "$ROS_WORKING_DIR"
 
@@ -58,7 +57,7 @@ deactivate
 
 echo "Install local packages..."
 
-# install local utility packages
+# Install local utility packages
 pip install "$ROS_WORKING_DIR""/src/motors/pib_motors"
 
 echo "Booting all nodes..."
