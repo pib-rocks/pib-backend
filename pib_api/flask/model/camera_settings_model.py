@@ -1,5 +1,6 @@
 from app.app import db
 
+
 class CameraSettings(db.Model):
 
     __tablename__ = "cameraSettings"

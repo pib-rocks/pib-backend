@@ -14,8 +14,11 @@ ipcon.connect(TINKERFORGE_HOST, TINKERFORGE_PORT)
 
 # get data from pib-api
 successful, bricklet_dtos = bricklet_client.get_all_bricklets()
-if not successful: raise RuntimeError("failed to load bricklets from pib-api...")
-bricklet_uids = [ dto['uid'] for dto in bricklet_dtos['bricklets'] ]
+if not successful:
+    raise RuntimeError("failed to load bricklets from pib-api...")
+bricklet_uids = [dto["uid"] for dto in bricklet_dtos["bricklets"]]
 
 # maps the uid (e.g. 'XYZ') to the associated bricklet object
-uid_to_bricklet: dict[str, BrickletServoV2] = { uid : BrickletServoV2(uid, ipcon) for uid in bricklet_uids }
+uid_to_bricklet: dict[str, BrickletServoV2] = {
+    uid: BrickletServoV2(uid, ipcon) for uid in bricklet_uids
+}
