@@ -72,8 +72,6 @@ sudo mv "$SETUP_FILES/nginx.conf" "$DEFAULT_NGINX_DIR"
 # Update backend
 echo -e "Update backend services (ROS packages and Flask API)"
 
-
-### Replace the replacement with Alambic
 sudo rm -r $ROS_WORKING_DIR/src/* 
 cp -r $BACKEND_DIR/ros_packages/* $ROS_WORKING_DIR/src
 mv $USER_HOME/flask/pibdata.db $TEMPORARY_SETUP_DIR/pibdata.db
