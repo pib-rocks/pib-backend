@@ -4,14 +4,16 @@ from marshmallow import fields
 
 from schema.bricklet_pin_schema import bricklet_pins_schema
 
+
 class MotorSchema(ma.SQLAlchemyAutoSchema):
     class Meta:
         model = Motor
-        exclude = ('id',)
+        exclude = ("id",)
 
     brickletPins = fields.Nested(bricklet_pins_schema)
 
+
 motor_schema = MotorSchema()
 motors_schema = MotorSchema(many=True)
-motor_settings_schema = MotorSchema(exclude=('brickletPins',))
-motor_bricklet_pins_schema = MotorSchema(only=('name', 'brickletPins'))
+motor_settings_schema = MotorSchema(exclude=("brickletPins",))
+motor_bricklet_pins_schema = MotorSchema(only=("name", "brickletPins"))

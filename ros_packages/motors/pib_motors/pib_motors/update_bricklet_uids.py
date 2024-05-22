@@ -1,4 +1,5 @@
 """Script for managing TinkerForge UIDs and corresponding database operations"""
+
 import json
 import os
 import sys
@@ -15,16 +16,26 @@ BRICKLET_URLS = [f"{BASE_URL}/bricklet/{i}" for i in range(1, 4)]
 uid0 = "AAA"
 uid1 = "BBB"
 uid2 = "CCC"
-POSITION_TO_UID_MAP = {'a': 'uid0', 'b': 'uid1', 'e': 'uid2'}
+POSITION_TO_UID_MAP = {"a": "uid0", "b": "uid1", "e": "uid2"}
 
 ipcon: IPConnection = IPConnection()
 hat = BrickHAT("X", ipcon)
 ipcon.connect(TINKERFORGE_HOST, TINKERFORGE_PORT)
 
-def cb_enumerate(uid, connected_uid, position, hardware_version, firmware_version, device_identifier, enumeration_type):
+
+def cb_enumerate(
+    uid,
+    connected_uid,
+    position,
+    hardware_version,
+    firmware_version,
+    device_identifier,
+    enumeration_type,
+):
     """Readout the UIDs of the connected TinkerForge Bricklets and update global variables."""
     if position in POSITION_TO_UID_MAP:
         globals()[POSITION_TO_UID_MAP[position]] = uid
+
 
 ipcon.register_callback(IPConnection.CALLBACK_ENUMERATE, cb_enumerate)
 
@@ -32,6 +43,7 @@ p = multiprocessing.Process(target=lambda: ipcon.enumerate())
 p.start()
 p.join()
 ipcon.disconnect()
+
 
 def update_uids():
     print("update")
@@ -42,15 +54,22 @@ def update_uids():
         url = BRICKLET_URLS[uid_number]
         requests.put(url, data=json.dumps({"uid": uid}), headers=header)
 
+
 def get_uids_from_db():
     """Retrieve all UIDs from the database."""
     response = requests.get(BASE_URL + "/bricklet")
     json_data = json.loads(response.text)
-    return [json_data['bricklets'][0]['uid'], json_data['bricklets'][1]['uid'], json_data['bricklets'][2]['uid']]
+    return [
+        json_data["bricklets"][0]["uid"],
+        json_data["bricklets"][1]["uid"],
+        json_data["bricklets"][2]["uid"],
+    ]
+
 
 def no_uids_in_database():
     """Check for changes between current databse and TinkerForge UIDs."""
     return get_uids_from_db() == ["AAA", "BBB", "CCC"]
+
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
