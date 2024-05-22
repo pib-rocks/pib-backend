@@ -54,24 +54,24 @@ class PlaybackItem():
                 channels=self.encoding.num_channels,
                 rate=self.encoding.frames_per_second,
                 output=True)
+
+            for chunk in self.data:
+                if self.is_cleared():
+                    break
+                stream.write(chunk)
+
+            self.finished_playing.set()
+
+            time.sleep(self.pause_seconds)
+
+            stream.stop_stream()
+            stream.close()
+            pya.terminate()
         except OSError as e:
-            # ToDo - Migrate to better logging
+            # ToDo - Get better logging for non-ROS packages
             print(f"failed to playback audio: {e}", file=sys.stderr)
             pya.terminate()
             return
-
-        for chunk in self.data:
-            if self.is_cleared():
-                break
-            stream.write(chunk)
-
-        self.finished_playing.set()
-
-        time.sleep(self.pause_seconds)
-
-        stream.stop_stream()
-        stream.close()
-        pya.terminate()
 
 
 SPEECH_ENCODING = AudioEncoding(2, 1, 16000)
@@ -144,7 +144,8 @@ class AudioPlayerNode(Node):
         playback_item = PlaybackItem(data, encoding, 0.0, order)
         self.playback_queue.put(playback_item, True)
 
-        if request.join: playback_item.finished_playing.wait()
+        if request.join:
+            playback_item.finished_playing.wait()
         return response
 
     def play_audio_from_speech(self, request: PlayAudioFromSpeech.Request,
@@ -152,12 +153,17 @@ class AudioPlayerNode(Node):
 
         order = self.counter_next()
 
-        data = public_voice_client.text_to_speech(request.speech, request.gender, request.language)
+        try:
+            data = public_voice_client.text_to_speech(request.speech, request.gender, request.language)
+        except Exception as e:
+            self.get_logger().error(f"text_to_speech failed: {e}")
+            return response
 
         playback_item = PlaybackItem(data, SPEECH_ENCODING, 0.2, order)
         self.playback_queue.put(playback_item, True)
 
-        if request.join: playback_item.finished_playing.wait()
+        if request.join:
+            playback_item.finished_playing.wait()
         return response
 
     def clear_playback_queue(self, _: PlayAudioFromFile.Request,

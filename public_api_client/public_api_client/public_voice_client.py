@@ -15,7 +15,7 @@ try:
     TEXT_TO_SPEECH_URL = configuration.tryb_url_prefix + "/public-api/conversions/text-to-speech"
     VOICE_ASSISTANT_TEXT_URL = configuration.tryb_url_prefix + "/public-api/voice-assistant/text"
 except TypeError as e:
-    logging.error("missing configuration for tryb")
+    raise RuntimeError(f"no tryb configuration found: {e}")
 
 
 def _send_request(method: str, url: str, headers: dict[str, str], body: dict[str, Any], stream: bool):
