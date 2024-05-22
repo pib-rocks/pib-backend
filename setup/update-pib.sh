@@ -69,10 +69,11 @@ sudo -S rm -r $DEFAULT_NGINX_HTML_DIR/*
 sudo mv "$FRONTEND_DIR/dist/cerebra" "$DEFAULT_NGINX_HTML_DIR"
 sudo mv "$SETUP_FILES/nginx.conf" "$DEFAULT_NGINX_DIR"
 
-
 # Update backend
 echo -e "Update backend services (ROS packages and Flask API)"
 
+
+### Replace the replacement with Alambic
 sudo rm -r $ROS_WORKING_DIR/src/* 
 cp -r $BACKEND_DIR/ros_packages/* $ROS_WORKING_DIR/src
 mv $USER_HOME/flask/pibdata.db $TEMPORARY_SETUP_DIR/pibdata.db
@@ -88,7 +89,11 @@ ROS_PROGRAMS_BOOT_DIR="$ROS_WORKING_DIR"/src/programs/boot_scripts
 
 # install local utility packages
 pip install "$ROS_WORKING_DIR""/src/motors/pib_motors"
-pip install "$ROS_WORKING_DIR""/src/voice_assistant/pib_voice"
+
+# Boot flask api
+sudo chmod 700 "$USER_HOME/flask/pib_api_boot.service"
+sudo mv "$USER_HOME/flask/pib_api_boot.service" /etc/systemd/system
+sudo systemctl enable pib_api_boot.service
 
 # Boot camera
 sudo chmod 700 "$ROS_CAMERA_BOOT_DIR/ros_camera_boot.sh"
@@ -114,17 +119,40 @@ sudo chmod 700 "$ROS_MOTORS_BOOT_DIR/ros_motor_current_node_boot.service"
 sudo mv "$ROS_MOTORS_BOOT_DIR/ros_motor_current_node_boot.service" /etc/systemd/system
 sudo systemctl enable ros_motor_current_node_boot.service
 
-# Boot voice-assistant
+# Boot bricklet uid
+sudo chmod 700 "$ROS_MOTORS_BOOT_DIR/bricklet_uid_boot.service"
+sudo mv "$ROS_MOTORS_BOOT_DIR/bricklet_uid_boot.service" /etc/systemd/system
+sudo systemctl enable bricklet_uid_boot.service
+
+# Boot voice assistant
 sudo chmod 700 "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_voice_assistant_boot.sh"
 sudo chmod 700 "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_voice_assistant_boot.service"
 sudo mv "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_voice_assistant_boot.service" /etc/systemd/system
 sudo systemctl enable ros_voice_assistant_boot.service
 
-# Boot text-to-speech
-sudo chmod 700 "$ROS_VOICE_ASSISTANT_BOOT_DIR""/ros_text_to_speech_boot.sh"
-sudo chmod 700 "$ROS_VOICE_ASSISTANT_BOOT_DIR""/ros_text_to_speech_boot.service"
-sudo mv "$ROS_VOICE_ASSISTANT_BOOT_DIR""/ros_text_to_speech_boot.service" /etc/systemd/system
-sudo systemctl enable ros_text_to_speech_boot.service
+# Boot audio player
+sudo chmod 700 "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_audio_player_boot.sh"
+sudo chmod 700 "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_audio_player_boot.service"
+sudo mv "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_audio_player_boot.service" /etc/systemd/system
+sudo systemctl enable ros_audio_player_boot.service
+
+# Boot audio recorder
+sudo chmod 700 "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_audio_recorder_boot.sh"
+sudo chmod 700 "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_audio_recorder_boot.service"
+sudo mv "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_audio_recorder_boot.service" /etc/systemd/system
+sudo systemctl enable ros_audio_recorder_boot.service
+
+# Boot chat
+sudo chmod 700 "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_chat_boot.sh"
+sudo chmod 700 "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_chat_boot.service"
+sudo mv "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_chat_boot.service" /etc/systemd/system
+sudo systemctl enable ros_chat_boot.service
+
+# Boot cerebra
+sudo chmod 700 "$ROS_PROGRAMS_BOOT_DIR/ros_cerebra_boot.sh"
+sudo chmod 700 "$ROS_PROGRAMS_BOOT_DIR/ros_cerebra_boot.service"
+sudo mv "$ROS_PROGRAMS_BOOT_DIR/ros_cerebra_boot.service" /etc/systemd/system
+sudo systemctl enable ros_cerebra_boot.service
 
 # Boot program node
 sudo chmod 700 "$ROS_PROGRAMS_BOOT_DIR/ros_program_boot.sh"
