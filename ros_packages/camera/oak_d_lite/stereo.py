@@ -20,7 +20,6 @@ class ErrorPublisher(Node):
         timer_period = 1  # seconds
         self.timer = self.create_timer(timer_period, self.timer_callback)
 
-
     def timer_callback(self):
         msg = String()
         msg.data = "Camera not available: "
@@ -28,15 +27,17 @@ class ErrorPublisher(Node):
         #self.get_logger().info('Publishing: "%s"' % msg.data)
 
 
-
 class CameraNode(Node):
 
     def __init__(self):
         super().__init__('camera_node')
         self.publisher_ = self.create_publisher(String, 'camera_topic', 10)
-        self.timer_subscription = self.create_subscription(Float64, 'timer_period_topic', self.timer_period_callback, 10)
-        self.quality_factor_subscription = self.create_subscription(Int32, 'quality_factor_topic', self.quality_factor_callback, 10)
-        self.preview_size_subscription = self.create_subscription(Int32MultiArray, 'size_topic', self.preview_size_callback, 10)
+        self.timer_subscription = self.create_subscription(Float64, 'timer_period_topic', self.timer_period_callback,
+                                                           10)
+        self.quality_factor_subscription = self.create_subscription(Int32, 'quality_factor_topic',
+                                                                    self.quality_factor_callback, 10)
+        self.preview_size_subscription = self.create_subscription(Int32MultiArray, 'size_topic',
+                                                                  self.preview_size_callback, 10)
 
         # Initialize default preview size and quality factor
         self.preview_width = 1280
@@ -68,16 +69,18 @@ class CameraNode(Node):
         self.queue = self.device.getOutputQueue(name="rgb", maxSize=4, blocking=False)
 
     def timer_callback(self):
-        inRgb = self.queue.get()  # blocking call, will wait until a new data has arrived
+        image_rgb = self.queue.tryGet()  # non-blocking call
+        if image_rgb is None:
+            return
         # data is originally represented as a flat 1D array, it needs to be converted into HxWxC form
-        frame = inRgb.getCvFrame()
+        frame = image_rgb.getCvFrame()
 
         # Convert the image to base64
         retval, buffer = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), self.quality_factor])
         jpg_as_text = base64.b64encode(buffer)
 
         msg = String()
-        msg.data = jpg_as_text.decode('utf-8') # convert bytes to string
+        msg.data = jpg_as_text.decode('utf-8')  # convert bytes to string
         self.publisher_.publish(msg)
 
     def timer_period_callback(self, msg):
@@ -95,9 +98,10 @@ class CameraNode(Node):
         self.device.close()
         self.init_pipeline()
 
+
 def spin_camera(times):
     cnt = times
-    if cnt==0:
+    if cnt == 0:
         print("Couldn't restart camera due to displayed error/s, publishing error message")
         rclpy.spin(error_publisher)
     else:
@@ -115,15 +119,16 @@ def spin_camera(times):
             print("Retry starting camera..." + str(cnt))
             spin_camera(cnt)
     return
-        
-            
+
+
 def main(args=None):
-    rclpy.init() 
-    global error_publisher 
+    rclpy.init()
+    global error_publisher
     error_publisher = ErrorPublisher()
     print("Starting camera")
     spin_camera(3)
     rclpy.shutdown()
+
 
 if __name__ == '__main__':
     main()
