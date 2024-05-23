@@ -73,6 +73,10 @@ export USER_HOME="/home/$DEFAULT_USER"
 
 # We want the user pib to setup things without password (sudo without password)
 # Yes, we are aware of the security-issues..
+
+# Block Time Measuring
+start_time=$(date +%s)
+
 echo "Hello pib! We start the setup by allowing you permanently to run commands with admin-privileges."
 if [[ "$(id)" == *"(sudo)"* ]]; then
 	echo "For this change please enter your password..."
@@ -206,5 +210,11 @@ cp "$SETUP_FILES/pib-eyes-animated.gif" "$USER_HOME/Desktop/pib-eyes-animated.gi
 # Move log file to temporary setup folder
 mv "$LOG_FILE" "$TEMPORARY_SETUP_DIR"
 
+sleep 2
+
+end_time=$(date +%s)
+elapsed_time=$(( end_time - start_time ))
+
 echo -e "$NEW_LINE""Congratulations! The setup completed succesfully!"
 echo -e "$NEW_LINE""Please restart the system to apply changes..."
+echo "<Elapsed time: $elapsed_time seconds> [setup-pib.sh]"

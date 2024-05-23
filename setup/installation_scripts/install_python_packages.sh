@@ -2,6 +2,9 @@
 #
 # This script installs all python packages necessary for running pib
 # To properly run this script relies on being sourced by the "setup-pib.sh"-script
+#
+# Block Time Measuring
+start_time=$(date +%s)
 
 echo -e "$YELLOW_TEXT_COLOR""-- Installing python packages --""$RESET_TEXT_COLOR"		
 
@@ -23,4 +26,11 @@ INIT_PYTHON_CODE="print('hello world')"
 # Create the directory for python code and populate it with a single initial python script (matching
 # the single entry in the database)
 mkdir "$PYTHON_CODE_PATH"
+
+sleep 2
+
+end_time=$(date +%s)
+elapsed_time=$(( end_time - start_time ))
+
 echo "$INIT_PYTHON_CODE" | cat > "$PYTHON_CODE_PATH/e1d46e2a-935e-4e2b-b2f9-0856af4257c5.py"
+echo "<Elapsed time: $elapsed_time seconds> [install_python_packages.sh]"

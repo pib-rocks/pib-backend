@@ -2,6 +2,9 @@
 #
 # This script checks if the username and ubuntu version is matching the expected values
 # To properly run this script relies on being sourced by the "setup-pib.sh"-script
+#
+# Block Time Measuring
+start_time=$(date +%s)
 
 echo -e "$YELLOW_TEXT_COLOR""-- Checking system version and username --""$RESET_TEXT_COLOR""$NEW_LINE"
 
@@ -32,4 +35,10 @@ if [ "$(lsb_release -rs)" != "$EXPECTED_UBUNTU_VERSION" ]; then
 	done
 fi
 
+sleep 2
+
+end_time=$(date +%s)
+elapsed_time=$(( end_time - start_time ))
+
 echo -e "$GREEN_TEXT_COLOR""-- System version and username check completed --""$RESET_TEXT_COLOR""$NEW_LINE"
+echo "<Elapsed time: $elapsed_time seconds> [check_system_variables.sh]"
