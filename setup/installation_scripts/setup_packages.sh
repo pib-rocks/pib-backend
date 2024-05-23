@@ -2,9 +2,6 @@
 #
 # This script sets up our custom ros packages
 # To properly run this script relies on being sourced by the "setup-pib.sh"-script
-#
-# Block Time Measuring
-start_time=$(date +%s)
 
 echo -e "$YELLOW_TEXT_COLOR""-- Setting up custom ros packages --""$RESET_TEXT_COLOR"		
 
@@ -128,10 +125,4 @@ sudo systemctl enable ros_proxy_program_boot.service
 cd "$ROS_WORKING_DIR"
 colcon build
 
-sleep 2
-
-end_time=$(date +%s)
-elapsed_time=$(( end_time - start_time ))
-
 echo -e "$NEW_LINE""$GREEN_TEXT_COLOR""-- Custom ros package setup completed --""$RESET_TEXT_COLOR""$NEW_LINE"
-echo "<Elapsed time: $elapsed_time seconds> [setup_packages.sh]"

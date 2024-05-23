@@ -2,9 +2,6 @@
 #
 # This script installs Cerebra
 # To properly run this script relies on being sourced by the "setup-pib.sh"-script
-#
-# Block Time Measuring
-start_time=$(date +%s)
 
 echo -e "$YELLOW_TEXT_COLOR""-- Installing Cerebra --""$RESET_TEXT_COLOR"		
 
@@ -94,10 +91,4 @@ timeout 20s firefox --headless
 readonly FIREFOX_PREFS_FILE=$(echo /home/pib/snap/firefox/common/.mozilla/firefox/*.default)/prefs.js
 echo "user_pref(\"browser.startup.homepage\", \"127.0.0.1\");" >> "$FIREFOX_PREFS_FILE"
 
-sleep 2
-
-end_time=$(date +%s)
-elapsed_time=$(( end_time - start_time ))
-
 echo -e "$NEW_LINE""$GREEN_TEXT_COLOR""-- Cerebra installation completed --""$RESET_TEXT_COLOR""$NEW_LINE"
-echo "<Elapsed time: $elapsed_time seconds> [install_cerebra.sh]"

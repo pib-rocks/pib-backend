@@ -34,6 +34,14 @@ show_help()
 	exit
 }
 
+# This function calculates and prints out the elapsed time since the last "SECONDS" reset
+# "SECONDS" is an environment variable that counts the seconds since the shell initialisation
+# "SECONDS" can be reset to zero by calling "SECONDS=0"
+print_elapsed_time() 
+{
+	echo "$(($SECONDS / 60)) minutes and $(($SECONDS % 60)) seconds elapsed. Current Time: $(date)"
+}
+
 echo -e "$NEW_LINE""$YELLOW_TEXT_COLOR""-- Checking user input option syntax --""$RESET_TEXT_COLOR""$NEW_LINE"
 
 # Github repo origins and branches (branch values will be replaced in dev-mode)
@@ -112,7 +120,10 @@ fi
 echo -e "$NEW_LINE""$GREEN_TEXT_COLOR""-- Removal of unused default software packages completed --""$RESET_TEXT_COLOR""$NEW_LINE"
 
 # Refresh the linux packages list (sometimes necessary for packages that are required in the installion scripts)
+SECONDS=0
 sudo apt update
+print_elapsed_time
+
 # These packages are installed seperately, since the installation scripts are dependent on them
 sudo apt-get install -y git curl
 
@@ -159,23 +170,44 @@ mkdir "$ROS_WORKING_DIR"
 # The following scripts are sourced into the same shell as this script,
 # Allowing them to acces all variables and context
 # Check system variables
+SECONDS=0
 source "$INSTALLATION_SCRIPTS/check_system_variables.sh"
+print_elapsed_time
 # Install system packages
+SECONDS=0
 source "$INSTALLATION_SCRIPTS/install_system_packages.sh"
+print_elapsed_time
 # Install python packages
+SECONDS=0
 source "$INSTALLATION_SCRIPTS/install_python_packages.sh"
+print_elapsed_time
 # Install public-api-client
+SECONDS=0
 source "$INSTALLATION_SCRIPTS/install_public_api_client.sh"
+print_elapsed_time
 # Install tinkerforge
+SECONDS=0
 source "$INSTALLATION_SCRIPTS/install_tinkerforge.sh"
+print_elapsed_time
 # Install Cerebra
+SECONDS=0
 source "$INSTALLATION_SCRIPTS/install_cerebra.sh"
+print_elapsed_time
 # Install pib ros-packages
+SECONDS=0
 source "$INSTALLATION_SCRIPTS/setup_packages.sh"
+print_elapsed_time
+
 # Adjust system settings
+SECONDS=0
 source "$INSTALLATION_SCRIPTS/set_system_settings.sh"
+print_elapsed_time
+
 # Prepares JSON-Server
+SECONDS=0
 source "$INSTALLATION_SCRIPTS/prepare_json_server.sh"
+print_elapsed_time
+
 
 # Install update-pip
 cp "$SETUP_DIR/update-pib.sh" "$USER_HOME/update-pib.sh"
@@ -210,11 +242,10 @@ cp "$SETUP_FILES/pib-eyes-animated.gif" "$USER_HOME/Desktop/pib-eyes-animated.gi
 # Move log file to temporary setup folder
 mv "$LOG_FILE" "$TEMPORARY_SETUP_DIR"
 
-sleep 2
-
 end_time=$(date +%s)
-elapsed_time=$(( end_time - start_time ))
+elapsed_time=$(( $(date +%s) - start_time ))
 
 echo -e "$NEW_LINE""Congratulations! The setup completed succesfully!"
 echo -e "$NEW_LINE""Please restart the system to apply changes..."
-echo "<Elapsed time: $elapsed_time seconds> [setup-pib.sh]"
+echo "<Elapsed time: $(( ($(date +%s) - start_time) / 60)) minutes> [setup-pib.sh]"
+echo "<Script Run Duration $elapsed_time> <Current Time: $(date)>"
