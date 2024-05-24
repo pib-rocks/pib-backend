@@ -3,7 +3,7 @@
 # This script sets up our custom ros packages
 # To properly run this script relies on being sourced by the "setup-pib.sh"-script
 
-echo -e "$YELLOW_TEXT_COLOR""-- Setting up custom ros packages --""$RESET_TEXT_COLOR"		
+print_colored_line_of_text "$YELLOW_TEXT_COLOR" "-- Setting up custom ros packages --"
 
 # Boot script file locations
 ROS_CAMERA_BOOT_DIR="$ROS_WORKING_DIR"/src/camera/boot_scripts
@@ -131,4 +131,4 @@ sudo systemctl enable ros_proxy_program_boot.service
 cd "$ROS_WORKING_DIR"
 colcon build
 
-echo -e "$NEW_LINE""$GREEN_TEXT_COLOR""-- Custom ros package setup completed --""$RESET_TEXT_COLOR""$NEW_LINE"
+print_colored_line_of_text "$GREEN_TEXT_COLOR" "-- Custom ros package setup completed --"

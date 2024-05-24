@@ -3,7 +3,7 @@
 # This script checks if the username and ubuntu version is matching the expected values
 # To properly run this script relies on being sourced by the "setup-pib.sh"-script
 
-echo -e "$YELLOW_TEXT_COLOR""-- Checking system version and username --""$RESET_TEXT_COLOR""$NEW_LINE"
+print_colored_line_of_text "$YELLOW_TEXT_COLOR" "-- Checking system version and username --"
 
 readonly EXPECTED_USERNAME="$DEFAULT_USER"
 readonly EXPECTED_UBUNTU_VERSION="22.04"
@@ -32,4 +32,4 @@ if [ "$(lsb_release -rs)" != "$EXPECTED_UBUNTU_VERSION" ]; then
 	done
 fi
 
-echo -e "$GREEN_TEXT_COLOR""-- System version and username check completed --""$RESET_TEXT_COLOR""$NEW_LINE"
+print_colored_line_of_text  "$GREEN_TEXT_COLOR" "-- System version and username check completed --"

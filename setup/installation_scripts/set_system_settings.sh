@@ -3,7 +3,7 @@
 # This script adjust ubuntu system settings
 # To properly run this script relies on being sourced by the "setup-pib.sh"-script
 
-echo -e "$YELLOW_TEXT_COLOR""-- Adjusting system settings --""$RESET_TEXT_COLOR"	
+print_colored_line_of_text "$YELLOW_TEXT_COLOR" "-- Adjusting system settings --"
 
 # This config file exists only on RaspberryPi, but not VMs 
 CONFIG_FILE="/boot/firmware/config.txt"
@@ -46,4 +46,4 @@ gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-battery-typ
 # Add default ubuntu terminal to favorites
 gsettings set org.gnome.shell favorite-apps "$(gsettings get org.gnome.shell favorite-apps | sed s/.$//), 'org.gnome.Terminal.desktop']"
 
-echo -e "$NEW_LINE""$GREEN_TEXT_COLOR""-- System settings adjustment completed --""$RESET_TEXT_COLOR""$NEW_LINE"
+print_colored_line_of_text "$GREEN_TEXT_COLOR" "-- System settings adjustment completed --"

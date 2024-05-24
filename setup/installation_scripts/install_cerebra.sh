@@ -3,7 +3,7 @@
 # This script installs Cerebra
 # To properly run this script relies on being sourced by the "setup-pib.sh"-script
 
-echo -e "$YELLOW_TEXT_COLOR""-- Installing Cerebra --""$RESET_TEXT_COLOR"		
+print_colored_line_of_text "$YELLOW_TEXT_COLOR" "-- Installing Cerebra --"
 
 # Nginx variables
 DEFAULT_NGINX_DIR="/etc/nginx"
@@ -100,4 +100,4 @@ timeout 20s firefox --headless
 readonly FIREFOX_PREFS_FILE=$(echo /home/pib/snap/firefox/common/.mozilla/firefox/*.default)/prefs.js
 echo "user_pref(\"browser.startup.homepage\", \"127.0.0.1\");" >> "$FIREFOX_PREFS_FILE"
 
-echo -e "$NEW_LINE""$GREEN_TEXT_COLOR""-- Cerebra installation completed --""$RESET_TEXT_COLOR""$NEW_LINE"
+print_colored_line_of_text "$GREEN_TEXT_COLOR" "-- Cerebra installation completed --"
