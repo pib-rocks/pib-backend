@@ -14,9 +14,13 @@ NGINX_CONF_FILE="nginx.conf"
 PHPLITEADMIN_ZIP="phpliteadmin_v1_9_9_dev.zip"
 PHPLITEADMIN_INSTALLATION_DIR="/var/www/phpliteadmin"
 
-# Pib-api variables
+# pib-api variables
 PIB_API_DIR="$USER_HOME/flask"
 DATABASE_FILE="pibdata.db"
+
+# python code variables
+PYTHON_CODE_PATH="$USER_HOME/cerebra_programs"
+INIT_PYTHON_CODE="print('hello world')"
 
 # Setup nginx
 sudo apt install -y nginx
@@ -64,6 +68,11 @@ sudo chown -R www-data:www-data "$PHPLITEADMIN_INSTALLATION_DIR"
 sudo chmod -R 700 "$PHPLITEADMIN_INSTALLATION_DIR"
 sudo unzip "$SETUP_FILES/$PHPLITEADMIN_ZIP" -d "$PHPLITEADMIN_INSTALLATION_DIR"
 sudo systemctl restart php8.1-fpm
+
+# Create the directory for python code and populate it with a single initial python script (matching
+# the single entry in the database)
+mkdir "$PYTHON_CODE_PATH"
+echo "$INIT_PYTHON_CODE" | cat > "$PYTHON_CODE_PATH/e1d46e2a-935e-4e2b-b2f9-0856af4257c5.py"
 
 # Create pib-api
 echo "export PYTHONIOENCODING=utf-8" >> "$USER_HOME/.bashrc"
