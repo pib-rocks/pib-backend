@@ -143,6 +143,7 @@ export SETUP_DIR="$BACKEND_DIR/setup"
 export SETUP_FILES="$SETUP_DIR/setup_files"
 export INSTALLATION_SCRIPTS="$SETUP_DIR/installation_scripts"
 export PIB_API_SETUP_DIR="$BACKEND_DIR/pib_api"
+export UPDATE_TARGET_DIR="/usr/bin"
 
 # clone repos
 git clone -b "$frontend_branch" "$FRONTEND_REPO" "$FRONTEND_DIR"
@@ -174,8 +175,8 @@ source "$INSTALLATION_SCRIPTS/set_system_settings.sh"
 source "$INSTALLATION_SCRIPTS/prepare_json_server.sh"
 
 # install update-pip
-cp "$SETUP_DIR/update-pib.sh" "$USER_HOME/update-pib.sh"
-sudo chmod 700 ~/update-pib.sh
+sudo cp "$SETUP_DIR/update-pib.sh" "$UPDATE_TARGET_DIR/update-pib"
+sudo chmod 700 "$UPDATE_TARGET_DIR/update-pib"
 
 # Get ros_config
 cp "$SETUP_FILES/ros_config.sh" "$ROS_WORKING_DIR/ros_config.sh"
