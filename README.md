@@ -96,6 +96,6 @@ https://docs.ros.org/en/dashing/Concepts/About-Domain-ID.html
 `password.env` required to run the voice assistant:
 
 ```
-OPENAI_API_KEY=<OpenAI_API_KEY>
-GOOGLE_APPLICATION_CREDENTIALS=<path_to_google_application_credentials_json>
+PUBLIC_API_TOKEN=<PUBLIC_API_TOKEN>
+TRYB_URL_PREFIX=<tryb's base-url, e.g.: "http://localhost:8080" for a local deployment>
 ```
