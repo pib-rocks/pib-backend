@@ -42,6 +42,13 @@ print_elapsed_time()
 	echo -e "$(($SECONDS / 60)) minutes and $(($SECONDS % 60)) seconds elapsed. <Current Time: $(date)>""$NEW_LINE"
 }
 
+run_script_and_measure_runtime() { 
+	SECONDS=0 
+	shell_script_path=$1 
+	source "$shell_script_path" 
+	print_elapsed_time 
+}
+
 echo -e "$NEW_LINE""$YELLOW_TEXT_COLOR""-- Checking user input option syntax --""$RESET_TEXT_COLOR""$NEW_LINE"
 
 # Github repo origins and branches (branch values will be replaced in dev-mode)
@@ -170,43 +177,21 @@ mkdir "$ROS_WORKING_DIR"
 # The following scripts are sourced into the same shell as this script,
 # Allowing them to acces all variables and context
 # Check system variables
-SECONDS=0
-source "$INSTALLATION_SCRIPTS/check_system_variables.sh"
-print_elapsed_time
+run_script_and_measure_runtime "$INSTALLATION_SCRIPTS/check_system_variables.sh"
 # Install system packages
-SECONDS=0
-source "$INSTALLATION_SCRIPTS/install_system_packages.sh"
-print_elapsed_time
-# Install python packages
-SECONDS=0
-source "$INSTALLATION_SCRIPTS/install_python_packages.sh"
-print_elapsed_time
+run_script_and_measure_runtime "$INSTALLATION_SCRIPTS/install_system_packages.sh"
 # Install public-api-client
-SECONDS=0
-source "$INSTALLATION_SCRIPTS/install_public_api_client.sh"
-print_elapsed_time
+run_script_and_measure_runtime "$INSTALLATION_SCRIPTS/install_public_api_client.sh"
 # Install tinkerforge
-SECONDS=0
-source "$INSTALLATION_SCRIPTS/install_tinkerforge.sh"
-print_elapsed_time
+run_script_and_measure_runtime "$INSTALLATION_SCRIPTS/install_tinkerforge.sh"
 # Install Cerebra
-SECONDS=0
-source "$INSTALLATION_SCRIPTS/install_cerebra.sh"
-print_elapsed_time
+run_script_and_measure_runtime "$INSTALLATION_SCRIPTS/install_cerebra.sh"
 # Install pib ros-packages
-SECONDS=0
-source "$INSTALLATION_SCRIPTS/setup_packages.sh"
-print_elapsed_time
-
+run_script_and_measure_runtime "$INSTALLATION_SCRIPTS/setup_packages.sh"
 # Adjust system settings
-SECONDS=0
-source "$INSTALLATION_SCRIPTS/set_system_settings.sh"
-print_elapsed_time
-
+run_script_and_measure_runtime "$INSTALLATION_SCRIPTS/set_system_settings.sh"
 # Prepares JSON-Server
-SECONDS=0
-source "$INSTALLATION_SCRIPTS/prepare_json_server.sh"
-print_elapsed_time
+run_script_and_measure_runtime "$INSTALLATION_SCRIPTS/prepare_json_server.sh"
 
 
 # Install update-pip
