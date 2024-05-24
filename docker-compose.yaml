@@ -4,7 +4,7 @@ networks:
   pib-network:
     driver: bridge
 
-services:  
+services:
   flask-app:
     image: flask_api
     build:
@@ -21,27 +21,31 @@ services:
       - SQLALCHEMY_DATABASE_URI=sqlite:////app/pibdata.db
     command: "bash -c 'flask --app run db upgrade && flask --app run seed_db && flask --app run run --host 0.0.0.0 --debug'"
 
-  # ros-camera:
-  #   image: ros-camera
-  #   privileged: true
-  #   build:
-  #     context: ./ros_packages
-  #     dockerfile: ./camera/Dockerfile
-  #   command: ros2 run oak_d_lite stereo
-  #   # Volume binding should not be necessary here, 
-  #   # but removing will stop the camera from showing pictures for some reason
-  #   volumes:
-  #     - /dev/:/dev/
-  #   devices:
-  #     - /dev/bus/usb:/dev/bus/usb
-  #   networks:
-  #     - pib-network
+  ros-camera:
+    image: ros-camera
+    privileged: true
+    build:
+      context: ./ros_packages
+      dockerfile: ./camera/Dockerfile
+    profiles:
+      - camera
+    command: ros2 run oak_d_lite stereo
+    # Volume binding should not be necessary here,
+    # but removing will stop the camera from showing pictures for some reason
+    volumes:
+      - /dev/:/dev/
+    devices:
+      - /dev/bus/usb:/dev/bus/usb
+    networks:
+      - pib-network
 
   ros-motors:
     image: ros_motors
     build:
       context: .
       dockerfile: ./ros_packages/motors/Dockerfile
+    profiles:
+      - motors
     command: /bin/bash -c 'python3 /app/motors/pib_motors/pib_motors/update_bricklet_uids.py check_and_update; ros2 launch motors launch.yaml'
     environment:
       - FLASK_API_BASE_URL=http://flask-app:5000
@@ -60,6 +64,8 @@ services:
     build:
       context: .
       dockerfile: ./ros_packages/voice_assistant/Dockerfile
+    profiles:
+      - voice_assistant
     command: ros2 launch voice_assistant launch.yaml
     environment:
       - PULSE_SERVER=unix:${XDG_RUNTIME_DIR}/pulse/native
@@ -96,6 +102,7 @@ services:
       - VOICE_ASSISTANT_DIR=/app/ros2_ws/voice_assistant
     volumes:
       - programs:/ros2_ws/cerebra_programs
+    restart: always
     networks:
       - pib-network
 
@@ -112,6 +119,8 @@ services:
   tinkerforge-brickd:
     privileged: true
     image: tinkerforge-brickd
+    profiles:
+      - motors
     networks:
       - pib-network
     build:
@@ -120,9 +129,9 @@ services:
     ports:
       - "4223:4223"
     tty: true
-   # Mount bricklets
+    # Mount bricklets
     devices:
-     - /dev/gpiomem:/dev/gpiomem
+      - /dev/gpiomem:/dev/gpiomem
     depends_on:
       - flask-app
 
