@@ -40,12 +40,12 @@ services:
       - TINKERFORGE_HOST=tinkerforge-brickd
       - TINKERFORGE_PORT=4223
       - PYTHON_BINARY=/usr/bin/python3
-      - PROGRAM_DIR=/ros_ws/cerebra_programs
-      - VOICE_ASSISTANT_DIR=/ros_ws/voice_assistant
+      - PROGRAM_DIR=/ros2_ws/cerebra_programs
+      - VOICE_ASSISTANT_DIR=/ros2_ws/voice_assistant
     env_file:
       - password.env
     volumes:
-      - programs:/ros_ws/cerebra_programs
+      - programs:/ros2_ws/cerebra_programs
     command: "/bin/bash -c 'source docker_run_all_nodes.sh'"
     depends_on:
       - flask-app

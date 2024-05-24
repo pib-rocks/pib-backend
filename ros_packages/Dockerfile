@@ -1,6 +1,6 @@
 FROM ros:humble-ros-core
 
-WORKDIR /ros_ws
+WORKDIR /ros2_ws
 
 RUN apt-get update && apt-get install -y curl
 
@@ -40,7 +40,7 @@ RUN git clone https://github.com/geaxgx/depthai_hand_tracker.git
 WORKDIR /depthai_hand_tracker
 RUN pip install -r requirements.txt
 
-WORKDIR /ros_ws
+WORKDIR /ros2_ws
 
 # Python Dependencies for all ros_packages
 COPY ./ros_packages/requirements.txt .
