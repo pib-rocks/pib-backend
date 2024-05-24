@@ -76,7 +76,7 @@ sudo chmod 700 "$ROS_CAMERA_BOOT_DIR/ros_camera_boot.service"
 sudo mv "$ROS_CAMERA_BOOT_DIR/ros_camera_boot.service" /etc/systemd/system
 sudo systemctl enable ros_camera_boot.service
 
-# Boot motor nodeS
+# Boot motor nodes
 sudo chmod 700 "$ROS_MOTORS_BOOT_DIR/ros_motor_boot.sh"
 sudo chmod 700 "$ROS_MOTORS_BOOT_DIR/ros_motor_boot.service"
 sudo mv "$ROS_MOTORS_BOOT_DIR/ros_motor_boot.service" /etc/systemd/system

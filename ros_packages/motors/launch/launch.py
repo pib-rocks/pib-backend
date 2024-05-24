@@ -6,7 +6,7 @@ from pib_motors.update_bricklet_uids import *
 from launch import LaunchDescription
 
 
-def check_and_update_uids():
+def _check_and_update_uids():
     i = 1
     while True:
         try:
@@ -21,7 +21,7 @@ def check_and_update_uids():
 
 
 def generate_launch_description():
-    check_and_update_uids()
+    _check_and_update_uids()
     return LaunchDescription(
         [
             Node(package="motors", executable="motor_control"),
