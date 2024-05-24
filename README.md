@@ -1,90 +1,60 @@
-# Software setup
+# Docker setup
 
 This script assumes: 
-- that Ubuntu Desktop 22.04.2 LTS is installed
-- the user running it is **pib**
+- that you are working on a linux distribution with docker support
+- prerequisted packages:
+    - docker.io
+    - docker-compose
+    - nvidia-docker2 (if you have a nvidia graphics card)
 
-If you have not set up the user **pib** at installation, you can do so via the settings-dialog of Ubuntu and then log in as **pib**.
+- download the docker-compose.yml file
+- Go to the directory of the docker-compose.yml file
+- start the following command:
 
-## Installing pibs software
+	docker-compose up 
 
-All the software pib requires can be installed by running our setup script.
-Follow these steps to run it: 
+- if everything succeeds a window should open with the simulation of our
+  so called digital twin of pib.
 
-1. Open a terminal in Ubuntu
 
-2. Insert the following command into the terminal to download the script:
+# Containers
 
-        wget https://raw.githubusercontent.com/pib-rocks/pib-backend/main/setup/setup-pib.sh
+1.) container pib-digital-twin
+  - is a Ubuntu 22.04 with a full installed ros2 humble desktop and webots robot simulator
+  - a control node is started for pib and pib's digital twin is loaded into the webots simulator
 
-	(or download it manually: https://github.com/pib-rocks/pib-backend/blob/main/setup/setup-pib.sh)
+2.) container pib-backend-bridge
+  - is a Ubuntu 22.04 with a full installed ros2 humble desktop and ros-humble-rosbridge-server
+  - the rosbridge server is started
 
-3. Insert this into the terminal to make the script executable:
-   
-        chmod 755 ./setup-pib.sh
+3.) container cerebra
+  - is a debian based image with an installed nginx webserver
+  - The webserver is started with a controlling website for pib
+  - the portnumber to access it is 8000, so if you brwose to http://localhost:8000 on your host
+    you should see the controlling page for pib
 
-4. Insert this command to run the script:
+The whole system is still under development. The cerebra controlling software is not yet connected to
+the simulator.
 
-        ./setup-pib.sh
+To test the simulator you can do the following steps:
 
-The setup then adds Cerebra and it's dependencies, including ROS2, Tinkerforge,...
-Once the installation is complete, please restart the system to apply all the changes.
+1.) Open a new terminal while the docker-compose command is still running.
+2.) Run the following command:
 
-# Updating the Software
-This script assumes that the setup script was executed successfully
+    docker exec -it pib-digitaltwin-webots /bin/bash 
 
-1. Open a terminal
-2. Enter this command: `update-pib`
-   
-You can add the "-Cerebra" parameter to update only the frontend application but not the backend.
+3.) Now you are inside the container. Here you run
 
-## Checking if the software was installed successfully
+    . /opt/ros/humble/setup.bash
+    . /home/ros2_ws/install/setup.bash
+    rqt
 
-Inside the "setup" folder of the pib-backend repo there is a "dev_tools" folder. 
-Within it you can find a shell script (health-check-pib.sh) that checks if all necessary packages are installed and all required ros-services are running.
+4.) In the new window click on "Plugins"->"Topics"->"Message Publisher"
 
-Follow these steps to run the health-check-script:
-1. Download the script from our Github repo:  
-	`wget https://raw.githubusercontent.com/pib-rocks/pib-backend/main/setup/dev_tools/health-check-pib.sh`
-2. Change the permissions of the file `chmod 755 health-check-pib.sh`
-3. Run the script `./health-check-pib.sh`
+5.) Set Topic to "/pib/cmd_vel" and click on "+" sign
 
-The script also has a development mode "./health-check-pib.sh -d" option that allows you to skip some parts of the check.
-For example to only check ros packages and system services without the python packages.
+6.) Expand the "pib/cmd_val" on teh little triangle and again the "angular" line
 
-## Clustering pibs
+7.) Set the z value from "0.0" to e.g. "1.0" and set the check mark on the "/pib/cmd_vel" line.
 
-To synchronize communication between pibs on default ROS_DOMAIN_ID=0:
-
-1. Open a Terminal:
-2. Run the following command:  
-	`gedit ~/.bashrc`  
-	OR for users connected through terminal:  
-	`vim ~/.bashrc`  
-3. Within .bashrc  
-	delete: export ROS_LOCALHOST_ONLY=1  
-	or replace it with: ROS_LOCALHOST_ONLY=0  
-4. Restart pib
-
-To add pib to a distinct logical network:
-
-1. Open a Terminal
-2. Run the following command:  
-		`gedit ~/.bashrc`  
-	OR for users connected through terminal:  
-		`vim ~/.bashrc`  
-3. Delete: "export ROS_LOCALHOST_ONLY=1"
-4. Append: "export ROS_DOMAIN_ID=YOUR_DOMAIN_ID"
-5. Restart pib
-
-For a range of available ROS_DOMAIN_IDs please check the official documentation at:  
-https://docs.ros.org/en/dashing/Concepts/About-Domain-ID.html
-
-### Docker 
-
-`password.env` required to run the voice assistant:
-
-```
-OPENAI_API_KEY=<OpenAI_API_KEY>
-GOOGLE_APPLICATION_CREDENTIALS=<path_to_google_application_credentials_json>
-```
+8.) Now you should see that the head of pib should turn inside the simulation ;-)

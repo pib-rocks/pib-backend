@@ -21,38 +21,38 @@ services:
       - SQLALCHEMY_DATABASE_URI=sqlite:////app/pibdata.db
     command: "bash -c 'flask --app run db upgrade && flask --app run seed_db && flask --app run run --host 0.0.0.0 --debug'"
 
-  ros-camera:
-    image: ros-camera
-    privileged: true
-    build:
-      context: ./ros_packages
-      dockerfile: ./camera/Dockerfile
-    command: ros2 run oak_d_lite stereo
-    # Volume binding should not be necessary here, 
-    # but removing will stop the camera from showing pictures for some reason
-    volumes:
-      - /dev/:/dev/
-    devices:
-      - /dev/bus/usb:/dev/bus/usb
-    networks:
-      - pib-network
-
-  # ros-motors:
-  #   image: ros_motors
+  # ros-camera:
+  #   image: ros-camera
+  #   privileged: true
   #   build:
-  #     context: .
-  #     dockerfile: ./ros_packages/motors/Dockerfile
-  #   command: /bin/bash -c 'python3 /app/motors/pib_motors/pib_motors/update_bricklet_uids.py check_and_update; ros2 launch motors launch.yaml'
-  #   environment:
-  #     - FLASK_API_BASE_URL=http://flask-app:5000
-  #     - TINKERFORGE_HOST=tinkerforge-brickd
-  #     - TINKERFORGE_PORT=4223
+  #     context: ./ros_packages
+  #     dockerfile: ./camera/Dockerfile
+  #   command: ros2 run oak_d_lite stereo
+  #   # Volume binding should not be necessary here, 
+  #   # but removing will stop the camera from showing pictures for some reason
+  #   volumes:
+  #     - /dev/:/dev/
+  #   devices:
+  #     - /dev/bus/usb:/dev/bus/usb
   #   networks:
   #     - pib-network
-  #   restart: always
-  #   depends_on:
-  #     - tinkerforge-brickd
-  #     - flask-app
+
+  ros-motors:
+    image: ros_motors
+    build:
+      context: .
+      dockerfile: ./ros_packages/motors/Dockerfile
+    command: /bin/bash -c 'python3 /app/motors/pib_motors/pib_motors/update_bricklet_uids.py check_and_update; ros2 launch motors launch.yaml'
+    environment:
+      - FLASK_API_BASE_URL=http://flask-app:5000
+      - TINKERFORGE_HOST=tinkerforge-brickd
+      - TINKERFORGE_PORT=4223
+    networks:
+      - pib-network
+    restart: always
+    depends_on:
+      - tinkerforge-brickd
+      - flask-app
 
   ros-voice_assistant:
     image: ros_voice_assistant
@@ -65,7 +65,7 @@ services:
       - PULSE_SERVER=unix:${XDG_RUNTIME_DIR}/pulse/native
       - ALSA_CARD=Generic
       - FLASK_API_BASE_URL=http://flask-app:5000
-      - VOICE_ASSISTANT_DIR=/ros_ws/voice_assistant
+      - VOICE_ASSISTANT_DIR=/app/ros2_ws/voice_assistant
     env_file:
       - password.env
     volumes:
@@ -81,23 +81,23 @@ services:
     depends_on:
       - flask-app
 
-  # ros-programs:
-  #   image: ros_programs
-  #   build:
-  #     context: ./ros_packages
-  #     dockerfile: ./programs/Dockerfile
-  #   command: ros2 launch programs program_launch.yaml
-  #   environment:
-  #     - FLASK_API_BASE_URL=http://flask-app:5000
-  #     - TINKERFORGE_HOST=tinkerforge-brickd
-  #     - TINKERFORGE_PORT=4223
-  #     - PYTHON_BINARY=/usr/bin/python3
-  #     - PROGRAM_DIR=/ros_ws/cerebra_programs
-  #     - VOICE_ASSISTANT_DIR=/ros_ws/voice_assistant
-  #   volumes:
-  #     - programs:/ros_ws/cerebra_programs
-  #   networks:
-  #     - pib-network
+  ros-programs:
+    image: ros_programs
+    build:
+      context: ./ros_packages
+      dockerfile: ./programs/Dockerfile
+    command: ros2 launch programs program_launch.yaml
+    environment:
+      - FLASK_API_BASE_URL=http://flask-app:5000
+      - TINKERFORGE_HOST=tinkerforge-brickd
+      - TINKERFORGE_PORT=4223
+      - PYTHON_BINARY=/usr/bin/python3
+      - PROGRAM_DIR=/ros2_ws/cerebra_programs
+      - VOICE_ASSISTANT_DIR=/app/ros2_ws/voice_assistant
+    volumes:
+      - programs:/ros2_ws/cerebra_programs
+    networks:
+      - pib-network
 
   rosbridge-ws:
     build:
