@@ -39,7 +39,7 @@ show_help()
 # "SECONDS" can be reset to zero by calling "SECONDS=0"
 print_elapsed_time() 
 {
-	echo "$(($SECONDS / 60)) minutes and $(($SECONDS % 60)) seconds elapsed. Current Time: $(date)"
+	echo -e "$(($SECONDS / 60)) minutes and $(($SECONDS % 60)) seconds elapsed. <Current Time: $(date)>""$NEW_LINE"
 }
 
 echo -e "$NEW_LINE""$YELLOW_TEXT_COLOR""-- Checking user input option syntax --""$RESET_TEXT_COLOR""$NEW_LINE"
@@ -242,10 +242,7 @@ cp "$SETUP_FILES/pib-eyes-animated.gif" "$USER_HOME/Desktop/pib-eyes-animated.gi
 # Move log file to temporary setup folder
 mv "$LOG_FILE" "$TEMPORARY_SETUP_DIR"
 
-end_time=$(date +%s)
-elapsed_time=$(( $(date +%s) - start_time ))
-
 echo -e "$NEW_LINE""Congratulations! The setup completed succesfully!"
 echo -e "$NEW_LINE""Please restart the system to apply changes..."
-echo "<Elapsed time: $(( ($(date +%s) - start_time) / 60)) minutes> [setup-pib.sh]"
-echo "<Script Run Duration $elapsed_time> <Current Time: $(date)>"
+ 
+echo -e "$NEW_LINE""<Script Run Duration: $(( ($(date +%s) - start_time) / 60)) minutes> <Current Time: $(date)>"
