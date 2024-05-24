@@ -11,17 +11,24 @@ ROS_MOTORS_BOOT_DIR="$ROS_WORKING_DIR"/src/motors/boot_scripts
 ROS_VOICE_ASSISTANT_BOOT_DIR="$ROS_WORKING_DIR"/src/voice_assistant/boot_scripts
 ROS_PROGRAMS_BOOT_DIR="$ROS_WORKING_DIR"/src/programs/boot_scripts
 
-#
+
 # Installing dependencies
-# Depth-AI
+# Depth-AI (Camera)
 sudo curl --silent --location https://docs.luxonis.com/install_dependencies.sh | sudo bash
 python3 -m pip install depthai
+
 # Setting up the motor packages
-pip3.10 install tinkerforge
 sudo apt-get -y install libusb-1.0-0-dev
+pip3.10 install -r "$BACKEND_DIR/ros_packages/motors/requirements.txt"
+
 # Setting up the voice-assistant packages
-pip3.10 install openai google-cloud-speech google-cloud-texttospeech pyaudio
+sudo apt-get install -y portaudio19-dev
 sudo apt-get install flac
+pip3.10 install -r "$BACKEND_DIR/ros_packages/voice_assistant/requirements.txt"
+pip3.10 install "$BACKEND_DIR/public_api_client"
+mkdir "$USER_HOME/public_api"
+printf "{\n\t\"trybUrlPrefix\": \"\",\n\t\"publicApiToken\": \"\"\n}\n" > "$USER_HOME/public_api/config.json"
+
 # Git examples for Depth-AI
 git clone --recurse-submodules https://github.com/luxonis/depthai-python.git
 cd depthai-python/examples
