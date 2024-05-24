@@ -15,9 +15,12 @@ ament-xmllint==0.12.9
 argcomplete==1.8.1
 attrs==21.2.0
 blinker==1.4
+blobconverter==1.4.3
 builtin-interfaces==1.2.1
 camera-calibration==3.0.0
 catkin-pkg-modules==1.0.0
+certifi==2024.2.2
+charset-normalizer==3.3.2
 colcon-argcomplete==0.3.3
 colcon-bash==0.5.0
 colcon-cd==0.1.1
@@ -59,6 +62,7 @@ flake8==4.0.1
 foxglove-msgs==2.3.0
 geometry-msgs==4.2.3
 httplib2==0.20.2
+idna==3.7
 image-geometry==3.2.1
 importlib-metadata==4.6.4
 iniconfig==1.1.1
@@ -106,6 +110,7 @@ PyYAML==5.4.1
 rcl-interfaces==1.2.1
 rclpy==3.3.11
 rcutils==5.1.4
+requests==2.32.2
 resource-retriever==3.1.1
 rmw-dds-common==1.6.0
 roman==3.3
@@ -167,6 +172,7 @@ theora-image-transport==2.5.0
 toml==0.10.2
 trajectory-msgs==4.2.3
 unique-identifier-msgs==2.2.1
+urllib3==2.2.1
 vcstool==0.3.0
 vision-msgs==4.1.0
 visualization-msgs==4.2.3
