@@ -3,7 +3,6 @@
 # This script adjust ubuntu system settings
 # To properly run this script relies on being sourced by the "setup-pib.sh"-script
 
-
 echo -e "$YELLOW_TEXT_COLOR""-- Adjusting system settings --""$RESET_TEXT_COLOR"	
 
 # This config file exists only on RaspberryPi, but not VMs 
