@@ -10,5 +10,5 @@ npm audit fix
 # Stop if still running pib_api service
 systemctl stop pib_api_boot.service
 
-# Start the JOSN-Server
+# Start the JSON-Server
 node server/json-server-funktion.mjs
