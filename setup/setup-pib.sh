@@ -176,7 +176,7 @@ source "$INSTALLATION_SCRIPTS/prepare_json_server.sh"
 
 # install update-pip
 sudo cp "$SETUP_DIR/update-pib.sh" "$UPDATE_TARGET_DIR/update-pib"
-sudo chmod 700 "$UPDATE_TARGET_DIR/update-pib"
+sudo chmod 755 "$UPDATE_TARGET_DIR/update-pib"
 
 # Get ros_config
 cp "$SETUP_FILES/ros_config.sh" "$ROS_WORKING_DIR/ros_config.sh"
