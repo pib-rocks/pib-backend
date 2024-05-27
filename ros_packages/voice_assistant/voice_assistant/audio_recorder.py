@@ -24,11 +24,13 @@ CHUNKS_PER_SECOND = 10
 
 FRAMES_PER_CHUNK = FRAMES_PER_SECOND // CHUNKS_PER_SECOND
 
-# TODO: his value should not be hardcoded, as the optimal value 
-# depends on the level of background noise. 
+# TODO: his value should not be hardcoded, as the optimal value
+# depends on the level of background noise.
 SILENCE_VOLUME_THRESHOLD = 500
 
-VOICE_ASSISTANT_DIRECTORY = os.getenv("VOICE_ASSISTANT_DIR", "/home/pib/ros_working_dir/src/voice_assistant")
+VOICE_ASSISTANT_DIRECTORY = os.getenv(
+    "VOICE_ASSISTANT_DIR", "/home/pib/ros_working_dir/src/voice_assistant"
+)
 OUTPUT_FILE_PATH = f"{VOICE_ASSISTANT_DIRECTORY}/audiofiles/output.wav"
 
 
@@ -36,7 +38,7 @@ class AudioRecorderNode(Node):
 
     def __init__(self):
 
-        super().__init__('audio_recorder')
+        super().__init__("audio_recorder")
 
         self.goal_queue: deque[ServerGoalHandle] = deque()
         self.goal_queue_lock = Lock()
@@ -45,12 +47,13 @@ class AudioRecorderNode(Node):
         self.record_audio_server = ActionServer(
             self,
             RecordAudio,
-            'record_audio',
+            "record_audio",
             execute_callback=self.record_audio,
             handle_accepted_callback=self.handle_accepted_goal,
-            cancel_callback=(lambda _: CancelResponse.ACCEPT))
+            cancel_callback=(lambda _: CancelResponse.ACCEPT),
+        )
 
-        self.get_logger().info('Now running AUDIO RECORDER')
+        self.get_logger().info("Now running AUDIO RECORDER")
 
     def handle_accepted_goal(self, goal_handle: ServerGoalHandle) -> GoalResponse:
         """place a goal into the queue and start execution if the queue was empty before"""
@@ -111,7 +114,8 @@ class AudioRecorderNode(Node):
                 channels=NUM_CHANNELS,
                 rate=FRAMES_PER_SECOND,
                 input=True,
-                frames_per_buffer=FRAMES_PER_CHUNK)
+                frames_per_buffer=FRAMES_PER_CHUNK,
+            )
 
             # record audio, until too many silent chunks were detected in a row
             # or if cancellation of the goal was requested
@@ -150,16 +154,16 @@ class AudioRecorderNode(Node):
         goal_handle.publish_feedback(RecordAudio.Feedback())
 
         # collect binary data
-        data = b''.join(chunks)
+        data = b"".join(chunks)
 
         # TODO: public-api should accept raw pcm data in future -> this step will be unnecessary
-        with wave.open(OUTPUT_FILE_PATH, 'wb') as wave_file:
+        with wave.open(OUTPUT_FILE_PATH, "wb") as wave_file:
             wave_file.setnchannels(NUM_CHANNELS)
             wave_file.setsampwidth(BYTES_PER_SAMPLE)
             wave_file.setframerate(FRAMES_PER_SECOND)
             wave_file.writeframes(data)
             wave_file.close()
-        with open(OUTPUT_FILE_PATH, 'rb') as f:
+        with open(OUTPUT_FILE_PATH, "rb") as f:
             data = f.read()
 
         # transcribe the audio data
