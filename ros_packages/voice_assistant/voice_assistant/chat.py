@@ -2,21 +2,18 @@ import re
 from threading import Lock
 
 import rclpy
-from rclpy.node import Node
-from rclpy.executors import MultiThreadedExecutor
-from rclpy.callback_groups import ReentrantCallbackGroup
-from rclpy.node import Node
+from datatypes.action import Chat
+from datatypes.msg import ChatMessage
+from pib_api_client import voice_assistant_client
 from rclpy.action import ActionServer
 from rclpy.action import CancelResponse
 from rclpy.action.server import ServerGoalHandle
+from rclpy.callback_groups import ReentrantCallbackGroup
+from rclpy.executors import MultiThreadedExecutor
+from rclpy.node import Node
 from rclpy.publisher import Publisher
 
-from datatypes.msg import ChatMessage
-from datatypes.action import Chat
-from datatypes.srv import GetCameraImage
-
 from public_api_client import public_voice_client
-from pib_api_client import voice_assistant_client
 
 
 class ChatNode(Node):
