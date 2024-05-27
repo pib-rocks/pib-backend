@@ -96,7 +96,7 @@ touch ~/app/pib-backend/password.env
 echo -e "Pulled pib-backend and Cerebra repositories to ~/app"
 
 cd ~/app/pib-backend
-sudo docker compose -f docker-compose.device.yaml up -d
+sudo docker compose --profile camera --profile motors --profile voice_assistant up -d
 
 cd ~/app/cerebra
 sudo docker compose up -d
