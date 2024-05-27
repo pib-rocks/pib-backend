@@ -16,9 +16,8 @@ VOICE_ASSISTANT_TEXT_URL = configuration.tryb_url_prefix + "/public-api/voice-as
 
 
 def _send_request(method: str, url: str, headers: dict[str, str], body: dict[str, Any], stream: bool):
-
     try:
-        headers["Authorization"] = "Bearer " + configuration.public_api_token 
+        headers["Authorization"] = "Bearer " + configuration.public_api_token
         response = requests.request(
             method=method,
             url=url,
@@ -33,21 +32,20 @@ def _send_request(method: str, url: str, headers: dict[str, str], body: dict[str
         headers_without_auth = {k: v for k, v in headers.items() if k != "Authorization"}
         logging.info(
             f"An Error occured while sending request:\n" +
-            f"-----------------------------------------------------\n" + 
+            f"-----------------------------------------------------\n" +
             f"url: {url}\n" +
             f"method: {method}\n" +
-            f"body: {body}\n"+
+            f"body: {body}\n" +
             f"headers: {headers_without_auth}"
             f"-----------------------------------------------------\n" +
-            f"Received following response from the public-api:\n" + 
+            f"Received following response from the public-api:\n" +
             f"-----------------------------------------------------\n" +
             f"status: {response.status_code}\n"
             f"headers: {response.headers}\n"
             f"content: {response.content}\n" +
             f":::::::::::::::::::::::::::::::::::::::::::::::::::::\n")
-        
+
         raise Exception("error while sending request to public-api")
-        
 
 
 def speech_to_text(audio: bytes) -> str:
@@ -63,7 +61,6 @@ def speech_to_text(audio: bytes) -> str:
     response = _send_request("POST", SPEECH_TO_TEXT_URL, headers, body, False)
 
     return response.json()["responseText"]
-
 
 
 def text_to_speech(text: str, gender: str, language: str) -> Iterable[bytes]:
@@ -97,7 +94,7 @@ def chat_completion(text: str, description: str, image_base64: str | None = None
 
     # Claude does not accept empty strings as input
     if (text is None) or (text == ""):
-        text = "echo 'I could not hear you, please repeat your message.'"
+        text = "empty"
 
     body = {
         "data": text,

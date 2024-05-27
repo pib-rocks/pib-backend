@@ -26,7 +26,7 @@ def create_personality(personality_dto: Any) -> List[Personality]:
 def update_personality(personality_id: str, personality_dto: Any) -> Personality:
     personality = get_personality(personality_id)
     personality.name = personality_dto['name']
-    personality.gender = personality_dto['gender']
+    personality.gender = personality_dto['gender'].title()
     personality.pause_threshold = personality_dto['pause_threshold']
     if 'description' in personality_dto:
         personality.description = personality_dto['description']
