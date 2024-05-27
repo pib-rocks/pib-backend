@@ -9,7 +9,6 @@ from tinkerforge.bricklet_servo_v2 import BrickletServoV2
 from tinkerforge.ip_connection import IPConnection
 
 
-
 class Motor_current(Node):
 
     def __init__(self):
