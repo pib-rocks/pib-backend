@@ -1,15 +1,13 @@
-import os
-from tinkerforge.ip_connection import IPConnection
-from tinkerforge.brick_hat import BrickHAT
-from tinkerforge.bricklet_servo_v2 import BrickletServoV2
 import rclpy
-from rclpy.node import Node
 from diagnostic_msgs.msg import DiagnosticStatus
 from diagnostic_msgs.msg import KeyValue
+from pib_motors.config import cfg
 from pib_motors.update_bricklet_uids import *
+from rclpy.node import Node
+from tinkerforge.brick_hat import BrickHAT
+from tinkerforge.bricklet_servo_v2 import BrickletServoV2
+from tinkerforge.ip_connection import IPConnection
 
-TINKERFORGE_HOST = os.getenv("TINKERFORGE_HOST", "localhost")
-TINKERFORGE_PORT = int(os.getenv("TINKERFORGE_PORT", 4223))
 
 
 class Motor_current(Node):
@@ -83,7 +81,7 @@ class Motor_current(Node):
             self.servo1 = BrickletServoV2(UID1, self.ipcon)
             self.servo2 = BrickletServoV2(UID2, self.ipcon)
             self.servo3 = BrickletServoV2(UID3, self.ipcon)
-            self.ipcon.connect(TINKERFORGE_HOST, TINKERFORGE_PORT)
+            self.ipcon.connect(cfg.TINKERFORGE_HOST, cfg.TINKERFORGE_PORT)
             self.get_logger().info(self.get_name() + ": servo init complete")
         except Exception as e:
             self.get_logger().warn(f"Error servo init: {str(e)}")

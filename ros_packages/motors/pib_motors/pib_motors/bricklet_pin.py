@@ -1,7 +1,8 @@
+import logging
 from typing import Any
+
 from pib_motors.bricklet import uid_to_bricklet
 from tinkerforge.bricklet_servo_v2 import BrickletServoV2
-import logging
 
 
 class BrickletPin:
