@@ -11,12 +11,12 @@ from std_msgs.msg import String, Float64, Int32, Int32MultiArray
 
 class ErrorPublisher(Node):
 
-    #def __new__(cls, error_message):
+    # def __new__(cls, error_message):
     #    print("creating new ErrorPublisher with Error message" + error_message)
 
     def __init__(self):
-        super().__init__('error_publisher')
-        self.publisher_ = self.create_publisher(String, 'camera_topic', 10)
+        super().__init__("error_publisher")
+        self.publisher_ = self.create_publisher(String, "camera_topic", 10)
         timer_period = 1  # seconds
         self.timer = self.create_timer(timer_period, self.timer_callback)
 
@@ -24,20 +24,23 @@ class ErrorPublisher(Node):
         msg = String()
         msg.data = "Camera not available: "
         self.publisher_.publish(msg)
-        #self.get_logger().info('Publishing: "%s"' % msg.data)
+        # self.get_logger().info('Publishing: "%s"' % msg.data)
 
 
 class CameraNode(Node):
 
     def __init__(self):
-        super().__init__('camera_node')
-        self.publisher_ = self.create_publisher(String, 'camera_topic', 10)
-        self.timer_subscription = self.create_subscription(Float64, 'timer_period_topic', self.timer_period_callback,
-                                                           10)
-        self.quality_factor_subscription = self.create_subscription(Int32, 'quality_factor_topic',
-                                                                    self.quality_factor_callback, 10)
-        self.preview_size_subscription = self.create_subscription(Int32MultiArray, 'size_topic',
-                                                                  self.preview_size_callback, 10)
+        super().__init__("camera_node")
+        self.publisher_ = self.create_publisher(String, "camera_topic", 10)
+        self.timer_subscription = self.create_subscription(
+            Float64, "timer_period_topic", self.timer_period_callback, 10
+        )
+        self.quality_factor_subscription = self.create_subscription(
+            Int32, "quality_factor_topic", self.quality_factor_callback, 10
+        )
+        self.preview_size_subscription = self.create_subscription(
+            Int32MultiArray, "size_topic", self.preview_size_callback, 10
+        )
 
         # Initialize default preview size and quality factor
         self.preview_width = 1280
@@ -76,17 +79,21 @@ class CameraNode(Node):
         frame = image_rgb.getCvFrame()
 
         # Convert the image to base64
-        retval, buffer = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), self.quality_factor])
+        retval, buffer = cv2.imencode(
+            ".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), self.quality_factor]
+        )
         jpg_as_text = base64.b64encode(buffer)
 
         msg = String()
-        msg.data = jpg_as_text.decode('utf-8')  # convert bytes to string
+        msg.data = jpg_as_text.decode("utf-8")  # convert bytes to string
         self.publisher_.publish(msg)
 
     def timer_period_callback(self, msg):
         self.timer_period = msg.data
         self.timer.cancel()  # cancel the old timer
-        self.timer = self.create_timer(self.timer_period, self.timer_callback)  # create a new timer with updated period
+        self.timer = self.create_timer(
+            self.timer_period, self.timer_callback
+        )  # create a new timer with updated period
 
     def quality_factor_callback(self, msg):
         self.quality_factor = msg.data
@@ -102,7 +109,9 @@ class CameraNode(Node):
 def spin_camera(times):
     cnt = times
     if cnt == 0:
-        print("Couldn't restart camera due to displayed error/s, publishing error message")
+        print(
+            "Couldn't restart camera due to displayed error/s, publishing error message"
+        )
         rclpy.spin(error_publisher)
     else:
         try:
@@ -112,7 +121,7 @@ def spin_camera(times):
             error_publisher.timer_callback()
             print(exc)
         finally:
-            if 'camera_node' in locals():
+            if "camera_node" in locals():
                 camera_node.destroy_node()
                 print("camera_node destroyed")
             cnt = times - 1
@@ -130,5 +139,5 @@ def main(args=None):
     rclpy.shutdown()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

@@ -66,7 +66,8 @@ class PlaybackItem:
                 format=pya.get_format_from_width(self.encoding.bytes_per_sample),
                 channels=self.encoding.num_channels,
                 rate=self.encoding.frames_per_second,
-                output=True)
+                output=True,
+            )
 
             for chunk in self.data:
                 if self.is_cleared():
@@ -89,7 +90,6 @@ class PlaybackItem:
 
 SPEECH_ENCODING = AudioEncoding(2, 1, 16000)
 CHUNKS_PER_SECOND = 10
-
 
 
 class AudioPlayerNode(Node):
@@ -147,9 +147,8 @@ class AudioPlayerNode(Node):
         with wave.open(request.filepath, "rb") as wf:
 
             encoding = AudioEncoding(
-                wf.getsampwidth(),
-                wf.getnchannels(),
-                wf.getframerate())
+                wf.getsampwidth(), wf.getnchannels(), wf.getframerate()
+            )
 
             frames_per_chunk = encoding.frames_per_second // CHUNKS_PER_SECOND
 
@@ -176,7 +175,9 @@ class AudioPlayerNode(Node):
         order = self.counter_next()
 
         try:
-            data = public_voice_client.text_to_speech(request.speech, request.gender, request.language)
+            data = public_voice_client.text_to_speech(
+                request.speech, request.gender, request.language
+            )
         except Exception as e:
             self.get_logger().error(f"text_to_speech failed: {e}")
             return response
