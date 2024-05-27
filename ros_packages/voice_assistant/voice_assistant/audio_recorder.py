@@ -1,23 +1,19 @@
-from collections import deque
 import os
+import wave
+from collections import deque
+from threading import Lock
+
 import numpy as np
 import pyaudio
 import rclpy
-from rclpy.node import Node
-from rclpy.executors import MultiThreadedExecutor
-from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
-from rclpy.node import Node
-
 from datatypes.action import RecordAudio
-
-from threading import Lock
-
-from public_api_client import public_voice_client
-import wave
-
 from rclpy.action import ActionServer
 from rclpy.action import CancelResponse, GoalResponse
 from rclpy.action.server import ServerGoalHandle
+from rclpy.executors import MultiThreadedExecutor
+from rclpy.node import Node
+
+from public_api_client import public_voice_client
 
 # these values define the pcm-encoding, in which the recorded
 # audio will be received
@@ -108,7 +104,6 @@ class AudioRecorderNode(Node):
         max_silent_chunks = max_silent_chunks_before
 
         # create an pyaudio-input-stream for recording audio
-        self.get_logger().info("START RECORDING AUDIO")
         pya = pyaudio.PyAudio()
         try:
             stream = pya.open(
@@ -122,7 +117,6 @@ class AudioRecorderNode(Node):
             # or if cancellation of the goal was requested
             while silent_chunks < max_silent_chunks:
                 chunk = stream.read(FRAMES_PER_CHUNK, exception_on_overflow=False)
-                self.get_logger().info(f"CURRENT CHUNK IS SILENT: {self.is_silent(chunk)}")
                 chunks.append(chunk)
                 if goal_handle.is_cancel_requested:
                     break
