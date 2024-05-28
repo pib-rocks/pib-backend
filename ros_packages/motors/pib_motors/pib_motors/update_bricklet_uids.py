@@ -8,6 +8,7 @@ import requests
 from pib_motors.config import cfg
 from tinkerforge.brick_hat import BrickHAT
 from tinkerforge.ip_connection import IPConnection
+from tinkerforge.brick_hat import BrickHAT
 
 BRICKLET_URLS = [f"{cfg.FLASK_API}/bricklet/{i}" for i in range(1, 4)]
 
@@ -67,6 +68,12 @@ def get_uids_from_db():
 def no_uids_in_database():
     """Check for changes between current databse and TinkerForge UIDs."""
     return get_uids_from_db() == ["AAA", "BBB", "CCC"]
+
+
+def check_and_update():
+    if no_uids_in_database():
+        update_uids()
+    return
 
 
 if __name__ == "__main__":
