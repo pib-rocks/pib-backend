@@ -19,7 +19,7 @@ services:
       - programs:/root/cerebra_programs
     environment:
       - SQLALCHEMY_DATABASE_URI=sqlite:////app/pibdata.db
-    command: "bash -c 'flask --app run db upgrade && flask --app run seed_db && flask --app run run --host 0.0.0.0 --debug'"
+    command: "bash -c 'flask --app run db upgrade && flask --app run seed_db && flask --app run run --host 0.0.0.0'"
 
   ros-camera:
     image: ros-camera
@@ -58,7 +58,7 @@ services:
       - tinkerforge-brickd
       - flask-app
 
-  ros-voice_assistant:
+  ros-voice-assistant:
     image: ros_voice_assistant
     privileged: true
     build:

@@ -107,7 +107,7 @@ echo -e "To check docker container status use 'docker ps -a'"
 echo -e "To stop docker containers, use 'docker compose down' in ~/app/cerebra or ~/app/pib-backend"
 echo -e "To start docker containers used 'docker compose up -d' in ~/app/cerebra or ~/app/pib-backend"
 
-# Don' require sudo
+# Doesn't require sudo
 # newgrp kills script, that's why it's at the end
 sudo groupadd docker
 sudo usermod -aG docker $USER
