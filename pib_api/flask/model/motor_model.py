@@ -1,5 +1,4 @@
 from app.app import db
-from model.bricklet_pin_model import BrickletPin
 
 
 class Motor(db.Model):

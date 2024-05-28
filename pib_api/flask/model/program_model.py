@@ -1,5 +1,4 @@
 from app.app import db
-import uuid
 
 from model.util import generate_uuid
 
