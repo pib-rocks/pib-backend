@@ -353,8 +353,6 @@ class VoiceAssistantNode(Node):
         self.waiting_for_transcribed_text = True
 
     def on_transcribed_text_received(self, transcribed_text: str) -> None:
-        if not self.waiting_for_transcribed_text:
-            return
         self.waiting_for_transcribed_text = False
 
         self.chat(
