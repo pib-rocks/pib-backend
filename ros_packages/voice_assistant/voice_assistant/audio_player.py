@@ -69,6 +69,9 @@ class PlaybackItem():
 
 SPEECH_ENCODING = AudioEncoding(2, 1, 16000)
 CHUNKS_PER_SECOND = 10
+FRAMES_PER_CHUNK = SPEECH_ENCODING.frames_per_second // CHUNKS_PER_SECOND
+BYTES_PER_FRAME = SPEECH_ENCODING.bytes_per_sample * SPEECH_ENCODING.num_channels
+BYTES_PER_CHUNK = BYTES_PER_FRAME * FRAMES_PER_CHUNK
 
 
 
@@ -106,16 +109,28 @@ class AudioPlayerNode(Node):
             self.play_audio_from_file, 
             callback_group=play_audio_callback_group)
         
-        self.get_logger().info('Now running AUDIO PLAYER')
+        self.get_logger().info('Now running AUDIO PLAYERA')
 
 
 
     def counter_next(self) -> int:
-
         with self.counter_lock:
             value = self.counter
             self.counter += 1
             return value
+
+
+    
+    def adjust_data_granularity(self, data: Iterable[bytes], target_bytes_per_chunk: int) -> Iterable[bytes]:
+        """returns a new iterable, whose data chunks have the specified target size (in bytes)"""
+        data_buffer: bytes = b''
+        for chunk in data:
+            data_buffer = data_buffer + chunk
+            while len(data_buffer) >= target_bytes_per_chunk:
+                yield data_buffer[:target_bytes_per_chunk]
+                data_buffer = data_buffer[target_bytes_per_chunk:]
+        if len(data_buffer) > 0:
+            yield data_buffer
 
 
     
@@ -151,6 +166,7 @@ class AudioPlayerNode(Node):
         order = self.counter_next()
 
         data = public_voice_client.text_to_speech(request.speech, request.gender, request.language)
+        data = self.adjust_data_granularity(data, BYTES_PER_CHUNK)
 
         playback_item = PlaybackItem(data, SPEECH_ENCODING, 0.2, order)
         self.playback_queue.put(playback_item, True)
