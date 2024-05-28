@@ -27,5 +27,3 @@ EXPOSE 9090
 
 ENTRYPOINT ["/ros_entrypoint.sh"]
 CMD ["bash"]
-
-# RUN echo $(dpkg -s ros-$ROS_DISTRO-rosbridge-server | grep 'Version' | sed -r 's/Version:\s([0-9]+.[0-9]+.[0-9]+).*/\1/g') >> /version.txt

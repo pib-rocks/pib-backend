@@ -18,7 +18,7 @@ RUN curl -sSL https://download.tinkerforge.com/apt/$(. /etc/os-release; echo $ID
         libusb-1.0-0-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# COPY ./ros_packages/requirements.txt .
+# ToDo - DEV MERGE: COPY ./ros_packages/requirements.txt .
 RUN pip install requests
 
 COPY ./pib_api/client ./client
