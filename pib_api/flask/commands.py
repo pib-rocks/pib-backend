@@ -95,16 +95,17 @@ def _create_program_data() -> None:
 
 
 def _create_chat_data_and_assistant() -> None:
-    gpt4 = AssistantModel(visual_name="GPT-4", api_name="gpt-4-turbo", has_image_support=True)
+    gpt4o1 = AssistantModel(visual_name="GPT-4o (with image)", api_name="gpt-4o", has_image_support=True)
+    gpt4o2 = AssistantModel(visual_name="GPT-4o (without image)", api_name="gpt-4o", has_image_support=False)
     gpt3 = AssistantModel(visual_name="GPT-3.5", api_name="gpt-3.5-turbo", has_image_support=False)
-    claude = AssistantModel(visual_name="Claude 3 Sonnet", api_name="anthropic.claude-3-sonnet-20240229-v1:0", has_image_support=True)
-    db.session.add_all([gpt3, gpt4, claude])
+    claude = AssistantModel(visual_name="Claude 3 Sonnet (with image)", api_name="anthropic.claude-3-sonnet-20240229-v1:0", has_image_support=True)
+    db.session.add_all([gpt3, gpt4o1, gpt4o2, claude])
     db.session.flush()
 
     p_eva = Personality(name="Eva", personality_id="8f73b580-927e-41c2-98ac-e5df070e7288", gender="Female",
                         pause_threshold=0.8, assistant_model_id=claude.id)
     p_thomas = Personality(name="Thomas", personality_id="8b310f95-92cd-4512-b42a-d3fe29c4bb8a", gender="Male",
-                           pause_threshold=0.8, assistant_model_id=gpt4.id)
+                           pause_threshold=0.8, assistant_model_id=gpt4o1.id)
     db.session.add_all([p_eva, p_thomas])
     db.session.flush()
 
