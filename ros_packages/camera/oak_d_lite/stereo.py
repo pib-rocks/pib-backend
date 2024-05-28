@@ -7,11 +7,12 @@ import base64
 import numpy as np
 
 from std_msgs.msg import String, Float64, Int32, Int32MultiArray
+from datatypes.srv import GetCameraImage
 
 
 class ErrorPublisher(Node):
 
-    #def __new__(cls, error_message):
+    # def __new__(cls, error_message):
     #    print("creating new ErrorPublisher with Error message" + error_message)
 
     def __init__(self):
@@ -19,14 +20,13 @@ class ErrorPublisher(Node):
         self.publisher_ = self.create_publisher(String, 'camera_topic', 10)
         timer_period = 1  # seconds
         self.timer = self.create_timer(timer_period, self.timer_callback)
-
+        self.current_image = ""
 
     def timer_callback(self):
         msg = String()
         msg.data = "Camera not available: "
         self.publisher_.publish(msg)
-        #self.get_logger().info('Publishing: "%s"' % msg.data)
-
+        # self.get_logger().info('Publishing: "%s"' % msg.data)
 
 
 class CameraNode(Node):
@@ -34,9 +34,14 @@ class CameraNode(Node):
     def __init__(self):
         super().__init__('camera_node')
         self.publisher_ = self.create_publisher(String, 'camera_topic', 10)
-        self.timer_subscription = self.create_subscription(Float64, 'timer_period_topic', self.timer_period_callback, 10)
-        self.quality_factor_subscription = self.create_subscription(Int32, 'quality_factor_topic', self.quality_factor_callback, 10)
-        self.preview_size_subscription = self.create_subscription(Int32MultiArray, 'size_topic', self.preview_size_callback, 10)
+        self.timer_subscription = self.create_subscription(Float64, 'timer_period_topic', self.timer_period_callback,
+                                                           10)
+        self.quality_factor_subscription = self.create_subscription(Int32, 'quality_factor_topic',
+                                                                    self.quality_factor_callback, 10)
+        self.preview_size_subscription = self.create_subscription(Int32MultiArray, 'size_topic',
+                                                                  self.preview_size_callback, 10)
+        self.picture_service = self.create_service(GetCameraImage, 'get_camera_image',
+                                                   self.get_camera_image_callback)
 
         # Initialize default preview size and quality factor
         self.preview_width = 1280
@@ -48,6 +53,10 @@ class CameraNode(Node):
 
         self.timer_period = 0.1  # seconds
         self.timer = self.create_timer(self.timer_period, self.timer_callback)
+
+    def get_camera_image_callback(self, request, response):
+        response = GetCameraImage.Response(image_base64=self.current_image)
+        return response
 
     def init_pipeline(self):
         self.pipeline = dai.Pipeline()
@@ -75,9 +84,10 @@ class CameraNode(Node):
         # Convert the image to base64
         retval, buffer = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), self.quality_factor])
         jpg_as_text = base64.b64encode(buffer)
+        self.current_image = jpg_as_text.decode('utf-8')
 
         msg = String()
-        msg.data = jpg_as_text.decode('utf-8') # convert bytes to string
+        msg.data = self.current_image
         self.publisher_.publish(msg)
 
     def timer_period_callback(self, msg):
@@ -95,9 +105,10 @@ class CameraNode(Node):
         self.device.close()
         self.init_pipeline()
 
+
 def spin_camera(times):
     cnt = times
-    if cnt==0:
+    if cnt == 0:
         print("Couldn't restart camera due to displayed error/s, publishing error message")
         rclpy.spin(error_publisher)
     else:
@@ -115,15 +126,16 @@ def spin_camera(times):
             print("Retry starting camera..." + str(cnt))
             spin_camera(cnt)
     return
-        
-            
+
+
 def main(args=None):
-    rclpy.init() 
-    global error_publisher 
+    rclpy.init()
+    global error_publisher
     error_publisher = ErrorPublisher()
     print("Starting camera")
     spin_camera(3)
     rclpy.shutdown()
+
 
 if __name__ == '__main__':
     main()
