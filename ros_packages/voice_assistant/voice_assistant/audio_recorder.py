@@ -1,3 +1,4 @@
+from collections import deque
 import os
 import wave
 from collections import deque
@@ -6,7 +7,18 @@ from threading import Lock
 import numpy as np
 import pyaudio
 import rclpy
+from rclpy.node import Node
+from rclpy.executors import MultiThreadedExecutor
+from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
+from rclpy.node import Node
+
 from datatypes.action import RecordAudio
+
+from threading import Lock
+
+from public_api_client import public_voice_client
+import wave
+
 from rclpy.action import ActionServer
 from rclpy.action import CancelResponse, GoalResponse
 from rclpy.action.server import ServerGoalHandle
@@ -92,7 +104,7 @@ class AudioRecorderNode(Node):
         """
 
         request: RecordAudio.Goal = goal_handle.request
-
+        
         # these values indicate, after how many silent chunks, the recording is interrupted,
         # the 'before' value is used, if speech has not started yet
         # the 'after' value if used, after speech has already started
@@ -169,14 +181,18 @@ class AudioRecorderNode(Node):
             data = f.read()
 
         # transcribe the audio data
-        text = public_voice_client.speech_to_text(data)
+        try:
+            text = public_voice_client.speech_to_text(data)
+        except Exception as e:
+            self.get_logger().error(f"failed speech_to_text: {e}")
+            goal_handle.abort()
+            return self.create_result("")
 
         goal_handle.succeed()
         return self.create_result(text)
 
 
 def main(args=None):
-
     rclpy.init()
     node = AudioRecorderNode()
     executor = MultiThreadedExecutor(4)
