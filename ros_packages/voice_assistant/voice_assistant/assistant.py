@@ -1,16 +1,9 @@
+import os
 from typing import Any, Callable
-import rclpy
-from rclpy.node import Node
-from rclpy.executors import SingleThreadedExecutor
-from rclpy.node import Node
-from rclpy.task import Future
-from rclpy.service import Service
-from rclpy.action import ActionClient
-from rclpy.action.client import ClientGoalHandle
-from rclpy.publisher import Publisher
-from rclpy.client import Client
 
+import rclpy
 from datatypes.action import Chat, RecordAudio
+from datatypes.msg import VoiceAssistantState, ChatIsListening
 from datatypes.srv import (
     SetVoiceAssistantState,
     GetVoiceAssistantState,
@@ -20,12 +13,16 @@ from datatypes.srv import (
     GetChatIsListening,
     SendChatMessage,
 )
-from datatypes.msg import VoiceAssistantState, ChatIsListening
-
-import os
-
 from pib_api_client import voice_assistant_client
 from pib_api_client.voice_assistant_client import Personality
+from rclpy.action import ActionClient
+from rclpy.action.client import ClientGoalHandle
+from rclpy.client import Client
+from rclpy.executors import SingleThreadedExecutor
+from rclpy.node import Node
+from rclpy.publisher import Publisher
+from rclpy.service import Service
+from rclpy.task import Future
 
 VOICE_ASSISTANT_DIRECTORY = os.getenv(
     "VOICE_ASSISTANT_DIR", "/home/pib/ros_working_dir/src/voice_assistant"
@@ -158,10 +155,12 @@ class VoiceAssistantNode(Node):
         goal.max_silent_seconds_before = max_silent_seconds_before
         goal.max_silent_seconds_after = max_silent_seconds_after
         feedback_callback = (
-            None if on_stopped_recording is None else lambda _: on_stopped_recording()
+            self._deactivate_voice_assistant()
+            if on_stopped_recording is None
+            else lambda _: on_stopped_recording()
         )
         result_callback = (
-            None
+            self._deactivate_voice_assistant()
             if on_transcribed_text_received is None
             else lambda res: on_transcribed_text_received(res.transcribed_text)
         )
