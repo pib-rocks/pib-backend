@@ -47,7 +47,7 @@ class BrickletPin:
 	
 	def get_current(self) -> int:
 		"""returns the current of the bricklet pin, or NO_CURRENT, if it is not connected"""
-		return self.bricklet.get_servo_current() if self.is_connected() else BrickletPin.NO_CURRENT
+		return self.bricklet.get_servo_current(self.pin) if self.is_connected() else BrickletPin.NO_CURRENT
 	
 	def is_connected(self) -> bool:
 		"""checks if the bricklet-pin is connected to a bricklet"""
