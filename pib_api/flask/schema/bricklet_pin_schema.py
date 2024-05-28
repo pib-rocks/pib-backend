@@ -1,15 +1,16 @@
-from model.bricklet_pin_model import BrickletPin
-from schema.bricklet_schema import bricklet_uid_only_schema
-from app.app import ma
 from marshmallow import fields
 
+from model.bricklet_pin_model import BrickletPin
+from schema.sql_auto_with_camel_case_schema import SQLAutoWithCamelCaseSchema
+from schema.bricklet_schema import bricklet_uid_only_schema
 
-class BrickletPinSchema(ma.SQLAlchemyAutoSchema):
+
+class BrickletPinSchemaSQLAutoWith(SQLAutoWithCamelCaseSchema):
     class Meta:
         model = BrickletPin
-        exclude = ("id",)
+        exclude = ('id',)
 
-    bricklet = fields.Pluck(bricklet_uid_only_schema, "uid")
+    bricklet = fields.Pluck(bricklet_uid_only_schema, 'uid')
 
 
-bricklet_pins_schema = BrickletPinSchema(many=True)
+bricklet_pins_schema = BrickletPinSchemaSQLAutoWith(many=True)

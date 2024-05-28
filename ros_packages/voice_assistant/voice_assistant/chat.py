@@ -13,7 +13,12 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.publisher import Publisher
 
+from datatypes.msg import ChatMessage
+from datatypes.action import Chat
+from datatypes.srv import GetCameraImage
+
 from public_api_client import public_voice_client
+from pib_api_client import voice_assistant_client
 
 
 class ChatNode(Node):
@@ -40,6 +45,7 @@ class ChatNode(Node):
         self.chat_message_publisher: Publisher = self.create_publisher(
             ChatMessage, "chat_messages", 10
         )
+        self.camera_client = self.create_client(GetCameraImage, "get_camera_image")
 
         # lock that should be aquired, whenever accessing 'public_voice_client'
         self.public_voice_client_lock = Lock()
@@ -73,7 +79,7 @@ class ChatNode(Node):
 
         self.chat_message_publisher.publish(chat_message_ros)
 
-    def chat(self, goal_handle: ServerGoalHandle):
+    async def chat(self, goal_handle: ServerGoalHandle):
 
         # unpack request data
         request: Chat.Goal = goal_handle.request
@@ -99,9 +105,20 @@ class ChatNode(Node):
             if personality.description is not None
             else "Du bist pib, ein humanoider Roboter."
         )
+        camera_response = None
+        if personality.assistant_model.has_image_support:
+            camera_response_future = await self.camera_client.call_async(
+                GetCameraImage.Request()
+            )
+            camera_response = camera_response_future.image_base64
         with self.public_voice_client_lock:
             try:
-                tokens = public_voice_client.chat_completion(content, description)
+                tokens = public_voice_client.chat_completion(
+                    text=content,
+                    description=description,
+                    image_base64=camera_response,
+                    model=personality.assistant_model.api_name,
+                )
 
                 curr_sentence: str = ""
                 prev_sentence: str | None = None
@@ -142,6 +159,7 @@ class ChatNode(Node):
 
 
 def main(args=None):
+
     rclpy.init()
     node = ChatNode()
     # the number of threads is chosen arbitrarily to be '8' because ros requires a

@@ -30,13 +30,13 @@ def _send_request(
     method: str, url: str, headers: dict[str, str], body: dict[str, Any], stream: bool
 ):
     try:
-        headers["Authorization"] = "Bearer " + configuration.public_api_token
+        headers["Authorization"] = "Bearer " + configuration.public_api_token 
         response = requests.request(
             method=method, url=url, stream=stream, headers=headers, json=body
         )
         response.raise_for_status()
         return response
-
+    
     except requests.HTTPError as error:
         response: requests.Response = error.response
         headers_without_auth = {
@@ -60,6 +60,7 @@ def _send_request(
         )
 
         raise Exception("error while sending request to public-api")
+        
 
 
 def speech_to_text(audio: bytes) -> str:
@@ -72,6 +73,7 @@ def speech_to_text(audio: bytes) -> str:
     return response.json()["responseText"]
 
 
+
 def text_to_speech(text: str, gender: str, language: str) -> Iterable[bytes]:
     """converts text to speech using tryb-public-api"""
 
@@ -82,17 +84,36 @@ def text_to_speech(text: str, gender: str, language: str) -> Iterable[bytes]:
     return response.iter_content(chunk_size=None)
 
 
-def chat_completion(text: str, description: str) -> Iterable[str]:
+def chat_completion(text: str, description: str, image_base64: str | None = None, model: str = "gpt-3.5-turbo") -> \
+        Iterable[str]:
     """
     receive a textual llm response, that takes into account the provided description
     """
-    headers = {"Accept": "text/event-stream", "Content-Type": "application/json"}
-    body = {"data": text, "personality": {"description": description}}
-    response = _send_request("POST", VOICE_ASSISTANT_TEXT_URL, headers, body, True)
+    headers = {
+        "Accept": "text/event-stream",
+        "Content-Type": "application/json"
+    }
 
+    # Claude does not accept empty strings as input
+    if (text is None) or (text == ""):
+        text = "empty"
+
+    body = {
+        "data": text,
+        "personality": {
+            "description": description,
+            "model": model
+        }
+    }
+
+    if image_base64 is not None:
+        body["imageBase64"] = image_base64
+
+    response = _send_request("POST", VOICE_ASSISTANT_TEXT_URL, headers, body, True)
+    
     line_bin: bytes
     for line_bin in response.iter_lines():
-        line_str = line_bin.decode("utf-8")
+        line_str = line_bin.decode('utf-8')
         if not line_str.startswith("data:"):
             continue
         yield json.loads(line_str[21:-1])
