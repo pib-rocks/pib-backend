@@ -8,10 +8,10 @@ from app.app import db
 from flask import jsonify, request, abort, Blueprint
 
 
-bp = Blueprint('bricklet_controller', __name__)
+bp = Blueprint("bricklet_controller", __name__)
 
 
-@bp.route('', methods=['GET'])
+@bp.route("", methods=["GET"])
 def get_all_bricklets():
     bricklets = bricklet_service.get_all_bricklets()
     try:
@@ -20,7 +20,7 @@ def get_all_bricklets():
         abort(500)
 
 
-@bp.route('/<string:bricklet_number>', methods=['GET'])
+@bp.route("/<string:bricklet_number>", methods=["GET"])
 def get_bricklet(bricklet_number: str):
     bricklet = bricklet_service.get_bricklet(bricklet_number)
     try:
@@ -29,7 +29,7 @@ def get_bricklet(bricklet_number: str):
         abort(500)
 
 
-@bp.route('/<string:bricklet_number>', methods=['PUT'])
+@bp.route("/<string:bricklet_number>", methods=["PUT"])
 def update_bricklet(bricklet_number: str):
     uid = bricklet_uid_only_schema.load(request.json)["uid"]
     bricklet = bricklet_service.set_bricklet_uid(bricklet_number, uid)

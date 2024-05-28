@@ -46,7 +46,7 @@ services:
       dockerfile: ./ros_packages/motors/Dockerfile
     profiles:
       - motors
-    command: /bin/bash -c 'python3 /app/motors/pib_motors/pib_motors/update_bricklet_uids.py check_and_update; ros2 launch motors launch.yaml'
+    command: ros2 launch motors launch.py
     environment:
       - FLASK_API_BASE_URL=http://flask-app:5000
       - TINKERFORGE_HOST=tinkerforge-brickd
@@ -66,7 +66,7 @@ services:
       dockerfile: ./ros_packages/voice_assistant/Dockerfile
     profiles:
       - voice_assistant
-    command: ros2 launch voice_assistant launch.yaml
+    command: ros2 launch voice_assistant launch.py
     environment:
       - PULSE_SERVER=unix:${XDG_RUNTIME_DIR}/pulse/native
       - ALSA_CARD=Generic
@@ -92,7 +92,7 @@ services:
     build:
       context: ./ros_packages
       dockerfile: ./programs/Dockerfile
-    command: ros2 launch programs program_launch.yaml
+    command: ros2 launch programs launch.py
     environment:
       - FLASK_API_BASE_URL=http://flask-app:5000
       - TINKERFORGE_HOST=tinkerforge-brickd

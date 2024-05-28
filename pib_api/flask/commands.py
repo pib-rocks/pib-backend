@@ -43,10 +43,19 @@ def _is_empty_db() -> bool:
 
 def _create_bricklet_data() -> None:
     data = _get_motor_list()
-    motor_settings = {"pulse_width_min": 700, "pulse_width_max": 2500, "rotation_range_min": -9000,
-                      "rotation_range_max": 9000, "velocity": 16000, "acceleration": 10000, "deceleration": 5000,
-                      "period": 19500,
-                      "turned_on": True, "visible": True, "invert": False}
+    motor_settings = {
+        "pulse_width_min": 700,
+        "pulse_width_max": 2500,
+        "rotation_range_min": -9000,
+        "rotation_range_max": 9000,
+        "velocity": 16000,
+        "acceleration": 10000,
+        "deceleration": 5000,
+        "period": 19500,
+        "turned_on": True,
+        "visible": True,
+        "invert": False,
+    }
 
     for item in data:
         motor = Motor(name=item["name"], **motor_settings)
@@ -72,7 +81,11 @@ def _create_bricklet_data() -> None:
             invert = False
             if bricklet_pin == (3, 7) or bricklet_pin == (3, 5):
                 invert = True
-            db.session.add(BrickletPin(motor_id=motor.id, bricklet_id=bricklet_id, pin=pin, invert=invert))
+            db.session.add(
+                BrickletPin(
+                    motor_id=motor.id, bricklet_id=bricklet_id, pin=pin, invert=invert
+                )
+            )
         db.session.flush()
 
     b1 = Bricklet(uid="AAA", bricklet_number=1)
@@ -83,7 +96,9 @@ def _create_bricklet_data() -> None:
 
 
 def _create_camera_data() -> None:
-    camera_settings = CameraSettings(resolution="SD", refresh_rate=0.1, quality_factor=80, res_x=640, res_y=480)
+    camera_settings = CameraSettings(
+        resolution="SD", refresh_rate=0.1, quality_factor=80, res_x=640, res_y=480
+    )
     db.session.add(camera_settings)
     db.session.flush()
 
@@ -95,30 +110,62 @@ def _create_program_data() -> None:
 
 
 def _create_chat_data_and_assistant() -> None:
-    gpt4 = AssistantModel(visual_name="GPT-4", api_name="gpt-4-turbo", has_image_support=True)
-    gpt3 = AssistantModel(visual_name="GPT-3.5", api_name="gpt-3.5-turbo", has_image_support=False)
-    claude = AssistantModel(visual_name="Claude 3 Sonnet", api_name="anthropic.claude-3-sonnet-20240229-v1:0", has_image_support=True)
+    gpt4 = AssistantModel(
+        visual_name="GPT-4", api_name="gpt-4-turbo", has_image_support=True
+    )
+    gpt3 = AssistantModel(
+        visual_name="GPT-3.5", api_name="gpt-3.5-turbo", has_image_support=False
+    )
+    claude = AssistantModel(
+        visual_name="Claude 3 Sonnet",
+        api_name="anthropic.claude-3-sonnet-20240229-v1:0",
+        has_image_support=True,
+    )
     db.session.add_all([gpt3, gpt4, claude])
     db.session.flush()
 
-    p_eva = Personality(name="Eva", personality_id="8f73b580-927e-41c2-98ac-e5df070e7288", gender="Female",
-                        pause_threshold=0.8, assistant_model_id=claude.id)
-    p_thomas = Personality(name="Thomas", personality_id="8b310f95-92cd-4512-b42a-d3fe29c4bb8a", gender="Male",
-                           pause_threshold=0.8, assistant_model_id=gpt4.id)
+    p_eva = Personality(
+        name="Eva",
+        personality_id="8f73b580-927e-41c2-98ac-e5df070e7288",
+        gender="Female",
+        pause_threshold=0.8,
+        assistant_model_id=claude.id,
+    )
+    p_thomas = Personality(
+        name="Thomas",
+        personality_id="8b310f95-92cd-4512-b42a-d3fe29c4bb8a",
+        gender="Male",
+        pause_threshold=0.8,
+        assistant_model_id=gpt4.id,
+    )
     db.session.add_all([p_eva, p_thomas])
     db.session.flush()
 
-    c1 = Chat(chat_id="b4f01552-0c09-401c-8fde-fda753fb0261", topic="Nuernberg",
-              personality_id="8f73b580-927e-41c2-98ac-e5df070e7288")
-    c2 = Chat(chat_id="ee3e80f9-c8f7-48c2-9f15-449ba9bbe4ab", topic="Home-Office",
-              personality_id="8b310f95-92cd-4512-b42a-d3fe29c4bb8a")
+    c1 = Chat(
+        chat_id="b4f01552-0c09-401c-8fde-fda753fb0261",
+        topic="Nuernberg",
+        personality_id="8f73b580-927e-41c2-98ac-e5df070e7288",
+    )
+    c2 = Chat(
+        chat_id="ee3e80f9-c8f7-48c2-9f15-449ba9bbe4ab",
+        topic="Home-Office",
+        personality_id="8b310f95-92cd-4512-b42a-d3fe29c4bb8a",
+    )
     db.session.add_all([c1, c2])
     db.session.flush()
 
-    m1 = ChatMessage(message_id="539ed3e6-9e3d-11ee-8c90-0242ac120002", is_user=True, content="hello pib!",
-                     chat_id="b4f01552-0c09-401c-8fde-fda753fb0261")
-    m2 = ChatMessage(message_id="0a080706-9e3e-11ee-8c90-0242ac120002", is_user=False, content="hello user!",
-                     chat_id="b4f01552-0c09-401c-8fde-fda753fb0261")
+    m1 = ChatMessage(
+        message_id="539ed3e6-9e3d-11ee-8c90-0242ac120002",
+        is_user=True,
+        content="hello pib!",
+        chat_id="b4f01552-0c09-401c-8fde-fda753fb0261",
+    )
+    m2 = ChatMessage(
+        message_id="0a080706-9e3e-11ee-8c90-0242ac120002",
+        is_user=False,
+        content="hello user!",
+        chat_id="b4f01552-0c09-401c-8fde-fda753fb0261",
+    )
     db.session.add_all([m1, m2])
     db.session.flush()
 
@@ -159,4 +206,4 @@ def _get_motor_list() -> [dict[str, Any]]:
 
 
 def _get_example_program() -> str:
-    return '''{"blocks":{"languageVersion":0,"blocks":[{"type":"text_print","id":"QWplsQn`*28S!rmDws$4","x":315,"y":279,"inputs":{"TEXT":{"shadow":{"type":"text","id":"`{AWS~jvKQo-ve^M@z-(","fields":{"TEXT":"hello world"}}}}}]}}'''
+    return """{"blocks":{"languageVersion":0,"blocks":[{"type":"text_print","id":"QWplsQn`*28S!rmDws$4","x":315,"y":279,"inputs":{"TEXT":{"shadow":{"type":"text","id":"`{AWS~jvKQo-ve^M@z-(","fields":{"TEXT":"hello world"}}}}}]}}"""

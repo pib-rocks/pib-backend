@@ -104,7 +104,7 @@ class AudioRecorderNode(Node):
         """
 
         request: RecordAudio.Goal = goal_handle.request
-        
+
         # these values indicate, after how many silent chunks, the recording is interrupted,
         # the 'before' value is used, if speech has not started yet
         # the 'after' value if used, after speech has already started

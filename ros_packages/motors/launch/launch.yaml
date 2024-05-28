@@ -1,9 +1,0 @@
-launch:
-
-- node:
-    pkg: "motors"
-    exec: "motor_control"
-
-- node:
-    pkg: "motors"
-    exec: "motor_current"
