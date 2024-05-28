@@ -12,12 +12,12 @@ from datatypes.srv import GetCameraImage
 
 class ErrorPublisher(Node):
 
-    #def __new__(cls, error_message):
+    # def __new__(cls, error_message):
     #    print("creating new ErrorPublisher with Error message" + error_message)
 
     def __init__(self):
-        super().__init__('error_publisher')
-        self.publisher_ = self.create_publisher(String, 'camera_topic', 10)
+        super().__init__("error_publisher")
+        self.publisher_ = self.create_publisher(String, "camera_topic", 10)
         timer_period = 1  # seconds
         self.timer = self.create_timer(timer_period, self.timer_callback)
         self.current_image = ""
@@ -29,20 +29,23 @@ class ErrorPublisher(Node):
         # self.get_logger().info('Publishing: "%s"' % msg.data)
 
 
-
 class CameraNode(Node):
 
     def __init__(self):
-        super().__init__('camera_node')
-        self.publisher_ = self.create_publisher(String, 'camera_topic', 10)
-        self.timer_subscription = self.create_subscription(Float64, 'timer_period_topic', self.timer_period_callback,
-                                                           10)
-        self.quality_factor_subscription = self.create_subscription(Int32, 'quality_factor_topic',
-                                                                    self.quality_factor_callback, 10)
-        self.preview_size_subscription = self.create_subscription(Int32MultiArray, 'size_topic',
-                                                                  self.preview_size_callback, 10)
-        self.picture_service = self.create_service(GetCameraImage, 'get_camera_image',
-                                                   self.get_camera_image_callback)
+        super().__init__("camera_node")
+        self.publisher_ = self.create_publisher(String, "camera_topic", 10)
+        self.timer_subscription = self.create_subscription(
+            Float64, "timer_period_topic", self.timer_period_callback, 10
+        )
+        self.quality_factor_subscription = self.create_subscription(
+            Int32, "quality_factor_topic", self.quality_factor_callback, 10
+        )
+        self.preview_size_subscription = self.create_subscription(
+            Int32MultiArray, "size_topic", self.preview_size_callback, 10
+        )
+        self.picture_service = self.create_service(
+            GetCameraImage, "get_camera_image", self.get_camera_image_callback
+        )
 
         # Initialize default preview size and quality factor
         self.preview_width = 1280
@@ -110,6 +113,7 @@ class CameraNode(Node):
         # Reset pipeline with new preview size
         self.device.close()
         self.init_pipeline()
+
 
 def spin_camera(times):
     cnt = times

@@ -2,7 +2,7 @@ from app.app import db
 
 
 class AssistantModel(db.Model):
-    
+
     __tablename__ = "assistant_model"
 
     id = db.Column(db.Integer, primary_key=True)
