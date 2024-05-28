@@ -65,3 +65,4 @@ snowballstemmer==2.2.0
 toml==0.10.2
 urllib3==2.2.1
 zipp==1.0.0
+pyaudio==0.2.14

@@ -1,7 +1,7 @@
 import os
 from os.path import dirname, abspath, expanduser
 
-BASE_DIR = dirname(dirname(abspath(__file__)))
+BASE_DIR = dirname(abspath(__file__))
 
 
 class Config:

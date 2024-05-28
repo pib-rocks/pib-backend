@@ -141,7 +141,7 @@ class AudioRecorderNode(Node):
                 self.get_logger().error(f"failed to record audio: {e}")
                 pya.terminate()
                 goal_handle.abort()
-                return
+                return self.create_result("")
 
         # if cancel is requested, stop execution here
         if goal_handle.is_cancel_requested:
