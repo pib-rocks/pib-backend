@@ -1,6 +1,5 @@
 from app.app import db
-from model.bricklet_pin_model import BrickletPin
-
+from model.motor_position_model import MotorPosition
 
 class Motor(db.Model):
     __tablename__ = "motor"
