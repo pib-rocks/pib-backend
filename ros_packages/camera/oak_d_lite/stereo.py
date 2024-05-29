@@ -1,13 +1,12 @@
 #!/usr/bin/python3
-import rclpy
-from rclpy.node import Node
+import base64
+
 import cv2
 import depthai as dai
-import base64
-import numpy as np
-
-from std_msgs.msg import String, Float64, Int32, Int32MultiArray
+import rclpy
 from datatypes.srv import GetCameraImage
+from rclpy.node import Node
+from std_msgs.msg import String, Float64, Int32, Int32MultiArray
 
 
 class ErrorPublisher(Node):
@@ -59,6 +58,7 @@ class CameraNode(Node):
         self.timer = self.create_timer(self.timer_period, self.timer_callback)
 
     def get_camera_image_callback(self, request, response):
+        self.get_logger().info(f"LEN IMAGE: {len(self.current_image)}")
         response = GetCameraImage.Response(image_base64=self.current_image)
         return response
 
@@ -95,6 +95,7 @@ class CameraNode(Node):
 
         msg = String()
         msg.data = jpg_as_text.decode("utf-8")  # convert bytes to string
+        self.current_image = msg.data
         self.publisher_.publish(msg)
 
     def timer_period_callback(self, msg):

@@ -6,6 +6,7 @@ from datatypes.action import Chat
 from datatypes.msg import ChatMessage
 from datatypes.srv import GetCameraImage
 from pib_api_client import voice_assistant_client
+from public_api_client.public_voice_client import PublicApiChatMessage
 from rclpy.action import ActionServer
 from rclpy.action import CancelResponse
 from rclpy.action.server import ServerGoalHandle
@@ -107,11 +108,27 @@ class ChatNode(Node):
                 GetCameraImage.Request()
             )
             camera_response = camera_response_future.image_base64
+
+        with self.voice_assistant_client_lock:
+            successful, chat_messages = voice_assistant_client.get_all_chat_messages(
+                chat_id
+            )
+        if not successful:
+            self.get_logger().error(f"chat with id'{chat_id}' does not exist...")
+            goal_handle.abort()
+            return Chat.Result()
+
+        message_history = [
+            PublicApiChatMessage(message.content, message.is_user)
+            for message in chat_messages
+        ]
+
         with self.public_voice_client_lock:
             try:
                 tokens = public_voice_client.chat_completion(
                     text=content,
                     description=description,
+                    message_history=message_history,
                     image_base64=camera_response,
                     model=personality.assistant_model.api_name,
                 )

@@ -1,11 +1,13 @@
 """provides methods for accessing TRYB's public-voice-api"""
 
-from public_api_client import configuration
-import requests
-from typing import Any, Iterable, List
 import base64
 import json
 import logging
+from typing import Any, Iterable, List
+
+import requests
+
+from public_api_client import configuration
 
 logging.basicConfig(
     level=logging.INFO,
@@ -24,6 +26,12 @@ try:
     )
 except TypeError as e:
     raise RuntimeError(f"no tryb configuration found: {e}")
+
+
+class PublicApiChatMessage:
+    def __init__(self, content: str, is_user: bool):
+        self.content = content
+        self.is_user = is_user
 
 
 def _send_request(
@@ -85,19 +93,28 @@ def text_to_speech(text: str, gender: str, language: str) -> Iterable[bytes]:
 def chat_completion(
     text: str,
     description: str,
+    message_history: List[PublicApiChatMessage],
     image_base64: str | None = None,
     model: str = "gpt-3.5-turbo",
 ) -> Iterable[str]:
     """
     receive a textual llm response, that takes into account the provided description
     """
+
     headers = {"Accept": "text/event-stream", "Content-Type": "application/json"}
 
     # Claude does not accept empty strings as input
     if (text is None) or (text == ""):
-        text = "empty"
+        text = "echo 'I could not hear you, please repeat your message.'"
 
-    body = {"data": text, "personality": {"description": description, "model": model}}
+    body = {
+        "data": text,
+        "messageHistory": [
+            {"content": message.content, "isUser": message.is_user}
+            for message in message_history
+        ],
+        "personality": {"description": description, "model": model},
+    }
 
     if image_base64 is not None:
         body["imageBase64"] = image_base64
