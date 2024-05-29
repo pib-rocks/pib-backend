@@ -1,8 +1,7 @@
 from marshmallow import fields
-
 from model.motor_model import Motor
-from schema.sql_auto_with_camel_case_schema import SQLAutoWithCamelCaseSchema
 from schema.bricklet_pin_schema import bricklet_pins_schema
+from schema.sql_auto_with_camel_case_schema import SQLAutoWithCamelCaseSchema
 
 
 class MotorSchemaSQLAutoWith(SQLAutoWithCamelCaseSchema):
