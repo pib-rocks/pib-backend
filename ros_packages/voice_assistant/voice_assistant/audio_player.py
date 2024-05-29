@@ -125,12 +125,21 @@ class AudioPlayerNode(Node):
         """returns a new iterable, whose data chunks have the specified target size (in bytes)"""
         data_buffer: bytes = b''
         for chunk in data:
+            # add data-chunk to the buffer
             data_buffer = data_buffer + chunk
+            # iterate over the data stored in the data_buffer and
+            # yield chunks of the specified target-size
             num_iters = len(data_buffer) // target_bytes_per_chunk
             for i in range(num_iters):
                 offset = i*target_bytes_per_chunk
                 yield data_buffer[offset:(offset + target_bytes_per_chunk)]
+            # remove all data from the buffer, that was yielded during the loop above
+            # (in case the length of the data in the buffer is not a multiple of the target-size
+            # the remainder is kept and yielded during the next iteration)
             data_buffer = data_buffer[(num_iters*target_bytes_per_chunk):]
+        # yield the remaining data
+        if len(data_buffer) > 0:
+            yield data_buffer
 
 
 
