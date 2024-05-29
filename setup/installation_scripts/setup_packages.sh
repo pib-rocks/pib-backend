@@ -23,7 +23,6 @@ pip3.10 install -r "$BACKEND_DIR/ros_packages/motors/requirements.txt"
 
 # Setting up the voice-assistant packages
 sudo apt-get install -y portaudio19-dev
-sudo apt install python3-pyaudio
 sudo apt-get install flac
 pip3.10 install -r "$BACKEND_DIR/ros_packages/voice_assistant/requirements.txt"
 pip3.10 install "$BACKEND_DIR/public_api_client"
