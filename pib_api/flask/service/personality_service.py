@@ -13,11 +13,11 @@ def get_personality(personality_id: str) -> Personality:
 
 def create_personality(personality_dto: Any) -> List[Personality]:
     personality = Personality(
-        name=personality_dto['name'],
-        gender=personality_dto['gender'],
-        pause_threshold=personality_dto['pause_threshold'],
-
-        assistant_model_id=personality_dto['assistant_model_id'])
+        name=personality_dto["name"],
+        gender=personality_dto["gender"],
+        pause_threshold=personality_dto["pause_threshold"],
+        assistant_model_id=personality_dto["assistant_model_id"],
+    )
     db.session.add(personality)
     db.session.flush()
     return personality
@@ -25,12 +25,12 @@ def create_personality(personality_dto: Any) -> List[Personality]:
 
 def update_personality(personality_id: str, personality_dto: Any) -> Personality:
     personality = get_personality(personality_id)
-    personality.name = personality_dto['name']
-    personality.gender = personality_dto['gender']
-    personality.pause_threshold = personality_dto['pause_threshold']
-    if 'description' in personality_dto:
-        personality.description = personality_dto['description']
-    personality.assistant_model_id = personality_dto['assistant_model_id']
+    personality.name = personality_dto["name"]
+    personality.gender = personality_dto["gender"].title()
+    personality.pause_threshold = personality_dto["pause_threshold"]
+    if "description" in personality_dto:
+        personality.description = personality_dto["description"]
+    personality.assistant_model_id = personality_dto["assistant_model_id"]
     db.session.flush()
     return personality
 

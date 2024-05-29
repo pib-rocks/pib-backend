@@ -1,11 +1,11 @@
 from model.camera_settings_model import CameraSettings
-from schema.sql_auto_with_camel_case_schema import SQLAutoWithCamelCaseSchema
+from app.app import ma
 
 
-class CameraSettingsSchemaSQLAutoWith(SQLAutoWithCamelCaseSchema):
+class CameraSettingsSchema(ma.SQLAlchemyAutoSchema):
     class Meta:
         model = CameraSettings
-        exclude = ('id',)
+        exclude = ("id",)
 
 
-camera_settings_schema = CameraSettingsSchemaSQLAutoWith()
+camera_settings_schema = CameraSettingsSchema()
