@@ -1,5 +1,7 @@
-from flask import jsonify
+import traceback
+
 from app.app import app
+from flask import jsonify
 
 
 def handle_not_found_error(error):
