@@ -126,11 +126,12 @@ class AudioPlayerNode(Node):
         data_buffer: bytes = b''
         for chunk in data:
             data_buffer = data_buffer + chunk
-            while len(data_buffer) >= target_bytes_per_chunk:
-                yield data_buffer[:target_bytes_per_chunk]
-                data_buffer = data_buffer[target_bytes_per_chunk:]
-        if len(data_buffer) > 0:
-            yield data_buffer
+            num_iters = len(data_buffer) // target_bytes_per_chunk
+            for i in range(num_iters):
+                offset = i*target_bytes_per_chunk
+                yield data_buffer[offset:(offset + target_bytes_per_chunk)]
+            data_buffer = data_buffer[(num_iters*target_bytes_per_chunk):]
+
 
 
     
