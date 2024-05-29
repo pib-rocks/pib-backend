@@ -4,6 +4,7 @@ from threading import Lock
 import rclpy
 from datatypes.action import Chat
 from datatypes.msg import ChatMessage
+from datatypes.srv import GetCameraImage
 from pib_api_client import voice_assistant_client
 from rclpy.action import ActionServer
 from rclpy.action import CancelResponse
@@ -13,12 +14,7 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.publisher import Publisher
 
-from datatypes.msg import ChatMessage
-from datatypes.action import Chat
-from datatypes.srv import GetCameraImage
-
 from public_api_client import public_voice_client
-from pib_api_client import voice_assistant_client
 
 
 class ChatNode(Node):
@@ -80,7 +76,7 @@ class ChatNode(Node):
         self.chat_message_publisher.publish(chat_message_ros)
 
     async def chat(self, goal_handle: ServerGoalHandle):
-
+        self.get_logger().info("start chat request")
         # unpack request data
         request: Chat.Goal = goal_handle.request
         chat_id: str = request.chat_id
