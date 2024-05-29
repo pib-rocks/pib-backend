@@ -26,6 +26,7 @@ sudo apt-get install -y portaudio19-dev
 sudo apt-get install flac
 pip3.10 install -r "$BACKEND_DIR/ros_packages/voice_assistant/requirements.txt"
 pip3.10 install "$BACKEND_DIR/public_api_client"
+pip3.10 install pyaudio
 mkdir "$USER_HOME/public_api"
 printf "{\n\t\"trybUrlPrefix\": \"\",\n\t\"publicApiToken\": \"\"\n}\n" > "$USER_HOME/public_api/config.json"
 
