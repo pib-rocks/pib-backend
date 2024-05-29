@@ -1,4 +1,3 @@
-from collections import deque
 import os
 import wave
 from collections import deque
@@ -7,18 +6,7 @@ from threading import Lock
 import numpy as np
 import pyaudio
 import rclpy
-from rclpy.node import Node
-from rclpy.executors import MultiThreadedExecutor
-from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
-from rclpy.node import Node
-
 from datatypes.action import RecordAudio
-
-from threading import Lock
-
-from public_api_client import public_voice_client
-import wave
-
 from rclpy.action import ActionServer
 from rclpy.action import CancelResponse, GoalResponse
 from rclpy.action.server import ServerGoalHandle
@@ -121,9 +109,9 @@ class AudioRecorderNode(Node):
         max_silent_chunks = max_silent_chunks_before
 
         # create an pyaudio-input-stream for recording audio
-        with util.surpress_stderr():
-            pya = pyaudio.PyAudio()
-            try:
+        try:
+            with util.surpress_stderr():
+                pya = pyaudio.PyAudio()
                 stream = pya.open(
                     format=pya.get_format_from_width(BYTES_PER_SAMPLE),
                     channels=NUM_CHANNELS,
@@ -149,11 +137,11 @@ class AudioRecorderNode(Node):
                 stream.stop_stream()
                 stream.close()
                 pya.terminate()
-            except OSError as e:
-                self.get_logger().error(f"failed to record audio: {e}")
-                pya.terminate()
-                goal_handle.abort()
-                return self.create_result("")
+        except OSError as e:
+            self.get_logger().error(f"failed to record audio: {e}")
+            # pya.terminate()
+            goal_handle.abort()
+            return self.create_result("")
 
         # if cancel is requested, stop execution here
         if goal_handle.is_cancel_requested:
