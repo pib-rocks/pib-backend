@@ -109,7 +109,7 @@ class AudioPlayerNode(Node):
             self.play_audio_from_file, 
             callback_group=play_audio_callback_group)
         
-        self.get_logger().info('Now running AUDIO PLAYERA')
+        self.get_logger().info('Now running AUDIO PLAYER')
 
 
 
