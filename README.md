@@ -52,27 +52,39 @@ Follow these steps to run the health-check-script:
 The script also has a development mode "./health-check-pib.sh -d" option that allows you to skip some parts of the check.
 For example to only check ros packages and system services without the python packages.
 
+## Webots
+
+Starting the webots simulation:
+
+1. Complete all steps of the "Installing pibs software"-section of this readme document
+2. Enter the following command into a terminal:  
+   `ros2 launch pibsim_webots pib_launch.py`  
+   (The first time this command is entered, a prompt will appear asking to install webots.  
+   Confirm this prompt and wait a few seconds for the installation to finish. Webots should open afterwards.)
+
+Webots may throw error messages saying it crashed (especially on VM). This can usually be ignored by clicking on "wait".
+
 ## Clustering pibs
 
 To synchronize communication between pibs on default ROS_DOMAIN_ID=0:
 
 1. Open a Terminal:
 2. Run the following command:  
-	`gedit ~/.bashrc`  
-	OR for users connected through terminal:  
-	`vim ~/.bashrc`  
+   `gedit ~/.bashrc`  
+   OR for users connected through terminal:  
+   `vim ~/.bashrc`
 3. Within .bashrc  
-	delete: export ROS_LOCALHOST_ONLY=1  
-	or replace it with: ROS_LOCALHOST_ONLY=0  
+   delete: export ROS_LOCALHOST_ONLY=1  
+   or replace it with: ROS_LOCALHOST_ONLY=0
 4. Restart pib
 
 To add pib to a distinct logical network:
 
 1. Open a Terminal
 2. Run the following command:  
-		`gedit ~/.bashrc`  
-	OR for users connected through terminal:  
-		`vim ~/.bashrc`  
+   `gedit ~/.bashrc`  
+   OR for users connected through terminal:  
+   `vim ~/.bashrc`
 3. Delete: "export ROS_LOCALHOST_ONLY=1"
 4. Append: "export ROS_DOMAIN_ID=YOUR_DOMAIN_ID"
 5. Restart pib
@@ -80,11 +92,20 @@ To add pib to a distinct logical network:
 For a range of available ROS_DOMAIN_IDs please check the official documentation at:  
 https://docs.ros.org/en/dashing/Concepts/About-Domain-ID.html
 
-### Docker 
+### Docker
+
+The backend can be started via `docker compose`. Since the software requires to interface with the OS hardware (USB,
+sound and GPIO) Docker for Windows and Mac is not supported.
+Running `docker compose up` will start the Flask API, rosbridge and the programs node. To run the full backend,
+including camera, motors and the voice assistant, profiles can be used:
+
+```bash
+docker compose --profile camera --profile motors --profile voice_assistant up
+```
 
 `password.env` required to run the voice assistant:
 
 ```
-OPENAI_API_KEY=<OpenAI_API_KEY>
-GOOGLE_APPLICATION_CREDENTIALS=<path_to_google_application_credentials_json>
+TRYB_URL_PREFIX=<BASE_URL_Tryb>
+PUBLIC_API_TOKEN=<Tryb_Public_API_Token>
 ```

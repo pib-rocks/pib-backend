@@ -11,17 +11,25 @@ ROS_MOTORS_BOOT_DIR="$ROS_WORKING_DIR"/src/motors/boot_scripts
 ROS_VOICE_ASSISTANT_BOOT_DIR="$ROS_WORKING_DIR"/src/voice_assistant/boot_scripts
 ROS_PROGRAMS_BOOT_DIR="$ROS_WORKING_DIR"/src/programs/boot_scripts
 
-#
+
 # Installing dependencies
-# Depth-AI
+# Depth-AI (Camera)
 sudo curl --silent --location https://docs.luxonis.com/install_dependencies.sh | sudo bash
 python3 -m pip install depthai
+
 # Setting up the motor packages
-pip3.10 install tinkerforge
 sudo apt-get -y install libusb-1.0-0-dev
+pip3.10 install -r "$BACKEND_DIR/ros_packages/motors/requirements.txt"
+
 # Setting up the voice-assistant packages
-pip3.10 install openai google-cloud-speech google-cloud-texttospeech pyaudio
+sudo apt-get install -y portaudio19-dev
+sudo apt install python3-pyaudio
 sudo apt-get install flac
+pip3.10 install -r "$BACKEND_DIR/ros_packages/voice_assistant/requirements.txt"
+pip3.10 install "$BACKEND_DIR/public_api_client"
+mkdir "$USER_HOME/public_api"
+printf "{\n\t\"trybUrlPrefix\": \"\",\n\t\"publicApiToken\": \"\"\n}\n" > "$USER_HOME/public_api/config.json"
+
 # Git examples for Depth-AI
 git clone --recurse-submodules https://github.com/luxonis/depthai-python.git
 cd depthai-python/examples
@@ -69,23 +77,11 @@ sudo chmod 700 "$ROS_CAMERA_BOOT_DIR/ros_camera_boot.service"
 sudo mv "$ROS_CAMERA_BOOT_DIR/ros_camera_boot.service" /etc/systemd/system
 sudo systemctl enable ros_camera_boot.service
 
-# Boot bricklet uid script
-sudo chmod 700 "$ROS_WORKING_DIR/src/motors/utils/update_bricklet_uids.py"
-sudo chmod 700 "$ROS_MOTORS_BOOT_DIR/bricklet_uid_boot.service"
-sudo mv "$ROS_MOTORS_BOOT_DIR/bricklet_uid_boot.service" /etc/systemd/system
-sudo systemctl enable bricklet_uid_boot.service
-
-# Boot motor control node
-sudo chmod 700 "$ROS_MOTORS_BOOT_DIR/ros_motor_control_node_boot.sh"
-sudo chmod 700 "$ROS_MOTORS_BOOT_DIR/ros_motor_control_node_boot.service"
-sudo mv "$ROS_MOTORS_BOOT_DIR/ros_motor_control_node_boot.service" /etc/systemd/system
+# Boot motor nodes
+sudo chmod 700 "$ROS_MOTORS_BOOT_DIR/ros_motor_boot.sh"
+sudo chmod 700 "$ROS_MOTORS_BOOT_DIR/ros_motor_boot.service"
+sudo mv "$ROS_MOTORS_BOOT_DIR/ros_motor_boot.service" /etc/systemd/system
 sudo systemctl enable ros_motor_control_node_boot.service
-
-# Boot motor current node
-sudo chmod 700 "$ROS_MOTORS_BOOT_DIR/ros_motor_current_node_boot.sh"
-sudo chmod 700 "$ROS_MOTORS_BOOT_DIR/ros_motor_current_node_boot.service"
-sudo mv "$ROS_MOTORS_BOOT_DIR/ros_motor_current_node_boot.service" /etc/systemd/system
-sudo systemctl enable ros_motor_current_node_boot.service
 
 # Boot voice-assistant
 sudo chmod 700 "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_voice_assistant_boot.sh"
@@ -93,35 +89,11 @@ sudo chmod 700 "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_voice_assistant_boot.service"
 sudo mv "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_voice_assistant_boot.service" /etc/systemd/system
 sudo systemctl enable ros_voice_assistant_boot.service
 
-# Boot chat
-sudo chmod 700 "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_chat_boot.sh"
-sudo chmod 700 "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_chat_boot.service"
-sudo mv "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_chat_boot.service" /etc/systemd/system
-sudo systemctl enable ros_chat_boot.service
-
-# Boot audio_player
-sudo chmod 700 "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_audio_player_boot.sh"
-sudo chmod 700 "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_audio_player_boot.service"
-sudo mv "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_audio_player_boot.service" /etc/systemd/system
-sudo systemctl enable ros_audio_player_boot.service
-
-# Boot audio_recorder
-sudo chmod 700 "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_audio_recorder_boot.sh"
-sudo chmod 700 "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_audio_recorder_boot.service"
-sudo mv "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_audio_recorder_boot.service" /etc/systemd/system
-sudo systemctl enable ros_audio_recorder_boot.service
-
 # Boot program node
 sudo chmod 700 "$ROS_PROGRAMS_BOOT_DIR/ros_program_boot.sh"
 sudo chmod 700 "$ROS_PROGRAMS_BOOT_DIR/ros_program_boot.service"
 sudo mv "$ROS_PROGRAMS_BOOT_DIR/ros_program_boot.service" /etc/systemd/system
 sudo systemctl enable ros_program_boot.service
-
-# Boot program proxy node
-sudo chmod 700 "$ROS_PROGRAMS_BOOT_DIR/ros_proxy_program_boot.sh"
-sudo chmod 700 "$ROS_PROGRAMS_BOOT_DIR/ros_proxy_program_boot.service"
-sudo mv "$ROS_PROGRAMS_BOOT_DIR/ros_proxy_program_boot.service" /etc/systemd/system
-sudo systemctl enable ros_proxy_program_boot.service
 
 cd "$ROS_WORKING_DIR"
 colcon build

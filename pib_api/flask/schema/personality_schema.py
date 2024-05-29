@@ -8,6 +8,8 @@ class PersonalitySchemaSQLAutoWith(SQLAutoWithCamelCaseSchema):
         include_fk = True
 
 
-personality_schema = PersonalitySchemaSQLAutoWith(exclude=('id',))
-upload_personality_schema = PersonalitySchemaSQLAutoWith(exclude=('id', 'personality_id'))
-personalities_schema = PersonalitySchemaSQLAutoWith(exclude=('id',), many=True)
+personality_schema = PersonalitySchemaSQLAutoWith(exclude=("id",))
+upload_personality_schema = PersonalitySchemaSQLAutoWith(
+    exclude=("id", "personality_id")
+)
+personalities_schema = PersonalitySchemaSQLAutoWith(exclude=("id",), many=True)
