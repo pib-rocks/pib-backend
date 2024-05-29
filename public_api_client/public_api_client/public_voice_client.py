@@ -2,7 +2,7 @@
 
 from public_api_client import configuration
 import requests
-from typing import Any, Iterable
+from typing import Any, Iterable, List
 import base64
 import json
 import logging

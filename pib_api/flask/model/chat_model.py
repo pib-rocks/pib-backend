@@ -4,6 +4,7 @@ from model.util import generate_uuid
 
 
 class Chat(db.Model):
+
     __tablename__ = "chat"
 
     id = db.Column(db.Integer, primary_key=True)

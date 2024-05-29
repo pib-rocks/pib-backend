@@ -88,7 +88,7 @@ class ChatNode(Node):
                 chat_id
             )
         if not successful:
-            self.get_logger().info(f"no personality found for id {chat_id}")
+            self.get_logger().error(f"no personality found for id {chat_id}")
             goal_handle.abort()
             return Chat.Result()
 

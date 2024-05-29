@@ -90,6 +90,9 @@ class PlaybackItem:
 
 SPEECH_ENCODING = AudioEncoding(2, 1, 16000)
 CHUNKS_PER_SECOND = 10
+FRAMES_PER_CHUNK = SPEECH_ENCODING.frames_per_second // CHUNKS_PER_SECOND
+BYTES_PER_FRAME = SPEECH_ENCODING.bytes_per_sample * SPEECH_ENCODING.num_channels
+BYTES_PER_CHUNK = BYTES_PER_FRAME * FRAMES_PER_CHUNK
 
 
 class AudioPlayerNode(Node):
@@ -132,12 +135,35 @@ class AudioPlayerNode(Node):
         self.get_logger().info("Now running AUDIO PLAYER")
 
     def counter_next(self) -> int:
-
         with self.counter_lock:
             value = self.counter
             self.counter += 1
             return value
 
+
+    
+    def adjust_data_granularity(self, data: Iterable[bytes], target_bytes_per_chunk: int) -> Iterable[bytes]:
+        """returns a new iterable, whose data chunks have the specified target size (in bytes)"""
+        data_buffer: bytes = b''
+        for chunk in data:
+            # add data-chunk to the buffer
+            data_buffer = data_buffer + chunk
+            # iterate over the data stored in the data_buffer and
+            # yield chunks of the specified target-size
+            num_iters = len(data_buffer) // target_bytes_per_chunk
+            for i in range(num_iters):
+                offset = i*target_bytes_per_chunk
+                yield data_buffer[offset:(offset + target_bytes_per_chunk)]
+            # remove all data from the buffer, that was yielded during the loop above
+            # (in case the length of the data in the buffer is not a multiple of the target-size
+            # the remainder is kept and yielded during the next iteration)
+            data_buffer = data_buffer[(num_iters*target_bytes_per_chunk):]
+        # yield the remaining data
+        if len(data_buffer) > 0:
+            yield data_buffer
+
+
+    
     def play_audio_from_file(
         self, request: PlayAudioFromFile.Request, response: PlayAudioFromFile.Response
     ) -> PlayAudioFromFile.Response:
@@ -181,6 +207,7 @@ class AudioPlayerNode(Node):
         except Exception as e:
             self.get_logger().error(f"text_to_speech failed: {e}")
             return response
+        data = self.adjust_data_granularity(data, BYTES_PER_CHUNK)
 
         playback_item = PlaybackItem(data, SPEECH_ENCODING, 0.2, order)
         self.playback_queue.put(playback_item, True)
