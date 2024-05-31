@@ -8,9 +8,9 @@ from schema.bricklet_schema import bricklet_uid_only_schema
 class BrickletPinSchemaSQLAutoWith(SQLAutoWithCamelCaseSchema):
     class Meta:
         model = BrickletPin
-        exclude = ('id',)
+        exclude = ("id",)
 
-    bricklet = fields.Pluck(bricklet_uid_only_schema, 'uid')
+    bricklet = fields.Pluck(bricklet_uid_only_schema, "uid")
 
 
 bricklet_pins_schema = BrickletPinSchemaSQLAutoWith(many=True)
