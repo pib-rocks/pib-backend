@@ -1,6 +1,7 @@
+from typing import Iterable, Tuple
 import rclpy
 from rclpy.node import Node
-from trajectory_msgs.msg import JointTrajectory
+from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from datatypes.srv import MotorSettingsSrv
 from datatypes.msg import MotorSettings
 from pib_api_client import motor_client
@@ -25,6 +26,15 @@ def motor_settings_ros_to_dto(ms: MotorSettings):
         "visible": ms.visible,
         "invert": ms.invert
     }
+
+def unpack_joint_trajectory(jt: JointTrajectory) -> Iterable[Tuple[str, int]]:
+    """unpacks a jt-message into an iterable of motorname-position-pairs"""
+    motornames = jt.joint_names
+    points: Iterable[JointTrajectoryPoint] = jt.points
+    if (len(points) != len(motornames)):
+        raise Exception(f"mismatch between number of motornames and points")
+    positions = (point.positions[0] for point in points)
+    return zip(motornames, positions)
 
 
 class MotorControl(Node):
@@ -110,16 +120,11 @@ class MotorControl(Node):
     def joint_trajectory_callback(self, joint_trajectory: JointTrajectory):
 
         try:
-            motor_name = joint_trajectory.joint_names[0]
-            target_position = joint_trajectory.points[0].positions[0]
-
-            for motor in name_to_motors[motor_name]:
-                if motor.check_if_motor_is_connected():
-                    self.get_logger().info(f"setting position of '{motor.name}' to {target_position}.")
-                    motor.set_position(target_position)
+            for motorname, position in unpack_joint_trajectory(joint_trajectory):
+                for motor in name_to_motors[motorname]:
+                    self.get_logger().info(f"setting position of '{motor.name}' to {position}.")
+                    motor.set_position(position)
                     self.get_logger().info(f"position of '{motor.name}' was set to {motor.get_position()}.")
-                else:
-                    self.get_logger().info(f"Motor is not connected.")
 
         except Exception as e:
             self.get_logger().warn(
