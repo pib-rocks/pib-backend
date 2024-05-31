@@ -20,5 +20,5 @@ class Chat(db.Model):
         backref="chat",
         lazy=True,
         cascade="all,delete",
-        order_by=ChatMessage.timestamp.desc(),
+        order_by=ChatMessage.timestamp,
     )
