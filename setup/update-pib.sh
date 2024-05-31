@@ -109,7 +109,7 @@ sudo systemctl enable bricklet_uid_boot.service
 sudo chmod 700 "$ROS_MOTORS_BOOT_DIR/ros_motor_boot.sh"
 sudo chmod 700 "$ROS_MOTORS_BOOT_DIR/ros_motor_boot.service"
 sudo mv "$ROS_MOTORS_BOOT_DIR/ros_motor_boot.service" /etc/systemd/system
-sudo systemctl enable ros_motor_control_node_boot.service
+sudo systemctl enable ros_motor_boot.service
 
 
 # Boot voice assistant
