@@ -64,9 +64,9 @@ class BrickletPin:
     def is_connected(self) -> bool:
         # X,Y and Z are the default uid of a Servo Bricklet 2.0 (updated ob boot by update_bricklet_uids.py)
         if (
-            self.bricklet.uid_string != "X"
-            and self.bricklet.uid_string != "Y"
-            and self.bricklet.uid_string != "Z"
+            self.bricklet.uid_string != "AAA"
+            and self.bricklet.uid_string != "BBB"
+            and self.bricklet.uid_string != "CCC"
         ):
             return True
         return False
