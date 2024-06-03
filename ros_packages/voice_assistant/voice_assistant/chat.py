@@ -162,13 +162,14 @@ class ChatNode(Node):
                 return Chat.Result()
 
         # create chat-message for remaining input
-        self.executor.create_task(
-            self.create_chat_message, chat_id, curr_sentence, False
-        )
+        if len(curr_sentence) > 0:
+            self.executor.create_task(self.create_chat_message, chat_id, curr_sentence, False)
 
-        # return the rest of the received text, that has not been forwarded as feedback
+        # return the restult
+        result = Chat.Result()
+        result.rest = curr_sentence if prev_sentence is None else prev_sentence
         goal_handle.succeed()
-        return Chat.Result(rest=curr_sentence)
+        return result
 
 
 def main(args=None):
