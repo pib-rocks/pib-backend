@@ -15,10 +15,8 @@ def get_chat(chat_id: str) -> Chat:
 
 
 def create_chat(chat_dto: Any) -> Chat:
-    personality = personality_service.get_personality(chat_dto['personality_id'])
-    chat = Chat(
-        topic=chat_dto['topic'],
-        personality=personality)
+    personality = personality_service.get_personality(chat_dto["personality_id"])
+    chat = Chat(topic=chat_dto["topic"], personality=personality)
     db.session.add(chat)
     db.session.flush()
     return chat
@@ -26,7 +24,7 @@ def create_chat(chat_dto: Any) -> Chat:
 
 def update_chat(chat_id: str, chat_dto: Any) -> Chat:
     chat = get_chat(chat_id)
-    chat.topic = chat_dto['topic']
+    chat.topic = chat_dto["topic"]
     db.session.flush()
     return chat
 
@@ -39,9 +37,10 @@ def delete_chat(chat_id: str) -> None:
 def create_chat_message(chat_id: str, chat_message_dto: Any) -> ChatMessage:
     chat = get_chat(chat_id)
     chat_message = ChatMessage(
-        is_user=chat_message_dto['is_user'],
-        content=chat_message_dto['content'],
-        chat=chat)
+        is_user=chat_message_dto["is_user"],
+        content=chat_message_dto["content"],
+        chat=chat,
+    )
     db.session.add(chat_message)
     db.session.flush()
     return chat_message
@@ -49,7 +48,7 @@ def create_chat_message(chat_id: str, chat_message_dto: Any) -> ChatMessage:
 
 def delete_message(chat_id: str, message_id: str) -> None:
     message = ChatMessage.query.filter(
-        (ChatMessage.message_id == message_id) &
-        (ChatMessage.chat_id == chat_id)).one()
+        (ChatMessage.message_id == message_id) & (ChatMessage.chat_id == chat_id)
+    ).one()
     db.session.delete(message)
     db.session.flush()
