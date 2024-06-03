@@ -754,23 +754,6 @@ paths:
           type: string
           format: uuid
         description: the number of the pose
-    get:
-      tags:
-        - pose
-      summary: Get one pose by the pose number
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Pose'
-        '400':
-          $ref: '#/components/responses/400'
-        '404':
-          $ref: '#/components/responses/404'
-        '500':
-          $ref: '#/components/responses/500'
     delete:
       tags:
         - pose

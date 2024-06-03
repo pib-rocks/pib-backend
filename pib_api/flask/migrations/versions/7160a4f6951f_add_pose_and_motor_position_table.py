@@ -1,8 +1,8 @@
-"""empty message
+"""add pose- and motor-position-table
 
-Revision ID: 9e48f719f042
+Revision ID: 7160a4f6951f
 Revises: 7a4053561c44
-Create Date: 2024-05-29 12:44:40.684331
+Create Date: 2024-06-03 13:54:28.623744
 
 """
 from alembic import op
@@ -10,7 +10,7 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision = '9e48f719f042'
+revision = '7160a4f6951f'
 down_revision = '7a4053561c44'
 branch_labels = None
 depends_on = None
@@ -29,7 +29,7 @@ def upgrade():
     op.create_table('motor_position',
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('position', sa.Integer(), nullable=False),
-    sa.Column('motorname', sa.String(), nullable=False),
+    sa.Column('motorname', sa.Integer(), nullable=False),
     sa.Column('pose_id', sa.Integer(), nullable=False),
     sa.ForeignKeyConstraint(['motorname'], ['motor.name'], ),
     sa.ForeignKeyConstraint(['pose_id'], ['pose.id'], ),

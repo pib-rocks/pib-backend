@@ -23,13 +23,6 @@ def get_all_poses():
     except Exception: abort(500)
 
 
-@bp.route('/<string:pose_id>', methods=['GET'])
-def get_pose(pose_id: str):
-    pose = pose_service.get_pose(pose_id)
-    try: return pose_schema.dump(pose)
-    except Exception: abort(500)
-
-
 @bp.route('/<string:pose_id>/motor-positions', methods=['GET'])
 def get_motor_positions_of_pose(pose_id: str):
     pose = pose_service.get_pose(pose_id)
@@ -42,6 +35,7 @@ def delete_pose(pose_id: str):
     pose_service.delete_pose(pose_id)
     db.session.commit()
     return '', 204
+
 
 @bp.route('/<string:pose_id>', methods=['PATCH'])
 def rename_pose(pose_id: str):
