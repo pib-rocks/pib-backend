@@ -110,16 +110,16 @@ def _create_program_data() -> None:
 
 def _create_chat_data_and_assistant() -> None:
     gpt4o1 = AssistantModel(
-        visual_name="GPT-4o (with image)", api_name="gpt-4o", has_image_support=True
+        visual_name="GPT-4o [Vision]", api_name="gpt-4o", has_image_support=True
     )
     gpt4o2 = AssistantModel(
-        visual_name="GPT-4o (without image)", api_name="gpt-4o", has_image_support=False
+        visual_name="GPT-4o [Text]", api_name="gpt-4o", has_image_support=False
     )
     gpt3 = AssistantModel(
-        visual_name="GPT-3.5", api_name="gpt-3.5-turbo", has_image_support=False
+        visual_name="GPT-3.5 [Text]", api_name="gpt-3.5-turbo", has_image_support=False
     )
     claude = AssistantModel(
-        visual_name="Claude 3 Sonnet (with image)",
+        visual_name="Claude 3 Sonnet [Vision]",
         api_name="anthropic.claude-3-sonnet-20240229-v1:0",
         has_image_support=True,
     )
