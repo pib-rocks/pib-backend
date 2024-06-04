@@ -42,7 +42,9 @@ class ChatNode(Node):
         self.chat_message_publisher: Publisher = self.create_publisher(
             ChatMessage, "chat_messages", 10
         )
-        self.camera_client = self.create_client(GetCameraImage, "get_camera_image")
+        self.get_camera_image_client = self.create_client(
+            GetCameraImage, "get_camera_image"
+        )
 
         # lock that should be aquired, whenever accessing 'public_voice_client'
         self.public_voice_client_lock = Lock()
@@ -78,6 +80,7 @@ class ChatNode(Node):
 
     async def chat(self, goal_handle: ServerGoalHandle):
         self.get_logger().info("start chat request")
+
         # unpack request data
         request: Chat.Goal = goal_handle.request
         chat_id: str = request.chat_id
@@ -92,23 +95,24 @@ class ChatNode(Node):
             self.get_logger().error(f"no personality found for id {chat_id}")
             goal_handle.abort()
             return Chat.Result()
-
-        # create the user message
-        self.executor.create_task(self.create_chat_message, chat_id, content, True)
-
-        # receive an iterable of tokens from the public-api
         description = (
             personality.description
             if personality.description is not None
             else "Du bist pib, ein humanoider Roboter."
         )
-        camera_response = None
-        if personality.assistant_model.has_image_support:
-            camera_response_future = await self.camera_client.call_async(
-                GetCameraImage.Request()
-            )
-            camera_response = camera_response_future.image_base64
 
+        # create the user message
+        self.executor.create_task(self.create_chat_message, chat_id, content, True)
+
+        # get the current image from the camera
+        image_base64 = None
+        if personality.assistant_model.has_image_support:
+            response: GetCameraImage.Response = (
+                await self.get_camera_image_client.call_async(GetCameraImage.Request())
+            )
+            image_base64 = response.image_base64
+
+        # get the message-history from the pib-api
         with self.voice_assistant_client_lock:
             successful, chat_messages = voice_assistant_client.get_all_chat_messages(
                 chat_id
@@ -117,7 +121,6 @@ class ChatNode(Node):
             self.get_logger().error(f"chat with id'{chat_id}' does not exist...")
             goal_handle.abort()
             return Chat.Result()
-
         message_history = [
             PublicApiChatMessage(message.content, message.is_user)
             for message in chat_messages
@@ -125,11 +128,12 @@ class ChatNode(Node):
 
         with self.public_voice_client_lock:
             try:
+                # receive an iterable of tokens from the public-api
                 tokens = public_voice_client.chat_completion(
                     text=content,
                     description=description,
                     message_history=message_history,
-                    image_base64=camera_response,
+                    image_base64=image_base64,
                     model=personality.assistant_model.api_name,
                 )
 

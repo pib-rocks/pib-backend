@@ -7,6 +7,9 @@ from tinkerforge.bricklet_servo_v2 import BrickletServoV2
 
 class BrickletPin:
 
+    NO_CURRENT: int = -1
+    DEFAULT_BRICKLET_UIDS = ["AAA", "BBB", "CCC"]
+
     def __init__(self, pin: int, uid: str, invert: bool) -> None:
         self.pin: int = pin
         self.bricklet: BrickletServoV2 = uid_to_bricklet[uid]
@@ -21,6 +24,7 @@ class BrickletPin:
         return f"BRICKLET-PIN[ pin: {self.pin}, bricklet: {uid} ]"
 
     def apply_settings(self, settings_dto: dict[str, Any]) -> bool:
+        """apply the provided settings to the bricklet-pin"""
         if not self.is_connected():
             return False
         try:
@@ -43,6 +47,7 @@ class BrickletPin:
         return False
 
     def get_settings(self) -> dict[str, Any]:
+        """returns the current settings of the bricklet-pin"""
         settings_dto = {}
         try:
             settings_dto["pulseWidthMin"], settings_dto["pulseWidthMax"] = (
@@ -61,21 +66,24 @@ class BrickletPin:
             )
         return settings_dto
 
-    def is_connected(self) -> bool:
-        # X,Y and Z are the default uid of a Servo Bricklet 2.0 (updated ob boot by update_bricklet_uids.py)
-        if (
-            self.bricklet.uid_string != "AAA"
-            and self.bricklet.uid_string != "BBB"
-            and self.bricklet.uid_string != "CCC"
-        ):
-            return True
-        return False
+    def get_current(self) -> int:
+        """returns the current of the bricklet pin, or NO_CURRENT, if it is not connected"""
+        return (
+            self.bricklet.get_servo_current(self.pin)
+            if self.is_connected()
+            else BrickletPin.NO_CURRENT
+        )
 
-    def set_position(self, position: int, invert: bool) -> bool:
+    def is_connected(self) -> bool:
+        """checks if the bricklet-pin is connected to a bricklet"""
+        return self.bricklet.uid_string not in BrickletPin.DEFAULT_BRICKLET_UIDS
+
+    def set_position(self, position: int) -> bool:
+        """sets the position of the bricklet-pin and returns 'True' if this was successful"""
         if not self.is_connected():
             return False
-        if invert:
-            position = position * -1
+        if self.invert:
+            position *= -1
         try:
             self.bricklet.set_position(self.pin, position)
         except Exception:
@@ -83,6 +91,7 @@ class BrickletPin:
         return True
 
     def get_position(self) -> int:
+        """returns the current position of the bricklet-pin, or '0' if not connected to a bricklet"""
         try:
             return self.bricklet.get_position(self.pin)
         except Exception:
