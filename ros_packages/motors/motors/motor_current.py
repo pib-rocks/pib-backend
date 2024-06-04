@@ -1,13 +1,10 @@
 import os
 import rclpy
-from rclpy.node import Node
 from diagnostic_msgs.msg import DiagnosticStatus
 from diagnostic_msgs.msg import KeyValue
+from pib_motors.config import cfg
 from pib_motors.update_bricklet_uids import *
 from pib_motors.motor import motors, Motor
-
-TINKERFORGE_HOST = os.getenv("TINKERFORGE_HOST", "localhost")
-TINKERFORGE_PORT = int(os.getenv("TINKERFORGE_PORT", 4223))
 
 
 class MotorCurrent(Node):

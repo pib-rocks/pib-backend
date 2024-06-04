@@ -1,17 +1,16 @@
 """Script for managing TinkerForge UIDs and corresponding database operations"""
 
 import json
-import os
-import sys
 import multiprocessing
+import sys
+
 import requests
+from pib_motors.config import cfg
+from tinkerforge.brick_hat import BrickHAT
 from tinkerforge.ip_connection import IPConnection
 from tinkerforge.brick_hat import BrickHAT
 
-BASE_URL = os.getenv("FLASK_API_BASE_URL", "http://127.0.0.1:5000")
-TINKERFORGE_HOST = os.getenv("TINKERFORGE_HOST", "localhost")
-TINKERFORGE_PORT = int(os.getenv("TINKERFORGE_PORT", 4223))
-BRICKLET_URLS = [f"{BASE_URL}/bricklet/{i}" for i in range(1, 4)]
+BRICKLET_URLS = [f"{cfg.FLASK_API}/bricklet/{i}" for i in range(1, 4)]
 
 uid0 = "AAA"
 uid1 = "BBB"
@@ -20,7 +19,7 @@ POSITION_TO_UID_MAP = {"a": "uid0", "b": "uid1", "e": "uid2"}
 
 ipcon: IPConnection = IPConnection()
 hat = BrickHAT("X", ipcon)
-ipcon.connect(TINKERFORGE_HOST, TINKERFORGE_PORT)
+ipcon.connect(cfg.TINKERFORGE_HOST, cfg.TINKERFORGE_PORT)
 
 
 def cb_enumerate(
@@ -57,7 +56,7 @@ def update_uids():
 
 def get_uids_from_db():
     """Retrieve all UIDs from the database."""
-    response = requests.get(BASE_URL + "/bricklet")
+    response = requests.get(f"{cfg.FLASK_API}/bricklet")
     json_data = json.loads(response.text)
     return [
         json_data["bricklets"][0]["uid"],
@@ -69,6 +68,12 @@ def get_uids_from_db():
 def no_uids_in_database():
     """Check for changes between current databse and TinkerForge UIDs."""
     return get_uids_from_db() == ["AAA", "BBB", "CCC"]
+
+
+def check_and_update():
+    if no_uids_in_database():
+        update_uids()
+    return
 
 
 if __name__ == "__main__":

@@ -8,7 +8,7 @@ class Motor:
     MIN_ROTATION: int = -9000
     MAX_ROTATION: int = 9000
 
-    NO_CURRENT: int = -1
+    NO_CURRENT: int = BrickletPin.NO_CURRENT
 
     def __init__(self, name: str, bricklet_pins: list[BrickletPin], invert: bool):
         self.name: str = name
@@ -51,9 +51,7 @@ class Motor:
         if self.invert:
             position *= -1
         position = self._validate_position(position)
-        return all(
-            bricklet_pin.set_position(position) for bricklet_pin in self.bricklet_pins
-        )
+        return all(bp.set_position(position) for bp in self.bricklet_pins)
 
     def get_position(self) -> int:
         """returns the postion of the motor"""
@@ -61,11 +59,11 @@ class Motor:
 
     def get_current(self) -> int:
         """returns the maximum current of all bricklet-pins, or NO_CURRENT, if not bricklet-pin is connected"""
-        return max(bricklet_pin.get_current() for bricklet_pin in self.bricklet_pins)
+        return max(bp.get_current() for bp in self.bricklet_pins)
 
     def check_if_motor_is_connected(self) -> bool:
         """returns 'True' iff all bricklet-pins of this motor are connected"""
-        return all(bricklet_pin.is_connected() for bricklet_pin in self.bricklet_pins)
+        return all(bp.is_connected() for bp in self.bricklet_pins)
 
     def _validate_position(self, position: int) -> int:
         """Check if position is within range, set it to the min/max value if not."""

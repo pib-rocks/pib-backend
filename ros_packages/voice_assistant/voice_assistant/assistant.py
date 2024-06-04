@@ -199,7 +199,6 @@ class VoiceAssistantNode(Node):
     def play_audio_from_file(
         self, filepath: str, on_stopped_playing: Callable[[], None] = None
     ):
-
         request = PlayAudioFromFile.Request()
         request.filepath = filepath
         request.join = on_stopped_playing is not None
@@ -258,7 +257,6 @@ class VoiceAssistantNode(Node):
             elif not request_state.turned_on:  # deactivate voice assistant
                 self.cycle += 1
                 self.turning_off = True
-                self.waiting_for_transcribed_text = False
                 self.stop_recording()
                 self.stop_chat(self.state.chat_id)
                 current_chat_id = self.state.chat_id
@@ -302,7 +300,6 @@ class VoiceAssistantNode(Node):
     def get_chat_is_listening(
         self, request: GetChatIsListening.Request, response: GetChatIsListening.Response
     ) -> GetChatIsListening.Response:
-
         response.listening = self.get_is_listening(request.chat_id)
         return response
 
@@ -378,13 +375,17 @@ class VoiceAssistantNode(Node):
         )
 
     def on_sentence_received(self, sentence: str) -> None:
-
+        if not sentence:
+            self._turn_off_voice_assistant()
+            return
         self.play_audio_from_speech(
             sentence, self.personality.gender, self.personality.language
         )
 
     def on_final_sentence_received(self, sentence: str) -> None:
-
+        if not sentence:
+            self._turn_off_voice_assistant()
+            return
         self.play_audio_from_speech(
             sentence,
             self.personality.gender,
@@ -393,7 +394,6 @@ class VoiceAssistantNode(Node):
         )
 
     def on_final_sentence_played(self) -> None:
-
         self.play_audio_from_file(
             START_SIGNAL_FILE, self.if_cycle_not_changed(self.on_start_signal_played)
         )
@@ -415,7 +415,6 @@ class VoiceAssistantNode(Node):
         self, goal_handle_future: Future, callback: Callable[[Any], None] = None
     ) -> Callable[[], None]:
         """adds a result callback to the goal and returns a function, that can be used to cancel the goal"""
-
         if callback is not None:
 
             def result_callback(result_future: Future):
@@ -459,7 +458,6 @@ class VoiceAssistantNode(Node):
 
 
 def main(args=None):
-
     rclpy.init()
     node = VoiceAssistantNode()
     executor = SingleThreadedExecutor()

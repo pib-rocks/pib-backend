@@ -1,13 +1,14 @@
+from typing import List
 from model.bricklet_model import Bricklet
 from app.app import db
 
 
-def get_all_bricklets() -> list[Bricklet]:
+def get_all_bricklets() -> List[Bricklet]:
     return Bricklet.query.all()
 
 
 def get_bricklet(bricklet_number: int) -> Bricklet:
-    return Bricklet.query.filter(Bricklet.brickletNumber == bricklet_number).one()
+    return Bricklet.query.filter(Bricklet.bricklet_number == bricklet_number).one()
 
 
 def set_bricklet_uid(bricklet_number: int, uid: str) -> Bricklet:
