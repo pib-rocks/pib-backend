@@ -27,6 +27,7 @@ import os
 from pib_api_client import voice_assistant_client
 from pib_api_client.voice_assistant_client import Personality
 
+
 VOICE_ASSISTANT_DIRECTORY = os.getenv(
     "VOICE_ASSISTANT_DIR", "/home/pib/ros_working_dir/src/voice_assistant"
 )
@@ -182,12 +183,12 @@ class VoiceAssistantNode(Node):
         goal.text = text
         goal.chat_id = chat_id
         feedback_callback = (
-            self._deactivate_voice_assistant()
+            None
             if on_sentence_received is None
             else lambda msg: on_sentence_received(msg.feedback.sentence)
         )
         result_callback = (
-            self._deactivate_voice_assistant()
+            None
             if on_final_sentence_received is None
             else lambda result: on_final_sentence_received(result.rest)
         )
@@ -229,6 +230,7 @@ class VoiceAssistantNode(Node):
         _: GetVoiceAssistantState.Request,
         response: GetVoiceAssistantState.Response,
     ) -> GetVoiceAssistantState.Response:
+
         response.voice_assistant_state = self.state
         return response
 
@@ -237,6 +239,7 @@ class VoiceAssistantNode(Node):
         request: SetVoiceAssistantState.Request,
         response: SetVoiceAssistantState.Response,
     ) -> SetVoiceAssistantState.Response:
+
         request_state: VoiceAssistantState = request.voice_assistant_state
 
         try:
@@ -303,6 +306,7 @@ class VoiceAssistantNode(Node):
     def send_chat_message(
         self, request: SendChatMessage.Request, response: SendChatMessage.Response
     ) -> GetChatIsListening.Response:
+
         if not self.get_is_listening(
             request.chat_id
         ):  # do not create a message, if chat is not listening
@@ -349,6 +353,7 @@ class VoiceAssistantNode(Node):
         self.set_is_listening(self.state.chat_id, True)
 
     def on_stopped_recording(self) -> None:
+
         if not self.get_is_listening(self.state.chat_id):
             return
 
@@ -357,6 +362,9 @@ class VoiceAssistantNode(Node):
         self.waiting_for_transcribed_text = True
 
     def on_transcribed_text_received(self, transcribed_text: str) -> None:
+
+        if not self.waiting_for_transcribed_text:
+            return
         self.waiting_for_transcribed_text = False
 
         self.chat(
@@ -447,14 +455,6 @@ class VoiceAssistantNode(Node):
         stop_chat = self.chat_id_to_stop_chat.get(chat_id)
         if stop_chat is not None:
             stop_chat()
-
-    def _turn_off_voice_assistant(self):
-        request: SetVoiceAssistantState.Request = SetVoiceAssistantState.Request()
-        request.voice_assistant_state = self.state
-        request.voice_assistant_state.turned_on = False
-
-        response = SetVoiceAssistantState.Response()
-        self.set_voice_assistant_state(request, response)
 
 
 def main(args=None):
