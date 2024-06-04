@@ -163,7 +163,9 @@ class ChatNode(Node):
 
         # create chat-message for remaining input
         if len(curr_sentence) > 0:
-            self.executor.create_task(self.create_chat_message, chat_id, curr_sentence, False)
+            self.executor.create_task(
+                self.create_chat_message, chat_id, curr_sentence, False
+            )
 
         # return the restult
         result = Chat.Result()
