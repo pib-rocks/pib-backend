@@ -51,9 +51,9 @@ class VoiceAssistantNode(Node):
         self.cycle: int = 0
         self.state: VoiceAssistantState = VoiceAssistantState()
         # indicates if the va is turned on or off
-        self.state.turned_on = False  
+        self.state.turned_on = False
         # id of the active chat
-        self.state.chat_id = ""  
+        self.state.chat_id = ""
         # indicates if the voice_assistant is currently turning off
         self.turning_off = False
         # the personality associated with the active chat
@@ -65,7 +65,7 @@ class VoiceAssistantNode(Node):
         # maps a chat-id to the listening status of the respective chat
         self.chat_id_to_is_listening: dict[str, bool] = {}
         # indicates, whether audio was recorded and va is currently awaitng the transcription
-        self.waiting_for_transcribed_text = False  
+        self.waiting_for_transcribed_text = False
 
         # services ----------------------------------------------------------------------
 
@@ -177,7 +177,7 @@ class VoiceAssistantNode(Node):
         goal.chat_id = chat_id
         feedback_callback = None
         if on_sentence_received is not None:
-            feedback_callback =  lambda msg: on_sentence_received(msg.feedback.sentence)
+            feedback_callback = lambda msg: on_sentence_received(msg.feedback.sentence)
         result_callback = None
         if on_final_sentence_received is not None:
             result_callback = lambda result: on_final_sentence_received(result.rest)
@@ -383,15 +383,18 @@ class VoiceAssistantNode(Node):
     def update_state(self, turned_on: bool, chat_id: str = "") -> bool:
         """attempts to update the internal state, and returns whether this was successful"""
         try:
-            if self.turning_off:  # ignore if currently turning off
+            # ignore if currently turning off
+            if self.turning_off:
                 raise Exception("voice assistant is currently turning off")
-            
-            elif turned_on == self.state.turned_on: # ignore if activation state not changed
+
+            # ignore if activation state not changed
+            elif turned_on == self.state.turned_on:
                 raise Exception(
                     f"voice assistant is already turned {'on' if turned_on else 'off'}."
                 )
-            
-            elif not turned_on: # deactivate voice assistant
+
+            # deactivate voice assistant
+            elif not turned_on:
                 self.cycle += 1
                 self.turning_off = True
                 self.stop_recording()
@@ -405,7 +408,8 @@ class VoiceAssistantNode(Node):
 
                 self.clear_playback_queue(on_playback_queue_cleared)
 
-            else:  # activate voice assistant
+            # activate voice assistant
+            else:
                 self.stop_chat(chat_id)
                 successful, self.personality = (
                     voice_assistant_client.get_personality_from_chat(chat_id)
