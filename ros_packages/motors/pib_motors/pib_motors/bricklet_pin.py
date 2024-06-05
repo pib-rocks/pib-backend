@@ -57,5 +57,9 @@ class BrickletPin:
 		return True
 
 	def get_position(self) -> int:
-		try: return self.bricklet.get_position(self.pin)
-		except Exception: return 0
+		if not self.is_connected():
+			return 0
+		try: 
+			return self.bricklet.get_position(self.pin)
+		except Exception: 
+			return 0
