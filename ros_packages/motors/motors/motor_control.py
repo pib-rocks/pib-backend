@@ -43,8 +43,7 @@ class MotorControl(Node):
 
         qos_policy = rclpy.qos.QoSProfile(
             reliability=rclpy.qos.ReliabilityPolicy.BEST_EFFORT,
-            history=rclpy.qos.HistoryPolicy.KEEP_LAST,
-            depth=1
+            history=rclpy.qos.HistoryPolicy.KEEP_ALL
         )
 
         super().__init__('motor_control')
