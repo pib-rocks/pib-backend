@@ -27,6 +27,7 @@ import os
 from pib_api_client import voice_assistant_client
 from pib_api_client.voice_assistant_client import Personality
 
+
 VOICE_ASSISTANT_DIRECTORY = os.getenv(
     "VOICE_ASSISTANT_DIR", "/home/pib/ros_working_dir/src/voice_assistant"
 )
@@ -175,12 +176,16 @@ class VoiceAssistantNode(Node):
         goal = Chat.Goal()
         goal.text = text
         goal.chat_id = chat_id
-        feedback_callback = None
-        if on_sentence_received is not None:
-            feedback_callback = lambda msg: on_sentence_received(msg.feedback.sentence)
-        result_callback = None
-        if on_final_sentence_received is not None:
-            result_callback = lambda result: on_final_sentence_received(result.rest)
+        feedback_callback = (
+            None
+            if on_sentence_received is None
+            else lambda msg: on_sentence_received(msg.feedback.sentence)
+        )
+        result_callback = (
+            None
+            if on_final_sentence_received is None
+            else lambda result: on_final_sentence_received(result.rest)
+        )
         future: Future = self.chat_client.send_goal_async(goal, feedback_callback)
         stop_chat = self.digest_goal_handle_future(future, result_callback)
         self.chat_id_to_stop_chat[chat_id] = stop_chat
@@ -218,6 +223,7 @@ class VoiceAssistantNode(Node):
         _: GetVoiceAssistantState.Request,
         response: GetVoiceAssistantState.Response,
     ) -> GetVoiceAssistantState.Response:
+
         response.voice_assistant_state = self.state
         return response
 
@@ -226,6 +232,7 @@ class VoiceAssistantNode(Node):
         request: SetVoiceAssistantState.Request,
         response: SetVoiceAssistantState.Response,
     ) -> SetVoiceAssistantState.Response:
+
         request_state: VoiceAssistantState = request.voice_assistant_state
         successful = self.update_state(request_state.turned_on, request_state.chat_id)
         response.successful = successful
@@ -240,6 +247,7 @@ class VoiceAssistantNode(Node):
     def send_chat_message(
         self, request: SendChatMessage.Request, response: SendChatMessage.Response
     ) -> GetChatIsListening.Response:
+
         if not self.get_is_listening(
             request.chat_id
         ):  # do not create a message, if chat is not listening
