@@ -126,9 +126,9 @@ class ChatNode(Node):
             for message in chat_messages
         ]
 
-        with self.public_voice_client_lock:
-            try:
-                # receive an iterable of tokens from the public-api
+        # receive assistant-response in form of an iterable of token from the public-api
+        try:
+            with self.public_voice_client_lock:
                 tokens = public_voice_client.chat_completion(
                     text=content,
                     description=description,
@@ -136,43 +136,48 @@ class ChatNode(Node):
                     image_base64=image_base64,
                     model=personality.assistant_model.api_name,
                 )
+        except Exception as e:
+            self.get_logger().error(f"failed to send request to public-api: {e}")
+            goal_handle.abort()
+            return Chat.Result()
 
-                curr_sentence: str = ""
-                prev_sentence: str | None = None
-                sentence_boundary = re.compile(r"[^\d | ^A-Z][\.|!|\?|:]")
+        # for storing and analyzing data from the public-api
+        curr_sentence: str = ""
+        prev_sentence: str | None = None
+        sentence_boundary = re.compile(r"[^\d | ^A-Z][\.|!|\?|:]")
 
-                for token in tokens:
-                    # if the goal was cancelled, return immediately
-                    if goal_handle.is_cancel_requested:
-                        goal_handle.canceled()
-                        return Chat.Result(rest=curr_sentence)
-                    # if a sentence was already found and another token was received, forward the sentence as feedback
-                    if prev_sentence is not None:
-                        self.executor.create_task(
-                            self.create_chat_message, chat_id, prev_sentence, False
-                        )
-                        feedback = Chat.Feedback()
-                        feedback.sentence = prev_sentence
-                        goal_handle.publish_feedback(feedback)
-                        prev_sentence = None
-                    # check if the current token marks the end of a sentence
-                    if sentence_boundary.search(curr_sentence):
-                        prev_sentence = curr_sentence.strip()
-                        curr_sentence = ""
-                    curr_sentence += token
-            except Exception as e:
-                self.get_logger().error(f"chat completion failed: {e}")
-                goal_handle.abort()
-                return Chat.Result()
+        # process incoming data from public-api
+        for token in tokens:
+            # if the goal was cancelled, return immediately
+            if goal_handle.is_cancel_requested:
+                goal_handle.canceled()
+                return Chat.Result(rest=curr_sentence)
+            # if a sentence was already found and another token was received, forward the sentence as feedback
+            if prev_sentence is not None:
+                self.executor.create_task(
+                    self.create_chat_message, chat_id, prev_sentence, False
+                )
+                feedback = Chat.Feedback()
+                feedback.sentence = prev_sentence
+                goal_handle.publish_feedback(feedback)
+                prev_sentence = None
+            # check if the current token marks the end of a sentence
+            if sentence_boundary.search(curr_sentence):
+                prev_sentence = curr_sentence.strip()
+                curr_sentence = ""
+            curr_sentence += token
 
         # create chat-message for remaining input
-        self.executor.create_task(
-            self.create_chat_message, chat_id, curr_sentence, False
-        )
+        if len(curr_sentence) > 0:
+            self.executor.create_task(
+                self.create_chat_message, chat_id, curr_sentence, False
+            )
 
-        # return the rest of the received text, that has not been forwarded as feedback
+        # return the restult
+        result = Chat.Result()
+        result.rest = curr_sentence if prev_sentence is None else prev_sentence
         goal_handle.succeed()
-        return Chat.Result(rest=curr_sentence)
+        return result
 
 
 def main(args=None):
