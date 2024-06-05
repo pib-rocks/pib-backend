@@ -17,6 +17,7 @@ from rclpy.publisher import Publisher
 
 from public_api_client import public_voice_client
 
+
 class ChatNode(Node):
 
     def __init__(self):
@@ -41,7 +42,9 @@ class ChatNode(Node):
         self.chat_message_publisher: Publisher = self.create_publisher(
             ChatMessage, "chat_messages", 10
         )
-        self.get_camera_image_client = self.create_client(GetCameraImage, "get_camera_image")
+        self.get_camera_image_client = self.create_client(
+            GetCameraImage, "get_camera_image"
+        )
 
         # lock that should be aquired, whenever accessing 'public_voice_client'
         self.public_voice_client_lock = Lock()
@@ -77,7 +80,7 @@ class ChatNode(Node):
 
     async def chat(self, goal_handle: ServerGoalHandle):
         self.get_logger().info("start chat request")
-        
+
         # unpack request data
         request: Chat.Goal = goal_handle.request
         chat_id: str = request.chat_id
@@ -104,8 +107,8 @@ class ChatNode(Node):
         # get the current image from the camera
         image_base64 = None
         if personality.assistant_model.has_image_support:
-            response: GetCameraImage.Response = await self.get_camera_image_client.call_async(
-                GetCameraImage.Request()
+            response: GetCameraImage.Response = (
+                await self.get_camera_image_client.call_async(GetCameraImage.Request())
             )
             image_base64 = response.image_base64
 
@@ -163,7 +166,7 @@ class ChatNode(Node):
                 prev_sentence = curr_sentence.strip()
                 curr_sentence = ""
             curr_sentence += token
-            
+
         # create chat-message for remaining input
         if len(curr_sentence) > 0:
             self.executor.create_task(
@@ -175,6 +178,7 @@ class ChatNode(Node):
         result.rest = curr_sentence if prev_sentence is None else prev_sentence
         goal_handle.succeed()
         return result
+
 
 def main(args=None):
 
