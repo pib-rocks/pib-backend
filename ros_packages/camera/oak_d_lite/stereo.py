@@ -42,7 +42,7 @@ class CameraNode(Node):
         self.preview_size_subscription = self.create_subscription(
             Int32MultiArray, "size_topic", self.preview_size_callback, 10
         )
-        self.picture_service = self.create_service(
+        self.get_camera_image_service = self.create_service(
             GetCameraImage, "get_camera_image", self.get_camera_image_callback
         )
 

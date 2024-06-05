@@ -81,6 +81,7 @@ class PlaybackItem:
                 stream.stop_stream()
                 stream.close()
                 pya.terminate()
+
         except OSError as e:
             # ToDo - Get better logging for non-ROS packages
             print(f"failed to playback audio: {e}", file=sys.stderr)
