@@ -3,7 +3,7 @@
 import base64
 import json
 import logging
-from typing import Any, Iterable, List
+from typing import Any, Iterable, List, Optional
 
 import requests
 
@@ -94,7 +94,7 @@ def chat_completion(
     text: str,
     description: str,
     message_history: List[PublicApiChatMessage],
-    image_base64: str | None = None,
+    image_base64: Optional[str] = None,
     model: str = "gpt-3.5-turbo",
 ) -> Iterable[str]:
     """

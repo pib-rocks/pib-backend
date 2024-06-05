@@ -49,6 +49,8 @@ class BrickletPin:
     def get_settings(self) -> dict[str, Any]:
         """returns the current settings of the bricklet-pin"""
         settings_dto = {}
+        if not self.is_connected():
+            return settings_dto
         try:
             settings_dto["pulseWidthMin"], settings_dto["pulseWidthMax"] = (
                 self.bricklet.get_pulse_width(self.pin)
