@@ -6,7 +6,7 @@ from datatypes.srv import MotorSettingsSrv
 from datatypes.msg import MotorSettings
 from pib_api_client import motor_client
 from pib_motors.motor import name_to_motors, motors
-from pib_motors.bricklet import ipcon      
+from pib_motors.bricklet import ipcon
 from pib_motors.update_bricklet_uids import *
 
 
@@ -24,17 +24,8 @@ def motor_settings_ros_to_dto(ms: MotorSettings):
         "deceleration": ms.deceleration,
         "period": ms.period,
         "visible": ms.visible,
-        "invert": ms.invert
+        "invert": ms.invert,
     }
-
-def unpack_joint_trajectory(jt: JointTrajectory) -> Iterable[Tuple[str, int]]:
-    """unpacks a jt-message into an iterable of motorname-position-pairs"""
-    motornames = jt.joint_names
-    points: Iterable[JointTrajectoryPoint] = jt.points
-    if (len(points) != len(motornames)):
-        raise Exception(f"mismatch between number of motornames and points")
-    positions = (point.positions[0] for point in points)
-    return zip(motornames, positions)
 
 
 class MotorControl(Node):
@@ -43,10 +34,10 @@ class MotorControl(Node):
 
         qos_policy = rclpy.qos.QoSProfile(
             reliability=rclpy.qos.ReliabilityPolicy.BEST_EFFORT,
-            history=rclpy.qos.HistoryPolicy.KEEP_ALL
+            history=rclpy.qos.HistoryPolicy.KEEP_ALL,
         )
 
-        super().__init__('motor_control')
+        super().__init__("motor_control")
 
         # Toggle Devmode
         self.declare_parameter("dev", False)
@@ -55,28 +46,26 @@ class MotorControl(Node):
         # Topic for JointTrajectory
         self.subscription = self.create_subscription(
             JointTrajectory,
-            'joint_trajectory',
+            "joint_trajectory",
             self.joint_trajectory_callback,
-            qos_profile=qos_policy
+            qos_profile=qos_policy,
         )
 
         # Service for MotorSettings
         self.srv = self.create_service(
-            MotorSettingsSrv,
-            'motor_settings',
-            self.motor_settings_callback
+            MotorSettingsSrv, "motor_settings", self.motor_settings_callback
         )
 
         # Publisher for MotorSettings
-        self.publisher = self.create_publisher(
-            MotorSettings, "motor_settings", 10)
+        self.publisher = self.create_publisher(MotorSettings, "motor_settings", 10)
 
         # load motor-settings if not in dev mode
         if not self.dev:
             for motor in motors:
                 if motor.check_if_motor_is_connected():
                     successful, motor_settings_dto = motor_client.get_motor_settings(
-                        motor.name)
+                        motor.name
+                    )
                     if successful:
                         motor.apply_settings(motor_settings_dto)
 
@@ -86,7 +75,9 @@ class MotorControl(Node):
         # Log that initialization is complete
         self.get_logger().warn("Info: passed __init__")
 
-    def motor_settings_callback(self, request: MotorSettingsSrv.Request, response: MotorSettingsSrv.Response):
+    def motor_settings_callback(
+        self, request: MotorSettingsSrv.Request, response: MotorSettingsSrv.Response
+    ):
 
         response.settings_applied = True
         response.settings_persisted = True
@@ -97,37 +88,46 @@ class MotorControl(Node):
         try:
             motors = name_to_motors[request.motor_settings.motor_name]
             for motor in motors:
-                motor_settings_dto['name'] = motor.name
+                motor_settings_dto["name"] = motor.name
                 motor_settings_ros.motor_name = motor.name
                 applied = motor.apply_settings(motor_settings_dto)
                 response.settings_applied &= applied
                 if applied or self.dev:
                     persisted, _ = motor_client.update_motor_settings(
-                        motor.name, motor_settings_dto)
+                        motor.name, motor_settings_dto
+                    )
                     response.settings_persisted &= persisted
                     self.publisher.publish(motor_settings_ros)
-                self.get_logger().info(f'updated motor: {str(motor)}')
+                self.get_logger().info(f"updated motor: {str(motor)}")
 
         except Exception as e:
             response = MotorSettingsSrv.Response(
-                settings_applied=False, settings_persisted=False)
+                settings_applied=False, settings_persisted=False
+            )
             self.get_logger().warn(
-                f"Error while processing motor-settings-message: {str(e)}")
+                f"Error while processing motor-settings-message: {str(e)}"
+            )
 
         return response
 
     def joint_trajectory_callback(self, joint_trajectory: JointTrajectory):
 
         try:
-            for motorname, position in unpack_joint_trajectory(joint_trajectory):
-                for motor in name_to_motors[motorname]:
-                    self.get_logger().info(f"setting position of '{motor.name}' to {position}.")
-                    motor.set_position(position)
-                    self.get_logger().info(f"position of '{motor.name}' was set to {motor.get_position()}.")
+            motor_name = joint_trajectory.joint_names[0]
+            target_position = joint_trajectory.points[0].positions[0]
+            for motor in name_to_motors[motor_name]:
+                self.get_logger().info(
+                    f"setting position of '{motor.name}' to {target_position}."
+                )
+                motor.set_position(target_position)
+                self.get_logger().info(
+                    f"position of '{motor.name}' was set to {motor.get_position()}."
+                )
 
         except Exception as e:
             self.get_logger().warn(
-                f"Error while processing joint-trajectory-message: {str(e)}")
+                f"Error while processing joint-trajectory-message: {str(e)}"
+            )
 
 
 def main(args=None):
@@ -139,5 +139,5 @@ def main(args=None):
     ipcon.disconnect()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

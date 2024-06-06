@@ -30,7 +30,7 @@ def delete_pose(pose_id: str) -> None:
 def _create_motor_position(motor_position_dto: dict[str, Any]) -> MotorPosition:
     motor_position = MotorPosition(
         position=motor_position_dto["position"],
-        motorname=motor_position_dto["motorname"]
+        motorname=motor_position_dto["motorname"],
     )
     db.session.add(motor_position)
     return motor_position

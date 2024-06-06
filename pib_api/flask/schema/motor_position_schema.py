@@ -6,7 +6,9 @@ from marshmallow import fields
 class MotorPositionSchema(SQLAutoWithCamelCaseSchema):
     class Meta:
         model = MotorPosition
-        exclude = ('id',)
+        exclude = ("id",)
+
     motorname = fields.Str()
 
-motor_positions_schema = MotorPositionSchema(only=('position', 'motorname'), many=True)
+
+motor_positions_schema = MotorPositionSchema(only=("position", "motorname"), many=True)
