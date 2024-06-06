@@ -95,6 +95,7 @@ FRAMES_PER_CHUNK = SPEECH_ENCODING.frames_per_second // CHUNKS_PER_SECOND
 BYTES_PER_FRAME = SPEECH_ENCODING.bytes_per_sample * SPEECH_ENCODING.num_channels
 BYTES_PER_CHUNK = BYTES_PER_FRAME * FRAMES_PER_CHUNK
 
+
 class AudioPlayerNode(Node):
 
     def __init__(self, playback_queue: Queue[PlaybackItem]):
