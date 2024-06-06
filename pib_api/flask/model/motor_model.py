@@ -1,6 +1,7 @@
 from app.app import db
 from model.motor_position_model import MotorPosition
 
+
 class Motor(db.Model):
     __tablename__ = "motor"
 
@@ -17,4 +18,6 @@ class Motor(db.Model):
     turned_on = db.Column(db.Boolean, nullable=False)
     visible = db.Column(db.Boolean, nullable=False)
     invert = db.Column(db.Boolean, nullable=False)
-    bricklet_pins = db.relationship("BrickletPin", backref="motor", lazy=True, cascade="all,, delete-orphan")
+    bricklet_pins = db.relationship(
+        "BrickletPin", backref="motor", lazy=True, cascade="all,, delete-orphan"
+    )

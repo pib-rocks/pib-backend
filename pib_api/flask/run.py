@@ -16,10 +16,10 @@ app.register_error_handler(IntegrityError, error_handler.handle_bad_request_erro
 
 
 def on_connect(dbapi_con, con_record):
-    dbapi_con.execute('PRAGMA FOREIGN_KEYS=ON')
+    dbapi_con.execute("PRAGMA FOREIGN_KEYS=ON")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     with app.app_context():
-        event.listen(db.engine, 'connect', on_connect)
+        event.listen(db.engine, "connect", on_connect)
     app.run(host="0.0.0.0", port=5000)

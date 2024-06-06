@@ -9,4 +9,4 @@ class ProgramCodeSchemaSQLAutoWith(SQLAutoWithCamelCaseSchema):
 
 
 program_code_schema = ProgramCodeSchemaSQLAutoWith()
-program_code_visual_only_schema = ProgramCodeSchemaSQLAutoWith(only=('visual',))
+program_code_visual_only_schema = ProgramCodeSchemaSQLAutoWith(only=("visual",))
