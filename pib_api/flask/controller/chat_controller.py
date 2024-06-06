@@ -1,17 +1,16 @@
-from service import chat_service
+from app.app import db
+from flask import abort, jsonify, request, Blueprint
+from schema.chat_message_schema import (
+    chat_message_post_schema,
+    chat_message_schema,
+)
 from schema.chat_schema import (
     chat_schema,
     chats_schema,
     upload_chat_schema,
     chat_messages_only_schema,
 )
-from schema.chat_message_schema import (
-    chat_message_post_schema,
-    chat_messages_schema,
-    chat_message_schema,
-)
-from app.app import db
-from flask import abort, jsonify, request, Blueprint
+from service import chat_service
 
 bp = Blueprint("chat_controller", __name__)
 

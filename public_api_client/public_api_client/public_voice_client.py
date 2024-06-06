@@ -1,27 +1,37 @@
 """provides methods for accessing TRYB's public-voice-api"""
 
-from public_api_client import configuration
-import requests
-from typing import Any, Iterable
 import base64
 import json
 import logging
+from typing import Any, Iterable, List, Optional
+
+import requests
+
+from public_api_client import configuration
 
 logging.basicConfig(
     level=logging.INFO,
     format="[%(levelname)s] [%(asctime)s] [%(process)d] [%(filename)s:%(lineno)s]: %(message)s",
 )
 
-SPEECH_TO_TEXT_URL = (
-    configuration.tryb_url_prefix + "/public-api/conversions/speech-to-text"
-)
-TEXT_TO_SPEECH_URL = (
-    configuration.tryb_url_prefix + "/public-api/conversions/text-to-speech"
-)
-VOICE_ASSISTANT_TEXT_URL = (
-    configuration.tryb_url_prefix
-    + "/public-api/voice-assistant/text?include-audio=false"
-)
+try:
+    SPEECH_TO_TEXT_URL = (
+        configuration.tryb_url_prefix + "/public-api/conversions/speech-to-text"
+    )
+    TEXT_TO_SPEECH_URL = (
+        configuration.tryb_url_prefix + "/public-api/conversions/text-to-speech"
+    )
+    VOICE_ASSISTANT_TEXT_URL = (
+        configuration.tryb_url_prefix + "/public-api/voice-assistant/text"
+    )
+except TypeError as e:
+    raise RuntimeError(f"no tryb configuration found: {e}")
+
+
+class PublicApiChatMessage:
+    def __init__(self, content: str, is_user: bool):
+        self.content = content
+        self.is_user = is_user
 
 
 def _send_request(
@@ -41,7 +51,8 @@ def _send_request(
             k: v for k, v in headers.items() if k != "Authorization"
         }
         logging.info(
-            f"An Error occured while sending request:\n"
+            f":::::::::::::::::::::::::::::::::::::::::::::::::::::\n"
+            + f"An Error occured while sending request:\n"
             + f"-----------------------------------------------------\n"
             + f"url: {url}\n"
             + f"method: {method}\n"
@@ -82,7 +93,8 @@ def text_to_speech(text: str, gender: str, language: str) -> Iterable[bytes]:
 def chat_completion(
     text: str,
     description: str,
-    image_base64: str | None = None,
+    message_history: List[PublicApiChatMessage],
+    image_base64: Optional[str] = None,
     model: str = "gpt-3.5-turbo",
 ) -> Iterable[str]:
     """
@@ -92,9 +104,16 @@ def chat_completion(
 
     # Claude does not accept empty strings as input
     if (text is None) or (text == ""):
-        text = "empty"
+        text = "echo 'I could not hear you, please repeat your message.'"
 
-    body = {"data": text, "personality": {"description": description, "model": model}}
+    body = {
+        "data": text,
+        "messageHistory": [
+            {"content": message.content, "isUser": message.is_user}
+            for message in message_history
+        ],
+        "personality": {"description": description, "model": model},
+    }
 
     if image_base64 is not None:
         body["imageBase64"] = image_base64

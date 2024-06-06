@@ -1,24 +1,20 @@
-from collections import deque
 import os
+import wave
+from collections import deque
+from threading import Lock
+
 import numpy as np
 import pyaudio
 import rclpy
-from rclpy.node import Node
-from rclpy.executors import MultiThreadedExecutor
-from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
-from rclpy.node import Node
-
 from datatypes.action import RecordAudio
-
-from threading import Lock
-
-from public_api_client import public_voice_client
-import wave
-
 from rclpy.action import ActionServer
 from rclpy.action import CancelResponse, GoalResponse
 from rclpy.action.server import ServerGoalHandle
+from rclpy.executors import MultiThreadedExecutor
+from rclpy.node import Node
 
+from public_api_client import public_voice_client
+from . import util
 
 # these values define the pcm-encoding, in which the recorded
 # audio will be received
@@ -113,32 +109,40 @@ class AudioRecorderNode(Node):
         max_silent_chunks = max_silent_chunks_before
 
         # create an pyaudio-input-stream for recording audio
-        pya = pyaudio.PyAudio()
-        stream = pya.open(
-            format=pya.get_format_from_width(BYTES_PER_SAMPLE),
-            channels=NUM_CHANNELS,
-            rate=FRAMES_PER_SECOND,
-            input=True,
-            frames_per_buffer=FRAMES_PER_CHUNK,
-        )
+        try:
+            with util.surpress_stderr():
+                pya = pyaudio.PyAudio()
+                stream = pya.open(
+                    format=pya.get_format_from_width(BYTES_PER_SAMPLE),
+                    channels=NUM_CHANNELS,
+                    rate=FRAMES_PER_SECOND,
+                    input=True,
+                    frames_per_buffer=FRAMES_PER_CHUNK,
+                )
 
-        # record audio, until too many silent chunks were detected in a row
-        # or if cancellation of the goal was requested
-        while silent_chunks < max_silent_chunks:
-            chunk = stream.read(FRAMES_PER_CHUNK, exception_on_overflow=False)
-            chunks.append(chunk)
-            if goal_handle.is_cancel_requested:
-                break
-            if self.is_silent(chunk):
-                silent_chunks += 1
-            else:
-                max_silent_chunks = max_silent_chunks_after
-                silent_chunks = 0
+                # record audio, until too many silent chunks were detected in a row
+                # or if cancellation of the goal was requested
+                while silent_chunks < max_silent_chunks:
+                    chunk = stream.read(FRAMES_PER_CHUNK, exception_on_overflow=False)
+                    chunks.append(chunk)
+                    if goal_handle.is_cancel_requested:
+                        break
+                    if self.is_silent(chunk):
+                        silent_chunks += 1
+                    else:
+                        max_silent_chunks = max_silent_chunks_after
+                        silent_chunks = 0
 
-        # stop recording
-        stream.stop_stream()
-        stream.close()
-        pya.terminate()
+                # stop recording
+                stream.stop_stream()
+                stream.close()
+                pya.terminate()
+
+        except OSError as e:
+            self.get_logger().error(f"failed to record audio: {e}")
+            # pya.terminate()
+            goal_handle.abort()
+            return self.create_result("")
 
         # if cancel is requested, stop execution here
         if goal_handle.is_cancel_requested:
@@ -166,14 +170,18 @@ class AudioRecorderNode(Node):
             data = f.read()
 
         # transcribe the audio data
-        text = public_voice_client.speech_to_text(data)
+        try:
+            text = public_voice_client.speech_to_text(data)
+        except Exception as e:
+            self.get_logger().error(f"failed speech_to_text: {e}")
+            goal_handle.abort()
+            return self.create_result("")
 
         goal_handle.succeed()
         return self.create_result(text)
 
 
 def main(args=None):
-
     rclpy.init()
     node = AudioRecorderNode()
     executor = MultiThreadedExecutor(4)

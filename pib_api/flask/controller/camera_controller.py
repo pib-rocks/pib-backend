@@ -1,7 +1,7 @@
-from model.camera_settings_model import CameraSettings
-from schema.camera_settings_schema import camera_settings_schema
 from app.app import db
 from flask import abort, request, Blueprint
+from model.camera_settings_model import CameraSettings
+from schema.camera_settings_schema import camera_settings_schema
 
 bp = Blueprint("camera_controller", __name__)
 

@@ -5,12 +5,15 @@ from urllib.request import Request, urlopen
 import json
 import logging
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="[%(levelname)s] [%(asctime)s] [%(process)d] [%(filename)s:%(lineno)s]: %(message)s",
+)
 
 URL_PREFIX = os.getenv("FLASK_API_BASE_URL", "http://localhost:5000")
 
 
 def send_request(request: Request) -> (bool, dict[str, Any]):
-
     try:
         with urlopen(request) as response:
             response_data = response.read().decode("utf-8")
@@ -32,6 +35,6 @@ def send_request(request: Request) -> (bool, dict[str, Any]):
         )
 
     except Exception as error:
-        logging.error(f"Error while getting all motors: {str(error)}")
+        logging.error(f"Error communicating with pib API: {error}")
 
     return False, None

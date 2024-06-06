@@ -1,5 +1,4 @@
 from app.app import db
-from model.motor_position_model import MotorPosition
 
 
 class Motor(db.Model):
