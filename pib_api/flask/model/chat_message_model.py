@@ -1,7 +1,6 @@
-from sqlalchemy.sql import func
-
 from app.app import db
 from model.util import generate_uuid
+from sqlalchemy.sql import func
 
 
 class ChatMessage(db.Model):

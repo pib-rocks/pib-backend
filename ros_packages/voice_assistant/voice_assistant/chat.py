@@ -2,21 +2,20 @@ import re
 from threading import Lock
 
 import rclpy
-from rclpy.node import Node
-from rclpy.executors import MultiThreadedExecutor
-from rclpy.callback_groups import ReentrantCallbackGroup
-from rclpy.node import Node
+from datatypes.action import Chat
+from datatypes.msg import ChatMessage
+from datatypes.srv import GetCameraImage
+from pib_api_client import voice_assistant_client
+from public_api_client.public_voice_client import PublicApiChatMessage
 from rclpy.action import ActionServer
 from rclpy.action import CancelResponse
 from rclpy.action.server import ServerGoalHandle
+from rclpy.callback_groups import ReentrantCallbackGroup
+from rclpy.executors import MultiThreadedExecutor
+from rclpy.node import Node
 from rclpy.publisher import Publisher
 
-from datatypes.msg import ChatMessage
-from datatypes.action import Chat
-from datatypes.srv import GetCameraImage
-
 from public_api_client import public_voice_client
-from pib_api_client import voice_assistant_client
 
 
 class ChatNode(Node):
@@ -43,9 +42,9 @@ class ChatNode(Node):
         self.chat_message_publisher: Publisher = self.create_publisher(
             ChatMessage, "chat_messages", 10
         )
-
-        # Client to get Camera images
-        self.camera_client = self.create_client(GetCameraImage, "get_camera_image")
+        self.get_camera_image_client = self.create_client(
+            GetCameraImage, "get_camera_image"
+        )
 
         # lock that should be aquired, whenever accessing 'public_voice_client'
         self.public_voice_client_lock = Lock()
@@ -80,6 +79,7 @@ class ChatNode(Node):
         self.chat_message_publisher.publish(chat_message_ros)
 
     async def chat(self, goal_handle: ServerGoalHandle):
+        self.get_logger().info("start chat request")
 
         # unpack request data
         request: Chat.Goal = goal_handle.request
@@ -92,37 +92,61 @@ class ChatNode(Node):
                 chat_id
             )
         if not successful:
-            self.get_logger().info(f"no personality found for id {chat_id}")
+            self.get_logger().error(f"no personality found for id {chat_id}")
             goal_handle.abort()
             return Chat.Result()
-
-        # create the user message
-        self.executor.create_task(self.create_chat_message, chat_id, content, True)
-
-        # receive an iterable of tokens from the public-api
         description = (
             personality.description
             if personality.description is not None
             else "Du bist pib, ein humanoider Roboter."
         )
-        camera_response = None
-        if personality.assistant_model.has_image_support:
-            camera_response_future = await self.camera_client.call_async(
-                GetCameraImage.Request()
-            )
-            camera_response = camera_response_future.image_base64
-        with self.public_voice_client_lock:
-            tokens = public_voice_client.chat_completion(
-                text=content,
-                description=description,
-                image_base64=camera_response,
-                model=personality.assistant_model.api_name,
-            )
 
+        # create the user message
+        self.executor.create_task(self.create_chat_message, chat_id, content, True)
+
+        # get the current image from the camera
+        image_base64 = None
+        if personality.assistant_model.has_image_support:
+            response: GetCameraImage.Response = (
+                await self.get_camera_image_client.call_async(GetCameraImage.Request())
+            )
+            image_base64 = response.image_base64
+
+        # get the message-history from the pib-api
+        with self.voice_assistant_client_lock:
+            successful, chat_messages = voice_assistant_client.get_all_chat_messages(
+                chat_id
+            )
+        if not successful:
+            self.get_logger().error(f"chat with id'{chat_id}' does not exist...")
+            goal_handle.abort()
+            return Chat.Result()
+        message_history = [
+            PublicApiChatMessage(message.content, message.is_user)
+            for message in chat_messages
+        ]
+
+        # receive assistant-response in form of an iterable of token from the public-api
+        try:
+            with self.public_voice_client_lock:
+                tokens = public_voice_client.chat_completion(
+                    text=content,
+                    description=description,
+                    message_history=message_history,
+                    image_base64=image_base64,
+                    model=personality.assistant_model.api_name,
+                )
+        except Exception as e:
+            self.get_logger().error(f"failed to send request to public-api: {e}")
+            goal_handle.abort()
+            return Chat.Result()
+
+        # for storing and analyzing data from the public-api
         curr_sentence: str = ""
         prev_sentence: str | None = None
         sentence_boundary = re.compile(r"[^\d | ^A-Z][\.|!|\?|:]")
 
+        # process incoming data from public-api
         for token in tokens:
             # if the goal was cancelled, return immediately
             if goal_handle.is_cancel_requested:
@@ -144,16 +168,20 @@ class ChatNode(Node):
             curr_sentence += token
 
         # create chat-message for remaining input
-        self.executor.create_task(
-            self.create_chat_message, chat_id, curr_sentence, False
-        )
+        if len(curr_sentence) > 0:
+            self.executor.create_task(
+                self.create_chat_message, chat_id, curr_sentence, False
+            )
 
-        # return the rest of the received text, that has not been forwarded as feedback
+        # return the restult
+        result = Chat.Result()
+        result.rest = curr_sentence if prev_sentence is None else prev_sentence
         goal_handle.succeed()
-        return Chat.Result(rest=curr_sentence)
+        return result
 
 
 def main(args=None):
+
     rclpy.init()
     node = ChatNode()
     # the number of threads is chosen arbitrarily to be '8' because ros requires a
