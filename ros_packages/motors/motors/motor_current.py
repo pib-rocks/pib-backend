@@ -45,7 +45,6 @@ class MotorCurrent(Node):
         self.motor_current_publisher.publish(msg)
 
 
-
 def main(args=None):
 
     rclpy.init(args=args)
