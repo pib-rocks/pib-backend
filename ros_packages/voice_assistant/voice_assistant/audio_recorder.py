@@ -51,17 +51,18 @@ class AudioRecorderNode(Node):
             "record_audio",
             execute_callback=self.record_audio,
             handle_accepted_callback=self.handle_accepted_goal,
-            cancel_callback = (lambda _ : CancelResponse.ACCEPT))
+            cancel_callback=(lambda _: CancelResponse.ACCEPT),
+        )
 
-        self.get_logger().info('Now running AUDIO RECORDER')
+        self.get_logger().info("Now running AUDIO RECORDER")
 
     def handle_accepted_goal(self, goal_handle: ServerGoalHandle) -> GoalResponse:
         """place a goal into the queue and start execution if the queue was empty before"""
         with self.goal_queue_lock:
-            if not self.goal_queue: 
+            if not self.goal_queue:
                 goal_handle.execute()
             self.goal_queue.appendleft(goal_handle)
-    
+
     def is_silent(self, data_chunk) -> bool:
         """Check whether a chunk of frmaes is below the minimum volume threshold"""
         as_ints = np.frombuffer(data_chunk, dtype=np.int16)

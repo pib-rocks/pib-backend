@@ -14,18 +14,18 @@ bp = Blueprint("motor_controller", __name__)
 @bp.route("", methods=["GET"])
 def get_all_motors():
     motors = motor_service.get_all_motors()
-    try: 
-        return jsonify({'motors': motors_schema.dump(motors)})
-    except Exception: 
+    try:
+        return jsonify({"motors": motors_schema.dump(motors)})
+    except Exception:
         abort(500)
 
 
 @bp.route("/<string:name>", methods=["GET"])
 def get_motor(name: str):
     motor = motor_service.get_motor_by_name(name)
-    try: 
+    try:
         return motor_schema.dump(motor)
-    except Exception: 
+    except Exception:
         abort(500)
 
 
@@ -36,18 +36,18 @@ def update_motor(name: str):
     motor_service.set_bricklet_pins(name, bricklet_pin_dtos)
     motor = motor_service.set_motor_settings(name, motor_settings_dto)
     db.session.commit()
-    try: 
+    try:
         return motor_schema.dump(motor)
-    except Exception: 
+    except Exception:
         abort(500)
 
 
 @bp.route("/<string:name>/settings", methods=["GET"])
 def get_motor_settings(name: str):
     motor = motor_service.get_motor_by_name(name)
-    try: 
+    try:
         return motor_settings_schema.dump(motor)
-    except Exception: 
+    except Exception:
         abort(500)
 
 
@@ -56,18 +56,18 @@ def update_motor_settings(name: str):
     motor_settings_dto = motor_settings_schema.load(request.json)
     motor = motor_service.set_motor_settings(name, motor_settings_dto)
     db.session.commit()
-    try: 
+    try:
         return motor_settings_schema.dump(motor)
-    except Exception: 
+    except Exception:
         abort(500)
 
 
 @bp.route("/<string:name>/bricklet-pins", methods=["GET"])
 def get_motor_bricklet_pins(name: str):
     motor = motor_service.get_motor_by_name(name)
-    try: 
+    try:
         return motor_bricklet_pins_schema.dump(motor)
-    except Exception: 
+    except Exception:
         abort(500)
 
 
@@ -76,7 +76,7 @@ def update_motor_bricklet_pins(name: str):
     bricklet_pin_dtos = motor_bricklet_pins_schema.load(request.json)["brickletPins"]
     motor = motor_service.set_bricklet_pins(name, bricklet_pin_dtos)
     db.session.commit()
-    try: 
+    try:
         return motor_bricklet_pins_schema.dump(motor)
-    except Exception: 
+    except Exception:
         abort(500)

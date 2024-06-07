@@ -54,7 +54,7 @@ class ChatNode(Node):
         # lock that should be aquired, whenever accessing 'voice_assistant_client'
         self.voice_assistant_client_lock = Lock()
 
-        self.get_logger().info('Now running CHAT')
+        self.get_logger().info("Now running CHAT")
 
     def create_chat_message(self, chat_id: str, text: str, is_user: bool) -> None:
         """writes a new chat-message to the db, and publishes it to the 'chat_messages'-topic"""
@@ -109,7 +109,7 @@ class ChatNode(Node):
             if personality.description is not None
             else "Du bist pib, ein humanoider Roboter."
         )
-        if generate_code: 
+        if generate_code:
             description = CODE_DESCRIPTION_PREFIX + description
 
         # get the message-history from the pib-api
@@ -150,9 +150,14 @@ class ChatNode(Node):
             return Chat.Result()
 
         # regex for indentifying sentences
-        sentence_pattern = re.compile(r"^(?!<pib-program>)(.*?)(([^\d | ^A-Z][\.|!|\?|:])|<pib-program>)", re.DOTALL)
+        sentence_pattern = re.compile(
+            r"^(?!<pib-program>)(.*?)(([^\d | ^A-Z][\.|!|\?|:])|<pib-program>)",
+            re.DOTALL,
+        )
         # regex-pattern for indentifying visual-code blocks
-        code_visual_pattern = re.compile(r"^<pib-program>(.*?)</pib-program>", re.DOTALL)
+        code_visual_pattern = re.compile(
+            r"^<pib-program>(.*?)</pib-program>", re.DOTALL
+        )
 
         # the text that was currently collected by chaining together tokens
         # at any given point in time, this string must not contain any leading whitespaces!
@@ -162,7 +167,7 @@ class ChatNode(Node):
 
         for token in tokens:
 
-            if prev_text is not None: 
+            if prev_text is not None:
                 # publish the previously collected text in form of feedback
                 feedback = Chat.Feedback()
                 feedback.text = prev_text
@@ -174,13 +179,15 @@ class ChatNode(Node):
             # add token to current text; remove leading white-spaces, if current-text is empty
             curr_text = curr_text + (token if len(curr_text) > 0 else token.lstrip())
 
-            while True: # loop until current-text was not stripped during current iteration
+            while (
+                True
+            ):  # loop until current-text was not stripped during current iteration
 
                 # if the goal was cancelled, return immediately
                 if goal_handle.is_cancel_requested:
                     goal_handle.canceled()
                     return Chat.Result()
-                
+
                 # check if the collected text is visual-code
                 code_visual_match = code_visual_pattern.search(curr_text)
                 if code_visual_match is not None:
@@ -190,30 +197,44 @@ class ChatNode(Node):
                     prev_text_type = Chat.Goal.TEXT_TYPE_CODE_VISUAL
                     # create a chat message from the visual-code, including opening and closing tags
                     chat_message_text = code_visual_match.group(0)
-                    self.executor.create_task(self.create_chat_message, chat_id, chat_message_text, False)
+                    self.executor.create_task(
+                        self.create_chat_message, chat_id, chat_message_text, False
+                    )
                     # strip the current text
-                    curr_text = curr_text[code_visual_match.end():].rstrip()
+                    curr_text = curr_text[code_visual_match.end() :].rstrip()
                     continue
 
                 # check if collected text is a sentence
                 sentence_match = sentence_pattern.search(curr_text)
                 if sentence_match is not None:
                     # extract the visual-code by removing the opening + closing tag and store it as previous text
-                    sentence = sentence_match.group(1) + (sentence_match.group(3) if sentence_match.group(3) is not None else "")
+                    sentence = sentence_match.group(1) + (
+                        sentence_match.group(3)
+                        if sentence_match.group(3) is not None
+                        else ""
+                    )
                     prev_text = sentence
                     prev_text_type = Chat.Goal.TEXT_TYPE_SENTENCE
                     # create a chat message from the visual-code, including opening and closing tags
                     chat_message_text = sentence
-                    self.executor.create_task(self.create_chat_message, chat_id, chat_message_text, False)
+                    self.executor.create_task(
+                        self.create_chat_message, chat_id, chat_message_text, False
+                    )
                     # strip the current text
-                    curr_text = curr_text[sentence_match.end(3 if sentence_match.group(3) is not None else 1):].rstrip()
+                    curr_text = curr_text[
+                        sentence_match.end(
+                            3 if sentence_match.group(3) is not None else 1
+                        ) :
+                    ].rstrip()
                     continue
-                    
+
                 break
 
         # create chat-message for remaining input
         if len(curr_text) > 0:
-            self.executor.create_task(self.create_chat_message, chat_id, curr_text, False)
+            self.executor.create_task(
+                self.create_chat_message, chat_id, curr_text, False
+            )
 
         # return the rest of the received text, that has not been forwarded as feedback
         goal_handle.succeed()
@@ -226,7 +247,7 @@ class ChatNode(Node):
         else:
             result.text = prev_text
             result.text_type = prev_text_type
-        return result 
+        return result
 
 
 def main(args=None):

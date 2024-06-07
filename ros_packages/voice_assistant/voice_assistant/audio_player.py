@@ -95,6 +95,7 @@ FRAMES_PER_CHUNK = SPEECH_ENCODING.frames_per_second // CHUNKS_PER_SECOND
 BYTES_PER_FRAME = SPEECH_ENCODING.bytes_per_sample * SPEECH_ENCODING.num_channels
 BYTES_PER_CHUNK = BYTES_PER_FRAME * FRAMES_PER_CHUNK
 
+
 class AudioPlayerNode(Node):
 
     def __init__(self, playback_queue: Queue[PlaybackItem]):
@@ -229,8 +230,8 @@ def main(args=None):
 
     playback_queue: Queue[PlaybackItem] = Queue()
 
-    def audio_loop(playback_queue: Queue[PlaybackItem]) ->  None: 
-        while True: 
+    def audio_loop(playback_queue: Queue[PlaybackItem]) -> None:
+        while True:
             playback_queue.get(True).play()
 
     Thread(target=audio_loop, args=(playback_queue,), daemon=True).start()
