@@ -23,9 +23,11 @@ from datatypes.msg import ProgramOutputLine
 
 import pib_blockly_client
 
-
-PYTHON_BINARY: str = os.getenv('PYTHON_BINARY', '/home/pib/ros_working_dir/src/programs/user_program_env/bin/python3')
-UNBUFFERED_OUTPUT_FLAG: str = '-u'
+PYTHON_BINARY: str = os.getenv(
+    "PYTHON_BINARY",
+    "/home/pib/ros_working_dir/src/programs/user_program_env/bin/python3",
+)
+UNBUFFERED_OUTPUT_FLAG: str = "-u"
 PROGRAM_DIR: str = os.getenv("PROGRAM_DIR", "/home/pib/cerebra_programs")
 
 MAIN_LOOP_WAITING_PERIOD_SECONDS: float = 0.1
@@ -38,27 +40,32 @@ class StartRequest:
         self.goal_id = goal_id
         self.code_python_file_path = code_python_file_path
 
+
 # response sent from main-process to ros-process, after ros-process sent a 'StartRequest'
 class StartResponse:
     def __init__(self, successful: bool, connection: Connection) -> None:
         self.successful = successful
         self.connection = connection
 
+
 # request to stop execution of user-program, sent from ros-process to main-process
 class StopRequest:
     def __init__(self, goal_id: bytes) -> None:
         self.goal_id = goal_id
+
 
 # response sent from main-process to ros-process, after ros-process sent a 'StopRequest'
 class StopResponse:
     def __init__(self, successful: bool) -> None:
         self.successful = successful
 
+
 # one line of stdout/stderr output of a running user-program, sent from a host-process to the ros-process
 class OutputLine:
     def __init__(self, content: str, is_stderr: bool) -> None:
         self.content = content
         self.is_stderr = is_stderr
+
 
 # exit-code of a user-program, sent from a host-process to the ros-process
 class ExitCode:
@@ -70,14 +77,15 @@ class ProgramNode(Node):
 
     def __init__(self, request_sender: Connection) -> None:
 
-        super().__init__('program')
-        	
+        super().__init__("program")
+
         # Quality-of-Service profile for feedback
         feedback_profile = qos.QoSProfile(
             history=qos.HistoryPolicy.KEEP_ALL,
             reliability=qos.ReliabilityPolicy.RELIABLE,
             durability=qos.DurabilityPolicy.VOLATILE,
-            lifespan=Duration(seconds=100))  
+            lifespan=Duration(seconds=100),
+        )
 
         # used for requesting the main prcess to start/stop a python program
         self.request_sender: Connection = request_sender
@@ -85,11 +93,11 @@ class ProgramNode(Node):
 
         # server for running local python-programs generated with blockly
         self.run_program_server = ActionServer(
-            self, 
-            RunProgram, 
-            'run_program', 
+            self,
+            RunProgram,
+            "run_program",
             self.run_program_callback,
-            cancel_callback=(lambda _ : CancelResponse.ACCEPT),
+            cancel_callback=(lambda _: CancelResponse.ACCEPT),
             callback_group=ReentrantCallbackGroup(),
             feedback_pub_qos_profile=feedback_profile)
 
@@ -98,7 +106,7 @@ class ProgramNode(Node):
     def run_program_callback(self, goal_handle: ServerGoalHandle) -> RunProgram.Result:
 
         # convert goal id to bytes
-        goal_id: bytes = bytes([ int(num) for num in goal_handle.goal_id.uuid ])
+        goal_id: bytes = bytes([int(num) for num in goal_handle.goal_id.uuid])
 
         # digest the code-source and create a path to the resulting python-code file that should be executed
         request: RunProgram.Goal = goal_handle.request
@@ -178,9 +186,8 @@ class ProgramNode(Node):
             if request.source_type == RunProgram.Goal.SOURCE_CODE_VISUAL: 
                 os.remove(code_python_file_path)
 
-
 def main_loop(request_receiver: Connection) -> None:
-    
+
     goal_id_to_host: dict[bytes, Process] = {}
 
     while True:
@@ -195,18 +202,22 @@ def main_loop(request_receiver: Connection) -> None:
                 goal_id_to_host[request.goal_id] = host_process
                 host_process.start()
             elif isinstance(request, StopRequest):
-                try: 
+                try:
                     host_process = goal_id_to_host.pop(request.goal_id)
-                except KeyError: 
+                except KeyError:
                     request_receiver.send(StopResponse(False))
                     continue
                 host_process.terminate()
                 request_receiver.send(StopResponse(True))
             else:
-                raise RuntimeError(f"main-process received unexpected request-type from ros-process: {type(request)}'")
-        
+                raise RuntimeError(
+                    f"main-process received unexpected request-type from ros-process: {type(request)}'"
+                )
+
         # filter out host-processes that have already terminated
-        goal_id_to_host = { id : host for id , host in goal_id_to_host.items() if host.is_alive() }
+        goal_id_to_host = {
+            id: host for id, host in goal_id_to_host.items() if host.is_alive()
+        }
 
         time.sleep(MAIN_LOOP_WAITING_PERIOD_SECONDS)
 
@@ -230,12 +241,16 @@ def run_program(code_python_file_path: str, output_sender: Connection) -> None:
         output_sender_lock = Lock()
 
         def forward_io_to_connection(output: IO[str], is_stderr: bool) -> None:
-            for line in output: 
-                with output_sender_lock: 
+            for line in output:
+                with output_sender_lock:
                     output_sender.send(OutputLine(line[:-1], is_stderr))
 
-        forward_stdout = Thread(target=forward_io_to_connection, args=(popen.stdout, False))
-        forward_stderr = Thread(target=forward_io_to_connection, args=(popen.stderr, True))
+        forward_stdout = Thread(
+            target=forward_io_to_connection, args=(popen.stdout, False)
+        )
+        forward_stderr = Thread(
+            target=forward_io_to_connection, args=(popen.stderr, True)
+        )
 
         forward_stdout.start()
         forward_stderr.start()
@@ -254,7 +269,6 @@ def main(args=None) -> None:
     ros_process.start()
 
     main_loop(request_receiver)
- 
 
 if __name__ == "__main__":
     main()
