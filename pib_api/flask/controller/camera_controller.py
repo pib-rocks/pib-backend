@@ -1,6 +1,6 @@
 from schema.camera_settings_schema import camera_settings_schema
 from service import camera_service
-from flask import abort, request
+from flask import Blueprint, abort, request
 from app.app import db
 
 

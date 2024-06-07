@@ -18,7 +18,8 @@ from rclpy.publisher import Publisher
 
 from public_api_client import public_voice_client
 
-CODE_DESCRIPTION_PREFIX = 'You answer as a humanoid robot, that can be programmed via a json-api. If you want the robot to make a movement, include this part in <pib-program></pib-program> tags. This is an example of how the json-code should look like: {"blocks":{"languageVersion":0,"blocks":[{"type":"controls_repeat_ext","inputs":{"TIMES":{"shadow":{"type":"math_number","fields":{"NUM":4}}},"DO":{"block":{"type":"move_motor","fields":{"MOTORNAME":"TURN_HEAD","MODE":"ABSOLUTE"},"inputs":{"POSITION":{"block":{"type":"math_number","fields":{"NUM":5000}}}},"next":{"block":{"type":"sleep_for_seconds","fields":{"SECONDS":0.4},"next":{"block":{"type":"move_motor","fields":{"MOTORNAME":"TURN_HEAD","MODE":"ABSOLUTE"},"inputs":{"POSITION":{"block":{"type":"math_number","fields":{"NUM":-5000}}}},"next":{"block":{"type":"sleep_for_seconds","fields":{"SECONDS":0.4}}}}}}}}}},"next":{"block":{"type":"move_motor","fields":{"MOTORNAME":"INDEX_LEFT_STRETCH","MODE":"ABSOLUTE"},"inputs":{"POSITION":{"block":{"type":"math_number","fields":{"NUM":9000}}}}}}}]}}. The code provided in the previous example will cause you to shake your head 4 times from left to right with small pauses in between movements and finally you will stretch your index finger once. In the "MOTORNAME" field you can specify one of the following motor-names: "THUMB_LEFT_OPPOSITION", "THUMB_LEFT_STRETCH", "INDEX_LEFT_STRETCH", "MIDDLE_LEFT_STRETCH", "RING_LEFT_STRETCH", "PINKY_LEFT_STRETCH", "ALL_FINGERS_LEFT_STRETCH", "THUMB_RIGHT_OPPOSITION", "THUMB_RIGHT_STRETCH", "INDEX_RIGHT_STRETCH", "MIDDLE_RIGHT_STRETCH", "RING_RIGHT_STRETCH", "PINKY_RIGHT_STRETCH", "ALL_FINGERS_RIGHT_STRETCH", "UPPER_ARM_LEFT_ROTATION", "ELBOW_LEFT", "LOWER_ARM_LEFT_ROTATION", "WRIST_LEFT", "SHOULDER_VERTICAL_LEFT", "SHOULDER_HORIZONTAL_LEFT", "UPPER_ARM_RIGHT_ROTATION", "ELBOW_RIGHT", "LOWER_ARM_RIGHT_ROTATION", "WRIST_RIGHT", "SHOULDER_VERTICAL_RIGHT", "SHOULDER_HORIZONTAL_RIGHT", "TILT_FORWARD_HEAD", "TURN_HEAD". Each motor\'s position can be set to a value between -9000 and +9000.'
+
+CODE_DESCRIPTION_PREFIX = 'You are a humanoid robot and if you are asked to perform a movement, you can do so by answering with json-code, which should always be put between <pib-program></pib-program> tags. Here is an example of how the json-code should look like: {"blocks":{"languageVersion":0,"blocks":[{"type":"controls_repeat_ext","inputs":{"TIMES":{"shadow":{"type":"math_number","fields":{"NUM":4}}},"DO":{"block":{"type":"move_motor","fields":{"MOTORNAME":"TURN_HEAD","MODE":"ABSOLUTE"},"inputs":{"POSITION":{"block":{"type":"math_number","fields":{"NUM":5000}}}},"next":{"block":{"type":"sleep_for_seconds","fields":{"SECONDS":0.4},"next":{"block":{"type":"move_motor","fields":{"MOTORNAME":"TURN_HEAD","MODE":"ABSOLUTE"},"inputs":{"POSITION":{"block":{"type":"math_number","fields":{"NUM":-5000}}}},"next":{"block":{"type":"sleep_for_seconds","fields":{"SECONDS":0.4}}}}}}}}}},"next":{"block":{"type":"move_motor","fields":{"MOTORNAME":"INDEX_LEFT_STRETCH","MODE":"ABSOLUTE"},"inputs":{"POSITION":{"block":{"type":"math_number","fields":{"NUM":9000}}}}}}}]}}. The code provided in the previous example will cause you to shake your head 4 times from left to right with small pauses in between movements and finally you will stretch your index finger once. In the "MOTORNAME" field you can specify one of the following motor-names: "THUMB_LEFT_OPPOSITION", "THUMB_LEFT_STRETCH", "INDEX_LEFT_STRETCH", "MIDDLE_LEFT_STRETCH", "RING_LEFT_STRETCH", "PINKY_LEFT_STRETCH", "ALL_FINGERS_LEFT_STRETCH", "THUMB_RIGHT_OPPOSITION", "THUMB_RIGHT_STRETCH", "INDEX_RIGHT_STRETCH", "MIDDLE_RIGHT_STRETCH", "RING_RIGHT_STRETCH", "PINKY_RIGHT_STRETCH", "ALL_FINGERS_RIGHT_STRETCH", "UPPER_ARM_LEFT_ROTATION", "ELBOW_LEFT", "LOWER_ARM_LEFT_ROTATION", "WRIST_LEFT", "SHOULDER_VERTICAL_LEFT", "SHOULDER_HORIZONTAL_LEFT", "UPPER_ARM_RIGHT_ROTATION", "ELBOW_RIGHT", "LOWER_ARM_RIGHT_ROTATION", "WRIST_RIGHT", "SHOULDER_VERTICAL_RIGHT", "SHOULDER_HORIZONTAL_RIGHT", "TILT_FORWARD_HEAD", "TURN_HEAD". Each motor\'s position can be set to a value between -9000 and +9000.'
 
 
 class ChatNode(Node):
@@ -134,8 +135,8 @@ class ChatNode(Node):
             )
             image_base64 = response.image_base64
 
-        # receive assistant-response in form of an iterable of tokens from the public-api
         try:
+             # receive assistant-response in form of an iterable of tokens from the public-api
             with self.public_voice_client_lock:
                 tokens = public_voice_client.chat_completion(
                     text=content,
@@ -144,91 +145,92 @@ class ChatNode(Node):
                     image_base64=image_base64,
                     model=personality.assistant_model.api_name,
                 )
+
+            # regex for indentifying sentences
+            sentence_pattern = re.compile(
+                r"^(?!<pib-program>)(.*?)(([^\d | ^A-Z][\.|!|\?|:])|<pib-program>)",
+                re.DOTALL,
+            )
+            # regex-pattern for indentifying visual-code blocks
+            code_visual_pattern = re.compile(
+                r"^<pib-program>(.*?)</pib-program>", re.DOTALL
+            )
+
+            # the text that was currently collected by chaining together tokens
+            # at any given point in time, this string must not contain any leading whitespaces!
+            curr_text: str = ""
+            # previously collected text, that is waiting to be published as feedback
+            prev_text: Optional[str] = None
+
+            for token in tokens:
+
+                if prev_text is not None:
+                    # publish the previously collected text in form of feedback
+                    feedback = Chat.Feedback()
+                    feedback.text = prev_text
+                    feedback.text_type = prev_text_type
+                    goal_handle.publish_feedback(feedback)
+                    prev_text = None
+                    prev_text_type = None
+
+                # add token to current text; remove leading white-spaces, if current-text is empty
+                curr_text = curr_text + (token if len(curr_text) > 0 else token.lstrip())
+
+                while (
+                    True
+                ):  # loop until current-text was not stripped during current iteration
+
+                    # if the goal was cancelled, return immediately
+                    if goal_handle.is_cancel_requested:
+                        goal_handle.canceled()
+                        return Chat.Result()
+
+                    # check if the collected text is visual-code
+                    code_visual_match = code_visual_pattern.search(curr_text)
+                    if code_visual_match is not None:
+                        # extract the visual-code by removing the opening + closing tag and store it as previous text
+                        code_visual = code_visual_match.group(1)
+                        prev_text = code_visual
+                        prev_text_type = Chat.Goal.TEXT_TYPE_CODE_VISUAL
+                        # create a chat message from the visual-code, including opening and closing tags
+                        chat_message_text = code_visual_match.group(0)
+                        self.executor.create_task(
+                            self.create_chat_message, chat_id, chat_message_text, False
+                        )
+                        # strip the current text
+                        curr_text = curr_text[code_visual_match.end() :].rstrip()
+                        continue
+
+                    # check if collected text is a sentence
+                    sentence_match = sentence_pattern.search(curr_text)
+                    if sentence_match is not None:
+                        # extract the visual-code by removing the opening + closing tag and store it as previous text
+                        sentence = sentence_match.group(1) + (
+                            sentence_match.group(3)
+                            if sentence_match.group(3) is not None
+                            else ""
+                        )
+                        prev_text = sentence
+                        prev_text_type = Chat.Goal.TEXT_TYPE_SENTENCE
+                        # create a chat message from the visual-code, including opening and closing tags
+                        chat_message_text = sentence
+                        self.executor.create_task(
+                            self.create_chat_message, chat_id, chat_message_text, False
+                        )
+                        # strip the current text
+                        curr_text = curr_text[
+                            sentence_match.end(
+                                3 if sentence_match.group(3) is not None else 1
+                            ) :
+                        ].rstrip()
+                        continue
+
+                    break
+
         except Exception as e:
             self.get_logger().error(f"failed to send request to public-api: {e}")
             goal_handle.abort()
             return Chat.Result()
-
-        # regex for indentifying sentences
-        sentence_pattern = re.compile(
-            r"^(?!<pib-program>)(.*?)(([^\d | ^A-Z][\.|!|\?|:])|<pib-program>)",
-            re.DOTALL,
-        )
-        # regex-pattern for indentifying visual-code blocks
-        code_visual_pattern = re.compile(
-            r"^<pib-program>(.*?)</pib-program>", re.DOTALL
-        )
-
-        # the text that was currently collected by chaining together tokens
-        # at any given point in time, this string must not contain any leading whitespaces!
-        curr_text: str = ""
-        # previously collected text, that is waiting to be published as feedback
-        prev_text: Optional[str] = None
-
-        for token in tokens:
-
-            if prev_text is not None:
-                # publish the previously collected text in form of feedback
-                feedback = Chat.Feedback()
-                feedback.text = prev_text
-                feedback.text_type = prev_text_type
-                goal_handle.publish_feedback(feedback)
-                prev_text = None
-                prev_text_type = None
-
-            # add token to current text; remove leading white-spaces, if current-text is empty
-            curr_text = curr_text + (token if len(curr_text) > 0 else token.lstrip())
-
-            while (
-                True
-            ):  # loop until current-text was not stripped during current iteration
-
-                # if the goal was cancelled, return immediately
-                if goal_handle.is_cancel_requested:
-                    goal_handle.canceled()
-                    return Chat.Result()
-
-                # check if the collected text is visual-code
-                code_visual_match = code_visual_pattern.search(curr_text)
-                if code_visual_match is not None:
-                    # extract the visual-code by removing the opening + closing tag and store it as previous text
-                    code_visual = code_visual_match.group(1)
-                    prev_text = code_visual
-                    prev_text_type = Chat.Goal.TEXT_TYPE_CODE_VISUAL
-                    # create a chat message from the visual-code, including opening and closing tags
-                    chat_message_text = code_visual_match.group(0)
-                    self.executor.create_task(
-                        self.create_chat_message, chat_id, chat_message_text, False
-                    )
-                    # strip the current text
-                    curr_text = curr_text[code_visual_match.end() :].rstrip()
-                    continue
-
-                # check if collected text is a sentence
-                sentence_match = sentence_pattern.search(curr_text)
-                if sentence_match is not None:
-                    # extract the visual-code by removing the opening + closing tag and store it as previous text
-                    sentence = sentence_match.group(1) + (
-                        sentence_match.group(3)
-                        if sentence_match.group(3) is not None
-                        else ""
-                    )
-                    prev_text = sentence
-                    prev_text_type = Chat.Goal.TEXT_TYPE_SENTENCE
-                    # create a chat message from the visual-code, including opening and closing tags
-                    chat_message_text = sentence
-                    self.executor.create_task(
-                        self.create_chat_message, chat_id, chat_message_text, False
-                    )
-                    # strip the current text
-                    curr_text = curr_text[
-                        sentence_match.end(
-                            3 if sentence_match.group(3) is not None else 1
-                        ) :
-                    ].rstrip()
-                    continue
-
-                break
 
         # create chat-message for remaining input
         if len(curr_text) > 0:
