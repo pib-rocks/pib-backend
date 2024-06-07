@@ -99,9 +99,10 @@ class ProgramNode(Node):
             self.run_program_callback,
             cancel_callback=(lambda _: CancelResponse.ACCEPT),
             callback_group=ReentrantCallbackGroup(),
-            feedback_pub_qos_profile=feedback_profile)
+            feedback_pub_qos_profile=feedback_profile,
+        )
 
-        self.get_logger().info('Now Running PROGRAM')
+        self.get_logger().info("Now Running PROGRAM")
 
     def run_program_callback(self, goal_handle: ServerGoalHandle) -> RunProgram.Result:
 
@@ -112,21 +113,29 @@ class ProgramNode(Node):
         request: RunProgram.Goal = goal_handle.request
         if request.source_type == RunProgram.Goal.SOURCE_PROGRAM_NUMBER:
             program_number = request.source
-            self.get_logger().info("received request to execute program of number {source}.")
+            self.get_logger().info(
+                "received request to execute program of number {source}."
+            )
             code_python_file_path = f"{PROGRAM_DIR}/{program_number}.py"
         elif request.source_type == RunProgram.Goal.SOURCE_CODE_VISUAL:
             self.get_logger().info("received request to execute some visual-code.")
             code_visual = request.source
-            successful, code_python = pib_blockly_client.code_visual_to_python(code_visual)
-            if not successful: 
+            successful, code_python = pib_blockly_client.code_visual_to_python(
+                code_visual
+            )
+            if not successful:
                 goal_handle.abort()
                 return RunProgram.Result(exit_code=2)
-            self.get_logger().info("visual-code was successfully compiled to python-code.")
+            self.get_logger().info(
+                "visual-code was successfully compiled to python-code."
+            )
             fd, code_python_file_path = tempfile.mkstemp()
-            with os.fdopen(fd, 'w') as file: 
+            with os.fdopen(fd, "w") as file:
                 file.write(code_python)
         else:
-            self.get_logger().info(f"received unexpected source type: {request.source_type}.")
+            self.get_logger().info(
+                f"received unexpected source type: {request.source_type}."
+            )
             goal_handle.abort()
             return RunProgram.Result(exit_code=2)
 
@@ -142,7 +151,9 @@ class ProgramNode(Node):
                     return RunProgram.Result(exit_code=2)
                 output_receiver: Connection = response.connection
 
-            while True: # loop until either cancellation of goal is requested, or python-program terminated
+            while (
+                True
+            ):  # loop until either cancellation of goal is requested, or python-program terminated
 
                 # if cancellation of the goal if requested, send termination-request to main-process
                 if goal_handle.is_cancel_requested:
@@ -161,30 +172,35 @@ class ProgramNode(Node):
                     output = output_receiver.recv()
                     if isinstance(output, OutputLine):
                         output_line = ProgramOutputLine(
-                            content=output.content, 
-                            is_stderr=output.is_stderr)
+                            content=output.content, is_stderr=output.is_stderr
+                        )
                         output_lines.append(output_line)
                     elif isinstance(output, ExitCode):
                         exit_code = output.code
                     else:
-                        raise RuntimeError(f"ros-process received unexpected output-type from host-process: {type(output)}'")
-                
+                        raise RuntimeError(
+                            f"ros-process received unexpected output-type from host-process: {type(output)}'"
+                        )
+
                 # if at least one line of stdout/stderr output was collected, send it as feedback
-                if len(output_lines) > 0: 
-                    goal_handle.publish_feedback(RunProgram.Feedback(output_lines=output_lines))
+                if len(output_lines) > 0:
+                    goal_handle.publish_feedback(
+                        RunProgram.Feedback(output_lines=output_lines)
+                    )
 
                 # if an exit-code was collected, return it as the result of the goal
                 if exit_code is not None:
                     goal_handle.succeed()
                     return RunProgram.Result(exit_code=exit_code)
-                        
+
                 time.sleep(ACTION_LOOP_WAITING_PERIOD_SECONDS)
 
         # if the code-source is viual-code, a temp. file was created, which must now be deleted
-        finally: 
+        finally:
             self.get_logger().info("execution finished, cleaning up...")
-            if request.source_type == RunProgram.Goal.SOURCE_CODE_VISUAL: 
+            if request.source_type == RunProgram.Goal.SOURCE_CODE_VISUAL:
                 os.remove(code_python_file_path)
+
 
 def main_loop(request_receiver: Connection) -> None:
 
@@ -198,7 +214,10 @@ def main_loop(request_receiver: Connection) -> None:
             if isinstance(request, StartRequest):
                 output_sender, output_receiver = Pipe()
                 request_receiver.send(StartResponse(True, output_receiver))
-                host_process = Process(target=run_program, args=(request.code_python_file_path, output_sender))
+                host_process = Process(
+                    target=run_program,
+                    args=(request.code_python_file_path, output_sender),
+                )
                 goal_id_to_host[request.goal_id] = host_process
                 host_process.start()
             elif isinstance(request, StopRequest):
@@ -236,7 +255,9 @@ def ros_target(request_sender: Connection) -> None:
 def run_program(code_python_file_path: str, output_sender: Connection) -> None:
 
     run_python_program = [PYTHON_BINARY, UNBUFFERED_OUTPUT_FLAG, code_python_file_path]
-    with Popen(run_python_program, stdout=PIPE, stderr=PIPE, universal_newlines=True, bufsize=1) as popen:
+    with Popen(
+        run_python_program, stdout=PIPE, stderr=PIPE, universal_newlines=True, bufsize=1
+    ) as popen:
 
         output_sender_lock = Lock()
 
@@ -269,6 +290,7 @@ def main(args=None) -> None:
     ros_process.start()
 
     main_loop(request_receiver)
+
 
 if __name__ == "__main__":
     main()

@@ -14,18 +14,18 @@ bp = Blueprint("bricklet_controller", __name__)
 @bp.route("", methods=["GET"])
 def get_all_bricklets():
     bricklets = bricklet_service.get_all_bricklets()
-    try: 
+    try:
         return jsonify({"bricklets": bricklets_schema.dump(bricklets)})
-    except Exception: 
+    except Exception:
         abort(500)
 
 
 @bp.route("/<string:bricklet_number>", methods=["GET"])
 def get_bricklet(bricklet_number: str):
     bricklet = bricklet_service.get_bricklet(bricklet_number)
-    try: 
+    try:
         return bricklet_uid_only_schema.dump(bricklet)
-    except Exception: 
+    except Exception:
         abort(500)
 
 
@@ -34,7 +34,7 @@ def update_bricklet(bricklet_number: str):
     uid = bricklet_uid_only_schema.load(request.json)["uid"]
     bricklet = bricklet_service.set_bricklet_uid(bricklet_number, uid)
     db.session.commit()
-    try: 
+    try:
         return bricklet_schema.dump(bricklet)
-    except Exception: 
+    except Exception:
         abort(500)

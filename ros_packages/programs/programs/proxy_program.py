@@ -37,6 +37,7 @@ TERMINAL_GOAL_STATES = {
     GoalStatus.STATUS_CANCELED,
 }
 
+
 class ProxyProgramNode(Node):
 
     def __init__(self) -> None:
@@ -83,11 +84,15 @@ class ProxyProgramNode(Node):
         )
         self.run_program_client.wait_for_server()
 
-        self.get_logger().info('Now Running PROXY PROGRAM')
+        self.get_logger().info("Now Running PROXY PROGRAM")
 
-    def start_program_callback(self, request: ProxyRunProgramStart.Request, response: ProxyRunProgramStart.Response) -> ProxyRunProgramStart.Response:
+    def start_program_callback(
+        self,
+        request: ProxyRunProgramStart.Request,
+        response: ProxyRunProgramStart.Response,
+    ) -> ProxyRunProgramStart.Response:
 
-        # the uuid is used to identify an action-goal and is sent with every topic message, so that they 
+        # the uuid is used to identify an action-goal and is sent with every topic message, so that they
         # can be filtered  for the messages, that actually belong to the goal, that the client has initiated
         proxy_goal_id = str(uuid4())
 
@@ -117,16 +122,24 @@ class ProxyProgramNode(Node):
         goal = RunProgram.Goal()
         goal.source = request.program_number
         goal.source_type = RunProgram.Goal.SOURCE_PROGRAM_NUMBER
-        future: Future = self.run_program_client.send_goal_async(goal, forward_feedback_to_publisher)
+        future: Future = self.run_program_client.send_goal_async(
+            goal, forward_feedback_to_publisher
+        )
         future.add_done_callback(receive_goal_handle)
 
         response.proxy_goal_id = proxy_goal_id
         return response
 
-    def stop_program_callback(self, request: ProxyRunProgramStop.Request, response: ProxyRunProgramStop.Response) -> ProxyRunProgramStop.Response:
+    def stop_program_callback(
+        self,
+        request: ProxyRunProgramStop.Request,
+        response: ProxyRunProgramStop.Response,
+    ) -> ProxyRunProgramStop.Response:
 
-        try: goal_handle: ClientGoalHandle = self.id_to_goal[request.proxy_goal_id][0]
-        except: return response
+        try:
+            goal_handle: ClientGoalHandle = self.id_to_goal[request.proxy_goal_id][0]
+        except:
+            return response
         goal_handle.cancel_goal_async()
         return response
 
@@ -153,6 +166,7 @@ class ProxyProgramNode(Node):
             for id, t in self.id_to_goal.items()
             if t[1] not in TERMINAL_GOAL_STATES
         }
+
 
 def main(args=None) -> None:
 
