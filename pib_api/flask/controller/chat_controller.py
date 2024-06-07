@@ -1,10 +1,21 @@
-from service import chat_service
-from schema.chat_schema import chat_schema, chats_schema, upload_chat_schema, chat_messages_only_schema
-from schema.chat_message_schema import chat_message_post_schema, chat_messages_schema, chat_message_schema
 from app.app import db
-from flask import abort, jsonify, request
+from flask import abort, jsonify, request, Blueprint
+from schema.chat_message_schema import (
+    chat_message_post_schema,
+    chat_message_schema,
+)
+from schema.chat_schema import (
+    chat_schema,
+    chats_schema,
+    upload_chat_schema,
+    chat_messages_only_schema,
+)
+from service import chat_service
+
+bp = Blueprint("chat_controller", __name__)
 
 
+@bp.route("", methods=["POST"])
 def create_chat():
     chat_dto = upload_chat_schema.load(request.json)
     chat = chat_service.create_chat(chat_dto)
@@ -15,6 +26,7 @@ def create_chat():
         abort(500)
 
 
+@bp.route("", methods=["GET"])
 def get_all_chats():
     chats = chat_service.get_all_chats()
     try: 
@@ -23,6 +35,7 @@ def get_all_chats():
         abort(500)
 
 
+@bp.route("/<string:chat_id>", methods=["GET"])
 def get_chat_by_id(chat_id: str):
     chat = chat_service.get_chat(chat_id)
     try: 
@@ -31,6 +44,7 @@ def get_chat_by_id(chat_id: str):
         abort(500)
 
 
+@bp.route("/<string:chat_id>", methods=["PUT"])
 def update_chat(chat_id: str):
     chat_dto = upload_chat_schema.load(request.json)
     chat = chat_service.update_chat(chat_id, chat_dto)
@@ -41,12 +55,14 @@ def update_chat(chat_id: str):
         abort(500)
 
 
+@bp.route("/<string:chat_id>", methods=["DELETE"])
 def delete_chat(chat_id: str):
     chat_service.delete_chat(chat_id)
     db.session.commit()
-    return '', 204
+    return "", 204
 
 
+@bp.route("/<string:chat_id>/messages", methods=["POST"])
 def create_message(chat_id: str):
     chat_message_dto = chat_message_post_schema.load(request.json)
     chat_message = chat_service.create_chat_message(chat_id, chat_message_dto)
@@ -57,6 +73,8 @@ def create_message(chat_id: str):
         abort(500)
     
 
+
+@bp.route("/<string:chat_id>/messages", methods=["GET"])
 def get_messages_by_chat_id(chat_id: str):
     chat = chat_service.get_chat(chat_id)
     try: 
@@ -65,7 +83,8 @@ def get_messages_by_chat_id(chat_id: str):
         abort(500)
 
 
+@bp.route("/<string:chat_id>/messages/<string:message_id>", methods=["DELETE"])
 def delete_message(chat_id: str, message_id: str):
     chat_service.delete_message(chat_id, message_id)
     db.session.commit()
-    return '', 204
+    return "", 204

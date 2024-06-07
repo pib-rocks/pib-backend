@@ -10,6 +10,8 @@ info:
 tags:
   - name: personality
     description: CRUD-Operations for voice assistant personalities
+  - name: assistant-model
+    description: CRUD-Operations for voice assistant models
   - name: chat
     description: CRUD-Operations for voice assistant chats
   - name: motor
@@ -119,6 +121,48 @@ paths:
       responses:
         '204':
           $ref: '#/components/responses/204'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+  /assistant-model:
+    get:
+      tags:
+        - assistant-model
+      summary: Get all assistant models
+      operationId: getAllAssistantModels
+      responses:
+        '200':
+          description: Created
+          content:
+            application/json:
+              schema: 
+                $ref: '#/components/schemas/AssistantModels'
+        '400':
+          $ref: '#/components/responses/400'
+        '500':
+          $ref: '#/components/responses/500'
+  /assistant-model/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      tags:
+        - assistant-model
+      summary: Get one specific assistant model by id
+      operationId: getAssistantModelById
+      responses:
+        '200':
+          description: Created
+          content:
+            application/json:
+              schema: 
+                $ref: '#/components/schemas/AssistantModel'
         '400':
           $ref: '#/components/responses/400'
         '404':
@@ -767,12 +811,18 @@ components:
           examples: 
             - 0.8
             - 1.0
+        assistantModelId:
+          type: string
+          examples:
+            - 1
+            - 2
       required:
         - personalityId
         - name
         - description
         - gender
         - pauseThreshold
+        - assistantModelId
     PostVoiceAssistantPersonality:
       type: object
       properties:
@@ -1197,6 +1247,42 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Bricklet'
+    AssistantModel:
+      type: object
+      properties:
+        id:
+          type: string
+          readOnly: true
+          examples: 
+            - 1
+            - 2
+        apiName:
+          type: string
+          default: gpt-3.5-turbo
+          examples: 
+            - gpt-4.0
+            - Llava
+        hasImageSupport:
+          type: boolean
+          examples:
+            - false
+        visualName:
+          type: string
+          default: GPT-3.5
+          examples:
+            - GPT-4.0
+            - LLAVA
+      required:
+        - id
+        - apiName
+        - hasImageSupport
+    AssistantModels:
+      type: object
+      properties:
+        assistantModels:
+          type: array
+          items:
+            $ref: '#/components/schemas/AssistantModel'
     Error:
         required:
           - Error

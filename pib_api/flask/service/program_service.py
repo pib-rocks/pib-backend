@@ -60,4 +60,4 @@ def _delete_python_code_file(program_number):
 
 
 def _get_code_filepath(program_number):
-    return os.path.join(app.config['PYTHON_CODE_DIR'], f"{program_number}.py")
+    return os.path.join(app.config["PYTHON_CODE_DIR"], f"{program_number}.py")

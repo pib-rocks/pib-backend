@@ -1,5 +1,5 @@
 from collections import deque
-from typing import Any, Callable
+from typing import Any, Callable, Optional
 import rclpy
 from rclpy.node import Node
 from rclpy.executors import SingleThreadedExecutor
@@ -21,9 +21,15 @@ from pib_api_client import voice_assistant_client
 from pib_api_client.voice_assistant_client import Personality
 
 
-VOICE_ASSISTANT_DIRECTORY = os.getenv("VOICE_ASSISTANT_DIR", "/home/pib/ros_working_dir/src/voice_assistant")
-START_SIGNAL_FILE = VOICE_ASSISTANT_DIRECTORY + "/audiofiles/assistant_start_listening.wav"
-STOP_SIGNAL_FILE = VOICE_ASSISTANT_DIRECTORY + "/audiofiles/assistant_stop_listening.wav"
+VOICE_ASSISTANT_DIRECTORY = os.getenv(
+    "VOICE_ASSISTANT_DIR", "/home/pib/ros_working_dir/src/voice_assistant"
+)
+START_SIGNAL_FILE = (
+    VOICE_ASSISTANT_DIRECTORY + "/audiofiles/assistant_start_listening.wav"
+)
+STOP_SIGNAL_FILE = (
+    VOICE_ASSISTANT_DIRECTORY + "/audiofiles/assistant_stop_listening.wav"
+)
 MAX_SILENT_SECONDS_BEFORE = 8.0
 
 
@@ -31,80 +37,100 @@ class VoiceAssistantNode(Node):
 
     def __init__(self):
 
-        super().__init__('voice_assistant')
+        super().__init__("voice_assistant")
 
         # state -------------------------------------------------------------------------
 
-        self.cycle: int = 0 # a counter for indicating the index of the current on-off-cycle
+        # a counter for indicating the index of the current on-off-cycle
+        self.cycle: int = 0
+        # contains information on whether the va is turned on (and what the active chat is)
         self.state: VoiceAssistantState = VoiceAssistantState()
-        self.state.turned_on = False # indicates if the va is turned on or off
-        self.state.chat_id = "" # id of the active chat
-        self.turning_off = False  # indicates if the voice_assistant is currently turning off
-        self.personality: Personality = None # the personality associated with the active chat
-        self.stop_recording: Callable[[], None] = lambda: None # calling this function stops audio-recording
-        self.chat_id_to_stop_chat: dict[str, Callable[[], None]] = {} # maps a chat-id to a function that can be used to stop receiving llm-responses
-        self.chat_id_to_is_listening: dict[str, bool] = {} # maps a chat-id to the listening status of the respective chat
-        self.waiting_for_transcribed_text = False # indicates, whether audio was recorded and va is currently awaitng the transcription
-        self.code_visual_queue: deque[str] = deque() # programs (in for of visual-code) received from the chat-server are buffered here until the current program finished executing
-        self.final_chat_response_received = False # indicates whether the final response (code or sentence) in the current request/response cycle of the active chat was already received
-        self.stop_program_execution: Callable[[], None] = lambda: None # calling this function stops the current program
-        self.is_executing_program = False # indicates if a program is currently executing
+        # indicates if the va is turned on or off
+        self.state.turned_on = False 
+        # id of the active chat (may be an arbitrary value, if the va is turned off)
+        self.state.chat_id = "" 
+        # indicates if the voice_assistant is currently turning off
+        self.turning_off = False  
+        # the personality associated with the active chat
+        self.personality: Personality = None 
+        # calling this function stops audio-recording
+        self.stop_recording: Callable[[], None] = lambda: None 
+        # maps a chat-id to a function that can be used to stop receiving llm-responses
+        self.chat_id_to_stop_chat: dict[str, Callable[[], None]] = {} 
+        # maps a chat-id to the listening status of the respective chat
+        self.chat_id_to_is_listening: dict[str, bool] = {} 
+        # indicates, whether audio was recorded and va is currently awaitng the transcription
+        self.waiting_for_transcribed_text = False 
+        # programs (in for of visual-code) received from the chat-server are buffered here until the current program finished executing
+        self.code_visual_queue: deque[str] = deque() 
+        # indicates whether the final response (code or sentence) in the current request/response cycle of the active chat was already received
+        self.final_chat_response_received = False 
+        # calling this function stops the current program
+        self.stop_program_execution: Callable[[], None] = lambda: None 
+        # indicates if a program is currently executing
+        self.is_executing_program = False 
 
         # services ----------------------------------------------------------------------
 
         # Service for setting VoiceAssistantState
         self.set_voice_assistant_service: Service = self.create_service(
-            SetVoiceAssistantState, 
-            'set_voice_assistant_state',
-            self.set_voice_assistant_state)
+            SetVoiceAssistantState,
+            "set_voice_assistant_state",
+            self.set_voice_assistant_state,
+        )
 
         # Service for getting current VoiceAssistantState
         self.get_voice_assistant_service: Service = self.create_service(
-            GetVoiceAssistantState, 
-            'get_voice_assistant_state',
-            self.get_voice_assistant_state)
-        
+            GetVoiceAssistantState,
+            "get_voice_assistant_state",
+            self.get_voice_assistant_state,
+        )
+
         # Service for getting the listening status of a chat
         self.get_chat_is_listening_service: Service = self.create_service(
-            GetChatIsListening, 
-            'get_chat_is_listening',
-            self.get_chat_is_listening)
-        
+            GetChatIsListening, "get_chat_is_listening", self.get_chat_is_listening
+        )
+
         # Service that allows clients to send chat messages
         self.send_chat_message: Service = self.create_service(
-            SendChatMessage, 
-            'send_chat_message',
-            self.send_chat_message)
-        
+            SendChatMessage, "send_chat_message", self.send_chat_message
+        )
+
         # publishers --------------------------------------------------------------------
 
         # Publisher for VoiceAssistantState
         self.voice_assistant_state_publisher: Publisher = self.create_publisher(
-            VoiceAssistantState, 
-            "voice_assistant_state",
-            10)
+            VoiceAssistantState, "voice_assistant_state", 10
+        )
 
         # Publisher for ChatIsListening
         self.chat_is_listening_publisher: Publisher = self.create_publisher(
-            ChatIsListening, 
-            "chat_is_listening",
-            10)
+            ChatIsListening, "chat_is_listening", 10
+        )
 
         # clients -----------------------------------------------------------------------
 
-        self.chat_client: ActionClient = ActionClient(self, Chat, 'chat')
+        self.chat_client: ActionClient = ActionClient(self, Chat, "chat")
         self.chat_client.wait_for_server()
 
-        self.record_audio_client: ActionClient = ActionClient(self, RecordAudio, 'record_audio')
+        self.record_audio_client: ActionClient = ActionClient(
+            self, RecordAudio, "record_audio"
+        )
         self.record_audio_client.wait_for_server()
 
-        self.play_audio_from_file_client: Client = self.create_client(PlayAudioFromFile, 'play_audio_from_file')
+        self.play_audio_from_file_client: Client = self.create_client(
+            PlayAudioFromFile, "play_audio_from_file"
+        )
         self.play_audio_from_file_client.wait_for_service()
 
-        self.play_audio_from_speech_client: Client = self.create_client(PlayAudioFromSpeech, 'play_audio_from_speech')
+        self.play_audio_from_speech_client: Client = self.create_client(
+            PlayAudioFromSpeech, "play_audio_from_speech"
+        )
         self.play_audio_from_speech_client.wait_for_service()
 
-        self.clear_playback_queue_client: Client = self.create_client(ClearPlaybackQueue, 'clear_playback_queue')
+        self.clear_playback_queue_client: Client = self.create_client(
+            ClearPlaybackQueue, "clear_playback_queue"
+        )
         self.clear_playback_queue_client.wait_for_service()
 
         self.run_program_client: ActionClient = ActionClient(self, RunProgram, 'run_program')
@@ -129,9 +155,17 @@ class VoiceAssistantNode(Node):
         goal = RecordAudio.Goal()
         goal.max_silent_seconds_before = max_silent_seconds_before
         goal.max_silent_seconds_after = max_silent_seconds_after
-        feedback_callback = None if on_stopped_recording is None else lambda _ : on_stopped_recording()
-        result_callback = None if on_transcribed_text_received is None else lambda res: on_transcribed_text_received(res.transcribed_text)
-        future: Future = self.record_audio_client.send_goal_async(goal, feedback_callback)
+        feedback_callback = (
+            None if on_stopped_recording is None else lambda _: on_stopped_recording()
+        )
+        result_callback = (
+            None
+            if on_transcribed_text_received is None
+            else lambda res: on_transcribed_text_received(res.transcribed_text)
+        )
+        future: Future = self.record_audio_client.send_goal_async(
+            goal, feedback_callback
+        )
         self.stop_recording = self.digest_goal_handle_future(future, result_callback)
 
     def chat(self, 
@@ -169,23 +203,23 @@ class VoiceAssistantNode(Node):
         stop_chat = self.digest_goal_handle_future(future, result_callback)
         self.chat_id_to_stop_chat[chat_id] = stop_chat
 
-    def play_audio_from_file(self, 
-                             filepath: str, 
-                             on_stopped_playing: Callable[[], None] = None):
-        
+    def play_audio_from_file(
+        self, filepath: str, on_stopped_playing: Callable[[], None] = None
+    ) -> None:
         request = PlayAudioFromFile.Request()
         request.filepath = filepath
         request.join = on_stopped_playing is not None
         future: Future = self.play_audio_from_file_client.call_async(request)
-        if request.join: 
-            future.add_done_callback(lambda _ : on_stopped_playing())
+        if request.join:
+            future.add_done_callback(lambda _: on_stopped_playing())
 
-    def play_audio_from_speech(self, 
-                               speech: str, 
-                               gender: str, 
-                               language: str, 
-                               on_stopped_playing: Callable[[], None] = None):
-        
+    def play_audio_from_speech(
+        self,
+        speech: str,
+        gender: str,
+        language: str,
+        on_stopped_playing: Callable[[], None] = None,
+    ) -> None:
         request = PlayAudioFromSpeech.Request()
         request.speech = speech
         request.gender = gender
@@ -209,82 +243,50 @@ class VoiceAssistantNode(Node):
     # serivce callbacks -----------------------------------------------------------------
 
     def get_voice_assistant_state(self, _: GetVoiceAssistantState.Request, response: GetVoiceAssistantState.Response) -> GetVoiceAssistantState.Response:
-
+        """callback function for 'get_voice_assistant_state' service"""
         response.voice_assistant_state = self.state
         return response
 
-    def set_voice_assistant_state(self, request: SetVoiceAssistantState.Request, response: SetVoiceAssistantState.Response) -> SetVoiceAssistantState.Response:
-        
+    def set_voice_assistant_state(
+        self,
+        request: SetVoiceAssistantState.Request,
+        response: SetVoiceAssistantState.Response,
+    ) -> SetVoiceAssistantState.Response:
+        """callback function for 'set_voice_assistant_state' service"""
         request_state: VoiceAssistantState = request.voice_assistant_state
-
-        try:
-
-            if self.turning_off: # ignore if currently turning off
-                raise Exception("voice assistant is currently turning off")
-            
-            elif request_state.turned_on == self.state.turned_on: # ignore if activation stage not changed
-                raise Exception(f"voice assistant is already turned {'on' if request_state.turned_on else 'off'}.")
-            
-            elif not request_state.turned_on: # deactivate voice assistant
-                self.cycle += 1
-                self.turning_off = True
-                self.waiting_for_transcribed_text = False
-                self.stop_recording()
-                self.stop_chat(self.state.chat_id)
-                self.stop_program_execution()
-                self.code_visual_queue.clear()
-                self.final_chat_response_received = False
-                self.is_executing_program = False
-                current_chat_id = self.state.chat_id
-
-                def on_playback_queue_cleared():
-                    self.turning_off = False
-                    self.set_is_listening(current_chat_id, True)
-                    self.play_audio_from_file(STOP_SIGNAL_FILE)
-
-                self.clear_playback_queue(on_playback_queue_cleared)
-
-            else: # activate voice assistant
-                self.stop_chat(request_state.chat_id)
-                successful, self.personality = voice_assistant_client.get_personality_from_chat(request_state.chat_id)
-                if not successful: 
-                    raise Exception(f"no personality with chat of id {request_state.chat_id} found...")
-                self.set_is_listening(request_state.chat_id, False)
-                self.play_audio_from_file(START_SIGNAL_FILE, self.if_cycle_not_changed(self.on_start_signal_played))
-
-            self.state = request_state
-            response.successful = True
-
-        except Exception as e:
-            self.get_logger().error(f"following error occured while trying to set voice assistant state: {str(e)}.")
-
-        self.voice_assistant_state_publisher.publish(self.state)
-
+        successful = self.update_state(request_state.turned_on, request_state.chat_id)
+        response.successful = successful
         return response
 
-    def get_chat_is_listening(self, request: GetChatIsListening.Request, response: GetChatIsListening.Response) -> GetChatIsListening.Response:
-
+    def get_chat_is_listening(
+        self, request: GetChatIsListening.Request, response: GetChatIsListening.Response
+    ) -> GetChatIsListening.Response:
+        """callback function for 'get_chat_is_listening' service"""
         response.listening = self.get_is_listening(request.chat_id)
         return response
 
-    def send_chat_message(self, request: SendChatMessage.Request, response: SendChatMessage.Response) -> GetChatIsListening.Response:
+    def send_chat_message(self, request: SendChatMessage.Request, response: SendChatMessage.Response) -> SendChatMessage.Response:
+        """callback function for 'send_chat_message' service"""
 
-        if not self.get_is_listening(request.chat_id): # do not create a message, if chat is not listening
+        # do not create a message, if chat is not listening
+        if not self.get_is_listening(request.chat_id): 
             return response
-        
-        elif request.chat_id == self.state.chat_id: # if chat is active, jump to next stage of the va-cycle
+
+        # if chat is active, jump to next stage of the va-cycle
+        elif request.chat_id == self.state.chat_id:  
             self.set_is_listening(request.chat_id, False)
             self.play_audio_from_file(STOP_SIGNAL_FILE)
             self.stop_recording()
             self.set_is_listening(request.chat_id, False)
             self.chat(
-                request.content, 
+                request.content,
                 self.state.chat_id,
                 True,
                 self.if_cycle_not_changed(self.on_sentence_received),
                 self.if_cycle_not_changed(self.on_code_visual_received))
 
-        else: # if not active, create messages, without playing audio etc.
+        # if not active, create messages, without playing audio etc.
+        else:  
             self.set_is_listening(request.chat_id, False)
 
             def on_sentence_received(sentence: str, is_final: bool):
@@ -303,67 +305,60 @@ class VoiceAssistantNode(Node):
     # callback cycle --------------------------------------------------------------------
 
     def on_start_signal_played(self) -> None:
-
         self.record_audio(
-            MAX_SILENT_SECONDS_BEFORE, 
+            MAX_SILENT_SECONDS_BEFORE,
             self.personality.pause_threshold,
             self.if_cycle_not_changed(self.on_stopped_recording),
-            self.if_cycle_not_changed(self.on_transcribed_text_received))
-        
+            self.if_cycle_not_changed(self.on_transcribed_text_received),
+        )
         self.set_is_listening(self.state.chat_id, True)
-    
+
     def on_stopped_recording(self) -> None:
-
-        if not self.get_is_listening(self.state.chat_id): 
+        if not self.get_is_listening(self.state.chat_id):
             return
-
         self.play_audio_from_file(STOP_SIGNAL_FILE)
         self.set_is_listening(self.state.chat_id, False)
         self.waiting_for_transcribed_text = True
 
     def on_transcribed_text_received(self, transcribed_text: str) -> None:
-
-        if not self.waiting_for_transcribed_text: 
+        if not self.waiting_for_transcribed_text:
             return
         self.waiting_for_transcribed_text = False
-
         self.chat(
-            transcribed_text, 
+            transcribed_text,
             self.state.chat_id,
             True,
             self.if_cycle_not_changed(self.on_sentence_received),
             self.if_cycle_not_changed(self.on_code_visual_received))
 
     def on_sentence_received(self, sentence: str, is_final: bool) -> None:
-
+        if not sentence:
+            self.update_state(False)
+            return
         self.final_chat_response_received = is_final
-
-        on_stopped_playing = None
-        if is_final and not self.is_executing_program: 
-            on_stopped_playing = self.if_cycle_not_changed(self.on_final_sentence_played)
+        on_stopped_playing = (
+            self.if_cycle_not_changed(self.on_final_sentence_played)
+            if is_final and not self.is_executing_program
+            else None
+        )
         self.play_audio_from_speech(
-            sentence, 
-            self.personality.gender, 
+            sentence,
+            self.personality.gender,
             self.personality.language,
             on_stopped_playing)
         
     def on_code_visual_received(self, code_visual: str, is_final: bool) -> None:
-
         self.final_chat_response_received = is_final
-
         if self.is_executing_program: 
             self.code_visual_queue.append(code_visual)
         else:  
             self.run_program(code_visual, self.if_cycle_not_changed(self.on_stopped_executing_program))
-        
         self.is_executing_program = True
 
     def on_stopped_executing_program(self) -> None:
-
         if self.code_visual_queue:
             code_visual = self.code_visual_queue.pop()
             self.run_program(code_visual, self.if_cycle_not_changed(self.on_stopped_executing_program))
-
         else:
             self.is_executing_program = False
             if self.final_chat_response_received:
@@ -372,26 +367,26 @@ class VoiceAssistantNode(Node):
                     self.if_cycle_not_changed(self.on_start_signal_played))
 
     def on_final_sentence_played(self) -> None:
-
         self.play_audio_from_file(
-            START_SIGNAL_FILE, 
-            self.if_cycle_not_changed(self.on_start_signal_played))
+            START_SIGNAL_FILE, self.if_cycle_not_changed(self.on_start_signal_played)
+        )
 
     # helper functions ------------------------------------------------------------------
 
     def if_cycle_not_changed(self, callback: Callable) -> Callable:
         """a decorator. the decorated callback only executes, if the cycle has not changed after its creation"""
-
         current_cycle = self.cycle
+
         def decorated_callback(*args):
-            if self.cycle == current_cycle: 
+            if self.cycle == current_cycle:
                 callback(*args)
 
         return decorated_callback
 
-    def digest_goal_handle_future(self, goal_handle_future: Future, callback: Callable[[Any], None] = None) -> Callable[[], None]:
+    def digest_goal_handle_future(
+        self, goal_handle_future: Future, callback: Callable[[Any], None] = None
+    ) -> Callable[[], None]:
         """adds a result callback to the goal and returns a function, that can be used to cancel the goal"""
-
         if callback is not None:
 
             def result_callback(result_future: Future):
@@ -413,7 +408,6 @@ class VoiceAssistantNode(Node):
 
     def set_is_listening(self, chat_id: str, listening: bool) -> None:
         """updates and publishes the listening status of a chat"""
-
         self.chat_id_to_is_listening[chat_id] = listening
 
         chat_is_listening = ChatIsListening()
@@ -424,19 +418,76 @@ class VoiceAssistantNode(Node):
 
     def get_is_listening(self, chat_id: str) -> bool:
         """find out, if a chat is currently listening for user input"""
-
         return self.chat_id_to_is_listening.get(chat_id, True)
 
     def stop_chat(self, chat_id: str) -> None:
-        """if the chat of the provided is active, stop receiving messages from the chat"""
-
+        """if the chat of the provided chat-id is active, stop receiving messages from the chat"""
         stop_chat = self.chat_id_to_stop_chat.get(chat_id)
-        if stop_chat is not None: 
+        if stop_chat is not None:
             stop_chat()
+
+    def update_state(self, turned_on: bool, chat_id: str = "") -> bool:
+        """attempts to update the internal state, and returns whether this was successful"""
+        try:
+            # ignore if currently turning off
+            if self.turning_off:
+                raise Exception("voice assistant is currently turning off")
+
+            # ignore if activation state not changed
+            elif turned_on == self.state.turned_on:
+                raise Exception(
+                    f"voice assistant is already turned {'on' if turned_on else 'off'}."
+                )
+
+            # deactivate voice assistant
+            elif not turned_on:
+                self.cycle += 1
+                self.turning_off = True
+                self.waiting_for_transcribed_text = False
+                self.stop_recording()
+                self.stop_chat(chat_id)
+                self.stop_program_execution()
+                self.code_visual_queue.clear()
+                self.final_chat_response_received = False
+                self.is_executing_program = False
+                
+                current_chat_id = self.state.chat_id
+                def on_playback_queue_cleared():
+                    self.turning_off = False
+                    self.set_is_listening(current_chat_id, True)
+                    self.play_audio_from_file(STOP_SIGNAL_FILE)
+                self.clear_playback_queue(on_playback_queue_cleared)
+
+            # activate voice assistant
+            else:
+                self.stop_chat(chat_id)
+                successful, self.personality = (
+                    voice_assistant_client.get_personality_from_chat(chat_id)
+                )
+                if not successful:
+                    raise Exception(
+                        f"no personality with chat of id {chat_id} found..."
+                    )
+                self.set_is_listening(chat_id, False)
+                self.play_audio_from_file(
+                    START_SIGNAL_FILE,
+                    self.if_cycle_not_changed(self.on_start_signal_played),
+                )
+
+            self.state.turned_on = turned_on
+            self.state.chat_id = chat_id
+
+        except Exception as e:
+            self.get_logger().error(
+                f"following error occured while trying to update state: {str(e)}."
+            )
+            return False
+
+        self.voice_assistant_state_publisher.publish(self.state)
+        return True
 
 
 def main(args=None):
-
     rclpy.init()
     node = VoiceAssistantNode()
     executor = SingleThreadedExecutor()
