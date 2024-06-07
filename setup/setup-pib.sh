@@ -116,6 +116,14 @@ fi
 LOG_FILE="$USER_HOME/setup-pib.log"
 exec > >(tee -a "$LOG_FILE") 2>&1
 
+# Disable IPv6
+echo -e "$NEW_LINE""$YELLOW_TEXT_COLOR""-- Disabling IPv6  --""$RESET_TEXT_COLOR""$NEW_LINE"
+
+sudo sysctl -w net.ipv6.conf.all.disable_ipv6=1
+sudo sysctl -w net.ipv6.conf.default.disable_ipv6=1
+
+echo -e "$NEW_LINE""$GREEN_TEXT_COLOR""-- Disabled IPv6 --""$RESET_TEXT_COLOR""$NEW_LINE"
+
 
 # Delete unnecessary apps
 print_colored_line_of_text "$YELLOW_TEXT_COLOR" "-- Removing unused default software packages --"
@@ -176,6 +184,7 @@ export SETUP_DIR="$BACKEND_DIR/setup"
 export SETUP_FILES="$SETUP_DIR/setup_files"
 export INSTALLATION_SCRIPTS="$SETUP_DIR/installation_scripts"
 export PIB_API_SETUP_DIR="$BACKEND_DIR/pib_api"
+export UPDATE_TARGET_DIR="/usr/bin"
 
 # Clone repos
 git clone -b "$frontend_branch" "$FRONTEND_REPO" "$FRONTEND_DIR"
@@ -191,8 +200,6 @@ mkdir "$ROS_WORKING_DIR"
 run_script_and_measure_runtime "$INSTALLATION_SCRIPTS/check_system_variables.sh"
 # Install system packages
 run_script_and_measure_runtime "$INSTALLATION_SCRIPTS/install_system_packages.sh"
-# Install public-api-client
-run_script_and_measure_runtime "$INSTALLATION_SCRIPTS/install_public_api_client.sh"
 # Install tinkerforge
 run_script_and_measure_runtime "$INSTALLATION_SCRIPTS/install_tinkerforge.sh"
 # Install Cerebra
@@ -206,8 +213,8 @@ run_script_and_measure_runtime "$INSTALLATION_SCRIPTS/prepare_json_server.sh"
 
 
 # Install update-pip
-cp "$SETUP_DIR/update-pib.sh" "$USER_HOME/update-pib.sh"
-sudo chmod 700 ~/update-pib.sh
+sudo cp "$SETUP_DIR/update-pib.sh" "$UPDATE_TARGET_DIR/update-pib"
+sudo chmod 755 "$UPDATE_TARGET_DIR/update-pib"
 
 # Get ros_config
 cp "$SETUP_FILES/ros_config.sh" "$ROS_WORKING_DIR/ros_config.sh"
