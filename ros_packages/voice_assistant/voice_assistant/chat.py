@@ -21,7 +21,7 @@ from public_api_client import public_voice_client
 # in future, this code will be prepended to the description in a chat-request
 # if it is specified that code should be generated. The text will contain
 # instruction for the llm on how to generate the code. For now, it is left blank
-CODE_DESCRIPTION_PREFIX = ''
+CODE_DESCRIPTION_PREFIX = ""
 
 
 class ChatNode(Node):
