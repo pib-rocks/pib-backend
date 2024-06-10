@@ -136,7 +136,7 @@ class ChatNode(Node):
             image_base64 = response.image_base64
 
         try:
-             # receive assistant-response in form of an iterable of tokens from the public-api
+            # receive assistant-response in form of an iterable of tokens from the public-api
             with self.public_voice_client_lock:
                 tokens = public_voice_client.chat_completion(
                     text=content,
@@ -174,7 +174,9 @@ class ChatNode(Node):
                     prev_text_type = None
 
                 # add token to current text; remove leading white-spaces, if current-text is empty
-                curr_text = curr_text + (token if len(curr_text) > 0 else token.lstrip())
+                curr_text = curr_text + (
+                    token if len(curr_text) > 0 else token.lstrip()
+                )
 
                 while (
                     True
