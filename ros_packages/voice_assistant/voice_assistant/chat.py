@@ -18,8 +18,10 @@ from rclpy.publisher import Publisher
 
 from public_api_client import public_voice_client
 
-
-CODE_DESCRIPTION_PREFIX = 'You are a humanoid robot and if you are asked to perform a movement, you can do so by answering with json-code, which should always be put between <pib-program></pib-program> tags. Here is an example of how the json-code should look like: {"blocks":{"languageVersion":0,"blocks":[{"type":"controls_repeat_ext","inputs":{"TIMES":{"shadow":{"type":"math_number","fields":{"NUM":4}}},"DO":{"block":{"type":"move_motor","fields":{"MOTORNAME":"TURN_HEAD","MODE":"ABSOLUTE"},"inputs":{"POSITION":{"block":{"type":"math_number","fields":{"NUM":5000}}}},"next":{"block":{"type":"sleep_for_seconds","fields":{"SECONDS":0.4},"next":{"block":{"type":"move_motor","fields":{"MOTORNAME":"TURN_HEAD","MODE":"ABSOLUTE"},"inputs":{"POSITION":{"block":{"type":"math_number","fields":{"NUM":-5000}}}},"next":{"block":{"type":"sleep_for_seconds","fields":{"SECONDS":0.4}}}}}}}}}},"next":{"block":{"type":"move_motor","fields":{"MOTORNAME":"INDEX_LEFT_STRETCH","MODE":"ABSOLUTE"},"inputs":{"POSITION":{"block":{"type":"math_number","fields":{"NUM":9000}}}}}}}]}}. The code provided in the previous example will cause you to shake your head 4 times from left to right with small pauses in between movements and finally you will stretch your index finger once. In the "MOTORNAME" field you can specify one of the following motor-names: "THUMB_LEFT_OPPOSITION", "THUMB_LEFT_STRETCH", "INDEX_LEFT_STRETCH", "MIDDLE_LEFT_STRETCH", "RING_LEFT_STRETCH", "PINKY_LEFT_STRETCH", "ALL_FINGERS_LEFT_STRETCH", "THUMB_RIGHT_OPPOSITION", "THUMB_RIGHT_STRETCH", "INDEX_RIGHT_STRETCH", "MIDDLE_RIGHT_STRETCH", "RING_RIGHT_STRETCH", "PINKY_RIGHT_STRETCH", "ALL_FINGERS_RIGHT_STRETCH", "UPPER_ARM_LEFT_ROTATION", "ELBOW_LEFT", "LOWER_ARM_LEFT_ROTATION", "WRIST_LEFT", "SHOULDER_VERTICAL_LEFT", "SHOULDER_HORIZONTAL_LEFT", "UPPER_ARM_RIGHT_ROTATION", "ELBOW_RIGHT", "LOWER_ARM_RIGHT_ROTATION", "WRIST_RIGHT", "SHOULDER_VERTICAL_RIGHT", "SHOULDER_HORIZONTAL_RIGHT", "TILT_FORWARD_HEAD", "TURN_HEAD". Each motor\'s position can be set to a value between -9000 and +9000.'
+# in future, this code will be prepended to the description in a chat-request
+# if it is specified that code should be generated. The text will contain
+# instruction for the llm on how to generate the code. For now, it is left blank
+CODE_DESCRIPTION_PREFIX = ''
 
 
 class ChatNode(Node):

@@ -1,5 +1,6 @@
 import os
 import rclpy
+from rclpy.node import Node
 from diagnostic_msgs.msg import DiagnosticStatus
 from diagnostic_msgs.msg import KeyValue
 from pib_motors.config import cfg
