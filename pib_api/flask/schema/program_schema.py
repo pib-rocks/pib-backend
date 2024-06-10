@@ -9,5 +9,7 @@ class ProgramSchemaSQLAutoWith(SQLAutoWithCamelCaseSchema):
 
 program_schema_name_only = ProgramSchemaSQLAutoWith(only=("name",))
 program_schema_without_code = ProgramSchemaSQLAutoWith(only=("name", "program_number"))
-programs_schema_without_code = ProgramSchemaSQLAutoWith(only=("name", "program_number"), many=True)
+programs_schema_without_code = ProgramSchemaSQLAutoWith(
+    only=("name", "program_number"), many=True
+)
 program_schema_code_visual_only = ProgramSchemaSQLAutoWith(only=("code_visual",))

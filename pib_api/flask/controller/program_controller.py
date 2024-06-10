@@ -3,7 +3,7 @@ from schema.program_schema import (
     program_schema_name_only,
     program_schema_without_code,
     programs_schema_without_code,
-    program_schema_code_visual_only
+    program_schema_code_visual_only,
 )
 from service import program_service
 from app.app import db
