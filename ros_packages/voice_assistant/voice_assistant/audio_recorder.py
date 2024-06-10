@@ -137,6 +137,7 @@ class AudioRecorderNode(Node):
                 stream.stop_stream()
                 stream.close()
                 pya.terminate()
+
         except OSError as e:
             self.get_logger().error(f"failed to record audio: {e}")
             # pya.terminate()
