@@ -16,7 +16,7 @@ def get_all_personalities():
     personalities_dto = personalities_schema.dump(personalities)
     try:
         return jsonify({"voiceAssistantPersonalities": personalities_dto})
-    except:
+    except Exception:
         abort(500)
 
 
@@ -25,7 +25,7 @@ def get_personality(personality_id: str):
     personality = personality_service.get_personality(personality_id)
     try:
         return personality_schema.dump(personality)
-    except:
+    except Exception:
         abort(500)
 
 
@@ -36,7 +36,7 @@ def create_personality():
     db.session.commit()
     try:
         return personality_schema.dump(personality), 201
-    except:
+    except Exception:
         abort(500)
 
 
@@ -49,7 +49,7 @@ def update_personality(personality_id: str):
     db.session.commit()
     try:
         return personality_schema.dump(personality)
-    except:
+    except Exception:
         abort(500)
 
 
@@ -57,7 +57,4 @@ def update_personality(personality_id: str):
 def delete_personality(personality_id: str):
     personality_service.delete_personality(personality_id)
     db.session.commit()
-    try:
-        return "", 204
-    except:
-        abort(500)
+    return "", 204

@@ -8,8 +8,8 @@ services:
   flask-app:
     image: flask_api
     build:
-      context: ./pib_api/flask/
-      dockerfile: ./Dockerfile
+      context: .
+      dockerfile: ./pib_api/flask/Dockerfile
     networks:
       - pib-network
     ports:
@@ -19,7 +19,21 @@ services:
       - programs:/root/cerebra_programs
     environment:
       - SQLALCHEMY_DATABASE_URI=sqlite:////app/pibdata.db
+      - PIB_BLOCKLY_SERVER_URL=http://pib-blockly-server:2442
     command: "bash -c 'flask --app run db upgrade && flask --app run seed_db && flask --app run run --host 0.0.0.0'"
+    depends_on:
+      - pib-blockly-server
+
+  pib-blockly-server:
+    image: pib-blockly-server
+    build:
+      context: ./pib_blockly/pib_blockly_server/
+      dockerfile: ./Dockerfile
+    networks:
+      - pib-network
+    ports: 
+      - "2442:2442"
+    command: "node /app/dist/pib_blockly_server_bundle.js"
 
   ros-camera:
     image: ros-camera
@@ -49,6 +63,7 @@ services:
     command: ros2 launch motors launch.py
     environment:
       - FLASK_API_BASE_URL=http://flask-app:5000
+      - PIB_BLOCKLY_SERVER_URL=http://pib-blockly-server:2442
       - TINKERFORGE_HOST=tinkerforge-brickd
       - TINKERFORGE_PORT=4223
     networks:
@@ -86,11 +101,12 @@ services:
     restart: always
     depends_on:
       - flask-app
+      - pib-blockly-server
 
   ros-programs:
     image: ros_programs
     build:
-      context: ./ros_packages
+      context: .
       dockerfile: ./programs/Dockerfile
     command: ros2 launch programs launch.py
     environment:
