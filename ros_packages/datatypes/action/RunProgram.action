@@ -1,5 +1,13 @@
-string program_number
+
+# the code is provided in form of a program-number, that refers to a program
+# that is managed by the pib-api
+byte SOURCE_PROGRAM_NUMBER=0
+# the code is provided in form of visual-code. the action-server will compile
+# it to python code and delete the code, once exectution has finished
+byte SOURCE_CODE_VISUAL=1 
+byte source_type # the type of source that provides the code
+string source # the source of the code that should be exectuted
 ---
-uint8 exit_code
+int8 exit_code -1
 ---
 ProgramOutputLine[] output_lines

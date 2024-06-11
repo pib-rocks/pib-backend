@@ -24,12 +24,13 @@ show_help()
 	echo -e "$CYAN_TEXT_COLOR""Development mode (specify the branches you want to install)""$RESET_TEXT_COLOR"
 
 	echo -e "You can either use the short or verbose command versions:"
-	echo -e "-f=YourBranchName or --frontendBranch=YourBranchName"
-	echo -e "-b=YourBranchName or --backendBranch=YourBranchName"
+	echo -e "-f=YourBranchName or --frontend-branch=YourBranchName"
+	echo -e "-b=YourBranchName or --backend-branch=YourBranchName"
+	echo -e "-p=YourBranchName or --pib-blockly-branch=YourBranchName"
 
 	echo -e "$NEW_LINE""Examples:"
 	echo -e "    ./setup-pib -b=main -f=PR-566"
-    echo -e "    ./setup-pib --backendBranch=main --frontendBranch=PR-566"
+    echo -e "    ./setup-pib --backend-branch=main --frontend-branch=PR-566 --pib-blockly-branch=PR-develop"
 	
 	exit
 }
@@ -73,11 +74,11 @@ export is_dev_mode=false
 while [ $# -gt 0 ]; do
 	case "$1" in
 		# Assign default and feature branches for dev-mode
-		-f=* | --frontendBranch=*)
+		-f=* | --frontend-branch=*)
 			is_dev_mode=true
 			frontend_branch="${1#*=}"
 			;;
-		-b=* | --backendBranch=*)
+		-b=* | --backend-branch=*)
 			is_dev_mode=true
 			backend_branch="${1#*=}"
 			;;
@@ -184,11 +185,18 @@ export SETUP_DIR="$BACKEND_DIR/setup"
 export SETUP_FILES="$SETUP_DIR/setup_files"
 export INSTALLATION_SCRIPTS="$SETUP_DIR/installation_scripts"
 export PIB_API_SETUP_DIR="$BACKEND_DIR/pib_api"
+export PIB_BLOCKLY_SETUP_DIR="$BACKEND_DIR/pib_blockly"
 export UPDATE_TARGET_DIR="/usr/bin"
 
 # Clone repos
 git clone -b "$frontend_branch" "$FRONTEND_REPO" "$FRONTEND_DIR"
+cd "$FRONTEND_DIR"
+git submodule update --init
+
+# clone backend repo and initialize submodules
 git clone -b "$backend_branch" "$BACKEND_REPO" "$BACKEND_DIR"
+cd "$BACKEND_DIR"
+git submodule update --init
 
 # Create working directory for ros
 export ROS_WORKING_DIR="$USER_HOME/ros_working_dir"
@@ -210,6 +218,8 @@ run_script_and_measure_runtime "$INSTALLATION_SCRIPTS/setup_packages.sh"
 run_script_and_measure_runtime "$INSTALLATION_SCRIPTS/set_system_settings.sh"
 # Prepares JSON-Server
 run_script_and_measure_runtime "$INSTALLATION_SCRIPTS/prepare_json_server.sh"
+# Install pib-blockly-server
+run_script_and_measure_runtime "$INSTALLATION_SCRIPTS/install_pib_blockly_server.sh"
 
 
 # Install update-pip
