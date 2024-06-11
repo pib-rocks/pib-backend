@@ -23,21 +23,14 @@ def create_program():
         return error, 400
     created = Program(name=request.json.get("name"))
     db.session.add(created)
-    db.session.commit()
     program_service.create_empty_python_code_file(created.program_number)
-    try:
-        return program_schema_without_program.dump(created)
-    except:
-        abort(500)
+    return program_schema_without_program.dump(created)
 
 
 @bp.route("", methods=["GET"])
 def get_all_programs():
     all_programs = Program.query.all()
-    try:
-        return jsonify({"programs": programs_schema_without_program.dump(all_programs)})
-    except:
-        abort(500)
+    return jsonify({"programs": programs_schema_without_program.dump(all_programs)})
 
 
 @bp.route("/<string:program_number>", methods=["GET"])
@@ -45,10 +38,7 @@ def get_program_by_number(program_number):
     program = Program.query.filter(
         Program.program_number == program_number
     ).first_or_404()
-    try:
-        return program_schema_without_program.dump(program)
-    except:
-        abort(500)
+    return program_schema_without_program.dump(program)
 
 
 @bp.route("/<string:program_number>", methods=["PUT"])
@@ -62,11 +52,7 @@ def update_program_by_number(program_number):
     ).first_or_404()
     program.name = data["name"]
     db.session.add(program)
-    db.session.commit()
-    try:
-        return program_schema_without_program.dump(program)
-    except:
-        abort(500)
+    return program_schema_without_program.dump(program)
 
 
 @bp.route("/<string:program_number>", methods=["DELETE"])
@@ -75,12 +61,8 @@ def delete_program_by_number(program_number):
     delete_program = Program.query.filter(
         Program.program_number == program_number
     ).first_or_404()
-    try:
-        db.session.delete(delete_program)
-        db.session.commit()
-        return "", 204
-    except:
-        abort(500)
+    db.session.delete(delete_program)
+    return "", 204
 
 
 @bp.route("/<string:program_number>/code", methods=["GET"])
@@ -101,6 +83,5 @@ def update_program_code_by_number(program_number):
         Program.program_number == program_number
     ).first_or_404()
     program.code_visual = data["visual"]
-    db.session.commit()
     program_service.write_to_python_code_file(program_number, data["python"])
     return program_code_visual_only_schema.dump(data)

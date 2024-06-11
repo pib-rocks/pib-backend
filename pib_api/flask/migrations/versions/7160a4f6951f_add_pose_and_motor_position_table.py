@@ -32,10 +32,10 @@ def upgrade():
         "motor_position",
         sa.Column("id", sa.Integer(), nullable=False),
         sa.Column("position", sa.Integer(), nullable=False),
-        sa.Column("motorname", sa.Integer(), nullable=False),
+        sa.Column("motor_name", sa.Integer(), nullable=False),
         sa.Column("pose_id", sa.Integer(), nullable=False),
         sa.ForeignKeyConstraint(
-            ["motorname"],
+            ["motor_name"],
             ["motor.name"],
         ),
         sa.ForeignKeyConstraint(

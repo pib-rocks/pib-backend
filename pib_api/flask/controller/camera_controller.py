@@ -1,5 +1,5 @@
 from app.app import db
-from flask import abort, request, Blueprint
+from flask import request, Blueprint
 from model.camera_settings_model import CameraSettings
 from schema.camera_settings_schema import camera_settings_schema
 
@@ -9,10 +9,7 @@ bp = Blueprint("camera_controller", __name__)
 @bp.route("", methods=["GET", "POST"])
 def get_camera_settings():
     cameraSettings = CameraSettings.query.all()
-    try:
-        return camera_settings_schema.dump(cameraSettings[0])
-    except:
-        abort(500)
+    return camera_settings_schema.dump(cameraSettings[0])
 
 
 @bp.route("", methods=["PUT"])
@@ -38,9 +35,5 @@ def update_camera_settings():
     updateCameraSettings.resX = newCameraSettings.resX
     updateCameraSettings.resY = newCameraSettings.resY
     db.session.add(updateCameraSettings)
-    db.session.commit()
     response = CameraSettings.query.filter(CameraSettings.id == 1).first_or_404()
-    try:
-        return camera_settings_schema.dump(response)
-    except:
-        abort(500)
+    return camera_settings_schema.dump(response)

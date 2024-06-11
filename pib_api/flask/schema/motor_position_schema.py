@@ -8,7 +8,7 @@ class MotorPositionSchema(SQLAutoWithCamelCaseSchema):
         model = MotorPosition
         exclude = ("id",)
 
-    motorname = fields.Str()
+    motor_name = fields.Str()
 
 
-motor_positions_schema = MotorPositionSchema(only=("position", "motorname"), many=True)
+motor_positions_schema = MotorPositionSchema(only=("position", "motor_name"), many=True)
