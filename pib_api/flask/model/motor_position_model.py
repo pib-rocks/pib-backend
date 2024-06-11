@@ -7,5 +7,5 @@ class MotorPosition(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     position = db.Column(db.Integer, nullable=False)
-    motorname = db.Column(db.Integer, db.ForeignKey("motor.name"), nullable=False)
+    motor_name = db.Column(db.Integer, db.ForeignKey("motor.name"), nullable=False)
     pose_id = db.Column(db.Integer, db.ForeignKey("pose.id"), nullable=False)

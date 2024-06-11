@@ -1375,7 +1375,7 @@ components:
     MotorPosition:
       type: object
       properties:
-        motorname:
+        motorName:
           $ref: '#/components/schemas/MotorName'
         position:
           description: Position of the Motor
@@ -1383,7 +1383,7 @@ components:
           examples:
             - 2500
       required:
-        - motorname
+        - motorName
         - position
     PoseNameAndIdOnly:
       type: object
