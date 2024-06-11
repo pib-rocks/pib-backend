@@ -4,7 +4,7 @@ from schema.bricklet_schema import (
     bricklets_schema,
 )
 from service import bricklet_service
-from flask import request, Blueprint
+from flask import request, Blueprint, jsonify
 
 
 bp = Blueprint("bricklet_controller", __name__)
