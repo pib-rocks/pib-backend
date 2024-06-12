@@ -37,10 +37,10 @@ def unpack_joint_trajectory(jt: JointTrajectory) -> Iterable[Tuple[str, int]]:
 
 def as_joint_trajectory(motor_name: str, position: int) -> JointTrajectory:
     """converts a motorname and position into a simple jt-message"""
-    jt = JointTrajectory
+    jt = JointTrajectory()
     jt.joint_names = [motor_name]
     point = JointTrajectoryPoint()
-    point.positions = [position]
+    point.positions.append(position)
     jt.points = [point]
     return jt
 
@@ -55,8 +55,13 @@ class MotorControl(Node):
         self.declare_parameter("dev", False)
         self.dev = self.get_parameter("dev").value
 
+        # Service for JointTrajectory
+        self.srv = self.create_service(
+            ApplyJointTrajectory, "apply_joint_trajectory", self.apply_joint_trajectory
+        )
+
         # Publisher for JointTrajectory
-        self.publisher = self.create_publisher(JointTrajectory, "joint_trajectory", 10)
+        self.joint_trajectory_publisher = self.create_publisher(JointTrajectory, "joint_trajectory", 10)
 
         # Service for MotorSettings
         self.srv = self.create_service(
@@ -64,7 +69,7 @@ class MotorControl(Node):
         )
 
         # Publisher for MotorSettings
-        self.publisher = self.create_publisher(MotorSettings, "motor_settings", 10)
+        self.motor_settings_publisher = self.create_publisher(MotorSettings, "motor_settings", 10)
 
         # load motor-settings if not in dev mode
         if not self.dev:
@@ -77,7 +82,7 @@ class MotorControl(Node):
                         motor.apply_settings(motor_settings_dto)
 
         # Log that initialization is complete
-        self.get_logger().warn("Now Running MOTOR_CONTROL")
+        self.get_logger().info("Now Running MOTOR_CONTROL")
 
     def motor_settings_callback(
         self, request: MotorSettingsSrv.Request, response: MotorSettingsSrv.Response
@@ -101,7 +106,7 @@ class MotorControl(Node):
                         motor.name, motor_settings_dto
                     )
                     response.settings_persisted &= persisted
-                    self.publisher.publish(motor_settings_ros)
+                    self.motor_settings_publisher.publish(motor_settings_ros)
                 self.get_logger().info(f"updated motor: {str(motor)}")
 
         except Exception as e:
@@ -131,8 +136,8 @@ class MotorControl(Node):
                         f"setting position {'succeeded' if successful else 'failed'}."
                     )
                     response.successful &= successful
-                    if successful:
-                        self.publisher.publish(
+                    if True:
+                        self.joint_trajectory_publisher.publish(
                             as_joint_trajectory(motor.name, position)
                         )
         except Exception as e:
