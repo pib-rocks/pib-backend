@@ -27,7 +27,7 @@ def motor_settings_ros_to_dto(ms: MotorSettings):
     }
 
 
-def unpack_joint_trajectory(jt: JointTrajectory) -> Iterable[Tuple[str, int]]:
+def as_motor_positions(jt: JointTrajectory) -> Iterable[Tuple[str, int]]:
     """unpacks a jt-message into an iterable of motorname-position-pairs"""
     motor_names = jt.joint_names
     points: list[JointTrajectoryPoint] = jt.points
@@ -61,7 +61,9 @@ class MotorControl(Node):
         )
 
         # Publisher for JointTrajectory
-        self.joint_trajectory_publisher = self.create_publisher(JointTrajectory, "joint_trajectory", 10)
+        self.joint_trajectory_publisher = self.create_publisher(
+            JointTrajectory, "joint_trajectory", 10
+        )
 
         # Service for MotorSettings
         self.srv = self.create_service(
@@ -69,7 +71,9 @@ class MotorControl(Node):
         )
 
         # Publisher for MotorSettings
-        self.motor_settings_publisher = self.create_publisher(MotorSettings, "motor_settings", 10)
+        self.motor_settings_publisher = self.create_publisher(
+            MotorSettings, "motor_settings", 10
+        )
 
         # load motor-settings if not in dev mode
         if not self.dev:
@@ -126,7 +130,7 @@ class MotorControl(Node):
         jt = request.joint_trajectory
         response.successful = True
         try:
-            for motor_name, position in unpack_joint_trajectory(jt):
+            for motor_name, position in as_motor_positions(jt):
                 for motor in name_to_motors[motor_name]:
                     self.get_logger().info(
                         f"setting position of {motor.name} to {position}"
@@ -142,7 +146,7 @@ class MotorControl(Node):
                         )
         except Exception as e:
             response.successful = False
-            self.get_logger().error(f"error while applying jt: {str(e)}")
+            self.get_logger().error(f"error while applying joint-trajectory: {str(e)}")
         return response
 
 
