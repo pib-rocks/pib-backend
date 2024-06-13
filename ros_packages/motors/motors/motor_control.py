@@ -2,7 +2,7 @@ from typing import Iterable, Tuple
 import rclpy
 from rclpy.node import Node
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
-from datatypes.srv import MotorSettingsSrv, ApplyJointTrajectory
+from datatypes.srv import ApplyMotorSettings, ApplyJointTrajectory
 from datatypes.msg import MotorSettings
 from pib_api_client import motor_client
 from pib_motors.motor import name_to_motors, motors
@@ -67,7 +67,7 @@ class MotorControl(Node):
 
         # Service for MotorSettings
         self.srv = self.create_service(
-            MotorSettingsSrv, "motor_settings", self.motor_settings_callback
+            ApplyMotorSettings, "apply_motor_settings", self.apply_motor_settings
         )
 
         # Publisher for MotorSettings
@@ -88,9 +88,9 @@ class MotorControl(Node):
         # Log that initialization is complete
         self.get_logger().info("Now Running MOTOR_CONTROL")
 
-    def motor_settings_callback(
-        self, request: MotorSettingsSrv.Request, response: MotorSettingsSrv.Response
-    ) -> MotorSettingsSrv.Response:
+    def apply_motor_settings(
+        self, request: ApplyMotorSettings.Request, response: ApplyMotorSettings.Response
+    ) -> ApplyMotorSettings.Response:
 
         response.settings_applied = True
         response.settings_persisted = True
