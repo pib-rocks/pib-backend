@@ -19,7 +19,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
 	"msg/ProxyRunProgramResult.msg"
 	"msg/ProxyRunProgramStatus.msg"
 	"msg/ChatIsListening.msg"
-	"srv/MotorSettingsSrv.srv"
+	"srv/ApplyMotorSettings.srv"
 	"srv/PlayAudioFromFile.srv"
 	"srv/PlayAudioFromSpeech.srv"
 	"srv/GetVoiceAssistantState.srv"
