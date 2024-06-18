@@ -1,16 +1,8 @@
 from typing import Any, Callable, Optional
-import rclpy
-from rclpy.node import Node
-from rclpy.executors import SingleThreadedExecutor
-from rclpy.node import Node
-from rclpy.task import Future
-from rclpy.service import Service
-from rclpy.action import ActionClient
-from rclpy.action.client import ClientGoalHandle
-from rclpy.publisher import Publisher
-from rclpy.client import Client
 
+import rclpy
 from datatypes.action import Chat, RecordAudio
+from datatypes.msg import VoiceAssistantState, ChatIsListening
 from datatypes.srv import (
     SetVoiceAssistantState,
     GetVoiceAssistantState,
@@ -20,24 +12,21 @@ from datatypes.srv import (
     GetChatIsListening,
     SendChatMessage,
 )
-from datatypes.msg import VoiceAssistantState, ChatIsListening
-
-import os
-
 from pib_api_client import voice_assistant_client
 from pib_api_client.voice_assistant_client import Personality
-
-
-VOICE_ASSISTANT_DIRECTORY = os.getenv(
-    "VOICE_ASSISTANT_DIR", "/home/pib/ros_working_dir/src/voice_assistant"
+from rclpy.action import ActionClient
+from rclpy.action.client import ClientGoalHandle
+from rclpy.client import Client
+from rclpy.executors import SingleThreadedExecutor
+from rclpy.node import Node
+from rclpy.publisher import Publisher
+from rclpy.service import Service
+from rclpy.task import Future
+from voice_assistant import (
+    START_SIGNAL_FILE,
+    STOP_SIGNAL_FILE,
+    MAX_SILENT_SECONDS_BEFORE,
 )
-START_SIGNAL_FILE = (
-    VOICE_ASSISTANT_DIRECTORY + "/audiofiles/assistant_start_listening.wav"
-)
-STOP_SIGNAL_FILE = (
-    VOICE_ASSISTANT_DIRECTORY + "/audiofiles/assistant_stop_listening.wav"
-)
-MAX_SILENT_SECONDS_BEFORE = 8.0
 
 
 class VoiceAssistantNode(Node):

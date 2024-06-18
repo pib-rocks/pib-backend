@@ -12,6 +12,7 @@ from rclpy.action import CancelResponse, GoalResponse
 from rclpy.action.server import ServerGoalHandle
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
+from std_msgs.msg import String
 
 from public_api_client import public_voice_client
 from . import util
@@ -40,6 +41,7 @@ class AudioRecorderNode(Node):
     def __init__(self):
 
         super().__init__("audio_recorder")
+        self.token: str = None
 
         self.goal_queue: deque[ServerGoalHandle] = deque()
         self.goal_queue_lock = Lock()
@@ -53,8 +55,15 @@ class AudioRecorderNode(Node):
             handle_accepted_callback=self.handle_accepted_goal,
             cancel_callback=(lambda _: CancelResponse.ACCEPT),
         )
+        self.get_token_subscription = self.create_subscription(
+            String, "public_api_token", self.get_public_api_token_listener, 10
+        )
 
         self.get_logger().info("Now running AUDIO RECORDER")
+
+    def get_public_api_token_listener(self, msg):
+        token = msg.data
+        self.token = token
 
     def handle_accepted_goal(self, goal_handle: ServerGoalHandle) -> GoalResponse:
         """place a goal into the queue and start execution if the queue was empty before"""
@@ -171,7 +180,7 @@ class AudioRecorderNode(Node):
 
         # transcribe the audio data
         try:
-            text = public_voice_client.speech_to_text(data)
+            text = public_voice_client.speech_to_text(data, self.token)
         except Exception as e:
             self.get_logger().error(f"failed speech_to_text: {e}")
             goal_handle.abort()

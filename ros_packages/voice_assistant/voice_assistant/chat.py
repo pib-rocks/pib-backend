@@ -14,6 +14,7 @@ from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.publisher import Publisher
+from std_msgs.msg import String
 
 from public_api_client import public_voice_client
 
@@ -23,6 +24,7 @@ class ChatNode(Node):
     def __init__(self):
 
         super().__init__("chat")
+        self.token: str = None
 
         # server for communicating with an llm via tryb's public-api
         # In the goal, a client specifies some text that will be sent as input to the llm, as well as the
@@ -45,6 +47,9 @@ class ChatNode(Node):
         self.get_camera_image_client = self.create_client(
             GetCameraImage, "get_camera_image"
         )
+        self.get_token_subscription = self.create_subscription(
+            String, "public_api_token", self.get_public_api_token_listener, 10
+        )
 
         # lock that should be aquired, whenever accessing 'public_voice_client'
         self.public_voice_client_lock = Lock()
@@ -52,6 +57,10 @@ class ChatNode(Node):
         self.voice_assistant_client_lock = Lock()
 
         self.get_logger().info("Now running CHAT")
+
+    def get_public_api_token_listener(self, msg):
+        token = msg.data
+        self.token = token
 
     def create_chat_message(self, chat_id: str, text: str, is_user: bool) -> None:
         """writes a new chat-message to the db, and publishes it to the 'chat_messages'-topic"""
@@ -135,6 +144,7 @@ class ChatNode(Node):
                     message_history=message_history,
                     image_base64=image_base64,
                     model=personality.assistant_model.api_name,
+                    public_api_token=self.token,
                 )
         except Exception as e:
             self.get_logger().error(f"failed to send request to public-api: {e}")

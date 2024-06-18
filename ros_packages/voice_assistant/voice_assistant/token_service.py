@@ -2,13 +2,14 @@ import os
 import secrets
 from base64 import urlsafe_b64encode
 from hashlib import scrypt
+from typing import Union
 
 import rclpy
 from cryptography.fernet import Fernet
-from datatypes.srv import EncryptToken, DecryptToken
+from datatypes.srv import EncryptToken, DecryptToken, ExistToken
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
-from std_msgs.msg import String
+from std_msgs.msg import String, Empty
 
 from . import SECRETS_DIR, SALT_PATH, TOKEN_PATH
 
@@ -16,8 +17,15 @@ from . import SECRETS_DIR, SALT_PATH, TOKEN_PATH
 class TokenServiceNode(Node):
     def __init__(self):
         super().__init__("token_service")
+        self.active_token: Union[str, None] = None
+        self.is_token_stored: bool = self._check_if_previous_token_stored()
 
-        self.get_logger().info("Now running Token Service")
+        self.delete_token_subscription = self.create_subscription(
+            Empty, "delete_token", self.delete_token_callback, 10
+        )
+        self.token_exists_service = self.create_service(
+            ExistToken, "exist_token", self.token_exists_callback
+        )
         self.encryption_service = self.create_service(
             EncryptToken, "encrypt_token", self.encrypt_token_callback
         )
@@ -26,6 +34,35 @@ class TokenServiceNode(Node):
         )
         self.token_publisher = self.create_publisher(String, "public_api_token", 10)
 
+        self.get_logger().info("Now running TOKEN SERVICE")
+
+    def publish_token(self, token: str) -> None:
+        self.active_token = token
+        msg = String()
+        msg.data = token
+        self.token_publisher.publish(msg)
+
+    def delete_token_callback(self, _: Empty) -> None:
+        try:
+            if self._check_if_previous_token_stored():
+                os.remove(TOKEN_PATH)
+                os.remove(SALT_PATH)
+        except Exception as e:
+            self.get_logger().warn(f"Token file could not be deleted: {e}")
+
+        # even if token stored in file cannot be deleted, remove the active token
+        self.is_token_stored = False
+        self.publish_token("")
+
+    def token_exists_callback(
+        self, _: ExistToken.Request, response: ExistToken.Response
+    ):
+        response.token_exists = self.is_token_stored
+        response.token_active = False
+        if self.active_token:
+            response.token_active = True
+        return response
+
     def encrypt_token_callback(
         self, request: EncryptToken.Request, response: EncryptToken.Response
     ):
@@ -33,7 +70,10 @@ class TokenServiceNode(Node):
         password: str = request.password
 
         is_successful: bool = self.encrypt_token(token, password)
+        if is_successful:
+            self.publish_token(token)
 
+        self.is_token_stored = is_successful
         response.is_successful = is_successful
         return response
 
@@ -45,17 +85,16 @@ class TokenServiceNode(Node):
 
         try:
             token: str = self.decrypt_token(password)
-
-            # Publish decrypted Token
-            msg = String()
-            msg.data = token
-            self.token_publisher.publish(msg)
+            self.publish_token(token)
         except Exception:
-            self.get_logger().warn(f"token could not be decrypted")
+            self.get_logger().warn(f"Token could not be decrypted")
             is_successful = False
 
         response.is_successful = is_successful
         return response
+
+    def _check_if_previous_token_stored(self) -> bool:
+        return os.path.isfile(TOKEN_PATH)
 
     def _generate_salt(self, size: int = 16) -> bytes:
         return secrets.token_bytes(size)
@@ -108,8 +147,8 @@ class TokenServiceNode(Node):
     def decrypt_token(self, password: str) -> str:
         salt: bytes = self._load_secret(SALT_PATH)
         encrypted_token: bytes = self._load_secret(TOKEN_PATH)
-
         key: bytes = self._generate_key(salt, password)
+
         f = Fernet(key)
         decrypted_token: bytes = f.decrypt(encrypted_token)
         return decrypted_token.decode("utf-8")

@@ -31,6 +31,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
 	"srv/GetCameraImage.srv"
 	"srv/EncryptToken.srv"
 	"srv/DecryptToken.srv"
+	"srv/ExistToken.srv"
 	"action/RunProgram.action"
 	"action/RecordAudio.action"
 	"action/Chat.action"
