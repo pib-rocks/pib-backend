@@ -28,7 +28,6 @@ import os
 from pib_api_client import voice_assistant_client
 from pib_api_client.voice_assistant_client import Personality
 
-
 VOICE_ASSISTANT_DIRECTORY = os.getenv(
     "VOICE_ASSISTANT_DIR", "/home/pib/ros_working_dir/src/voice_assistant"
 )
