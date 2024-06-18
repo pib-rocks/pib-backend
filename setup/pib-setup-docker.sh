@@ -90,8 +90,8 @@ sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plug
 echo -e "INSTALLED DOCKER ENGINE"
 
 mkdir ~/app
-git clone -b "$backend_branch" https://github.com/pib-rocks/pib-backend.git ~/app/pib-backend
-git clone -b "$frontend_branch" https://github.com/pib-rocks/cerebra.git ~/app/cerebra
+git clone -b "$backend_branch" --recurse-submodules https://github.com/pib-rocks/pib-backend.git ~/app/pib-backend
+git clone -b "$frontend_branch" --recurse-submodules https://github.com/pib-rocks/cerebra.git ~/app/cerebra
 touch ~/app/pib-backend/password.env
 echo -e "Pulled pib-backend and Cerebra repositories to ~/app"
 

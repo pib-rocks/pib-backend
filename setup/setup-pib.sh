@@ -155,15 +155,12 @@ export PIB_API_SETUP_DIR="$BACKEND_DIR/pib_api"
 export PIB_BLOCKLY_SETUP_DIR="$BACKEND_DIR/pib_blockly"
 export UPDATE_TARGET_DIR="/usr/bin"
 
-# clone frontend repo and initialize submodules
-git clone -b "$frontend_branch" "$FRONTEND_REPO" "$FRONTEND_DIR"
-cd "$FRONTEND_DIR"
-git submodule update --init
+# clone frontend repo
+git clone -b "$frontend_branch" --recurse-submodules "$FRONTEND_REPO" "$FRONTEND_DIR"
 
-# clone backend repo and initialize submodules
-git clone -b "$backend_branch" "$BACKEND_REPO" "$BACKEND_DIR"
-cd "$BACKEND_DIR"
-git submodule update --init
+# clone backend repo
+git clone -b "$backend_branch" --recurse-submodules "$BACKEND_REPO" "$BACKEND_DIR"
+
 
 # create working directory for ros
 export ROS_WORKING_DIR="$USER_HOME/ros_working_dir"
