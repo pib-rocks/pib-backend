@@ -20,6 +20,8 @@ tags:
     description: Read- and Update-Operations for camera-settings
   - name: program
     description: CRUD-Operations for user programs
+  - name: pose
+    description: CRUD-Operations for poses
   - name: bricklet
     description: Read- and Update-Operations for bricklets
 paths:
@@ -705,6 +707,117 @@ paths:
           $ref: '#/components/responses/404'
         '500':
           $ref: '#/components/responses/500'
+  /pose:
+    post:
+      tags:
+        - pose
+      summary: Add a pose
+      requestBody:
+        description: Create an existing pose.
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Pose'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Pose'
+        '400':
+          $ref: '#/components/responses/400'
+        '500':
+          $ref: '#/components/responses/500'
+    get:
+      tags:
+        - pose
+      summary: Get all poses
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Poses'
+        '400':
+          $ref: '#/components/responses/400'
+        '500':
+          $ref: '#/components/responses/500'
+  /pose/{pose-id}:
+    parameters:
+      - in: path
+        name: pose-id
+        required: true
+        schema:
+          type: string
+          format: uuid
+        description: the number of the pose
+    delete:
+      tags:
+        - pose
+      summary: Delete one pose by the pose number
+      responses:
+        '204':
+          $ref: '#/components/responses/204'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+    patch:
+      tags:
+        - pose
+      summary: Rename the pose
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RenamePose'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PoseNameAndIdOnly'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+      
+
+  /pose/{pose-id}/motor-positions:
+    parameters:
+      - in: path
+        name: pose-id
+        required: true
+        schema:
+          type: string
+          format: uuid
+        description: the number of the pose
+    get:
+      tags:
+        - pose
+      summary: Get the motor-positions of one pose by the pose-id
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MotorPositions'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
   /bricklet:
     get:
       tags: 
@@ -1221,6 +1334,98 @@ components:
           type: string
           examples:
             - '{"blocks": { ... } }'
+    ProgramCodePut:
+      type: object
+      properties:
+        visual:
+          description: Contains a stringified json of the program's visual representation
+          type: string
+          examples:
+            - '{"blocks": { ... }}'
+        python:
+          description: Contains the python code of the program
+          type: string
+          examples:
+            - 'print("hello world!")'
+    Pose:
+      type: object
+      properties:
+        name:
+          description: Name of your Pose
+          type: string
+          examples:
+            - T-Pose
+        motorPositions:
+          description: indicates the position of a specific motor associated with the pose
+          type: array
+          items:
+            $ref: '#/components/schemas/MotorPosition'
+        poseId:
+          description: id of the pose
+          type: string
+          format: uuid
+          examples:
+            - 3ac9cace-afa3-4930-9b21-f8b3bcc8a349
+          readOnly: true
+      required:
+        - name
+        - motorPositions
+        - poseId
+    MotorPosition:
+      type: object
+      properties:
+        motorName:
+          $ref: '#/components/schemas/MotorName'
+        position:
+          description: Position of the Motor
+          type: number
+          examples:
+            - 2500
+      required:
+        - motorName
+        - position
+    PoseNameAndIdOnly:
+      type: object
+      properties:
+        name:
+          description: Name of your Pose
+          type: string
+          examples:
+            - T-Pose
+        poseId:
+          description: id of the pose
+          type: string
+          format: uuid
+          examples:
+            - 3ac9cace-afa3-4930-9b21-f8b3bcc8a349
+          readOnly: true
+      required:
+        - name
+        - poseId    
+    RenamePose:
+      type: object
+      properties:
+        name:
+          description: Name of your Pose
+          type: string
+          examples:
+            - T-Pose
+      required:
+        - name  
+    Poses:
+      properties:
+        poses:
+          type: array
+          items:
+            $ref: '#/components/schemas/PoseNameAndIdOnly'
+    MotorPositions:
+      type: object
+      properties:
+        motorPositions:
+          description: indicates the position of a specific motor associated with the pose
+          type: array
+          items:
+            $ref: '#/components/schemas/MotorPosition'
     Bricklet:
       type: object
       properties:
