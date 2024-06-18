@@ -23,7 +23,7 @@ function respond(res: http.ServerResponse<http.IncomingMessage>, code: number, m
 customBlockDefinition();
 
 const workspace = new Blockly.Workspace();
-const hostname = '127.0.0.1';
+const hostname = '0.0.0.0';
 const port = 2442;
 
 const server = http.createServer((req, res) => {
