@@ -11,14 +11,14 @@ def get_all_programs() -> list[Program]:
 
 
 def get_program(program_number: str) -> Program:
-    return Program.query.filter(Program.programNumber == program_number).one()
+    return Program.query.filter(Program.program_number == program_number).one()
 
 
 def create_program(program_dto: dict[str, Any]) -> Program:
     program = Program(name=program_dto["name"])
     db.session.add(program)
     db.session.flush()
-    _create_empty_python_code_file(program.programNumber)
+    _create_empty_python_code_file(program.program_number)
     return program
 
 
