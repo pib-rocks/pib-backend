@@ -2,7 +2,7 @@ from typing import Iterable, Tuple
 import rclpy
 from rclpy.node import Node
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
-from datatypes.srv import MotorSettingsSrv
+from datatypes.srv import ApplyMotorSettings, ApplyJointTrajectory
 from datatypes.msg import MotorSettings
 from pib_api_client import motor_client
 from pib_motors.motor import name_to_motors, motors
@@ -11,7 +11,6 @@ from pib_motors.update_bricklet_uids import *
 
 
 def motor_settings_ros_to_dto(ms: MotorSettings):
-
     return {
         "name": ms.motor_name,
         "turnedOn": ms.turned_on,
@@ -28,14 +27,27 @@ def motor_settings_ros_to_dto(ms: MotorSettings):
     }
 
 
+def as_motor_positions(jt: JointTrajectory) -> Iterable[Tuple[str, int]]:
+    """unpacks a jt-message into an iterable of motorname-position-pairs"""
+    motor_names = jt.joint_names
+    points: list[JointTrajectoryPoint] = jt.points
+    positions = (point.positions[0] for point in points)
+    return zip(motor_names, positions)
+
+
+def as_joint_trajectory(motor_name: str, position: int) -> JointTrajectory:
+    """converts a motorname and position into a simple jt-message"""
+    jt = JointTrajectory()
+    jt.joint_names = [motor_name]
+    point = JointTrajectoryPoint()
+    point.positions.append(position)
+    jt.points = [point]
+    return jt
+
+
 class MotorControl(Node):
 
     def __init__(self):
-
-        qos_policy = rclpy.qos.QoSProfile(
-            reliability=rclpy.qos.ReliabilityPolicy.BEST_EFFORT,
-            history=rclpy.qos.HistoryPolicy.KEEP_ALL,
-        )
 
         super().__init__("motor_control")
 
@@ -43,21 +55,25 @@ class MotorControl(Node):
         self.declare_parameter("dev", False)
         self.dev = self.get_parameter("dev").value
 
-        # Topic for JointTrajectory
-        self.subscription = self.create_subscription(
-            JointTrajectory,
-            "joint_trajectory",
-            self.joint_trajectory_callback,
-            qos_profile=qos_policy,
+        # Service for JointTrajectory
+        self.srv = self.create_service(
+            ApplyJointTrajectory, "apply_joint_trajectory", self.apply_joint_trajectory
+        )
+
+        # Publisher for JointTrajectory
+        self.joint_trajectory_publisher = self.create_publisher(
+            JointTrajectory, "joint_trajectory", 10
         )
 
         # Service for MotorSettings
         self.srv = self.create_service(
-            MotorSettingsSrv, "motor_settings", self.motor_settings_callback
+            ApplyMotorSettings, "apply_motor_settings", self.apply_motor_settings
         )
 
         # Publisher for MotorSettings
-        self.publisher = self.create_publisher(MotorSettings, "motor_settings", 10)
+        self.motor_settings_publisher = self.create_publisher(
+            MotorSettings, "motor_settings", 10
+        )
 
         # load motor-settings if not in dev mode
         if not self.dev:
@@ -69,15 +85,12 @@ class MotorControl(Node):
                     if successful:
                         motor.apply_settings(motor_settings_dto)
 
-                # get UID from database
-                response = get_uids_from_db()
-
         # Log that initialization is complete
-        self.get_logger().warn("Info: passed __init__")
+        self.get_logger().info("Now Running MOTOR_CONTROL")
 
-    def motor_settings_callback(
-        self, request: MotorSettingsSrv.Request, response: MotorSettingsSrv.Response
-    ):
+    def apply_motor_settings(
+        self, request: ApplyMotorSettings.Request, response: ApplyMotorSettings.Response
+    ) -> ApplyMotorSettings.Response:
 
         response.settings_applied = True
         response.settings_persisted = True
@@ -97,37 +110,44 @@ class MotorControl(Node):
                         motor.name, motor_settings_dto
                     )
                     response.settings_persisted &= persisted
-                    self.publisher.publish(motor_settings_ros)
+                    self.motor_settings_publisher.publish(motor_settings_ros)
                 self.get_logger().info(f"updated motor: {str(motor)}")
 
         except Exception as e:
-            response = MotorSettingsSrv.Response(
-                settings_applied=False, settings_persisted=False
-            )
+            response.settings_applied = False
+            response.settings_persisted = False
             self.get_logger().warn(
                 f"Error while processing motor-settings-message: {str(e)}"
             )
 
         return response
 
-    def joint_trajectory_callback(self, joint_trajectory: JointTrajectory):
-
+    def apply_joint_trajectory(
+        self,
+        request: ApplyJointTrajectory.Request,
+        response: ApplyJointTrajectory.Response,
+    ) -> ApplyJointTrajectory.Response:
+        jt = request.joint_trajectory
+        response.successful = True
         try:
-            motor_name = joint_trajectory.joint_names[0]
-            target_position = joint_trajectory.points[0].positions[0]
-            for motor in name_to_motors[motor_name]:
-                self.get_logger().info(
-                    f"setting position of '{motor.name}' to {target_position}."
-                )
-                motor.set_position(target_position)
-                self.get_logger().info(
-                    f"position of '{motor.name}' was set to {motor.get_position()}."
-                )
-
+            for motor_name, position in as_motor_positions(jt):
+                for motor in name_to_motors[motor_name]:
+                    self.get_logger().info(
+                        f"setting position of {motor.name} to {position}"
+                    )
+                    successful = motor.set_position(position)
+                    self.get_logger().info(
+                        f"setting position {'succeeded' if successful else 'failed'}."
+                    )
+                    response.successful &= successful
+                    if successful:
+                        self.joint_trajectory_publisher.publish(
+                            as_joint_trajectory(motor.name, position)
+                        )
         except Exception as e:
-            self.get_logger().warn(
-                f"Error while processing joint-trajectory-message: {str(e)}"
-            )
+            response.successful = False
+            self.get_logger().error(f"error while applying joint-trajectory: {str(e)}")
+        return response
 
 
 def main(args=None):
