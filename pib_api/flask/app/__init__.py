@@ -7,6 +7,7 @@ from controller import (
     motor_controller,
     personality_controller,
     program_controller,
+    pose_controller,
 )
 
 app.register_blueprint(program_controller.bp, url_prefix="/program", name="program")
@@ -26,3 +27,4 @@ app.register_blueprint(bricklet_controller.bp, url_prefix="/bricklet", name="bri
 app.register_blueprint(
     assistant_model_controller.bp, url_prefix="/assistant-model", name="assistant_model"
 )
+app.register_blueprint(pose_controller.bp, url_prefix="/pose", name="pose")
