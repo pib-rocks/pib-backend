@@ -22,11 +22,9 @@ from rclpy.node import Node
 from rclpy.publisher import Publisher
 from rclpy.service import Service
 from rclpy.task import Future
-from voice_assistant import (
-    START_SIGNAL_FILE,
-    STOP_SIGNAL_FILE,
-    MAX_SILENT_SECONDS_BEFORE,
-)
+from voice_assistant import START_SIGNAL_FILE, STOP_SIGNAL_FILE
+
+MAX_SILENT_SECONDS_BEFORE = 8.0
 
 
 class VoiceAssistantNode(Node):

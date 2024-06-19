@@ -20,4 +20,3 @@ START_SIGNAL_FILE = (
 STOP_SIGNAL_FILE = (
     f"{VOICE_ASSISTANT_DIRECTORY}/audiofiles/assistant_stop_listening.wav"
 )
-MAX_SILENT_SECONDS_BEFORE = 8.0
