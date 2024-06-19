@@ -1,7 +1,7 @@
 #!/bin/bash
-
+#
 # This script checks if all requirements for running pibs software are met
-
+#
 # Expected values
 expected_user_name="pib"
 expected_ubuntu_version='"22.04"'

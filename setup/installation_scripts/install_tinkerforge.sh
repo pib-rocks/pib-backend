@@ -4,7 +4,7 @@
 # including: Brick Daemon, Brick Viewer and Python API bindings
 # To properly run this script relies on being sourced by the "setup-pib.sh"-script
 
-echo -e "$YELLOW_TEXT_COLOR""-- Installing TinkerForge --""$RESET_TEXT_COLOR"		
+print_colored_line_of_text "$YELLOW_TEXT_COLOR" "-- Installing TinkerForge --"		
 
 # Brick daemon
 PLATFORM_TYPE=$(uname -m)
@@ -27,4 +27,4 @@ echo "deb https://download.tinkerforge.com/apt/$(. /etc/os-release; echo $ID $VE
 sudo apt-get update
 sudo apt-get install -y python3-tinkerforge
 
-echo -e "$NEW_LINE""$GREEN_TEXT_COLOR""-- TinkerForge installation completed --""$RESET_TEXT_COLOR""$NEW_LINE"
+print_colored_line_of_text "$GREEN_TEXT_COLOR" "-- TinkerForge installation completed --"

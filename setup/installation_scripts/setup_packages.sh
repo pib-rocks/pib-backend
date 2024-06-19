@@ -3,7 +3,7 @@
 # This script sets up our custom ros packages
 # To properly run this script relies on being sourced by the "setup-pib.sh"-script
 
-echo -e "$YELLOW_TEXT_COLOR""-- Setting up custom ros packages --""$RESET_TEXT_COLOR"		
+print_colored_line_of_text "$YELLOW_TEXT_COLOR" "-- Setting up custom ros packages --"
 
 # Boot script file locations
 ROS_CAMERA_BOOT_DIR="$ROS_WORKING_DIR"/src/camera/boot_scripts
@@ -12,23 +12,24 @@ ROS_VOICE_ASSISTANT_BOOT_DIR="$ROS_WORKING_DIR"/src/voice_assistant/boot_scripts
 ROS_PROGRAMS_BOOT_DIR="$ROS_WORKING_DIR"/src/programs/boot_scripts
 
 
-# Installing dependencies
-# Depth-AI (Camera)
-sudo curl --silent --location https://docs.luxonis.com/install_dependencies.sh | sudo bash
-python3 -m pip install depthai
 
-# Setting up the motor packages
+# Install motor package dependencies
 sudo apt-get -y install libusb-1.0-0-dev
 pip3.10 install -r "$BACKEND_DIR/ros_packages/motors/requirements.txt"
 
-# Setting up the voice-assistant packages
+# Install voice assistant package dependencies
 sudo apt-get install -y portaudio19-dev
 sudo apt-get install flac
 pip3.10 install -r "$BACKEND_DIR/ros_packages/voice_assistant/requirements.txt"
 pip3.10 install "$BACKEND_DIR/public_api_client"
-pip3.10 install pyaudio
+pip3.10 install pyaudio==0.2.14
 mkdir "$USER_HOME/public_api"
 printf "{\n\t\"trybUrlPrefix\": \"\",\n\t\"publicApiToken\": \"\"\n}\n" > "$USER_HOME/public_api/config.json"
+
+# Install camera package dependencies
+# Depth-AI
+sudo curl --silent --location https://docs.luxonis.com/install_dependencies.sh | sudo bash
+python3 -m pip install depthai
 
 # Git examples for Depth-AI
 git clone --recurse-submodules https://github.com/luxonis/depthai-python.git
@@ -48,7 +49,7 @@ sudo apt install -y ros-humble-rtabmap
 sudo apt install -y ros-humble-rtabmap-launch
 sudo apt install -y ros-humble-rtabmap-examples
 
-# move ros-packages into working directory
+# Move ros-packages into working directory
 cp -r "$BACKEND_DIR/ros_packages" "$ROS_WORKING_DIR/src"
 sudo chmod -R 700 "$ROS_WORKING_DIR"
 
@@ -66,7 +67,7 @@ deactivate
 
 echo "Install local packages..."
 
-# install local utility packages
+# Install local utility packages
 pip install "$ROS_WORKING_DIR""/src/motors/pib_motors"
 
 echo "Booting all nodes..."
@@ -98,4 +99,4 @@ sudo systemctl enable ros_program_boot.service
 cd "$ROS_WORKING_DIR"
 colcon build
 
-echo -e "$NEW_LINE""$GREEN_TEXT_COLOR""-- Custom ros package setup completed --""$RESET_TEXT_COLOR""$NEW_LINE"
+print_colored_line_of_text "$GREEN_TEXT_COLOR" "-- Custom ros package setup completed --"

@@ -7,7 +7,7 @@
 #   - the default-user "pib" is executing it
 #
 
-# Codes for "echo -e" output text formatting (Exported constants made available for all subshells)
+# ANSI escape codes for text formatting
 export RED_TEXT_COLOR="\e[31m"
 export YELLOW_TEXT_COLOR="\e[33m"
 export GREEN_TEXT_COLOR="\e[32m"
@@ -35,7 +35,33 @@ show_help()
 	exit
 }
 
-echo -e "$NEW_LINE""$YELLOW_TEXT_COLOR""-- Checking user input option syntax --""$RESET_TEXT_COLOR""$NEW_LINE"
+# Prints out a colored line of text
+print_colored_line_of_text() {
+    local COLOR_CODE="$1"  # First argument is the ANSI color escape code
+    local MESSAGE="$2"  # Second argument is the text to be printed out
+    printf "%b%s%b%b" "$NEW_LINE$COLOR_CODE" "$MESSAGE" "$RESET_TEXT_COLOR" "$NEW_LINE$NEW_LINE"
+}
+
+
+# This function calculates and prints out the elapsed time since the last "SECONDS" reset
+# "SECONDS" is an environment variable that counts the seconds since the shell initialisation
+# "SECONDS" can be reset to zero by calling "SECONDS=0"
+print_elapsed_time() 
+{
+	echo -e "$((SECONDS / 60)) minutes and $((SECONDS % 60)) seconds elapsed. <Current Time: $(date)>""$NEW_LINE"
+}
+
+
+# Source a script and measure its runtime
+run_script_and_measure_runtime() { 
+	SECONDS=0
+	local SHELL_SCRIPT_PATH=$1
+	source "$SHELL_SCRIPT_PATH"
+	print_elapsed_time
+}
+
+
+print_colored_line_of_text "$YELLOW_TEXT_COLOR" "-- Checking user input option syntax --"
 
 # Github repo origins and branches (branch values will be replaced in dev-mode)
 export FRONTEND_REPO="https://github.com/pib-rocks/cerebra.git"
@@ -60,13 +86,13 @@ while [ $# -gt 0 ]; do
 			show_help
 			;;
 		*)
-			echo -e "$RED_TEXT_COLOR""Invalid input options. Here are some infos about the possible script inputs:""$RESET_TEXT_COLOR""$NEW_LINE"
+			print_colored_line_of_text "$RED_TEXT_COLOR" "Invalid input options. Here are some infos about the possible script inputs:"
 			show_help
 	esac
 	shift
 done
 
-echo -e "$NEW_LINE""$GREEN_TEXT_COLOR""-- User input options syntax correct --""$RESET_TEXT_COLOR""$NEW_LINE"
+print_colored_line_of_text "$GREEN_TEXT_COLOR" "-- User input options syntax correct --"
 
 # Default ubuntu paths
 export DEFAULT_USER="pib"
@@ -74,6 +100,10 @@ export USER_HOME="/home/$DEFAULT_USER"
 
 # We want the user pib to setup things without password (sudo without password)
 # Yes, we are aware of the security-issues..
+
+# Block Time Measuring
+start_time=$(date +%s)
+
 echo "Hello pib! We start the setup by allowing you permanently to run commands with admin-privileges."
 if [[ "$(id)" == *"(sudo)"* ]]; then
 	echo "For this change please enter your password..."
@@ -97,7 +127,7 @@ echo -e "$NEW_LINE""$GREEN_TEXT_COLOR""-- Disabled IPv6 --""$RESET_TEXT_COLOR""$
 
 
 # Delete unnecessary apps
-echo -e "$NEW_LINE""$YELLOW_TEXT_COLOR""-- Removing unused default software packages --""$RESET_TEXT_COLOR""$NEW_LINE"
+print_colored_line_of_text "$YELLOW_TEXT_COLOR" "-- Removing unused default software packages --"
 
 PACKAGES_TO_BE_REMOVED=("aisleriot" "gnome-sudoku" "ace-of-penguins" "gbrainy" "gnome-mines" "gnome-mahjongg" "libreoffice*" "thunderbird*")
 installed_packages_to_be_removed=""
@@ -114,17 +144,20 @@ if  [ -n "$installed_packages_to_be_removed" ]; then
 	sudo apt-get -y purge $installed_packages_to_be_removed
 	sudo apt-get autoclean
 fi
-echo -e "$NEW_LINE""$GREEN_TEXT_COLOR""-- Removal of unused default software packages completed --""$RESET_TEXT_COLOR""$NEW_LINE"
+print_colored_line_of_text "$GREEN_TEXT_COLOR" "-- Removal of unused default software packages completed --"
 
 # Refresh the linux packages list (sometimes necessary for packages that are required in the installion scripts)
+SECONDS=0
 sudo apt update
+print_elapsed_time
+
 # These packages are installed seperately, since the installation scripts are dependent on them
 sudo apt-get install -y git curl
 
 # In dev-mode check if the specified branches exist for each repo
 if [ "$is_dev_mode" = true ] 
 then
-	echo -e "$NEW_LINE""$YELLOW_TEXT_COLOR""-- Checking if user-specified branches exist --""$RESET_TEXT_COLOR""$NEW_LINE"
+	print_colored_line_of_text "$YELLOW_TEXT_COLOR" "-- Checking if user-specified branches exist --"
 
 	if git ls-remote --exit-code --heads "$FRONTEND_REPO" "$frontend_branch" >/dev/null 2>&1; then
 		echo -e "$CYAN_TEXT_COLOR""Frontend repo branch used: ""$RESET_TEXT_COLOR""$frontend_branch"
@@ -140,7 +173,7 @@ then
 		show_help
 	fi
 
-	echo -e "$NEW_LINE""$GREEN_TEXT_COLOR""-- Check for user-specified branches completed --""$RESET_TEXT_COLOR""$NEW_LINE"
+	print_colored_line_of_text "$GREEN_TEXT_COLOR" "-- Check for user-specified branches completed --"
 fi
 
 # Create temporary directory for installation files and define path constants
@@ -155,7 +188,7 @@ export PIB_API_SETUP_DIR="$BACKEND_DIR/pib_api"
 export PIB_BLOCKLY_SETUP_DIR="$BACKEND_DIR/pib_blockly"
 export UPDATE_TARGET_DIR="/usr/bin"
 
-# clone frontend repo and initialize submodules
+# Clone repos
 git clone -b "$frontend_branch" "$FRONTEND_REPO" "$FRONTEND_DIR"
 cd "$FRONTEND_DIR"
 git submodule update --init
@@ -165,30 +198,31 @@ git clone -b "$backend_branch" "$BACKEND_REPO" "$BACKEND_DIR"
 cd "$BACKEND_DIR"
 git submodule update --init
 
-# create working directory for ros
+# Create working directory for ros
 export ROS_WORKING_DIR="$USER_HOME/ros_working_dir"
 mkdir "$ROS_WORKING_DIR"
 
 # The following scripts are sourced into the same shell as this script,
-# allowing them to acces all variables and context
+# Allowing them to acces all variables and context
 # Check system variables
-source "$INSTALLATION_SCRIPTS/check_system_variables.sh"
+run_script_and_measure_runtime "$INSTALLATION_SCRIPTS/check_system_variables.sh"
 # Install system packages
-source "$INSTALLATION_SCRIPTS/install_system_packages.sh"
+run_script_and_measure_runtime "$INSTALLATION_SCRIPTS/install_system_packages.sh"
 # Install tinkerforge
-source "$INSTALLATION_SCRIPTS/install_tinkerforge.sh"
+run_script_and_measure_runtime "$INSTALLATION_SCRIPTS/install_tinkerforge.sh"
 # Install Cerebra
-source "$INSTALLATION_SCRIPTS/install_cerebra.sh"
+run_script_and_measure_runtime "$INSTALLATION_SCRIPTS/install_cerebra.sh"
 # Install pib ros-packages
-source "$INSTALLATION_SCRIPTS/setup_packages.sh"
+run_script_and_measure_runtime "$INSTALLATION_SCRIPTS/setup_packages.sh"
 # Adjust system settings
-source "$INSTALLATION_SCRIPTS/set_system_settings.sh"
-# prepares JSON-Server
-source "$INSTALLATION_SCRIPTS/prepare_json_server.sh"
+run_script_and_measure_runtime "$INSTALLATION_SCRIPTS/set_system_settings.sh"
+# Prepares JSON-Server
+run_script_and_measure_runtime "$INSTALLATION_SCRIPTS/prepare_json_server.sh"
 # Install pib-blockly-server
-source "$INSTALLATION_SCRIPTS/install_pib_blockly_server.sh"
+run_script_and_measure_runtime "$INSTALLATION_SCRIPTS/install_pib_blockly_server.sh"
 
-# install update-pip
+
+# Install update-pip
 sudo cp "$SETUP_DIR/update-pib.sh" "$UPDATE_TARGET_DIR/update-pib"
 sudo chmod 755 "$UPDATE_TARGET_DIR/update-pib"
 
@@ -223,3 +257,5 @@ mv "$LOG_FILE" "$TEMPORARY_SETUP_DIR"
 
 echo -e "$NEW_LINE""Congratulations! The setup completed succesfully!"
 echo -e "$NEW_LINE""Please restart the system to apply changes..."
+ 
+echo -e "$NEW_LINE""<Script Run Duration: $(( ($(date +%s) - start_time) / 60)) minutes> <Current Time: $(date)>"
