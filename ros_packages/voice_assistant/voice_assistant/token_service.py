@@ -6,7 +6,7 @@ from typing import Optional
 
 import rclpy
 from cryptography.fernet import Fernet
-from datatypes.srv import EncryptToken, DecryptToken, ExistToken
+from datatypes.srv import EncryptToken, DecryptToken, GetTokenExists
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
 from std_msgs.msg import String, Empty
@@ -24,7 +24,7 @@ class TokenServiceNode(Node):
             Empty, "delete_token", self.delete_token_callback, 10
         )
         self.get_token_exists_service = self.create_service(
-            ExistToken, "get_token_exists ", self.get_token_exists_callback
+            GetTokenExists, "get_token_exists ", self.get_token_exists_callback
         )
         self.encryption_service = self.create_service(
             EncryptToken, "encrypt_token", self.encrypt_token_callback
@@ -55,7 +55,7 @@ class TokenServiceNode(Node):
         self.publish_token("")
 
     def get_token_exists_callback(
-        self, _: ExistToken.Request, response: ExistToken.Response
+        self, _: GetTokenExists.Request, response: GetTokenExists.Response
     ):
         response.token_exists = self.is_token_stored
         if self.active_token:
