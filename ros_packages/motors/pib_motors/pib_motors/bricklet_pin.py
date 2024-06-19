@@ -94,6 +94,8 @@ class BrickletPin:
 
     def get_position(self) -> int:
         """returns the current position of the bricklet-pin, or '0' if not connected to a bricklet"""
+        if not self.is_connected():
+            return 0
         try:
             return self.bricklet.get_position(self.pin)
         except Exception:

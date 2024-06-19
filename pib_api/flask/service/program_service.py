@@ -37,8 +37,8 @@ def delete_program(program_number: str) -> None:
 
 def update_program_code(program_number: str, program_dto: dict[str, Any]) -> None:
     program = get_program(program_number)
-    code_visual = program_dto["codeVisual"]
-    program.codeVisual = code_visual
+    code_visual = program_dto["code_visual"]
+    program.code_visual = code_visual
     successful, code_python = pib_blockly_client.code_visual_to_python(code_visual)
     if not successful:
         raise Exception("failed to generate python-code")
