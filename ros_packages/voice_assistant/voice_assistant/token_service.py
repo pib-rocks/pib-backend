@@ -2,7 +2,7 @@ import os
 import secrets
 from base64 import urlsafe_b64encode
 from hashlib import scrypt
-from typing import Union
+from typing import Optional
 
 import rclpy
 from cryptography.fernet import Fernet
@@ -17,14 +17,14 @@ from . import SECRETS_DIR, SALT_PATH, TOKEN_PATH
 class TokenServiceNode(Node):
     def __init__(self):
         super().__init__("token_service")
-        self.active_token: Union[str, None] = None
+        self.active_token: Optional[str] = None
         self.is_token_stored: bool = self._check_if_previous_token_stored()
 
         self.delete_token_subscription = self.create_subscription(
             Empty, "delete_token", self.delete_token_callback, 10
         )
-        self.token_exists_service = self.create_service(
-            ExistToken, "exist_token", self.token_exists_callback
+        self.get_token_exists_service = self.create_service(
+            ExistToken, "get_token_exists ", self.get_token_exists_callback
         )
         self.encryption_service = self.create_service(
             EncryptToken, "encrypt_token", self.encrypt_token_callback
@@ -34,7 +34,7 @@ class TokenServiceNode(Node):
         )
         self.token_publisher = self.create_publisher(String, "public_api_token", 10)
 
-        self.get_logger().info("Now running TOKEN SERVICE")
+        self.get_logger().info("Now Running TOKEN SERVICE")
 
     def publish_token(self, token: str) -> None:
         self.active_token = token
@@ -54,11 +54,10 @@ class TokenServiceNode(Node):
         self.is_token_stored = False
         self.publish_token("")
 
-    def token_exists_callback(
+    def get_token_exists_callback(
         self, _: ExistToken.Request, response: ExistToken.Response
     ):
         response.token_exists = self.is_token_stored
-        response.token_active = False
         if self.active_token:
             response.token_active = True
         return response
@@ -74,14 +73,14 @@ class TokenServiceNode(Node):
             self.publish_token(token)
 
         self.is_token_stored = is_successful
-        response.is_successful = is_successful
+        response.successful = is_successful
         return response
 
     def decrypt_token_callback(
         self, request: DecryptToken.Request, response: DecryptToken.Response
     ):
         password: str = request.password
-        is_successful: bool = True
+        is_successful = True
 
         try:
             token: str = self.decrypt_token(password)
@@ -90,7 +89,7 @@ class TokenServiceNode(Node):
             self.get_logger().warn(f"Token could not be decrypted")
             is_successful = False
 
-        response.is_successful = is_successful
+        response.successful = is_successful
         return response
 
     def _check_if_previous_token_stored(self) -> bool:

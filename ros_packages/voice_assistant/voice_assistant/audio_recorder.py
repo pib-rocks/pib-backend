@@ -2,6 +2,7 @@ import os
 import wave
 from collections import deque
 from threading import Lock
+from typing import Optional
 
 import numpy as np
 import pyaudio
@@ -41,7 +42,7 @@ class AudioRecorderNode(Node):
     def __init__(self):
 
         super().__init__("audio_recorder")
-        self.token: str = None
+        self.token: Optional[str] = None
 
         self.goal_queue: deque[ServerGoalHandle] = deque()
         self.goal_queue_lock = Lock()

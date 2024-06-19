@@ -1,5 +1,6 @@
 import re
 from threading import Lock
+from typing import Optional
 
 import rclpy
 from datatypes.action import Chat
@@ -24,7 +25,7 @@ class ChatNode(Node):
     def __init__(self):
 
         super().__init__("chat")
-        self.token: str = None
+        self.token: Optional[str] = None
 
         # server for communicating with an llm via tryb's public-api
         # In the goal, a client specifies some text that will be sent as input to the llm, as well as the

@@ -1,4 +1,4 @@
 string token
 string password
 ---
-bool is_successful
+bool successful
