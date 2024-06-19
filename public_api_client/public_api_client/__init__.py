@@ -9,9 +9,9 @@ try:
 except FileNotFoundError:
     tryb_url_prefix = os.getenv("TRYB_URL_PREFIX")
 
-try:
-    SPEECH_TO_TEXT_URL = f"{tryb_url_prefix}/public-api/conversions/speech-to-text"
-    TEXT_TO_SPEECH_URL = f"{tryb_url_prefix}/public-api/conversions/text-to-speech"
-    VOICE_ASSISTANT_TEXT_URL = f"{tryb_url_prefix}/public-api/voice-assistant/text"
-except TypeError as e:
-    raise RuntimeError(f"no tryb configuration found: {e}")
+if not tryb_url_prefix:
+    raise RuntimeError(f"no tryb configuration found")
+
+SPEECH_TO_TEXT_URL = f"{tryb_url_prefix}/public-api/conversions/speech-to-text"
+TEXT_TO_SPEECH_URL = f"{tryb_url_prefix}/public-api/conversions/text-to-speech"
+VOICE_ASSISTANT_TEXT_URL = f"{tryb_url_prefix}/public-api/voice-assistant/text"

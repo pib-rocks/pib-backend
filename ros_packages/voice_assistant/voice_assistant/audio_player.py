@@ -3,7 +3,7 @@ import time
 import wave
 from queue import Queue
 from threading import Lock, Event, Thread
-from typing import Iterable
+from typing import Iterable, Optional
 
 import pyaudio
 import rclpy
@@ -102,7 +102,7 @@ class AudioPlayerNode(Node):
     def __init__(self, playback_queue: Queue[PlaybackItem]):
 
         super().__init__("audio_player")
-        self.token: str = None
+        self.token: Optional[str] = None
         self.playback_queue = playback_queue
         self.counter = 0
         self.counter_lock = Lock()
