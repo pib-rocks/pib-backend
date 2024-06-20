@@ -95,6 +95,25 @@ def create_chat_message(
     return successful, ChatMessage(chat_message_dto)
 
 
+def update_chat_message(
+    chat_id: str, message_content: str, is_user: bool, message_id: str
+) -> Tuple[bool, ChatMessage]:
+    # Get Request auf den bereits bestehen den eintrag um die Message zu erhalten
+    request = Request(CHAT_URL % chat_id + "/" + message_id, method="GET")
+    successful, message_dto = send_request(request)
+    message_content = message_dto["content"] + message_content
+
+    data = json.dumps({"isUser": is_user, "content": message_content}).encode("UTF-8")
+    request = Request(
+        CHAT_MESSAGES_URL % chat_id + "/" + message_id,
+        method="PUT",
+        headers={"Content-Type": "application/json"},
+        data=data,
+    )
+    successful, chat_message_dto = send_request(request)
+    return successful, ChatMessage(chat_message_dto)
+
+
 def get_all_chat_messages(chat_id: str) -> List[ChatMessage]:
     request = Request(CHAT_MESSAGES_URL % chat_id, method="GET")
     successful, chat_messages_dto = send_request(request)

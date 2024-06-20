@@ -17,3 +17,4 @@ blueprint.route("/<string:chat_id>/messages", methods=["POST"])(
 blueprint.route("/<string:chat_id>/messages/<string:message_id>", methods=["DELETE"])(
     chat_controller.delete_message
 )
+blueprint.route('/<string:chat_id>/messages/<string:message_id>', methods=['PUT'])(chat_controller.patch_message)
