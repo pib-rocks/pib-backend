@@ -44,6 +44,10 @@ class ChatNode(Node):
         self.chat_message_publisher: Publisher = self.create_publisher(
             ChatMessage, "chat_messages", 10
         )
+        # Publisher for updating ChatMessages
+        self.chat_message_update_publisher: Publisher = self.create_publisher(
+            ChatMessage, "chat_messages_update", 10
+        )
         self.get_camera_image_client = self.create_client(
             GetCameraImage, "get_camera_image"
         )
@@ -62,16 +66,21 @@ class ChatNode(Node):
         token = msg.data
         self.token = token
 
-    def create_chat_message(self, chat_id: str, text: str, is_user: bool) -> None:
+    def create_chat_message(self, chat_id: str, text: str, is_user: bool, update_message: bool) -> None:
         """writes a new chat-message to the db, and publishes it to the 'chat_messages'-topic"""
 
         if text == "":
             return
 
         with self.voice_assistant_client_lock:
-            successful, chat_message = voice_assistant_client.create_chat_message(
-                chat_id, text, is_user
-            )
+            if(update_message):
+                successful, chat_message = voice_assistant_client.update_chat_message(
+                    chat_id, text, is_user
+                )
+            else:
+                successful, chat_message = voice_assistant_client.create_chat_message(
+                    chat_id, text, is_user
+                )
         if not successful:
             self.get_logger().error(
                 f"unable to create chat message: {(chat_id, text, is_user)}"
@@ -85,7 +94,12 @@ class ChatNode(Node):
         chat_message_ros.message_id = chat_message.message_id
         chat_message_ros.timestamp = chat_message.timestamp
 
-        self.chat_message_publisher.publish(chat_message_ros)
+        if(update_message):
+            self.get_logger().info("update previos chat message")
+            self.chat_message_update_publisher.publish(chat_message_ros)
+        else:    
+            self.get_logger().info("new chat message")
+            self.chat_message_publisher.publish(chat_message_ros)
 
     async def chat(self, goal_handle: ServerGoalHandle):
         self.get_logger().info("start chat request")
@@ -111,7 +125,8 @@ class ChatNode(Node):
         )
 
         # create the user message
-        self.executor.create_task(self.create_chat_message, chat_id, content, True)
+        self.get_logger().info("1")
+        self.executor.create_task(self.create_chat_message(chat_id, content, True, False))
 
         # get the current image from the camera
         image_base64 = None
@@ -121,6 +136,7 @@ class ChatNode(Node):
             )
             image_base64 = response.image_base64
 
+        self.get_logger().info("2")
         # get the message-history from the pib-api
         with self.voice_assistant_client_lock:
             successful, chat_messages = voice_assistant_client.get_all_chat_messages(
@@ -136,8 +152,10 @@ class ChatNode(Node):
         ]
 
         # receive assistant-response in form of an iterable of token from the public-api
+        self.get_logger().info("3")
         try:
             with self.public_voice_client_lock:
+                self.get_logger().error(f"Upload content:'{content}' to tryb")
                 tokens = public_voice_client.chat_completion(
                     text=content,
                     description=description,
@@ -157,6 +175,8 @@ class ChatNode(Node):
         sentence_boundary = re.compile(r"[^\d | ^A-Z][\.|!|\?|:]")
 
         # process incoming data from public-api
+        self.get_logger().info("4")
+        update_chat_message: bool = False
         for token in tokens:
             # if the goal was cancelled, return immediately
             if goal_handle.is_cancel_requested:
@@ -165,8 +185,9 @@ class ChatNode(Node):
             # if a sentence was already found and another token was received, forward the sentence as feedback
             if prev_sentence is not None:
                 self.executor.create_task(
-                    self.create_chat_message, chat_id, prev_sentence, False
+                    self.create_chat_message, chat_id, prev_sentence, False, update_chat_message
                 )
+                update_chat_message = True
                 feedback = Chat.Feedback()
                 feedback.sentence = prev_sentence
                 goal_handle.publish_feedback(feedback)
@@ -178,10 +199,12 @@ class ChatNode(Node):
             curr_sentence += token
 
         # create chat-message for remaining input
+        self.get_logger().info("5")
         if len(curr_sentence) > 0:
             self.executor.create_task(
-                self.create_chat_message, chat_id, curr_sentence, False
+                self.create_chat_message, chat_id, curr_sentence, False, update_chat_message
             )
+            update_chat_message = True
 
         # return the restult
         result = Chat.Result()
