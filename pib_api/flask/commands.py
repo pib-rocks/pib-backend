@@ -104,9 +104,9 @@ def _create_camera_data() -> None:
 
 def _create_program_data() -> None:
     program = Program(
-        name="hello_world", 
+        name="hello_world",
         code_visual=_get_example_program(),
-        program_number="e1d46e2a-935e-4e2b-b2f9-0856af4257c5"
+        program_number="e1d46e2a-935e-4e2b-b2f9-0856af4257c5",
     )
     db.session.add(program)
     db.session.flush()
