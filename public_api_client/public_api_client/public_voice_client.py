@@ -100,7 +100,6 @@ def chat_completion(
     """
     receive a textual llm response, that takes into account the provided description
     """
-
     headers = {"Accept": "text/event-stream", "Content-Type": "application/json"}
 
     # Claude does not accept empty strings as input
