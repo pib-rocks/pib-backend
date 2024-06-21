@@ -36,6 +36,12 @@ while [ $# -gt 0 ]; do
 done
 
 
+# Refresh the linux packages list (sometimes necessary for packages that are required in the installion scripts)
+sudo apt update
+# These packages are installed seperately, since the installation scripts are dependent on them
+sudo apt-get install -y git curl
+
+
 if [ "$is_dev_mode" = true ] 
 then
 	echo -e "$NEW_LINE""$YELLOW_TEXT_COLOR""-- Checking if user-specified branches exist --""$RESET_TEXT_COLOR""$NEW_LINE"
@@ -90,8 +96,8 @@ sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plug
 echo -e "INSTALLED DOCKER ENGINE"
 
 mkdir ~/app
-git clone -b "$backend_branch" https://github.com/pib-rocks/pib-backend.git ~/app/pib-backend
-git clone -b "$frontend_branch" https://github.com/pib-rocks/cerebra.git ~/app/cerebra
+git clone -b "$backend_branch" --recurse-submodules https://github.com/pib-rocks/pib-backend.git ~/app/pib-backend
+git clone -b "$frontend_branch" --recurse-submodules https://github.com/pib-rocks/cerebra.git ~/app/cerebra
 touch ~/app/pib-backend/password.env
 echo -e "Pulled pib-backend and Cerebra repositories to ~/app"
 
