@@ -36,6 +36,12 @@ while [ $# -gt 0 ]; do
 done
 
 
+# Refresh the linux packages list (sometimes necessary for packages that are required in the installion scripts)
+sudo apt update
+# These packages are installed seperately, since the installation scripts are dependent on them
+sudo apt-get install -y git curl
+
+
 if [ "$is_dev_mode" = true ] 
 then
 	echo -e "$NEW_LINE""$YELLOW_TEXT_COLOR""-- Checking if user-specified branches exist --""$RESET_TEXT_COLOR""$NEW_LINE"
