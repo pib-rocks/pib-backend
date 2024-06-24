@@ -7,27 +7,27 @@ from webots_ros2_driver.webots_controller import WebotsController
 
 
 def generate_launch_description():
-    package_dir = get_package_share_directory("pibsim_webots")
-    robot_description_path = os.path.join(package_dir, "resource", "pib.urdf")
+    package_dir = get_package_share_directory('pibsim_webots')
+    robot_description_path = os.path.join(package_dir, 'resource', 'pib.urdf')
 
-    webots = WebotsLauncher(world=os.path.join(package_dir, "worlds", "PibSim.wbt"))
+    webots = WebotsLauncher(
+        world=os.path.join(package_dir, 'worlds', 'PibSim.wbt')
+    )
 
     pib_driver = WebotsController(
-        robot_name="PibSimple",
+        robot_name='pib',
         parameters=[
-            {"robot_description": robot_description_path},
-        ],
-    )
-
-    return LaunchDescription(
-        [
-            webots,
-            pib_driver,
-            launch.actions.RegisterEventHandler(
-                event_handler=launch.event_handlers.OnProcessExit(
-                    target_action=webots,
-                    on_exit=[launch.actions.EmitEvent(event=launch.events.Shutdown())],
-                )
-            ),
+            {'robot_description': robot_description_path},
         ]
     )
+
+    return LaunchDescription([
+        webots,
+        pib_driver,
+        launch.actions.RegisterEventHandler(
+            event_handler=launch.event_handlers.OnProcessExit(
+                target_action=webots,
+                on_exit=[launch.actions.EmitEvent(event=launch.events.Shutdown())],
+            )
+        )
+    ])
