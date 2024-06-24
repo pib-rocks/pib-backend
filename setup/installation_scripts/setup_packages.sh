@@ -10,6 +10,7 @@ ROS_CAMERA_BOOT_DIR="$ROS_WORKING_DIR"/src/camera/boot_scripts
 ROS_MOTORS_BOOT_DIR="$ROS_WORKING_DIR"/src/motors/boot_scripts
 ROS_VOICE_ASSISTANT_BOOT_DIR="$ROS_WORKING_DIR"/src/voice_assistant/boot_scripts
 ROS_PROGRAMS_BOOT_DIR="$ROS_WORKING_DIR"/src/programs/boot_scripts
+ROS_DISPLAY_BOOT_DIR="$ROS_WORKING_DIR"/src/display/boot_scripts
 
 
 # Installing dependencies
@@ -77,7 +78,7 @@ sudo chmod 700 "$ROS_CAMERA_BOOT_DIR/ros_camera_boot.service"
 sudo mv "$ROS_CAMERA_BOOT_DIR/ros_camera_boot.service" /etc/systemd/system
 sudo systemctl enable ros_camera_boot.service
 
-# Boot motor nodes
+# Boot motors
 sudo chmod 700 "$ROS_MOTORS_BOOT_DIR/ros_motor_boot.sh"
 sudo chmod 700 "$ROS_MOTORS_BOOT_DIR/ros_motor_boot.service"
 sudo mv "$ROS_MOTORS_BOOT_DIR/ros_motor_boot.service" /etc/systemd/system
@@ -89,11 +90,17 @@ sudo chmod 700 "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_voice_assistant_boot.service"
 sudo mv "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_voice_assistant_boot.service" /etc/systemd/system
 sudo systemctl enable ros_voice_assistant_boot.service
 
-# Boot program node
+# Boot programs
 sudo chmod 700 "$ROS_PROGRAMS_BOOT_DIR/ros_program_boot.sh"
 sudo chmod 700 "$ROS_PROGRAMS_BOOT_DIR/ros_program_boot.service"
 sudo mv "$ROS_PROGRAMS_BOOT_DIR/ros_program_boot.service" /etc/systemd/system
 sudo systemctl enable ros_program_boot.service
+
+# Boot display
+sudo chmod 700 "$ROS_DISPLAY_BOOT_DIR/ros_display_boot.sh"
+sudo chmod 700 "$ROS_DISPLAY_BOOT_DIR/ros_display_boot.service"
+sudo mv "$ROS_DISPLAY_BOOT_DIR/ros_display_boot.service" /etc/systemd/system
+sudo systemctl enable ros_display_boot.service
 
 cd "$ROS_WORKING_DIR"
 colcon build

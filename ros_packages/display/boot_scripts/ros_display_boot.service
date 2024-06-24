@@ -1,0 +1,11 @@
+[Unit]
+Description=Startup script for the ROS display-node
+After=network.target
+
+[Service]
+Type=simple
+User=pib
+ExecStart=/usr/bin/bash /home/pib/ros_working_dir/src/display/boot_scripts/ros_display_boot.sh
+
+[Install]
+WantedBy=multi-user.target
