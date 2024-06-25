@@ -91,7 +91,15 @@ def delete_message(chat_id: str, message_id: str):
 @bp.route("/<string:chat_id>/messages/<string:message_id>", methods=["PUT"])
 def patch_message(chat_id: str, message_id: str):
     chat_message_dto = chat_message_post_schema.load(request.json)
-    chat_message = chat_service.update_chat_message(chat_id, chat_message_dto, message_id)
+    chat_message = chat_service.update_chat_message(chat_message_dto, chat_id, message_id)
     db.session.commit()
     try: return chat_message_schema.dump(chat_message), 201
     except Exception: abort(500)
+
+@bp.route("/<string:chat_id>/messages/<string:message_id>", methods=["GET"])
+def get_message_by_chat_id_and_message_id(chat_id: str, message_id: str):
+    message = chat_service.get_message(chat_id, message_id)
+    try:
+        return chat_message_schema.dump(message)
+    except Exception:
+        abort(500)
