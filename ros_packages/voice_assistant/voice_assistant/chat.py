@@ -26,6 +26,7 @@ class ChatNode(Node):
 
         super().__init__("chat")
         self.token: Optional[str] = None
+        self.last_pib_message_id: str = None
 
         # server for communicating with an llm via tryb's public-api
         # In the goal, a client specifies some text that will be sent as input to the llm, as well as the
@@ -61,7 +62,6 @@ class ChatNode(Node):
         # lock that should be aquired, whenever accessing 'voice_assistant_client'
         self.voice_assistant_client_lock = Lock()
 
-        self.get_logger().info("Now running CHAT")
 
     def get_public_api_token_listener(self, msg):
         token = msg.data
@@ -75,10 +75,12 @@ class ChatNode(Node):
 
         with self.voice_assistant_client_lock:
             if(update_message):
+                self.get_logger().info(f"update message: {text}")
                 successful, chat_message = voice_assistant_client.update_chat_message(
-                    chat_id, text, is_user
+                    chat_id, text, is_user, self.last_pib_message_id
                 )
             else:
+                self.get_logger().info(f"new message: {text}")
                 successful, chat_message = voice_assistant_client.create_chat_message(
                     chat_id, text, is_user
                 )
@@ -87,7 +89,7 @@ class ChatNode(Node):
                 f"unable to create chat message: {(chat_id, text, is_user)}"
             )
             return
-
+        self.last_pib_message_id = chat_message.message_id
         chat_message_ros = ChatMessage()
         chat_message_ros.chat_id = chat_id
         chat_message_ros.content = chat_message.content
@@ -95,15 +97,9 @@ class ChatNode(Node):
         chat_message_ros.message_id = chat_message.message_id
         chat_message_ros.timestamp = chat_message.timestamp
 
-        if(update_message):
-            self.get_logger().info("update previos chat message")
-            self.chat_message_update_publisher.publish(chat_message_ros)
-        else:    
-            self.get_logger().info("new chat message")
-            self.chat_message_publisher.publish(chat_message_ros)
+        self.chat_message_publisher.publish(chat_message_ros)
 
     async def chat(self, goal_handle: ServerGoalHandle):
-        self.get_logger().info("start chat request")
 
         # unpack request data
         request: Chat.Goal = goal_handle.request
@@ -116,7 +112,6 @@ class ChatNode(Node):
                 chat_id
             )
         if not successful:
-            self.get_logger().error(f"no personality found for id {chat_id}")
             goal_handle.abort()
             return Chat.Result()
         description = (
@@ -126,8 +121,7 @@ class ChatNode(Node):
         )
 
         # create the user message
-        self.get_logger().info("1")
-        self.executor.create_task(self.create_chat_message(chat_id, content, True, False))
+        self.executor.create_task(self.create_chat_message, chat_id, content, True, False)
 
         # get the current image from the camera
         image_base64 = None
@@ -137,7 +131,6 @@ class ChatNode(Node):
             )
             image_base64 = response.image_base64
 
-        self.get_logger().info("2")
         # get the message-history from the pib-api
         with self.voice_assistant_client_lock:
             successful, chat_messages = voice_assistant_client.get_all_chat_messages(
@@ -153,10 +146,8 @@ class ChatNode(Node):
         ]
 
         # receive assistant-response in form of an iterable of token from the public-api
-        self.get_logger().info("3")
         try:
             with self.public_voice_client_lock:
-                self.get_logger().error(f"Upload content:'{content}' to tryb")
                 tokens = public_voice_client.chat_completion(
                     text=content,
                     description=description,
@@ -176,8 +167,7 @@ class ChatNode(Node):
         sentence_boundary = re.compile(r"[^\d | ^A-Z][\.|!|\?|:]")
 
         # process incoming data from public-api
-        self.get_logger().info("4")
-        update_chat_message: bool = False
+        bool_update_chat_message: bool = False
         for token in tokens:
             # if the goal was cancelled, return immediately
             if goal_handle.is_cancel_requested:
@@ -186,9 +176,9 @@ class ChatNode(Node):
             # if a sentence was already found and another token was received, forward the sentence as feedback
             if prev_sentence is not None:
                 self.executor.create_task(
-                    self.create_chat_message, chat_id, prev_sentence, False, update_chat_message
+                    self.create_chat_message, chat_id, prev_sentence, False, bool_update_chat_message
                 )
-                update_chat_message = True
+                bool_update_chat_message = True
                 feedback = Chat.Feedback()
                 feedback.sentence = prev_sentence
                 goal_handle.publish_feedback(feedback)
@@ -200,14 +190,12 @@ class ChatNode(Node):
             curr_sentence += token
 
         # create chat-message for remaining input
-        self.get_logger().info("5")
         if len(curr_sentence) > 0:
             self.executor.create_task(
-                self.create_chat_message, chat_id, curr_sentence, False, update_chat_message
+                self.create_chat_message, chat_id, curr_sentence, False, bool_update_chat_message
             )
-            update_chat_message = True
-
         # return the restult
+        bool_update_chat_message = False
         result = Chat.Result()
         result.rest = curr_sentence if prev_sentence is None else prev_sentence
         goal_handle.succeed()
