@@ -190,39 +190,39 @@ function install_ros_packages() {
   sudo chmod 700 "$ROS_CAMERA_BOOT_DIR/ros_camera_boot.sh"
   sudo chmod 700 "$ROS_CAMERA_BOOT_DIR/ros_camera_boot.service"
   sudo cp "$ROS_CAMERA_BOOT_DIR/ros_camera_boot.service" /etc/systemd/system
-  sudo systemctl daemon-reload
-  sudo systemctl enable ros_camera_boot.service --now
+
 
   # Boot motor nodes
   sudo chmod 700 "$ROS_MOTORS_BOOT_DIR/ros_motor_boot.sh"
   sudo chmod 700 "$ROS_MOTORS_BOOT_DIR/ros_motor_boot.service"
   sudo cp "$ROS_MOTORS_BOOT_DIR/ros_motor_boot.service" /etc/systemd/system
-  sudo systemctl daemon-reload
-  sudo systemctl enable ros_motor_boot.service --now
+
 
   # Boot voice-assistant
   sudo chmod 700 "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_voice_assistant_boot.sh"
   sudo chmod 700 "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_voice_assistant_boot.service"
   sudo cp "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_voice_assistant_boot.service" /etc/systemd/system
-  sudo systemctl daemon-reload
-  sudo systemctl enable ros_voice_assistant_boot.service --now
+
+
 
   # Boot program node
   sudo chmod 700 "$ROS_PROGRAMS_BOOT_DIR/ros_program_boot.sh"
   sudo chmod 700 "$ROS_PROGRAMS_BOOT_DIR/ros_program_boot.service"
   sudo cp "$ROS_PROGRAMS_BOOT_DIR/ros_program_boot.service" /etc/systemd/system
-  sudo systemctl daemon-reload
-  sudo systemctl enable ros_program_boot.service --now
 
   cd "$ROS_WORKING_DIR" || { print ERROR "${ROS_WORKING_DIR} not found"; return 1; }
   source /opt/ros/humble/setup.bash
   colcon build || { print ERROR "could not colcon build packages"; return 1; }
   cd "$HOME" || { print ERROR "${HOME} not found"; return 1; }
+
   sudo systemctl daemon-reload
+  sudo systemctl enable ros_camera_boot.service --now
+  sudo systemctl enable ros_motor_boot.service --now
+  sudo systemctl enable ros_program_boot.service --now
+  sudo systemctl enable ros_voice_assistant_boot.service --now
 
   print SUCCESS "Finished installing ros_packages"
 }
-
 
 
 # Install Cerebra, phpLiteAdmin, nginx
@@ -240,7 +240,7 @@ function install_frontend() {
 
   # Move nvm directory to systemfolders and create environment variable
   NVM_DIR="/etc/nvm"
-  sudo cp "$HOME/.nvm/" "$NVM_DIR"
+  sudo cp -r "$HOME/.nvm/" "$NVM_DIR"
   source "$NVM_DIR/nvm.sh"
 
   # Install and use Node.js 18 via nvm
