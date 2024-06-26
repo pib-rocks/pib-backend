@@ -206,12 +206,13 @@ class GuiApplication(Frame):
             self._show_static_image(deserialized_image)
 
     def _show_animated_gif(self, deserialized_image: DeserializedImage) -> None:
-        self.current_main_content = Animation(
+        animation = Animation(
             deserialized_image.data, 
             self._width, 
             self._height
         )
-        self._show_next_frame()
+        self.current_main_content = animation
+        self._show_next_frame(animation)
 
     def _show_static_image(self, deserialized_image: DeserializedImage) -> None:
         format = FORMAT_ID_TO_STR[deserialized_image.format]
@@ -223,19 +224,16 @@ class GuiApplication(Frame):
         self.current_main_content = PhotoImage(data=data, format=format)
         self.canvas.create_image(0, 0, image=self.current_main_content, anchor="nw")
 
-    def _show_next_frame(self) -> None:
-        if not isinstance(self.current_main_content, Animation):
-            return
+    def _show_next_frame(self, animation: Animation) -> None:
         try:
-            frame: AnimationFrame = next(self.current_main_content)
+            frame: AnimationFrame = next(animation)
         except StopIteration:
             return
         self.canvas.delete("all")
         self.canvas.create_image(0, 0, image=frame.photo_image, anchor="nw")
-        self.canvas.after(frame.duration_ms, self._show_next_frame)
+        self.canvas.after(frame.duration_ms, self._show_next_frame, animation)
 
     def _poll_next_image(self) -> None:
-        print("polling")
         if self.image_queue.qsize() != 0:
             image: Optional[DeserializedImage] = self.image_queue.get()
             if image is None:
