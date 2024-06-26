@@ -3,6 +3,7 @@ from threading import Lock
 from typing import Optional
 
 import rclpy
+import datetime
 from datatypes.action import Chat
 from datatypes.msg import ChatMessage
 from datatypes.srv import GetCameraImage
@@ -27,6 +28,7 @@ class ChatNode(Node):
         super().__init__("chat")
         self.token: Optional[str] = None
         self.last_pib_message_id: str = None
+        self.message_content: str = None
 
         # server for communicating with an llm via tryb's public-api
         # In the goal, a client specifies some text that will be sent as input to the llm, as well as the
@@ -67,7 +69,7 @@ class ChatNode(Node):
         token = msg.data
         self.token = token
 
-    def create_chat_message(self, chat_id: str, text: str, is_user: bool, update_message: bool) -> None:
+    def create_chat_message(self, chat_id: str, text: str, is_user: bool, update_message: bool, update_database: bool) -> None:
         """writes a new chat-message to the db, and publishes it to the 'chat_messages'-topic"""
 
         if text == "":
@@ -75,27 +77,35 @@ class ChatNode(Node):
 
         with self.voice_assistant_client_lock:
             if(update_message):
-                self.get_logger().info(f"update message: {text}")
-                successful, chat_message = voice_assistant_client.update_chat_message(
-                    chat_id, text, is_user, self.last_pib_message_id
-                )
+                if(update_database):
+                    self.message_content = self.message_content + " " + text 
+                    successful, chat_message = voice_assistant_client.update_chat_message(
+                        chat_id, self.message_content, is_user, self.last_pib_message_id
+                    )
+                    if not successful:
+                        self.get_logger().error(
+                            f"unable to create chat message: {(chat_id, text, is_user, update_message, update_database)}"
+                        )
+                        return
+                else:
+                    self.message_content = self.message_content + " " + text
             else:
-                self.get_logger().info(f"new message: {text}")
                 successful, chat_message = voice_assistant_client.create_chat_message(
                     chat_id, text, is_user
                 )
-        if not successful:
-            self.get_logger().error(
-                f"unable to create chat message: {(chat_id, text, is_user)}"
-            )
-            return
-        self.last_pib_message_id = chat_message.message_id
+                self.last_pib_message_id = chat_message.message_id
+                self.message_content = text
+            if not successful:
+                self.get_logger().error(
+                    f"unable to create chat message: {(chat_id, text, is_user, update_message, update_database)}"
+                )
+                return
         chat_message_ros = ChatMessage()
         chat_message_ros.chat_id = chat_id
-        chat_message_ros.content = chat_message.content
-        chat_message_ros.is_user = chat_message.is_user
-        chat_message_ros.message_id = chat_message.message_id
-        chat_message_ros.timestamp = chat_message.timestamp
+        chat_message_ros.content = self.message_content
+        chat_message_ros.is_user = is_user
+        chat_message_ros.message_id = self.last_pib_message_id
+        chat_message_ros.timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         self.chat_message_publisher.publish(chat_message_ros)
 
@@ -121,7 +131,7 @@ class ChatNode(Node):
         )
 
         # create the user message
-        self.executor.create_task(self.create_chat_message, chat_id, content, True, False)
+        self.executor.create_task(self.create_chat_message, chat_id, content, True, False, False)
 
         # get the current image from the camera
         image_base64 = None
@@ -146,12 +156,13 @@ class ChatNode(Node):
         ]
 
         # receive assistant-response in form of an iterable of token from the public-api
+        # message_history[-20] for limiting the sice of the history
         try:
             with self.public_voice_client_lock:
                 tokens = public_voice_client.chat_completion(
                     text=content,
                     description=description,
-                    message_history=message_history,
+                    message_history=message_history[-20:],
                     image_base64=image_base64,
                     model=personality.assistant_model.api_name,
                     public_api_token=self.token,
@@ -175,8 +186,9 @@ class ChatNode(Node):
                 return Chat.Result(rest=curr_sentence)
             # if a sentence was already found and another token was received, forward the sentence as feedback
             if prev_sentence is not None:
+                self.get_logger().info(f"TOKEN: {chat_id, curr_sentence, False, bool_update_chat_message}")
                 self.executor.create_task(
-                    self.create_chat_message, chat_id, prev_sentence, False, bool_update_chat_message
+                    self.create_chat_message, chat_id, prev_sentence, False, bool_update_chat_message, not bool_update_chat_message
                 )
                 bool_update_chat_message = True
                 feedback = Chat.Feedback()
@@ -191,8 +203,9 @@ class ChatNode(Node):
 
         # create chat-message for remaining input
         if len(curr_sentence) > 0:
+            self.get_logger().info(f"REMAINING: {chat_id, curr_sentence, False, bool_update_chat_message}")
             self.executor.create_task(
-                self.create_chat_message, chat_id, curr_sentence, False, bool_update_chat_message
+                self.create_chat_message, chat_id, curr_sentence, False, bool_update_chat_message, bool_update_chat_message
             )
         # return the restult
         bool_update_chat_message = False
