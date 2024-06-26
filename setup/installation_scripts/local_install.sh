@@ -20,7 +20,6 @@ SETUP_FILES="$BACKEND_DIR/setup/setup_files"
 
 PIB_BLOCKLY_SETUP_DIR="$BACKEND_DIR/pib_blockly"
 PIB_BLOCKLY_SERVER_DIR="$PIB_BLOCKLY_SETUP_DIR/pib_blockly_server"
-PIB_BLOCKLY_CLIENT_DIR="$PIB_BLOCKLY_SETUP_DIR/pib_blockly_client"
 
 
 # Install ROS2 Humble, rosbridge and colcon
@@ -136,12 +135,13 @@ function install_ros_packages() {
   sudo curl --silent --location https://docs.luxonis.com/install_dependencies.sh | sudo bash
   python3 -m pip install depthai
   git clone --recurse-submodules https://github.com/luxonis/depthai-python.git
-  cd depthai-python/examples
+  cd depthai-python/examples || { print ERROR "depthai-python/examples not found"; return 1; }
   python3 install_requirements.py
   # Hand tracker
   git clone https://github.com/geaxgx/depthai_hand_tracker.git
-  cd depthai_hand_tracker
+  cd depthai_hand_tracker || { print ERROR "depthai_hand_tracker not found"; return 1; }
   pip install -r requirements.txt
+  cd "$HOME" || { print ERROR "${HOME} not found"; return 1; }
 
   # SLAM dependencies (optional)
 #  sudo apt install -y ros-humble-depthai-ros
@@ -214,10 +214,10 @@ function install_ros_packages() {
   sudo systemctl daemon-reload
   sudo systemctl enable ros_program_boot.service --now
 
-  cd "$ROS_WORKING_DIR"
+  cd "$ROS_WORKING_DIR" || { print ERROR "${ROS_WORKING_DIR} not found"; return 1; }
   source /opt/ros/humble/setup.bash
   colcon build || { print ERROR "could not colcon build packages"; return 1; }
-  cd ~
+  cd "$HOME" || { print ERROR "${HOME} not found"; return 1; }
   sudo systemctl daemon-reload
 
   print SUCCESS "Finished installing ros_packages"
@@ -253,15 +253,15 @@ function install_frontend() {
   npm link @angular/cli
 
   npm --prefix "$FRONTEND_DIR" install
-  cd "$FRONTEND_DIR"
+  cd "$FRONTEND_DIR" || { print ERROR "${FRONTEND_DIR} not found"; return 1; }
   ng build --configuration production
-  cd "$HOME"
+  cd "$HOME" || { print ERROR "${HOME} not found"; return 1; }
 
   # Move the build to the destination folder
   sudo mv "$FRONTEND_DIR/dist"/* "$DEFAULT_NGINX_HTML_DIR"
 
   cp "$SETUP_FILES/ros_cerebra_boot.sh" "$ROS_WORKING_DIR/ros_cerebra_boot.sh"
-  sudo chmod 700 $ROS_WORKING_DIR/ros_cerebra_boot.sh
+  sudo chmod 700 "$ROS_WORKING_DIR"/ros_cerebra_boot.sh
 
   sudo cp "$SETUP_FILES/ros_cerebra_boot.service" /etc/systemd/system
   sudo chmod 700 /etc/systemd/system/ros_cerebra_boot.service
@@ -294,15 +294,14 @@ function install_blocky_node_service() {
         return 1
   fi
 
-  PIB_BLOCKLY_SERVER_DIR="$HOME/pib_blockly_server"
-  PIB_BLOCKLY_CLIENT_DIR="$HOME/pib_blockly_client"
 
   # copy the pib-blockly-server and client from the setup-folder to their targets in the user home-dir
-  cp -r "$PIB_BLOCKLY_SETUP_DIR/pib_blockly_server" $HOME
-  cp -r "$PIB_BLOCKLY_SETUP_DIR/pib_blockly_client" $HOME
+  cp -r "$PIB_BLOCKLY_SETUP_DIR/pib_blockly_server" "$HOME"
+  # shellcheck disable=SC2086
+  cp -r "$PIB_BLOCKLY_SETUP_DIR/pib_blockly_client" "$HOME"
 
   # build the pib-blockly-server
-  cd "$PIB_BLOCKLY_SERVER_DIR"
+  cd "$PIB_BLOCKLY_SERVER_DIR" || { print ERROR "${PIB_BLOCKLY_SERVER_DIR} not found"; return 1; }
   echo $(ls)
   echo $(ls pib_blockly_server)
   echo $(ls src)
@@ -310,7 +309,7 @@ function install_blocky_node_service() {
   npm run build
 
   # build the pib-blockly-server
-  cd "$PIB_BLOCKLY_SERVER_DIR"
+  cd "$PIB_BLOCKLY_SERVER_DIR" || { print ERROR "${PIB_BLOCKLY_SERVER_DIR} not found"; return 1; }
   echo $(ls)
   npm install || { print ERROR "error using npm"; return 1; }
   npm run build || { print ERROR "error using npm"; return 1; }
@@ -323,8 +322,8 @@ function install_blocky_node_service() {
   # install the pib_blockly_client
   pip install "$PIB_BLOCKLY_SETUP_DIR/pib_blockly_client"
 
-  cp "$SETUP_FILES/start_json_server.sh" $HOME
-  sudo chmod 700 $HOME/start_json_server.sh
+  cp "$SETUP_FILES/start_json_server.sh" "$HOME"
+  sudo chmod 700 "$HOME"/start_json_server.sh
   print SUCCESS "Finished installing Blockly Node service"
 }
 
