@@ -238,15 +238,18 @@ function install_frontend() {
   # Install Node Version Manager. Version is hardcoded to avoid discrepancies through updates
   curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.1/install.sh | bash
 
-  # Move nvm directory to systemfolders and create environment variable
-  NVM_DIR="/etc/nvm"
-  sudo cp -r "$HOME/.nvm/" "$NVM_DIR"
-  source "$NVM_DIR/nvm.sh"
+  # nvm config was is put into .bashrc
+  source "$HOME"/.bashrc
 
   # Install and use Node.js 18 via nvm
   # Dont use sudo for nvm-associated commands (npm, ng) since nvm is not accessible by root
   nvm install 18
   nvm use 18
+
+  if ! command_exists nvm; then
+      print ERROR "nvm installation failed"
+      return 1
+  fi
 
   # Install Angular CLI
   npm install -g @angular/cli
@@ -297,7 +300,6 @@ function install_blocky_node_service() {
 
   # copy the pib-blockly-server and client from the setup-folder to their targets in the user home-dir
   cp -r "$PIB_BLOCKLY_SETUP_DIR/pib_blockly_server" "$HOME"
-  # shellcheck disable=SC2086
   cp -r "$PIB_BLOCKLY_SETUP_DIR/pib_blockly_client" "$HOME"
 
   # build the pib-blockly-server
