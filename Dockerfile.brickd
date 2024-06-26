@@ -1,7 +1,7 @@
 FROM ubuntu:jammy
 
 RUN apt-get update \
-    && apt-get install -y libusb-1.0-0 libudev1 procps \
+    && apt-get install -y libusb-1.0-0 libudev1 libgpiod2 procps \
     && rm -rf /var/lib/apt/lists/*
 COPY setup/setup_files/brickd_2.4.6+snapshot~730b7d7_arm64.deb .
 RUN dpkg -i brickd_2.4.6+snapshot~730b7d7_arm64.deb
