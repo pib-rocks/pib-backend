@@ -126,6 +126,29 @@ services:
       - pib-blockly-server
       - flask-app
 
+  ros-display:
+    image: ros-display
+    privileged: true
+    build:
+      context: .
+      dockerfile: ./ros_packages/display/Dockerfile
+    profiles:
+      - display
+    volumes:
+      # this is a socket that is used by the x-windowing-system
+      # for cmmunication betweem clients and servers on the same
+      # machine. By mounting the socket of the docker-host, the 
+      # display-node uses the x-server running on the host for
+      # graphics-related communication
+      - /tmp/.X11-unix:/tmp/.X11-unix 
+    environment:
+      - STATIC_IMAGE_DIR=/app/ros2_ws/display/static_images
+      - DISPLAY=:0.0
+    command: ros2 launch display launch.py
+    restart: always
+    networks:
+      - pib-network
+
   rosbridge-ws:
     build:
       context: ./ros_packages

@@ -74,7 +74,6 @@ else
 fi
 
 
-
 # Install Docker Engine
 # Add Docker's official GPG key:
 sudo apt-get update
@@ -82,6 +81,10 @@ sudo apt-get install -y ca-certificates curl git
 sudo install -y -m 0755 -d /etc/apt/keyrings
 sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
 sudo chmod a+r /etc/apt/keyrings/docker.asc
+
+# allow communication between docker-host and the local x-server
+export DISPLAY=":0.0"
+sudo xhost +local:docker
 
 # Add the repository to Apt sources:
 echo \
@@ -102,7 +105,7 @@ touch ~/app/pib-backend/password.env
 echo -e "Pulled pib-backend and Cerebra repositories to ~/app"
 
 cd ~/app/pib-backend
-sudo docker compose --profile camera --profile motors --profile voice_assistant up -d
+sudo docker compose --profile camera --profile motors --profile voice_assistant --profile display up -d
 
 cd ~/app/cerebra
 sudo docker compose up -d
