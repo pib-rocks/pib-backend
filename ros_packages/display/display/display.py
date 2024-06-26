@@ -34,43 +34,43 @@ STATIC_IMAGE_DIR: str = os.getenv(
 
 
 @dataclass
-class SerializedImage:
+class ImageFile:
     """represents an image stored in the filesystem"""
 
-    format: bytes
+    format_value: bytes
     filepath: str
 
 
 @dataclass
-class DeserializedImage:
+class RawImage:
     """an image whose data was loaded into main-memory"""
 
-    format: bytes
+    format_value: bytes
     data: bytes
 
     @staticmethod
     def from_display_image(display_image: DisplayImage):
-        """turns a DisplayImage into a DeserializedImage"""
+        """turns a DisplayImage into a RawImage"""
         image_id = display_image.id.value
         match image_id:
             case ImageId.CUSTOM:
-                return DeserializedImage(
+                return RawImage(
                     display_image.format.value, b"".join(display_image.data)
                 )
             case ImageId.NONE:
                 return None
             case _:
-                serialized_image = IMAGE_ID_TO_STATIC_IMAGES.get(image_id)
-                if serialized_image is None:
+                image_file = IMAGE_ID_TO_STATIC_IMAGES.get(image_id)
+                if image_file is None:
                     raise Exception(f"illegal image-id: '{image_id}'.")
-                return DeserializedImage.from_serialized_image(serialized_image)
+                return RawImage.from_image_file(image_file)
 
     @staticmethod
-    def from_serialized_image(serialized_image: SerializedImage):
-        """turns a SerializedImage into a DeserializedImage"""
-        with open(serialized_image.filepath, "rb") as file:
+    def from_image_file(image_file: ImageFile):
+        """turns a ImageFile into a RawImage"""
+        with open(image_file.filepath, "rb") as file:
             data = file.read()
-        return DeserializedImage(serialized_image.format, data)
+        return RawImage(image_file.format_value, data)
 
 
 @dataclass
@@ -145,16 +145,16 @@ class Animation:
 
 
 # maps an image-id to its corresponding image in the filesystem
-IMAGE_ID_TO_STATIC_IMAGES: dict[int, SerializedImage] = {
-    ImageId.PIB_EYES_ANIMATED: SerializedImage(
+IMAGE_ID_TO_STATIC_IMAGES: dict[int, ImageFile] = {
+    ImageId.PIB_EYES_ANIMATED: ImageFile(
         ImageFormat.ANIMATED_GIF, STATIC_IMAGE_DIR + "/pib-eyes-animated.gif"
     ),
 }
 
-FORMAT_ID_TO_STR: dict[int, str] = {
+FORMAT_VALUE_TO_STR: dict[int, str] = {
     ImageFormat.ANIMATED_GIF: "gif",
     ImageFormat.PNG: "png",
-    ImageFormat.JPEG: "jpg",
+    ImageFormat.JPEG: "jpeg",
 }
 
 
@@ -163,8 +163,8 @@ class GuiApplication(Frame):
     def __init__(
         self,
         parent: Widget,
-        image_queue: Queue[DeserializedImage | None],
-        inital_image: DeserializedImage,
+        image_queue: Queue[RawImage | None],
+        inital_image: RawImage,
         *args,
         **kwargs,
     ):
@@ -204,31 +204,31 @@ class GuiApplication(Frame):
         # position the widget in its parent
         self.grid()
 
-    def _show_image(self, deserialized_image: DeserializedImage) -> None:
+    def _show_image(self, raw_image: RawImage) -> None:
         """update the main background image"""
         self.canvas.delete("all")
         if isinstance(self.current_main_content, Animation):
             self.current_main_content.stop()
-        if deserialized_image.format == ImageFormat.ANIMATED_GIF:
-            self._show_animated_gif(deserialized_image)
+        if raw_image.format_value == ImageFormat.ANIMATED_GIF:
+            self._show_animated_gif(raw_image)
         else:
-            self._show_static_image(deserialized_image)
+            self._show_static_image(raw_image)
 
-    def _show_animated_gif(self, deserialized_image: DeserializedImage) -> None:
-        animation = Animation(deserialized_image.data, self._width, self._height)
+    def _show_animated_gif(self, raw_image: RawImage) -> None:
+        animation = Animation(raw_image.data, self._width, self._height)
         self.current_main_content = animation
         self._show_next_frame(animation)
 
-    def _show_static_image(self, deserialized_image: DeserializedImage) -> None:
-        format = FORMAT_ID_TO_STR[deserialized_image.format]
-        with PIL.Image.open(BytesIO(deserialized_image.data)) as image:
+    def _show_static_image(self, raw_image: RawImage) -> None:
+        format_str = FORMAT_VALUE_TO_STR[raw_image.format_value]
+        with PIL.Image.open(BytesIO(raw_image.data)) as image:
             resized = image.resize((self._width, self._height))
-            data_buffer = BytesIO()  # buffer for storing binary data of image-frame
-            resized.save(
-                data_buffer, format
-            )  # save the current frame in the data-buffer
+            # buffer for storing binary data of image
+            data_buffer = BytesIO()
+            # save the current frame in the data-buffer
+            resized.save(data_buffer, format_str)
             data = base64.b64encode(data_buffer.getvalue())
-        self.current_main_content = PhotoImage(data=data, format=format)
+        self.current_main_content = PhotoImage(data=data, format=format_str)
         self.canvas.create_image(0, 0, image=self.current_main_content, anchor="nw")
 
     def _show_next_frame(self, animation: Animation) -> None:
@@ -242,7 +242,7 @@ class GuiApplication(Frame):
 
     def _poll_next_image(self) -> None:
         if self.image_queue.qsize() != 0:
-            image: Optional[DeserializedImage] = self.image_queue.get()
+            image: Optional[RawImage] = self.image_queue.get()
             if image is None:
                 self.winfo_toplevel().destroy()
                 return
@@ -260,7 +260,7 @@ class GuiApplication(Frame):
 
 class DisplayNode(Node):
 
-    def __init__(self, image_queue: Queue[DeserializedImage | None]) -> None:
+    def __init__(self, image_queue: Queue[RawImage | None]) -> None:
 
         super().__init__("display")
 
@@ -270,7 +270,7 @@ class DisplayNode(Node):
 
         self.image_queue = image_queue
 
-        pib_eyes_animated = DeserializedImage.from_serialized_image(
+        pib_eyes_animated = RawImage.from_image_file(
             IMAGE_ID_TO_STATIC_IMAGES[ImageId.PIB_EYES_ANIMATED]
         )
         self.image_queue.put(pib_eyes_animated)
@@ -280,13 +280,13 @@ class DisplayNode(Node):
     def on_display_image_received(self, display_image: DisplayImage):
         """callback function for the 'display_image'-topic subscriber"""
         try:
-            deserialized_image = DeserializedImage.from_display_image(display_image)
-            self.image_queue.put(deserialized_image)
+            raw_image = RawImage.from_display_image(display_image)
+            self.image_queue.put(raw_image)
         except Exception as e:
             self.get_logger().error(f"error while showing image from topic: {e}.")
 
 
-def run_gui_application(image_queue: Queue[DeserializedImage | None]) -> None:
+def run_gui_application(image_queue: Queue[RawImage | None]) -> None:
     while True:
         image = image_queue.get()
         if image is None:
@@ -300,7 +300,7 @@ def run_gui_application(image_queue: Queue[DeserializedImage | None]) -> None:
         root.mainloop()
 
 
-def run_display_node(image_queue: Queue[DeserializedImage | None]) -> None:
+def run_display_node(image_queue: Queue[RawImage | None]) -> None:
     rclpy.init()
     executor = SingleThreadedExecutor()
     display_node = DisplayNode(image_queue)
@@ -312,11 +312,11 @@ def run_display_node(image_queue: Queue[DeserializedImage | None]) -> None:
 
 def main(args=None) -> None:
     # the image-queue is used to send images from the ros-node to the
-    # gui-application. The value is either a 'DeserializedImage', which
+    # gui-application. The value is either a 'RawImage', which
     # the ros-node requests do be shown, or alternatively 'None', in
     # order to indicate that nothing should be shown (i.e. the gui-window
     # is closed)
-    image_queue: Queue[DeserializedImage | None] = Queue(maxsize=1)
+    image_queue: Queue[RawImage | None] = Queue(maxsize=1)
     # run hui-application and ros in two separate threads
     Thread(daemon=True, target=run_display_node, args=(image_queue,)).start()
     run_gui_application(image_queue)
