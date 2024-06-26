@@ -238,18 +238,21 @@ function install_frontend() {
   # Install Node Version Manager. Version is hardcoded to avoid discrepancies through updates
   curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.1/install.sh | bash
 
-  # nvm config was is put into .bashrc
-  source "$HOME"/.bashrc
-
-  # Install and use Node.js 18 via nvm
-  # Dont use sudo for nvm-associated commands (npm, ng) since nvm is not accessible by root
-  nvm install 18
-  nvm use 18
+  # make nvm available without re-opening terminal
+  export NVM_DIR="$HOME/.nvm"
+  [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" # This loads nvm
+  [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion" # This loads nvm bash_completion
 
   if ! command_exists nvm; then
       print ERROR "nvm installation failed"
       return 1
   fi
+
+
+  # Install and use Node.js 18 via nvm
+  # Dont use sudo for nvm-associated commands (npm, ng) since nvm is not accessible by root
+  nvm install 18
+  nvm use 18
 
   # Install Angular CLI
   npm install -g @angular/cli
