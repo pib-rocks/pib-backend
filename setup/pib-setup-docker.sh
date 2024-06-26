@@ -198,7 +198,8 @@ function install_docker_engine() {
         $sh_c "chmod a+r /etc/apt/keyrings/docker.asc"
         $sh_c "echo \"$apt_repo\" > /etc/apt/sources.list.d/docker.list"
         $sh_c 'apt-get update -qq >/dev/null'
-    )
+    ) || { print ERROR "failed to install docker"; return 1; }
+
     pkg_version=""
     if [ -n "$VERSION" ]; then
         pkg_pattern="$(echo "$VERSION" | sed 's/-ce-/~ce~.*/g' | sed 's/-/.*/g')"
@@ -233,7 +234,7 @@ function install_docker_engine() {
             pkgs="$pkgs docker-buildx-plugin"
         fi
         $sh_c "DEBIAN_FRONTEND=noninteractive apt-get install -y -qq $pkgs >/dev/null"
-    )
+    ) || { print ERROR "failed to install docker"; return 1; }
     print SUCCESS "Docker Engine installed"
 }
 
