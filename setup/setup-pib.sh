@@ -175,7 +175,32 @@ function cleanup() {
 }
 
 
+show_help()
+{
+	echo -e "The setup-pib.sh script has two execution modes:"
+	echo -e "(normal mode and development mode)""$NEW_LINE"
+	echo -e "$INFO""Normal mode (don't add any arguments or options)""$RESET_TEXT_COLOR"
+	echo -e "Example: ./setup-pib""$NEW_LINE"
+	echo -e "$INFO""Development mode (specify the branches you want to install)""$RESET_TEXT_COLOR"
+
+	echo -e "You can either use the short or verbose command versions:"
+	echo -e "-f=YourBranchName or --frontend-branch=YourBranchName"
+	echo -e "-b=YourBranchName or --backend-branch=YourBranchName"
+	echo -e "-p=YourBranchName or --pib-blockly-branch=YourBranchName"
+
+	echo -e "$NEW_LINE""Examples:"
+	echo -e "    ./setup-pib -b=main -f=PR-566"
+    echo -e "    ./setup-pib --backend-branch=main --frontend-branch=PR-566 --pib-blockly-branch=PR-develop"
+
+	exit
+}
+
+
 # ---------- SETUP STARTS FROM HERE -----------
+
+# Reduplicate output to an extra log file as well
+LOG_FILE="$HOME/setup-pib.log"
+exec > >(tee -a "$LOG_FILE") 2>&1
 
 echo "Hello $USER! We start the setup by allowing you permanently to run commands with admin-privileges."
 if [[ "$(id)" == *"(sudo)"* ]]; then

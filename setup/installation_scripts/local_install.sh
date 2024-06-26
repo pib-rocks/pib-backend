@@ -118,8 +118,8 @@ function install_flask_api() {
   print INFO "Installed pipenv"
   cp -r "$PIB_API_SETUP_DIR/flask" "$PIB_API_DIR"
   sudo mv "$PIB_API_DIR/pib_api_boot.service" /etc/systemd/system || print WARN "pib_api_boot.service not found"
-  sudo systemctl daemon-reload
-  sudo systemctl enable pib_api_boot.service || { print ERROR "pib_api_boot.service cannot be enabled"; return 1; }
+
+  # service enabled at the end of the script
   sudo chmod 777 "$HOME"
   sudo chmod 777 "$PIB_API_DIR"
 
@@ -215,11 +215,7 @@ function install_ros_packages() {
   colcon build || { print ERROR "could not colcon build packages"; return 1; }
   cd "$HOME" || { print ERROR "${HOME} not found"; return 1; }
 
-  sudo systemctl daemon-reload
-  sudo systemctl enable ros_camera_boot.service --now
-  sudo systemctl enable ros_motor_boot.service --now
-  sudo systemctl enable ros_program_boot.service --now
-  sudo systemctl enable ros_voice_assistant_boot.service --now
+  # services enabled at the end of the script
 
   print SUCCESS "Finished installing ros_packages"
 }
@@ -271,8 +267,7 @@ function install_frontend() {
 
   sudo cp "$SETUP_FILES/ros_cerebra_boot.service" /etc/systemd/system
   sudo chmod 700 /etc/systemd/system/ros_cerebra_boot.service
-  sudo systemctl daemon-reload
-  sudo systemctl enable ros_cerebra_boot.service --now
+  # service enabled at the end of the script
 
   print INFO "Build frontend and setup nginx"
 
@@ -321,8 +316,7 @@ function install_blocky_node_service() {
 
   # create service that starts the pib_blockly_server during boot
   sudo cp "$PIB_BLOCKLY_SERVER_DIR/pib_blockly_server_boot.service" /etc/systemd/system
-  sudo systemctl daemon-reload
-  sudo systemctl enable pib_blockly_server_boot.service
+  # services enabled at end of the script
 
   # install the pib_blockly_client
   pip install "$PIB_BLOCKLY_SETUP_DIR/pib_blockly_client"
@@ -345,9 +339,24 @@ if ! [ "$USER" == "pib" ]; then
 fi
 
 
+# Disable IPv6 due to installation problems with npm otherwise (not necessary for Docker setup)
+print INFO "Disable IPv6"
+sudo sysctl -w net.ipv6.conf.all.disable_ipv6=1
+sudo sysctl -w net.ipv6.conf.default.disable_ipv6=1
+
 install_ros || { print ERROR "Failed installing ROS"; return 1; }
 install_tinkerforge || { print ERROR "Failed installing Tinkerforge"; return 1; }
 install_flask_api || { print ERROR "Failed installing pib-api"; return 1; }
 install_ros_packages || { print ERROR "Failed installing ros_packages"; return 1; }
 install_frontend || { print ERROR "Failed installing frontend"; return 1; }
 install_blocky_node_service || { print ERROR "Failed installing blocky node service"; return 1; }
+
+# Enable all services
+sudo systemctl daemon-reload
+sudo systemctl enable pib_blockly_server_boot.service -- now
+sudo systemctl enable pib_api_boot.service --now
+sudo systemctl enable ros_camera_boot.service --now
+sudo systemctl enable ros_motor_boot.service --now
+sudo systemctl enable ros_program_boot.service --now
+sudo systemctl enable ros_voice_assistant_boot.service --now
+sudo systemctl enable ros_cerebra_boot.service --now
