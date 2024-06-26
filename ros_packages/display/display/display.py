@@ -1,4 +1,3 @@
-from abc import ABC
 from hashlib import sha256
 from queue import Queue
 import base64
@@ -8,11 +7,11 @@ from io import BytesIO
 from itertools import cycle
 import os
 from threading import Thread
-from typing import Iterable, Iterator, List, Optional
+from typing import Iterable, Iterator, Optional
 
 import rclpy
 from rclpy.node import Node
-from rclpy.executors import MultiThreadedExecutor
+from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
 import PIL.Image
 
@@ -23,10 +22,8 @@ from datatypes.msg import DisplayImage, ImageFormat, ImageId
 import os
 
 
-# this env-variable specifies the display that
-# x-server should use. If none is specified,
-# use ':0.0' as default
 os.environ.setdefault("DISPLAY", ":0.0")
+
 
 # points to the directory, where all static images are
 # stored that are managed by the display-node
@@ -52,7 +49,7 @@ class DeserializedImage:
 
     @staticmethod
     def from_display_image(display_image: DisplayImage):
-        """turns a DisplayImaGE into a DeserializedImage"""
+        """turns a DisplayImage into a DeserializedImage"""
         image_id = display_image.id.value
         match image_id:
             case ImageId.CUSTOM:
@@ -107,29 +104,41 @@ class Animation:
             return next(self._frame_iterator) 
         
     def _as_frames(self, data: bytes, width: int, height: int) -> Iterable[AnimationFrame]:
-        with PIL.Image.open(BytesIO(data)) as image:
-            n = image.n_frames
         queue = Queue()
-        def f(data):
-            with PIL.Image.open(BytesIO(data)) as image:
-                for i in range(image.n_frames): # iterate over frames of image
-                    image.seek(i) # go to i-th frame of the image
-                    data_buffer = BytesIO() # buffer for storing binary data of image-frames
-                    resized = (
-                        image.resize((width, height))
-                        if image.width != width or image.height != height
-                        else image
-                    )
-                    resized.save(data_buffer, "gif") # save the current frame in the data-buffer
-                    data = base64.b64encode(data_buffer.getvalue()) # extract and encode data in data-buffer
-                    # photo_image = PhotoImage(data=data) # image, displaying the current frame
-                    duration_ms = image.info["duration"] # get the duration of the current frame
-                    queue.put((data, duration_ms))  # yield the extracted data
-                    data_buffer.flush() # clear the data-buffer
-        Thread(target=f, args=(data,)).start()
-        for _ in range(n):
+        Thread(
+            target=self._load_frames_into_queue, 
+            args=(queue, data, width, height)
+        ).start()
+        while True:
             data, duration_ms = queue.get()
+            if data is None:
+                break
             yield AnimationFrame(duration_ms, PhotoImage(data=data))
+
+    def _load_frames_into_queue(self, queue: Queue, data: bytes, width: int, height: int) -> None:
+        with PIL.Image.open(BytesIO(data)) as image:
+            # iterate over frames of image
+            for i in range(image.n_frames): 
+                # go to i-th frame of the image
+                image.seek(i) 
+                # resize the current frame, to fit the screen-size
+                resized = (
+                    image.resize((width, height))
+                    if image.width != width or image.height != height
+                    else image
+                )
+                # buffer for storing binary data of image-frames
+                data_buffer = BytesIO() 
+                # save the current frame in the data-buffer
+                resized.save(data_buffer, "gif") 
+                # extract data from buffer and encode bytes as base64
+                data = base64.b64encode(data_buffer.getvalue()) 
+                # get the duration of the current frame
+                duration_ms = image.info["duration"] 
+                # yield the extracted data
+                queue.put((data, duration_ms))  
+            # 'None' -> all frames were processed
+            queue.put((None, -1))
                 
 
 # maps an image-id to its corresponding image in the filesystem
@@ -147,9 +156,12 @@ FORMAT_ID_TO_STR: dict[int, str] = {
 }
 
 
-class Application(Frame):
+class GuiApplication(Frame):
     
     def __init__(self, parent: Widget, image_queue: Queue[DeserializedImage | None], inital_image: DeserializedImage, *args, **kwargs):
+
+        self._width = kwargs.setdefault("width", 100)
+        self._height = kwargs.setdefault("height", 100)
 
         # call to the constructor of the superclass
         Frame.__init__(self, parent, *args, **kwargs)
@@ -157,15 +169,9 @@ class Application(Frame):
         # store the image_queue to poll from it for images to show
         self.image_queue = image_queue
 
-        # store the width and height of the screen
-        # this widget together with all the images that it
-        # displays, will be scaled to the screen-size
-        self._width = parent.winfo_screenwidth()
-        self._height = parent.winfo_screenheight()
-
         # define a canvas where the main-image is displayed
         self.canvas = Canvas(
-            parent, 
+            self, 
             width=self._width,
             height=self._height,
             borderwidth=0, 
@@ -173,13 +179,18 @@ class Application(Frame):
         )
         self.canvas.place(x=0, y=0)
 
-        # current static-image or animated-gif are stored here
+        # the current static-image/animation that is shown is stored here
         self.current_main_content: PhotoImage | Animation | None = None
+        
+        inital_image = inital_image
+
+        self._show_image(inital_image)
+
+        # time until attempt to poll next image (in milliseconds)
+        self.polling_timeout_ms = 10
 
         # intiate periodically polling for images in the queue
         self._poll_next_image()
-
-        self._show_image(inital_image)
 
         # position the widget in its parent
         self.grid()
@@ -207,31 +218,39 @@ class Application(Frame):
         with PIL.Image.open(BytesIO(deserialized_image.data)) as image:
             resized = image.resize((self._width, self._height))
             data_buffer = BytesIO() # buffer for storing binary data of image-frame
-            resized.save(data_buffer, "png") # save the current frame in the data-buffer
+            resized.save(data_buffer, format) # save the current frame in the data-buffer
             data = base64.b64encode(data_buffer.getvalue())
         self.current_main_content = PhotoImage(data=data, format=format)
-        self.canvas.create_image(self.current_main_content)
+        self.canvas.create_image(0, 0, image=self.current_main_content, anchor="nw")
 
     def _show_next_frame(self) -> None:
+        if not isinstance(self.current_main_content, Animation):
+            return
         try:
             frame: AnimationFrame = next(self.current_main_content)
         except StopIteration:
             return
         self.canvas.delete("all")
-        self.canvas.create_image(0,0, image=frame.photo_image, anchor="nw")
+        self.canvas.create_image(0, 0, image=frame.photo_image, anchor="nw")
         self.canvas.after(frame.duration_ms, self._show_next_frame)
 
     def _poll_next_image(self) -> None:
+        print("polling")
         if self.image_queue.qsize() != 0:
             image: Optional[DeserializedImage] = self.image_queue.get()
             if image is None:
                 self.winfo_toplevel().destroy()
                 return
             else:
-                print("a")
+                # if an image is received, reset the timeout to the lowest
+                # possible value
+                self.polling_timeout_ms = 10
                 self._show_image(image)
-                print("b")
-        self.after(100, self._poll_next_image)
+        else:
+            # if no image, was received, increase the polling timeout
+            # (value is capped at 160ms)
+            self.polling_timeout_ms = min(2 * self.polling_timeout_ms, 160)
+        self.after(self.polling_timeout_ms, self._poll_next_image)
 
 
 class DisplayNode(Node):
@@ -271,14 +290,17 @@ def run_gui_application(image_queue: Queue[DeserializedImage | None]) -> None:
         if image is None:
             continue
         root = Tk()
+        root.bind("<Escape>", lambda _: root.destroy())
         root.attributes("-fullscreen", True)
-        application = Application(root, image_queue, image)
+        width = root.winfo_screenwidth()
+        height = root.winfo_screenheight()
+        GuiApplication(root, image_queue, image, width=width, height=height)
         root.mainloop()
 
 
 def run_display_node(image_queue: Queue[DeserializedImage | None]) -> None:
     rclpy.init()
-    executor = MultiThreadedExecutor(2)
+    executor = SingleThreadedExecutor()
     display_node = DisplayNode(image_queue)
     executor.add_node(display_node)
     executor.spin()
@@ -287,9 +309,14 @@ def run_display_node(image_queue: Queue[DeserializedImage | None]) -> None:
 
 
 def main(args=None) -> None:   
-    image_queue: Queue[DeserializedImage | None] = Queue()
-    t = Thread(daemon=True, target=run_display_node, args=(image_queue,))
-    t.start()
+    # the image-queue is used to send images from the ros-node to the 
+    # gui-application. The value is either a 'DeserializedImage', which
+    # the ros-node requests do be shown, or alternatively 'None', in
+    # order to indicate that nothing should be shown (i.e. the gui-window
+    # is closed)
+    image_queue: Queue[DeserializedImage | None] = Queue(maxsize=1)
+    # run hui-application and ros in two separate threads
+    Thread(daemon=True, target=run_display_node, args=(image_queue,)).start()
     run_gui_application(image_queue)   
 
 
