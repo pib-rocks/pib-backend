@@ -36,6 +36,7 @@ STATIC_IMAGE_DIR: str = os.getenv(
 @dataclass
 class SerializedImage:
     """represents an image stored in the filesystem"""
+
     format: bytes
     filepath: str
 
@@ -43,9 +44,9 @@ class SerializedImage:
 @dataclass
 class DeserializedImage:
     """an image whose data was loaded into main-memory"""
+
     format: bytes
     data: bytes
-
 
     @staticmethod
     def from_display_image(display_image: DisplayImage):
@@ -54,8 +55,7 @@ class DeserializedImage:
         match image_id:
             case ImageId.CUSTOM:
                 return DeserializedImage(
-                    display_image.format.value,
-                    b''.join(display_image.data)
+                    display_image.format.value, b"".join(display_image.data)
                 )
             case ImageId.NONE:
                 return None
@@ -64,19 +64,19 @@ class DeserializedImage:
                 if serialized_image is None:
                     raise Exception(f"illegal image-id: '{image_id}'.")
                 return DeserializedImage.from_serialized_image(serialized_image)
-            
-    
+
     @staticmethod
     def from_serialized_image(serialized_image: SerializedImage):
         """turns a SerializedImage into a DeserializedImage"""
         with open(serialized_image.filepath, "rb") as file:
             data = file.read()
         return DeserializedImage(serialized_image.format, data)
-    
+
 
 @dataclass
 class AnimationFrame:
     """represents one frame of an animated gif"""
+
     duration_ms: int
     photo_image: PhotoImage
 
@@ -89,7 +89,7 @@ class Animation:
         self._frames: Iterable[AnimationFrame] = self._as_frames(data, width, height)
         self._frame_iterator = iter(cycle(self._frames))
         self._stopped = False
-    
+
     def stop(self) -> None:
         """stop the iterator"""
         self._stopped = True
@@ -101,13 +101,14 @@ class Animation:
         if self._stopped:
             raise StopIteration()
         else:
-            return next(self._frame_iterator) 
-        
-    def _as_frames(self, data: bytes, width: int, height: int) -> Iterable[AnimationFrame]:
+            return next(self._frame_iterator)
+
+    def _as_frames(
+        self, data: bytes, width: int, height: int
+    ) -> Iterable[AnimationFrame]:
         queue = Queue()
         Thread(
-            target=self._load_frames_into_queue, 
-            args=(queue, data, width, height)
+            target=self._load_frames_into_queue, args=(queue, data, width, height)
         ).start()
         while True:
             data, duration_ms = queue.get()
@@ -115,12 +116,14 @@ class Animation:
                 break
             yield AnimationFrame(duration_ms, PhotoImage(data=data))
 
-    def _load_frames_into_queue(self, queue: Queue, data: bytes, width: int, height: int) -> None:
+    def _load_frames_into_queue(
+        self, queue: Queue, data: bytes, width: int, height: int
+    ) -> None:
         with PIL.Image.open(BytesIO(data)) as image:
             # iterate over frames of image
-            for i in range(image.n_frames): 
+            for i in range(image.n_frames):
                 # go to i-th frame of the image
-                image.seek(i) 
+                image.seek(i)
                 # resize the current frame, to fit the screen-size
                 resized = (
                     image.resize((width, height))
@@ -128,24 +131,23 @@ class Animation:
                     else image
                 )
                 # buffer for storing binary data of image-frames
-                data_buffer = BytesIO() 
+                data_buffer = BytesIO()
                 # save the current frame in the data-buffer
-                resized.save(data_buffer, "gif") 
+                resized.save(data_buffer, "gif")
                 # extract data from buffer and encode bytes as base64
-                data = base64.b64encode(data_buffer.getvalue()) 
+                data = base64.b64encode(data_buffer.getvalue())
                 # get the duration of the current frame
-                duration_ms = image.info["duration"] 
+                duration_ms = image.info["duration"]
                 # yield the extracted data
-                queue.put((data, duration_ms))  
+                queue.put((data, duration_ms))
             # 'None' -> all frames were processed
             queue.put((None, -1))
-                
+
 
 # maps an image-id to its corresponding image in the filesystem
 IMAGE_ID_TO_STATIC_IMAGES: dict[int, SerializedImage] = {
     ImageId.PIB_EYES_ANIMATED: SerializedImage(
-        ImageFormat.ANIMATED_GIF, 
-        STATIC_IMAGE_DIR + "/pib-eyes-animated.gif"
+        ImageFormat.ANIMATED_GIF, STATIC_IMAGE_DIR + "/pib-eyes-animated.gif"
     ),
 }
 
@@ -157,8 +159,15 @@ FORMAT_ID_TO_STR: dict[int, str] = {
 
 
 class GuiApplication(Frame):
-    
-    def __init__(self, parent: Widget, image_queue: Queue[DeserializedImage | None], inital_image: DeserializedImage, *args, **kwargs):
+
+    def __init__(
+        self,
+        parent: Widget,
+        image_queue: Queue[DeserializedImage | None],
+        inital_image: DeserializedImage,
+        *args,
+        **kwargs,
+    ):
 
         self._width = kwargs.setdefault("width", 100)
         self._height = kwargs.setdefault("height", 100)
@@ -171,17 +180,17 @@ class GuiApplication(Frame):
 
         # define a canvas where the main-image is displayed
         self.canvas = Canvas(
-            self, 
+            self,
             width=self._width,
             height=self._height,
-            borderwidth=0, 
-            highlightthickness=0
+            borderwidth=0,
+            highlightthickness=0,
         )
         self.canvas.place(x=0, y=0)
 
         # the current static-image/animation that is shown is stored here
         self.current_main_content: PhotoImage | Animation | None = None
-        
+
         inital_image = inital_image
 
         self._show_image(inital_image)
@@ -206,11 +215,7 @@ class GuiApplication(Frame):
             self._show_static_image(deserialized_image)
 
     def _show_animated_gif(self, deserialized_image: DeserializedImage) -> None:
-        animation = Animation(
-            deserialized_image.data, 
-            self._width, 
-            self._height
-        )
+        animation = Animation(deserialized_image.data, self._width, self._height)
         self.current_main_content = animation
         self._show_next_frame(animation)
 
@@ -218,8 +223,10 @@ class GuiApplication(Frame):
         format = FORMAT_ID_TO_STR[deserialized_image.format]
         with PIL.Image.open(BytesIO(deserialized_image.data)) as image:
             resized = image.resize((self._width, self._height))
-            data_buffer = BytesIO() # buffer for storing binary data of image-frame
-            resized.save(data_buffer, format) # save the current frame in the data-buffer
+            data_buffer = BytesIO()  # buffer for storing binary data of image-frame
+            resized.save(
+                data_buffer, format
+            )  # save the current frame in the data-buffer
             data = base64.b64encode(data_buffer.getvalue())
         self.current_main_content = PhotoImage(data=data, format=format)
         self.canvas.create_image(0, 0, image=self.current_main_content, anchor="nw")
@@ -258,10 +265,7 @@ class DisplayNode(Node):
         super().__init__("display")
 
         self.create_subscription(
-            DisplayImage,
-            "display_image",
-            self.on_display_image_received,
-            1
+            DisplayImage, "display_image", self.on_display_image_received, 1
         )
 
         self.image_queue = image_queue
@@ -280,7 +284,7 @@ class DisplayNode(Node):
             self.image_queue.put(deserialized_image)
         except Exception as e:
             self.get_logger().error(f"error while showing image from topic: {e}.")
-        
+
 
 def run_gui_application(image_queue: Queue[DeserializedImage | None]) -> None:
     while True:
@@ -306,8 +310,8 @@ def run_display_node(image_queue: Queue[DeserializedImage | None]) -> None:
     rclpy.shutdown()
 
 
-def main(args=None) -> None:   
-    # the image-queue is used to send images from the ros-node to the 
+def main(args=None) -> None:
+    # the image-queue is used to send images from the ros-node to the
     # gui-application. The value is either a 'DeserializedImage', which
     # the ros-node requests do be shown, or alternatively 'None', in
     # order to indicate that nothing should be shown (i.e. the gui-window
@@ -315,7 +319,7 @@ def main(args=None) -> None:
     image_queue: Queue[DeserializedImage | None] = Queue(maxsize=1)
     # run hui-application and ros in two separate threads
     Thread(daemon=True, target=run_display_node, args=(image_queue,)).start()
-    run_gui_application(image_queue)   
+    run_gui_application(image_queue)
 
 
 if __name__ == "__main__":
