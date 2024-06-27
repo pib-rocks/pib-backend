@@ -8,6 +8,7 @@ endif()
 # find dependencies
 find_package(ament_cmake REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
+find_package(trajectory_msgs REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
 	"msg/MotorSettings.msg"
@@ -18,7 +19,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
 	"msg/ProxyRunProgramResult.msg"
 	"msg/ProxyRunProgramStatus.msg"
 	"msg/ChatIsListening.msg"
-	"srv/MotorSettingsSrv.srv"
+	"srv/ApplyMotorSettings.srv"
 	"srv/PlayAudioFromFile.srv"
 	"srv/PlayAudioFromSpeech.srv"
 	"srv/GetVoiceAssistantState.srv"
@@ -29,12 +30,14 @@ rosidl_generate_interfaces(${PROJECT_NAME}
 	"srv/ProxyRunProgramStop.srv"
 	"srv/ClearPlaybackQueue.srv"
 	"srv/GetCameraImage.srv"
+	"srv/ApplyJointTrajectory.srv"
 	"srv/EncryptToken.srv"
 	"srv/DecryptToken.srv"
 	"srv/GetTokenExists.srv"
 	"action/RunProgram.action"
 	"action/RecordAudio.action"
 	"action/Chat.action"
+	DEPENDENCIES trajectory_msgs
 )
 
 ament_export_dependencies(rosidl_default_runtime)
