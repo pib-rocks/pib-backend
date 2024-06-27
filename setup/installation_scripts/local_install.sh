@@ -11,7 +11,7 @@ ROS_PROGRAMS_BOOT_DIR="$ROS_WORKING_DIR/src/programs/boot_scripts"
 
 DEFAULT_NGINX_DIR="/etc/nginx"
 DEFAULT_NGINX_HTML_DIR="$DEFAULT_NGINX_DIR/html"
-PYTHON_CODE_PATH="$USER_HOME/cerebra_programs"
+PYTHON_CODE_PATH="$HOME/cerebra_programs"
 
 PHPLITEADMIN_ZIP="phpliteadmin_v1_9_9_dev.zip"
 PHPLITEADMIN_INSTALLATION_DIR="/var/www/phpliteadmin"
@@ -113,7 +113,7 @@ function install_tinkerforge() {
 function install_flask_api() {
   print INFO "Install pib-api"
 
-  echo "export PYTHONIOENCODING=utf-8" >> "$USER_HOME/.bashrc"
+  echo "export PYTHONIOENCODING=utf-8" >> "$HOME/.bashrc"
   pip install pipenv
   print INFO "Installed pipenv"
   cp -r "$PIB_API_SETUP_DIR/flask" "$PIB_API_DIR"
@@ -158,8 +158,8 @@ function install_ros_packages() {
   pip install "$BACKEND_DIR/public_api_client"
   pip install "$PIB_API_SETUP_DIR/client"
   pip install pyaudio
-  mkdir "$USER_HOME/public_api"
-  printf "{\n\t\"trybUrlPrefix\": \"\",\n\t\"publicApiToken\": \"\"\n}\n" > "$USER_HOME/public_api/config.json"
+  mkdir "$HOME/public_api"
+  printf "{\n\t\"trybUrlPrefix\": \"\",\n\t\"publicApiToken\": \"\"\n}\n" > "$HOME/public_api/config.json"
   print INFO "Installed voice assistant dependencies"
 
   # Programs dependencies
