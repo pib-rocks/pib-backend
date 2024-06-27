@@ -19,7 +19,7 @@ SETUP_FILES="$BACKEND_DIR/setup/setup_files"
 
 
 PIB_BLOCKLY_SETUP_DIR="$BACKEND_DIR/pib_blockly"
-PIB_BLOCKLY_SERVER_DIR="$PIB_BLOCKLY_SETUP_DIR/pib_blockly_server"
+PIB_BLOCKLY_SERVER_DIR="$HOME/pib_blockly_server"
 
 
 # Install ROS2 Humble, rosbridge and colcon
@@ -156,6 +156,7 @@ function install_ros_packages() {
   sudo apt-get install flac
   pip install -r "$BACKEND_DIR/ros_packages/voice_assistant/requirements.txt"
   pip install "$BACKEND_DIR/public_api_client"
+  pip install "$PIB_API_SETUP_DIR/client"
   pip install pyaudio
   mkdir "$USER_HOME/public_api"
   printf "{\n\t\"trybUrlPrefix\": \"\",\n\t\"publicApiToken\": \"\"\n}\n" > "$USER_HOME/public_api/config.json"
