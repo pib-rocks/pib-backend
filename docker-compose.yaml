@@ -1,158 +1,185 @@
 version: '3'
 
-networks:
-  pib-network:
-    driver: bridge
-
 services:
+  pib-blockly-server:
+    image: pib-blockly-server
+    build:
+      context: ./pib_blockly/pib_blockly_server/
+      dockerfile: ./Dockerfile
+    command: "node /app/dist/pib_blockly_server_bundle.js"
+    networks:
+      - pib-network
+    ports:
+      - "2442:2442"
+
   flask-app:
     image: flask_api
     build:
       context: .
       dockerfile: ./pib_api/flask/Dockerfile
+    command: "bash -c 'flask --app run db upgrade && flask --app run seed_db && flask --app run run --host 0.0.0.0'"
     networks:
       - pib-network
     ports:
       - "5000:5000"
+    environment:
+      - SQLALCHEMY_DATABASE_URI=sqlite:////db/pibdata.db
+      - PIB_BLOCKLY_SERVER_URL=http://pib-blockly-server:2442
     volumes:
       - ./pib_api/flask/:/app
       - programs:/root/cerebra_programs
       - db:/db
-    environment:
-      - SQLALCHEMY_DATABASE_URI=sqlite:////db/pibdata.db
-      - PIB_BLOCKLY_SERVER_URL=http://pib-blockly-server:2442
-    command: "bash -c 'flask --app run db upgrade && flask --app run seed_db && flask --app run run --host 0.0.0.0'"
-#    depends_on:
-#      - pib-blockly-server
+    depends_on:
+      - pib-blockly-server
 
-#  pib-blockly-server:
-#    image: pib-blockly-server
-#    build:
-#      context: ./pib_blockly/pib_blockly_server/
-#      dockerfile: ./Dockerfile
-#    networks:
-#      - pib-network
-#    ports:
-#      - "2442:2442"
-#    command: "node /app/dist/pib_blockly_server_bundle.js"
-#
-#  ros-camera:
-#    image: ros-camera
-#    privileged: true
-#    build:
-#      context: ./ros_packages
-#      dockerfile: ./camera/Dockerfile
-#    profiles:
-#      - camera
-#    command: ros2 run oak_d_lite stereo
-#    # Volume binding should not be necessary here,
-#    # but removing will stop the camera from showing pictures for some reason
-#    volumes:
-#      - /dev/:/dev/
-#    devices:
-#      - /dev/bus/usb:/dev/bus/usb
-#    networks:
-#      - pib-network
-#
-#  ros-motors:
-#    image: ros_motors
-#    build:
-#      context: .
-#      dockerfile: ./ros_packages/motors/Dockerfile
-#    profiles:
-#      - motors
-#    command: ros2 launch motors launch.py
-#    environment:
-#      - FLASK_API_BASE_URL=http://flask-app:5000
-#      - PIB_BLOCKLY_SERVER_URL=http://pib-blockly-server:2442
-#      - TINKERFORGE_HOST=tinkerforge-brickd
-#      - TINKERFORGE_PORT=4223
-#    networks:
-#      - pib-network
-#    restart: always
-#    depends_on:
-#      - tinkerforge-brickd
-#      - flask-app
-#
-#  ros-voice-assistant:
-#    image: ros_voice_assistant
-#    privileged: true
-#    build:
-#      context: .
-#      dockerfile: ./ros_packages/voice_assistant/Dockerfile
-#    profiles:
-#      - voice_assistant
-#    command: ros2 launch voice_assistant launch.py
-#    environment:
-#      - PULSE_SERVER=unix:${XDG_RUNTIME_DIR}/pulse/native
-#      - ALSA_CARD=Generic
-#      - FLASK_API_BASE_URL=http://flask-app:5000
-#      - VOICE_ASSISTANT_DIR=/app/ros2_ws/voice_assistant
-#    env_file:
-#      - password.env
-#    volumes:
-#      - /media/dyan/project/projects/voice/:/data/voice
-#      - /dev/snd:/dev/snd
-#      - /dev/dsp:/dev/dsp
-#      - /etc/machine-id:/etc/machine-id
-#      - ${XDG_RUNTIME_DIR}/pulse/native:${XDG_RUNTIME_DIR}/pulse/native
-#      - ~/.config/pulse/cookie:/root/.config/pulse/cookie
-#    networks:
-#      - pib-network
-#    restart: always
-#    depends_on:
-#      - flask-app
-#      - pib-blockly-server
-#
-#  ros-programs:
-#    image: ros_programs
-#    build:
-#      context: .
-#      dockerfile: ./programs/Dockerfile
-#    command: ros2 launch programs launch.py
-#    environment:
-#      - FLASK_API_BASE_URL=http://flask-app:5000
-#      - TINKERFORGE_HOST=tinkerforge-brickd
-#      - TINKERFORGE_PORT=4223
-#      - PYTHON_BINARY=/usr/bin/python3
-#      - PROGRAM_DIR=/ros2_ws/cerebra_programs
-#      - VOICE_ASSISTANT_DIR=/app/ros2_ws/voice_assistant
-#    volumes:
-#      - programs:/ros2_ws/cerebra_programs
-#    restart: always
-#    networks:
-#      - pib-network
-#
-#  rosbridge-ws:
-#    build:
-#      context: ./ros_packages
-#      dockerfile: ./rosbridge/Dockerfile
-#    ports:
-#      - 9090:9090
-#    command: ros2 launch rosbridge_server rosbridge_websocket_launch.xml
-#    networks:
-#      - pib-network
-#
-#  tinkerforge-brickd:
-#    privileged: true
-#    image: tinkerforge-brickd
-#    profiles:
-#      - motors
-#    networks:
-#      - pib-network
-#    build:
-#      context: .
-#      dockerfile: Dockerfile.brickd
-#    ports:
-#      - "4223:4223"
-#    tty: true
-#    # Mount bricklets
-#    devices:
-#      - /dev/gpiomem:/dev/gpiomem
-#    depends_on:
-#      - flask-app
+  sqlite-viewer:
+    image: sqlite-viewer-web
+    build:
+      context: https://github.com/nmsger-isento/sqlite-web.git
+      dockerfile: docker/Docker
+    networks:
+      - pib-network
+    ports:
+      - "8000:8080"
+    environment:
+      - SQLITE_DATABASE=pibdata.db
+    volumes:
+      - db:/data
+
+  tinkerforge-brickd:
+    image: tinkerforge-brickd
+    build:
+      context: .
+      dockerfile: Dockerfile.brickd
+    privileged: true
+    profiles:
+      - all
+      - motors
+    networks:
+      - pib-network
+    ports:
+      - "4223:4223"
+    # Mount bricklets
+    devices:
+      - /dev/gpiomem:/dev/gpiomem
+    tty: true
+    depends_on:
+      - flask-app
+
+  rosbridge-ws:
+    build:
+      context: ./ros_packages
+      dockerfile: ./rosbridge/Dockerfile
+    command: ros2 launch rosbridge_server rosbridge_websocket_launch.xml
+    networks:
+      - pib-network
+    ports:
+      - "9090:9090"
+
+  ros-camera:
+    image: ros-camera
+    privileged: true
+    build:
+      context: ./ros_packages
+      dockerfile: ./camera/Dockerfile
+    command: ros2 run oak_d_lite stereo
+    profiles:
+      - all
+      - camera
+    # Volume binding should not be necessary here,
+    # but removing will stop the camera from showing pictures for some reason
+    volumes:
+      - /dev/:/dev/
+    devices:
+      - /dev/bus/usb:/dev/bus/usb
+    networks:
+      - pib-network
+    depends_on:
+      - rosbridge-ws
+
+  ros-motors:
+    image: ros_motors
+    build:
+      context: .
+      dockerfile: ./ros_packages/motors/Dockerfile
+    command: ros2 launch motors launch.py
+    profiles:
+      - all
+      - motors
+    networks:
+      - pib-network
+    environment:
+      - FLASK_API_BASE_URL=http://flask-app:5000
+      - PIB_BLOCKLY_SERVER_URL=http://pib-blockly-server:2442
+      - TINKERFORGE_HOST=tinkerforge-brickd
+      - TINKERFORGE_PORT=4223
+    restart: always
+    depends_on:
+      - rosbridge-ws
+      - tinkerforge-brickd
+      - flask-app
+
+  ros-voice-assistant:
+    image: ros_voice_assistant
+    build:
+      context: .
+      dockerfile: ./ros_packages/voice_assistant/Dockerfile
+    command: ros2 launch voice_assistant launch.py
+    privileged: true
+    profiles:
+      - all
+      - voice_assistant
+    networks:
+      - pib-network
+    env_file:
+      - password.env
+    environment:
+      - PULSE_SERVER=unix:${XDG_RUNTIME_DIR}/pulse/native
+      - ALSA_CARD=Generic
+      - FLASK_API_BASE_URL=http://flask-app:5000
+      - VOICE_ASSISTANT_DIR=/app/ros2_ws/voice_assistant
+    volumes:
+      - /media/dyan/project/projects/voice/:/data/voice
+      - /dev/snd:/dev/snd
+      - /dev/dsp:/dev/dsp
+      - /etc/machine-id:/etc/machine-id
+      - ${XDG_RUNTIME_DIR}/pulse/native:${XDG_RUNTIME_DIR}/pulse/native
+      - ~/.config/pulse/cookie:/root/.config/pulse/cookie
+    restart: always
+    depends_on:
+      - rosbridge-ws
+      - flask-app
+      - pib-blockly-server
+
+  ros-programs:
+    image: ros_programs
+    build:
+      context: .
+      dockerfile: ./programs/Dockerfile
+    command: ros2 launch programs launch.py
+    profiles:
+      - all
+      - programs
+    environment:
+      - FLASK_API_BASE_URL=http://flask-app:5000
+      - TINKERFORGE_HOST=tinkerforge-brickd
+      - TINKERFORGE_PORT=4223
+      - PYTHON_BINARY=/usr/bin/python3
+      - PROGRAM_DIR=/ros2_ws/cerebra_programs
+      - VOICE_ASSISTANT_DIR=/app/ros2_ws/voice_assistant
+    volumes:
+      - programs:/ros2_ws/cerebra_programs
+    restart: always
+    networks:
+      - pib-network
+    depends_on:
+      - rosbridge-ws
 
 
 volumes:
-  programs:
   db:
+  programs:
+
+networks:
+  pib-network:
+    driver: bridge
