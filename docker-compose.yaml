@@ -4,7 +4,7 @@ services:
   pib-blockly-server:
     image: pib-blockly-server
     build:
-      context: ./pib_blockly/pib_blockly_server/
+      context: ./pib_blockly/pib_blockly_server
       dockerfile: ./Dockerfile
     command: "node /app/dist/pib_blockly_server_bundle.js"
     networks:
@@ -155,13 +155,14 @@ services:
     image: ros_programs
     build:
       context: .
-      dockerfile: ./programs/Dockerfile
+      dockerfile: ./ros_packages/programs/Dockerfile
     command: ros2 launch programs launch.py
     profiles:
       - all
       - programs
     environment:
       - FLASK_API_BASE_URL=http://flask-app:5000
+      - PIB_BLOCKLY_SERVER_URL=http://pib-blockly-server:2442
       - TINKERFORGE_HOST=tinkerforge-brickd
       - TINKERFORGE_PORT=4223
       - PYTHON_BINARY=/usr/bin/python3
@@ -174,6 +175,8 @@ services:
       - pib-network
     depends_on:
       - rosbridge-ws
+      - pib-blockly-server
+      - flask-app
 
 
 volumes:
