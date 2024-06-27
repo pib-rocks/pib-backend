@@ -7,25 +7,16 @@ from typing import Any, Iterable, List, Optional
 
 import requests
 
-from public_api_client import configuration
+from public_api_client import (
+    SPEECH_TO_TEXT_URL,
+    TEXT_TO_SPEECH_URL,
+    VOICE_ASSISTANT_TEXT_URL,
+)
 
 logging.basicConfig(
     level=logging.INFO,
     format="[%(levelname)s] [%(asctime)s] [%(process)d] [%(filename)s:%(lineno)s]: %(message)s",
 )
-
-try:
-    SPEECH_TO_TEXT_URL = (
-        configuration.tryb_url_prefix + "/public-api/conversions/speech-to-text"
-    )
-    TEXT_TO_SPEECH_URL = (
-        configuration.tryb_url_prefix + "/public-api/conversions/text-to-speech"
-    )
-    VOICE_ASSISTANT_TEXT_URL = (
-        configuration.tryb_url_prefix + "/public-api/voice-assistant/text"
-    )
-except TypeError as e:
-    raise RuntimeError(f"no tryb configuration found: {e}")
 
 
 class PublicApiChatMessage:
@@ -35,10 +26,15 @@ class PublicApiChatMessage:
 
 
 def _send_request(
-    method: str, url: str, headers: dict[str, str], body: dict[str, Any], stream: bool
+    method: str,
+    url: str,
+    headers: dict[str, str],
+    body: dict[str, Any],
+    stream: bool,
+    public_api_token: str,
 ):
     try:
-        headers["Authorization"] = "Bearer " + configuration.public_api_token
+        headers["Authorization"] = "Bearer " + public_api_token
         response = requests.request(
             method=method, url=url, stream=stream, headers=headers, json=body
         )
@@ -70,22 +66,28 @@ def _send_request(
         raise Exception("error while sending request to public-api")
 
 
-def speech_to_text(audio: bytes) -> str:
+def speech_to_text(audio: bytes, public_api_token: str) -> str:
     """converts binary audio data to text using tryb-public-api"""
 
     headers = {"Accept": "application/json", "Content-Type": "application/json"}
     body = {"data": base64.encodebytes(audio).decode("ascii")}
-    response = _send_request("POST", SPEECH_TO_TEXT_URL, headers, body, False)
+    response = _send_request(
+        "POST", SPEECH_TO_TEXT_URL, headers, body, False, public_api_token
+    )
 
     return response.json()["responseText"]
 
 
-def text_to_speech(text: str, gender: str, language: str) -> Iterable[bytes]:
+def text_to_speech(
+    text: str, gender: str, language: str, public_api_token: str
+) -> Iterable[bytes]:
     """converts text to speech using tryb-public-api"""
 
     headers = {"Accept": "audio/pcm", "Content-Type": "application/json"}
     body = {"data": text, "personality": {"gender": gender, "language": language}}
-    response = _send_request("POST", TEXT_TO_SPEECH_URL, headers, body, True)
+    response = _send_request(
+        "POST", TEXT_TO_SPEECH_URL, headers, body, True, public_api_token
+    )
 
     return response.iter_content(chunk_size=None)
 
@@ -94,6 +96,7 @@ def chat_completion(
     text: str,
     description: str,
     message_history: List[PublicApiChatMessage],
+    public_api_token: str,
     image_base64: Optional[str] = None,
     model: str = "gpt-3.5-turbo",
 ) -> Iterable[str]:
@@ -118,7 +121,9 @@ def chat_completion(
     if image_base64 is not None:
         body["imageBase64"] = image_base64
 
-    response = _send_request("POST", VOICE_ASSISTANT_TEXT_URL, headers, body, True)
+    response = _send_request(
+        "POST", VOICE_ASSISTANT_TEXT_URL, headers, body, True, public_api_token
+    )
 
     line_bin: bytes
     for line_bin in response.iter_lines():
