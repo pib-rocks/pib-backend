@@ -28,7 +28,7 @@ pip3.10 install -r "$BACKEND_DIR/ros_packages/voice_assistant/requirements.txt"
 pip3.10 install "$BACKEND_DIR/public_api_client"
 pip3.10 install pyaudio
 mkdir "$USER_HOME/public_api"
-printf "{\n\t\"trybUrlPrefix\": \"\",\n\t\"publicApiToken\": \"\"\n}\n" > "$USER_HOME/public_api/config.json"
+printf "{\n\t\"trybUrlPrefix\": \"\"\n}\n" > "$USER_HOME/public_api/config.json"
 
 # Git examples for Depth-AI
 git clone --recurse-submodules https://github.com/luxonis/depthai-python.git
