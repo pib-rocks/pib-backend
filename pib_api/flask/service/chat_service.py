@@ -13,10 +13,12 @@ def get_all_chats() -> List[Chat]:
 def get_chat(chat_id: str) -> Chat:
     return Chat.query.filter(Chat.chat_id == chat_id).one()
 
+
 def get_message(chat_id: str, message_id: str) -> ChatMessage:
     return ChatMessage.query.filter(
         (ChatMessage.message_id == message_id) & (ChatMessage.chat_id == chat_id)
     ).one()
+
 
 def create_chat(chat_dto: Any) -> Chat:
     personality = personality_service.get_personality(chat_dto["personality_id"])
@@ -49,9 +51,12 @@ def create_chat_message(chat_id: str, chat_message_dto: Any) -> ChatMessage:
     db.session.flush()
     return chat_message
 
-def update_chat_message(chat_message_dto: dict[str, Any], chat_id: str, message_id: str) ->ChatMessage:
+
+def update_chat_message(
+    chat_message_dto: dict[str, Any], chat_id: str, message_id: str
+) -> ChatMessage:
     chat_message = get_message(chat_id, message_id)
-    chat_message.content = chat_message_dto['content']
+    chat_message.content = chat_message_dto["content"]
     db.session.flush()
     return chat_message
 
