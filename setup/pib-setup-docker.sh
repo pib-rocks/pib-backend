@@ -248,6 +248,7 @@ function start_container() {
     print SUCCESS "Started cerebra container"
 }
 
+clone_repositories || print ERROR "failed to clone repositories"
 install_docker_engine || print ERROR "failed to install docker engine"
 start_container || print ERROR "failed to start containers"
 print SUCCESS "Installed Cerebra, files can be found at ${HOME}/app"
