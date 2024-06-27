@@ -36,7 +36,7 @@ services:
     image: sqlite-viewer-web
     build:
       context: https://github.com/nmsger-isento/sqlite-web.git
-      dockerfile: docker/Docker
+      dockerfile: docker/Dockerfile
     networks:
       - pib-network
     ports:
