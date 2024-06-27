@@ -1,106 +1,56 @@
-from model.program_model import Program
-from flask import jsonify, abort, request, Blueprint
+from flask import jsonify, request, Blueprint
 from schema.program_schema import (
-    programs_schema_without_program,
     program_schema_name_only,
-    program_schema_without_program,
-)
-from schema.program_code_schema import (
-    program_code_schema,
-    program_code_visual_only_schema,
+    program_schema_without_code,
+    programs_schema_without_code,
+    program_schema_code_visual_only,
 )
 from service import program_service
-from marshmallow import ValidationError
-from app.app import db
+
 
 bp = Blueprint("program_controller", __name__)
 
 
 @bp.route("", methods=["POST"])
 def create_program():
-    error = program_schema_name_only.validate(request.json)
-    if error:
-        return error, 400
-    created = Program(name=request.json.get("name"))
-    db.session.add(created)
-    db.session.commit()
-    program_service.create_empty_python_code_file(created.program_number)
-    try:
-        return program_schema_without_program.dump(created)
-    except:
-        abort(500)
+    program_dto = program_schema_name_only.load(request.json)
+    program = program_service.create_program(program_dto)
+    return program_schema_without_code.dump(program), 201
 
 
 @bp.route("", methods=["GET"])
 def get_all_programs():
-    all_programs = Program.query.all()
-    try:
-        return jsonify({"programs": programs_schema_without_program.dump(all_programs)})
-    except:
-        abort(500)
+    programs = program_service.get_all_programs()
+    return jsonify({"programs": programs_schema_without_code.dump(programs)})
 
 
 @bp.route("/<string:program_number>", methods=["GET"])
-def get_program_by_number(program_number):
-    program = Program.query.filter(
-        Program.program_number == program_number
-    ).first_or_404()
-    try:
-        return program_schema_without_program.dump(program)
-    except:
-        abort(500)
+def get_program(program_number: str):
+    program = program_service.get_program(program_number)
+    return program_schema_without_code.dump(program)
 
 
 @bp.route("/<string:program_number>", methods=["PUT"])
-def update_program_by_number(program_number):
-    try:
-        data = program_schema_name_only.load(request.json)
-    except ValidationError as error:
-        return error.messages, 400
-    program = Program.query.filter(
-        Program.program_number == program_number
-    ).first_or_404()
-    program.name = data["name"]
-    db.session.add(program)
-    db.session.commit()
-    try:
-        return program_schema_without_program.dump(program)
-    except:
-        abort(500)
+def update_program(program_number: str):
+    program_dto = program_schema_name_only.load(request.json)
+    program = program_service.update_program(program_number, program_dto)
+    return program_schema_without_code.dump(program)
 
 
 @bp.route("/<string:program_number>", methods=["DELETE"])
-def delete_program_by_number(program_number):
-    program_service.delete_python_code_file(program_number)
-    delete_program = Program.query.filter(
-        Program.program_number == program_number
-    ).first_or_404()
-    try:
-        db.session.delete(delete_program)
-        db.session.commit()
-        return "", 204
-    except:
-        abort(500)
+def delete_program(program_number: str):
+    program_service.delete_program(program_number)
+    return "", 204
 
 
 @bp.route("/<string:program_number>/code", methods=["GET"])
-def get_program_code_by_number(program_number):
-    program = Program.query.filter(
-        Program.program_number == program_number
-    ).first_or_404()
-    return program_code_visual_only_schema.dump({"visual": program.code_visual})
+def get_program_code(program_number: str):
+    program = program_service.get_program(program_number)
+    return program_schema_code_visual_only.dump(program)
 
 
 @bp.route("/<string:program_number>/code", methods=["PUT"])
-def update_program_code_by_number(program_number):
-    try:
-        data = program_code_schema.load(request.json)
-    except ValidationError as error:
-        return error.messages, 400
-    program = Program.query.filter(
-        Program.program_number == program_number
-    ).first_or_404()
-    program.code_visual = data["visual"]
-    db.session.commit()
-    program_service.write_to_python_code_file(program_number, data["python"])
-    return program_code_visual_only_schema.dump(data)
+def update_program_code(program_number: str):
+    program_dto = program_schema_code_visual_only.load(request.json)
+    program_service.update_program_code(program_number, program_dto)
+    return program_schema_code_visual_only.dump(program_dto)

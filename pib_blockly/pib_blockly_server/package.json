@@ -1,0 +1,23 @@
+{
+  "name": "pib_blockly_server",
+  "version": "1.0.0",
+  "description": "A server that provides functionality for compiling visual-code to python-code",
+  "main": "app.js",
+  "private": true,
+  "scripts": {
+    "build": "webpack --mode production"
+  },
+  "author": "",
+  "devDependencies": {
+    "source-map-loader": "^4.0.1",
+    "ts-loader": "^9.4.2",
+    "typescript": "^5.0.2",
+    "webpack": "^5.76.0",
+    "webpack-cli": "^4.10.0",
+    "webpack-dev-server": "^4.11.1",
+    "webpack-node-externals": "^3.0.0"
+  },
+  "dependencies": {
+    "blockly": "^10.0.2"
+  }
+}

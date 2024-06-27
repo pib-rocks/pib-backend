@@ -1,5 +1,4 @@
-from app.app import db
-from flask import abort, jsonify, request, Blueprint
+from flask import jsonify, request, Blueprint
 from schema.chat_message_schema import (
     chat_message_post_schema,
     chat_message_schema,
@@ -19,46 +18,31 @@ bp = Blueprint("chat_controller", __name__)
 def create_chat():
     chat_dto = upload_chat_schema.load(request.json)
     chat = chat_service.create_chat(chat_dto)
-    db.session.commit()
-    try:
-        return chat_schema.dump(chat), 201
-    except Exception:
-        abort(500)
+    return chat_schema.dump(chat), 201
 
 
 @bp.route("", methods=["GET"])
 def get_all_chats():
     chats = chat_service.get_all_chats()
-    try:
-        return jsonify({"voiceAssistantChats": chats_schema.dump(chats)})
-    except Exception:
-        abort(500)
+    return jsonify({"voiceAssistantChats": chats_schema.dump(chats)})
 
 
 @bp.route("/<string:chat_id>", methods=["GET"])
 def get_chat_by_id(chat_id: str):
     chat = chat_service.get_chat(chat_id)
-    try:
-        return chat_schema.dump(chat)
-    except Exception:
-        abort(500)
+    return chat_schema.dump(chat)
 
 
 @bp.route("/<string:chat_id>", methods=["PUT"])
 def update_chat(chat_id: str):
     chat_dto = upload_chat_schema.load(request.json)
     chat = chat_service.update_chat(chat_id, chat_dto)
-    db.session.commit()
-    try:
-        return chat_schema.dump(chat)
-    except Exception:
-        abort(500)
+    return chat_schema.dump(chat)
 
 
 @bp.route("/<string:chat_id>", methods=["DELETE"])
 def delete_chat(chat_id: str):
     chat_service.delete_chat(chat_id)
-    db.session.commit()
     return "", 204
 
 
@@ -66,26 +50,18 @@ def delete_chat(chat_id: str):
 def create_message(chat_id: str):
     chat_message_dto = chat_message_post_schema.load(request.json)
     chat_message = chat_service.create_chat_message(chat_id, chat_message_dto)
-    db.session.commit()
-    try:
-        return chat_message_schema.dump(chat_message), 201
-    except Exception:
-        abort(500)
+    return chat_message_schema.dump(chat_message), 201
 
 
 @bp.route("/<string:chat_id>/messages", methods=["GET"])
 def get_messages_by_chat_id(chat_id: str):
     chat = chat_service.get_chat(chat_id)
-    try:
-        return chat_messages_only_schema.dump(chat)
-    except Exception:
-        abort(500)
+    return chat_messages_only_schema.dump(chat)
 
 
 @bp.route("/<string:chat_id>/messages/<string:message_id>", methods=["DELETE"])
 def delete_message(chat_id: str, message_id: str):
     chat_service.delete_message(chat_id, message_id)
-    db.session.commit()
     return "", 204
 
 @bp.route("/<string:chat_id>/messages/<string:message_id>", methods=["PUT"])
