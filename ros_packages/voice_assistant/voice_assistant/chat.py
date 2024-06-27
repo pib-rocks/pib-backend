@@ -69,23 +69,34 @@ class ChatNode(Node):
         # lock that should be aquired, whenever accessing 'voice_assistant_client'
         self.voice_assistant_client_lock = Lock()
 
-
     def get_public_api_token_listener(self, msg):
         token = msg.data
         self.token = token
 
-    def create_chat_message(self, chat_id: str, text: str, is_user: bool, update_message: bool, update_database: bool) -> None:
+    def create_chat_message(
+        self,
+        chat_id: str,
+        text: str,
+        is_user: bool,
+        update_message: bool,
+        update_database: bool,
+    ) -> None:
         """writes a new chat-message to the db, and publishes it to the 'chat_messages'-topic"""
 
         if text == "":
             return
 
         with self.voice_assistant_client_lock:
-            if(update_message):
-                if(update_database):
-                    self.message_content = self.message_content + " " + text 
-                    successful, chat_message = voice_assistant_client.update_chat_message(
-                        chat_id, self.message_content, is_user, self.last_pib_message_id
+            if update_message:
+                if update_database:
+                    self.message_content = self.message_content + " " + text
+                    successful, chat_message = (
+                        voice_assistant_client.update_chat_message(
+                            chat_id,
+                            self.message_content,
+                            is_user,
+                            self.last_pib_message_id,
+                        )
                     )
                     if not successful:
                         self.get_logger().error(
@@ -110,16 +121,16 @@ class ChatNode(Node):
         chat_message_ros.content = self.message_content
         chat_message_ros.is_user = is_user
         chat_message_ros.message_id = self.last_pib_message_id
-        chat_message_ros.timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        chat_message_ros.timestamp = datetime.datetime.now().strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
 
         self.chat_message_publisher.publish(chat_message_ros)
 
     async def chat(self, goal_handle: ServerGoalHandle):
-
         """callback function for 'chat'-action"""
 
         self.get_logger().info("start chat request")
-
 
         # unpack request data
         request: Chat.Goal = goal_handle.request
@@ -144,9 +155,10 @@ class ChatNode(Node):
             else "Du bist pib, ein humanoider Roboter."
         )
 
-
         # create the user message
-        self.executor.create_task(self.create_chat_message, chat_id, content, True, False, False)
+        self.executor.create_task(
+            self.create_chat_message, chat_id, content, True, False, False
+        )
 
         # get the current image from the camera
         image_base64 = None
@@ -158,7 +170,6 @@ class ChatNode(Node):
 
         if generate_code:
             description = CODE_DESCRIPTION_PREFIX + description
-
 
         # get the message-history from the pib-api
         with self.voice_assistant_client_lock:
@@ -298,7 +309,12 @@ class ChatNode(Node):
             # if a sentence was already found and another token was received, forward the sentence as feedback
             if prev_sentence is not None:
                 self.executor.create_task(
-                    self.create_chat_message, chat_id, prev_sentence, False, bool_update_chat_message, not bool_update_chat_message
+                    self.create_chat_message,
+                    chat_id,
+                    prev_sentence,
+                    False,
+                    bool_update_chat_message,
+                    not bool_update_chat_message,
                 )
                 bool_update_chat_message = True
                 feedback = Chat.Feedback()
@@ -314,7 +330,12 @@ class ChatNode(Node):
         # create chat-message for remaining input
         if len(curr_sentence) > 0:
             self.executor.create_task(
-                self.create_chat_message, chat_id, curr_sentence, False, bool_update_chat_message, bool_update_chat_message
+                self.create_chat_message,
+                chat_id,
+                curr_sentence,
+                False,
+                bool_update_chat_message,
+                bool_update_chat_message,
             )
         # return the restult
         bool_update_chat_message = False
