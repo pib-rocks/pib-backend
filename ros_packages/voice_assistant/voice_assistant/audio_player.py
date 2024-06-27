@@ -3,7 +3,7 @@ import time
 import wave
 from queue import Queue
 from threading import Lock, Event, Thread
-from typing import Iterable
+from typing import Iterable, Optional
 
 import pyaudio
 import rclpy
@@ -11,6 +11,7 @@ from datatypes.srv import PlayAudioFromFile, PlayAudioFromSpeech, ClearPlaybackQ
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
+from std_msgs.msg import String
 
 from public_api_client import public_voice_client
 from . import util
@@ -101,7 +102,7 @@ class AudioPlayerNode(Node):
     def __init__(self, playback_queue: Queue[PlaybackItem]):
 
         super().__init__("audio_player")
-
+        self.token: Optional[str] = None
         self.playback_queue = playback_queue
         self.counter = 0
         self.counter_lock = Lock()
@@ -133,7 +134,15 @@ class AudioPlayerNode(Node):
             callback_group=play_audio_callback_group,
         )
 
+        self.get_token_subscription = self.create_subscription(
+            String, "public_api_token", self.get_public_api_token_listener, 10
+        )
+
         self.get_logger().info("Now running AUDIO PLAYER")
+
+    def get_public_api_token_listener(self, msg):
+        token = msg.data
+        self.token = token
 
     def counter_next(self) -> int:
         with self.counter_lock:
@@ -201,7 +210,7 @@ class AudioPlayerNode(Node):
 
         try:
             data = public_voice_client.text_to_speech(
-                request.speech, request.gender, request.language
+                request.speech, request.gender, request.language, self.token
             )
         except Exception as e:
             self.get_logger().error(f"text_to_speech failed: {e}")
