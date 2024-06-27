@@ -167,11 +167,11 @@ function move_setup_files() {
 
 # clean setup files if local install + remove user from sudoers file again
 function cleanup() {
-  sudo rm /etc/sudoers.d/"$USER"
   if [ "$INSTALL_METHOD" = "local" ]; then
     sudo rm -r "$HOME/app"
     print INFO "Removed repositories from $HOME due to local installation"
   fi
+  sudo rm /etc/sudoers.d/"$USER"
 }
 
 
