@@ -11,6 +11,7 @@ services:
       - pib-network
     ports:
       - "2442:2442"
+    restart: always
 
   flask-app:
     image: flask_api
@@ -29,6 +30,7 @@ services:
       - ./pib_api/flask/:/app
       - programs:/root/cerebra_programs
       - db:/db
+    restart: always
     depends_on:
       - pib-blockly-server
 
@@ -43,6 +45,7 @@ services:
       - "8000:8080"
     environment:
       - SQLITE_DATABASE=pibdata.db
+    restart: always
     volumes:
       - db:/data
 
@@ -63,6 +66,7 @@ services:
     devices:
       - /dev/gpiomem:/dev/gpiomem
     tty: true
+    restart: always
     depends_on:
       - flask-app
 
@@ -73,6 +77,7 @@ services:
     command: ros2 launch rosbridge_server rosbridge_websocket_launch.xml
     networks:
       - pib-network
+    restart: always
     ports:
       - "9090:9090"
 
@@ -94,6 +99,7 @@ services:
       - /dev/bus/usb:/dev/bus/usb
     networks:
       - pib-network
+    restart: always
     depends_on:
       - rosbridge-ws
 

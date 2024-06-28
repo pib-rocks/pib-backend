@@ -180,12 +180,14 @@ show_help()
 	echo -e "The setup-pib.sh script has two execution modes:"
 	echo -e "(normal mode and development mode)""$NEW_LINE"
 	echo -e "$INFO""Normal mode (don't add any arguments or options)""$RESET_TEXT_COLOR"
+	echo -e "$INFO""If you are do not know what the flags for development mode do, use the normal mode""$RESET_TEXT_COLOR"
 	echo -e "Example: ./setup-pib""$NEW_LINE"
 	echo -e "$INFO""Development mode (specify the branches you want to install)""$RESET_TEXT_COLOR"
 
 	echo -e "You can either use the short or verbose command versions:"
 	echo -e "-f=YourBranchName or --frontend-branch=YourBranchName"
 	echo -e "-b=YourBranchName or --backend-branch=YourBranchName"
+	echo -e "-l or --local for a local installation of the software over using a containerized setup using Docker"
 
 	echo -e "$NEW_LINE""Examples:"
 	echo -e "    ./setup-pib -b=main -f=PR-566"
@@ -201,7 +203,7 @@ show_help()
 LOG_FILE="$HOME/setup-pib.log"
 exec > >(tee -a "$LOG_FILE") 2>&1
 
-echo "Hello $USER! We start the setup by allowing you permanently to run commands with admin-privileges."
+echo "Hello $USER! We start the setup by allowing you permanently to run commands with admin-privileges. This change is reverted at the end of the setup."
 if [[ "$(id)" == *"(sudo)"* ]]; then
 	echo "For this change please enter your password..."
 	sudo bash -c "echo '$USER ALL=(ALL) NOPASSWD:ALL' | tee /etc/sudoers.d/$USER"
