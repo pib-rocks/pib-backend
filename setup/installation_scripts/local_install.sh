@@ -354,7 +354,7 @@ install_blocky_node_service || { print ERROR "Failed installing blocky node serv
 
 # Enable all services
 sudo systemctl daemon-reload
-sudo systemctl enable pib_blockly_server_boot.service -- now
+sudo systemctl enable pib_blockly_server_boot.service --now
 sudo systemctl enable pib_api_boot.service --now
 sudo systemctl enable ros_camera_boot.service --now
 sudo systemctl enable ros_motor_boot.service --now
