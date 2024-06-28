@@ -5,7 +5,7 @@
 
 print INFO "Adjusting system settings"
 
-if ! [ "$DIST_VERSION" == "jammy" ]; then
+if ! [ "$DISTRIBUTION" == "ubuntu" ]; then
     print ERROR "Not using Ubuntu 22.04; skipping adjusting system settings"
     return
 fi

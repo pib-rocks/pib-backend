@@ -85,7 +85,7 @@ get_dist_version() {
 function remove_apps() {
   print INFO "Removing unused default software"
 
-  if ! [ "$DIST_VERSION" == "jammy" ]; then
+  if ! [ "$DISTRIBUTION" == "ubuntu" ]; then
     print ERROR "Not using Ubuntu 22.04; skipping removing unused default software"
     return
   fi
