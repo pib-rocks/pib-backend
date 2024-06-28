@@ -1,6 +1,7 @@
 import math
+from typing import Iterable, Tuple
 import rclpy
-from trajectory_msgs.msg import JointTrajectory
+from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 
 class PibDriver:
@@ -16,11 +17,10 @@ class PibDriver:
 
         rclpy.init(args=None)
         self.__node = rclpy.create_node("pib_driver")
-        self.__node.get_logger().info("Node created")
         self.__node.create_subscription(
             JointTrajectory, "/joint_trajectory", self.__trajectory_callback, 10
         )
-        self.__node.get_logger().info("Subscribed to /joint_trajectory")
+        self.__node.get_logger().info("PibDriver ready")
 
     MOTOR_TO_DEVICES_MAP = {
         "turn_head_motor": ["head_horizontal"],
@@ -56,10 +56,24 @@ class PibDriver:
         devices = {}
 
         for pib_motor_name, proto_device_names in self.MOTOR_TO_DEVICES_MAP.items():
-            devices[pib_motor_name] = self.__find_devices_in_robot(proto_device_names)
+            devices[pib_motor_name] = self.find_devices_in_robot(proto_device_names)
         return devices
 
-    def __find_devices_in_robot(self, device_names: list) -> list:
+    def __trajectory_callback(self, joint_trajectory: JointTrajectory):
+        """Sets the positions of all devices in a received joint trajectory message."""
+        motor_name_position_pairs = self.extract_motor_name_position_pairs(
+            joint_trajectory
+        )
+
+        for (
+            motor_name,
+            device_target_position,
+        ) in motor_name_position_pairs:
+            self.set_device_positions(
+                motor_name, self.convert_position(device_target_position)
+            )
+
+    def find_devices_in_robot(self, device_names: list) -> list:
         """Retrieves devices from the robot based on a list of device names"""
         device_list = []
 
@@ -77,22 +91,30 @@ class PibDriver:
         """Converts degree to radian and adjust for cerebras offset (multiplying degree by 100)."""
         return math.radians(position / 100.0)
 
-    def __trajectory_callback(self, joint_trajectory: JointTrajectory):
-        """Sets the positions of devices whenever a joint trajectory message is received."""
-        motor_name = joint_trajectory.joint_names[0]
-        device_target_position = self.convert_position(
-            joint_trajectory.points[0].positions[0]
-        )
+    def extract_motor_name_position_pairs(
+        self, jt: JointTrajectory
+    ) -> Iterable[Tuple[str, int]]:
+        """unpacks a jt-message into an iterable of motor_name-position-pairs"""
+        motor_names = jt.joint_names
+        points: list[JointTrajectoryPoint] = jt.points
+        positions = (point.positions[0] for point in points)
 
-        self.set_device_positions(motor_name, device_target_position)
-        self.__node.get_logger().info(
-            f"Device '{motor_name}' moved to position {device_target_position}"
-        )
+        motor_name_position_pairs = zip(motor_names, positions)
+
+        return motor_name_position_pairs
 
     def set_device_positions(self, motor_name: str, device_target_position: float):
-        """Sets the positions of a devices."""
-        for device in self.__devices[motor_name]:
-            device.setPosition(device_target_position)
+        """Sets the position of a device."""
+        try:
+            for device in self.__devices[motor_name]:
+                device.setPosition(device_target_position)
+            self.__node.get_logger().info(
+                f"Device '{motor_name}' moved to position {device_target_position}"
+            )
+        except KeyError:
+            self.__node.get_logger().error(
+                f"Motor name '{motor_name}' not found in devices."
+            )
 
     def step(self):
         """Spins the ROS node once to handle any pending messages or callbacks."""
