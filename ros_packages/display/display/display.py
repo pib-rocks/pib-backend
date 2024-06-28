@@ -1,8 +1,6 @@
-from hashlib import sha256
 from queue import Queue
 import base64
 from dataclasses import dataclass
-from functools import reduce
 from io import BytesIO
 from itertools import cycle
 import os
@@ -190,8 +188,6 @@ class GuiApplication(Frame):
 
         # the current static-image/animation that is shown is stored here
         self.current_main_content: PhotoImage | Animation | None = None
-
-        inital_image = inital_image
 
         self._show_image(inital_image)
 
