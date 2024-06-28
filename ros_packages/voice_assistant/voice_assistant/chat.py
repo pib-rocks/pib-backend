@@ -53,10 +53,6 @@ class ChatNode(Node):
         self.chat_message_publisher: Publisher = self.create_publisher(
             ChatMessage, "chat_messages", 10
         )
-        # Publisher for updating ChatMessages
-        self.chat_message_update_publisher: Publisher = self.create_publisher(
-            ChatMessage, "chat_messages_update", 10
-        )
         self.get_camera_image_client = self.create_client(
             GetCameraImage, "get_camera_image"
         )
@@ -68,6 +64,8 @@ class ChatNode(Node):
         self.public_voice_client_lock = Lock()
         # lock that should be aquired, whenever accessing 'voice_assistant_client'
         self.voice_assistant_client_lock = Lock()
+
+        self.get_logger().info("Now running CHAT")
 
     def get_public_api_token_listener(self, msg):
         token = msg.data
@@ -87,8 +85,13 @@ class ChatNode(Node):
             return
 
         with self.voice_assistant_client_lock:
+            self.get_logger().info(f"5")
+            self.get_logger().info(f"{self.last_pib_message_id}")
             if update_message:
+                self.get_logger().info(f"4")
                 if update_database:
+                    self.get_logger().info(f"3")
+                    self.get_logger().info(f"ASDASD: {chat_id, self.message_content, is_user, self.last_pib_message_id}")
                     self.message_content = self.message_content + " " + text
                     successful, chat_message = (
                         voice_assistant_client.update_chat_message(
@@ -104,11 +107,14 @@ class ChatNode(Node):
                         )
                         return
                 else:
+                    self.get_logger().info(f"2")
                     self.message_content = self.message_content + " " + text
             else:
+                self.get_logger().info(f"1")
                 successful, chat_message = voice_assistant_client.create_chat_message(
                     chat_id, text, is_user
                 )
+                self.get_logger().info(f"unable to create chat message: {(chat_id, text, is_user, update_message, update_database)}")
                 self.last_pib_message_id = chat_message.message_id
                 self.message_content = text
             if not successful:
@@ -139,7 +145,8 @@ class ChatNode(Node):
         generate_code: bool = request.generate_code
 
         # create the user message
-        self.executor.create_task(self.create_chat_message, chat_id, content, True)
+        self.executor.create_task(self.create_chat_message, chat_id, content, True, False, True)
+
 
         # get the personality that is associated with the request chat-id from the pib-api
         with self.voice_assistant_client_lock:
@@ -147,6 +154,7 @@ class ChatNode(Node):
                 chat_id
             )
         if not successful:
+            self.get_logger().error(f"no personality found for id {chat_id}")
             goal_handle.abort()
             return Chat.Result()
         description = (
@@ -154,20 +162,6 @@ class ChatNode(Node):
             if personality.description is not None
             else "Du bist pib, ein humanoider Roboter."
         )
-
-        # create the user message
-        self.executor.create_task(
-            self.create_chat_message, chat_id, content, True, False, False
-        )
-
-        # get the current image from the camera
-        image_base64 = None
-        if personality.assistant_model.has_image_support:
-            response: GetCameraImage.Response = (
-                await self.get_camera_image_client.call_async(GetCameraImage.Request())
-            )
-            image_base64 = response.image_base64
-
         if generate_code:
             description = CODE_DESCRIPTION_PREFIX + description
 
@@ -221,6 +215,7 @@ class ChatNode(Node):
             curr_text: str = ""
             # previously collected text, that is waiting to be published as feedback
             prev_text: Optional[str] = None
+            bool_update_chat_message: bool = False
 
             for token in tokens:
 
@@ -257,8 +252,9 @@ class ChatNode(Node):
                         # create a chat message from the visual-code, including opening and closing tags
                         chat_message_text = code_visual_match.group(0)
                         self.executor.create_task(
-                            self.create_chat_message, chat_id, chat_message_text, False
+                            self.create_chat_message, chat_id, chat_message_text, False, bool_update_chat_message, True
                         )
+                        bool_update_chat_message = True
                         # strip the current text
                         curr_text = curr_text[code_visual_match.end() :].rstrip()
                         continue
@@ -277,8 +273,9 @@ class ChatNode(Node):
                         # create a chat message from the visual-code, including opening and closing tags
                         chat_message_text = sentence
                         self.executor.create_task(
-                            self.create_chat_message, chat_id, chat_message_text, False
+                            self.create_chat_message, chat_id, chat_message_text, False, bool_update_chat_message, True
                         )
+                        bool_update_chat_message = True
                         # strip the current text
                         curr_text = curr_text[
                             sentence_match.end(
@@ -294,53 +291,7 @@ class ChatNode(Node):
             goal_handle.abort()
             return Chat.Result()
 
-        # for storing and analyzing data from the public-api
-        curr_sentence: str = ""
-        prev_sentence: str | None = None
-        sentence_boundary = re.compile(r"[^\d | ^A-Z][\.|!|\?|:]")
-
-        # process incoming data from public-api
-        bool_update_chat_message: bool = False
-        for token in tokens:
-            # if the goal was cancelled, return immediately
-            if goal_handle.is_cancel_requested:
-                goal_handle.canceled()
-                return Chat.Result(rest=curr_sentence)
-            # if a sentence was already found and another token was received, forward the sentence as feedback
-            if prev_sentence is not None:
-                self.executor.create_task(
-                    self.create_chat_message,
-                    chat_id,
-                    prev_sentence,
-                    False,
-                    bool_update_chat_message,
-                    not bool_update_chat_message,
-                )
-                bool_update_chat_message = True
-                feedback = Chat.Feedback()
-                feedback.sentence = prev_sentence
-                goal_handle.publish_feedback(feedback)
-                prev_sentence = None
-            # check if the current token marks the end of a sentence
-            if sentence_boundary.search(curr_sentence):
-                prev_sentence = curr_sentence.strip()
-                curr_sentence = ""
-            curr_sentence += token
-
-        # create chat-message for remaining input
-        if len(curr_sentence) > 0:
-            self.executor.create_task(
-                self.create_chat_message,
-                chat_id,
-                curr_sentence,
-                False,
-                bool_update_chat_message,
-                bool_update_chat_message,
-            )
-        # return the restult
-        bool_update_chat_message = False
-        result = Chat.Result()
-        result.rest = curr_sentence if prev_sentence is None else prev_sentence
+        # return the rest of the received text, that has not been forwarded as feedback
         goal_handle.succeed()
 
         # return the result

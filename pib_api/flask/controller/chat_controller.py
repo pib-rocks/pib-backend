@@ -71,11 +71,7 @@ def patch_message(chat_id: str, message_id: str):
     chat_message = chat_service.update_chat_message(
         chat_message_dto, chat_id, message_id
     )
-    db.session.commit()
-    try:
-        return chat_message_schema.dump(chat_message), 201
-    except Exception:
-        abort(500)
+    return chat_message_schema.dump(chat_message)
 
 
 @bp.route("/<string:chat_id>/messages/<string:message_id>", methods=["GET"])
