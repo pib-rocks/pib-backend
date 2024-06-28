@@ -61,7 +61,7 @@ def get_messages_by_chat_id(chat_id: str):
 
 @bp.route("/<string:chat_id>/messages/<string:message_id>", methods=["DELETE"])
 def delete_message(chat_id: str, message_id: str):
-    chat_service.delete_message(chat_id, message_id)
+    chat_service.delete_message(message_id)
     return "", 204
 
 
@@ -69,7 +69,7 @@ def delete_message(chat_id: str, message_id: str):
 def patch_message(chat_id: str, message_id: str):
     chat_message_dto = chat_message_post_schema.load(request.json)
     chat_message = chat_service.update_chat_message(
-        chat_message_dto, chat_id, message_id
+        chat_message_dto, message_id
     )
     return chat_message_schema.dump(chat_message)
 

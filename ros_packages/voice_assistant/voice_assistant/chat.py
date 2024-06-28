@@ -32,8 +32,9 @@ class ChatNode(Node):
 
         super().__init__("chat")
         self.token: Optional[str] = None
-        self.last_pib_message_id: str = None
-        self.message_content: str = None
+        self.last_pib_message_id: Optional[str] = None
+        self.message_content: Optional[str] = None
+        self.history_length: number = 20
 
         # server for communicating with an llm via tryb's public-api
         # In the goal, a client specifies some text that will be sent as input to the llm, as well as the
@@ -85,14 +86,10 @@ class ChatNode(Node):
             return
 
         with self.voice_assistant_client_lock:
-            self.get_logger().info(f"5")
             self.get_logger().info(f"{self.last_pib_message_id}")
             if update_message:
-                self.get_logger().info(f"4")
                 if update_database:
-                    self.get_logger().info(f"3")
-                    self.get_logger().info(f"ASDASD: {chat_id, self.message_content, is_user, self.last_pib_message_id}")
-                    self.message_content = self.message_content + " " + text
+                    self.message_content = f"{self.message_content} {text}"
                     successful, chat_message = (
                         voice_assistant_client.update_chat_message(
                             chat_id,
@@ -107,10 +104,8 @@ class ChatNode(Node):
                         )
                         return
                 else:
-                    self.get_logger().info(f"2")
-                    self.message_content = self.message_content + " " + text
+                    self.message_content = f"{self.message_content} {text}"
             else:
-                self.get_logger().info(f"1")
                 successful, chat_message = voice_assistant_client.create_chat_message(
                     chat_id, text, is_user
                 )
@@ -194,7 +189,7 @@ class ChatNode(Node):
                 tokens = public_voice_client.chat_completion(
                     text=content,
                     description=description,
-                    message_history=message_history[-20:],
+                    message_history=message_history[-1 * self.history_length:],
                     image_base64=image_base64,
                     model=personality.assistant_model.api_name,
                     public_api_token=self.token,
@@ -215,6 +210,7 @@ class ChatNode(Node):
             curr_text: str = ""
             # previously collected text, that is waiting to be published as feedback
             prev_text: Optional[str] = None
+            # for tracking if a message is an update or a new message
             bool_update_chat_message: bool = False
 
             for token in tokens:
