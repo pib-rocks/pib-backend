@@ -33,7 +33,7 @@ function print() {
     fi
 
     # Print the text in the specified color
-    echo -e "${!color}[[ ${text} ]]${RESET_TEXT_COLOR}"
+    echo -e "${!color}[$(date -u)][[ ${text} ]]${RESET_TEXT_COLOR}"
 }
 
 function command_exists() {
@@ -259,3 +259,4 @@ else
   source "$SETUP_INSTALLATION_DIR/docker_install.sh" || print ERROR "failed to install Cerebra via Docker"
 fi
 cleanup
+print SUCCESS "Finished installation, for more information on how to use pib and Cerebra, visit https://pib-rocks.atlassian.net/wiki/spaces/kb/overview?homepageId=65077450"
