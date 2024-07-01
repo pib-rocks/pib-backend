@@ -59,6 +59,14 @@ def get_messages_by_chat_id(chat_id: str):
     return chat_messages_only_schema.dump(chat)
 
 
+@bp.route(
+    "/<string:chat_id>/messages/history/<string:message_history>", methods=["GET"]
+)
+def get_limited_amount_of_messages_by_chat(chat_id: str, message_history: int):
+    chat = chat_service.get_message_history(chat_id, message_history)
+    return chat_messages_only_schema.dump(chat)
+
+
 @bp.route("/<string:chat_id>/messages/<string:message_id>", methods=["DELETE"])
 def delete_message(chat_id: str, message_id: str):
     chat_service.delete_message(message_id)
@@ -68,9 +76,7 @@ def delete_message(chat_id: str, message_id: str):
 @bp.route("/<string:chat_id>/messages/<string:message_id>", methods=["PUT"])
 def patch_message(chat_id: str, message_id: str):
     chat_message_dto = chat_message_post_schema.load(request.json)
-    chat_message = chat_service.update_chat_message(
-        chat_message_dto, message_id
-    )
+    chat_message = chat_service.update_chat_message(chat_message_dto, message_id)
     return chat_message_schema.dump(chat_message)
 
 
