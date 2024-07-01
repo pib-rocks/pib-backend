@@ -7,8 +7,6 @@ ASSISTANT_MODEL_URL = URL_PREFIX + "/assistant-model/%s"
 PERSONALITY_URL = URL_PREFIX + "/voice-assistant/personality/%s"
 CHAT_URL = URL_PREFIX + "/voice-assistant/chat/%s"
 CHAT_MESSAGES_URL = URL_PREFIX + "/voice-assistant/chat/%s/messages"
-CHAT_URL_MESSAGE = URL_PREFIX + "/voice-assistant/chat/%s/messages/%s"
-CHAT_MESSAGE_HISTORY_URL = URL_PREFIX + "/voice-assistant/chat/%s/messages/history/%s"
 
 
 class AssistantModel:
@@ -124,7 +122,10 @@ def get_all_chat_messages(chat_id: str) -> List[ChatMessage]:
 
 
 def get_chat_history(chat_id: str, history_length: int) -> List[ChatMessage]:
-    request = Request(CHAT_MESSAGE_HISTORY_URL % chat_id % history_length, method="GET")
+    request = Request(
+        CHAT_MESSAGES_URL % chat_id + "/messages/history/" + f"{history_length}",
+        method="GET",
+    )
     successful, chat_messages_dto = send_request(request)
     if not successful:
         return successful, None

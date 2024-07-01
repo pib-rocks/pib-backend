@@ -18,11 +18,9 @@ def get_message(message_id: str) -> ChatMessage:
     return ChatMessage.query.filter((ChatMessage.message_id == message_id)).one()
 
 
-def get_message_history(message_id: str, length: int) -> ChatMessage:
+def get_message_history(chat_id: str, length: int) -> ChatMessage:
     return (
-        ChatMessage.query.filter((ChatMessage.message_id == message_id))
-        .limit(length)
-        .all()
+        ChatMessage.query.filter((ChatMessage.chat_id == chat_id)).limit(length).all()
     )
 
 
