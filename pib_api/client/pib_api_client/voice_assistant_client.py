@@ -120,3 +120,15 @@ def get_all_chat_messages(chat_id: str) -> List[ChatMessage]:
         ChatMessage(chat_message_dto) for chat_message_dto in chat_message_dtos
     ]
     return successful, chat_messages
+
+
+def get_chat_history(chat_id: str, history_length: int) -> List[ChatMessage]:
+    request = Request(CHAT_MESSAGES_URL % chat_id, method="GET")
+    successful, chat_messages_dto = send_request(request)
+    if not successful:
+        return successful, None
+    chat_message_dtos = chat_messages_dto["messages"]
+    chat_messages = [
+        ChatMessage(chat_message_dto) for chat_message_dto in chat_message_dtos
+    ]
+    return successful, chat_messages[-history_length:]
