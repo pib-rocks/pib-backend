@@ -15,9 +15,15 @@ def get_chat(chat_id: str) -> Chat:
 
 
 def get_message(message_id: str) -> ChatMessage:
-    return ChatMessage.query.filter(
-        (ChatMessage.message_id == message_id)
-    ).one()
+    return ChatMessage.query.filter((ChatMessage.message_id == message_id)).one()
+
+
+def get_message_history(message_id: str, length: int) -> ChatMessage:
+    return (
+        ChatMessage.query.filter((ChatMessage.message_id == message_id))
+        .limit(length)
+        .all()
+    )
 
 
 def create_chat(chat_dto: Any) -> Chat:
