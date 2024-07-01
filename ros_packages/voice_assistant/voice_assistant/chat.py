@@ -34,7 +34,7 @@ class ChatNode(Node):
         self.token: Optional[str] = None
         self.last_pib_message_id: Optional[str] = None
         self.message_content: Optional[str] = None
-        self.history_length: number = 20
+        self.history_length: int = 20
 
         # server for communicating with an llm via tryb's public-api
         # In the goal, a client specifies some text that will be sent as input to the llm, as well as the
@@ -109,7 +109,9 @@ class ChatNode(Node):
                 successful, chat_message = voice_assistant_client.create_chat_message(
                     chat_id, text, is_user
                 )
-                self.get_logger().info(f"unable to create chat message: {(chat_id, text, is_user, update_message, update_database)}")
+                self.get_logger().info(
+                    f"unable to create chat message: {(chat_id, text, is_user, update_message, update_database)}"
+                )
                 self.last_pib_message_id = chat_message.message_id
                 self.message_content = text
             if not successful:
@@ -140,8 +142,9 @@ class ChatNode(Node):
         generate_code: bool = request.generate_code
 
         # create the user message
-        self.executor.create_task(self.create_chat_message, chat_id, content, True, False, True)
-
+        self.executor.create_task(
+            self.create_chat_message, chat_id, content, True, False, True
+        )
 
         # get the personality that is associated with the request chat-id from the pib-api
         with self.voice_assistant_client_lock:
@@ -162,9 +165,10 @@ class ChatNode(Node):
 
         # get the message-history from the pib-api
         with self.voice_assistant_client_lock:
-            successful, chat_messages = voice_assistant_client.get_all_chat_messages(
-                chat_id
+            successful, chat_messages = voice_assistant_client.get_chat_history(
+                chat_id, self.history_length
             )
+        self.get_logger().error(f"HISTORY'{chat_messages}'")
         if not successful:
             self.get_logger().error(f"chat with id'{chat_id}' does not exist...")
             goal_handle.abort()
@@ -184,12 +188,11 @@ class ChatNode(Node):
 
         try:
             # receive assistant-response in form of an iterable of tokens from the public-api
-            # message_history[-20] for limiting the sice of the history
             with self.public_voice_client_lock:
                 tokens = public_voice_client.chat_completion(
                     text=content,
                     description=description,
-                    message_history=message_history[-1 * self.history_length:],
+                    message_history=message_history,
                     image_base64=image_base64,
                     model=personality.assistant_model.api_name,
                     public_api_token=self.token,
@@ -248,7 +251,12 @@ class ChatNode(Node):
                         # create a chat message from the visual-code, including opening and closing tags
                         chat_message_text = code_visual_match.group(0)
                         self.executor.create_task(
-                            self.create_chat_message, chat_id, chat_message_text, False, bool_update_chat_message, True
+                            self.create_chat_message,
+                            chat_id,
+                            chat_message_text,
+                            False,
+                            bool_update_chat_message,
+                            True,
                         )
                         bool_update_chat_message = True
                         # strip the current text
@@ -269,7 +277,12 @@ class ChatNode(Node):
                         # create a chat message from the visual-code, including opening and closing tags
                         chat_message_text = sentence
                         self.executor.create_task(
-                            self.create_chat_message, chat_id, chat_message_text, False, bool_update_chat_message, True
+                            self.create_chat_message,
+                            chat_id,
+                            chat_message_text,
+                            False,
+                            bool_update_chat_message,
+                            True,
                         )
                         bool_update_chat_message = True
                         # strip the current text
