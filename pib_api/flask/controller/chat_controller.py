@@ -2,6 +2,7 @@ from flask import jsonify, request, Blueprint
 from schema.chat_message_schema import (
     chat_message_post_schema,
     chat_message_schema,
+    chat_messages_schema,
 )
 from schema.chat_schema import (
     chat_schema,
@@ -60,11 +61,11 @@ def get_messages_by_chat_id(chat_id: str):
 
 
 @bp.route(
-    "/<string:chat_id>/messages/history/<string:message_history>", methods=["GET"]
+    "/<string:chat_id>/messages/history/<int:message_history>", methods=["GET"]
 )
 def get_limited_amount_of_messages_by_chat(chat_id: str, message_history: int):
-    chat = chat_service.get_message_history(chat_id, message_history)
-    return chat_messages_only_schema.dump(chat)
+    messages = chat_service.get_message_history(chat_id, message_history)
+    return chat_messages_schema.dump(messages)
 
 
 @bp.route("/<string:chat_id>/messages/<string:message_id>", methods=["DELETE"])
@@ -82,7 +83,7 @@ def patch_message(chat_id: str, message_id: str):
 
 @bp.route("/<string:chat_id>/messages/<string:message_id>", methods=["GET"])
 def get_message_by_chat_id_and_message_id(chat_id: str, message_id: str):
-    message = chat_service.get_message(chat_id, message_id)
+    message = chat_service.get_message(message_id)
     try:
         return chat_message_schema.dump(message)
     except Exception:

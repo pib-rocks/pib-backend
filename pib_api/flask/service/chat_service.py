@@ -15,14 +15,11 @@ def get_chat(chat_id: str) -> Chat:
 
 
 def get_message(message_id: str) -> ChatMessage:
-    return ChatMessage.query.filter((ChatMessage.message_id == message_id)).one()
+    return ChatMessage.query.filter(ChatMessage.message_id == message_id).one()
 
 
-def get_message_history(chat_id: str, length: int) -> ChatMessage:
-    return (
-        ChatMessage.query.filter((ChatMessage.chat_id == chat_id)).limit(length).all()
-    )
-
+def get_message_history(chat_id: str, length: str) -> ChatMessage:
+    return ChatMessage.query.filter(ChatMessage.chat_id == chat_id).limit(length).all()
 
 def create_chat(chat_dto: Any) -> Chat:
     personality = personality_service.get_personality(chat_dto["personality_id"])
