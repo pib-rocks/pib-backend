@@ -303,9 +303,6 @@ function install_blocky_node_service() {
 
   # build the pib-blockly-server
   cd "$PIB_BLOCKLY_SERVER_DIR" || { print ERROR "${PIB_BLOCKLY_SERVER_DIR} not found"; return 1; }
-  echo $(ls)
-  echo $(ls pib_blockly_server)
-  echo $(ls src)
   npm install
   npm run build
 

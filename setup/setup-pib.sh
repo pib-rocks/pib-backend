@@ -227,10 +227,10 @@ INSTALL_METHOD="docker"
 # Check if branch was specified
 while [ $# -gt 0 ]; do
   case "$1" in
-    -f=* | --frontendBranch=*)
+    -f=* | --frontend-branch=*)
       BRANCH_FRONTEND="${1#*=}"
       ;;
-    -b=* | --backendBranch=*)
+    -b=* | --backend-branch=*)
       BRANCH_BACKEND="${1#*=}"
       ;;
     -l | --local)
