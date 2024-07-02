@@ -123,7 +123,7 @@ def get_all_chat_messages(chat_id: str) -> List[ChatMessage]:
 
 def get_chat_history(chat_id: str, history_length: int) -> List[ChatMessage]:
     request = Request(
-        CHAT_MESSAGES_URL % chat_id + "/messages/history/" + f"{history_length}",
+        CHAT_MESSAGES_URL % chat_id + "/history/" + f"{history_length}",
         method="GET",
     )
     successful, chat_messages_dto = send_request(request)

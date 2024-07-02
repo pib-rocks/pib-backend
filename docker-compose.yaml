@@ -20,7 +20,7 @@ services:
     environment:
       - SQLALCHEMY_DATABASE_URI=sqlite:////app/pibdata.db
       - PIB_BLOCKLY_SERVER_URL=http://pib-blockly-server:2442
-    command: "bash -c 'flask --app run db upgrade && flask --app run seed_db && flask --app run run --host 0.0.0.0'"
+    command: "bash -c 'flask --app run db upgrade && flask --app run seed_db && flask --app run run --host 0.0.0.0 --debug'"
     depends_on:
       - pib-blockly-server
 
