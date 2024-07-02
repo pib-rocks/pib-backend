@@ -160,8 +160,9 @@ function move_setup_files() {
   cp "$BACKEND_DIR/setup/setup_files/pib-eyes-animated.gif" "$HOME/Desktop/pib-eyes-animated.gif"
   print SUCCESS "Moved animated eyes to Desktop"
 
-  # Add HTML that opens Cerebra to the Desktop
+  # Add HTML that opens Cerebra + Database to the Desktop
   printf '<meta content="0; url=http://localhost" http-equiv=refresh>' > "$HOME/Desktop/Cerebra.html"
+  printf '<meta content="0; url=http://localhost:8000" http-equiv=refresh>' > "$HOME/Desktop/pib_data.html"
 }
 
 
@@ -260,3 +261,4 @@ else
 fi
 cleanup
 print SUCCESS "Finished installation, for more information on how to use pib and Cerebra, visit https://pib-rocks.atlassian.net/wiki/spaces/kb/overview?homepageId=65077450"
+print SUCCESS "Reboot pib to apply all changes"

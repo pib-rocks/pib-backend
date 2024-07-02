@@ -38,6 +38,7 @@ if [ -e "$CONFIG_FILE" ]; then
             echo "${settingsMap[$setting]}" | sudo tee -a "$CONFIG_FILE" > /dev/null
         fi
     done
+    print INFO "Adjusted display resolution and settings"
 else
   print WARN "OS not running on Raspberry Pi; skipping adjusting display resolution"
 fi
