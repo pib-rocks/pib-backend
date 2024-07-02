@@ -205,7 +205,6 @@ function install_ros_packages() {
   sudo cp "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_voice_assistant_boot.service" /etc/systemd/system
 
 
-
   # Boot program node
   sudo chmod 700 "$ROS_PROGRAMS_BOOT_DIR/ros_program_boot.sh"
   sudo chmod 700 "$ROS_PROGRAMS_BOOT_DIR/ros_program_boot.service"
@@ -216,6 +215,7 @@ function install_ros_packages() {
   colcon build || { print ERROR "could not colcon build packages"; return 1; }
   cd "$HOME" || { print ERROR "${HOME} not found"; return 1; }
 
+  cp "$SETUP_FILES/ros_config.sh" "$ROS_ROS_WORKING_DIR" || { print ERROR "could not move ros_config.sh"; return 1; }
   # services enabled at the end of the script
 
   print SUCCESS "Finished installing ros_packages"
