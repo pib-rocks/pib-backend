@@ -36,8 +36,9 @@ ACTION_LOOP_WAITING_PERIOD_SECONDS: float = 0.05
 
 # request to start execution of user-program, sent from ros-process to main-process
 class StartRequest:
-    def __init__(self, goal_id: bytes, code_python_file_path: str) -> None:
+    def __init__(self, goal_id: bytes, mpid: int, code_python_file_path: str) -> None:
         self.goal_id = goal_id
+        self.mpid = mpid
         self.code_python_file_path = code_python_file_path
 
 
@@ -102,6 +103,11 @@ class ProgramNode(Node):
             feedback_pub_qos_profile=feedback_profile,
         )
 
+        # the mpid is used to identify a running instance of a program
+        self.next_mpid = 0
+        self.next_mpid_lock = Lock()
+
+
         self.get_logger().info("Now Running PROGRAM")
 
     def run_program_callback(self, goal_handle: ServerGoalHandle) -> RunProgram.Result:
@@ -139,10 +145,19 @@ class ProgramNode(Node):
             goal_handle.abort()
             return RunProgram.Result(exit_code=2)
 
+        with self.next_mpid_lock:
+            mpid = self.next_mpid
+            self.next_mpid += 1
+
+        # publish only the mpid as initial feedback
+        init_feedback = RunProgram.Feedback()
+        init_feedback.mpid = mpid
+        goal_handle.publish_feedback(init_feedback)
+
         try:
             self.get_logger().info("starting execution of program...")
             # send request to main-process to start the program
-            start_request = StartRequest(goal_id, code_python_file_path)
+            start_request = StartRequest(goal_id, mpid, code_python_file_path)
             with self.request_sender_lock:
                 self.request_sender.send(start_request)
                 response: StartResponse = self.request_sender.recv()
@@ -184,9 +199,10 @@ class ProgramNode(Node):
 
                 # if at least one line of stdout/stderr output was collected, send it as feedback
                 if len(output_lines) > 0:
-                    goal_handle.publish_feedback(
-                        RunProgram.Feedback(output_lines=output_lines)
-                    )
+                    feedback = RunProgram.Feedback()
+                    feedback.output_lines = output_lines
+                    feedback.mpid = mpid
+                    goal_handle.publish_feedback(feedback)
 
                 # if an exit-code was collected, return it as the result of the goal
                 if exit_code is not None:
@@ -216,7 +232,7 @@ def main_loop(request_receiver: Connection) -> None:
                 request_receiver.send(StartResponse(True, output_receiver))
                 host_process = Process(
                     target=run_program,
-                    args=(request.code_python_file_path, output_sender),
+                    args=(request.code_python_file_path, output_sender, request.mpid),
                 )
                 goal_id_to_host[request.goal_id] = host_process
                 host_process.start()
@@ -252,9 +268,9 @@ def ros_target(request_sender: Connection) -> None:
     rclpy.shutdown()
 
 
-def run_program(code_python_file_path: str, output_sender: Connection) -> None:
+def run_program(code_python_file_path: str, output_sender: Connection, mpid: int) -> None:
 
-    run_python_program = [PYTHON_BINARY, UNBUFFERED_OUTPUT_FLAG, code_python_file_path]
+    run_python_program = [PYTHON_BINARY, UNBUFFERED_OUTPUT_FLAG, code_python_file_path, mpid]
     with Popen(
         run_python_program, stdout=PIPE, stderr=PIPE, universal_newlines=True, bufsize=1
     ) as popen:
