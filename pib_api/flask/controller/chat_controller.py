@@ -60,9 +60,7 @@ def get_messages_by_chat_id(chat_id: str):
     return chat_messages_only_schema.dump(chat)
 
 
-@bp.route(
-    "/<string:chat_id>/messages/history/<int:message_history>", methods=["GET"]
-)
+@bp.route("/<string:chat_id>/messages/history/<int:message_history>", methods=["GET"])
 def get_limited_amount_of_messages_by_chat(chat_id: str, message_history: int):
     messages = chat_service.get_message_history(chat_id, message_history)
     return chat_messages_schema.dump(messages)
