@@ -1,10 +1,10 @@
-#VRML_SIM R2023b utf8
+#VRML_SIM R2022b utf8
 # license: Apache License 2.0
 # license url: http://www.apache.org/licenses/LICENSE-2.0
-# This is a proto file for Webots for the Pib
-# Extracted from: /home/pib/ros_working_dir/src/pibsim_webots/protos/resources/robot.urdf
+# This is a proto file for Webots for the pib
+# Extracted from: /app/onshape-to-robot_config_files/robot.urdf
 
-PROTO Pib [
+PROTO pib [
   field  SFVec3f     translation     0 0 0
   field  SFRotation  rotation        0 0 1 0
   field  SFString    name            "pib"  # Is `Robot.name`.
@@ -28,7 +28,7 @@ PROTO Pib [
     children [
       Solid {
         children [
-          Pose {
+          Transform {
             translation -0.013133 0.012566 0.891187
             children [
               Shape {
@@ -64,7 +64,7 @@ PROTO Pib [
               translation -0.013134 0.012566 0.987187
               rotation 0.999999 -0.001451 -0.000000 3.141593
               children [
-                Pose {
+                Transform {
                   translation 0.000000 0.000000 0.096600
                   rotation 1.000000 -0.000000 -0.000000 3.141593
                   children [
@@ -101,7 +101,7 @@ PROTO Pib [
                     translation -0.041250 0.048000 -0.012900
                     rotation 0.577350 -0.577350 -0.577350 2.094395
                     children [
-                      Pose {
+                      Transform {
                         translation 0.048000 0.109500 -0.041750
                         rotation 0.577350 0.577350 -0.577350 2.094395
                         children [
@@ -121,7 +121,7 @@ PROTO Pib [
                         translation -0.047400 0.001268 -0.042000
                         rotation 0.000000 1.000000 -0.000000 1.570796
                         children [
-                          Pose {
+                          Transform {
                             translation -0.000250 0.108232 0.095400
                             rotation 1.000000 0.000000 -0.000000 1.570796
                             children [
@@ -139,7 +139,7 @@ PROTO Pib [
                           }
                         ]
                         name "urdf_camera_link"
-                        boundingObject Pose {
+                        boundingObject Transform {
                           translation -0.000250 0.108232 0.095400
                           rotation 1.000000 0.000000 -0.000000 1.570796
                           children [
@@ -158,7 +158,7 @@ PROTO Pib [
                       }
                     ]
                     name "urdf_head"
-                    boundingObject Pose {
+                    boundingObject Transform {
                       translation 0.048000 0.109500 -0.041750
                       rotation 0.577350 0.577350 -0.577350 2.094395
                       children [
@@ -178,7 +178,7 @@ PROTO Pib [
                 }
               ]
               name "urdf_head_base"
-              boundingObject Pose {
+              boundingObject Transform {
                 translation 0.000000 0.000000 0.096600
                 rotation 1.000000 -0.000000 -0.000000 3.141593
                 children [
@@ -217,7 +217,7 @@ PROTO Pib [
               translation 0.146867 0.012566 0.835688
               rotation -0.577350 0.577350 -0.577350 2.094395
               children [
-                Pose {
+                Transform {
                   translation -0.000000 0.000000 -0.006000
                   rotation 0.707107 -0.000000 0.707107 3.141593
                   children [
@@ -254,7 +254,7 @@ PROTO Pib [
                     translation -0.000000 -0.037495 0.059000
                     rotation 0.577350 -0.577350 0.577350 2.094395
                     children [
-                      Pose {
+                      Transform {
                         translation 0.000000 -0.065000 -0.037200
                         rotation -0.577350 -0.577350 0.577350 2.094395
                         children [
@@ -291,7 +291,7 @@ PROTO Pib [
                           translation 0.140000 -0.000000 -0.037200
                           rotation -0.577350 -0.577350 0.577350 2.094395
                           children [
-                            Pose {
+                            Transform {
                               translation -0.065000 0.000001 0.140000
                               children [
                                 Shape {
@@ -327,7 +327,7 @@ PROTO Pib [
                                 translation -0.037900 -0.021000 -0.076338
                                 rotation 0.707107 0.000000 -0.707107 3.141593
                                 children [
-                                  Pose {
+                                  Transform {
                                     translation -0.138124 -0.167824 0.027200
                                     rotation 0.678598 0.281085 -0.678598 2.593564
                                     children [
@@ -364,7 +364,7 @@ PROTO Pib [
                                       translation 0.076438 0.046740 -0.037800
                                       rotation 0.678598 0.281085 -0.678598 2.593564
                                       children [
-                                        Pose {
+                                        Transform {
                                           translation -0.064742 -0.000469 0.303438
                                           children [
                                             Shape {
@@ -400,7 +400,7 @@ PROTO Pib [
                                             translation 0.015000 0.026000 -0.154400
                                             rotation 0.000000 -0.707107 -0.707107 3.141593
                                             children [
-                                              Pose {
+                                              Transform {
                                                 translation 0.003000 -0.100000 -0.182700
                                                 rotation 0.577350 0.577350 -0.577350 2.094395
                                                 children [
@@ -436,7 +436,7 @@ PROTO Pib [
                                                   translation 0.009841 -0.037731 -0.049771
                                                   rotation -0.613630 0.613630 -0.496908 4.063934
                                                   children [
-                                                    Pose {
+                                                    Transform {
                                                       translation 0.088236 -0.078349 -0.488027
                                                       rotation -0.000000 0.994522 -0.104528 3.141593
                                                       children [
@@ -472,7 +472,7 @@ PROTO Pib [
                                                         translation -0.020000 0.001320 -0.010565
                                                         rotation -0.447214 0.447214 0.774597 1.823477
                                                         children [
-                                                          Pose {
+                                                          Transform {
                                                             translation -0.081396 -0.542444 -0.061495
                                                             rotation 1.000000 -0.000000 0.000000 1.745329
                                                             children [
@@ -507,7 +507,7 @@ PROTO Pib [
                                                             endPoint Solid {
                                                               translation -0.000000 0.048000 0.000000
                                                               children [
-                                                                Pose {
+                                                                Transform {
                                                                   translation -0.081282 -0.590565 -0.061495
                                                                   rotation 1.000000 -0.000000 0.000000 1.745329
                                                                   children [
@@ -525,7 +525,7 @@ PROTO Pib [
                                                                 }
                                                               ]
                                                               name "urdf_finger_distal"
-                                                              boundingObject Pose {
+                                                              boundingObject Transform {
                                                                 translation -0.081282 -0.590565 -0.061495
                                                                 rotation 1.000000 -0.000000 0.000000 1.745329
                                                                 children [
@@ -545,7 +545,7 @@ PROTO Pib [
                                                           }
                                                         ]
                                                         name "urdf_finger_proximal"
-                                                        boundingObject Pose {
+                                                        boundingObject Transform {
                                                           translation -0.081396 -0.542444 -0.061495
                                                           rotation 1.000000 -0.000000 0.000000 1.745329
                                                           children [
@@ -565,7 +565,7 @@ PROTO Pib [
                                                     }
                                                   ]
                                                   name "urdf_thumb_rotator_left"
-                                                  boundingObject Pose {
+                                                  boundingObject Transform {
                                                     translation 0.088236 -0.078349 -0.488027
                                                     rotation -0.000000 0.994522 -0.104528 3.141593
                                                     children [
@@ -603,7 +603,7 @@ PROTO Pib [
                                                   translation 0.003000 -0.088618 -0.058502
                                                   rotation -0.000000 -0.087156 0.996195 3.141593
                                                   children [
-                                                    Pose {
+                                                    Transform {
                                                       translation -0.081396 -0.542444 -0.061495
                                                       rotation 1.000000 -0.000000 0.000000 1.745329
                                                       children [
@@ -632,7 +632,7 @@ PROTO Pib [
                                                       endPoint Solid {
                                                         translation -0.000000 0.048000 -0.000000
                                                         children [
-                                                          Pose {
+                                                          Transform {
                                                             translation -0.081282 -0.590565 -0.061495
                                                             rotation 1.000000 -0.000000 0.000000 1.745329
                                                             children [
@@ -644,7 +644,7 @@ PROTO Pib [
                                                           }
                                                         ]
                                                         name "urdf_finger_distal_2"
-                                                        boundingObject Pose {
+                                                        boundingObject Transform {
                                                           translation -0.081282 -0.590565 -0.061495
                                                           rotation 1.000000 -0.000000 0.000000 1.745329
                                                           children [
@@ -664,7 +664,7 @@ PROTO Pib [
                                                     }
                                                   ]
                                                   name "urdf_finger_proximal_2"
-                                                  boundingObject Pose {
+                                                  boundingObject Transform {
                                                     translation -0.081396 -0.542444 -0.061495
                                                     rotation 1.000000 -0.000000 0.000000 1.745329
                                                     children [
@@ -702,7 +702,7 @@ PROTO Pib [
                                                   translation 0.003000 -0.100000 -0.032700
                                                   rotation 0.000000 -0.000000 -1.000000 3.141593
                                                   children [
-                                                    Pose {
+                                                    Transform {
                                                       translation -0.081396 -0.542444 -0.061495
                                                       rotation 1.000000 -0.000000 0.000000 1.745329
                                                       children [
@@ -731,7 +731,7 @@ PROTO Pib [
                                                       endPoint Solid {
                                                         translation -0.000000 0.048000 0.000000
                                                         children [
-                                                          Pose {
+                                                          Transform {
                                                             translation -0.081282 -0.590565 -0.061495
                                                             rotation 1.000000 -0.000000 0.000000 1.745329
                                                             children [
@@ -743,7 +743,7 @@ PROTO Pib [
                                                           }
                                                         ]
                                                         name "urdf_finger_distal_3"
-                                                        boundingObject Pose {
+                                                        boundingObject Transform {
                                                           translation -0.081282 -0.590565 -0.061495
                                                           rotation 1.000000 -0.000000 0.000000 1.745329
                                                           children [
@@ -763,7 +763,7 @@ PROTO Pib [
                                                     }
                                                   ]
                                                   name "urdf_finger_proximal_3"
-                                                  boundingObject Pose {
+                                                  boundingObject Transform {
                                                     translation -0.081396 -0.542444 -0.061495
                                                     rotation 1.000000 -0.000000 0.000000 1.745329
                                                     children [
@@ -801,7 +801,7 @@ PROTO Pib [
                                                   translation 0.003000 -0.088618 -0.006898
                                                   rotation 0.000000 0.087156 0.996195 3.141593
                                                   children [
-                                                    Pose {
+                                                    Transform {
                                                       translation -0.081396 -0.542444 -0.061495
                                                       rotation 1.000000 -0.000000 0.000000 1.745329
                                                       children [
@@ -830,7 +830,7 @@ PROTO Pib [
                                                       endPoint Solid {
                                                         translation -0.000000 0.048000 -0.000000
                                                         children [
-                                                          Pose {
+                                                          Transform {
                                                             translation -0.081282 -0.590565 -0.061495
                                                             rotation 1.000000 -0.000000 0.000000 1.745329
                                                             children [
@@ -842,7 +842,7 @@ PROTO Pib [
                                                           }
                                                         ]
                                                         name "urdf_finger_distal_4"
-                                                        boundingObject Pose {
+                                                        boundingObject Transform {
                                                           translation -0.081282 -0.590565 -0.061495
                                                           rotation 1.000000 -0.000000 0.000000 1.745329
                                                           children [
@@ -862,7 +862,7 @@ PROTO Pib [
                                                     }
                                                   ]
                                                   name "urdf_finger_proximal_4"
-                                                  boundingObject Pose {
+                                                  boundingObject Transform {
                                                     translation -0.081396 -0.542444 -0.061495
                                                     rotation 1.000000 -0.000000 0.000000 1.745329
                                                     children [
@@ -900,7 +900,7 @@ PROTO Pib [
                                                   translation 0.003000 -0.075546 0.015421
                                                   rotation 0.000000 -0.156434 -0.987688 3.141593
                                                   children [
-                                                    Pose {
+                                                    Transform {
                                                       translation -0.081396 -0.542444 -0.061495
                                                       rotation 1.000000 -0.000000 0.000000 1.745329
                                                       children [
@@ -929,7 +929,7 @@ PROTO Pib [
                                                       endPoint Solid {
                                                         translation 0.000000 0.048000 0.000000
                                                         children [
-                                                          Pose {
+                                                          Transform {
                                                             translation -0.081282 -0.590565 -0.061495
                                                             rotation 1.000000 -0.000000 0.000000 1.745329
                                                             children [
@@ -941,7 +941,7 @@ PROTO Pib [
                                                           }
                                                         ]
                                                         name "urdf_finger_distal_5"
-                                                        boundingObject Pose {
+                                                        boundingObject Transform {
                                                           translation -0.081282 -0.590565 -0.061495
                                                           rotation 1.000000 -0.000000 0.000000 1.745329
                                                           children [
@@ -961,7 +961,7 @@ PROTO Pib [
                                                     }
                                                   ]
                                                   name "urdf_finger_proximal_5"
-                                                  boundingObject Pose {
+                                                  boundingObject Transform {
                                                     translation -0.081396 -0.542444 -0.061495
                                                     rotation 1.000000 -0.000000 0.000000 1.745329
                                                     children [
@@ -981,7 +981,7 @@ PROTO Pib [
                                               }
                                             ]
                                             name "urdf_palm_left"
-                                            boundingObject Pose {
+                                            boundingObject Transform {
                                               translation 0.003000 -0.100000 -0.182700
                                               rotation 0.577350 0.577350 -0.577350 2.094395
                                               children [
@@ -1001,7 +1001,7 @@ PROTO Pib [
                                         }
                                       ]
                                       name "urdf_forearm"
-                                      boundingObject Pose {
+                                      boundingObject Transform {
                                         translation -0.064742 -0.000469 0.303438
                                         children [
                                           USE urdf_forearm
@@ -1020,7 +1020,7 @@ PROTO Pib [
                                   }
                                 ]
                                 name "urdf_elbow-lower"
-                                boundingObject Pose {
+                                boundingObject Transform {
                                   translation -0.138124 -0.167824 0.027200
                                   rotation 0.678598 0.281085 -0.678598 2.593564
                                   children [
@@ -1040,7 +1040,7 @@ PROTO Pib [
                             }
                           ]
                           name "urdf_elbow-upper"
-                          boundingObject Pose {
+                          boundingObject Transform {
                             translation -0.065000 0.000001 0.140000
                             children [
                               USE urdf_elbow-upper
@@ -1059,7 +1059,7 @@ PROTO Pib [
                       }
                     ]
                     name "urdf_shoulder_horizontal"
-                    boundingObject Pose {
+                    boundingObject Transform {
                       translation 0.000000 -0.065000 -0.037200
                       rotation -0.577350 -0.577350 0.577350 2.094395
                       children [
@@ -1079,7 +1079,7 @@ PROTO Pib [
                 }
               ]
               name "urdf_shoulder_vertical"
-              boundingObject Pose {
+              boundingObject Transform {
                 translation -0.000000 0.000000 -0.006000
                 rotation 0.707107 -0.000000 0.707107 3.141593
                 children [
@@ -1118,7 +1118,7 @@ PROTO Pib [
               translation -0.173133 0.012566 0.835688
               rotation -0.577350 -0.577350 0.577350 2.094395
               children [
-                Pose {
+                Transform {
                   translation -0.000000 0.000000 -0.006000
                   rotation 0.707107 -0.000000 0.707107 3.141593
                   children [
@@ -1149,7 +1149,7 @@ PROTO Pib [
                     translation -0.000000 -0.037495 0.059000
                     rotation 0.577350 -0.577350 0.577350 2.094395
                     children [
-                      Pose {
+                      Transform {
                         translation 0.000000 0.065000 -0.037200
                         rotation 0.577350 -0.577350 -0.577350 2.094395
                         children [
@@ -1180,7 +1180,7 @@ PROTO Pib [
                           translation 0.140000 0.000000 -0.037200
                           rotation -0.577350 -0.577350 0.577350 2.094395
                           children [
-                            Pose {
+                            Transform {
                               translation -0.065000 0.000001 0.140000
                               children [
                                 Shape {
@@ -1210,7 +1210,7 @@ PROTO Pib [
                                 translation -0.037900 -0.021000 -0.076338
                                 rotation -0.707107 0.000000 0.707107 3.141593
                                 children [
-                                  Pose {
+                                  Transform {
                                     translation -0.138124 -0.167824 0.027200
                                     rotation 0.678598 0.281085 -0.678598 2.593564
                                     children [
@@ -1241,7 +1241,7 @@ PROTO Pib [
                                       translation 0.076438 0.046740 -0.037800
                                       rotation 0.357407 -0.862856 0.357407 1.717772
                                       children [
-                                        Pose {
+                                        Transform {
                                           translation -0.064742 -0.000469 0.303438
                                           children [
                                             Shape {
@@ -1271,7 +1271,7 @@ PROTO Pib [
                                             translation 0.015000 0.025000 -0.154400
                                             rotation -0.000000 -0.707107 -0.707107 3.141593
                                             children [
-                                              Pose {
+                                              Transform {
                                                 translation -0.078396 0.456264 -0.025531
                                                 rotation -1.000000 -0.000000 -0.000000 1.570796
                                                 children [
@@ -1289,7 +1289,7 @@ PROTO Pib [
                                               }
                                               HingeJoint {
                                                 jointParameters HingeJointParameters {
-                                                  axis 0.000000 0.978148 -0.207912
+                                                  axis -0.000000 -0.978148 0.207912
                                                   anchor 0.009841 -0.037731 -0.000629
                                                 }
                                                 device [
@@ -1307,7 +1307,7 @@ PROTO Pib [
                                                   translation 0.009841 -0.037731 -0.000629
                                                   rotation 0.532626 -0.532626 0.657738 1.978001
                                                   children [
-                                                    Pose {
+                                                    Transform {
                                                       translation 0.201764 -0.015767 -0.193605
                                                       rotation 1.000000 -0.000000 0.000000 2.932153
                                                       children [
@@ -1343,7 +1343,7 @@ PROTO Pib [
                                                         translation 0.020000 0.001320 -0.010565
                                                         rotation -0.654654 -0.654654 0.377964 3.864327
                                                         children [
-                                                          Pose {
+                                                          Transform {
                                                             translation -0.081396 -0.542444 -0.061495
                                                             rotation 1.000000 -0.000000 0.000000 1.745329
                                                             children [
@@ -1372,7 +1372,7 @@ PROTO Pib [
                                                             endPoint Solid {
                                                               translation -0.000000 0.048000 -0.000000
                                                               children [
-                                                                Pose {
+                                                                Transform {
                                                                   translation -0.081282 -0.590565 -0.061495
                                                                   rotation 1.000000 -0.000000 0.000000 1.745329
                                                                   children [
@@ -1384,7 +1384,7 @@ PROTO Pib [
                                                                 }
                                                               ]
                                                               name "urdf_finger_distal_6"
-                                                              boundingObject Pose {
+                                                              boundingObject Transform {
                                                                 translation -0.081282 -0.590565 -0.061495
                                                                 rotation 1.000000 -0.000000 0.000000 1.745329
                                                                 children [
@@ -1404,7 +1404,7 @@ PROTO Pib [
                                                           }
                                                         ]
                                                         name "urdf_finger_proximal_6"
-                                                        boundingObject Pose {
+                                                        boundingObject Transform {
                                                           translation -0.081396 -0.542444 -0.061495
                                                           rotation 1.000000 -0.000000 0.000000 1.745329
                                                           children [
@@ -1424,7 +1424,7 @@ PROTO Pib [
                                                     }
                                                   ]
                                                   name "urdf_thumb_rotator_right"
-                                                  boundingObject Pose {
+                                                  boundingObject Transform {
                                                     translation 0.201764 -0.015767 -0.193605
                                                     rotation 1.000000 -0.000000 0.000000 2.932153
                                                     children [
@@ -1462,7 +1462,7 @@ PROTO Pib [
                                                   translation 0.003000 -0.088618 0.008102
                                                   rotation 0.000000 0.087156 0.996195 3.141593
                                                   children [
-                                                    Pose {
+                                                    Transform {
                                                       translation -0.081396 -0.542444 -0.061495
                                                       rotation 1.000000 -0.000000 0.000000 1.745329
                                                       children [
@@ -1491,7 +1491,7 @@ PROTO Pib [
                                                       endPoint Solid {
                                                         translation -0.000000 0.048000 0.000000
                                                         children [
-                                                          Pose {
+                                                          Transform {
                                                             translation -0.081282 -0.590565 -0.061495
                                                             rotation 1.000000 -0.000000 0.000000 1.745329
                                                             children [
@@ -1503,7 +1503,7 @@ PROTO Pib [
                                                           }
                                                         ]
                                                         name "urdf_finger_distal_7"
-                                                        boundingObject Pose {
+                                                        boundingObject Transform {
                                                           translation -0.081282 -0.590565 -0.061495
                                                           rotation 1.000000 -0.000000 0.000000 1.745329
                                                           children [
@@ -1523,7 +1523,7 @@ PROTO Pib [
                                                     }
                                                   ]
                                                   name "urdf_finger_proximal_7"
-                                                  boundingObject Pose {
+                                                  boundingObject Transform {
                                                     translation -0.081396 -0.542444 -0.061495
                                                     rotation 1.000000 -0.000000 0.000000 1.745329
                                                     children [
@@ -1561,7 +1561,7 @@ PROTO Pib [
                                                   translation 0.003000 -0.100000 -0.017700
                                                   rotation -0.000000 -0.000000 1.000000 3.141593
                                                   children [
-                                                    Pose {
+                                                    Transform {
                                                       translation -0.081396 -0.542444 -0.061495
                                                       rotation 1.000000 -0.000000 0.000000 1.745329
                                                       children [
@@ -1590,7 +1590,7 @@ PROTO Pib [
                                                       endPoint Solid {
                                                         translation -0.000000 0.048000 0.000000
                                                         children [
-                                                          Pose {
+                                                          Transform {
                                                             translation -0.081282 -0.590565 -0.061495
                                                             rotation 1.000000 -0.000000 0.000000 1.745329
                                                             children [
@@ -1602,7 +1602,7 @@ PROTO Pib [
                                                           }
                                                         ]
                                                         name "urdf_finger_distal_8"
-                                                        boundingObject Pose {
+                                                        boundingObject Transform {
                                                           translation -0.081282 -0.590565 -0.061495
                                                           rotation 1.000000 -0.000000 0.000000 1.745329
                                                           children [
@@ -1622,7 +1622,7 @@ PROTO Pib [
                                                     }
                                                   ]
                                                   name "urdf_finger_proximal_8"
-                                                  boundingObject Pose {
+                                                  boundingObject Transform {
                                                     translation -0.081396 -0.542444 -0.061495
                                                     rotation 1.000000 -0.000000 0.000000 1.745329
                                                     children [
@@ -1660,7 +1660,7 @@ PROTO Pib [
                                                   translation 0.003000 -0.088618 -0.043502
                                                   rotation -0.000000 -0.087156 0.996195 3.141593
                                                   children [
-                                                    Pose {
+                                                    Transform {
                                                       translation -0.081396 -0.542444 -0.061495
                                                       rotation 1.000000 -0.000000 0.000000 1.745329
                                                       children [
@@ -1689,7 +1689,7 @@ PROTO Pib [
                                                       endPoint Solid {
                                                         translation -0.000000 0.048000 0.000000
                                                         children [
-                                                          Pose {
+                                                          Transform {
                                                             translation -0.081282 -0.590565 -0.061495
                                                             rotation 1.000000 -0.000000 0.000000 1.745329
                                                             children [
@@ -1701,7 +1701,7 @@ PROTO Pib [
                                                           }
                                                         ]
                                                         name "urdf_finger_distal_9"
-                                                        boundingObject Pose {
+                                                        boundingObject Transform {
                                                           translation -0.081282 -0.590565 -0.061495
                                                           rotation 1.000000 -0.000000 0.000000 1.745329
                                                           children [
@@ -1721,7 +1721,7 @@ PROTO Pib [
                                                     }
                                                   ]
                                                   name "urdf_finger_proximal_9"
-                                                  boundingObject Pose {
+                                                  boundingObject Transform {
                                                     translation -0.081396 -0.542444 -0.061495
                                                     rotation 1.000000 -0.000000 0.000000 1.745329
                                                     children [
@@ -1759,7 +1759,7 @@ PROTO Pib [
                                                   translation 0.003000 -0.075546 -0.065821
                                                   rotation 0.000000 -0.156434 0.987688 3.141593
                                                   children [
-                                                    Pose {
+                                                    Transform {
                                                       translation -0.081396 -0.542444 -0.061495
                                                       rotation 1.000000 -0.000000 0.000000 1.745329
                                                       children [
@@ -1789,7 +1789,7 @@ PROTO Pib [
                                                         translation 0.000000 0.048000 0.000000
                                                         rotation 0.000000 -0.000000 1.000000 0.087929
                                                         children [
-                                                          Pose {
+                                                          Transform {
                                                             translation -0.081282 -0.590565 -0.061495
                                                             rotation 1.000000 -0.000000 0.000000 1.745329
                                                             children [
@@ -1801,7 +1801,7 @@ PROTO Pib [
                                                           }
                                                         ]
                                                         name "urdf_finger_distal_10"
-                                                        boundingObject Pose {
+                                                        boundingObject Transform {
                                                           translation -0.081282 -0.590565 -0.061495
                                                           rotation 1.000000 -0.000000 0.000000 1.745329
                                                           children [
@@ -1821,7 +1821,7 @@ PROTO Pib [
                                                     }
                                                   ]
                                                   name "urdf_finger_proximal_10"
-                                                  boundingObject Pose {
+                                                  boundingObject Transform {
                                                     translation -0.081396 -0.542444 -0.061495
                                                     rotation 1.000000 -0.000000 0.000000 1.745329
                                                     children [
@@ -1841,7 +1841,7 @@ PROTO Pib [
                                               }
                                             ]
                                             name "urdf_palm_right"
-                                            boundingObject Pose {
+                                            boundingObject Transform {
                                               translation -0.078396 0.456264 -0.025531
                                               rotation -1.000000 -0.000000 -0.000000 1.570796
                                               children [
@@ -1861,7 +1861,7 @@ PROTO Pib [
                                         }
                                       ]
                                       name "urdf_forearm_2"
-                                      boundingObject Pose {
+                                      boundingObject Transform {
                                         translation -0.064742 -0.000469 0.303438
                                         children [
                                           USE urdf_forearm
@@ -1880,7 +1880,7 @@ PROTO Pib [
                                   }
                                 ]
                                 name "urdf_elbow-lower_2"
-                                boundingObject Pose {
+                                boundingObject Transform {
                                   translation -0.138124 -0.167824 0.027200
                                   rotation 0.678598 0.281085 -0.678598 2.593564
                                   children [
@@ -1900,7 +1900,7 @@ PROTO Pib [
                             }
                           ]
                           name "urdf_elbow-upper_2"
-                          boundingObject Pose {
+                          boundingObject Transform {
                             translation -0.065000 0.000001 0.140000
                             children [
                               USE urdf_elbow-upper
@@ -1919,7 +1919,7 @@ PROTO Pib [
                       }
                     ]
                     name "urdf_shoulder_horizontal_2"
-                    boundingObject Pose {
+                    boundingObject Transform {
                       translation 0.000000 0.065000 -0.037200
                       rotation 0.577350 -0.577350 -0.577350 2.094395
                       children [
@@ -1939,7 +1939,7 @@ PROTO Pib [
                 }
               ]
               name "urdf_shoulder_vertical_2"
-              boundingObject Pose {
+              boundingObject Transform {
                 translation -0.000000 0.000000 -0.006000
                 rotation 0.707107 -0.000000 0.707107 3.141593
                 children [
@@ -1959,7 +1959,7 @@ PROTO Pib [
           }
         ]
         name "urdf_body"
-        boundingObject Pose {
+        boundingObject Transform {
           translation -0.013133 0.012566 0.891187
           children [
             USE urdf_body
