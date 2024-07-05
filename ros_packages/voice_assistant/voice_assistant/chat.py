@@ -86,7 +86,6 @@ class ChatNode(Node):
             return
 
         with self.voice_assistant_client_lock:
-            self.get_logger().info(f"{self.last_pib_message_id}")
             if update_message:
                 if update_database:
                     self.message_content = f"{self.message_content} {text}"
@@ -168,7 +167,6 @@ class ChatNode(Node):
             successful, chat_messages = voice_assistant_client.get_chat_history(
                 chat_id, self.history_length
             )
-        self.get_logger().error(f"HISTORY'{chat_messages}'")
         if not successful:
             self.get_logger().error(f"chat with id'{chat_id}' does not exist...")
             goal_handle.abort()
