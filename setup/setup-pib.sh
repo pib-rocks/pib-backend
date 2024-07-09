@@ -217,5 +217,7 @@ cp "$SETUP_FILES/pib-eyes-animated.gif" "$USER_HOME/Desktop/pib-eyes-animated.gi
 # Move log file to temporary setup folder
 mv "$LOG_FILE" "$TEMPORARY_SETUP_DIR"
 
+apt-get autoremove
+
 echo -e "$NEW_LINE""Congratulations! The setup completed succesfully!"
 echo -e "$NEW_LINE""Please restart the system to apply changes..."
