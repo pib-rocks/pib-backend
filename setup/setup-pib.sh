@@ -26,11 +26,10 @@ show_help()
 	echo -e "You can either use the short or verbose command versions:"
 	echo -e "-f=YourBranchName or --frontend-branch=YourBranchName"
 	echo -e "-b=YourBranchName or --backend-branch=YourBranchName"
-	echo -e "-p=YourBranchName or --pib-blockly-branch=YourBranchName"
 
 	echo -e "$NEW_LINE""Examples:"
 	echo -e "    ./setup-pib -b=main -f=PR-566"
-    echo -e "    ./setup-pib --backend-branch=main --frontend-branch=PR-566 --pib-blockly-branch=PR-develop"
+    echo -e "    ./setup-pib --backend-branch=main --frontend-branch=PR-566"
 	
 	exit
 }
