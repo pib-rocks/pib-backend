@@ -3,6 +3,7 @@ from threading import Lock
 from typing import Optional
 
 import rclpy
+import datetime
 from datatypes.action import Chat
 from datatypes.msg import ChatMessage
 from datatypes.srv import GetCameraImage
@@ -31,6 +32,9 @@ class ChatNode(Node):
 
         super().__init__("chat")
         self.token: Optional[str] = None
+        self.last_pib_message_id: Optional[str] = None
+        self.message_content: Optional[str] = None
+        self.history_length: int = 20
 
         # server for communicating with an llm via tryb's public-api
         # In the goal, a client specifies some text that will be sent as input to the llm, as well as the
@@ -68,28 +72,60 @@ class ChatNode(Node):
         token = msg.data
         self.token = token
 
-    def create_chat_message(self, chat_id: str, text: str, is_user: bool) -> None:
+    def create_chat_message(
+        self,
+        chat_id: str,
+        text: str,
+        is_user: bool,
+        update_message: bool,
+        update_database: bool,
+    ) -> None:
         """writes a new chat-message to the db, and publishes it to the 'chat_messages'-topic"""
 
         if text == "":
             return
 
         with self.voice_assistant_client_lock:
-            successful, chat_message = voice_assistant_client.create_chat_message(
-                chat_id, text, is_user
-            )
-        if not successful:
-            self.get_logger().error(
-                f"unable to create chat message: {(chat_id, text, is_user)}"
-            )
-            return
-
+            if update_message:
+                if update_database:
+                    self.message_content = f"{self.message_content} {text}"
+                    successful, chat_message = (
+                        voice_assistant_client.update_chat_message(
+                            chat_id,
+                            self.message_content,
+                            is_user,
+                            self.last_pib_message_id,
+                        )
+                    )
+                    if not successful:
+                        self.get_logger().error(
+                            f"unable to create chat message: {(chat_id, text, is_user, update_message, update_database)}"
+                        )
+                        return
+                else:
+                    self.message_content = f"{self.message_content} {text}"
+            else:
+                successful, chat_message = voice_assistant_client.create_chat_message(
+                    chat_id, text, is_user
+                )
+                self.get_logger().info(
+                    f"unable to create chat message: {(chat_id, text, is_user, update_message, update_database)}"
+                )
+                self.last_pib_message_id = chat_message.message_id
+                self.message_content = text
+            if not successful:
+                self.get_logger().error(
+                    f"unable to create chat message: {(chat_id, text, is_user, update_message, update_database)}"
+                )
+                return
         chat_message_ros = ChatMessage()
         chat_message_ros.chat_id = chat_id
-        chat_message_ros.content = chat_message.content
-        chat_message_ros.is_user = chat_message.is_user
-        chat_message_ros.message_id = chat_message.message_id
-        chat_message_ros.timestamp = chat_message.timestamp
+        chat_message_ros.content = self.message_content
+        chat_message_ros.is_user = is_user
+        chat_message_ros.message_id = self.last_pib_message_id
+        chat_message_ros.timestamp = datetime.datetime.now().strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
 
         self.chat_message_publisher.publish(chat_message_ros)
 
@@ -105,7 +141,9 @@ class ChatNode(Node):
         generate_code: bool = request.generate_code
 
         # create the user message
-        self.executor.create_task(self.create_chat_message, chat_id, content, True)
+        self.executor.create_task(
+            self.create_chat_message, chat_id, content, True, False, True
+        )
 
         # get the personality that is associated with the request chat-id from the pib-api
         with self.voice_assistant_client_lock:
@@ -126,8 +164,8 @@ class ChatNode(Node):
 
         # get the message-history from the pib-api
         with self.voice_assistant_client_lock:
-            successful, chat_messages = voice_assistant_client.get_all_chat_messages(
-                chat_id
+            successful, chat_messages = voice_assistant_client.get_chat_history(
+                chat_id, self.history_length
             )
         if not successful:
             self.get_logger().error(f"chat with id'{chat_id}' does not exist...")
@@ -173,6 +211,8 @@ class ChatNode(Node):
             curr_text: str = ""
             # previously collected text, that is waiting to be published as feedback
             prev_text: Optional[str] = None
+            # for tracking if a message is an update or a new message
+            bool_update_chat_message: bool = False
 
             for token in tokens:
 
@@ -209,8 +249,14 @@ class ChatNode(Node):
                         # create a chat message from the visual-code, including opening and closing tags
                         chat_message_text = code_visual_match.group(0)
                         self.executor.create_task(
-                            self.create_chat_message, chat_id, chat_message_text, False
+                            self.create_chat_message,
+                            chat_id,
+                            chat_message_text,
+                            False,
+                            bool_update_chat_message,
+                            True,
                         )
+                        bool_update_chat_message = True
                         # strip the current text
                         curr_text = curr_text[code_visual_match.end() :].rstrip()
                         continue
@@ -229,8 +275,14 @@ class ChatNode(Node):
                         # create a chat message from the visual-code, including opening and closing tags
                         chat_message_text = sentence
                         self.executor.create_task(
-                            self.create_chat_message, chat_id, chat_message_text, False
+                            self.create_chat_message,
+                            chat_id,
+                            chat_message_text,
+                            False,
+                            bool_update_chat_message,
+                            True,
                         )
+                        bool_update_chat_message = True
                         # strip the current text
                         curr_text = curr_text[
                             sentence_match.end(
@@ -245,12 +297,6 @@ class ChatNode(Node):
             self.get_logger().error(f"failed to send request to public-api: {e}")
             goal_handle.abort()
             return Chat.Result()
-
-        # create chat-message for remaining input
-        if len(curr_text) > 0:
-            self.executor.create_task(
-                self.create_chat_message, chat_id, curr_text, False
-            )
 
         # return the rest of the received text, that has not been forwarded as feedback
         goal_handle.succeed()
