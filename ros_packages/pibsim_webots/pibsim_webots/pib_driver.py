@@ -12,15 +12,15 @@ class PibDriver:
 
     def init(self, webots_node, properties):
         """The init method is the Webot/ ROS node counterpart to the python __init__ constructor"""
-        self.__robot = webots_node.robot
-        self.__devices = self.__initialize_devices()
+        self._robot = webots_node.robot
+        self._devices = self._initialize_devices()
 
         rclpy.init(args=None)
-        self.__node = rclpy.create_node("pib_driver")
-        self.__node.create_subscription(
-            JointTrajectory, "/joint_trajectory", self.__trajectory_callback, 10
+        self._node = rclpy.create_node("pib_driver")
+        self._node.create_subscription(
+            JointTrajectory, "/joint_trajectory", self._trajectory_callback, 10
         )
-        self.__node.get_logger().info("PibDriver ready")
+        self._node.get_logger().info("PibDriver ready")
 
     MOTOR_TO_DEVICES_MAP = {
         "turn_head_motor": ["head_horizontal"],
@@ -51,7 +51,7 @@ class PibDriver:
         "wrist_right": ["wrist_right"],
     }
 
-    def __initialize_devices(self) -> dict:
+    def _initialize_devices(self) -> dict:
         """Initialize all webot robot devices associated with the pib robot names"""
         devices = {}
 
@@ -59,7 +59,7 @@ class PibDriver:
             devices[pib_motor_name] = self.find_devices_in_robot(proto_device_names)
         return devices
 
-    def __trajectory_callback(self, joint_trajectory: JointTrajectory):
+    def _trajectory_callback(self, joint_trajectory: JointTrajectory):
         """Sets the positions of all devices in a received joint trajectory message."""
         motor_name_position_pairs = self.extract_motor_name_position_pairs(
             joint_trajectory
@@ -78,11 +78,11 @@ class PibDriver:
         device_list = []
 
         for device_name in device_names:
-            device = self.__robot.getDevice(device_name)
+            device = self._robot.getDevice(device_name)
             if device is not None:
                 device_list.append(device)
             else:
-                self.__node.get_logger().error(
+                self._node.get_logger().error(
                     f"Failed to retrieve device: {device_name}"
                 )
         return device_list
@@ -100,7 +100,7 @@ class PibDriver:
         positions = (point.positions[0] for point in points)
 
         if len(motor_names) != len(points):
-            self.__node.get_logger().error(
+            self._node.get_logger().error(
                 f"Syntax error within JointTrajectory message: The number of motor names ({len(motor_names)}) doesn't match the number of jointTrajectoryPoints ({len(points)})."
             )
             return []
@@ -112,16 +112,16 @@ class PibDriver:
     def set_device_positions(self, motor_name: str, device_target_position: float):
         """Sets the position of a device."""
         try:
-            for device in self.__devices[motor_name]:
+            for device in self._devices[motor_name]:
                 device.setPosition(device_target_position)
-            self.__node.get_logger().info(
+            self._node.get_logger().info(
                 f"Device '{motor_name}' moved to position {device_target_position}"
             )
         except KeyError:
-            self.__node.get_logger().error(
+            self._node.get_logger().error(
                 f"Motor name '{motor_name}' not found in devices."
             )
 
     def step(self):
         """Spins the ROS node once to handle any pending messages or callbacks."""
-        rclpy.spin_once(self.__node, timeout_sec=0)
+        rclpy.spin_once(self._node, timeout_sec=0)
