@@ -99,6 +99,12 @@ class PibDriver:
         points: list[JointTrajectoryPoint] = jt.points
         positions = (point.positions[0] for point in points)
 
+        if len(motor_names) != len(points):
+            self.__node.get_logger().error(
+                f"Syntax error within JointTrajectory message: The number of motor names ({len(motor_names)}) doesn't match the number of jointTrajectoryPoints ({len(points)})."
+            )
+            return []
+
         motor_name_position_pairs = zip(motor_names, positions)
 
         return motor_name_position_pairs
