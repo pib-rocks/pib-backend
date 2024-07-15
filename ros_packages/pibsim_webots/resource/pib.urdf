@@ -1,7 +1,7 @@
 <?xml version="1.0" ?>
 <robot name="pibSimple">
     <webots>
-        <device reference="camera_link" type="Camera">
+        <device reference="urdf_camera_link" type="Camera">
             <ros>
                 <topicName>/camera</topicName>
             </ros>
