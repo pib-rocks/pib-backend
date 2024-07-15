@@ -113,6 +113,9 @@ def _create_program_data() -> None:
 
 
 def _create_chat_data_and_assistant() -> None:
+    bravo = AssistantModel(
+        visual_name="Bravo [RAG]", api_name="bravo", has_image_support=False
+    )
     gpt4o1 = AssistantModel(
         visual_name="GPT-4o [Vision]", api_name="gpt-4o", has_image_support=True
     )
@@ -127,15 +130,15 @@ def _create_chat_data_and_assistant() -> None:
         api_name="anthropic.claude-3-sonnet-20240229-v1:0",
         has_image_support=True,
     )
-    db.session.add_all([gpt3, gpt4o1, gpt4o2, claude])
+    db.session.add_all([bravo, gpt3, gpt4o1, gpt4o2, claude])
     db.session.flush()
 
     p_eva = Personality(
-        name="Eva",
+        name="Berater",
         personality_id="8f73b580-927e-41c2-98ac-e5df070e7288",
         gender="Female",
         pause_threshold=0.8,
-        assistant_model_id=claude.id,
+        assistant_model_id=bravo.id,
     )
     p_thomas = Personality(
         name="Thomas",

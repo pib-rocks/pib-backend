@@ -8,6 +8,7 @@ try:
     tryb_url_prefix = _config["trybUrlPrefix"]
 except FileNotFoundError:
     tryb_url_prefix = os.getenv("TRYB_URL_PREFIX")
+    bravo_url_prefix = os.getenv("BRAVO_URL_PREFIX")
 
 if not tryb_url_prefix:
     raise RuntimeError(f"no tryb configuration found")
@@ -15,3 +16,4 @@ if not tryb_url_prefix:
 SPEECH_TO_TEXT_URL = f"{tryb_url_prefix}/public-api/conversions/speech-to-text"
 TEXT_TO_SPEECH_URL = f"{tryb_url_prefix}/public-api/conversions/text-to-speech"
 VOICE_ASSISTANT_TEXT_URL = f"{tryb_url_prefix}/public-api/voice-assistant/text"
+BRAVO_VA_TEXT_URL = f"{bravo_url_prefix}/api/rag/collection/query"

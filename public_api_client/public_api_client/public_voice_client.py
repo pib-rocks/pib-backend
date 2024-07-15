@@ -11,6 +11,7 @@ from public_api_client import (
     SPEECH_TO_TEXT_URL,
     TEXT_TO_SPEECH_URL,
     VOICE_ASSISTANT_TEXT_URL,
+    BRAVO_VA_TEXT_URL,
 )
 
 logging.basicConfig(
@@ -36,7 +37,12 @@ def _send_request(
     try:
         headers["Authorization"] = "Bearer " + public_api_token
         response = requests.request(
-            method=method, url=url, stream=stream, headers=headers, json=body
+            method=method,
+            url=url,
+            stream=stream,
+            headers=headers,
+            json=body,
+            timeout=200,
         )
         response.raise_for_status()
         return response
@@ -109,25 +115,45 @@ def chat_completion(
     if (text is None) or (text == ""):
         text = "echo 'I could not hear you, please repeat your message.'"
 
-    body = {
-        "data": text,
-        "messageHistory": [
-            {"content": message.content, "isUser": message.is_user}
-            for message in message_history
-        ],
-        "personality": {"description": description, "model": model},
-    }
+    if model == "bravo":
+        body = {
+            "collection_name": "string",
+            "query": text,
+            "history": [message.content for message in message_history],
+        }
 
-    if image_base64 is not None:
-        body["imageBase64"] = image_base64
+        response = _send_request(
+            "POST", BRAVO_VA_TEXT_URL, headers, body, True, public_api_token
+        )
 
-    response = _send_request(
-        "POST", VOICE_ASSISTANT_TEXT_URL, headers, body, True, public_api_token
-    )
+        line_bin: bytes
+        for line_bin in response.iter_lines():
+            line_str = line_bin.decode("utf-8")
+            try:
+                yield json.loads(line_str[6:])["delta"]
+            except Exception as e:
+                print(e)
 
-    line_bin: bytes
-    for line_bin in response.iter_lines():
-        line_str = line_bin.decode("utf-8")
-        if not line_str.startswith("data:"):
-            continue
-        yield json.loads(line_str[21:-1])
+    else:
+        body = {
+            "data": text,
+            "messageHistory": [
+                {"content": message.content, "isUser": message.is_user}
+                for message in message_history
+            ],
+            "personality": {"description": description, "model": model},
+        }
+
+        if image_base64 is not None:
+            body["imageBase64"] = image_base64
+
+        response = _send_request(
+            "POST", VOICE_ASSISTANT_TEXT_URL, headers, body, True, public_api_token
+        )
+
+        line_bin: bytes
+        for line_bin in response.iter_lines():
+            line_str = line_bin.decode("utf-8")
+            if not line_str.startswith("data:"):
+                continue
+            yield json.loads(line_str[21:-1])
