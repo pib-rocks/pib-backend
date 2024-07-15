@@ -186,7 +186,7 @@ function install_ros_packages() {
   sudo chmod -R 700 "$ROS_WORKING_DIR"
 
 
-  print INFO "Setting up bootservices"
+  print INFO "Setting up boot-services"
   # Boot camera
   sudo chmod 700 "$ROS_CAMERA_BOOT_DIR/ros_camera_boot.sh"
   sudo chmod 700 "$ROS_CAMERA_BOOT_DIR/ros_camera_boot.service"
@@ -308,7 +308,6 @@ function install_blocky_node_service() {
 
   # build the pib-blockly-server
   cd "$PIB_BLOCKLY_SERVER_DIR" || { print ERROR "${PIB_BLOCKLY_SERVER_DIR} not found"; return 1; }
-  echo $(ls)
   npm install || { print ERROR "error using npm"; return 1; }
   npm run build || { print ERROR "error using npm"; return 1; }
 
