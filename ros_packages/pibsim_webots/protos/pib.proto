@@ -1,0 +1,1981 @@
+#VRML_SIM R2022b utf8
+# license: Apache License 2.0
+# license url: http://www.apache.org/licenses/LICENSE-2.0
+# This is a proto file for Webots for the pib
+# Extracted from: /app/onshape-to-robot_config_files/robot.urdf
+
+PROTO pib [
+  field  SFVec3f     translation     0 0 0
+  field  SFRotation  rotation        0 0 1 0
+  field  SFString    name            "pib"  # Is `Robot.name`.
+  field  SFString    controller      "void" # Is `Robot.controller`.
+  field  MFString    controllerArgs  []     # Is `Robot.controllerArgs`.
+  field  SFString    customData      ""     # Is `Robot.customData`.
+  field  SFBool      supervisor      FALSE  # Is `Robot.supervisor`.
+  field  SFBool      synchronization TRUE   # Is `Robot.synchronization`.
+  field  SFBool      selfCollision   FALSE  # Is `Robot.selfCollision`.
+]
+{
+  Robot {
+    translation IS translation
+    rotation IS rotation
+    controller IS controller
+    controllerArgs IS controllerArgs
+    customData IS customData
+    supervisor IS supervisor
+    synchronization IS synchronization
+    selfCollision IS selfCollision
+    children [
+      Solid {
+        children [
+          Transform {
+            translation -0.013133 0.012566 0.891187
+            children [
+              Shape {
+                appearance DEF urdf_body_material PBRAppearance {
+                  baseColor 0.901961 0.901961 0.901961
+                  roughness 1.000000
+                  metalness 0
+                }
+                geometry DEF urdf_body Mesh {
+                  url "/home/pib/ros_working_dir/src/pibsim_webots/protos/resources/urdf_body.stl"
+                }
+              }
+            ]
+          }
+          HingeJoint {
+            jointParameters HingeJointParameters {
+              axis -0.000000 -0.000000 -1.000000
+              anchor -0.013134 0.012566 0.987187
+            }
+            device [
+              RotationalMotor {
+                name "head_horizontal"
+                maxVelocity 20.0
+                minPosition -1.5707963267948966
+                maxPosition 1.5707963267948966
+                maxTorque 10.0
+              }
+              PositionSensor {
+                name "head_horizontal_sensor"
+              }
+            ]
+            endPoint Solid {
+              translation -0.013134 0.012566 0.987187
+              rotation 0.999999 -0.001451 -0.000000 3.141593
+              children [
+                Transform {
+                  translation 0.000000 0.000000 0.096600
+                  rotation 1.000000 -0.000000 -0.000000 3.141593
+                  children [
+                    Shape {
+                      appearance DEF urdf_head_base_material PBRAppearance {
+                        baseColor 0.901961 0.901961 0.901961
+                        roughness 1.000000
+                        metalness 0
+                      }
+                      geometry DEF urdf_head_base Mesh {
+                        url "/home/pib/ros_working_dir/src/pibsim_webots/protos/resources/urdf_head_base.stl"
+                      }
+                    }
+                  ]
+                }
+                HingeJoint {
+                  jointParameters HingeJointParameters {
+                    axis -1.000000 0.000000 0.000000
+                    anchor -0.041250 0.048000 -0.012900
+                  }
+                  device [
+                    RotationalMotor {
+                      name "head_vertical"
+                      maxVelocity 20.0
+                      minPosition -0.7853981633974483
+                      maxPosition 1.2217304763960306
+                      maxTorque 10.0
+                    }
+                    PositionSensor {
+                      name "head_vertical_sensor"
+                    }
+                  ]
+                  endPoint Solid {
+                    translation -0.041250 0.048000 -0.012900
+                    rotation 0.577350 -0.577350 -0.577350 2.094395
+                    children [
+                      Transform {
+                        translation 0.048000 0.109500 -0.041750
+                        rotation 0.577350 0.577350 -0.577350 2.094395
+                        children [
+                          Shape {
+                            appearance DEF urdf_head_material PBRAppearance {
+                              baseColor 0.901961 0.901961 0.901961
+                              roughness 1.000000
+                              metalness 0
+                            }
+                            geometry DEF urdf_head Mesh {
+                              url "/home/pib/ros_working_dir/src/pibsim_webots/protos/resources/urdf_head.stl"
+                            }
+                          }
+                        ]
+                      }
+                      Solid {
+                        translation -0.047400 0.001268 -0.042000
+                        rotation 0.000000 1.000000 -0.000000 1.570796
+                        children [
+                          Transform {
+                            translation -0.000250 0.108232 0.095400
+                            rotation 1.000000 0.000000 -0.000000 1.570796
+                            children [
+                              Shape {
+                                appearance DEF urdf_camera_link_material PBRAppearance {
+                                  baseColor 0.000000 0.000000 0.000000
+                                  roughness 1.000000
+                                  metalness 0
+                                }
+                                geometry DEF urdf_camera_link Mesh {
+                                  url "/home/pib/ros_working_dir/src/pibsim_webots/protos/resources/urdf_camera_link.stl"
+                                }
+                              }
+                            ]
+                          }
+                        ]
+                        name "urdf_camera_link"
+                        boundingObject Transform {
+                          translation -0.000250 0.108232 0.095400
+                          rotation 1.000000 0.000000 -0.000000 1.570796
+                          children [
+                            USE urdf_camera_link
+                          ]
+                        }
+                        physics Physics {
+                          density -1
+                          mass 0.011584
+                          centerOfMass [ 0.000000 0.000000 -0.001500 ]
+                          inertiaMatrix [
+                            3.233129e-07 6.403968e-06 6.709904e-06
+                            0.000000e+00 -3.100992e-24 0.000000e+00
+                          ]
+                        }
+                      }
+                    ]
+                    name "urdf_head"
+                    boundingObject Transform {
+                      translation 0.048000 0.109500 -0.041750
+                      rotation 0.577350 0.577350 -0.577350 2.094395
+                      children [
+                        USE urdf_head
+                      ]
+                    }
+                    physics Physics {
+                      density -1
+                      mass 0.512494
+                      centerOfMass [ -0.010759 -0.069460 -0.041777 ]
+                      inertiaMatrix [
+                        4.588409e-03 3.547551e-03 2.775521e-03
+                        4.119973e-04 1.956937e-06 3.571491e-06
+                      ]
+                    }
+                  }
+                }
+              ]
+              name "urdf_head_base"
+              boundingObject Transform {
+                translation 0.000000 0.000000 0.096600
+                rotation 1.000000 -0.000000 -0.000000 3.141593
+                children [
+                  USE urdf_head_base
+                ]
+              }
+              physics Physics {
+                density -1
+                mass 0.275218
+                centerOfMass [ -0.000035 0.017378 -0.012899 ]
+                inertiaMatrix [
+                  2.690431e-04 1.613479e-04 3.992076e-04
+                  4.926601e-07 -1.917504e-09 -1.203986e-08
+                ]
+              }
+            }
+          }
+          HingeJoint {
+            jointParameters HingeJointParameters {
+              axis 1.000000 0.000000 0.000000
+              anchor 0.146867 0.012566 0.835688
+            }
+            device [
+              RotationalMotor {
+                name "shoulder_vertical_left"
+                maxVelocity 20.0
+                minPosition -1.5707963267948966
+                maxPosition 1.5707963267948966
+                maxTorque 10.0
+              }
+              PositionSensor {
+                name "shoulder_vertical_left_sensor"
+              }
+            ]
+            endPoint Solid {
+              translation 0.146867 0.012566 0.835688
+              rotation -0.577350 0.577350 -0.577350 2.094395
+              children [
+                Transform {
+                  translation -0.000000 0.000000 -0.006000
+                  rotation 0.707107 -0.000000 0.707107 3.141593
+                  children [
+                    Shape {
+                      appearance DEF urdf_shoulder_vertical_material PBRAppearance {
+                        baseColor 0.901961 0.901961 0.901961
+                        roughness 1.000000
+                        metalness 0
+                      }
+                      geometry DEF urdf_shoulder_vertical Mesh {
+                        url "/home/pib/ros_working_dir/src/pibsim_webots/protos/resources/urdf_shoulder_vertical.stl"
+                      }
+                    }
+                  ]
+                }
+                HingeJoint {
+                  jointParameters HingeJointParameters {
+                    axis 0.000000 -1.000000 0.000000
+                    anchor -0.000000 -0.037495 0.059000
+                  }
+                  device [
+                    RotationalMotor {
+                      name "shoulder_horizontal_left"
+                      maxVelocity 20.0
+                      minPosition -1.5707963267948966
+                      maxPosition 1.5707963267948966
+                      maxTorque 10.0
+                    }
+                    PositionSensor {
+                      name "shoulder_horizontal_left_sensor"
+                    }
+                  ]
+                  endPoint Solid {
+                    translation -0.000000 -0.037495 0.059000
+                    rotation 0.577350 -0.577350 0.577350 2.094395
+                    children [
+                      Transform {
+                        translation 0.000000 -0.065000 -0.037200
+                        rotation -0.577350 -0.577350 0.577350 2.094395
+                        children [
+                          Shape {
+                            appearance DEF urdf_shoulder_horizontal_material PBRAppearance {
+                              baseColor 0.901961 0.901961 0.901961
+                              roughness 1.000000
+                              metalness 0
+                            }
+                            geometry DEF urdf_shoulder_horizontal Mesh {
+                              url "/home/pib/ros_working_dir/src/pibsim_webots/protos/resources/urdf_shoulder_horizontal.stl"
+                            }
+                          }
+                        ]
+                      }
+                      HingeJoint {
+                        jointParameters HingeJointParameters {
+                          axis -1.000000 0.000000 0.000000
+                          anchor 0.140000 -0.000000 -0.037200
+                        }
+                        device [
+                          RotationalMotor {
+                            name "upper_arm_left"
+                            maxVelocity 20.0
+                            minPosition -1.5707963267948966
+                            maxPosition 1.5707963267948966
+                            maxTorque 10.0
+                          }
+                          PositionSensor {
+                            name "upper_arm_left_sensor"
+                          }
+                        ]
+                        endPoint Solid {
+                          translation 0.140000 -0.000000 -0.037200
+                          rotation -0.577350 -0.577350 0.577350 2.094395
+                          children [
+                            Transform {
+                              translation -0.065000 0.000001 0.140000
+                              children [
+                                Shape {
+                                  appearance DEF urdf_elbow-upper_material PBRAppearance {
+                                    baseColor 0.901961 0.901961 0.901961
+                                    roughness 1.000000
+                                    metalness 0
+                                  }
+                                  geometry DEF urdf_elbow-upper Mesh {
+                                    url "/home/pib/ros_working_dir/src/pibsim_webots/protos/resources/urdf_elbow-upper.stl"
+                                  }
+                                }
+                              ]
+                            }
+                            HingeJoint {
+                              jointParameters HingeJointParameters {
+                                axis -1.000000 -0.000000 -0.000000
+                                anchor -0.037900 -0.021000 -0.076338
+                              }
+                              device [
+                                RotationalMotor {
+                                  name "elbow_left"
+                                  maxVelocity 20.0
+                                  minPosition -0.7853981633974483
+                                  maxPosition 1.5707963267948966
+                                  maxTorque 10.0
+                                }
+                                PositionSensor {
+                                  name "elbow_left_sensor"
+                                }
+                              ]
+                              endPoint Solid {
+                                translation -0.037900 -0.021000 -0.076338
+                                rotation 0.707107 0.000000 -0.707107 3.141593
+                                children [
+                                  Transform {
+                                    translation -0.138124 -0.167824 0.027200
+                                    rotation 0.678598 0.281085 -0.678598 2.593564
+                                    children [
+                                      Shape {
+                                        appearance DEF urdf_elbow-lower_material PBRAppearance {
+                                          baseColor 0.901961 0.901961 0.901961
+                                          roughness 1.000000
+                                          metalness 0
+                                        }
+                                        geometry DEF urdf_elbow-lower Mesh {
+                                          url "/home/pib/ros_working_dir/src/pibsim_webots/protos/resources/urdf_elbow-lower.stl"
+                                        }
+                                      }
+                                    ]
+                                  }
+                                  HingeJoint {
+                                    jointParameters HingeJointParameters {
+                                      axis -0.707107 -0.707107 -0.000000
+                                      anchor 0.076438 0.046740 -0.037800
+                                    }
+                                    device [
+                                      RotationalMotor {
+                                        name "forearm_left"
+                                        maxVelocity 20.0
+                                        minPosition -1.5707963267948966
+                                        maxPosition 1.5707963267948966
+                                        maxTorque 10.0
+                                      }
+                                      PositionSensor {
+                                        name "forearm_left_sensor"
+                                      }
+                                    ]
+                                    endPoint Solid {
+                                      translation 0.076438 0.046740 -0.037800
+                                      rotation 0.678598 0.281085 -0.678598 2.593564
+                                      children [
+                                        Transform {
+                                          translation -0.064742 -0.000469 0.303438
+                                          children [
+                                            Shape {
+                                              appearance DEF urdf_forearm_material PBRAppearance {
+                                                baseColor 0.901961 0.901961 0.901961
+                                                roughness 1.000000
+                                                metalness 0
+                                              }
+                                              geometry DEF urdf_forearm Mesh {
+                                                url "/home/pib/ros_working_dir/src/pibsim_webots/protos/resources/urdf_forearm.stl"
+                                              }
+                                            }
+                                          ]
+                                        }
+                                        HingeJoint {
+                                          jointParameters HingeJointParameters {
+                                            axis -0.000000 1.000000 -0.000000
+                                            anchor 0.015000 0.026000 -0.154400
+                                          }
+                                          device [
+                                            RotationalMotor {
+                                              name "wrist_left"
+                                              maxVelocity 20.0
+                                              minPosition -0.5235987755982988
+                                              maxPosition 0.5235987755982988
+                                              maxTorque 10.0
+                                            }
+                                            PositionSensor {
+                                              name "wrist_left_sensor"
+                                            }
+                                          ]
+                                          endPoint Solid {
+                                            translation 0.015000 0.026000 -0.154400
+                                            rotation 0.000000 -0.707107 -0.707107 3.141593
+                                            children [
+                                              Transform {
+                                                translation 0.003000 -0.100000 -0.182700
+                                                rotation 0.577350 0.577350 -0.577350 2.094395
+                                                children [
+                                                  Shape {
+                                                    appearance DEF urdf_palm_left_material PBRAppearance {
+                                                      baseColor 0.901961 0.901961 0.901961
+                                                      roughness 1.000000
+                                                      metalness 0
+                                                    }
+                                                    geometry DEF urdf_palm_left Mesh {
+                                                      url "/home/pib/ros_working_dir/src/pibsim_webots/protos/resources/urdf_palm_left.stl"
+                                                    }
+                                                  }
+                                                ]
+                                              }
+                                              HingeJoint {
+                                                jointParameters HingeJointParameters {
+                                                  axis 0.000000 -0.978148 -0.207912
+                                                  anchor 0.009841 -0.037731 -0.049771
+                                                }
+                                                device [
+                                                  RotationalMotor {
+                                                    name "thumb_left_opposition"
+                                                    maxVelocity 20.0
+                                                    maxPosition 1.5707963267948966
+                                                    maxTorque 10.0
+                                                  }
+                                                  PositionSensor {
+                                                    name "thumb_left_opposition_sensor"
+                                                  }
+                                                ]
+                                                endPoint Solid {
+                                                  translation 0.009841 -0.037731 -0.049771
+                                                  rotation -0.613630 0.613630 -0.496908 4.063934
+                                                  children [
+                                                    Transform {
+                                                      translation 0.088236 -0.078349 -0.488027
+                                                      rotation -0.000000 0.994522 -0.104528 3.141593
+                                                      children [
+                                                        Shape {
+                                                          appearance DEF urdf_thumb_rotator_left_material PBRAppearance {
+                                                            baseColor 0.901961 0.901961 0.901961
+                                                            roughness 1.000000
+                                                            metalness 0
+                                                          }
+                                                          geometry DEF urdf_thumb_rotator_left Mesh {
+                                                            url "/home/pib/ros_working_dir/src/pibsim_webots/protos/resources/urdf_thumb_rotator_left.stl"
+                                                          }
+                                                        }
+                                                      ]
+                                                    }
+                                                    HingeJoint {
+                                                      jointParameters HingeJointParameters {
+                                                        axis -0.000000 0.866025 0.500000
+                                                        anchor -0.020000 0.001320 -0.010565
+                                                      }
+                                                      device [
+                                                        RotationalMotor {
+                                                          name "thumb_left_proximal"
+                                                          maxVelocity 20.0
+                                                          maxPosition 1.5707963267948966
+                                                          maxTorque 10.0
+                                                        }
+                                                        PositionSensor {
+                                                          name "thumb_left_proximal_sensor"
+                                                        }
+                                                      ]
+                                                      endPoint Solid {
+                                                        translation -0.020000 0.001320 -0.010565
+                                                        rotation -0.447214 0.447214 0.774597 1.823477
+                                                        children [
+                                                          Transform {
+                                                            translation -0.081396 -0.542444 -0.061495
+                                                            rotation 1.000000 -0.000000 0.000000 1.745329
+                                                            children [
+                                                              Shape {
+                                                                appearance DEF urdf_finger_proximal_material PBRAppearance {
+                                                                  baseColor 0.901961 0.901961 0.901961
+                                                                  roughness 1.000000
+                                                                  metalness 0
+                                                                }
+                                                                geometry DEF urdf_finger_proximal Mesh {
+                                                                  url "/home/pib/ros_working_dir/src/pibsim_webots/protos/resources/urdf_finger_proximal.stl"
+                                                                }
+                                                              }
+                                                            ]
+                                                          }
+                                                          HingeJoint {
+                                                            jointParameters HingeJointParameters {
+                                                              axis 0.000000 0.000000 1.000000
+                                                              anchor -0.000000 0.048000 0.000000
+                                                            }
+                                                            device [
+                                                              RotationalMotor {
+                                                                name "thumb_left_distal"
+                                                                maxVelocity 20.0
+                                                                maxPosition 1.5707963267948966
+                                                                maxTorque 10.0
+                                                              }
+                                                              PositionSensor {
+                                                                name "thumb_left_distal_sensor"
+                                                              }
+                                                            ]
+                                                            endPoint Solid {
+                                                              translation -0.000000 0.048000 0.000000
+                                                              children [
+                                                                Transform {
+                                                                  translation -0.081282 -0.590565 -0.061495
+                                                                  rotation 1.000000 -0.000000 0.000000 1.745329
+                                                                  children [
+                                                                    Shape {
+                                                                      appearance DEF urdf_finger_distal_material PBRAppearance {
+                                                                        baseColor 0.901961 0.901961 0.901961
+                                                                        roughness 1.000000
+                                                                        metalness 0
+                                                                      }
+                                                                      geometry DEF urdf_finger_distal Mesh {
+                                                                        url "/home/pib/ros_working_dir/src/pibsim_webots/protos/resources/urdf_finger_distal.stl"
+                                                                      }
+                                                                    }
+                                                                  ]
+                                                                }
+                                                              ]
+                                                              name "urdf_finger_distal"
+                                                              boundingObject Transform {
+                                                                translation -0.081282 -0.590565 -0.061495
+                                                                rotation 1.000000 -0.000000 0.000000 1.745329
+                                                                children [
+                                                                  USE urdf_finger_distal
+                                                                ]
+                                                              }
+                                                              physics Physics {
+                                                                density -1
+                                                                mass 0.017728
+                                                                centerOfMass [ -0.004057 0.024626 -0.000000 ]
+                                                                inertiaMatrix [
+                                                                  3.210356e-06 9.953923e-07 3.190242e-06
+                                                                  4.352333e-07 2.281216e-12 -6.040708e-12
+                                                                ]
+                                                              }
+                                                            }
+                                                          }
+                                                        ]
+                                                        name "urdf_finger_proximal"
+                                                        boundingObject Transform {
+                                                          translation -0.081396 -0.542444 -0.061495
+                                                          rotation 1.000000 -0.000000 0.000000 1.745329
+                                                          children [
+                                                            USE urdf_finger_proximal
+                                                          ]
+                                                        }
+                                                        physics Physics {
+                                                          density -1
+                                                          mass 0.017237
+                                                          centerOfMass [ -0.002338 0.024000 -0.000000 ]
+                                                          inertiaMatrix [
+                                                            3.279610e-06 8.309189e-07 3.241537e-06
+                                                            -2.478788e-13 4.367699e-13 -6.083883e-14
+                                                          ]
+                                                        }
+                                                      }
+                                                    }
+                                                  ]
+                                                  name "urdf_thumb_rotator_left"
+                                                  boundingObject Transform {
+                                                    translation 0.088236 -0.078349 -0.488027
+                                                    rotation -0.000000 0.994522 -0.104528 3.141593
+                                                    children [
+                                                      USE urdf_thumb_rotator_left
+                                                    ]
+                                                  }
+                                                  physics Physics {
+                                                    density -1
+                                                    mass 0.019599
+                                                    centerOfMass [ -0.002542 0.000636 -0.005731 ]
+                                                    inertiaMatrix [
+                                                      2.351580e-06 2.906817e-06 1.952187e-06
+                                                      1.563495e-07 -3.874771e-07 6.356559e-08
+                                                    ]
+                                                  }
+                                                }
+                                              }
+                                              HingeJoint {
+                                                jointParameters HingeJointParameters {
+                                                  axis -0.000000 -0.173648 0.984808
+                                                  anchor 0.003000 -0.088618 -0.058502
+                                                }
+                                                device [
+                                                  RotationalMotor {
+                                                    name "index_left_proximal"
+                                                    maxVelocity 20.0
+                                                    maxPosition 1.5707963267948966
+                                                    maxTorque 10.0
+                                                  }
+                                                  PositionSensor {
+                                                    name "index_left_proximal_sensor"
+                                                  }
+                                                ]
+                                                endPoint Solid {
+                                                  translation 0.003000 -0.088618 -0.058502
+                                                  rotation -0.000000 -0.087156 0.996195 3.141593
+                                                  children [
+                                                    Transform {
+                                                      translation -0.081396 -0.542444 -0.061495
+                                                      rotation 1.000000 -0.000000 0.000000 1.745329
+                                                      children [
+                                                        Shape {
+                                                          appearance USE urdf_finger_proximal_material
+                                                          geometry USE urdf_finger_proximal
+                                                        }
+                                                      ]
+                                                    }
+                                                    HingeJoint {
+                                                      jointParameters HingeJointParameters {
+                                                        axis 0.000000 0.000000 1.000000
+                                                        anchor -0.000000 0.048000 -0.000000
+                                                      }
+                                                      device [
+                                                        RotationalMotor {
+                                                          name "index_left_distal"
+                                                          maxVelocity 20.0
+                                                          maxPosition 1.5707963267948966
+                                                          maxTorque 10.0
+                                                        }
+                                                        PositionSensor {
+                                                          name "index_left_distal_sensor"
+                                                        }
+                                                      ]
+                                                      endPoint Solid {
+                                                        translation -0.000000 0.048000 -0.000000
+                                                        children [
+                                                          Transform {
+                                                            translation -0.081282 -0.590565 -0.061495
+                                                            rotation 1.000000 -0.000000 0.000000 1.745329
+                                                            children [
+                                                              Shape {
+                                                                appearance USE urdf_finger_distal_material
+                                                                geometry USE urdf_finger_distal
+                                                              }
+                                                            ]
+                                                          }
+                                                        ]
+                                                        name "urdf_finger_distal_2"
+                                                        boundingObject Transform {
+                                                          translation -0.081282 -0.590565 -0.061495
+                                                          rotation 1.000000 -0.000000 0.000000 1.745329
+                                                          children [
+                                                            USE urdf_finger_distal
+                                                          ]
+                                                        }
+                                                        physics Physics {
+                                                          density -1
+                                                          mass 0.017728
+                                                          centerOfMass [ -0.004057 0.024626 -0.000000 ]
+                                                          inertiaMatrix [
+                                                            3.210356e-06 9.953923e-07 3.190242e-06
+                                                            4.352333e-07 2.281216e-12 -6.040708e-12
+                                                          ]
+                                                        }
+                                                      }
+                                                    }
+                                                  ]
+                                                  name "urdf_finger_proximal_2"
+                                                  boundingObject Transform {
+                                                    translation -0.081396 -0.542444 -0.061495
+                                                    rotation 1.000000 -0.000000 0.000000 1.745329
+                                                    children [
+                                                      USE urdf_finger_proximal
+                                                    ]
+                                                  }
+                                                  physics Physics {
+                                                    density -1
+                                                    mass 0.017237
+                                                    centerOfMass [ -0.002338 0.024000 -0.000000 ]
+                                                    inertiaMatrix [
+                                                      3.279610e-06 8.309189e-07 3.241537e-06
+                                                      -2.478788e-13 4.367699e-13 -6.083883e-14
+                                                    ]
+                                                  }
+                                                }
+                                              }
+                                              HingeJoint {
+                                                jointParameters HingeJointParameters {
+                                                  axis -0.000000 0.000000 1.000000
+                                                  anchor 0.003000 -0.100000 -0.032700
+                                                }
+                                                device [
+                                                  RotationalMotor {
+                                                    name "middle_left_proximal"
+                                                    maxVelocity 20.0
+                                                    maxPosition 1.5707963267948966
+                                                    maxTorque 10.0
+                                                  }
+                                                  PositionSensor {
+                                                    name "middle_left_proximal_sensor"
+                                                  }
+                                                ]
+                                                endPoint Solid {
+                                                  translation 0.003000 -0.100000 -0.032700
+                                                  rotation 0.000000 -0.000000 -1.000000 3.141593
+                                                  children [
+                                                    Transform {
+                                                      translation -0.081396 -0.542444 -0.061495
+                                                      rotation 1.000000 -0.000000 0.000000 1.745329
+                                                      children [
+                                                        Shape {
+                                                          appearance USE urdf_finger_proximal_material
+                                                          geometry USE urdf_finger_proximal
+                                                        }
+                                                      ]
+                                                    }
+                                                    HingeJoint {
+                                                      jointParameters HingeJointParameters {
+                                                        axis 0.000000 0.000000 1.000000
+                                                        anchor -0.000000 0.048000 0.000000
+                                                      }
+                                                      device [
+                                                        RotationalMotor {
+                                                          name "middle_left_distal"
+                                                          maxVelocity 20.0
+                                                          maxPosition 1.5707963267948966
+                                                          maxTorque 10.0
+                                                        }
+                                                        PositionSensor {
+                                                          name "middle_left_distal_sensor"
+                                                        }
+                                                      ]
+                                                      endPoint Solid {
+                                                        translation -0.000000 0.048000 0.000000
+                                                        children [
+                                                          Transform {
+                                                            translation -0.081282 -0.590565 -0.061495
+                                                            rotation 1.000000 -0.000000 0.000000 1.745329
+                                                            children [
+                                                              Shape {
+                                                                appearance USE urdf_finger_distal_material
+                                                                geometry USE urdf_finger_distal
+                                                              }
+                                                            ]
+                                                          }
+                                                        ]
+                                                        name "urdf_finger_distal_3"
+                                                        boundingObject Transform {
+                                                          translation -0.081282 -0.590565 -0.061495
+                                                          rotation 1.000000 -0.000000 0.000000 1.745329
+                                                          children [
+                                                            USE urdf_finger_distal
+                                                          ]
+                                                        }
+                                                        physics Physics {
+                                                          density -1
+                                                          mass 0.017728
+                                                          centerOfMass [ -0.004057 0.024626 -0.000000 ]
+                                                          inertiaMatrix [
+                                                            3.210356e-06 9.953923e-07 3.190242e-06
+                                                            4.352333e-07 2.281216e-12 -6.040708e-12
+                                                          ]
+                                                        }
+                                                      }
+                                                    }
+                                                  ]
+                                                  name "urdf_finger_proximal_3"
+                                                  boundingObject Transform {
+                                                    translation -0.081396 -0.542444 -0.061495
+                                                    rotation 1.000000 -0.000000 0.000000 1.745329
+                                                    children [
+                                                      USE urdf_finger_proximal
+                                                    ]
+                                                  }
+                                                  physics Physics {
+                                                    density -1
+                                                    mass 0.017237
+                                                    centerOfMass [ -0.002338 0.024000 -0.000000 ]
+                                                    inertiaMatrix [
+                                                      3.279610e-06 8.309189e-07 3.241537e-06
+                                                      -2.478788e-13 4.367699e-13 -6.083883e-14
+                                                    ]
+                                                  }
+                                                }
+                                              }
+                                              HingeJoint {
+                                                jointParameters HingeJointParameters {
+                                                  axis 0.000000 0.173648 0.984808
+                                                  anchor 0.003000 -0.088618 -0.006898
+                                                }
+                                                device [
+                                                  RotationalMotor {
+                                                    name "ring_left_proximal"
+                                                    maxVelocity 20.0
+                                                    maxPosition 1.5707963267948966
+                                                    maxTorque 10.0
+                                                  }
+                                                  PositionSensor {
+                                                    name "ring_left_proximal_sensor"
+                                                  }
+                                                ]
+                                                endPoint Solid {
+                                                  translation 0.003000 -0.088618 -0.006898
+                                                  rotation 0.000000 0.087156 0.996195 3.141593
+                                                  children [
+                                                    Transform {
+                                                      translation -0.081396 -0.542444 -0.061495
+                                                      rotation 1.000000 -0.000000 0.000000 1.745329
+                                                      children [
+                                                        Shape {
+                                                          appearance USE urdf_finger_proximal_material
+                                                          geometry USE urdf_finger_proximal
+                                                        }
+                                                      ]
+                                                    }
+                                                    HingeJoint {
+                                                      jointParameters HingeJointParameters {
+                                                        axis 0.000000 0.000000 1.000000
+                                                        anchor -0.000000 0.048000 -0.000000
+                                                      }
+                                                      device [
+                                                        RotationalMotor {
+                                                          name "ring_left_distal"
+                                                          maxVelocity 20.0
+                                                          maxPosition 1.5707963267948966
+                                                          maxTorque 10.0
+                                                        }
+                                                        PositionSensor {
+                                                          name "ring_left_distal_sensor"
+                                                        }
+                                                      ]
+                                                      endPoint Solid {
+                                                        translation -0.000000 0.048000 -0.000000
+                                                        children [
+                                                          Transform {
+                                                            translation -0.081282 -0.590565 -0.061495
+                                                            rotation 1.000000 -0.000000 0.000000 1.745329
+                                                            children [
+                                                              Shape {
+                                                                appearance USE urdf_finger_distal_material
+                                                                geometry USE urdf_finger_distal
+                                                              }
+                                                            ]
+                                                          }
+                                                        ]
+                                                        name "urdf_finger_distal_4"
+                                                        boundingObject Transform {
+                                                          translation -0.081282 -0.590565 -0.061495
+                                                          rotation 1.000000 -0.000000 0.000000 1.745329
+                                                          children [
+                                                            USE urdf_finger_distal
+                                                          ]
+                                                        }
+                                                        physics Physics {
+                                                          density -1
+                                                          mass 0.017728
+                                                          centerOfMass [ -0.004057 0.024626 -0.000000 ]
+                                                          inertiaMatrix [
+                                                            3.210356e-06 9.953923e-07 3.190242e-06
+                                                            4.352333e-07 2.281216e-12 -6.040708e-12
+                                                          ]
+                                                        }
+                                                      }
+                                                    }
+                                                  ]
+                                                  name "urdf_finger_proximal_4"
+                                                  boundingObject Transform {
+                                                    translation -0.081396 -0.542444 -0.061495
+                                                    rotation 1.000000 -0.000000 0.000000 1.745329
+                                                    children [
+                                                      USE urdf_finger_proximal
+                                                    ]
+                                                  }
+                                                  physics Physics {
+                                                    density -1
+                                                    mass 0.017237
+                                                    centerOfMass [ -0.002338 0.024000 -0.000000 ]
+                                                    inertiaMatrix [
+                                                      3.279610e-06 8.309189e-07 3.241537e-06
+                                                      -2.478788e-13 4.367699e-13 -6.083883e-14
+                                                    ]
+                                                  }
+                                                }
+                                              }
+                                              HingeJoint {
+                                                jointParameters HingeJointParameters {
+                                                  axis -0.000000 0.309017 0.951057
+                                                  anchor 0.003000 -0.075546 0.015421
+                                                }
+                                                device [
+                                                  RotationalMotor {
+                                                    name "pinky_left_proximal"
+                                                    maxVelocity 20.0
+                                                    maxPosition 1.5707963267948966
+                                                    maxTorque 10.0
+                                                  }
+                                                  PositionSensor {
+                                                    name "pinky_left_proximal_sensor"
+                                                  }
+                                                ]
+                                                endPoint Solid {
+                                                  translation 0.003000 -0.075546 0.015421
+                                                  rotation 0.000000 -0.156434 -0.987688 3.141593
+                                                  children [
+                                                    Transform {
+                                                      translation -0.081396 -0.542444 -0.061495
+                                                      rotation 1.000000 -0.000000 0.000000 1.745329
+                                                      children [
+                                                        Shape {
+                                                          appearance USE urdf_finger_proximal_material
+                                                          geometry USE urdf_finger_proximal
+                                                        }
+                                                      ]
+                                                    }
+                                                    HingeJoint {
+                                                      jointParameters HingeJointParameters {
+                                                        axis 0.000000 0.000000 1.000000
+                                                        anchor 0.000000 0.048000 0.000000
+                                                      }
+                                                      device [
+                                                        RotationalMotor {
+                                                          name "pinky_left_distal"
+                                                          maxVelocity 20.0
+                                                          maxPosition 1.5707963267948966
+                                                          maxTorque 10.0
+                                                        }
+                                                        PositionSensor {
+                                                          name "pinky_left_distal_sensor"
+                                                        }
+                                                      ]
+                                                      endPoint Solid {
+                                                        translation 0.000000 0.048000 0.000000
+                                                        children [
+                                                          Transform {
+                                                            translation -0.081282 -0.590565 -0.061495
+                                                            rotation 1.000000 -0.000000 0.000000 1.745329
+                                                            children [
+                                                              Shape {
+                                                                appearance USE urdf_finger_distal_material
+                                                                geometry USE urdf_finger_distal
+                                                              }
+                                                            ]
+                                                          }
+                                                        ]
+                                                        name "urdf_finger_distal_5"
+                                                        boundingObject Transform {
+                                                          translation -0.081282 -0.590565 -0.061495
+                                                          rotation 1.000000 -0.000000 0.000000 1.745329
+                                                          children [
+                                                            USE urdf_finger_distal
+                                                          ]
+                                                        }
+                                                        physics Physics {
+                                                          density -1
+                                                          mass 0.017728
+                                                          centerOfMass [ -0.004057 0.024626 -0.000000 ]
+                                                          inertiaMatrix [
+                                                            3.210356e-06 9.953923e-07 3.190242e-06
+                                                            4.352333e-07 2.281216e-12 -6.040708e-12
+                                                          ]
+                                                        }
+                                                      }
+                                                    }
+                                                  ]
+                                                  name "urdf_finger_proximal_5"
+                                                  boundingObject Transform {
+                                                    translation -0.081396 -0.542444 -0.061495
+                                                    rotation 1.000000 -0.000000 0.000000 1.745329
+                                                    children [
+                                                      USE urdf_finger_proximal
+                                                    ]
+                                                  }
+                                                  physics Physics {
+                                                    density -1
+                                                    mass 0.017237
+                                                    centerOfMass [ -0.002338 0.024000 -0.000000 ]
+                                                    inertiaMatrix [
+                                                      3.279610e-06 8.309189e-07 3.241537e-06
+                                                      -2.478788e-13 4.367699e-13 -6.083883e-14
+                                                    ]
+                                                  }
+                                                }
+                                              }
+                                            ]
+                                            name "urdf_palm_left"
+                                            boundingObject Transform {
+                                              translation 0.003000 -0.100000 -0.182700
+                                              rotation 0.577350 0.577350 -0.577350 2.094395
+                                              children [
+                                                USE urdf_palm_left
+                                              ]
+                                            }
+                                            physics Physics {
+                                              density -1
+                                              mass 0.203065
+                                              centerOfMass [ 0.002099 -0.041510 -0.022975 ]
+                                              inertiaMatrix [
+                                                2.562339e-04 8.745446e-05 1.918388e-04
+                                                -4.792106e-07 -1.962111e-06 -7.343815e-06
+                                              ]
+                                            }
+                                          }
+                                        }
+                                      ]
+                                      name "urdf_forearm"
+                                      boundingObject Transform {
+                                        translation -0.064742 -0.000469 0.303438
+                                        children [
+                                          USE urdf_forearm
+                                        ]
+                                      }
+                                      physics Physics {
+                                        density -1
+                                        mass 0.057000
+                                        centerOfMass [ 0.001876 -0.000000 -0.050267 ]
+                                        inertiaMatrix [
+                                          1.811918e-04 1.718223e-04 6.899559e-05
+                                          -2.057982e-10 7.361010e-06 -2.121378e-09
+                                        ]
+                                      }
+                                    }
+                                  }
+                                ]
+                                name "urdf_elbow-lower"
+                                boundingObject Transform {
+                                  translation -0.138124 -0.167824 0.027200
+                                  rotation 0.678598 0.281085 -0.678598 2.593564
+                                  children [
+                                    USE urdf_elbow-lower
+                                  ]
+                                }
+                                physics Physics {
+                                  density -1
+                                  mass 0.149603
+                                  centerOfMass [ 0.043032 0.015369 -0.037800 ]
+                                  inertiaMatrix [
+                                    2.293672e-04 2.490972e-04 1.687095e-04
+                                    -5.452975e-06 -4.342150e-09 1.434547e-09
+                                  ]
+                                }
+                              }
+                            }
+                          ]
+                          name "urdf_elbow-upper"
+                          boundingObject Transform {
+                            translation -0.065000 0.000001 0.140000
+                            children [
+                              USE urdf_elbow-upper
+                            ]
+                          }
+                          physics Physics {
+                            density -1
+                            mass 0.217001
+                            centerOfMass [ -0.000000 -0.005614 -0.021290 ]
+                            inertiaMatrix [
+                              2.076732e-04 3.257831e-04 3.163404e-04
+                              -4.636222e-10 -1.129111e-09 -2.977767e-05
+                            ]
+                          }
+                        }
+                      }
+                    ]
+                    name "urdf_shoulder_horizontal"
+                    boundingObject Transform {
+                      translation 0.000000 -0.065000 -0.037200
+                      rotation -0.577350 -0.577350 0.577350 2.094395
+                      children [
+                        USE urdf_shoulder_horizontal
+                      ]
+                    }
+                    physics Physics {
+                      density -1
+                      mass 0.350000
+                      centerOfMass [ 0.031416 0.000000 -0.037200 ]
+                      inertiaMatrix [
+                        3.705891e-04 7.972465e-04 8.457617e-04
+                        1.282698e-10 7.790867e-11 1.228809e-10
+                      ]
+                    }
+                  }
+                }
+              ]
+              name "urdf_shoulder_vertical"
+              boundingObject Transform {
+                translation -0.000000 0.000000 -0.006000
+                rotation 0.707107 -0.000000 0.707107 3.141593
+                children [
+                  USE urdf_shoulder_vertical
+                ]
+              }
+              physics Physics {
+                density -1
+                mass 0.250000
+                centerOfMass [ -0.000000 0.000000 0.042643 ]
+                inertiaMatrix [
+                  7.272408e-04 4.734012e-04 6.768080e-04
+                  -3.018833e-66 2.195104e-43 1.533092e-42
+                ]
+              }
+            }
+          }
+          HingeJoint {
+            jointParameters HingeJointParameters {
+              axis -1.000000 0.000000 0.000000
+              anchor -0.173133 0.012566 0.835688
+            }
+            device [
+              RotationalMotor {
+                name "shoulder_vertical_right"
+                maxVelocity 20.0
+                minPosition -1.5707963267948966
+                maxPosition 1.5707963267948966
+                maxTorque 10.0
+              }
+              PositionSensor {
+                name "shoulder_vertical_right_sensor"
+              }
+            ]
+            endPoint Solid {
+              translation -0.173133 0.012566 0.835688
+              rotation -0.577350 -0.577350 0.577350 2.094395
+              children [
+                Transform {
+                  translation -0.000000 0.000000 -0.006000
+                  rotation 0.707107 -0.000000 0.707107 3.141593
+                  children [
+                    Shape {
+                      appearance USE urdf_shoulder_vertical_material
+                      geometry USE urdf_shoulder_vertical
+                    }
+                  ]
+                }
+                HingeJoint {
+                  jointParameters HingeJointParameters {
+                    axis 0.000000 -1.000000 -0.000000
+                    anchor -0.000000 -0.037495 0.059000
+                  }
+                  device [
+                    RotationalMotor {
+                      name "shoulder_horizontal_right"
+                      maxVelocity 20.0
+                      minPosition -1.5707963267948966
+                      maxPosition 1.5707963267948966
+                      maxTorque 10.0
+                    }
+                    PositionSensor {
+                      name "shoulder_horizontal_right_sensor"
+                    }
+                  ]
+                  endPoint Solid {
+                    translation -0.000000 -0.037495 0.059000
+                    rotation 0.577350 -0.577350 0.577350 2.094395
+                    children [
+                      Transform {
+                        translation 0.000000 0.065000 -0.037200
+                        rotation 0.577350 -0.577350 -0.577350 2.094395
+                        children [
+                          Shape {
+                            appearance USE urdf_shoulder_horizontal_material
+                            geometry USE urdf_shoulder_horizontal
+                          }
+                        ]
+                      }
+                      HingeJoint {
+                        jointParameters HingeJointParameters {
+                          axis -1.000000 0.000000 0.000000
+                          anchor 0.140000 0.000000 -0.037200
+                        }
+                        device [
+                          RotationalMotor {
+                            name "upper_arm_right"
+                            maxVelocity 20.0
+                            minPosition -1.5707963267948966
+                            maxPosition 1.5707963267948966
+                            maxTorque 10.0
+                          }
+                          PositionSensor {
+                            name "upper_arm_right_sensor"
+                          }
+                        ]
+                        endPoint Solid {
+                          translation 0.140000 0.000000 -0.037200
+                          rotation -0.577350 -0.577350 0.577350 2.094395
+                          children [
+                            Transform {
+                              translation -0.065000 0.000001 0.140000
+                              children [
+                                Shape {
+                                  appearance USE urdf_elbow-upper_material
+                                  geometry USE urdf_elbow-upper
+                                }
+                              ]
+                            }
+                            HingeJoint {
+                              jointParameters HingeJointParameters {
+                                axis -1.000000 0.000000 -0.000000
+                                anchor -0.037900 -0.021000 -0.076338
+                              }
+                              device [
+                                RotationalMotor {
+                                  name "elbow_right"
+                                  maxVelocity 20.0
+                                  minPosition -0.7853981633974483
+                                  maxPosition 1.5707963267948966
+                                  maxTorque 10.0
+                                }
+                                PositionSensor {
+                                  name "elbow_right_sensor"
+                                }
+                              ]
+                              endPoint Solid {
+                                translation -0.037900 -0.021000 -0.076338
+                                rotation -0.707107 0.000000 0.707107 3.141593
+                                children [
+                                  Transform {
+                                    translation -0.138124 -0.167824 0.027200
+                                    rotation 0.678598 0.281085 -0.678598 2.593564
+                                    children [
+                                      Shape {
+                                        appearance USE urdf_elbow-lower_material
+                                        geometry USE urdf_elbow-lower
+                                      }
+                                    ]
+                                  }
+                                  HingeJoint {
+                                    jointParameters HingeJointParameters {
+                                      axis -0.707107 -0.707107 0.000000
+                                      anchor 0.076438 0.046740 -0.037800
+                                    }
+                                    device [
+                                      RotationalMotor {
+                                        name "forearm_right"
+                                        maxVelocity 20.0
+                                        minPosition -1.5707963267948966
+                                        maxPosition 1.5707963267948966
+                                        maxTorque 10.0
+                                      }
+                                      PositionSensor {
+                                        name "forearm_right_sensor"
+                                      }
+                                    ]
+                                    endPoint Solid {
+                                      translation 0.076438 0.046740 -0.037800
+                                      rotation 0.357407 -0.862856 0.357407 1.717772
+                                      children [
+                                        Transform {
+                                          translation -0.064742 -0.000469 0.303438
+                                          children [
+                                            Shape {
+                                              appearance USE urdf_forearm_material
+                                              geometry USE urdf_forearm
+                                            }
+                                          ]
+                                        }
+                                        HingeJoint {
+                                          jointParameters HingeJointParameters {
+                                            axis -0.000000 1.000000 0.000000
+                                            anchor 0.015000 0.025000 -0.154400
+                                          }
+                                          device [
+                                            RotationalMotor {
+                                              name "wrist_right"
+                                              maxVelocity 20.0
+                                              minPosition -0.5235987755982988
+                                              maxPosition 0.5235987755982988
+                                              maxTorque 10.0
+                                            }
+                                            PositionSensor {
+                                              name "wrist_right_sensor"
+                                            }
+                                          ]
+                                          endPoint Solid {
+                                            translation 0.015000 0.025000 -0.154400
+                                            rotation -0.000000 -0.707107 -0.707107 3.141593
+                                            children [
+                                              Transform {
+                                                translation -0.078396 0.456264 -0.025531
+                                                rotation -1.000000 -0.000000 -0.000000 1.570796
+                                                children [
+                                                  Shape {
+                                                    appearance DEF urdf_palm_right_material PBRAppearance {
+                                                      baseColor 0.901961 0.901961 0.901961
+                                                      roughness 1.000000
+                                                      metalness 0
+                                                    }
+                                                    geometry DEF urdf_palm_right Mesh {
+                                                      url "/home/pib/ros_working_dir/src/pibsim_webots/protos/resources/urdf_palm_right.stl"
+                                                    }
+                                                  }
+                                                ]
+                                              }
+                                              HingeJoint {
+                                                jointParameters HingeJointParameters {
+                                                  axis -0.000000 -0.978148 0.207912
+                                                  anchor 0.009841 -0.037731 -0.000629
+                                                }
+                                                device [
+                                                  RotationalMotor {
+                                                    name "thumb_right_opposition"
+                                                    maxVelocity 20.0
+                                                    maxPosition 1.5707963267948966
+                                                    maxTorque 10.0
+                                                  }
+                                                  PositionSensor {
+                                                    name "thumb_right_opposition_sensor"
+                                                  }
+                                                ]
+                                                endPoint Solid {
+                                                  translation 0.009841 -0.037731 -0.000629
+                                                  rotation 0.532626 -0.532626 0.657738 1.978001
+                                                  children [
+                                                    Transform {
+                                                      translation 0.201764 -0.015767 -0.193605
+                                                      rotation 1.000000 -0.000000 0.000000 2.932153
+                                                      children [
+                                                        Shape {
+                                                          appearance DEF urdf_thumb_rotator_right_material PBRAppearance {
+                                                            baseColor 0.901961 0.901961 0.901961
+                                                            roughness 1.000000
+                                                            metalness 0
+                                                          }
+                                                          geometry DEF urdf_thumb_rotator_right Mesh {
+                                                            url "/home/pib/ros_working_dir/src/pibsim_webots/protos/resources/urdf_thumb_rotator_right.stl"
+                                                          }
+                                                        }
+                                                      ]
+                                                    }
+                                                    HingeJoint {
+                                                      jointParameters HingeJointParameters {
+                                                        axis 0.000000 -0.866025 -0.500000
+                                                        anchor 0.020000 0.001320 -0.010565
+                                                      }
+                                                      device [
+                                                        RotationalMotor {
+                                                          name "thumb_right_proximal"
+                                                          maxVelocity 20.0
+                                                          maxPosition 1.5707963267948966
+                                                          maxTorque 10.0
+                                                        }
+                                                        PositionSensor {
+                                                          name "thumb_right_proximal_sensor"
+                                                        }
+                                                      ]
+                                                      endPoint Solid {
+                                                        translation 0.020000 0.001320 -0.010565
+                                                        rotation -0.654654 -0.654654 0.377964 3.864327
+                                                        children [
+                                                          Transform {
+                                                            translation -0.081396 -0.542444 -0.061495
+                                                            rotation 1.000000 -0.000000 0.000000 1.745329
+                                                            children [
+                                                              Shape {
+                                                                appearance USE urdf_finger_proximal_material
+                                                                geometry USE urdf_finger_proximal
+                                                              }
+                                                            ]
+                                                          }
+                                                          HingeJoint {
+                                                            jointParameters HingeJointParameters {
+                                                              axis 0.000000 0.000000 1.000000
+                                                              anchor -0.000000 0.048000 -0.000000
+                                                            }
+                                                            device [
+                                                              RotationalMotor {
+                                                                name "thumb_right_distal"
+                                                                maxVelocity 20.0
+                                                                maxPosition 1.5707963267948966
+                                                                maxTorque 10.0
+                                                              }
+                                                              PositionSensor {
+                                                                name "thumb_right_distal_sensor"
+                                                              }
+                                                            ]
+                                                            endPoint Solid {
+                                                              translation -0.000000 0.048000 -0.000000
+                                                              children [
+                                                                Transform {
+                                                                  translation -0.081282 -0.590565 -0.061495
+                                                                  rotation 1.000000 -0.000000 0.000000 1.745329
+                                                                  children [
+                                                                    Shape {
+                                                                      appearance USE urdf_finger_distal_material
+                                                                      geometry USE urdf_finger_distal
+                                                                    }
+                                                                  ]
+                                                                }
+                                                              ]
+                                                              name "urdf_finger_distal_6"
+                                                              boundingObject Transform {
+                                                                translation -0.081282 -0.590565 -0.061495
+                                                                rotation 1.000000 -0.000000 0.000000 1.745329
+                                                                children [
+                                                                  USE urdf_finger_distal
+                                                                ]
+                                                              }
+                                                              physics Physics {
+                                                                density -1
+                                                                mass 0.017728
+                                                                centerOfMass [ -0.004057 0.024626 -0.000000 ]
+                                                                inertiaMatrix [
+                                                                  3.210356e-06 9.953923e-07 3.190242e-06
+                                                                  4.352333e-07 2.281216e-12 -6.040708e-12
+                                                                ]
+                                                              }
+                                                            }
+                                                          }
+                                                        ]
+                                                        name "urdf_finger_proximal_6"
+                                                        boundingObject Transform {
+                                                          translation -0.081396 -0.542444 -0.061495
+                                                          rotation 1.000000 -0.000000 0.000000 1.745329
+                                                          children [
+                                                            USE urdf_finger_proximal
+                                                          ]
+                                                        }
+                                                        physics Physics {
+                                                          density -1
+                                                          mass 0.017237
+                                                          centerOfMass [ -0.002338 0.024000 -0.000000 ]
+                                                          inertiaMatrix [
+                                                            3.279610e-06 8.309189e-07 3.241537e-06
+                                                            -2.478788e-13 4.367699e-13 -6.083883e-14
+                                                          ]
+                                                        }
+                                                      }
+                                                    }
+                                                  ]
+                                                  name "urdf_thumb_rotator_right"
+                                                  boundingObject Transform {
+                                                    translation 0.201764 -0.015767 -0.193605
+                                                    rotation 1.000000 -0.000000 0.000000 2.932153
+                                                    children [
+                                                      USE urdf_thumb_rotator_right
+                                                    ]
+                                                  }
+                                                  physics Physics {
+                                                    density -1
+                                                    mass 0.019599
+                                                    centerOfMass [ 0.002542 0.000636 -0.005731 ]
+                                                    inertiaMatrix [
+                                                      2.351580e-06 2.906818e-06 1.952188e-06
+                                                      -1.563493e-07 3.874770e-07 6.356603e-08
+                                                    ]
+                                                  }
+                                                }
+                                              }
+                                              HingeJoint {
+                                                jointParameters HingeJointParameters {
+                                                  axis 0.000000 0.173648 0.984808
+                                                  anchor 0.003000 -0.088618 0.008102
+                                                }
+                                                device [
+                                                  RotationalMotor {
+                                                    name "index_right_proximal"
+                                                    maxVelocity 20.0
+                                                    maxPosition 1.5707963267948966
+                                                    maxTorque 10.0
+                                                  }
+                                                  PositionSensor {
+                                                    name "index_right_proximal_sensor"
+                                                  }
+                                                ]
+                                                endPoint Solid {
+                                                  translation 0.003000 -0.088618 0.008102
+                                                  rotation 0.000000 0.087156 0.996195 3.141593
+                                                  children [
+                                                    Transform {
+                                                      translation -0.081396 -0.542444 -0.061495
+                                                      rotation 1.000000 -0.000000 0.000000 1.745329
+                                                      children [
+                                                        Shape {
+                                                          appearance USE urdf_finger_proximal_material
+                                                          geometry USE urdf_finger_proximal
+                                                        }
+                                                      ]
+                                                    }
+                                                    HingeJoint {
+                                                      jointParameters HingeJointParameters {
+                                                        axis 0.000000 0.000000 1.000000
+                                                        anchor -0.000000 0.048000 0.000000
+                                                      }
+                                                      device [
+                                                        RotationalMotor {
+                                                          name "index_right_distal"
+                                                          maxVelocity 20.0
+                                                          maxPosition 1.5707963267948966
+                                                          maxTorque 10.0
+                                                        }
+                                                        PositionSensor {
+                                                          name "index_right_distal_sensor"
+                                                        }
+                                                      ]
+                                                      endPoint Solid {
+                                                        translation -0.000000 0.048000 0.000000
+                                                        children [
+                                                          Transform {
+                                                            translation -0.081282 -0.590565 -0.061495
+                                                            rotation 1.000000 -0.000000 0.000000 1.745329
+                                                            children [
+                                                              Shape {
+                                                                appearance USE urdf_finger_distal_material
+                                                                geometry USE urdf_finger_distal
+                                                              }
+                                                            ]
+                                                          }
+                                                        ]
+                                                        name "urdf_finger_distal_7"
+                                                        boundingObject Transform {
+                                                          translation -0.081282 -0.590565 -0.061495
+                                                          rotation 1.000000 -0.000000 0.000000 1.745329
+                                                          children [
+                                                            USE urdf_finger_distal
+                                                          ]
+                                                        }
+                                                        physics Physics {
+                                                          density -1
+                                                          mass 0.017728
+                                                          centerOfMass [ -0.004057 0.024626 -0.000000 ]
+                                                          inertiaMatrix [
+                                                            3.210356e-06 9.953923e-07 3.190242e-06
+                                                            4.352333e-07 2.281216e-12 -6.040708e-12
+                                                          ]
+                                                        }
+                                                      }
+                                                    }
+                                                  ]
+                                                  name "urdf_finger_proximal_7"
+                                                  boundingObject Transform {
+                                                    translation -0.081396 -0.542444 -0.061495
+                                                    rotation 1.000000 -0.000000 0.000000 1.745329
+                                                    children [
+                                                      USE urdf_finger_proximal
+                                                    ]
+                                                  }
+                                                  physics Physics {
+                                                    density -1
+                                                    mass 0.017237
+                                                    centerOfMass [ -0.002338 0.024000 -0.000000 ]
+                                                    inertiaMatrix [
+                                                      3.279610e-06 8.309189e-07 3.241537e-06
+                                                      -2.478788e-13 4.367699e-13 -6.083883e-14
+                                                    ]
+                                                  }
+                                                }
+                                              }
+                                              HingeJoint {
+                                                jointParameters HingeJointParameters {
+                                                  axis -0.000000 -0.000000 1.000000
+                                                  anchor 0.003000 -0.100000 -0.017700
+                                                }
+                                                device [
+                                                  RotationalMotor {
+                                                    name "middle_right_proximal"
+                                                    maxVelocity 20.0
+                                                    maxPosition 1.5707963267948966
+                                                    maxTorque 10.0
+                                                  }
+                                                  PositionSensor {
+                                                    name "middle_right_proximal_sensor"
+                                                  }
+                                                ]
+                                                endPoint Solid {
+                                                  translation 0.003000 -0.100000 -0.017700
+                                                  rotation -0.000000 -0.000000 1.000000 3.141593
+                                                  children [
+                                                    Transform {
+                                                      translation -0.081396 -0.542444 -0.061495
+                                                      rotation 1.000000 -0.000000 0.000000 1.745329
+                                                      children [
+                                                        Shape {
+                                                          appearance USE urdf_finger_proximal_material
+                                                          geometry USE urdf_finger_proximal
+                                                        }
+                                                      ]
+                                                    }
+                                                    HingeJoint {
+                                                      jointParameters HingeJointParameters {
+                                                        axis 0.000000 0.000000 1.000000
+                                                        anchor -0.000000 0.048000 0.000000
+                                                      }
+                                                      device [
+                                                        RotationalMotor {
+                                                          name "middle_right_distal"
+                                                          maxVelocity 20.0
+                                                          maxPosition 1.5707963267948966
+                                                          maxTorque 10.0
+                                                        }
+                                                        PositionSensor {
+                                                          name "middle_right_distal_sensor"
+                                                        }
+                                                      ]
+                                                      endPoint Solid {
+                                                        translation -0.000000 0.048000 0.000000
+                                                        children [
+                                                          Transform {
+                                                            translation -0.081282 -0.590565 -0.061495
+                                                            rotation 1.000000 -0.000000 0.000000 1.745329
+                                                            children [
+                                                              Shape {
+                                                                appearance USE urdf_finger_distal_material
+                                                                geometry USE urdf_finger_distal
+                                                              }
+                                                            ]
+                                                          }
+                                                        ]
+                                                        name "urdf_finger_distal_8"
+                                                        boundingObject Transform {
+                                                          translation -0.081282 -0.590565 -0.061495
+                                                          rotation 1.000000 -0.000000 0.000000 1.745329
+                                                          children [
+                                                            USE urdf_finger_distal
+                                                          ]
+                                                        }
+                                                        physics Physics {
+                                                          density -1
+                                                          mass 0.017728
+                                                          centerOfMass [ -0.004057 0.024626 -0.000000 ]
+                                                          inertiaMatrix [
+                                                            3.210356e-06 9.953923e-07 3.190242e-06
+                                                            4.352333e-07 2.281216e-12 -6.040708e-12
+                                                          ]
+                                                        }
+                                                      }
+                                                    }
+                                                  ]
+                                                  name "urdf_finger_proximal_8"
+                                                  boundingObject Transform {
+                                                    translation -0.081396 -0.542444 -0.061495
+                                                    rotation 1.000000 -0.000000 0.000000 1.745329
+                                                    children [
+                                                      USE urdf_finger_proximal
+                                                    ]
+                                                  }
+                                                  physics Physics {
+                                                    density -1
+                                                    mass 0.017237
+                                                    centerOfMass [ -0.002338 0.024000 -0.000000 ]
+                                                    inertiaMatrix [
+                                                      3.279610e-06 8.309189e-07 3.241537e-06
+                                                      -2.478788e-13 4.367699e-13 -6.083883e-14
+                                                    ]
+                                                  }
+                                                }
+                                              }
+                                              HingeJoint {
+                                                jointParameters HingeJointParameters {
+                                                  axis -0.000000 -0.173648 0.984808
+                                                  anchor 0.003000 -0.088618 -0.043502
+                                                }
+                                                device [
+                                                  RotationalMotor {
+                                                    name "ring_right_proximal"
+                                                    maxVelocity 20.0
+                                                    maxPosition 1.5707963267948966
+                                                    maxTorque 10.0
+                                                  }
+                                                  PositionSensor {
+                                                    name "ring_right_proximal_sensor"
+                                                  }
+                                                ]
+                                                endPoint Solid {
+                                                  translation 0.003000 -0.088618 -0.043502
+                                                  rotation -0.000000 -0.087156 0.996195 3.141593
+                                                  children [
+                                                    Transform {
+                                                      translation -0.081396 -0.542444 -0.061495
+                                                      rotation 1.000000 -0.000000 0.000000 1.745329
+                                                      children [
+                                                        Shape {
+                                                          appearance USE urdf_finger_proximal_material
+                                                          geometry USE urdf_finger_proximal
+                                                        }
+                                                      ]
+                                                    }
+                                                    HingeJoint {
+                                                      jointParameters HingeJointParameters {
+                                                        axis 0.000000 0.000000 1.000000
+                                                        anchor -0.000000 0.048000 0.000000
+                                                      }
+                                                      device [
+                                                        RotationalMotor {
+                                                          name "ring_right_distal"
+                                                          maxVelocity 20.0
+                                                          maxPosition 1.5707963267948966
+                                                          maxTorque 10.0
+                                                        }
+                                                        PositionSensor {
+                                                          name "ring_right_distal_sensor"
+                                                        }
+                                                      ]
+                                                      endPoint Solid {
+                                                        translation -0.000000 0.048000 0.000000
+                                                        children [
+                                                          Transform {
+                                                            translation -0.081282 -0.590565 -0.061495
+                                                            rotation 1.000000 -0.000000 0.000000 1.745329
+                                                            children [
+                                                              Shape {
+                                                                appearance USE urdf_finger_distal_material
+                                                                geometry USE urdf_finger_distal
+                                                              }
+                                                            ]
+                                                          }
+                                                        ]
+                                                        name "urdf_finger_distal_9"
+                                                        boundingObject Transform {
+                                                          translation -0.081282 -0.590565 -0.061495
+                                                          rotation 1.000000 -0.000000 0.000000 1.745329
+                                                          children [
+                                                            USE urdf_finger_distal
+                                                          ]
+                                                        }
+                                                        physics Physics {
+                                                          density -1
+                                                          mass 0.017728
+                                                          centerOfMass [ -0.004057 0.024626 -0.000000 ]
+                                                          inertiaMatrix [
+                                                            3.210356e-06 9.953923e-07 3.190242e-06
+                                                            4.352333e-07 2.281216e-12 -6.040708e-12
+                                                          ]
+                                                        }
+                                                      }
+                                                    }
+                                                  ]
+                                                  name "urdf_finger_proximal_9"
+                                                  boundingObject Transform {
+                                                    translation -0.081396 -0.542444 -0.061495
+                                                    rotation 1.000000 -0.000000 0.000000 1.745329
+                                                    children [
+                                                      USE urdf_finger_proximal
+                                                    ]
+                                                  }
+                                                  physics Physics {
+                                                    density -1
+                                                    mass 0.017237
+                                                    centerOfMass [ -0.002338 0.024000 -0.000000 ]
+                                                    inertiaMatrix [
+                                                      3.279610e-06 8.309189e-07 3.241537e-06
+                                                      -2.478788e-13 4.367699e-13 -6.083883e-14
+                                                    ]
+                                                  }
+                                                }
+                                              }
+                                              HingeJoint {
+                                                jointParameters HingeJointParameters {
+                                                  axis -0.000000 -0.309017 0.951057
+                                                  anchor 0.003000 -0.075546 -0.065821
+                                                }
+                                                device [
+                                                  RotationalMotor {
+                                                    name "pinky_right_proximal"
+                                                    maxVelocity 20.0
+                                                    maxPosition 1.5707963267948966
+                                                    maxTorque 10.0
+                                                  }
+                                                  PositionSensor {
+                                                    name "pinky_right_proximal_sensor"
+                                                  }
+                                                ]
+                                                endPoint Solid {
+                                                  translation 0.003000 -0.075546 -0.065821
+                                                  rotation 0.000000 -0.156434 0.987688 3.141593
+                                                  children [
+                                                    Transform {
+                                                      translation -0.081396 -0.542444 -0.061495
+                                                      rotation 1.000000 -0.000000 0.000000 1.745329
+                                                      children [
+                                                        Shape {
+                                                          appearance USE urdf_finger_proximal_material
+                                                          geometry USE urdf_finger_proximal
+                                                        }
+                                                      ]
+                                                    }
+                                                    HingeJoint {
+                                                      jointParameters HingeJointParameters {
+                                                        axis -0.000000 -0.000000 1.000000
+                                                        anchor 0.000000 0.048000 0.000000
+                                                      }
+                                                      device [
+                                                        RotationalMotor {
+                                                          name "pinky_right_distal"
+                                                          maxVelocity 20.0
+                                                          maxPosition 1.5707963267948966
+                                                          maxTorque 10.0
+                                                        }
+                                                        PositionSensor {
+                                                          name "pinky_right_distal_sensor"
+                                                        }
+                                                      ]
+                                                      endPoint Solid {
+                                                        translation 0.000000 0.048000 0.000000
+                                                        rotation 0.000000 -0.000000 1.000000 0.087929
+                                                        children [
+                                                          Transform {
+                                                            translation -0.081282 -0.590565 -0.061495
+                                                            rotation 1.000000 -0.000000 0.000000 1.745329
+                                                            children [
+                                                              Shape {
+                                                                appearance USE urdf_finger_distal_material
+                                                                geometry USE urdf_finger_distal
+                                                              }
+                                                            ]
+                                                          }
+                                                        ]
+                                                        name "urdf_finger_distal_10"
+                                                        boundingObject Transform {
+                                                          translation -0.081282 -0.590565 -0.061495
+                                                          rotation 1.000000 -0.000000 0.000000 1.745329
+                                                          children [
+                                                            USE urdf_finger_distal
+                                                          ]
+                                                        }
+                                                        physics Physics {
+                                                          density -1
+                                                          mass 0.017728
+                                                          centerOfMass [ -0.004057 0.024626 -0.000000 ]
+                                                          inertiaMatrix [
+                                                            3.210356e-06 9.953923e-07 3.190242e-06
+                                                            4.352333e-07 2.281216e-12 -6.040708e-12
+                                                          ]
+                                                        }
+                                                      }
+                                                    }
+                                                  ]
+                                                  name "urdf_finger_proximal_10"
+                                                  boundingObject Transform {
+                                                    translation -0.081396 -0.542444 -0.061495
+                                                    rotation 1.000000 -0.000000 0.000000 1.745329
+                                                    children [
+                                                      USE urdf_finger_proximal
+                                                    ]
+                                                  }
+                                                  physics Physics {
+                                                    density -1
+                                                    mass 0.017237
+                                                    centerOfMass [ -0.002338 0.024000 -0.000000 ]
+                                                    inertiaMatrix [
+                                                      3.279610e-06 8.309189e-07 3.241537e-06
+                                                      -2.478788e-13 4.367699e-13 -6.083883e-14
+                                                    ]
+                                                  }
+                                                }
+                                              }
+                                            ]
+                                            name "urdf_palm_right"
+                                            boundingObject Transform {
+                                              translation -0.078396 0.456264 -0.025531
+                                              rotation -1.000000 -0.000000 -0.000000 1.570796
+                                              children [
+                                                USE urdf_palm_right
+                                              ]
+                                            }
+                                            physics Physics {
+                                              density -1
+                                              mass 0.203071
+                                              centerOfMass [ 0.002099 -0.041511 -0.027424 ]
+                                              inertiaMatrix [
+                                                2.562417e-04 8.746021e-05 1.918414e-04
+                                                -4.799333e-07 1.963630e-06 7.347497e-06
+                                              ]
+                                            }
+                                          }
+                                        }
+                                      ]
+                                      name "urdf_forearm_2"
+                                      boundingObject Transform {
+                                        translation -0.064742 -0.000469 0.303438
+                                        children [
+                                          USE urdf_forearm
+                                        ]
+                                      }
+                                      physics Physics {
+                                        density -1
+                                        mass 0.057000
+                                        centerOfMass [ 0.001876 -0.000000 -0.050267 ]
+                                        inertiaMatrix [
+                                          1.811918e-04 1.718223e-04 6.899559e-05
+                                          -2.057982e-10 7.361010e-06 -2.121378e-09
+                                        ]
+                                      }
+                                    }
+                                  }
+                                ]
+                                name "urdf_elbow-lower_2"
+                                boundingObject Transform {
+                                  translation -0.138124 -0.167824 0.027200
+                                  rotation 0.678598 0.281085 -0.678598 2.593564
+                                  children [
+                                    USE urdf_elbow-lower
+                                  ]
+                                }
+                                physics Physics {
+                                  density -1
+                                  mass 0.149603
+                                  centerOfMass [ 0.043032 0.015369 -0.037800 ]
+                                  inertiaMatrix [
+                                    2.293672e-04 2.490972e-04 1.687095e-04
+                                    -5.452975e-06 -4.342150e-09 1.434547e-09
+                                  ]
+                                }
+                              }
+                            }
+                          ]
+                          name "urdf_elbow-upper_2"
+                          boundingObject Transform {
+                            translation -0.065000 0.000001 0.140000
+                            children [
+                              USE urdf_elbow-upper
+                            ]
+                          }
+                          physics Physics {
+                            density -1
+                            mass 0.217001
+                            centerOfMass [ -0.000000 -0.005614 -0.021290 ]
+                            inertiaMatrix [
+                              2.076732e-04 3.257831e-04 3.163404e-04
+                              -4.636222e-10 -1.129111e-09 -2.977767e-05
+                            ]
+                          }
+                        }
+                      }
+                    ]
+                    name "urdf_shoulder_horizontal_2"
+                    boundingObject Transform {
+                      translation 0.000000 0.065000 -0.037200
+                      rotation 0.577350 -0.577350 -0.577350 2.094395
+                      children [
+                        USE urdf_shoulder_horizontal
+                      ]
+                    }
+                    physics Physics {
+                      density -1
+                      mass 0.350000
+                      centerOfMass [ 0.031416 -0.000000 -0.037200 ]
+                      inertiaMatrix [
+                        3.705891e-04 7.972465e-04 8.457617e-04
+                        -1.282698e-10 -7.790867e-11 1.228809e-10
+                      ]
+                    }
+                  }
+                }
+              ]
+              name "urdf_shoulder_vertical_2"
+              boundingObject Transform {
+                translation -0.000000 0.000000 -0.006000
+                rotation 0.707107 -0.000000 0.707107 3.141593
+                children [
+                  USE urdf_shoulder_vertical
+                ]
+              }
+              physics Physics {
+                density -1
+                mass 0.250000
+                centerOfMass [ -0.000000 0.000000 0.042643 ]
+                inertiaMatrix [
+                  7.272408e-04 4.734012e-04 6.768080e-04
+                  -4.392422e-76 5.794877e-48 1.201288e-47
+                ]
+              }
+            }
+          }
+        ]
+        name "urdf_body"
+        boundingObject Transform {
+          translation -0.013133 0.012566 0.891187
+          children [
+            USE urdf_body
+          ]
+        }
+        physics Physics {
+          density -1
+          mass 14.989177
+          centerOfMass [ -0.013149 0.006254 0.341938 ]
+          inertiaMatrix [
+            1.029495e+00 1.088778e+00 1.055054e-01
+            1.018105e-06 2.100263e-05 -8.598107e-03
+          ]
+        }
+      }
+    ]
+    name IS name
+  }
+}
