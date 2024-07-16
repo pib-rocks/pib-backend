@@ -84,7 +84,26 @@ sudo chmod a+r /etc/apt/keyrings/docker.asc
 
 # allow communication between docker-host and the local x-server
 export DISPLAY=":0.0"
-sudo xhost +local:docker
+sudo xhost +local:
+
+# create a boot-service for setting permisssions for 'local:' on startup
+cat > ~/xhost_enable_local1.service << EOL
+[Unit]
+Description=Enables Connections to the host X-Server from within a docker container
+
+[Service]
+User=pib
+Environment=DISPLAY=:0.0
+Restart=on-failure
+RestartSec=5s
+ExecStart=/usr/bin/xhost +local:
+
+[Install]
+WantedBy=multi-user.target
+EOL
+sudo mv ~/xhost_enable_local1.service /etc/systemd/xhost_enable_local1.service
+sudo chmod 700 /etc/systemd/xhost_enable_local1.service
+sudo systemctl enable /etc/systemd/xhost_enable_local1.service
 
 # Add the repository to Apt sources:
 echo \
