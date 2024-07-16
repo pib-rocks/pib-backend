@@ -72,7 +72,7 @@ function install_tinkerforge() {
         print WARN "brick daemon already installed; skipping installation"
    else
     sudo apt -qq update && \
-    sudo apt -qq install libusb-1.0-0 libudev1 procps
+    sudo apt -qq install libgpiod2 libusb-1.0-0 libudev1 procps
 
     # Install brickd
     PLATFORM_TYPE=$(uname -m)
