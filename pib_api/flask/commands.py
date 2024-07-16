@@ -127,7 +127,7 @@ def _create_chat_data_and_assistant() -> None:
         api_name="anthropic.claude-3-sonnet-20240229-v1:0",
         has_image_support=True,
     )
-    db.session.add_all([gpt3, gpt4o1, gpt4o2, claude])
+    db.session.add_all([gpt4o1, gpt4o2, gpt3, claude])
     db.session.flush()
 
     p_eva = Personality(
