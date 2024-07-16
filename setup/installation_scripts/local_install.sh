@@ -215,6 +215,7 @@ function install_ros_packages() {
   colcon build || { print ERROR "could not colcon build packages"; return 1; }
   cd "$HOME" || { print ERROR "${HOME} not found"; return 1; }
 
+  echo "SETUP FILES: ${SETUP_FILES} ROS_WORKING_DIR: ${ROS_WORKING_DIR}"
   cp "${SETUP_FILES}/ros_config.sh" "$ROS_ROS_WORKING_DIR" || { print ERROR "could not move ros_config.sh"; return 1; }
   # services enabled at the end of the script
 
