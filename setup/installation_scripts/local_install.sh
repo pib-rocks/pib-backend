@@ -217,7 +217,7 @@ function install_ros_packages() {
 
   echo "SETUP FILES: ${SETUP_FILES} ROS_WORKING_DIR: ${ROS_WORKING_DIR}"
   echo "$(ls $SETUP_FILES)"
-  cp "${SETUP_FILES}/ros_config.sh" "$ROS_ROS_WORKING_DIR" || { print ERROR "could not move ros_config.sh"; return 1; }
+  cp "${SETUP_FILES}/ros_config.sh" "$ROS_WORKING_DIR" || { print ERROR "could not move ros_config.sh"; return 1; }
   # services enabled at the end of the script
 
   print SUCCESS "Finished installing ros_packages"
