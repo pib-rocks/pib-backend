@@ -72,7 +72,7 @@ function install_tinkerforge() {
         print WARN "brick daemon already installed; skipping installation"
    else
     sudo apt -qq update && \
-    sudo apt -qq install libusb-1.0-0 libudev1 procps
+    sudo apt -qq install libgpiod2 libusb-1.0-0 libudev1 procps
 
     # Install brickd
     PLATFORM_TYPE=$(uname -m)
@@ -190,32 +190,32 @@ function install_ros_packages() {
   # Boot camera
   sudo chmod 700 "$ROS_CAMERA_BOOT_DIR/ros_camera_boot.sh"
   sudo chmod 700 "$ROS_CAMERA_BOOT_DIR/ros_camera_boot.service"
-  sudo cp "$ROS_CAMERA_BOOT_DIR/ros_camera_boot.service" /etc/systemd/system
+  sudo cp "${ROS_CAMERA_BOOT_DIR}/ros_camera_boot.service" /etc/systemd/system
 
 
   # Boot motor nodes
   sudo chmod 700 "$ROS_MOTORS_BOOT_DIR/ros_motor_boot.sh"
   sudo chmod 700 "$ROS_MOTORS_BOOT_DIR/ros_motor_boot.service"
-  sudo cp "$ROS_MOTORS_BOOT_DIR/ros_motor_boot.service" /etc/systemd/system
+  sudo cp "${ROS_MOTORS_BOOT_DIR}/ros_motor_boot.service" /etc/systemd/system
 
 
   # Boot voice-assistant
   sudo chmod 700 "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_voice_assistant_boot.sh"
   sudo chmod 700 "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_voice_assistant_boot.service"
-  sudo cp "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_voice_assistant_boot.service" /etc/systemd/system
+  sudo cp "${ROS_VOICE_ASSISTANT_BOOT_DIR}/ros_voice_assistant_boot.service" /etc/systemd/system
 
 
   # Boot program node
   sudo chmod 700 "$ROS_PROGRAMS_BOOT_DIR/ros_program_boot.sh"
   sudo chmod 700 "$ROS_PROGRAMS_BOOT_DIR/ros_program_boot.service"
-  sudo cp "$ROS_PROGRAMS_BOOT_DIR/ros_program_boot.service" /etc/systemd/system
+  sudo cp "${ROS_PROGRAMS_BOOT_DIR}/ros_program_boot.service" /etc/systemd/system
 
   cd "$ROS_WORKING_DIR" || { print ERROR "${ROS_WORKING_DIR} not found"; return 1; }
   source /opt/ros/humble/setup.bash
   colcon build || { print ERROR "could not colcon build packages"; return 1; }
   cd "$HOME" || { print ERROR "${HOME} not found"; return 1; }
 
-  cp "$SETUP_FILES/ros_config.sh" "$ROS_ROS_WORKING_DIR" || { print ERROR "could not move ros_config.sh"; return 1; }
+  cp "${SETUP_FILES}/ros_config.sh" "$ROS_WORKING_DIR" || { print ERROR "could not move ros_config.sh"; return 1; }
   # services enabled at the end of the script
 
   print SUCCESS "Finished installing ros_packages"
@@ -228,7 +228,7 @@ function install_frontend() {
   sudo apt -qq install -y nginx
   sudo mkdir -p $DEFAULT_NGINX_HTML_DIR
   # Setting up nginx to serve Cerebra locally
-  sudo cp "$SETUP_FILES/nginx.conf" "$DEFAULT_NGINX_DIR/nginx.conf"
+  sudo cp "${SETUP_FILES}/nginx.conf" "$DEFAULT_NGINX_DIR/nginx.conf"
 
   # Remove pre-installed node version in preparation of node install via nvm
   sudo apt-get purge -y nodejs
@@ -263,10 +263,10 @@ function install_frontend() {
   # Move the build to the destination folder
   sudo mv "$FRONTEND_DIR/dist"/* "$DEFAULT_NGINX_HTML_DIR"
 
-  cp "$SETUP_FILES/ros_cerebra_boot.sh" "$ROS_WORKING_DIR/ros_cerebra_boot.sh"
+  cp "${SETUP_FILES}/ros_cerebra_boot.sh" "${ROS_WORKING_DIR}/ros_cerebra_boot.sh"
   sudo chmod 700 "$ROS_WORKING_DIR"/ros_cerebra_boot.sh
 
-  sudo cp "$SETUP_FILES/ros_cerebra_boot.service" /etc/systemd/system
+  sudo cp "${SETUP_FILES}/ros_cerebra_boot.service" /etc/systemd/system
   sudo chmod 700 /etc/systemd/system/ros_cerebra_boot.service
   # service enabled at the end of the script
 
@@ -312,14 +312,14 @@ function install_blocky_node_service() {
   npm run build || { print ERROR "error using npm"; return 1; }
 
   # create service that starts the pib_blockly_server during boot
-  sudo cp "$PIB_BLOCKLY_SERVER_DIR/pib_blockly_server_boot.service" /etc/systemd/system
+  sudo cp "${PIB_BLOCKLY_SERVER_DIR}/pib_blockly_server_boot.service" /etc/systemd/system
   # services enabled at end of the script
 
   # install the pib_blockly_client
   pip install "$PIB_BLOCKLY_SETUP_DIR/pib_blockly_client"
 
-  cp "$SETUP_FILES/start_json_server.sh" "$HOME"
-  sudo chmod 700 "$HOME"/start_json_server.sh
+  cp "${SETUP_FILES}/start_json_server.sh" "$HOME"
+  sudo chmod 700 "${HOME}"/start_json_server.sh
   print SUCCESS "Finished installing Blockly Node service"
 }
 
