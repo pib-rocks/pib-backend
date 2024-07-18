@@ -87,7 +87,7 @@ export DISPLAY=":0.0"
 sudo xhost +local:
 
 # create a boot-service for setting permisssions for 'local:' on startup
-cat > ~/xhost_enable_local1.service << EOL
+cat > ~/xhost_enable_local.service << EOL
 [Unit]
 Description=Enables Connections to the host X-Server from within a docker container
 
@@ -101,9 +101,9 @@ ExecStart=/usr/bin/xhost +local:
 [Install]
 WantedBy=multi-user.target
 EOL
-sudo mv ~/xhost_enable_local1.service /etc/systemd/xhost_enable_local1.service
-sudo chmod 700 /etc/systemd/xhost_enable_local1.service
-sudo systemctl enable /etc/systemd/xhost_enable_local1.service
+sudo mv ~/xhost_enable_local.service /etc/systemd/xhost_enable_local.service
+sudo chmod 700 /etc/systemd/xhost_enable_local.service
+sudo systemctl enable /etc/systemd/xhost_enable_local.service
 
 # Add the repository to Apt sources:
 echo \
