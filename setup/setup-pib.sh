@@ -172,7 +172,6 @@ function cleanup() {
     sudo rm -r "$HOME/app"
     print INFO "Removed repositories from $HOME due to local installation"
   fi
-  apt-get autoremove
   sudo rm /etc/sudoers.d/"$USER"
 }
 
