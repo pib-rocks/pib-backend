@@ -122,12 +122,18 @@ def _create_chat_data_and_assistant() -> None:
     gpt3 = AssistantModel(
         visual_name="GPT-3.5 [Text]", api_name="gpt-3.5-turbo", has_image_support=False
     )
-    claude = AssistantModel(
-        visual_name="Claude 3 Sonnet [Vision]",
-        api_name="anthropic.claude-3-sonnet-20240229-v1:0",
+    claude1 = AssistantModel(
+        visual_name="Claude 3.5 Sonnet [Vision]",
+        api_name="anthropic.claude-3-5-sonnet-20240620-v1:0",
         has_image_support=True,
     )
-    db.session.add_all([gpt4o1, gpt4o2, gpt3, claude])
+    claude2 = AssistantModel(
+        visual_name="Claude 3.5 Sonnet [Text]",
+        api_name="anthropic.claude-3-5-sonnet-20240620-v1:0",
+        has_image_support=False,
+    )
+
+    db.session.add_all([gpt4o2, gpt4o1, gpt3, claude1, claude2])
     db.session.flush()
 
     p_eva = Personality(
@@ -135,7 +141,7 @@ def _create_chat_data_and_assistant() -> None:
         personality_id="8f73b580-927e-41c2-98ac-e5df070e7288",
         gender="Female",
         pause_threshold=0.8,
-        assistant_model_id=claude.id,
+        assistant_model_id=claude2.id,
     )
     p_thomas = Personality(
         name="Thomas",
