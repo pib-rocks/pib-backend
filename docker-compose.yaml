@@ -218,25 +218,6 @@ services:
     networks:
       - pib-network
 
-  tinkerforge-brickd:
-    privileged: true
-    image: tinkerforge-brickd
-    profiles:
-      - motors
-    networks:
-      - pib-network
-    build:
-      context: .
-      dockerfile: Dockerfile.brickd
-    ports:
-      - "4223:4223"
-    tty: true
-    # Mount bricklets
-    devices:
-      - /dev/gpiomem:/dev/gpiomem
-    depends_on:
-      - flask-app
-
 volumes:
   db:
   programs:
