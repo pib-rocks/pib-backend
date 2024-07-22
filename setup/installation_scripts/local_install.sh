@@ -78,11 +78,11 @@ function install_tinkerforge() {
     PLATFORM_TYPE=$(uname -m)
     if [ "$PLATFORM_TYPE" != 'aarch64' ]; then
       echo "Installing Brick daemon for $PLATFORM_TYPE"
-      curl --location https://download.tinkerforge.com/tools/brickd/linux/brickd_linux_latest_amd64.deb --output  "$APP_DIR/brickd_linux_latest_amd64.deb"
+      curl --location https://download.tinkerforge.com/tools/brickd/linux/brickd-2.4.5_amd64.deb --output  "$APP_DIR/brickd_linux_latest_amd64.deb"
       sudo dpkg -i "$APP_DIR/brickd_linux_latest_amd64.deb" || { print ERROR "Failed install brickd"; return 1; }
     else
       echo "Installing Brick daemon for $PLATFORM_TYPE"
-      curl --location https://download.tinkerforge.com/tools/brickd/linux/brickd_linux_latest_arm64.deb --output "$APP_DIR/brickd_linux_latest_arm64.deb"
+      curl --location https://download.tinkerforge.com/tools/brickd/linux/brickd-2.4.5_arm64.deb --output "$APP_DIR/brickd_linux_latest_arm64.deb"
       sudo dpkg -i "$APP_DIR/brickd_linux_latest_arm64.deb" || { print ERROR "Failed install brickd"; return 1; }
     fi
     print INFO "Installed brick daemon"
