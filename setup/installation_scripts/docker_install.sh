@@ -65,7 +65,7 @@ function install_docker_engine() {
     fi
 
     (
-        pkgs="docker-ce${pkg_version%=}=5:26.1.4-1~ubuntu.22.04~jammy"
+        pkgs="docker-ce${pkg_version%=}"
         if version_gte "18.09"; then
             pkgs="$pkgs docker-ce-cli${cli_pkg_version%=} containerd.io"
         fi
