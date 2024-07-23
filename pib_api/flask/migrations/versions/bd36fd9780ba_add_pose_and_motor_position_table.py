@@ -1,17 +1,16 @@
 """add pose- and motor-position-table
 
-Revision ID: bd36fd9780ba
-Revises: 259579f4fe12
-Create Date: 2024-06-20 10:16:36.985356
+Revision ID: 7160a4f6951f
+Revises: 7a4053561c44
+Create Date: 2024-06-03 13:54:28.623744
 
 """
 
-from alembic import op
 import sqlalchemy as sa
-
+from alembic import op
 
 # revision identifiers, used by Alembic.
-revision = "bd36fd9780ba"
+revision = "7160a4f6951f"
 down_revision = "259579f4fe12"
 branch_labels = None
 depends_on = None
@@ -28,7 +27,6 @@ def upgrade():
         sa.UniqueConstraint("name"),
         sa.UniqueConstraint("pose_id"),
     )
-
     op.create_table(
         "motor_position",
         sa.Column("id", sa.Integer(), nullable=False),

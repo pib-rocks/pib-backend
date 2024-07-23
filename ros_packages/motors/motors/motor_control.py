@@ -140,10 +140,9 @@ class MotorControl(Node):
                         f"setting position {'succeeded' if successful else 'failed'}."
                     )
                     response.successful &= successful
-                    if successful:
-                        self.joint_trajectory_publisher.publish(
-                            as_joint_trajectory(motor.name, position)
-                        )
+                    self.joint_trajectory_publisher.publish(
+                        as_joint_trajectory(motor.name, position)
+                    )
         except Exception as e:
             response.successful = False
             self.get_logger().error(f"error while applying joint-trajectory: {str(e)}")
