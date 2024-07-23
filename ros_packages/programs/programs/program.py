@@ -61,7 +61,7 @@ class ProgramNode(Node):
             ProgramInput,
             "program_input",
             self.program_input_callback,
-            qos.QoSProfile(history=qos.HistoryPolicy.KEEP_ALL)
+            qos.QoSProfile(history=qos.HistoryPolicy.KEEP_ALL),
         )
 
         # perform cleanup periodically
@@ -80,9 +80,8 @@ class ProgramNode(Node):
     def cleanup(self) -> None:
         with self.process_lock:
             self.mpid_to_process = {
-                mpid: process 
-                for mpid, process 
-                in self.mpid_to_process.items()
+                mpid: process
+                for mpid, process in self.mpid_to_process.items()
                 if process.poll() is None
             }
 
@@ -93,12 +92,17 @@ class ProgramNode(Node):
                 process = self.mpid_to_process[program_input.mpid]
                 process.stdin.write(program_input.input + "\n")
             except KeyError:
-                self.get_logger().warn(f"attempted to provide input to process {program_input.mpid}, but no such process was found")
+                self.get_logger().warn(
+                    f"attempted to provide input to process {program_input.mpid}, but no such process was found"
+                )
             except BrokenPipeError:
-                self.get_logger().warn(f"attempted to provide input to process {program_input.mpid}, but it seems that the process has already terminated (broken pipe)")
+                self.get_logger().warn(
+                    f"attempted to provide input to process {program_input.mpid}, but it seems that the process has already terminated (broken pipe)"
+                )
             except Exception as e:
-                self.get_logger().error(f"unexpected error occured while trying to provide input to process: {e}")
-
+                self.get_logger().error(
+                    f"unexpected error occured while trying to provide input to process: {e}"
+                )
 
     def run_program_callback(self, goal_handle: ServerGoalHandle) -> RunProgram.Result:
 
@@ -143,9 +147,20 @@ class ProgramNode(Node):
 
         try:
             self.get_logger().info("starting execution of program...")
-            
-            run_python_program = [PYTHON_BINARY, UNBUFFERED_OUTPUT_FLAG, code_python_file_path]
-            process = Popen(run_python_program, stdout=PIPE, stderr=PIPE, stdin=PIPE, universal_newlines=True, bufsize=1)
+
+            run_python_program = [
+                PYTHON_BINARY,
+                UNBUFFERED_OUTPUT_FLAG,
+                code_python_file_path,
+            ]
+            process = Popen(
+                run_python_program,
+                stdout=PIPE,
+                stderr=PIPE,
+                stdin=PIPE,
+                universal_newlines=True,
+                bufsize=1,
+            )
             output_queue: Queue[Tuple[str, bool]] = Queue()
 
             def forward_io_to_connection(output: IO[str], is_stderr: bool) -> None:
@@ -166,7 +181,7 @@ class ProgramNode(Node):
             forward_stderr.start()
 
             # loop until either cancellation of goal is requested, or python-program terminated
-            while True:  
+            while True:
 
                 # if cancellation of the goal if requested, terminate the process
                 if goal_handle.is_cancel_requested:
@@ -189,7 +204,7 @@ class ProgramNode(Node):
                     feedback.output_lines = output_lines
                     feedback.mpid = mpid
                     goal_handle.publish_feedback(feedback)
-                
+
                 return_code = process.poll()
                 if return_code is not None:
                     if forward_stdout.is_alive() or forward_stderr.is_alive():
