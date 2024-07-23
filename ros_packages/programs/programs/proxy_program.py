@@ -100,9 +100,9 @@ class ProxyProgramNode(Node):
         def forward_feedback_to_publisher(feedback_message) -> None:
             feedback: RunProgram.Feedback = feedback_message.feedback
             proxy_feedback = ProxyRunProgramFeedback(
-                proxy_goal_id=proxy_goal_id, 
+                proxy_goal_id=proxy_goal_id,
                 output_lines=feedback.output_lines,
-                mpid=feedback.mpid
+                mpid=feedback.mpid,
             )
             self.feedback_publisher.publish(proxy_feedback)
 
