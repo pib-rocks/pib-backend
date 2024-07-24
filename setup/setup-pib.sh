@@ -152,7 +152,7 @@ function clone_repositories() {
 
 # Install update script; move animated eyes, etc.
 function move_setup_files() {
-  local update_target_dir="/usr/bin"
+  local update_target_dir="/usr/local/bin"
   sudo cp "$BACKEND_DIR/setup/update-pib.sh" "$update_target_dir/update-pib"
   sudo chmod 755 "$update_target_dir/update-pib"
   print SUCCESS "Installed update script"
@@ -172,7 +172,6 @@ function cleanup() {
     sudo rm -r "$HOME/app"
     print INFO "Removed repositories from $HOME due to local installation"
   fi
-  apt-get autoremove
   sudo rm /etc/sudoers.d/"$USER"
 }
 
