@@ -328,6 +328,49 @@ paths:
         '500':
           $ref: '#/components/responses/500'
   /voice-assistant/chat/{chat-id}/messages/{message-id}:
+    get:
+      tags:
+        - chat
+      summary: Get message of a voice assistant chat by chat id and message id
+      operationId: getAllVoiceAssistantChatMessageByChatIdAndMessageId
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoiceAssistantChatMessage'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+    put:
+      tags:
+        - chat
+      summary: Edit an existing message of an voice assistant
+      operationId: editVoiceAssistantChatMessage
+      requestBody:
+        description: Edit an existing message of an voice assistant
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VoiceAssistantChatMessage'
+      responses:
+        '201':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoiceAssistantChatMessage'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
     parameters:
       - name: chat-id
         in: path
@@ -346,6 +389,36 @@ paths:
       responses:
         '204':
           $ref: '#/components/responses/204'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+  /voice-assistant/chat/{chat-id}/messages/history/{length}:
+    parameters:
+      - name: chat-id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: length
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      tags:
+        - chat
+      summary: Get all messages of a voice assistant chat by chat id
+      operationId: getAllVoiceAssistantChatMessagesWithHistoryLegth
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoiceAssistantChatMessages'
         '400':
           $ref: '#/components/responses/400'
         '404':
@@ -720,7 +793,7 @@ paths:
             schema:
               $ref: '#/components/schemas/Pose'
       responses:
-        '200':
+        '201':
           description: OK
           content:
             application/json:
@@ -1489,6 +1562,16 @@ components:
           items:
             $ref: '#/components/schemas/AssistantModel'
     Error:
+      required:
+        - Error
+      type: object
+      properties:
+        error:
+          type: string
+          examples: 
+            - An error occurred
+            - The requested resource is not available
+    NotFoundError:
         required:
           - Error
         type: object
@@ -1496,8 +1579,7 @@ components:
           error:
             type: string
             examples: 
-              - An error occurred
-              - The requested resource is not available
+              - Entity not found. Please check your path parameter.
   responses:
     '204':
       description: No Content        
@@ -1512,7 +1594,7 @@ components:
       content:
         application/json:
           schema: 
-            $ref: '#/components/schemas/Error'
+            $ref: '#/components/schemas/NotFoundError'
     '500':
       description: Internal Server Error
       content:

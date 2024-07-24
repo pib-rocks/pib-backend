@@ -5,7 +5,7 @@ After=network.target
 [Service]
 Type=simple
 User=pib
-ExecStart=bash -c "source /etc/nvm/nvm.sh && node /home/pib/pib_blockly_server/dist/pib_blockly_server_bundle.js"
+ExecStart=bash -c "source $HOME/.nvm/nvm.sh && node /home/pib/pib_blockly_server/dist/pib_blockly_server_bundle.js"
 
 [Install]
 WantedBy=multi-user.target

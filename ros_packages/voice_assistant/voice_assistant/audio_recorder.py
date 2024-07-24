@@ -2,6 +2,7 @@ import os
 import wave
 from collections import deque
 from threading import Lock
+from typing import Optional
 
 import numpy as np
 import pyaudio
@@ -12,6 +13,7 @@ from rclpy.action import CancelResponse, GoalResponse
 from rclpy.action.server import ServerGoalHandle
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
+from std_msgs.msg import String
 
 from public_api_client import public_voice_client
 from . import util
@@ -19,11 +21,11 @@ from . import util
 # these values define the pcm-encoding, in which the recorded
 # audio will be received
 BYTES_PER_SAMPLE = 2
-FRAMES_PER_SECOND = 16000
+FRAMES_PER_SECOND = 48000
 NUM_CHANNELS = 1
 CHUNKS_PER_SECOND = 10
 
-FRAMES_PER_CHUNK = FRAMES_PER_SECOND // CHUNKS_PER_SECOND
+FRAMES_PER_CHUNK = 1024
 
 # TODO: his value should not be hardcoded, as the optimal value
 # depends on the level of background noise.
@@ -40,6 +42,7 @@ class AudioRecorderNode(Node):
     def __init__(self):
 
         super().__init__("audio_recorder")
+        self.token: Optional[str] = None
 
         self.goal_queue: deque[ServerGoalHandle] = deque()
         self.goal_queue_lock = Lock()
@@ -53,8 +56,15 @@ class AudioRecorderNode(Node):
             handle_accepted_callback=self.handle_accepted_goal,
             cancel_callback=(lambda _: CancelResponse.ACCEPT),
         )
+        self.get_token_subscription = self.create_subscription(
+            String, "public_api_token", self.get_public_api_token_listener, 10
+        )
 
         self.get_logger().info("Now running AUDIO RECORDER")
+
+    def get_public_api_token_listener(self, msg):
+        token = msg.data
+        self.token = token
 
     def handle_accepted_goal(self, goal_handle: ServerGoalHandle) -> GoalResponse:
         """place a goal into the queue and start execution if the queue was empty before"""
@@ -171,7 +181,7 @@ class AudioRecorderNode(Node):
 
         # transcribe the audio data
         try:
-            text = public_voice_client.speech_to_text(data)
+            text = public_voice_client.speech_to_text(data, self.token)
         except Exception as e:
             self.get_logger().error(f"failed speech_to_text: {e}")
             goal_handle.abort()

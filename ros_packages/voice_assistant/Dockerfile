@@ -20,14 +20,13 @@ RUN apt-get update --fix-missing && \
 COPY ./ros_packages/requirements.txt .
 
 RUN pip install requests
+RUN pip install pyaudio
 
 COPY ./pib_api/client ./client
 RUN pip install ./client
 
 COPY ./public_api_client ./public_api_client
 RUN pip install ./public_api_client/
-
-RUN pip install pyaudio
 
 COPY ./ros_packages/datatypes ros2_ws/datatypes
 COPY ./ros_packages/voice_assistant ros2_ws/voice_assistant
