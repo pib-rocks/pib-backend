@@ -793,7 +793,7 @@ paths:
             schema:
               $ref: '#/components/schemas/Pose'
       responses:
-        '200':
+        '201':
           description: OK
           content:
             application/json:
@@ -1562,6 +1562,16 @@ components:
           items:
             $ref: '#/components/schemas/AssistantModel'
     Error:
+      required:
+        - Error
+      type: object
+      properties:
+        error:
+          type: string
+          examples: 
+            - An error occurred
+            - The requested resource is not available
+    NotFoundError:
         required:
           - Error
         type: object
@@ -1569,8 +1579,7 @@ components:
           error:
             type: string
             examples: 
-              - An error occurred
-              - The requested resource is not available
+              - Entity not found. Please check your path parameter.
   responses:
     '204':
       description: No Content        
@@ -1585,7 +1594,7 @@ components:
       content:
         application/json:
           schema: 
-            $ref: '#/components/schemas/Error'
+            $ref: '#/components/schemas/NotFoundError'
     '500':
       description: Internal Server Error
       content:
