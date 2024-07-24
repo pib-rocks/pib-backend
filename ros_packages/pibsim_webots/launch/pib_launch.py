@@ -13,7 +13,7 @@ def generate_launch_description():
     webots = WebotsLauncher(world=os.path.join(package_dir, "worlds", "PibSim.wbt"))
 
     pib_driver = WebotsController(
-        robot_name="PibSimple",
+        robot_name="pib",
         parameters=[
             {"robot_description": robot_description_path},
         ],
