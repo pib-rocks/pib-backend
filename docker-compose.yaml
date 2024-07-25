@@ -208,16 +208,6 @@ services:
     networks:
       - pib-network
 
-  rosbridge-ws:
-    build:
-      context: ./ros_packages
-      dockerfile: ./rosbridge/Dockerfile
-    ports:
-      - 9090:9090
-    command: ros2 launch rosbridge_server rosbridge_websocket_launch.xml
-    networks:
-      - pib-network
-
 volumes:
   db:
   programs:
