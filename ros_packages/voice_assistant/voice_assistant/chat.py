@@ -5,9 +5,10 @@ from typing import Optional
 import rclpy
 import datetime
 from datatypes.action import Chat
-from datatypes.msg import ChatMessage
+from datatypes.msg import ChatMessage as RosChatMessage
 from datatypes.srv import GetCameraImage
 from pib_api_client import voice_assistant_client
+from pib_api_client.voice_assistant_client import ChatMessage as PibApiChatMessage
 from public_api_client.public_voice_client import PublicApiChatMessage
 from rclpy.action import ActionServer
 from rclpy.action import CancelResponse
@@ -52,7 +53,7 @@ class ChatNode(Node):
 
         # Publisher for ChatMessages
         self.chat_message_publisher: Publisher = self.create_publisher(
-            ChatMessage, "chat_messages", 10
+            RosChatMessage, "chat_messages", 10
         )
         self.get_camera_image_client = self.create_client(
             GetCameraImage, "get_camera_image"
@@ -68,67 +69,54 @@ class ChatNode(Node):
 
         self.get_logger().info("Now running CHAT")
 
-    def get_public_api_token_listener(self, msg):
+    def get_public_api_token_listener(self, msg: String) -> None:
         token = msg.data
         self.token = token
 
-    def create_chat_message(
-        self,
-        chat_id: str,
-        text: str,
-        is_user: bool,
-        update_message: bool,
-        update_database: bool,
-    ) -> None:
-        """writes a new chat-message to the db, and publishes it to the 'chat_messages'-topic"""
-
-        if text == "":
-            return
-
-        with self.voice_assistant_client_lock:
-            if update_message:
-                if update_database:
-                    self.message_content = f"{self.message_content} {text}"
-                    successful, chat_message = (
-                        voice_assistant_client.update_chat_message(
-                            chat_id,
-                            self.message_content,
-                            is_user,
-                            self.last_pib_message_id,
-                        )
-                    )
-                    if not successful:
-                        self.get_logger().error(
-                            f"unable to create chat message: {(chat_id, text, is_user, update_message, update_database)}"
-                        )
-                        return
-                else:
-                    self.message_content = f"{self.message_content} {text}"
-            else:
-                successful, chat_message = voice_assistant_client.create_chat_message(
-                    chat_id, text, is_user
-                )
-                self.get_logger().info(
-                    f"unable to create chat message: {(chat_id, text, is_user, update_message, update_database)}"
-                )
-                self.last_pib_message_id = chat_message.message_id
-                self.message_content = text
-            if not successful:
-                self.get_logger().error(
-                    f"unable to create chat message: {(chat_id, text, is_user, update_message, update_database)}"
-                )
-                return
-        chat_message_ros = ChatMessage()
+    def publish_chat_message(self, pib_api_chat_message: PibApiChatMessage, chat_id: str) -> None:
+        chat_message_ros = RosChatMessage()
         chat_message_ros.chat_id = chat_id
-        chat_message_ros.content = self.message_content
-        chat_message_ros.is_user = is_user
-        chat_message_ros.message_id = self.last_pib_message_id
-        chat_message_ros.timestamp = datetime.datetime.now().strftime(
-            "%Y-%m-%d %H:%M:%S"
-        )
-
+        chat_message_ros.content = pib_api_chat_message.content
+        chat_message_ros.is_user = pib_api_chat_message.is_user
+        chat_message_ros.message_id = pib_api_chat_message.message_id
+        chat_message_ros.timestamp = pib_api_chat_message.timestamp
         self.chat_message_publisher.publish(chat_message_ros)
 
+    def update_chat_message(self, chat_id: str, message_id: str, delta: str):
+        """updates a chat-message in the db and publishes the updated method to the 'chat_messages'-topic"""
+        with self.voice_assistant_client_lock:
+            successful, chat_message = (
+                voice_assistant_client.extend_chat_message(
+                    chat_id,
+                    message_id,
+                    delta,
+                )
+            )
+            if not successful:
+                self.get_logger().error(
+                    f"unable to update chat message: {(chat_id, message_id, delta)}"
+                )
+                return
+            self.publish_chat_message(chat_message)
+
+    def create_chat_message(self, chat_id: str, text: str, is_user: bool) -> str:
+        """writes a new chat-message to the db, and publishes it to the 'chat_messages'-topic"""
+        if text == "": # TODO
+            return
+        with self.voice_assistant_client_lock:
+            successful, chat_message = voice_assistant_client.create_chat_message(
+                chat_id, 
+                text, 
+                is_user
+            )
+            if not successful:
+                self.get_logger().error(
+                    f"unable to create chat message: {(chat_id, text, is_user)}"
+                )
+                return
+        self.publish_chat_message(chat_message)
+        return chat_message.message_id
+    
     async def chat(self, goal_handle: ServerGoalHandle):
         """callback function for 'chat'-action"""
 
@@ -141,8 +129,8 @@ class ChatNode(Node):
         generate_code: bool = request.generate_code
 
         # create the user message
-        self.executor.create_task(
-            self.create_chat_message, chat_id, content, True, False, True
+        self.executor.create_task( #######################
+            self.create_chat_message, chat_id, content, True
         )
 
         # get the personality that is associated with the request chat-id from the pib-api
@@ -212,7 +200,7 @@ class ChatNode(Node):
             # previously collected text, that is waiting to be published as feedback
             prev_text: Optional[str] = None
             # for tracking if a message is an update or a new message
-            bool_update_chat_message: bool = False
+            message_id: Optional[str] = None
 
             for token in tokens:
 
@@ -248,15 +236,18 @@ class ChatNode(Node):
                         prev_text_type = Chat.Goal.TEXT_TYPE_CODE_VISUAL
                         # create a chat message from the visual-code, including opening and closing tags
                         chat_message_text = code_visual_match.group(0)
-                        self.executor.create_task(
-                            self.create_chat_message,
-                            chat_id,
-                            chat_message_text,
-                            False,
-                            bool_update_chat_message,
-                            True,
-                        )
-                        bool_update_chat_message = True
+                        if message_id is not None:
+                            message_id = self.create_chat_message(chat_id, chat_message_text, False)
+                        else:
+                            self.update_chat_message(chat_id, message_id, chat_message_text)
+                        # self.executor.create_task( #############################
+                        #     self.create_chat_message,
+                        #     chat_id,
+                        #     chat_message_text,
+                        #     False,
+                        #     bool_update_chat_message,
+                        # )
+                        # bool_update_chat_message = True
                         # strip the current text
                         curr_text = curr_text[code_visual_match.end() :].rstrip()
                         continue
@@ -274,15 +265,18 @@ class ChatNode(Node):
                         prev_text_type = Chat.Goal.TEXT_TYPE_SENTENCE
                         # create a chat message from the visual-code, including opening and closing tags
                         chat_message_text = sentence
-                        self.executor.create_task(
-                            self.create_chat_message,
-                            chat_id,
-                            chat_message_text,
-                            False,
-                            bool_update_chat_message,
-                            True,
-                        )
-                        bool_update_chat_message = True
+                        if message_id is not None:
+                            message_id = self.create_chat_message(chat_id, chat_message_text, False)
+                        else:
+                            self.update_chat_message(chat_id, message_id, chat_message_text)
+                        # self.executor.create_task(
+                        #     self.create_chat_message, #################################
+                        #     chat_id,
+                        #     chat_message_text,
+                        #     False,
+                        #     bool_update_chat_message,
+                        # )
+                        # bool_update_chat_message = True
                         # strip the current text
                         curr_text = curr_text[
                             sentence_match.end(

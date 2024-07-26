@@ -11,3 +11,4 @@ class ChatMessageSchemaSQLAutoWith(SQLAutoWithCamelCaseSchema):
 chat_message_schema = ChatMessageSchemaSQLAutoWith()
 chat_messages_schema = ChatMessageSchemaSQLAutoWith(many=True)
 chat_message_post_schema = ChatMessageSchemaSQLAutoWith(only=("is_user", "content"))
+chat_message_patch_schema = ChatMessageSchemaSQLAutoWith(only=("content",))
