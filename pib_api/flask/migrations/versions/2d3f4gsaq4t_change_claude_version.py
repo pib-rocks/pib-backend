@@ -36,13 +36,34 @@ def upgrade():
         )
         conn.execute(
             sa.text(
-                """
+            """
             INSERT OR IGNORE INTO assistant_model (api_name, visual_name, has_image_support)
             VALUES ('anthropic.claude-3-5-sonnet-20240620-v1:0', 'Claude 3.5 Sonnet [Text]', false)
             """
             )
         )
 
-
 def downgrade():
-    pass
+        
+    conn = op.get_bind()
+
+    result = conn.execute(sa.text("SELECT COUNT(*) FROM assistant_model"))
+    count = result.scalar()
+
+    if count > 0:
+        conn.execute(
+            sa.text(
+                """
+                DELETE FROM assistant_model WHERE visual_name = 'Claude 3.5 Sonnet [Text]'
+                """
+            )
+        )
+        conn.execute(
+            sa.text(
+                """
+                UPDATE assistant_model
+                SET api_name = 'anthropic.claude-3-sonnet-20240229-v1:0', visual_name = 'Claude 3 Sonnet [Vision]', has_image_support = true
+                WHERE api_name = 'anthropic.claude-3-5-sonnet-20240620-v1:0';
+                """
+            )
+        )
