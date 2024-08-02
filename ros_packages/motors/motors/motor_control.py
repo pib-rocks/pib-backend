@@ -2,9 +2,9 @@ from typing import Iterable, Tuple
 import rclpy
 from rclpy.node import Node
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
-from datatypes.srv import ApplyMotorSettings, ApplyJointTrajectory
+from datatypes.srv import ApplyMotorSettings, ApplyJointTrajectory, ApplyPose
 from datatypes.msg import MotorSettings
-from pib_api_client import motor_client
+from pib_api_client import motor_client, pose_client
 from pib_motors.motor import name_to_motors, motors
 from pib_motors.bricklet import ipcon
 from pib_motors.update_bricklet_uids import *
@@ -73,6 +73,11 @@ class MotorControl(Node):
         # Publisher for MotorSettings
         self.motor_settings_publisher = self.create_publisher(
             MotorSettings, "motor_settings", 10
+        )
+
+        # Service for Pose
+        self.srv = self.create_service(
+            ApplyPose, "apply_pose", self.apply_pose
         )
 
         # load motor-settings if not in dev mode
@@ -147,6 +152,25 @@ class MotorControl(Node):
             response.successful = False
             self.get_logger().error(f"error while applying joint-trajectory: {str(e)}")
         return response
+    
+    def apply_pose(
+            self,
+            request: ApplyPose.Request,
+            response: ApplyPose.Response
+    ) -> ApplyPose.Response:
+        self.get_logger().info(f"Pose ID: {request.pose_id}")
+        successful, motor_positions = pose_client.get_motor_positions_of_pose(request.pose_id)
+        for motor_position in motor_positions["motorPositions"]:
+            motor_name = motor_position["motorName"]
+            position = motor_position["position"]
+
+            jt_response = self.apply_joint_trajectory(as_joint_trajectory(motor_name, position))
+            response.successful = jt_response.successful
+            if not response.successful:
+                break
+            
+        return response
+        
 
 
 def main(args=None):
