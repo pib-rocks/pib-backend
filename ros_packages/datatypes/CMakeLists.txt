@@ -34,6 +34,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
 	"srv/EncryptToken.srv"
 	"srv/DecryptToken.srv"
 	"srv/GetTokenExists.srv"
+	"srv/ApplyPose.srv"
 	"action/RunProgram.action"
 	"action/RecordAudio.action"
 	"action/Chat.action"
