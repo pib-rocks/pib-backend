@@ -1,13 +1,14 @@
 from typing import Iterable, Tuple
+
 import rclpy
+from datatypes.msg import MotorSettings
+from datatypes.srv import ApplyMotorSettings, ApplyJointTrajectory, ApplyPose
+from pib_api_client import motor_client, pose_client
+from pib_motors.bricklet import ipcon
+from pib_motors.motor import name_to_motors, motors
+from pib_motors.update_bricklet_uids import *
 from rclpy.node import Node
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
-from datatypes.srv import ApplyMotorSettings, ApplyJointTrajectory, ApplyPose
-from datatypes.msg import MotorSettings
-from pib_api_client import motor_client, pose_client
-from pib_motors.motor import name_to_motors, motors
-from pib_motors.bricklet import ipcon
-from pib_motors.update_bricklet_uids import *
 
 
 def motor_settings_ros_to_dto(ms: MotorSettings):
@@ -76,9 +77,7 @@ class MotorControl(Node):
         )
 
         # Service for Pose
-        self.srv = self.create_service(
-            ApplyPose, "apply_pose", self.apply_pose
-        )
+        self.srv = self.create_service(ApplyPose, "apply_pose", self.apply_pose)
 
         # load motor-settings if not in dev mode
         if not self.dev:
@@ -152,25 +151,36 @@ class MotorControl(Node):
             response.successful = False
             self.get_logger().error(f"error while applying joint-trajectory: {str(e)}")
         return response
-    
+
     def apply_pose(
-            self,
-            request: ApplyPose.Request,
-            response: ApplyPose.Response
+        self, request: ApplyPose.Request, response: ApplyPose.Response
     ) -> ApplyPose.Response:
         self.get_logger().info(f"Pose ID: {request.pose_id}")
-        successful, motor_positions = pose_client.get_motor_positions_of_pose(request.pose_id)
+        successful, motor_positions = pose_client.get_motor_positions_of_pose(
+            request.pose_id
+        )
+        if not successful:
+            response.successful = False
+            return response
+
+        jt = JointTrajectory()
+        jt.joint_names = []
+
         for motor_position in motor_positions["motorPositions"]:
             motor_name = motor_position["motorName"]
             position = motor_position["position"]
 
-            jt_response = self.apply_joint_trajectory(as_joint_trajectory(motor_name, position))
-            response.successful = jt_response.successful
-            if not response.successful:
-                break
-            
+            jt.joint_names.append(motor_name)
+            point = JointTrajectoryPoint()
+            point.positions.append(position)
+            jt.points.append(point)
+
+        req = ApplyJointTrajectory.Request()
+        req.joint_trajectory = jt
+        resp = ApplyJointTrajectory.Response()
+        resp.successful = resp.successful
+
         return response
-        
 
 
 def main(args=None):
