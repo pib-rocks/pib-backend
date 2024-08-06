@@ -1,6 +1,7 @@
+from dataclasses import dataclass
 import re
 from threading import Lock
-from typing import Optional
+from typing import Callable, Iterable, Optional, Tuple
 
 import rclpy
 import datetime
@@ -25,6 +26,60 @@ from public_api_client import public_voice_client
 # if it is specified that code should be generated. The text will contain
 # instruction for the llm on how to generate the code. For now, it is left blank
 CODE_DESCRIPTION_PREFIX = ""
+
+@dataclass
+class ResponseSection:
+    """
+    represents one section of the asssistant's response - either a natural-language sentence or a code visual block (indicated by the 'type' field)
+
+    for a natural-language sentence, the 'core' field represents the actual sentence and the 'total' field contains possible leading/trailing whitespaces
+    e.g.: core = "this is a sentence.", total = "   this is a sentence.    "
+
+    for a visual-code-block, the 'core' field represents the actual code, and the 'total' field contains additionally the '<pib-program></pib-program>'
+    tags + possible leading/trailing whitespaces, 
+    e.g: core = "print('hello world')", total = " <pib-program>print('hello world')</pib-program>  "
+
+    The 'final' field indicates, whether this is the final section of the assistatnt's response 
+    """
+    core: str
+    total: str
+    type: bytes
+    final: bool
+
+### regex for matching response-sections ###
+
+# matches a visual-code block, that is not the final section of the response
+INTERMEDIATE_CODE_VISUAL = r"^(\\s*)<pib-program>(.*?)</pib-program>(?=(\\s*)(\\S))"
+# the group of a match that represents the core of the section
+INTERMEDIATE_CODE_VISUAL_CORE = 2
+# the group of a match that represents the total section
+INTERMEDIATE_CODE_VISUAL_TOTAL = 0
+
+# matches a natural-language-sentence that is not the final section of the response
+INTERMEDIATE_SENTENCE = r"(\\s*)(((.*?)([^\d | ^A-Z][\.|!|\?|:])(?=(\\s*)(\\S)))|((.*)(\\S)(?=(\\s*)<pib-program>)))"
+# the group of a match that represents the core of the section
+INTERMEDIATE_SENTENCE_CORE = 2
+# the group of a match that represents the total section
+INTERMEDIATE_SENTENCE_TOTAL = 0
+
+# matches the final visual-code block
+FINAL_CODE_VISUAL = r"^(\\s*)<pib-program>(.*?)</pib-program>(\\s*)"
+# the group of a match that represents the core of the section
+FINAL_CODE_VISUAL_CORE = 2
+# the group of a match that represents the total section
+FINAL_CODE_VISUAL_TOTAL = 0
+
+# matches the final natural-language sentence
+FINAL_SENTENCE = r"^(\\s*)(.*?)(\\s*)$"
+# the group of a match that represents the core of the section
+FINAL_SENTENCE_CORE = 2
+# the group of a match that represents the total section
+FINAL_SENTENCE_TOTAL = 0
+
+### constants representing response-section types ###
+
+SENTENCE_TYPE = Chat.Goal.TEXT_TYPE_SENTENCE
+CODE_VISUAL_TYPE = Chat.Goal.TEXT_TYPE_CODE_VISUAL
 
 
 class ChatNode(Node):
@@ -97,12 +152,10 @@ class ChatNode(Node):
                     f"unable to update chat message: {(chat_id, message_id, delta)}"
                 )
                 return
-            self.publish_chat_message(chat_message)
+        self.publish_chat_message(chat_message)
 
     def create_chat_message(self, chat_id: str, text: str, is_user: bool) -> str:
         """writes a new chat-message to the db, and publishes it to the 'chat_messages'-topic"""
-        if text == "": # TODO
-            return
         with self.voice_assistant_client_lock:
             successful, chat_message = voice_assistant_client.create_chat_message(
                 chat_id, 
@@ -184,127 +237,85 @@ class ChatNode(Node):
                     public_api_token=self.token,
                 )
 
-            # regex for indentifying sentences
-            sentence_pattern = re.compile(
-                r"^(?!<pib-program>)(.*?)(([^\d | ^A-Z][\.|!|\?|:])|<pib-program>)",
-                re.DOTALL,
-            )
-            # regex-pattern for indentifying visual-code blocks
-            code_visual_pattern = re.compile(
-                r"^<pib-program>(.*?)</pib-program>", re.DOTALL
-            )
-
-            # the text that was currently collected by chaining together tokens
-            # at any given point in time, this string must not contain any leading whitespaces!
-            curr_text: str = ""
-            # previously collected text, that is waiting to be published as feedback
-            prev_text: Optional[str] = None
             # for tracking if a message is an update or a new message
             message_id: Optional[str] = None
 
-            for token in tokens:
+            # transform assistant response from sequence of tokens to sequence of response-sections
+            response_sections = self.tokens_to_sections(tokens, goal_handle.canceled)
 
-                if prev_text is not None:
-                    # publish the previously collected text in form of feedback
+            for section in response_sections:
+
+                if message_id is None:
+                    message_id = self.create_chat_message(chat_id, section.total, False)
+                else:
+                    self.update_chat_message(chat_id, message_id, section.total)
+                if section.final:
+                    result = Chat.Result()
+                    result.text = section.core
+                    result.text_type = section.type
+                    goal_handle.succeed()
+                    return result
+                else:
                     feedback = Chat.Feedback()
-                    feedback.text = prev_text
-                    feedback.text_type = prev_text_type
+                    feedback.text = section.core
+                    feedback.text_type = section.type
                     goal_handle.publish_feedback(feedback)
-                    prev_text = None
-                    prev_text_type = None
-
-                # add token to current text; remove leading white-spaces, if current-text is empty
-                curr_text = curr_text + (
-                    token if len(curr_text) > 0 else token.lstrip()
-                )
-
-                while (
-                    True
-                ):  # loop until current-text was not stripped during current iteration
-
-                    # if the goal was cancelled, return immediately
-                    if goal_handle.is_cancel_requested:
-                        goal_handle.canceled()
-                        return Chat.Result()
-
-                    # check if the collected text is visual-code
-                    code_visual_match = code_visual_pattern.search(curr_text)
-                    if code_visual_match is not None:
-                        # extract the visual-code by removing the opening + closing tag and store it as previous text
-                        code_visual = code_visual_match.group(1)
-                        prev_text = code_visual
-                        prev_text_type = Chat.Goal.TEXT_TYPE_CODE_VISUAL
-                        # create a chat message from the visual-code, including opening and closing tags
-                        chat_message_text = code_visual_match.group(0)
-                        if message_id is not None:
-                            message_id = self.create_chat_message(chat_id, chat_message_text, False)
-                        else:
-                            self.update_chat_message(chat_id, message_id, chat_message_text)
-                        # self.executor.create_task( #############################
-                        #     self.create_chat_message,
-                        #     chat_id,
-                        #     chat_message_text,
-                        #     False,
-                        #     bool_update_chat_message,
-                        # )
-                        # bool_update_chat_message = True
-                        # strip the current text
-                        curr_text = curr_text[code_visual_match.end() :].rstrip()
-                        continue
-
-                    # check if collected text is a sentence
-                    sentence_match = sentence_pattern.search(curr_text)
-                    if sentence_match is not None:
-                        # extract the visual-code by removing the opening + closing tag and store it as previous text
-                        sentence = sentence_match.group(1) + (
-                            sentence_match.group(3)
-                            if sentence_match.group(3) is not None
-                            else ""
-                        )
-                        prev_text = sentence
-                        prev_text_type = Chat.Goal.TEXT_TYPE_SENTENCE
-                        # create a chat message from the visual-code, including opening and closing tags
-                        chat_message_text = sentence
-                        if message_id is not None:
-                            message_id = self.create_chat_message(chat_id, chat_message_text, False)
-                        else:
-                            self.update_chat_message(chat_id, message_id, chat_message_text)
-                        # self.executor.create_task(
-                        #     self.create_chat_message, #################################
-                        #     chat_id,
-                        #     chat_message_text,
-                        #     False,
-                        #     bool_update_chat_message,
-                        # )
-                        # bool_update_chat_message = True
-                        # strip the current text
-                        curr_text = curr_text[
-                            sentence_match.end(
-                                3 if sentence_match.group(3) is not None else 1
-                            ) :
-                        ].rstrip()
-                        continue
-
-                    break
 
         except Exception as e:
             self.get_logger().error(f"failed to send request to public-api: {e}")
             goal_handle.abort()
             return Chat.Result()
 
-        # return the rest of the received text, that has not been forwarded as feedback
-        goal_handle.succeed()
+        # we only end up here, if the goal was cancelled
+        return Chat.Result()
 
-        # return the result
-        result = Chat.Result()
-        if prev_text is None:
-            result.text = curr_text
-            result.text_type = Chat.Goal.TEXT_TYPE_SENTENCE
+    def tokens_to_sections(self, tokens: Iterable[str], is_cancelled: Callable[[], bool]) -> Iterable[ResponseSection]:
+        """
+        transforms an assistant-response received in form of a sequence of tokens, into a sequence of response-sections.
+        stops prematurely, if 'is_cancelled()' yields 'True' at some point
+        """
+
+        sentence_pattern = re.compile(INTERMEDIATE_SENTENCE, re.DOTALL)
+        code_visual_pattern = re.compile(INTERMEDIATE_CODE_VISUAL, re.DOTALL)
+        final_code_visual_pattern = re.compile(FINAL_CODE_VISUAL, re.DOTALL)
+        final_sentence_pattern = re.compile(FINAL_SENTENCE, re.DOTALL)
+
+        response = ""
+
+        for token in tokens:
+            if is_cancelled():
+                self.get_logger().info("response-section generation cancelled")
+                return
+            response += token
+            while True:
+                sentence_match = sentence_pattern.search(response)
+                if sentence_match is not None:
+                    core = sentence_match[INTERMEDIATE_SENTENCE_CORE]
+                    total = sentence_match[INTERMEDIATE_SENTENCE_TOTAL]
+                    text = text[len(total):]
+                    yield ResponseSection(core, total, SENTENCE_TYPE, False)
+                    continue
+                code_visual_match = code_visual_pattern.search(response)
+                if code_visual_match is not None:
+                    core = code_visual_match[INTERMEDIATE_CODE_VISUAL_CORE]
+                    total = code_visual_match[INTERMEDIATE_CODE_VISUAL_TOTAL]
+                    text = text[len(total):]
+                    yield ResponseSection(core, total, CODE_VISUAL_TYPE, False)
+                    continue
+                break
+        
+        final_code_visual_match = final_code_visual_pattern.search(response)
+        if final_code_visual_match is not None:
+            core = final_code_visual_match[FINAL_CODE_VISUAL_CORE]
+            total = final_code_visual_match[FINAL_CODE_VISUAL_TOTAL]
+            yield ResponseSection(core, total, CODE_VISUAL_TYPE, True)
         else:
-            result.text = prev_text
-            result.text_type = prev_text_type
-        return result
+            final_sentence_match = final_sentence_pattern.search(response)
+            core = final_sentence_match[FINAL_SENTENCE_CORE]
+            total = final_sentence_match[FINAL_SENTENCE_TOTAL]
+            yield ResponseSection(core, total, SENTENCE_TYPE, True)
 
+            
 
 def main(args=None):
 
