@@ -12,6 +12,6 @@ except FileNotFoundError:
 if not tryb_url_prefix:
     raise RuntimeError(f"no tryb configuration found")
 
-SPEECH_TO_TEXT_URL = f"{tryb_url_prefix}/public-api/conversions/speech-to-text"
-TEXT_TO_SPEECH_URL = f"{tryb_url_prefix}/public-api/conversions/text-to-speech"
-VOICE_ASSISTANT_TEXT_URL = f"{tryb_url_prefix}/public-api/voice-assistant/text"
+SPEECH_TO_TEXT_URL = f"{tryb_url_prefix}/bff/tt/be/pub/api/conversions/speech-to-text"
+TEXT_TO_SPEECH_URL = f"{tryb_url_prefix}/bff/tt/be/pub/api/conversions/text-to-speech"
+VOICE_ASSISTANT_TEXT_URL = f"{tryb_url_prefix}/bff/tt/be/pub/api/voice-assistant/text"
