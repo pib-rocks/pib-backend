@@ -10,4 +10,5 @@ string source # the source of the code that should be exectuted
 ---
 int8 exit_code -1
 ---
+uint32 mpid
 ProgramOutputLine[] output_lines
