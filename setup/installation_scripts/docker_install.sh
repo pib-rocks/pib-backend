@@ -12,6 +12,14 @@ version_gte() {
 	version_compare "$VERSION" "$1"
 }
 
+# create a systemd-service that adds the 'local:'-host to the x-server's access-control-list on each startup,
+# allowing applications from within a docker container to access the x-server on the host os
+function create_xhost_service() {
+    sudo mv "$BACKEND_DIR/setup/setup_files/xhost_enable_local.service" /etc/systemd/xhost_enable_local.service
+    sudo chmod 700 /etc/systemd/xhost_enable_local.service
+    sudo systemctl enable /etc/systemd/xhost_enable_local.service --now
+}
+
 
 # Installs the Docker Engine on supported linux distributions (ubuntu, debian, raspbian)
 function install_docker_engine() {
@@ -90,5 +98,6 @@ function start_container() {
     print SUCCESS "Started cerebra container"
 }
 
+create_xhost_service || print ERROR "failed to create service for xhost permission management"
 install_docker_engine || print ERROR "failed to install docker engine"
 start_container || print ERROR "failed to start containers"
