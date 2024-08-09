@@ -109,8 +109,8 @@ def update_chat_message(
     return successful, ChatMessage(chat_message_dto)
 
 
-def extend_chat_message(chat_id: str, message_id: str, delta: str) -> Tuple[bool, ChatMessage]:
-    data = json.dumps({"content": delta}).encode("UTF-8")
+def append_to_chat_message(chat_id: str, message_id: str, delta: str) -> Tuple[bool, ChatMessage]:
+    data = json.dumps({"delta": delta}).encode("UTF-8")
     request = Request(
         CHAT_MESSAGES_URL % chat_id + "/" + message_id,
         method="PATCH",

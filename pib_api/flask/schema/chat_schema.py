@@ -1,19 +1,18 @@
-from marshmallow import fields
-from model.chat_model import Chat
-from schema.chat_message_schema import chat_messages_schema
+from model.chat_message_model import ChatMessage
 from schema.sql_auto_with_camel_case_schema import SQLAutoWithCamelCaseSchema
+from marshmallow import Schema, fields
 
 
-class ChatSchemaSQLAutoWith(SQLAutoWithCamelCaseSchema):
+class ChatMessageSchemaSQLAutoWith(SQLAutoWithCamelCaseSchema):
     class Meta:
-        model = Chat
-        exclude = ("id",)
+        model = ChatMessage
+        exclude = ("id", "chat_id")
 
-    personality_id = fields.String()
-    messages = fields.Nested(chat_messages_schema)
+class ChatMessageDeltaSchema(Schema):
+    delta = fields.Str(required=True)
 
 
-chat_schema = ChatSchemaSQLAutoWith(exclude=("messages",))
-chats_schema = ChatSchemaSQLAutoWith(many=True, exclude=("messages",))
-upload_chat_schema = ChatSchemaSQLAutoWith(only=["topic", "personality_id"])
-chat_messages_only_schema = ChatSchemaSQLAutoWith(only=("messages",))
+chat_message_schema = ChatMessageSchemaSQLAutoWith()
+chat_messages_schema = ChatMessageSchemaSQLAutoWith(many=True)
+chat_message_post_schema = ChatMessageSchemaSQLAutoWith(only=("is_user", "content"))
+chat_message_delta_schema = ChatMessageDeltaSchema()
