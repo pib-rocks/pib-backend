@@ -3,7 +3,7 @@ from schema.chat_message_schema import (
     chat_message_post_schema,
     chat_message_schema,
     chat_messages_schema,
-    chat_message_delta_schema
+    chat_message_delta_schema,
 )
 from schema.chat_schema import (
     chat_schema,

@@ -8,6 +8,7 @@ class ChatMessageSchemaSQLAutoWith(SQLAutoWithCamelCaseSchema):
         model = ChatMessage
         exclude = ("id", "chat_id")
 
+
 class ChatMessageDeltaSchema(Schema):
     delta = fields.Str(required=True)
 

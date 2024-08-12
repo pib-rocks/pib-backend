@@ -109,7 +109,9 @@ def update_chat_message(
     return successful, ChatMessage(chat_message_dto)
 
 
-def append_to_chat_message(chat_id: str, message_id: str, delta: str) -> Tuple[bool, ChatMessage]:
+def append_to_chat_message(
+    chat_id: str, message_id: str, delta: str
+) -> Tuple[bool, ChatMessage]:
     data = json.dumps({"delta": delta}).encode("UTF-8")
     request = Request(
         CHAT_MESSAGES_URL % chat_id + "/" + message_id,
@@ -133,7 +135,9 @@ def get_all_chat_messages(chat_id: str) -> Tuple[bool, List[ChatMessage]]:
     return successful, chat_messages
 
 
-def get_chat_history(chat_id: str, history_length: int) -> Tuple[bool, List[ChatMessage]]:
+def get_chat_history(
+    chat_id: str, history_length: int
+) -> Tuple[bool, List[ChatMessage]]:
     request = Request(
         CHAT_MESSAGES_URL % chat_id + "/history/" + f"{history_length}",
         method="GET",

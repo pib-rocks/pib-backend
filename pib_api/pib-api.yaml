@@ -349,10 +349,10 @@ paths:
     put:
       tags:
         - chat
-      summary: Edit an existing message of an voice assistant
+      summary: Edit an existing message of a chat
       operationId: editVoiceAssistantChatMessage
       requestBody:
-        description: Edit an existing message of an voice assistant
+        description: Edit an existing message of a chat
         required: true
         content:
           application/json:

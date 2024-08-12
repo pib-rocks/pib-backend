@@ -28,6 +28,7 @@ from public_api_client import public_voice_client
 # instruction for the llm on how to generate the code. For now, it is left blank
 CODE_DESCRIPTION_PREFIX = ""
 
+
 @dataclass
 class ResponseSection:
     """
@@ -37,41 +38,43 @@ class ResponseSection:
     e.g.: core = "this is a sentence.", total = "   this is a sentence.    "
 
     for a visual-code-block, the 'core' field represents the actual code, and the 'total' field contains additionally the '<pib-program></pib-program>'
-    tags + possible leading/trailing whitespaces, 
+    tags + possible leading/trailing whitespaces,
     e.g: core = "print('hello world')", total = " <pib-program>print('hello world')</pib-program>  "
 
-    The 'final' field indicates, whether this is the final section of the assistatnt's response 
+    The 'final' field indicates, whether this is the final section of the assistatnt's response
     """
+
     core: str
     total: str
     type: bytes
     final: bool
 
+
 ### regex for matching response-sections ###
 
 # matches a visual-code block, that is NOT the FINAL section of the assistant-response
-CODE_VISUAL = "^(\\s*)<pib-program>(.*?)</pib-program>(?=(\\s*)(\\S))"
+CODE_VISUAL = r"^(\s*)<pib-program>(.*?)</pib-program>(?=(\s*)(\S))"
 # the group of a match that represents the core of the section
 CODE_VISUAL_CORE = 2
 # the group of a match that represents the total section
 CODE_VISUAL_TOTAL = 0
 
 # matches a natural-language-sentence that is NOT the FINAL section of the assistant-response
-SENTENCE = "(\\s*)(((.*?)([^\d | ^A-Z][\\.|!|\\?|:])(?=(\\s*)(\\S)))|((.*)(\\S)(?=(\\s*)<pib-program>)))"
+SENTENCE = r"(\s*)(((.*?)([^\d | ^A-Z][\.|!|\?|:])(?=(\s*)(\S)))|((.*)(\S)(?=(\s*)<pib-program>)))"
 # the group of a match that represents the core of the section
 SENTENCE_CORE = 2
 # the group of a match that represents the total section
 SENTENCE_TOTAL = 0
 
 # matches the FINAL visual-code block of an assistant-response
-FINAL_CODE_VISUAL = "^(\\s*)<pib-program>(.*?)</pib-program>(\\s*)"
+FINAL_CODE_VISUAL = r"^(\s*)<pib-program>(.*?)</pib-program>(\s*)"
 # the group of a match that represents the core of the section
 FINAL_CODE_VISUAL_CORE = 2
 # the group of a match that represents the total section
 FINAL_CODE_VISUAL_TOTAL = 0
 
 # matches the FINAL natural-language sentence of an assistant-response
-FINAL_SENTENCE = "^(\\s*)(.*?)(\\s*)$"
+FINAL_SENTENCE = r"^(\s*)(.*?)(\s*)$"
 # the group of a match that represents the core of the section
 FINAL_SENTENCE_CORE = 2
 # the group of a match that represents the total section
@@ -129,24 +132,25 @@ class ChatNode(Node):
         token = msg.data
         self.token = token
 
-    def publish_chat_message(self, pib_api_chat_message: PibApiChatMessage, chat_id: str) -> None:
-        chat_message_ros = RosChatMessage()
-        chat_message_ros.chat_id = chat_id
-        chat_message_ros.content = pib_api_chat_message.content
-        chat_message_ros.is_user = pib_api_chat_message.is_user
-        chat_message_ros.message_id = pib_api_chat_message.message_id
-        chat_message_ros.timestamp = pib_api_chat_message.timestamp
-        self.chat_message_publisher.publish(chat_message_ros)
+    def publish_chat_message(
+        self, pib_api_chat_message: PibApiChatMessage, chat_id: str
+    ) -> None:
+        """publish a chat-message to the respective ros-topic"""
+        ros_chat_message = RosChatMessage()
+        ros_chat_message.chat_id = chat_id
+        ros_chat_message.content = pib_api_chat_message.content
+        ros_chat_message.is_user = pib_api_chat_message.is_user
+        ros_chat_message.message_id = pib_api_chat_message.message_id
+        ros_chat_message.timestamp = pib_api_chat_message.timestamp
+        self.chat_message_publisher.publish(ros_chat_message)
 
-    async def update_chat_message(self, chat_id: str, message_id: Future, delta: str):
+    def update_chat_message(self, chat_id: str, message_id: str, delta: str):
         """updates a chat-message in the db and publishes the updated method to the 'chat_messages'-topic"""
         with self.voice_assistant_client_lock:
-            successful, chat_message = (
-                voice_assistant_client.append_to_chat_message(
-                    chat_id,
-                    (await message_id),
-                    delta,
-                )
+            successful, chat_message = voice_assistant_client.append_to_chat_message(
+                chat_id,
+                message_id,
+                delta,
             )
             if not successful:
                 self.get_logger().error(
@@ -159,9 +163,7 @@ class ChatNode(Node):
         """writes a new chat-message to the db, and publishes it to the 'chat_messages'-topic"""
         with self.voice_assistant_client_lock:
             successful, chat_message = voice_assistant_client.create_chat_message(
-                chat_id, 
-                text, 
-                is_user
+                chat_id, text, is_user
             )
             if not successful:
                 self.get_logger().error(
@@ -170,7 +172,7 @@ class ChatNode(Node):
                 return
         self.publish_chat_message(chat_message, chat_id)
         return chat_message.message_id
-    
+
     async def chat(self, goal_handle: ServerGoalHandle):
         """callback function for 'chat'-action"""
 
@@ -188,9 +190,7 @@ class ChatNode(Node):
             return Chat.Result()
 
         # create the user message
-        self.executor.create_task(
-            self.create_chat_message, chat_id, content, True
-        )
+        self.executor.create_task(self.create_chat_message, chat_id, content, True)
 
         # get the personality that is associated with the request chat-id from the pib-api
         with self.voice_assistant_client_lock:
@@ -253,17 +253,22 @@ class ChatNode(Node):
         # generate chat-message from sequence of response-sections
         try:
             # transform assistant response from sequence of tokens to sequence of response-sections
-            response_sections = self.tokens_to_sections(tokens, lambda: goal_handle.is_cancel_requested)
+            response_sections = self.tokens_to_sections(
+                tokens, lambda: goal_handle.is_cancel_requested
+            )
             # process each incoming section
             for section in response_sections:
                 if message_id is None:
                     message_id = self.executor.create_task(
                         self.create_chat_message, chat_id, section.total, False
-                    )   
+                    )
                 else:
                     self.executor.create_task(
-                        self.update_chat_message, chat_id, message_id, section.total
-                    ) 
+                        self.update_chat_message,
+                        chat_id,
+                        (await message_id),
+                        section.total,
+                    )
                 if section.final:
                     result = Chat.Result()
                     result.text = section.core
@@ -276,7 +281,9 @@ class ChatNode(Node):
                     feedback.text_type = section.type
                     goal_handle.publish_feedback(feedback)
         except Exception as e:
-            self.get_logger().error(f"failed to process incoming response-sections: {e}")
+            self.get_logger().error(
+                f"failed to process incoming response-sections: {e}"
+            )
             goal_handle.abort()
             return Chat.Result()
 
@@ -284,7 +291,9 @@ class ChatNode(Node):
         goal_handle.canceled()
         return Chat.Result()
 
-    def tokens_to_sections(self, tokens: Iterable[str], is_cancelled: Callable[[], bool]) -> Iterable[ResponseSection]:
+    def tokens_to_sections(
+        self, tokens: Iterable[str], is_cancelled: Callable[[], bool]
+    ) -> Iterable[ResponseSection]:
         """
         transforms an assistant-response received in form of a sequence of tokens, into a sequence of response-sections.
         stops prematurely, if 'is_cancelled()' yields 'True' at some point during processing of incoming tokens
@@ -313,7 +322,7 @@ class ChatNode(Node):
                         core = sentence_match[SENTENCE_CORE]
                         total = sentence_match[SENTENCE_TOTAL]
                         yield ResponseSection(core, total, SENTENCE_TYPE, False)
-                        response = response[len(total):]
+                        response = response[len(total) :]
                         next_type = None
                         continue
                 elif next_type == CODE_VISUAL_TYPE:
@@ -322,11 +331,11 @@ class ChatNode(Node):
                         core = code_visual_match[CODE_VISUAL_CORE]
                         total = code_visual_match[CODE_VISUAL_TOTAL]
                         yield ResponseSection(core, total, CODE_VISUAL_TYPE, False)
-                        response = response[len(total):]
+                        response = response[len(total) :]
                         next_type = None
                         continue
                 break
-        
+
         final_code_visual_match = final_code_visual_pattern.search(response)
         if final_code_visual_match is not None:
             core = final_code_visual_match[FINAL_CODE_VISUAL_CORE]
@@ -354,7 +363,6 @@ class ChatNode(Node):
         else:
             return SENTENCE_TYPE
 
-            
 
 def main(args=None):
 
