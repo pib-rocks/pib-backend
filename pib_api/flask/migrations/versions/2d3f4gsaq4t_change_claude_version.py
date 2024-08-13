@@ -36,15 +36,16 @@ def upgrade():
         )
         conn.execute(
             sa.text(
-            """
+                """
             INSERT OR IGNORE INTO assistant_model (api_name, visual_name, has_image_support)
             VALUES ('anthropic.claude-3-5-sonnet-20240620-v1:0', 'Claude 3.5 Sonnet [Text]', false)
             """
             )
         )
 
+
 def downgrade():
-        
+
     conn = op.get_bind()
 
     result = conn.execute(sa.text("SELECT COUNT(*) FROM assistant_model"))
@@ -67,4 +68,3 @@ def downgrade():
                 """
             )
         )
-        
