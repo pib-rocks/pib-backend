@@ -44,7 +44,7 @@ aws-key
 
 # /programs
 # user program env
-user_program_env
+user_program_env/
 
 password.env
 

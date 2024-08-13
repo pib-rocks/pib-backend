@@ -1,0 +1,4 @@
+uint16 NONE=0
+uint16 CUSTOM=1
+uint16 PIB_EYES_ANIMATED=2
+uint16 value
