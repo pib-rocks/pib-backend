@@ -76,9 +76,6 @@ class MotorControl(Node):
             MotorSettings, "motor_settings", 10
         )
 
-        # Service for Pose
-        self.srv = self.create_service(ApplyPose, "apply_pose", self.apply_pose)
-
         # load motor-settings if not in dev mode
         if not self.dev:
             for motor in motors:
@@ -151,37 +148,6 @@ class MotorControl(Node):
             response.successful = False
             self.get_logger().error(f"error while applying joint-trajectory: {str(e)}")
         return response
-
-    def apply_pose(
-        self, request: ApplyPose.Request, response: ApplyPose.Response
-    ) -> ApplyPose.Response:
-        self.get_logger().info(f"Pose ID: {request.pose_id}")
-        successful, motor_positions = pose_client.get_motor_positions_of_pose(
-            request.pose_id
-        )
-        if not successful:
-            response.successful = False
-            return response
-
-        jt = JointTrajectory()
-        jt.joint_names = []
-
-        for motor_position in motor_positions["motorPositions"]:
-            motor_name = motor_position["motorName"]
-            position = motor_position["position"]
-
-            jt.joint_names.append(motor_name)
-            point = JointTrajectoryPoint()
-            point.positions.append(position)
-            jt.points.append(point)
-
-        req = ApplyJointTrajectory.Request()
-        req.joint_trajectory = jt
-        resp = ApplyJointTrajectory.Response()
-        resp.successful = resp.successful
-
-        return response
-
 
 def main(args=None):
 
