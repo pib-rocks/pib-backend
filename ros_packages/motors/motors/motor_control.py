@@ -149,6 +149,7 @@ class MotorControl(Node):
             self.get_logger().error(f"error while applying joint-trajectory: {str(e)}")
         return response
 
+
 def main(args=None):
 
     rclpy.init(args=args)
