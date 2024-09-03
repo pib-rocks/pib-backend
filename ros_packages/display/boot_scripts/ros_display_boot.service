@@ -1,0 +1,14 @@
+[Unit]
+Description=Startup script for the ROS display-node
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+Type=exec
+User=pib
+Restart=always
+RestartSec=1s
+ExecStart=/usr/bin/bash /home/pib/ros_working_dir/src/display/boot_scripts/ros_display_boot.sh
+
+[Install]
+WantedBy=graphical-session.target

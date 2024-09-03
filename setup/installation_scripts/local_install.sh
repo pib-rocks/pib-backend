@@ -8,6 +8,8 @@ ROS_CAMERA_BOOT_DIR="$ROS_WORKING_DIR/src/camera/boot_scripts"
 ROS_MOTORS_BOOT_DIR="$ROS_WORKING_DIR/src/motors/boot_scripts"
 ROS_VOICE_ASSISTANT_BOOT_DIR="$ROS_WORKING_DIR/src/voice_assistant/boot_scripts"
 ROS_PROGRAMS_BOOT_DIR="$ROS_WORKING_DIR/src/programs/boot_scripts"
+ROS_DISPLAY_BOOT_DIR="$ROS_WORKING_DIR"/src/display/boot_scripts
+
 
 DEFAULT_NGINX_DIR="/etc/nginx"
 DEFAULT_NGINX_HTML_DIR="$DEFAULT_NGINX_DIR/html"
@@ -51,7 +53,7 @@ function install_ros() {
   print INFO "Installed ROS2 Humble"
 
   sudo apt -qq update  && \
-  sudo apt -qq -y install python3 python3-pip python3-colcon-common-extensions && \
+  sudo apt -qq -y install python3 python3-pip python3-tk python3-colcon-common-extensions && \
   echo 'source /home/pib/ros_working_dir/install/setup.bash' >> "$HOME/.bashrc" && \
   echo "export ROS_LOCALHOST_ONLY=1" >> "$HOME/.bashrc"
   print INFO "Installed colcon"
@@ -187,6 +189,7 @@ function install_ros_packages() {
 
 
   print INFO "Setting up boot-services"
+
   # Boot camera
   sudo chmod 700 "$ROS_CAMERA_BOOT_DIR/ros_camera_boot.sh"
   sudo chmod 700 "$ROS_CAMERA_BOOT_DIR/ros_camera_boot.service"
@@ -209,6 +212,13 @@ function install_ros_packages() {
   sudo chmod 700 "$ROS_PROGRAMS_BOOT_DIR/ros_program_boot.sh"
   sudo chmod 700 "$ROS_PROGRAMS_BOOT_DIR/ros_program_boot.service"
   sudo cp "${ROS_PROGRAMS_BOOT_DIR}/ros_program_boot.service" /etc/systemd/system
+
+
+  # Boot display
+  sudo chmod 700 "$ROS_DISPLAY_BOOT_DIR/ros_display_boot.sh"
+  sudo chmod 700 "$ROS_DISPLAY_BOOT_DIR/ros_display_boot.service"
+  sudo mv "$ROS_DISPLAY_BOOT_DIR/ros_display_boot.service" /etc/systemd/system
+
 
   cd "$ROS_WORKING_DIR" || { print ERROR "${ROS_WORKING_DIR} not found"; return 1; }
   source /opt/ros/humble/setup.bash
@@ -356,4 +366,5 @@ sudo systemctl enable ros_camera_boot.service --now
 sudo systemctl enable ros_motor_boot.service --now
 sudo systemctl enable ros_program_boot.service --now
 sudo systemctl enable ros_voice_assistant_boot.service --now
+sudo systemctl enable ros_display_boot.service --now
 sudo systemctl enable ros_cerebra_boot.service --now
