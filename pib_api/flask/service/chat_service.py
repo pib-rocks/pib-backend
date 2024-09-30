@@ -63,6 +63,13 @@ def update_chat_message(
     return chat_message
 
 
-def delete_message(chat_id: str, message_id: str) -> None:
+def append_to_chat_message(delta_dto: dict[str, Any], message_id: str) -> ChatMessage:
+    chat_message = get_message(message_id)
+    chat_message.content += delta_dto["delta"]
+    db.session.flush()
+    return chat_message
+
+
+def delete_message(message_id: str) -> None:
     db.session.delete(get_message(message_id))
     db.session.flush()

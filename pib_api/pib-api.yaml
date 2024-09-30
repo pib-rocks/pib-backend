@@ -349,17 +349,42 @@ paths:
     put:
       tags:
         - chat
-      summary: Edit an existing message of an voice assistant
+      summary: Edit an existing message of a chat
       operationId: editVoiceAssistantChatMessage
       requestBody:
-        description: Edit an existing message of an voice assistant
+        description: Edit an existing message of a chat
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/VoiceAssistantChatMessage'
       responses:
-        '201':
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoiceAssistantChatMessage'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
+    patch:
+      tags:
+        - chat
+      summary: add content to an existing chat-message
+      operationId: appendToVoiceAssistantChatMessage
+      requestBody:
+        description: add content to an existing chat-message
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VoiceAssistantChatMessageDelta'
+      responses:
+        '200':
           description: Updated
           content:
             application/json:
@@ -1107,6 +1132,16 @@ components:
         - isUser
         - message_content
         - voiceAssistantChat
+    VoiceAssistantChatMessageDelta:
+      type: object
+      properties:
+        delta:
+          description: this is the content added to the message
+          type: string
+          examples: 
+            - " of short stories"
+      required:
+        - delta
     VoiceAssistantChatMessages:
       properties:
         messages:
