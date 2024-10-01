@@ -22,6 +22,7 @@ class Personality:
         self.gender = personality_dto["gender"]
         self.language = "German"  # TODO: language should be stored as part of a personality -> personality_dto["language"]
         self.pause_threshold = personality_dto["pauseThreshold"]
+        self.message_history = personality_dto["messageHistory"]
         self.description = personality_dto.get("description")
         self.assistant_model = self._get_assistant_model(
             personality_dto["assistantModelId"]
