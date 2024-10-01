@@ -34,6 +34,7 @@ class ChatNode(Node):
         self.token: Optional[str] = None
         self.last_pib_message_id: Optional[str] = None
         self.message_content: Optional[str] = None
+        # TODO replace 20 with dynamic value from db
         self.history_length: int = 20
 
         # server for communicating with an llm via tryb's public-api
