@@ -29,7 +29,7 @@ def update_personality(personality_id: str, personality_dto: Any) -> Personality
     personality.name = personality_dto["name"]
     personality.gender = personality_dto["gender"].title()
     personality.pause_threshold = personality_dto["pause_threshold"]
-    personality.message_history = (personality_dto["message_history"],)
+    personality.message_history = personality_dto["message_history"]
     if "description" in personality_dto:
         personality.description = personality_dto["description"]
     personality.assistant_model_id = personality_dto["assistant_model_id"]
