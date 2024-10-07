@@ -34,8 +34,7 @@ class ChatNode(Node):
         self.token: Optional[str] = None
         self.last_pib_message_id: Optional[str] = None
         self.message_content: Optional[str] = None
-        # TODO replace 20 with dynamic value from db
-        self.history_length: int = 20
+        self.history_length: int = 10
 
         # server for communicating with an llm via tryb's public-api
         # In the goal, a client specifies some text that will be sent as input to the llm, as well as the
@@ -151,6 +150,8 @@ class ChatNode(Node):
             successful, personality = voice_assistant_client.get_personality_from_chat(
                 chat_id
             )
+            # set the history_length dynamically
+            self.history_length = personality.message_history
         if not successful:
             self.get_logger().error(f"no personality found for id {chat_id}")
             goal_handle.abort()
