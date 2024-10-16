@@ -1,7 +1,8 @@
-from urllib.request import Request
-from typing import Any, Tuple, List
-from pib_api_client import send_request, URL_PREFIX
 import json
+from typing import Any, Tuple, List
+from urllib.request import Request
+
+from pib_api_client import send_request, URL_PREFIX
 
 ASSISTANT_MODEL_URL = URL_PREFIX + "/assistant-model/%s"
 PERSONALITY_URL = URL_PREFIX + "/voice-assistant/personality/%s"
@@ -124,7 +125,7 @@ def get_all_chat_messages(chat_id: str) -> List[ChatMessage]:
 
 def get_chat_history(chat_id: str, history_length: int) -> List[ChatMessage]:
     request = Request(
-        CHAT_MESSAGES_URL % chat_id + "/history/" + f"{history_length}",
+        CHAT_MESSAGES_URL % chat_id + f"/{history_length}",
         method="GET",
     )
     successful, chat_messages_dto = send_request(request)
