@@ -54,10 +54,17 @@ def create_message(chat_id: str):
     return chat_message_schema.dump(chat_message), 201
 
 
-@bp.route("/<string:chat_id>/messages", methods=["GET"])
-def get_messages_by_chat_id(chat_id: str):
-    chat = chat_service.get_chat(chat_id)
-    return chat_messages_only_schema.dump(chat)
+@bp.route(
+    "/<string:chat_id>/messages", defaults={"message_history": None}, methods=["GET"]
+)
+@bp.route("/<string:chat_id>/messages/<int:message_history>", methods=["GET"])
+def get_messages_by_chat_id(chat_id: str, message_history: int | None = None):
+    if message_history is None:
+        chat = chat_service.get_chat(chat_id)
+        return chat_messages_only_schema.dump(chat)
+    else:
+        messages = chat_service.get_message_history(chat_id, message_history)
+        return jsonify({"messages": chat_messages_schema.dump(messages)})
 
 
 @bp.route("/<string:chat_id>/messages/history/<int:message_history>", methods=["GET"])
