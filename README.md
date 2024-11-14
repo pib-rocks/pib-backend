@@ -21,13 +21,13 @@ Follow these steps to run it:
 
    (or download it manually: https://github.com/pib-rocks/pib-backend/blob/main/setup/setup-pib.sh)
 
-3. Insert this into the terminal to make the script executable:
+3. Insert this command to run the script:
 
-        chmod 755 ./setup-pib.sh
+        bash setup-pib.sh
 
-4. Insert this command to run the script:
-
-        ./setup-pib.sh
+   If you want to run the setup-script in legacy mode (for Raspberry Pi 4), insert:
+               
+         bash setup-pib.sh -l
 
 The setup then adds Cerebra and it's dependencies, including ROS2, Tinkerforge,...
 Once the installation is complete, please restart the system to apply all the changes.
