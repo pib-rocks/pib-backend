@@ -253,7 +253,7 @@ move_setup_files || print ERROR "failed to move setup files"
 source "$SETUP_INSTALLATION_DIR/set_system_settings.sh" || print ERROR "failed to set system settings"
 print INFO "${INSTALL_METHOD}"
 if [ "$INSTALL_METHOD" = "local" ]; then
-  print INFO "Going to install Cerebra locally"
+  print INFO "Going to install Cerebra locally (LEGACY MODE NOT WORKING ON RASPBERRY PI 5)"
   source "$SETUP_INSTALLATION_DIR/local_install.sh" || print ERROR "failed to install Cerebra locally"
 else
   print INFO "Going to install Cerebra via Docker"
