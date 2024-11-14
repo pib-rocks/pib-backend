@@ -168,7 +168,7 @@ function move_setup_files() {
 
 # clean setup files if local install + remove user from sudoers file again
 function cleanup() {
-  if [ "$INSTALL_METHOD" = "local" ]; then
+  if [ "$INSTALL_METHOD" = "legacy" ]; then
     sudo rm -r "$HOME/app"
     print INFO "Removed repositories from $HOME due to local installation"
   fi
@@ -234,8 +234,8 @@ while [ $# -gt 0 ]; do
     -b=* | --backend-branch=*)
       BRANCH_BACKEND="${1#*=}"
       ;;
-    -l | --local)
-      INSTALL_METHOD="local"
+    -l | --legacy)
+      INSTALL_METHOD="legacy"
       ;;
     -h | --help)
       show_help
@@ -252,7 +252,7 @@ clone_repositories || { print ERROR "failed to clone repositories"; return 1; }
 move_setup_files || print ERROR "failed to move setup files"
 source "$SETUP_INSTALLATION_DIR/set_system_settings.sh" || print ERROR "failed to set system settings"
 print INFO "${INSTALL_METHOD}"
-if [ "$INSTALL_METHOD" = "local" ]; then
+if [ "$INSTALL_METHOD" = "legacy" ]; then
   print INFO "Going to install Cerebra locally (LEGACY MODE NOT WORKING ON RASPBERRY PI 5)"
   source "$SETUP_INSTALLATION_DIR/local_install.sh" || print ERROR "failed to install Cerebra locally"
 else
