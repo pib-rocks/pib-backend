@@ -17,20 +17,33 @@ Follow these steps to run it:
 
 2. Insert the following command into the terminal to download the script:
 
-        wget https://raw.githubusercontent.com/pib-rocks/pib-backend/main/setup/setup-pib.sh
+        wget https://raw.githubusercontent.com/pib-rocks/pib-backend/main/setup/pib-setup-docker.sh
 
-   (or download it manually: https://github.com/pib-rocks/pib-backend/blob/main/setup/setup-pib.sh)
+   (or download it manually: https://github.com/pib-rocks/pib-backend/blob/main/setup/pib-setup-docker.sh)
 
 3. Insert this command to run the script:
 
+<<<<<<< HEAD
         bash setup-pib.sh
 
    If you want to run the setup-script in legacy mode (for Raspberry Pi 4), insert:
                
          bash setup-pib.sh -l
+=======
+        chmod 755 ./pib-setup-docker.sh
+
+4. Insert this command to run the script:
+
+        ./pib-setup-docker.sh
+>>>>>>> origin/main
 
 The setup then adds Cerebra and it's dependencies, including ROS2, Tinkerforge,...
 Once the installation is complete, please restart the system to apply all the changes.
+
+If you what to install the software on a raspberry pi 4 you should use:
+
+        wget https://raw.githubusercontent.com/pib-rocks/pib-backend/main/setup/setup-pib.sh
+
 
 # Updating the Software
 
