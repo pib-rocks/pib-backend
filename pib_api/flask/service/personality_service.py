@@ -16,6 +16,7 @@ def create_personality(personality_dto: Any) -> List[Personality]:
         name=personality_dto["name"],
         gender=personality_dto["gender"],
         pause_threshold=personality_dto["pause_threshold"],
+        message_history=personality_dto["message_history"],
         assistant_model_id=personality_dto["assistant_model_id"],
     )
     db.session.add(personality)
@@ -28,6 +29,7 @@ def update_personality(personality_id: str, personality_dto: Any) -> Personality
     personality.name = personality_dto["name"]
     personality.gender = personality_dto["gender"].title()
     personality.pause_threshold = personality_dto["pause_threshold"]
+    personality.message_history = personality_dto["message_history"]
     if "description" in personality_dto:
         personality.description = personality_dto["description"]
     personality.assistant_model_id = personality_dto["assistant_model_id"]
