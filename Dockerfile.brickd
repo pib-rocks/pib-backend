@@ -1,13 +1,13 @@
 FROM ubuntu:jammy
 
-RUN apt-get update \
-    && apt-get install -y systemd libusb-1.0-0 libudev1 libgpiod2 procps \
-    && rm -rf /var/lib/apt/lists/*
-COPY setup/setup_files/brickd_2.4.6+snapshot~730b7d7_arm64.deb .
-RUN dpkg -i brickd_2.4.6+snapshot~730b7d7_arm64.deb
+RUN apt-get update && apt-get install -y curl gnupg
+RUN curl -sSL https://download.tinkerforge.com/apt/$(. /etc/os-release; echo $ID)/tinkerforge.gpg | apt-key add - && \
+    echo "deb https://download.tinkerforge.com/apt/$(. /etc/os-release; echo $ID $VERSION_CODENAME) main" > /etc/apt/sources.list.d/tinkerforge.list && \
+    apt-get update --fix-missing && \
+    apt-get install -y \
+    brickd
 
 CMD ["brickd"] 
 
 # Expose the brickd port
 EXPOSE 4223
-
