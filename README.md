@@ -23,19 +23,11 @@ Follow these steps to run it:
 
 3. Insert this command to run the script:
 
-<<<<<<< HEAD
         bash setup-pib.sh
 
    If you want to run the setup-script in legacy mode (for Raspberry Pi 4), insert:
                
          bash setup-pib.sh -l
-=======
-        chmod 755 ./pib-setup-docker.sh
-
-4. Insert this command to run the script:
-
-        ./pib-setup-docker.sh
->>>>>>> origin/main
 
 The setup then adds Cerebra and it's dependencies, including ROS2, Tinkerforge,...
 Once the installation is complete, please restart the system to apply all the changes.
