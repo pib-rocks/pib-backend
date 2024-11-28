@@ -91,7 +91,7 @@ function install_docker_engine() {
 
 function start_container() {
     print INFO "Starting container"
-    echo "TRYB_URL_PREFIX=<TRYB_URL>" > "$BACKEND_DIR"/password.env
+    echo "TRYB_URL_PREFIX=https://tryb.ai" > "$BACKEND_DIR"/password.env
     sudo docker compose -f "$BACKEND_DIR/docker-compose.yaml" --profile all up -d || return 1
     print SUCCESS "Started pib-backend container"
     sudo docker compose -f "$FRONTEND_DIR/docker-compose.yaml" up -d || return 1
