@@ -246,6 +246,25 @@ while [ $# -gt 0 ]; do
   shift
 done
 
+
+echo "Disabling under-voltage warnings..."
+sudo sh -c 'echo "avoid_warnings=2" >> /boot/firmware/config.txt'
+
+echo "Preventing CPU throttling..."
+sudo sh -c 'echo "force_turbo=1" >> /boot/firmware/config.txt'
+
+echo "Installing and configuring watchdog service..."
+sudo apt-get install -y watchdog
+sudo systemctl enable watchdog
+sudo systemctl start watchdog
+
+echo "Modifying watchdog configuration..."
+sudo sed -i 's/#reboot=1/reboot=0/' /etc/watchdog.conf
+
+echo "Disabling kernel panic reboots..."
+echo "kernel.panic = 0" | sudo tee -a 
+
+
 remove_apps || print ERROR "failed to install remove default software"
 install_system_packages || { print ERROR "failed to install system packages"; return 1; }
 clone_repositories || { print ERROR "failed to clone repositories"; return 1; }
