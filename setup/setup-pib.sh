@@ -247,26 +247,21 @@ while [ $# -gt 0 ]; do
 done
 
 
-# Disable Under-Voltage Warnings
-echo "Disabling under-voltage warnings..."
-echo "avoid_warnings=2" >> /boot/firmware/config.txt
+print "Disabling under-voltage warnings..."
+sudo sh -c 'echo "avoid_warnings=2" >> /boot/firmware/config.txt'
 
-# Prevent CPU Throttling
-echo "Preventing CPU throttling..."
-echo "force_turbo=1" >> /boot/firmware/config.txt
+print "Preventing CPU throttling..."
+sudo sh -c 'echo "force_turbo=1" >> /boot/firmware/config.txt'
 
-# Install and Configure Watchdog Service
-echo "Installing and configuring watchdog service..."
+print "Installing and configuring watchdog service..."
 sudo apt-get install -y watchdog
 sudo systemctl enable watchdog
 sudo systemctl start watchdog
 
-# Modify watchdog configuration
-echo "Modifying watchdog configuration..."
+print "Modifying watchdog configuration..."
 sudo sed -i 's/#reboot=1/reboot=0/' /etc/watchdog.conf
 
-# Disable Kernel Panic Reboots
-echo "Disabling kernel panic reboots..."
+print "Disabling kernel panic reboots..."
 echo "kernel.panic = 0" | sudo tee -a 
 
 
