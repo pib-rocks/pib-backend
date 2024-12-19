@@ -2,18 +2,15 @@
 
 This script assumes:
 
-- that Ubuntu Desktop 22.04.2 LTS is installed
+- that the newest Raspberry Pi OS is installed
 - the user running it is **pib**
-
-If you have not set up the user **pib** at installation, you can do so via the settings-dialog of Ubuntu and then log in
-as **pib**.
 
 ## Installing pibs software
 
 All the software pib requires can be installed by running our setup script.
 Follow these steps to run it:
 
-1. Open a terminal in Ubuntu
+1. Open a terminal in Raspberry Pi OS
 
 2. Insert the following command into the terminal to download the script:
 
