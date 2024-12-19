@@ -41,23 +41,6 @@ This script assumes that the setup script was executed successfully
 
 You can add the "-Cerebra" parameter to update only the frontend application but not the backend.
 
-## Checking if the software was installed successfully
-
-Inside the "setup" folder of the pib-backend repo there is a "dev_tools" folder.
-Within it you can find a shell script (health-check-pib.sh) that checks if all necessary packages are installed and all
-required ros-services are running.
-
-Follow these steps to run the health-check-script:
-
-1. Download the script from our Github repo:  
-   `wget https://raw.githubusercontent.com/pib-rocks/pib-backend/main/setup/dev_tools/health-check-pib.sh`
-2. Change the permissions of the file `chmod 755 health-check-pib.sh`
-3. Run the script `./health-check-pib.sh`
-
-The script also has a development mode "./health-check-pib.sh -d" option that allows you to skip some parts of the
-check.
-For example to only check ros packages and system services without the python packages.
-
 ## Webots
 
 Starting the webots simulation:
