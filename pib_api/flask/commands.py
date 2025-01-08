@@ -61,8 +61,6 @@ def _create_bricklet_data() -> None:
         if motor.name == "tilt_forward_motor":
             motor.rotation_range_min = -4500
             motor.rotation_range_max = 4500
-        elif motor.name == "tilt_sideways_motor":
-            motor.visible = False
         # modify all fingers
         elif motor.name.endswith("stretch") or "thumb" in motor.name:
             motor.pulse_width_min = 750
@@ -78,8 +76,6 @@ def _create_bricklet_data() -> None:
             bricklet_id, pin = bricklet_pin
 
             invert = False
-            if bricklet_pin == (3, 7) or bricklet_pin == (3, 5):
-                invert = True
             db.session.add(
                 BrickletPin(
                     motor_id=motor.id, bricklet_id=bricklet_id, pin=pin, invert=invert
@@ -127,7 +123,7 @@ def _create_chat_data_and_assistant() -> None:
         api_name="anthropic.claude-3-sonnet-20240229-v1:0",
         has_image_support=True,
     )
-    db.session.add_all([gpt3, gpt4o1, gpt4o2, claude])
+    db.session.add_all([gpt4o2, gpt4o1, gpt3, claude])
     db.session.flush()
 
     p_eva = Personality(
@@ -181,33 +177,32 @@ def _get_motor_list() -> [dict[str, Any]]:
     bricklet_pins: str = "bricklet_pins"
 
     return [
-        {name: "turn_head_motor", bricklet_pins: [(1, 0)]},
-        {name: "tilt_forward_motor", bricklet_pins: [(1, 1)]},
-        {name: "tilt_sideways_motor", bricklet_pins: [(2, 8)]},
-        {name: "upper_arm_left_rotation", bricklet_pins: [(2, 5)]},
-        {name: "elbow_left", bricklet_pins: [(2, 6)]},
-        {name: "lower_arm_left_rotation", bricklet_pins: [(2, 7)]},
-        {name: "shoulder_vertical_left", bricklet_pins: [(3, 7), (3, 9)]},
-        {name: "shoulder_horizontal_left", bricklet_pins: [(3, 0)]},
-        {name: "upper_arm_right_rotation", bricklet_pins: [(3, 1)]},
-        {name: "elbow_right", bricklet_pins: [(3, 2)]},
-        {name: "lower_arm_right_rotation", bricklet_pins: [(3, 3)]},
-        {name: "shoulder_vertical_right", bricklet_pins: [(3, 5), (3, 8)]},
-        {name: "shoulder_horizontal_right", bricklet_pins: [(3, 6)]},
-        {name: "thumb_right_opposition", bricklet_pins: [(1, 3)]},
-        {name: "thumb_right_stretch", bricklet_pins: [(1, 4)]},
-        {name: "index_right_stretch", bricklet_pins: [(1, 5)]},
-        {name: "middle_right_stretch", bricklet_pins: [(1, 6)]},
-        {name: "ring_right_stretch", bricklet_pins: [(1, 7)]},
-        {name: "pinky_right_stretch", bricklet_pins: [(1, 8)]},
-        {name: "thumb_left_opposition", bricklet_pins: [(1, 9)]},
-        {name: "thumb_left_stretch", bricklet_pins: [(2, 0)]},
-        {name: "index_left_stretch", bricklet_pins: [(2, 1)]},
-        {name: "middle_left_stretch", bricklet_pins: [(2, 2)]},
-        {name: "ring_left_stretch", bricklet_pins: [(2, 3)]},
-        {name: "pinky_left_stretch", bricklet_pins: [(2, 4)]},
-        {name: "wrist_left", bricklet_pins: [(1, 2)]},
-        {name: "wrist_right", bricklet_pins: [(3, 4)]},
+        {name: "turn_head_motor", bricklet_pins: [(2, 4)]},
+        {name: "tilt_forward_motor", bricklet_pins: [(2, 5)]},
+        {name: "upper_arm_left_rotation", bricklet_pins: [(3, 9)]},
+        {name: "elbow_left", bricklet_pins: [(3, 8)]},
+        {name: "lower_arm_left_rotation", bricklet_pins: [(3, 7)]},
+        {name: "shoulder_vertical_left", bricklet_pins: [(2, 9)]},
+        {name: "shoulder_horizontal_left", bricklet_pins: [(2, 8)]},
+        {name: "upper_arm_right_rotation", bricklet_pins: [(1, 9)]},
+        {name: "elbow_right", bricklet_pins: [(1, 8)]},
+        {name: "lower_arm_right_rotation", bricklet_pins: [(1, 7)]},
+        {name: "shoulder_vertical_right", bricklet_pins: [(2, 1)]},
+        {name: "shoulder_horizontal_right", bricklet_pins: [(2, 0)]},
+        {name: "thumb_right_opposition", bricklet_pins: [(1, 0)]},
+        {name: "thumb_right_stretch", bricklet_pins: [(1, 1)]},
+        {name: "index_right_stretch", bricklet_pins: [(1, 2)]},
+        {name: "middle_right_stretch", bricklet_pins: [(1, 3)]},
+        {name: "ring_right_stretch", bricklet_pins: [(1, 4)]},
+        {name: "pinky_right_stretch", bricklet_pins: [(1, 5)]},
+        {name: "thumb_left_opposition", bricklet_pins: [(3, 0)]},
+        {name: "thumb_left_stretch", bricklet_pins: [(3, 1)]},
+        {name: "index_left_stretch", bricklet_pins: [(3, 2)]},
+        {name: "middle_left_stretch", bricklet_pins: [(3, 3)]},
+        {name: "ring_left_stretch", bricklet_pins: [(3, 4)]},
+        {name: "pinky_left_stretch", bricklet_pins: [(3, 5)]},
+        {name: "wrist_left", bricklet_pins: [(3, 6)]},
+        {name: "wrist_right", bricklet_pins: [(1, 6)]},
     ]
 
 

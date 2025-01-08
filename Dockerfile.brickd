@@ -1,20 +1,13 @@
 FROM ubuntu:jammy
 
-WORKDIR /app
-RUN apt-get update && apt-get install -y curl gnupg systemd libusb-1.0-0
-RUN PLATFORM_TYPE=$(uname -m) && \
-    if [ "$PLATFORM_TYPE" != 'aarch64' ]; then \
-        echo "Installing Brick daemon for $PLATFORM_TYPE" && \
-        curl --location https://download.tinkerforge.com/tools/brickd/linux/brickd-2.4.5_amd64.deb --output /app/brickd_linux_latest_amd64.deb && \
-        dpkg -i /app/brickd_linux_latest_amd64.deb || { echo "ERROR: Failed to install brickd"; exit 1; }; \
-    else \
-        echo "Installing Brick daemon for $PLATFORM_TYPE" && \
-        curl --location https://download.tinkerforge.com/tools/brickd/linux/brickd-2.4.5_arm64.deb --output /app/brickd_linux_latest_arm64.deb && \
-        dpkg -i /app/brickd_linux_latest_arm64.deb || { echo "ERROR: Failed to install brickd"; exit 1; }; \
-    fi
+RUN apt-get update && apt-get install -y curl gnupg
+RUN curl -sSL https://download.tinkerforge.com/apt/$(. /etc/os-release; echo $ID)/tinkerforge.gpg | apt-key add - && \
+    echo "deb https://download.tinkerforge.com/apt/$(. /etc/os-release; echo $ID $VERSION_CODENAME) main" > /etc/apt/sources.list.d/tinkerforge.list && \
+    apt-get update --fix-missing && \
+    apt-get install -y \
+    brickd
 
 CMD ["brickd"] 
 
 # Expose the brickd port
 EXPOSE 4223
-
