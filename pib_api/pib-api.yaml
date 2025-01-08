@@ -1337,7 +1337,6 @@ components:
         - shoulder_vertical_right
         - shoulder_horizontal_right
         - tilt_forward_motor
-        - tilt_sideways_motor
     CameraSettings:
       type: object
       properties:

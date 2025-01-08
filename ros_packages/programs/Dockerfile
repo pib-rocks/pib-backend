@@ -14,8 +14,9 @@ COPY ./pib_blockly/pib_blockly_client /tmp/pib_blockly_client
 COPY ./pib_api/client /tmp/pib_api_client
 RUN apt-get update --fix-missing && \
     apt-get install --no-install-recommends -y python3-pip && \
+    pip install /tmp/pib_blockly_client && \
     pip install /tmp/pib_api_client && \
-    pip install requests==2.32.3 /tmp/pib_blockly_client
+    pip install requests==2.32.3
 
 
 
