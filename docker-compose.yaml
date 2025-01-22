@@ -24,12 +24,11 @@ services:
     ports:
       - "5000:5000"
     environment:
-      - SQLALCHEMY_DATABASE_URI=sqlite:////db/pibdata.db
+      - SQLALCHEMY_DATABASE_URI=sqlite:////app/pibdata.db
       - PIB_BLOCKLY_SERVER_URL=http://pib-blockly-server:2442
     volumes:
       - ./pib_api/flask/:/app
       - programs:/root/cerebra_programs
-      - db:/db
     restart: always
     depends_on:
       - pib-blockly-server
@@ -47,7 +46,7 @@ services:
       - SQLITE_DATABASE=pibdata.db
     restart: always
     volumes:
-      - db:/data
+      - ./pib_api/flask/:/data
 
   tinkerforge-brickd:
     image: tinkerforge-brickd
@@ -209,7 +208,6 @@ services:
       - pib-network
 
 volumes:
-  db:
   programs:
 
 networks:
