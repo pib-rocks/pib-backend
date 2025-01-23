@@ -1,6 +1,6 @@
 import sqlite3
 
-database = "./pib_api/flask/pibdata.db"
+database = "././pib_api/flask/pibdata.db"
 bricklet_numbers = [1, 2, 3]
 
 
