@@ -2,24 +2,21 @@
 
 This script assumes:
 
-- that Ubuntu Desktop 22.04.2 LTS is installed
+- that the newest Raspberry Pi OS is installed
 - the user running it is **pib**
-
-If you have not set up the user **pib** at installation, you can do so via the settings-dialog of Ubuntu and then log in
-as **pib**.
 
 ## Installing pibs software
 
 All the software pib requires can be installed by running our setup script.
 Follow these steps to run it:
 
-1. Open a terminal in Ubuntu
+1. Open a terminal in Raspberry Pi OS
 
 2. Insert the following command into the terminal to download the script:
 
-        wget https://raw.githubusercontent.com/pib-rocks/pib-backend/main/setup/pib-setup-docker.sh
+        wget https://raw.githubusercontent.com/pib-rocks/pib-backend/main/setup/setup-pib.sh
 
-   (or download it manually: https://github.com/pib-rocks/pib-backend/blob/main/setup/pib-setup-docker.sh)
+   (or download it manually: https://github.com/pib-rocks/pib-backend/blob/main/setup/setup-pib.sh)
 
 3. Insert this command to run the script:
 
@@ -32,11 +29,6 @@ Follow these steps to run it:
 The setup then adds Cerebra and it's dependencies, including ROS2, Tinkerforge,...
 Once the installation is complete, please restart the system to apply all the changes.
 
-If you what to install the software on a raspberry pi 4 you should use:
-
-        wget https://raw.githubusercontent.com/pib-rocks/pib-backend/main/setup/setup-pib.sh
-
-
 # Updating the Software
 
 This script assumes that the setup script was executed successfully
@@ -45,23 +37,6 @@ This script assumes that the setup script was executed successfully
 2. Enter this command: `update-pib`
 
 You can add the "-Cerebra" parameter to update only the frontend application but not the backend.
-
-## Checking if the software was installed successfully
-
-Inside the "setup" folder of the pib-backend repo there is a "dev_tools" folder.
-Within it you can find a shell script (health-check-pib.sh) that checks if all necessary packages are installed and all
-required ros-services are running.
-
-Follow these steps to run the health-check-script:
-
-1. Download the script from our Github repo:  
-   `wget https://raw.githubusercontent.com/pib-rocks/pib-backend/main/setup/dev_tools/health-check-pib.sh`
-2. Change the permissions of the file `chmod 755 health-check-pib.sh`
-3. Run the script `./health-check-pib.sh`
-
-The script also has a development mode "./health-check-pib.sh -d" option that allows you to skip some parts of the
-check.
-For example to only check ros packages and system services without the python packages.
 
 ## Webots
 
