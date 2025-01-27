@@ -1,26 +1,40 @@
 import sqlite3
 
 database = "././pib_api/flask/pibdata.db"
-bricklet_numbers = [1, 2, 3]
 
 
-def ask_for_bricklet_uids() -> list[str]:
+def ask_for_bricklet_uids(bricklet_numbers: list[int]) -> list[str]:
     new_uids = []
     for bricklet_number in bricklet_numbers:
-        user_uid = input(f"Please enter the ID for bricklet {bricklet_number}: ")
-        if user_uid and not user_uid.isalnum():
-            raise ValueError("Only numbers and letters are allowed")
-        new_uids.append(user_uid)
+        while True:
+            user_uid = input(f"Please enter the ID for bricklet {bricklet_number}: ")
+            if not user_uid or user_uid.isalnum():
+                new_uids.append(user_uid)
+                break
+            print("Only letters and numbers are allowed")
     return new_uids
 
 
-def update_bricklet_uids() -> None:
+def get_bricklet_numbers_from_db() -> list[int]:
+    try:
+        with sqlite3.connect(database) as conn:
+            cur = conn.cursor()
+            bricklet_numbers = cur.execute(
+                "SELECT bricklet_number FROM bricklet"
+            ).fetchall()
+
+        return [bricklet_number[0] for bricklet_number in bricklet_numbers]
+    except sqlite3.OperationalError as e:
+        print(e)
+        print("Could not get bricklet_numbers from database")
+
+
+def update_bricklet_uids(new_uids: list[str], bricklet_numbers: list[int]) -> None:
     try:
         with sqlite3.connect(database) as conn:
             cur = conn.cursor()
 
-            new_uids = ask_for_bricklet_uids()
-
+            assert len(new_uids) == len(bricklet_numbers)
             for uid, bricklet_number in zip(new_uids, bricklet_numbers):
                 if not uid:
                     continue
@@ -38,10 +52,12 @@ def update_bricklet_uids() -> None:
                 )
 
             print("New uids were successfully set")
-    except Exception as e:
+    except (sqlite3.OperationalError, sqlite3.IntegrityError) as e:
         print(e)
-        print("New uids could not be set")
+        print("Could not update bricklet-uids")
 
 
 if __name__ == "__main__":
-    update_bricklet_uids()
+    bricklet_numbers = get_bricklet_numbers_from_db()
+    new_uids = ask_for_bricklet_uids(bricklet_numbers)
+    update_bricklet_uids(new_uids, bricklet_numbers)
