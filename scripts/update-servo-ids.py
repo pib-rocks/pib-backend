@@ -1,6 +1,6 @@
 import sqlite3
 
-database = "././pib_api/flask/pibdata.db"
+database = "../pib_api/flask/pibdata.db"
 
 
 def ask_for_bricklet_uids(bricklet_numbers: list[int]) -> list[str]:
