@@ -261,7 +261,9 @@ else
 fi
 cleanup
 
-# Temporal emergency fix for Cerebra:
+# Temporal emergency fix for Cerebra and backen docker containers:
+cd /home/pib/app/pib-backend
+sudo docker compose --profile all up
 cd /home/pib/app/cerebra
 sudo docker compose --profile all up
 
