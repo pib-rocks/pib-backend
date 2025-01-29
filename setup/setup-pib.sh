@@ -260,5 +260,10 @@ else
   source "$SETUP_INSTALLATION_DIR/docker_install.sh" || print ERROR "failed to install Cerebra via Docker"
 fi
 cleanup
+
+# Temporal emergency fix for Cerebra:
+cd /home/pib/app/cerebra
+sudo docker compose --profile all up
+
 print SUCCESS "Finished installation, for more information on how to use pib and Cerebra, visit https://pib-rocks.atlassian.net/wiki/spaces/kb/overview?homepageId=65077450"
 print SUCCESS "Reboot pib to apply all changes"
