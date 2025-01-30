@@ -101,3 +101,4 @@ function start_container() {
 create_xhost_service || print ERROR "failed to create service for xhost permission management"
 install_docker_engine || print ERROR "failed to install docker engine"
 start_container || print ERROR "failed to start containers"
+sudo chmod 777 "$BACKEND_DIR/pib_api/flask/pibdata.db"
