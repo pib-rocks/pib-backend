@@ -34,7 +34,11 @@ services:
       - pib-blockly-server
 
   sqlite-viewer:
-    image: coleifer/sqlite-web:latest
+    image: sqlite-viewer-web
+    build:
+      context: https://github.com/nmsger-isento/sqlite-web.git
+      dockerfile: docker/Dockerfile
+    privileged: true
     networks:
       - pib-network
     ports:
