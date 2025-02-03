@@ -86,7 +86,7 @@ function remove_apps() {
   print INFO "Removing unused default software"
 
   if ! [ "$DISTRIBUTION" == "ubuntu" ]; then
-    print ERROR "Not using Ubuntu 22.04; skipping removing unused default software"
+    print INFO "Not using Ubuntu 22.04; skipping removing unused default software"
     return
   fi
 
@@ -246,11 +246,11 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-remove_apps || print ERROR "failed to install remove default software"
+remove_apps || print INFO "Skipped removing default software"
 install_system_packages || { print ERROR "failed to install system packages"; return 1; }
 clone_repositories || { print ERROR "failed to clone repositories"; return 1; }
 move_setup_files || print ERROR "failed to move setup files"
-source "$SETUP_INSTALLATION_DIR/set_system_settings.sh" || print ERROR "failed to set system settings"
+source "$SETUP_INSTALLATION_DIR/set_system_settings.sh" || print INFO "skipped setting system settings"
 print INFO "${INSTALL_METHOD}"
 if [ "$INSTALL_METHOD" = "legacy" ]; then
   print INFO "Going to install Cerebra locally (LEGACY MODE NOT WORKING ON RASPBERRY PI 5)"
@@ -260,12 +260,6 @@ else
   source "$SETUP_INSTALLATION_DIR/docker_install.sh" || print ERROR "failed to install Cerebra via Docker"
 fi
 cleanup
-
-# Temporal emergency fix for Cerebra and backen docker containers:
-cd /home/pib/app/pib-backend
-sudo docker compose --profile all up
-cd /home/pib/app/cerebra
-sudo docker compose --profile all up
 
 print SUCCESS "Finished installation, for more information on how to use pib and Cerebra, visit https://pib-rocks.atlassian.net/wiki/spaces/kb/overview?homepageId=65077450"
 print SUCCESS "Reboot pib to apply all changes"
