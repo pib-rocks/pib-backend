@@ -166,7 +166,7 @@ function move_setup_files() {
 }
 
 function install_DBbrowser() {
-  sudo apt install sqlitebrowser
+  sudo apt install -y sqlitebrowser
   print SUCCESS "Installed DB browser"
 }
 
@@ -174,8 +174,9 @@ function install_BrickV() {
   wget https://download.tinkerforge.com/apt/$(. /etc/os-release; echo $ID)/tinkerforge.asc -q -O - | sudo tee /etc/apt/trusted.gpg.d/tinkerforge.asc > /dev/null
   echo "deb https://download.tinkerforge.com/apt/$(. /etc/os-release; echo $ID $VERSION_CODENAME) main" | sudo tee /etc/apt/sources.list.d/tinkerforge.list
   sudo apt update
-  sudo apt install brickv
-  print SUCCESS "Installed brick viewer"
+  sudo apt install -y brickv
+  sudo apt install python3-tinkerforge #python API Bindings
+  print SUCCESS "Installed brick viewer and python API bindings"
 }
 
 # clean setup files if local install + remove user from sudoers file again
