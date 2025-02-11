@@ -165,6 +165,18 @@ function move_setup_files() {
   printf '<meta content="0; url=http://localhost:8000" http-equiv=refresh>' > "$HOME/Desktop/pib_data.html"
 }
 
+function install_DBbrowser() {
+  sudo apt install sqlitebrowser
+  print SUCCESS "Installed DB browser"
+}
+
+function install_BrickV() {
+  wget https://download.tinkerforge.com/apt/$(. /etc/os-release; echo $ID)/tinkerforge.asc -q -O - | sudo tee /etc/apt/trusted.gpg.d/tinkerforge.asc > /dev/null
+  echo "deb https://download.tinkerforge.com/apt/$(. /etc/os-release; echo $ID $VERSION_CODENAME) main" | sudo tee /etc/apt/sources.list.d/tinkerforge.list
+  sudo apt update
+  sudo apt install brickv
+  print SUCCESS "Installed brick viewer"
+}
 
 # clean setup files if local install + remove user from sudoers file again
 function cleanup() {
@@ -250,6 +262,8 @@ remove_apps || print INFO "Skipped removing default software"
 install_system_packages || { print ERROR "failed to install system packages"; return 1; }
 clone_repositories || { print ERROR "failed to clone repositories"; return 1; }
 move_setup_files || print ERROR "failed to move setup files"
+install_DBbrowser || print ERROR "failed to install DB browser"
+install_BrickV || print ERROR "failed to install Brick viewer"
 source "$SETUP_INSTALLATION_DIR/set_system_settings.sh" || print INFO "skipped setting system settings"
 print INFO "${INSTALL_METHOD}"
 if [ "$INSTALL_METHOD" = "legacy" ]; then
