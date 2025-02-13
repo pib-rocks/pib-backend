@@ -6,7 +6,7 @@
 print INFO "Adjusting system settings"
 
 if ! [ "$DISTRIBUTION" == "ubuntu" ]; then
-    print ERROR "Not using Ubuntu 22.04; skipping adjusting system settings"
+    print INFO "Not using Ubuntu 22.04; skipping adjusting system settings"
     return
 fi
 
