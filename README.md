@@ -81,7 +81,7 @@ https://docs.ros.org/en/dashing/Concepts/About-Domain-ID.html
 ## Update Servo Bricklet IDs
 
 1. Open a terminal and navigate to `pib-backend/scripts`
-2. For Servo Bricklet ID update you can run a script with `python3 update_servo_ids.py`
+2. For Servo Bricklet ID update you can run a script with `python3 update-servo-ids.py`
 after that you can change every single uid in a command line. 
 3. You can change the IDs for Bricklets 1, 2 and 3 (to skip a Bricklet simply press enter without typing anything).
 
@@ -96,7 +96,7 @@ Example:
 3  CCC
 ```
 
-execute `python3 update_servo_ids.py` and change one after another all bricklet uids:
+execute `python3 update-servo-ids.py` and change one after another all bricklet uids:
 ```
 1  AAA -> 1 Aa1
 2  BBB -> 2 Bb2
