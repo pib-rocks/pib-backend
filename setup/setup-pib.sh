@@ -86,7 +86,7 @@ function remove_apps() {
   print INFO "Removing unused default software"
 
   if ! [ "$DISTRIBUTION" == "ubuntu" ]; then
-    print ERROR "Not using Ubuntu 22.04; skipping removing unused default software"
+    print INFO "Not using Ubuntu 22.04; skipping removing unused default software"
     return
   fi
 
@@ -165,6 +165,19 @@ function move_setup_files() {
   printf '<meta content="0; url=http://localhost:8000" http-equiv=refresh>' > "$HOME/Desktop/pib_data.html"
 }
 
+function install_DBbrowser() {
+  sudo apt install -y sqlitebrowser
+  print SUCCESS "Installed DB browser"
+}
+
+function install_BrickV() {
+  wget https://download.tinkerforge.com/apt/$(. /etc/os-release; echo $ID)/tinkerforge.asc -q -O - | sudo tee /etc/apt/trusted.gpg.d/tinkerforge.asc > /dev/null
+  echo "deb https://download.tinkerforge.com/apt/$(. /etc/os-release; echo $ID $VERSION_CODENAME) main" | sudo tee /etc/apt/sources.list.d/tinkerforge.list
+  sudo apt update
+  sudo apt install -y brickv
+  sudo apt install python3-tinkerforge #python API Bindings
+  print SUCCESS "Installed brick viewer and python API bindings"
+}
 
 # clean setup files if local install + remove user from sudoers file again
 function cleanup() {
@@ -246,11 +259,13 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-remove_apps || print ERROR "failed to install remove default software"
+remove_apps || print INFO "Skipped removing default software"
 install_system_packages || { print ERROR "failed to install system packages"; return 1; }
 clone_repositories || { print ERROR "failed to clone repositories"; return 1; }
 move_setup_files || print ERROR "failed to move setup files"
-source "$SETUP_INSTALLATION_DIR/set_system_settings.sh" || print ERROR "failed to set system settings"
+install_DBbrowser || print ERROR "failed to install DB browser"
+install_BrickV || print ERROR "failed to install Brick viewer"
+source "$SETUP_INSTALLATION_DIR/set_system_settings.sh" || print INFO "skipped setting system settings"
 print INFO "${INSTALL_METHOD}"
 if [ "$INSTALL_METHOD" = "legacy" ]; then
   print INFO "Going to install Cerebra locally (LEGACY MODE NOT WORKING ON RASPBERRY PI 5)"
@@ -260,5 +275,6 @@ else
   source "$SETUP_INSTALLATION_DIR/docker_install.sh" || print ERROR "failed to install Cerebra via Docker"
 fi
 cleanup
+
 print SUCCESS "Finished installation, for more information on how to use pib and Cerebra, visit https://pib-rocks.atlassian.net/wiki/spaces/kb/overview?homepageId=65077450"
 print SUCCESS "Reboot pib to apply all changes"
