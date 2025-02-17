@@ -246,24 +246,30 @@ while [ $# -gt 0 ]; do
   shift
 done
 
+function disable_power_notification() {
+	local file="/boot/firmware/config.txt"
+	
+	if [ -f "$file" ]; then
+    	echo "Disabling under-voltage warnings..."
+		echo "avoid_warnings=2" | sudo tee -a "$file" > /dev/null
 
-echo "Disabling under-voltage warnings..."
-sudo sh -c 'echo "avoid_warnings=2" >> /boot/firmware/config.txt'
+    	echo "Preventing CPU throttling..."
+    	echo "force_turbo=1" | sudo tee -a "$file" > /dev/null
+	fi
 
-echo "Preventing CPU throttling..."
-sudo sh -c 'echo "force_turbo=1" >> /boot/firmware/config.txt'
+	echo "Installing and configuring watchdog service..."
+	sudo apt-get install -y watchdog
+	sudo systemctl enable watchdog
+	sudo systemctl start watchdog
 
-echo "Installing and configuring watchdog service..."
-sudo apt-get install -y watchdog
-sudo systemctl enable watchdog
-sudo systemctl start watchdog
+	echo "Modifying watchdog configuration..."
+	sudo sed -i 's/#reboot=1/reboot=0/' /etc/watchdog.conf
 
-echo "Modifying watchdog configuration..."
-sudo sed -i 's/#reboot=1/reboot=0/' /etc/watchdog.conf
+	echo "Disabling kernel panic reboots..."
+	echo "kernel.panic = 0" | sudo tee -a /etc/sysctl.conf
 
-echo "Disabling kernel panic reboots..."
-echo "kernel.panic = 0" | sudo tee -a 
-
+	sudo sysctl -p
+}
 
 remove_apps || print ERROR "failed to install remove default software"
 install_system_packages || { print ERROR "failed to install system packages"; return 1; }
