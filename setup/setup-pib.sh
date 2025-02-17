@@ -273,6 +273,7 @@ function disable_power_notification() {
 
 remove_apps || print ERROR "failed to install remove default software"
 install_system_packages || { print ERROR "failed to install system packages"; return 1; }
+disable_power_notification || print ERROR "failed to disable power notifications"
 clone_repositories || { print ERROR "failed to clone repositories"; return 1; }
 move_setup_files || print ERROR "failed to move setup files"
 source "$SETUP_INSTALLATION_DIR/set_system_settings.sh" || print ERROR "failed to set system settings"
