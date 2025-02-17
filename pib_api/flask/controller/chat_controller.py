@@ -3,6 +3,7 @@ from schema.chat_message_schema import (
     chat_message_post_schema,
     chat_message_schema,
     chat_messages_schema,
+    chat_message_delta_schema,
 )
 from schema.chat_schema import (
     chat_schema,
@@ -73,9 +74,16 @@ def delete_message(chat_id: str, message_id: str):
 
 
 @bp.route("/<string:chat_id>/messages/<string:message_id>", methods=["PUT"])
-def patch_message(chat_id: str, message_id: str):
+def update_message(chat_id: str, message_id: str):
     chat_message_dto = chat_message_post_schema.load(request.json)
     chat_message = chat_service.update_chat_message(chat_message_dto, message_id)
+    return chat_message_schema.dump(chat_message)
+
+
+@bp.route("/<string:chat_id>/messages/<string:message_id>", methods=["PATCH"])
+def extend_message(chat_id: str, message_id: str):
+    delta_dto = chat_message_delta_schema.load(request.json)
+    chat_message = chat_service.append_to_chat_message(delta_dto, message_id)
     return chat_message_schema.dump(chat_message)
 
 
