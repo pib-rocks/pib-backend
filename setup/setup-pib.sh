@@ -264,7 +264,7 @@ function disable_power_notification() {
 	
 	if [ -f "$file" ]; then
     	echo "Disabling under-voltage warnings..."
-		echo "avoid_warnings=2" | sudo tee -a "$file" > /dev/null
+		  echo "avoid_warnings=2" | sudo tee -a "$file" > /dev/null
 
     	echo "Preventing CPU throttling..."
     	echo "force_turbo=1" | sudo tee -a "$file" > /dev/null
