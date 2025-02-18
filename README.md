@@ -2,24 +2,21 @@
 
 This script assumes:
 
-- that Ubuntu Desktop 22.04.2 LTS is installed
+- that the newest Raspberry Pi OS is installed
 - the user running it is **pib**
-
-If you have not set up the user **pib** at installation, you can do so via the settings-dialog of Ubuntu and then log in
-as **pib**.
 
 ## Installing pibs software
 
 All the software pib requires can be installed by running our setup script.
 Follow these steps to run it:
 
-1. Open a terminal in Ubuntu
+1. Open a terminal in Raspberry Pi OS
 
 2. Insert the following command into the terminal to download the script:
 
-        wget https://raw.githubusercontent.com/pib-rocks/pib-backend/main/setup/pib-setup-docker.sh
+        wget https://raw.githubusercontent.com/pib-rocks/pib-backend/main/setup/setup-pib.sh
 
-   (or download it manually: https://github.com/pib-rocks/pib-backend/blob/main/setup/pib-setup-docker.sh)
+   (or download it manually: https://github.com/pib-rocks/pib-backend/blob/main/setup/setup-pib.sh)
 
 3. Insert this command to run the script:
 
@@ -32,11 +29,6 @@ Follow these steps to run it:
 The setup then adds Cerebra and it's dependencies, including ROS2, Tinkerforge,...
 Once the installation is complete, please restart the system to apply all the changes.
 
-If you what to install the software on a raspberry pi 4 you should use:
-
-        wget https://raw.githubusercontent.com/pib-rocks/pib-backend/main/setup/setup-pib.sh
-
-
 # Updating the Software
 
 This script assumes that the setup script was executed successfully
@@ -45,23 +37,6 @@ This script assumes that the setup script was executed successfully
 2. Enter this command: `update-pib`
 
 You can add the "-Cerebra" parameter to update only the frontend application but not the backend.
-
-## Checking if the software was installed successfully
-
-Inside the "setup" folder of the pib-backend repo there is a "dev_tools" folder.
-Within it you can find a shell script (health-check-pib.sh) that checks if all necessary packages are installed and all
-required ros-services are running.
-
-Follow these steps to run the health-check-script:
-
-1. Download the script from our Github repo:  
-   `wget https://raw.githubusercontent.com/pib-rocks/pib-backend/main/setup/dev_tools/health-check-pib.sh`
-2. Change the permissions of the file `chmod 755 health-check-pib.sh`
-3. Run the script `./health-check-pib.sh`
-
-The script also has a development mode "./health-check-pib.sh -d" option that allows you to skip some parts of the
-check.
-For example to only check ros packages and system services without the python packages.
 
 ## Webots
 
@@ -102,6 +77,31 @@ To add pib to a distinct logical network:
 
 For a range of available ROS_DOMAIN_IDs please check the official documentation at:  
 https://docs.ros.org/en/dashing/Concepts/About-Domain-ID.html
+
+## Update Servo Bricklet IDs
+
+1. Open a terminal and navigate to `pib-backend/scripts`
+2. For Servo Bricklet ID update you can run a script with `python3 update-servo-ids.py`
+after that you can change every single uid in a command line. 
+3. You can change the IDs for Bricklets 1, 2 and 3 (to skip a Bricklet simply press enter without typing anything).
+
+**Attention**: The IDs are case-sensitive and consist only of letters and numbers
+
+
+Example: 
+   Standard bricklet uids: 
+```
+1  AAA
+2  BBB
+3  CCC
+```
+
+execute `python3 update-servo-ids.py` and change one after another all bricklet uids:
+```
+1  AAA -> 1 Aa1
+2  BBB -> 2 Bb2
+3  CCC -> 3 Cc3
+```
 
 ### Docker
 
