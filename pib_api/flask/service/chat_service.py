@@ -19,8 +19,7 @@ def get_message(message_id: str) -> ChatMessage:
 
 
 def get_message_history(chat_id: str, length: int) -> ChatMessage:
-    return ChatMessage.query.filter(ChatMessage.chat_id == chat_id).limit(length).all()
-
+    return ChatMessage.query.filter(ChatMessage.chat_id == chat_id).order_by(ChatMessage.timestamp.desc()).limit(length).all()
 
 def create_chat(chat_dto: Any) -> Chat:
     personality = personality_service.get_personality(chat_dto["personality_id"])

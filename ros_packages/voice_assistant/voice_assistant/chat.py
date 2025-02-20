@@ -108,9 +108,6 @@ class ChatNode(Node):
                 successful, chat_message = voice_assistant_client.create_chat_message(
                     chat_id, text, is_user
                 )
-                self.get_logger().info(
-                    f"unable to create chat message: {(chat_id, text, is_user, update_message, update_database)}"
-                )
                 self.last_pib_message_id = chat_message.message_id
                 self.message_content = text
             if not successful:
