@@ -259,8 +259,34 @@ while [ $# -gt 0 ]; do
   shift
 done
 
+function disable_power_notification() {
+	local file="/boot/firmware/config.txt"
+	
+	if [ -f "$file" ]; then
+    	echo "Disabling under-voltage warnings..."
+		  echo "avoid_warnings=2" | sudo tee -a "$file" > /dev/null
+
+    	echo "Preventing CPU throttling..."
+    	echo "force_turbo=1" | sudo tee -a "$file" > /dev/null
+	fi
+
+	echo "Installing and configuring watchdog service..."
+	sudo apt-get install -y watchdog
+	sudo systemctl enable watchdog
+	sudo systemctl start watchdog
+
+	echo "Modifying watchdog configuration..."
+	sudo sed -i 's/#reboot=1/reboot=0/' /etc/watchdog.conf
+
+	echo "Disabling kernel panic reboots..."
+	echo "kernel.panic = 0" | sudo tee -a /etc/sysctl.conf
+
+	sudo sysctl -p
+}
+
 remove_apps || print INFO "Skipped removing default software"
 install_system_packages || { print ERROR "failed to install system packages"; return 1; }
+disable_power_notification || print ERROR "failed to disable power notifications"
 clone_repositories || { print ERROR "failed to clone repositories"; return 1; }
 move_setup_files || print ERROR "failed to move setup files"
 install_DBbrowser || print ERROR "failed to install DB browser"
