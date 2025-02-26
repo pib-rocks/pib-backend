@@ -997,6 +997,11 @@ components:
           examples: 
             - 0.8
             - 1.0
+        messageHistory:
+          type: number
+          examples:
+            - 5
+            - 15
         assistantModelId:
           type: string
           examples:
@@ -1009,6 +1014,7 @@ components:
         - gender
         - pauseThreshold
         - assistantModelId
+        - messageHistory
     PostVoiceAssistantPersonality:
       type: object
       properties:
@@ -1036,12 +1042,18 @@ components:
           examples: 
             - 0.8
             - 1.0
+        messageHistory:
+          type: number
+          examples:
+            - 5
+            - 15
       required:
         - personalityId
         - name
         - description
         - gender
         - pauseThreshold
+        - messageHistory
     VoiceAssistantPersonalities:
       properties:
         voiceAssistantPersonalities:
