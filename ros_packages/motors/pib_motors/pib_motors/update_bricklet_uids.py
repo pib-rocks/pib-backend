@@ -58,15 +58,17 @@ def get_uids_from_db():
     """Retrieve all UIDs from the database."""
     response = requests.get(f"{cfg.FLASK_API}/bricklet")
     json_data = json.loads(response.text)
-    return [
-        json_data["bricklets"][0]["uid"],
-        json_data["bricklets"][1]["uid"],
-        json_data["bricklets"][2]["uid"],
-    ]
+    result = []
+
+    for bricklet in json_data["bricklets"]:
+        result.append(bricklet["uid"])
+    print(result)
+
+    return result
 
 
 def no_uids_in_database():
-    """Check for changes between current databse and TinkerForge UIDs."""
+    """Check for changes between current database and TinkerForge UIDs."""
     return get_uids_from_db() == ["AAA", "BBB", "CCC"]
 
 
