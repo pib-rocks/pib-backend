@@ -15,7 +15,7 @@ BRICKLET_URLS = [f"{cfg.FLASK_API}/bricklet/{i}" for i in range(1, 4)]
 uid0 = "AAA"
 uid1 = "BBB"
 uid2 = "CCC"
-POSITION_TO_UID_MAP = {"a": "uid0", "b": "uid1", "e": "uid2"}
+POSITION_TO_UID_MAP = {"a": uid0, "b": uid1, "e": uid2}
 
 ipcon: IPConnection = IPConnection()
 hat = BrickHAT("X", ipcon)
@@ -62,8 +62,6 @@ def get_uids_from_db():
 
     for bricklet in json_data["bricklets"]:
         result.append(bricklet["uid"])
-    print(result)
-
     return result
 
 
