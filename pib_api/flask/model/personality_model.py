@@ -14,6 +14,7 @@ class Personality(db.Model):
     gender = db.Column(db.String(255), nullable=False)
     description = db.Column(db.String(38000), nullable=True)
     pause_threshold = db.Column(db.Float, nullable=False)
+    message_history = db.Column(db.Integer, nullable=False)
     chats = db.relationship(
         "Chat", backref="personality", lazy=True, cascade="all,delete"
     )
