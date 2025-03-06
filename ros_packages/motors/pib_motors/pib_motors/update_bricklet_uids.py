@@ -1,5 +1,6 @@
 """Script for managing TinkerForge UIDs and corresponding database operations"""
 
+import logging
 import json
 import multiprocessing
 import sys
@@ -32,8 +33,11 @@ def cb_enumerate(
     enumeration_type,
 ):
     """Readout the UIDs of the connected TinkerForge Bricklets and update global variables."""
-    if position in POSITION_TO_UID_MAP:
-        globals()[POSITION_TO_UID_MAP[position]] = uid
+    print(f"###device_identifier: {device_identifier}")
+    print(f"###position: {position}")
+    if device_identifier == 2157:
+        if position in POSITION_TO_UID_MAP:
+            globals()[POSITION_TO_UID_MAP[position]] = uid
 
 
 ipcon.register_callback(IPConnection.CALLBACK_ENUMERATE, cb_enumerate)
@@ -68,6 +72,7 @@ def get_uids_from_db():
 def no_uids_in_database():
     """Check for changes between current database and TinkerForge UIDs."""
     return get_uids_from_db() == ["AAA", "BBB", "CCC"]
+#TODO: iterativ check of uids 
 
 
 def check_and_update():
