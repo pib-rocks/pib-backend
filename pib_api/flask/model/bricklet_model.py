@@ -7,7 +7,7 @@ class Bricklet(db.Model):
     __tablename__ = "bricklet"
 
     id = db.Column(db.Integer, primary_key=True)
-    uid = db.Column(db.String(30), nullable=False, default=generate_uuid, unique=True)
+    uid = db.Column(db.String(30), nullable=True, default=generate_uuid, unique=True)
     bricklet_number = db.Column(db.Integer, nullable=False, unique=True)
     bricklet_pins = db.relationship(
         BrickletPin, backref="bricklet", lazy=True, cascade="all,delete-orphan"
