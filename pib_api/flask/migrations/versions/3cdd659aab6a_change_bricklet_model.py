@@ -19,9 +19,7 @@ depends_on = None
 
 def upgrade():
     with op.batch_alter_table("bricklet", schema=None) as batch_op:
-        batch_op.alter_column("uid",
-            existing_type=sa.VARCHAR(length=30),
-            nullable=True)
+        batch_op.alter_column("uid", existing_type=sa.VARCHAR(length=30), nullable=True)
 
 
 def downgrade():
@@ -29,8 +27,9 @@ def downgrade():
     result = conn.execute(sa.text("SELECT id from bricklet WHERE uid IS NULL"))
 
     for row in result.fetchall():
-        conn.execute(sa.text("UPDATE bricklet SET uid = :uid WHERE id = :id"),
-            {"uid": f"EMPTY{row.id}", "id": row.id}
+        conn.execute(
+            sa.text("UPDATE bricklet SET uid = :uid WHERE id = :id"),
+            {"uid": f"EMPTY{row.id}", "id": row.id},
         )
 
     with op.batch_alter_table("bricklet", schema=None) as batch_op:
