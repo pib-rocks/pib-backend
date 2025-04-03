@@ -6,7 +6,6 @@ from datatypes.srv import ApplyMotorSettings, ApplyJointTrajectory
 from pib_api_client import motor_client
 from pib_motors.bricklet import ipcon
 from pib_motors.motor import name_to_motors, motors
-from pib_motors.update_bricklet_uids import *
 from rclpy.node import Node
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
