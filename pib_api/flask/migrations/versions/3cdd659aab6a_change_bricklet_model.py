@@ -24,7 +24,7 @@ def upgrade():
 
 def downgrade():
     conn = op.get_bind()
-    result = conn.execute(sa.text("SELECT id from bricklet WHERE uid IS NULL"))
+    result = conn.execute(sa.text("SELECT id FROM bricklet WHERE uid IS NULL"))
 
     for row in result.fetchall():
         conn.execute(
