@@ -119,3 +119,7 @@ docker compose --profile all up
 ```
 TRYB_URL_PREFIX=<BASE_URL_Tryb>
 ```
+
+### Contributing to pib
+
+For the development process, external developers are requested to refer to the following explanation: tbd.
