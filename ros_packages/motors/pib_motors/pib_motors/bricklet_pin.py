@@ -31,7 +31,7 @@ class BrickletPin:
             try:
                 self.bricklet.get_servo_current(self.pin)
                 self._connected = True
-            except Exception:
+            except TimeoutError:
                 self._connected = False
 
     def apply_settings(self, settings_dto: dict[str, Any]) -> bool:
