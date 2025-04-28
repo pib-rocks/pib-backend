@@ -139,9 +139,8 @@ services:
     networks:
       - pib-network
     environment:
-      - FLASK_API_BASE_URL=http://flask-app:5000
       - DISPLAY=:0.0
-    restart: always
+    restart: no
 
   ros-voice-assistant:
     image: ros_voice_assistant
