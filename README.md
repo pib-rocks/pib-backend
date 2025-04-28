@@ -43,7 +43,7 @@ You can add the "-Cerebra" parameter to update only the frontend application but
 Starting the webots simulation:
 
 1. Complete all steps of the "Installing pibs software"-section of this readme document
-2. Nabivigate to app/pib-backend
+2. Navigate to app/pib-backend
    `cd app/pib-backend`
 3. Enter the following command into a terminal:  
    `sudo docker compose --profile pibsim_webots up`  
