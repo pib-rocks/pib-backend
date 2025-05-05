@@ -49,7 +49,7 @@ get_distribution() {
     echo "$distribution"
 }
 
-# Get Linux distribution version, e.g. (ubuntu) 'jammy', (debian) 'bookworm'
+# Get Linux distribution version, e.g. (ubuntu) 'noble', (debian) 'bookworm'
 get_dist_version() {
   local distribution=$1
   case "$distribution" in
@@ -81,8 +81,8 @@ get_dist_version() {
     echo "$dist_version" |  tr '[:upper:]' '[:lower:]'
 }
 
-function is_ubuntu_jammy() {
-  [[ "$DISTRIBUTION" == "ubuntu" && "$DIST_VERSION" == "jammy" ]]
+function is_ubuntu_noble() {
+  [[ "$DISTRIBUTION" == "ubuntu" && "$DIST_VERSION" == "noble" ]]
 }
 
 function is_raspbian_bookworm() {
@@ -90,7 +90,7 @@ function is_raspbian_bookworm() {
 }
 
 function check_distribution() {
-  if is_ubuntu_jammy || is_raspbian_bookworm; then
+  if is_ubuntu_noble || is_raspbian_bookworm; then
     print INFO "You are running the setup-script on: $DISTRIBUTION $DIST_VERSION which is one of the supported two operating-systems! So, we can happily start the setup…"
     return 0
   else
@@ -277,7 +277,7 @@ fi
 
 DISTRIBUTION=$(get_distribution) # e.g., 'ubuntu'
 export DISTRIBUTION
-DIST_VERSION=$(get_dist_version "$DISTRIBUTION")  # e.g., 'jammy'
+DIST_VERSION=$(get_dist_version "$DISTRIBUTION")  # e.g., 'noble'
 export DIST_VERSION
 check_distribution
 
@@ -307,7 +307,7 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-if is_ubuntu_jammy; then
+if is_ubuntu_noble; then
   remove_apps || print ERROR "failed to remove default software"
 fi
 
@@ -325,7 +325,7 @@ print INFO "${INSTALL_METHOD}"
 if [ "$INSTALL_METHOD" = "legacy" ]; then
   print INFO "Going to install Cerebra locally (LEGACY MODE NOT WORKING ON RASPBERRY PI 5)"
   source "$SETUP_INSTALLATION_DIR/local_install.sh" || print ERROR "failed to install Cerebra locally"
-elif is_ubuntu_jammy || is_raspbian_bookworm; then
+elif is_ubuntu_noble || is_raspbian_bookworm; then
   print INFO "Going to install Cerebra via Docker"
   source "$SETUP_INSTALLATION_DIR/docker_install.sh" || print ERROR "failed to install Cerebra via Docker"
 fi
