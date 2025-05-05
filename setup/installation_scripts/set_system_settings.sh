@@ -38,7 +38,7 @@ if is_raspbian_bookworm; then
 fi
 
 
-if is_ubuntu_jammy; then
+if is_ubuntu_noble; then
     # Activate automatic login settings via regex
     sudo sed -i '/#  AutomaticLogin/{s/#//;s/user1/pib/}' /etc/gdm3/custom.conf
     print INFO "Activated automatic login"
