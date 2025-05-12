@@ -43,11 +43,13 @@ You can add the "-Cerebra" parameter to update only the frontend application but
 Starting the webots simulation:
 
 1. Complete all steps of the "Installing pibs software"-section of this readme document
-2. Navigate to app/pib-backend
+2. If you are running simulation in a virtual machine ubuntu type the following command
+   `xhost +local:root`
+4. Navigate to app/pib-backend
    `cd app/pib-backend`
-3. Enter the following command into a terminal:  
+5. Enter the following command into a terminal:  
    `sudo docker compose --profile pibsim_webots up`  
-   (The first time this command is entered, webots will be installed. Webots should open automatically afterwards, to close it you should stop the container by closing the terminal window which is open or by pressing ctrl c.)
+   (The first time this command is entered, webots will be installed. Webots should open automatically afterwards, to close it you should stop the container by closing the terminal window which is open or by pressing ctrl c. To run it again just restart the container and if you turned off the virtual machine repeat step 2)
 
 Webots may throw error messages saying it crashed (especially on VM). This can usually be ignored by clicking on "wait".
 
