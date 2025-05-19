@@ -38,7 +38,7 @@ PROTO pib [
                   metalness 0
                 }
                 geometry DEF urdf_body Mesh {
-                  url "/home/pib/ros_working_dir/src/pibsim_webots/protos/resources/urdf_body.stl"
+                  url "/app/ros2_ws/pibsim_webots/protos/resources/urdf_body.stl"
                 }
               }
             ]
@@ -75,7 +75,7 @@ PROTO pib [
                         metalness 0
                       }
                       geometry DEF urdf_head_base Mesh {
-                        url "/home/pib/ros_working_dir/src/pibsim_webots/protos/resources/urdf_head_base.stl"
+                        url "/app/ros2_ws/pibsim_webots/protos/resources/urdf_head_base.stl"
                       }
                     }
                   ]
@@ -112,7 +112,7 @@ PROTO pib [
                               metalness 0
                             }
                             geometry DEF urdf_head Mesh {
-                              url "/home/pib/ros_working_dir/src/pibsim_webots/protos/resources/urdf_head.stl"
+                              url "/app/ros2_ws/pibsim_webots/protos/resources/urdf_head.stl"
                             }
                           }
                         ]
@@ -132,7 +132,7 @@ PROTO pib [
                                   metalness 0
                                 }
                                 geometry DEF urdf_camera_link Mesh {
-                                  url "/home/pib/ros_working_dir/src/pibsim_webots/protos/resources/urdf_camera_link.stl"
+                                  url "/app/ros2_ws/pibsim_webots/protos/resources/urdf_camera_link.stl"
                                 }
                               }
                             ]
@@ -228,7 +228,7 @@ PROTO pib [
                         metalness 0
                       }
                       geometry DEF urdf_shoulder_vertical Mesh {
-                        url "/home/pib/ros_working_dir/src/pibsim_webots/protos/resources/urdf_shoulder_vertical.stl"
+                        url "/app/ros2_ws/pibsim_webots/protos/resources/urdf_shoulder_vertical.stl"
                       }
                     }
                   ]
@@ -265,7 +265,7 @@ PROTO pib [
                               metalness 0
                             }
                             geometry DEF urdf_shoulder_horizontal Mesh {
-                              url "/home/pib/ros_working_dir/src/pibsim_webots/protos/resources/urdf_shoulder_horizontal.stl"
+                              url "/app/ros2_ws/pibsim_webots/protos/resources/urdf_shoulder_horizontal.stl"
                             }
                           }
                         ]
@@ -301,7 +301,7 @@ PROTO pib [
                                     metalness 0
                                   }
                                   geometry DEF urdf_elbow-upper Mesh {
-                                    url "/home/pib/ros_working_dir/src/pibsim_webots/protos/resources/urdf_elbow-upper.stl"
+                                    url "/app/ros2_ws/pibsim_webots/protos/resources/urdf_elbow-upper.stl"
                                   }
                                 }
                               ]
@@ -338,7 +338,7 @@ PROTO pib [
                                           metalness 0
                                         }
                                         geometry DEF urdf_elbow-lower Mesh {
-                                          url "/home/pib/ros_working_dir/src/pibsim_webots/protos/resources/urdf_elbow-lower.stl"
+                                          url "/app/ros2_ws/pibsim_webots/protos/resources/urdf_elbow-lower.stl"
                                         }
                                       }
                                     ]
@@ -374,7 +374,7 @@ PROTO pib [
                                                 metalness 0
                                               }
                                               geometry DEF urdf_forearm Mesh {
-                                                url "/home/pib/ros_working_dir/src/pibsim_webots/protos/resources/urdf_forearm.stl"
+                                                url "/app/ros2_ws/pibsim_webots/protos/resources/urdf_forearm.stl"
                                               }
                                             }
                                           ]
@@ -411,7 +411,7 @@ PROTO pib [
                                                       metalness 0
                                                     }
                                                     geometry DEF urdf_palm_left Mesh {
-                                                      url "/home/pib/ros_working_dir/src/pibsim_webots/protos/resources/urdf_palm_left.stl"
+                                                      url "/app/ros2_ws/pibsim_webots/protos/resources/urdf_palm_left.stl"
                                                     }
                                                   }
                                                 ]
@@ -447,7 +447,7 @@ PROTO pib [
                                                             metalness 0
                                                           }
                                                           geometry DEF urdf_thumb_rotator_left Mesh {
-                                                            url "/home/pib/ros_working_dir/src/pibsim_webots/protos/resources/urdf_thumb_rotator_left.stl"
+                                                            url "/app/ros2_ws/pibsim_webots/protos/resources/urdf_thumb_rotator_left.stl"
                                                           }
                                                         }
                                                       ]
@@ -483,7 +483,7 @@ PROTO pib [
                                                                   metalness 0
                                                                 }
                                                                 geometry DEF urdf_finger_proximal Mesh {
-                                                                  url "/home/pib/ros_working_dir/src/pibsim_webots/protos/resources/urdf_finger_proximal.stl"
+                                                                  url "/app/ros2_ws/pibsim_webots/protos/resources/urdf_finger_proximal.stl"
                                                                 }
                                                               }
                                                             ]
@@ -518,7 +518,7 @@ PROTO pib [
                                                                         metalness 0
                                                                       }
                                                                       geometry DEF urdf_finger_distal Mesh {
-                                                                        url "/home/pib/ros_working_dir/src/pibsim_webots/protos/resources/urdf_finger_distal.stl"
+                                                                        url "/app/ros2_ws/pibsim_webots/protos/resources/urdf_finger_distal.stl"
                                                                       }
                                                                     }
                                                                   ]
@@ -1282,7 +1282,7 @@ PROTO pib [
                                                       metalness 0
                                                     }
                                                     geometry DEF urdf_palm_right Mesh {
-                                                      url "/home/pib/ros_working_dir/src/pibsim_webots/protos/resources/urdf_palm_right.stl"
+                                                      url "/app/ros2_ws/pibsim_webots/protos/resources/urdf_palm_right.stl"
                                                     }
                                                   }
                                                 ]
@@ -1318,7 +1318,7 @@ PROTO pib [
                                                             metalness 0
                                                           }
                                                           geometry DEF urdf_thumb_rotator_right Mesh {
-                                                            url "/home/pib/ros_working_dir/src/pibsim_webots/protos/resources/urdf_thumb_rotator_right.stl"
+                                                            url "/app/ros2_ws/pibsim_webots/protos/resources/urdf_thumb_rotator_right.stl"
                                                           }
                                                         }
                                                       ]
