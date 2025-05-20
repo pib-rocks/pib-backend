@@ -18,7 +18,7 @@ depends_on = None
 
 def upgrade():
     with op.batch_alter_table('bricklet', schema=None) as batch_op:
-        batch_op.add_column(sa.Column('type', sa.Enum('Solid State Relay Bricklet', 'Servo Bricklet', name='bricklet_type'), nullable=False))
+        batch_op.add_column(sa.Column('type', sa.Enum('Solid State Relay Bricklet', 'Servo Bricklet', name='bricklet_type'), nullable=False, server_default='Servo Bricklet'))
 
 
 def downgrade():
