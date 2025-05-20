@@ -23,4 +23,5 @@ def upgrade():
 
 def downgrade():
     with op.batch_alter_table('bricklet', schema=None) as batch_op:
+        op.execute("DELETE FROM bricklet WHERE type = 'Solid State Relay Bricklet'")
         batch_op.drop_column('type')
