@@ -174,9 +174,22 @@ function install_BrickV() {
   wget https://download.tinkerforge.com/apt/$(. /etc/os-release; echo $ID)/tinkerforge.asc -q -O - | sudo tee /etc/apt/trusted.gpg.d/tinkerforge.asc > /dev/null
   echo "deb https://download.tinkerforge.com/apt/$(. /etc/os-release; echo $ID $VERSION_CODENAME) main" | sudo tee /etc/apt/sources.list.d/tinkerforge.list
   sudo apt update
-  sudo apt install -y brickv
-  sudo apt install python3-tinkerforge #python API Bindings
-  print SUCCESS "Installed brick viewer and python API bindings"
+  sudo apt install -y brickv brickd python3-tinkerforge #python API Bindings
+  print SUCCESS "Installed brick viewer, brickd, and python API bindings"
+
+  print INFO "Enabling brickd service..."
+  if sudo systemctl enable brickd; then
+    print SUCCESS "brickd service enabled."
+  else
+    print ERROR "Failed to enable brickd service."
+  fi
+
+  print INFO "Starting brickd service..."
+  if sudo systemctl start brickd; then
+    print SUCCESS "brickd service started."
+  else
+    print ERROR "Failed to start brickd service."
+  fi
 }
 
 # clean setup files if local install + remove user from sudoers file again
