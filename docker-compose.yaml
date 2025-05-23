@@ -92,6 +92,8 @@ services:
     environment:
       - FLASK_API_BASE_URL=http://flask-app:5000
       - PIB_BLOCKLY_SERVER_URL=http://pib-blockly-server:2442
+      - TINKERFORGE_HOST=localhost
+      - TINKERFORGE_PORT=4223
     restart: always
     depends_on:
       - rosbridge-ws
@@ -141,6 +143,8 @@ services:
     environment:
       - FLASK_API_BASE_URL=http://flask-app:5000
       - PIB_BLOCKLY_SERVER_URL=http://pib-blockly-server:2442
+      - TINKERFORGE_HOST=localhost
+      - TINKERFORGE_PORT=4223
       - PYTHON_BINARY=/usr/bin/python3
       - PROGRAM_DIR=/ros2_ws/cerebra_programs
       - VOICE_ASSISTANT_DIR=/app/ros2_ws/voice_assistant
