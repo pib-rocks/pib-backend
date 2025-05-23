@@ -174,7 +174,7 @@ function install_tinkerforge() {
   wget https://download.tinkerforge.com/apt/$(. /etc/os-release; echo $ID)/tinkerforge.asc -q -O - | sudo tee /etc/apt/trusted.gpg.d/tinkerforge.asc > /dev/null
   echo "deb https://download.tinkerforge.com/apt/$(. /etc/os-release; echo $ID $VERSION_CODENAME) main" | sudo tee /etc/apt/sources.list.d/tinkerforge.list
   sudo apt update
-  sudo apt install -y \ 
+  sudo apt install -y \
     brickd \
     brickv \
     python3-tinkerforge #python API Bindings
