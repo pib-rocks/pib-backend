@@ -45,7 +45,10 @@ services:
     volumes:
       - ./pib_api/flask/:/data
 
+<<<<<<< HEAD
 
+=======
+>>>>>>> 1629d93d4f9b97c752b7cdae12b7637591aa893c
   rosbridge-ws:
     build:
       context: ./ros_packages
@@ -93,6 +96,11 @@ services:
     environment:
       - FLASK_API_BASE_URL=http://flask-app:5000
       - PIB_BLOCKLY_SERVER_URL=http://pib-blockly-server:2442
+<<<<<<< HEAD
+=======
+      - TINKERFORGE_HOST=localhost
+      - TINKERFORGE_PORT=4223
+>>>>>>> 1629d93d4f9b97c752b7cdae12b7637591aa893c
     restart: always
     depends_on:
       - rosbridge-ws
@@ -142,6 +150,11 @@ services:
     environment:
       - FLASK_API_BASE_URL=http://flask-app:5000
       - PIB_BLOCKLY_SERVER_URL=http://pib-blockly-server:2442
+<<<<<<< HEAD
+=======
+      - TINKERFORGE_HOST=localhost
+      - TINKERFORGE_PORT=4223
+>>>>>>> 1629d93d4f9b97c752b7cdae12b7637591aa893c
       - PYTHON_BINARY=/usr/bin/python3
       - PROGRAM_DIR=/ros2_ws/cerebra_programs
       - VOICE_ASSISTANT_DIR=/app/ros2_ws/voice_assistant
