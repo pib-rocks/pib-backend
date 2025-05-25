@@ -6,12 +6,15 @@ WORKDIR /app
 
 RUN apt-get update && apt-get install --no-install-recommends -y curl
 
-RUN apt-get update --fix-missing && \
+RUN curl -sSL https://download.tinkerforge.com/apt/$(. /etc/os-release; echo $ID)/tinkerforge.gpg | apt-key add - && \
+    echo "deb https://download.tinkerforge.com/apt/$(. /etc/os-release; echo $ID $VERSION_CODENAME) main" > /etc/apt/sources.list.d/tinkerforge.list && \
+    apt-get update --fix-missing && \
     apt-get install --no-install-recommends -y \
         build-essential \
         python3-colcon-common-extensions \
         python3-colcon-mixin \
         python3-pip \
+        python3-tinkerforge \
         libusb-1.0-0-dev \
     && rm -rf /var/lib/apt/lists/*
 
