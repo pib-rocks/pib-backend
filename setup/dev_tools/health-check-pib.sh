@@ -136,7 +136,7 @@ if [ $run_pip_package_check = $true ]; then
 
     folders=([1]=motors [2]=datatypes [3]=voice_assistant [4]=camera [5]=programs)
     package_names=([1]="name: motors" [2]="name: datatypes" [3]="name: voice_assistant" [4]="name: oak_d_lite" [5]="name: programs")
-    sys_ctls=([1]=ros_motor_control_node_boot.service [2]=ros_motor_current_node_boot.service [3]=pib_api_boot.service [4]=ros_camera_boot.service [5]=ros_cerebra_boot.service [6]=ros_voice_assistant_boot.service [7]=ros_chat_boot.service [8]=ros_audio_recorder.service [9]=ros_audio_player.service [10]=ros_program_boot.service [11]=ros_proxy_program_boot.service)
+    sys_ctls=([1]=ros_motor_control_node_boot.service [2]=ros_motor_current_node_boot.service [3]=pib_api_boot.service [4]=ros_camera_boot.service [5]=ros_cerebra_boot.service [6]=ros_voice_assistant_boot.service [7]=ros_chat_boot.service [8]=ros_audio_streamer.service [9]=ros_audio_recorder.service [10]=ros_audio_player.service [11]=ros_program_boot.service [12]=ros_proxy_program_boot.service)
 
     # Change directory to make the colcon command work independently of the location of this shell script
     cd $ros_working_dir_src
