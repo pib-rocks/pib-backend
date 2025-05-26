@@ -204,6 +204,31 @@ services:
     networks:
       - pib-network
 
+  ros-doa:
+    image: ros-doa
+    build:
+     context: .
+     dockerfile: ./ros_packages/doa/Dockerfile
+    command: ros2 launch doa launch.py
+    profiles:
+      - all
+      - doa
+    networks:
+      - pib-network
+    environment:
+      - PULSE_SERVER=unix:${XDG_RUNTIME_DIR}/pulse/native
+      - ALSA_CARD=Generic
+    volumes:
+      - /media/dyan/project/projects/voice/:/data/voice
+      - /dev/snd:/dev/snd
+      - /dev/dsp:/dev/dsp
+      - /etc/machine-id:/etc/machine-id
+      - ${XDG_RUNTIME_DIR}/pulse/native:${XDG_RUNTIME_DIR}/pulse/native
+      - ~/.config/pulse/cookie:/root/.config/pulse/cookie
+    restart: always
+    depends_on:
+      - rosbridge-ws
+
 volumes:
   programs:
 
