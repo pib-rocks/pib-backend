@@ -9,10 +9,7 @@ import time
 # Add usb_4_mic_array to Python path so we can import tuning.py
 sys.path.append('/ros2_ws/src/my_talker/my_talker/usb_4_mic_array')
 
-try:
-    from tuning import Tuning
-except ImportError:
-    print("ERROR: Could not import `tuning.py`. Ensure `usb_4_mic_array` is correctly placed.")
+from tuning import Tuning
 
 class DOAPublisher(Node):
     def __init__(self):
