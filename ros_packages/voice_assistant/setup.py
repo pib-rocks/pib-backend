@@ -28,6 +28,7 @@ setup(
             "audio_recorder = voice_assistant.audio_recorder:main",
             "audio_player = voice_assistant.audio_player:main",
             "token_service = voice_assistant.token_service:main",
+            "audio_streamer = voice_assistant.audio_streamer:main",
         ],
     },
 )

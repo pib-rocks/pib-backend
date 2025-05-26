@@ -124,6 +124,12 @@ sudo chmod 700 "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_audio_player_boot.service"
 sudo mv "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_audio_player_boot.service" /etc/systemd/system
 sudo systemctl enable ros_audio_player_boot.service
 
+# Boot audio streamer
+sudo chmod 700 "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_audio_streamer_boot.sh"
+sudo chmod 700 "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_audio_streamer_boot.service"
+sudo mv "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_audio_streamer_boot.service" /etc/systemd/system
+sudo systemctl enable ros_audio_streamer_boot.service
+
 # Boot audio recorder
 sudo chmod 700 "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_audio_recorder_boot.sh"
 sudo chmod 700 "$ROS_VOICE_ASSISTANT_BOOT_DIR/ros_audio_recorder_boot.service"
