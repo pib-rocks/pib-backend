@@ -28,25 +28,35 @@ class AudioStreamer(Node):
         self.timer = self.create_timer(0.1, self.publish_audio)
 
     def select_input_device(self):
-        """Find and set the correct microphone input device."""
+        """Find and set the correct microphone input device, or fall back to the default."""
+        # List all devices (optional, for debugging)
         for i in range(self.audio.get_device_count()):
-            device_info = self.audio.get_device_info_by_index(i)
-            print(f"Device Index {i}: {device_info['name']}")
-            print(f"  Max Input Channels: {device_info.get('maxInputChannels')}")
-            print(f"  Max Output Channels: {device_info.get('maxOutputChannels')}\n")
-            print(f"Device default sample rate: {device_info['defaultSampleRate']}\n")
+            info = self.audio.get_device_info_by_index(i)
+            self.get_logger().info(
+                f"Device {i}: {info['name']} — "
+                f"in:{info.get('maxInputChannels')} out:{info.get('maxOutputChannels')}"
+            )
 
+        # Try to pick any Respeaker (or similar) array first
         for i in range(self.audio.get_device_count()):
-            device_info = self.audio.get_device_info_by_index(i)
-            self.get_logger().info(f"Device {i}: {device_info['name']}")
-            if "respeaker" in device_info['name'].lower():  # Adjust if using a different mic
+            info = self.audio.get_device_info_by_index(i)
+            if "respeaker" in info['name'].lower():
                 self.input_device_index = i
-                self.get_logger().info(f"Selected audio input device: {device_info['name']}")
-                print(f"Device {i}: {device_info['name']} - Default sample rate: {device_info['defaultSampleRate']}")
+                self.get_logger().info(f"Selected audio input device: {info['name']} (index {i})")
                 return
 
-        self.get_logger().error("No valid microphone found!")
-        self.input_device_index = None
+        # Fallback: use default input device
+        try:
+            default_info = self.audio.get_default_input_device_info()
+            self.input_device_index = int(default_info['index'])
+            self.get_logger().warn(
+                f"No Respeaker found, falling back to default input device: "
+                f"{default_info['name']} (index {self.input_device_index})"
+            )
+        except IOError:
+            # No default device either
+            self.get_logger().error("No valid microphone found and no default input device available!")
+            self.input_device_index = None
 
     def publish_audio(self):
         """Read audio data from the microphone and publish it."""
