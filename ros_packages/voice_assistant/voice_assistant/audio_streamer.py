@@ -58,7 +58,6 @@ class AudioStreamer(Node):
             self.get_logger().error("No valid microphone found and no default input device available!")
             self.input_device_index = None
 
-
     def publish_audio(self):
         """Read audio data from the microphone and publish it."""
         if self.input_device_index is None:
