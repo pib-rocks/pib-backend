@@ -7,7 +7,8 @@ WORKDIR /app
 RUN apt-get update && apt-get install --no-install-recommends -y curl
 
 # Install necessary dependencies
-RUN python3-pip python3-colcon-common-extensions \
+RUN apt install -y \
+    python3-pip python3-colcon-common-extensions \
     ros-humble-rclpy ros-humble-std-msgs \
     python3-usb \
     portaudio19-dev \
