@@ -25,7 +25,6 @@ setup(
         "console_scripts": [
             "audio_streamer = ros_audio_io.audio_streamer:main",
             "doa_publisher = ros_audio_io.doa_publisher:main",
-            "doa_listener = ros_audio_io.doa_listener:main",            
         ],
     },
 )
