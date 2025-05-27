@@ -11,7 +11,7 @@ class DOAListener(Node):
         # Subscribe to the DOA topic
         self.subscription = self.create_subscription(
             Int32, 
-            'doa_angle', 
+            '/doa_angle', 
             self.listener_callback, 
             10
         )
