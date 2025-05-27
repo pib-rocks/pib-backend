@@ -22,9 +22,9 @@ class DOAPublisher(Node):
         else:
             self.Mic_tuning = Tuning(self.dev)
             try:
-                interval = float(os.getenv('DOA_INTERVAL', '2.0'))
+                interval = float(os.getenv('DOA_PUBLISH_INTERVAL', '2.0'))
             except ValueError:
-                self.get_logger().warn("Invalid DOA_INTERVAL, defaulting to 2.0s")
+                self.get_logger().warn("Invalid DOA_PUBLISH_INTERVAL, defaulting to 2.0s")
                 interval = 2.0
 
             self.get_logger().info(f"DOA publishing every {interval:.3f}s")
