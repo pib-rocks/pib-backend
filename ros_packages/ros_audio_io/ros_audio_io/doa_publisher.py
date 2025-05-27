@@ -6,7 +6,7 @@ import usb.core
 import usb.util
 import time
 
-from doa.tuning import Tuning
+from ros_audio_io.tuning import Tuning
 
 class DOAPublisher(Node):
     def __init__(self):
