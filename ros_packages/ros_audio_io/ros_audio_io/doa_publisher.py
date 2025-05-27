@@ -5,6 +5,7 @@ from std_msgs.msg import Int32
 import usb.core
 import usb.util
 import time
+import os
 
 from ros_audio_io.tuning import Tuning
 
@@ -20,7 +21,15 @@ class DOAPublisher(Node):
             self.get_logger().error("ReSpeaker Mic Array v2.0 not found! Make sure it's connected.")
         else:
             self.Mic_tuning = Tuning(self.dev)
-            self.timer = self.create_timer(2.0, self.publish_doa)
+            try:
+                interval = float(os.getenv('DOA_INTERVAL', '2.0'))
+            except ValueError:
+                self.get_logger().warn("Invalid DOA_INTERVAL, defaulting to 2.0s")
+                interval = 2.0
+
+            self.get_logger().info(f"DOA publishing every {interval:.3f}s")
+            self.timer = self.create_timer(interval, self.publish_doa)
+            
 
     def publish_doa(self):
         if self.dev is not None:
