@@ -219,7 +219,10 @@ services:
       - pib-network
     environment:
       - PULSE_SERVER=unix:${XDG_RUNTIME_DIR}/pulse/native
-      - ALSA_CARD=Generic
+    devices:
+      - /dev/snd:/dev/snd
+      - /dev/bus/usb:/dev/bus/usb1
+    privileged: true
     volumes:
       - /media/dyan/project/projects/voice/:/data/voice
       - /dev/snd:/dev/snd
