@@ -3,7 +3,7 @@ from glob import glob
 
 from setuptools import find_packages, setup
 
-package_name = "doa"
+package_name = "ros_audio_io"
 
 setup(
     name=package_name,
@@ -23,8 +23,9 @@ setup(
     tests_require=["pytest"],
     entry_points={
         "console_scripts": [
-            "doa_publisher = doa.doa_publisher:main",
-            "doa_listener = doa.doa_listener:main",            
+            "audio_streamer = ros_audio_io.audio_streamer:main",
+            "doa_publisher = ros_audio_io.doa_publisher:main",
+            "doa_listener = ros_audio_io.doa_listener:main",            
         ],
     },
 )

@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
-  <name>doa</name>
+  <name>ros_audio_io</name>
   <version>0.0.0</version>
   <description>Publish and listen to DOA data from usb mic array via ROS2 stream, if mic array is connected</description>
   <maintainer email="team@pib.rocks">pib</maintainer>

@@ -154,6 +154,7 @@ services:
       - rosbridge-ws
       - flask-app
       - pib-blockly-server
+      - ros-audio-io
 
   ros-programs:
     image: ros_programs
@@ -206,15 +207,15 @@ services:
     networks:
       - pib-network
 
-  ros-doa:
-    image: ros-doa
+  ros-audio-io:
+    image: ros-audio-io
     build:
      context: .
-     dockerfile: ./ros_packages/doa/Dockerfile
-    command: ros2 launch doa launch.py
+     dockerfile: ./ros_packages/ros_audio_io/Dockerfile
+    command: ros2 launch ros_audio_io launch.py
     profiles:
       - all
-      - doa
+      - ros_audio_io
     networks:
       - pib-network
     environment:

@@ -21,7 +21,7 @@ COPY ./pib_api/client ./client
 RUN pip install ./client
 
 COPY ./ros_packages/datatypes ros2_ws/datatypes
-COPY ./ros_packages/doa ros2_ws/doa
+COPY ./ros_packages/ros_audio_io ros2_ws/ros_audio_io
 
 RUN cd ros2_ws && \
     source /opt/ros/humble/setup.bash && \
