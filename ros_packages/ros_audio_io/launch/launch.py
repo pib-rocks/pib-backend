@@ -12,7 +12,7 @@ def generate_launch_description():
     # Stream raw audio
     ld.add_action(
         Node(
-            package='voice_assistant',
+            package='ros_audio_io',
             executable='audio_streamer',
             name='audio_streamer',
             output='screen',
@@ -22,7 +22,7 @@ def generate_launch_description():
     if mic == 'respeaker':
         ld.add_action(
             Node(
-                package='doa',
+                package='ros_audio_io',
                 executable='doa_publisher',
                 name='doa_publisher',
                 output='screen',
