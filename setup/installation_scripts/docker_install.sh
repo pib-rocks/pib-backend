@@ -31,17 +31,6 @@ function install_docker_engine() {
         return
     fi
 
-    # Get if distribution compatible with docker setup
-    if [[ "$DISTRIBUTION" != "ubuntu" && "$DISTRIBUTION" != "debian" && "$DISTRIBUTION" != "raspbian" ]]; then
-        print ERROR "Unsupported distribution: $DISTRIBUTION"
-        return 1
-    fi
-
-    if [ -z "$DIST_VERSION" ]; then
-        print ERROR "could not find version of linux distribution"
-        return 1
-    fi
-
     print INFO "Installing Docker Engine for ${DISTRIBUTION} ${DIST_VERSION}"
     print INFO "$USER"
 
