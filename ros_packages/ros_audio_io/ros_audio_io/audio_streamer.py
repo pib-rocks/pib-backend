@@ -5,12 +5,13 @@ import pyaudio
 import numpy as np
 import os
 
+
 class AudioStreamer(Node):
     def __init__(self):
-        super().__init__('audio_streamer')
+        super().__init__("audio_streamer")
 
         # Read preferred device substring from environment (MIC_DEVICE)
-        self.preferred = os.getenv('MIC_DEVICE', 'default').lower()
+        self.preferred = os.getenv("MIC_DEVICE", "default").lower()
 
         # Audio parameters
         self.chunk = 1024  # Buffer size
@@ -20,15 +21,19 @@ class AudioStreamer(Node):
         self.input_device_index = None  # Will be determined dynamically
 
         # ROS2 publisher for raw audio chunks
-        self.publisher_ = self.create_publisher(Int16MultiArray, 'audio_stream', 10)
+        self.publisher_ = self.create_publisher(Int16MultiArray, "audio_stream", 10)
 
         self.audio = pyaudio.PyAudio()
         self.select_input_device()
 
-        self.stream = self.audio.open(format=self.format, channels=self.channels,
-                                      rate=self.rate, input=True,
-                                      input_device_index=self.input_device_index,
-                                      frames_per_buffer=self.chunk)
+        self.stream = self.audio.open(
+            format=self.format,
+            channels=self.channels,
+            rate=self.rate,
+            input=True,
+            input_device_index=self.input_device_index,
+            frames_per_buffer=self.chunk,
+        )
 
         # Schedule callback every chunk/rate seconds for minimal latency
         self.timer = self.create_timer(self.chunk / self.rate, self.publish_audio)
@@ -41,7 +46,7 @@ class AudioStreamer(Node):
             self.get_logger().debug(
                 f"Device {i}: {info['name']} (in:{info.get('maxInputChannels')}, out:{info.get('maxOutputChannels')})"
             )
-            if self.preferred in info['name'].lower():
+            if self.preferred in info["name"].lower():
                 found = (i, info)
                 break
 
@@ -55,7 +60,7 @@ class AudioStreamer(Node):
             # Fallback to system default input
             try:
                 default = self.audio.get_default_input_device_info()
-                self.input_device_index = int(default['index'])
+                self.input_device_index = int(default["index"])
                 self.get_logger().warn(
                     f"No device matching '{self.preferred}'; falling back to default: "
                     f"{default['name']} (index {self.input_device_index})"
@@ -71,11 +76,13 @@ class AudioStreamer(Node):
         if self.input_device_index is None:
             return
 
-        audio_data = np.frombuffer(self.stream.read(self.chunk, exception_on_overflow=False), dtype=np.int16)
+        audio_data = np.frombuffer(
+            self.stream.read(self.chunk, exception_on_overflow=False), dtype=np.int16
+        )
         msg = Int16MultiArray()
         msg.data = audio_data.tolist()
         self.publisher_.publish(msg)
-        #self.get_logger().info(f"Published {len(audio_data)} samples of audio data")
+        # self.get_logger().info(f"Published {len(audio_data)} samples of audio data")
 
     def destroy_node(self):
         """Cleanup resources when shutting down."""
@@ -93,5 +100,5 @@ def main(args=None):
     rclpy.shutdown()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

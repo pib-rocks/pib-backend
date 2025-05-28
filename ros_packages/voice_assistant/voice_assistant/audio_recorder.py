@@ -36,6 +36,7 @@ VOICE_ASSISTANT_DIRECTORY = os.getenv(
 )
 OUTPUT_FILE_PATH = VOICE_ASSISTANT_DIRECTORY + "/audiofiles/output.wav"
 
+
 class AudioRecorderNode(Node):
 
     def __init__(self):
@@ -64,10 +65,7 @@ class AudioRecorderNode(Node):
         self.audio_chunk_event = Event()
         # subscribe to ROS2 audio_stream topic
         self.audio_stream_subscription = self.create_subscription(
-            Int16MultiArray,
-            'audio_stream',
-            self.audio_stream_callback,
-            10
+            Int16MultiArray, "audio_stream", self.audio_stream_callback, 10
         )
         self.get_logger().info("Now running AUDIO RECORDER")
 
@@ -89,9 +87,9 @@ class AudioRecorderNode(Node):
         with self.audio_chunks_lock:
             self.audio_chunks.append(chunk_bytes)
             self.audio_chunk_event.set()
-    
+
     def get_next_chunk(self) -> bytes:
-    # wait until a chunk is available
+        # wait until a chunk is available
         while True:
             self.audio_chunk_event.wait()
             with self.audio_chunks_lock:
@@ -100,7 +98,7 @@ class AudioRecorderNode(Node):
                     if not self.audio_chunks:
                         self.audio_chunk_event.clear()
                     return chunk
-                
+
     def is_silent(self, data_chunk) -> bool:
         """Check whether a chunk of frmaes is below the minimum volume threshold"""
         as_ints = np.frombuffer(data_chunk, dtype=np.int16)
