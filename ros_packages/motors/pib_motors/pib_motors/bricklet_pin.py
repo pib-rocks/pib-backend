@@ -8,12 +8,14 @@ from tinkerforge.bricklet_servo_v2 import BrickletServoV2
 class BrickletPin:
 
     NO_CURRENT: int = -1
-    DEFAULT_BRICKLET_UIDS = ["AAA", "BBB", "CCC"]
 
     def __init__(self, pin: int, uid: str, invert: bool) -> None:
         self.pin: int = pin
         self.bricklet: BrickletServoV2 = uid_to_bricklet[uid]
         self.invert = invert
+        self._connected = False
+
+        self.check_connection()
 
     def __str__(self) -> str:
         uid = "---"
@@ -22,6 +24,15 @@ class BrickletPin:
         except Exception:
             pass
         return f"BRICKLET-PIN[ pin: {self.pin}, bricklet: {uid} ]"
+
+    def check_connection(self):
+        """checks if the bricklet-pin is connected to a bricklet"""
+        if self._connected == False:
+            try:
+                self.bricklet.get_servo_current(self.pin)
+                self._connected = True
+            except TimeoutError:
+                self._connected = False
 
     def apply_settings(self, settings_dto: dict[str, Any]) -> bool:
         """apply the provided settings to the bricklet-pin"""
@@ -70,15 +81,14 @@ class BrickletPin:
 
     def get_current(self) -> int:
         """returns the current of the bricklet pin, or NO_CURRENT, if it is not connected"""
-        return (
-            self.bricklet.get_servo_current(self.pin)
-            if self.is_connected()
-            else BrickletPin.NO_CURRENT
-        )
+        if self.is_connected():
+            return self.bricklet.get_servo_current(self.pin)
+        else:
+            return BrickletPin.NO_CURRENT
 
     def is_connected(self) -> bool:
         """checks if the bricklet-pin is connected to a bricklet"""
-        return self.bricklet.uid_string not in BrickletPin.DEFAULT_BRICKLET_UIDS
+        return self._connected
 
     def set_position(self, position: int) -> bool:
         """sets the position of the bricklet-pin and returns 'True' if this was successful"""
