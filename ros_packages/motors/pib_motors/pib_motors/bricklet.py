@@ -1,5 +1,5 @@
 import os
-
+import logging
 from pib_api_client import bricklet_client
 from pib_motors.config import cfg
 from tinkerforge.brick_hat import BrickHAT
@@ -24,3 +24,26 @@ bricklet_uids = [dto["uid"] for dto in bricklet_dtos["bricklets"]]
 uid_to_bricklet: dict[str, BrickletServoV2] = {
     uid: BrickletServoV2(uid, ipcon) for uid in bricklet_uids
 }
+
+connected_bricklets = set()
+
+
+# callback function to handle bricklet enumeration events
+def connected_enumerate(
+    uid,
+    connected_uid,
+    position,
+    hardware_version,
+    firmware_version,
+    device_identifier,
+    enumeration_type,
+):
+    if (
+        device_identifier == BrickletServoV2.DEVICE_IDENTIFIER
+        and enumeration_type == IPConnection.ENUMERATION_TYPE_AVAILABLE
+    ):
+        connected_bricklets.add(uid)
+        logging.info(f"Servo Bricklet {uid} is connected.")
+    elif enumeration_type == IPConnection.ENUMERATION_TYPE_DISCONNECTED:
+        connected_bricklets.discard(uid)
+        logging.info(f"Servo Bricklet {uid} is disconnected.")
