@@ -147,11 +147,14 @@ services:
       - /etc/machine-id:/etc/machine-id
       - ${XDG_RUNTIME_DIR}/pulse/native:${XDG_RUNTIME_DIR}/pulse/native
       - ~/.config/pulse/cookie:/root/.config/pulse/cookie
+    devices:
+      - "/dev/snd:/dev/snd"
     restart: always
     depends_on:
       - rosbridge-ws
       - flask-app
       - pib-blockly-server
+      - ros-audio-io
 
   ros-programs:
     image: ros_programs
@@ -203,6 +206,36 @@ services:
     restart: always
     networks:
       - pib-network
+
+  ros-audio-io:
+    image: ros-audio-io
+    build:
+     context: .
+     dockerfile: ./ros_packages/ros_audio_io/Dockerfile
+    command: ros2 launch ros_audio_io launch.py
+    profiles:
+      - all
+      - ros_audio_io
+    networks:
+      - pib-network
+    env_file:
+      - ros-audio.env
+    environment:
+      - PULSE_SERVER=unix:${XDG_RUNTIME_DIR}/pulse/native
+    devices:
+      - /dev/snd:/dev/snd
+      - /dev/bus/usb:/dev/bus/usb1
+    privileged: true
+    volumes:
+      - /media/dyan/project/projects/voice/:/data/voice
+      - /dev/snd:/dev/snd
+      - /dev/dsp:/dev/dsp
+      - /etc/machine-id:/etc/machine-id
+      - ${XDG_RUNTIME_DIR}/pulse/native:${XDG_RUNTIME_DIR}/pulse/native
+      - ~/.config/pulse/cookie:/root/.config/pulse/cookie
+    restart: always
+    depends_on:
+      - rosbridge-ws
 
 volumes:
   programs:

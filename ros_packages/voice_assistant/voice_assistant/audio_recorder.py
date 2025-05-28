@@ -1,7 +1,7 @@
 import os
 import wave
 from collections import deque
-from threading import Lock
+from threading import Lock, Event
 from typing import Optional
 
 import numpy as np
@@ -13,7 +13,7 @@ from rclpy.action import CancelResponse, GoalResponse
 from rclpy.action.server import ServerGoalHandle
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
-from std_msgs.msg import String
+from std_msgs.msg import String, Int16MultiArray
 
 from public_api_client import public_voice_client
 from . import util
@@ -35,7 +35,6 @@ VOICE_ASSISTANT_DIRECTORY = os.getenv(
     "VOICE_ASSISTANT_DIR", "/home/pib/ros_working_dir/src/voice_assistant"
 )
 OUTPUT_FILE_PATH = VOICE_ASSISTANT_DIRECTORY + "/audiofiles/output.wav"
-
 
 class AudioRecorderNode(Node):
 
@@ -59,7 +58,17 @@ class AudioRecorderNode(Node):
         self.get_token_subscription = self.create_subscription(
             String, "public_api_token", self.get_public_api_token_listener, 10
         )
-
+        # buffer for incoming audio stream frames
+        self.audio_chunks = deque()
+        self.audio_chunks_lock = Lock()
+        self.audio_chunk_event = Event()
+        # subscribe to ROS2 audio_stream topic
+        self.audio_stream_subscription = self.create_subscription(
+            Int16MultiArray,
+            'audio_stream',
+            self.audio_stream_callback,
+            10
+        )
         self.get_logger().info("Now running AUDIO RECORDER")
 
     def get_public_api_token_listener(self, msg):
@@ -72,7 +81,26 @@ class AudioRecorderNode(Node):
             if not self.goal_queue:
                 goal_handle.execute()
             self.goal_queue.appendleft(goal_handle)
+        return GoalResponse.ACCEPT
 
+    def audio_stream_callback(self, msg: Int16MultiArray):
+        # convert incoming Int16MultiArray to raw PCM bytes
+        chunk_bytes = np.array(msg.data, dtype=np.int16).tobytes()
+        with self.audio_chunks_lock:
+            self.audio_chunks.append(chunk_bytes)
+            self.audio_chunk_event.set()
+    
+    def get_next_chunk(self) -> bytes:
+    # wait until a chunk is available
+        while True:
+            self.audio_chunk_event.wait()
+            with self.audio_chunks_lock:
+                if self.audio_chunks:
+                    chunk = self.audio_chunks.popleft()
+                    if not self.audio_chunks:
+                        self.audio_chunk_event.clear()
+                    return chunk
+                
     def is_silent(self, data_chunk) -> bool:
         """Check whether a chunk of frmaes is below the minimum volume threshold"""
         as_ints = np.frombuffer(data_chunk, dtype=np.int16)
@@ -118,41 +146,22 @@ class AudioRecorderNode(Node):
         # the maximum number of silent chunks allowed in a row
         max_silent_chunks = max_silent_chunks_before
 
-        # create an pyaudio-input-stream for recording audio
-        try:
-            with util.surpress_stderr():
-                pya = pyaudio.PyAudio()
-                stream = pya.open(
-                    format=pya.get_format_from_width(BYTES_PER_SAMPLE),
-                    channels=NUM_CHANNELS,
-                    rate=FRAMES_PER_SECOND,
-                    input=True,
-                    frames_per_buffer=FRAMES_PER_CHUNK,
-                )
+        # clear any buffered audio
+        with self.audio_chunks_lock:
+            self.audio_chunks.clear()
+            self.audio_chunk_event.clear()
 
-                # record audio, until too many silent chunks were detected in a row
-                # or if cancellation of the goal was requested
-                while silent_chunks < max_silent_chunks:
-                    chunk = stream.read(FRAMES_PER_CHUNK, exception_on_overflow=False)
-                    chunks.append(chunk)
-                    if goal_handle.is_cancel_requested:
-                        break
-                    if self.is_silent(chunk):
-                        silent_chunks += 1
-                    else:
-                        max_silent_chunks = max_silent_chunks_after
-                        silent_chunks = 0
-
-                # stop recording
-                stream.stop_stream()
-                stream.close()
-                pya.terminate()
-
-        except OSError as e:
-            self.get_logger().error(f"failed to record audio: {e}")
-            # pya.terminate()
-            goal_handle.abort()
-            return self.create_result("")
+        # collect audio until silence
+        while silent_chunks < max_silent_chunks:
+            if goal_handle.is_cancel_requested:
+                break
+            chunk = self.get_next_chunk()
+            chunks.append(chunk)
+            if self.is_silent(chunk):
+                silent_chunks += 1
+            else:
+                max_silent_chunks = max_silent_chunks_after
+                silent_chunks = 0
 
         # if cancel is requested, stop execution here
         if goal_handle.is_cancel_requested:
@@ -176,6 +185,7 @@ class AudioRecorderNode(Node):
             wave_file.setframerate(FRAMES_PER_SECOND)
             wave_file.writeframes(data)
             wave_file.close()
+
         with open(OUTPUT_FILE_PATH, "rb") as f:
             data = f.read()
 
