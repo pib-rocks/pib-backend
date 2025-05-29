@@ -33,18 +33,6 @@ services:
     depends_on:
       - pib-blockly-server
 
-  sqlite-viewer:
-    image: coleifer/sqlite-web:latest
-    networks:
-      - pib-network
-    ports:
-      - "8000:8080"
-    environment:
-      - SQLITE_DATABASE=pibdata.db
-    restart: always
-    volumes:
-      - ./pib_api/flask/:/data
-
   tinkerforge-brickd:
     image: tinkerforge-brickd
     build:
