@@ -33,27 +33,6 @@ services:
     depends_on:
       - pib-blockly-server
 
-  tinkerforge-brickd:
-    image: tinkerforge-brickd
-    build:
-      context: .
-      dockerfile: Dockerfile.brickd
-    privileged: true
-    profiles:
-      - all
-      - motors
-    networks:
-      - pib-network
-    ports:
-      - "4223:4223"
-    # Mount bricklets
-    devices:
-      - /dev/gpiomem:/dev/gpiomem
-    tty: true
-    restart: always
-    depends_on:
-      - flask-app
-
   rosbridge-ws:
     build:
       context: ./ros_packages
