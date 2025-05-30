@@ -21,7 +21,7 @@ from . import util
 # these values define the pcm-encoding, in which the recorded
 # audio will be received
 BYTES_PER_SAMPLE = 2
-FRAMES_PER_SECOND = 48000
+FRAMES_PER_SECOND = 16000
 NUM_CHANNELS = 1
 CHUNKS_PER_SECOND = 10
 
