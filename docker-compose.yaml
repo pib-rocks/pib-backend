@@ -136,7 +136,7 @@ services:
     env_file:
       - password.env
     environment:
-      - PULSE_SERVER=unix:${XDG_RUNTIME_DIR}/pulse/native
+      - PULSE_SERVER=unix:${XDG_RUNTIME_DIR:-/run/user/1000}/pulse/native
       - ALSA_CARD=Generic
       - FLASK_API_BASE_URL=http://flask-app:5000
       - VOICE_ASSISTANT_DIR=/app/ros2_ws/voice_assistant
@@ -145,7 +145,7 @@ services:
       - /dev/snd:/dev/snd
       - /dev/dsp:/dev/dsp
       - /etc/machine-id:/etc/machine-id
-      - ${XDG_RUNTIME_DIR}/pulse/native:${XDG_RUNTIME_DIR}/pulse/native
+      - ${XDG_RUNTIME_DIR:-/run/user/1000}/pulse/native:${XDG_RUNTIME_DIR:-/run/user/1000}/pulse/native
       - ~/.config/pulse/cookie:/root/.config/pulse/cookie
     devices:
       - "/dev/snd:/dev/snd"
@@ -221,7 +221,7 @@ services:
     env_file:
       - ros-audio.env
     environment:
-      - PULSE_SERVER=unix:${XDG_RUNTIME_DIR}/pulse/native
+      - PULSE_SERVER=unix:${XDG_RUNTIME_DIR:-/run/user/1000}/pulse/native
     devices:
       - /dev/snd:/dev/snd
       - /dev/bus/usb:/dev/bus/usb1
@@ -231,7 +231,7 @@ services:
       - /dev/snd:/dev/snd
       - /dev/dsp:/dev/dsp
       - /etc/machine-id:/etc/machine-id
-      - ${XDG_RUNTIME_DIR}/pulse/native:${XDG_RUNTIME_DIR}/pulse/native
+      - ${XDG_RUNTIME_DIR:-/run/user/1000}/pulse/native:${XDG_RUNTIME_DIR:-/run/user/1000}/pulse/native
       - ~/.config/pulse/cookie:/root/.config/pulse/cookie
     restart: always
     depends_on:
