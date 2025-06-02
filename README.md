@@ -49,7 +49,7 @@ Starting the webots simulation:
    `cd app/pib-backend`
 5. Enter the following command into a terminal:  
    `sudo docker compose --profile pibsim_webots up`  
-   (The first time this command is entered, webots will be installed. Webots should open automatically afterwards, to close it you should stop the container by closing the terminal window which is open or by pressing ctrl c. To run it again just restart the container and if you turned off the virtual machine repeat step 2)
+   (The first time this command is entered, webots will be installed. Webots should open automatically afterwards, to close it you should stop the container by closing the terminal window which is open or by pressing ctrl + c. To run it again just restart the container and if you turned off the virtual machine repeat step 2)
 
 Webots may throw error messages saying it crashed (especially on VM). This can usually be ignored by clicking on "wait".
 
