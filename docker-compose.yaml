@@ -129,7 +129,7 @@ services:
     command: ros2 launch pibsim_webots pib_launch.py
     volumes:
       # this is a socket that is used by the x-windowing-system
-      # for cmmunication betweem clients and servers on the same
+      # for communication between clients and servers on the same
       # machine. By mounting the socket of the docker-host, the 
       # display-node uses the x-server running on the host for
       # graphics-related communication
