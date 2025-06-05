@@ -134,6 +134,7 @@ services:
     networks:
       - pib-network
     env_file:
+      - ros-audio.env
       - password.env
     environment:
       - PULSE_SERVER=unix:${XDG_RUNTIME_DIR:-/run/user/1000}/pulse/native
