@@ -16,6 +16,9 @@ set -e  # Stop on errors
 
 # Configuration
 DEFAULT_USER="pib"
+APP_DIR="$HOME/app"
+BACKEND_DIR="$APP_DIR/pib-backend"
+FRONTEND_DIR="$APP_DIR/cerebra"
 LOG_FILE="$HOME/update-pib.log"
 
 # Function to support printing consistent log messages
