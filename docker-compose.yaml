@@ -33,39 +33,6 @@ services:
     depends_on:
       - pib-blockly-server
 
-  sqlite-viewer:
-    image: coleifer/sqlite-web:latest
-    networks:
-      - pib-network
-    ports:
-      - "8000:8080"
-    environment:
-      - SQLITE_DATABASE=pibdata.db
-    restart: always
-    volumes:
-      - ./pib_api/flask/:/data
-
-  tinkerforge-brickd:
-    image: tinkerforge-brickd
-    build:
-      context: .
-      dockerfile: Dockerfile.brickd
-    privileged: true
-    profiles:
-      - all
-      - motors
-    networks:
-      - pib-network
-    ports:
-      - "4223:4223"
-    # Mount bricklets
-    devices:
-      - /dev/gpiomem:/dev/gpiomem
-    tty: true
-    restart: always
-    depends_on:
-      - flask-app
-
   rosbridge-ws:
     build:
       context: ./ros_packages
@@ -110,16 +77,38 @@ services:
       - motors
     networks:
       - pib-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       - FLASK_API_BASE_URL=http://flask-app:5000
       - PIB_BLOCKLY_SERVER_URL=http://pib-blockly-server:2442
-      - TINKERFORGE_HOST=tinkerforge-brickd
+      - TINKERFORGE_HOST=host.docker.internal
       - TINKERFORGE_PORT=4223
     restart: always
     depends_on:
       - rosbridge-ws
-      - tinkerforge-brickd
       - flask-app
+      
+  pibsim_webots:
+    image: pibsim_webots
+    build:
+      context: .
+      dockerfile: ./ros_packages/pibsim_webots/Dockerfile
+    command: ros2 launch pibsim_webots pib_launch.py
+    volumes:
+      # this is a socket that is used by the x-windowing-system
+      # for communication between clients and servers on the same
+      # machine. By mounting the socket of the docker-host, the 
+      # display-node uses the x-server running on the host for
+      # graphics-related communication
+      - /tmp/.X11-unix:/tmp/.X11-unix 
+    profiles:
+      - pibsim_webots
+    networks:
+      - pib-network
+    environment:
+      - DISPLAY=:0.0
+    restart: no
 
   ros-voice-assistant:
     image: ros_voice_assistant
@@ -165,7 +154,7 @@ services:
     environment:
       - FLASK_API_BASE_URL=http://flask-app:5000
       - PIB_BLOCKLY_SERVER_URL=http://pib-blockly-server:2442
-      - TINKERFORGE_HOST=tinkerforge-brickd
+      - TINKERFORGE_HOST=host.docker.internal
       - TINKERFORGE_PORT=4223
       - PYTHON_BINARY=/usr/bin/python3
       - PROGRAM_DIR=/ros2_ws/cerebra_programs
@@ -175,6 +164,8 @@ services:
     restart: always
     networks:
       - pib-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       - rosbridge-ws
       - pib-blockly-server
