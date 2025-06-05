@@ -21,7 +21,6 @@ from . import util
 # these values define the PCM encoding in which the recorded
 # audio will be received
 BYTES_PER_SAMPLE = 2
-NUM_CHANNELS = 1
 
 # TODO: this value should not be hardcoded, as the optimal value
 # depends on the level of background noise.
@@ -38,10 +37,35 @@ class AudioRecorderNode(Node):
     def __init__(self):
         super().__init__("audio_recorder")
 
-        # Allow the sample rate (in Hz) to be set via a ROS parameter.
-        # If not provided, default to 16000.
-        self.declare_parameter("sample_rate_hz", 16000)
-        self.sample_rate_hz = self.get_parameter("sample_rate_hz").value
+        # Read preferred device substring from environment (MIC_DEVICE)
+        self.preferred = os.getenv("MIC_DEVICE", "default").lower()
+
+        # Audio parameters
+        self.chunk = 1024  # Buffer size
+        self.format = pyaudio.paInt16  # 16-bit audio format
+        self.channels = None  # Mono recording. Will be determined dynamically
+        self.rate = None  # Sample rate in Hz. Will be determined dynamically
+        self.input_device_index = None  # Will be determined dynamically
+
+        self.audio = pyaudio.PyAudio()
+        self.select_input_device()
+
+        if self.input_device_index is None:
+            self.get_logger().error("No audio input device found; shutting down.")
+            rclpy.shutdown()
+            return
+        
+        dev_info = self.audio.get_device_info_by_index(self.input_device_index)
+        self.rate = int(dev_info.get("defaultSampleRate", -1))
+        self.channels = int(dev_info.get("maxInputChannels", -1))
+        self.get_logger().info(
+            f"Device info: {self.sample_rate_hz}Hz, {self.channels} channels"
+        )        
+        
+        if self.rate is -1 or self.channels is -1:
+            self.get_logger().error("No audio counfiguration data found; shutting down.")
+            rclpy.shutdown()
+            return  
 
         self.token: Optional[str] = None
 
@@ -73,6 +97,39 @@ class AudioRecorderNode(Node):
         )
 
         self.get_logger().info("Now running AUDIO RECORDER")
+
+    def select_input_device(self):
+            """Select the user-preferred audio device or fall back to default."""
+            found = None
+            for i in range(self.audio.get_device_count()):
+                info = self.audio.get_device_info_by_index(i)
+                self.get_logger().debug(
+                    f"Device {i}: {info['name']} (in:{info.get('maxInputChannels')}, out:{info.get('maxOutputChannels')})"
+                )
+                if self.preferred in info["name"].lower():
+                    found = (i, info)
+                    break
+
+            if found:
+                idx, info = found
+                self.input_device_index = idx
+                self.get_logger().info(
+                    f"Using preferred mic '{self.preferred}': {info['name']} (index {idx})"
+                )
+            else:
+                # Fallback to system default input
+                try:
+                    default = self.audio.get_default_input_device_info()
+                    self.input_device_index = int(default["index"])
+                    self.get_logger().warn(
+                        f"No device matching '{self.preferred}'; falling back to default: "
+                        f"{default['name']} (index {self.input_device_index})"
+                    )
+                except IOError:
+                    self.get_logger().error(
+                        f"No device matching '{self.preferred}' and no default input; shutting down."
+                    )
+                    self.input_device_index = None
 
     def get_public_api_token_listener(self, msg):
         """Listener for incoming public‐API token messages."""
@@ -145,30 +202,28 @@ class AudioRecorderNode(Node):
         """
         request: RecordAudio.Goal = goal_handle.request
 
-        # 1. Read thresholds (in seconds) from the goal
+        # Read thresholds (in seconds) from the goal
         max_silent_before_secs = request.max_silent_seconds_before
         max_silent_after_secs = request.max_silent_seconds_after
 
-        # 2. Sample rate (Hz), from ROS parameter
-        sample_rate_hz = self.sample_rate_hz
 
-        # 3. Prepare to accumulate silence time
+        # Prepare to accumulate silence time
         silent_time_accum = 0.0
         speech_started = False
         max_silent_target = max_silent_before_secs  # initially, measure "before" speech
 
-        # 4. Clear any buffered audio from previous runs
+        # Clear any buffered audio from previous runs
         with self.audio_chunks_lock:
             self.audio_chunks.clear()
             self.audio_chunk_event.clear()
 
-        # 5. Collect incoming chunks into this list
+        # Collect incoming chunks into this list
         chunks = []
 
         # Number of bytes per single frame (sample × channels)
-        bytes_per_frame = BYTES_PER_SAMPLE * NUM_CHANNELS
+        bytes_per_frame = BYTES_PER_SAMPLE * self.channels
 
-        # 6. Loop until we accumulate enough silence to stop
+        # Loop until we accumulate enough silence to stop
         while True:
             if goal_handle.is_cancel_requested:
                 # If the client canceled the goal, stop immediately
@@ -182,7 +237,7 @@ class AudioRecorderNode(Node):
             # Compute how many frames are in this chunk
             num_frames_in_chunk = len(data_chunk) // bytes_per_frame
             # Convert to duration in seconds
-            chunk_duration_secs = float(num_frames_in_chunk) / float(sample_rate_hz)
+            chunk_duration_secs = float(num_frames_in_chunk) / float(self.rate)
 
             # Determine if this chunk is "silent"
             if self.is_silent(data_chunk):
@@ -206,23 +261,23 @@ class AudioRecorderNode(Node):
                 # Continue collecting until we accumulate enough silence after speech
                 continue
 
-        # 7. Recording phase has ended; notify client that we are transcribing
+        # Recording phase has ended; notify client that we are transcribing
         goal_handle.publish_feedback(RecordAudio.Feedback())
 
-        # 8. Write the collected raw PCM chunks into a WAV file using the correct sample rate
+        # Write the collected raw PCM chunks into a WAV file using the correct sample rate
         data_bytes = b"".join(chunks)
         try:
             with wave.open(OUTPUT_FILE_PATH, "wb") as wave_file:
-                wave_file.setnchannels(NUM_CHANNELS)
+                wave_file.setnchannels(self.channels)
                 wave_file.setsampwidth(BYTES_PER_SAMPLE)
-                wave_file.setframerate(sample_rate_hz)
+                wave_file.setframerate(self.rate)
                 wave_file.writeframes(data_bytes)
         except Exception as e:
             self.get_logger().error(f"Could not write WAV: {e}")
             goal_handle.abort()
             return self.create_result("")
 
-        # 9. Read the WAV file back into memory for the STT API
+        # Read the WAV file back into memory for the STT API
         try:
             with open(OUTPUT_FILE_PATH, "rb") as f:
                 wav_data = f.read()
@@ -231,7 +286,7 @@ class AudioRecorderNode(Node):
             goal_handle.abort()
             return self.create_result("")
 
-        # 10. Call the public‐API to transcribe, then finish the goal
+        # Call the public‐API to transcribe, then finish the goal
         try:
             text = public_voice_client.speech_to_text(wav_data, self.token)
         except Exception as e:

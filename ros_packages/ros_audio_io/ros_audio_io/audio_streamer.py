@@ -16,8 +16,8 @@ class AudioStreamer(Node):
         # Audio parameters
         self.chunk = 1024  # Buffer size
         self.format = pyaudio.paInt16  # 16-bit audio format
-        self.channels = 1  # Mono recording
-        self.rate = 16000  # Sample rate in Hz
+        self.channels = None  # Mono recording. Will be determined dynamically
+        self.rate = None  # Sample rate in Hz. Will be determined dynamically
         self.input_device_index = None  # Will be determined dynamically
 
         # ROS2 publisher for raw audio chunks
@@ -25,6 +25,23 @@ class AudioStreamer(Node):
 
         self.audio = pyaudio.PyAudio()
         self.select_input_device()
+
+        if self.input_device_index is None:
+            self.get_logger().error("No audio input device found; shutting down.")
+            rclpy.shutdown()
+            return
+        
+        dev_info = self.audio.get_device_info_by_index(self.input_device_index)
+        self.rate = int(dev_info.get("defaultSampleRate", -1))
+        self.channels = int(dev_info.get("maxInputChannels", -1))
+        self.get_logger().info(
+            f"Device info: {self.sample_rate_hz}Hz, {self.channels} channels"
+        )        
+        
+        if self.rate is -1 or self.channels is -1:
+            self.get_logger().error("No audio counfiguration data found; shutting down.")
+            rclpy.shutdown()
+            return           
 
         self.stream = self.audio.open(
             format=self.format,
