@@ -4,13 +4,39 @@
 #   - that setup-pib was already executed
 #   - the default-DEFAULT_USER "pib" is executing it
 
-source "$(dirname "$0")/setup-pib.sh"
+# Color definitions for logging
+export ERROR="\e[31m"
+export WARN="\e[33m"
+export SUCCESS="\e[32m"
+export INFO="\e[36m"
+export RESET_TEXT_COLOR="\e[0m"
+export NEW_LINE="\n"
 
 set -e  # Stop on errors
 
 # Configuration
 DEFAULT_USER="pib"
 LOG_FILE="$HOME/update-pib.log"
+
+# Function to support printing consistent log messages
+function print() {
+    local color=$1
+    local text=$2
+
+    # If only one argument is provided, assume it is the text
+    if [ -z "$text" ]; then
+        text=$color
+        color="RESET_TEXT_COLOR"
+    fi
+
+    # Check if the provided color exists
+    if [ -n "$color" ] && [ -z "${!color}" ]; then
+        color="RESET_TEXT_COLOR"
+    fi
+
+    # Print the text in the specified color
+    echo -e "${!color}[$(date -u)][[ ${text} ]]${RESET_TEXT_COLOR}"
+}
 
 # Check correct user
 if [ "$(whoami)" != "$DEFAULT_USER" ]; then
