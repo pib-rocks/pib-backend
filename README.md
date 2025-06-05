@@ -36,7 +36,7 @@ This script assumes that the setup script was executed successfully
 1. Open a terminal
 2. Enter this command: `update-pib`
 
-You can add the "-Cerebra" parameter to update only the frontend application but not the backend.
+This script will update your docker containers (Front- and Backend)
 
 ## Webots
 
