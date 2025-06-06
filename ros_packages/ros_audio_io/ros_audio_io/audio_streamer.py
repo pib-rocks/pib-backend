@@ -11,80 +11,92 @@ class AudioStreamer(Node):
         super().__init__("audio_streamer")
 
         # Read preferred device substring from environment (MIC_DEVICE)
-        self.preferred = os.getenv("MIC_DEVICE", "default").lower()
+        self.mic_preferred_name = os.getenv("MIC_DEVICE", "default").lower()
+
+        # Read number of mic chanels from environment (MIC_CHANELS)
+        self.mic_channels = os.getenv("MIC_CHANELS", 1)
 
         # Audio parameters
-        self.chunk = 1024  # Buffer size
-        self.format = pyaudio.paInt16  # 16-bit audio format
-        self.channels = None  # Mono recording. Will be determined dynamically
-        self.rate = None  # Sample rate in Hz. Will be determined dynamically
+        self.chunk_size = 1024  # Buffer size
+        self.audio_format = pyaudio.paInt16  # 16-bit audio format
+        self.sample_rate = None  # Sample rate in Hz. Will be determined dynamically
         self.input_device_index = None  # Will be determined dynamically
 
         # ROS2 publisher for raw audio chunks
-        self.publisher_ = self.create_publisher(Int16MultiArray, "audio_stream", 10)
+        self.ros_publisher = self.create_publisher(Int16MultiArray, "audio_stream", 10)
 
-        self.audio = pyaudio.PyAudio()
+        self.py_audio = pyaudio.PyAudio()
         self.select_input_device()
 
         if self.input_device_index is None:
             self.get_logger().error("No audio input device found; shutting down.")
             rclpy.shutdown()
             return
-        
-        dev_info = self.audio.get_device_info_by_index(self.input_device_index)
-        self.rate = int(dev_info.get("defaultSampleRate", -1))
-        self.channels = int(dev_info.get("maxInputChannels", -1))
-        self.get_logger().info(
-            f"Device info: {self.sample_rate_hz}Hz, {self.channels} channels"
-        )        
-        
-        if self.rate is -1 or self.channels is -1:
-            self.get_logger().error("No audio counfiguration data found; shutting down.")
-            rclpy.shutdown()
-            return           
 
-        self.stream = self.audio.open(
-            format=self.format,
-            channels=self.channels,
-            rate=self.rate,
+        # Configure mic device configuration
+        selected_input_device_info = self.py_audio.get_device_info_by_index(
+            self.input_device_index
+        )
+        self.sample_rate = int(selected_input_device_info.get("defaultSampleRate", -1))
+
+        self.get_logger().info(
+            f"Device info: {self.sample_rate}Hz, {self.mic_channels} channels"
+        )
+
+        if self.sample_rate == -1:
+            self.get_logger().error(
+                "No audio counfiguration data found; shutting down."
+            )
+            rclpy.shutdown()
+            return
+
+        # Open audio stream
+        self.audio_stream = self.py_audio.open(
+            format=self.audio_format,
+            channels=self.mic_channels,
+            rate=self.sample_rate,
             input=True,
             input_device_index=self.input_device_index,
-            frames_per_buffer=self.chunk,
+            frames_per_buffer=self.chunk_size,
         )
 
         # Schedule callback every chunk/rate seconds for minimal latency
-        self.timer = self.create_timer(self.chunk / self.rate, self.publish_audio)
+        self.timer = self.create_timer(
+            self.chunk_size / self.sample_rate, self.publish_audio
+        )
 
     def select_input_device(self):
         """Select the user-preferred audio device or fall back to default."""
-        found = None
-        for i in range(self.audio.get_device_count()):
-            info = self.audio.get_device_info_by_index(i)
-            self.get_logger().debug(
-                f"Device {i}: {info['name']} (in:{info.get('maxInputChannels')}, out:{info.get('maxOutputChannels')})"
+        found_device = None
+        for i in range(self.py_audio.get_device_count()):
+            found_device_info = self.py_audio.get_device_info_by_index(i)
+            self.get_logger().info(
+                f"Device {i}: {found_device_info.get('name')} (in:{found_device_info.get('maxInputChannels')}"
             )
-            if self.preferred in info["name"].lower():
-                found = (i, info)
+            if self.mic_preferred_name in found_device_info.get("name").lower():
+                found_device = (i, found_device_info)
                 break
 
-        if found:
-            idx, info = found
-            self.input_device_index = idx
+        if found_device:
+            found_device_index, found_device_info = found_device
+            self.input_device_index = found_device_index
             self.get_logger().info(
-                f"Using preferred mic '{self.preferred}': {info['name']} (index {idx})"
+                f"Using preferred mic '{self.mic_preferred_name}': {found_device_info.get('name')} (index {found_device_index})"
             )
         else:
             # Fallback to system default input
             try:
-                default = self.audio.get_default_input_device_info()
-                self.input_device_index = int(default["index"])
+                default_input_device_info = (
+                    self.py_audio.get_default_input_device_info()
+                )
+                self.input_device_index = int(default_input_device_info.get("index"))
                 self.get_logger().warn(
-                    f"No device matching '{self.preferred}'; falling back to default: "
-                    f"{default['name']} (index {self.input_device_index})"
+                    f"No device matching '{self.mic_preferred_name}'; falling back to default: "
+                    f"{default_input_device_info.get('name')} (index {self.input_device_index})"
                 )
             except IOError:
                 self.get_logger().error(
-                    f"No device matching '{self.preferred}' and no default input; shutting down."
+                    f"No device matching '{self.mic_preferred_name}' and no default input; shutting down."
                 )
                 self.input_device_index = None
 
@@ -94,18 +106,18 @@ class AudioStreamer(Node):
             return
 
         audio_data = np.frombuffer(
-            self.stream.read(self.chunk, exception_on_overflow=False), dtype=np.int16
+            self.audio_stream.read(self.chunk_size, exception_on_overflow=False),
+            dtype=np.int16,
         )
-        msg = Int16MultiArray()
-        msg.data = audio_data.tolist()
-        self.publisher_.publish(msg)
-        # self.get_logger().info(f"Published {len(audio_data)} samples of audio data")
+        ros_message = Int16MultiArray()
+        ros_message.data = audio_data.tolist()
+        self.ros_publisher.publish(ros_message)
 
     def destroy_node(self):
         """Cleanup resources when shutting down."""
-        self.stream.stop_stream()
-        self.stream.close()
-        self.audio.terminate()
+        self.audio_stream.stop_stream()
+        self.audio_stream.close()
+        self.py_audio.terminate()
         super().destroy_node()
 
 
