@@ -38,34 +38,40 @@ class AudioRecorderNode(Node):
         super().__init__("audio_recorder")
 
         # Read preferred device substring from environment (MIC_DEVICE)
-        self.preferred = os.getenv("MIC_DEVICE", "default").lower()
+        self.mic_preferred_name = os.getenv("MIC_DEVICE", "default").lower()
+
+        # Read number of mic chanels from environment (MIC_CHANELS)
+        self.mic_channels = os.getenv("MIC_CHANELS", 1)
 
         # Audio parameters
-        self.chunk = 1024  # Buffer size
-        self.format = pyaudio.paInt16  # 16-bit audio format
-        self.channels = None  # Mono recording. Will be determined dynamically
-        self.rate = None  # Sample rate in Hz. Will be determined dynamically
+        self.chunk_size = 1024  # Buffer size
+        self.audio_format = pyaudio.paInt16  # 16-bit audio format
+        self.sample_rate = None  # Sample rate in Hz. Will be determined dynamically
         self.input_device_index = None  # Will be determined dynamically
 
-        self.audio = pyaudio.PyAudio()
+        self.py_audio = pyaudio.PyAudio()
         self.select_input_device()
 
         if self.input_device_index is None:
             self.get_logger().error("No audio input device found; shutting down.")
             rclpy.shutdown()
             return
-        
-        dev_info = self.audio.get_device_info_by_index(self.input_device_index)
-        self.rate = int(dev_info.get("defaultSampleRate", -1))
-        self.channels = int(dev_info.get("maxInputChannels", -1))
+
+        selected_input_device_info = self.py_audio.get_device_info_by_index(
+            self.input_device_index
+        )
+        self.sample_rate = int(selected_input_device_info.get("defaultSampleRate", -1))
+
         self.get_logger().info(
-            f"Device info: {self.sample_rate_hz}Hz, {self.channels} channels"
-        )        
-        
-        if self.rate is -1 or self.channels is -1:
-            self.get_logger().error("No audio counfiguration data found; shutting down.")
+            f"Device info: {self.sample_rate}Hz, {self.mic_channels} channels"
+        )
+
+        if self.sample_rate == -1:
+            self.get_logger().error(
+                "No audio counfiguration data found; shutting down."
+            )
             rclpy.shutdown()
-            return  
+            return
 
         self.token: Optional[str] = None
 
@@ -92,44 +98,46 @@ class AudioRecorderNode(Node):
         self.audio_chunk_event = Event()
 
         # subscribe to ROS2 audio_stream topic
-        self.audio_stream_subscription = self.create_subscription(
+        self.ros_audio_stream_subscription = self.create_subscription(
             Int16MultiArray, "audio_stream", self.audio_stream_callback, 10
         )
 
         self.get_logger().info("Now running AUDIO RECORDER")
 
     def select_input_device(self):
-            """Select the user-preferred audio device or fall back to default."""
-            found = None
-            for i in range(self.audio.get_device_count()):
-                info = self.audio.get_device_info_by_index(i)
-                self.get_logger().debug(
-                    f"Device {i}: {info['name']} (in:{info.get('maxInputChannels')}, out:{info.get('maxOutputChannels')})"
-                )
-                if self.preferred in info["name"].lower():
-                    found = (i, info)
-                    break
+        """Select the user-preferred audio device or fall back to default."""
+        found_device = None
+        for i in range(self.py_audio.get_device_count()):
+            found_device_info = self.py_audio.get_device_info_by_index(i)
+            self.get_logger().info(
+                f"Device {i}: {found_device_info.get('name')} (in:{found_device_info.get('maxInputChannels')}"
+            )
+            if self.mic_preferred_name in found_device_info.get("name").lower():
+                found_device = (i, found_device_info)
+                break
 
-            if found:
-                idx, info = found
-                self.input_device_index = idx
-                self.get_logger().info(
-                    f"Using preferred mic '{self.preferred}': {info['name']} (index {idx})"
+        if found_device:
+            found_device_index, found_device_info = found_device
+            self.input_device_index = found_device_index
+            self.get_logger().info(
+                f"Using preferred mic '{self.mic_preferred_name}': {found_device_info.get('name')} (index {found_device_index})"
+            )
+        else:
+            # Fallback to system default input
+            try:
+                default_input_device_info = (
+                    self.py_audio.get_default_input_device_info()
                 )
-            else:
-                # Fallback to system default input
-                try:
-                    default = self.audio.get_default_input_device_info()
-                    self.input_device_index = int(default["index"])
-                    self.get_logger().warn(
-                        f"No device matching '{self.preferred}'; falling back to default: "
-                        f"{default['name']} (index {self.input_device_index})"
-                    )
-                except IOError:
-                    self.get_logger().error(
-                        f"No device matching '{self.preferred}' and no default input; shutting down."
-                    )
-                    self.input_device_index = None
+                self.input_device_index = int(default_input_device_info.get("index"))
+                self.get_logger().warn(
+                    f"No device matching '{self.mic_preferred_name}'; falling back to default: "
+                    f"{default_input_device_info.get('name')} (index {self.input_device_index})"
+                )
+            except IOError:
+                self.get_logger().error(
+                    f"No device matching '{self.mic_preferred_name}' and no default input; shutting down."
+                )
+                self.input_device_index = None
 
     def get_public_api_token_listener(self, msg):
         """Listener for incoming public‐API token messages."""
@@ -196,7 +204,7 @@ class AudioRecorderNode(Node):
         Record audio until we see `max_silent_seconds_before` of silence before speech
         or `max_silent_seconds_after` of silence after speech has started.
         We compute silence in actual time by looking at chunk‐duration using the known
-        sample rate (self.sample_rate_hz), rather than relying on a fixed chunk‐count.
+        sample rate (self.sample_rate), rather than relying on a fixed chunk‐count.
         Exactly one feedback object is returned (empty), indicating that recording has
         stopped and transcription has begun. The final result contains the transcribed text.
         """
@@ -205,7 +213,6 @@ class AudioRecorderNode(Node):
         # Read thresholds (in seconds) from the goal
         max_silent_before_secs = request.max_silent_seconds_before
         max_silent_after_secs = request.max_silent_seconds_after
-
 
         # Prepare to accumulate silence time
         silent_time_accum = 0.0
@@ -221,7 +228,7 @@ class AudioRecorderNode(Node):
         chunks = []
 
         # Number of bytes per single frame (sample × channels)
-        bytes_per_frame = BYTES_PER_SAMPLE * self.channels
+        bytes_per_frame = BYTES_PER_SAMPLE * self.mic_channels
 
         # Loop until we accumulate enough silence to stop
         while True:
@@ -237,7 +244,7 @@ class AudioRecorderNode(Node):
             # Compute how many frames are in this chunk
             num_frames_in_chunk = len(data_chunk) // bytes_per_frame
             # Convert to duration in seconds
-            chunk_duration_secs = float(num_frames_in_chunk) / float(self.rate)
+            chunk_duration_secs = float(num_frames_in_chunk) / float(self.sample_rate)
 
             # Determine if this chunk is "silent"
             if self.is_silent(data_chunk):
@@ -268,9 +275,9 @@ class AudioRecorderNode(Node):
         data_bytes = b"".join(chunks)
         try:
             with wave.open(OUTPUT_FILE_PATH, "wb") as wave_file:
-                wave_file.setnchannels(self.channels)
+                wave_file.setnchannels(self.mic_channels)
                 wave_file.setsampwidth(BYTES_PER_SAMPLE)
-                wave_file.setframerate(self.rate)
+                wave_file.setframerate(self.sample_rate)
                 wave_file.writeframes(data_bytes)
         except Exception as e:
             self.get_logger().error(f"Could not write WAV: {e}")
