@@ -14,6 +14,7 @@ from rclpy.action.server import ServerGoalHandle
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from std_msgs.msg import String, Int16MultiArray
+from std_msgs.srv import GetMicConfiguration
 
 from public_api_client import public_voice_client
 from . import util
@@ -37,37 +38,22 @@ class AudioRecorderNode(Node):
     def __init__(self):
         super().__init__("audio_recorder")
 
-        # Read preferred device substring from environment (MIC_DEVICE)
-        self.mic_preferred_name = os.getenv("MIC_DEVICE", "default").lower()
+        # Set defaults for mic configuration
+        self.mic_channels = None
+        self.chunk_size = None
+        self.audio_format = None
+        self.sample_rate = None
 
-        # Read number of mic channels from environment (MIC_CHANNELS)
-        self.mic_channels = int(os.getenv("MIC_CHANNELS", 1))
-
-        # Audio parameters
-        self.chunk_size = 1024  # Buffer size
-        self.audio_format = pyaudio.paInt16  # 16-bit audio format
-        self.sample_rate = None  # Sample rate in Hz. Will be determined dynamically
-        self.input_device_index = None  # Will be determined dynamically
-
-        self.py_audio = pyaudio.PyAudio()
-        self.select_input_device()
-
-        if self.input_device_index is None:
-            self.get_logger().error("No audio input device found; shutting down.")
-            rclpy.shutdown()
-            return
-
-        selected_input_device_info = self.py_audio.get_device_info_by_index(
-            self.input_device_index
+        # Prepare service client
+        self.ros_mic_configuration_client = self.create_client(
+            GetMicConfiguration, "get_mic_configuration"
         )
-        self.sample_rate = int(selected_input_device_info.get("defaultSampleRate", -1))
+        while not self.ros_mic_configuration_client.wait_for_service(timeout_sec=1.0):
+            self.get_logger().warn("Waiting for get_mic_configuration service…")
+        self.ros_mic_configuration_request = GetMicConfiguration.Request()
 
-        self.get_logger().info(
-            f"Device info: {self.sample_rate}Hz, {self.mic_channels} channels"
-        )
-
-        if self.sample_rate == -1:
-            self.get_logger().error("No audio configuration data found; shutting down.")
+        # Request & handle response
+        if not self.request_mic_configuration():
             rclpy.shutdown()
             return
 
@@ -102,40 +88,56 @@ class AudioRecorderNode(Node):
 
         self.get_logger().info("Now running AUDIO RECORDER")
 
-    def select_input_device(self):
-        """Select the user-preferred audio device or fall back to default."""
-        found_device = None
-        for i in range(self.py_audio.get_device_count()):
-            found_device_info = self.py_audio.get_device_info_by_index(i)
-            self.get_logger().info(
-                f"Device {i}: {found_device_info.get('name')} (in:{found_device_info.get('maxInputChannels')}"
-            )
-            if self.mic_preferred_name in found_device_info.get("name").lower():
-                found_device = (i, found_device_info)
-                break
+    def request_mic_configuration(self, timeout_sec: float = 5.0) -> bool:
+        """
+        Call the get_mic_configuration service,
+        populate self.mic_channels, self.chunk_size, self.audio_format and self.sample_rate,
+        and return True on success (False on failure / timeout).
+        """
+        self.get_logger().info("Requesting mic configuration from server…")
 
-        if found_device:
-            found_device_index, found_device_info = found_device
-            self.input_device_index = found_device_index
-            self.get_logger().info(
-                f"Using preferred mic '{self.mic_preferred_name}': {found_device_info.get('name')} (index {found_device_index})"
+        # Wait for the service to appear
+        if not self.ros_mic_configuration_client.wait_for_service(
+            timeout_sec=timeout_sec
+        ):
+            self.get_logger().error(
+                f"get_mic_configuration service not available after {timeout_sec}s"
             )
-        else:
-            # Fallback to system default input
-            try:
-                default_input_device_info = (
-                    self.py_audio.get_default_input_device_info()
-                )
-                self.input_device_index = int(default_input_device_info.get("index"))
-                self.get_logger().warn(
-                    f"No device matching '{self.mic_preferred_name}'; falling back to default: "
-                    f"{default_input_device_info.get('name')} (index {self.input_device_index})"
-                )
-            except IOError:
-                self.get_logger().error(
-                    f"No device matching '{self.mic_preferred_name}' and no default input; shutting down."
-                )
-                self.input_device_index = None
+            return False
+
+        # Send the request
+        future = self.ros_mic_configuration_client.call_async(
+            self.ros_mic_configuration_request
+        )
+
+        # Block and spin until we get a response (or timeout)
+        rclpy.spin_until_future_complete(self, future, timeout_sec=timeout_sec)
+
+        # Check for timeout / failure
+        if not future.done():
+            self.get_logger().error("Service call timed out")
+            return False
+
+        try:
+            resp = future.result()
+        except Exception as e:
+            self.get_logger().error(f"Service call failed: {e}")
+            return False
+
+        # Store the received parameters
+        self.mic_channels = resp.mic_channels
+        self.chunk_size = resp.chunk_size
+        self.audio_format = resp.audio_format
+        self.sample_rate = resp.sample_rate
+
+        self.get_logger().info(
+            f"Got mic configuration:"
+            f"channels = {self.mic_channels}, "
+            f"chunk = {self.chunk_size}, "
+            f"format = {self.audio_format}, "
+            f"rate = {self.sample_rate}"
+        )
+        return True
 
     def get_public_api_token_listener(self, msg):
         """Listener for incoming public‐API token messages."""
