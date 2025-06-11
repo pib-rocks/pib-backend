@@ -37,9 +37,7 @@ class DOAPublisher(Node):
 
     def publish_doa(self):
         if self.dev is not None:
-            direction = (
-                self.Mic_tuning.direction
-            )  # If it's a method, use self.Mic_tuning.direction()
+            direction = self.Mic_tuning.direction
             msg = Int32()
             msg.data = direction
             self.publisher_.publish(msg)
