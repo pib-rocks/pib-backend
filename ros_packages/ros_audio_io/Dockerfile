@@ -38,8 +38,6 @@ COPY ./ros_packages/ros_entrypoint.sh /
 
 RUN chmod +x /ros_entrypoint.sh
 
-RUN export PULSE_SERVER=unix:${XDG_RUNTIME_DIR}/pulse/native
-
 ENTRYPOINT ["/ros_entrypoint.sh"]
 CMD ["bash"]
 

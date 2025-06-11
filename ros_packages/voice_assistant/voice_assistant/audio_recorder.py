@@ -40,8 +40,8 @@ class AudioRecorderNode(Node):
         # Read preferred device substring from environment (MIC_DEVICE)
         self.mic_preferred_name = os.getenv("MIC_DEVICE", "default").lower()
 
-        # Read number of mic chanels from environment (MIC_CHANELS)
-        self.mic_channels = os.getenv("MIC_CHANELS", 1)
+        # Read number of mic channels from environment (MIC_CHANNELS)
+        self.mic_channels = int(os.getenv("MIC_CHANNELS", 1))
 
         # Audio parameters
         self.chunk_size = 1024  # Buffer size
@@ -67,9 +67,7 @@ class AudioRecorderNode(Node):
         )
 
         if self.sample_rate == -1:
-            self.get_logger().error(
-                "No audio counfiguration data found; shutting down."
-            )
+            self.get_logger().error("No audio configuration data found; shutting down.")
             rclpy.shutdown()
             return
 

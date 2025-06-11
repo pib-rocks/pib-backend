@@ -147,9 +147,9 @@ services:
       - /dev/dsp:/dev/dsp
       - /etc/machine-id:/etc/machine-id
       - ${XDG_RUNTIME_DIR:-/run/user/1000}/pulse/native:${XDG_RUNTIME_DIR:-/run/user/1000}/pulse/native
-      - ~/.config/pulse/cookie:/root/.config/pulse/cookie
+      - /home/pib/.config/pulse/cookie:/root/.config/pulse/cookie
     devices:
-      - "/dev/snd:/dev/snd"
+      - /dev/snd:/dev/snd
     restart: always
     depends_on:
       - rosbridge-ws
@@ -217,6 +217,7 @@ services:
     profiles:
       - all
       - ros_audio_io
+      - voice_assistant
     networks:
       - pib-network
     env_file:
@@ -233,7 +234,7 @@ services:
       - /dev/dsp:/dev/dsp
       - /etc/machine-id:/etc/machine-id
       - ${XDG_RUNTIME_DIR:-/run/user/1000}/pulse/native:${XDG_RUNTIME_DIR:-/run/user/1000}/pulse/native
-      - ~/.config/pulse/cookie:/root/.config/pulse/cookie
+      - /home/pib/.config/pulse/cookie:/root/.config/pulse/cookie
     restart: always
     depends_on:
       - rosbridge-ws
