@@ -1,7 +1,7 @@
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Int16MultiArray
-from std_msgs.srv import GetMicConfiguration
+from datatypes.srv import GetMicConfiguration
 import pyaudio
 import numpy as np
 import os
@@ -42,22 +42,20 @@ class AudioStreamer(Node):
         )
         self.sample_rate = int(selected_input_device_info.get("defaultSampleRate", -1))
 
-        self.get_logger().info(
-            f"Device info: {self.sample_rate}Hz, {self.mic_channels} channels"
-        )
-
         if self.sample_rate == -1:
             self.get_logger().error("No audio configuration data found; shutting down.")
             rclpy.shutdown()
             return
 
-        # ROS2 service for mic config
-        self.ros_mic_configuration_service = self.create_subscription(
-            GetMicConfiguration, "get_mic_configuration", self.get_mic_configuration
-        )
         self.get_logger().info(
             f"Device info: {self.sample_rate}Hz, {self.mic_channels} channels"
         )
+
+        # ROS2 service for mic config
+        self.ros_mic_configuration_service = self.create_service(
+            GetMicConfiguration, "get_mic_configuration", self.get_mic_configuration
+        )
+        self.get_logger().info("Mic configuration service ready")
 
         # Open audio stream
         self.audio_stream = self.py_audio.open(

@@ -8,13 +8,13 @@ import numpy as np
 import pyaudio
 import rclpy
 from datatypes.action import RecordAudio
+from datatypes.srv import GetMicConfiguration
 from rclpy.action import ActionServer
 from rclpy.action import CancelResponse, GoalResponse
 from rclpy.action.server import ServerGoalHandle
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from std_msgs.msg import String, Int16MultiArray
-from std_msgs.srv import GetMicConfiguration
 
 from public_api_client import public_voice_client
 from . import util
