@@ -1,6 +1,7 @@
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Int16MultiArray
+from std_msgs.srv import GetMicConfiguration
 import pyaudio
 import numpy as np
 import os
@@ -23,7 +24,9 @@ class AudioStreamer(Node):
         self.input_device_index = None  # Will be determined dynamically
 
         # ROS2 publisher for raw audio chunks
-        self.ros_publisher = self.create_publisher(Int16MultiArray, "audio_stream", 10)
+        self.ros_audio_data_publisher = self.create_publisher(
+            Int16MultiArray, "audio_stream", 10
+        )
 
         self.py_audio = pyaudio.PyAudio()
         self.select_input_device()
@@ -44,11 +47,17 @@ class AudioStreamer(Node):
         )
 
         if self.sample_rate == -1:
-            self.get_logger().error(
-                "No audio counfiguration data found; shutting down."
-            )
+            self.get_logger().error("No audio configuration data found; shutting down.")
             rclpy.shutdown()
             return
+
+        # ROS2 service for mic config
+        self.ros_mic_configuration_service = self.create_subscription(
+            GetMicConfiguration, "get_mic_configuration", self.get_mic_configuration
+        )
+        self.get_logger().info(
+            f"Device info: {self.sample_rate}Hz, {self.mic_channels} channels"
+        )
 
         # Open audio stream
         self.audio_stream = self.py_audio.open(
@@ -64,6 +73,13 @@ class AudioStreamer(Node):
         self.timer = self.create_timer(
             self.chunk_size / self.sample_rate, self.publish_audio
         )
+
+    def get_mic_configuration(self, request, response):
+        response.mic_channels = self.mic_channels
+        response.chunk_size = self.chunk_size
+        response.audio_format = self.audio_format
+        response.sample_rate = self.sample_rate
+        return response
 
     def select_input_device(self):
         """Select the user-preferred audio device or fall back to default."""
@@ -108,7 +124,7 @@ class AudioStreamer(Node):
         )
         ros_message = Int16MultiArray()
         ros_message.data = audio_data.tolist()
-        self.ros_publisher.publish(ros_message)
+        self.ros_audio_data_publisher.publish(ros_message)
 
     def destroy_node(self):
         """Cleanup resources when shutting down."""
