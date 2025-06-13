@@ -1,0 +1,5 @@
+---
+int32 mic_channels   # number of channels (e.g. 1)
+int32 chunk_size     # buffer size in frames (e.g. 1024)
+uint32 audio_format  # the PyAudio format constant (e.g. paInt16)
+int32 sample_rate    # sample rate in Hz, will be set at runtime
