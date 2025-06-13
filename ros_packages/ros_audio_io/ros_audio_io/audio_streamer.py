@@ -72,7 +72,11 @@ class AudioStreamer(Node):
             self.chunk_size / self.sample_rate, self.publish_audio
         )
 
-    def get_mic_configuration(self, request, response):
+    def get_mic_configuration(
+        self,
+        request: GetMicConfiguration.Request,
+        response: GetMicConfiguration.Response,
+    ) -> GetMicConfiguration.Response:
         response.mic_channels = self.mic_channels
         response.chunk_size = self.chunk_size
         response.audio_format = self.audio_format

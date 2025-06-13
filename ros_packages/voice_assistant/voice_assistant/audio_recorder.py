@@ -48,9 +48,6 @@ class AudioRecorderNode(Node):
         self.ros_mic_configuration_client = self.create_client(
             GetMicConfiguration, "get_mic_configuration"
         )
-        while not self.ros_mic_configuration_client.wait_for_service(timeout_sec=1.0):
-            self.get_logger().warn("Waiting for get_mic_configuration service…")
-        self.ros_mic_configuration_request = GetMicConfiguration.Request()
 
         # Request & handle response
         if not self.request_mic_configuration():
@@ -96,7 +93,7 @@ class AudioRecorderNode(Node):
         """
         self.get_logger().info("Requesting mic configuration from server…")
 
-        # Wait for the service to appear
+        # Make sure that service already appeared
         if not self.ros_mic_configuration_client.wait_for_service(
             timeout_sec=timeout_sec
         ):
@@ -105,9 +102,12 @@ class AudioRecorderNode(Node):
             )
             return False
 
+        # Create the request locally
+        ros_mic_configuration_request = GetMicConfiguration.Request()
+
         # Send the request
         future = self.ros_mic_configuration_client.call_async(
-            self.ros_mic_configuration_request
+            ros_mic_configuration_request
         )
 
         # Block and spin until we get a response (or timeout)
