@@ -49,7 +49,7 @@ get_distribution() {
     echo "$distribution"
 }
 
-# Get Linux distribution version, e.g. (ubuntu) 'jammy', (debian) 'bookworm'
+# Get Linux distribution version, e.g. (ubuntu) 'noble', (debian) 'bookworm'
 get_dist_version() {
   local distribution=$1
   case "$distribution" in
@@ -81,32 +81,55 @@ get_dist_version() {
     echo "$dist_version" |  tr '[:upper:]' '[:lower:]'
 }
 
+function is_ubuntu_noble() {
+  [[ "$DISTRIBUTION" == "ubuntu" && "$DIST_VERSION" == "noble" ]]
+}
+
+function is_raspbian_bookworm() {
+  [[ ( "$DISTRIBUTION" == "raspbian" || "$DISTRIBUTION" == "debian" ) && "$DIST_VERSION" == "bookworm" ]]
+}
+
+function check_distribution() {
+  if is_ubuntu_noble || is_raspbian_bookworm; then
+    print INFO "You are running the setup-script on: $DISTRIBUTION $DIST_VERSION which is one of the supported two operating-systems! So, we can happily start the setup…"
+    return 0
+  else
+    print WARN "This script expects Raspberry Pi OS on pib or Ubuntu 24.04 for systems that run the digital twin only. We detected $DISTRIBUTION $DIST_VERSION. Do you want to continue? (Y/N):"
+    read -r answer
+      case "$answer" in
+        [Yy]*)
+          echo "Continuing..."
+          return 0
+          ;;
+        *)
+          echo "Stopping setup, no changes were made."
+          exit 1
+          ;;
+      esac
+    return 1
+  fi
+}
 
 function remove_apps() {
-  print INFO "Removing unused default software"
+    print INFO "Removing unused default software"
 
-  if ! [ "$DISTRIBUTION" == "ubuntu" ]; then
-    print INFO "Not using Ubuntu 22.04; skipping removing unused default software"
-    return
-  fi
+    PACKAGES_TO_BE_REMOVED=("aisleriot" "gnome-sudoku" "ace-of-penguins" "gbrainy" "gnome-mines" "gnome-mahjongg" "libreoffice*" "thunderbird*")
+    installed_packages_to_be_removed=""
 
-  PACKAGES_TO_BE_REMOVED=("aisleriot" "gnome-sudoku" "ace-of-penguins" "gbrainy" "gnome-mines" "gnome-mahjongg" "libreoffice*" "thunderbird*")
-  installed_packages_to_be_removed=""
+    # Create a list of all currently installed packaged that should be removed to reduce software bloat
+    for package_name in "${PACKAGES_TO_BE_REMOVED[@]}"; do
+      if dpkg-query -W -f='${Status}\n' "$package_name" 2>/dev/null | grep -q "install ok installed"; then
+        installed_packages_to_be_removed+="$package_name "
+      fi
+    done
 
-  # Create a list of all currently installed packaged that should be removed to reduce software bloat
-  for package_name in "${PACKAGES_TO_BE_REMOVED[@]}"; do
-    if dpkg-query -W -f='${Status}\n' "$package_name" 2>/dev/null | grep -q "install ok installed"; then
-      installed_packages_to_be_removed+="$package_name "
+    # Remove unnecessary packages, if any are found
+    if  [ -n "$installed_packages_to_be_removed" ]; then
+      sudo apt-get -y purge "$installed_packages_to_be_removed"
+      sudo apt-get autoclean
     fi
-  done
 
-  # Remove unnecessary packages, if any are found
-  if  [ -n "$installed_packages_to_be_removed" ]; then
-    sudo apt-get -y purge "$installed_packages_to_be_removed"
-    sudo apt-get autoclean
-  fi
-
-  print SUCCESS "Removed unused default software"
+    print SUCCESS "Removed unused default software"
 }
 
 
@@ -170,13 +193,37 @@ function install_DBbrowser() {
   print SUCCESS "Installed DB browser"
 }
 
-function install_BrickV() {
+function install_tinkerforge() {
   wget https://download.tinkerforge.com/apt/$(. /etc/os-release; echo $ID)/tinkerforge.asc -q -O - | sudo tee /etc/apt/trusted.gpg.d/tinkerforge.asc > /dev/null
   echo "deb https://download.tinkerforge.com/apt/$(. /etc/os-release; echo $ID $VERSION_CODENAME) main" | sudo tee /etc/apt/sources.list.d/tinkerforge.list
   sudo apt update
-  sudo apt install -y brickv
-  sudo apt install python3-tinkerforge #python API Bindings
-  print SUCCESS "Installed brick viewer and python API bindings"
+  sudo apt install -y brickd brickv python3-tinkerforge
+  print SUCCESS "Installed tinkerforge"
+}
+
+function disable_power_notification() {
+	local file="/boot/firmware/config.txt"
+	
+	if [ -f "$file" ]; then
+    	echo "Disabling under-voltage warnings..."
+		  echo "avoid_warnings=2" | sudo tee -a "$file" > /dev/null
+
+    	echo "Preventing CPU throttling..."
+    	echo "force_turbo=1" | sudo tee -a "$file" > /dev/null
+	fi
+
+	echo "Installing and configuring watchdog service..."
+	sudo apt-get install -y watchdog
+	sudo systemctl enable watchdog
+	sudo systemctl start watchdog
+
+	echo "Modifying watchdog configuration..."
+	sudo sed -i 's/#reboot=1/reboot=0/' /etc/watchdog.conf
+
+	echo "Disabling kernel panic reboots..."
+	echo "kernel.panic = 0" | sudo tee -a /etc/sysctl.conf
+
+	sudo sysctl -p
 }
 
 # clean setup files if local install + remove user from sudoers file again
@@ -229,9 +276,9 @@ fi
 
 DISTRIBUTION=$(get_distribution) # e.g., 'ubuntu'
 export DISTRIBUTION
-DIST_VERSION=$(get_dist_version "$DISTRIBUTION")  # e.g., 'jammy'
+DIST_VERSION=$(get_dist_version "$DISTRIBUTION")  # e.g., 'noble'
 export DIST_VERSION
-print INFO "$DISTRIBUTION $DIST_VERSION"
+check_distribution
 
 
 # VALIDATE CLI ARGUMENTS
@@ -259,44 +306,25 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-function disable_power_notification() {
-	local file="/boot/firmware/config.txt"
-	
-	if [ -f "$file" ]; then
-    	echo "Disabling under-voltage warnings..."
-		  echo "avoid_warnings=2" | sudo tee -a "$file" > /dev/null
+if is_ubuntu_noble; then
+  remove_apps || print ERROR "failed to remove default software"
+fi
 
-    	echo "Preventing CPU throttling..."
-    	echo "force_turbo=1" | sudo tee -a "$file" > /dev/null
-	fi
+if is_raspbian_bookworm; then
+  disable_power_notification || print ERROR "failed to disable power notifications"
+fi
 
-	echo "Installing and configuring watchdog service..."
-	sudo apt-get install -y watchdog
-	sudo systemctl enable watchdog
-	sudo systemctl start watchdog
-
-	echo "Modifying watchdog configuration..."
-	sudo sed -i 's/#reboot=1/reboot=0/' /etc/watchdog.conf
-
-	echo "Disabling kernel panic reboots..."
-	echo "kernel.panic = 0" | sudo tee -a /etc/sysctl.conf
-
-	sudo sysctl -p
-}
-
-remove_apps || print INFO "Skipped removing default software"
 install_system_packages || { print ERROR "failed to install system packages"; return 1; }
-disable_power_notification || print ERROR "failed to disable power notifications"
 clone_repositories || { print ERROR "failed to clone repositories"; return 1; }
 move_setup_files || print ERROR "failed to move setup files"
 install_DBbrowser || print ERROR "failed to install DB browser"
-install_BrickV || print ERROR "failed to install Brick viewer"
-source "$SETUP_INSTALLATION_DIR/set_system_settings.sh" || print INFO "skipped setting system settings"
+install_tinkerforge || print ERROR "failed to install tinkerforge"
+source "$SETUP_INSTALLATION_DIR/set_system_settings.sh" || print ERROR "failed to set system settings"
 print INFO "${INSTALL_METHOD}"
 if [ "$INSTALL_METHOD" = "legacy" ]; then
   print INFO "Going to install Cerebra locally (LEGACY MODE NOT WORKING ON RASPBERRY PI 5)"
   source "$SETUP_INSTALLATION_DIR/local_install.sh" || print ERROR "failed to install Cerebra locally"
-else
+elif is_ubuntu_noble || is_raspbian_bookworm; then
   print INFO "Going to install Cerebra via Docker"
   source "$SETUP_INSTALLATION_DIR/docker_install.sh" || print ERROR "failed to install Cerebra via Docker"
 fi
