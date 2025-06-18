@@ -83,10 +83,11 @@ def _create_bricklet_data() -> None:
             )
         db.session.flush()
 
-    b1 = Bricklet(uid="AAA", bricklet_number=1)
-    b2 = Bricklet(uid="BBB", bricklet_number=2)
-    b3 = Bricklet(uid="CCC", bricklet_number=3)
-    db.session.add_all([b1, b2, b3])
+    b1 = Bricklet(bricklet_number=1, type="Servo Bricklet")
+    b2 = Bricklet(bricklet_number=2, type="Servo Bricklet")
+    b3 = Bricklet(bricklet_number=3, type="Servo Bricklet")
+    b4 = Bricklet(bricklet_number=4, type="Solid State Relay Bricklet")
+    db.session.add_all([b1, b2, b3, b4])
     db.session.flush()
 
 
