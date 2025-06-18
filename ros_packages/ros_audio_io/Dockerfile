@@ -6,30 +6,29 @@ WORKDIR /app
 
 RUN apt-get update && apt-get install --no-install-recommends -y curl
 
-RUN curl -sSL https://download.tinkerforge.com/apt/$(. /etc/os-release; echo $ID)/tinkerforge.gpg | apt-key add - && \
-    echo "deb https://download.tinkerforge.com/apt/$(. /etc/os-release; echo $ID $VERSION_CODENAME) main" > /etc/apt/sources.list.d/tinkerforge.list && \
-    apt-get update --fix-missing && \
+# Install necessary dependencies
+RUN apt-get update --fix-missing && \
     apt-get install --no-install-recommends -y \
-        build-essential \
-        python3-colcon-common-extensions \
-        python3-colcon-mixin \
         python3-pip \
-        python3-tinkerforge \
+        python3-colcon-common-extensions \
+        ros-humble-rclpy \
+        ros-humble-std-msgs \
+        python3-usb \
+        portaudio19-dev \
+        build-essential \
+        python3-colcon-mixin \
+        pulseaudio \
         libusb-1.0-0-dev \
     && rm -rf /var/lib/apt/lists/*
 
-
-# ToDo - DEV MERGE: COPY ./ros_packages/requirements.txt .
-RUN pip install requests
+# Install Python audio packages
+RUN pip install pyaudio numpy scipy taskgroup
 
 COPY ./pib_api/client ./client
 RUN pip install ./client
 
-COPY ./ros_packages/motors/pib_motors ./motors/pib_motors
-RUN pip install ./motors/pib_motors
-
 COPY ./ros_packages/datatypes ros2_ws/datatypes
-COPY ./ros_packages/motors ros2_ws/motors
+COPY ./ros_packages/ros_audio_io ros2_ws/ros_audio_io
 
 RUN cd ros2_ws && \
     source /opt/ros/humble/setup.bash && \
@@ -41,3 +40,4 @@ RUN chmod +x /ros_entrypoint.sh
 
 ENTRYPOINT ["/ros_entrypoint.sh"]
 CMD ["bash"]
+
