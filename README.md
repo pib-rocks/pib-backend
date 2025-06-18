@@ -36,17 +36,20 @@ This script assumes that the setup script was executed successfully
 1. Open a terminal
 2. Enter this command: `update-pib`
 
-You can add the "-Cerebra" parameter to update only the frontend application but not the backend.
+This script will update your docker containers (Front- and Backend)
 
 ## Webots
 
 Starting the webots simulation:
 
 1. Complete all steps of the "Installing pibs software"-section of this readme document
-2. Enter the following command into a terminal:  
-   `ros2 launch pibsim_webots pib_launch.py`  
-   (The first time this command is entered, a prompt will appear asking to install webots.  
-   Confirm this prompt and wait a few seconds for the installation to finish. Webots should open afterwards.)
+2. If you are running simulation in a virtual machine ubuntu type the following command
+   `xhost +local:root`
+4. Navigate to app/pib-backend
+   `cd app/pib-backend`
+5. Enter the following command into a terminal:  
+   `sudo docker compose --profile pibsim_webots up`  
+   (The first time this command is entered, webots will be installed. Webots should open automatically afterwards, to close it you should stop the container by closing the terminal window which is open or by pressing ctrl + c. To run it again just restart the container and if you turned off the virtual machine repeat step 2)
 
 Webots may throw error messages saying it crashed (especially on VM). This can usually be ignored by clicking on "wait".
 
@@ -78,31 +81,6 @@ To add pib to a distinct logical network:
 For a range of available ROS_DOMAIN_IDs please check the official documentation at:  
 https://docs.ros.org/en/dashing/Concepts/About-Domain-ID.html
 
-## Update Servo Bricklet IDs
-
-1. Open a terminal and navigate to `pib-backend/scripts`
-2. For Servo Bricklet ID update you can run a script with `python3 update-servo-ids.py`
-after that you can change every single uid in a command line. 
-3. You can change the IDs for Bricklets 1, 2 and 3 (to skip a Bricklet simply press enter without typing anything).
-
-**Attention**: The IDs are case-sensitive and consist only of letters and numbers
-
-
-Example: 
-   Standard bricklet uids: 
-```
-1  AAA
-2  BBB
-3  CCC
-```
-
-execute `python3 update-servo-ids.py` and change one after another all bricklet uids:
-```
-1  AAA -> 1 Aa1
-2  BBB -> 2 Bb2
-3  CCC -> 3 Cc3
-```
-
 ### Docker
 
 The backend can be started via `docker compose`. Since the software requires to interface with the OS hardware (USB,
@@ -119,3 +97,7 @@ docker compose --profile all up
 ```
 TRYB_URL_PREFIX=<BASE_URL_Tryb>
 ```
+
+### Contributing to pib
+
+For the development process, external developers are requested to refer to the following explanation: https://pib-rocks.atlassian.net/wiki/spaces/kb/pages/435486721/Contributing+to+pib
