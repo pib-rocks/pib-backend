@@ -23,11 +23,13 @@ class Motor:
 
     def apply_settings(self, settings_dto: dict[str, Any]) -> bool:
         """apply provided settings to the motor"""
-
         self.visible = settings_dto["visible"]
         self.invert = settings_dto["invert"]
         self.rotation_range_min = settings_dto["rotationRangeMin"]
         self.rotation_range_max = settings_dto["rotationRangeMax"]
+
+        if not self.bricklet_pins:
+            return False
 
         # Check if current position is outside of new rotation Ranges
         adjusted_position = self._validate_position(self.get_position())
@@ -38,32 +40,44 @@ class Motor:
 
     def get_settings(self) -> dict[str, Any]:
         """get the current settings of this motor"""
-        motor_settings_dto = self.bricklet_pins[0].get_settings()
-        motor_settings_dto["visible"] = self.visible
-        motor_settings_dto["name"] = self.name
-        motor_settings_dto["invert"] = self.invert
-        motor_settings_dto["rotationRangeMin"] = self.rotation_range_min
-        motor_settings_dto["rotationRangeMax"] = self.rotation_range_max
-        return motor_settings_dto
+        settings = {
+            "visible": self.visible,
+            "name": self.name,
+            "invert": self.invert,
+            "rotationRangeMin": self.rotation_range_min,
+            "rotationRangeMax": self.rotation_range_max,
+        }
+        if not self.bricklet_pins:
+            return settings
+        settings.update(self.bricklet_pins[0].get_settings())
+        return settings
 
     def set_position(self, position: int) -> bool:
         """sets the position of all bricklet-pins associated with this motor"""
+        if not self.bricklet_pins:
+            return False
         if self.invert:
             position *= -1
         position = self._validate_position(position)
         return all(bp.set_position(position) for bp in self.bricklet_pins)
 
     def get_position(self) -> int:
-        """returns the postion of the motor"""
+        """returns the postion of the motor or '0' if no bricklet-pin is connected"""
+        if not self.bricklet_pins:
+            return 0
         return self.bricklet_pins[0].get_position()
 
     def get_current(self) -> int:
         """returns the maximum current of all bricklet-pins, or NO_CURRENT, if not bricklet-pin is connected"""
+        if not self.bricklet_pins:
+            return Motor.NO_CURRENT
         return max(bp.get_current() for bp in self.bricklet_pins)
 
     def check_if_motor_is_connected(self) -> bool:
-        """returns 'True' iff all bricklet-pins of this motor are connected"""
-        return all(bp.is_connected() for bp in self.bricklet_pins)
+        """returns 'True' if all bricklet-pins of this motor are connected"""
+        return bool(self.bricklet_pins) and all(
+            bp.is_connected() for bp in self.bricklet_pins
+        )
 
     def _validate_position(self, position: int) -> int:
         """Check if position is within range, set it to the min/max value if not."""
@@ -86,6 +100,7 @@ for motor_dto in response["motors"]:
             bricklet_pin_dto["invert"],
         )
         for bricklet_pin_dto in motor_dto["brickletPins"]
+        if bricklet_pin_dto["bricklet"]
     ]
     motors.append(Motor(motor_dto["name"], bricklet_pins, motor_dto["invert"]))
 
