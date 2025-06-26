@@ -1,7 +1,7 @@
 import logging
 from typing import Any
 
-from pib_motors.bricklet import uid_to_bricklet
+from pib_motors.bricklet import uid_to_servo_bricklet
 from tinkerforge.bricklet_servo_v2 import BrickletServoV2
 
 
@@ -12,7 +12,7 @@ class BrickletPin:
 
     def __init__(self, pin: int, uid: str, invert: bool) -> None:
         self.pin: int = pin
-        self.bricklet: BrickletServoV2 = uid_to_bricklet[uid]
+        self.bricklet: BrickletServoV2 = uid_to_servo_bricklet[uid]
         self.invert = invert
 
     def __str__(self) -> str:

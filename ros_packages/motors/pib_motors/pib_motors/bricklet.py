@@ -34,20 +34,20 @@ uid_to_servo_bricklet: dict[str, BrickletServoV2] = {
 
 # maps the uid (e.g. 'XYZ') to the associated solid state relay bricklet object
 if solid_state_relay_bricklet_uid:
-    solid_state_relay_bricklet: BrickletSolidStateRelayV2 = BrickletSolidStateRelayV2(solid_state_relay_bricklet_uid[0], ipcon)
+    solid_state_relay_bricklet: BrickletSolidStateRelayV2 = BrickletSolidStateRelayV2(solid_state_relay_bricklet_uid, ipcon)
 
 def set_ssr_state(state: bool) -> None:
     """set the status of the solid state relay to on (true) or off (false)"""
     if solid_state_relay_bricklet_uid is None:
-        logging.error("SSR uid is not set")
+        logging.error("The UID of the Solid-State Relay is not set.")
         return
     else:
         try:
             solid_state_relay_bricklet.set_state(state)
-            logging.info(f"Solid-State Relay '{status}'")
+            logging.info(f"Solid-State Relay {'ON' if state else 'OFF'}")
         except Error as e:
             if e.value == Error.TIMEOUT:
-                logging.error("Solid-State Relay is not connected or unresponsive (Timeout).")
+                logging.error("Solid-State Relay is not connected or unresponsive (Timeout). Please check the UID and ensure the device is plugged in.")
             elif e.value == Error.INVALID_UID:
                 logging.error("Invalid UID for Solid-State Relay.")
             elif e.value == Error.NOT_CONNECTED:
