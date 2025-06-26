@@ -18,11 +18,20 @@ ipcon.connect(cfg.TINKERFORGE_HOST, cfg.TINKERFORGE_PORT)
 successful, bricklet_dtos = bricklet_client.get_all_bricklets()
 if not successful:
     raise RuntimeError("failed to load bricklets from pib-api...")
-bricklet_uids = [dto["uid"] for dto in bricklet_dtos["bricklets"]]
+
+servo_bricklet_uids = [
+    dto["uid"] for dto in bricklet_dtos["bricklets"] if dto["type"] == "Servo Bricklet"
+]
+solid_state_relay_bricklet_uid = [
+    dto["uid"]
+    for dto in bricklet_dtos["bricklets"]
+    if dto["type"] == "Solid State Relay Bricklet"
+]
+
 
 # maps the uid (e.g. 'XYZ') to the associated bricklet object
 uid_to_bricklet: dict[str, BrickletServoV2] = {
-    uid: BrickletServoV2(uid, ipcon) for uid in bricklet_uids
+    uid: BrickletServoV2(uid, ipcon) for uid in servo_bricklet_uids if uid
 }
 
 connected_bricklets = set()
