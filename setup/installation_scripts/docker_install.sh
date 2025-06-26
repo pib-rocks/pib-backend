@@ -31,17 +31,6 @@ function install_docker_engine() {
         return
     fi
 
-    # Get if distribution compatible with docker setup
-    if [[ "$DISTRIBUTION" != "ubuntu" && "$DISTRIBUTION" != "debian" && "$DISTRIBUTION" != "raspbian" ]]; then
-        print ERROR "Unsupported distribution: $DISTRIBUTION"
-        return 1
-    fi
-
-    if [ -z "$DIST_VERSION" ]; then
-        print ERROR "could not find version of linux distribution"
-        return 1
-    fi
-
     print INFO "Installing Docker Engine for ${DISTRIBUTION} ${DIST_VERSION}"
     print INFO "$USER"
 
@@ -91,7 +80,7 @@ function install_docker_engine() {
 
 function start_container() {
     print INFO "Starting container"
-    echo "TRYB_URL_PREFIX=https://tryb.ai" > "$BACKEND_DIR"/password.env
+    echo "TRYB_URL_PREFIX=https://platform.tryb.ai" > "$BACKEND_DIR"/password.env
     sudo docker compose -f "$BACKEND_DIR/docker-compose.yaml" --profile all up -d || return 1
     print SUCCESS "Started pib-backend container"
     sudo docker compose -f "$FRONTEND_DIR/docker-compose.yaml" up -d || return 1
