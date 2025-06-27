@@ -46,7 +46,7 @@ def set_ssr_state(state: bool) -> None:
             solid_state_relay_bricklet.set_state(state)
             logging.info(f"Solid-State Relay {'ON' if state else 'OFF'}")
         except Error as e:
-            if e.value == Error.TIMEOUT:
+            if e.value == Error.TIMEOUT or e.value == Error.WRONG_RESPONSE_LENGTH:
                 logging.error("Solid-State Relay is not connected or unresponsive (Timeout). Please check the UID and ensure the device is plugged in.")
             elif e.value == Error.INVALID_UID:
                 logging.error("Invalid UID for Solid-State Relay.")
@@ -54,5 +54,4 @@ def set_ssr_state(state: bool) -> None:
                 logging.error("No connection to Solid-State Relay.")
             else:
                 logging.error(f"Unknown Tinkerforge error: {e}")
-        except Exception as e:
-            logging.error(f"Unexpected error while setting SSR state: {e}")
+            raise e
