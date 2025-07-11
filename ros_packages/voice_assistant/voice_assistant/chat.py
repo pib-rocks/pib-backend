@@ -19,6 +19,7 @@ from rclpy.publisher import Publisher
 from std_msgs.msg import String
 
 from public_api_client import public_voice_client
+from .chat_factory import chat_completion as factory_chat_completion
 
 # in future, this code will be prepended to the description in a chat-request
 # if it is specified that code should be generated. The text will contain
@@ -184,9 +185,9 @@ class ChatNode(Node):
             image_base64 = response.image_base64
 
         try:
-            # receive assistant-response in form of an iterable of tokens from the public-api
+            # receive assistant-response in form of an async iterable of tokens
             with self.public_voice_client_lock:
-                tokens = public_voice_client.chat_completion(
+                tokens = factory_chat_completion(
                     text=content,
                     description=description,
                     message_history=message_history,
@@ -213,7 +214,7 @@ class ChatNode(Node):
             # for tracking if a message is an update or a new message
             bool_update_chat_message: bool = False
 
-            for token in tokens:
+            async for token in tokens:
 
                 if prev_text is not None:
                     # publish the previously collected text in form of feedback
