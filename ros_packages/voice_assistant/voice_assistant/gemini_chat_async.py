@@ -1,12 +1,8 @@
 """Async interface to Google's Gemini Live API."""
 from __future__ import annotations
 
-import base64
 import os
-from io import BytesIO
 from typing import AsyncIterable, Iterable, List, Optional
-
-from PIL import Image
 
 from public_api_client.public_voice_client import PublicApiChatMessage
 
@@ -52,7 +48,6 @@ async def gemini_chat_completion(
     _configure_api_key()
 
     config = {
-        "response_modalities": ["AUDIO"],
         "system_instruction": description,
     }
 
@@ -60,15 +55,7 @@ async def gemini_chat_completion(
         for msg in message_history:
             await session.send(input=msg.content, end_of_turn=True)
 
-        parts: list[object] = [text]
-        if image_base64:
-            try:
-                image_data = base64.b64decode(image_base64)
-                parts.append(Image.open(BytesIO(image_data)))
-            except Exception:
-                pass
-
-        await session.send(input=parts if len(parts) > 1 else parts[0], end_of_turn=audio_stream is None)
+        await session.send(input=text, end_of_turn=audio_stream is None)
 
         if audio_stream is not None:
             for chunk in audio_stream:

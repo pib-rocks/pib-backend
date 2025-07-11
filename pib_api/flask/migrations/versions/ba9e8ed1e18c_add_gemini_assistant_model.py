@@ -25,15 +25,7 @@ def upgrade():
             sa.text(
                 """
                 INSERT OR IGNORE INTO assistant_model (api_name, visual_name, has_image_support)
-                VALUES ('gemini-2.5-flash', 'Gemini 2.5 Flash [Text]', false)
-                """
-            )
-        )
-        conn.execute(
-            sa.text(
-                """
-                INSERT OR IGNORE INTO assistant_model (api_name, visual_name, has_image_support)
-                VALUES ('gemini-2.5-flash', 'Gemini 2.5 Flash [Vision]', true)
+                VALUES ('gemini-2.5-flash', 'Gemini 2.5 Flash', false)
                 """
             )
         )
@@ -43,6 +35,6 @@ def downgrade():
     conn = op.get_bind()
     conn.execute(
         sa.text(
-            "DELETE FROM assistant_model WHERE visual_name IN ('Gemini 2.5 Flash [Text]', 'Gemini 2.5 Flash [Vision]')"
+            "DELETE FROM assistant_model WHERE visual_name = 'Gemini 2.5 Flash'"
         )
     )
