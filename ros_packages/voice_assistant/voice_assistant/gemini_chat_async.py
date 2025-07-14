@@ -28,6 +28,64 @@ def _build_history(messages: List[PublicApiChatMessage]) -> list[dict[str, objec
     ]
 
 
+class GeminiLiveSession:
+    """Manage a persistent Gemini Live API session."""
+
+    def __init__(
+        self,
+        *,
+        description: str,
+        message_history: List[PublicApiChatMessage],
+        image_base64: Optional[str],
+        model: str,
+    ) -> None:
+        self.description = description
+        self.message_history = message_history
+        self.image_base64 = image_base64
+        self.model = model
+        self._session_cm: Optional[object] = None
+        self._session: Optional[object] = None
+
+    async def _ensure_session(self) -> None:
+        if self._session is not None:
+            return
+
+        _configure_api_key()
+
+        config = {
+            "system_instruction": self.description,
+        }
+
+        self._session_cm = genai.Client().aio.live.connect(model=self.model, config=config)
+        self._session = await self._session_cm.__aenter__()
+        for msg in self.message_history:
+            await self._session.send(input=msg.content, end_of_turn=True)
+
+    async def ask(
+        self, text: str, *, audio_stream: Optional[Iterable[bytes]] = None
+    ) -> AsyncIterable[str]:
+        await self._ensure_session()
+
+        await self._session.send(input=text, end_of_turn=audio_stream is None)
+
+        if audio_stream is not None:
+            for chunk in audio_stream:
+                await self._session.send_realtime_input(
+                    audio=types.Blob(data=chunk, mime_type="audio/pcm;rate=16000")
+                )
+            await self._session.end_turn()
+
+        async for response in self._session.receive():
+            if response.text:
+                yield response.text
+
+    async def close(self) -> None:
+        if self._session_cm is not None:
+            await self._session_cm.__aexit__(None, None, None)
+            self._session_cm = None
+            self._session = None
+
+
 async def gemini_chat_completion(
     *,
     text: str,
