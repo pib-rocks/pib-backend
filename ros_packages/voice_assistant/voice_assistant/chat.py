@@ -194,6 +194,7 @@ class ChatNode(Node):
                     image_base64=image_base64,
                     model=personality.assistant_model.api_name,
                     public_api_token=self.token,
+                    chat_id=chat_id,
                 )
 
             # regex for indentifying sentences
