@@ -6,15 +6,15 @@ from typing import AsyncIterable, Iterable, List, Optional
 
 from public_api_client.public_voice_client import PublicApiChatMessage
 
-import google.generativeai as genai
-from google.generativeai import types
+import google.genai as genai
+from google.genai import types
 
 
 GOOGLE_API_KEY_ENV = "GOOGLE_API_KEY"
 
 
 def _configure_api_key() -> None:
-    """Configure the API key for ``google-generativeai`` from the environment."""
+    """Configure the API key for ``google-genai`` from the environment."""
     api_key = os.getenv(GOOGLE_API_KEY_ENV)
     if api_key:
         genai.configure(api_key=api_key)
@@ -59,21 +59,30 @@ class GeminiLiveSession:
         self._session_cm = genai.Client().aio.live.connect(model=self.model, config=config)
         self._session = await self._session_cm.__aenter__()
         for msg in self.message_history:
-            await self._session.send(input=msg.content, end_of_turn=True)
+            await self._session.send_client_content(
+                turns={
+                    "role": "user" if msg.is_user else "model",
+                    "parts": [msg.content],
+                },
+                turn_complete=True,
+            )
 
     async def ask(
         self, text: str, *, audio_stream: Optional[Iterable[bytes]] = None
     ) -> AsyncIterable[str]:
         await self._ensure_session()
 
-        await self._session.send(input=text, end_of_turn=audio_stream is None)
+        await self._session.send_client_content(
+            turns={"role": "user", "parts": [text]},
+            turn_complete=audio_stream is None,
+        )
 
         if audio_stream is not None:
             for chunk in audio_stream:
                 await self._session.send_realtime_input(
                     audio=types.Blob(data=chunk, mime_type="audio/pcm;rate=16000")
                 )
-            await self._session.end_turn()
+            await self._session.send_realtime_input(audio_stream_end=True)
 
         async for response in self._session.receive():
             if response.text:
@@ -111,16 +120,25 @@ async def gemini_chat_completion(
 
     async with genai.Client().aio.live.connect(model=model, config=config) as session:
         for msg in message_history:
-            await session.send(input=msg.content, end_of_turn=True)
+            await session.send_client_content(
+                turns={
+                    "role": "user" if msg.is_user else "model",
+                    "parts": [msg.content],
+                },
+                turn_complete=True,
+            )
 
-        await session.send(input=text, end_of_turn=audio_stream is None)
+        await session.send_client_content(
+            turns={"role": "user", "parts": [text]},
+            turn_complete=audio_stream is None,
+        )
 
         if audio_stream is not None:
             for chunk in audio_stream:
                 await session.send_realtime_input(
                     audio=types.Blob(data=chunk, mime_type="audio/pcm;rate=16000")
                 )
-            await session.end_turn()
+            await session.send_realtime_input(audio_stream_end=True)
 
         async for response in session.receive():
             if response.text:
