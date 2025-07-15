@@ -130,6 +130,10 @@ services:
       - ALSA_CARD=Generic
       - FLASK_API_BASE_URL=http://flask-app:5000
       - VOICE_ASSISTANT_DIR=/app/ros2_ws/voice_assistant
+      - TINKERFORGE_HOST=host.docker.internal
+      - TINKERFORGE_PORT=4223
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - /media/dyan/project/projects/voice/:/data/voice
       - /dev/snd:/dev/snd

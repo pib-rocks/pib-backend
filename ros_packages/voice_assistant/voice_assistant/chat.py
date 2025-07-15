@@ -19,6 +19,7 @@ from rclpy.publisher import Publisher
 from std_msgs.msg import String
 
 from public_api_client import public_voice_client
+from pib_motors.bricklet import get_aq_bricklet_data
 
 # in future, this code will be prepended to the description in a chat-request
 # if it is specified that code should be generated. The text will contain
@@ -137,6 +138,8 @@ class ChatNode(Node):
         content: str = request.text
         generate_code: bool = request.generate_code
 
+        aq_brick_data = get_aq_bricklet_data()
+
         # create the user message
         self.executor.create_task(
             self.create_chat_message, chat_id, content, True, False, True
@@ -160,6 +163,7 @@ class ChatNode(Node):
         )
         if generate_code:
             description = CODE_DESCRIPTION_PREFIX + description
+        description = description + aq_brick_data
 
         # get the message-history from the pib-api
         with self.voice_assistant_client_lock:
