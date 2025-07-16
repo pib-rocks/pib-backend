@@ -138,10 +138,14 @@ class ChatNode(Node):
         content: str = request.text
         generate_code: bool = request.generate_code
 
+        self.get_logger().info(f"Unpacked")
+
         # create the user message
         self.executor.create_task(
             self.create_chat_message, chat_id, content, True, False, True
         )
+
+        self.get_logger().info(f"Created user message")
 
         # get the personality that is associated with the request chat-id from the pib-api
         with self.voice_assistant_client_lock:
@@ -161,6 +165,8 @@ class ChatNode(Node):
         )
         if generate_code:
             description = CODE_DESCRIPTION_PREFIX + description
+
+        self.get_logger().info(f"Got pers")
 
         # get the message-history from the pib-api
         with self.voice_assistant_client_lock:
@@ -216,6 +222,8 @@ class ChatNode(Node):
             bool_update_chat_message: bool = False
 
             async for token in tokens:
+                if token is None:
+                    self.get_logger().info(f"Got pers")
 
                 if prev_text is not None:
                     # publish the previously collected text in form of feedback
@@ -225,16 +233,16 @@ class ChatNode(Node):
                     goal_handle.publish_feedback(feedback)
                     prev_text = None
                     prev_text_type = None
-
+                    self.get_logger().info(f"Prev text is not None")
                 # add token to current text; remove leading white-spaces, if current-text is empty
                 curr_text = curr_text + (
                     token if len(curr_text) > 0 else token.lstrip()
                 )
-
+                self.get_logger().info(f"Added curr_text")
                 while (
                     True
                 ):  # loop until current-text was not stripped during current iteration
-
+                    self.get_logger().info(f"Started loop")
                     # if the goal was cancelled, return immediately
                     if goal_handle.is_cancel_requested:
                         goal_handle.canceled()
