@@ -3,6 +3,7 @@ import os
 
 bp = Blueprint("ip_controller", __name__)
 
+
 @bp.route("", methods=["GET"])
 def get_host_ip():
     ip_file = "/app/host_ip.txt"
