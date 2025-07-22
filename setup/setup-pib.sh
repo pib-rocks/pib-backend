@@ -237,22 +237,22 @@ setup_ip_dispatcher() {
 LOG="/tmp/nm-dispatcher.log"
 OUTFILE="/home/pib/app/pib-backend/pib_api/flask/host_ip.txt"
 
-echo "\$(date): Dispatcher triggered with IFACE=\$1 STATE=\$2" >> "\$LOG"
+echo "$(date): Dispatcher triggered with IFACE=$1 STATE=$2" >> "$LOG"
 
-IP=\$(ip route get 1 | grep -oP 'src \K[\d.]+' || echo "")
+IP=$(ip route get 1 | grep -oP 'src \K[\d.]+' || echo "")
 
 CURRENT_IP=""
-if [[ -f "\$OUTFILE" ]]; then
-    CURRENT_IP=\$(cat "\$OUTFILE")
+if [[ -f "$OUTFILE" ]]; then
+    CURRENT_IP=$(cat "$OUTFILE")
 fi
 
-if [[ "\$IP" != "\$CURRENT_IP" ]]; then
-    if [[ -n "\$IP" ]]; then
-        echo "\$IP" > "\$OUTFILE"
-        echo "\$(date): Updated IP to \$IP" >> "\$LOG"
+if [[ "$IP" != "$CURRENT_IP" ]]; then
+    if [[ -n "$IP" ]]; then
+        echo "$IP" > "$OUTFILE"
+        echo "$(date): Updated IP to $IP" >> "$LOG"
     else
-        > "\$OUTFILE"
-        echo "\$(date): No IP found" >> "\$LOG"
+        > "$OUTFILE"
+        echo "$(date): No IP found" >> "$LOG"
     fi
 fi
 EOF
