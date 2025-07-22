@@ -226,6 +226,50 @@ function disable_power_notification() {
 	sudo sysctl -p
 }
 
+setup_ip_dispatcher() {
+  local dispatcher_script="/etc/NetworkManager/dispatcher.d/99-update-ip.sh"
+  local outfile="/home/pib/app/pib-backend/pib_api/flask/host_ip.txt"
+
+  print INFO "Creating dispatcher script..."
+
+  sudo tee "$dispatcher_script" > /dev/null << 'EOF'
+#!/bin/bash
+LOG="/tmp/nm-dispatcher.log"
+OUTFILE="/home/pib/app/pib-backend/pib_api/flask/host_ip.txt"
+
+echo "\$(date): Dispatcher triggered with IFACE=\$1 STATE=\$2" >> "\$LOG"
+
+IP=\$(ip route get 1 | grep -oP 'src \K[\d.]+' || echo "")
+
+CURRENT_IP=""
+if [[ -f "\$OUTFILE" ]]; then
+    CURRENT_IP=\$(cat "\$OUTFILE")
+fi
+
+if [[ "\$IP" != "\$CURRENT_IP" ]]; then
+    if [[ -n "\$IP" ]]; then
+        echo "\$IP" > "\$OUTFILE"
+        echo "\$(date): Updated IP to \$IP" >> "\$LOG"
+    else
+        > "\$OUTFILE"
+        echo "\$(date): No IP found" >> "\$LOG"
+    fi
+fi
+EOF
+
+  sudo chmod +x "$dispatcher_script"
+
+  print INFO "Manually running dispatcher script to generate host_ip.txt..."
+  sudo bash -c "$dispatcher_script wlan0 dhcp4-change"
+
+  if [[ -f "$outfile" ]]; then
+    print INFO "host_ip.txt was filled with the following IP:"
+    cat "$outfile"
+  else
+    print WARN "host_ip.txt does not exist!"
+  fi
+}
+
 # clean setup files if local install + remove user from sudoers file again
 function cleanup() {
   if [ "$INSTALL_METHOD" = "legacy" ]; then
@@ -319,6 +363,7 @@ clone_repositories || { print ERROR "failed to clone repositories"; return 1; }
 move_setup_files || print ERROR "failed to move setup files"
 install_DBbrowser || print ERROR "failed to install DB browser"
 install_tinkerforge || print ERROR "failed to install tinkerforge"
+setup_ip_dispatcher || print ERROR "failed to setup ip dispatcher"
 source "$SETUP_INSTALLATION_DIR/set_system_settings.sh" || print ERROR "failed to set system settings"
 print INFO "${INSTALL_METHOD}"
 if [ "$INSTALL_METHOD" = "legacy" ]; then

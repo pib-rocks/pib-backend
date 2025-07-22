@@ -50,6 +50,8 @@ password.env
 
 pibdata.db
 
+host_ip.txt
+
 *.log
 output.wav
 
