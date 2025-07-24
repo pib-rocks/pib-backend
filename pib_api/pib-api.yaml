@@ -895,7 +895,7 @@ paths:
     get:
       tags: 
         - bricklet
-      summary: Get all brickletIds
+      summary: Get all bricklets
       responses:
         '200':
           description: OK
@@ -917,7 +917,7 @@ paths:
         schema:
           type: integer
           minimum: 1
-          maximum: 3
+          maximum: 4
         description: the number of the bricklet
     get:
       tags: 
@@ -929,7 +929,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/GetBrickletByBrickletNumber'
+                $ref: '#/components/schemas/BrickletIdByBrickletNumber'
         '400':
           $ref: '#/components/responses/400'
         '404':
@@ -946,7 +946,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/Bricklet'
+              $ref: '#/components/schemas/BrickletIdByBrickletNumber'
       responses:
         '200':
           description: OK
@@ -960,6 +960,19 @@ paths:
           $ref: '#/components/responses/404'
         '500':
           $ref: '#/components/responses/500'
+          
+  /host-ip:
+    get:
+      tags: 
+        - host-ip
+      summary: Get the ip-address of the host system
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HostIp'
 components:
   schemas:
     VoiceAssistantPersonality:
@@ -1518,17 +1531,25 @@ components:
           type: integer
           examples: 
             - 1
-        uid:
+        type:
           type: string
+          enum:
+            - Solid State Relay Bricklet
+            - Servo Bricklet
+          example: Servo Bricklet
+        uid:
+          type: [string, "null"]
           examples:
             - XYZ
-    GetBrickletByBrickletNumber:
+            - null
+    BrickletIdByBrickletNumber:
       type: object
       properties:
         uid:
-          type: string
+          type: [string, "null"]
           examples:
             - XYZ
+            - null
     Bricklets:
       type: object
       properties:
@@ -1572,6 +1593,14 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/AssistantModel'
+    HostIp:
+      type: object
+      properties:
+        "host-ip":
+          readOnly: true
+          type: string
+          examples: 
+            - 192.168.220.243
     Error:
       required:
         - Error
