@@ -4,7 +4,7 @@ import rclpy
 from datatypes.msg import MotorSettings
 from datatypes.srv import ApplyMotorSettings, ApplyJointTrajectory
 from pib_api_client import motor_client
-from pib_motors.bricklet import ipcon
+from pib_motors.bricklet import ipcon, connected_enumerate
 from pib_motors.motor import name_to_motors, motors
 from rclpy.node import Node
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
@@ -87,6 +87,10 @@ class MotorControl(Node):
 
         # Log that initialization is complete
         self.get_logger().info("Now Running MOTOR_CONTROL")
+
+        # Register and trigger enumeration of available bricklets to detect connected devices
+        ipcon.register_callback(ipcon.CALLBACK_ENUMERATE, connected_enumerate)
+        ipcon.enumerate()
 
     def apply_motor_settings(
         self, request: ApplyMotorSettings.Request, response: ApplyMotorSettings.Response
