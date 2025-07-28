@@ -24,6 +24,7 @@ RUN apt-get update --fix-missing && apt-get install --no-install-recommends -y \
     && rm -rf /var/lib/apt/lists/*
 
 
+RUN pip install pib-sdk
 
 COPY ./ros_packages/pibsim_webots ros2_ws/pibsim_webots
 

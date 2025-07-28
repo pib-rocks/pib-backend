@@ -64,6 +64,10 @@ function update_frontend() {
         exit 1 
     fi
 }
+function upgrade_pib-sdk() {
+  pip3 install --upgrade pib-sdk
+  print SUCCESS "pib-sdk upgraded"
+}
 
 # Check correct user
 if [ "$(whoami)" != "$DEFAULT_USER" ]; then
@@ -82,9 +86,8 @@ exec > >(tee -a "$LOG_FILE") 2>&1
 print INFO "Update started: "
 
 update_backend
-
 update_frontend
-
+upgrade_pib-sdk
 
 # Cleanup
 print INFO "Cleaning up:"

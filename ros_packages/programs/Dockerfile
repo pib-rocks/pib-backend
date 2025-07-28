@@ -19,6 +19,7 @@ RUN apt-get update --fix-missing && \
     pip install requests==2.32.3
 
 
+RUN pip install pib-sdk
 
 COPY ./ros_packages/datatypes ros2_ws/datatypes
 COPY ./ros_packages/programs ros2_ws/programs

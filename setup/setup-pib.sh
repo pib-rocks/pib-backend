@@ -193,6 +193,11 @@ function install_DBbrowser() {
   print SUCCESS "Installed DB browser"
 }
 
+function install_pib-sdk() {
+  pip install pib-sdk
+  print SUCCESS "Installed pib-sdk"
+}
+
 function install_tinkerforge() {
   wget https://download.tinkerforge.com/apt/$(. /etc/os-release; echo $ID)/tinkerforge.asc -q -O - | sudo tee /etc/apt/trusted.gpg.d/tinkerforge.asc > /dev/null
   echo "deb https://download.tinkerforge.com/apt/$(. /etc/os-release; echo $ID $VERSION_CODENAME) main" | sudo tee /etc/apt/sources.list.d/tinkerforge.list
@@ -319,6 +324,7 @@ clone_repositories || { print ERROR "failed to clone repositories"; return 1; }
 move_setup_files || print ERROR "failed to move setup files"
 install_DBbrowser || print ERROR "failed to install DB browser"
 install_tinkerforge || print ERROR "failed to install tinkerforge"
+install_pib-sdk || print ERROR "failed to install pib-sdk"
 source "$SETUP_INSTALLATION_DIR/set_system_settings.sh" || print ERROR "failed to set system settings"
 print INFO "${INSTALL_METHOD}"
 if [ "$INSTALL_METHOD" = "legacy" ]; then

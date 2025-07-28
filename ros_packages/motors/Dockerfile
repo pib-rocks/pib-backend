@@ -21,6 +21,7 @@ RUN curl -sSL https://download.tinkerforge.com/apt/$(. /etc/os-release; echo $ID
 
 # ToDo - DEV MERGE: COPY ./ros_packages/requirements.txt .
 RUN pip install requests
+RUN pip install pib-sdk
 
 COPY ./pib_api/client ./client
 RUN pip install ./client
