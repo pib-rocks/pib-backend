@@ -3,107 +3,116 @@ from __future__ import annotations
 import os
 import asyncio
 from typing import AsyncIterable, Iterable, List, Optional
+import pyaudio
+import traceback
 
 import google.genai as genai
 from google.genai import types
 from public_api_client.public_voice_client import PublicApiChatMessage
 
+pya = pyaudio.PyAudio()
+
 GOOGLE_API_KEY_ENV = "GOOGLE_API_KEY"
 
-def _configure_api_key() -> None:
-    key = "AIzaSyDCcTrpz2KoNOf4Y3bGPGiuLupnthweVYA"
-    if not key:
-        raise RuntimeError(f"{GOOGLE_API_KEY_ENV} not set")
-    genai.configure(api_key=key)
+FORMAT = pyaudio.paInt16
+CHANNELS = 1
+SEND_SAMPLE_RATE = 16000
+RECEIVE_SAMPLE_RATE = 24000
+CHUNK_SIZE = 1024
 
-def _build_history(
-    messages: List[PublicApiChatMessage],
-) -> list[types.ChatMessage]:
-    return [
-        types.ChatMessage(
-            role=types.ChatRole.USER if m.is_user else types.ChatRole.ASSISTANT,
-            content=m.content
+client = genai.Client()  # GOOGLE_API_KEY must be set as env variable
+
+MODEL = "gemini-2.5-flash-preview-native-audio-dialog"
+CONFIG = {"response_modalities": ["AUDIO"]}
+
+class AudioLoop:
+    def __init__(self):
+        self.audio_in_queue = None
+        self.out_queue = None
+
+        self.session = None
+
+        self.audio_stream = None
+
+        self.receive_audio_task = None
+        self.play_audio_task = None
+
+
+    async def listen_audio(self):
+        mic_info = pya.get_default_input_device_info()
+        self.audio_stream = await asyncio.to_thread(
+            pya.open,
+            format=FORMAT,
+            channels=CHANNELS,
+            rate=SEND_SAMPLE_RATE,
+            input=True,
+            input_device_index=mic_info["index"],
+            frames_per_buffer=CHUNK_SIZE,
         )
-        for m in messages
-    ]
+        if __debug__:
+            kwargs = {"exception_on_overflow": False}
+        else:
+            kwargs = {}
+        while True:
+            data = await asyncio.to_thread(self.audio_stream.read, CHUNK_SIZE, **kwargs)
+            await self.out_queue.put({"data": data, "mime_type": "audio/pcm"})
 
-class GeminiLiveSession:
-    """Persistent Gemini Live API session with interrupt support."""
-    def __init__(
-        self,
-        *,
-        description: str,
-        message_history: List[PublicApiChatMessage],
-        model: str,
-    ) -> None:
-        self.description = description
-        self.history = message_history
-        self.model = model
-        self._session_cm: Optional[types.LiveConnect] = None
-        self._session: Optional[types.LiveSession] = None
-        self._lock = asyncio.Lock()
+    async def send_realtime(self):
+        while True:
+            msg = await self.out_queue.get()
+            await self.session.send_realtime_input(audio=msg)
 
-    async def _ensure_session(self) -> None:
-        if self._session is not None:
-            return
-        _configure_api_key()
-        self._session_cm = genai.Client().aio.live.connect(
-            model=self.model,
-            config={
-                "system_instruction": self.description,
-                "response_modalities": ["AUDIO", "TEXT"]
-            },
+    async def receive_audio(self):
+        "Background task to reads from the websocket and write pcm chunks to the output queue"
+        while True:
+            turn = self.session.receive()
+            async for response in turn:
+                if data := response.data:
+                    self.audio_in_queue.put_nowait(data)
+                    continue
+                if text := response.text:
+                    print(text, end="")
+
+            # If you interrupt the model, it sends a turn_complete.
+            # For interruptions to work, we need to stop playback.
+            # So empty out the audio queue because it may have loaded
+            # much more audio than has played yet.
+            while not self.audio_in_queue.empty():
+                self.audio_in_queue.get_nowait()
+
+    async def play_audio(self):
+        stream = await asyncio.to_thread(
+            pya.open,
+            format=FORMAT,
+            channels=CHANNELS,
+            rate=RECEIVE_SAMPLE_RATE,
+            output=True,
         )
-        self._session = await self._session_cm.__aenter__()
-        # send system prompt + history
-        await self._session.send(
-            types.ChatMessage(role=types.ChatRole.SYSTEM, content=self.description)
-        )
-        for msg in _build_history(self.history):
-            await self._session.send(msg)
+        while True:
+            bytestream = await self.audio_in_queue.get()
+            await asyncio.to_thread(stream.write, bytestream)
 
-    async def ask(
-        self,
-        text: Optional[str] = None,
-        *,
-        audio_stream: Optional[Iterable[bytes]] = None
-    ) -> AsyncIterable[str]:
-        """
-        Send a new user turn (text and/or audio) and yield back text tokens live.
-        Stops yielding if the model is interrupted by new input.
-        """
-        # ensure only one turn at a time
-        async with self._lock:
-            await self._ensure_session()
+    async def run(self):
+        try:
+            async with (
+                client.aio.live.connect(model=MODEL, config=CONFIG) as session,
+                asyncio.TaskGroup() as tg,
+            ):
+                self.session = session
 
-            # send text if provided
-            if text is not None:
-                await self._session.send(
-                    types.ChatMessage(role=types.ChatRole.USER, content=text)
-                )
+                self.audio_in_queue = asyncio.Queue()
+                self.out_queue = asyncio.Queue(maxsize=5)
 
-            # stream audio if provided
-            if audio_stream is not None:
-                for chunk in audio_stream:
-                    await self._session.send_realtime_input(
-                        audio=types.Blob(data=chunk, mime_type="audio/pcm;rate=16000")
-                    )
-                await self._session.send_realtime_input(audio_stream_end=True)
-
-            # stream back the response until complete or interrupted
-            async for event in self._session.receive():
-                if getattr(event, "interrupted", False):
-                    # model was cut off by user—end this turn
-                    break
-                if event.text:
-                    yield event.text
-
-    async def close(self) -> None:
-        """Terminate the WebSocket and clear session state."""
-        if self._session_cm is not None:
-            await self._session_cm.__aexit__(None, None, None)
-            self._session_cm = None
-            self._session = None
+                tg.create_task(self.send_realtime())
+                tg.create_task(self.listen_audio())
+                tg.create_task(self.receive_audio())
+                tg.create_task(self.play_audio())
+        except asyncio.CancelledError:
+            pass
+        except ExceptionGroup as EG:
+            if self.audio_stream:
+                self.audio_stream.close()
+            traceback.print_exception(EG)
 
 async def gemini_chat_completion(
     *,
@@ -121,13 +130,5 @@ async def gemini_chat_completion(
     """
     # We'll create a new session for each call here; for multi-turn you can
     # hoist session creation out and reuse the same GeminiLiveSession.
-    session = GeminiLiveSession(
-        description=description,
-        message_history=message_history,
-        model=model,
-    )
-    try:
-        async for token in session.ask(text=text, audio_stream=audio_stream):
-            yield token
-    finally:
-        await session.close()
+    loop = AudioLoop()
+    asyncio.run(loop.run())
