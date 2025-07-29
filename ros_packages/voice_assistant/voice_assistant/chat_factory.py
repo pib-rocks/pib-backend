@@ -21,27 +21,13 @@ async def chat_completion(
     chat_id: str,
 ) -> AsyncIterable[str]:
     """Return tokens from the selected LLM model."""
-    if "gemini" in model.lower():
-        session = _gemini_sessions.get(chat_id)
-        if session is None:
-            session = GeminiLiveSession(
-                description=description,
-                message_history=message_history,
-                model=model,
-            )
-            _gemini_sessions[chat_id] = session
-
-        async for token in session.ask(text):
-            yield token
-    else:
-        # wrap synchronous generator in async iterator
-        tokens = public_voice_client.chat_completion(
-            text=text,
-            description=description,
-            message_history=message_history,
-            image_base64=image_base64,
-            model=model,
-            public_api_token=public_api_token,
-        )
-        for token in tokens:
-            yield token
+    tokens = public_voice_client.chat_completion(
+        text=text,
+        description=description,
+        message_history=message_history,
+        image_base64=image_base64,
+        model=model,
+        public_api_token=public_api_token,
+    )
+    for token in tokens:
+        yield token
