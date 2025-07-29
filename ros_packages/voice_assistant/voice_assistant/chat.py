@@ -12,10 +12,10 @@ from public_api_client.public_voice_client import PublicApiChatMessage
 from pib_api_client import voice_assistant_client
 from .chat_factory import chat_completion as factory_chat_completion
 from .live_api_client import live_chat_stream
-from .audio_recorder import GeminiAudioLoop
+from .audio_loop import GeminiAudioLoop
 from rclpy.action import ActionServer, CancelResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
-from rclpy.executors import MultiThreadedExecutor
+from rclpy.executors import MultiThreadedExecutor, AsyncIOExecutor
 from rclpy.node import Node
 from rclpy.publisher import Publisher
 from std_msgs.msg import String
@@ -185,16 +185,14 @@ class ChatNode(Node):
 
         try:
             if use_gemini:
-                # start audio I/O loop and Live API streaming
-                asyncio.create_task(self.gemini_audio_loop.run())
-                asyncio.create_task(
-                    live_chat_stream(
-                        in_queue=self.gemini_audio_loop.in_queue,
-                        out_queue=self.gemini_audio_loop.out_queue,
-                        text_queue=self.live_text_queue,
-                        model=personality.assistant_model.api_name,
-                    )
-                )
+                loop = asyncio.get_running_loop()
+                loop.create_task(self.gemini_audio_loop.run())
+                loop.create_task(live_chat_stream(
+                    in_queue=self.gemini_audio_loop.in_queue,
+                    out_queue=self.gemini_audio_loop.out_queue,
+                    text_queue=self.live_text_queue,
+                    model=personality.assistant_model.api_name,
+                ))
                 token_iter = self._gemini_text_iterator(goal_handle)
             else:
                 # fallback to public-api text streaming
@@ -278,7 +276,7 @@ class ChatNode(Node):
 def main(args=None):
     rclpy.init()
     node = ChatNode()
-    executor = MultiThreadedExecutor(8)
+    executor = AsyncIOExecutor()
     executor.add_node(node)
     executor.spin()
     node.destroy_node()
