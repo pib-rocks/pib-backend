@@ -5,9 +5,9 @@ from typing import AsyncIterable, List, Optional
 
 from public_api_client import public_voice_client
 
-from .gemini_chat_async import GeminiLiveSession
+# from .gemini_chat_async import GeminiLiveSession
 
-_gemini_sessions: dict[str, GeminiLiveSession] = {}
+# _gemini_sessions: dict[str, GeminiLiveSession] = {}
 
 
 async def chat_completion(
