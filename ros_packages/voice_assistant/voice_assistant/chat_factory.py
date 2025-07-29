@@ -27,7 +27,6 @@ async def chat_completion(
             session = GeminiLiveSession(
                 description=description,
                 message_history=message_history,
-                image_base64=image_base64,
                 model=model,
             )
             _gemini_sessions[chat_id] = session

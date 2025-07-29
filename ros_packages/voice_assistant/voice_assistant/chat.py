@@ -1,77 +1,78 @@
 import re
+import asyncio
 from threading import Lock
-from typing import Optional
+from typing import Optional, Iterable
 
 import rclpy
 import datetime
 from datatypes.action import Chat
 from datatypes.msg import ChatMessage
 from datatypes.srv import GetCameraImage
-from pib_api_client import voice_assistant_client
 from public_api_client.public_voice_client import PublicApiChatMessage
-from rclpy.action import ActionServer
-from rclpy.action import CancelResponse
-from rclpy.action.server import ServerGoalHandle
+from pib_api_client import voice_assistant_client
+from .chat_factory import chat_completion as factory_chat_completion
+from .live_api_client import live_chat_stream
+from .audio_recorder import GeminiAudioLoop
+from rclpy.action import ActionServer, CancelResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.publisher import Publisher
 from std_msgs.msg import String
 
-from public_api_client import public_voice_client
-from .chat_factory import chat_completion as factory_chat_completion
-
-# in future, this code will be prepended to the description in a chat-request
-# if it is specified that code should be generated. The text will contain
-# instruction for the llm on how to generate the code. For now, it is left blank
+# In future, this prefix can contain instructions for code generation.
 CODE_DESCRIPTION_PREFIX = ""
 
 
 class ChatNode(Node):
-
     def __init__(self):
-
         super().__init__("chat")
+
+        # token for public‐API / Gemini Live API (via TokenServiceNode)
         self.token: Optional[str] = None
+
+        # history settings
         self.last_pib_message_id: Optional[str] = None
         self.message_content: Optional[str] = None
         self.history_length: int = 10
 
-        # server for communicating with an llm via tryb's public-api
-        # In the goal, a client specifies some text that will be sent as input to the llm, as well as the
-        # description of the personality. The server then forwards the llm output to the client at the
-        # granularity of sentences. Intermediate sentences, are forwared in form of feedback. The final
-        # sentence is forwarded as the result of the goal
+        # audio loop for Gemini Live API
+        self.gemini_audio_loop = GeminiAudioLoop()
+        self.live_text_queue: asyncio.Queue[str] = asyncio.Queue()
+
+        # ActionServer for Chat requests
         self.chat_server = ActionServer(
             self,
             Chat,
             "chat",
             execute_callback=self.chat,
-            cancel_callback=(lambda _: CancelResponse.ACCEPT),
+            cancel_callback=lambda _: CancelResponse.ACCEPT,
             callback_group=ReentrantCallbackGroup(),
         )
 
-        # Publisher for ChatMessages
+        # Publisher for incremental ChatMessages
         self.chat_message_publisher: Publisher = self.create_publisher(
             ChatMessage, "chat_messages", 10
         )
+
+        # Service client for optional camera images
         self.get_camera_image_client = self.create_client(
             GetCameraImage, "get_camera_image"
         )
+
+        # Subscribe to incoming public-API token
         self.get_token_subscription = self.create_subscription(
             String, "public_api_token", self.get_public_api_token_listener, 10
         )
 
-        # lock that should be aquired, whenever accessing 'public_voice_client'
+        # Locks to protect shared clients
         self.public_voice_client_lock = Lock()
-        # lock that should be aquired, whenever accessing 'voice_assistant_client'
         self.voice_assistant_client_lock = Lock()
 
         self.get_logger().info("Now running CHAT")
 
-    def get_public_api_token_listener(self, msg):
-        token = msg.data
-        self.token = token
+    def get_public_api_token_listener(self, msg: String):
+        self.token = msg.data
 
     def create_chat_message(
         self,
@@ -81,259 +82,207 @@ class ChatNode(Node):
         update_message: bool,
         update_database: bool,
     ) -> None:
-        """writes a new chat-message to the db, and publishes it to the 'chat_messages'-topic"""
-
-        if text == "":
+        """Persist & publish a ChatMessage (user or assistant)."""
+        if not text:
             return
 
+        # Update or create via PIB API
         with self.voice_assistant_client_lock:
             if update_message:
                 if update_database:
-                    self.message_content = f"{self.message_content} {text}"
-                    successful, chat_message = (
-                        voice_assistant_client.update_chat_message(
-                            chat_id,
-                            self.message_content,
-                            is_user,
-                            self.last_pib_message_id,
-                        )
+                    self.message_content += " " + text
+                    successful, chat_msg = voice_assistant_client.update_chat_message(
+                        chat_id,
+                        self.message_content,
+                        is_user,
+                        self.last_pib_message_id,
                     )
-                    if not successful:
-                        self.get_logger().error(
-                            f"unable to create chat message: {(chat_id, text, is_user, update_message, update_database)}"
-                        )
-                        return
                 else:
-                    self.message_content = f"{self.message_content} {text}"
+                    self.message_content += " " + text
+                    successful, chat_msg = True, None
             else:
-                successful, chat_message = voice_assistant_client.create_chat_message(
+                successful, chat_msg = voice_assistant_client.create_chat_message(
                     chat_id, text, is_user
                 )
-                self.last_pib_message_id = chat_message.message_id
+                self.last_pib_message_id = chat_msg.message_id
                 self.message_content = text
+
             if not successful:
                 self.get_logger().error(
-                    f"unable to create chat message: {(chat_id, text, is_user, update_message, update_database)}"
+                    f"ChatMessage persist failed: {(chat_id, text, is_user)}"
                 )
                 return
-        chat_message_ros = ChatMessage()
-        chat_message_ros.chat_id = chat_id
-        chat_message_ros.content = self.message_content
-        chat_message_ros.is_user = is_user
-        chat_message_ros.message_id = self.last_pib_message_id
-        chat_message_ros.timestamp = datetime.datetime.now().strftime(
+
+        # Publish over ROS
+        ros_msg = ChatMessage()
+        ros_msg.chat_id = chat_id
+        ros_msg.content = self.message_content
+        ros_msg.is_user = is_user
+        ros_msg.message_id = self.last_pib_message_id or ""
+        ros_msg.timestamp = datetime.datetime.now().strftime(
             "%Y-%m-%d %H:%M:%S"
         )
+        self.chat_message_publisher.publish(ros_msg)
 
-        self.chat_message_publisher.publish(chat_message_ros)
+    async def chat(self, goal_handle):
+        """Handle incoming Chat action goals."""
+        self.get_logger().info("Start chat request")
+        req: Chat.Goal = goal_handle.request
+        chat_id = req.chat_id
+        content = req.text
+        generate_code = req.generate_code
 
-    async def chat(self, goal_handle: ServerGoalHandle):
-        """callback function for 'chat'-action"""
+        # 1) Publish user message immediately
+        self.create_chat_message(chat_id, content, True, False, True)
 
-        self.get_logger().info("start chat request")
-
-        # unpack request data
-        request: Chat.Goal = goal_handle.request
-        chat_id: str = request.chat_id
-        content: str = request.text
-        generate_code: bool = request.generate_code
-
-        self.get_logger().info(f"Unpacked")
-
-        # create the user message
-        self.executor.create_task(
-            self.create_chat_message, chat_id, content, True, False, True
-        )
-
-        self.get_logger().info(f"Created user message")
-
-        # get the personality that is associated with the request chat-id from the pib-api
+        # 2) Fetch personality & history from PIB API
         with self.voice_assistant_client_lock:
-            successful, personality = voice_assistant_client.get_personality_from_chat(
-                chat_id
-            )
-            # set the history_length dynamically
-            self.history_length = personality.message_history
-        if not successful:
-            self.get_logger().error(f"no personality found for id {chat_id}")
+            ok, personality = voice_assistant_client.get_personality_from_chat(chat_id)
+        if not ok:
+            self.get_logger().error(f"No personality for chat_id={chat_id}")
             goal_handle.abort()
             return Chat.Result()
-        description = (
-            personality.description
-            if personality.description is not None
-            else "Du bist pib, ein humanoider Roboter."
-        )
+
+        description = personality.description or "Du bist pib, ein humanoider Roboter."
         if generate_code:
             description = CODE_DESCRIPTION_PREFIX + description
+        self.history_length = personality.message_history
 
-        self.get_logger().info(f"Got pers")
-
-        # get the message-history from the pib-api
         with self.voice_assistant_client_lock:
-            successful, chat_messages = voice_assistant_client.get_chat_history(
+            ok, history = voice_assistant_client.get_chat_history(
                 chat_id, self.history_length
             )
-        if not successful:
-            self.get_logger().error(f"chat with id'{chat_id}' does not exist...")
+        if not ok:
+            self.get_logger().error(f"Chat history missing for {chat_id}")
             goal_handle.abort()
             return Chat.Result()
+
         message_history = [
-            PublicApiChatMessage(message.content, message.is_user)
-            for message in chat_messages
+            PublicApiChatMessage(m.content, m.is_user) for m in history
         ]
 
-        # get the current image from the camera
+        # 3) Optionally grab a camera image
         image_base64 = None
         if personality.assistant_model.has_image_support:
-            response: GetCameraImage.Response = (
-                await self.get_camera_image_client.call_async(GetCameraImage.Request())
+            resp = await self.get_camera_image_client.call_async(
+                GetCameraImage.Request()
             )
-            image_base64 = response.image_base64
+            image_base64 = resp.image_base64
+
+        # 4) Decide path: Gemini Live API vs public-API
+        use_gemini = "gemini" in personality.assistant_model.api_name.lower()
+
+        # regex to split sentences vs code blocks
+        SENTENCE_RE = re.compile(
+            r"^(?!<pib-program>)(.*?)(([^\d | ^A-Z][\.!?])|<pib-program>)", re.DOTALL
+        )
+        CODE_RE = re.compile(r"^<pib-program>(.*?)</pib-program>", re.DOTALL)
+
+        curr_text = ""
+        prev_text = None
+        prev_type = None
+        update_db = False
 
         try:
-            # receive assistant-response in form of an async iterable of tokens
-            with self.public_voice_client_lock:
-                tokens = factory_chat_completion(
-                    text=content,
-                    description=description,
-                    message_history=message_history,
-                    image_base64=image_base64,
-                    model=personality.assistant_model.api_name,
-                    public_api_token=self.token,
-                    chat_id=chat_id,
+            if use_gemini:
+                # start audio I/O loop and Live API streaming
+                asyncio.create_task(self.gemini_audio_loop.run())
+                asyncio.create_task(
+                    live_chat_stream(
+                        in_queue=self.gemini_audio_loop.in_queue,
+                        out_queue=self.gemini_audio_loop.out_queue,
+                        text_queue=self.live_text_queue,
+                        model=personality.assistant_model.api_name,
+                    )
                 )
+                token_iter = self._gemini_text_iterator(goal_handle)
+            else:
+                # fallback to public-api text streaming
+                async with self.public_voice_client_lock:
+                    token_iter = factory_chat_completion(
+                        text=content,
+                        description=description,
+                        message_history=message_history,
+                        image_base64=image_base64,
+                        model=personality.assistant_model.api_name,
+                        public_api_token=self.token,
+                    )
 
-            # regex for indentifying sentences
-            sentence_pattern = re.compile(
-                r"^(?!<pib-program>)(.*?)(([^\d | ^A-Z][\.|!|\?|:])|<pib-program>)",
-                re.DOTALL,
-            )
-            # regex-pattern for indentifying visual-code blocks
-            code_visual_pattern = re.compile(
-                r"^<pib-program>(.*?)</pib-program>", re.DOTALL
-            )
+            # stream tokens
+            async for token in token_iter:
+                # handle cancellation
+                if goal_handle.is_cancel_requested:
+                    goal_handle.canceled()
+                    return Chat.Result()
 
-            # the text that was currently collected by chaining together tokens
-            # at any given point in time, this string must not contain any leading whitespaces!
-            curr_text: str = ""
-            # previously collected text, that is waiting to be published as feedback
-            prev_text: Optional[str] = None
-            # for tracking if a message is an update or a new message
-            bool_update_chat_message: bool = False
+                # accumulate & split into sentences or code
+                curr_text += token if curr_text else token.lstrip()
 
-            async for token in tokens:
-                if token is None:
-                    self.get_logger().info(f"Got pers")
-
-                if prev_text is not None:
-                    # publish the previously collected text in form of feedback
-                    feedback = Chat.Feedback()
-                    feedback.text = prev_text
-                    feedback.text_type = prev_text_type
-                    goal_handle.publish_feedback(feedback)
-                    prev_text = None
-                    prev_text_type = None
-                    self.get_logger().info(f"Prev text is not None")
-                # add token to current text; remove leading white-spaces, if current-text is empty
-                curr_text = curr_text + (
-                    token if len(curr_text) > 0 else token.lstrip()
-                )
-                self.get_logger().info(f"Added curr_text")
-                while (
-                    True
-                ):  # loop until current-text was not stripped during current iteration
-                    self.get_logger().info(f"Started loop")
-                    # if the goal was cancelled, return immediately
-                    if goal_handle.is_cancel_requested:
-                        goal_handle.canceled()
-                        return Chat.Result()
-
-                    # check if the collected text is visual-code
-                    code_visual_match = code_visual_pattern.search(curr_text)
-                    if code_visual_match is not None:
-                        # extract the visual-code by removing the opening + closing tag and store it as previous text
-                        code_visual = code_visual_match.group(1)
-                        prev_text = code_visual
-                        prev_text_type = Chat.Goal.TEXT_TYPE_CODE_VISUAL
-                        # create a chat message from the visual-code, including opening and closing tags
-                        chat_message_text = code_visual_match.group(0)
-                        self.executor.create_task(
-                            self.create_chat_message,
+                while True:
+                    code_match = CODE_RE.search(curr_text)
+                    if code_match:
+                        prev_text = code_match.group(1)
+                        prev_type = Chat.Goal.TEXT_TYPE_CODE_VISUAL
+                        self.create_chat_message(
                             chat_id,
-                            chat_message_text,
+                            f"<pib-program>{prev_text}</pib-program>",
                             False,
-                            bool_update_chat_message,
+                            update_db,
                             True,
                         )
-                        bool_update_chat_message = True
-                        # strip the current text
-                        curr_text = curr_text[code_visual_match.end() :].rstrip()
+                        curr_text = curr_text[code_match.end():].lstrip()
+                        update_db = True
                         continue
 
-                    # check if collected text is a sentence
-                    sentence_match = sentence_pattern.search(curr_text)
-                    if sentence_match is not None:
-                        # extract the visual-code by removing the opening + closing tag and store it as previous text
-                        sentence = sentence_match.group(1) + (
-                            sentence_match.group(3)
-                            if sentence_match.group(3) is not None
-                            else ""
+                    sent_match = SENTENCE_RE.search(curr_text)
+                    if sent_match:
+                        prev_text = sent_match.group(1) + (sent_match.group(3) or "")
+                        prev_type = Chat.Goal.TEXT_TYPE_SENTENCE
+                        self.create_chat_message(
+                            chat_id, prev_text, False, update_db, True
                         )
-                        prev_text = sentence
-                        prev_text_type = Chat.Goal.TEXT_TYPE_SENTENCE
-                        # create a chat message from the visual-code, including opening and closing tags
-                        chat_message_text = sentence
-                        self.executor.create_task(
-                            self.create_chat_message,
-                            chat_id,
-                            chat_message_text,
-                            False,
-                            bool_update_chat_message,
-                            True,
-                        )
-                        bool_update_chat_message = True
-                        # strip the current text
-                        curr_text = curr_text[
-                            sentence_match.end(
-                                3 if sentence_match.group(3) is not None else 1
-                            ) :
-                        ].rstrip()
+                        curr_text = curr_text[sent_match.end():].lstrip()
+                        update_db = True
                         continue
 
                     break
 
+            goal_handle.succeed()
         except Exception as e:
-            self.get_logger().error(f"failed to send request to public-api: {e}")
+            self.get_logger().error(f"Chat streaming failed: {e}")
             goal_handle.abort()
             return Chat.Result()
 
-        # return the rest of the received text, that has not been forwarded as feedback
-        goal_handle.succeed()
-
-        # return the result
+        # final leftover
         result = Chat.Result()
         if prev_text is None:
             result.text = curr_text
             result.text_type = Chat.Goal.TEXT_TYPE_SENTENCE
         else:
             result.text = prev_text
-            result.text_type = prev_text_type
+            result.text_type = prev_type
         return result
 
+    async def _gemini_text_iterator(self, goal_handle):
+        """
+        Pull text tokens from the Live API text_queue, yielding
+        until the session closes or goal is canceled.
+        """
+        while True:
+            if goal_handle.is_cancel_requested:
+                goal_handle.canceled()
+                return
+            token = await self.live_text_queue.get()
+            yield token
 
 def main(args=None):
-
     rclpy.init()
     node = ChatNode()
-    # the number of threads is chosen arbitrarily to be '8' because ros requires a
-    # fixed number of threads to be specified. Generally, multiple goals should
-    # be handled simultaneously, so the number should be sufficiently large.
     executor = MultiThreadedExecutor(8)
     executor.add_node(node)
     executor.spin()
     node.destroy_node()
     rclpy.shutdown()
-
 
 if __name__ == "__main__":
     main()
