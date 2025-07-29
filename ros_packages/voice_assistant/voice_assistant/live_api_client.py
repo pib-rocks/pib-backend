@@ -1,4 +1,5 @@
 import asyncio
+import os
 from google import genai
 from google.genai import types
 
@@ -7,7 +8,9 @@ LIVE_CONFIG = types.LiveConnectConfig(response_modalities=["AUDIO"])
 
 async def live_chat_stream(in_queue: asyncio.Queue, out_queue: asyncio.Queue, text_queue: asyncio.Queue):
     # Initialize GenAI client
-    client = genai.Client()  # GOOGLE_API_KEY env var must be set
+    client = genai.Client(
+    api_key=os.environ["GOOGLE_API_KEY"]
+    )
     # Open a Live API session
     async with client.aio.live.connect(model=LIVE_MODEL, config=LIVE_CONFIG) as session:
         # Set up queues
