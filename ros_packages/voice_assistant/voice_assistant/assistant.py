@@ -36,6 +36,17 @@ class VoiceAssistantNode(Node):
 
         super().__init__("voice_assistant")
 
+        # ——— Set up a standalone asyncio loop in its own thread ———
+        import threading, asyncio
+        self.asyncio_loop = asyncio.new_event_loop()
+        t = threading.Thread(
+            target=lambda: (asyncio.set_event_loop(self.asyncio_loop),
+                            self.asyncio_loop.run_forever()),
+        # ————————————————————————————————————————————————————————
+            daemon=True
+        )
+        t.start()
+
         # state -------------------------------------------------------------------------
 
         # a counter for indicating the index of the current on-off-cycle
@@ -328,12 +339,12 @@ class VoiceAssistantNode(Node):
     # callback cycle --------------------------------------------------------------------
 
     def on_start_signal_played(self) -> None:
-        if (
-            self.personality
-            and "gemini" in self.personality.assistant_model.api_name.lower()
-        ):
-            loop = asyncio.get_running_loop()
-            self.gemini_task = loop.create_task(self.gemini_audio_loop.run())
+        if self.personality and "gemini" in self.personality.assistant_model.api_name.lower():
+            # schedule the GeminiAudioLoop on our background asyncio loop
+            self.gemini_task = asyncio.run_coroutine_threadsafe(
+                self.gemini_audio_loop.run(),
+                self.asyncio_loop
+            )
         else:
             self.record_audio(
                 MAX_SILENT_SECONDS_BEFORE,
@@ -495,7 +506,7 @@ class VoiceAssistantNode(Node):
                 self.waiting_for_transcribed_text = False
                 self.stop_recording()
                 self.stop_chat(chat_id)
-                if self.gemini_task:
+                if hasattr(self, "gemini_task") and self.gemini_task is not None:
                     self.gemini_task.cancel()
                     self.gemini_task = None
                 self.stop_program_execution()
