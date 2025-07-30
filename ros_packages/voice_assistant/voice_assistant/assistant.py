@@ -334,10 +334,7 @@ class VoiceAssistantNode(Node):
     def on_start_signal_played(self) -> None:
         if self.personality and "gemini" in self.personality.assistant_model.api_name.lower():
             # schedule the GeminiAudioLoop on our background asyncio loop
-            self.gemini_task = asyncio.run_coroutine_threadsafe(
-                self.gemini_audio_loop.run(),
-                self.asyncio_loop
-            )
+            self.asyncio_loop.run_until_complete(self.gemini_audio_loop.run())
         else:
             self.record_audio(
                 MAX_SILENT_SECONDS_BEFORE,
