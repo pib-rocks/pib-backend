@@ -303,22 +303,15 @@ class VoiceAssistantNode(Node):
         # if chat is active, jump to next stage of the va-cycle
         elif request.chat_id == self.state.chat_id:
             self.set_is_listening(request.chat_id, False)
-            if (
-                self.personality
-                and "gemini" in self.personality.assistant_model.api_name.lower()
-            ):
-                loop = asyncio.get_running_loop()
-                self.gemini_task = loop.create_task(self.gemini_audio_loop.run())
-            else:
-                self.play_audio_from_file(STOP_SIGNAL_FILE)
-                self.stop_recording()
-                self.set_is_listening(request.chat_id, False)
-                self.chat(
-                    request.content,
-                    self.state.chat_id,
-                    True,
-                    self.if_cycle_not_changed(self.on_sentence_received),
-                    self.if_cycle_not_changed(self.on_code_visual_received),
+            self.play_audio_from_file(STOP_SIGNAL_FILE)
+            self.stop_recording()
+            self.set_is_listening(request.chat_id, False)
+            self.chat(
+                request.content,
+                self.state.chat_id,
+                True,
+                self.if_cycle_not_changed(self.on_sentence_received),
+                self.if_cycle_not_changed(self.on_code_visual_received),
                 )
 
         # if not active, create messages, without playing audio etc.
