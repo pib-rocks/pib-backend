@@ -1,9 +1,7 @@
-from app.app import db
+from pib_api.flask.app.app import db
 from flask import request, Blueprint
 from schema.camera_settings_schema import camera_settings_schema
 from service import camera_service
-from flask import Blueprint, request
-from app.app import db
 
 
 bp = Blueprint("camera_controller", __name__)

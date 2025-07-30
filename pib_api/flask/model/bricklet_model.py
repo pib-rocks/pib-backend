@@ -1,6 +1,5 @@
-from app.app import db
+from pib_api.flask.app.app import db
 from model.bricklet_pin_model import BrickletPin
-from model.util import generate_uuid
 
 
 class Bricklet(db.Model):

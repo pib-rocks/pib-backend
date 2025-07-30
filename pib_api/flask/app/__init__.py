@@ -1,4 +1,4 @@
-from app.app import app
+from pib_api.flask.app.app import app
 from controller import (
     assistant_model_controller,
     bricklet_controller,

@@ -1,4 +1,4 @@
-from app.app import db
+from pib_api.flask.app.app import db
 from model.util import generate_uuid
 
 

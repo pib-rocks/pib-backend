@@ -2,7 +2,7 @@ from model.motor_model import Motor
 from model.bricklet_model import Bricklet
 from model.bricklet_pin_model import BrickletPin
 from typing import Any, List
-from app.app import db
+from pib_api.flask.app.app import db
 
 
 def get_all_motors() -> List[Motor]:

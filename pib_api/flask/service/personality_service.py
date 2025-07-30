@@ -1,6 +1,6 @@
 from typing import Any, List
 from model.personality_model import Personality
-from app.app import db
+from pib_api.flask.app.app import db
 
 
 def get_all_personalities() -> List[Personality]:

@@ -2,7 +2,7 @@ from typing import Any, Tuple
 
 from sqlalchemy import inspect
 
-from app.app import db, app
+from pib_api.flask.app.app import db, app
 from model.assistant_model import AssistantModel
 from model.bricklet_model import Bricklet
 from model.bricklet_pin_model import BrickletPin

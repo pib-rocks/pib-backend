@@ -1,9 +1,8 @@
 import os
 from model.program_model import Program
-from app.app import app
+from pib_api.flask.app.app import app, db
 from typing import Any
-from app.app import db
-import pib_blockly_client
+from pib_blockly import pib_blockly_client
 
 
 def get_all_programs() -> list[Program]:

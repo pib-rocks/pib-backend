@@ -1,6 +1,6 @@
 from typing import Any, List
 
-from app.app import db
+from pib_api.flask.app.app import db
 from model.pose_model import Pose
 from model.motor_position_model import MotorPosition
 

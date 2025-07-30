@@ -1,6 +1,6 @@
 from typing import List
 from model.bricklet_model import Bricklet
-from app.app import db
+from pib_api.flask.app.app import db
 
 
 def get_all_bricklets() -> List[Bricklet]:

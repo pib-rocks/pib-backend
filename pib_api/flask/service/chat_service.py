@@ -1,6 +1,6 @@
 from typing import Any, List
 
-from app.app import db
+from pib_api.flask.app.app import db
 from model.chat_message_model import ChatMessage
 from model.chat_model import Chat
 from service import personality_service

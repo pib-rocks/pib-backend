@@ -1,4 +1,4 @@
-from app.app import ma
+from pib_api.flask.app.app import ma
 
 
 def camelcase(s: str) -> str:

@@ -1,6 +1,6 @@
 from model.camera_settings_model import CameraSettings
 from typing import Any
-from app.app import db
+from pib_api.flask.app.app import db
 
 
 def get_camera_settings() -> CameraSettings:
