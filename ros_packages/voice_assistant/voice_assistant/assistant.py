@@ -1,5 +1,6 @@
 from collections import deque
 from typing import Any, Callable, Optional
+import asyncio
 
 import rclpy
 from datatypes.action import Chat, RecordAudio, RunProgram
@@ -24,6 +25,7 @@ from rclpy.publisher import Publisher
 from rclpy.service import Service
 from rclpy.task import Future
 from voice_assistant import START_SIGNAL_FILE, STOP_SIGNAL_FILE
+from voice_assistant.audio_loop import GeminiAudioLoop
 
 MAX_SILENT_SECONDS_BEFORE = 8.0
 
@@ -64,6 +66,9 @@ class VoiceAssistantNode(Node):
         self.stop_program_execution: Callable[[], None] = lambda: None
         # indicates if a program is currently executing
         self.is_executing_program = False
+        # Gemini audio loop management
+        self.gemini_audio_loop = GeminiAudioLoop()
+        self.gemini_task = None
 
         # services ----------------------------------------------------------------------
 
@@ -287,16 +292,23 @@ class VoiceAssistantNode(Node):
         # if chat is active, jump to next stage of the va-cycle
         elif request.chat_id == self.state.chat_id:
             self.set_is_listening(request.chat_id, False)
-            self.play_audio_from_file(STOP_SIGNAL_FILE)
-            self.stop_recording()
-            self.set_is_listening(request.chat_id, False)
-            self.chat(
-                request.content,
-                self.state.chat_id,
-                True,
-                self.if_cycle_not_changed(self.on_sentence_received),
-                self.if_cycle_not_changed(self.on_code_visual_received),
-            )
+            if (
+                self.personality
+                and "gemini" in self.personality.assistant_model.api_name.lower()
+            ):
+                loop = asyncio.get_running_loop()
+                self.gemini_task = loop.create_task(self.gemini_audio_loop.run())
+            else:
+                self.play_audio_from_file(STOP_SIGNAL_FILE)
+                self.stop_recording()
+                self.set_is_listening(request.chat_id, False)
+                self.chat(
+                    request.content,
+                    self.state.chat_id,
+                    True,
+                    self.if_cycle_not_changed(self.on_sentence_received),
+                    self.if_cycle_not_changed(self.on_code_visual_received),
+                )
 
         # if not active, create messages, without playing audio etc.
         else:
@@ -316,15 +328,27 @@ class VoiceAssistantNode(Node):
     # callback cycle --------------------------------------------------------------------
 
     def on_start_signal_played(self) -> None:
-        self.record_audio(
-            MAX_SILENT_SECONDS_BEFORE,
-            self.personality.pause_threshold,
-            self.if_cycle_not_changed(self.on_stopped_recording),
-            self.if_cycle_not_changed(self.on_transcribed_text_received),
-        )
+        if (
+            self.personality
+            and "gemini" in self.personality.assistant_model.api_name.lower()
+        ):
+            loop = asyncio.get_running_loop()
+            self.gemini_task = loop.create_task(self.gemini_audio_loop.run())
+        else:
+            self.record_audio(
+                MAX_SILENT_SECONDS_BEFORE,
+                self.personality.pause_threshold,
+                self.if_cycle_not_changed(self.on_stopped_recording),
+                self.if_cycle_not_changed(self.on_transcribed_text_received),
+            )
         self.set_is_listening(self.state.chat_id, True)
 
     def on_stopped_recording(self) -> None:
+        if (
+            self.personality
+            and "gemini" in self.personality.assistant_model.api_name.lower()
+        ):
+            return
         if not self.get_is_listening(self.state.chat_id):
             return
         self.play_audio_from_file(STOP_SIGNAL_FILE)
@@ -332,6 +356,11 @@ class VoiceAssistantNode(Node):
         self.waiting_for_transcribed_text = True
 
     def on_transcribed_text_received(self, transcribed_text: str) -> None:
+        if (
+            self.personality
+            and "gemini" in self.personality.assistant_model.api_name.lower()
+        ):
+            return
         if not self.waiting_for_transcribed_text:
             return
         self.waiting_for_transcribed_text = False
@@ -466,6 +495,9 @@ class VoiceAssistantNode(Node):
                 self.waiting_for_transcribed_text = False
                 self.stop_recording()
                 self.stop_chat(chat_id)
+                if self.gemini_task:
+                    self.gemini_task.cancel()
+                    self.gemini_task = None
                 self.stop_program_execution()
                 self.code_visual_queue.clear()
                 self.final_chat_response_received = False

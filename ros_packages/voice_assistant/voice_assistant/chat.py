@@ -11,8 +11,6 @@ from datatypes.srv import GetCameraImage
 from public_api_client.public_voice_client import PublicApiChatMessage
 from pib_api_client import voice_assistant_client
 from .chat_factory import chat_completion as factory_chat_completion
-from .live_api_client import live_chat_stream
-from .audio_loop import GeminiAudioLoop
 from rclpy.action import ActionServer, CancelResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor, AsyncIOExecutor
@@ -35,10 +33,6 @@ class ChatNode(Node):
         self.last_pib_message_id: Optional[str] = None
         self.message_content: Optional[str] = None
         self.history_length: int = 10
-
-        # audio loop for Gemini Live API
-        self.gemini_audio_loop = GeminiAudioLoop()
-        self.live_text_queue: asyncio.Queue[str] = asyncio.Queue()
 
         # ActionServer for Chat requests
         self.chat_server = ActionServer(
@@ -169,9 +163,6 @@ class ChatNode(Node):
             )
             image_base64 = resp.image_base64
 
-        # 4) Decide path: Gemini Live API vs public-API
-        use_gemini = "gemini" in personality.assistant_model.api_name.lower()
-
         # regex to split sentences vs code blocks
         SENTENCE_RE = re.compile(
             r"^(?!<pib-program>)(.*?)(([^\d | ^A-Z][\.!?])|<pib-program>)", re.DOTALL
@@ -184,27 +175,16 @@ class ChatNode(Node):
         update_db = False
 
         try:
-            if use_gemini:
-                loop = asyncio.get_running_loop()
-                loop.create_task(self.gemini_audio_loop.run())
-                loop.create_task(live_chat_stream(
-                    in_queue=self.gemini_audio_loop.in_queue,
-                    out_queue=self.gemini_audio_loop.out_queue,
-                    text_queue=self.live_text_queue,
+            # stream text tokens via the public API
+            async with self.public_voice_client_lock:
+                token_iter = factory_chat_completion(
+                    text=content,
+                    description=description,
+                    message_history=message_history,
+                    image_base64=image_base64,
                     model=personality.assistant_model.api_name,
-                ))
-                token_iter = self._gemini_text_iterator(goal_handle)
-            else:
-                # fallback to public-api text streaming
-                async with self.public_voice_client_lock:
-                    token_iter = factory_chat_completion(
-                        text=content,
-                        description=description,
-                        message_history=message_history,
-                        image_base64=image_base64,
-                        model=personality.assistant_model.api_name,
-                        public_api_token=self.token,
-                    )
+                    public_api_token=self.token,
+                )
 
             # stream tokens
             async for token in token_iter:
@@ -261,17 +241,6 @@ class ChatNode(Node):
             result.text_type = prev_type
         return result
 
-    async def _gemini_text_iterator(self, goal_handle):
-        """
-        Pull text tokens from the Live API text_queue, yielding
-        until the session closes or goal is canceled.
-        """
-        while True:
-            if goal_handle.is_cancel_requested:
-                goal_handle.canceled()
-                return
-            token = await self.live_text_queue.get()
-            yield token
 
 def main(args=None):
     rclpy.init()
