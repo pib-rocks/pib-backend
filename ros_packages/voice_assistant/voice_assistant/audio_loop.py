@@ -19,6 +19,7 @@ class GeminiAudioLoop:
         self.audio_stream = None
 
     async def listen_audio(self):
+        print("gemini listening")
         mic = pyaudio.PyAudio().get_default_input_device_info()
         self.audio_stream = await asyncio.to_thread(
             pyaudio.PyAudio().open,
