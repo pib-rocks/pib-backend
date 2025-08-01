@@ -31,9 +31,9 @@ class GeminiAudioLoop:
 
     async def listen_audio(self):
         logger.info("listen_audio: starting microphone capture")
-        mic_info = pya.PyAudio().get_default_input_device_info()
+        mic_info = pya.get_default_input_device_info()
         self.audio_stream = await asyncio.to_thread(
-            pya.PyAudio().open,
+            pya.open,
             format=FORMAT,
             channels=CHANNELS,
             rate=SEND_RATE,
@@ -88,7 +88,7 @@ class GeminiAudioLoop:
     async def play_audio(self):
         logger.info("play_audio: starting playback")
         stream = await asyncio.to_thread(
-            pya.PyAudio().open,
+            pya.open,
             format=FORMAT, channels=CHANNELS, rate=RECV_RATE, output=True
         )
         try:
