@@ -12,6 +12,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger("GeminiAudioLoop")
 
+pya = pyaudio.PyAudio()
+
 FORMAT = pyaudio.paInt16
 CHANNELS = 1
 SEND_RATE = 16000
@@ -22,18 +24,21 @@ CONFIG = types.LiveConnectConfig(response_modalities=["AUDIO"])
 
 class GeminiAudioLoop:
     def __init__(self):
-        self.in_queue: asyncio.Queue[bytes] = None
-        self.out_queue: asyncio.Queue[bytes] = None
+        self.in_queue = None
+        self.out_queue = None
         self.session = None
         self.audio_stream = None
 
     async def listen_audio(self):
         logger.info("listen_audio: starting microphone capture")
-        mic_info = pyaudio.PyAudio().get_default_input_device_info()
+        mic_info = pya.PyAudio().get_default_input_device_info()
         self.audio_stream = await asyncio.to_thread(
-            pyaudio.PyAudio().open,
-            format=FORMAT, channels=CHANNELS, rate=SEND_RATE,
-            input=True, input_device_index=mic_info["index"],
+            pya.PyAudio().open,
+            format=FORMAT,
+            channels=CHANNELS,
+            rate=SEND_RATE,
+            input=True,
+            input_device_index=mic_info["index"],
             frames_per_buffer=CHUNK,
         )
         kwargs = {"exception_on_overflow": False}
@@ -55,7 +60,7 @@ class GeminiAudioLoop:
             while True:
                 msg = await self.out_queue.get()
                 await self.session.send_realtime_input(audio=msg)
-                logger.debug(f"send_realtime: sent {len(chunk)} bytes as Blob")
+                logger.debug(f"send_realtime: sent {len(msg)} bytes as Blob")
         except asyncio.CancelledError:
             logger.info("send_realtime: cancelled")
             raise
@@ -83,7 +88,7 @@ class GeminiAudioLoop:
     async def play_audio(self):
         logger.info("play_audio: starting playback")
         stream = await asyncio.to_thread(
-            pyaudio.PyAudio().open,
+            pya.PyAudio().open,
             format=FORMAT, channels=CHANNELS, rate=RECV_RATE, output=True
         )
         try:
