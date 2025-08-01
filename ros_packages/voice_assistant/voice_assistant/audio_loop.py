@@ -45,7 +45,7 @@ class GeminiAudioLoop:
         try:
             while True:
                 data = await asyncio.to_thread(self.audio_stream.read, CHUNK, **kwargs)
-                await self.out_queue.put(data)
+                await self.out_queue.put({"data": data, "mime_type": "audio/pcm"})
                 logger.debug(f"listen_audio: queued {len(data)} bytes")
         except asyncio.CancelledError:
             logger.info("listen_audio: cancelled, closing stream")
@@ -70,14 +70,17 @@ class GeminiAudioLoop:
     async def receive_audio(self):
         logger.info("receive_audio: awaiting responses")
         try:
-            async for turn in self.session.receive():
-                for resp in turn:
-                    if resp.audio and resp.audio.data:
-                        self.in_queue.put_nowait(resp.audio.data)
-                        logger.debug(f"receive_audio: received {len(resp.audio.data)} bytes")
+            turn = self.session.receive()
+            async for resp in turn:
+                if data := resp.data:
+                    self.in_queue.put_nowait(data)
+                    logger.debug(f"receive_audio: received {len(resp.audio.data)} bytes")
+                    continue
+                if text := resp.text:
+                    logger.info(text, end="")
                 # flush any leftovers on interruption
                 while not self.in_queue.empty():
-                    _ = self.in_queue.get_nowait()
+                     self.in_queue.get_nowait()
             logger.info("receive_audio: stream closed by server")
         except asyncio.CancelledError:
             logger.info("receive_audio: cancelled")
