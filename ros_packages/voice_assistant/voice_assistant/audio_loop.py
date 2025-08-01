@@ -4,7 +4,6 @@ import logging
 import pyaudio
 from google import genai
 from google.genai import types
-
 # ——— Configure logging ———
 logging.basicConfig(
     level=logging.INFO,
@@ -54,9 +53,9 @@ class GeminiAudioLoop:
         logger.info("send_realtime: starting to send audio to Gemini")
         try:
             while True:
-                chunk = await self.out_queue.get()
-                await self.session.send_realtime_input(audio=chunk)
-                logger.debug(f"send_realtime: sent {len(chunk)} bytes")
+                msg = await self.out_queue.get()
+                await self.session.send_realtime_input(audio=msg)
+                logger.debug(f"send_realtime: sent {len(chunk)} bytes as Blob")
         except asyncio.CancelledError:
             logger.info("send_realtime: cancelled")
             raise
@@ -101,7 +100,7 @@ class GeminiAudioLoop:
 
     async def run(self):
         logger.info(f"run: connecting to Gemini model {MODEL}")
-        client = genai.Client(api_key=None)  # uses/env GOOGLE_API_KEY or ADC
+        client = genai.Client(api_key="")  # uses/env GOOGLE_API_KEY or ADC
         try:
             async with client.aio.live.connect(model=MODEL, config=CONFIG) as session:
                 self.session = session
