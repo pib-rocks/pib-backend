@@ -74,7 +74,7 @@ class GeminiAudioLoop:
             async for resp in turn:
                 if data := resp.data:
                     self.in_queue.put_nowait(data)
-                    logger.debug(f"receive_audio: received {len(resp.audio.data)} bytes")
+                    logger.debug(f"receive_audio: received {len(data)} bytes")
                     continue
                 if text := resp.text:
                     logger.info(text, end="")
