@@ -335,10 +335,11 @@ class VoiceAssistantNode(Node):
         if self.personality and "gemini" in self.personality.assistant_model.api_name.lower():
             # schedule the GeminiAudioLoop on our background asyncio loop
             self.get_logger().info("running gemini")
-            self.gemini_task = asyncio.run_coroutine_threadsafe(
-                self.gemini_audio_loop.run(),
-                self.asyncio_loop
-            )
+            self.gemini_audio_loop.run()
+            # self.gemini_task = asyncio.run_coroutine_threadsafe(
+            #     self.gemini_audio_loop.run(),
+            #     self.asyncio_loop
+            # )
         else:
             self.record_audio(
                 MAX_SILENT_SECONDS_BEFORE,
@@ -501,7 +502,7 @@ class VoiceAssistantNode(Node):
                 self.stop_recording()
                 self.stop_chat(chat_id)
                 if hasattr(self, "gemini_task") and self.gemini_task is not None:
-                    self.gemini_task.cancel()
+                    self.gemini_audio_loop.close()
                     self.gemini_task = None
                 self.stop_program_execution()
                 self.code_visual_queue.clear()
