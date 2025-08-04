@@ -159,6 +159,11 @@ class GeminiAudioLoop:
                 self.audio_stream.close()
             logger.info("GeminiAudioLoop.run: terminated")
 
+import asyncio
+from contextlib import suppress
+
+import rclpy
+from voice_assistant.assistant import VoiceAssistantNode
 
 class VoiceAssistantNode(Node):
 
@@ -645,7 +650,6 @@ class VoiceAssistantNode(Node):
                 self.stop_recording()
                 self.stop_chat(chat_id)
                 if hasattr(self, "gemini_task") and self.gemini_task is not None:
-                    self.gemini_audio_loop.close()
                     self.gemini_task = None
                 self.stop_program_execution()
                 self.code_visual_queue.clear()
@@ -689,16 +693,30 @@ class VoiceAssistantNode(Node):
         self.voice_assistant_state_publisher.publish(self.state)
         return True
 
+async def ros_spin(node):
+    while rclpy.ok():
+        rclpy.spin_once(node, timeout_sec=0.1)
+        await asyncio.sleep(0)
+    # when rclpy.ok() becomes False, this coro returns
 
-def main(args=None):
+async def main(args=None):
     rclpy.init()
     node = VoiceAssistantNode()
-    executor = SingleThreadedExecutor()
-    executor.add_node(node)
-    executor.spin()
+    spin_task   = asyncio.create_task(ros_spin(node))
+    gemini_task = asyncio.create_task(node.run_gemini())
+
+    # Block here until ROS is shut down (Ctrl-C or programmatic shutdown)
+    try:
+        await spin_task
+    finally:
+        # Then tear down Gemini cleanly
+        gemini_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await gemini_task
+
     node.destroy_node()
     rclpy.shutdown()
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
