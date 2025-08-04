@@ -2,6 +2,7 @@ import asyncio
 import traceback
 import logging
 import pyaudio
+import threading
 from google import genai
 from google.genai import types
 # ——— Configure logging ———
@@ -22,11 +23,12 @@ CHUNK_SIZE = 1024
 MODEL = "gemini-2.5-flash-preview-native-audio-dialog"
 CONFIG = {"response_modalities": ["AUDIO"]}
 class GeminiAudioLoop:
-    def __init__(self):
+    def __init__(self, stop_event: threading.Event):
         self.audio_in_queue = None
         self.out_queue = None
         self.session = None
         self.audio_stream = None
+        self.stop_event = stop_event
 
     async def listen_audio(self):
         mic_info = pya.get_default_input_device_info()
@@ -34,15 +36,15 @@ class GeminiAudioLoop:
             pya.open,
             format=FORMAT,
             channels=CHANNELS,
-            rate=SEND_RATE,
+            rate=SEND_SAMPLE_RATE,
             input=True,
             input_device_index=mic_info["index"],
-            frames_per_buffer=CHUNK,
+            frames_per_buffer=CHUNK_SIZE,
         )
         kwargs = {"exception_on_overflow": False}
         try:
-            while True:
-                data = await asyncio.to_thread(self.audio_stream.read, CHUNK, **kwargs)
+            while not self.stop_event.is_set():
+                data = await asyncio.to_thread(self.audio_stream.read, CHUNK_SIZE, **kwargs)
                 await self.out_queue.put({"data": data, "mime_type": "audio/pcm"})
         except asyncio.CancelledError:
             logger.info("listen_audio: cancelled, closing stream")
@@ -53,7 +55,7 @@ class GeminiAudioLoop:
 
     async def send_realtime(self):
         try:
-            while True:
+            while not self.stop_event.is_set():
                 msg = await self.out_queue.get()
                 await self.session.send_realtime_input(audio=msg)
         except asyncio.CancelledError:
@@ -64,7 +66,7 @@ class GeminiAudioLoop:
 
     async def receive_audio(self):
         try:
-            while True:
+            while not self.stop_event.is_set():
                 turn = self.session.receive()
                 async for resp in turn:
                     if data := resp.data:
@@ -85,11 +87,11 @@ class GeminiAudioLoop:
             pya.open,
             format=FORMAT,
             channels=CHANNELS,
-            rate=RECV_RATE,
+            rate=RECEIVE_SAMPLE_RATE,
             output=True,
         )
         try:
-            while True:
+            while not self.stop_event.is_set():
                 pcm = await self.audio_in_queue.get()
                 await asyncio.to_thread(stream.write, pcm)
         except asyncio.CancelledError:
