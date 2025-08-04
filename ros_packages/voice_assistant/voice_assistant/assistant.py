@@ -66,15 +66,15 @@ class GeminiAudioLoop:
             pya.open,
             format=FORMAT,
             channels=CHANNELS,
-            rate=SEND_RATE,
+            rate=SEND_SAMPLE_RATE,
             input=True,
             input_device_index=mic_info["index"],
-            frames_per_buffer=CHUNK,
+            frames_per_buffer=CHUNK_SIZE,
         )
         kwargs = {"exception_on_overflow": False}
         try:
             while True:
-                data = await asyncio.to_thread(self.audio_stream.read, CHUNK, **kwargs)
+                data = await asyncio.to_thread(self.audio_stream.read, CHUNK_SIZE, **kwargs)
                 await self.out_queue.put({"data": data, "mime_type": "audio/pcm"})
         except asyncio.CancelledError:
             logger.info("listen_audio: cancelled, closing stream")
@@ -159,11 +159,6 @@ class GeminiAudioLoop:
                 self.audio_stream.close()
             logger.info("GeminiAudioLoop.run: terminated")
 
-import asyncio
-from contextlib import suppress
-
-import rclpy
-# from voice_assistant.assistant import VoiceAssistantNode
 
 class VoiceAssistantNode(Node):
 
@@ -693,30 +688,41 @@ class VoiceAssistantNode(Node):
         self.voice_assistant_state_publisher.publish(self.state)
         return True
 
-async def ros_spin(node):
-    while rclpy.ok():
-        rclpy.spin_once(node, timeout_sec=0.1)
-        await asyncio.sleep(0)
-    # when rclpy.ok() becomes False, this coro returns
+import threading
 
-async def main(args=None):
+def main(args=None):
     rclpy.init()
     node = VoiceAssistantNode()
-    spin_task   = asyncio.create_task(ros_spin(node))
-    gemini_task = asyncio.create_task(node.run_gemini())
+    executor = SingleThreadedExecutor()
+    executor.add_node(node)
 
-    # Block here until ROS is shut down (Ctrl-C or programmatic shutdown)
+    # background asyncio loop for Gemini
+    gemini_loop = asyncio.new_event_loop()
+    t = threading.Thread(
+        target=lambda: (asyncio.set_event_loop(gemini_loop),
+                        gemini_loop.run_forever()),
+        daemon=True,
+    )
+    t.start()
+
+    # schedule Gemini.run() on that loop
+    gemini_future = asyncio.run_coroutine_threadsafe(
+        node.gemini_audio_loop.run(),
+        gemini_loop
+    )
+
     try:
-        await spin_task
+        executor.spin()
+    except KeyboardInterrupt:
+        pass
     finally:
-        # Then tear down Gemini cleanly
-        gemini_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await gemini_task
-
-    node.destroy_node()
-    rclpy.shutdown()
-
+        # tear down Gemini
+        gemini_future.cancel()
+        gemini_loop.call_soon_threadsafe(gemini_loop.stop)
+        t.join()
+        # tear down ROS
+        node.destroy_node()
+        rclpy.shutdown()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
