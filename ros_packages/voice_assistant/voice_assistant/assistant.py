@@ -163,7 +163,7 @@ import asyncio
 from contextlib import suppress
 
 import rclpy
-from voice_assistant.assistant import VoiceAssistantNode
+# from voice_assistant.assistant import VoiceAssistantNode
 
 class VoiceAssistantNode(Node):
 
