@@ -26,7 +26,7 @@ from rclpy.task import Future
 from voice_assistant import START_SIGNAL_FILE, STOP_SIGNAL_FILE
 MAX_SILENT_SECONDS_BEFORE = 8.0
 
-from audio_loop import GeminiAudioLoop
+from voice_assistant.audio_loop import GeminiAudioLoop
 import threading
 import asyncio
 

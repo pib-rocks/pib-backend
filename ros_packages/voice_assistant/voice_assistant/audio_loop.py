@@ -4,7 +4,7 @@ import logging
 import pyaudio
 import threading
 from google import genai
-from google.genai import types
+
 # ——— Configure logging ———
 logging.basicConfig(
     level=logging.INFO,
@@ -22,6 +22,8 @@ RECEIVE_SAMPLE_RATE = 24000
 CHUNK_SIZE = 1024
 MODEL = "gemini-2.5-flash-preview-native-audio-dialog"
 CONFIG = {"response_modalities": ["AUDIO"]}
+
+
 class GeminiAudioLoop:
     def __init__(self, stop_event: threading.Event):
         self.audio_in_queue = None
@@ -102,7 +104,8 @@ class GeminiAudioLoop:
             logger.exception(f"play_audio error: {e}")
 
     async def close(self):
-        self.audio_stream.close()
+        if self.audio_stream:
+            self.audio_stream.close()
 
     async def run(self):
         client = genai.Client(api_key="")  # or let it pick up ADC
@@ -112,19 +115,37 @@ class GeminiAudioLoop:
                 self.audio_in_queue = asyncio.Queue()
                 self.out_queue = asyncio.Queue(maxsize=5)
 
-                # start all four subtasks and wait for any to error/cancel
-                async with asyncio.TaskGroup() as tg:
-                    tg.create_task(self.listen_audio())
-                    tg.create_task(self.send_realtime())
-                    tg.create_task(self.receive_audio())
-                    tg.create_task(self.play_audio())
+                # Create tasks manually for Python 3.10
+                tasks = [
+                    asyncio.create_task(self.listen_audio()),
+                    asyncio.create_task(self.send_realtime()),
+                    asyncio.create_task(self.receive_audio()),
+                    asyncio.create_task(self.play_audio()),
+                ]
+
+                # Wait until any task finishes or errors out
+                done, pending = await asyncio.wait(
+                    tasks, return_when=asyncio.FIRST_EXCEPTION
+                )
+
+                # If any task raised, re-raise to be caught below
+                for task in done:
+                    if task.exception():
+                        raise task.exception()
+
         except asyncio.CancelledError:
             logger.info("GeminiAudioLoop.run: cancelled, shutting down")
-            pass
         except Exception as eg:
             logger.exception("GeminiAudioLoop.run: unexpected error")
             traceback.print_exception(eg)
         finally:
+            # Cancel any remaining tasks
+            for t in tasks:
+                t.cancel()
+            # Gather to suppress warnings
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+            # Close streams if still open
             if self.audio_stream:
                 self.audio_stream.close()
             logger.info("GeminiAudioLoop.run: terminated")
