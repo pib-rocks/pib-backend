@@ -14,6 +14,10 @@ RUN curl -sSL https://download.tinkerforge.com/apt/$(. /etc/os-release; echo $ID
         python3-colcon-common-extensions \
         python3-colcon-mixin \
         python3-pip \
+        python3-dev \
+        libatlas-base-dev \
+        liblapack-dev \
+        gfortran \
         python3-tinkerforge \
         libusb-1.0-0-dev \
     && rm -rf /var/lib/apt/lists/*
@@ -21,7 +25,11 @@ RUN curl -sSL https://download.tinkerforge.com/apt/$(. /etc/os-release; echo $ID
 
 # ToDo - DEV MERGE: COPY ./ros_packages/requirements.txt .
 RUN pip install requests
+RUN pip install --upgrade pip setuptools wheel
+RUN pip install numpy scipy matplotlib spatialmath-python
+RUN pip install --no-binary :all: roboticstoolbox-python==1.1.1
 RUN pip install pib-sdk
+
 
 COPY ./pib_api/client ./client
 RUN pip install ./client
