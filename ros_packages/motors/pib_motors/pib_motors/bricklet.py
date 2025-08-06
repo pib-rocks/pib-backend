@@ -21,17 +21,14 @@ successful, bricklet_dtos = bricklet_client.get_all_bricklets()
 if not successful:
     raise RuntimeError("failed to load bricklets from pib-api...")
 
-servo_bricklet_uids = [
-    dto["uid"] for dto in bricklet_dtos["bricklets"] if dto["type"] == "Servo Bricklet"
-]
-solid_state_relay_bricklet_uid = next(
-    (
-        dto["uid"]
-        for dto in bricklet_dtos["bricklets"]
-        if dto["type"] == "Solid State Relay Bricklet" and dto["uid"]
-    ),
-    None,
-)
+servo_bricklet_uids = []
+solid_state_relay_bricklet_uid = None
+
+for dto in bricklet_dtos["bricklets"]:
+    if dto["type"] == "Servo Bricklet":
+        servo_bricklet_uids.append(dto["uid"])
+    elif dto["type"] == "Solid State Relay Bricklet" and dto["uid"]:
+        solid_state_relay_bricklet_uid = dto["uid"]
 
 # maps the uid (e.g. 'XYZ') to the associated servo bricklet object
 uid_to_servo_bricklet: dict[str, BrickletServoV2] = {
