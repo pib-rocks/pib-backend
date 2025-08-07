@@ -3,25 +3,36 @@ from typing import Any
 
 from pib_motors.bricklet import uid_to_servo_bricklet
 from tinkerforge.bricklet_servo_v2 import BrickletServoV2
+from tinkerforge.ip_connection import Error
 
 
 class BrickletPin:
 
     NO_CURRENT: int = -1
-    DEFAULT_BRICKLET_UIDS = ["AAA", "BBB", "CCC"]
 
     def __init__(self, pin: int, uid: str, invert: bool) -> None:
         self.pin: int = pin
-        self.bricklet: BrickletServoV2 = uid_to_servo_bricklet[uid]
+        self.uid = uid
+        self.bricklet: BrickletServoV2 | None = uid_to_servo_bricklet.get(uid)
         self.invert = invert
+        self._connected: bool | None = None
+
+        self.check_connection()
 
     def __str__(self) -> str:
-        uid = "---"
+        return f"BRICKLET-PIN[ pin: {self.pin}, bricklet: {self.uid} ]"
+
+    def check_connection(self):
+        """checks if the bricklet-pin is connected to a bricklet"""
         try:
-            uid = self.bricklet.get_identity()[0]
-        except Exception:
-            pass
-        return f"BRICKLET-PIN[ pin: {self.pin}, bricklet: {uid} ]"
+            if self.bricklet is None:
+                self._connected = False
+            else:
+                self.bricklet.get_servo_current(self.pin)
+                self._connected = True
+        except Error as e:
+            self._connected = False
+        return self._connected
 
     def apply_settings(self, settings_dto: dict[str, Any]) -> bool:
         """apply the provided settings to the bricklet-pin"""
@@ -70,15 +81,15 @@ class BrickletPin:
 
     def get_current(self) -> int:
         """returns the current of the bricklet pin, or NO_CURRENT, if it is not connected"""
-        return (
-            self.bricklet.get_servo_current(self.pin)
-            if self.is_connected()
-            else BrickletPin.NO_CURRENT
-        )
+        if not self.is_connected():
+            return BrickletPin.NO_CURRENT
+        return self.bricklet.get_servo_current(self.pin)
 
     def is_connected(self) -> bool:
         """checks if the bricklet-pin is connected to a bricklet"""
-        return self.bricklet.uid_string not in BrickletPin.DEFAULT_BRICKLET_UIDS
+        if self._connected is None:
+            return self.check_connection()
+        return self._connected
 
     def set_position(self, position: int) -> bool:
         """sets the position of the bricklet-pin and returns 'True' if this was successful"""
