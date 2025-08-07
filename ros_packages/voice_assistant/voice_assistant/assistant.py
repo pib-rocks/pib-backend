@@ -346,6 +346,7 @@ class VoiceAssistantNode(Node):
 
     def _on_stop_signal_played(self) -> None:
         # signal all four sub-loops to exit
+        self.get_logger().info("_on_stop_signal_played")
         if self._gemini_stop_event is not None:
             self._gemini_stop_event.set()
             # (thread will exit once run() returns)
@@ -358,7 +359,6 @@ class VoiceAssistantNode(Node):
         
         self.play_audio_from_file(
             STOP_SIGNAL_FILE,
-            self.if_cycle_not_changed(self._on_stop_signal_played),
         )
         self.set_is_listening(self.state.chat_id, False)
         self.waiting_for_transcribed_text = True
@@ -461,6 +461,9 @@ class VoiceAssistantNode(Node):
     def set_is_listening(self, chat_id: str, listening: bool) -> None:
         """updates and publishes the listening status of a chat"""
         self.chat_id_to_is_listening[chat_id] = listening
+
+        if (self.personality and "gemini" in self.personality.assistant_model.api_name.lower() and not listening):
+            self._on_stop_signal_played()
 
         chat_is_listening = ChatIsListening()
         chat_is_listening.listening = listening
