@@ -3,6 +3,7 @@ import traceback
 import logging
 import pyaudio
 import threading
+from typing import Any, Optional
 from google import genai
 
 # ——— Configure logging ———
@@ -25,12 +26,54 @@ CONFIG = {"response_modalities": ["AUDIO"]}
 
 
 class GeminiAudioLoop:
-    def __init__(self, stop_event: threading.Event):
-        self.audio_in_queue = None
-        self.out_queue = None
+    def __init__(self, api_key: str = "") -> None:
+        self._stop_event = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+        self._is_listening = False
+
+        # These get initialized in run()
+        self.audio_in_queue: asyncio.Queue[bytes]
+        self.out_queue: asyncio.Queue[dict[str, Any]]
         self.session = None
         self.audio_stream = None
-        self.stop_event = stop_event
+        self.playback_stream = None
+        self.api_key = api_key
+
+    @property
+    def is_listening(self) -> bool:
+        return self._is_listening
+
+    def start(self) -> None:
+        """Start the Gemini audio loop in a background thread."""
+        if self._is_listening:
+            logger.info("GeminiAudioLoop is already running.")
+            return
+
+        # clear any previous stop flag and spawn the thread
+        self._stop_event.clear()
+        self._thread = threading.Thread(target=self._run_wrapper, daemon=True)
+        self._thread.start()
+        self._is_listening = True
+        logger.info("GeminiAudioLoop: started")
+
+    def stop(self, join_timeout: float = 1.0) -> None:
+        """Signal the loop to stop and join the thread."""
+        if not self._is_listening:
+            logger.info("GeminiAudioLoop is not running.")
+            return
+
+        self._stop_event.set()
+        if self._thread:
+            self._thread.join(timeout=join_timeout)
+        self._is_listening = False
+        self._thread = None
+        logger.info("GeminiAudioLoop: stopped")
+
+    def _run_wrapper(self):
+        try:
+            asyncio.run(self.run())
+        except Exception:
+            logger.exception("GeminiAudioLoop error in thread")
 
     async def listen_audio(self):
         mic_info = pya.get_default_input_device_info()
@@ -44,48 +87,49 @@ class GeminiAudioLoop:
             frames_per_buffer=CHUNK_SIZE,
         )
         kwargs = {"exception_on_overflow": False}
+
         try:
-            while not self.stop_event.is_set():
+            while not self._stop_event.is_set():
                 data = await asyncio.to_thread(self.audio_stream.read, CHUNK_SIZE, **kwargs)
                 await self.out_queue.put({"data": data, "mime_type": "audio/pcm"})
         except asyncio.CancelledError:
             logger.info("listen_audio: cancelled, closing stream")
             self.audio_stream.close()
             raise
-        except Exception as e:
-            logger.exception(f"listen_audio error: {e}")
+        except Exception:
+            logger.exception("listen_audio error")
 
     async def send_realtime(self):
         try:
-            while not self.stop_event.is_set():
+            while not self._stop_event.is_set():
                 msg = await self.out_queue.get()
                 await self.session.send_realtime_input(audio=msg)
         except asyncio.CancelledError:
             logger.info("send_realtime: cancelled")
             raise
-        except Exception as e:
-            logger.exception(f"send_realtime error: {e}")
+        except Exception:
+            logger.exception("send_realtime error")
 
     async def receive_audio(self):
         try:
-            while not self.stop_event.is_set():
+            while not self._stop_event.is_set():
                 turn = self.session.receive()
                 async for resp in turn:
-                    if data := resp.data:
+                    if data := getattr(resp, "data", None):
                         self.audio_in_queue.put_nowait(data)
-                    elif text := resp.text:
+                    elif text := getattr(resp, "text", None):
                         print(text, end="")
-                # clear queue on interruptions
+                # flush on interruptions
                 while not self.audio_in_queue.empty():
                     self.audio_in_queue.get_nowait()
         except asyncio.CancelledError:
             logger.info("receive_audio: cancelled")
             raise
-        except Exception as e:
-            logger.exception(f"receive_audio error: {e}")
+        except Exception:
+            logger.exception("receive_audio error")
 
     async def play_audio(self):
-        stream = await asyncio.to_thread(
+        self.playback_stream = await asyncio.to_thread(
             pya.open,
             format=FORMAT,
             channels=CHANNELS,
@@ -93,29 +137,25 @@ class GeminiAudioLoop:
             output=True,
         )
         try:
-            while not self.stop_event.is_set():
+            while not self._stop_event.is_set():
                 pcm = await self.audio_in_queue.get()
-                await asyncio.to_thread(stream.write, pcm)
+                await asyncio.to_thread(self.playback_stream.write, pcm)
         except asyncio.CancelledError:
             logger.info("play_audio: cancelled, closing playback stream")
-            stream.close()
+            self.playback_stream.close()
             raise
-        except Exception as e:
-            logger.exception(f"play_audio error: {e}")
-
-    async def close(self):
-        if self.audio_stream:
-            self.audio_stream.close()
+        except Exception:
+            logger.exception("play_audio error")
 
     async def run(self):
-        client = genai.Client(api_key="")  # or let it pick up ADC
+        client = genai.Client(api_key=self.api_key)
         try:
             async with client.aio.live.connect(model=MODEL, config=CONFIG) as session:
                 self.session = session
                 self.audio_in_queue = asyncio.Queue()
                 self.out_queue = asyncio.Queue(maxsize=5)
 
-                # Create tasks manually for Python 3.10
+                # spawn tasks
                 tasks = [
                     asyncio.create_task(self.listen_audio()),
                     asyncio.create_task(self.send_realtime()),
@@ -123,29 +163,26 @@ class GeminiAudioLoop:
                     asyncio.create_task(self.play_audio()),
                 ]
 
-                # Wait until any task finishes or errors out
+                # stop when any task errors
                 done, pending = await asyncio.wait(
                     tasks, return_when=asyncio.FIRST_EXCEPTION
                 )
-
-                # If any task raised, re-raise to be caught below
-                for task in done:
-                    if task.exception():
-                        raise task.exception()
+                for t in done:
+                    if t.exception():
+                        raise t.exception()
 
         except asyncio.CancelledError:
-            logger.info("GeminiAudioLoop.run: cancelled, shutting down")
-        except Exception as eg:
+            logger.info("GeminiAudioLoop.run: cancelled")
+        except Exception:
             logger.exception("GeminiAudioLoop.run: unexpected error")
-            traceback.print_exception(eg)
         finally:
-            # Cancel any remaining tasks
-            for t in tasks:
+            # cancel and clean up
+            for t in locals().get("tasks", []):
                 t.cancel()
-            # Gather to suppress warnings
-            await asyncio.gather(*tasks, return_exceptions=True)
+            await asyncio.gather(*locals().get("tasks", []), return_exceptions=True)
 
-            # Close streams if still open
             if self.audio_stream:
                 self.audio_stream.close()
+            if self.playback_stream:
+                self.playback_stream.close()
             logger.info("GeminiAudioLoop.run: terminated")
