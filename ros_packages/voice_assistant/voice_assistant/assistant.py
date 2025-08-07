@@ -36,8 +36,7 @@ class VoiceAssistantNode(Node):
 
         super().__init__("voice_assistant")
 
-        self._gemini_stop_event: threading.Event | None = None
-        self._gemini_thread: threading.Thread   | None = None
+        self.gemini_loop = GeminiAudioLoop(api_key="YOUR_API_KEY")
 
         # state -------------------------------------------------------------------------
 
@@ -325,16 +324,7 @@ class VoiceAssistantNode(Node):
             self.personality
             and "gemini" in self.personality.assistant_model.api_name.lower()
         ):
-            self.get_logger().info("running gemini")
-            if self._gemini_stop_event is None or self._gemini_stop_event.is_set():
-                evt = threading.Event()
-                self._gemini_stop_event = evt
-                loop = GeminiAudioLoop(stop_event=evt)
-                t = threading.Thread(
-                    target=lambda: asyncio.run(loop.run()), daemon=True
-                )
-                self._gemini_thread = t
-                t.start()
+            self.gemini_loop.start()
         else:
             self.record_audio(
                 MAX_SILENT_SECONDS_BEFORE,
@@ -347,13 +337,16 @@ class VoiceAssistantNode(Node):
     def _on_stop_signal_played(self) -> None:
         # signal all four sub-loops to exit
         self.get_logger().info("_on_stop_signal_played")
-        if self._gemini_stop_event is not None:
-            self._gemini_stop_event.set()
-            # (thread will exit once run() returns)
-            self._gemini_thread = None
-            self._gemini_stop_event = None
 
     def on_stopped_recording(self) -> None:
+        if (
+            self.personality
+            and "gemini" in self.personality.assistant_model.api_name.lower()
+            and self.gemini_loop.is_listening
+        ):
+            self.set_is_listening(self.state.chat_id, False)
+            return
+
         if not self.get_is_listening(self.state.chat_id):
             return
         
@@ -460,14 +453,21 @@ class VoiceAssistantNode(Node):
 
     def set_is_listening(self, chat_id: str, listening: bool) -> None:
         """updates and publishes the listening status of a chat"""
+                
+        if (
+            self.personality
+            and "gemini" in self.personality.assistant_model.api_name.lower()
+        ):
+            self.get_logger().info(f"gemini is listening {self.gemini_loop.is_listening}")
+            self.get_logger().info(f"VA is listening {listening}")
+            if self.gemini_loop.is_listening and listening is not self.gemini_loop.is_listening:
+                self.gemini_loop.stop()
+            else:
+                self.gemini_loop.start()
+
+            return
+
         self.chat_id_to_is_listening[chat_id] = listening
-
-        if self._gemini_stop_event is not None:
-            self._gemini_stop_event.set()
-            # (thread will exit once run() returns)
-            self._gemini_thread = None
-            self._gemini_stop_event = None
-
         chat_is_listening = ChatIsListening()
         chat_is_listening.listening = listening
         chat_is_listening.chat_id = chat_id
