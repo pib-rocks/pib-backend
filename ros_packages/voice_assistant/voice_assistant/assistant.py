@@ -462,8 +462,11 @@ class VoiceAssistantNode(Node):
         """updates and publishes the listening status of a chat"""
         self.chat_id_to_is_listening[chat_id] = listening
 
-        if (self.personality and "gemini" in self.personality.assistant_model.api_name.lower() and not listening):
-            self._on_stop_signal_played()
+        if self._gemini_stop_event is not None:
+            self._gemini_stop_event.set()
+            # (thread will exit once run() returns)
+            self._gemini_thread = None
+            self._gemini_stop_event = None
 
         chat_is_listening = ChatIsListening()
         chat_is_listening.listening = listening
