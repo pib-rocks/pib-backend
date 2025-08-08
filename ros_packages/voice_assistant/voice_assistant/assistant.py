@@ -327,14 +327,16 @@ class VoiceAssistantNode(Node):
     def on_start_signal_played(self) -> None:
         if (
             self.personality
-            and not "gemini" in self.personality.assistant_model.api_name.lower()
+            and "gemini" in self.personality.assistant_model.api_name.lower()
         ):
-            self.record_audio(
-                MAX_SILENT_SECONDS_BEFORE,
-                self.personality.pause_threshold,
-                self.if_cycle_not_changed(self.on_stopped_recording),
-                self.if_cycle_not_changed(self.on_transcribed_text_received),
-            )
+            return
+        
+        self.record_audio(
+            MAX_SILENT_SECONDS_BEFORE,
+            self.personality.pause_threshold,
+            self.if_cycle_not_changed(self.on_stopped_recording),
+            self.if_cycle_not_changed(self.on_transcribed_text_received),
+        )
 
         self.set_is_listening(self.state.chat_id, True)
 
@@ -346,12 +348,7 @@ class VoiceAssistantNode(Node):
         if (
             self.personality
             and "gemini" in self.personality.assistant_model.api_name.lower()
-            and self.gemini_loop.is_listening
         ):
-            self.set_is_listening(self.state.chat_id, False)
-            self.play_audio_from_file(
-                STOP_SIGNAL_FILE,
-            )
             return
 
         if not self.get_is_listening(self.state.chat_id):
