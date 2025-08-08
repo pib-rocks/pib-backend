@@ -23,12 +23,13 @@ class RelayControl(Node):
         )
 
         # Service for setting the solid state relay state
-        self.set_voice_assistant_service: Service = self.create_service(
+        self.set_solid_state_relay_state_service: Service = self.create_service(
             SetSolidStateRelay,
             "set_solid_state_relay_state",
             self.set_solid_state_relay_state,
         )
 
+        # Get relay status every second in case the user is setting it via brickv
         self.polling_timer = self.create_timer(1.0, self.poll_relay_state)
 
         self.get_logger().info("Now Running RELAY_CONTROL")
