@@ -276,7 +276,7 @@ class VoiceAssistantNode(Node):
         self, request: GetChatIsListening.Request, response: GetChatIsListening.Response
     ) -> GetChatIsListening.Response:
         """callback function for 'get_chat_is_listening' service"""
-        response.listening = self.get_is_listening(request.chat_id)
+        response.listening = self.get_is_listening(request.chat_id) or self.gemini_loop.is_listening
         return response
 
     def send_chat_message(
@@ -285,10 +285,8 @@ class VoiceAssistantNode(Node):
         """callback function for 'send_chat_message' service"""
 
         if (
-            self.personality
-            and "gemini" in self.personality.assistant_model.api_name.lower()
+            self.gemini_loop.is_listening
         ):
-            response.successful = True
             return response
         
         # do not create a message, if chat is not listening
@@ -354,7 +352,6 @@ class VoiceAssistantNode(Node):
             self.play_audio_from_file(
                 STOP_SIGNAL_FILE,
             )
-
             return
 
         if not self.get_is_listening(self.state.chat_id):
@@ -379,6 +376,9 @@ class VoiceAssistantNode(Node):
         )
 
     def on_sentence_received(self, sentence: str, is_final: bool) -> None:
+        if self.gemini_loop.is_listening:
+            return
+        
         if not sentence:
             self.update_state(False)
             return
