@@ -460,19 +460,6 @@ class VoiceAssistantNode(Node):
 
     def set_is_listening(self, chat_id: str, listening: bool) -> None:
         """updates and publishes the listening status of a chat"""
-                
-        if (
-            self.personality
-            and "gemini" in self.personality.assistant_model.api_name.lower()
-        ):
-            self.get_logger().info(f"gemini is listening {self.gemini_loop.is_listening}")
-            self.get_logger().info(f"VA is listening {listening}")
-            if self.gemini_loop.is_listening:
-                self.gemini_loop.stop()
-            else:
-                self.gemini_loop.start()
-            return
-
         self.chat_id_to_is_listening[chat_id] = listening
         chat_is_listening = ChatIsListening()
         chat_is_listening.listening = listening
@@ -492,6 +479,11 @@ class VoiceAssistantNode(Node):
 
     def update_state(self, turned_on: bool, chat_id: str = "") -> bool:
         """attempts to update the internal state, and returns whether this was successful"""
+        import traceback
+        stack = "".join(traceback.format_stack(limit=5))
+        self.get_logger().info(f"Call stack (most recent 5 frames):\n{stack}")
+        self.get_logger().info(f"set_is_listening called: api_name={self.personality.assistant_model.api_name.lower()}")
+
         if (
             self.personality
             and "gemini" in self.personality.assistant_model.api_name.lower()
@@ -504,11 +496,11 @@ class VoiceAssistantNode(Node):
                     )
             
             elif not turned_on:
-                self.set_is_listening(current_chat_id, False)
+                self.gemini_loop.stop()
                 self.play_audio_from_file(STOP_SIGNAL_FILE)
             
             else:
-                self.set_is_listening(current_chat_id, True)
+                self.gemini_loop.start()
                 self.play_audio_from_file(START_SIGNAL_FILE)
 
             self.state.turned_on = turned_on
