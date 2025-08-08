@@ -288,7 +288,8 @@ class VoiceAssistantNode(Node):
             self.personality
             and "gemini" in self.personality.assistant_model.api_name.lower()
         ):
-            return
+            response.successful = True
+            return response
         
         # do not create a message, if chat is not listening
         if not self.get_is_listening(request.chat_id):
@@ -350,6 +351,10 @@ class VoiceAssistantNode(Node):
             and self.gemini_loop.is_listening
         ):
             self.set_is_listening(self.state.chat_id, False)
+            self.play_audio_from_file(
+                STOP_SIGNAL_FILE,
+            )
+
             return
 
         if not self.get_is_listening(self.state.chat_id):
@@ -465,7 +470,7 @@ class VoiceAssistantNode(Node):
         ):
             self.get_logger().info(f"gemini is listening {self.gemini_loop.is_listening}")
             self.get_logger().info(f"VA is listening {listening}")
-            if self.gemini_loop.is_listening and listening is not self.gemini_loop.is_listening:
+            if self.gemini_loop.is_listening:
                 self.gemini_loop.stop()
             else:
                 self.gemini_loop.start()
@@ -494,7 +499,26 @@ class VoiceAssistantNode(Node):
             self.personality
             and "gemini" in self.personality.assistant_model.api_name.lower()
         ):
-            return
+            current_chat_id = self.state.chat_id
+            
+            if turned_on == self.gemini_loop.is_listening:
+                raise Exception(
+                        f"voice assistant is already turned {'on' if turned_on else 'off'}."
+                    )
+            
+            elif not turned_on:
+                self.set_is_listening(current_chat_id, False)
+                self.play_audio_from_file(STOP_SIGNAL_FILE)
+            
+            else:
+                self.set_is_listening(current_chat_id, True)
+                self.play_audio_from_file(START_SIGNAL_FILE)
+
+            self.state.turned_on = turned_on
+            self.state.chat_id = chat_id
+
+            self.voice_assistant_state_publisher.publish(self.state)
+            return True
         
         try:
             # ignore if currently turning off
@@ -506,6 +530,7 @@ class VoiceAssistantNode(Node):
                 raise Exception(
                     f"voice assistant is already turned {'on' if turned_on else 'off'}."
                 )
+
 
             # deactivate voice assistant
             elif not turned_on:
