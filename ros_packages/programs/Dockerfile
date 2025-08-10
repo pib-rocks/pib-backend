@@ -26,9 +26,6 @@ RUN apt-get update --fix-missing && \
     pip install requests==2.32.3
 
 RUN pip install --upgrade pip setuptools wheel
-RUN pip install numpy scipy matplotlib spatialmath-python
-RUN pip install --no-binary :all: roboticstoolbox-python==1.1.1
-RUN pip install pib-sdk
 
 COPY ./ros_packages/datatypes ros2_ws/datatypes
 COPY ./ros_packages/programs ros2_ws/programs
