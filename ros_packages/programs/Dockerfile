@@ -34,6 +34,8 @@ RUN cd ros2_ws && \
     source /opt/ros/humble/setup.bash && \
     colcon build
 
+RUN pip install pib-sdk
+
 COPY ./ros_packages/ros_entrypoint.sh /
 
 RUN chmod +x /ros_entrypoint.sh
