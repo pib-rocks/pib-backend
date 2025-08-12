@@ -36,7 +36,7 @@ class VoiceAssistantNode(Node):
 
         super().__init__("voice_assistant")
 
-        self.gemini_loop = GeminiAudioLoop(api_key="YOUR_API_KEY")
+        self.gemini_loop = GeminiAudioLoop(api_key="")
 
         # state -------------------------------------------------------------------------
 
@@ -478,56 +478,50 @@ class VoiceAssistantNode(Node):
             stop_chat()
 
     def update_state(self, turned_on: bool, chat_id: str = "") -> bool:
-        """attempts to update the internal state, and returns whether this was successful"""
+        """Attempts to update the internal state, and returns whether this was successful."""
         import traceback
+
+        # Use a stable chat id: when turning OFF, requests may pass "" → fall back to current state
+        effective_chat_id = chat_id or self.state.chat_id
+
+        # Debug
         stack = "".join(traceback.format_stack(limit=5))
         self.get_logger().info(f"Call stack (most recent 5 frames):\n{stack}")
-        self.get_logger().info(f"set_is_listening called: api_name={self.personality.assistant_model.api_name.lower()}")
+        self.get_logger().info(
+            f"update_state: requested chat_id={chat_id!r}, effective_chat_id={effective_chat_id!r}, "
+            f"turned_on={turned_on}, gemini_loop.is_listening={self.gemini_loop.is_listening}"
+        )
 
-        if (
-            self.personality
-            and "gemini" in self.personality.assistant_model.api_name.lower()
-        ):
-            current_chat_id = self.state.chat_id
-            
-            if turned_on == self.gemini_loop.is_listening:
-                raise Exception(
-                        f"voice assistant is already turned {'on' if turned_on else 'off'}."
-                    )
-            
-            elif not turned_on:
-                self.gemini_loop.stop()
+        # ---------- TURNING OFF ----------
+        if not turned_on:
+            # If we know we're currently on Gemini, stop it without fetching anything
+            if self.personality and "gemini" in self.personality.assistant_model.api_name.lower():
+                if self.gemini_loop.is_listening:
+                    self.gemini_loop.stop()
                 self.play_audio_from_file(STOP_SIGNAL_FILE)
-            
-            else:
-                self.gemini_loop.start()
-                self.play_audio_from_file(START_SIGNAL_FILE)
 
-            self.state.turned_on = turned_on
-            self.state.chat_id = chat_id
+                self.state.turned_on = False
+                # keep the current chat id if none was provided
+                self.state.chat_id = effective_chat_id
+                self.voice_assistant_state_publisher.publish(self.state)
+                return True
 
-            self.voice_assistant_state_publisher.publish(self.state)
-            return True
-        
-        try:
-            # ignore if currently turning off
-            if self.turning_off:
-                raise Exception("voice assistant is currently turning off")
+            # Legacy deactivation (unchanged)
+            try:
+                if self.turning_off:
+                    raise Exception("voice assistant is currently turning off")
+                if not self.state.turned_on:
+                    # already off → no-op
+                    self.state.turned_on = False
+                    self.state.chat_id = effective_chat_id
+                    self.voice_assistant_state_publisher.publish(self.state)
+                    return True
 
-            # ignore if activation state not changed
-            elif turned_on == self.state.turned_on:
-                raise Exception(
-                    f"voice assistant is already turned {'on' if turned_on else 'off'}."
-                )
-
-
-            # deactivate voice assistant
-            elif not turned_on:
                 self.cycle += 1
                 self.turning_off = True
                 self.waiting_for_transcribed_text = False
                 self.stop_recording()
-                self.stop_chat(chat_id)
+                self.stop_chat(effective_chat_id)
                 self.stop_program_execution()
                 self.code_visual_queue.clear()
                 self.final_chat_response_received = False
@@ -542,24 +536,63 @@ class VoiceAssistantNode(Node):
 
                 self.clear_playback_queue(on_playback_queue_cleared)
 
-            # activate voice assistant
-            else:
-                self.stop_chat(chat_id)
-                successful, self.personality = (
-                    voice_assistant_client.get_personality_from_chat(chat_id)
+                self.state.turned_on = False
+                self.state.chat_id = effective_chat_id
+                self.voice_assistant_state_publisher.publish(self.state)
+                return True
+
+            except Exception as e:
+                self.get_logger().error(
+                    f"following error occured while trying to update state: {str(e)}."
                 )
-                if not successful:
-                    raise Exception(
-                        f"no personality with chat of id {chat_id} found..."
-                    )
-                self.set_is_listening(chat_id, False)
-                self.play_audio_from_file(
-                    START_SIGNAL_FILE,
-                    self.if_cycle_not_changed(self.on_start_signal_played),
+                return False
+
+        # ---------- TURNING ON ----------
+        # Turning ON requires a valid chat id
+        if not effective_chat_id:
+            self.get_logger().error("update_state: turning ON but no chat_id available")
+            return False
+
+        # Always resolve the target personality when turning ON (we may be switching chats/models)
+        ok, pers = voice_assistant_client.get_personality_from_chat(effective_chat_id)
+        if not ok or pers is None:
+            self.get_logger().error(f"no personality with chat id {effective_chat_id}")
+            return False
+        self.personality = pers
+        api_name = self.personality.assistant_model.api_name.lower()
+        self.get_logger().info(f"update_state: resolved api_name={api_name}")
+
+        # GEMINI path: short-circuit legacy logic
+        if "gemini" in api_name:
+            if not self.gemini_loop.is_listening:
+                self.gemini_loop.start()
+                self.play_audio_from_file(START_SIGNAL_FILE)
+            else:
+                self.get_logger().info("Gemini already running; no-op")
+
+            self.state.turned_on = True
+            self.state.chat_id = effective_chat_id
+            self.voice_assistant_state_publisher.publish(self.state)
+            return True
+
+        # Legacy activation (unchanged)
+        try:
+            if self.turning_off:
+                raise Exception("voice assistant is currently turning off")
+            if turned_on == self.state.turned_on and effective_chat_id == self.state.chat_id:
+                raise Exception(
+                    f"voice assistant is already turned {'on' if turned_on else 'off'}."
                 )
 
-            self.state.turned_on = turned_on
-            self.state.chat_id = chat_id
+            self.stop_chat(effective_chat_id)
+            self.set_is_listening(effective_chat_id, False)
+            self.play_audio_from_file(
+                START_SIGNAL_FILE,
+                self.if_cycle_not_changed(self.on_start_signal_played),
+            )
+
+            self.state.turned_on = True
+            self.state.chat_id = effective_chat_id
 
         except Exception as e:
             self.get_logger().error(
@@ -569,7 +602,6 @@ class VoiceAssistantNode(Node):
 
         self.voice_assistant_state_publisher.publish(self.state)
         return True
-
 
 def main(args=None):
     rclpy.init()
