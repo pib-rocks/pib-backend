@@ -29,7 +29,7 @@ class RelayControl(Node):
             self.set_solid_state_relay_state,
         )
 
-        # Get relay status every second in case the user is setting it via brickv
+        # Publish relay status every second to catch external changes (e.g. brickv)
         self.polling_timer = self.create_timer(1.0, self.poll_relay_state)
 
         self.get_logger().info("Now Running RELAY_CONTROL")
@@ -46,7 +46,7 @@ class RelayControl(Node):
     def update_relay_state(self, turned_on: bool) -> bool:
         """attempts to update the solid state relay, and returns whether this was successful"""
         if self.state.turned_on == turned_on:
-            return True
+            return self.relay_available
         try:
             set_ssr_state(turned_on)
             self.state.turned_on = turned_on
@@ -74,7 +74,7 @@ class RelayControl(Node):
             self.relay_available = False
             return
 
-        if current_relay_state is not self.state.turned_on:
+        if current_relay_state != self.state.turned_on:
             self.state.turned_on = current_relay_state
 
             msg = SolidStateRelayState()
