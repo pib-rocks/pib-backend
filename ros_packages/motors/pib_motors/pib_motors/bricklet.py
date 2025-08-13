@@ -63,3 +63,27 @@ def set_ssr_state(state: bool) -> None:
             else:
                 logging.error(f"Unknown Tinkerforge error: {e}")
             raise e
+
+
+connected_bricklets = set()
+
+
+# callback function to handle bricklet enumeration events
+def connected_enumerate(
+    uid,
+    connected_uid,
+    position,
+    hardware_version,
+    firmware_version,
+    device_identifier,
+    enumeration_type,
+):
+    if (
+        device_identifier == BrickletServoV2.DEVICE_IDENTIFIER
+        and enumeration_type == IPConnection.ENUMERATION_TYPE_AVAILABLE
+    ):
+        connected_bricklets.add(uid)
+        logging.info(f"Servo Bricklet {uid} is connected.")
+    elif enumeration_type == IPConnection.ENUMERATION_TYPE_DISCONNECTED:
+        connected_bricklets.discard(uid)
+        logging.info(f"Servo Bricklet {uid} is disconnected.")
