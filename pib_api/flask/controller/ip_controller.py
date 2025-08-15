@@ -1,5 +1,5 @@
 import os
-from flask import Blueprint, jsonify
+from flask import Blueprint, jsonify, abort
 from app.app import app
 
 bp = Blueprint("ip_controller", __name__)
@@ -13,4 +13,4 @@ def get_host_ip():
             ip = f.read().strip()
             return jsonify({"host_ip": ip}), 200
     else:
-        return jsonify({"host_ip": ""}), 200
+        abort(500, description="Unable to retrieve host IP")

@@ -226,6 +226,7 @@ function disable_power_notification() {
 	sudo sysctl -p
 }
 
+# Install a NetworkManager dispatcher script that observes IP changes and writes the current host IP to a file
 setup_ip_dispatcher() {
   local dispatcher_script="/etc/NetworkManager/dispatcher.d/99-update-ip.sh"
   local outfile="/home/pib/app/pib-backend/pib_api/flask/host_ip.txt"

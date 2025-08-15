@@ -973,6 +973,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HostIp'
+        '500':
+          description: Unable to retrieve host IP
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 components:
   schemas:
     VoiceAssistantPersonality:
