@@ -13,9 +13,9 @@ class RelayControl(Node):
     def __init__(self):
         super().__init__("relay_control")
         self.state: SolidStateRelayState = SolidStateRelayState()
-        self.state.turned_on = False
-        self.relay = solid_state_relay_bricklet
-        self.relay_available = True
+        self.state.turned_on: bool = False
+        self.relay: BrickletSolidStateRelayV2 | None = solid_state_relay_bricklet
+        self.relay_available: bool = self.relay is not None
 
         # Publisher for solid state relay status
         self.relay_state_publisher: Publisher = self.create_publisher(
@@ -74,12 +74,11 @@ class RelayControl(Node):
             self.relay_available = False
             return
 
-        if current_relay_state != self.state.turned_on:
-            self.state.turned_on = current_relay_state
+        self.state.turned_on = current_relay_state
 
-            msg = SolidStateRelayState()
-            msg.turned_on = self.state.turned_on
-            self.relay_state_publisher.publish(msg)
+        msg = SolidStateRelayState()
+        msg.turned_on = self.state.turned_on
+        self.relay_state_publisher.publish(msg)
 
 
 def main(args=None):
