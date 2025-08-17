@@ -36,6 +36,7 @@ setup(
     entry_points={
         "console_scripts": [
             "pib_driver = pibsim_webots.pib_driver:main",
+            'mcp_server = pibsim_webots.mcp_server:main'
         ],
     },
 )
