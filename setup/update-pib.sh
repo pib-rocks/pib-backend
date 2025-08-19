@@ -45,7 +45,8 @@ function update_backend() {
     if [ -d "$BACKEND_DIR" ]; then
         print INFO "Updating backend:"
         cd "$BACKEND_DIR" || { print ERROR "Cannot get to $BACKEND_DIR"; exit 1; }
-        git pull || { print ERROR "backend git pull error"; exit 1; }
+        git pull --recurse-submodules || { print ERROR "backend git pull error"; exit 1; }
+        git submodule update --init --recursive || { print ERROR "backend submodule update error"; exit 1; }
         sudo docker compose --profile all up --force-recreate --build -d || { print ERROR "docker compose backend build error"; exit 1; }
     else
         print ERROR "Directory $BACKEND_DIR does not exist"
@@ -57,7 +58,8 @@ function update_frontend() {
     if [ -d "$FRONTEND_DIR" ]; then
         print INFO "Updating frontend:"
         cd "$FRONTEND_DIR" || { print ERROR "Cannot get to $FRONTEND_DIR"; exit 1; }
-        git pull || { print ERROR "frontend git pull error"; exit 1; }
+        git pull --recurse-submodules || { print ERROR "frontend git pull error"; exit 1; }
+        git submodule update --init --recursive || { print ERROR "frontend submodule update error"; exit 1; }
         sudo docker compose up --force-recreate --build -d || { print ERROR "docker compose frontend build error"; exit 1; }
     else
         print ERROR "Directory $FRONTEND_DIR does not exist"
