@@ -304,7 +304,6 @@ class AudioRecorderNode(Node):
         goal_handle.succeed()
         return self.create_result(text)
 
-
 def main(args=None):
     rclpy.init()
     node = AudioRecorderNode()
