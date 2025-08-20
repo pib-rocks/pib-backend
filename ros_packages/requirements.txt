@@ -6,3 +6,4 @@ opencv-python >= 4.5.1.48
 depthai>=2.24.0.0
 numpy==1.26.3
 blobconverter==1.4.2
+google-genai
