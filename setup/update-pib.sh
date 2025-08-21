@@ -41,11 +41,56 @@ function print() {
     echo -e "${!color}[$(date -u)][[ ${text} ]]${RESET_TEXT_COLOR}"
 }
 
+function ensure_host_ip() {
+    local outfile="/home/pib/app/pib-backend/pib_api/flask/host_ip.txt"
+    local dispatcher_script="/etc/NetworkManager/dispatcher.d/99-update-ip.sh"
+
+    if [ ! -f "$outfile" ]; then
+        print INFO "host_ip.txt missing, ensuring dispatcher script exists..."
+
+        if [[ ! -f "$dispatcher_script" ]]; then
+            print INFO "Creating dispatcher script..."
+            sudo tee "$dispatcher_script" > /dev/null << 'EOF'
+#!/bin/bash
+LOG="/tmp/nm-dispatcher.log"
+OUTFILE="/home/pib/app/pib-backend/pib_api/flask/host_ip.txt"
+
+echo "$(date): Dispatcher triggered with IFACE=$1 STATE=$2" >> "$LOG"
+
+IP=$(ip route get 1 | grep -oP 'src \K[\d.]+' || echo "")
+
+CURRENT_IP=""
+if [[ -f "$OUTFILE" ]]; then
+    CURRENT_IP=$(cat "$OUTFILE")
+fi
+
+if [[ "$IP" != "$CURRENT_IP" ]]; then
+    if [[ -n "$IP" ]]; then
+        echo "$IP" > "$OUTFILE"
+        echo "$(date): Updated IP to $IP" >> "$LOG"
+    else
+        > "$OUTFILE"
+        echo "$(date): No IP found" >> "$LOG"
+    fi
+fi
+EOF
+            sudo chmod +x "$dispatcher_script"
+        fi
+
+        print INFO "Manually running dispatcher script to generate host_ip.txt..."
+        sudo bash -c "$dispatcher_script wlan0 dhcp4-change"
+    else
+        print INFO "host-ip.txt already exists, skipping dispatcher setup"
+    fi
+}
+
 function update_backend() {
     if [ -d "$BACKEND_DIR" ]; then
         print INFO "Updating backend:"
         cd "$BACKEND_DIR" || { print ERROR "Cannot get to $BACKEND_DIR"; exit 1; }
         git pull || { print ERROR "backend git pull error"; exit 1; }
+        # Ensure that the IP dispatcher script is set up so the IP display works correctly
+        ensure_host_ip
         sudo docker compose --profile all up --force-recreate --build -d || { print ERROR "docker compose backend build error"; exit 1; }
     else
         print ERROR "Directory $BACKEND_DIR does not exist"
