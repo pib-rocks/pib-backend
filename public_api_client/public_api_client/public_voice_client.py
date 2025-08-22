@@ -128,7 +128,7 @@ def chat_completion(
     # WICHTIG: keine JSON-URL! Der Server streamt SSE unter /voice/text
     response = _send_request(
         "POST",
-        "http://andi-desktop:9393/voice/text",
+        VOICE_ASSISTANT_TEXT_URL,
         headers,
         body,
         True,                  # stream=True

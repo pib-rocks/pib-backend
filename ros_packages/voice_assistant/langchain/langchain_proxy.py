@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 from __future__ import annotations
 import os
 import json
@@ -66,20 +67,7 @@ app.add_middleware(
 # ==========================================================
 # Utils
 # ==========================================================
-def build_prompt(req: ChatRequest) -> str:
-    lines = [f"[PERSONALITY] {req.personality.description} (model={req.personality.model})", ""]
-    for m in req.messageHistory:
-        role = "USER" if m.isUser else "ASSISTANT"
-        lines.append(f"{role}: {m.content}")
-    lines.append(f"USER: {req.data}")
-    lines.append("ASSISTANT:")
-    return "\n".join(lines)
 
-async def aggregate_llm_response(prompt: str) -> str:
-    parts: List[str] = []
-    async for tok in stream_llm_tokens(prompt):
-        parts.append(tok)
-    return "".join(parts)
 
 def sse_event(payload: Dict[str, Any]) -> bytes:
     # korrektes SSE-Frame: "data: <json>\n\n"

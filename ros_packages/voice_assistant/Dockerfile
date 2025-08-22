@@ -4,6 +4,8 @@ SHELL ["/bin/bash", "-c"]
 
 WORKDIR /app
 
+ENV MCP_SERVERS='{"srv": {"url": "http://andi-desktop:9292/mcp", "transport": "streamable_http"}}'
+
 RUN apt-get update && apt-get install --no-install-recommends -y curl
 
 RUN apt-get update --fix-missing && \
@@ -21,6 +23,10 @@ COPY ./ros_packages/requirements.txt .
 
 RUN pip install requests
 RUN pip install pyaudio
+RUN pip install fastapi==0.116.1
+RUN pip install langchain==0.3.27
+RUN pip install langchain-mcp-adapters==0.1.9
+RUN pip install langgraph==0.6.5
 
 COPY ./pib_api/client ./client
 RUN pip install ./client
