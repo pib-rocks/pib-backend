@@ -101,33 +101,65 @@ def chat_completion(
     model: str = "gpt-3.5-turbo",
 ) -> Iterable[str]:
     """
-    receive a textual llm response, that takes into account the provided description
+    Liest SSE vom Server und yieldet die Delta-Tokens.
     """
-    headers = {"Accept": "text/event-stream", "Content-Type": "application/json"}
+    import logging
 
-    # Claude does not accept empty strings as input
-    if (text is None) or (text == ""):
+    headers = {
+        "Accept": "text/event-stream",
+        "Content-Type": "application/json",
+    }
+    if public_api_token:  # optional
+        headers["Authorization"] = f"Bearer {public_api_token}"
+
+    if not text:
         text = "echo 'I could not hear you, please repeat your message.'"
 
     body = {
         "data": text,
         "messageHistory": [
-            {"content": message.content, "isUser": message.is_user}
-            for message in message_history
+            {"content": m.content, "isUser": m.is_user} for m in message_history
         ],
         "personality": {"description": description, "model": model},
     }
-
     if image_base64 is not None:
         body["imageBase64"] = image_base64
 
+    # WICHTIG: keine JSON-URL! Der Server streamt SSE unter /voice/text
     response = _send_request(
-        "POST", VOICE_ASSISTANT_TEXT_URL, headers, body, True, public_api_token
+        "POST",
+        "http://andi-desktop:9393/voice/text",
+        headers,
+        body,
+        True,                  # stream=True
+        public_api_token,
     )
 
-    line_bin: bytes
+    # Optional: zur Diagnose einmal den Content-Type loggen
+    logging.info("public-api CT: %s", getattr(response, "headers", {}).get("content-type"))
+
+    # SSE lesen: nur data:-Zeilen parsen
     for line_bin in response.iter_lines():
-        line_str = line_bin.decode("utf-8")
-        if not line_str.startswith("data:"):
+        if not line_bin:
             continue
-        yield json.loads(line_str[21:-1])
+        line_str = line_bin.decode("utf-8", "replace").strip()
+        # Kommentare ": keep-alive" ignorieren
+        if not line_str.startswith("data: "):
+            continue
+
+        try:
+            evt = json.loads(line_str[6:])  # korrekt: alles nach "data: "
+        except json.JSONDecodeError:
+            # Vorschau loggen und weiter
+            logging.warning("Non-JSON SSE line: %r", line_str[:120])
+            continue
+
+        typ = evt.get("type")
+        if typ == "answer":
+            yield evt.get("delta", "")
+        elif typ == "error":
+            logging.error("SSE error: %s", evt.get("error"))
+            break
+        elif typ == "done":
+            break
+
