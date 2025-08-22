@@ -66,3 +66,7 @@ toml==0.10.2
 urllib3==2.2.1
 zipp==1.0.0
 pyaudio==0.2.14
+fastapi==0.116.1
+langchain==0.3.27
+langchain-mcp-adapters==0.1.9
+langgraph==0.6.5

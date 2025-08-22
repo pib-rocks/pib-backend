@@ -23,7 +23,7 @@ RUN apt-get update --fix-missing && apt-get install --no-install-recommends -y \
     && rm /tmp/webots.deb \
     && rm -rf /var/lib/apt/lists/*
 
-
+RUN pip install fastmcp 
 
 COPY ./ros_packages/pibsim_webots ros2_ws/pibsim_webots
 
