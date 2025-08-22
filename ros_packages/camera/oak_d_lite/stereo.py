@@ -85,7 +85,9 @@ class CameraNode(Node):
             self.device = dai.Device(self.pipeline)
 
             # Output queue will be used to get the rgb frames from the output defined above
-            self.queue = self.device.getOutputQueue(name="rgb", maxSize=4, blocking=False)
+            self.queue = self.device.getOutputQueue(
+                name="rgb", maxSize=4, blocking=False
+            )
             return True
 
         except Exception as e:
