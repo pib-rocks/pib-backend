@@ -43,8 +43,8 @@ function print() {
 
 # Ensure that the update-pib command is installed as a symlink
 function ensure_symlink_self() {
-    local update_bin=$(which update-pib 2>/dev/null || true)
-    local source_file="$HOME/app/pib-backend/setup/update-pib.sh"
+    local update_bin="/usr/local/bin/update-pib"
+    local source_file="$BACKEND_DIR/setup/update-pib.sh"
 
     # If update-pib exists but is not a symlink
     if [[ -n "$update_bin" && ! -L "$update_bin" ]]; then
@@ -59,7 +59,7 @@ function ensure_symlink_self() {
 }
 
 function ensure_host_ip() {
-    local outfile="/home/pib/app/pib-backend/pib_api/flask/host_ip.txt"
+    local outfile="$BACKEND_DIR/pib_api/flask/host_ip.txt"
     local dispatcher_script="/etc/NetworkManager/dispatcher.d/99-update-ip.sh"
 
     if [ ! -f "$outfile" ]; then
