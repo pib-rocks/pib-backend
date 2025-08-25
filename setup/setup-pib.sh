@@ -176,8 +176,17 @@ function clone_repositories() {
 # Install update script; move animated eyes, etc.
 function move_setup_files() {
   local update_target_dir="/usr/local/bin"
-  sudo cp "$BACKEND_DIR/setup/update-pib.sh" "$update_target_dir/update-pib"
-  sudo chmod 755 "$update_target_dir/update-pib"
+  local source_file="$BACKEND_DIR/setup/update-pib.sh"
+  local target_file="$update_target_dir/update-pib"
+
+  if [[ ! -f "$source_file" ]]; then
+    print ERROR "$source_file not found"
+    return 1
+  fi
+
+  sudo ln -s "$source_file" "$target_file"
+
+  sudo chmod 755 "$source_file"
   print SUCCESS "Installed update script"
 
   cp "$BACKEND_DIR/setup/setup_files/pib-eyes-animated.gif" "$HOME/Desktop/pib-eyes-animated.gif"
