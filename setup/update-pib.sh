@@ -41,6 +41,23 @@ function print() {
     echo -e "${!color}[$(date -u)][[ ${text} ]]${RESET_TEXT_COLOR}"
 }
 
+# Ensure that the update-pib command is installed as a symlink
+function ensure_symlink_self() {
+    local update_bin=$(which update-pib 2>/dev/null || true)
+    local source_file="$HOME/app/pib-backend/setup/update-pib.sh"
+
+    # If update-pib exists but is not a symlink
+    if [[ -n "$update_bin" && ! -L "$update_bin" ]]; then
+        print WARN "update-pib is not installed as a symlink. Fixing..."
+        sudo rm -f "$update_bin"
+        sudo ln -s "$source_file" "$update_bin"
+        sudo chmod +x "$source_file"
+        print INFO "Symlink re-created: $update_bin -> $source_file"
+        print INFO "Please run 'update-pib' again."
+        exit 1
+    fi
+}
+
 function ensure_host_ip() {
     local outfile="/home/pib/app/pib-backend/pib_api/flask/host_ip.txt"
     local dispatcher_script="/etc/NetworkManager/dispatcher.d/99-update-ip.sh"
@@ -125,6 +142,8 @@ sudo chmod 0440 "/etc/sudoers.d/$DEFAULT_USER"
 print INFO "Logging to $LOG_FILE"
 exec > >(tee -a "$LOG_FILE") 2>&1
 print INFO "Update started: "
+
+ensure_symlink_self
 
 update_backend
 
