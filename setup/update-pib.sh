@@ -53,8 +53,6 @@ function ensure_symlink_self() {
         sudo ln -s "$source_file" "$update_bin"
         sudo chmod +x "$source_file"
         print INFO "Symlink re-created: $update_bin -> $source_file"
-        print INFO "Please run 'update-pib' again."
-        exit 1
     fi
 }
 
