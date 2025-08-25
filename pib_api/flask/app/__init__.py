@@ -8,6 +8,7 @@ from controller import (
     personality_controller,
     program_controller,
     pose_controller,
+    ip_controller,
 )
 
 app.register_blueprint(program_controller.bp, url_prefix="/program", name="program")
@@ -28,3 +29,4 @@ app.register_blueprint(
     assistant_model_controller.bp, url_prefix="/assistant-model", name="assistant_model"
 )
 app.register_blueprint(pose_controller.bp, url_prefix="/pose", name="pose")
+app.register_blueprint(ip_controller.bp, url_prefix="/host-ip", name="host-ip")
