@@ -1,4 +1,5 @@
 import asyncio
+import os
 import traceback
 import logging
 import pyaudio
@@ -16,13 +17,62 @@ logger = logging.getLogger("GeminiAudioLoop")
 
 pya = pyaudio.PyAudio()
 
+# ——— Audio constants (forced) ———
 FORMAT = pyaudio.paInt16
-CHANNELS = 1
-SEND_SAMPLE_RATE = 16000
+CHANNELS = 1                # force mono
+SEND_SAMPLE_RATE = 16000    # force 16 kHz capture
 RECEIVE_SAMPLE_RATE = 24000
 CHUNK_SIZE = 1024
+
 MODEL = "gemini-2.5-flash-preview-native-audio-dialog"
 CONFIG = {"response_modalities": ["AUDIO"]}
+
+PREFERRED_SUBSTR = os.getenv("MIC_DEVICE", "respeaker").lower().strip()
+
+
+def _list_input_devices() -> list[dict]:
+    """Return a list of input-capable device info dicts."""
+    devices = []
+    try:
+        for i in range(pya.get_device_count()):
+            info = pya.get_device_info_by_index(i)
+            if info.get("maxInputChannels", 0) > 0:
+                devices.append(info)
+    except Exception:
+        logger.exception("Failed to enumerate input devices")
+    return devices
+
+
+def _log_device_inventory():
+    """Log a compact table of input-capable devices."""
+    devs = _list_input_devices()
+    if not devs:
+        logger.warning("No input-capable audio devices found.")
+        return
+    logger.info("Input device inventory (index | name | maxInCh | defaultSR):")
+    for d in devs:
+        logger.info(
+            "  %3s | %s | %s | %s",
+            d.get("index"),
+            d.get("name"),
+            d.get("maxInputChannels"),
+            d.get("defaultSampleRate"),
+        )
+
+
+def _find_respeaker_device_index(preferred_substring: str) -> Optional[int]:
+    """
+    Try to find an input device whose name contains the preferred substring.
+    Returns the device index or None.
+    """
+    preferred_substring = preferred_substring.lower()
+    for i in range(pya.get_device_count()):
+        info = pya.get_device_info_by_index(i)
+        if info.get("maxInputChannels", 0) > 0:
+            name = str(info.get("name", "")).lower()
+            if preferred_substring in name:
+                return info["index"]
+    return None
 
 
 class GeminiAudioLoop:
@@ -49,7 +99,6 @@ class GeminiAudioLoop:
             logger.info("GeminiAudioLoop is already running.")
             return
 
-        # clear any previous stop flag and spawn the thread
         self._stop_event.clear()
         self._thread = threading.Thread(target=self._run_wrapper, daemon=True)
         self._thread.start()
@@ -75,27 +124,73 @@ class GeminiAudioLoop:
         except Exception:
             logger.exception("GeminiAudioLoop error in thread")
 
-    async def listen_audio(self):
-        mic_info = pya.get_default_input_device_info()
-        self.audio_stream = await asyncio.to_thread(
+    async def _open_input_stream(self):
+        """
+        Open PyAudio input stream with forced mono/16kHz on a device whose
+        name contains 'respeaker' (or MIC_DEVICE env). Falls back to default.
+        """
+        _log_device_inventory()
+
+        # First try preferred (ReSpeaker) device
+        preferred_idx = _find_respeaker_device_index(PREFERRED_SUBSTR)
+        use_idx = preferred_idx
+        use_label = "preferred (match)"
+        if preferred_idx is None:
+            # Fall back to default input device
+            try:
+                default_info = pya.get_default_input_device_info()
+                use_idx = default_info["index"]
+                use_label = "fallback (default)"
+                logger.warning(
+                    "Preferred input device with '%s' not found. Falling back to default input: index=%s name=%s",
+                    PREFERRED_SUBSTR,
+                    default_info.get("index"),
+                    default_info.get("name"),
+                )
+            except Exception:
+                logger.exception("No default input device available")
+                raise
+
+        # Open forced mono/16kHz stream
+        logger.info(
+            "Opening input stream (%s): index=%s, rate=%s, channels=%s, format=paInt16",
+            use_label, use_idx, SEND_SAMPLE_RATE, CHANNELS
+        )
+        stream = await asyncio.to_thread(
             pya.open,
             format=FORMAT,
-            channels=CHANNELS,
-            rate=SEND_SAMPLE_RATE,
+            channels=CHANNELS,           # forced 1
+            rate=SEND_SAMPLE_RATE,       # forced 16000
             input=True,
-            input_device_index=mic_info["index"],
+            input_device_index=use_idx,
             frames_per_buffer=CHUNK_SIZE,
         )
+
+        # Log what we actually got (some backends coerce settings)
+        try:
+            actual_rate = stream._rate if hasattr(stream, "_rate") else SEND_SAMPLE_RATE
+            actual_ch = stream._channels if hasattr(stream, "_channels") else CHANNELS
+            logger.info("Input stream opened: actual_rate=%s, actual_channels=%s", actual_rate, actual_ch)
+        except Exception:
+            pass
+
+        return stream
+
+    async def listen_audio(self):
+        self.audio_stream = await self._open_input_stream()
         kwargs = {"exception_on_overflow": False}
 
         try:
             while not self._stop_event.is_set():
                 data = await asyncio.to_thread(self.audio_stream.read, CHUNK_SIZE, **kwargs)
+                # Always PCM 16-bit mono 16kHz
                 await self.out_queue.put({"data": data, "mime_type": "audio/pcm"})
         except asyncio.CancelledError:
             logger.info("listen_audio: cancelled, closing stream")
-            self.audio_stream.close()
-            raise
+            try:
+                self.audio_stream.close()
+            finally:
+                raise
         except Exception:
             logger.exception("listen_audio error")
 
@@ -129,6 +224,7 @@ class GeminiAudioLoop:
             logger.exception("receive_audio error")
 
     async def play_audio(self):
+        # Playback stays at 24k mono unless you need something else
         self.playback_stream = await asyncio.to_thread(
             pya.open,
             format=FORMAT,
@@ -137,13 +233,20 @@ class GeminiAudioLoop:
             output=True,
         )
         try:
+            logger.info("Playback stream opened: rate=%s, channels=%s", RECEIVE_SAMPLE_RATE, CHANNELS)
+        except Exception:
+            pass
+
+        try:
             while not self._stop_event.is_set():
                 pcm = await self.audio_in_queue.get()
                 await asyncio.to_thread(self.playback_stream.write, pcm)
         except asyncio.CancelledError:
             logger.info("play_audio: cancelled, closing playback stream")
-            self.playback_stream.close()
-            raise
+            try:
+                self.playback_stream.close()
+            finally:
+                raise
         except Exception:
             logger.exception("play_audio error")
 
@@ -182,7 +285,13 @@ class GeminiAudioLoop:
             await asyncio.gather(*locals().get("tasks", []), return_exceptions=True)
 
             if self.audio_stream:
-                self.audio_stream.close()
+                try:
+                    self.audio_stream.close()
+                except Exception:
+                    pass
             if self.playback_stream:
-                self.playback_stream.close()
+                try:
+                    self.playback_stream.close()
+                except Exception:
+                    pass
             logger.info("GeminiAudioLoop.run: terminated")
