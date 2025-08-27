@@ -9,6 +9,7 @@ import rclpy
 from rclpy.node import Node
 from rclpy.executors import SingleThreadedExecutor
 from std_msgs.msg import Int16MultiArray
+from scipy.signal import resample_poly
 
 import pyaudio
 from google import genai
@@ -35,6 +36,23 @@ CONFIG = {"response_modalities": ["AUDIO"]}
 # Topic name (ROS)
 ROS_AUDIO_TOPIC = os.getenv("ROS_AUDIO_TOPIC", "audio_stream")
 
+def detect_output_rate(pya_instance: pyaudio.PyAudio, fallback: int) -> int:
+    """
+    Ask the default output device what sample rate it prefers.
+    Falls back to `fallback` if anything goes wrong.
+    You can override via env: OUTPUT_SAMPLE_RATE=48000,44100,etc.
+    """
+    try:
+        env = os.getenv("OUTPUT_SAMPLE_RATE")
+        if env:
+            return int(env)
+        info = pya_instance.get_default_output_device_info()
+        rate = int(round(float(info.get("defaultSampleRate", fallback))))
+        return rate
+
+    except Exception:
+        pass
+    return fallback
 
 # ——————————————————————————————————————————
 #         ROS subscriber bridge (thread)
@@ -136,6 +154,19 @@ class RosAudioBridge:
             logger.exception("RosAudioBridge crashed")
 
 
+def resample_audio(data, orig_sr, target_sr):
+    """
+    Resample the audio data from orig_sr to target_sr using polyphase filtering.
+    """
+    if orig_sr == target_sr:
+        return data
+    
+    # Convert bytes data to a NumPy array of int16 samples.
+    audio_data = np.frombuffer(data, dtype=np.int16)
+    # Resample using polyphase filtering.
+    resampled_audio = resample_poly(audio_data, target_sr, orig_sr)
+    # Convert back to int16 and then to bytes.
+    return resampled_audio.astype(np.int16).tobytes()
 
 # ——————————————————————————————————————————
 #                Main audio loop
@@ -153,7 +184,7 @@ class GeminiAudioLoop:
         self.audio_stream = None
         self.playback_stream = None
         self.api_key = api_key
-        
+        self.output_sample_rate = detect_output_rate(pya, 48000)
         # ROS bridge handle
         self._ros_bridge: Optional[RosAudioBridge] = None
 
@@ -220,18 +251,20 @@ class GeminiAudioLoop:
             async for resp in turn:
                 if data := getattr(resp, "data", None):
                     self.audio_in_queue.put_nowait(data)
+
                 elif text := getattr(resp, "text", None):
                     print(text, end="")
             # flush on interruptions
             while not self.audio_in_queue.empty():
                 self.audio_in_queue.get_nowait()
+
     async def play_audio(self):
-        # Output at 24 kHz mono (your speaker supports this)
-        self.playback_stream = await asyncio.to_thread(
+        stream = await asyncio.to_thread(
             pya.open,
             format=FORMAT,
             channels=CHANNELS,
-            rate=RECEIVE_SAMPLE_RATE,
+            output_device_index=1,
+            rate=44100,
             output=True,
         )
         try:
@@ -240,9 +273,11 @@ class GeminiAudioLoop:
             pass
 
         try:
-            while not self._stop_event.is_set():
-                pcm = await self.audio_in_queue.get()
-                await asyncio.to_thread(self.playback_stream.write, pcm)
+            while True:
+                bytestream = await self.audio_in_queue.get()
+                # Resample from RECEIVE_SAMPLE_RATE (24000) to TARGET_SAMPLE_RATE (16000)
+                resampled_data = resample_audio(bytestream, RECEIVE_SAMPLE_RATE, self.output_sample_rate)
+                await asyncio.to_thread(stream.write, resampled_data)
         except asyncio.CancelledError:
             logger.info("play_audio: cancelled, closing playback stream")
             try:
