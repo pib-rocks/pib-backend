@@ -1,7 +1,7 @@
 import logging
 from typing import Any
 
-from pib_motors.bricklet import uid_to_bricklet
+from pib_motors.bricklet import uid_to_servo_bricklet
 from tinkerforge.bricklet_servo_v2 import BrickletServoV2
 from tinkerforge.ip_connection import Error
 
@@ -13,7 +13,7 @@ class BrickletPin:
     def __init__(self, pin: int, uid: str, invert: bool) -> None:
         self.pin: int = pin
         self.uid = uid
-        self.bricklet: BrickletServoV2 | None = uid_to_bricklet.get(uid)
+        self.bricklet: BrickletServoV2 | None = uid_to_servo_bricklet.get(uid)
         self.invert = invert
         self._connected: bool | None = None
 
