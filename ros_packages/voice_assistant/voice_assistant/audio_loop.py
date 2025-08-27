@@ -31,7 +31,27 @@ RECEIVE_SAMPLE_RATE = 24000  # model replies at 24 kHz (your speaker supports it
 CHUNK_SIZE = 1024
 
 MODEL = "gemini-2.5-flash-preview-native-audio-dialog"
-CONFIG = {"response_modalities": ["AUDIO"]}
+CONFIG = {
+    # same as you had
+    "response_modalities": ["AUDIO"],
+
+    # NEW: control barge-in + VAD
+    "realtime_input_config": {
+        # stop the model from cutting itself off when it hears speech
+        "activity_handling": "NO_INTERRUPTION",
+
+        # make server VAD less jumpy (tune as you like)
+        "automatic_activity_detection": {
+            "start_of_speech_sensitivity": "START_SENSITIVITY_LOW",
+            "end_of_speech_sensitivity":   "END_SENSITIVITY_LOW",
+            "silence_duration_ms": 800
+        }
+    },
+
+    # optional but useful while tuning
+    "input_audio_transcription": {},
+    "output_audio_transcription": {}
+}
 
 # Topic name (ROS)
 ROS_AUDIO_TOPIC = os.getenv("ROS_AUDIO_TOPIC", "audio_stream")
@@ -48,8 +68,9 @@ def detect_output_rate(pya_instance: pyaudio.PyAudio, fallback: int) -> int:
             return int(env)
         info = pya_instance.get_default_output_device_info()
         rate = int(round(float(info.get("defaultSampleRate", fallback))))
+        logger.info(f"Send semple rate{rate}")
         return rate
-
+    
     except Exception:
         pass
     return fallback
@@ -253,7 +274,8 @@ class GeminiAudioLoop:
                     self.audio_in_queue.put_nowait(data)
 
                 elif text := getattr(resp, "text", None):
-                    print(text, end="")
+                    logger.info(text)
+                    
             # flush on interruptions
             while not self.audio_in_queue.empty():
                 self.audio_in_queue.get_nowait()
