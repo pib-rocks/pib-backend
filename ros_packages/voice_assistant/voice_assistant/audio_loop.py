@@ -248,12 +248,11 @@ class GeminiAudioLoop:
                 self.audio_in_queue.get_nowait()
 
     async def play_audio(self):
-        stream = await asyncio.to_thread(
+        self.playback_stream = await asyncio.to_thread(
             pya.open,
             format=FORMAT,
             channels=CHANNELS,
-            output_device_index=1,
-            rate=44100,
+            rate=RECEIVE_SAMPLE_RATE,
             output=True,
         )
         try:
