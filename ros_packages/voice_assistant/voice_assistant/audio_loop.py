@@ -1,9 +1,10 @@
+# audio_loop.py
+
 import asyncio
 import os
 import logging
 import threading
 from typing import Any, Optional
-import asyncio
 import numpy as np
 import rclpy
 from rclpy.node import Node
@@ -12,6 +13,11 @@ from std_msgs.msg import Int16MultiArray
 
 import pyaudio
 from google import genai
+
+import wave
+from pathlib import Path
+from datetime import datetime
+from asyncio import QueueEmpty
 
 # ——— Logging ———
 logging.basicConfig(
@@ -30,8 +36,26 @@ RECEIVE_SAMPLE_RATE = 24000  # model replies at 24 kHz (your speaker supports it
 CHUNK_SIZE = 1024
 
 MODEL = "gemini-2.5-flash-preview-native-audio-dialog"
-CONFIG = {"response_modalities": ["AUDIO"]}
+CONFIG = {
+    "response_modalities": ["AUDIO"],
 
+   # "realtime_input_config": {
+
+
+        #  Make VAD less trigger-happy so speaker bleed doesn’t look like “user talking” 
+#        "automatic_activity_detection": {
+            #"start_of_speech_sensitivity": "START_SENSITIVITY_LOW",
+            #"end_of_speech_sensitivity":   "END_SENSITIVITY_LOW",
+ #           "prefix_padding_ms": 200,      # require ~200 ms of speech before committing start
+  #          "silence_duration_ms": 900     # need ~0.9 s quiet to commit end
+    #    },
+        # (optional) "turn_coverage": "TURN_INCLUDES_ONLY_ACTIVITY"
+    #},
+
+    # (optional, handy while tuning)
+    # "input_audio_transcription": {},
+    # "output_audio_transcription": {}
+}
 # Topic name (ROS)
 ROS_AUDIO_TOPIC = os.getenv("ROS_AUDIO_TOPIC", "audio_stream")
 
@@ -76,8 +100,6 @@ class RosAudioBridge:
 
             # IMPORTANT: reuse existing ROS context if already init'd by the launcher
             if not rclpy.ok():
-                # If your process hasn't called rclpy.init(), you can do it here.
-                # In your launch, rclpy is already initialized, so we skip.
                 pass
 
             class _Node(Node):
@@ -102,7 +124,6 @@ class RosAudioBridge:
                     async def _put():
                         await self._q.put({"data": payload, "mime_type": "audio/pcm"})
                     try:
-                        # bounded backpressure — avoid QueueFull storms
                         fut = asyncio.run_coroutine_threadsafe(_put(), self._loop)
                         fut.result(timeout=0.25)
                     except Exception:
@@ -153,9 +174,17 @@ class GeminiAudioLoop:
         self.audio_stream = None
         self.playback_stream = None
         self.api_key = api_key
-        
+
         # ROS bridge handle
         self._ros_bridge: Optional[RosAudioBridge] = None
+
+        # Logging / turns
+        self._turn_id = 0
+        self._in_wav: Optional[wave.Wave_write] = None
+        self._out_wav: Optional[wave.Wave_write] = None
+        self._log_lock: Optional[asyncio.Lock] = None
+        self._log_input_dir = Path(os.getenv("AUDIO_LOG_INPUT_DIR", "input"))
+        self._log_output_dir = Path(os.getenv("AUDIO_LOG_OUTPUT_DIR", "output"))
 
     @property
     def is_listening(self) -> bool:
@@ -192,6 +221,106 @@ class GeminiAudioLoop:
         except Exception:
             logger.exception("GeminiAudioLoop error in thread")
 
+    # ——— Queue utils ———
+    def _drain_queue(self, q: asyncio.Queue):
+        drained = 0
+        try:
+            while True:
+                q.get_nowait()
+                drained += 1
+        except QueueEmpty:
+            if drained:
+                logger.info("Drained %d items from queue.", drained)
+
+    async def _flush_queues(self, where: str):
+        try:
+            self._drain_queue(self.audio_in_queue)
+        except Exception:
+            pass
+        try:
+            self._drain_queue(self.out_queue)
+        except Exception:
+            pass
+        logger.info("Queues flushed (%s).", where)
+
+    # ——— Turn log helpers ———
+    async def _ensure_log_dirs(self):
+        # Create folders if missing
+        for d in (self._log_input_dir, self._log_output_dir):
+            d.mkdir(parents=True, exist_ok=True)
+
+    async def _open_turn_logs(self):
+        if self._log_lock is None:
+            self._log_lock = asyncio.Lock()
+        async with self._log_lock:
+            # If already open, do nothing
+            if self._in_wav or self._out_wav:
+                return
+            await self._ensure_log_dirs()
+            self._turn_id += 1
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]  # ms precision
+            in_path = self._log_input_dir / f"turn{self._turn_id:04d}_{ts}_in.wav"
+            out_path = self._log_output_dir / f"turn{self._turn_id:04d}_{ts}_out.wav"
+
+            # Input (16k mono, PCM16)
+            self._in_wav = wave.open(str(in_path), "wb")
+            self._in_wav.setnchannels(1)
+            self._in_wav.setsampwidth(2)  # 16-bit
+            self._in_wav.setframerate(SEND_SAMPLE_RATE)
+
+            # Output (24k mono, PCM16)
+            self._out_wav = wave.open(str(out_path), "wb")
+            self._out_wav.setnchannels(1)
+            self._out_wav.setsampwidth(2)
+            self._out_wav.setframerate(RECEIVE_SAMPLE_RATE)
+
+            logger.info("Turn %04d: logging to %s and %s", self._turn_id, in_path, out_path)
+
+    async def _close_turn_logs(self):
+        if self._log_lock is None:
+            self._log_lock = asyncio.Lock()
+        async with self._log_lock:
+            try:
+                if self._in_wav:
+                    self._in_wav.close()
+            except Exception:
+                logger.exception("Error closing input WAV")
+            finally:
+                self._in_wav = None
+
+            try:
+                if self._out_wav:
+                    self._out_wav.close()
+            except Exception:
+                logger.exception("Error closing output WAV")
+            finally:
+                self._out_wav = None
+
+    async def _log_input_bytes(self, pcm: bytes):
+        if self._log_lock is None:
+            self._log_lock = asyncio.Lock()
+        async with self._log_lock:
+            if self._in_wav is None:
+                # Lazy open if send starts before any receive()
+                await self._open_turn_logs()
+            try:
+                # writeframes() is fine for PCM bytes
+                self._in_wav.writeframes(pcm)
+            except Exception:
+                logger.exception("Failed to write input audio log")
+
+    async def _log_output_bytes(self, pcm: bytes):
+        if self._log_lock is None:
+            self._log_lock = asyncio.Lock()
+        async with self._log_lock:
+            if self._out_wav is None:
+                # If we somehow got output first, open files
+                await self._open_turn_logs()
+            try:
+                self._out_wav.writeframes(pcm)
+            except Exception:
+                logger.exception("Failed to write output audio log")
+
     # — tasks —
     async def _listen_from_ros(self):
         """Bridge thread pushes data to out_queue; we just idle until stop."""
@@ -207,6 +336,10 @@ class GeminiAudioLoop:
         try:
             while not self._stop_event.is_set():
                 msg = await self.out_queue.get()
+                # Log input (what we send to the model)
+                data = msg.get("data", b"")
+                if data:
+                    await self._log_input_bytes(data)
                 await self.session.send_realtime_input(audio=msg)
         except asyncio.CancelledError:
             logger.info("send_realtime: cancelled")
@@ -216,15 +349,23 @@ class GeminiAudioLoop:
 
     async def receive_audio(self):
         while not self._stop_event.is_set():
+            # Open/rotate logs at the start of each model turn
+            await self._open_turn_logs()
+
             turn = self.session.receive()
             async for resp in turn:
                 if data := getattr(resp, "data", None):
+                    # Log output bytes
+                    await self._log_output_bytes(data)
+                    # Enqueue for playback
                     self.audio_in_queue.put_nowait(data)
                 elif text := getattr(resp, "text", None):
                     print(text, end="")
-            # flush on interruptions
+                
             while not self.audio_in_queue.empty():
                 self.audio_in_queue.get_nowait()
+
+
     async def play_audio(self):
         # Output at 24 kHz mono (your speaker supports this)
         self.playback_stream = await asyncio.to_thread(
@@ -259,21 +400,25 @@ class GeminiAudioLoop:
             async with client.aio.live.connect(model=MODEL, config=CONFIG) as session:
                 self.session = session
                 self.audio_in_queue = asyncio.Queue()  # playback side
-                self.out_queue = asyncio.Queue() #ROS → Gemini side
+                self.out_queue = asyncio.Queue()       # ROS → Gemini side
+                self._log_lock = asyncio.Lock()
 
-                # start ROS bridge (topic name can be env-override if you like)
+                # Ensure log dirs exist early
+                await self._ensure_log_dirs()
+
+                # start ROS bridge
                 topic = os.getenv("ROS_AUDIO_TOPIC", "audio_stream")
                 self._ros_bridge = RosAudioBridge(topic, asyncio.get_running_loop(), self.out_queue)
                 self._ros_bridge.start()
+                ros_started = True
                 logger.info("RosAudioBridge started.")
 
                 tasks = [
-                    asyncio.create_task(self._listen_from_ros()),   # idle; bridge pushes into out_queue
-                    asyncio.create_task(self.send_realtime()),      # forwards to Gemini live session
-                    asyncio.create_task(self.receive_audio()),      # model's audio/text back
-                    asyncio.create_task(self.play_audio()),         # play 24k mono
+                    asyncio.create_task(self._listen_from_ros()),
+                    asyncio.create_task(self.send_realtime()),
+                    asyncio.create_task(self.receive_audio()),
+                    asyncio.create_task(self.play_audio()),
                 ]
-
 
                 done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION)
                 for t in done:
@@ -302,4 +447,24 @@ class GeminiAudioLoop:
                 except Exception:
                     pass
 
+            # Final flush at shutdown + close any open logs
+            try:
+                await self._flush_queues("shutdown")
+            except Exception:
+                pass
+            try:
+                await self._close_turn_logs()
+            except Exception:
+                pass
+
             logger.info("GeminiAudioLoop.run: terminated")
+
+
+def main():
+    # If you want to run standalone for quick testing, set GOOGLE_API_KEY and call:
+    # GeminiAudioLoop(os.getenv("GOOGLE_API_KEY", "")).start()
+    loop = GeminiAudioLoop(api_key=os.getenv("GOOGLE_API_KEY", ""))
+    loop.start()
+
+if __name__ == "__main__":
+    main()
