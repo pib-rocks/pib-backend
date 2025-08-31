@@ -70,3 +70,4 @@ fastapi==0.116.1
 langchain==0.3.27
 langchain-mcp-adapters==0.1.9
 langgraph==0.6.5
+langchain-openai==0.3.32

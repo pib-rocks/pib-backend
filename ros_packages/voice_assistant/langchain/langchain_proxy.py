@@ -10,7 +10,8 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from langchain_service import LangchainService
+# from langchain_service import LangchainService 
+from chatgpt_service import ChatGPTService as LangchainService
 import traceback
 
 # ==========================================================
@@ -63,11 +64,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
 # ==========================================================
 # Utils
 # ==========================================================
-
 
 def sse_event(payload: Dict[str, Any]) -> bytes:
     # korrektes SSE-Frame: "data: <json>\n\n"
@@ -82,19 +81,19 @@ def _get_bearer(req):
 # Wrapper-Funktionen (behalten deine alten Signaturen)
 # ==========================================================
 async def run_once_with(body: dict, token: str) -> str:
-    """Wrapper: entspricht deinem bisherigen Aufrufschema."""
     svc = LangchainService(token, body)
+    await svc.load_mcp_tools()          # <— WICHTIG: MCP-Tools laden
     return await svc.run_once_with()
 
 async def stream_llm_tokens(prompt: str) -> AsyncIterator[str]:
-    """Wrapper: baut minimalen Body und streamt über die Service-Klasse."""
     token = os.getenv("TRYB_API_KEY", "dummy_token")
     body = {
         "data": prompt,
         "messageHistory": [],
-        "personality": {"description": str, "model": str},
+        "personality": {"description": "", "model": "gpt-4o-mini"},  # <— echte Strings, nicht Typobjekte
     }
     svc = LangchainService(token, body)
+    await svc.load_mcp_tools()          # <— WICHTIG
     async for chunk in svc.stream_llm_tokens():
         yield chunk
 
