@@ -6,9 +6,14 @@ import logging
 from typing import AsyncIterator, List
 
 from langchain_openai import ChatOpenAI
-from langchain_core.messages import HumanMessage
 from langchain_core.tools import tool
+from langchain_core.messages import HumanMessage
 from langchain_mcp_adapters.client import MultiServerMCPClient
+
+# NEU: Agent + Memory
+from langchain.agents import initialize_agent, AgentType
+from langchain.memory import ConversationBufferMemory
+from langchain.prompts import MessagesPlaceholder
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -38,7 +43,7 @@ def random_number(min_val: int = 0, max_val: int = 100) -> str:
 
 # ---------------- Service ----------------
 class ChatGPTService:
-    """Minimaler Service: OpenAI-Chat + Tools (lokal + MCP)."""
+    """Service: OpenAI-Chat + Tools (lokal + MCP) als Agent (OpenAI Functions)."""
 
     def __init__(self, token: str, body: dict):
         self.token = token
@@ -48,6 +53,7 @@ class ChatGPTService:
         self.llm = ChatOpenAI(model=model, temperature=temperature)  # nutzt OPENAI_API_KEY
         self.local_tools = [add, random_number]
         self.mcp_tools: List = []
+        self._agent = None  # wird lazy gebaut
 
     async def load_mcp_tools(self):
         """Lädt MCP-Tools (robust, mit Stacktrace bei Fehlern)."""
@@ -66,41 +72,39 @@ class ChatGPTService:
             logger.exception("MCP-Tools konnten nicht geladen werden")
             self.mcp_tools = []
 
+    async def _ensure_agent(self):
+        """Initialisiert den Agenten einmalig."""
+        if self._agent is not None:
+            return
+        tools = self.local_tools + self.mcp_tools
+        memory = ConversationBufferMemory(memory_key="memory", return_messages=True)
+        agent_kwargs = {"extra_prompt_messages": [MessagesPlaceholder(variable_name="memory")]}
+        self._agent = initialize_agent(
+            tools,
+            self.llm,
+            agent=AgentType.OPENAI_FUNCTIONS,  # orchestriert Tool-Calls und finalisiert Text
+            verbose=False,
+            agent_kwargs=agent_kwargs,
+            memory=memory,
+        )
+
     async def run_once_with(self) -> str:
         """
-        Führt genau einen Prompt aus:
-        - LLM (mit Tools) aufrufen
-        - Tool-Calls ggf. ausführen und deren Output zurückgeben
-        - sonst LLM-Text
+        Führt genau einen Prompt über den Agenten aus:
+        - Agent plant Tool-Calls, führt sie aus und liefert eine finale Textantwort.
         """
         prompt = (self.body.get("data") or "").strip() or "Hallo"
-        all_tools = self.local_tools + self.mcp_tools
-        llm_with_tools = self.llm.bind_tools(all_tools)
+        await self._ensure_agent()
+        try:
+            result = await self._agent.ainvoke({"input": prompt})
+        except Exception as e:
+            logger.exception("Agent-Aufruf fehlgeschlagen")
+            return f"Fehler beim Agent-Aufruf: {e}"
 
-        # 1) LLM-Aufruf
-        result = await llm_with_tools.ainvoke([HumanMessage(content=prompt)])
-
-        # 2) Tool-Calls ausführen
-        tool_calls = getattr(result, "tool_calls", None)
-        if tool_calls:
-            outputs: List[str] = []
-            for call in tool_calls:
-                name = call.get("name")
-                args = call.get("args", {}) or {}
-                logger.info("Tool-Call: %s(%s)", name, args)
-                tool_obj = next((t for t in all_tools if t.name == name), None)
-                if not tool_obj:
-                    outputs.append(f"Unbekanntes Tool: {name}")
-                    continue
-                try:
-                    res = await tool_obj.ainvoke(args)   # async (MCP)
-                except AttributeError:
-                    res = tool_obj.invoke(args)          # sync (lokal)
-                outputs.append(str(res))
-            return "\n".join(outputs).strip()
-
-        # 3) Kein Tool → normaler Text
-        return result.content or "Keine Antwort"
+        if isinstance(result, dict) and "output" in result:
+            return (result["output"] or "").strip() or "Keine Antwort"
+        # Fallback: stringifizieren
+        return (str(result) or "").strip() or "Keine Antwort"
 
     async def stream_llm_tokens(self) -> AsyncIterator[str]:
         """Streamt (simuliert) die Antwort in Chunks, basierend auf run_once_with()."""
