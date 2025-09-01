@@ -1,0 +1,9 @@
+multirepo-angular-app
+ros_programs
+ros_voice_assistant
+ros_motors
+flask_api
+ros-audio-io
+ros-camera
+multirepo-rosbridge-ws
+ros-display
