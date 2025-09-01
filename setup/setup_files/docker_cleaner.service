@@ -1,0 +1,18 @@
+[Unit]
+Description=Docker Container Cleanup Service
+After=docker.service
+After=network.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/docker-container-cleanup
+RemainAfterExit=yes
+User=root
+Environment="ROS_DISTRO=humble"
+Environment="PYTHONUNBUFFERED=1"
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
