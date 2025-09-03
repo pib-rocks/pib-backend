@@ -1,15 +1,12 @@
 [Unit]
 Description=Docker Container Cleanup Service
 After=docker.service
-After=network.target
 Requires=docker.service
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/bin/docker-container-cleanup
-RemainAfterExit=yes
+ExecStart=/bin/bash /home/pib/app/pib-backend/setup/setup_files/docker_cleaner.sh
 User=root
-Environment="ROS_DISTRO=humble"
 Environment="PYTHONUNBUFFERED=1"
 StandardOutput=journal
 StandardError=journal
