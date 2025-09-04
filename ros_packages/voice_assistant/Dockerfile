@@ -23,10 +23,11 @@ COPY ./ros_packages/requirements.txt .
 
 RUN pip install requests
 RUN pip install pyaudio
-RUN pip install fastapi==0.116.1
-RUN pip install langchain==0.3.27
-RUN pip install langchain-mcp-adapters==0.1.9
-RUN pip install langgraph==0.6.5
+RUN pip install fastapi
+RUN pip install langchain
+RUN pip install langchain-mcp-adapters
+RUN pip install langgraph
+RUN pip install langchain_openai
 
 COPY ./pib_api/client ./client
 RUN pip install ./client

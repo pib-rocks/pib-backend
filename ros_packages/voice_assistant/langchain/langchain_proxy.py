@@ -10,8 +10,8 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-# from langchain_service import LangchainService 
-from chatgpt_service import ChatGPTService as LangchainService
+from langchain_service import LangchainService 
+#from chatgpt_service import ChatGPTService as LangchainService
 import traceback
 
 # ==========================================================
@@ -20,20 +20,6 @@ import traceback
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 LOG = logging.getLogger("voice")
 TRACE_TOKENS = os.getenv("TRACE_TOKENS", "0") == "1"
-
-# ==========================================================
-# LangChain / LangGraph / Tryb Imports
-# ==========================================================
-import operator
-from typing import Annotated, TypedDict
-from langgraph.graph import StateGraph, END
-from langchain_core.messages import SystemMessage, HumanMessage, BaseMessage, AIMessage
-from langchain_mcp_adapters.client import MultiServerMCPClient
-
-# Du hast die Tryb-Integration schon
-# Falls dein Paket anders heißt, bitte hier anpassen.
-from langchain_tryb import TrybClient, TrybModel
-
 
 # ==========================================================
 # Modelle (Request/Response)
@@ -121,6 +107,7 @@ async def _stream_from_text(text: str):
 
 @app.post("/voice/text")
 async def voice_text(req: Request, body: ChatRequest):
+
     async def gen_sse():
         try:
             yield sse_event({"type": "meta", "model": body.personality.model})

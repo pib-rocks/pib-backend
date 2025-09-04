@@ -14,4 +14,4 @@ if not tryb_url_prefix:
 
 SPEECH_TO_TEXT_URL = f"{tryb_url_prefix}/bff/tt/be/pub/api/conversions/speech-to-text"
 TEXT_TO_SPEECH_URL = f"{tryb_url_prefix}/bff/tt/be/pub/api/conversions/text-to-speech"
-VOICE_ASSISTANT_TEXT_URL = "http://localhost:9393/voice/text"
+VOICE_ASSISTANT_TEXT_URL = "http://andi-pib:9393/voice/text"

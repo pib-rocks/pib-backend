@@ -72,6 +72,7 @@ class LangchainService:
             tool: Dict[str, Any] = {}
             try:
                 data = json.loads(ai.content)
+                logger.warning("Tool-Antwort (ai.content): %r", ai.content)
                 if isinstance(data, dict) and "tool" in data:
                     tool = {"tool": str(data["tool"]), "args": data.get("args", {}) or {}}
             except Exception as e:
@@ -97,9 +98,22 @@ class LangchainService:
         def answer_node(state: GraphState) -> GraphState:
             # Wenn ein Tool gewählt wurde, nimm direkt dessen Output
             if state.get("tool"):
+                tool = state["tool"]
+                tool_name = tool.get("tool", "unbekanntes Tool")
+                args = tool.get("args", {})
+
+                # Tool-Ausgabe extrahieren
                 last_ai = next((m for m in reversed(state["messages"]) if isinstance(m, AIMessage)), None)
-                if last_ai:
-                    return {"messages": [last_ai]}
+                tool_output = last_ai.content if last_ai else ""
+
+                # Schöne Antwort formulieren
+                arg_text = ", ".join(f"{k}={v}" for k, v in args.items()) or "keine Argumente"
+                antwort = f"✅ Die Geste '{tool_name}' wurde mit {arg_text} erfolgreich ausgeführt."
+
+                if "fehler" in tool_output.lower() or "error" in tool_output.lower():
+                    antwort = f"❌ Beim Ausführen von '{tool_name}' ist ein Fehler aufgetreten: {tool_output}"
+
+                return {"messages": [AIMessage(content=antwort)]}
 
             # sonst: normales LLM
             msgs: List[BaseMessage] = [SystemMessage(content=self.SYS_ANSWER)]
@@ -181,13 +195,10 @@ class LangchainService:
         return list(self.LOCAL_TOOLS.keys()) + list(mcp.keys())
 
     def _mcp_url(self) -> str:
-        return os.getenv("MCP_URL", "http://localhost:9292/mcp")
+        return os.getenv("MCP_URL", "http://andi-desktop:9292/mcp")
 
     def _resolve_tool_name(self, name: str) -> str:
         return self.ALIASES.get(name, name)
-
-
-
 
     def _mcp_servers(self) -> Dict[str, Dict[str, str]]:
         """
@@ -202,7 +213,7 @@ class LangchainService:
         raw = os.getenv("MCP_SERVERS")
         if not raw:
             # Dev-Default, damit es out-of-the-box funktioniert
-            return {"srv": {"url": "http://localhost:9191/mcp", "transport": "streamable_http"}}
+            return {"srv": {"url": "http://andi-desktop:9292/mcp", "transport": "streamable_http"}}
         try:
             servers = json.loads(raw)
             if not isinstance(servers, dict):
@@ -234,6 +245,10 @@ class LangchainService:
             self._MCP_LOAD_ERROR = e
             logger.error("MCP-Tools konnten nicht geladen werden: %s", e)
         return self._MCP_TOOLS
+
+
+    async def load_mcp_tools(self):
+        return
 
     async def acall_tool(self, name: str, args: Dict[str, Any]) -> str:
         name = self._resolve_tool_name(name)

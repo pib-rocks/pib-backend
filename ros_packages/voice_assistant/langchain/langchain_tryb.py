@@ -12,14 +12,20 @@ class TrybClient:
     def __init__(self, token: str, body: dict):
         self.token = token
         self.body = body
+        print(body)
         self._session = requests.Session()
 
     def _build_payload(self, system_prompt: str) -> Dict[str, Any]:
-        personality = self.body.get("personality", {}).copy()
-        # immer kombinieren (append)
-        personality["description"] = f"{personality.get('description', '')}\n{system_prompt}"
-        payload = {**self.body, "personality": personality}
-        return payload
+        personality = (self.body.get("personality") or {}).copy()
+        base_desc = (personality.get("description") or "").strip()
+        sys = (system_prompt or "").strip()
+
+        # Persona + Agent-Systemprompt zusammenführen (nur 1x sauberer Zeilenumbruch)
+        description = base_desc if not sys else (base_desc + ("\n" if base_desc else "") + sys)
+        personality["description"] = description
+
+        # Body 1:1 übernehmen, nur personality ersetzen
+        return {**self.body, "personality": personality}
 
     def _sse_text_chunks(self, r: requests.Response) -> Iterator[str]:
         """
@@ -97,7 +103,6 @@ class TrybModel(BaseChatModel):
     def _generate(
         self,
         messages: List[BaseMessage],
-        *,
         stop: Optional[List[str]] = None,
         run_manager: Optional[CallbackManagerForLLMRun] = None,
         **kwargs: Any,
@@ -110,15 +115,3 @@ class TrybModel(BaseChatModel):
                     text = text[:i]
                     break
         return ChatResult(generations=[ChatGeneration(message=AIMessage(content=text))])
-
-    # --- Streaming (model.stream(...)) ---
-    def _stream(
-        self,
-        messages: List[BaseMessage],
-        *,
-        stop: Optional[List[str]] = None,
-        run_manager: Optional[CallbackManagerForLLMRun] = None,
-        **kwargs: Any,
-    ) -> Iterator[ChatGenerationChunk]:
-        for piece in self._client.stream_response(messages):
-            yield ChatGenerationChunk(message=AIMessageChunk(content=piece))
