@@ -9,6 +9,7 @@ from langchain_core.messages import SystemMessage, HumanMessage, BaseMessage, AI
 from langgraph.graph import StateGraph, END
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_tryb import TrybClient, TrybModel
+import traceback
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -27,7 +28,6 @@ class LangchainService:
     - LangGraph mit decide/tools/answer
     """
 
-    # ---------- Konstruktor ----------
     def __init__(self, token: str, body: dict):
         self.token = token
         self.body = body
@@ -56,6 +56,21 @@ class LangchainService:
             "Rufe KEIN Tool mehr auf und gib KEIN JSON zurück."
         )
 
+        self.SYS_FORMAT = (
+            "Formatiere die folgende Ausgabe kurz auf Deutsch. "
+            "Wenn es eine JSON-Liste ist, gib nur eine knappe, kommaseparierte Liste der wichtigsten Namen aus, "
+            "maximal 10 Einträge, bei mehr: ' (+N weitere)'. "
+            "Kein JSON, keine Erklärungen, nur der Text."
+        )
+
+        self.SYS_POST = (
+            "Der folgende Input ist ein JSON-Objekt oder eine JSON-Liste. "
+            "Gib EXAKT die Listeneinträge aus, unverändert, in der Originalreihenfolge, "
+            "kommasepariert in einer Zeile. "
+            "Keine Übersetzungen, keine Erklärungen, keine Ergänzungen, KEIN JSON, KEIN zusätzlicher Text."
+        )
+
+
     # ---------- Public API ----------
     def new_llm(self) -> TrybModel:
         """Erzeugt ein TrybModel auf Basis von token/body."""
@@ -67,16 +82,26 @@ class LangchainService:
 
         def decide_node(state: GraphState) -> GraphState:
             query = state["messages"][-1]
-            ai = llm.invoke([SystemMessage(content=self.system_decide_prompt()), query])
 
-            tool: Dict[str, Any] = {}
-            try:
-                data = json.loads(ai.content)
-                logger.warning("Tool-Antwort (ai.content): %r", ai.content)
-                if isinstance(data, dict) and "tool" in data:
-                    tool = {"tool": str(data["tool"]), "args": data.get("args", {}) or {}}
-            except Exception as e:
-                logger.warning("Tool-Call konnte nicht als JSON gelesen werden: %s", e)
+            # Einfacher Prompt
+            sys_prompt = (
+                "Wenn eine Nachricht mit einem der folgenden Tools gelöst werden kann, "
+                "gib NUR den Tool-Namen zurück. Tools: "
+                f"{', '.join(self.available_tool_names()) or '—'}. "
+                "Sonst gib eine normale Antwort."
+            )
+
+            ai = llm.invoke([SystemMessage(content=sys_prompt), query])
+            raw = (ai.content or "").strip()
+            logger.info("AI Raw Output: %r", raw)
+
+            tool = {}
+            # Ganz simple Logik: Enthält Text einen Toolnamen -> Tool ausführen
+            for t in self.available_tool_names():
+                if t.lower() in raw.lower():
+                    tool = {"tool": t, "args": {}}
+                    logger.info(f"Direkt erkanntes Tool: {t}")
+                    break
 
             return {"messages": [ai], "tool": tool}
 
@@ -86,7 +111,6 @@ class LangchainService:
             args = d.get("args", {}) or {}
             res = await self.acall_tool(name, args)
 
-            # robust in String umwandeln (dein bisheriger Stil)
             try:
                 res_str = res if isinstance(res, str) else json.dumps(res, ensure_ascii=False)
             except Exception:
@@ -96,26 +120,21 @@ class LangchainService:
             return {"messages": [AIMessage(content=res_str)]}
 
         def answer_node(state: GraphState) -> GraphState:
-            # Wenn ein Tool gewählt wurde, nimm direkt dessen Output
             if state.get("tool"):
                 tool = state["tool"]
                 tool_name = tool.get("tool", "unbekanntes Tool")
                 args = tool.get("args", {})
 
-                # Tool-Ausgabe extrahieren
                 last_ai = next((m for m in reversed(state["messages"]) if isinstance(m, AIMessage)), None)
                 tool_output = last_ai.content if last_ai else ""
 
-                # Schöne Antwort formulieren
-                arg_text = ", ".join(f"{k}={v}" for k, v in args.items()) or "keine Argumente"
-                antwort = f"✅ Die Geste '{tool_name}' wurde mit {arg_text} erfolgreich ausgeführt."
+                antwort = f"✅ '{tool_name}' ausgeführt. Die Antwort ist {tool_output}."
 
                 if "fehler" in tool_output.lower() or "error" in tool_output.lower():
                     antwort = f"❌ Beim Ausführen von '{tool_name}' ist ein Fehler aufgetreten: {tool_output}"
 
                 return {"messages": [AIMessage(content=antwort)]}
 
-            # sonst: normales LLM
             msgs: List[BaseMessage] = [SystemMessage(content=self.SYS_ANSWER)]
             humans = [m for m in state["messages"] if isinstance(m, HumanMessage)]
             if humans:
@@ -134,42 +153,6 @@ class LangchainService:
         wf.add_edge("tools", "answer")
         wf.add_edge("answer", END)
         return wf.compile()
-
-    async def stream_llm_tokens(self):
-        """
-        Streamt Text-Chunks über einen pro-Request Graph (mit frischem LLM).
-        Nutzt nur body['data'] als Eingabe-Nachricht – der TrybClient bekommt den
-        kompletten Body ohnehin im Konstruktor und reicht ihn 1:1 an Tryb weiter.
-        """
-        llm = self.new_llm()
-        graph = self.make_graph(llm)
-        yielded = False
-        prompt = (self.body.get("data") or ".").strip() or "."
-        async for ev in graph.astream_events(
-            {"messages": [HumanMessage(content=prompt)], "tool": {}},
-            version="v1",
-        ):
-            c = (ev.get("data") or {}).get("chunk")
-            if not c:
-                continue
-            content = getattr(c, "content", "")
-            if isinstance(content, str):
-                txt = content
-            elif isinstance(content, list):
-                txt = "".join(
-                    (blk.get("text") or blk.get("content") or "")
-                    for blk in content if isinstance(blk, dict)
-                )
-            else:
-                txt = ""
-            if txt:
-                yielded = True
-                yield txt
-
-        if not yielded:
-            out = await graph.ainvoke({"messages": [HumanMessage(content=prompt)], "tool": {}})
-            ai_msgs = [m for m in out["messages"] if isinstance(m, AIMessage)]
-            yield (ai_msgs[-1].content if ai_msgs else "")
 
     async def run_once_with(self) -> str:
         """Einmalige Ausführung ohne Streaming."""
@@ -194,26 +177,13 @@ class LangchainService:
         mcp = self.get_mcp_tools()
         return list(self.LOCAL_TOOLS.keys()) + list(mcp.keys())
 
-    def _mcp_url(self) -> str:
-        return os.getenv("MCP_URL", "http://andi-desktop:9292/mcp")
-
     def _resolve_tool_name(self, name: str) -> str:
         return self.ALIASES.get(name, name)
 
     def _mcp_servers(self) -> Dict[str, Dict[str, str]]:
-        """
-        Liest alle MCP-Server aus ENV MCP_SERVERS (JSON).
-        Beispiel:
-        MCP_SERVERS='{
-            "math": {"url":"http://localhost:9292/mcp","transport":"streamable_http"},
-            "robot":{"url":"http://192.168.0.99:9393/mcp","transport":"streamable_http"}
-        }'
-        Fallback (Dev): ein lokaler Server unter 9292.
-        """
         raw = os.getenv("MCP_SERVERS")
         if not raw:
-            # Dev-Default, damit es out-of-the-box funktioniert
-            return {"srv": {"url": "http://andi-desktop:9292/mcp", "transport": "streamable_http"}}
+            return {"srv": {"url": "http://ros-programs:9696/mcp", "transport": "streamable_http"}}
         try:
             servers = json.loads(raw)
             if not isinstance(servers, dict):
@@ -241,14 +211,12 @@ class LangchainService:
             self._MCP_LOAD_ERROR = None
             logger.info("Geladene MCP-Tools: %s", ", ".join(self._MCP_TOOLS.keys()) or "—")
         except Exception as e:
+            tb = traceback.format_exc()
+            logger.error("MCP-Tools konnten nicht geladen werden: %s\n%s", e, tb)
             self._MCP_TOOLS = {}
             self._MCP_LOAD_ERROR = e
-            logger.error("MCP-Tools konnten nicht geladen werden: %s", e)
         return self._MCP_TOOLS
 
-
-    async def load_mcp_tools(self):
-        return
 
     async def acall_tool(self, name: str, args: Dict[str, Any]) -> str:
         name = self._resolve_tool_name(name)
@@ -273,31 +241,5 @@ class LangchainService:
             )
         return f"Unbekanntes Tool: {name}"
 
-if __name__ == "__main__":
-    import sys
-    import asyncio
 
-    async def main():
-        token = os.getenv("TRYB_API_KEY", "dummy_token")
-        prompt = " ".join(sys.argv[1:]).strip() or "gib mir eine Zufallszahl"
 
-        body = {
-            "data": prompt,
-            "messageHistory": [],
-            "personality": {"description": "", "model": "gpt-4o"},
-        }
-
-        svc = LangchainService(token, body)
-
-        # Einmalige Ausführung (kein Streaming)
-        print("\n=== run_once_with ===")
-        result = await svc.run_once_with()
-        print(result)
-
-        # Streaming-Demo
-        print("\n=== streaming ===")
-        async for chunk in svc.stream_llm_tokens():
-            print(chunk, end="", flush=True)
-        print()  # Zeilenumbruch nach dem Stream
-
-    asyncio.run(main())

@@ -8,5 +8,6 @@ def generate_launch_description():
         [
             Node(package="programs", executable="program"),
             Node(package="programs", executable="proxy_program"),
+            Node(package="programs", executable="mcp_server"),
         ]
     )

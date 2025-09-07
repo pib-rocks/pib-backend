@@ -128,7 +128,7 @@ class ProgramNode(Node):
             )
             fd, code_python_file_path = tempfile.mkstemp()
             with os.fdopen(fd, "w") as file:
-                file.write(code_python)
+                file.write(ech)
         else:
             self.get_logger().info(
                 f"received unexpected source type: {request.source_type}."

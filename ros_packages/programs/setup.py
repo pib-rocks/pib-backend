@@ -25,6 +25,7 @@ setup(
         "console_scripts": [
             "program = programs.program:main",
             "proxy_program = programs.proxy_program:main",
+            "mcp_server = programs.mcp_server:main",
         ],
     },
 )

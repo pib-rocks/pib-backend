@@ -4,7 +4,7 @@ SHELL ["/bin/bash", "-c"]
 
 WORKDIR /app
 
-ENV MCP_SERVERS='{"srv": {"url": "http://andi-desktop:9292/mcp", "transport": "streamable_http"}}'
+ENV MCP_SERVERS='{"srv": {"url": "http://ros-programs:9696/mcp", "transport": "streamable_http"}}'
 
 RUN apt-get update && apt-get install --no-install-recommends -y curl
 
@@ -27,7 +27,7 @@ RUN pip install fastapi
 RUN pip install langchain
 RUN pip install langchain-mcp-adapters
 RUN pip install langgraph
-RUN pip install langchain_openai
+RUN pip install langchain-openai
 
 COPY ./pib_api/client ./client
 RUN pip install ./client
