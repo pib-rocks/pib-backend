@@ -88,7 +88,7 @@ services:
     depends_on:
       - rosbridge-ws
       - flask-app
-      
+
   pibsim_webots:
     image: pibsim_webots
     build:
@@ -174,6 +174,8 @@ services:
       - rosbridge-ws
       - pib-blockly-server
       - flask-app
+    ports:
+      - "9696:9696"
 
   ros-display:
     image: ros-display
@@ -187,10 +189,10 @@ services:
     volumes:
       # this is a socket that is used by the x-windowing-system
       # for cmmunication betweem clients and servers on the same
-      # machine. By mounting the socket of the docker-host, the 
+      # machine. By mounting the socket of the docker-host, the
       # display-node uses the x-server running on the host for
       # graphics-related communication
-      - /tmp/.X11-unix:/tmp/.X11-unix 
+      - /tmp/.X11-unix:/tmp/.X11-unix
     environment:
       - STATIC_IMAGE_DIR=/app/ros2_ws/display/static_images
       - DISPLAY=:0.0

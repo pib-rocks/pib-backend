@@ -10,7 +10,7 @@ import requests
 from public_api_client import (
     SPEECH_TO_TEXT_URL,
     TEXT_TO_SPEECH_URL,
-    VOICE_ASSISTANT_TEXT_URL,
+    LANGCHAIN_PROXY_URL
 )
 
 logging.basicConfig(
@@ -99,35 +99,45 @@ def chat_completion(
     public_api_token: str,
     image_base64: Optional[str] = None,
     model: str = "gpt-3.5-turbo",
-) -> Iterable[str]:
+) -> str:
     """
-    receive a textual llm response, that takes into account the provided description
+    Non-Streaming: Einfacher Request, gibt die Antwort als String zurück.
+    Erwartet, dass der Server eine JSON-Antwort liefert.
     """
-    headers = {"Accept": "text/event-stream", "Content-Type": "application/json"}
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    }
+    if public_api_token:
+        headers["Authorization"] = f"Bearer {public_api_token}"
 
-    # Claude does not accept empty strings as input
-    if (text is None) or (text == ""):
+    if not text:
         text = "echo 'I could not hear you, please repeat your message.'"
 
     body = {
         "data": text,
         "messageHistory": [
-            {"content": message.content, "isUser": message.is_user}
-            for message in message_history
+            {"content": m.content, "isUser": m.is_user} for m in message_history
         ],
         "personality": {"description": description, "model": model},
     }
-
     if image_base64 is not None:
         body["imageBase64"] = image_base64
 
-    response = _send_request(
-        "POST", VOICE_ASSISTANT_TEXT_URL, headers, body, True, public_api_token
+    # Einfache POST-Anfrage, kein Streaming
+    resp = _send_request(
+        "POST",
+        LANGCHAIN_PROXY_URL,
+        headers,
+        body,
+        False,  
+        public_api_token,
     )
 
-    line_bin: bytes
-    for line_bin in response.iter_lines():
-        line_str = line_bin.decode("utf-8")
-        if not line_str.startswith("data:"):
-            continue
-        yield json.loads(line_str[21:-1])
+    try:
+        data = resp.json()
+        # Nimm direkt den relevanten Key
+        return data.get("responseText") or data.get("text") or data.get("content") or ""
+    except Exception:
+        return resp.text or ""
+

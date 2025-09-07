@@ -16,9 +16,8 @@ RUN apt-get update --fix-missing && \
     apt-get install --no-install-recommends -y python3-pip && \
     pip install /tmp/pib_blockly_client && \
     pip install /tmp/pib_api_client && \
-    pip install requests==2.32.3
-
-
+    pip install requests==2.32.3 && \
+    pip install fastmcp==2.10.2
 
 COPY ./ros_packages/datatypes ros2_ws/datatypes
 COPY ./ros_packages/programs ros2_ws/programs

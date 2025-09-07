@@ -184,113 +184,28 @@ class ChatNode(Node):
             image_base64 = response.image_base64
 
         try:
-            # receive assistant-response in form of an iterable of tokens from the public-api
             with self.public_voice_client_lock:
-                tokens = public_voice_client.chat_completion(
+                full_text = public_voice_client.chat_completion(
                     text=content,
                     description=description,
                     message_history=message_history,
                     image_base64=image_base64,
                     model=personality.assistant_model.api_name,
                     public_api_token=self.token,
+                ) or ""                      # ← None-Schutz
+
+            msg = full_text.strip()
+            if msg:
+                self.executor.create_task(
+                    self.create_chat_message,
+                    chat_id,
+                    msg,
+                    False,
+                    False,
+                    True,
                 )
-
-            # regex for indentifying sentences
-            sentence_pattern = re.compile(
-                r"^(?!<pib-program>)(.*?)(([^\d | ^A-Z][\.|!|\?|:])|<pib-program>)",
-                re.DOTALL,
-            )
-            # regex-pattern for indentifying visual-code blocks
-            code_visual_pattern = re.compile(
-                r"^<pib-program>(.*?)</pib-program>", re.DOTALL
-            )
-
-            # the text that was currently collected by chaining together tokens
-            # at any given point in time, this string must not contain any leading whitespaces!
-            curr_text: str = ""
-            # previously collected text, that is waiting to be published as feedback
-            prev_text: Optional[str] = None
-            # for tracking if a message is an update or a new message
-            bool_update_chat_message: bool = False
-
-            for token in tokens:
-
-                if prev_text is not None:
-                    # publish the previously collected text in form of feedback
-                    feedback = Chat.Feedback()
-                    feedback.text = prev_text
-                    feedback.text_type = prev_text_type
-                    goal_handle.publish_feedback(feedback)
-                    prev_text = None
-                    prev_text_type = None
-
-                # add token to current text; remove leading white-spaces, if current-text is empty
-                curr_text = curr_text + (
-                    token if len(curr_text) > 0 else token.lstrip()
-                )
-
-                while (
-                    True
-                ):  # loop until current-text was not stripped during current iteration
-
-                    # if the goal was cancelled, return immediately
-                    if goal_handle.is_cancel_requested:
-                        goal_handle.canceled()
-                        return Chat.Result()
-
-                    # check if the collected text is visual-code
-                    code_visual_match = code_visual_pattern.search(curr_text)
-                    if code_visual_match is not None:
-                        # extract the visual-code by removing the opening + closing tag and store it as previous text
-                        code_visual = code_visual_match.group(1)
-                        prev_text = code_visual
-                        prev_text_type = Chat.Goal.TEXT_TYPE_CODE_VISUAL
-                        # create a chat message from the visual-code, including opening and closing tags
-                        chat_message_text = code_visual_match.group(0)
-                        self.executor.create_task(
-                            self.create_chat_message,
-                            chat_id,
-                            chat_message_text,
-                            False,
-                            bool_update_chat_message,
-                            True,
-                        )
-                        bool_update_chat_message = True
-                        # strip the current text
-                        curr_text = curr_text[code_visual_match.end() :].rstrip()
-                        continue
-
-                    # check if collected text is a sentence
-                    sentence_match = sentence_pattern.search(curr_text)
-                    if sentence_match is not None:
-                        # extract the visual-code by removing the opening + closing tag and store it as previous text
-                        sentence = sentence_match.group(1) + (
-                            sentence_match.group(3)
-                            if sentence_match.group(3) is not None
-                            else ""
-                        )
-                        prev_text = sentence
-                        prev_text_type = Chat.Goal.TEXT_TYPE_SENTENCE
-                        # create a chat message from the visual-code, including opening and closing tags
-                        chat_message_text = sentence
-                        self.executor.create_task(
-                            self.create_chat_message,
-                            chat_id,
-                            chat_message_text,
-                            False,
-                            bool_update_chat_message,
-                            True,
-                        )
-                        bool_update_chat_message = True
-                        # strip the current text
-                        curr_text = curr_text[
-                            sentence_match.end(
-                                3 if sentence_match.group(3) is not None else 1
-                            ) :
-                        ].rstrip()
-                        continue
-
-                    break
+            else:
+                self.get_logger().info("public-api returned empty response")
 
         except Exception as e:
             self.get_logger().error(f"failed to send request to public-api: {e}")
@@ -300,14 +215,10 @@ class ChatNode(Node):
         # return the rest of the received text, that has not been forwarded as feedback
         goal_handle.succeed()
 
-        # return the result
+        # Ergebnis zurückgeben (ganzer Text in einer Nachricht)
         result = Chat.Result()
-        if prev_text is None:
-            result.text = curr_text
-            result.text_type = Chat.Goal.TEXT_TYPE_SENTENCE
-        else:
-            result.text = prev_text
-            result.text_type = prev_text_type
+        result.text = msg  # komplette Antwort
+        result.text_type = Chat.Goal.TEXT_TYPE_SENTENCE
         return result
 
 
