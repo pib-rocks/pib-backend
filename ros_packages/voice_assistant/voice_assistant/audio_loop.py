@@ -53,8 +53,8 @@ CONFIG = {
     #},
 
     # (optional, handy while tuning)
-    # "input_audio_transcription": {},
-    # "output_audio_transcription": {}
+    "input_audio_transcription": {},
+    "output_audio_transcription": {}
 }
 # Topic name (ROS)
 ROS_AUDIO_TOPIC = os.getenv("ROS_AUDIO_TOPIC", "audio_stream")
@@ -354,10 +354,17 @@ class GeminiAudioLoop:
 
             turn = self.session.receive()
             async for resp in turn:
+                sc = getattr(resp, "server_content", None)
+                if sc:
+                    it = getattr(sc, "input_transcription", None)
+                    if it and getattr(it, "text", None):
+                        await self.get_logger().info(f"User: {it.text}")
+
+                    ot = getattr(sc, "output_transcription", None)
+                    if ot and getattr(ot, "text", None):
+                        await self.get_logger().info(f"Gemini: {ot.text}")
+
                 if data := getattr(resp, "data", None):
-                    # Log output bytes
-                    await self._log_output_bytes(data)
-                    # Enqueue for playback
                     self.audio_in_queue.put_nowait(data)
                 elif text := getattr(resp, "text", None):
                     print(text, end="")
