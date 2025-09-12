@@ -11,6 +11,7 @@ class Pose(db.Model):
         db.String(255), nullable=False, default=generate_uuid, unique=True
     )
     name = db.Column(db.String(255), nullable=False, unique=True)
+    deletable = db.Column(db.Boolean, nullable=False, default=True)
     motor_positions = db.relationship(
-        "MotorPosition", backref="pose", lazy=True, cascade="all,, delete-orphan"
+        "MotorPosition", backref="pose", lazy=True, cascade="all, delete-orphan"
     )

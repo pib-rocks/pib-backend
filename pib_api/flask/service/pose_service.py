@@ -23,7 +23,10 @@ def create_pose(pose_dto: dict[str, Any]) -> Pose:
 
 
 def delete_pose(pose_id: str) -> None:
-    db.session.delete(get_pose(pose_id))
+    pose = get_pose(pose_id)
+    if not pose.deletable:
+        raise ValueError(f"Pose '{pose.name}' is not deletable")
+    db.session.delete(pose)
     db.session.flush()
 
 
@@ -38,6 +41,8 @@ def _create_motor_position(motor_position_dto: dict[str, Any]) -> MotorPosition:
 
 def rename_pose(pose_id: str, pose_dto: dict[str, Any]) -> Pose:
     pose = get_pose(pose_id)
+    if not pose.deletable:
+        raise ValueError(f"Pose '{pose.name}' cannot be renamed.")
     pose.name = pose_dto["name"]
     db.session.flush()
     return pose

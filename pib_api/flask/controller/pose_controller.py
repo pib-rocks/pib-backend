@@ -34,12 +34,18 @@ def get_motor_positions_of_pose(pose_id: str):
 
 @bp.route("/<string:pose_id>", methods=["DELETE"])
 def delete_pose(pose_id: str):
-    pose_service.delete_pose(pose_id)
+    try:
+        pose_service.delete_pose(pose_id)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
     return "", 204
 
 
 @bp.route("/<string:pose_id>", methods=["PATCH"])
 def rename_pose(pose_id: str):
     pose_dto = pose_schema_name_only.load(request.json)
-    pose = pose_service.rename_pose(pose_id, pose_dto)
+    try:
+        pose = pose_service.rename_pose(pose_id, pose_dto)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
     return pose_schema_without_motor_positions.dump(pose)
