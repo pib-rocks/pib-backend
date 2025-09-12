@@ -13,8 +13,8 @@ class PoseSchema(SQLAutoWithCamelCaseSchema):
     motor_positions = fields.Nested(motor_positions_schema)
 
 
-poses_schema = PoseSchema(many=True, only=("pose_id", "name"))
-pose_schema = PoseSchema(only=("pose_id", "name", "motor_positions"))
+poses_schema = PoseSchema(many=True, only=("pose_id", "name", "deletable"))
+pose_schema = PoseSchema(only=("pose_id", "name", "motor_positions", "deletable"))
 create_pose_schema = PoseSchema(only=("name", "motor_positions"))
 pose_schema_motor_positions_only = PoseSchema(only=("motor_positions",))
 pose_schema_name_only = PoseSchema(only=("name",))
