@@ -6,7 +6,7 @@ from model.motor_position_model import MotorPosition
 
 
 def get_all_poses() -> List[Pose]:
-    return Pose.query.all()
+    return Pose.query.filter().order_by(Pose.deletable.asc()).all()
 
 
 def get_pose(pose_id: str) -> Pose:
