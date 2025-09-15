@@ -18,4 +18,4 @@ pose_schema = PoseSchema(only=("pose_id", "name", "motor_positions", "deletable"
 create_pose_schema = PoseSchema(only=("name", "motor_positions"))
 pose_schema_motor_positions_only = PoseSchema(only=("motor_positions",))
 pose_schema_name_only = PoseSchema(only=("name",))
-pose_schema_without_motor_positions = PoseSchema(only=("pose_id", "name"))
+pose_schema_without_motor_positions = PoseSchema(only=("pose_id", "name", "deletable"))
