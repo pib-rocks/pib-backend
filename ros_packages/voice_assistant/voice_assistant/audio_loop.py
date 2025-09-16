@@ -358,11 +358,11 @@ class GeminiAudioLoop:
                 if sc:
                     it = getattr(sc, "input_transcription", None)
                     if it and getattr(it, "text", None):
-                        await self.get_logger().info(f"User: {it.text}")
+                        await logger.info(f"User: {it.text}")
 
                     ot = getattr(sc, "output_transcription", None)
                     if ot and getattr(ot, "text", None):
-                        await self.get_logger().info(f"Gemini: {ot.text}")
+                        await logger.info(f"Gemini: {ot.text}")
 
                 if data := getattr(resp, "data", None):
                     self.audio_in_queue.put_nowait(data)
