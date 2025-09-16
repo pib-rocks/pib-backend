@@ -35,20 +35,26 @@ class LowCpuDOAPublisher(Node):
         self.publisher_ = self.create_publisher(Int32, "doa_angle", 10)
 
         # Configurable intervals
-        self.poll_interval = self._get_env_float("DOA_PUBLISH_INTERVAL", self.DEFAULT_DOA_PUBLISH_INTERVAL)
-        self.reconnect_interval = self._get_env_float("DOA_RECONNECT_INTERVAL", self.DEFAULT_RECONNECT_INTERVAL)
+        self.poll_interval = self._get_env_float(
+            "DOA_PUBLISH_INTERVAL", self.DEFAULT_DOA_PUBLISH_INTERVAL
+        )
+        self.reconnect_interval = self._get_env_float(
+            "DOA_RECONNECT_INTERVAL", self.DEFAULT_RECONNECT_INTERVAL
+        )
 
         # USB device / tuning handle
-        self._dev = None               # type: Optional[usb.core.Device]
-        self._tuning = None            # type: Optional[Tuning]
-        self._last_direction = None    # last published direction
+        self._dev = None  # type: Optional[usb.core.Device]
+        self._tuning = None  # type: Optional[Tuning]
+        self._last_direction = None  # last published direction
 
         # Thread control
         self._stop_event = threading.Event()
         self._thread = threading.Thread(target=self._worker_loop, daemon=True)
 
         # Start worker thread (it handles connection attempts internally)
-        self.get_logger().info(f"DOA poll interval: {self.poll_interval}s, reconnect interval: {self.reconnect_interval}s")
+        self.get_logger().info(
+            f"DOA poll interval: {self.poll_interval}s, reconnect interval: {self.reconnect_interval}s"
+        )
         self._thread.start()
 
     def _get_env_float(self, varname: str, default: float) -> float:
@@ -58,7 +64,9 @@ class LowCpuDOAPublisher(Node):
         try:
             return float(val)
         except ValueError:
-            self.get_logger().warning(f"Invalid {varname}='{val}', using default {default}")
+            self.get_logger().warning(
+                f"Invalid {varname}='{val}', using default {default}"
+            )
             return default
 
     def _find_device(self) -> Optional[usb.core.Device]:
