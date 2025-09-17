@@ -10,6 +10,7 @@ import rclpy
 from rclpy.node import Node
 from rclpy.executors import SingleThreadedExecutor
 from std_msgs.msg import Int16MultiArray
+from pib_api_client import voice_assistant_client
 
 import pyaudio
 from google import genai
@@ -166,6 +167,7 @@ class GeminiAudioLoop:
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._is_listening = False
+        self._chat_id = None
 
         # Initialized in run()
         self.audio_in_queue: asyncio.Queue[bytes]
@@ -190,12 +192,13 @@ class GeminiAudioLoop:
     def is_listening(self) -> bool:
         return self._is_listening
 
-    def start(self) -> None:
+    def start(self, chat_id) -> None:
         """Start the Gemini audio loop in a background thread."""
         if self._is_listening:
             logger.info("GeminiAudioLoop is already running.")
             return
 
+        self._chat_id = chat_id
         self._stop_event.clear()
         self._thread = threading.Thread(target=self._run_wrapper, daemon=True)
         self._thread.start()
@@ -404,7 +407,22 @@ class GeminiAudioLoop:
         client = genai.Client(api_key=self.api_key)
         ros_started = False
         try:
-            async with client.aio.live.connect(model=MODEL, config=CONFIG) as session:
+            successful, personality = voice_assistant_client.get_personality_from_chat(
+                    self._chat_id
+                )
+            if not successful:
+                self.get_logger().error(f"no personality found for id {self._chat_id}")
+            description = (
+                personality.description
+                if personality.description is not None
+                else "Du bist pib, ein humanoider Roboter."
+            )
+
+            cfg = dict(CONFIG)
+            # SDK accepts `system_instruction` in config; it persists across turns.
+            cfg["system_instruction"] = description
+
+            async with client.aio.live.connect(model=MODEL, config=cfg) as session:
                 self.session = session
                 self.audio_in_queue = asyncio.Queue()  # playback side
                 self.out_queue = asyncio.Queue()       # ROS → Gemini side
