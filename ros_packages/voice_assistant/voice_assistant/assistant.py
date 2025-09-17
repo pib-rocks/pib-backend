@@ -565,7 +565,7 @@ class VoiceAssistantNode(Node):
         # GEMINI path: short-circuit legacy logic
         if "gemini" in api_name:
             if not self.gemini_loop.is_listening:
-                self.gemini_loop.start()
+                self.gemini_loop.start(chat_id=chat_id)
                 self.play_audio_from_file(START_SIGNAL_FILE)
             else:
                 self.get_logger().info("Gemini already running; no-op")
