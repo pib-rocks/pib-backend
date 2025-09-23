@@ -31,31 +31,16 @@ logger = logging.getLogger("GeminiAudioLoop")
 # ——— Model + audio IO constants ———
 pya = pyaudio.PyAudio()
 FORMAT = pyaudio.paInt16
-CHANNELS = 1                 # send mono to Gemini
-SEND_SAMPLE_RATE = 16000     # recorder publishes 16 kHz mono
+CHANNELS = 1  # send mono to Gemini
+SEND_SAMPLE_RATE = 16000  # recorder publishes 16 kHz mono
 RECEIVE_SAMPLE_RATE = 24000  # model replies at 24 kHz (your speaker supports it)
 CHUNK_SIZE = 1024
 
 MODEL = "gemini-2.5-flash-preview-native-audio-dialog"
 CONFIG = {
     "response_modalities": ["AUDIO"],
-
-   # "realtime_input_config": {
-
-
-        #  Make VAD less trigger-happy so speaker bleed doesn’t look like “user talking” 
-#        "automatic_activity_detection": {
-            #"start_of_speech_sensitivity": "START_SENSITIVITY_LOW",
-            #"end_of_speech_sensitivity":   "END_SENSITIVITY_LOW",
- #           "prefix_padding_ms": 200,      # require ~200 ms of speech before committing start
-  #          "silence_duration_ms": 900     # need ~0.9 s quiet to commit end
-    #    },
-        # (optional) "turn_coverage": "TURN_INCLUDES_ONLY_ACTIVITY"
-    #},
-
-    # (optional, handy while tuning)
     "input_audio_transcription": {},
-    "output_audio_transcription": {}
+    "output_audio_transcription": {},
 }
 # Topic name (ROS)
 ROS_AUDIO_TOPIC = os.getenv("ROS_AUDIO_TOPIC", "audio_stream")
@@ -70,7 +55,9 @@ class RosAudioBridge:
     and forwards chunks into an asyncio.Queue that send_realtime() consumes.
     """
 
-    def __init__(self, topic: str, loop: asyncio.AbstractEventLoop, out_queue: asyncio.Queue):
+    def __init__(
+        self, topic: str, loop: asyncio.AbstractEventLoop, out_queue: asyncio.Queue
+    ):
         self._topic = topic
         self._loop = loop
         self._q = out_queue
@@ -79,7 +66,9 @@ class RosAudioBridge:
         self._started_evt = threading.Event()
 
     def start(self):
-        self._thread = threading.Thread(target=self._run, name="RosAudioBridge", daemon=True)
+        self._thread = threading.Thread(
+            target=self._run, name="RosAudioBridge", daemon=True
+        )
         self._thread.start()
         self._started_evt.wait(timeout=3.0)
 
@@ -95,6 +84,7 @@ class RosAudioBridge:
             AudioData = None
             try:
                 from audio_common_msgs.msg import AudioData as _AudioData  # type: ignore
+
                 AudioData = _AudioData
             except Exception:
                 pass
@@ -110,20 +100,28 @@ class RosAudioBridge:
                     self._q = q
                     self._stop_evt = stop_evt
                     self._subs = []
-                    self._subs.append(self.create_subscription(
-                        Int16MultiArray, topic, self._cb_int16, 10
-                    ))
+                    self._subs.append(
+                        self.create_subscription(
+                            Int16MultiArray, topic, self._cb_int16, 10
+                        )
+                    )
                     if AudioData is not None:
-                        self._subs.append(self.create_subscription(
-                            AudioData, topic, self._cb_bytes, 10
-                        ))
-                    self.get_logger().info(f"Subscribed to '{topic}' for PCM16 mono @16k")
+                        self._subs.append(
+                            self.create_subscription(
+                                AudioData, topic, self._cb_bytes, 10
+                            )
+                        )
+                    self.get_logger().info(
+                        f"Subscribed to '{topic}' for PCM16 mono @16k"
+                    )
 
                 def _enqueue(self, payload: bytes):
                     if self._stop_evt.is_set():
                         return
+
                     async def _put():
                         await self._q.put({"data": payload, "mime_type": "audio/pcm"})
+
                     try:
                         fut = asyncio.run_coroutine_threadsafe(_put(), self._loop)
                         fut.result(timeout=0.25)
@@ -156,7 +154,6 @@ class RosAudioBridge:
 
         except Exception:
             logger.exception("RosAudioBridge crashed")
-
 
 
 # ——————————————————————————————————————————
@@ -233,7 +230,7 @@ class GeminiAudioLoop:
                 drained += 1
         except QueueEmpty:
             if drained:
-                logger.info("Drained %d items from queue.", drained)
+                logger.debug("Drained %d items from queue.", drained)
 
     async def _flush_queues(self, where: str):
         try:
@@ -244,7 +241,7 @@ class GeminiAudioLoop:
             self._drain_queue(self.out_queue)
         except Exception:
             pass
-        logger.info("Queues flushed (%s).", where)
+        logger.debug("Queues flushed (%s).", where)
 
     # ——— Turn log helpers ———
     async def _ensure_log_dirs(self):
@@ -277,7 +274,9 @@ class GeminiAudioLoop:
             self._out_wav.setsampwidth(2)
             self._out_wav.setframerate(RECEIVE_SAMPLE_RATE)
 
-            logger.info("Turn %04d: logging to %s and %s", self._turn_id, in_path, out_path)
+            logger.debug(
+                "Turn %04d: logging to %s and %s", self._turn_id, in_path, out_path
+            )
 
     async def _close_turn_logs(self):
         if self._log_lock is None:
@@ -327,12 +326,14 @@ class GeminiAudioLoop:
     # — tasks —
     async def _listen_from_ros(self):
         """Bridge thread pushes data to out_queue; we just idle until stop."""
-        logger.info(f"Listening from ROS topic '{ROS_AUDIO_TOPIC}' (expect PCM16 mono @16k).")
+        logger.info(
+            f"Listening from ROS topic '{ROS_AUDIO_TOPIC}' (expect PCM16 mono @16k)."
+        )
         try:
             while not self._stop_event.is_set():
                 await asyncio.sleep(0.1)
         except asyncio.CancelledError:
-            logger.info("_listen_from_ros: cancelled")
+            logger.debug("_listen_from_ros: cancelled")
             raise
 
     async def send_realtime(self):
@@ -345,7 +346,7 @@ class GeminiAudioLoop:
                     await self._log_input_bytes(data)
                 await self.session.send_realtime_input(audio=msg)
         except asyncio.CancelledError:
-            logger.info("send_realtime: cancelled")
+            logger.debug("send_realtime: cancelled")
             raise
         except Exception:
             logger.exception("send_realtime error")
@@ -371,10 +372,9 @@ class GeminiAudioLoop:
                     self.audio_in_queue.put_nowait(data)
                 elif text := getattr(resp, "text", None):
                     print(text, end="")
-                
+
             while not self.audio_in_queue.empty():
                 self.audio_in_queue.get_nowait()
-
 
     async def play_audio(self):
         # Output at 24 kHz mono (your speaker supports this)
@@ -386,7 +386,11 @@ class GeminiAudioLoop:
             output=True,
         )
         try:
-            logger.info("Playback stream opened: rate=%s, channels=%s", RECEIVE_SAMPLE_RATE, CHANNELS)
+            logger.info(
+                "Playback stream opened: rate=%s, channels=%s",
+                RECEIVE_SAMPLE_RATE,
+                CHANNELS,
+            )
         except Exception:
             pass
 
@@ -395,7 +399,7 @@ class GeminiAudioLoop:
                 pcm = await self.audio_in_queue.get()
                 await asyncio.to_thread(self.playback_stream.write, pcm)
         except asyncio.CancelledError:
-            logger.info("play_audio: cancelled, closing playback stream")
+            logger.debug("play_audio: cancelled, closing playback stream")
             try:
                 self.playback_stream.close()
             finally:
@@ -408,8 +412,8 @@ class GeminiAudioLoop:
         ros_started = False
         try:
             successful, personality = voice_assistant_client.get_personality_from_chat(
-                    self._chat_id
-                )
+                self._chat_id
+            )
             if not successful:
                 self.get_logger().error(f"no personality found for id {self._chat_id}")
             description = (
@@ -425,7 +429,7 @@ class GeminiAudioLoop:
             async with client.aio.live.connect(model=MODEL, config=cfg) as session:
                 self.session = session
                 self.audio_in_queue = asyncio.Queue()  # playback side
-                self.out_queue = asyncio.Queue()       # ROS → Gemini side
+                self.out_queue = asyncio.Queue()  # ROS → Gemini side
                 self._log_lock = asyncio.Lock()
 
                 # Ensure log dirs exist early
@@ -433,7 +437,9 @@ class GeminiAudioLoop:
 
                 # start ROS bridge
                 topic = os.getenv("ROS_AUDIO_TOPIC", "audio_stream")
-                self._ros_bridge = RosAudioBridge(topic, asyncio.get_running_loop(), self.out_queue)
+                self._ros_bridge = RosAudioBridge(
+                    topic, asyncio.get_running_loop(), self.out_queue
+                )
                 self._ros_bridge.start()
                 ros_started = True
                 logger.info("RosAudioBridge started.")
@@ -445,13 +451,15 @@ class GeminiAudioLoop:
                     asyncio.create_task(self.play_audio()),
                 ]
 
-                done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION)
+                done, pending = await asyncio.wait(
+                    tasks, return_when=asyncio.FIRST_EXCEPTION
+                )
                 for t in done:
                     if t.exception():
                         raise t.exception()
 
         except asyncio.CancelledError:
-            logger.info("GeminiAudioLoop.run: cancelled")
+            logger.debug("GeminiAudioLoop.run: cancelled")
         except Exception:
             logger.exception("GeminiAudioLoop.run: unexpected error")
         finally:
@@ -490,6 +498,7 @@ def main():
     # GeminiAudioLoop(os.getenv("GOOGLE_API_KEY", "")).start()
     loop = GeminiAudioLoop(api_key=os.getenv("GOOGLE_API_KEY", ""))
     loop.start()
+
 
 if __name__ == "__main__":
     main()

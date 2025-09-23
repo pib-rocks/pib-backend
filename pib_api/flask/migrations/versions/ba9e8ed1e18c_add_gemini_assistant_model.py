@@ -34,7 +34,5 @@ def upgrade():
 def downgrade():
     conn = op.get_bind()
     conn.execute(
-        sa.text(
-            "DELETE FROM assistant_model WHERE visual_name = 'Gemini 2.5 Flash'"
-        )
+        sa.text("DELETE FROM assistant_model WHERE visual_name = 'Gemini 2.5 Flash'")
     )

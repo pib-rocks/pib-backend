@@ -1,14 +1,15 @@
 # audio_streamer.py
 
-import os
-import traceback
-import numpy as np
-import pyaudio
 
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Int16MultiArray
 from datatypes.srv import GetMicConfiguration
+import pyaudio
+import numpy as np
+import os
+import traceback
+
 
 
 class AudioStreamer(Node):
@@ -102,7 +103,13 @@ class AudioStreamer(Node):
         if not self.audio_stream:
             self.get_logger().error(
                 "Failed to open audio stream after trying fallbacks.\n"
-                + ("" if not last_err else "".join(traceback.format_exception_only(type(last_err), last_err)).strip())
+                + (
+                    ""
+                    if not last_err
+                    else "".join(
+                        traceback.format_exception_only(type(last_err), last_err)
+                    ).strip()
+                )
             )
             rclpy.shutdown()
             return
@@ -113,7 +120,10 @@ class AudioStreamer(Node):
             rclpy.shutdown()
             return
 
-        if self.processed_channel_index < 0 or self.processed_channel_index >= self.open_channels:
+        if (
+            self.processed_channel_index < 0
+            or self.processed_channel_index >= self.open_channels
+        ):
             self.get_logger().warning(
                 f"MIC_PROCESSED_CHANNEL={self.processed_channel_index} out of range "
                 f"(0..{self.open_channels-1}); using 0."
@@ -130,10 +140,14 @@ class AudioStreamer(Node):
             f"Env: MIC_DEVICE='{self.mic_preferred_name}', MIC_CHANNELS={self.requested_channels}, "
             f"MIC_RATE={self.requested_rate}, MIC_PROCESSED_CHANNEL={self.processed_channel_index}"
         )
-        self.get_logger().info("Mic configuration service ready (get_mic_configuration)")
+        self.get_logger().info(
+            "Mic configuration service ready (get_mic_configuration)"
+        )
 
         # Publish timer
-        self.timer = self.create_timer(self.chunk_size / float(self.sample_rate), self.publish_audio)
+        self.timer = self.create_timer(
+            self.chunk_size / float(self.sample_rate), self.publish_audio
+        )
 
     # ----- ROS service -----
     def get_mic_configuration(self, request, response):
@@ -147,8 +161,12 @@ class AudioStreamer(Node):
     def select_input_device(self):
         """Select preferred mic by substring; else fall back to default."""
         found = None
-        hostapis = {self.py_audio.get_host_api_info_by_index(i)["index"]: self.py_audio.get_host_api_info_by_index(i)["name"]
-                    for i in range(self.py_audio.get_host_api_count())}
+        hostapis = {
+            self.py_audio.get_host_api_info_by_index(i)[
+                "index"
+            ]: self.py_audio.get_host_api_info_by_index(i)["name"]
+            for i in range(self.py_audio.get_host_api_count())
+        }
         for i in range(self.py_audio.get_device_count()):
             info = self.py_audio.get_device_info_by_index(i)
             name = info.get("name", "")
@@ -193,7 +211,9 @@ class AudioStreamer(Node):
                 if frames * self.open_channels != buf.size:
                     # Truncate to whole frames if we got a partial
                     buf = buf[: frames * self.open_channels]
-                buf = buf.reshape(frames, self.open_channels)[:, self.processed_channel_index]
+                buf = buf.reshape(frames, self.open_channels)[
+                    :, self.processed_channel_index
+                ]
 
             # Publish mono PCM (selected channel only)
             msg = Int16MultiArray()
