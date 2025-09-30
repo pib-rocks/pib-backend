@@ -328,13 +328,6 @@ elif is_ubuntu_noble || is_raspbian_bookworm; then
   print INFO "Going to install Cerebra via Docker"
   source "$SETUP_INSTALLATION_DIR/docker_install.sh" || print ERROR "failed to install Cerebra via Docker"
   
-  # Install Docker container cleanup service
-  print INFO "Setting up Docker container cleanup service"
-  sudo cp "$BACKEND_DIR/setup/setup_files/docker_cleaner.service" /etc/systemd/system/
-  sudo systemctl daemon-reload
-  sudo systemctl enable docker_cleaner.service
-  sudo systemctl start docker_cleaner.service
-  print SUCCESS "Docker container cleanup service installed and started"
 fi
 cleanup
 
