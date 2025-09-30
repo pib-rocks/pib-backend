@@ -77,6 +77,14 @@ function install_docker_engine() {
     print SUCCESS "Docker Engine installed"
 }
 
+function setup_docker_cleaner_service() {
+    print INFO "Setting up Docker container cleanup service"
+    sudo cp "$BACKEND_DIR/setup/setup_files/docker_cleaner.service" /etc/systemd/system/
+    sudo systemctl daemon-reload
+    sudo systemctl enable docker_cleaner.service
+    sudo systemctl start docker_cleaner.service
+    print SUCCESS "Docker container cleanup service installed and started"
+}
 
 function start_container() {
     print INFO "Starting container"
@@ -90,4 +98,5 @@ function start_container() {
 create_xhost_service || print ERROR "failed to create service for xhost permission management"
 install_docker_engine || print ERROR "failed to install docker engine"
 start_container || print ERROR "failed to start containers"
+setup_docker_cleaner_service || print ERROR "failed to setup docker cleaner service"
 sudo chmod 777 "$BACKEND_DIR/pib_api/flask/pibdata.db"

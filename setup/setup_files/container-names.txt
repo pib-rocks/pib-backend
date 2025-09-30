@@ -1,10 +1,9 @@
-multirepo-angular-motors-1
 multirepo-ros-motors-1
 multirepo-angular-app-1
 multirepo-ros-programs-1
 multirepo-ros-voice-assistant-1
 multirepo-ros-camera-1
-multirepo-ros-audio-lo-1
+multirepo-ros-audio-io-1
 multirepo-flask-app-1
 multirepo-pib-blockly-server-1
 multirepo-rosbridge-ws-1
