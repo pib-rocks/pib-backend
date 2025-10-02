@@ -74,6 +74,8 @@ function update_docker_cleaner() {
     else
         print ERROR "Docker cleaner service file does not exist"
     fi
+
+    sudo usermod -aG docker pib 
 }
 
 # Check correct user
