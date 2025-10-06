@@ -315,7 +315,6 @@ if is_raspbian_bookworm; then
 fi
 
 install_system_packages || { print ERROR "failed to install system packages"; return 1; }
-sudo usermod -aG docker pib || { print ERROR "failed to add user 'pib' to docker group"; return 1; }
 clone_repositories || { print ERROR "failed to clone repositories"; return 1; }
 move_setup_files || print ERROR "failed to move setup files"
 install_DBbrowser || print ERROR "failed to install DB browser"
@@ -328,7 +327,7 @@ if [ "$INSTALL_METHOD" = "legacy" ]; then
 elif is_ubuntu_noble || is_raspbian_bookworm; then
   print INFO "Going to install Cerebra via Docker"
   source "$SETUP_INSTALLATION_DIR/docker_install.sh" || print ERROR "failed to install Cerebra via Docker"
-  
+  sudo usermod -aG docker pib || { print ERROR "failed to add user 'pib' to docker group"; return 1; }
 fi
 cleanup
 
