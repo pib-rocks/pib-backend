@@ -7,7 +7,6 @@ Requires=docker.service
 Type=oneshot
 ExecStart=/bin/bash /home/pib/app/pib-backend/setup/setup_files/docker_cleaner.sh
 User=pib
-Environment="PYTHONUNBUFFERED=1"
 StandardOutput=journal
 StandardError=journal
 
