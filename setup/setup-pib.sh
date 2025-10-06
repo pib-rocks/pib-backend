@@ -90,8 +90,8 @@ function is_ubuntu_noble() {
 
 function is_supported_raspbian(){
   local supported_versions=("bookworm" "trixie")
-  [[ ("$DISTRIBUTION" == "raspbian" || "$DISTRIBUTION" == "debian") ]] &&
-  [[ " ${supported_versions[@]} " =~ " ${DIST_VERSION} " ]]
+  [[ ("$DISTRIBUTION" == "raspbian" || "$DISTRIBUTION" == "debian") &&
+  " ${supported_versions[@]} " =~ " ${DIST_VERSION} " ]]
 }
 
 function check_distribution() {
