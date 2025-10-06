@@ -1,3 +1,4 @@
+multirepo-angular-app-1
 multirepo-ros-motors-1
 multirepo-ros-programs-1
 multirepo-ros-voice-assistant-1
