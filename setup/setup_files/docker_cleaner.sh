@@ -1,7 +1,7 @@
 #!/bin/bash
 
 CONFIG_DIR="/home/pib/app/pib-backend/setup/setup_files"
-CONTAINER_NAMES_FILE="${CONFIG_DIR}/container-names.txt"
+CONTAINER_NAMES_FILE="${CONFIG_DIR}/docker-image-names.txt"
 LOG_FILE="${CONFIG_DIR}/docker-container-cleanup.log"
 
 mkdir -p "$CONFIG_DIR"
@@ -27,32 +27,33 @@ log "Starting Docker container cleanup"
 
 REMOVED=0
 
-# Read each container name from the file and remove stopped containers
-while IFS= read -r name || [[ -n "$name" ]]; do
+
+# Read each image name from the file and remove stopped containers by image
+while IFS= read -r image || [[ -n "$image" ]]; do
     # Skip empty lines and comments
-    [[ -z "$name" || "$name" =~ ^[[:space:]]*# ]] && continue
-    
+    [[ -z "$image" || "$image" =~ ^[[:space:]]*# ]] && continue
+
     # Trim whitespace
-    name=$(echo "$name" | xargs)
-    
-    log "Processing container: $name"
-    
-    # Get IDs of stopped containers matching the name
-    ids=$(docker ps -a --filter "name=$name" --filter "status=exited" --format "{{.ID}}")
-    
+    image=$(echo "$image" | xargs)
+
+    log "Processing image: $image"
+
+    # Get IDs of stopped containers matching the image name
+    ids=$(docker ps -a --filter "ancestor=$image" --filter "status=exited" --format "{{.ID}}")
+
     if [[ -n "$ids" ]]; then
-        log "Found stopped containers for $name: $ids"
+        log "Found stopped containers for image $image: $ids"
     else
-        log "No stopped containers found for $name"
+        log "No stopped containers found for image $image"
     fi
-    
+
     # Remove each stopped container and increment counter
     for id in $ids; do
         if docker rm "$id" >> "$LOG_FILE" 2>&1; then
             ((REMOVED++))
-            log "Successfully removed container $id ($name)"
+            log "Successfully removed container $id (image: $image)"
         else
-            log "ERROR: Failed to remove container $id ($name)"
+            log "ERROR: Failed to remove container $id (image: $image)"
         fi
     done
 done < "$CONTAINER_NAMES_FILE"
