@@ -1,0 +1,12 @@
+pib-blockly-server
+flask_api
+ros-camera
+ros_motors
+ros_voice_assistant
+ros_programs
+ros-display
+ros-audio-io
+pibsim_webots
+multirepo-angular-app
+multirepo-rosbridge-ws
+cerebra
