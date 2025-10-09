@@ -1,11 +1,11 @@
 [Unit]
-Description=Docker Container Cleanup Service
+Description=Docker Cache Cleanup Service
 After=docker.service
 Requires=docker.service
 
 [Service]
 Type=oneshot
-ExecStart=/bin/bash /home/pib/app/pib-backend/setup/setup_files/docker_cleaner.sh
+ExecStart=/usr/bin/docker builder prune -f
 User=pib
 StandardOutput=journal
 StandardError=journal
