@@ -320,6 +320,8 @@ if is_supported_raspbian; then
 fi
 
 install_system_packages || { print ERROR "failed to install system packages"; return 1; }
+sudo locale-gen en_US.UTF-8 || { print ERROR "failed to generate locale"; return 1; }
+sudo update-locale LANG=en_US.UTF-8 || { print ERROR "failed to update locale"; return 1; }
 clone_repositories || { print ERROR "failed to clone repositories"; return 1; }
 move_setup_files || print ERROR "failed to move setup files"
 install_DBbrowser || print ERROR "failed to install DB browser"
