@@ -52,7 +52,7 @@ class RelayControl(Node):
             self.state.turned_on = turned_on
         except Exception as e:
             self.get_logger().error(
-                f"following error occured while trying to update solid state relay state: {str(e)}."
+                f"following error occurred while trying to update solid state relay state: {str(e)}."
             )
             return False
 
