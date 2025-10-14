@@ -17,34 +17,68 @@ down_revision = "ddd0daa8e6f5"
 branch_labels = None
 depends_on = None
 
-# TODO: add real startup positions and add calibration positions
-motor_positions_startup = {
-    "turn_head_motor": -4000,
-    "tilt_forward_motor": 0,
-    "upper_arm_left_rotation": -4000,
-    "elbow_left": 0,
-    "lower_arm_left_rotation": 0,
-    "shoulder_vertical_left": 0,
-    "shoulder_horizontal_left": 0,
-    "upper_arm_right_rotation": -4000,
-    "elbow_right": 0,
-    "lower_arm_right_rotation": 0,
-    "shoulder_vertical_right": 0,
-    "shoulder_horizontal_right": 0,
-    "thumb_right_opposition": 0,
-    "thumb_right_stretch": 0,
-    "index_right_stretch": 0,
-    "middle_right_stretch": 0,
-    "ring_right_stretch": 0,
-    "pinky_right_stretch": 0,
-    "thumb_left_opposition": 0,
-    "thumb_left_stretch": 0,
-    "index_left_stretch": 0,
-    "middle_left_stretch": 0,
-    "ring_left_stretch": 0,
-    "pinky_left_stretch": 0,
-    "wrist_left": 0,
-    "wrist_right": 0,
+all_motors = [
+    "turn_head_motor",
+    "tilt_forward_motor",
+    "upper_arm_left_rotation",
+    "elbow_left",
+    "lower_arm_left_rotation",
+    "shoulder_vertical_left",
+    "shoulder_horizontal_left",
+    "upper_arm_right_rotation",
+    "elbow_right",
+    "lower_arm_right_rotation",
+    "shoulder_vertical_right",
+    "shoulder_horizontal_right",
+    "thumb_right_opposition",
+    "thumb_right_stretch",
+    "index_right_stretch",
+    "middle_right_stretch",
+    "ring_right_stretch",
+    "pinky_right_stretch",
+    "thumb_left_opposition",
+    "thumb_left_stretch",
+    "index_left_stretch",
+    "middle_left_stretch",
+    "ring_left_stretch",
+    "pinky_left_stretch",
+    "wrist_left",
+    "wrist_right",
+]
+
+overrides_startup = {
+    "elbow_left": 5500,
+    "elbow_right": 5500,
+    "thumb_right_opposition": -9000,
+    "thumb_right_stretch": -9000,
+    "index_right_stretch": -9000,
+    "middle_right_stretch": -9000,
+    "ring_right_stretch": -9000,
+    "pinky_right_stretch": -9000,
+    "thumb_left_opposition": -9000,
+    "thumb_left_stretch": -9000,
+    "index_left_stretch": -9000,
+    "middle_left_stretch": -9000,
+    "ring_left_stretch": -9000,
+    "pinky_left_stretch": -9000,
+    "shoulder_vertical_left": -9000,
+    "shoulder_horizontal_left": -9000,
+    "shoulder_vertical_right": -9000,
+    "shoulder_horizontal_right": -9000,
+}
+overrides_calibration = {
+    "thumb_right_opposition": -9000,
+    "thumb_right_stretch": -9000,
+    "index_right_stretch": -9000,
+    "middle_right_stretch": -9000,
+    "ring_right_stretch": -9000,
+    "pinky_right_stretch": -9000,
+    "thumb_left_opposition": -9000,
+    "thumb_left_stretch": -9000,
+    "index_left_stretch": -9000,
+    "middle_left_stretch": -9000,
+    "ring_left_stretch": -9000,
+    "pinky_left_stretch": -9000,
 }
 
 
@@ -72,8 +106,8 @@ def upgrade():
 
     # add startup positions
     startup_values = " UNION ALL ".join(
-        f"SELECT '{motor}', {pos}, id FROM pose WHERE name='Startup/Resting'"
-        for motor, pos in motor_positions_startup.items()
+        f"SELECT '{motor}', {overrides_startup.get(motor, 0)}, id FROM pose WHERE name='Startup/Resting'"
+        for motor in all_motors
     )
     op.execute(
         f"INSERT OR IGNORE INTO motor_position (motor_name, position, pose_id) {startup_values}"
@@ -81,8 +115,8 @@ def upgrade():
 
     # add calibration positions
     calibration_values = " UNION ALL ".join(
-        f"SELECT '{motor}', 0, id FROM pose WHERE name='Calibration'"
-        for motor in motor_positions_startup.keys()
+        f"SELECT '{motor}', {overrides_calibration.get(motor, 0)}, id FROM pose WHERE name='Calibration'"
+        for motor in all_motors
     )
     op.execute(
         f"INSERT OR IGNORE INTO motor_position (motor_name, position, pose_id) {calibration_values}"
