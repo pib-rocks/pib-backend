@@ -326,7 +326,7 @@ if is_supported_raspbian; then
 fi
 
 install_system_packages || { print ERROR "failed to install system packages"; return 1; }
-install_locale || || { print ERROR "failed to install locale"; return 1; }
+install_locale || { print ERROR "failed to install locale"; return 1; }
 clone_repositories || { print ERROR "failed to clone repositories"; return 1; }
 move_setup_files || print ERROR "failed to move setup files"
 install_DBbrowser || print ERROR "failed to install DB browser"
