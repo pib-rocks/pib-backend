@@ -145,6 +145,12 @@ function install_system_packages() {
     print SUCCESS "Installing system packages completed"
 }
 
+function install_locale() {
+  sudo apt-get install -y locales
+  sudo locale-gen en_US.UTF-8
+  sudo dpkg-reconfigure locales
+  sudo update-locale LANG=en_US.UTF-8
+}
 
 # function to clone pib repositories to APP_DIR (~/app) directory
 function clone_repositories() {
@@ -320,8 +326,7 @@ if is_supported_raspbian; then
 fi
 
 install_system_packages || { print ERROR "failed to install system packages"; return 1; }
-sudo locale-gen en_US.UTF-8 || { print ERROR "failed to generate locale"; return 1; }
-sudo update-locale LANG=en_US.UTF-8 || { print ERROR "failed to update locale"; return 1; }
+install_locale || || { print ERROR "failed to install locale"; return 1; }
 clone_repositories || { print ERROR "failed to clone repositories"; return 1; }
 move_setup_files || print ERROR "failed to move setup files"
 install_DBbrowser || print ERROR "failed to install DB browser"
