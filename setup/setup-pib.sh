@@ -147,9 +147,19 @@ function install_system_packages() {
 
 function install_locale() {
   sudo apt-get install -y locales
+  
+  # Ensure the locale is uncommented in locale.gen
+  sudo sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen
+  
+  # Generate the locale
   sudo locale-gen en_US.UTF-8
-  sudo dpkg-reconfigure locales
-  sudo update-locale LANG=en_US.UTF-8
+  
+  # Configure system locale
+  sudo update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
+  
+  # Export for current shell session
+  export LANG=en_US.UTF-8
+  export LC_ALL=en_US.UTF-8
 }
 
 # function to clone pib repositories to APP_DIR (~/app) directory
