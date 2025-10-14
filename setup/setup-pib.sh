@@ -149,7 +149,7 @@ function install_locale() {
   sudo apt-get install -y locales
   sudo sed -i '/en_US.UTF-8/d' /etc/locale.gen
   echo "en_US.UTF-8 UTF-8" | sudo tee -a /etc/locale.gen
-  sudo locale-gen
+  sudo locale-gen en_US.UTF-8
   sudo update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
   export LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
 }
