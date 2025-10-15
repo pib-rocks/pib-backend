@@ -3,6 +3,6 @@ google-cloud-texttospeech
 pyaudio==0.2.14
 SpeechRecognition
 opencv-python >= 4.5.1.48
-depthai>=2.24.0.0
+depthai==2.25.1.0
 numpy==1.26.3
 blobconverter==1.4.2
