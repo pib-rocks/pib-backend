@@ -14,6 +14,7 @@ from model.personality_model import Personality
 from model.program_model import Program
 from model.pose_model import Pose
 from model.motor_position_model import MotorPosition
+from default_pose_constants import STARTUP_POSITIONS, CALIBRATION_POSITIONS
 
 
 @app.cli.command("seed_db")
@@ -188,57 +189,22 @@ def _create_default_poses() -> None:
     motors = _get_motor_list()
 
     startup_positions = [
-        MotorPosition(position=0, motor_name=motor["name"], pose_id=startup_pose.id)
+        MotorPosition(
+            position=STARTUP_POSITIONS.get(motor["name"], 0),
+            motor_name=motor["name"],
+            pose_id=startup_pose.id,
+        )
         for motor in motors
     ]
-    overrides_startup = {
-        "elbow_left": 5500,
-        "elbow_right": 5500,
-        "thumb_right_opposition": -9000,
-        "thumb_right_stretch": -9000,
-        "index_right_stretch": -9000,
-        "middle_right_stretch": -9000,
-        "ring_right_stretch": -9000,
-        "pinky_right_stretch": -9000,
-        "thumb_left_opposition": -9000,
-        "thumb_left_stretch": -9000,
-        "index_left_stretch": -9000,
-        "middle_left_stretch": -9000,
-        "ring_left_stretch": -9000,
-        "pinky_left_stretch": -9000,
-        "shoulder_vertical_left": -9000,
-        "shoulder_horizontal_left": -9000,
-        "shoulder_vertical_right": -9000,
-        "shoulder_horizontal_right": -9000,
-    }
 
     calibration_positions = [
-        MotorPosition(position=0, motor_name=motor["name"], pose_id=calibration_pose.id)
+        MotorPosition(
+            position=CALIBRATION_POSITIONS.get(motor["name"], 0),
+            motor_name=motor["name"],
+            pose_id=calibration_pose.id,
+        )
         for motor in motors
     ]
-
-    overrides_calibration = {
-        "thumb_right_opposition": -9000,
-        "thumb_right_stretch": -9000,
-        "index_right_stretch": -9000,
-        "middle_right_stretch": -9000,
-        "ring_right_stretch": -9000,
-        "pinky_right_stretch": -9000,
-        "thumb_left_opposition": -9000,
-        "thumb_left_stretch": -9000,
-        "index_left_stretch": -9000,
-        "middle_left_stretch": -9000,
-        "ring_left_stretch": -9000,
-        "pinky_left_stretch": -9000,
-    }
-
-    for mp in startup_positions:
-        if mp.motor_name in overrides_startup:
-            mp.position = overrides_startup[mp.motor_name]
-
-    for mp in calibration_positions:
-        if mp.motor_name in overrides_calibration:
-            mp.position = overrides_calibration[mp.motor_name]
 
     db.session.add_all(startup_positions + calibration_positions)
     db.session.commit()

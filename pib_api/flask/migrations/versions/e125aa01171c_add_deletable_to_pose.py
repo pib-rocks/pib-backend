@@ -91,37 +91,6 @@ def upgrade():
             )
         )
 
-    # add default poses when they don't exist
-    op.execute(
-        f"INSERT OR IGNORE INTO pose (pose_id, name, deletable) VALUES ('{generate_uuid()}', 'Startup/Resting', 0)"
-    )
-    op.execute(
-        f"INSERT OR IGNORE INTO pose (pose_id, name, deletable) VALUES ('{generate_uuid()}', 'Calibration', 0)"
-    )
-
-    # make sure default poses are not deletable
-    op.execute(
-        "UPDATE pose SET deletable=0 WHERE name IN ('Startup/Resting', 'Calibration')"
-    )
-
-    # add startup positions
-    startup_values = " UNION ALL ".join(
-        f"SELECT '{motor}', {overrides_startup.get(motor, 0)}, id FROM pose WHERE name='Startup/Resting'"
-        for motor in all_motors
-    )
-    op.execute(
-        f"INSERT OR IGNORE INTO motor_position (motor_name, position, pose_id) {startup_values}"
-    )
-
-    # add calibration positions
-    calibration_values = " UNION ALL ".join(
-        f"SELECT '{motor}', {overrides_calibration.get(motor, 0)}, id FROM pose WHERE name='Calibration'"
-        for motor in all_motors
-    )
-    op.execute(
-        f"INSERT OR IGNORE INTO motor_position (motor_name, position, pose_id) {calibration_values}"
-    )
-
 
 def downgrade():
     # remove deletable column but keep default poses
