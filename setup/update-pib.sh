@@ -127,6 +127,19 @@ function update_frontend() {
     fi
 }
 
+function update_database() {
+    print INFO "Updating database:"
+
+    UPDATE_DB_SCRIPT="$BACKEND_DIR/scripts/update_db.py"
+
+    if [ -f "$UPDATE_DB_SCRIPT" ]; then
+        python3 "$UPDATE_DB_SCRIPT" || { print ERROR "Failed to run $UPDATE_DB_SCRIPT"; exit 1; }
+    else
+        print ERROR "Python script $UPDATE_DB_SCRIPT not found"
+        exit 1
+    fi
+}
+
 # Check correct user
 if [ "$(whoami)" != "$DEFAULT_USER" ]; then
     print INFO "Run this as user: $DEFAULT_USER"
@@ -146,6 +159,8 @@ print INFO "Update started: "
 ensure_symlink_self
 
 update_backend
+
+update_database
 
 update_frontend
 
