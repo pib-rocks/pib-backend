@@ -42,45 +42,63 @@ class CameraNode(Node):
         self.preview_size_subscription = self.create_subscription(
             Int32MultiArray, "size_topic", self.preview_size_callback, 10
         )
-        self.get_camera_image_service = self.create_service(
-            GetCameraImage, "get_camera_image", self.get_camera_image_callback
-        )
 
         # Initialize default preview size and quality factor
         self.preview_width = 1280
         self.preview_height = 720
         self.quality_factor = 80
 
-        # Initialize pipeline
-        self.init_pipeline()
+        # Initialize pipeline when camera is available
+        self.camera_available = self.init_pipeline()
+
+        if self.camera_available:
+            self.get_camera_image_service = self.create_service(
+                GetCameraImage, "get_camera_image", self.get_camera_image_callback
+            )
+            self.get_logger().info("Camera service initialized.")
+        else:
+            self.get_logger().error("Camera not available.")
 
         self.timer_period = 0.1  # seconds
         self.timer = self.create_timer(self.timer_period, self.timer_callback)
 
     def get_camera_image_callback(self, request, response):
         self.get_logger().info(f"LEN IMAGE: {len(self.current_image)}")
-        response = GetCameraImage.Response(image_base64=self.current_image)
+        response.image_base64 = self.current_image
         return response
 
-    def init_pipeline(self):
-        self.pipeline = dai.Pipeline()
+    def init_pipeline(self) -> bool:
+        try:
+            self.pipeline = dai.Pipeline()
 
-        # Define a source - color camera
-        self.camRgb = self.pipeline.createColorCamera()
-        self.camRgb.setPreviewSize(self.preview_width, self.preview_height)
-        self.camRgb.setInterleaved(False)
+            # Define a source - color camera
+            self.camRgb = self.pipeline.createColorCamera()
+            self.camRgb.setPreviewSize(self.preview_width, self.preview_height)
+            self.camRgb.setInterleaved(False)
 
-        # Create output
-        xoutRgb = self.pipeline.createXLinkOut()
-        xoutRgb.setStreamName("rgb")
-        self.camRgb.preview.link(xoutRgb.input)
+            # Create output
+            xoutRgb = self.pipeline.createXLinkOut()
+            xoutRgb.setStreamName("rgb")
+            self.camRgb.preview.link(xoutRgb.input)
 
-        self.device = dai.Device(self.pipeline)
+            # Try to connect to device
+            self.device = dai.Device(self.pipeline)
 
-        # Output queue will be used to get the rgb frames from the output defined above
-        self.queue = self.device.getOutputQueue(name="rgb", maxSize=4, blocking=False)
+            # Output queue will be used to get the rgb frames from the output defined above
+            self.queue = self.device.getOutputQueue(
+                name="rgb", maxSize=4, blocking=False
+            )
+            return True
+
+        except Exception as e:
+            self.get_logger().error(f"Camera not found: {e}")
+            self.device = None
+            self.queue = None
+            return False
 
     def timer_callback(self):
+        if not self.queue:
+            return
         image_rgb = self.queue.tryGet()  # non-blocking call
         if image_rgb is None:
             return

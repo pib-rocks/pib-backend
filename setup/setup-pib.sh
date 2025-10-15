@@ -176,8 +176,17 @@ function clone_repositories() {
 # Install update script; move animated eyes, etc.
 function move_setup_files() {
   local update_target_dir="/usr/local/bin"
-  sudo cp "$BACKEND_DIR/setup/update-pib.sh" "$update_target_dir/update-pib"
-  sudo chmod 755 "$update_target_dir/update-pib"
+  local source_file="$BACKEND_DIR/setup/update-pib.sh"
+  local target_file="$update_target_dir/update-pib"
+
+  if [[ ! -f "$source_file" ]]; then
+    print ERROR "$source_file not found"
+    return 1
+  fi
+
+  sudo ln -s "$source_file" "$target_file"
+
+  sudo chmod 755 "$source_file"
   print SUCCESS "Installed update script"
 
   cp "$BACKEND_DIR/setup/setup_files/pib-eyes-animated.gif" "$HOME/Desktop/pib-eyes-animated.gif"
@@ -224,6 +233,51 @@ function disable_power_notification() {
 	echo "kernel.panic = 0" | sudo tee -a /etc/sysctl.conf
 
 	sudo sysctl -p
+}
+
+# Install a NetworkManager dispatcher script that observes IP changes and writes the current host IP to a file
+setup_ip_dispatcher() {
+  local dispatcher_script="/etc/NetworkManager/dispatcher.d/99-update-ip.sh"
+  local outfile="/home/pib/app/pib-backend/pib_api/flask/host_ip.txt"
+
+  print INFO "Creating dispatcher script..."
+
+  sudo tee "$dispatcher_script" > /dev/null << 'EOF'
+#!/bin/bash
+LOG="/tmp/nm-dispatcher.log"
+OUTFILE="/home/pib/app/pib-backend/pib_api/flask/host_ip.txt"
+
+echo "$(date): Dispatcher triggered with IFACE=$1 STATE=$2" >> "$LOG"
+
+IP=$(ip route get 1 | grep -oP 'src \K[\d.]+' || echo "")
+
+CURRENT_IP=""
+if [[ -f "$OUTFILE" ]]; then
+    CURRENT_IP=$(cat "$OUTFILE")
+fi
+
+if [[ "$IP" != "$CURRENT_IP" ]]; then
+    if [[ -n "$IP" ]]; then
+        echo "$IP" > "$OUTFILE"
+        echo "$(date): Updated IP to $IP" >> "$LOG"
+    else
+        > "$OUTFILE"
+        echo "$(date): No IP found" >> "$LOG"
+    fi
+fi
+EOF
+
+  sudo chmod +x "$dispatcher_script"
+
+  print INFO "Manually running dispatcher script to generate host_ip.txt..."
+  sudo bash -c "$dispatcher_script wlan0 dhcp4-change"
+
+  if [[ -f "$outfile" ]]; then
+    print INFO "host_ip.txt was filled with the following IP:"
+    cat "$outfile"
+  else
+    print WARN "host_ip.txt does not exist!"
+  fi
 }
 
 # clean setup files if local install + remove user from sudoers file again
@@ -319,6 +373,7 @@ clone_repositories || { print ERROR "failed to clone repositories"; return 1; }
 move_setup_files || print ERROR "failed to move setup files"
 install_DBbrowser || print ERROR "failed to install DB browser"
 install_tinkerforge || print ERROR "failed to install tinkerforge"
+setup_ip_dispatcher || print ERROR "failed to setup ip dispatcher"
 source "$SETUP_INSTALLATION_DIR/set_system_settings.sh" || print ERROR "failed to set system settings"
 print INFO "${INSTALL_METHOD}"
 if [ "$INSTALL_METHOD" = "legacy" ]; then
