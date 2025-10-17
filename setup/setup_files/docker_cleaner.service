@@ -1,0 +1,14 @@
+[Unit]
+Description=Docker Cache Cleanup Service
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/docker builder prune -f
+User=pib
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
