@@ -66,6 +66,9 @@ get_dist_version() {
     debian | raspbian)
         dist_version="$(sed 's/\/.*//' /etc/debian_version | sed 's/\..*//')"
         case "$dist_version" in
+        13)
+            dist_version="trixie"
+            ;;
         12)
             dist_version="bookworm"
             ;;
@@ -85,13 +88,15 @@ function is_ubuntu_noble() {
   [[ "$DISTRIBUTION" == "ubuntu" && "$DIST_VERSION" == "noble" ]]
 }
 
-function is_raspbian_bookworm() {
-  [[ ( "$DISTRIBUTION" == "raspbian" || "$DISTRIBUTION" == "debian" ) && "$DIST_VERSION" == "bookworm" ]]
+function is_supported_raspbian(){
+  local supported_versions=("bookworm" "trixie")
+  [[ ("$DISTRIBUTION" == "raspbian" || "$DISTRIBUTION" == "debian") &&
+  " ${supported_versions[@]} " =~ " ${DIST_VERSION} " ]]
 }
 
 function check_distribution() {
-  if is_ubuntu_noble || is_raspbian_bookworm; then
-    print INFO "You are running the setup-script on: $DISTRIBUTION $DIST_VERSION which is one of the supported two operating-systems! So, we can happily start the setup…"
+  if is_ubuntu_noble || is_supported_raspbian; then
+    print INFO "You are running the setup-script on: $DISTRIBUTION $DIST_VERSION which is one of the supported operating-systems! So, we can happily start the setup…"
     return 0
   else
     print WARN "This script expects Raspberry Pi OS on pib or Ubuntu 24.04 for systems that run the digital twin only. We detected $DISTRIBUTION $DIST_VERSION. Do you want to continue? (Y/N):"
@@ -140,6 +145,14 @@ function install_system_packages() {
     print SUCCESS "Installing system packages completed"
 }
 
+function install_locale() {
+  sudo apt-get install -y locales
+  sudo sed -i '/en_US.UTF-8/d' /etc/locale.gen
+  echo "en_US.UTF-8 UTF-8" | sudo tee -a /etc/locale.gen
+  sudo locale-gen en_US.UTF-8
+  sudo update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
+  export LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
+}
 
 # function to clone pib repositories to APP_DIR (~/app) directory
 function clone_repositories() {
@@ -364,11 +377,12 @@ if is_ubuntu_noble; then
   remove_apps || print ERROR "failed to remove default software"
 fi
 
-if is_raspbian_bookworm; then
+if is_supported_raspbian; then
   disable_power_notification || print ERROR "failed to disable power notifications"
 fi
 
 install_system_packages || { print ERROR "failed to install system packages"; return 1; }
+install_locale || { print ERROR "failed to install locale"; return 1; }
 clone_repositories || { print ERROR "failed to clone repositories"; return 1; }
 move_setup_files || print ERROR "failed to move setup files"
 install_DBbrowser || print ERROR "failed to install DB browser"
@@ -379,9 +393,10 @@ print INFO "${INSTALL_METHOD}"
 if [ "$INSTALL_METHOD" = "legacy" ]; then
   print INFO "Going to install Cerebra locally (LEGACY MODE NOT WORKING ON RASPBERRY PI 5)"
   source "$SETUP_INSTALLATION_DIR/local_install.sh" || print ERROR "failed to install Cerebra locally"
-elif is_ubuntu_noble || is_raspbian_bookworm; then
+elif is_ubuntu_noble || is_supported_raspbian; then
   print INFO "Going to install Cerebra via Docker"
   source "$SETUP_INSTALLATION_DIR/docker_install.sh" || print ERROR "failed to install Cerebra via Docker"
+  sudo usermod -aG docker pib || { print ERROR "failed to add user 'pib' to docker group"; return 1; }
 fi
 cleanup
 
