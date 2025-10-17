@@ -127,6 +127,19 @@ function update_frontend() {
     fi
 }
 
+function update_docker_cleaner() {
+    if [ -f "$BACKEND_DIR/setup/setup_files/docker_cleaner.service" ]; then
+        sudo cp "$BACKEND_DIR/setup/setup_files/docker_cleaner.service" /etc/systemd/system/
+        sudo systemctl daemon-reload
+        sudo systemctl restart docker_cleaner.service
+        print SUCCESS "Docker container cleanup service updated"
+    else
+        print ERROR "Docker cleaner service file does not exist"
+    fi
+
+    sudo usermod -aG docker pib 
+}
+
 # Check correct user
 if [ "$(whoami)" != "$DEFAULT_USER" ]; then
     print INFO "Run this as user: $DEFAULT_USER"
@@ -148,6 +161,8 @@ ensure_symlink_self
 update_backend
 
 update_frontend
+
+update_docker_cleaner
 
 
 # Cleanup

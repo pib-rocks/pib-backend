@@ -40,13 +40,17 @@ if solid_state_relay_bricklet_uid:
     solid_state_relay_bricklet: BrickletSolidStateRelayV2 = BrickletSolidStateRelayV2(
         solid_state_relay_bricklet_uid, ipcon
     )
+    solid_state_relay_bricklet.set_response_expected(
+        BrickletSolidStateRelayV2.FUNCTION_SET_STATE, True
+    )
+else:
+    solid_state_relay_bricklet = None
 
 
 def set_ssr_state(state: bool) -> None:
     """set the status of the solid state relay to on (true) or off (false)"""
-    if solid_state_relay_bricklet_uid is None:
-        logging.error("The UID of the Solid-State Relay is not set.")
-        return
+    if solid_state_relay_bricklet is None:
+        raise RuntimeError("UID of Solid-State Relay is not set.")
     else:
         try:
             solid_state_relay_bricklet.set_state(state)
