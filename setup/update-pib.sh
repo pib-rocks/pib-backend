@@ -130,10 +130,10 @@ function update_frontend() {
 function update_database() {
     print INFO "Updating database:"
 
-    UPDATE_DB_SCRIPT="$BACKEND_DIR/scripts/update_db.py"
+    UPDATE_DB_SCRIPT="$BACKEND_DIR/pib_api/flask/update_db.py"
 
     if [ -f "$UPDATE_DB_SCRIPT" ]; then
-        python3 "$UPDATE_DB_SCRIPT" || { print ERROR "Failed to run $UPDATE_DB_SCRIPT"; exit 1; }
+        sudo docker compose exec flask-app python3 -m update_db || { print ERROR "Failed to run $UPDATE_DB_SCRIPT"; exit 1; }
     else
         print ERROR "Python script $UPDATE_DB_SCRIPT not found"
         exit 1
