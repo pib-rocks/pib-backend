@@ -68,36 +68,47 @@ class AudioStreamer(Node):
         ch_candidates = [self.requested_channels, dev_max_in]
 
         self.audio_stream = None
+        
         last_err = None
 
         for rate in sr_candidates:
-            for ch in ch_candidates:
-                if ch <= 0:
+            for channel in ch_candidates:
+                if channel <= 0:
                     continue
+
+                self.get_logger().info(
+                    f"Trying to open '{dev_name}' (idx {self.input_device_index}) "
+                    f"rate={rate}Hz channels={channel} format=Int16 chunk={self.chunk_size}"
+                )
+
                 try:
-                    self.get_logger().info(
-                        f"Trying to open '{dev_name}' (idx {self.input_device_index}) "
-                        f"rate={rate}Hz channels={ch} format=Int16 chunk={self.chunk_size}"
-                    )
                     stream = self.py_audio.open(
                         format=self.audio_format,
-                        channels=ch,
+                        channels=channel,
                         rate=rate,
                         input=True,
                         input_device_index=self.input_device_index,
                         frames_per_buffer=self.chunk_size,
                     )
-                    self.audio_stream = stream
-                    self.sample_rate = rate
-                    self.open_channels = ch
-                    break
                 except Exception as e:
                     last_err = e
-                    self.get_logger().warning(
-                        f"Open failed with rate={rate} ch={ch}: {e}"
-                    )
-            if self.audio_stream:
-                break
+                    self.get_logger().warning(f"Open failed with rate={rate}, ch={channel}: {e}")
+                    continue  # try next combination
+
+                # success: store and exit both loops
+                self.audio_stream = stream
+                self.sample_rate = rate
+                self.open_channels = channel
+                break  # exit inner loop
+            else:
+                # only executed if inner loop didn't break → try next rate
+                continue
+            break  # exit outer loop once success found
+        else:
+            # executed if no combination succeeded
+            self.get_logger().error(
+                f"Failed to open audio stream after trying all combinations: {last_err}"
+            )
 
         if not self.audio_stream:
             self.get_logger().error(
