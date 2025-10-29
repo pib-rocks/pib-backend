@@ -60,7 +60,7 @@ class RosAudioBridge:
     ):
         self._topic = topic
         self._loop = loop
-        self._q = out_queue
+        self._out_queue = out_queue
         self._thread: Optional[threading.Thread] = None
         self._stop_evt = threading.Event()
         self._started_evt = threading.Event()
@@ -94,10 +94,10 @@ class RosAudioBridge:
                 pass
 
             class _Node(Node):
-                def __init__(self, topic, loop, q, stop_evt):
+                def __init__(self, topic, loop, queue, stop_evt):
                     super().__init__("ros_audio_bridge")
                     self._loop = loop
-                    self._q = q
+                    self._queue = queue
                     self._stop_evt = stop_evt
                     self._subs = []
                     self._subs.append(
@@ -120,7 +120,7 @@ class RosAudioBridge:
                         return
 
                     async def _put():
-                        await self._q.put({"data": payload, "mime_type": "audio/pcm"})
+                        await self._queue.put({"data": payload, "mime_type": "audio/pcm"})
 
                     try:
                         fut = asyncio.run_coroutine_threadsafe(_put(), self._loop)
@@ -142,7 +142,7 @@ class RosAudioBridge:
                     except Exception as e:
                         self.get_logger().error(f"AudioData forward error: {e}")
 
-            node = _Node(self._topic, self._loop, self._q, self._stop_evt)
+            node = _Node(self._topic, self._loop, self._out_queue, self._stop_evt)
             self._started_evt.set()
 
             executor = SingleThreadedExecutor(context=rclpy.get_default_context())
@@ -351,30 +351,38 @@ class GeminiAudioLoop:
         except Exception:
             logger.exception("send_realtime error")
 
+    def _log_transcriptions(self, sc):
+        if (it := getattr(sc, "input_transcription", None)) and getattr(it, "text", None):
+            logger.info(f"User: {it.text}")
+        if (ot := getattr(sc, "output_transcription", None)) and getattr(ot, "text", None):
+            logger.info(f"Gemini: {ot.text}")
+
     async def receive_audio(self):
         while not self._stop_event.is_set():
-            # Open/rotate logs at the start of each model turn
-            await self._open_turn_logs()
+            try:
+                await self._open_turn_logs()
+            except Exception as e:
+                logger.error(f"Failed to open turn logs: {e}")
+                continue
 
-            turn = self.session.receive()
-            async for resp in turn:
-                sc = getattr(resp, "server_content", None)
-                if sc:
-                    it = getattr(sc, "input_transcription", None)
-                    if it and getattr(it, "text", None):
-                        logger.info(f"User: {it.text}")
+            try:
+                turn = self.session.receive()
+                async for resp in turn:
+                    if sc := getattr(resp, "server_content", None):
+                        self._log_transcriptions(sc)
 
-                    ot = getattr(sc, "output_transcription", None)
-                    if ot and getattr(ot, "text", None):
-                        logger.info(f"Gemini: {ot.text}")
+                    if data := getattr(resp, "data", None):
+                        try:
+                            self.audio_in_queue.put_nowait(data)
+                        except asyncio.QueueFull:
+                            logger.warning("Audio input queue is full; dropping data chunk.")
+                    elif text := getattr(resp, "text", None):
+                        print(text, end="")
+            except Exception as e:
+                logger.exception(f"Error receiving audio: {e}")
 
-                if data := getattr(resp, "data", None):
-                    self.audio_in_queue.put_nowait(data)
-                elif text := getattr(resp, "text", None):
-                    print(text, end="")
-
-            while not self.audio_in_queue.empty():
-                self.audio_in_queue.get_nowait()
+            # Optional: reset queue if needed between turns
+            self.audio_in_queue = asyncio.Queue()
 
     async def play_audio(self):
         # Output at 24 kHz mono (your speaker supports this)
@@ -419,14 +427,14 @@ class GeminiAudioLoop:
             description = (
                 personality.description
                 if personality.description is not None
-                else "Du bist pib, ein humanoider Roboter."
+                else "You are pib, a humanoid robot."
             )
 
-            cfg = dict(CONFIG)
+            gemini_config = dict(CONFIG)
             # SDK accepts `system_instruction` in config; it persists across turns.
-            cfg["system_instruction"] = description
+            gemini_config["system_instruction"] = description
 
-            async with client.aio.live.connect(model=MODEL, config=cfg) as session:
+            async with client.aio.live.connect(model=MODEL, config=gemini_config) as session:
                 self.session = session
                 self.audio_in_queue = asyncio.Queue()  # playback side
                 self.out_queue = asyncio.Queue()  # ROS → Gemini side
