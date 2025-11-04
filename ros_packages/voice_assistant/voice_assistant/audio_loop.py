@@ -36,7 +36,7 @@ SEND_SAMPLE_RATE = 16000  # recorder publishes 16 kHz mono
 RECEIVE_SAMPLE_RATE = 24000  # model replies at 24 kHz (your speaker supports it)
 CHUNK_SIZE = 1024
 
-MODEL = "gemini-2.5-flash-preview-native-audio-dialog"
+MODEL = "gemini-2.5-flash-native-audio-preview-09-2025"
 CONFIG = {
     "response_modalities": ["AUDIO"],
     "input_audio_transcription": {},
