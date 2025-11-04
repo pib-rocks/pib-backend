@@ -68,7 +68,7 @@ class AudioStreamer(Node):
         ch_candidates = [self.requested_channels, dev_max_in]
 
         self.audio_stream = None
-        
+
         last_err = None
 
         for rate in sr_candidates:
@@ -92,7 +92,9 @@ class AudioStreamer(Node):
                     )
                 except Exception as e:
                     last_err = e
-                    self.get_logger().warning(f"Open failed with rate={rate}, ch={channel}: {e}")
+                    self.get_logger().warning(
+                        f"Open failed with rate={rate}, ch={channel}: {e}"
+                    )
                     continue  # try next combination
 
                 # success: store and exit both loops

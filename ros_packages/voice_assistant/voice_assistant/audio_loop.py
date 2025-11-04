@@ -120,7 +120,9 @@ class RosAudioBridge:
                         return
 
                     async def _put():
-                        await self._queue.put({"data": payload, "mime_type": "audio/pcm"})
+                        await self._queue.put(
+                            {"data": payload, "mime_type": "audio/pcm"}
+                        )
 
                     try:
                         fut = asyncio.run_coroutine_threadsafe(_put(), self._loop)
@@ -352,9 +354,13 @@ class GeminiAudioLoop:
             logger.exception("send_realtime error")
 
     def _log_transcriptions(self, sc):
-        if (it := getattr(sc, "input_transcription", None)) and getattr(it, "text", None):
+        if (it := getattr(sc, "input_transcription", None)) and getattr(
+            it, "text", None
+        ):
             logger.info(f"User: {it.text}")
-        if (ot := getattr(sc, "output_transcription", None)) and getattr(ot, "text", None):
+        if (ot := getattr(sc, "output_transcription", None)) and getattr(
+            ot, "text", None
+        ):
             logger.info(f"Gemini: {ot.text}")
 
     async def receive_audio(self):
@@ -375,7 +381,9 @@ class GeminiAudioLoop:
                         try:
                             self.audio_in_queue.put_nowait(data)
                         except asyncio.QueueFull:
-                            logger.warning("Audio input queue is full; dropping data chunk.")
+                            logger.warning(
+                                "Audio input queue is full; dropping data chunk."
+                            )
                     elif text := getattr(resp, "text", None):
                         print(text, end="")
             except Exception as e:
@@ -434,7 +442,9 @@ class GeminiAudioLoop:
             # SDK accepts `system_instruction` in config; it persists across turns.
             gemini_config["system_instruction"] = description
 
-            async with client.aio.live.connect(model=MODEL, config=gemini_config) as session:
+            async with client.aio.live.connect(
+                model=MODEL, config=gemini_config
+            ) as session:
                 self.session = session
                 self.audio_in_queue = asyncio.Queue()  # playback side
                 self.out_queue = asyncio.Queue()  # ROS → Gemini side

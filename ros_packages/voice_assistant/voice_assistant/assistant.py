@@ -556,8 +556,10 @@ class VoiceAssistantNode(Node):
             return False
 
         # Always resolve the target personality when turning ON (we may be switching chats/models)
-        ok, pers = voice_assistant_client.get_personality_from_chat(effective_chat_id)
-        if not ok or pers is None:
+        is_success, pers = voice_assistant_client.get_personality_from_chat(
+            effective_chat_id
+        )
+        if not is_success or pers is None:
             self.get_logger().error(f"no personality with chat id {effective_chat_id}")
             return False
         self.personality = pers
