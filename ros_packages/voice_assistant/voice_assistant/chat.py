@@ -7,7 +7,9 @@ import datetime
 from datatypes.action import Chat
 from datatypes.msg import ChatMessage
 from datatypes.srv import GetCameraImage
+# NEW: service for AudioLoop → ChatNode bridge
 from datatypes.srv import CreateOrUpdateChatMessage
+
 from pib_api_client import voice_assistant_client
 from public_api_client.public_voice_client import PublicApiChatMessage
 from rclpy.action import ActionServer
@@ -39,10 +41,6 @@ class ChatNode(Node):
         self.history_length: int = 10
 
         # server for communicating with an llm via tryb's public-api
-        # In the goal, a client specifies some text that will be sent as input to the llm, as well as the
-        # description of the personality. The server then forwards the llm output to the client at the
-        # granularity of sentences. Intermediate sentences, are forwared in form of feedback. The final
-        # sentence is forwarded as the result of the goal
         self.chat_server = ActionServer(
             self,
             Chat,
@@ -67,13 +65,12 @@ class ChatNode(Node):
             String, "public_api_token", self.get_public_api_token_listener, 10
         )
 
-        # lock that should be aquired, whenever accessing 'public_voice_client'
+        # locks for external clients
         self.public_voice_client_lock = Lock()
-        # lock that should be aquired, whenever accessing 'voice_assistant_client'
         self.voice_assistant_client_lock = Lock()
 
-        # service used by audio_loop (Gemini) to stream/create/update ChatMessages
-        self.create_or_update_chat_message_service: Service = self.create_service(
+        # NEW: lightweight service for external publishers (Gemini audio loop)
+        self._cu_srv: Service = self.create_service(
             CreateOrUpdateChatMessage,
             "create_or_update_chat_message",
             self._handle_create_or_update_chat_message,
@@ -82,24 +79,18 @@ class ChatNode(Node):
 
         self.get_logger().info("Now running CHAT")
 
-    def get_public_api_token_listener(self, msg):
-        token = msg.data
-        self.token = token
+    # ---------- helpers used by Action and Service ----------
 
-    # helper for publishing ChatMessage on the ROS topic
-    def _publish_chat_message(
-        self, chat_id: str, content: str, is_user: bool, message_id: str
-    ):
-        chat_message_ros = ChatMessage()
-        chat_message_ros.chat_id = chat_id
-        chat_message_ros.content = content
-        chat_message_ros.is_user = is_user
-        chat_message_ros.message_id = message_id
-        chat_message_ros.timestamp = datetime.datetime.now().strftime(
-            "%Y-%m-%d %H:%M:%S"
-        )
-        self.chat_message_publisher.publish(chat_message_ros)
+    def _publish_chat_message(self, chat_id: str, content: str, is_user: bool, message_id: str):
+        msg = ChatMessage()
+        msg.chat_id = chat_id
+        msg.content = content
+        msg.is_user = is_user
+        msg.message_id = message_id
+        msg.timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self.chat_message_publisher.publish(msg)
 
+    # existing method (used by Action server path)
     def create_chat_message(
         self,
         chat_id: str,
@@ -109,7 +100,6 @@ class ChatNode(Node):
         update_database: bool,
     ) -> None:
         """writes a new chat-message to the db, and publishes it to the 'chat_messages'-topic"""
-
         if text == "":
             return
 
@@ -117,13 +107,11 @@ class ChatNode(Node):
             if update_message:
                 if update_database:
                     self.message_content = f"{self.message_content} {text}"
-                    successful, chat_message = (
-                        voice_assistant_client.update_chat_message(
-                            chat_id,
-                            self.message_content,
-                            is_user,
-                            self.last_pib_message_id,
-                        )
+                    successful, _ = voice_assistant_client.update_chat_message(
+                        chat_id,
+                        self.message_content,
+                        is_user,
+                        self.last_pib_message_id,
                     )
                     if not successful:
                         self.get_logger().error(
@@ -146,6 +134,7 @@ class ChatNode(Node):
                 self.last_pib_message_id = chat_message.message_id
                 self.message_content = text
 
+        # publish to ROS
         self._publish_chat_message(
             chat_id=chat_id,
             content=self.message_content,
@@ -153,7 +142,7 @@ class ChatNode(Node):
             message_id=self.last_pib_message_id,
         )
 
-    # ---------- service handler for audio_loop streaming ----------
+    # ---------- NEW: Service handler for AudioLoop streaming ----------
 
     def _handle_create_or_update_chat_message(
         self,
@@ -161,11 +150,9 @@ class ChatNode(Node):
         resp: CreateOrUpdateChatMessage.Response,
     ) -> CreateOrUpdateChatMessage.Response:
         """
-        Lightweight, mostly stateless path used by audio_loop.py.
-
-        The audio loop sends the FULL text seen so far (not just a delta).
-        We create or update a ChatMessage in PIB accordingly and publish a
-        ChatMessage on the ROS topic so UIs stay in sync.
+        External, stateless path used by audio_loop.py.
+        Takes the FULL current text (not just a delta), creates/updates in PIB,
+        then publishes ChatMessage so UIs stay in sync.
         """
         try:
             chat_id = (req.chat_id or "").strip()
@@ -180,9 +167,9 @@ class ChatNode(Node):
                 resp.content = text
                 return resp
 
-            # create vs update in PIB
+            # Create vs Update uses PIB client directly (stateless; no internal concat)
             if message_id_in:
-                # UPDATE existing message to *exact* text (no concatenation here)
+                # Update to EXACT content passed in `text` (no concatenation here)
                 if update_db:
                     successful, _ = voice_assistant_client.update_chat_message(
                         chat_id, text, is_user, message_id_in
@@ -194,7 +181,6 @@ class ChatNode(Node):
                         return resp
                 effective_message_id = message_id_in
             else:
-                # CREATE new message
                 successful, cm = voice_assistant_client.create_chat_message(
                     chat_id, text, is_user
                 )
@@ -205,7 +191,7 @@ class ChatNode(Node):
                     return resp
                 effective_message_id = cm.message_id
 
-            # publish to ROS topic
+            # Publish to topic for subscribers
             self._publish_chat_message(chat_id, text, is_user, effective_message_id)
 
             resp.successful = True
@@ -220,28 +206,31 @@ class ChatNode(Node):
             resp.content = req.text
             return resp
 
+    # ---------- Action server (unchanged) ----------
+
+    def get_public_api_token_listener(self, msg):
+        token = msg.data
+        self.token = token
+
     async def chat(self, goal_handle: ServerGoalHandle):
         """callback function for 'chat'-action"""
-
         self.get_logger().info("start chat request")
 
-        # unpack request data
         request: Chat.Goal = goal_handle.request
         chat_id: str = request.chat_id
         content: str = request.text
         generate_code: bool = request.generate_code
 
-        # create the user message
+        # create the user message (first chunk)
         self.executor.create_task(
             self.create_chat_message, chat_id, content, True, False, True
         )
 
-        # get the personality that is associated with the request chat-id from the pib-api
+        # get personality + history for the request
         with self.voice_assistant_client_lock:
             successful, personality = voice_assistant_client.get_personality_from_chat(
                 chat_id
             )
-            # set the history_length dynamically
             self.history_length = personality.message_history
         if not successful:
             self.get_logger().error(f"no personality found for id {chat_id}")
@@ -255,7 +244,6 @@ class ChatNode(Node):
         if generate_code:
             description = CODE_DESCRIPTION_PREFIX + description
 
-        # get the message-history from the pib-api
         with self.voice_assistant_client_lock:
             successful, chat_messages = voice_assistant_client.get_chat_history(
                 chat_id, self.history_length
@@ -269,7 +257,7 @@ class ChatNode(Node):
             for message in chat_messages
         ]
 
-        # get the current image from the camera
+        # Optional camera context
         image_base64 = None
         if personality.assistant_model.has_image_support:
             response: GetCameraImage.Response = (
@@ -278,7 +266,7 @@ class ChatNode(Node):
             image_base64 = response.image_base64
 
         try:
-            # receive assistant-response in form of an iterable of tokens from the public-api
+            # stream tokens from public API
             with self.public_voice_client_lock:
                 tokens = public_voice_client.chat_completion(
                     text=content,
@@ -289,30 +277,22 @@ class ChatNode(Node):
                     public_api_token=self.token,
                 )
 
-            # regex for indentifying sentences
+            # sentence / code chunking (as before)
             sentence_pattern = re.compile(
                 r"^(?!<pib-program>)(.*?)(([^\d | ^A-Z][\.|!|\?|:])|<pib-program>)",
                 re.DOTALL,
             )
-            # regex-pattern for indentifying visual-code blocks
             code_visual_pattern = re.compile(
                 r"^<pib-program>(.*?)</pib-program>", re.DOTALL
             )
 
-            # the text that was currently collected by chaining together tokens
-            # at any given point in time, this string must not contain any leading whitespaces!
             curr_text: str = ""
-            # previously collected text, that is waiting to be published as feedback
             prev_text: Optional[str] = None
-            # the type of the previously collected text
             prev_text_type = None
-            # for tracking if a message is an update or a new message
             bool_update_chat_message: bool = False
 
             for token in tokens:
-
                 if prev_text is not None:
-                    # publish the previously collected text in form of feedback
                     feedback = Chat.Feedback()
                     feedback.text = prev_text
                     feedback.text_type = prev_text_type
@@ -320,28 +300,18 @@ class ChatNode(Node):
                     prev_text = None
                     prev_text_type = None
 
-                # add token to current text; remove leading white-spaces, if current-text is empty
-                curr_text = curr_text + (
-                    token if len(curr_text) > 0 else token.lstrip()
-                )
+                curr_text = curr_text + (token if len(curr_text) > 0 else token.lstrip())
 
-                while (
-                    True
-                ):  # loop until current-text was not stripped during current iteration
-
-                    # if the goal was cancelled, return immediately
+                while True:
                     if goal_handle.is_cancel_requested:
                         goal_handle.canceled()
                         return Chat.Result()
 
-                    # check if the collected text is visual-code
                     code_visual_match = code_visual_pattern.search(curr_text)
                     if code_visual_match is not None:
-                        # extract the visual-code by removing the opening + closing tag and store it as previous text
                         code_visual = code_visual_match.group(1)
                         prev_text = code_visual
                         prev_text_type = Chat.Goal.TEXT_TYPE_CODE_VISUAL
-                        # create a chat message from the visual-code, including opening and closing tags
                         chat_message_text = code_visual_match.group(0)
                         self.executor.create_task(
                             self.create_chat_message,
@@ -352,22 +322,16 @@ class ChatNode(Node):
                             True,
                         )
                         bool_update_chat_message = True
-                        # strip the current text
-                        curr_text = curr_text[code_visual_match.end() :].rstrip()
+                        curr_text = curr_text[code_visual_match.end():].rstrip()
                         continue
 
-                    # check if collected text is a sentence
                     sentence_match = sentence_pattern.search(curr_text)
                     if sentence_match is not None:
-                        # extract the sentence and store it as previous text
                         sentence = sentence_match.group(1) + (
-                            sentence_match.group(3)
-                            if sentence_match.group(3) is not None
-                            else ""
+                            sentence_match.group(3) if sentence_match.group(3) is not None else ""
                         )
                         prev_text = sentence
                         prev_text_type = Chat.Goal.TEXT_TYPE_SENTENCE
-                        # create a chat message from the sentence
                         chat_message_text = sentence
                         self.executor.create_task(
                             self.create_chat_message,
@@ -378,11 +342,8 @@ class ChatNode(Node):
                             True,
                         )
                         bool_update_chat_message = True
-                        # strip the current text
                         curr_text = curr_text[
-                            sentence_match.end(
-                                3 if sentence_match.group(3) is not None else 1
-                            ) :
+                            sentence_match.end(3 if sentence_match.group(3) is not None else 1) :
                         ].rstrip()
                         continue
 
@@ -393,10 +354,7 @@ class ChatNode(Node):
             goal_handle.abort()
             return Chat.Result()
 
-        # return the rest of the received text, that has not been forwarded as feedback
         goal_handle.succeed()
-
-        # return the result
         result = Chat.Result()
         if prev_text is None:
             result.text = curr_text
@@ -411,9 +369,6 @@ def main(args=None):
 
     rclpy.init()
     node = ChatNode()
-    # the number of threads is chosen arbitrarily to be '8' because ros requires a
-    # fixed number of threads to be specified. Generally, multiple goals should
-    # be handled simultaneously, so the number should be sufficiently large.
     executor = MultiThreadedExecutor(8)
     executor.add_node(node)
     executor.spin()

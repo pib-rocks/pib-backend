@@ -21,6 +21,7 @@ from pathlib import Path
 from datetime import datetime
 from asyncio import QueueEmpty
 
+# NEW: service API to ChatNode
 from datatypes.srv import CreateOrUpdateChatMessage
 
 # ——— Logging ———
@@ -187,15 +188,12 @@ class GeminiAudioLoop:
         self._log_input_dir = Path(os.getenv("AUDIO_LOG_INPUT_DIR", "input"))
         self._log_output_dir = Path(os.getenv("AUDIO_LOG_OUTPUT_DIR", "output"))
 
-        # Service client state (for streaming ChatMessages to ChatNode)
+        # ---------- NEW: service client state ----------
         self._srv_node: Optional[Node] = None
         self._srv_client = None
         self._accum_text: str = ""
         self._last_pib_message_id: str = ""
         self._current_role: Optional[str] = None  # "user" | "assistant" | None
-
-        # event loop handle (for clean shutdown)
-        self._loop: Optional[asyncio.AbstractEventLoop] = None
 
     @property
     def is_listening(self) -> bool:
@@ -352,7 +350,7 @@ class GeminiAudioLoop:
             except Exception:
                 logger.exception("Failed to write output audio log")
 
-    # ---------- service client helpers ----------
+    # ---------- NEW: service client helpers ----------
 
     def _ensure_srv_client(self):
         if self._srv_node is None:
@@ -363,29 +361,19 @@ class GeminiAudioLoop:
                 CreateOrUpdateChatMessage, "create_or_update_chat_message"
             )
             if not self._srv_client.wait_for_service(timeout_sec=2.0):
-                logger.warning(
-                    "Service 'create_or_update_chat_message' not available yet."
-                )
+                logger.warning("Service 'create_or_update_chat_message' not available yet.")
 
     def _start_new_stream(self, role: str):
-        """Reset accumulation for a new logical message (user or assistant)."""
+        # role is "user" or "assistant"
         self._current_role = role
         self._accum_text = ""
         self._last_pib_message_id = ""
 
     def _send_chat_piece(self, text_piece: str, is_user: bool, update_db: bool = True):
-        """
-        Send (accumulated) text to ChatNode service.
-        First call (no message_id) → CREATE, subsequent → UPDATE.
-        """
-        if self._stop_event.is_set() or not self._is_listening:
-            return
+        """Send (accumulated) text to ChatNode service. First call → CREATE, then UPDATE."""
         if not text_piece:
             return
-
         self._ensure_srv_client()
-        if self._srv_client is None:
-            return
 
         # accumulate and normalize spacing
         self._accum_text = (self._accum_text + " " + text_piece).strip()
@@ -397,12 +385,12 @@ class GeminiAudioLoop:
         req.update_database = update_db
         req.message_id = self._last_pib_message_id  # "" → CREATE
 
-        try:
-            future = self._srv_client.call_async(req)
-            rclpy.spin_until_future_complete(self._srv_node, future, timeout_sec=1.0)
-            if future.done() and future.result() is not None and future.result().successful:
-                self._last_pib_message_id = future.result().message_id
-        except Exception:
+        future = self._srv_client.call_async(req)
+        # Spin until the service returns (simple and safe here)
+        rclpy.spin_until_future_complete(self._srv_node, future, timeout_sec=2.0)
+        if future.done() and future.result() is not None and future.result().successful:
+            self._last_pib_message_id = future.result().message_id
+        else:
             logger.debug("CreateOrUpdateChatMessage call failed or timed out.")
 
     # — tasks —
@@ -431,10 +419,7 @@ class GeminiAudioLoop:
 
     def _log_transcriptions(self, sc):
         """Forward streaming transcripts to ChatNode via service (+ log)."""
-        if self._stop_event.is_set() or not self._is_listening:
-            return
-
-        # user stream (what you say)
+        # user stream
         it = getattr(sc, "input_transcription", None)
         if it and getattr(it, "text", None):
             text_piece = it.text.strip()
@@ -443,7 +428,7 @@ class GeminiAudioLoop:
                 self._start_new_stream("user")
             self._send_chat_piece(text_piece, is_user=True, update_db=True)
 
-        # assistant stream (what Gemini says)
+        # assistant stream
         ot = getattr(sc, "output_transcription", None)
         if ot and getattr(ot, "text", None):
             text_piece = ot.text.strip()
@@ -455,6 +440,10 @@ class GeminiAudioLoop:
     async def receive_audio(self):
         while not self._stop_event.is_set():
             try:
+                # New turn → reset stream roles/accumulators so user and assistant get separate messages
+                self._current_role = None
+                self._accum_text = ""
+                self._last_pib_message_id = ""
                 await self._open_turn_logs()
             except Exception as e:
                 logger.error(f"Failed to open turn logs: {e}")
@@ -475,9 +464,7 @@ class GeminiAudioLoop:
                             self.audio_in_queue.put_nowait(data)
                             await self._log_output_bytes(data)
                         except asyncio.QueueFull:
-                            logger.warning(
-                                "Audio input queue is full; dropping data chunk."
-                            )
+                            logger.warning("Audio input queue is full; dropping data chunk.")
                     elif text := getattr(resp, "text", None):
                         print(text, end="")
             except Exception as e:
@@ -487,7 +474,6 @@ class GeminiAudioLoop:
             self.audio_in_queue = asyncio.Queue()
 
     async def play_audio(self):
-        # Output at 24 kHz mono
         self.playback_stream = await asyncio.to_thread(
             pya.open,
             format=FORMAT,
@@ -605,7 +591,6 @@ class GeminiAudioLoop:
 
 
 def main():
-    # For standalone testing (not used by ROS node normally)
     loop = GeminiAudioLoop(api_key=os.getenv("GOOGLE_API_KEY", ""))
     loop.start()
 
