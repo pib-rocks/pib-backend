@@ -20,6 +20,9 @@ from pathlib import Path
 from datetime import datetime
 from asyncio import QueueEmpty
 
+# NEW: service API to ChatNode
+from datatypes.srv import CreateOrUpdateChatMessage
+
 # ——— Logging ———
 logging.basicConfig(
     level=logging.INFO,
@@ -84,7 +87,6 @@ class RosAudioBridge:
             AudioData = None
             try:
                 from audio_common_msgs.msg import AudioData as _AudioData  # type: ignore
-
                 AudioData = _AudioData
             except Exception:
                 pass
@@ -187,6 +189,13 @@ class GeminiAudioLoop:
         self._log_input_dir = Path(os.getenv("AUDIO_LOG_INPUT_DIR", "input"))
         self._log_output_dir = Path(os.getenv("AUDIO_LOG_OUTPUT_DIR", "output"))
 
+        # ---------- NEW: service client state ----------
+        self._srv_node: Optional[Node] = None
+        self._srv_client = None
+        self._accum_text: str = ""
+        self._last_pib_message_id: str = ""
+        self._current_role: Optional[str] = None  # "user" | "assistant" | None
+
     @property
     def is_listening(self) -> bool:
         return self._is_listening
@@ -247,7 +256,6 @@ class GeminiAudioLoop:
 
     # ——— Turn log helpers ———
     async def _ensure_log_dirs(self):
-        # Create folders if missing
         for d in (self._log_input_dir, self._log_output_dir):
             d.mkdir(parents=True, exist_ok=True)
 
@@ -255,7 +263,6 @@ class GeminiAudioLoop:
         if self._log_lock is None:
             self._log_lock = asyncio.Lock()
         async with self._log_lock:
-            # If already open, do nothing
             if self._in_wav or self._out_wav:
                 return
             await self._ensure_log_dirs()
@@ -305,10 +312,8 @@ class GeminiAudioLoop:
             self._log_lock = asyncio.Lock()
         async with self._log_lock:
             if self._in_wav is None:
-                # Lazy open if send starts before any receive()
                 await self._open_turn_logs()
             try:
-                # writeframes() is fine for PCM bytes
                 self._in_wav.writeframes(pcm)
             except Exception:
                 logger.exception("Failed to write input audio log")
@@ -318,19 +323,58 @@ class GeminiAudioLoop:
             self._log_lock = asyncio.Lock()
         async with self._log_lock:
             if self._out_wav is None:
-                # If we somehow got output first, open files
                 await self._open_turn_logs()
             try:
                 self._out_wav.writeframes(pcm)
             except Exception:
                 logger.exception("Failed to write output audio log")
 
+    # ---------- NEW: service client helpers ----------
+
+    def _ensure_srv_client(self):
+        if self._srv_node is None:
+            if not rclpy.ok():
+                rclpy.init()
+            self._srv_node = Node("gemini_audio_loop_client")
+            self._srv_client = self._srv_node.create_client(
+                CreateOrUpdateChatMessage, "create_or_update_chat_message"
+            )
+            if not self._srv_client.wait_for_service(timeout_sec=2.0):
+                logger.warning("Service 'create_or_update_chat_message' not available yet.")
+
+    def _start_new_stream(self, role: str):
+        # role is "user" or "assistant"
+        self._current_role = role
+        self._accum_text = ""
+        self._last_pib_message_id = ""
+
+    def _send_chat_piece(self, text_piece: str, is_user: bool, update_db: bool = True):
+        """Send (accumulated) text to ChatNode service. First call → CREATE, then UPDATE."""
+        if not text_piece:
+            return
+        self._ensure_srv_client()
+
+        # accumulate and normalize spacing
+        self._accum_text = (self._accum_text + " " + text_piece).strip()
+
+        req = CreateOrUpdateChatMessage.Request()
+        req.chat_id = self._chat_id or ""
+        req.text = self._accum_text  # pass FULL text
+        req.is_user = is_user
+        req.update_database = update_db
+        req.message_id = self._last_pib_message_id  # "" → CREATE
+
+        future = self._srv_client.call_async(req)
+        # Spin until the service returns (simple and safe here)
+        rclpy.spin_until_future_complete(self._srv_node, future, timeout_sec=2.0)
+        if future.done() and future.result() is not None and future.result().successful:
+            self._last_pib_message_id = future.result().message_id
+        else:
+            logger.debug("CreateOrUpdateChatMessage call failed or timed out.")
+
     # — tasks —
     async def _listen_from_ros(self):
-        """Bridge thread pushes data to out_queue; we just idle until stop."""
-        logger.info(
-            f"Listening from ROS topic '{ROS_AUDIO_TOPIC}' (expect PCM16 mono @16k)."
-        )
+        logger.info(f"Listening from ROS topic '{ROS_AUDIO_TOPIC}' (expect PCM16 mono @16k).")
         try:
             while not self._stop_event.is_set():
                 await asyncio.sleep(0.1)
@@ -342,7 +386,6 @@ class GeminiAudioLoop:
         try:
             while not self._stop_event.is_set():
                 msg = await self.out_queue.get()
-                # Log input (what we send to the model)
                 data = msg.get("data", b"")
                 if data:
                     await self._log_input_bytes(data)
@@ -354,18 +397,32 @@ class GeminiAudioLoop:
             logger.exception("send_realtime error")
 
     def _log_transcriptions(self, sc):
-        if (it := getattr(sc, "input_transcription", None)) and getattr(
-            it, "text", None
-        ):
-            logger.info(f"User: {it.text}")
-        if (ot := getattr(sc, "output_transcription", None)) and getattr(
-            ot, "text", None
-        ):
-            logger.info(f"Gemini: {ot.text}")
+        """Forward streaming transcripts to ChatNode via service (+ log)."""
+        # user stream
+        it = getattr(sc, "input_transcription", None)
+        if it and getattr(it, "text", None):
+            text_piece = it.text.strip()
+            logger.info(f"User: {text_piece}")
+            if self._current_role != "user":
+                self._start_new_stream("user")
+            self._send_chat_piece(text_piece, is_user=True, update_db=True)
+
+        # assistant stream
+        ot = getattr(sc, "output_transcription", None)
+        if ot and getattr(ot, "text", None):
+            text_piece = ot.text.strip()
+            logger.info(f"Gemini: {text_piece}")
+            if self._current_role != "assistant":
+                self._start_new_stream("assistant")
+            self._send_chat_piece(text_piece, is_user=False, update_db=True)
 
     async def receive_audio(self):
         while not self._stop_event.is_set():
             try:
+                # New turn → reset stream roles/accumulators so user and assistant get separate messages
+                self._current_role = None
+                self._accum_text = ""
+                self._last_pib_message_id = ""
                 await self._open_turn_logs()
             except Exception as e:
                 logger.error(f"Failed to open turn logs: {e}")
@@ -380,10 +437,9 @@ class GeminiAudioLoop:
                     if data := getattr(resp, "data", None):
                         try:
                             self.audio_in_queue.put_nowait(data)
+                            await self._log_output_bytes(data)
                         except asyncio.QueueFull:
-                            logger.warning(
-                                "Audio input queue is full; dropping data chunk."
-                            )
+                            logger.warning("Audio input queue is full; dropping data chunk.")
                     elif text := getattr(resp, "text", None):
                         print(text, end="")
             except Exception as e:
@@ -393,7 +449,6 @@ class GeminiAudioLoop:
             self.audio_in_queue = asyncio.Queue()
 
     async def play_audio(self):
-        # Output at 24 kHz mono (your speaker supports this)
         self.playback_stream = await asyncio.to_thread(
             pya.open,
             format=FORMAT,
@@ -431,7 +486,7 @@ class GeminiAudioLoop:
                 self._chat_id
             )
             if not successful:
-                self.get_logger().error(f"no personality found for id {self._chat_id}")
+                logger.error(f"no personality found for id {self._chat_id}")
             description = (
                 personality.description
                 if personality.description is not None
@@ -439,18 +494,16 @@ class GeminiAudioLoop:
             )
 
             gemini_config = dict(CONFIG)
-            # SDK accepts `system_instruction` in config; it persists across turns.
             gemini_config["system_instruction"] = description
 
             async with client.aio.live.connect(
                 model=MODEL, config=gemini_config
             ) as session:
                 self.session = session
-                self.audio_in_queue = asyncio.Queue()  # playback side
-                self.out_queue = asyncio.Queue()  # ROS → Gemini side
+                self.audio_in_queue = asyncio.Queue()
+                self.out_queue = asyncio.Queue()
                 self._log_lock = asyncio.Lock()
 
-                # Ensure log dirs exist early
                 await self._ensure_log_dirs()
 
                 # start ROS bridge
@@ -498,7 +551,6 @@ class GeminiAudioLoop:
                 except Exception:
                     pass
 
-            # Final flush at shutdown + close any open logs
             try:
                 await self._flush_queues("shutdown")
             except Exception:
@@ -512,8 +564,6 @@ class GeminiAudioLoop:
 
 
 def main():
-    # If you want to run standalone for quick testing, set GOOGLE_API_KEY and call:
-    # GeminiAudioLoop(os.getenv("GOOGLE_API_KEY", "")).start()
     loop = GeminiAudioLoop(api_key=os.getenv("GOOGLE_API_KEY", ""))
     loop.start()
 

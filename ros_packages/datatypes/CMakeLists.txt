@@ -42,6 +42,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
 	"action/RecordAudio.action"
 	"action/Chat.action"
 	"srv/GetMicConfiguration.srv"
+	"srv/CreateOrUpdateChatMessage.srv"
 	DEPENDENCIES trajectory_msgs
 )
 
