@@ -160,9 +160,9 @@ ensure_symlink_self
 
 update_backend
 
-update_database
-
 update_frontend
+
+update_database
 
 
 # Cleanup
