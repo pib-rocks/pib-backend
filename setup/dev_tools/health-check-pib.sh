@@ -116,7 +116,7 @@ fi
 if [ $run_python_package_check = $true ]; then
     echo -e "$new_line""$yellow_text_color""--- checking python packages ---""$reset_text_color"
 
-    pip_packages=([1]=depthai [2]=tinkerforge [3]=openai [4]=google-cloud-speech [5]=google-cloud-texttospeech [6]=pyaudio [7]=opencv-python [8]=setuptools)
+    pip_packages=([1]=depthai [2]=tinkerforge [3]=openai [4]=google-cloud-speech [5]=google-cloud-texttospeech [6]=pyaudio [7]=opencv-python [8]=setuptools [9]=google-genai)
     for package in "${pip_packages[@]}"
     do
         if ! pip show "$package" >/dev/null 2>&1; then
