@@ -218,24 +218,32 @@ class GeminiAudioLoop:
         self._is_listening = True
         logger.info("GeminiAudioLoop: started")
 
-    def stop(self, join_timeout: float = 1.0) -> None:
-        """Signal the loop to stop and join the thread."""
+    def stop(self, join_timeout: float = 0.5) -> None:
+        """Signal the loop to stop and (briefly) wait for the thread.
+
+        We set the stop flag and only wait a short time; if the background
+        thread is still shutting down, we log a warning instead of blocking
+        the caller indefinitely.
+        """
         if not self._is_listening:
             logger.info("GeminiAudioLoop is not running.")
             return
 
+        # tell all async tasks to stop
         self._stop_event.set()
-        # reset accumulated text so we don't accidentally reuse it
-        self._accum_text = ""
-        self._last_pib_message_id = ""
-        self._current_role = None
 
-        # IMPORTANT: fully join the thread so the old session is completely torn down
         if self._thread:
-            self._thread.join()  # block until run() finished
+            self._thread.join(timeout=join_timeout)
+            if self._thread.is_alive():
+                logger.warning(
+                    "GeminiAudioLoop thread is still shutting down in the background."
+                )
+            else:
+                self._thread = None
+
         self._is_listening = False
-        self._thread = None
-        logger.info("GeminiAudioLoop: stopped")
+        logger.info("GeminiAudioLoop: stop requested")
+
 
     def _run_wrapper(self):
         try:
@@ -412,36 +420,28 @@ class GeminiAudioLoop:
             logger.exception("send_realtime error")
 
     def _log_transcriptions(self, sc):
-        """Forward streaming transcripts to ChatNode via service (+ log)."""
-        # If we've been stopped, ignore any further transcriptions.
+        """Log streaming transcripts. Stop immediately if the loop was stopped."""
         if self._stop_event.is_set() or not self._is_listening:
             return
 
-        # user stream
+        # user input transcription (what you say)
         it = getattr(sc, "input_transcription", None)
         if it and getattr(it, "text", None):
-            text_piece = it.text.strip()
-            logger.info(f"User: {text_piece}")
-            if self._current_role != "user":
-                self._start_new_stream("user")
-            self._send_chat_piece(text_piece, is_user=True, update_db=True)
+            logger.info(f"User: {it.text}")
 
-        # assistant stream
+        # assistant output transcription (what Gemini says)
         ot = getattr(sc, "output_transcription", None)
         if ot and getattr(ot, "text", None):
-            text_piece = ot.text.strip()
-            logger.info(f"Gemini: {text_piece}")
-            if self._current_role != "assistant":
-                self._start_new_stream("assistant")
-            self._send_chat_piece(text_piece, is_user=False, update_db=True)
+            logger.info(f"Gemini: {ot.text}")
 
     async def receive_audio(self):
+        """Receive audio + transcripts from Gemini.
+
+        Important: if _stop_event is set (Stop button pressed), we close the
+        streaming generator so there is no concurrent recv() left running.
+        """
         while not self._stop_event.is_set():
             try:
-                # New turn → reset stream roles/accumulators so user and assistant get separate messages
-                self._current_role = None
-                self._accum_text = ""
-                self._last_pib_message_id = ""
                 await self._open_turn_logs()
             except Exception as e:
                 logger.error(f"Failed to open turn logs: {e}")
@@ -451,7 +451,7 @@ class GeminiAudioLoop:
             try:
                 turn = self.session.receive()
                 async for resp in turn:
-                    # If stop was requested while we are still receiving, close this generator
+                    # Stop requested while we are still receiving → close stream
                     if self._stop_event.is_set():
                         if hasattr(turn, "aclose"):
                             try:
@@ -466,24 +466,27 @@ class GeminiAudioLoop:
                     if data := getattr(resp, "data", None):
                         try:
                             self.audio_in_queue.put_nowait(data)
-                            await self._log_output_bytes(data)
                         except asyncio.QueueFull:
-                            logger.warning("Audio input queue is full; dropping data chunk.")
+                            logger.warning(
+                                "Audio input queue is full; dropping data chunk."
+                            )
                     elif text := getattr(resp, "text", None):
+                        # (Optional) text responses without audio
                         print(text, end="")
-            except ConcurrencyError as e:
-                # This is the error you saw: break out of the loop and let run() clean up.
-                logger.error(f"ConcurrencyError in receive_audio: {e}")
-                break
-            except Exception as e:
-                logger.exception(f"Error receiving audio: {e}")
 
-            if self._stop_event.is_set():
-                # Stop requested: break outer loop as well
-                break
+            except Exception as e:
+                # This is where the "cannot call recv while another coroutine
+                # is already running recv" ends up. We log it and break so the
+                # loop can shut down cleanly.
+                logger.exception(f"Error receiving audio: {e}")
+                if self._stop_event.is_set():
+                    break
 
             # Optional: reset queue if needed between turns
             self.audio_in_queue = asyncio.Queue()
+
+            if self._stop_event.is_set():
+                break
 
     async def play_audio(self):
         self.playback_stream = await asyncio.to_thread(
