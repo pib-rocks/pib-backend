@@ -1,8 +1,11 @@
+# audio_loop.py
+
 import asyncio
 import os
 import logging
 import threading
 from typing import Any, Optional
+
 import numpy as np
 import rclpy
 from rclpy.node import Node
@@ -18,11 +21,7 @@ from pathlib import Path
 from datetime import datetime
 from asyncio import QueueEmpty
 
-# service API to ChatNode
 from datatypes.srv import CreateOrUpdateChatMessage
-
-# NEW: to catch concurrency errors from websockets
-from websockets.exceptions import ConcurrencyError
 
 # ——— Logging ———
 logging.basicConfig(
@@ -37,7 +36,7 @@ pya = pyaudio.PyAudio()
 FORMAT = pyaudio.paInt16
 CHANNELS = 1  # send mono to Gemini
 SEND_SAMPLE_RATE = 16000  # recorder publishes 16 kHz mono
-RECEIVE_SAMPLE_RATE = 24000  # model replies at 24 kHz (your speaker supports it)
+RECEIVE_SAMPLE_RATE = 24000  # model replies at 24 kHz
 CHUNK_SIZE = 1024
 
 MODEL = "gemini-2.5-flash-native-audio-preview-09-2025"
@@ -46,7 +45,6 @@ CONFIG = {
     "input_audio_transcription": {},
     "output_audio_transcription": {},
 }
-# Topic name (ROS)
 ROS_AUDIO_TOPIC = os.getenv("ROS_AUDIO_TOPIC", "audio_stream")
 
 
@@ -92,9 +90,9 @@ class RosAudioBridge:
             except Exception:
                 pass
 
-            # IMPORTANT: reuse existing ROS context if already init'd by the launcher
+            # we assume ROS is already initialized by the main application
             if not rclpy.ok():
-                pass
+                rclpy.init()
 
             class _Node(Node):
                 def __init__(self, topic, loop, queue, stop_evt):
@@ -169,13 +167,12 @@ class GeminiAudioLoop:
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._is_listening = False
-        self._chat_id = None
+        self._chat_id: Optional[str] = None
 
         # Initialized in run()
         self.audio_in_queue: asyncio.Queue[bytes]
         self.out_queue: asyncio.Queue[dict[str, Any]]
         self.session = None
-        self.audio_stream = None
         self.playback_stream = None
         self.api_key = api_key
 
@@ -190,12 +187,15 @@ class GeminiAudioLoop:
         self._log_input_dir = Path(os.getenv("AUDIO_LOG_INPUT_DIR", "input"))
         self._log_output_dir = Path(os.getenv("AUDIO_LOG_OUTPUT_DIR", "output"))
 
-        # ---------- service client state ----------
+        # Service client state (for streaming ChatMessages to ChatNode)
         self._srv_node: Optional[Node] = None
         self._srv_client = None
         self._accum_text: str = ""
         self._last_pib_message_id: str = ""
         self._current_role: Optional[str] = None  # "user" | "assistant" | None
+
+        # event loop handle (for clean shutdown)
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
 
     @property
     def is_listening(self) -> bool:
@@ -203,53 +203,57 @@ class GeminiAudioLoop:
 
     def start(self, chat_id) -> None:
         """Start the Gemini audio loop in a background thread."""
-        # Don't start if a previous thread is still alive
-        if self._thread is not None and self._thread.is_alive():
-            logger.warning("GeminiAudioLoop thread is still running; not starting a new one.")
-            return
         if self._is_listening:
             logger.info("GeminiAudioLoop is already running.")
             return
 
         self._chat_id = chat_id
         self._stop_event.clear()
-        self._thread = threading.Thread(target=self._run_wrapper, daemon=True)
+        self._thread = threading.Thread(target=self._run_thread, daemon=True)
         self._thread.start()
         self._is_listening = True
         logger.info("GeminiAudioLoop: started")
 
-    def stop(self, join_timeout: float = 0.5) -> None:
-        """Signal the loop to stop and (briefly) wait for the thread.
-
-        We set the stop flag and only wait a short time; if the background
-        thread is still shutting down, we log a warning instead of blocking
-        the caller indefinitely.
-        """
+    def stop(self, join_timeout: float = 5.0) -> None:
+        """Signal the loop to stop and join the thread."""
         if not self._is_listening:
             logger.info("GeminiAudioLoop is not running.")
             return
 
-        # tell all async tasks to stop
         self._stop_event.set()
+
+        # try to close the live session from this thread, if we have a loop
+        if self._loop and self.session is not None:
+            try:
+                async def _close():
+                    try:
+                        await self.session.close()
+                    except Exception:
+                        pass
+
+                asyncio.run_coroutine_threadsafe(_close(), self._loop)
+            except Exception:
+                pass
 
         if self._thread:
             self._thread.join(timeout=join_timeout)
             if self._thread.is_alive():
-                logger.warning(
-                    "GeminiAudioLoop thread is still shutting down in the background."
-                )
+                logger.warning("GeminiAudioLoop thread did not stop cleanly.")
             else:
                 self._thread = None
 
         self._is_listening = False
-        logger.info("GeminiAudioLoop: stop requested")
+        logger.info("GeminiAudioLoop: stopped")
 
-
-    def _run_wrapper(self):
+    def _run_thread(self):
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        self._loop = loop
         try:
-            asyncio.run(self.run())
-        except Exception:
-            logger.exception("GeminiAudioLoop error in thread")
+            loop.run_until_complete(self.run())
+        finally:
+            self._loop = None
+            loop.close()
 
     # ——— Queue utils ———
     def _drain_queue(self, q: asyncio.Queue):
@@ -359,23 +363,29 @@ class GeminiAudioLoop:
                 CreateOrUpdateChatMessage, "create_or_update_chat_message"
             )
             if not self._srv_client.wait_for_service(timeout_sec=2.0):
-                logger.warning("Service 'create_or_update_chat_message' not available yet.")
+                logger.warning(
+                    "Service 'create_or_update_chat_message' not available yet."
+                )
 
     def _start_new_stream(self, role: str):
-        # role is "user" or "assistant"
+        """Reset accumulation for a new logical message (user or assistant)."""
         self._current_role = role
         self._accum_text = ""
         self._last_pib_message_id = ""
 
     def _send_chat_piece(self, text_piece: str, is_user: bool, update_db: bool = True):
-        """Send (accumulated) text to ChatNode service. First call → CREATE, then UPDATE."""
-        # If we've been stopped (button pressed), do NOT send anything more.
+        """
+        Send (accumulated) text to ChatNode service.
+        First call (no message_id) → CREATE, subsequent → UPDATE.
+        """
         if self._stop_event.is_set() or not self._is_listening:
             return
         if not text_piece:
             return
 
         self._ensure_srv_client()
+        if self._srv_client is None:
+            return
 
         # accumulate and normalize spacing
         self._accum_text = (self._accum_text + " " + text_piece).strip()
@@ -387,12 +397,12 @@ class GeminiAudioLoop:
         req.update_database = update_db
         req.message_id = self._last_pib_message_id  # "" → CREATE
 
-        future = self._srv_client.call_async(req)
-        # Spin until the service returns (simple and safe here)
-        rclpy.spin_until_future_complete(self._srv_node, future, timeout_sec=2.0)
-        if future.done() and future.result() is not None and future.result().successful:
-            self._last_pib_message_id = future.result().message_id
-        else:
+        try:
+            future = self._srv_client.call_async(req)
+            rclpy.spin_until_future_complete(self._srv_node, future, timeout_sec=1.0)
+            if future.done() and future.result() is not None and future.result().successful:
+                self._last_pib_message_id = future.result().message_id
+        except Exception:
             logger.debug("CreateOrUpdateChatMessage call failed or timed out.")
 
     # — tasks —
@@ -420,26 +430,29 @@ class GeminiAudioLoop:
             logger.exception("send_realtime error")
 
     def _log_transcriptions(self, sc):
-        """Log streaming transcripts. Stop immediately if the loop was stopped."""
+        """Forward streaming transcripts to ChatNode via service (+ log)."""
         if self._stop_event.is_set() or not self._is_listening:
             return
 
-        # user input transcription (what you say)
+        # user stream (what you say)
         it = getattr(sc, "input_transcription", None)
         if it and getattr(it, "text", None):
-            logger.info(f"User: {it.text}")
+            text_piece = it.text.strip()
+            logger.info(f"User: {text_piece}")
+            if self._current_role != "user":
+                self._start_new_stream("user")
+            self._send_chat_piece(text_piece, is_user=True, update_db=True)
 
-        # assistant output transcription (what Gemini says)
+        # assistant stream (what Gemini says)
         ot = getattr(sc, "output_transcription", None)
         if ot and getattr(ot, "text", None):
-            logger.info(f"Gemini: {ot.text}")
+            text_piece = ot.text.strip()
+            logger.info(f"Gemini: {text_piece}")
+            if self._current_role != "assistant":
+                self._start_new_stream("assistant")
+            self._send_chat_piece(text_piece, is_user=False, update_db=True)
 
     async def receive_audio(self):
-        """Receive audio + transcripts from Gemini.
-
-        Important: if _stop_event is set (Stop button pressed), we close the
-        streaming generator so there is no concurrent recv() left running.
-        """
         while not self._stop_event.is_set():
             try:
                 await self._open_turn_logs()
@@ -451,13 +464,7 @@ class GeminiAudioLoop:
             try:
                 turn = self.session.receive()
                 async for resp in turn:
-                    # Stop requested while we are still receiving → close stream
                     if self._stop_event.is_set():
-                        if hasattr(turn, "aclose"):
-                            try:
-                                await turn.aclose()
-                            except Exception:
-                                pass
                         break
 
                     if sc := getattr(resp, "server_content", None):
@@ -466,29 +473,21 @@ class GeminiAudioLoop:
                     if data := getattr(resp, "data", None):
                         try:
                             self.audio_in_queue.put_nowait(data)
+                            await self._log_output_bytes(data)
                         except asyncio.QueueFull:
                             logger.warning(
                                 "Audio input queue is full; dropping data chunk."
                             )
                     elif text := getattr(resp, "text", None):
-                        # (Optional) text responses without audio
                         print(text, end="")
-
             except Exception as e:
-                # This is where the "cannot call recv while another coroutine
-                # is already running recv" ends up. We log it and break so the
-                # loop can shut down cleanly.
                 logger.exception(f"Error receiving audio: {e}")
-                if self._stop_event.is_set():
-                    break
 
-            # Optional: reset queue if needed between turns
+            # reset queue between turns
             self.audio_in_queue = asyncio.Queue()
 
-            if self._stop_event.is_set():
-                break
-
     async def play_audio(self):
+        # Output at 24 kHz mono
         self.playback_stream = await asyncio.to_thread(
             pya.open,
             format=FORMAT,
@@ -606,6 +605,7 @@ class GeminiAudioLoop:
 
 
 def main():
+    # For standalone testing (not used by ROS node normally)
     loop = GeminiAudioLoop(api_key=os.getenv("GOOGLE_API_KEY", ""))
     loop.start()
 

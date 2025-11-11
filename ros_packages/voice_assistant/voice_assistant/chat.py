@@ -7,9 +7,7 @@ import datetime
 from datatypes.action import Chat
 from datatypes.msg import ChatMessage
 from datatypes.srv import GetCameraImage
-# service for AudioLoop -> ChatNode bridge
 from datatypes.srv import CreateOrUpdateChatMessage
-
 from pib_api_client import voice_assistant_client
 from public_api_client.public_voice_client import PublicApiChatMessage
 from rclpy.action import ActionServer
@@ -54,13 +52,17 @@ class ChatNode(Node):
             callback_group=ReentrantCallbackGroup(),
         )
 
-        # Publisher for ChatMessages
+        # publisher for chat-messages that are sent or received
         self.chat_message_publisher: Publisher = self.create_publisher(
             ChatMessage, "chat_messages", 10
         )
+
+        # client for requesting images from the cameras
         self.get_camera_image_client = self.create_client(
             GetCameraImage, "get_camera_image"
         )
+
+        # subscription for the public-api-token
         self.get_token_subscription = self.create_subscription(
             String, "public_api_token", self.get_public_api_token_listener, 10
         )
@@ -70,8 +72,8 @@ class ChatNode(Node):
         # lock that should be aquired, whenever accessing 'voice_assistant_client'
         self.voice_assistant_client_lock = Lock()
 
-        # NEW: lightweight service for external publishers (Gemini audio loop)
-        self._cu_srv: Service = self.create_service(
+        # service used by audio_loop (Gemini) to stream/create/update ChatMessages
+        self.create_or_update_chat_message_service: Service = self.create_service(
             CreateOrUpdateChatMessage,
             "create_or_update_chat_message",
             self._handle_create_or_update_chat_message,
@@ -84,10 +86,10 @@ class ChatNode(Node):
         token = msg.data
         self.token = token
 
+    # helper for publishing ChatMessage on the ROS topic
     def _publish_chat_message(
         self, chat_id: str, content: str, is_user: bool, message_id: str
     ):
-        """Helper: publish a ChatMessage on the ROS topic."""
         chat_message_ros = ChatMessage()
         chat_message_ros.chat_id = chat_id
         chat_message_ros.content = content
@@ -115,11 +117,13 @@ class ChatNode(Node):
             if update_message:
                 if update_database:
                     self.message_content = f"{self.message_content} {text}"
-                    successful, _ = voice_assistant_client.update_chat_message(
-                        chat_id,
-                        self.message_content,
-                        is_user,
-                        self.last_pib_message_id,
+                    successful, chat_message = (
+                        voice_assistant_client.update_chat_message(
+                            chat_id,
+                            self.message_content,
+                            is_user,
+                            self.last_pib_message_id,
+                        )
                     )
                     if not successful:
                         self.get_logger().error(
@@ -129,8 +133,10 @@ class ChatNode(Node):
                 else:
                     self.message_content = f"{self.message_content} {text}"
             else:
-                successful, chat_message = voice_assistant_client.create_chat_message(
-                    chat_id, text, is_user
+                successful, chat_message = (
+                    voice_assistant_client.create_chat_message(
+                        chat_id, text, is_user
+                    )
                 )
                 if not successful or chat_message is None:
                     self.get_logger().error(
@@ -140,7 +146,6 @@ class ChatNode(Node):
                 self.last_pib_message_id = chat_message.message_id
                 self.message_content = text
 
-        # publish to ROS
         self._publish_chat_message(
             chat_id=chat_id,
             content=self.message_content,
@@ -148,7 +153,7 @@ class ChatNode(Node):
             message_id=self.last_pib_message_id,
         )
 
-    # ---------- Service handler for AudioLoop streaming ----------
+    # ---------- service handler for audio_loop streaming ----------
 
     def _handle_create_or_update_chat_message(
         self,
@@ -156,9 +161,11 @@ class ChatNode(Node):
         resp: CreateOrUpdateChatMessage.Response,
     ) -> CreateOrUpdateChatMessage.Response:
         """
-        External, stateless path used by audio_loop.py.
-        Takes the FULL current text (not just a delta), creates/updates in PIB,
-        then publishes ChatMessage so UIs stay in sync.
+        Lightweight, mostly stateless path used by audio_loop.py.
+
+        The audio loop sends the FULL text seen so far (not just a delta).
+        We create or update a ChatMessage in PIB accordingly and publish a
+        ChatMessage on the ROS topic so UIs stay in sync.
         """
         try:
             chat_id = (req.chat_id or "").strip()
@@ -173,9 +180,9 @@ class ChatNode(Node):
                 resp.content = text
                 return resp
 
-            # Create vs Update uses PIB client directly (stateless; no internal concat)
+            # create vs update in PIB
             if message_id_in:
-                # Update to EXACT content passed in `text` (no concatenation here)
+                # UPDATE existing message to *exact* text (no concatenation here)
                 if update_db:
                     successful, _ = voice_assistant_client.update_chat_message(
                         chat_id, text, is_user, message_id_in
@@ -187,6 +194,7 @@ class ChatNode(Node):
                         return resp
                 effective_message_id = message_id_in
             else:
+                # CREATE new message
                 successful, cm = voice_assistant_client.create_chat_message(
                     chat_id, text, is_user
                 )
@@ -197,7 +205,7 @@ class ChatNode(Node):
                     return resp
                 effective_message_id = cm.message_id
 
-            # Publish to topic for subscribers
+            # publish to ROS topic
             self._publish_chat_message(chat_id, text, is_user, effective_message_id)
 
             resp.successful = True
@@ -351,7 +359,7 @@ class ChatNode(Node):
                     # check if collected text is a sentence
                     sentence_match = sentence_pattern.search(curr_text)
                     if sentence_match is not None:
-                        # extract the visual-code by removing the opening + closing tag and store it as previous text
+                        # extract the sentence and store it as previous text
                         sentence = sentence_match.group(1) + (
                             sentence_match.group(3)
                             if sentence_match.group(3) is not None
@@ -359,7 +367,7 @@ class ChatNode(Node):
                         )
                         prev_text = sentence
                         prev_text_type = Chat.Goal.TEXT_TYPE_SENTENCE
-                        # create a chat message from the visual-code, including opening and closing tags
+                        # create a chat message from the sentence
                         chat_message_text = sentence
                         self.executor.create_task(
                             self.create_chat_message,
