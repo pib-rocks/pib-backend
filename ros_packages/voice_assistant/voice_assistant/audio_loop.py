@@ -20,7 +20,7 @@ from pathlib import Path
 from datetime import datetime
 from asyncio import QueueEmpty
 
-# NEW: service API to ChatNode
+# service API to ChatNode
 from datatypes.srv import CreateOrUpdateChatMessage
 
 # ——— Logging ———
@@ -189,7 +189,7 @@ class GeminiAudioLoop:
         self._log_input_dir = Path(os.getenv("AUDIO_LOG_INPUT_DIR", "input"))
         self._log_output_dir = Path(os.getenv("AUDIO_LOG_OUTPUT_DIR", "output"))
 
-        # ---------- NEW: service client state ----------
+        # ---------- service client state ----------
         self._srv_node: Optional[Node] = None
         self._srv_client = None
         self._accum_text: str = ""
@@ -220,6 +220,11 @@ class GeminiAudioLoop:
             return
 
         self._stop_event.set()
+        # reset accumulated text so we don't accidentally reuse it
+        self._accum_text = ""
+        self._last_pib_message_id = ""
+        self._current_role = None
+
         if self._thread:
             self._thread.join(timeout=join_timeout)
         self._is_listening = False
@@ -350,8 +355,12 @@ class GeminiAudioLoop:
 
     def _send_chat_piece(self, text_piece: str, is_user: bool, update_db: bool = True):
         """Send (accumulated) text to ChatNode service. First call → CREATE, then UPDATE."""
+        # If we've been stopped (button pressed), do NOT send anything more.
+        if self._stop_event.is_set() or not self._is_listening:
+            return
         if not text_piece:
             return
+
         self._ensure_srv_client()
 
         # accumulate and normalize spacing
@@ -398,6 +407,10 @@ class GeminiAudioLoop:
 
     def _log_transcriptions(self, sc):
         """Forward streaming transcripts to ChatNode via service (+ log)."""
+        # If we've been stopped, ignore any further transcriptions.
+        if self._stop_event.is_set() or not self._is_listening:
+            return
+
         # user stream
         it = getattr(sc, "input_transcription", None)
         if it and getattr(it, "text", None):
