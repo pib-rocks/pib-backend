@@ -1,5 +1,3 @@
-# audio_loop.py
-
 import asyncio
 import os
 import logging
@@ -22,6 +20,9 @@ from asyncio import QueueEmpty
 
 # service API to ChatNode
 from datatypes.srv import CreateOrUpdateChatMessage
+
+# NEW: to catch concurrency errors from websockets
+from websockets.exceptions import ConcurrencyError
 
 # ——— Logging ———
 logging.basicConfig(
@@ -202,6 +203,10 @@ class GeminiAudioLoop:
 
     def start(self, chat_id) -> None:
         """Start the Gemini audio loop in a background thread."""
+        # Don't start if a previous thread is still alive
+        if self._thread is not None and self._thread.is_alive():
+            logger.warning("GeminiAudioLoop thread is still running; not starting a new one.")
+            return
         if self._is_listening:
             logger.info("GeminiAudioLoop is already running.")
             return
@@ -225,8 +230,9 @@ class GeminiAudioLoop:
         self._last_pib_message_id = ""
         self._current_role = None
 
+        # IMPORTANT: fully join the thread so the old session is completely torn down
         if self._thread:
-            self._thread.join(timeout=join_timeout)
+            self._thread.join()  # block until run() finished
         self._is_listening = False
         self._thread = None
         logger.info("GeminiAudioLoop: stopped")
@@ -334,7 +340,7 @@ class GeminiAudioLoop:
             except Exception:
                 logger.exception("Failed to write output audio log")
 
-    # ---------- NEW: service client helpers ----------
+    # ---------- service client helpers ----------
 
     def _ensure_srv_client(self):
         if self._srv_node is None:
@@ -441,9 +447,19 @@ class GeminiAudioLoop:
                 logger.error(f"Failed to open turn logs: {e}")
                 continue
 
+            turn = None
             try:
                 turn = self.session.receive()
                 async for resp in turn:
+                    # If stop was requested while we are still receiving, close this generator
+                    if self._stop_event.is_set():
+                        if hasattr(turn, "aclose"):
+                            try:
+                                await turn.aclose()
+                            except Exception:
+                                pass
+                        break
+
                     if sc := getattr(resp, "server_content", None):
                         self._log_transcriptions(sc)
 
@@ -455,8 +471,16 @@ class GeminiAudioLoop:
                             logger.warning("Audio input queue is full; dropping data chunk.")
                     elif text := getattr(resp, "text", None):
                         print(text, end="")
+            except ConcurrencyError as e:
+                # This is the error you saw: break out of the loop and let run() clean up.
+                logger.error(f"ConcurrencyError in receive_audio: {e}")
+                break
             except Exception as e:
                 logger.exception(f"Error receiving audio: {e}")
+
+            if self._stop_event.is_set():
+                # Stop requested: break outer loop as well
+                break
 
             # Optional: reset queue if needed between turns
             self.audio_in_queue = asyncio.Queue()
@@ -494,6 +518,7 @@ class GeminiAudioLoop:
     async def run(self):
         client = genai.Client(api_key=self.api_key)
         ros_started = False
+        tasks = []
         try:
             successful, personality = voice_assistant_client.get_personality_from_chat(
                 self._chat_id
@@ -547,9 +572,10 @@ class GeminiAudioLoop:
         except Exception:
             logger.exception("GeminiAudioLoop.run: unexpected error")
         finally:
-            for t in locals().get("tasks", []):
+            for t in tasks:
                 t.cancel()
-            await asyncio.gather(*locals().get("tasks", []), return_exceptions=True)
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
 
             if ros_started and self._ros_bridge:
                 try:
