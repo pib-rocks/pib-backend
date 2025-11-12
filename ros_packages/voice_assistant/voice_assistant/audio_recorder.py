@@ -85,7 +85,7 @@ class AudioRecorderNode(Node):
 
         self.get_logger().info("Now running AUDIO RECORDER")
 
-    def request_mic_configuration(self, timeout_sec: float = 25.0) -> bool:
+    def request_mic_configuration(self, timeout_sec: float = 5.0) -> bool:
         """
         Call the get_mic_configuration service,
         populate self.mic_channels, self.chunk_size, self.audio_format and self.sample_rate,
