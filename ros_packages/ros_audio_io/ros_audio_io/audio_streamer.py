@@ -1,6 +1,3 @@
-# audio_streamer.py
-
-
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Int16MultiArray
@@ -8,202 +5,112 @@ from datatypes.srv import GetMicConfiguration
 import pyaudio
 import numpy as np
 import os
-import traceback
 
 
 class AudioStreamer(Node):
-    """
-    Capture from a multichannel USB mic (e.g., ReSpeaker v3.x) and publish ONLY one selected channel
-    as mono Int16 PCM chunks on the 'audio_stream' topic.
-
-    Env vars:
-      MIC_DEVICE              substring to match input device name (default: "default")
-      MIC_CHANNELS            number of input channels to open (default: 6)
-      MIC_RATE                sample rate to request (default: 16000)
-      MIC_PROCESSED_CHANNEL   which input channel index to publish (default: 0)
-
-    Notes:
-      - For ReSpeaker v3.x with 6-ch firmware: wiki ch0 is the AEC/beamformed stream.
-      - If opening with MIC_CHANNELS fails, we fallback to the device's maxInputChannels.
-      - If the requested sample rate is not supported, we fallback to the device's defaultSampleRate.
-    """
-
     def __init__(self):
         super().__init__("audio_streamer")
 
-        # --- Config from env ---
+        # Read preferred device substring from environment (MIC_DEVICE)
         self.mic_preferred_name = os.getenv("MIC_DEVICE", "default").lower()
-        self.requested_channels = int(os.getenv("MIC_CHANNELS", "6"))
-        self.requested_rate = int(os.getenv("MIC_RATE", "16000"))
-        self.processed_channel_index = int(os.getenv("MIC_PROCESSED_CHANNEL", "0"))
 
-        # --- Audio params ---
-        self.chunk_size = 1024
-        self.audio_format = pyaudio.paInt16  # 16-bit
-        self.input_device_index = None
-        self.sample_rate = None
-        self.open_channels = None
+        # Read number of mic channels from environment (MIC_CHANNELS)
+        self.mic_channels = int(os.getenv("MIC_CHANNELS", 1))
 
-        # --- ROS pub/service ---
-        self.pub = self.create_publisher(Int16MultiArray, "audio_stream", 10)
-        self.srv = self.create_service(
-            GetMicConfiguration, "get_mic_configuration", self.get_mic_configuration
+        # Audio parameters
+        self.chunk_size = 1024  # Buffer size
+        self.audio_format = pyaudio.paInt16  # 16-bit audio format
+        self.sample_rate = None  # Sample rate in Hz. Will be determined dynamically
+        self.input_device_index = None  # Will be determined dynamically
+
+        # ROS2 publisher for raw audio chunks
+        self.ros_audio_data_publisher = self.create_publisher(
+            Int16MultiArray, "audio_stream", 10
         )
 
-        # --- PyAudio init & device selection ---
         self.py_audio = pyaudio.PyAudio()
         self.select_input_device()
+
         if self.input_device_index is None:
             self.get_logger().error("No audio input device found; shutting down.")
             rclpy.shutdown()
             return
 
-        dev = self.py_audio.get_device_info_by_index(self.input_device_index)
-        dev_name = dev.get("name")
-        dev_default_rate = int(dev.get("defaultSampleRate", 16000))
-        dev_max_in = int(dev.get("maxInputChannels", 0))
+        # Configure mic device configuration
+        selected_input_device_info = self.py_audio.get_device_info_by_index(
+            self.input_device_index
+        )
+        self.sample_rate = int(selected_input_device_info.get("defaultSampleRate", -1))
 
-        # Choose rate/channels with graceful fallback
-        sr_candidates = [self.requested_rate, dev_default_rate]
-        ch_candidates = [self.requested_channels, dev_max_in]
-
-        self.audio_stream = None
-
-        last_err = None
-
-        for rate in sr_candidates:
-            for channel in ch_candidates:
-                if channel <= 0:
-                    continue
-
-                self.get_logger().info(
-                    f"Trying to open '{dev_name}' (idx {self.input_device_index}) "
-                    f"rate={rate}Hz channels={channel} format=Int16 chunk={self.chunk_size}"
-                )
-
-                try:
-                    stream = self.py_audio.open(
-                        format=self.audio_format,
-                        channels=channel,
-                        rate=rate,
-                        input=True,
-                        input_device_index=self.input_device_index,
-                        frames_per_buffer=self.chunk_size,
-                    )
-                except Exception as e:
-                    last_err = e
-                    self.get_logger().warning(
-                        f"Open failed with rate={rate}, ch={channel}: {e}"
-                    )
-                    continue  # try next combination
-
-                # success: store and exit both loops
-                self.audio_stream = stream
-                self.sample_rate = rate
-                self.open_channels = channel
-                break  # exit inner loop
-            else:
-                # only executed if inner loop didn't break → try next rate
-                continue
-            break  # exit outer loop once success found
-        else:
-            # executed if no combination succeeded
-            self.get_logger().error(
-                f"Failed to open audio stream after trying all combinations: {last_err}"
-            )
-
-        if not self.audio_stream:
-            self.get_logger().error(
-                "Failed to open audio stream after trying fallbacks.\n"
-                + (
-                    ""
-                    if not last_err
-                    else "".join(
-                        traceback.format_exception_only(type(last_err), last_err)
-                    ).strip()
-                )
-            )
+        if self.sample_rate == -1:
+            self.get_logger().error("No audio configuration data found; shutting down.")
             rclpy.shutdown()
             return
 
-        # Clamp selected channel to valid range
-        if self.open_channels <= 0:
-            self.get_logger().error("Open channels invalid; shutting down.")
-            rclpy.shutdown()
-            return
-
-        if (
-            self.processed_channel_index < 0
-            or self.processed_channel_index >= self.open_channels
-        ):
-            self.get_logger().warning(
-                f"MIC_PROCESSED_CHANNEL={self.processed_channel_index} out of range "
-                f"(0..{self.open_channels-1}); using 0."
-            )
-            self.processed_channel_index = 0
-
         self.get_logger().info(
-            "=== Input configured ===\n"
-            f"Device:      {dev_name} (index {self.input_device_index})\n"
-            f"Rate:        {self.sample_rate} Hz\n"
-            f"Channels:    {self.open_channels} (publishing ONLY channel {self.processed_channel_index})\n"
-            f"Chunk size:  {self.chunk_size} frames\n"
-            f"Format:      Int16\n"
-            f"Env: MIC_DEVICE='{self.mic_preferred_name}', MIC_CHANNELS={self.requested_channels}, "
-            f"MIC_RATE={self.requested_rate}, MIC_PROCESSED_CHANNEL={self.processed_channel_index}"
-        )
-        self.get_logger().info(
-            "Mic configuration service ready (get_mic_configuration)"
+            f"Device info: {self.sample_rate}Hz, {self.mic_channels} channels"
         )
 
-        # Publish timer
+        # ROS2 service for mic config
+        self.ros_mic_configuration_service = self.create_service(
+            GetMicConfiguration, "get_mic_configuration", self.get_mic_configuration
+        )
+        self.get_logger().info("Mic configuration service ready")
+
+        # Open audio stream
+        self.audio_stream = self.py_audio.open(
+            format=self.audio_format,
+            channels=self.mic_channels,
+            rate=self.sample_rate,
+            input=True,
+            input_device_index=self.input_device_index,
+            frames_per_buffer=self.chunk_size,
+        )
+
+        # Schedule callback every chunk/rate seconds for minimal latency
         self.timer = self.create_timer(
-            self.chunk_size / float(self.sample_rate), self.publish_audio
+            self.chunk_size / self.sample_rate, self.publish_audio
         )
 
-    # ----- ROS service -----
-    def get_mic_configuration(self, request, response):
-        response.mic_channels = 1  # we publish mono (selected channel only)
+    def get_mic_configuration(
+        self,
+        request: GetMicConfiguration.Request,
+        response: GetMicConfiguration.Response,
+    ) -> GetMicConfiguration.Response:
+        response.mic_channels = self.mic_channels
         response.chunk_size = self.chunk_size
         response.audio_format = self.audio_format
         response.sample_rate = self.sample_rate
         return response
 
-    # ----- Helpers -----
     def select_input_device(self):
-        """Select preferred mic by substring; else fall back to default."""
-        found = None
-        hostapis = {
-            self.py_audio.get_host_api_info_by_index(i)[
-                "index"
-            ]: self.py_audio.get_host_api_info_by_index(i)["name"]
-            for i in range(self.py_audio.get_host_api_count())
-        }
+        """Select the user-preferred audio device or fall back to default."""
+        found_device = None
         for i in range(self.py_audio.get_device_count()):
-            info = self.py_audio.get_device_info_by_index(i)
-            name = info.get("name", "")
-            max_in = info.get("maxInputChannels", 0)
-            api_name = hostapis.get(info.get("hostApi"), "?")
+            found_device_info = self.py_audio.get_device_info_by_index(i)
             self.get_logger().info(
-                f"Device {i}: '{name}' | hostapi={api_name} | maxInputChannels={max_in}"
+                f"Device {i}: {found_device_info.get('name')} (in:{found_device_info.get('maxInputChannels')}"
             )
-            if max_in and self.mic_preferred_name in name.lower():
-                found = i
+            if self.mic_preferred_name in found_device_info.get("name").lower():
+                found_device = (i, found_device_info)
                 break
 
-        if found is not None:
-            self.input_device_index = found
-            sel = self.py_audio.get_device_info_by_index(found)
+        if found_device:
+            found_device_index, found_device_info = found_device
+            self.input_device_index = found_device_index
             self.get_logger().info(
-                f"Using preferred input '{sel.get('name')}' (index {found})"
+                f"Using preferred mic '{self.mic_preferred_name}': {found_device_info.get('name')} (index {found_device_index})"
             )
         else:
+            # Fallback to system default input
             try:
-                default_info = self.py_audio.get_default_input_device_info()
-                self.input_device_index = int(default_info.get("index"))
-                self.get_logger().warning(
-                    f"No device matching '{self.mic_preferred_name}'; "
-                    f"falling back to default input '{default_info.get('name')}' (index {self.input_device_index})"
+                default_input_device_info = (
+                    self.py_audio.get_default_input_device_info()
+                )
+                self.input_device_index = int(default_input_device_info.get("index"))
+                self.get_logger().warn(
+                    f"No device matching '{self.mic_preferred_name}'; falling back to default: "
+                    f"{default_input_device_info.get('name')} (index {self.input_device_index})"
                 )
             except IOError:
                 self.get_logger().error(
@@ -211,49 +118,29 @@ class AudioStreamer(Node):
                 )
                 self.input_device_index = None
 
-    # ----- Main loop -----
     def publish_audio(self):
-        try:
-            raw = self.audio_stream.read(self.chunk_size, exception_on_overflow=False)
-            buf = np.frombuffer(raw, dtype=np.int16)
-
-            # De-interleave if multichannel, pick just the processed channel
-            if self.open_channels > 1:
-                frames = buf.size // self.open_channels
-                if frames * self.open_channels != buf.size:
-                    # Truncate to whole frames if we got a partial
-                    buf = buf[: frames * self.open_channels]
-                buf = buf.reshape(frames, self.open_channels)[
-                    :, self.processed_channel_index
-                ]
-
-            # Publish mono PCM (selected channel only)
-            msg = Int16MultiArray()
-            msg.data = buf.tolist()
-            self.pub.publish(msg)
-
-        except Exception as e:
-            self.get_logger().error(f"Audio read/publish error: {e}")
-            # Optional: attempt a soft recover on I/O errors. For now, just continue.
+        """Read audio data from the microphone and publish it."""
+        audio_data = np.frombuffer(
+            self.audio_stream.read(self.chunk_size, exception_on_overflow=False),
+            dtype=np.int16,
+        )
+        ros_message = Int16MultiArray()
+        ros_message.data = audio_data.tolist()
+        self.ros_audio_data_publisher.publish(ros_message)
 
     def destroy_node(self):
-        try:
-            if self.audio_stream is not None:
-                self.audio_stream.stop_stream()
-                self.audio_stream.close()
-        finally:
-            self.py_audio.terminate()
-            super().destroy_node()
+        """Cleanup resources when shutting down."""
+        self.audio_stream.stop_stream()
+        self.audio_stream.close()
+        self.py_audio.terminate()
+        super().destroy_node()
 
 
 def main(args=None):
     rclpy.init(args=args)
     node = AudioStreamer()
-    if node.input_device_index is not None:
-        try:
-            rclpy.spin(node)
-        finally:
-            node.destroy_node()
+    rclpy.spin(node)
+    node.destroy_node()
     rclpy.shutdown()
 
 
