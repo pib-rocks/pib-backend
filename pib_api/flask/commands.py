@@ -124,12 +124,7 @@ def _create_chat_data_and_assistant() -> None:
         api_name="anthropic.claude-3-sonnet-20240229-v1:0",
         has_image_support=True,
     )
-    gemini_text = AssistantModel(
-        visual_name="Gemini 2.5 Flash",
-        api_name="gemini-2.5-flash",
-        has_image_support=False,
-    )
-    db.session.add_all([gpt4o2, gpt4o1, gpt3, claude, gemini_text])
+    db.session.add_all([gpt4o2, gpt4o1, gpt3, claude])
     db.session.flush()
 
     p_eva = Personality(

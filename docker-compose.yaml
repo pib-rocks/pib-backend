@@ -139,7 +139,6 @@ services:
       - /home/pib/.config/pulse/cookie:/root/.config/pulse/cookie
     devices:
       - /dev/snd:/dev/snd
-      - /dev/bus/usb:/dev/bus/usb1
     restart: always
     depends_on:
       - rosbridge-ws
