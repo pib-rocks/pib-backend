@@ -528,13 +528,6 @@ class GeminiAudioLoop:
             try:
                 turn = self.session.receive()
                 async for resp in turn:
-                    if self._stop_event.is_set():
-                        # Stop requested → break out and let run() tear down
-                        break
-
-                    if sc := getattr(resp, "server_content", None):
-                        self._log_transcriptions(sc)
-
                     if data := getattr(resp, "data", None):
                         # PCM audio from Gemini (24k mono)
                         try:
@@ -546,11 +539,21 @@ class GeminiAudioLoop:
                     elif text := getattr(resp, "text", None):
                         # Occasionally text responses arrive without audio; print for debugging
                         print(text, end="")
+
+                    if sc := getattr(resp, "server_content", None):
+                        self._log_transcriptions(sc)
+    
+                    if self._stop_event.is_set():
+                        # Stop requested → break out and let run() tear down
+                        break
+
             except Exception as e:
                 logger.exception(f"Error receiving audio: {e}")
 
+            while not self.audio_in_queue.empty():
+                self.audio_in_queue.get_nowait()
             # Reset audio queue between turns (avoids stale audio carrying over)
-            self.audio_in_queue = asyncio.Queue()
+            # self.audio_in_queue = asyncio.Queue()
 
     async def play_audio(self):
         """Simple PyAudio playback consumer for PCM @24k mono."""
