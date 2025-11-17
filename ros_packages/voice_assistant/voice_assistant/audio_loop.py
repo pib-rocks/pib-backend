@@ -219,6 +219,10 @@ class GeminiAudioLoop:
             return
 
         self._stop_event.set()
+        # reset accumulated text so we don't accidentally reuse it
+        self._accum_text = ""
+        self._last_pib_message_id = ""
+        self._current_role = None
 
         # try to close the live session from this thread, if we have a loop
         if self._loop and self.session is not None:
@@ -371,6 +375,8 @@ class GeminiAudioLoop:
 
     def _send_chat_piece(self, text_piece: str, is_user: bool, update_db: bool = True):
         """Send (accumulated) text to ChatNode service. First call → CREATE, then UPDATE."""
+        if self._stop_event.is_set() or not self._is_listening:
+            return
         if not text_piece:
             return
         self._ensure_srv_client()
@@ -407,9 +413,9 @@ class GeminiAudioLoop:
         try:
             while not self._stop_event.is_set():
                 msg = await self.out_queue.get()
-                data = msg.get("data", b"")
-                if data:
-                    await self._log_input_bytes(data)
+                # data = msg.get("data", b"")
+                # if data:
+                #     await self._log_input_bytes(data)
                 await self.session.send_realtime_input(audio=msg)
         except asyncio.CancelledError:
             logger.debug("send_realtime: cancelled")
@@ -419,19 +425,22 @@ class GeminiAudioLoop:
 
     def _log_transcriptions(self, sc):
         """Forward streaming transcripts to ChatNode via service (+ log)."""
+        if self._stop_event.is_set() or not self._is_listening:
+            return
+
         # user stream
-        it = getattr(sc, "input_transcription", None)
-        if it and getattr(it, "text", None):
-            text_piece = it.text.strip()
+        input_transcription = getattr(sc, "input_transcription", None)
+        if input_transcription and getattr(input_transcription, "text", None):
+            text_piece = input_transcription.text.strip()
             logger.info(f"User: {text_piece}")
             if self._current_role != "user":
                 self._start_new_stream("user")
             self._send_chat_piece(text_piece, is_user=True, update_db=True)
 
         # assistant stream
-        ot = getattr(sc, "output_transcription", None)
-        if ot and getattr(ot, "text", None):
-            text_piece = ot.text.strip()
+        output_transcription = getattr(sc, "output_transcription", None)
+        if output_transcription and getattr(output_transcription, "text", None):
+            text_piece = output_transcription.text.strip()
             logger.info(f"Gemini: {text_piece}")
             if self._current_role != "assistant":
                 self._start_new_stream("assistant")
@@ -462,7 +471,7 @@ class GeminiAudioLoop:
                     if data := getattr(resp, "data", None):
                         try:
                             self.audio_in_queue.put_nowait(data)
-                            await self._log_output_bytes(data)
+                            # await self._log_output_bytes(data)
                         except asyncio.QueueFull:
                             logger.warning("Audio input queue is full; dropping data chunk.")
                     elif text := getattr(resp, "text", None):
