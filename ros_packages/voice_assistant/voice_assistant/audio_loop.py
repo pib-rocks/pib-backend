@@ -182,7 +182,7 @@ class GeminiAudioLoop:
 
         # Initialized in run()
         self.audio_in_queue: asyncio.Queue[bytes]
-        self.out_queue: asyncio.Queue[dict[str, Any]]
+        self.out_queue: asyncio.Queue[bytes]
         self.session = None          # gemini live session (aio client)
         self.playback_stream = None  # PyAudio output stream
         self.api_key = api_key
@@ -298,6 +298,7 @@ class GeminiAudioLoop:
 
     async def _flush_queues(self, where: str):
         """Drain known queues on shutdown to free memory quickly."""
+        logger.info("Queues flushed (%s).", where)
         try:
             self._drain_queue(self.audio_in_queue)
         except Exception:
@@ -608,7 +609,7 @@ class GeminiAudioLoop:
             async with client.aio.live.connect(model=MODEL, config=gemini_config) as session:
                 self.session = session
                 self.audio_in_queue = asyncio.Queue()
-                self.out_queue = asyncio.Queue()
+                self.out_queue = asyncio.Queue(maxsize=5)
                 self._log_lock = asyncio.Lock()
 
                 # Optional folders for WAV logs
