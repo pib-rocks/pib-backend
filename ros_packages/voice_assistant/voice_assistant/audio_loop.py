@@ -28,8 +28,11 @@ from pathlib import Path
 from datetime import datetime
 from asyncio import QueueEmpty
 
-# NEW: service API to ChatNode (to avoid duplicating DB/publish logic here)
+# service API to ChatNode (to avoid duplicating DB/publish logic here)
 from datatypes.srv import CreateOrUpdateChatMessage
+
+import queue        
+import time         
 
 # ——— Logging ———
 logging.basicConfig(
@@ -205,6 +208,14 @@ class GeminiAudioLoop:
         self._last_pib_message_id: str = ""
         self._current_role: Optional[str] = None  # "user" | "assistant" | None
 
+        # Chat update worker (so DB/UI updates don't block audio)
+        self._chat_queue: "queue.Queue[CreateOrUpdateChatMessage.Request]" = queue.Queue(
+            maxsize=32
+        )
+        self._chat_worker: Optional[threading.Thread] = None
+        self._last_srv_call_time: float = 0.0
+        self._srv_call_min_interval: float = 0.15 # seconds, 150 ms default
+
         # Event loop reference (used by stop() to close session)
         self._loop: Optional[asyncio.AbstractEventLoop] = None
 
@@ -225,6 +236,10 @@ class GeminiAudioLoop:
 
         self._chat_id = chat_id
         self._stop_event.clear()
+
+        # Start chat worker first so it can consume requests
+        self._start_chat_worker()
+
         self._thread = threading.Thread(target=self._run_thread, daemon=True)
         self._thread.start()
         self._is_listening = True
@@ -242,6 +257,19 @@ class GeminiAudioLoop:
             return
 
         self._stop_event.set()
+        # Wake chat worker so it can exit
+        try:
+            self._chat_queue.put_nowait(None)  # sentinel
+        except Exception:
+            pass
+
+        if self._chat_worker:
+            self._chat_worker.join(timeout=join_timeout)
+            if self._chat_worker.is_alive():
+                logger.warning("Chat worker thread did not stop cleanly.")
+            else:
+                self._chat_worker = None
+
         # Reset per-stream accumulators to avoid accidental reuse next run
         self._accum_text = ""
         self._last_pib_message_id = ""
@@ -404,51 +432,112 @@ class GeminiAudioLoop:
             if not self._srv_client.wait_for_service(timeout_sec=2.0):
                 logger.warning("Service 'create_or_update_chat_message' not available yet.")
 
+    def _start_chat_worker(self):
+        """Start background thread that handles CreateOrUpdateChatMessage calls."""
+        if self._chat_worker and self._chat_worker.is_alive():
+            return
+
+        def _worker():
+            logger.debug("Chat worker thread started.")
+            while not self._stop_event.is_set():
+                try:
+                    req = self._chat_queue.get(timeout=0.5)
+                except queue.Empty:
+                    continue
+
+                if req is None:
+                    # Sentinel for shutdown
+                    break
+
+                try:
+                    self._ensure_srv_client()
+                    if self._srv_client is None:
+                        continue
+
+                    future = self._srv_client.call_async(req)
+                    rclpy.spin_until_future_complete(
+                        self._srv_node, future, timeout_sec=1.0
+                    )
+
+                    if (
+                        future.done()
+                        and future.result() is not None
+                        and future.result().successful
+                    ):
+                        # keep message_id for subsequent UPDATEs
+                        self._last_pib_message_id = future.result().message_id
+                except Exception:
+                    logger.debug(
+                        "Chat worker: service call failed or timed out.", exc_info=True
+                    )
+
+            logger.debug("Chat worker thread exiting.")
+
+        self._chat_worker = threading.Thread(target=_worker, daemon=True)
+        self._chat_worker.start()
+
     def _start_new_stream(self, role: str):
         """
         Reset accumulation for a new logical message (role = 'user' or 'assistant').
         This ensures we create separate PIB messages for each side of the dialog.
         """
+        if self._current_role is not None and self._accum_text:
+            prev_is_user = self._current_role == "user"
+            self._send_chat_piece(
+                text_piece="",           # don’t change accumulator
+                is_user=prev_is_user,
+                update_db=True,
+                force_flush=True,        # ignore throttle
+            )
+
         self._current_role = role
         self._accum_text = ""
         self._last_pib_message_id = ""
 
-    def _send_chat_piece(self, text_piece: str, is_user: bool, update_db: bool = True):
+    def _send_chat_piece(
+    self,
+    text_piece: str,
+    is_user: bool,
+    update_db: bool = True,
+    force_flush: bool = False,
+    ):
         """
         Send accumulated text to ChatNode service.
-        First call (no message_id) → CREATE, subsequent calls → UPDATE the same PIB message
-        to the full accumulated content. This keeps the chat panel updating live.
 
-        IMPORTANT: no-ops if Stop was pressed (so we don't write after shutdown).
+        - For user: usually throttled.
+        - For assistant: typically force_flush=True → realtime.
         """
         if self._stop_event.is_set() or not self._is_listening:
             return
-        if not text_piece:
+
+        # 1) Update accumulator
+        if text_piece:
+            self._accum_text = (self._accum_text + " " + text_piece).strip()
+
+        if not self._accum_text:
             return
 
-        self._ensure_srv_client()
-        if self._srv_client is None:
+        now = time.time()
+
+        # 2) Throttle only when NOT forced
+        if not force_flush and now - self._last_srv_call_time < self._srv_call_min_interval:
             return
 
-        # Accumulate and normalize spacing (AudioLoop is responsible for full text)
-        self._accum_text = (self._accum_text + " " + text_piece).strip()
+        self._last_srv_call_time = now
 
+        # 3) Build request
         req = CreateOrUpdateChatMessage.Request()
         req.chat_id = self._chat_id or ""
-        req.text = self._accum_text          # send FULL current text
+        req.text = self._accum_text
         req.is_user = is_user
         req.update_database = update_db
         req.message_id = self._last_pib_message_id  # "" → CREATE on first call
 
+        # 4) Queue for chat worker
         try:
-            future = self._srv_client.call_async(req)
-            # Synchronous wait is OK here (isolated client node)
-            rclpy.spin_until_future_complete(self._srv_node, future, timeout_sec=1.0)
-            if future.done() and future.result() is not None and future.result().successful:
-                self._last_pib_message_id = future.result().message_id
-        except Exception:
-            # Swallow transient failures; next slice will re-try as needed.
-            logger.debug("CreateOrUpdateChatMessage call failed or timed out.")
+            self._chat_queue.put_nowait(req)
+        except queue.Full:
+            logger.debug("Chat worker queue full, dropping chat update.")
 
     # ---------- tasks ----------
 
@@ -495,7 +584,12 @@ class GeminiAudioLoop:
             logger.info(f"User: {text_piece}")
             if self._current_role != "user":
                 self._start_new_stream("user")
-            self._send_chat_piece(text_piece, is_user=True, update_db=True)
+            self._send_chat_piece(
+                text_piece,
+                is_user=True,
+                update_db=True,
+                force_flush=False,
+            )
 
         # Assistant stream
         output_transcription = getattr(sc, "output_transcription", None)
@@ -504,7 +598,12 @@ class GeminiAudioLoop:
             logger.info(f"Gemini: {text_piece}")
             if self._current_role != "assistant":
                 self._start_new_stream("assistant")
-            self._send_chat_piece(text_piece, is_user=False, update_db=True)
+            self._send_chat_piece(
+                text_piece,
+                is_user=False,
+                update_db=True,
+                force_flush=True,
+            )
 
     async def receive_audio(self):
         """
