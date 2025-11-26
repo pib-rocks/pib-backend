@@ -67,6 +67,9 @@ def _create_bricklet_data() -> None:
             motor.velocity = 100000
             motor.acceleration = 50000
             motor.deceleration = 50000
+        # reduce upper arm rotation speed
+        elif "upper_arm" in motor.name and "rotation" in motor.name:
+            motor.velocity = 16000
 
         db.session.add(motor)
         db.session.flush()
