@@ -184,7 +184,7 @@ class GeminiAudioLoop:
         self._chat_id: Optional[str] = None
 
         # Initialized in run()
-        self.audio_in_queue: asyncio.Queue[bytes]
+        self.audio_in_queue: asyncio.Queue[tuple[bytes, Optional[str]]]
         self.out_queue: asyncio.Queue[bytes]
         self.session = None          # gemini live session (aio client)
         self.playback_stream = None  # PyAudio output stream
@@ -438,7 +438,7 @@ class GeminiAudioLoop:
             return
 
         def _worker():
-            logger.debug("Chat worker thread started.")
+            logger.info("Chat worker thread started.")
             while not self._stop_event.is_set():
                 try:
                     req = self._chat_queue.get(timeout=0.5)
@@ -467,11 +467,11 @@ class GeminiAudioLoop:
                         # keep message_id for subsequent UPDATEs
                         self._last_pib_message_id = future.result().message_id
                 except Exception:
-                    logger.debug(
+                    logger.info(
                         "Chat worker: service call failed or timed out.", exc_info=True
                     )
 
-            logger.debug("Chat worker thread exiting.")
+            logger.info("Chat worker thread exiting.")
 
         self._chat_worker = threading.Thread(target=_worker, daemon=True)
         self._chat_worker.start()
@@ -505,7 +505,7 @@ class GeminiAudioLoop:
         Send accumulated text to ChatNode service.
 
         - For user: usually throttled.
-        - For assistant: typically force_flush=True → realtime.
+        - For assistant: typically force_flush=True -> realtime.
         """
         if self._stop_event.is_set() or not self._is_listening:
             return
@@ -517,23 +517,15 @@ class GeminiAudioLoop:
         if not self._accum_text:
             return
 
-        now = time.time()
-
-        # 2) Throttle only when NOT forced
-        if not force_flush and now - self._last_srv_call_time < self._srv_call_min_interval:
-            return
-
-        self._last_srv_call_time = now
-
-        # 3) Build request
+        # 2) Build request
         req = CreateOrUpdateChatMessage.Request()
         req.chat_id = self._chat_id or ""
         req.text = self._accum_text
         req.is_user = is_user
         req.update_database = update_db
-        req.message_id = self._last_pib_message_id  # "" → CREATE on first call
+        req.message_id = self._last_pib_message_id  # "" -> CREATE on first call
 
-        # 4) Queue for chat worker
+        # 3) Queue for chat worker
         try:
             self._chat_queue.put_nowait(req)
         except queue.Full:
@@ -567,12 +559,10 @@ class GeminiAudioLoop:
         except Exception:
             logger.exception("send_realtime error")
 
-    def _log_transcriptions(self, sc):
+    def _log_user_transcriptions(self, sc):
         """
         Called for each server_content event from Gemini:
-        - input_transcription  → what the user said (streaming text)
-        - output_transcription → what Gemini is saying (streaming text)
-        We forward slices into ChatNode so the UI updates while audio plays.
+        - input_transcription  -> what the user said (streaming text)
         """
         if self._stop_event.is_set() or not self._is_listening:
             return
@@ -590,32 +580,37 @@ class GeminiAudioLoop:
                 update_db=True,
                 force_flush=False,
             )
-
-        # Assistant stream
+    
+    def _extract_assistant_text(self, sc) -> Optional[str]:
+        """
+        Extract assistant (Gemini) text from server_content without sending it.
+        Return the text string or None.
+        """
         output_transcription = getattr(sc, "output_transcription", None)
-        if output_transcription and getattr(output_transcription, "text", None):
-            text_piece = output_transcription.text.strip()
-            logger.info(f"Gemini: {text_piece}")
-            if self._current_role != "assistant":
-                self._start_new_stream("assistant")
-            self._send_chat_piece(
-                text_piece,
-                is_user=False,
-                update_db=True,
-                force_flush=True,
-            )
+        if not output_transcription:
+            return None
+
+        txt = getattr(output_transcription, "text", None)
+        if txt:
+            text_piece = txt.strip()
+            logger.debug(f"Gemini (buffered in _extract_assistant_text) as single object: {text_piece}")
+            return text_piece
+
+        return None
+
 
     async def receive_audio(self):
         """
         Receives downstream events from Gemini:
-        - resp.data → PCM audio bytes (playback)
-        - resp.text → occasional text events
-        - resp.server_content → transcript slices (we pipe those to ChatNode)
-        The loop resets per "turn" and respects Stop immediately.
+        - resp.data -> PCM audio bytes (playback)
+        - resp.text -> occasional text events
+        - resp.server_content -> transcript slices:
+            * user -> handled immediately in _log_user_transcriptions
+            * assistant -> extracted and paired with PCM for synchronized display
         """
         while not self._stop_event.is_set():
             try:
-                # New turn → reset stream roles/accumulators so messages are separate
+                # New turn -> reset stream roles/accumulators so messages are separate
                 self._current_role = None
                 self._accum_text = ""
                 self._last_pib_message_id = ""
@@ -627,11 +622,29 @@ class GeminiAudioLoop:
             turn = None
             try:
                 turn = self.session.receive()
+                assistant_text_piece: Optional[str] = None
                 async for resp in turn:
+                    # Handle transcripts (user now, assistant buffered)
+                    sc = getattr(resp, "server_content", None)
+                    if sc is not None:
+                        # User text is sent immediately
+                        self._log_user_transcriptions(sc)
+                        # Assistant text is only extracted and passed along
+                        new_piece = self._extract_assistant_text(sc)
+                        if new_piece:
+                            assistant_text_piece = new_piece
+                            logger.debug(f"Buffered for upcoming audio: {assistant_text_piece}")
+                        
                     if data := getattr(resp, "data", None):
                         # PCM audio from Gemini (24k mono)
                         try:
-                            self.audio_in_queue.put_nowait(data)
+                            # Put a pair: (pcm_bytes, assistant_text_piece or None)
+                            queued_text = assistant_text_piece
+                            logger.debug(f"Queueing audio with text: {queued_text}")
+
+                            self.audio_in_queue.put_nowait((data, assistant_text_piece))
+                            if assistant_text_piece is not None:
+                                assistant_text_piece = None
                             # If desired, uncomment to log output audio:
                             # await self._log_output_bytes(data)
                         except asyncio.QueueFull:
@@ -640,23 +653,19 @@ class GeminiAudioLoop:
                         # Occasionally text responses arrive without audio; print for debugging
                         print(text, end="")
 
-                    if sc := getattr(resp, "server_content", None):
-                        self._log_transcriptions(sc)
-    
                     if self._stop_event.is_set():
-                        # Stop requested → break out and let run() tear down
+                        # Stop requested -> break out and let run() tear down
                         break
 
             except Exception as e:
                 logger.exception(f"Error receiving audio: {e}")
 
+            # Clear any leftover audio between turns
             while not self.audio_in_queue.empty():
                 self.audio_in_queue.get_nowait()
-            # Reset audio queue between turns (avoids stale audio carrying over)
-            # self.audio_in_queue = asyncio.Queue()
 
     async def play_audio(self):
-        """Simple PyAudio playback consumer for PCM @24k mono."""
+        """PyAudio playback consumer for PCM @24k mono + synchronized Gemini text."""
         self.playback_stream = await asyncio.to_thread(
             pya.open,
             format=FORMAT,
@@ -671,8 +680,28 @@ class GeminiAudioLoop:
 
         try:
             while not self._stop_event.is_set():
-                pcm = await self.audio_in_queue.get()
+                item = await self.audio_in_queue.get()
+                # Expecting a pair: (pcm_bytes, assistant_text_piece or None)
+                pcm, assistant_text_piece = item
+
+                # Play the audio
                 await asyncio.to_thread(self.playback_stream.write, pcm)
+                # If there is Gemini text attached to this PCM chunk, send it now.
+                logger.debug(f"writing {assistant_text_piece} as gemini in UI")
+                
+                if assistant_text_piece:
+                    # Ensure we are in assistant stream
+                    if self._current_role != "assistant":
+                        self._start_new_stream("assistant")
+                    logger.debug(f"sending {assistant_text_piece} to the worker")
+
+                    self._send_chat_piece(
+                        assistant_text_piece,
+                        is_user=False,
+                        update_db=True,
+                        force_flush=True,
+                    )
+
         except asyncio.CancelledError:
             logger.debug("play_audio: cancelled, closing playback stream")
             try:
@@ -707,7 +736,7 @@ class GeminiAudioLoop:
             # Live session
             async with client.aio.live.connect(model=MODEL, config=gemini_config) as session:
                 self.session = session
-                self.audio_in_queue = asyncio.Queue()
+                self.audio_in_queue = asyncio.Queue[tuple[bytes, Optional[str]]]()
                 self.out_queue = asyncio.Queue(maxsize=5)
                 self._log_lock = asyncio.Lock()
 
