@@ -7,6 +7,7 @@ import datetime
 from datatypes.action import Chat
 from datatypes.msg import ChatMessage
 from datatypes.srv import GetCameraImage
+
 # NEW: service for AudioLoop → ChatNode bridge (keeps AudioLoop thin)
 from datatypes.srv import CreateOrUpdateChatMessage
 
@@ -100,7 +101,9 @@ class ChatNode(Node):
 
     # ---------- common helpers used by Action and Service ----------
 
-    def _publish_chat_message(self, chat_id: str, content: str, is_user: bool, message_id: str):
+    def _publish_chat_message(
+        self, chat_id: str, content: str, is_user: bool, message_id: str
+    ):
         """
         Build and publish a datatypes/ChatMessage with current timestamp.
         Used by both the action path (create_chat_message) and the service path.
@@ -156,10 +159,8 @@ class ChatNode(Node):
                     self.message_content = f"{self.message_content} {text}"
             else:
                 # CREATE path
-                successful, chat_message = (
-                    voice_assistant_client.create_chat_message(
-                        chat_id, text, is_user
-                    )
+                successful, chat_message = voice_assistant_client.create_chat_message(
+                    chat_id, text, is_user
                 )
                 if not successful or chat_message is None:
                     self.get_logger().error(
@@ -354,7 +355,9 @@ class ChatNode(Node):
                     prev_text_type = None
 
                 # Accumulate token (strip leading spaces if first)
-                curr_text = curr_text + (token if len(curr_text) > 0 else token.lstrip())
+                curr_text = curr_text + (
+                    token if len(curr_text) > 0 else token.lstrip()
+                )
 
                 # Strip off complete chunks (code/sentences)
                 while True:
@@ -378,14 +381,16 @@ class ChatNode(Node):
                             True,
                         )
                         bool_update_chat_message = True
-                        curr_text = curr_text[code_visual_match.end():].rstrip()
+                        curr_text = curr_text[code_visual_match.end() :].rstrip()
                         continue
 
                     # Sentence
                     sentence_match = sentence_pattern.search(curr_text)
                     if sentence_match is not None:
                         sentence = sentence_match.group(1) + (
-                            sentence_match.group(3) if sentence_match.group(3) is not None else ""
+                            sentence_match.group(3)
+                            if sentence_match.group(3) is not None
+                            else ""
                         )
                         prev_text = sentence
                         prev_text_type = Chat.Goal.TEXT_TYPE_SENTENCE
@@ -400,7 +405,9 @@ class ChatNode(Node):
                         )
                         bool_update_chat_message = True
                         curr_text = curr_text[
-                            sentence_match.end(3 if sentence_match.group(3) is not None else 1) :
+                            sentence_match.end(
+                                3 if sentence_match.group(3) is not None else 1
+                            ) :
                         ].rstrip()
                         continue
 
