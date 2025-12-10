@@ -342,7 +342,7 @@ class GeminiAudioLoop:
 
     async def _flush_queues(self, where: str):
         """Drain known queues on shutdown to free memory quickly."""
-        logger.info("Queues flushed (%s).", where)
+        logger.debug("Queues flushed (%s).", where)
         try:
             self._drain_queue(self.audio_in_queue)
         except Exception:
@@ -458,7 +458,7 @@ class GeminiAudioLoop:
             return
 
         def _worker():
-            logger.info("Chat worker thread started.")
+            logger.debug("Chat worker thread started.")
             while not self._stop_event.is_set():
                 try:
                     req = self._chat_queue.get(timeout=0.5)
@@ -487,11 +487,11 @@ class GeminiAudioLoop:
                         # keep message_id for subsequent UPDATEs
                         self._last_pib_message_id = future.result().message_id
                 except Exception:
-                    logger.info(
+                    logger.error(
                         "Chat worker: service call failed or timed out.", exc_info=True
                     )
 
-            logger.info("Chat worker thread exiting.")
+            logger.debug("Chat worker thread exiting.")
 
         self._chat_worker = threading.Thread(target=_worker, daemon=True)
         self._chat_worker.start()
@@ -555,7 +555,7 @@ class GeminiAudioLoop:
 
     async def _listen_from_ros(self):
         """Pulls PCM16 mono @16k from ROS topic into out_queue for the live session."""
-        logger.info(
+        logger.debug(
             f"Listening from ROS topic '{ROS_AUDIO_TOPIC}' (expect PCM16 mono @16k)."
         )
         try:
@@ -593,7 +593,7 @@ class GeminiAudioLoop:
         input_transcription = getattr(sc, "input_transcription", None)
         if input_transcription and getattr(input_transcription, "text", None):
             text_piece = input_transcription.text.strip()
-            logger.info(f"User: {text_piece}")
+            logger.debug(f"User: {text_piece}")
             if self._current_role != "user":
                 self._start_new_stream("user")
             self._send_chat_piece(
