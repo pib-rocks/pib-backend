@@ -17,14 +17,18 @@ depends_on = None
 
 def upgrade():
     conn = op.get_bind()
-    conn.execute(
-        sa.text(
-            """
-            INSERT OR IGNORE INTO assistant_model (api_name, visual_name, has_image_support)
-            VALUES ('gemini-2.5-flash', 'Gemini 2.5 Flash', false)
-            """
+    result = conn.execute(sa.text("SELECT COUNT(*) FROM assistant_model"))
+    count = result.scalar()
+
+    if count > 0:
+        conn.execute(
+            sa.text(
+                """
+                INSERT OR IGNORE INTO assistant_model (api_name, visual_name, has_image_support)
+                VALUES ('gemini-2.5-flash', 'Gemini 2.5 Flash', false)
+                """
+            )
         )
-    )
 
 
 def downgrade():
