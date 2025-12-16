@@ -309,13 +309,23 @@ class ChatNode(Node):
             for message in chat_messages
         ]
 
-        # Optional camera image context
+        # get the current image from the camera if available
         image_base64 = None
         if personality.assistant_model.has_image_support:
-            response: GetCameraImage.Response = (
-                await self.get_camera_image_client.call_async(GetCameraImage.Request())
-            )
-            image_base64 = response.image_base64
+            if not self.get_camera_image_client.service_is_ready():
+                self.get_logger().warn(
+                    "get_camera_image service is not ready, proceeding without image."
+                )
+                image_base64 = None
+            else:
+                request = GetCameraImage.Request()
+                try:
+                    future = self.get_camera_image_client.call_async(request)
+                    response = await future
+                    image_base64 = response.image_base64
+                except Exception as e:
+                    self.get_logger().error(f"Camera service call failed: {e}")
+                    image_base64 = None
 
         try:
             # Stream tokens from public API (yields text tokens)
