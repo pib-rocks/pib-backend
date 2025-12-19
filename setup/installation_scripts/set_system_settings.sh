@@ -8,7 +8,7 @@ print INFO "Adjusting system settings"
 sudo systemctl daemon-reload
 sudo systemctl enable ssh --now
 
-if is_raspbian_bookworm; then
+if is_supported_raspbian; then
     local CONFIG_FILE="/boot/firmware/config.txt"
 
     # Apply display and resolution settings if config file exists

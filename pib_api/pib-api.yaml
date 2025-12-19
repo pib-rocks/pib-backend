@@ -856,7 +856,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PoseNameAndIdOnly'
+                $ref: '#/components/schemas/PoseNameDeletableAndIdOnly'
         '400':
           $ref: '#/components/responses/400'
         '404':
@@ -1470,6 +1470,10 @@ components:
           examples:
             - 3ac9cace-afa3-4930-9b21-f8b3bcc8a349
           readOnly: true
+        deletable:
+          description: indicates if the pose can be deleted or renamed
+          type: boolean
+          readOnly: true
       required:
         - name
         - motorPositions
@@ -1487,7 +1491,7 @@ components:
       required:
         - motorName
         - position
-    PoseNameAndIdOnly:
+    PoseNameDeletableAndIdOnly:
       type: object
       properties:
         name:
@@ -1501,6 +1505,10 @@ components:
           format: uuid
           examples:
             - 3ac9cace-afa3-4930-9b21-f8b3bcc8a349
+          readOnly: true
+        deletable:
+          description: indicates if the pose can be deleted or renamed
+          type: boolean
           readOnly: true
       required:
         - name
@@ -1520,7 +1528,7 @@ components:
         poses:
           type: array
           items:
-            $ref: '#/components/schemas/PoseNameAndIdOnly'
+            $ref: '#/components/schemas/PoseNameDeletableAndIdOnly'
     MotorPositions:
       type: object
       properties:
