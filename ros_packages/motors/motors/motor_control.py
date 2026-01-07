@@ -2,7 +2,7 @@ from typing import Iterable, Tuple
 
 import rclpy
 from datatypes.msg import MotorSettings
-from datatypes.srv import ApplyMotorSettings, ApplyJointTrajectory
+from datatypes.srv import ApplyMotorSettings, ApplyJointTrajectory, GetJointPosition
 from pib_api_client import motor_client
 from pib_motors.bricklet import ipcon, connected_enumerate
 from pib_motors.motor import name_to_motors, motors
@@ -68,6 +68,11 @@ class MotorControl(Node):
         # Service for MotorSettings
         self.srv = self.create_service(
             ApplyMotorSettings, "apply_motor_settings", self.apply_motor_settings
+        )
+
+        # Service for Getting Joint Position
+        self.srv_get_position = self.create_service(
+            GetJointPosition, "get_joint_position", self.get_joint_position
         )
 
         # Publisher for MotorSettings
@@ -150,6 +155,31 @@ class MotorControl(Node):
         except Exception as e:
             response.successful = False
             self.get_logger().error(f"error while applying joint-trajectory: {str(e)}")
+        return response
+
+    def get_joint_position(
+        self,
+        request: GetJointPosition.Request,
+        response: GetJointPosition.Response,
+    ) -> GetJointPosition.Response:
+        joint_name = request.joint_name
+        response.successful = True
+        try:
+            if joint_name in name_to_motors:
+                motors_for_joint = name_to_motors[joint_name]
+                if motors_for_joint:
+                    motor = motors_for_joint[0]
+                    response.position = float(motor.get_position())
+                else:
+                    response.successful = False
+                    response.message = f"no motors found for '{joint_name}'"
+            else:
+                response.successful = False
+                response.message = f"unknown joint name '{joint_name}'"
+        except Exception as e:
+            response.successful = False
+            response.message = str(e)
+            self.get_logger().error(f"error getting position: {str(e)}")
         return response
 
 

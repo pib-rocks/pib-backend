@@ -36,6 +36,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
 	"srv/ClearPlaybackQueue.srv"
 	"srv/GetCameraImage.srv"
 	"srv/ApplyJointTrajectory.srv"
+	"srv/GetJointPosition.srv"
 	"srv/EncryptToken.srv"
 	"srv/DecryptToken.srv"
 	"srv/GetTokenExists.srv"
