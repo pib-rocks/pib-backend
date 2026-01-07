@@ -18,5 +18,5 @@ class Motor(db.Model):
     visible = db.Column(db.Boolean, nullable=False)
     invert = db.Column(db.Boolean, nullable=False)
     bricklet_pins = db.relationship(
-        "BrickletPin", backref="motor", lazy=True, cascade="all,, delete-orphan"
+        "BrickletPin", backref="motor", lazy=True, cascade="all, delete-orphan"
     )
