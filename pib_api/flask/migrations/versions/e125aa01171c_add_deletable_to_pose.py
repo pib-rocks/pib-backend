@@ -1,7 +1,7 @@
 """add deletable to pose
 
 Revision ID: e125aa01171c
-Revises: ddd0daa8e6f5
+Revises: ba9e8ed1e18c
 Create Date: 2025-09-11 13:54:41.677586
 
 """
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision = "e125aa01171c"
-down_revision = "ddd0daa8e6f5"
+down_revision = "ba9e8ed1e18c"
 branch_labels = None
 depends_on = None
 
