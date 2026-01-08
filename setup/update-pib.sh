@@ -127,6 +127,19 @@ function update_frontend() {
     fi
 }
 
+function update_database() {
+    print INFO "Updating database:"
+
+    UPDATE_DB_SCRIPT="$BACKEND_DIR/pib_api/flask/update_db.py"
+
+    if [ -f "$UPDATE_DB_SCRIPT" ]; then
+        sudo docker compose exec flask-app python3 -m update_db || { print ERROR "Failed to run $UPDATE_DB_SCRIPT"; exit 1; }
+    else
+        print ERROR "Python script $UPDATE_DB_SCRIPT not found"
+        exit 1
+    fi
+}
+
 function update_docker_cleaner() {
     if [ -f "$BACKEND_DIR/setup/setup_files/docker_cleaner.service" ]; then
         sudo cp "$BACKEND_DIR/setup/setup_files/docker_cleaner.service" /etc/systemd/system/
@@ -161,6 +174,8 @@ ensure_symlink_self
 update_backend
 
 update_frontend
+
+update_database
 
 update_docker_cleaner
 
