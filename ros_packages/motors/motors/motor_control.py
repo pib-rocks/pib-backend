@@ -165,17 +165,15 @@ class MotorControl(Node):
         joint_name = request.joint_name
         response.successful = True
         try:
-            if joint_name in name_to_motors:
-                motors_for_joint = name_to_motors[joint_name]
-                if motors_for_joint:
-                    motor = motors_for_joint[0]
-                    response.position = float(motor.get_position())
-                else:
-                    response.successful = False
-                    response.message = f"no motors found for '{joint_name}'"
-            else:
+            if joint_name not in name_to_motors:
                 response.successful = False
                 response.message = f"unknown joint name '{joint_name}'"
+                return response
+            
+            motors_for_joint = name_to_motors[joint_name]
+            motor = motors_for_joint[0]
+            response.position = motor.get_position()
+            
         except Exception as e:
             response.successful = False
             response.message = str(e)
