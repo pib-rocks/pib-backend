@@ -1,5 +1,5 @@
 string joint_name
 ---
 bool successful
-float64 position
+int32 position
 string message
