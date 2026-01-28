@@ -71,6 +71,9 @@ def _create_bricklet_data() -> None:
             motor.velocity = 100000
             motor.acceleration = 50000
             motor.deceleration = 50000
+        # reduce upper arm rotation speed
+        elif motor.name in ["upper_arm_left_rotation", "upper_arm_right_rotation"]:
+            motor.velocity = 10000
 
         db.session.add(motor)
         db.session.flush()
@@ -128,7 +131,12 @@ def _create_chat_data_and_assistant() -> None:
         api_name="anthropic.claude-3-sonnet-20240229-v1:0",
         has_image_support=True,
     )
-    db.session.add_all([gpt4o2, gpt4o1, gpt3, claude])
+    gemini_text = AssistantModel(
+        visual_name="Gemini 2.5 Flash",
+        api_name="gemini-2.5-flash",
+        has_image_support=False,
+    )
+    db.session.add_all([gpt4o2, gpt4o1, gpt3, claude, gemini_text])
     db.session.flush()
 
     p_eva = Personality(
