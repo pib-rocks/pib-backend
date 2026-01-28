@@ -9,20 +9,24 @@ from tinkerforge.ip_connection import Error
 class BrickletPin:
 
     NO_CURRENT: int = -1
+    POSITION_TOLERANCE: int = (
+        20  # Allowed deviation for motor target position, in 1/100° units
+    )
 
     def __init__(self, pin: int, uid: str, invert: bool) -> None:
         self.pin: int = pin
-        self.uid = uid
+        self.uid: str = uid
         self.bricklet: BrickletServoV2 | None = uid_to_servo_bricklet.get(uid)
-        self.invert = invert
+        self.invert: bool = invert
         self._connected: bool | None = None
+        self._target_position: int | None = None
 
         self.check_connection()
 
     def __str__(self) -> str:
         return f"BRICKLET-PIN[ pin: {self.pin}, bricklet: {self.uid} ]"
 
-    def check_connection(self):
+    def check_connection(self) -> bool:
         """checks if the bricklet-pin is connected to a bricklet"""
         try:
             if self.bricklet is None:
@@ -98,16 +102,36 @@ class BrickletPin:
         if self.invert:
             position *= -1
         try:
+            self._target_position = position
             self.bricklet.set_position(self.pin, position)
+            return True
         except Exception:
             return False
-        return True
+
+    def has_reached_target(self) -> bool:
+        """returns 'True' if the bricklet-pin is within POSITION_TOLERANCE of the target position"""
+        target = self._target_position
+        if target is None:
+            return True
+        current = self.get_current_position()
+
+        return abs(current - target) <= self.POSITION_TOLERANCE
 
     def get_position(self) -> int:
-        """returns the current position of the bricklet-pin, or '0' if not connected to a bricklet"""
+        """returns the target position of the bricklet-pin as set by the last command, or '0' if not connected to a bricklet"""
         if not self.is_connected():
             return 0
         try:
             return self.bricklet.get_position(self.pin)
+        except Exception:
+            return 0
+
+    def get_current_position(self) -> int:
+        """returns the actual physical position of the bricklet-pin, or '0' if not connected to a bricklet"""
+        if not self.is_connected():
+            return 0
+        try:
+            position = self.bricklet.get_current_position(self.pin)
+            return position
         except Exception:
             return 0
