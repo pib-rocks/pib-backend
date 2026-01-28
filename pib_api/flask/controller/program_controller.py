@@ -7,7 +7,6 @@ from schema.program_schema import (
 )
 from service import program_service
 
-
 bp = Blueprint("program_controller", __name__)
 
 
