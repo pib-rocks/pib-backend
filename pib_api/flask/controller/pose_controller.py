@@ -7,7 +7,7 @@ from schema.pose_schema import (
     pose_schema_name_only,
     pose_schema_without_motor_positions,
 )
-from flask import jsonify, request, Blueprint
+from flask import abort, jsonify, request, Blueprint
 
 
 bp = Blueprint("pose_controller", __name__)
@@ -24,6 +24,15 @@ def create_pose():
 def get_all_poses():
     poses = pose_service.get_all_poses()
     return jsonify({"poses": poses_schema.dump(poses)})
+
+
+@bp.route("/by-name/<path:name>", methods=["GET"])
+def get_pose_by_name(name: str):
+    try:
+        pose = pose_service.get_pose_by_name(name)
+    except NoResultFound:
+        abort(404)
+    return pose_schema.dump(pose)
 
 
 @bp.route("/<string:pose_id>/motor-positions", methods=["GET"])
