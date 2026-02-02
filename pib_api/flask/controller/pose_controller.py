@@ -49,3 +49,13 @@ def rename_pose(pose_id: str):
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
     return pose_schema_without_motor_positions.dump(pose)
+
+@bp.route("/<string:pose_id>/motor-positions", methods=["PATCH"]) 
+def update_motor_positions_of_pose(pose_id: str):
+    pose_dto = pose_schema_motor_positions_only.load(request.json)
+    try:
+        pose = pose_service.update_motor_positions_of_pose(pose_id, pose_dto)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    return pose_schema_motor_positions_only.dump(pose)
+
