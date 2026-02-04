@@ -52,7 +52,10 @@ def update_motor_positions_of_pose(pose_id: str, pose_dto: dict[str, Any]) -> Po
     motor_position_dtos = pose_dto["motor_positions"]
     if len(motor_position_dtos) != len(pose.motor_positions):
         raise ValueError("Number of motor positions does not match existing pose.")
-    for existing_mp, mp_dto in zip(pose.motor_positions, motor_position_dtos):
-        existing_mp.position = mp_dto["position"]
+    motor_name_to_position = {mp["motor_name"]: mp["position"] for mp in motor_position_dtos}
+    for existing_mp in pose.motor_positions:
+        if existing_mp.motor_name not in motor_name_to_position:
+            raise ValueError(f"Motor '{existing_mp.motor_name}' not found in update request.")
+        existing_mp.position = motor_name_to_position[existing_mp.motor_name]
     db.session.flush()
     return pose
