@@ -3,7 +3,6 @@ from typing import Any
 from pib_api_client import send_request, URL_PREFIX
 import json
 
-
 ALL_MOTORS_URL = URL_PREFIX + "/motor"
 MOTOR_SETTINGS_URL = URL_PREFIX + "/motor/%s/settings"
 

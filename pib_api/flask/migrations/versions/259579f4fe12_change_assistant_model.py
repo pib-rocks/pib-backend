@@ -28,14 +28,10 @@ def upgrade():
     )
     conn = op.get_bind()
 
-    conn.execute(
-        sa.text(
-            """
+    conn.execute(sa.text("""
             INSERT INTO assistant_model_new
             SELECT * FROM assistant_model;
-             """
-        )
-    )
+             """))
     op.drop_table("assistant_model")
     op.rename_table("assistant_model_new", "assistant_model")
 
@@ -44,23 +40,15 @@ def upgrade():
     count = result.scalar()
 
     if count > 0:
-        conn.execute(
-            sa.text(
-                """
+        conn.execute(sa.text("""
                 UPDATE assistant_model
                 SET api_name = 'gpt-4o', visual_name = 'GPT-4o [Vision]', has_image_support = true
                 WHERE api_name = 'gpt-4-turbo';
-                """
-            )
-        )
-        conn.execute(
-            sa.text(
-                """
+                """))
+        conn.execute(sa.text("""
             INSERT OR IGNORE INTO assistant_model (api_name, visual_name, has_image_support)
             VALUES ('gpt-4o', 'GPT-4o [Text]', false)
-            """
-            )
-        )
+            """))
 
 
 def downgrade():
@@ -75,13 +63,9 @@ def downgrade():
         sa.UniqueConstraint("visual_name"),
     )
     conn = op.get_bind()
-    conn.execute(
-        sa.text(
-            """
+    conn.execute(sa.text("""
             INSERT OR IGNORE INTO assistant_model_new
             SELECT * FROM assistant_model;
-             """
-        )
-    )
+             """))
     op.drop_table("assistant_model")
     op.rename_table("assistant_model_new", "assistant_model")
