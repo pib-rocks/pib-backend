@@ -47,15 +47,20 @@ def rename_pose(pose_id: str, pose_dto: dict[str, Any]) -> Pose:
     db.session.flush()
     return pose
 
+
 def update_motor_positions_of_pose(pose_id: str, pose_dto: dict[str, Any]) -> Pose:
     pose = get_pose(pose_id)
     motor_position_dtos = pose_dto["motor_positions"]
     if len(motor_position_dtos) != len(pose.motor_positions):
         raise ValueError("Number of motor positions does not match existing pose.")
-    motor_name_to_position = {mp["motor_name"]: mp["position"] for mp in motor_position_dtos}
+    motor_name_to_position = {
+        mp["motor_name"]: mp["position"] for mp in motor_position_dtos
+    }
     for existing_mp in pose.motor_positions:
         if existing_mp.motor_name not in motor_name_to_position:
-            raise ValueError(f"Motor '{existing_mp.motor_name}' not found in update request.")
+            raise ValueError(
+                f"Motor '{existing_mp.motor_name}' not found in update request."
+            )
         existing_mp.position = motor_name_to_position[existing_mp.motor_name]
     db.session.flush()
     return pose
