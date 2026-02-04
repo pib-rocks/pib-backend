@@ -9,7 +9,6 @@ from schema.pose_schema import (
 )
 from flask import jsonify, request, Blueprint
 
-
 bp = Blueprint("pose_controller", __name__)
 
 

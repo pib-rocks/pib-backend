@@ -9,7 +9,6 @@ Create Date: 2024-10-01 15:26:16.931346
 from alembic import op
 import sqlalchemy as sa
 
-
 # revision identifiers, used by Alembic.
 revision = "c2de601304c2"
 down_revision = "7160a4f6951f"
@@ -23,13 +22,9 @@ def upgrade():
 
     conn = op.get_bind()
 
-    conn.execute(
-        sa.text(
-            """
+    conn.execute(sa.text("""
             UPDATE personality SET message_history = 10 WHERE message_history IS NULL
-             """
-        )
-    )
+             """))
 
     with op.batch_alter_table("personality", schema=None) as batch_op:
         batch_op.alter_column("message_history", nullable=False)
