@@ -27,10 +27,7 @@ def get_all_poses():
 
 @bp.route("/by-name/<path:name>", methods=["GET"])
 def get_pose_by_name(name: str):
-    try:
-        pose = pose_service.get_pose_by_name(name)
-    except NoResultFound:
-        abort(404)
+    pose = pose_service.get_pose_by_name(name)
     return pose_schema.dump(pose)
 
 
