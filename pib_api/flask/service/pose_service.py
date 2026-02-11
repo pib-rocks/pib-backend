@@ -50,6 +50,8 @@ def rename_pose(pose_id: str, pose_dto: dict[str, Any]) -> Pose:
 
 def update_motor_positions_of_pose(pose_id: str, pose_dto: dict[str, Any]) -> Pose:
     pose = get_pose(pose_id)
+    if not pose.deletable:
+        raise ValueError(f"Pose '{pose.name}' cannot be updated.")
     motor_position_dtos = pose_dto["motor_positions"]
     if len(motor_position_dtos) != len(pose.motor_positions):
         raise ValueError("Number of motor positions does not match existing pose.")
