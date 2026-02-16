@@ -1,1 +1,0 @@
-bool turned_on

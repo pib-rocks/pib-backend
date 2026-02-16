@@ -30,7 +30,8 @@ RUN pip install ./motors/pib_motors
 
 COPY ./ros_packages/datatypes ros2_ws/datatypes
 COPY ./ros_packages/motors ros2_ws/motors
-
+RUN pip install serial
+RUN pip install pyserial
 RUN cd ros2_ws && \
     source /opt/ros/humble/setup.bash && \
     colcon build

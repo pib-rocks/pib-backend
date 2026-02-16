@@ -18,7 +18,6 @@ rosidl_generate_interfaces(${PROJECT_NAME}
 	"msg/ProxyRunProgramFeedback.msg"
 	"msg/ProxyRunProgramResult.msg"
 	"msg/ProxyRunProgramStatus.msg"
-	"msg/SolidStateRelayState.msg"
 	"msg/ProgramInput.msg"
 	"msg/ChatIsListening.msg"
 	"srv/ApplyMotorSettings.srv"
@@ -39,12 +38,10 @@ rosidl_generate_interfaces(${PROJECT_NAME}
 	"srv/EncryptToken.srv"
 	"srv/DecryptToken.srv"
 	"srv/GetTokenExists.srv"
-	"srv/SetSolidStateRelay.srv"
 	"action/RunProgram.action"
 	"action/RecordAudio.action"
 	"action/Chat.action"
 	"srv/GetMicConfiguration.srv"
-	"srv/CreateOrUpdateChatMessage.srv"
 	DEPENDENCIES trajectory_msgs
 )
 

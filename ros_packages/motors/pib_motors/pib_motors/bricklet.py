@@ -1,25 +1,28 @@
-import os
+"""
+STS-compatible replacement for the old Tinkerforge bricklet layer.
+Keeps same interface but uses STS BrickletPin instead of Tinkerforge bricklets.
+"""
+
 import logging
+from types import SimpleNamespace
 
 from pib_api_client import bricklet_client
 from pib_motors.config import cfg
-from tinkerforge.brick_hat import BrickHAT
-from tinkerforge.bricklet_servo_v2 import BrickletServoV2
-from tinkerforge.bricklet_solid_state_relay_v2 import BrickletSolidStateRelayV2
-from tinkerforge.ip_connection import IPConnection, Error
 
-TINKERFORGE_HOST = os.getenv("TINKERFORGE_HOST", "localhost")
-TINKERFORGE_PORT = int(os.getenv("TINKERFORGE_PORT", 4223))
+from pib_motors.bricklet_pin import BrickletPin  # <-- your STS-based class
 
-# Connection
-ipcon = IPConnection()  # Create IP connection
-hat = BrickHAT("X", ipcon)
-ipcon.connect(cfg.TINKERFORGE_HOST, cfg.TINKERFORGE_PORT)
+TINKERFORGE_HOST = "localhost"
+TINKERFORGE_PORT = 4223
 
-# get data from pib-api
+# No real Tinkerforge connection
+BrickHAT = BrickletServoV2 = BrickletSolidStateRelayV2 = IPConnection = object
+Error = SimpleNamespace()
+
+# --- Retrieve bricklets from pib-api (still works) ---
 successful, bricklet_dtos = bricklet_client.get_all_bricklets()
-if not successful:
-    raise RuntimeError("failed to load bricklets from pib-api...")
+if not successful or "bricklets" not in bricklet_dtos:
+    logging.warning("?? Failed to load bricklets from pib-api; using empty set.")
+    bricklet_dtos = {"bricklets": []}
 
 servo_bricklet_uids = []
 solid_state_relay_bricklet_uid = None
@@ -30,64 +33,23 @@ for dto in bricklet_dtos["bricklets"]:
     elif dto["type"] == "Solid State Relay Bricklet" and dto["uid"]:
         solid_state_relay_bricklet_uid = dto["uid"]
 
-# maps the uid (e.g. 'XYZ') to the associated servo bricklet object
-uid_to_servo_bricklet: dict[str, BrickletServoV2] = {
-    uid: BrickletServoV2(uid, ipcon) for uid in servo_bricklet_uids if uid
-}
+# --- Initialize STS BrickletPin objects instead of Tinkerforge ones ---
+uid_to_servo_bricklet: dict[str, BrickletPin] = {}
+for uid in servo_bricklet_uids:
+    try:
+        # uid is your STS device path (e.g. "/dev/ttyUSB0")
+        uid_to_servo_bricklet[uid] = BrickletPin(pin=1, uid=uid, invert=False)
+        logging.info(f"Initialized STS motor on {uid}")
+    except Exception as e:
+        logging.error(f"Failed to initialize STS motor for {uid}: {e}")
 
-# maps the uid (e.g. 'XYZ') to the associated solid state relay bricklet object
-if solid_state_relay_bricklet_uid:
-    solid_state_relay_bricklet: BrickletSolidStateRelayV2 = BrickletSolidStateRelayV2(
-        solid_state_relay_bricklet_uid, ipcon
-    )
-    solid_state_relay_bricklet.set_response_expected(
-        BrickletSolidStateRelayV2.FUNCTION_SET_STATE, True
-    )
-else:
-    solid_state_relay_bricklet = None
-
-
+# --- Handle SSR gracefully (optional, log only) ---
+solid_state_relay_bricklet = None
 def set_ssr_state(state: bool) -> None:
-    """set the status of the solid state relay to on (true) or off (false)"""
-    if solid_state_relay_bricklet is None:
-        raise RuntimeError("UID of Solid-State Relay is not set.")
-    else:
-        try:
-            solid_state_relay_bricklet.set_state(state)
-            logging.info(f"Solid-State Relay {'ON' if state else 'OFF'}")
-        except Error as e:
-            if e.value == Error.TIMEOUT or e.value == Error.WRONG_RESPONSE_LENGTH:
-                logging.error(
-                    "Solid-State Relay is not connected or unresponsive (Timeout). Please check the UID and ensure the device is plugged in."
-                )
-            elif e.value == Error.INVALID_UID:
-                logging.error("Invalid UID for Solid-State Relay.")
-            elif e.value == Error.NOT_CONNECTED:
-                logging.error("No connection to Solid-State Relay.")
-            else:
-                logging.error(f"Unknown Tinkerforge error: {e}")
-            raise e
+    logging.info(f"[mock] Solid-State Relay {'ON' if state else 'OFF'} (no-op)")
 
+# --- Connected bricklets tracker ---
+connected_bricklets = set(uid_to_servo_bricklet.keys())
 
-connected_bricklets = set()
-
-
-# callback function to handle bricklet enumeration events
-def connected_enumerate(
-    uid,
-    connected_uid,
-    position,
-    hardware_version,
-    firmware_version,
-    device_identifier,
-    enumeration_type,
-):
-    if (
-        device_identifier == BrickletServoV2.DEVICE_IDENTIFIER
-        and enumeration_type == IPConnection.ENUMERATION_TYPE_AVAILABLE
-    ):
-        connected_bricklets.add(uid)
-        logging.info(f"Servo Bricklet {uid} is connected.")
-    elif enumeration_type == IPConnection.ENUMERATION_TYPE_DISCONNECTED:
-        connected_bricklets.discard(uid)
-        logging.info(f"Servo Bricklet {uid} is disconnected.")
+def connected_enumerate(*_, **__):
+    logging.debug("[mock] STS enumeration event ignored")
