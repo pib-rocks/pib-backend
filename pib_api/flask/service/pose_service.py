@@ -1,6 +1,7 @@
 from typing import Any, List
 
 from app.app import db
+from default_pose_constants import STARTUP_POSE_NAME
 from model.pose_model import Pose
 from model.motor_position_model import MotorPosition
 
@@ -50,7 +51,7 @@ def rename_pose(pose_id: str, pose_dto: dict[str, Any]) -> Pose:
 
 def update_motor_positions_of_pose(pose_id: str, pose_dto: dict[str, Any]) -> Pose:
     pose = get_pose(pose_id)
-    if not pose.deletable:
+    if not pose.deletable and pose.name != STARTUP_POSE_NAME:
         raise ValueError(f"Pose '{pose.name}' cannot be updated.")
     motor_position_dtos = pose_dto["motor_positions"]
     if len(motor_position_dtos) != len(pose.motor_positions):
