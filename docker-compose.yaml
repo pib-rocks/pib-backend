@@ -88,28 +88,12 @@ services:
     depends_on:
       - rosbridge-ws
       - flask-app
+    devices:
+      - "/dev/ttyMotor0:/dev/ttyMotor0"
+      - "/dev/ttyMotor1:/dev/ttyMotor1"
+      - "/dev/ttyMotor2:/dev/ttyMotor2"
+      - "/dev/ttyMotor3:/dev/ttyMotor3"       
       
-  pibsim_webots:
-    image: pibsim_webots
-    build:
-      context: .
-      dockerfile: ./ros_packages/pibsim_webots/Dockerfile
-    command: ros2 launch pibsim_webots pib_launch.py
-    volumes:
-      # this is a socket that is used by the x-windowing-system
-      # for communication between clients and servers on the same
-      # machine. By mounting the socket of the docker-host, the 
-      # display-node uses the x-server running on the host for
-      # graphics-related communication
-      - /tmp/.X11-unix:/tmp/.X11-unix 
-    profiles:
-      - pibsim_webots
-    networks:
-      - pib-network
-    environment:
-      - DISPLAY=:0.0
-    restart: no
-
   ros-voice-assistant:
     image: ros_voice_assistant
     build:
@@ -139,7 +123,6 @@ services:
       - /home/pib/.config/pulse/cookie:/root/.config/pulse/cookie
     devices:
       - /dev/snd:/dev/snd
-      - /dev/bus/usb:/dev/bus/usb1
     restart: always
     depends_on:
       - rosbridge-ws
