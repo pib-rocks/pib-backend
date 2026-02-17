@@ -113,9 +113,9 @@ class BrickletPin:
         target = self._target_position
         if target is None:
             return True
-        current = self.get_current_position()
+        current_position = self.get_current_position()
 
-        return abs(current - target) <= self.POSITION_TOLERANCE
+        return abs(current_position - target) <= self.POSITION_TOLERANCE
 
     def get_position(self) -> int:
         """returns the target position of the bricklet-pin as set by the last command, or '0' if not connected to a bricklet"""
