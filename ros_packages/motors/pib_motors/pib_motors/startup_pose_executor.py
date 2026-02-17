@@ -27,11 +27,11 @@ class StartupPoseExecutor:
         self._reduce_motor_speeds(original_settings)
 
         try:
-            self._move_and_wait(motor_positions)
+            success = self._move_and_wait(motor_positions)
         finally:
             self._restore_settings(original_settings)
 
-        return True
+        return success
 
     def _load_startup_pose(self) -> list[dict[str, Any]] | None:
 
@@ -71,7 +71,7 @@ class StartupPoseExecutor:
                 reduced_speed_settings["velocity"] = self.STARTUP_POSE_VELOCITY
                 motor.apply_settings(reduced_speed_settings)
 
-    def _move_and_wait(self, motor_positions: list[dict[str, Any]]) -> None:
+    def _move_and_wait(self, motor_positions: list[dict[str, Any]]) -> bool:
         jt = JointTrajectory()
         jt.joint_names = []
 
@@ -88,25 +88,26 @@ class StartupPoseExecutor:
         req.joint_trajectory = jt
 
         self.node.get_logger().info("Applying startup pose...")
-        resp = self.node.apply_joint_trajectory(req, ApplyJointTrajectory.Response())
+        self.node.apply_joint_trajectory(req, ApplyJointTrajectory.Response())
 
-        if not resp.successful:
-            self.node.get_logger().error("Startup pose failed")
-            return
-
-        if not self._wait_for_motors(timeout=self.STARTUP_TIMEOUT):
+        if not self._wait_for_connected_motors(timeout=self.STARTUP_TIMEOUT):
             self.node.get_logger().warn("Not all motors reached startup position")
+            return False
+        return True
 
-    def _wait_for_motors(self, timeout: float | None = None) -> bool:
+    def _wait_for_connected_motors(self, timeout: float | None = None) -> bool:
         if timeout is None:
             timeout = self.STARTUP_TIMEOUT
         start = time.time()
 
+        motors_to_check = [
+            motor for motor in self.motors if motor.check_if_motor_is_connected()
+        ]
+        if not motors_to_check:
+            return True  # nothing to wait for
+
         while time.time() - start < timeout:
-            if all(
-                motor.check_if_motor_is_connected() and motor.has_reached_position()
-                for motor in self.motors
-            ):
+            if all(motor.has_reached_position() for motor in motors_to_check):
                 return True
             time.sleep(self.WAIT_INTERVAL)
 

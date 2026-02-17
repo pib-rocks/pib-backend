@@ -103,12 +103,23 @@ class MotorControl(Node):
         self.startup_pose_executor = StartupPoseExecutor(self, motors=motors)
 
     def _on_ssr_state_change(self, msg: SolidStateRelayState):
-        if msg.turned_on and not self._startup_done:
-            try:
-                if self.startup_pose_executor.execute():
-                    self._startup_done = True
-            except Exception as e:
-                self.get_logger().error(f"Error while applying startup pose: {str(e)}")
+        if not msg.turned_on or self._startup_done:
+            return
+
+        self._startup_done = True
+
+        try:
+            success = self.startup_pose_executor.execute()
+            if success:
+                self.get_logger().info("Startup pose execution completed successfully.")
+            else:
+                self.get_logger().warn(
+                    "Startup pose execution completed with warnings."
+                )
+        except Exception as e:
+            self.get_logger().error(
+                f"Unexpected error while applying startup pose: {str(e)}"
+            )
 
     def apply_motor_settings(
         self, request: ApplyMotorSettings.Request, response: ApplyMotorSettings.Response
