@@ -2,7 +2,6 @@ from urllib.request import Request
 from typing import Any
 from pib_api_client import send_request, URL_PREFIX
 
-
 GET_ALL_BRICKLETS_URL = URL_PREFIX + "/bricklet"
 
 

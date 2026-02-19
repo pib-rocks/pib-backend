@@ -5,7 +5,6 @@ from service import camera_service
 from flask import Blueprint, request
 from app.app import db
 
-
 bp = Blueprint("camera_controller", __name__)
 
 
