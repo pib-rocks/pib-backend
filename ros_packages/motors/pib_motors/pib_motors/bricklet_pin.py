@@ -109,7 +109,7 @@ class BrickletPin:
             return False
 
     def has_reached_target(self) -> bool:
-        """returns 'True' if the bricklet-pin is within POSITION_TOLERANCE of the target position"""
+        """returns 'True' if no target position is set (e.g. pin not connected or never commanded to move) or if the current position is within POSITION_TOLERANCE of the target."""
         target = self._target_position
         if target is None:
             return True
