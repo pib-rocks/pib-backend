@@ -25,6 +25,12 @@ def get_all_poses():
     return jsonify({"poses": poses_schema.dump(poses)})
 
 
+@bp.route("/by-name/<path:name>", methods=["GET"])
+def get_pose_by_name(name: str):
+    pose = pose_service.get_pose_by_name(name)
+    return pose_schema.dump(pose)
+
+
 @bp.route("/<string:pose_id>/motor-positions", methods=["GET"])
 def get_motor_positions_of_pose(pose_id: str):
     pose = pose_service.get_pose(pose_id)

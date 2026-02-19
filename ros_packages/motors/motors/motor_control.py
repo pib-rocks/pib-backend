@@ -1,12 +1,12 @@
 from typing import Iterable, Tuple
-
 import rclpy
-from datatypes.msg import MotorSettings
+from datatypes.msg import MotorSettings, SolidStateRelayState
 from datatypes.srv import ApplyMotorSettings, ApplyJointTrajectory, GetJointPosition
 from pib_api_client import motor_client
-from pib_motors.bricklet import ipcon, connected_enumerate
+from pib_motors.bricklet import ipcon, connected_enumerate, solid_state_relay_bricklet
 from pib_motors.motor import name_to_motors, motors
 from rclpy.node import Node
+from pib_motors.startup_pose_executor import StartupPoseExecutor
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 
@@ -96,6 +96,43 @@ class MotorControl(Node):
         # Register and trigger enumeration of available bricklets to detect connected devices
         ipcon.register_callback(ipcon.CALLBACK_ENUMERATE, connected_enumerate)
         ipcon.enumerate()
+
+        self._startup_done = False
+        self.ssr_subscriber = self.create_subscription(
+            SolidStateRelayState,
+            "solid_state_relay_state",
+            self.on_ssr_state_change,
+            10,
+        )
+
+        self.startup_pose_executor = StartupPoseExecutor(self, motors=motors)
+
+        if solid_state_relay_bricklet is None:
+            self.get_logger().info(
+                "No SSR configured. Executing startup pose immediately."
+            )
+            self._startup_done = True
+            self._execute_startup_pose()
+
+    def _execute_startup_pose(self):
+        try:
+            success = self.startup_pose_executor.execute()
+            if success:
+                self.get_logger().info("Startup pose execution completed successfully.")
+            else:
+                self.get_logger().warn(
+                    "Startup pose execution completed with warnings."
+                )
+        except Exception as e:
+            self.get_logger().error(
+                f"Unexpected error while applying startup pose: {str(e)}"
+            )
+
+    def on_ssr_state_change(self, msg: SolidStateRelayState):
+        if not msg.turned_on or self._startup_done:
+            return
+        self._startup_done = True
+        self._execute_startup_pose()
 
     def apply_motor_settings(
         self, request: ApplyMotorSettings.Request, response: ApplyMotorSettings.Response
