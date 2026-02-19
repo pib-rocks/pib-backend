@@ -14,7 +14,12 @@ from model.personality_model import Personality
 from model.program_model import Program
 from model.pose_model import Pose
 from model.motor_position_model import MotorPosition
-from default_pose_constants import STARTUP_POSITIONS, CALIBRATION_POSITIONS
+from default_pose_constants import (
+    STARTUP_POSITIONS,
+    CALIBRATION_POSITIONS,
+    STARTUP_POSE_NAME,
+    CALIBRATION_POSE_NAME,
+)
 
 
 @app.cli.command("seed_db")
@@ -188,8 +193,8 @@ def _create_chat_data_and_assistant() -> None:
 
 
 def _create_default_poses() -> None:
-    startup_pose = Pose(name="Startup/Resting", deletable=False)
-    calibration_pose = Pose(name="Calibration", deletable=False)
+    startup_pose = Pose(name=STARTUP_POSE_NAME, deletable=False)
+    calibration_pose = Pose(name=CALIBRATION_POSE_NAME, deletable=False)
 
     db.session.add_all([startup_pose, calibration_pose])
     db.session.flush()
