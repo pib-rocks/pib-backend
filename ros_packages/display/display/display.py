@@ -19,7 +19,6 @@ from datatypes.msg import DisplayImage, ImageFormat, ImageId
 
 import os
 
-
 os.environ.setdefault("DISPLAY", ":0.0")
 
 
