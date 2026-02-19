@@ -59,6 +59,30 @@ CONFIG = {
 ROS_AUDIO_TOPIC = os.getenv("ROS_AUDIO_TOPIC", "audio_stream")
 
 
+
+
+# ——— Live session lifetime management ———
+# Live API limits:
+# - Without compression, audio-only sessions are limited to ~15 minutes.
+# - A single WebSocket connection is limited to ~10 minutes (GoAway warning before termination).
+# Enable BOTH:
+#   * context window compression -> removes the session duration cap
+#   * session resumption + reconnect -> survives the connection cap
+ENABLE_CONTEXT_COMPRESSION = os.getenv("ENABLE_CONTEXT_COMPRESSION", "1") == "1"
+ENABLE_SESSION_RESUMPTION = os.getenv("ENABLE_SESSION_RESUMPTION", "1") == "1"
+
+# Reasonable defaults for native-audio 128k context models (tune if needed)
+CWC_TRIGGER_TOKENS = int(os.getenv("CWC_TRIGGER_TOKENS", "100000"))
+CWC_TARGET_TOKENS = int(os.getenv("CWC_TARGET_TOKENS", "80000"))
+
+# Small delay before reconnecting (prevents tight loops on persistent failures)
+LIVE_RECONNECT_BACKOFF_S = float(os.getenv("LIVE_RECONNECT_BACKOFF_S", "0.5"))
+
+
+class ReconnectRequested(RuntimeError):
+    """Raised by tasks to request a clean Live session reconnect."""
+    pass
+
 # ——————————————————————————————————————————
 #         ROS subscriber bridge (thread)
 # ——————————————————————————————————————————
@@ -232,6 +256,9 @@ class GeminiAudioLoop:
 
         # Event loop reference (used by stop() to close session)
         self._loop: Optional[asyncio.AbstractEventLoop] = None
+        # Live API session resumption handle (updated from SessionResumptionUpdate)
+        self._session_handle: Optional[str] = None
+
 
     @property
     def is_listening(self) -> bool:
@@ -564,7 +591,6 @@ class GeminiAudioLoop:
         except asyncio.CancelledError:
             logger.debug("_listen_from_ros: cancelled")
             raise
-
     async def send_realtime(self):
         """Feeds PCM chunks from out_queue into the Gemini live session."""
         try:
@@ -578,8 +604,14 @@ class GeminiAudioLoop:
         except asyncio.CancelledError:
             logger.debug("send_realtime: cancelled")
             raise
-        except Exception:
-            logger.exception("send_realtime error")
+        except Exception as e:
+            if self._stop_event.is_set():
+                return
+            logger.warning(
+                "send_realtime: upstream send failed; requesting reconnect.",
+                exc_info=True,
+            )
+            raise ReconnectRequested("send_realtime failed") from e
 
     def _log_user_transcriptions(self, sc):
         """
@@ -647,6 +679,21 @@ class GeminiAudioLoop:
                 turn = self.session.receive()
                 assistant_text_piece: Optional[str] = None
                 async for resp in turn:
+                    # ----- Session management signals -----
+                    # Session resumption checkpoints (store handle for reconnect)
+                    sru = getattr(resp, "session_resumption_update", None) or getattr(resp, "sessionResumptionUpdate", None)
+                    if sru is not None:
+                        new_handle = getattr(sru, "new_handle", None) or getattr(sru, "newHandle", None)
+                        resumable = getattr(sru, "resumable", None)
+                        if resumable and new_handle:
+                            self._session_handle = new_handle
+
+                    # GoAway warning (connection will be terminated soon)
+                    ga = getattr(resp, "go_away", None) or getattr(resp, "goAway", None)
+                    if ga is not None:
+                        time_left = getattr(ga, "time_left", None) or getattr(ga, "timeLeft", None)
+                        logger.warning("GoAway received (time_left=%s). Reconnecting...", time_left)
+                        raise ReconnectRequested("go_away")
                     # Handle transcripts (user now, assistant buffered)
                     sc = getattr(resp, "server_content", None)
                     if sc is not None:
@@ -684,8 +731,14 @@ class GeminiAudioLoop:
                         # Stop requested -> break out and let run() tear down
                         break
 
+            except ReconnectRequested:
+                raise
+
             except Exception as e:
-                logger.exception(f"Error receiving audio: {e}")
+                if self._stop_event.is_set():
+                    return
+                logger.warning("receive_audio: downstream receive failed; requesting reconnect.", exc_info=True)
+                raise ReconnectRequested("receive_audio failed") from e
 
             # Clear any leftover audio between turns
             while not self.audio_in_queue.empty():
@@ -745,103 +798,154 @@ class GeminiAudioLoop:
     async def run(self):
         """
         Main async entry:
-        - Opens Gemini live session (genai client)
-        - Starts ROS bridge + 3 tasks (listen/send/receive/play)
-        - Waits for first exception to shut down everything together
+        - Maintains a Gemini live session, reconnecting automatically on GoAway / disconnect.
+        - Enables context window compression + session resumption (optional via env vars).
+        - Starts ROS bridge + tasks (send/receive/play).
         """
         client = genai.Client(api_key=self.api_key)
-        ros_started = False
-        tasks = []
+
+        # Read chat personality/description from PIB to seed the model (once)
+        description = "You are pib, a humanoid robot."
         try:
-            # Read chat personality/description from PIB to seed the model
             successful, personality = voice_assistant_client.get_personality_from_chat(
                 self._chat_id
             )
             if not successful:
                 logger.error(f"no personality found for id {self._chat_id}")
-            description = (
-                personality.description
-                if personality.description is not None
-                else "You are pib, a humanoid robot."
-            )
-
-            gemini_config = dict(CONFIG)
-            gemini_config["system_instruction"] = description
-
-            # Live session
-            async with client.aio.live.connect(
-                model=MODEL, config=gemini_config
-            ) as session:
-                self.session = session
-                self.audio_in_queue = asyncio.Queue[tuple[bytes, Optional[str]]]()
-                self.out_queue = asyncio.Queue(maxsize=5)
-                self._log_lock = asyncio.Lock()
-
-                # Optional folders for WAV logs
-                await self._ensure_log_dirs()
-
-                # Start ROS subscriber thread that feeds PCM into out_queue
-                topic = os.getenv("ROS_AUDIO_TOPIC", "audio_stream")
-                self._ros_bridge = RosAudioBridge(
-                    topic, asyncio.get_running_loop(), self.out_queue
-                )
-                self._ros_bridge.start()
-                ros_started = True
-                logger.info("RosAudioBridge started.")
-
-                # Start async tasks
-                tasks = [
-                    asyncio.create_task(self._listen_from_ros()),
-                    asyncio.create_task(self.send_realtime()),
-                    asyncio.create_task(self.receive_audio()),
-                    asyncio.create_task(self.play_audio()),
-                ]
-
-                # Wait until one task errors, then tear down everything
-                done, pending = await asyncio.wait(
-                    tasks, return_when=asyncio.FIRST_EXCEPTION
-                )
-                for t in done:
-                    if t.exception():
-                        raise t.exception()
-
-        except asyncio.CancelledError:
-            logger.debug("GeminiAudioLoop.run: cancelled")
+            else:
+                if getattr(personality, "description", None):
+                    description = personality.description
         except Exception:
-            logger.exception("GeminiAudioLoop.run: unexpected error")
-        finally:
-            # Cancel all tasks and wait; ignore exceptions during teardown
-            for t in tasks:
-                t.cancel()
-            if tasks:
-                await asyncio.gather(*tasks, return_exceptions=True)
+            logger.exception("Failed to fetch personality; using default system instruction.")
 
-            # Stop ROS bridge if it was started
-            if ros_started and self._ros_bridge:
+        base_config = dict(CONFIG)
+        base_config["system_instruction"] = description
+
+        async def _connect_config():
+            cfg = dict(base_config)
+
+            if ENABLE_CONTEXT_COMPRESSION:
+                cfg["context_window_compression"] = {
+                    "trigger_tokens": CWC_TRIGGER_TOKENS,
+                    "sliding_window": {"target_tokens": CWC_TARGET_TOKENS},
+                }
+
+            if ENABLE_SESSION_RESUMPTION:
+                # Gemini Developer API supports sessi:contentReference[oaicite:3]{index=3}dle,
+                # but NOT the 'transparent' parameter.
+                sr = {"handle": self._session_handle if self._session_handle else None}
+                cfg["session_resumption"] = sr
+
+            return cfg
+
+        # Outer loop: reconnect as needed until stopped
+        while not self._stop_event.is_set():
+            ros_started = False
+            tasks = []
+            try:
+                gemini_config = await _connect_config()
+
+                async with client.aio.live.connect(
+                    model=MODEL, config=gemini_config
+                ) as session:
+                    self.session = session
+                    self.audio_in_queue = asyncio.Queue[tuple[bytes, Optional[str]]]()
+                    self.out_queue = asyncio.Queue(maxsize=5)
+                    self._log_lock = asyncio.Lock()
+
+                    # Optional folders for WAV logs
+                    await self._ensure_log_dirs()
+
+                    # Start ROS subscriber thread that feeds PCM into out_queue
+                    topic = os.getenv("ROS_AUDIO_TOPIC", "audio_stream")
+                    self._ros_bridge = RosAudioBridge(
+                        topic, asyncio.get_running_loop(), self.out_queue
+                    )
+                    self._ros_bridge.start()
+                    ros_started = True
+                    logger.info("RosAudioBridge started.")
+
+                    # Start async tasks
+                    tasks = [
+                        asyncio.create_task(self._listen_from_ros()),
+                        asyncio.create_task(self.send_realtime()),
+                        asyncio.create_task(self.receive_audio()),
+                        asyncio.create_task(self.play_audio()),
+                    ]
+
+                    # Wait until one task errors (or requests reconnect)
+                    done, pending = await asyncio.wait(
+                        tasks, return_when=asyncio.FIRST_EXCEPTION
+                    )
+                    for t in done:
+                        exc = t.exception()
+                        if exc:
+                            raise exc
+
+                    # No exception, session ended normally -> stop loop
+                    logger.info("Live session ended normally; stopping.")
+                    break
+
+            except ReconnectRequested as e:
+                if self._stop_event.is_set():
+                    break
+                logger.info(
+                    "Reconnect requested (%s). session_handle=%s",
+                    str(e),
+                    "present" if self._session_handle else "none",
+                )
+
+            except asyncio.CancelledError:
+                logger.debug("GeminiAudioLoop.run: cancelled")
+                break
+
+            except Exception:
+                logger.exception("GeminiAudioLoop.run: unexpected error")
+                break
+
+            finally:
+                # Cancel all tasks and wait; ignore exceptions during teardown
+                for t in tasks:
+                    try:
+                        t.cancel()
+                    except Exception:
+                        pass
+                if tasks:
+                    await asyncio.gather(*tasks, return_exceptions=True)
+
+                # Stop ROS bridge if it was started
+                if ros_started and self._ros_bridge:
+                    try:
+                        self._ros_bridge.stop()
+                    except Exception:
+                        pass
+                    self._ros_bridge = None
+
+                # Close playback stream if still open
+                if self.playback_stream:
+                    try:
+                        self.playback_stream.close()
+                    except Exception:
+                        pass
+                    self.playback_stream = None
+
+                # Drain queues and close WAVs
                 try:
-                    self._ros_bridge.stop()
+                    await self._flush_queues("shutdown")
                 except Exception:
                     pass
-                self._ros_bridge = None
-
-            # Close playback stream if still open
-            if self.playback_stream:
                 try:
-                    self.playback_stream.close()
+                    await self._close_turn_logs()
                 except Exception:
                     pass
 
-            # Drain queues and close WAVs
-            try:
-                await self._flush_queues("shutdown")
-            except Exception:
-                pass
-            try:
-                await self._close_turn_logs()
-            except Exception:
-                pass
+                self.session = None
 
-            logger.info("GeminiAudioLoop.run: terminated")
+            # Backoff before reconnecting
+            if not self._stop_event.is_set():
+                await asyncio.sleep(LIVE_RECONNECT_BACKOFF_S)
+
+        logger.info("GeminiAudioLoop.run: terminated")
 
 
 def main():
