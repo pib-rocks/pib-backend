@@ -1,6 +1,9 @@
 # default_pose_constants.py
 # Defines default motor positions for Startup/Resting and Calibration poses.
 
+STARTUP_POSE_NAME = "Startup/Resting"
+CALIBRATION_POSE_NAME = "Calibration"
+
 STARTUP_POSITIONS = {
     "turn_head_motor": 0,
     "tilt_forward_motor": 0,
