@@ -1,12 +1,13 @@
 from typing import Any, List
 
 from app.app import db
+from default_pose_constants import STARTUP_POSE_NAME
 from model.pose_model import Pose
 from model.motor_position_model import MotorPosition
 
 
 def get_all_poses() -> List[Pose]:
-    return Pose.query.all()
+    return Pose.query.filter().order_by(Pose.deletable.asc()).all()
 
 
 def get_pose(pose_id: str) -> Pose:
@@ -23,7 +24,10 @@ def create_pose(pose_dto: dict[str, Any]) -> Pose:
 
 
 def delete_pose(pose_id: str) -> None:
-    db.session.delete(get_pose(pose_id))
+    pose = get_pose(pose_id)
+    if not pose.deletable:
+        raise ValueError(f"Pose '{pose.name}' is not deletable")
+    db.session.delete(pose)
     db.session.flush()
 
 
@@ -38,6 +42,28 @@ def _create_motor_position(motor_position_dto: dict[str, Any]) -> MotorPosition:
 
 def rename_pose(pose_id: str, pose_dto: dict[str, Any]) -> Pose:
     pose = get_pose(pose_id)
+    if not pose.deletable:
+        raise ValueError(f"Pose '{pose.name}' cannot be renamed.")
     pose.name = pose_dto["name"]
+    db.session.flush()
+    return pose
+
+
+def update_motor_positions_of_pose(pose_id: str, pose_dto: dict[str, Any]) -> Pose:
+    pose = get_pose(pose_id)
+    if not pose.deletable and pose.name != STARTUP_POSE_NAME:
+        raise ValueError(f"Pose '{pose.name}' cannot be updated.")
+    motor_position_dtos = pose_dto["motor_positions"]
+    if len(motor_position_dtos) != len(pose.motor_positions):
+        raise ValueError("Number of motor positions does not match existing pose.")
+    motor_name_to_position = {
+        mp["motor_name"]: mp["position"] for mp in motor_position_dtos
+    }
+    for existing_mp in pose.motor_positions:
+        if existing_mp.motor_name not in motor_name_to_position:
+            raise ValueError(
+                f"Motor '{existing_mp.motor_name}' not found in update request."
+            )
+        existing_mp.position = motor_name_to_position[existing_mp.motor_name]
     db.session.flush()
     return pose

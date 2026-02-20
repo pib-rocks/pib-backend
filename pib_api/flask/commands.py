@@ -12,6 +12,14 @@ from model.chat_model import Chat
 from model.motor_model import Motor
 from model.personality_model import Personality
 from model.program_model import Program
+from model.pose_model import Pose
+from model.motor_position_model import MotorPosition
+from default_pose_constants import (
+    STARTUP_POSITIONS,
+    CALIBRATION_POSITIONS,
+    STARTUP_POSE_NAME,
+    CALIBRATION_POSE_NAME,
+)
 
 
 @app.cli.command("seed_db")
@@ -23,6 +31,7 @@ def seed_db() -> None:
     _create_camera_data()
     _create_program_data()
     _create_chat_data_and_assistant()
+    _create_default_poses()
     db.session.commit()
     print("Seeded the database with default data.")
 
@@ -181,6 +190,37 @@ def _create_chat_data_and_assistant() -> None:
     )
     db.session.add_all([m1, m2])
     db.session.flush()
+
+
+def _create_default_poses() -> None:
+    startup_pose = Pose(name=STARTUP_POSE_NAME, deletable=False)
+    calibration_pose = Pose(name=CALIBRATION_POSE_NAME, deletable=False)
+
+    db.session.add_all([startup_pose, calibration_pose])
+    db.session.flush()
+
+    motors = _get_motor_list()
+
+    startup_positions = [
+        MotorPosition(
+            position=STARTUP_POSITIONS.get(motor["name"], 0),
+            motor_name=motor["name"],
+            pose_id=startup_pose.id,
+        )
+        for motor in motors
+    ]
+
+    calibration_positions = [
+        MotorPosition(
+            position=CALIBRATION_POSITIONS.get(motor["name"], 0),
+            motor_name=motor["name"],
+            pose_id=calibration_pose.id,
+        )
+        for motor in motors
+    ]
+
+    db.session.add_all(startup_positions + calibration_positions)
+    db.session.commit()
 
 
 def _get_motor_list() -> [dict[str, Any]]:
