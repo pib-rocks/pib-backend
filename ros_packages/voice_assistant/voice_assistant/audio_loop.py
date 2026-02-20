@@ -59,8 +59,6 @@ CONFIG = {
 ROS_AUDIO_TOPIC = os.getenv("ROS_AUDIO_TOPIC", "audio_stream")
 
 
-
-
 # ——— Live session lifetime management ———
 # Live API limits:
 # - Without compression, audio-only sessions are limited to ~15 minutes.
@@ -81,7 +79,9 @@ LIVE_RECONNECT_BACKOFF_S = float(os.getenv("LIVE_RECONNECT_BACKOFF_S", "0.5"))
 
 class ReconnectRequested(RuntimeError):
     """Raised by tasks to request a clean Live session reconnect."""
+
     pass
+
 
 # ——————————————————————————————————————————
 #         ROS subscriber bridge (thread)
@@ -258,7 +258,6 @@ class GeminiAudioLoop:
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         # Live API session resumption handle (updated from SessionResumptionUpdate)
         self._session_handle: Optional[str] = None
-
 
     @property
     def is_listening(self) -> bool:
@@ -591,6 +590,7 @@ class GeminiAudioLoop:
         except asyncio.CancelledError:
             logger.debug("_listen_from_ros: cancelled")
             raise
+
     async def send_realtime(self):
         """Feeds PCM chunks from out_queue into the Gemini live session."""
         try:
@@ -681,9 +681,13 @@ class GeminiAudioLoop:
                 async for resp in turn:
                     # ----- Session management signals -----
                     # Session resumption checkpoints (store handle for reconnect)
-                    sru = getattr(resp, "session_resumption_update", None) or getattr(resp, "sessionResumptionUpdate", None)
+                    sru = getattr(resp, "session_resumption_update", None) or getattr(
+                        resp, "sessionResumptionUpdate", None
+                    )
                     if sru is not None:
-                        new_handle = getattr(sru, "new_handle", None) or getattr(sru, "newHandle", None)
+                        new_handle = getattr(sru, "new_handle", None) or getattr(
+                            sru, "newHandle", None
+                        )
                         resumable = getattr(sru, "resumable", None)
                         if resumable and new_handle:
                             self._session_handle = new_handle
@@ -691,8 +695,12 @@ class GeminiAudioLoop:
                     # GoAway warning (connection will be terminated soon)
                     ga = getattr(resp, "go_away", None) or getattr(resp, "goAway", None)
                     if ga is not None:
-                        time_left = getattr(ga, "time_left", None) or getattr(ga, "timeLeft", None)
-                        logger.warning("GoAway received (time_left=%s). Reconnecting...", time_left)
+                        time_left = getattr(ga, "time_left", None) or getattr(
+                            ga, "timeLeft", None
+                        )
+                        logger.warning(
+                            "GoAway received (time_left=%s). Reconnecting...", time_left
+                        )
                         raise ReconnectRequested("go_away")
                     # Handle transcripts (user now, assistant buffered)
                     sc = getattr(resp, "server_content", None)
@@ -737,7 +745,10 @@ class GeminiAudioLoop:
             except Exception as e:
                 if self._stop_event.is_set():
                     return
-                logger.warning("receive_audio: downstream receive failed; requesting reconnect.", exc_info=True)
+                logger.warning(
+                    "receive_audio: downstream receive failed; requesting reconnect.",
+                    exc_info=True,
+                )
                 raise ReconnectRequested("receive_audio failed") from e
 
             # Clear any leftover audio between turns
@@ -816,7 +827,9 @@ class GeminiAudioLoop:
                 if getattr(personality, "description", None):
                     description = personality.description
         except Exception:
-            logger.exception("Failed to fetch personality; using default system instruction.")
+            logger.exception(
+                "Failed to fetch personality; using default system instruction."
+            )
 
         base_config = dict(CONFIG)
         base_config["system_instruction"] = description
