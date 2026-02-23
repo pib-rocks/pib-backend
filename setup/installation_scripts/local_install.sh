@@ -24,11 +24,11 @@ PIB_BLOCKLY_SETUP_DIR="$BACKEND_DIR/pib_blockly"
 PIB_BLOCKLY_SERVER_DIR="$HOME/pib_blockly_server"
 
 
-# Install ROS2 Humble, rosbridge and colcon
+# Install ROS2 Jazzy, rosbridge and colcon (Jazzy is supported on Ubuntu 24.04 Noble only)
 function install_ros() {
   print INFO "Installing ROS"
 
-  # Check that locale supports UTF-8 (should be pretty much always be the case with Ubuntu 22.04)
+  # Check that locale supports UTF-8 (should be pretty much always be the case with Ubuntu 24.04)
   if ! locale | grep -q 'UTF-8'; then
     print INFO "locale does not support UTF-8; switching to en_US.UTF-8"
     sudo apt -qq update && sudo apt install locales
@@ -47,10 +47,10 @@ function install_ros() {
   sudo apt -qq  update && \
   sudo apt -y -qq  upgrade
 
-  sudo apt -qq install -y ros-humble-ros-base ros-dev-tools && \
-  source /opt/ros/humble/setup.bash && \
-  echo 'source /opt/ros/humble/setup.bash' >> "$HOME/.bashrc"
-  print INFO "Installed ROS2 Humble"
+  sudo apt -qq install -y ros-jazzy-ros-base ros-dev-tools && \
+  source /opt/ros/jazzy/setup.bash && \
+  echo 'source /opt/ros/jazzy/setup.bash' >> "$HOME/.bashrc"
+  print INFO "Installed ROS2 Jazzy"
 
   sudo apt -qq update  && \
   sudo apt -qq -y install python3 python3-pip python3-tk python3-colcon-common-extensions && \
@@ -59,12 +59,12 @@ function install_ros() {
   print INFO "Installed colcon"
 
 
-  sudo apt -qq -y install ros-humble-rosbridge-server
+  sudo apt -qq -y install ros-jazzy-rosbridge-server
   # Install driver for webots connection
-  sudo apt -qq -y install ros-humble-webots-ros2-driver
+  sudo apt -qq -y install ros-jazzy-webots-ros2-driver
 
   print INFO "Installed rosbridge-server and Webots driver"
-  print INFO "Finished installing ROS2 Humble"
+  print INFO "Finished installing ROS2 Jazzy"
 }
 
 
@@ -146,10 +146,10 @@ function install_ros_packages() {
   cd "$HOME" || { print ERROR "${HOME} not found"; return 1; }
 
   # SLAM dependencies (optional)
-#  sudo apt install -y ros-humble-depthai-ros
-#  sudo apt install -y ros-humble-rtabmap
-#  sudo apt install -y ros-humble-rtabmap-launch
-#  sudo apt install -y ros-humble-rtabmap-examples
+#  sudo apt install -y ros-jazzy-depthai-ros
+#  sudo apt install -y ros-jazzy-rtabmap
+#  sudo apt install -y ros-jazzy-rtabmap-launch
+#  sudo apt install -y ros-jazzy-rtabmap-examples
   print INFO "Installed camera dependencies"
 
 
@@ -222,7 +222,7 @@ function install_ros_packages() {
 
 
   cd "$ROS_WORKING_DIR" || { print ERROR "${ROS_WORKING_DIR} not found"; return 1; }
-  source /opt/ros/humble/setup.bash
+  source /opt/ros/jazzy/setup.bash
   colcon build || { print ERROR "could not colcon build packages"; return 1; }
   cd "$HOME" || { print ERROR "${HOME} not found"; return 1; }
 
