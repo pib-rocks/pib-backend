@@ -20,13 +20,13 @@ RUN curl -sSL https://download.tinkerforge.com/apt/$(. /etc/os-release; echo $ID
 
 
 # ToDo - DEV MERGE: COPY ./ros_packages/requirements.txt .
-RUN pip install requests
+RUN pip install --break-system-packages requests
 
 COPY ./pib_api/client ./client
-RUN pip install ./client
+RUN pip install --break-system-packages ./client
 
 COPY ./ros_packages/motors/pib_motors ./motors/pib_motors
-RUN pip install ./motors/pib_motors
+RUN pip install --break-system-packages ./motors/pib_motors
 
 COPY ./ros_packages/datatypes ros2_ws/datatypes
 COPY ./ros_packages/motors ros2_ws/motors
