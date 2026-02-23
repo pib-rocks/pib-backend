@@ -304,34 +304,24 @@ EOF
   fi
 }
 
-# clean setup files if local install + remove user from sudoers file again
+# Remove temporary sudoers entry (repositories in $HOME/app are kept for both native and Docker)
 function cleanup() {
-  if [ "$INSTALL_METHOD" = "legacy" ]; then
-    sudo rm -r "$HOME/app"
-    print INFO "Removed repositories from $HOME due to local installation"
-  fi
-  sudo rm /etc/sudoers.d/"$USER"
+  sudo rm -f /etc/sudoers.d/"$USER"
 }
 
 
 show_help()
 {
-	echo -e "The setup-pib.sh script has two execution modes:"
-	echo -e "(normal mode and development mode)""$NEW_LINE"
-	echo -e "$INFO""Normal mode (don't add any arguments or options)""$RESET_TEXT_COLOR"
-	echo -e "$INFO""If you are do not know what the flags for development mode do, use the normal mode""$RESET_TEXT_COLOR"
+	echo -e "The setup-pib.sh script installs Cerebra and pib-backend.""$NEW_LINE"
+	echo -e "$INFO""On Ubuntu 24.04 the script installs Cerebra natively (development: ROS2 Jazzy, no Docker).""$RESET_TEXT_COLOR"
+	echo -e "$INFO""On Raspberry Pi OS (bookworm/trixie) it installs Cerebra via Docker (production).""$RESET_TEXT_COLOR"
 	echo -e "Example: ./setup-pib""$NEW_LINE"
-	echo -e "$INFO""Development mode (specify the branches you want to install)""$RESET_TEXT_COLOR"
-
-	echo -e "You can either use the short or verbose command versions:"
+	echo -e "$INFO""Development mode (specify the branches you want to install):""$RESET_TEXT_COLOR"
 	echo -e "-f=YourBranchName or --frontend-branch=YourBranchName"
 	echo -e "-b=YourBranchName or --backend-branch=YourBranchName"
-	echo -e "-l or --local for a local installation of the software over using a containerized setup using Docker"
-
 	echo -e "$NEW_LINE""Examples:"
 	echo -e "    ./setup-pib -b=main -f=PR-566"
-    echo -e "    ./setup-pib --backend-branch=main --frontend-branch=PR-566"
-
+	echo -e "    ./setup-pib --backend-branch=main --frontend-branch=PR-566"
 	exit
 }
 
@@ -389,8 +379,6 @@ check_distribution
 # VALIDATE CLI ARGUMENTS
 BRANCH_BACKEND="main"
 BRANCH_FRONTEND="main"
-INSTALL_METHOD="docker"
-# Check if branch was specified
 while [ $# -gt 0 ]; do
   case "$1" in
     -f=* | --frontend-branch=*)
@@ -398,9 +386,6 @@ while [ $# -gt 0 ]; do
       ;;
     -b=* | --backend-branch=*)
       BRANCH_BACKEND="${1#*=}"
-      ;;
-    -l | --legacy)
-      INSTALL_METHOD="legacy"
       ;;
     -h | --help)
       show_help
@@ -439,16 +424,19 @@ setup_ip_dispatcher || { print ERROR "failed to setup ip dispatcher"; console_er
 console_success "IP dispatcher configured"
 source "$SETUP_INSTALLATION_DIR/set_system_settings.sh" || { print ERROR "failed to set system settings"; console_error "Failed to set system settings"; exit 1; }
 console_success "System settings applied"
-print INFO "${INSTALL_METHOD}"
-if [ "$INSTALL_METHOD" = "legacy" ]; then
-  print INFO "Going to install Cerebra locally (LEGACY MODE NOT WORKING ON RASPBERRY PI 5)"
-  source "$SETUP_INSTALLATION_DIR/local_install.sh" || { print ERROR "failed to install Cerebra locally"; console_error "Failed to install Cerebra locally"; exit 1; }
-  console_success "Cerebra installed locally"
-elif is_ubuntu_noble || is_supported_raspbian; then
-  print INFO "Going to install Cerebra via Docker"
+if is_ubuntu_noble; then
+  print INFO "Installing Cerebra natively (Ubuntu 24.04 development setup)"
+  source "$SETUP_INSTALLATION_DIR/local_install.sh" || { print ERROR "failed to install Cerebra natively"; console_error "Failed to install Cerebra natively"; exit 1; }
+  console_success "Cerebra installed natively"
+elif is_supported_raspbian; then
+  print INFO "Installing Cerebra via Docker (Raspberry Pi OS production)"
   source "$SETUP_INSTALLATION_DIR/docker_install.sh" || { print ERROR "failed to install Cerebra via Docker"; console_error "Failed to install Cerebra via Docker"; exit 1; }
   sudo usermod -aG docker pib || { print ERROR "failed to add user 'pib' to docker group"; console_error "Failed to add user to docker group"; exit 1; }
   console_success "Cerebra installed via Docker"
+else
+  print ERROR "Unsupported OS. Use Ubuntu 24.04 for native (development) install or Raspberry Pi OS (bookworm/trixie) for Docker (production) install."
+  console_error "Unsupported OS. Use Ubuntu 24.04 or Raspberry Pi OS."
+  exit 1
 fi
 cleanup
 console_success "Cleanup done"

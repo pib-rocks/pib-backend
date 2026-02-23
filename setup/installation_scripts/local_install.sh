@@ -283,14 +283,14 @@ function install_frontend() {
 
   print INFO "Build frontend and setup nginx"
 
-  # Install and configure phpLiteAdmin
-  sudo apt -qq update && sudo apt -qq install -y php8.1-fpm php-sqlite3
-  sudo sed -i "s|;cgi.fix_pathinfo=1|cgi.fix_pathinfo=0|" /etc/php/8.1/fpm/php.ini
+  # Install and configure phpLiteAdmin (Ubuntu 24.04 provides PHP 8.3)
+  sudo apt -qq update && sudo apt -qq install -y php8.3-fpm php-sqlite3
+  sudo sed -i "s|;cgi.fix_pathinfo=1|cgi.fix_pathinfo=0|" /etc/php/8.3/fpm/php.ini
   sudo mkdir "$PHPLITEADMIN_INSTALLATION_DIR" || print WARN "$PHPLITEADMIN_INSTALLATION_DIR already exists"
   sudo chown -R www-data:www-data "$PHPLITEADMIN_INSTALLATION_DIR"
   sudo chmod -R 700 "$PHPLITEADMIN_INSTALLATION_DIR"
   sudo unzip -o "$SETUP_FILES/$PHPLITEADMIN_ZIP" -d "$PHPLITEADMIN_INSTALLATION_DIR" || print ERROR "cannot unzip $PHPLITEADMIN_ZIP"
-  sudo systemctl restart php8.1-fpm || { print ERROR "cannot start phpliteadmin"; return 1; }
+  sudo systemctl restart php8.3-fpm || { print ERROR "cannot start phpliteadmin"; return 1; }
   print INFO "Installed phpLiteAdmin"
 
 
@@ -336,8 +336,8 @@ function install_blocky_node_service() {
 
 
 
-if ! [ "$DIST_VERSION" == "jammy" ]; then
-    print ERROR "Not using Ubuntu 22.04; cannot install locally"
+if ! [ "$DIST_VERSION" == "noble" ]; then
+    print ERROR "Native install requires Ubuntu 24.04 (noble). Detected: $DISTRIBUTION $DIST_VERSION"
     return 1
 fi
 

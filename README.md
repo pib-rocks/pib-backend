@@ -1,42 +1,38 @@
 # Software setup
 
-This script assumes:
+The setup script supports two environments:
 
-- that the newest Raspberry Pi OS is installed
-- the user running it is **pib**
+- **Raspberry Pi OS** (bookworm or trixie): installs and runs Cerebra via **Docker** (production).
+- **Ubuntu 24.04 (Noble)**: installs and runs Cerebra **natively** (development: ROS2 Jazzy, no Docker, all components via systemd).
+
+The script assumes the user running it is **pib**.
 
 ## Installing pibs software
 
-All the software pib requires can be installed by running our setup script.
-Follow these steps to run it:
+Run the setup script on either Raspberry Pi OS or Ubuntu 24.04.
 
-1. Open a terminal in Raspberry Pi OS
+1. Open a terminal.
 
-2. Insert the following command into the terminal to download the script:
+2. Download the script:
 
         wget https://raw.githubusercontent.com/pib-rocks/pib-backend/main/setup/setup-pib.sh
 
    (or download it manually: https://github.com/pib-rocks/pib-backend/blob/main/setup/setup-pib.sh)
 
-3. Insert this command to run the script:
+3. Run the script:
 
         bash setup-pib.sh
 
-   If you want to run the setup-script in legacy mode (for Raspberry Pi 4), insert:
-               
-         bash setup-pib.sh -l
+   - On **Raspberry Pi OS** this installs Cerebra via Docker (containers for backend and frontend).
+   - On **Ubuntu 24.04** this installs Cerebra natively (ROS2 Jazzy, Flask, Blockly server, ROS nodes, Cerebra frontend; no Docker).
 
-The setup then adds Cerebra and it's dependencies, including ROS2, Tinkerforge,...
-Once the installation is complete, please restart the system to apply all the changes.
+The setup adds Cerebra and its dependencies (including ROS2, Tinkerforge, etc.).
+Once the installation is complete, restart the system to apply all changes.
 
 # Updating the Software
 
-This script assumes that the setup script was executed successfully
-
-1. Open a terminal
-2. Enter this command: `update-pib`
-
-This script will update your docker containers (Front- and Backend)
+- **Docker (Raspberry Pi OS):** Open a terminal and run `update-pib` to update the backend and frontend containers.
+- **Native (Ubuntu 24.04):** Update the repositories (e.g. `git pull` in `~/app/pib-backend` and `~/app/cerebra`) and restart the relevant systemd services as needed.
 
 ## Webots
 
