@@ -1,4 +1,4 @@
-FROM luxonis/depthai-ros:humble-latest
+FROM luxonis/depthai-ros:jazzy-latest
 SHELL ["/bin/bash", "-c"]
 
 WORKDIR /app
@@ -12,7 +12,7 @@ RUN set -xe \
 RUN pip install depthai==2.25.1.0
 
 RUN cd ros2_ws && \
-    source /opt/ros/humble/setup.bash && \
+    source /opt/ros/jazzy/setup.bash && \
     colcon build
 
 COPY ./ros_entrypoint.sh /
