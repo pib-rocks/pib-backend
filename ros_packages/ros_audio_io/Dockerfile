@@ -22,10 +22,10 @@ RUN apt-get update --fix-missing && \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python audio packages
-RUN pip install pyaudio numpy scipy taskgroup
+RUN pip install --break-system-packages pyaudio numpy scipy taskgroup
 
 COPY ./pib_api/client ./client
-RUN pip install ./client
+RUN pip install --break-system-packages ./client
 
 COPY ./ros_packages/datatypes ros2_ws/datatypes
 COPY ./ros_packages/ros_audio_io ros2_ws/ros_audio_io
