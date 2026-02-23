@@ -16,6 +16,10 @@ export BACKEND_DIR="$APP_DIR/pib-backend"
 export FRONTEND_DIR="$APP_DIR/cerebra"
 export SETUP_INSTALLATION_DIR="$BACKEND_DIR/setup/installation_scripts"
 
+# Log file in same directory as this script
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LOG_FILE="${SCRIPT_DIR}/setup-pib.log"
+
 # Function to support printing consistent log messages
 function print() {
     local color=$1
@@ -100,14 +104,17 @@ function check_distribution() {
     return 0
   else
     print WARN "This script expects Raspberry Pi OS on pib or Ubuntu 24.04 for systems that run the digital twin only. We detected $DISTRIBUTION $DIST_VERSION. Do you want to continue? (Y/N):"
+    echo -e "${WARN}Do you want to continue? (Y/N):${RESET_TEXT_COLOR}" >&3
     read -r answer
       case "$answer" in
         [Yy]*)
           echo "Continuing..."
+          echo "Continuing..." >&3
           return 0
           ;;
         *)
           echo "Stopping setup, no changes were made."
+          console_error "Stopping setup, no changes were made."
           exit 1
           ;;
       esac
@@ -159,15 +166,18 @@ function clone_repositories() {
   # Validate branches
   if ! command_exists git; then
     print ERROR "git not found"
+    console_error "git not found"
     exit 1
   fi
 
   if ! git ls-remote --exit-code --heads "$FRONTEND" "$BRANCH_FRONTEND" >/dev/null 2>&1; then
     print ERROR "Branch '${BRANCH_FRONTEND}' for Cerebra not found"
+    console_error "Branch '${BRANCH_FRONTEND}' for Cerebra not found"
     exit 1
   fi
   if ! git ls-remote --exit-code --heads "$BACKEND" "$BRANCH_BACKEND" >/dev/null 2>&1; then
     print ERROR "Branch '${BRANCH_BACKEND}' for pib-backend not found"
+    console_error "Branch '${BRANCH_BACKEND}' for pib-backend not found"
     exit 1
   fi
 
@@ -194,6 +204,7 @@ function move_setup_files() {
 
   if [[ ! -f "$source_file" ]]; then
     print ERROR "$source_file not found"
+    console_error "$source_file not found"
     return 1
   fi
 
@@ -327,18 +338,45 @@ show_help()
 
 # ---------- SETUP STARTS FROM HERE -----------
 
-# Reduplicate output to an extra log file as well
-LOG_FILE="$HOME/setup-pib.log"
-exec > >(tee -a "$LOG_FILE") 2>&1
+# Handle --help before redirecting stdout so help is shown on the terminal
+for arg in "$@"; do
+  if [[ "$arg" == "-h" || "$arg" == "--help" ]]; then
+    show_help
+    exit 0
+  fi
+done
 
-echo "Hello $USER! We start the setup by allowing you permanently to run commands with admin-privileges. This change is reverted at the end of the setup."
+# Redirect stdout/stderr to log only; keep terminal on fd 3 for minimal console output
+exec 3>&1
+exec 1>>"$LOG_FILE" 2>>"$LOG_FILE"
+
+# Console output helpers: minimal lines to terminal (fd 3) and one line to log
+console_success() {
+  echo "[$(date -u)] [SUCCESS] $*"
+  echo -e "${SUCCESS}${*}${RESET_TEXT_COLOR}" >&3
+}
+console_error() {
+  echo "[$(date -u)] [ERROR] $*"
+  echo -e "${ERROR}${*}${RESET_TEXT_COLOR}" >&3
+}
+console_info() {
+  echo "[$(date -u)] [INFO] $*"
+  echo -e "${INFO}${*}${RESET_TEXT_COLOR}" >&3
+}
+
+echo "Detailed log: $LOG_FILE"
+console_info "Log file: $LOG_FILE"
+
+echo "Requesting sudo privileges for setup..."
+console_info "Hello $USER! We start the setup by allowing you to run commands with admin-privileges (reverted at the end)."
 if [[ "$(id)" == *"(sudo)"* ]]; then
-	echo "For this change please enter your password..."
+	echo "For this change please enter your password..." >&3
 	sudo bash -c "echo '$USER ALL=(ALL) NOPASSWD:ALL' | tee /etc/sudoers.d/$USER"
 else
-	echo "For this change please enter the root-password. It is most likely just your normal one..."
+	echo "For this change please enter the root-password. It is most likely just your normal one..." >&3
 	su root bash -c "usermod -aG sudo $USER ; echo '$USER ALL=(ALL) NOPASSWD:ALL' | tee /etc/sudoers.d/$USER"
 fi
+console_success "Privileges set"
 
 
 DISTRIBUTION=$(get_distribution) # e.g., 'ubuntu'
@@ -369,36 +407,52 @@ while [ $# -gt 0 ]; do
       ;;
     *)
       print ERROR "invalid input options"
+      console_error "Invalid input options"
+      exit 1
   esac
   shift
 done
 
 if is_ubuntu_noble; then
-  remove_apps || print ERROR "failed to remove default software"
+  remove_apps || { print ERROR "failed to remove default software"; console_error "Failed to remove default software"; exit 1; }
+  console_success "Removed default software"
 fi
 
 if is_supported_raspbian; then
-  disable_power_notification || print ERROR "failed to disable power notifications"
+  disable_power_notification || { print ERROR "failed to disable power notifications"; console_error "Failed to disable power notifications"; exit 1; }
+  console_success "Power notifications disabled"
 fi
 
-install_system_packages || { print ERROR "failed to install system packages"; return 1; }
-install_locale || { print ERROR "failed to install locale"; return 1; }
-clone_repositories || { print ERROR "failed to clone repositories"; return 1; }
-move_setup_files || print ERROR "failed to move setup files"
-install_DBbrowser || print ERROR "failed to install DB browser"
-install_tinkerforge || print ERROR "failed to install tinkerforge"
-setup_ip_dispatcher || print ERROR "failed to setup ip dispatcher"
-source "$SETUP_INSTALLATION_DIR/set_system_settings.sh" || print ERROR "failed to set system settings"
+install_system_packages || { print ERROR "failed to install system packages"; console_error "Failed to install system packages"; exit 1; }
+console_success "System packages installed"
+install_locale || { print ERROR "failed to install locale"; console_error "Failed to install locale"; exit 1; }
+console_success "Locale installed"
+clone_repositories || { print ERROR "failed to clone repositories"; console_error "Failed to clone repositories"; exit 1; }
+console_success "Repositories cloned"
+move_setup_files || { print ERROR "failed to move setup files"; console_error "Failed to move setup files"; exit 1; }
+console_success "Setup files moved"
+install_DBbrowser || { print ERROR "failed to install DB browser"; console_error "Failed to install DB browser"; exit 1; }
+console_success "DB browser installed"
+install_tinkerforge || { print ERROR "failed to install tinkerforge"; console_error "Failed to install tinkerforge"; exit 1; }
+console_success "Tinkerforge installed"
+setup_ip_dispatcher || { print ERROR "failed to setup ip dispatcher"; console_error "Failed to setup IP dispatcher"; exit 1; }
+console_success "IP dispatcher configured"
+source "$SETUP_INSTALLATION_DIR/set_system_settings.sh" || { print ERROR "failed to set system settings"; console_error "Failed to set system settings"; exit 1; }
+console_success "System settings applied"
 print INFO "${INSTALL_METHOD}"
 if [ "$INSTALL_METHOD" = "legacy" ]; then
   print INFO "Going to install Cerebra locally (LEGACY MODE NOT WORKING ON RASPBERRY PI 5)"
-  source "$SETUP_INSTALLATION_DIR/local_install.sh" || print ERROR "failed to install Cerebra locally"
+  source "$SETUP_INSTALLATION_DIR/local_install.sh" || { print ERROR "failed to install Cerebra locally"; console_error "Failed to install Cerebra locally"; exit 1; }
+  console_success "Cerebra installed locally"
 elif is_ubuntu_noble || is_supported_raspbian; then
   print INFO "Going to install Cerebra via Docker"
-  source "$SETUP_INSTALLATION_DIR/docker_install.sh" || print ERROR "failed to install Cerebra via Docker"
-  sudo usermod -aG docker pib || { print ERROR "failed to add user 'pib' to docker group"; return 1; }
+  source "$SETUP_INSTALLATION_DIR/docker_install.sh" || { print ERROR "failed to install Cerebra via Docker"; console_error "Failed to install Cerebra via Docker"; exit 1; }
+  sudo usermod -aG docker pib || { print ERROR "failed to add user 'pib' to docker group"; console_error "Failed to add user to docker group"; exit 1; }
+  console_success "Cerebra installed via Docker"
 fi
 cleanup
+console_success "Cleanup done"
 
 print SUCCESS "Finished installation, for more information on how to use pib and Cerebra, visit https://pib-rocks.atlassian.net/wiki/spaces/kb/overview?homepageId=65077450"
 print SUCCESS "Reboot pib to apply all changes"
+console_success "Installation finished. Reboot to apply all changes."
