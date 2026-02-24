@@ -1,38 +1,102 @@
-# Software setup
+# Installation
 
-The setup script supports two environments:
+`setup-pib.sh` is a single script that installs the complete pib software stack.
+It detects the operating system automatically and chooses the appropriate installation method:
 
-- **Raspberry Pi OS** (bookworm or trixie): installs and runs Cerebra via **Docker** (production).
-- **Ubuntu 24.04 (Noble)**: installs and runs Cerebra **natively** (development: ROS2 Jazzy, no Docker, all components via systemd).
+| OS | Method | Intended for |
+|----|--------|--------------|
+| Raspberry Pi OS (bookworm / trixie) | Docker | **Users** (production) |
+| Ubuntu 24.04 Noble | Native (ROS2 Jazzy, systemd) | **Developers** |
 
-The script assumes the user running it is **pib**.
+> **The script must be run as the user `pib`.**
 
-## Installing pibs software
+---
 
-Run the setup script on either Raspberry Pi OS or Ubuntu 24.04.
+## Method 1 — Docker on Raspberry Pi OS (recommended for users)
 
-1. Open a terminal.
+This is the default production method. Cerebra and pib-backend run inside Docker containers managed by `docker compose`. No ROS installation on the host is required.
 
-2. Download the script:
+**Requirements:** Raspberry Pi OS Bookworm or Trixie, user `pib`.
 
-        wget https://raw.githubusercontent.com/pib-rocks/pib-backend/main/setup/setup-pib.sh
+```bash
+# 1. Download the setup script
+wget https://raw.githubusercontent.com/pib-rocks/pib-backend/main/setup/setup-pib.sh
 
-   (or download it manually: https://github.com/pib-rocks/pib-backend/blob/main/setup/setup-pib.sh)
+# 2. Run it
+bash setup-pib.sh
+```
 
-3. Run the script:
+The script will:
+- Install Docker and pull the pib containers
+- Configure all required systemd services
+- Add user `pib` to the `docker` group
 
-        bash setup-pib.sh
+Once complete, **reboot** to apply all changes.
 
-   - On **Raspberry Pi OS** this installs Cerebra via Docker (containers for backend and frontend).
-   - On **Ubuntu 24.04** this installs Cerebra natively (ROS2 Jazzy, Flask, Blockly server, ROS nodes, Cerebra frontend; no Docker).
+---
 
-The setup adds Cerebra and its dependencies (including ROS2, Tinkerforge, etc.).
-Once the installation is complete, restart the system to apply all changes.
+## Method 2 — Native install on Ubuntu 24.04 (for developers)
+
+On Ubuntu 24.04 Noble the script installs everything directly on the host:
+ROS2 Jazzy, Flask API, Blockly server, Tinkerforge tools, Cerebra frontend (Angular), and all ROS nodes — each managed by a dedicated systemd service.
+
+Python packages are installed into a dedicated virtual environment at `~/pib-venv` (PEP 668 compliance).
+
+**Requirements:** Ubuntu 24.04 Noble, user `pib`.
+
+```bash
+# 1. Download the setup script
+wget https://raw.githubusercontent.com/pib-rocks/pib-backend/main/setup/setup-pib.sh
+
+# 2. Run it
+bash setup-pib.sh
+```
+
+The script will:
+- Install ROS2 Jazzy, rosbridge, and colcon
+- Create `~/pib-venv` and install all Python dependencies into it
+- Install and configure Flask API, Blockly server, Tinkerforge, phpLiteAdmin, nginx
+- Build and deploy the Cerebra Angular frontend
+- Register and enable all systemd boot services
+
+Once complete, **reboot** to apply all changes.
+
+---
+
+## Script flags
+
+All flags are optional. When no flags are given, both repositories are cloned from the branch that matches the current git checkout of the script (falling back to `main`).
+
+| Flag | Long form | Description |
+|------|-----------|-------------|
+| `-b=BRANCH` | `--backend-branch=BRANCH` | Branch of [pib-backend](https://github.com/pib-rocks/pib-backend) to clone and install. |
+| `-f=BRANCH` | `--frontend-branch=BRANCH` | Branch of [cerebra](https://github.com/pib-rocks/cerebra) to clone and install. |
+| `-h` | `--help` | Print usage information and exit. |
+
+**Examples:**
+
+```bash
+# Install the main branch of both repos (default)
+bash setup-pib.sh
+
+# Install a specific backend PR branch, keep frontend on main
+bash setup-pib.sh -b=PR-1098
+
+# Install specific branches for both repos
+bash setup-pib.sh -b=PR-1098 -f=PR-566
+
+# Verbose form
+bash setup-pib.sh --backend-branch=PR-1098 --frontend-branch=PR-566
+```
+
+A detailed log of the installation is written to `setup-pib.log` in the same directory as the script.
+
+---
 
 # Updating the Software
 
-- **Docker (Raspberry Pi OS):** Open a terminal and run `update-pib` to update the backend and frontend containers.
-- **Native (Ubuntu 24.04):** Update the repositories (e.g. `git pull` in `~/app/pib-backend` and `~/app/cerebra`) and restart the relevant systemd services as needed.
+- **Docker (Raspberry Pi OS):** Open a terminal and run `update-pib` to pull and restart the latest containers.
+- **Native (Ubuntu 24.04):** Pull the latest code in `~/app/pib-backend` and `~/app/cerebra`, then restart the relevant systemd services (e.g. `sudo systemctl restart pib_api_boot.service`).
 
 ## Webots
 
