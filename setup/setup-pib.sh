@@ -213,6 +213,9 @@ function move_setup_files() {
   sudo chmod 755 "$source_file"
   print SUCCESS "Installed update script"
 
+  # Ensure Desktop exists (headless/server installs may not have it)
+  mkdir -p "$HOME/Desktop"
+
   cp "$BACKEND_DIR/setup/setup_files/pib-eyes-animated.gif" "$HOME/Desktop/pib-eyes-animated.gif"
   print SUCCESS "Moved animated eyes to Desktop"
 
@@ -377,7 +380,17 @@ check_distribution
 
 
 # VALIDATE CLI ARGUMENTS
-BRANCH_BACKEND="main"
+# Default backend branch: use the branch this script is running from (if inside a git repo),
+# so that running setup-pib.sh from a PR checkout automatically installs that PR branch.
+_detected_branch=""
+if command_exists git; then
+  _detected_branch="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --abbrev-ref HEAD 2>/dev/null)"
+  # Ignore detached HEAD or empty result
+  if [[ "$_detected_branch" == "HEAD" || -z "$_detected_branch" ]]; then
+    _detected_branch=""
+  fi
+fi
+BRANCH_BACKEND="${_detected_branch:-main}"
 BRANCH_FRONTEND="main"
 while [ $# -gt 0 ]; do
   case "$1" in

@@ -3,6 +3,9 @@
 PIB_API_DIR="$HOME/flask"
 PIB_API_SETUP_DIR="$BACKEND_DIR/pib_api"
 
+# System-wide venv for all local pip installs (PEP 668 — Ubuntu 24.04 forbids bare pip)
+PIB_VENV_DIR="$HOME/pib-venv"
+
 ROS_WORKING_DIR="$HOME/ros_working_dir"
 ROS_CAMERA_BOOT_DIR="$ROS_WORKING_DIR/src/camera/boot_scripts"
 ROS_MOTORS_BOOT_DIR="$ROS_WORKING_DIR/src/motors/boot_scripts"
@@ -22,6 +25,18 @@ SETUP_FILES="$BACKEND_DIR/setup/setup_files"
 
 PIB_BLOCKLY_SETUP_DIR="$BACKEND_DIR/pib_blockly"
 PIB_BLOCKLY_SERVER_DIR="$HOME/pib_blockly_server"
+
+
+# Create the shared venv used for all local pip installs (PEP 668 compliance on Ubuntu 24.04)
+function create_pib_venv() {
+  print INFO "Creating pib venv at $PIB_VENV_DIR"
+  sudo apt -qq -y install python3-venv
+  python3 -m venv "$PIB_VENV_DIR" --system-site-packages
+  # Expose venv pip/python on PATH for the rest of this script
+  export PATH="$PIB_VENV_DIR/bin:$PATH"
+  echo "export PATH=\"$PIB_VENV_DIR/bin:\$PATH\"" >> "$HOME/.bashrc"
+  print SUCCESS "pib venv created"
+}
 
 
 # Install ROS2 Jazzy, rosbridge and colcon (Jazzy is supported on Ubuntu 24.04 Noble only)
@@ -117,7 +132,7 @@ function install_flask_api() {
 
   echo "export PYTHONIOENCODING=utf-8" >> "$HOME/.bashrc"
   pip install pipenv
-  print INFO "Installed pipenv"
+  print INFO "Installed pipenv into pib venv"
   cp -r "$PIB_API_SETUP_DIR/flask" "$PIB_API_DIR"
   sudo mv "$PIB_API_DIR/pib_api_boot.service" /etc/systemd/system || print WARN "pib_api_boot.service not found"
 
@@ -135,7 +150,7 @@ function install_ros_packages() {
 
   # Camera Dependencies
   sudo curl --silent --location https://docs.luxonis.com/install_dependencies.sh | sudo bash
-  python3 -m pip install depthai
+  pip install depthai
   git clone --recurse-submodules https://github.com/luxonis/depthai-python.git
   cd depthai-python/examples || { print ERROR "depthai-python/examples not found"; return 1; }
   python3 install_requirements.py
@@ -160,12 +175,12 @@ function install_ros_packages() {
   pip install "$BACKEND_DIR/public_api_client"
   pip install "$PIB_API_SETUP_DIR/client"
   pip install pyaudio
-  mkdir "$HOME/public_api"
+  mkdir -p "$HOME/public_api"
   printf "{\n\t\"trybUrlPrefix\": \"\",\n\t\"publicApiToken\": \"\"\n}\n" > "$HOME/public_api/config.json"
   print INFO "Installed voice assistant dependencies"
 
   # Programs dependencies
-  sudo apt-get install -y python3.10-venv
+  sudo apt-get install -y python3-venv
   readonly USER_PROGRAM_ENV_DIR="$ROS_WORKING_DIR/src/programs/user_program_env"
   mkdir "$USER_PROGRAM_ENV_DIR"
   sudo chmod 700 "$USER_PROGRAM_ENV_DIR"
@@ -353,6 +368,7 @@ sudo sysctl -w net.ipv6.conf.all.disable_ipv6=1
 sudo sysctl -w net.ipv6.conf.default.disable_ipv6=1
 
 install_ros || { print ERROR "Failed installing ROS"; return 1; }
+create_pib_venv || { print ERROR "Failed creating pib venv"; return 1; }
 install_tinkerforge || { print ERROR "Failed installing Tinkerforge"; return 1; }
 install_flask_api || { print ERROR "Failed installing pib-api"; return 1; }
 install_ros_packages || { print ERROR "Failed installing ros_packages"; return 1; }
