@@ -166,15 +166,9 @@ function install_ros_packages() {
 
   # Camera Dependencies
   sudo curl --silent --location https://docs.luxonis.com/install_dependencies.sh | sudo bash
-  pip install depthai
-  git clone --recurse-submodules https://github.com/luxonis/depthai-python.git
-  cd depthai-python/examples || { print ERROR "depthai-python/examples not found"; return 1; }
-  "$PIB_VENV_DIR/bin/python3" install_requirements.py
-  # Hand tracker
-  git clone https://github.com/geaxgx/depthai_hand_tracker.git
-  cd depthai_hand_tracker || { print ERROR "depthai_hand_tracker not found"; return 1; }
-  pip install -r requirements.txt
-  cd "$HOME" || { print ERROR "${HOME} not found"; return 1; }
+  # Pin to the project-wide target versions; bare 'pip install depthai' would
+  # fetch the latest (3.x) release and break compatibility with the camera node.
+  pip install "depthai==2.24.0.0" "numpy==1.26.3"
 
   # SLAM dependencies (optional)
 #  sudo apt install -y ros-jazzy-depthai-ros
