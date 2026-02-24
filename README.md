@@ -30,6 +30,7 @@ The script will:
 - Install Docker and pull the pib containers
 - Configure all required systemd services
 - Add user `pib` to the `docker` group
+- Install [OpenClaw](https://openclaw.ai) AI assistant and start its gateway service
 
 Once complete, **reboot** to apply all changes.
 
@@ -58,6 +59,7 @@ The script will:
 - Install and configure Flask API, Blockly server, Tinkerforge, phpLiteAdmin, nginx
 - Build and deploy the Cerebra Angular frontend
 - Register and enable all systemd boot services
+- Install [OpenClaw](https://openclaw.ai) AI assistant and start its gateway service
 
 Once complete, **reboot** to apply all changes.
 
@@ -90,6 +92,40 @@ bash setup-pib.sh --backend-branch=PR-1098 --frontend-branch=PR-566
 ```
 
 A detailed log of the installation is written to `setup-pib.log` in the same directory as the script.
+
+---
+
+## OpenClaw AI Assistant
+
+`setup-pib.sh` automatically installs [OpenClaw](https://openclaw.ai) — a personal AI assistant — on both Raspberry Pi OS and Ubuntu 24.04.
+
+**What gets installed:**
+
+- Node 22 (via NodeSource, system-wide — does not affect the pib Node 18 used by Cerebra)
+- `openclaw` npm package (global, in `~/.npm-global`)
+- OpenClaw gateway configured on port `18789` (loopback only)
+- `openclaw-gateway.service` systemd user unit, enabled to start on boot
+
+**After installation, configure your AI provider:**
+
+```bash
+# Interactive setup wizard (adds API keys, channels, etc.)
+openclaw onboard
+```
+
+**Useful commands:**
+
+```bash
+openclaw status          # check gateway health
+openclaw daemon restart  # restart the gateway service
+openclaw agent --message "Hello pib!"  # send a message to the assistant
+```
+
+The gateway runs as a user service. If it is not running, start it with:
+
+```bash
+systemctl --user start openclaw-gateway.service
+```
 
 ---
 
