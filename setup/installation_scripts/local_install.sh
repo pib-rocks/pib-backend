@@ -126,14 +126,21 @@ function install_tinkerforge() {
 }
 
 
-# Install Flask API via pipenv
+# Install Flask API into pib-venv (replaces pipenv; deps installed at setup time, not at boot)
 function install_flask_api() {
   print INFO "Install pib-api"
 
   echo "export PYTHONIOENCODING=utf-8" >> "$HOME/.bashrc"
-  pip install pipenv
-  print INFO "Installed pipenv into pib venv"
+
   cp -r "$PIB_API_SETUP_DIR/flask" "$PIB_API_DIR"
+
+  # Install all Flask API dependencies into pib-venv now so the service
+  # only needs to run 'flask db upgrade' and 'flask seed_db' at boot.
+  pip install -r "$PIB_API_DIR/requirements.txt"
+  # pib_blockly_client is installed later by install_blocky_node_service,
+  # but the service needs it at boot — install from the setup source dir.
+  pip install "$PIB_BLOCKLY_SETUP_DIR/pib_blockly_client"
+
   sudo mv "$PIB_API_DIR/pib_api_boot.service" /etc/systemd/system || print WARN "pib_api_boot.service not found"
 
   # service enabled at the end of the script
