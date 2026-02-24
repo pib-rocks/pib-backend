@@ -160,7 +160,7 @@ function install_ros_packages() {
   pip install depthai
   git clone --recurse-submodules https://github.com/luxonis/depthai-python.git
   cd depthai-python/examples || { print ERROR "depthai-python/examples not found"; return 1; }
-  python3 install_requirements.py
+  "$PIB_VENV_DIR/bin/python3" install_requirements.py
   # Hand tracker
   git clone https://github.com/geaxgx/depthai_hand_tracker.git
   cd depthai_hand_tracker || { print ERROR "depthai_hand_tracker not found"; return 1; }
@@ -191,7 +191,7 @@ function install_ros_packages() {
   readonly USER_PROGRAM_ENV_DIR="$ROS_WORKING_DIR/src/programs/user_program_env"
   mkdir "$USER_PROGRAM_ENV_DIR"
   sudo chmod 700 "$USER_PROGRAM_ENV_DIR"
-  python3 -m venv "$USER_PROGRAM_ENV_DIR"
+  /usr/bin/python3 -m venv "$USER_PROGRAM_ENV_DIR"
   source "$USER_PROGRAM_ENV_DIR/bin/activate"
   python3 -m pip install numpy==1.26.3
   python3 -m pip install depthai==2.24.0.0

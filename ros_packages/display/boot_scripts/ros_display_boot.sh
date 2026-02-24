@@ -1,4 +1,5 @@
 #!/bin/bash
+source /home/pib/pib-venv/bin/activate
 source /home/pib/ros_working_dir/ros_config.sh
 source /opt/ros/jazzy/setup.bash
 source /home/pib/ros_working_dir/install/setup.bash
