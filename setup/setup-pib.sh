@@ -307,6 +307,72 @@ EOF
   fi
 }
 
+# Install OpenClaw AI assistant (Node ≥ 22 + npm global package + gateway daemon)
+function install_openclaw() {
+  print INFO "Installing OpenClaw"
+
+  # ── 1. Ensure Node 22 is available ──────────────────────────────────────────
+  # On Noble, install_frontend already set up nvm with Node 18 for the Angular
+  # build. OpenClaw requires Node ≥ 22, so we install it separately via the
+  # NodeSource binary package — this puts a system-wide node22 binary at
+  # /usr/bin/node that does not interfere with the nvm Node 18 used by pib.
+  # On Raspbian, no Node is present at all, so we install the same way.
+  local NODE_BIN
+  NODE_BIN=$(command -v node 2>/dev/null || true)
+  local NODE_VERSION=0
+  if [ -n "$NODE_BIN" ]; then
+    NODE_VERSION=$("$NODE_BIN" -e "process.stdout.write(String(process.versions.node.split('.')[0]))" 2>/dev/null || echo 0)
+  fi
+
+  if [ "$NODE_VERSION" -lt 22 ] 2>/dev/null; then
+    print INFO "Node < 22 detected (found: $NODE_VERSION); installing Node 22 via NodeSource"
+    curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && \
+    sudo apt-get install -y nodejs || { print ERROR "Failed to install Node 22"; return 1; }
+    NODE_BIN=$(command -v node)
+    print INFO "Node $("$NODE_BIN" --version) installed"
+  else
+    print INFO "Node $NODE_VERSION already satisfies ≥ 22 requirement"
+  fi
+
+  # ── 2. Configure npm global prefix to a user-writable directory ─────────────
+  # Avoids EACCES errors on 'npm install -g' without sudo.
+  local NPM_PREFIX="$HOME/.npm-global"
+  mkdir -p "$NPM_PREFIX"
+  npm config set prefix "$NPM_PREFIX"
+  export PATH="$NPM_PREFIX/bin:$PATH"
+  echo "export PATH=\"$NPM_PREFIX/bin:\$PATH\"" >> "$HOME/.bashrc"
+
+  # ── 3. Install OpenClaw CLI ──────────────────────────────────────────────────
+  if command_exists openclaw; then
+    print WARN "OpenClaw already installed ($(openclaw --version 2>/dev/null || echo unknown)); skipping npm install"
+  else
+    npm install -g openclaw@latest || { print ERROR "Failed to install OpenClaw"; return 1; }
+    print INFO "OpenClaw $(openclaw --version 2>/dev/null || echo installed)"
+  fi
+
+  # ── 4. Non-interactive onboard: workspace + gateway config (no auth/channels)
+  # Defers API-key setup to the user; --skip-skills avoids interactive prompts.
+  # The workspace is seeded at the default location (~/.openclaw/workspace).
+  openclaw onboard \
+    --non-interactive \
+    --mode local \
+    --gateway-port 18789 \
+    --gateway-bind loopback \
+    --skip-skills \
+    || print WARN "OpenClaw onboard returned non-zero; gateway may need manual auth setup"
+
+  # ── 5. Install and enable the gateway systemd user service ──────────────────
+  # 'openclaw daemon install' writes ~/.config/systemd/user/openclaw-gateway.service
+  # and enables it. loginctl enable-linger ensures the user service survives logout.
+  openclaw daemon install --runtime node || { print ERROR "Failed to install OpenClaw gateway service"; return 1; }
+  sudo loginctl enable-linger "$USER" || print WARN "loginctl enable-linger failed; gateway may not start on boot"
+  systemctl --user daemon-reload
+  systemctl --user enable openclaw-gateway.service --now || print WARN "Could not start openclaw-gateway.service immediately; it will start on next login"
+
+  print SUCCESS "OpenClaw installed — run 'openclaw onboard' to configure channels and API keys"
+}
+
+
 # Remove temporary sudoers entry (repositories in $HOME/app are kept for both native and Docker)
 function cleanup() {
   sudo rm -f /etc/sudoers.d/"$USER"
@@ -451,6 +517,8 @@ else
   console_error "Unsupported OS. Use Ubuntu 24.04 or Raspberry Pi OS."
   exit 1
 fi
+install_openclaw || print WARN "OpenClaw installation failed; pib will work normally but the AI assistant will not be available"
+console_success "OpenClaw installed"
 cleanup
 console_success "Cleanup done"
 
