@@ -35,6 +35,15 @@ function create_pib_venv() {
   # Expose venv pip/python on PATH for the rest of this script
   export PATH="$PIB_VENV_DIR/bin:$PATH"
   echo "export PATH=\"$PIB_VENV_DIR/bin:\$PATH\"" >> "$HOME/.bashrc"
+
+  # Install colcon into the venv so 'python3 -m colcon build' uses the venv's
+  # sys.executable — this makes colcon stamp the venv python path into every
+  # generated entry-point wrapper shebang, ensuring ROS nodes find venv packages.
+  pip install colcon-common-extensions
+
+  # Pillow is needed by the display ROS node (PIL.Image)
+  pip install Pillow
+
   print SUCCESS "pib venv created"
 }
 
@@ -245,7 +254,11 @@ function install_ros_packages() {
 
   cd "$ROS_WORKING_DIR" || { print ERROR "${ROS_WORKING_DIR} not found"; return 1; }
   source /opt/ros/jazzy/setup.bash
-  colcon build || { print ERROR "could not colcon build packages"; return 1; }
+  # Run colcon via the venv python so sys.executable inside colcon resolves to
+  # the venv interpreter. This causes all generated entry-point wrapper scripts
+  # to receive a shebang of '#!/home/pib/pib-venv/bin/python3' instead of
+  # '#!/usr/bin/python3', so ROS nodes can import packages installed in pib-venv.
+  "$PIB_VENV_DIR/bin/python3" -m colcon build || { print ERROR "could not colcon build packages"; return 1; }
   cd "$HOME" || { print ERROR "${HOME} not found"; return 1; }
 
   cp "${SETUP_FILES}/ros_config.sh" "$ROS_WORKING_DIR" || { print ERROR "could not move ros_config.sh"; return 1; }
