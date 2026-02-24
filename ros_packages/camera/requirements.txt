@@ -48,7 +48,7 @@ composition-interfaces==1.2.1
 cryptography==3.4.8
 cv-bridge==3.2.1
 dbus-python==1.2.18
-depthai==2.24.0.0
+depthai==2.25.1.0
 depthai-ros-driver==2.9.0
 depthai-ros-msgs==2.9.0
 diagnostic-msgs==4.2.3
