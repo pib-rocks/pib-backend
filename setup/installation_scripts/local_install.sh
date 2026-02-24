@@ -168,7 +168,7 @@ function install_ros_packages() {
   sudo curl --silent --location https://docs.luxonis.com/install_dependencies.sh | sudo bash
   # Pin to the project-wide target versions; bare 'pip install depthai' would
   # fetch the latest (3.x) release and break compatibility with the camera node.
-  pip install "depthai==2.24.0.0" "numpy==1.26.3"
+  pip install "depthai==2.25.1.0" "numpy==1.26.3"
 
   # SLAM dependencies (optional)
 #  sudo apt install -y ros-jazzy-depthai-ros
@@ -197,7 +197,7 @@ function install_ros_packages() {
   /usr/bin/python3 -m venv "$USER_PROGRAM_ENV_DIR"
   source "$USER_PROGRAM_ENV_DIR/bin/activate"
   python3 -m pip install numpy==1.26.3
-  python3 -m pip install depthai==2.24.0.0
+  python3 -m pip install depthai==2.25.1.0
   python3 -m pip install blobconverter==1.4.2
   python3 -m pip install "$PIB_API_SETUP_DIR/client"
   deactivate
