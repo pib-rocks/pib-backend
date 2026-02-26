@@ -681,22 +681,22 @@ class GeminiAudioLoop:
                 async for resp in turn:
                     # ----- Session management signals -----
                     # Session resumption checkpoints (store handle for reconnect)
-                    sru = getattr(resp, "session_resumption_update", None) or getattr(
+                    session_resumption_update = getattr(resp, "session_resumption_update", None) or getattr(
                         resp, "sessionResumptionUpdate", None
                     )
-                    if sru is not None:
-                        new_handle = getattr(sru, "new_handle", None) or getattr(
-                            sru, "newHandle", None
+                    if session_resumption_update is not None:
+                        new_handle = getattr(session_resumption_update, "new_handle", None) or getattr(
+                            session_resumption_update, "newHandle", None
                         )
-                        resumable = getattr(sru, "resumable", None)
+                        resumable = getattr(session_resumption_update, "resumable", None)
                         if resumable and new_handle:
                             self._session_handle = new_handle
 
                     # GoAway warning (connection will be terminated soon)
-                    ga = getattr(resp, "go_away", None) or getattr(resp, "goAway", None)
-                    if ga is not None:
-                        time_left = getattr(ga, "time_left", None) or getattr(
-                            ga, "timeLeft", None
+                    go_away_signal = getattr(resp, "go_away", None) or getattr(resp, "goAway", None)
+                    if go_away_signal is not None:
+                        time_left = getattr(go_away_signal, "time_left", None) or getattr(
+                            go_away_signal, "timeLeft", None
                         )
                         logger.warning(
                             "GoAway received (time_left=%s). Reconnecting...", time_left
@@ -835,10 +835,10 @@ class GeminiAudioLoop:
         base_config["system_instruction"] = description
 
         async def _connect_config():
-            cfg = dict(base_config)
+            connection_config = dict(base_config)
 
             if ENABLE_CONTEXT_COMPRESSION:
-                cfg["context_window_compression"] = {
+                connection_config["context_window_compression"] = {
                     "trigger_tokens": CWC_TRIGGER_TOKENS,
                     "sliding_window": {"target_tokens": CWC_TARGET_TOKENS},
                 }
@@ -847,9 +847,9 @@ class GeminiAudioLoop:
                 # Gemini Developer API supports sessi:contentReference[oaicite:3]{index=3}dle,
                 # but NOT the 'transparent' parameter.
                 sr = {"handle": self._session_handle if self._session_handle else None}
-                cfg["session_resumption"] = sr
+                connection_config["session_resumption"] = sr
 
-            return cfg
+            return connection_config
 
         # Outer loop: reconnect as needed until stopped
         while not self._stop_event.is_set():
