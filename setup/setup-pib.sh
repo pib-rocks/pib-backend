@@ -352,12 +352,19 @@ function install_openclaw() {
     print INFO "Removed prefix/globalconfig from ~/.npmrc to prevent nvm conflict"
   fi
 
-  export NPM_CONFIG_PREFIX="$NPM_PREFIX"
-  export PATH="$NPM_PREFIX/bin:$PATH"
-  # Persist for future shells via env var (not ~/.npmrc) to stay nvm-compatible.
-  if ! grep -q 'NPM_CONFIG_PREFIX' "$HOME/.bashrc"; then
-    echo "export NPM_CONFIG_PREFIX=\"$NPM_PREFIX\"" >> "$HOME/.bashrc"
-    echo "export PATH=\"$NPM_PREFIX/bin:\$PATH\"" >> "$HOME/.bashrc"
+  # Only configure a custom npm global prefix when nvm is NOT managing npm.
+  # With nvm, npm -g installs go into the nvm node directory — no EACCES issues,
+  # no custom prefix needed. Setting NPM_CONFIG_PREFIX alongside nvm triggers the
+  # "incompatible with nvm" warning on every terminal open.
+  if [ -z "${NVM_DIR:-}" ] || [ ! -s "$NVM_DIR/nvm.sh" ]; then
+    export NPM_CONFIG_PREFIX="$NPM_PREFIX"
+    export PATH="$NPM_PREFIX/bin:$PATH"
+    if ! grep -q 'NPM_CONFIG_PREFIX' "$HOME/.bashrc"; then
+      echo "export NPM_CONFIG_PREFIX=\"$NPM_PREFIX\"" >> "$HOME/.bashrc"
+      echo "export PATH=\"$NPM_PREFIX/bin:\$PATH\"" >> "$HOME/.bashrc"
+    fi
+  else
+    print INFO "nvm detected — skipping NPM_CONFIG_PREFIX; npm -g uses nvm-managed prefix"
   fi
 
   # ── 3. Install OpenClaw CLI ──────────────────────────────────────────────────

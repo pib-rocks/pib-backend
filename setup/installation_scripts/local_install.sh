@@ -286,10 +286,11 @@ function install_frontend() {
   fi
 
 
-  # Install and use Node.js 18 via nvm
+  # Install and use Node.js 22 via nvm (Angular 21 + @types/node ^24 require Node ≥ 18,
+  # but Node 22 LTS is the minimum that satisfies all current cerebra devDependencies cleanly)
   # Dont use sudo for nvm-associated commands (npm, ng) since nvm is not accessible by root
-  nvm install 18
-  nvm use 18
+  nvm install 22
+  nvm use 22
 
   # Install Angular CLI
   npm install -g @angular/cli
