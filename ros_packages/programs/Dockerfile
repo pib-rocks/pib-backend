@@ -14,12 +14,16 @@ COPY ./pib_blockly/pib_blockly_client /tmp/pib_blockly_client
 COPY ./pib_api/client /tmp/pib_api_client
 COPY ./ros_packages/motors/pib_motors /tmp/pib_motors
 RUN apt-get update --fix-missing && \
-    apt-get install --no-install-recommends -y python3-pip && \
-    pip install --break-system-packages /tmp/pib_blockly_client && \
-    pip install --break-system-packages /tmp/pib_api_client && \
-    pip install --break-system-packages /tmp/pib_motors && \
-    pip install --break-system-packages requests==2.32.3 && \
-    pip install --break-system-packages tinkerforge
+    apt-get install --no-install-recommends -y python3-pip python3-venv && \
+    python3 -m venv /opt/pib-venv && \
+    /opt/pib-venv/bin/pip install --no-cache-dir \
+        /tmp/pib_blockly_client \
+        /tmp/pib_api_client \
+        /tmp/pib_motors \
+        requests==2.32.3 \
+        tinkerforge
+
+ENV PATH="/opt/pib-venv/bin:$PATH"
 
 
 

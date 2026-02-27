@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install --no-install-recommends -y curl
 RUN apt-get update --fix-missing && \
     apt-get install --no-install-recommends -y \
         python3-pip \
+        python3-venv \
         python3-colcon-common-extensions \
         ros-jazzy-rclpy \
         ros-jazzy-std-msgs \
@@ -21,11 +22,14 @@ RUN apt-get update --fix-missing && \
         libusb-1.0-0-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python audio packages
-RUN pip install --break-system-packages pyaudio numpy scipy taskgroup
+RUN python3 -m venv /opt/pib-venv
+
+ENV PATH="/opt/pib-venv/bin:$PATH"
+
+RUN pip install --no-cache-dir pyaudio numpy scipy taskgroup
 
 COPY ./pib_api/client ./client
-RUN pip install --break-system-packages ./client
+RUN pip install --no-cache-dir ./client
 
 COPY ./ros_packages/datatypes ros2_ws/datatypes
 COPY ./ros_packages/ros_audio_io ros2_ws/ros_audio_io

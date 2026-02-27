@@ -12,9 +12,11 @@ RUN apt-get update && apt-get install --no-install-recommends -y \
 WORKDIR /app
 
 RUN apt-get update --fix-missing && \
-    apt-get install --no-install-recommends -y python3-pip && \
-    pip install --break-system-packages requests==2.32.3 && \
-    pip install --break-system-packages pillow
+    apt-get install --no-install-recommends -y python3-pip python3-venv && \
+    python3 -m venv /opt/pib-venv && \
+    /opt/pib-venv/bin/pip install --no-cache-dir requests==2.32.3 pillow
+
+ENV PATH="/opt/pib-venv/bin:$PATH"
 
 COPY ./ros_packages/datatypes ros2_ws/datatypes
 COPY ./ros_packages/display ros2_ws/display

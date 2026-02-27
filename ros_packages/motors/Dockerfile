@@ -14,19 +14,23 @@ RUN curl -sSL https://download.tinkerforge.com/apt/$(. /etc/os-release; echo $ID
         python3-colcon-common-extensions \
         python3-colcon-mixin \
         python3-pip \
+        python3-venv \
         python3-tinkerforge \
         libusb-1.0-0-dev \
     && rm -rf /var/lib/apt/lists/*
 
+RUN python3 -m venv /opt/pib-venv
+
+ENV PATH="/opt/pib-venv/bin:$PATH"
 
 # ToDo - DEV MERGE: COPY ./ros_packages/requirements.txt .
-RUN pip install --break-system-packages requests
+RUN pip install --no-cache-dir requests
 
 COPY ./pib_api/client ./client
-RUN pip install --break-system-packages ./client
+RUN pip install --no-cache-dir ./client
 
 COPY ./ros_packages/motors/pib_motors ./motors/pib_motors
-RUN pip install --break-system-packages ./motors/pib_motors
+RUN pip install --no-cache-dir ./motors/pib_motors
 
 COPY ./ros_packages/datatypes ros2_ws/datatypes
 COPY ./ros_packages/motors ros2_ws/motors
