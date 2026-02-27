@@ -336,11 +336,29 @@ function install_openclaw() {
 
   # ── 2. Configure npm global prefix to a user-writable directory ─────────────
   # Avoids EACCES errors on 'npm install -g' without sudo.
+  # IMPORTANT: We must NOT use 'npm config set prefix' here because that writes
+  # a `prefix=` line into ~/.npmrc, which nvm detects as incompatible and prints
+  # a warning on every new terminal session. Instead, we export NPM_CONFIG_PREFIX
+  # as an environment variable and persist it in .bashrc.
   local NPM_PREFIX="$HOME/.npm-global"
   mkdir -p "$NPM_PREFIX"
-  npm config set prefix "$NPM_PREFIX"
+
+  # Clean up any pre-existing prefix/globalconfig lines from ~/.npmrc that a
+  # previous run of this script (or any other tool) may have written. These
+  # lines cause the "incompatible with nvm" warning on every terminal open.
+  if [ -f "$HOME/.npmrc" ]; then
+    sed -i '/^prefix\s*=/d' "$HOME/.npmrc"
+    sed -i '/^globalconfig\s*=/d' "$HOME/.npmrc"
+    print INFO "Removed prefix/globalconfig from ~/.npmrc to prevent nvm conflict"
+  fi
+
+  export NPM_CONFIG_PREFIX="$NPM_PREFIX"
   export PATH="$NPM_PREFIX/bin:$PATH"
-  echo "export PATH=\"$NPM_PREFIX/bin:\$PATH\"" >> "$HOME/.bashrc"
+  # Persist for future shells via env var (not ~/.npmrc) to stay nvm-compatible.
+  if ! grep -q 'NPM_CONFIG_PREFIX' "$HOME/.bashrc"; then
+    echo "export NPM_CONFIG_PREFIX=\"$NPM_PREFIX\"" >> "$HOME/.bashrc"
+    echo "export PATH=\"$NPM_PREFIX/bin:\$PATH\"" >> "$HOME/.bashrc"
+  fi
 
   # ── 3. Install OpenClaw CLI ──────────────────────────────────────────────────
   if command_exists openclaw; then
