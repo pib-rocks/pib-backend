@@ -101,7 +101,7 @@ A detailed log of the installation is written to `setup-pib.log` in the same dir
 
 **What gets installed:**
 
-- Node 22 (via NodeSource, system-wide — does not affect the pib Node 18 used by Cerebra)
+- Node 24 (via NodeSource, system-wide — does not affect the pib Node used by Cerebra)
 - `openclaw` npm package (global, in `~/.npm-global`)
 - OpenClaw gateway configured on port `18789` (loopback only)
 - `openclaw-gateway.service` systemd user unit, enabled to start on boot

@@ -311,10 +311,10 @@ EOF
 function install_openclaw() {
   print INFO "Installing OpenClaw"
 
-  # ── 1. Ensure Node 22 is available ──────────────────────────────────────────
+  # ── 1. Ensure Node 24 is available ──────────────────────────────────────────
   # On Noble, install_frontend already set up nvm with Node 18 for the Angular
   # build. OpenClaw requires Node ≥ 22, so we install it separately via the
-  # NodeSource binary package — this puts a system-wide node22 binary at
+  # NodeSource binary package — this puts a system-wide node24 binary at
   # /usr/bin/node that does not interfere with the nvm Node 18 used by pib.
   # On Raspbian, no Node is present at all, so we install the same way.
   local NODE_BIN
@@ -325,9 +325,9 @@ function install_openclaw() {
   fi
 
   if [ "$NODE_VERSION" -lt 22 ] 2>/dev/null; then
-    print INFO "Node < 22 detected (found: $NODE_VERSION); installing Node 22 via NodeSource"
+    print INFO "Node < 22 detected (found: $NODE_VERSION); installing Node 24 via NodeSource"
     curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && \
-    sudo apt-get install -y nodejs || { print ERROR "Failed to install Node 22"; return 1; }
+    sudo apt-get install -y nodejs || { print ERROR "Failed to install Node 24"; return 1; }
     NODE_BIN=$(command -v node)
     print INFO "Node $("$NODE_BIN" --version) installed"
   else
