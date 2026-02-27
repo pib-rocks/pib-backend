@@ -326,7 +326,7 @@ function install_openclaw() {
 
   if [ "$NODE_VERSION" -lt 22 ] 2>/dev/null; then
     print INFO "Node < 22 detected (found: $NODE_VERSION); installing Node 24 via NodeSource"
-    curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && \
+    curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash - && \
     sudo apt-get install -y nodejs || { print ERROR "Failed to install Node 24"; return 1; }
     NODE_BIN=$(command -v node)
     print INFO "Node $("$NODE_BIN" --version) installed"
