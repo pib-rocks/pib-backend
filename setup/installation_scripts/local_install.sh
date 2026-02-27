@@ -267,8 +267,10 @@ function install_frontend() {
   print INFO "Install Cerebra"
   sudo apt -qq install -y nginx
   sudo mkdir -p $DEFAULT_NGINX_HTML_DIR
-  # Setting up nginx to serve Cerebra locally
-  sudo cp "${SETUP_FILES}/nginx.conf" "$DEFAULT_NGINX_DIR/nginx.conf"
+  # Setting up nginx to serve Cerebra locally using standard sites-available pattern
+  sudo cp "${SETUP_FILES}/pib-rocks.conf" "/etc/nginx/sites-available/pib-rocks"
+  sudo ln -sf "/etc/nginx/sites-available/pib-rocks" "/etc/nginx/sites-enabled/pib-rocks"
+  sudo rm -f "/etc/nginx/sites-enabled/default"
 
   # Remove pre-installed node version in preparation of node install via nvm
   sudo apt-get purge -y nodejs
