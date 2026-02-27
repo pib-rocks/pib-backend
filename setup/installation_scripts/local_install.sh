@@ -304,7 +304,8 @@ function install_frontend() {
   cd "$HOME" || { print ERROR "${HOME} not found"; return 1; }
 
   # Move the build to the destination folder
-  sudo mv "$FRONTEND_DIR/dist"/* "$DEFAULT_NGINX_HTML_DIR"
+  # Angular 18+ builds to dist/cerebra/browser/
+  sudo mv "$FRONTEND_DIR/dist/cerebra/browser"/* "$DEFAULT_NGINX_HTML_DIR"
 
   cp "${SETUP_FILES}/ros_cerebra_boot.sh" "${ROS_WORKING_DIR}/ros_cerebra_boot.sh"
   sudo chmod 700 "$ROS_WORKING_DIR"/ros_cerebra_boot.sh
