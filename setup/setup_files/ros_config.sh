@@ -1,4 +1,4 @@
 #!/bin/bash
 #Prevents talking to other robots on the same network
-export ROS_LOCALHOST_ONLY=1
+export ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
 

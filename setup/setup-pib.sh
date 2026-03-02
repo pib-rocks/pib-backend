@@ -216,7 +216,7 @@ function move_setup_files() {
   # Ensure Desktop exists (headless/server installs may not have it)
   mkdir -p "$HOME/Desktop"
 
-  cp "$BACKEND_DIR/setup/setup_files/pib-eyes-animated.gif" "$HOME/Desktop/pib-eyes-animated.gif"
+  cp "$BACKEND_DIR/setup/setup_files/pib-eyes-animated.gif" "$HOME/Desktop/pib-eyes-animated.gif" || { print ERROR "Failed to copy pib-eyes-animated.gif"; return 1; }
   print SUCCESS "Moved animated eyes to Desktop"
 
   # Add HTML that opens Cerebra + Database to the Desktop
@@ -312,10 +312,9 @@ function install_openclaw() {
   print INFO "Installing OpenClaw"
 
   # ── 1. Ensure Node 24 is available ──────────────────────────────────────────
-  # On Noble, install_frontend already set up nvm with Node 18 for the Angular
-  # build. OpenClaw requires Node ≥ 22, so we install it separately via the
-  # NodeSource binary package — this puts a system-wide node24 binary at
-  # /usr/bin/node that does not interfere with the nvm Node 18 used by pib.
+  # install_frontend sets up nvm with Node 24 for the Angular build.
+  # OpenClaw requires Node ≥ 22; we install Node 24 via NodeSource as a
+  # system-wide binary at /usr/bin/node that does not interfere with nvm.
   # On Raspbian, no Node is present at all, so we install the same way.
   local NODE_BIN
   NODE_BIN=$(command -v node 2>/dev/null || true)
@@ -380,6 +379,7 @@ function install_openclaw() {
   # The workspace is seeded at the default location (~/.openclaw/workspace).
   openclaw onboard \
     --non-interactive \
+    --accept-risk \
     --mode local \
     --gateway-port 18789 \
     --gateway-bind loopback \
@@ -389,10 +389,16 @@ function install_openclaw() {
   # ── 5. Install and enable the gateway systemd user service ──────────────────
   # 'openclaw daemon install' writes ~/.config/systemd/user/openclaw-gateway.service
   # and enables it. loginctl enable-linger ensures the user service survives logout.
-  openclaw daemon install --runtime node || { print ERROR "Failed to install OpenClaw gateway service"; return 1; }
-  sudo loginctl enable-linger "$USER" || print WARN "loginctl enable-linger failed; gateway may not start on boot"
-  systemctl --user daemon-reload
-  systemctl --user enable openclaw-gateway.service --now || print WARN "Could not start openclaw-gateway.service immediately; it will start on next login"
+  # Run as the pib user with the correct XDG_RUNTIME_DIR so systemd user units resolve.
+  local PIB_UID
+  PIB_UID=$(id -u pib 2>/dev/null || echo "")
+  local PIB_XDG_RUNTIME_DIR="/run/user/${PIB_UID}"
+  sudo -u pib XDG_RUNTIME_DIR="$PIB_XDG_RUNTIME_DIR" openclaw daemon install --runtime node \
+    || { print ERROR "Failed to install OpenClaw gateway service"; return 1; }
+  sudo loginctl enable-linger pib || print WARN "loginctl enable-linger failed; gateway may not start on boot"
+  sudo -u pib XDG_RUNTIME_DIR="$PIB_XDG_RUNTIME_DIR" systemctl --user daemon-reload
+  sudo -u pib XDG_RUNTIME_DIR="$PIB_XDG_RUNTIME_DIR" systemctl --user enable openclaw-gateway.service --now \
+    || print WARN "Could not start openclaw-gateway.service immediately; it will start on next login"
 
   print SUCCESS "OpenClaw installed — run 'openclaw onboard' to configure channels and API keys"
 }

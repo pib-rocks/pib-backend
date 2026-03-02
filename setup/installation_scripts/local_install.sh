@@ -79,7 +79,7 @@ function install_ros() {
   sudo apt -qq update  && \
   sudo apt -qq -y install python3 python3-pip python3-tk python3-colcon-common-extensions && \
   echo 'source /home/pib/ros_working_dir/install/setup.bash' >> "$HOME/.bashrc" && \
-  echo "export ROS_LOCALHOST_ONLY=1" >> "$HOME/.bashrc"
+  echo "export ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST" >> "$HOME/.bashrc"
   print INFO "Installed colcon"
 
 
@@ -168,7 +168,7 @@ function install_ros_packages() {
   sudo curl --silent --location https://docs.luxonis.com/install_dependencies.sh | sudo bash
   # Pin to the project-wide target versions; bare 'pip install depthai' would
   # fetch the latest (3.x) release and break compatibility with the camera node.
-  pip install "depthai==2.25.1.0" "numpy==1.26.3"
+  pip install "depthai==2.25.1.0" "numpy==1.26.3" "opencv-python"
 
   # SLAM dependencies (optional)
 #  sudo apt install -y ros-jazzy-depthai-ros
@@ -288,8 +288,7 @@ function install_frontend() {
   fi
 
 
-  # Install and use Node.js 22 via nvm (Angular 21 + @types/node ^24 require Node ≥ 18,
-  # but Node 22 LTS is the minimum that satisfies all current cerebra devDependencies cleanly)
+  # Install and use Node.js 24 via nvm
   # Dont use sudo for nvm-associated commands (npm, ng) since nvm is not accessible by root
   nvm install 24
   nvm use 24
@@ -300,13 +299,13 @@ function install_frontend() {
 
   npm --prefix "$FRONTEND_DIR" install
   cd "$FRONTEND_DIR" || { print ERROR "${FRONTEND_DIR} not found"; return 1; }
-  ng build --configuration production
+  ng build --configuration production || { print ERROR "ng build failed"; return 1; }
   cd "$HOME" || { print ERROR "${HOME} not found"; return 1; }
 
   # Move the build to the destination folder
   # Angular 18+ builds to dist/cerebra/browser/
   sudo mkdir -p "$DEFAULT_NGINX_HTML_DIR"
-  sudo cp -r "$FRONTEND_DIR/dist/cerebra/browser"/* "$DEFAULT_NGINX_HTML_DIR/"
+  sudo cp -r "$FRONTEND_DIR/dist/cerebra/browser"/* "$DEFAULT_NGINX_HTML_DIR/" || { print ERROR "Failed to copy Angular build to $DEFAULT_NGINX_HTML_DIR"; return 1; }
 
   cp "${SETUP_FILES}/ros_cerebra_boot.sh" "${ROS_WORKING_DIR}/ros_cerebra_boot.sh"
   sudo chmod 700 "$ROS_WORKING_DIR"/ros_cerebra_boot.sh
@@ -318,12 +317,12 @@ function install_frontend() {
   print INFO "Build frontend and setup nginx"
 
   # Install and configure phpLiteAdmin (Ubuntu 24.04 provides PHP 8.3)
-  sudo apt -qq update && sudo apt -qq install -y php8.3-fpm php-sqlite3
+  sudo apt -qq update && sudo apt -qq install -y php8.3-fpm php-sqlite3 unzip
   sudo sed -i "s|;cgi.fix_pathinfo=1|cgi.fix_pathinfo=0|" /etc/php/8.3/fpm/php.ini
   sudo mkdir "$PHPLITEADMIN_INSTALLATION_DIR" || print WARN "$PHPLITEADMIN_INSTALLATION_DIR already exists"
   sudo chown -R www-data:www-data "$PHPLITEADMIN_INSTALLATION_DIR"
   sudo chmod -R 700 "$PHPLITEADMIN_INSTALLATION_DIR"
-  sudo unzip -o "$SETUP_FILES/$PHPLITEADMIN_ZIP" -d "$PHPLITEADMIN_INSTALLATION_DIR" || print ERROR "cannot unzip $PHPLITEADMIN_ZIP"
+  sudo unzip -o "$SETUP_FILES/$PHPLITEADMIN_ZIP" -d "$PHPLITEADMIN_INSTALLATION_DIR" || { print ERROR "cannot unzip $PHPLITEADMIN_ZIP"; return 1; }
   sudo systemctl restart php8.3-fpm || { print ERROR "cannot start phpliteadmin"; return 1; }
   print INFO "Installed phpLiteAdmin"
 

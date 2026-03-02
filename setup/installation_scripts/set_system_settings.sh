@@ -44,17 +44,21 @@ if is_ubuntu_noble; then
     print INFO "Activated automatic login"
 
     # Disabling power saving settings
-    gsettings set org.gnome.desktop.session idle-delay 0
-    gsettings set org.gnome.settings-daemon.plugins.power power-saver-profile-on-low-battery false
-    gsettings set org.gnome.settings-daemon.plugins.power ambient-enabled false
-    gsettings set org.gnome.settings-daemon.plugins.power idle-dim false
-    gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-ac-type 'nothing'
-    gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-battery-type 'nothing'
-    print INFO "Disabled power saving settings"
+    if [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_DISPLAY:-}" ]; then
+      gsettings set org.gnome.desktop.session idle-delay 0
+      gsettings set org.gnome.settings-daemon.plugins.power power-saver-profile-on-low-battery false
+      gsettings set org.gnome.settings-daemon.plugins.power ambient-enabled false
+      gsettings set org.gnome.settings-daemon.plugins.power idle-dim false
+      gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-ac-type 'nothing'
+      gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-battery-type 'nothing'
+      print INFO "Disabled power saving settings"
 
-    # Add default ubuntu terminal to favorites
-    gsettings set org.gnome.shell favorite-apps "$(gsettings get org.gnome.shell favorite-apps | sed s/.$//), 'org.gnome.Terminal.desktop']"
-    print INFO "Added terminal to favorites"
+      # Add default ubuntu terminal to favorites
+      gsettings set org.gnome.shell favorite-apps "$(gsettings get org.gnome.shell favorite-apps | sed s/.$//), 'org.gnome.Terminal.desktop']"
+      print INFO "Added terminal to favorites"
+    else
+      print WARN "No display session detected (DISPLAY/WAYLAND_DISPLAY unset); skipping gsettings — power and favorites will be configured on first login"
+    fi
 fi
 
 print SUCCESS "System settings adjusted"
