@@ -374,10 +374,25 @@ function install_openclaw() {
     print INFO "OpenClaw $(openclaw --version 2>/dev/null || echo installed)"
   fi
 
+  # Resolve the absolute path to the openclaw binary, checking the pib user's
+  # nvm-managed environment first (Raspberry Pi OS), then falling back to the
+  # system PATH (Ubuntu). This ensures all subsequent calls use a stable path
+  # regardless of which user or shell environment runs this script.
+  local OPENCLAW_BIN
+  OPENCLAW_BIN=$(su - pib -c 'source ~/.nvm/nvm.sh 2>/dev/null; command -v openclaw' 2>/dev/null \
+    || command -v openclaw 2>/dev/null \
+    || true)
+
+  if [ -z "$OPENCLAW_BIN" ]; then
+    print ERROR "openclaw binary not found after installation"
+    return 1
+  fi
+  print INFO "Using openclaw at: $OPENCLAW_BIN"
+
   # ── 4. Non-interactive onboard: workspace + gateway config (no auth/channels)
   # Defers API-key setup to the user; --skip-skills avoids interactive prompts.
   # The workspace is seeded at the default location (~/.openclaw/workspace).
-  openclaw onboard \
+  "$OPENCLAW_BIN" onboard \
     --non-interactive \
     --accept-risk \
     --mode local \
@@ -393,7 +408,7 @@ function install_openclaw() {
   local PIB_UID
   PIB_UID=$(id -u pib 2>/dev/null || echo "")
   local PIB_XDG_RUNTIME_DIR="/run/user/${PIB_UID}"
-  sudo -u pib XDG_RUNTIME_DIR="$PIB_XDG_RUNTIME_DIR" openclaw daemon install --runtime node \
+  sudo -u pib XDG_RUNTIME_DIR="$PIB_XDG_RUNTIME_DIR" "$OPENCLAW_BIN" daemon install --runtime node \
     || { print ERROR "Failed to install OpenClaw gateway service"; return 1; }
   sudo loginctl enable-linger pib || print WARN "loginctl enable-linger failed; gateway may not start on boot"
   sudo -u pib XDG_RUNTIME_DIR="$PIB_XDG_RUNTIME_DIR" systemctl --user daemon-reload
