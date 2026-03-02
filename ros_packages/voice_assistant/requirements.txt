@@ -1,6 +1,5 @@
 argcomplete==1.8.1
 attrs==21.2.0
-catkin-pkg-modules==1.0.0
 certifi==2024.2.2
 charset-normalizer==3.3.2
 colcon-argcomplete==0.3.3
