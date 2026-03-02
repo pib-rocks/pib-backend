@@ -333,6 +333,10 @@ function install_openclaw() {
     print INFO "Node $NODE_VERSION already satisfies ≥ 22 requirement"
   fi
 
+  # Enable linger early so systemd creates /run/user/$UID and starts the user
+  # instance before we attempt 'openclaw daemon install' (which needs D-Bus).
+  sudo loginctl enable-linger pib || print WARN "loginctl enable-linger failed; gateway may not start on boot"
+
   # ── 2. Configure npm global prefix to a user-writable directory ─────────────
   # Avoids EACCES errors on 'npm install -g' without sudo.
   # IMPORTANT: We must NOT use 'npm config set prefix' here because that writes
@@ -408,11 +412,28 @@ function install_openclaw() {
   local PIB_UID
   PIB_UID=$(id -u pib 2>/dev/null || echo "")
   local PIB_XDG_RUNTIME_DIR="/run/user/${PIB_UID}"
-  sudo -u pib XDG_RUNTIME_DIR="$PIB_XDG_RUNTIME_DIR" "$OPENCLAW_BIN" daemon install --runtime node \
+
+  # Ensure /run/user/$PIB_UID exists with correct ownership before daemon install.
+  # loginctl enable-linger (called earlier) normally creates this, but may not
+  # have done so yet if systemd hasn't had time to react. We create it explicitly
+  # as a safety net so 'openclaw daemon install' can always reach the D-Bus session.
+  if [ ! -d "$PIB_XDG_RUNTIME_DIR" ]; then
+    print INFO "$PIB_XDG_RUNTIME_DIR not found; creating it"
+    sudo mkdir -p "$PIB_XDG_RUNTIME_DIR"
+    sudo chown pib:pib "$PIB_XDG_RUNTIME_DIR"
+    sudo chmod 700 "$PIB_XDG_RUNTIME_DIR"
+  fi
+
+  # Pass the nvm node directory explicitly in PATH so the openclaw shebang
+  # (#!/usr/bin/env node) resolves correctly when run via 'sudo -u pib'.
+  # sudo does not source .bashrc/.nvm/nvm.sh, so node is not on PATH otherwise.
+  local NODE_DIR
+  NODE_DIR=$(dirname "$OPENCLAW_BIN")
+  local OPENCLAW_PATH="$NODE_DIR:/home/ava/.local/bin:/home/ava/.nvm/versions/node/v24.14.0/bin:/home/ava/.local/bin:/home/ava/.nvm/versions/node/v24.14.0/bin:/usr/local/bin:/home/ava/.local/bin:/usr/bin:/bin:/home/ava/.nvm/current/bin:/home/ava/.npm-global/bin:/home/ava/bin:/home/ava/.volta/bin:/home/ava/.asdf/shims:/home/ava/.bun/bin:/home/ava/.fnm/current/bin:/home/ava/.local/share/pnpm:/snap/bin"
+  sudo -u pib env PATH="$OPENCLAW_PATH" XDG_RUNTIME_DIR="$PIB_XDG_RUNTIME_DIR" "$OPENCLAW_BIN" daemon install --runtime node \
     || { print ERROR "Failed to install OpenClaw gateway service"; return 1; }
-  sudo loginctl enable-linger pib || print WARN "loginctl enable-linger failed; gateway may not start on boot"
-  sudo -u pib XDG_RUNTIME_DIR="$PIB_XDG_RUNTIME_DIR" systemctl --user daemon-reload
-  sudo -u pib XDG_RUNTIME_DIR="$PIB_XDG_RUNTIME_DIR" systemctl --user enable openclaw-gateway.service --now \
+  sudo -u pib env XDG_RUNTIME_DIR="$PIB_XDG_RUNTIME_DIR" systemctl --user daemon-reload
+  sudo -u pib env XDG_RUNTIME_DIR="$PIB_XDG_RUNTIME_DIR" systemctl --user enable openclaw-gateway.service --now \
     || print WARN "Could not start openclaw-gateway.service immediately; it will start on next login"
 
   print SUCCESS "OpenClaw installed — run 'openclaw onboard' to configure channels and API keys"
