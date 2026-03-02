@@ -317,7 +317,7 @@ function install_frontend() {
   print INFO "Build frontend and setup nginx"
 
   # Install and configure phpLiteAdmin (Ubuntu 24.04 provides PHP 8.3)
-  sudo apt -qq update && sudo apt -qq install -y php8.3-fpm php-sqlite3 unzip
+  sudo apt -qq update && sudo apt -qq install -y php8.3-fpm php-sqlite3 sqlite3 unzip
   sudo sed -i "s|;cgi.fix_pathinfo=1|cgi.fix_pathinfo=0|" /etc/php/8.3/fpm/php.ini
   sudo mkdir "$PHPLITEADMIN_INSTALLATION_DIR" || print WARN "$PHPLITEADMIN_INSTALLATION_DIR already exists"
   sudo chown -R www-data:www-data "$PHPLITEADMIN_INSTALLATION_DIR"

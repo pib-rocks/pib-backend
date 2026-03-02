@@ -148,7 +148,7 @@ function remove_apps() {
 function install_system_packages() {
     print INFO "Installing system packages"
     sudo apt update -qq && \
-    sudo apt-get install -y git curl openssh-server >/dev/null
+    sudo apt-get install -y git curl openssh-server sqlite3 >/dev/null
     print SUCCESS "Installing system packages completed"
 }
 
