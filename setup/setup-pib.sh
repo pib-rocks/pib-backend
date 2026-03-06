@@ -626,8 +626,11 @@ else
   console_error "Unsupported OS. Use Ubuntu 24.04 or Raspberry Pi OS."
   exit 1
 fi
-install_openclaw || print WARN "OpenClaw installation failed; pib will work normally but the AI assistant will not be available"
-console_success "OpenClaw installed"
+if install_openclaw; then
+  console_success "OpenClaw installed"
+else
+  print WARN "OpenClaw installation failed; pib will work normally but the AI assistant will not be available"
+fi
 cleanup
 console_success "Cleanup done"
 
