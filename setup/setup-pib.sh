@@ -148,8 +148,13 @@ function remove_apps() {
 function install_system_packages() {
     print INFO "Installing system packages"
     sudo apt update -qq && \
-    sudo apt-get install -y git curl openssh-server sqlite3 >/dev/null
-    print SUCCESS "Installing system packages completed"
+    sudo apt-get install -y git curl openssh-server sqlite3 libxml2-dev libxslt-dev >/dev/null
+    if [ $? -eq 0 ]; then
+        print SUCCESS "Installing system packages completed"
+    else
+        print ERROR "Failed to install system packages"
+        return 1
+    fi
 }
 
 function install_locale() {
@@ -264,8 +269,14 @@ function disable_power_notification() {
 
 # Install a NetworkManager dispatcher script that observes IP changes and writes the current host IP to a file
 setup_ip_dispatcher() {
-  local dispatcher_script="/etc/NetworkManager/dispatcher.d/99-update-ip.sh"
+  local dispatcher_dir="/etc/NetworkManager/dispatcher.d"
+  local dispatcher_script="$dispatcher_dir/99-update-ip.sh"
   local outfile="/home/pib/app/pib-backend/pib_api/flask/host_ip.txt"
+
+  if [ ! -d "$dispatcher_dir" ]; then
+    print WARN "NetworkManager dispatcher directory not found ($dispatcher_dir); skipping IP dispatcher setup."
+    return 0
+  fi
 
   print INFO "Creating dispatcher script..."
 
@@ -312,6 +323,7 @@ function install_openclaw() {
   print INFO "Installing OpenClaw"
 
   # ── 1. Ensure Node 24 is available ──────────────────────────────────────────
+  print INFO "[OpenClaw] Step 1/5: Ensuring Node 24 is available..."
   # install_frontend sets up nvm with Node 24 for the Angular build.
   # OpenClaw requires Node ≥ 22; we install Node 24 via NodeSource as a
   # system-wide binary at /usr/bin/node that does not interfere with nvm.
@@ -332,12 +344,15 @@ function install_openclaw() {
   else
     print INFO "Node $NODE_VERSION already satisfies ≥ 22 requirement"
   fi
+  print SUCCESS "[OpenClaw] Step 1/5: Node environment ready."
 
   # Enable linger early so systemd creates /run/user/$UID and starts the user
   # instance before we attempt 'openclaw daemon install' (which needs D-Bus).
+  print INFO "[OpenClaw] Enabling linger for pib user..."
   sudo loginctl enable-linger pib || print WARN "loginctl enable-linger failed; gateway may not start on boot"
 
   # ── 2. Configure npm global prefix to a user-writable directory ─────────────
+  print INFO "[OpenClaw] Step 2/5: Configuring npm global prefix..."
   # Avoids EACCES errors on 'npm install -g' without sudo.
   # IMPORTANT: We must NOT use 'npm config set prefix' here because that writes
   # a `prefix=` line into ~/.npmrc, which nvm detects as incompatible and prints
@@ -369,8 +384,10 @@ function install_openclaw() {
   else
     print INFO "nvm detected — skipping NPM_CONFIG_PREFIX; npm -g uses nvm-managed prefix"
   fi
+  print SUCCESS "[OpenClaw] Step 2/5: npm global prefix configured."
 
   # ── 3. Install OpenClaw CLI ──────────────────────────────────────────────────
+  print INFO "[OpenClaw] Step 3/5: Installing OpenClaw CLI via npm..."
   if command_exists openclaw; then
     print WARN "OpenClaw already installed ($(openclaw --version 2>/dev/null || echo unknown)); skipping npm install"
   else
@@ -392,8 +409,10 @@ function install_openclaw() {
     return 1
   fi
   print INFO "Using openclaw at: $OPENCLAW_BIN"
+  print SUCCESS "[OpenClaw] Step 3/5: OpenClaw CLI installed."
 
   # ── 4. Non-interactive onboard: workspace + gateway config (no auth/channels)
+  print INFO "[OpenClaw] Step 4/5: Running non-interactive onboard..."
   # Defers API-key setup to the user; --skip-skills avoids interactive prompts.
   # The workspace is seeded at the default location (~/.openclaw/workspace).
   "$OPENCLAW_BIN" onboard \
@@ -404,8 +423,10 @@ function install_openclaw() {
     --gateway-bind loopback \
     --skip-skills \
     || print WARN "OpenClaw onboard returned non-zero; gateway may need manual auth setup"
+  print SUCCESS "[OpenClaw] Step 4/5: Onboarding completed."
 
   # ── 5. Install and enable the gateway systemd user service ──────────────────
+  print INFO "[OpenClaw] Step 5/5: Installing systemd user service..."
   # 'openclaw daemon install' writes ~/.config/systemd/user/openclaw-gateway.service
   # and enables it. loginctl enable-linger ensures the user service survives logout.
   # Run as the pib user with the correct XDG_RUNTIME_DIR so systemd user units resolve.
@@ -429,20 +450,39 @@ function install_openclaw() {
   # sudo does not source .bashrc/.nvm/nvm.sh, so node is not on PATH otherwise.
   local NODE_DIR
   NODE_DIR=$(dirname "$OPENCLAW_BIN")
-  local OPENCLAW_PATH="$NODE_DIR:/home/ava/.local/bin:/home/ava/.nvm/versions/node/v24.14.0/bin:/home/ava/.local/bin:/home/ava/.nvm/versions/node/v24.14.0/bin:/usr/local/bin:/home/ava/.local/bin:/usr/bin:/bin:/home/ava/.nvm/current/bin:/home/ava/.npm-global/bin:/home/ava/bin:/home/ava/.volta/bin:/home/ava/.asdf/shims:/home/ava/.bun/bin:/home/ava/.fnm/current/bin:/home/ava/.local/share/pnpm:/snap/bin"
-  sudo -u pib env PATH="$OPENCLAW_PATH" XDG_RUNTIME_DIR="$PIB_XDG_RUNTIME_DIR" "$OPENCLAW_BIN" daemon install --runtime node \
+  local OPENCLAW_PATH="$NODE_DIR:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+  
+  # Set DBUS_SESSION_BUS_ADDRESS if possible
+  local DBUS_ADDR="unix:path=$PIB_XDG_RUNTIME_DIR/bus"
+  
+  print INFO "[OpenClaw] Step 5/5: Installing systemd user service..."
+  sudo -u pib env PATH="$OPENCLAW_PATH" XDG_RUNTIME_DIR="$PIB_XDG_RUNTIME_DIR" DBUS_SESSION_BUS_ADDRESS="$DBUS_ADDR" "$OPENCLAW_BIN" daemon install --runtime node \
     || { print ERROR "Failed to install OpenClaw gateway service"; return 1; }
-  sudo -u pib env XDG_RUNTIME_DIR="$PIB_XDG_RUNTIME_DIR" systemctl --user daemon-reload
-  sudo -u pib env XDG_RUNTIME_DIR="$PIB_XDG_RUNTIME_DIR" systemctl --user enable openclaw-gateway.service --now \
+  sudo -u pib env XDG_RUNTIME_DIR="$PIB_XDG_RUNTIME_DIR" DBUS_SESSION_BUS_ADDRESS="$DBUS_ADDR" systemctl --user daemon-reload
+  sudo -u pib env XDG_RUNTIME_DIR="$PIB_XDG_RUNTIME_DIR" DBUS_SESSION_BUS_ADDRESS="$DBUS_ADDR" systemctl --user enable openclaw-gateway.service --now \
     || print WARN "Could not start openclaw-gateway.service immediately; it will start on next login"
+  print SUCCESS "[OpenClaw] Step 5/5: Systemd service installation completed."
 
   print SUCCESS "OpenClaw installed — run 'openclaw onboard' to configure channels and API keys"
+}
+
+
+# Ensure pib user has full sudo rights during the entire installation process
+function ensure_pib_sudo() {
+  if ! id "pib" &>/dev/null; then
+    return
+  fi
+  if [ ! -f "/etc/sudoers.d/pib" ]; then
+    print INFO "Granting temporary sudo privileges to pib user..."
+    echo "pib ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/pib > /dev/null
+  fi
 }
 
 
 # Remove temporary sudoers entry (repositories in $HOME/app are kept for both native and Docker)
 function cleanup() {
   sudo rm -f /etc/sudoers.d/"$USER"
+  sudo rm -f /etc/sudoers.d/pib
 }
 
 
@@ -510,6 +550,8 @@ export DISTRIBUTION
 DIST_VERSION=$(get_dist_version "$DISTRIBUTION")  # e.g., 'noble'
 export DIST_VERSION
 check_distribution
+
+ensure_pib_sudo
 
 
 # VALIDATE CLI ARGUMENTS

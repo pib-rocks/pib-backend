@@ -18,7 +18,7 @@ blinker==1.4
 blobconverter==1.4.3
 builtin-interfaces==1.2.1
 camera-calibration==3.0.0
-catkin-pkg-modules==1.0.0
+catkin-pkg
 certifi==2024.2.2
 charset-normalizer==3.3.2
 colcon-argcomplete==0.3.3
