@@ -1,43 +1,43 @@
 #!/bin/bash
 
-# Verzeichnis für das Skript erstellen, falls es nicht existiert
-mkdir -p /home/pib/app/pib-backend/scripts
+# Farben für bessere Lesbarkeit
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
 
-# Host-System aktualisieren
-echo "Aktualisiere das Host-System..."
-sudo apt update && sudo apt upgrade -y && sudo apt autoremove -y
+# Funktion für Fehlerbehandlung
+error_exit() {
+    echo -e "${RED}[ERROR] $1${NC}" >&2
+    exit 1
+}
 
-# Container multirepo-sqlite-viewer-1 stoppen und entfernen, falls er existiert
-sqlite_viewer="multirepo-sqlite-viewer-1"
-
-if sudo docker ps -a --format '{{.Names}}' | grep -q "^$sqlite_viewer$"; then
-  echo "Container $sqlite_viewer existiert. Stoppe und entferne ihn..."
-  sudo docker stop "$sqlite_viewer"
-  sudo docker rm "$sqlite_viewer"
-else
-  echo "Container $sqlite_viewer existiert nicht. Überspringe diesen Schritt."
+# Prüfe, ob Docker läuft
+if ! command -v docker &> /dev/null; then
+    error_exit "Docker ist nicht installiert oder nicht im PATH."
 fi
 
-# Container-IDs oder Namen für die Aktualisierung
-containers=(
-  "multirepo-angular-app-1"
-  "multirepo-ros-motors-1"
-  "multirepo-ros-voice-assistant-1"
-  "multirepo-ros-programs-1"
-  "multirepo-tinkerforge-brickd-1"
-  "multirepo-flask-app-1"
-  "multirepo-ros-camera-1"
-  "multirepo-pib-blockly-server-1"
-  "multirepo-rosbridge-ws-1"
-  "multirepo-ros-display-1"
-)
+if ! sudo docker info &> /dev/null; then
+    error_exit "Docker läuft nicht. Bitte starte Docker zuerst."
+fi
 
-# Aktualisierung jedes Containers
-for container in "${containers[@]}"; do
-  echo "Aktualisiere Container: $container"
-  sudo docker exec -it "$container" bash -c "apt update && apt upgrade -y && apt autoremove -y"
-done
+# Funktion zum Starten eines Docker-Compose-Projekts
+start_docker_compose() {
+    local dir=$1
+    local name=$2
+    echo -e "${YELLOW}[INFO] Starte $name in $dir...${NC}"
+    (
+        cd "$dir" || error_exit "Verzeichnis $dir nicht gefunden."
+        if ! sudo docker compose --profile "*" up --remove-orphans; then
+            error_exit "Fehler beim Starten von $name."
+        fi
+    ) &
+}
 
-# System neu starten
-echo "System wird neu"
-sudo reboot now
+# Starte beide Projekte parallel
+start_docker_compose "/home/pib/app/pib-backend" "pib-backend"
+start_docker_compose "/home/pib/app/cerebra" "cerebra"
+
+# Warte auf alle Hintergrundprozesse
+wait
+echo -e "${GREEN}[SUCCESS] Alle Docker-Container wurden erfolgreich gestartet.${NC}"
