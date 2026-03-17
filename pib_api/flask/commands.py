@@ -20,6 +20,7 @@ from default_pose_constants import (
     STARTUP_POSE_NAME,
     CALIBRATION_POSE_NAME,
 )
+from pib_api.flask.model.button_program_model import ButtonProgram
 
 
 @app.cli.command("seed_db")
@@ -32,6 +33,7 @@ def seed_db() -> None:
     _create_program_data()
     _create_chat_data_and_assistant()
     _create_default_poses()
+    _create_button_program_data()
     db.session.commit()
     print("Seeded the database with default data.")
 
@@ -99,7 +101,18 @@ def _create_bricklet_data() -> None:
     b2 = Bricklet(bricklet_number=2, type="Servo Bricklet")
     b3 = Bricklet(bricklet_number=3, type="Servo Bricklet")
     b4 = Bricklet(bricklet_number=4, type="Solid State Relay Bricklet")
-    db.session.add_all([b1, b2, b3, b4])
+    b5 = Bricklet(bricklet_number=5, type="RGB LED Button Bricklet")
+    b6 = Bricklet(bricklet_number=6, type="RGB LED Button Bricklet")
+    b7 = Bricklet(bricklet_number=7, type="RGB LED Button Bricklet")
+    db.session.add_all([b1, b2, b3, b4, b5, b6, b7])
+    db.session.flush()
+
+
+def _create_button_program_data():
+    button_program1 = ButtonProgram(bricklet_id=5, program_id=None)
+    button_program2 = ButtonProgram(bricklet_id=6, program_id=None)
+    button_program3 = ButtonProgram(bricklet_id=7, program_id=None)
+    db.session.add_all([button_program1, button_program2, button_program3])
     db.session.flush()
 
 
