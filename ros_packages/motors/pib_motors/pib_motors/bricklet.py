@@ -6,6 +6,7 @@ from pib_motors.config import cfg
 from tinkerforge.brick_hat import BrickHAT
 from tinkerforge.bricklet_servo_v2 import BrickletServoV2
 from tinkerforge.bricklet_solid_state_relay_v2 import BrickletSolidStateRelayV2
+from tinkerforge.bricklet_rgb_led import BrickletRGBLEDButton
 from tinkerforge.ip_connection import IPConnection, Error
 
 TINKERFORGE_HOST = os.getenv("TINKERFORGE_HOST", "localhost")
@@ -23,12 +24,15 @@ if not successful:
 
 servo_bricklet_uids = []
 solid_state_relay_bricklet_uid = None
+rgb_led_bricklet_uids = []
 
 for dto in bricklet_dtos["bricklets"]:
     if dto["type"] == "Servo Bricklet":
         servo_bricklet_uids.append(dto["uid"])
     elif dto["type"] == "Solid State Relay Bricklet" and dto["uid"]:
         solid_state_relay_bricklet_uid = dto["uid"]
+    elif dto["type"] == "RGB LED Button Bricklet" and dto["uid"]:
+        rgb_led_bricklet_uids.append(dto["uid"])
 
 # maps the uid (e.g. 'XYZ') to the associated servo bricklet object
 uid_to_servo_bricklet: dict[str, BrickletServoV2] = {
@@ -45,6 +49,11 @@ if solid_state_relay_bricklet_uid:
     )
 else:
     solid_state_relay_bricklet = None
+
+# maps the uid (e.g. 'XYZ') to the associated led button bricklet object
+uid_to_rgb_led_bricklet: dict[str, BrickletRGBLEDButton] = {
+    uid: BrickletRGBLEDButton(uid, ipcon) for uid in rgb_led_bricklet_uids if uid
+}
 
 
 def set_ssr_state(state: bool) -> None:
