@@ -1,4 +1,4 @@
-from dataclasses import fields
+from marshmallow import fields
 
 from model.button_program_model import ButtonProgram
 from schema.sql_auto_with_camel_case_schema import SQLAutoWithCamelCaseSchema

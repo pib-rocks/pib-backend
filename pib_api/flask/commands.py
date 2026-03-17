@@ -20,7 +20,7 @@ from default_pose_constants import (
     STARTUP_POSE_NAME,
     CALIBRATION_POSE_NAME,
 )
-from pib_api.flask.model.button_program_model import ButtonProgram
+from model.button_program_model import ButtonProgram
 
 
 @app.cli.command("seed_db")
