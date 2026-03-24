@@ -60,6 +60,7 @@ services:
       - /dev/:/dev/
     devices:
       - /dev/bus/usb:/dev/bus/usb
+    user: root
     networks:
       - pib-network
     restart: always
@@ -164,6 +165,9 @@ services:
       - PYTHON_BINARY=/usr/bin/python3
       - PROGRAM_DIR=/ros2_ws/cerebra_programs
       - VOICE_ASSISTANT_DIR=/app/ros2_ws/voice_assistant
+    devices:
+      - /dev/bus/usb:/dev/bus/usb
+    user: root
     volumes:
       - programs:/ros2_ws/cerebra_programs
     restart: always

@@ -1,4 +1,4 @@
-FROM ros:humble-ros-core
+FROM luxonis/depthai-ros:humble-arm64-latest
 
 SHELL ["/bin/bash", "-c"]
 
@@ -6,6 +6,14 @@ RUN apt-get update && apt-get install --no-install-recommends -y \
     build-essential \
     python3-colcon-common-extensions \
     python3-colcon-mixin \
+    python3-pip \
+    libglib2.0-0 \
+    libsm6 \
+    libxrender1 \
+    libxext6 \
+    libxcb1 \
+    libgl1 \
+    libusb-1.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -19,7 +27,11 @@ RUN apt-get update --fix-missing && \
     pip install /tmp/pib_api_client && \
     pip install /tmp/pib_motors && \
     pip install requests==2.32.3 && \
-    pip install tinkerforge
+    pip install tinkerforge && \
+    pip install opencv-python && \
+    pip install depthai==2.25.1.0 && \
+    pip install pyyaml && \
+    pip install blobconverter
 
 
 
