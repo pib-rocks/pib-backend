@@ -14,7 +14,8 @@ WORKDIR /app
 RUN apt-get update --fix-missing && \
     apt-get install --no-install-recommends -y python3-pip && \
     pip install --break-system-packages requests==2.32.3 && \
-    pip install --break-system-packages pillow
+    pip install --break-system-packages pillow && \
+    pip install --break-system-packages "empy<4.0"
 
 COPY ./ros_packages/datatypes ros2_ws/datatypes
 COPY ./ros_packages/display ros2_ws/display
