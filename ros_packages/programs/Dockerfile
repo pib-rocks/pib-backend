@@ -19,7 +19,8 @@ RUN apt-get update --fix-missing && \
     pip install --break-system-packages /tmp/pib_api_client && \
     pip install --break-system-packages /tmp/pib_motors && \
     pip install --break-system-packages requests==2.32.3 && \
-    pip install --break-system-packages tinkerforge
+    pip install --break-system-packages tinkerforge && \
+    pip install --break-system-packages "empy<4.0"
 
 
 

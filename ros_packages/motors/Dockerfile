@@ -28,6 +28,8 @@ RUN pip install --break-system-packages ./client
 COPY ./ros_packages/motors/pib_motors ./motors/pib_motors
 RUN pip install --break-system-packages ./motors/pib_motors
 
+RUN pip install --break-system-packages "empy<4.0"
+
 COPY ./ros_packages/datatypes ros2_ws/datatypes
 COPY ./ros_packages/motors ros2_ws/motors
 

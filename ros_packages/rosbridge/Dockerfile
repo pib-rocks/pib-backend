@@ -2,14 +2,17 @@ FROM ros:jazzy-ros-core
 
 SHELL ["/bin/bash", "-c"]
 
-RUN apt update && apt upgrade -y && apt install -y \
+RUN apt-get update --fix-missing && apt-get install --no-install-recommends -y \
     build-essential \
     python3-colcon-common-extensions \
     python3-colcon-mixin \
-    ros-$ROS_DISTRO-rosbridge-server&& \
+    python3-pip \
+    ros-$ROS_DISTRO-rosbridge-server && \
     apt-get autoremove -y && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
+
+RUN pip install --break-system-packages "empy<4.0"
 
 WORKDIR /app
 

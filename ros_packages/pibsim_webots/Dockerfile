@@ -25,6 +25,8 @@ RUN apt-get update --fix-missing && apt-get install --no-install-recommends -y \
 
 
 
+RUN pip install --break-system-packages "empy<4.0"
+
 COPY ./ros_packages/pibsim_webots ros2_ws/pibsim_webots
 
 RUN cd ros2_ws && \
