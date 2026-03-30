@@ -1,4 +1,5 @@
-FROM ros:jazzy-ros-core
+ARG DEPTHAI_TAG=jazzy-latest
+FROM luxonis/depthai-ros:${DEPTHAI_TAG}
 SHELL ["/bin/bash", "-c"]
 
 WORKDIR /app

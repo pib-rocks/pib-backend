@@ -50,6 +50,8 @@ services:
     build:
       context: ./ros_packages
       dockerfile: ./camera/Dockerfile
+      args:
+        DEPTHAI_TAG: ${DEPTHAI_TAG:-jazzy-latest}
     command: ros2 run oak_d_lite stereo
     profiles:
       - all
