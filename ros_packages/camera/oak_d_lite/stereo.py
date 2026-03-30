@@ -75,18 +75,19 @@ class CameraNode(Node):
             self.camRgb = self.pipeline.createColorCamera()
             self.camRgb.setPreviewSize(self.preview_width, self.preview_height)
             self.camRgb.setInterleaved(False)
+            self.camRgb.setBoardSocket(dai.CameraBoardSocket.RGB)
 
             # Create output
             xoutRgb = self.pipeline.createXLinkOut()
             xoutRgb.setStreamName("rgb")
             self.camRgb.preview.link(xoutRgb.input)
 
-            # Try to connect to device
+            # Try to connect to device (pipeline starts implicitly in DepthAI >= 2.x)
             self.device = dai.Device(self.pipeline)
 
             # Output queue will be used to get the rgb frames from the output defined above
             self.queue = self.device.getOutputQueue(
-                name="rgb", maxSize=4, blocking=False
+                name="rgb", maxSize=4, blocking=True
             )
             return True
 
@@ -99,7 +100,7 @@ class CameraNode(Node):
     def timer_callback(self):
         if not self.queue:
             return
-        image_rgb = self.queue.tryGet()  # non-blocking call
+        image_rgb = self.queue.get()
         if image_rgb is None:
             return
         # data is originally represented as a flat 1D array, it needs to be converted into HxWxC form
