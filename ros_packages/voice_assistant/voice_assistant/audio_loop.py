@@ -703,23 +703,27 @@ class GeminiAudioLoop:
                 async for resp in turn:
                     # ----- Session management signals -----
                     # Session resumption checkpoints (store handle for reconnect)
-                    session_resumption_update = getattr(resp, "session_resumption_update", None) or getattr(
-                        resp, "sessionResumptionUpdate", None
-                    )
+                    session_resumption_update = getattr(
+                        resp, "session_resumption_update", None
+                    ) or getattr(resp, "sessionResumptionUpdate", None)
                     if session_resumption_update is not None:
-                        new_handle = getattr(session_resumption_update, "new_handle", None) or getattr(
-                            session_resumption_update, "newHandle", None
+                        new_handle = getattr(
+                            session_resumption_update, "new_handle", None
+                        ) or getattr(session_resumption_update, "newHandle", None)
+                        resumable = getattr(
+                            session_resumption_update, "resumable", None
                         )
-                        resumable = getattr(session_resumption_update, "resumable", None)
                         if resumable and new_handle:
                             self._session_handle = new_handle
 
                     # GoAway warning (connection will be terminated soon)
-                    go_away_signal = getattr(resp, "go_away", None) or getattr(resp, "goAway", None)
+                    go_away_signal = getattr(resp, "go_away", None) or getattr(
+                        resp, "goAway", None
+                    )
                     if go_away_signal is not None:
-                        time_left = getattr(go_away_signal, "time_left", None) or getattr(
-                            go_away_signal, "timeLeft", None
-                        )
+                        time_left = getattr(
+                            go_away_signal, "time_left", None
+                        ) or getattr(go_away_signal, "timeLeft", None)
                         logger.warning(
                             "GoAway received (time_left=%s). Reconnecting...", time_left
                         )
