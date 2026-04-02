@@ -11,6 +11,7 @@ import asyncio
 import os
 import logging
 import threading
+import audioop
 from typing import Any, Optional
 
 import numpy as np
@@ -33,6 +34,8 @@ from datatypes.srv import CreateOrUpdateChatMessage
 
 import queue
 import time
+
+from voice_assistant import START_SIGNAL_FILE, STOP_SIGNAL_FILE
 
 # ——— Logging ———
 logging.basicConfig(
@@ -297,6 +300,25 @@ class GeminiAudioLoop:
             return
 
         self._stop_event.set()
+
+        if self._loop and self.playback_stream is not None:
+            try:
+                logger.info(
+                    "Scheduling Gemini stop cue before session shutdown: %s",
+                    STOP_SIGNAL_FILE,
+                )
+
+                async def _play_stop_cue():
+                    await asyncio.to_thread(
+                        self._play_wav_file_on_current_stream,
+                        STOP_SIGNAL_FILE,
+                    )
+
+                fut = asyncio.run_coroutine_threadsafe(_play_stop_cue(), self._loop)
+                fut.result(timeout=2.0)
+                logger.info("Gemini stop cue finished before shutdown.")
+            except Exception:
+                logger.exception("Failed to play Gemini stop cue before shutdown")
         # Wake chat worker so it can exit
         try:
             self._chat_queue.put_nowait(None)  # sentinel
@@ -681,23 +703,27 @@ class GeminiAudioLoop:
                 async for resp in turn:
                     # ----- Session management signals -----
                     # Session resumption checkpoints (store handle for reconnect)
-                    session_resumption_update = getattr(resp, "session_resumption_update", None) or getattr(
-                        resp, "sessionResumptionUpdate", None
-                    )
+                    session_resumption_update = getattr(
+                        resp, "session_resumption_update", None
+                    ) or getattr(resp, "sessionResumptionUpdate", None)
                     if session_resumption_update is not None:
-                        new_handle = getattr(session_resumption_update, "new_handle", None) or getattr(
-                            session_resumption_update, "newHandle", None
+                        new_handle = getattr(
+                            session_resumption_update, "new_handle", None
+                        ) or getattr(session_resumption_update, "newHandle", None)
+                        resumable = getattr(
+                            session_resumption_update, "resumable", None
                         )
-                        resumable = getattr(session_resumption_update, "resumable", None)
                         if resumable and new_handle:
                             self._session_handle = new_handle
 
                     # GoAway warning (connection will be terminated soon)
-                    go_away_signal = getattr(resp, "go_away", None) or getattr(resp, "goAway", None)
+                    go_away_signal = getattr(resp, "go_away", None) or getattr(
+                        resp, "goAway", None
+                    )
                     if go_away_signal is not None:
-                        time_left = getattr(go_away_signal, "time_left", None) or getattr(
-                            go_away_signal, "timeLeft", None
-                        )
+                        time_left = getattr(
+                            go_away_signal, "time_left", None
+                        ) or getattr(go_away_signal, "timeLeft", None)
                         logger.warning(
                             "GoAway received (time_left=%s). Reconnecting...", time_left
                         )
@@ -755,6 +781,83 @@ class GeminiAudioLoop:
             while not self.audio_in_queue.empty():
                 self.audio_in_queue.get_nowait()
 
+    def _play_wav_file_on_current_stream(self, wav_path: str) -> None:
+        if self.playback_stream is None:
+            logger.warning("No playback stream available for cue: %s", wav_path)
+            return
+
+        try:
+            logger.info("Cue: opening wav file %s", wav_path)
+
+            with wave.open(wav_path, "rb") as wf:
+                src_channels = wf.getnchannels()
+                src_width = wf.getsampwidth()
+                src_rate = wf.getframerate()
+                data = wf.readframes(wf.getnframes())
+
+            logger.info(
+                "Cue file %s loaded: width=%s channels=%s rate=%s bytes=%s",
+                wav_path,
+                src_width,
+                src_channels,
+                src_rate,
+                len(data),
+            )
+
+            # Convert sample width to 16-bit PCM if needed
+            if src_width != 2:
+                logger.info("Cue %s: converting width %s -> 2", wav_path, src_width)
+                data = audioop.lin2lin(data, src_width, 2)
+                src_width = 2
+
+            # Convert channels to match current playback stream
+            if src_channels == 2 and CHANNELS == 1:
+                logger.info("Cue %s: converting stereo -> mono", wav_path)
+                data = audioop.tomono(data, 2, 0.5, 0.5)
+                src_channels = 1
+            elif src_channels == 1 and CHANNELS == 2:
+                logger.info("Cue %s: converting mono -> stereo", wav_path)
+                data = audioop.tostereo(data, 2, 1.0, 1.0)
+                src_channels = 2
+            elif src_channels != CHANNELS:
+                logger.warning(
+                    "Cue %s: unsupported channel conversion %s -> %s",
+                    wav_path,
+                    src_channels,
+                    CHANNELS,
+                )
+                return
+
+            # Convert sample rate to match playback stream
+            if src_rate != RECEIVE_SAMPLE_RATE:
+                logger.info(
+                    "Cue %s: converting rate %s -> %s",
+                    wav_path,
+                    src_rate,
+                    RECEIVE_SAMPLE_RATE,
+                )
+                data, _ = audioop.ratecv(
+                    data,
+                    2,
+                    CHANNELS,
+                    src_rate,
+                    RECEIVE_SAMPLE_RATE,
+                    None,
+                )
+
+            logger.info(
+                "Cue %s: writing %s bytes to current playback stream",
+                wav_path,
+                len(data),
+            )
+            self.playback_stream.write(data)
+            logger.info("Cue played successfully: %s", wav_path)
+
+        except Exception:
+            logger.exception(
+                "Failed to play cue on current playback stream: %s", wav_path
+            )
+
     async def play_audio(self):
         """PyAudio playback consumer for PCM @24k mono + synchronized Gemini text."""
         self.playback_stream = await asyncio.to_thread(
@@ -770,6 +873,20 @@ class GeminiAudioLoop:
                 RECEIVE_SAMPLE_RATE,
                 CHANNELS,
             )
+
+            try:
+                logger.info("Attempting Gemini start cue: %s", START_SIGNAL_FILE)
+                if not self._stop_event.is_set():
+                    await asyncio.to_thread(
+                        self._play_wav_file_on_current_stream,
+                        START_SIGNAL_FILE,
+                    )
+                else:
+                    logger.info(
+                        "Skipping start cue because stop was already requested."
+                    )
+            except Exception:
+                logger.exception("Gemini start cue failed")
         except Exception:
             pass
 
@@ -937,9 +1054,18 @@ class GeminiAudioLoop:
                 # Close playback stream if still open
                 if self.playback_stream:
                     try:
+                        try:
+                            logger.info(
+                                "Attempting Gemini stop cue: %s", STOP_SIGNAL_FILE
+                            )
+                            self._play_wav_file_on_current_stream(STOP_SIGNAL_FILE)
+                        except Exception:
+                            logger.exception("Failed to play Gemini stop cue")
+
+                        logger.info("Closing Gemini playback stream")
                         self.playback_stream.close()
                     except Exception:
-                        pass
+                        logger.exception("Failed while closing playback stream")
                     self.playback_stream = None
 
                 # Drain queues and close WAVs

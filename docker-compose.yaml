@@ -117,6 +117,7 @@ services:
       dockerfile: ./ros_packages/voice_assistant/Dockerfile
     command: ros2 launch voice_assistant launch.py
     privileged: true
+    working_dir: /tmp
     profiles:
       - all
       - voice_assistant
@@ -126,20 +127,19 @@ services:
       - ros-audio.env
       - password.env
     environment:
-      - PULSE_SERVER=unix:${XDG_RUNTIME_DIR:-/run/user/1000}/pulse/native
-      - ALSA_CARD=Generic
+      - HOME=/tmp
+      - ROS_HOME=/tmp/.ros
+      - XDG_RUNTIME_DIR=/run/user/1000
+      - PULSE_SERVER=unix:/run/user/1000/pulse/native
       - FLASK_API_BASE_URL=http://flask-app:5000
       - VOICE_ASSISTANT_DIR=/app/ros2_ws/voice_assistant
     volumes:
       - /media/dyan/project/projects/voice/:/data/voice
-      - /dev/snd:/dev/snd
-      - /dev/dsp:/dev/dsp
-      - /etc/machine-id:/etc/machine-id
-      - ${XDG_RUNTIME_DIR:-/run/user/1000}/pulse/native:${XDG_RUNTIME_DIR:-/run/user/1000}/pulse/native
-      - /home/pib/.config/pulse/cookie:/root/.config/pulse/cookie
+      - /etc/machine-id:/etc/machine-id:ro
+      - /run/user/1000/pulse:/run/user/1000/pulse
+      - /run/user/1000/pipewire-0:/run/user/1000/pipewire-0
     devices:
-      - /dev/snd:/dev/snd
-      - /dev/bus/usb:/dev/bus/usb1
+      - /dev/bus/usb:/dev/bus/usb
     restart: always
     depends_on:
       - rosbridge-ws
@@ -203,9 +203,11 @@ services:
   ros-audio-io:
     image: ros-audio-io
     build:
-     context: .
-     dockerfile: ./ros_packages/ros_audio_io/Dockerfile
+      context: .
+      dockerfile: ./ros_packages/ros_audio_io/Dockerfile
     command: ros2 launch ros_audio_io launch.py
+    privileged: true
+    working_dir: /tmp
     profiles:
       - all
       - ros_audio_io
@@ -215,18 +217,17 @@ services:
     env_file:
       - ros-audio.env
     environment:
-      - PULSE_SERVER=unix:${XDG_RUNTIME_DIR:-/run/user/1000}/pulse/native
-    devices:
-      - /dev/snd:/dev/snd
-      - /dev/bus/usb:/dev/bus/usb1
-    privileged: true
+      - HOME=/tmp
+      - ROS_HOME=/tmp/.ros
+      - XDG_RUNTIME_DIR=/run/user/1000
+      - PULSE_SERVER=unix:/run/user/1000/pulse/native
     volumes:
       - /media/dyan/project/projects/voice/:/data/voice
-      - /dev/snd:/dev/snd
-      - /dev/dsp:/dev/dsp
-      - /etc/machine-id:/etc/machine-id
-      - ${XDG_RUNTIME_DIR:-/run/user/1000}/pulse/native:${XDG_RUNTIME_DIR:-/run/user/1000}/pulse/native
-      - /home/pib/.config/pulse/cookie:/root/.config/pulse/cookie
+      - /etc/machine-id:/etc/machine-id:ro
+      - /run/user/1000/pulse:/run/user/1000/pulse
+      - /run/user/1000/pipewire-0:/run/user/1000/pipewire-0
+    devices:
+      - /dev/bus/usb:/dev/bus/usb
     restart: always
     depends_on:
       - rosbridge-ws
