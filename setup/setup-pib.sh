@@ -40,6 +40,78 @@ function command_exists() {
     command -v "$@" >/dev/null 2>&1
 }
 
+# Detect NVIDIA Jetson
+function is_jetson() {
+    [[ -f /etc/nv_tegra_release ]]
+}
+
+# ---- Docker 28+/29 raw-table workaround for Jetson (no downgrade) ----
+# This avoids Docker's "direct access filtering" rule in iptables raw table on kernels missing iptable_raw.
+function enable_docker_no_raw_iptables() {
+    if ! is_jetson; then
+        return 0
+    fi
+
+    print WARN "Jetson detected: enabling Docker workaround DOCKER_INSECURE_NO_IPTABLES_RAW=1 (avoids iptables raw-table issue on Docker 28+)."
+
+    # Prefer legacy iptables on Jetson (iptables-nft may fail due to missing matches like xt_addrtype)
+    sudo update-alternatives --set iptables /usr/sbin/iptables-legacy 2>/dev/null || true
+    sudo update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy 2>/dev/null || true
+
+    sudo mkdir -p /etc/systemd/system/docker.service.d
+    sudo tee /etc/systemd/system/docker.service.d/override.conf >/dev/null <<'EOF'
+[Service]
+Environment="DOCKER_INSECURE_NO_IPTABLES_RAW=1"
+EOF
+
+    sudo systemctl daemon-reload >/dev/null 2>&1 || true
+    # If docker is already installed, restart to apply the env var
+    sudo systemctl restart docker >/dev/null 2>&1 || true
+}
+
+# ---- Add disk-backed swap on Jetson to prevent OOM reboots during builds (Angular/webpack/colcon) ----
+function ensure_swapfile() {
+    if ! is_jetson; then
+        return 0
+    fi
+
+    local SWAP_SIZE_GB="${SWAP_SIZE_GB:-8}"
+    local SWAPFILE="/swapfile"
+
+    # If any non-zram swap is active, leave it (assume it's already good)
+    if swapon --show=NAME --noheadings 2>/dev/null | grep -qv '^/dev/zram'; then
+        print INFO "Disk-backed swap already active; skipping swapfile creation"
+        return 0
+    fi
+
+    # If swapfile already exists, just enable it
+    if [[ -f "$SWAPFILE" ]]; then
+        print INFO "Swapfile exists; enabling it"
+        sudo mkswap "$SWAPFILE" >/dev/null 2>&1 || true
+        sudo swapon "$SWAPFILE" >/dev/null 2>&1 || true
+    else
+        print WARN "Creating ${SWAP_SIZE_GB}G swapfile at ${SWAPFILE} (recommended for Jetson 4GB during Docker builds)"
+        # fallocate is fast; dd fallback for filesystems without fallocate
+        if ! sudo fallocate -l "${SWAP_SIZE_GB}G" "$SWAPFILE" 2>/dev/null; then
+            sudo dd if=/dev/zero of="$SWAPFILE" bs=1M count=$((SWAP_SIZE_GB*1024)) status=progress
+        fi
+        sudo chmod 600 "$SWAPFILE"
+        sudo mkswap "$SWAPFILE" >/dev/null
+        sudo swapon "$SWAPFILE"
+    fi
+
+    # Persist across reboots
+    if ! grep -qE '^/swapfile\s+none\s+swap\s' /etc/fstab; then
+        echo "/swapfile none swap sw 0 0" | sudo tee -a /etc/fstab >/dev/null
+    fi
+
+    # Keep system responsive under pressure
+    echo "vm.swappiness=80" | sudo tee /etc/sysctl.d/99-swapfile.conf >/dev/null
+    sudo sysctl -p /etc/sysctl.d/99-swapfile.conf >/dev/null 2>&1 || true
+
+    print SUCCESS "Swap enabled: $(swapon --show | tr '\n' ' ' | sed 's/  */ /g')"
+}
+
 # Get Linux distribution name, e.g. 'ubuntu', 'debian'
 get_distribution() {
     local distribution=""
@@ -64,7 +136,7 @@ get_dist_version() {
         ;;
 
     debian | raspbian)
-        dist_version="$(sed 's/\/.*//' /etc/debian_version | sed 's/\..*//')"
+        dist_version="$(sed 's/\\/.*//' /etc/debian_version | sed 's/\..*//')"
         case "$dist_version" in
         13)
             dist_version="trixie"
@@ -95,11 +167,11 @@ function is_supported_raspbian(){
 }
 
 function check_distribution() {
-  if is_ubuntu_noble || is_supported_raspbian; then
-    print INFO "You are running the setup-script on: $DISTRIBUTION $DIST_VERSION which is one of the supported operating-systems! So, we can happily start the setup…"
+  if is_ubuntu_noble || is_supported_raspbian || is_jetson; then
+    print INFO "You are running the setup-script on: $DISTRIBUTION $DIST_VERSION (Jetson: $(is_jetson && echo yes || echo no)). Proceeding..."
     return 0
   else
-    print WARN "This script expects Raspberry Pi OS on pib or Ubuntu 24.04 for systems that run the digital twin only. We detected $DISTRIBUTION $DIST_VERSION. Do you want to continue? (Y/N):"
+    print WARN "This script expects Raspberry Pi OS on pib, NVIDIA Jetson (Ubuntu), or Ubuntu 24.04 for systems that run the digital twin only. We detected $DISTRIBUTION $DIST_VERSION. Do you want to continue? (Y/N):"
     read -r answer
       case "$answer" in
         [Yy]*)
@@ -175,12 +247,12 @@ function clone_repositories() {
 
   # Clone Repositories
   if [ ! -d "$APP_DIR" ]; then
-    mkdir $APP_DIR
+    mkdir -p "$APP_DIR"
     print INFO "${APP_DIR} created"
   fi
 
-  git clone --recurse-submodules -b "$BRANCH_BACKEND" $BACKEND "$BACKEND_DIR" || print WARN "pib-backend repository already exists"
-  git clone --recurse-submodules -b "$BRANCH_FRONTEND" $FRONTEND "$FRONTEND_DIR" || print WARN "cerebra repository already exists"
+  git clone --recurse-submodules -b "$BRANCH_BACKEND" "$BACKEND" "$BACKEND_DIR" || print WARN "pib-backend repository already exists"
+  git clone --recurse-submodules -b "$BRANCH_FRONTEND" "$FRONTEND" "$FRONTEND_DIR" || print WARN "cerebra repository already exists"
 
   print SUCCESS "Completed cloning repositories to $APP_DIR"
 }
@@ -228,7 +300,7 @@ function disable_power_notification() {
 	
 	if [ -f "$file" ]; then
     	echo "Disabling under-voltage warnings..."
-		  echo "avoid_warnings=2" | sudo tee -a "$file" > /dev/null
+		echo "avoid_warnings=2" | sudo tee -a "$file" > /dev/null
 
     	echo "Preventing CPU throttling..."
     	echo "force_turbo=1" | sudo tee -a "$file" > /dev/null
@@ -343,7 +415,7 @@ fi
 
 DISTRIBUTION=$(get_distribution) # e.g., 'ubuntu'
 export DISTRIBUTION
-DIST_VERSION=$(get_dist_version "$DISTRIBUTION")  # e.g., 'noble'
+DIST_VERSION=$(get_dist_version "$DISTRIBUTION")  # e.g., 'noble' (Jetson is jammy)
 export DIST_VERSION
 check_distribution
 
@@ -384,6 +456,11 @@ fi
 install_system_packages || { print ERROR "failed to install system packages"; return 1; }
 install_locale || { print ERROR "failed to install locale"; return 1; }
 clone_repositories || { print ERROR "failed to clone repositories"; return 1; }
+
+# >>> Jetson fixes before installing via Docker (NO Docker downgrade)
+enable_docker_no_raw_iptables || print WARN "Docker raw-table workaround failed (continuing anyway)"
+ensure_swapfile || print WARN "Swapfile setup failed (continuing anyway)"
+
 move_setup_files || print ERROR "failed to move setup files"
 install_DBbrowser || print ERROR "failed to install DB browser"
 install_tinkerforge || print ERROR "failed to install tinkerforge"
@@ -393,10 +470,10 @@ print INFO "${INSTALL_METHOD}"
 if [ "$INSTALL_METHOD" = "legacy" ]; then
   print INFO "Going to install Cerebra locally (LEGACY MODE NOT WORKING ON RASPBERRY PI 5)"
   source "$SETUP_INSTALLATION_DIR/local_install.sh" || print ERROR "failed to install Cerebra locally"
-elif is_ubuntu_noble || is_supported_raspbian; then
+elif is_ubuntu_noble || is_supported_raspbian || is_jetson; then
   print INFO "Going to install Cerebra via Docker"
   source "$SETUP_INSTALLATION_DIR/docker_install.sh" || print ERROR "failed to install Cerebra via Docker"
-  sudo usermod -aG docker pib || { print ERROR "failed to add user 'pib' to docker group"; return 1; }
+  sudo usermod -aG docker "$USER" || { print ERROR "failed to add user '$USER' to docker group"; return 1; }
 fi
 cleanup
 
