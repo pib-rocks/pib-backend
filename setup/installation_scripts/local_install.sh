@@ -3,6 +3,9 @@
 PIB_API_DIR="$HOME/flask"
 PIB_API_SETUP_DIR="$BACKEND_DIR/pib_api"
 
+# System-wide venv for all local pip installs (PEP 668 — Ubuntu 24.04 forbids bare pip)
+PIB_VENV_DIR="$HOME/pib-venv"
+
 ROS_WORKING_DIR="$HOME/ros_working_dir"
 ROS_CAMERA_BOOT_DIR="$ROS_WORKING_DIR/src/camera/boot_scripts"
 ROS_MOTORS_BOOT_DIR="$ROS_WORKING_DIR/src/motors/boot_scripts"
@@ -24,11 +27,32 @@ PIB_BLOCKLY_SETUP_DIR="$BACKEND_DIR/pib_blockly"
 PIB_BLOCKLY_SERVER_DIR="$HOME/pib_blockly_server"
 
 
-# Install ROS2 Humble, rosbridge and colcon
+# Create the shared venv used for all local pip installs (PEP 668 compliance on Ubuntu 24.04)
+function create_pib_venv() {
+  print INFO "Creating pib venv at $PIB_VENV_DIR"
+  sudo apt -qq -y install python3-venv
+  python3 -m venv "$PIB_VENV_DIR" --system-site-packages
+  # Expose venv pip/python on PATH for the rest of this script
+  export PATH="$PIB_VENV_DIR/bin:$PATH"
+  echo "export PATH=\"$PIB_VENV_DIR/bin:\$PATH\"" >> "$HOME/.bashrc"
+
+  # Install colcon into the venv so 'python3 -m colcon build' uses the venv's
+  # sys.executable — this makes colcon stamp the venv python path into every
+  # generated entry-point wrapper shebang, ensuring ROS nodes find venv packages.
+  pip install colcon-common-extensions
+
+  # Pillow is needed by the display ROS node (PIL.Image)
+  pip install Pillow
+
+  print SUCCESS "pib venv created"
+}
+
+
+# Install ROS2 Jazzy, rosbridge and colcon (Jazzy is supported on Ubuntu 24.04 Noble only)
 function install_ros() {
   print INFO "Installing ROS"
 
-  # Check that locale supports UTF-8 (should be pretty much always be the case with Ubuntu 22.04)
+  # Check that locale supports UTF-8 (should be pretty much always be the case with Ubuntu 24.04)
   if ! locale | grep -q 'UTF-8'; then
     print INFO "locale does not support UTF-8; switching to en_US.UTF-8"
     sudo apt -qq update && sudo apt install locales
@@ -47,10 +71,10 @@ function install_ros() {
   sudo apt -qq  update && \
   sudo apt -y -qq  upgrade
 
-  sudo apt -qq install -y ros-humble-ros-base ros-dev-tools && \
-  source /opt/ros/humble/setup.bash && \
-  echo 'source /opt/ros/humble/setup.bash' >> "$HOME/.bashrc"
-  print INFO "Installed ROS2 Humble"
+  sudo apt -qq install -y ros-jazzy-ros-base ros-dev-tools && \
+  source /opt/ros/jazzy/setup.bash && \
+  echo 'source /opt/ros/jazzy/setup.bash' >> "$HOME/.bashrc"
+  print INFO "Installed ROS2 Jazzy"
 
   sudo apt -qq update  && \
   sudo apt -qq -y install python3 python3-pip python3-tk python3-colcon-common-extensions && \
@@ -59,12 +83,12 @@ function install_ros() {
   print INFO "Installed colcon"
 
 
-  sudo apt -qq -y install ros-humble-rosbridge-server
+  sudo apt -qq -y install ros-jazzy-rosbridge-server
   # Install driver for webots connection
-  sudo apt -qq -y install ros-humble-webots-ros2-driver
+  sudo apt -qq -y install ros-jazzy-webots-ros2-driver
 
   print INFO "Installed rosbridge-server and Webots driver"
-  print INFO "Finished installing ROS2 Humble"
+  print INFO "Finished installing ROS2 Jazzy"
 }
 
 
@@ -111,14 +135,21 @@ function install_tinkerforge() {
 }
 
 
-# Install Flask API via pipenv
+# Install Flask API into pib-venv (replaces pipenv; deps installed at setup time, not at boot)
 function install_flask_api() {
   print INFO "Install pib-api"
 
   echo "export PYTHONIOENCODING=utf-8" >> "$HOME/.bashrc"
-  pip install pipenv
-  print INFO "Installed pipenv"
+
   cp -r "$PIB_API_SETUP_DIR/flask" "$PIB_API_DIR"
+
+  # Install all Flask API dependencies into pib-venv now so the service
+  # only needs to run 'flask db upgrade' and 'flask seed_db' at boot.
+  pip install -r "$PIB_API_DIR/requirements.txt"
+  # pib_blockly_client is installed later by install_blocky_node_service,
+  # but the service needs it at boot — install from the setup source dir.
+  pip install "$PIB_BLOCKLY_SETUP_DIR/pib_blockly_client"
+
   sudo mv "$PIB_API_DIR/pib_api_boot.service" /etc/systemd/system || print WARN "pib_api_boot.service not found"
 
   # service enabled at the end of the script
@@ -135,21 +166,15 @@ function install_ros_packages() {
 
   # Camera Dependencies
   sudo curl --silent --location https://docs.luxonis.com/install_dependencies.sh | sudo bash
-  python3 -m pip install depthai
-  git clone --recurse-submodules https://github.com/luxonis/depthai-python.git
-  cd depthai-python/examples || { print ERROR "depthai-python/examples not found"; return 1; }
-  python3 install_requirements.py
-  # Hand tracker
-  git clone https://github.com/geaxgx/depthai_hand_tracker.git
-  cd depthai_hand_tracker || { print ERROR "depthai_hand_tracker not found"; return 1; }
-  pip install -r requirements.txt
-  cd "$HOME" || { print ERROR "${HOME} not found"; return 1; }
+  # Pin to the project-wide target versions; bare 'pip install depthai' would
+  # fetch the latest (3.x) release and break compatibility with the camera node.
+  pip install "depthai==2.25.1.0" "numpy==1.26.3"
 
   # SLAM dependencies (optional)
-#  sudo apt install -y ros-humble-depthai-ros
-#  sudo apt install -y ros-humble-rtabmap
-#  sudo apt install -y ros-humble-rtabmap-launch
-#  sudo apt install -y ros-humble-rtabmap-examples
+#  sudo apt install -y ros-jazzy-depthai-ros
+#  sudo apt install -y ros-jazzy-rtabmap
+#  sudo apt install -y ros-jazzy-rtabmap-launch
+#  sudo apt install -y ros-jazzy-rtabmap-examples
   print INFO "Installed camera dependencies"
 
 
@@ -160,19 +185,19 @@ function install_ros_packages() {
   pip install "$BACKEND_DIR/public_api_client"
   pip install "$PIB_API_SETUP_DIR/client"
   pip install pyaudio
-  mkdir "$HOME/public_api"
+  mkdir -p "$HOME/public_api"
   printf "{\n\t\"trybUrlPrefix\": \"\",\n\t\"publicApiToken\": \"\"\n}\n" > "$HOME/public_api/config.json"
   print INFO "Installed voice assistant dependencies"
 
   # Programs dependencies
-  sudo apt-get install -y python3.10-venv
+  sudo apt-get install -y python3-venv
   readonly USER_PROGRAM_ENV_DIR="$ROS_WORKING_DIR/src/programs/user_program_env"
   mkdir "$USER_PROGRAM_ENV_DIR"
   sudo chmod 700 "$USER_PROGRAM_ENV_DIR"
-  python3 -m venv "$USER_PROGRAM_ENV_DIR"
+  /usr/bin/python3 -m venv "$USER_PROGRAM_ENV_DIR"
   source "$USER_PROGRAM_ENV_DIR/bin/activate"
   python3 -m pip install numpy==1.26.3
-  python3 -m pip install depthai==2.24.0.0
+  python3 -m pip install depthai==2.25.1.0
   python3 -m pip install blobconverter==1.4.2
   python3 -m pip install "$PIB_API_SETUP_DIR/client"
   deactivate
@@ -222,8 +247,12 @@ function install_ros_packages() {
 
 
   cd "$ROS_WORKING_DIR" || { print ERROR "${ROS_WORKING_DIR} not found"; return 1; }
-  source /opt/ros/humble/setup.bash
-  colcon build || { print ERROR "could not colcon build packages"; return 1; }
+  source /opt/ros/jazzy/setup.bash
+  # Run colcon via the venv python so sys.executable inside colcon resolves to
+  # the venv interpreter. This causes all generated entry-point wrapper scripts
+  # to receive a shebang of '#!/home/pib/pib-venv/bin/python3' instead of
+  # '#!/usr/bin/python3', so ROS nodes can import packages installed in pib-venv.
+  "$PIB_VENV_DIR/bin/python3" -m colcon build || { print ERROR "could not colcon build packages"; return 1; }
   cd "$HOME" || { print ERROR "${HOME} not found"; return 1; }
 
   cp "${SETUP_FILES}/ros_config.sh" "$ROS_WORKING_DIR" || { print ERROR "could not move ros_config.sh"; return 1; }
@@ -283,14 +312,14 @@ function install_frontend() {
 
   print INFO "Build frontend and setup nginx"
 
-  # Install and configure phpLiteAdmin
-  sudo apt -qq update && sudo apt -qq install -y php8.1-fpm php-sqlite3
-  sudo sed -i "s|;cgi.fix_pathinfo=1|cgi.fix_pathinfo=0|" /etc/php/8.1/fpm/php.ini
+  # Install and configure phpLiteAdmin (Ubuntu 24.04 provides PHP 8.3)
+  sudo apt -qq update && sudo apt -qq install -y php8.3-fpm php-sqlite3
+  sudo sed -i "s|;cgi.fix_pathinfo=1|cgi.fix_pathinfo=0|" /etc/php/8.3/fpm/php.ini
   sudo mkdir "$PHPLITEADMIN_INSTALLATION_DIR" || print WARN "$PHPLITEADMIN_INSTALLATION_DIR already exists"
   sudo chown -R www-data:www-data "$PHPLITEADMIN_INSTALLATION_DIR"
   sudo chmod -R 700 "$PHPLITEADMIN_INSTALLATION_DIR"
   sudo unzip -o "$SETUP_FILES/$PHPLITEADMIN_ZIP" -d "$PHPLITEADMIN_INSTALLATION_DIR" || print ERROR "cannot unzip $PHPLITEADMIN_ZIP"
-  sudo systemctl restart php8.1-fpm || { print ERROR "cannot start phpliteadmin"; return 1; }
+  sudo systemctl restart php8.3-fpm || { print ERROR "cannot start phpliteadmin"; return 1; }
   print INFO "Installed phpLiteAdmin"
 
 
@@ -336,8 +365,8 @@ function install_blocky_node_service() {
 
 
 
-if ! [ "$DIST_VERSION" == "jammy" ]; then
-    print ERROR "Not using Ubuntu 22.04; cannot install locally"
+if ! [ "$DIST_VERSION" == "noble" ]; then
+    print ERROR "Native install requires Ubuntu 24.04 (noble). Detected: $DISTRIBUTION $DIST_VERSION"
     return 1
 fi
 
@@ -353,6 +382,7 @@ sudo sysctl -w net.ipv6.conf.all.disable_ipv6=1
 sudo sysctl -w net.ipv6.conf.default.disable_ipv6=1
 
 install_ros || { print ERROR "Failed installing ROS"; return 1; }
+create_pib_venv || { print ERROR "Failed creating pib venv"; return 1; }
 install_tinkerforge || { print ERROR "Failed installing Tinkerforge"; return 1; }
 install_flask_api || { print ERROR "Failed installing pib-api"; return 1; }
 install_ros_packages || { print ERROR "Failed installing ros_packages"; return 1; }

@@ -16,6 +16,10 @@ export BACKEND_DIR="$APP_DIR/pib-backend"
 export FRONTEND_DIR="$APP_DIR/cerebra"
 export SETUP_INSTALLATION_DIR="$BACKEND_DIR/setup/installation_scripts"
 
+# Log file in same directory as this script
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LOG_FILE="${SCRIPT_DIR}/setup-pib.log"
+
 # Function to support printing consistent log messages
 function print() {
     local color=$1
@@ -100,14 +104,17 @@ function check_distribution() {
     return 0
   else
     print WARN "This script expects Raspberry Pi OS on pib or Ubuntu 24.04 for systems that run the digital twin only. We detected $DISTRIBUTION $DIST_VERSION. Do you want to continue? (Y/N):"
+    echo -e "${WARN}Do you want to continue? (Y/N):${RESET_TEXT_COLOR}" >&3
     read -r answer
       case "$answer" in
         [Yy]*)
           echo "Continuing..."
+          echo "Continuing..." >&3
           return 0
           ;;
         *)
           echo "Stopping setup, no changes were made."
+          console_error "Stopping setup, no changes were made."
           exit 1
           ;;
       esac
@@ -159,15 +166,18 @@ function clone_repositories() {
   # Validate branches
   if ! command_exists git; then
     print ERROR "git not found"
+    console_error "git not found"
     exit 1
   fi
 
   if ! git ls-remote --exit-code --heads "$FRONTEND" "$BRANCH_FRONTEND" >/dev/null 2>&1; then
     print ERROR "Branch '${BRANCH_FRONTEND}' for Cerebra not found"
+    console_error "Branch '${BRANCH_FRONTEND}' for Cerebra not found"
     exit 1
   fi
   if ! git ls-remote --exit-code --heads "$BACKEND" "$BRANCH_BACKEND" >/dev/null 2>&1; then
     print ERROR "Branch '${BRANCH_BACKEND}' for pib-backend not found"
+    console_error "Branch '${BRANCH_BACKEND}' for pib-backend not found"
     exit 1
   fi
 
@@ -194,6 +204,7 @@ function move_setup_files() {
 
   if [[ ! -f "$source_file" ]]; then
     print ERROR "$source_file not found"
+    console_error "$source_file not found"
     return 1
   fi
 
@@ -201,6 +212,9 @@ function move_setup_files() {
 
   sudo chmod 755 "$source_file"
   print SUCCESS "Installed update script"
+
+  # Ensure Desktop exists (headless/server installs may not have it)
+  mkdir -p "$HOME/Desktop"
 
   cp "$BACKEND_DIR/setup/setup_files/pib-eyes-animated.gif" "$HOME/Desktop/pib-eyes-animated.gif"
   print SUCCESS "Moved animated eyes to Desktop"
@@ -293,52 +307,135 @@ EOF
   fi
 }
 
-# clean setup files if local install + remove user from sudoers file again
-function cleanup() {
-  if [ "$INSTALL_METHOD" = "legacy" ]; then
-    sudo rm -r "$HOME/app"
-    print INFO "Removed repositories from $HOME due to local installation"
+# Install OpenClaw AI assistant (Node ≥ 22 + npm global package + gateway daemon)
+function install_openclaw() {
+  print INFO "Installing OpenClaw"
+
+  # ── 1. Ensure Node 22 is available ──────────────────────────────────────────
+  # On Noble, install_frontend already set up nvm with Node 18 for the Angular
+  # build. OpenClaw requires Node ≥ 22, so we install it separately via the
+  # NodeSource binary package — this puts a system-wide node22 binary at
+  # /usr/bin/node that does not interfere with the nvm Node 18 used by pib.
+  # On Raspbian, no Node is present at all, so we install the same way.
+  local NODE_BIN
+  NODE_BIN=$(command -v node 2>/dev/null || true)
+  local NODE_VERSION=0
+  if [ -n "$NODE_BIN" ]; then
+    NODE_VERSION=$("$NODE_BIN" -e "process.stdout.write(String(process.versions.node.split('.')[0]))" 2>/dev/null || echo 0)
   fi
-  sudo rm /etc/sudoers.d/"$USER"
+
+  if [ "$NODE_VERSION" -lt 22 ] 2>/dev/null; then
+    print INFO "Node < 22 detected (found: $NODE_VERSION); installing Node 22 via NodeSource"
+    curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && \
+    sudo apt-get install -y nodejs || { print ERROR "Failed to install Node 22"; return 1; }
+    NODE_BIN=$(command -v node)
+    print INFO "Node $("$NODE_BIN" --version) installed"
+  else
+    print INFO "Node $NODE_VERSION already satisfies ≥ 22 requirement"
+  fi
+
+  # ── 2. Configure npm global prefix to a user-writable directory ─────────────
+  # Avoids EACCES errors on 'npm install -g' without sudo.
+  local NPM_PREFIX="$HOME/.npm-global"
+  mkdir -p "$NPM_PREFIX"
+  npm config set prefix "$NPM_PREFIX"
+  export PATH="$NPM_PREFIX/bin:$PATH"
+  echo "export PATH=\"$NPM_PREFIX/bin:\$PATH\"" >> "$HOME/.bashrc"
+
+  # ── 3. Install OpenClaw CLI ──────────────────────────────────────────────────
+  if command_exists openclaw; then
+    print WARN "OpenClaw already installed ($(openclaw --version 2>/dev/null || echo unknown)); skipping npm install"
+  else
+    npm install -g openclaw@latest || { print ERROR "Failed to install OpenClaw"; return 1; }
+    print INFO "OpenClaw $(openclaw --version 2>/dev/null || echo installed)"
+  fi
+
+  # ── 4. Non-interactive onboard: workspace + gateway config (no auth/channels)
+  # Defers API-key setup to the user; --skip-skills avoids interactive prompts.
+  # The workspace is seeded at the default location (~/.openclaw/workspace).
+  openclaw onboard \
+    --non-interactive \
+    --mode local \
+    --gateway-port 18789 \
+    --gateway-bind loopback \
+    --skip-skills \
+    || print WARN "OpenClaw onboard returned non-zero; gateway may need manual auth setup"
+
+  # ── 5. Install and enable the gateway systemd user service ──────────────────
+  # 'openclaw daemon install' writes ~/.config/systemd/user/openclaw-gateway.service
+  # and enables it. loginctl enable-linger ensures the user service survives logout.
+  openclaw daemon install --runtime node || { print ERROR "Failed to install OpenClaw gateway service"; return 1; }
+  sudo loginctl enable-linger "$USER" || print WARN "loginctl enable-linger failed; gateway may not start on boot"
+  systemctl --user daemon-reload
+  systemctl --user enable openclaw-gateway.service --now || print WARN "Could not start openclaw-gateway.service immediately; it will start on next login"
+
+  print SUCCESS "OpenClaw installed — run 'openclaw onboard' to configure channels and API keys"
+}
+
+
+# Remove temporary sudoers entry (repositories in $HOME/app are kept for both native and Docker)
+function cleanup() {
+  sudo rm -f /etc/sudoers.d/"$USER"
 }
 
 
 show_help()
 {
-	echo -e "The setup-pib.sh script has two execution modes:"
-	echo -e "(normal mode and development mode)""$NEW_LINE"
-	echo -e "$INFO""Normal mode (don't add any arguments or options)""$RESET_TEXT_COLOR"
-	echo -e "$INFO""If you are do not know what the flags for development mode do, use the normal mode""$RESET_TEXT_COLOR"
+	echo -e "The setup-pib.sh script installs Cerebra and pib-backend.""$NEW_LINE"
+	echo -e "$INFO""On Ubuntu 24.04 the script installs Cerebra natively (development: ROS2 Jazzy, no Docker).""$RESET_TEXT_COLOR"
+	echo -e "$INFO""On Raspberry Pi OS (bookworm/trixie) it installs Cerebra via Docker (production).""$RESET_TEXT_COLOR"
 	echo -e "Example: ./setup-pib""$NEW_LINE"
-	echo -e "$INFO""Development mode (specify the branches you want to install)""$RESET_TEXT_COLOR"
-
-	echo -e "You can either use the short or verbose command versions:"
+	echo -e "$INFO""Development mode (specify the branches you want to install):""$RESET_TEXT_COLOR"
 	echo -e "-f=YourBranchName or --frontend-branch=YourBranchName"
 	echo -e "-b=YourBranchName or --backend-branch=YourBranchName"
-	echo -e "-l or --local for a local installation of the software over using a containerized setup using Docker"
-
 	echo -e "$NEW_LINE""Examples:"
 	echo -e "    ./setup-pib -b=main -f=PR-566"
-    echo -e "    ./setup-pib --backend-branch=main --frontend-branch=PR-566"
-
+	echo -e "    ./setup-pib --backend-branch=main --frontend-branch=PR-566"
 	exit
 }
 
 
 # ---------- SETUP STARTS FROM HERE -----------
 
-# Reduplicate output to an extra log file as well
-LOG_FILE="$HOME/setup-pib.log"
-exec > >(tee -a "$LOG_FILE") 2>&1
+# Handle --help before redirecting stdout so help is shown on the terminal
+for arg in "$@"; do
+  if [[ "$arg" == "-h" || "$arg" == "--help" ]]; then
+    show_help
+    exit 0
+  fi
+done
 
-echo "Hello $USER! We start the setup by allowing you permanently to run commands with admin-privileges. This change is reverted at the end of the setup."
+# Redirect stdout/stderr to log only; keep terminal on fd 3 for minimal console output
+exec 3>&1
+exec 1>>"$LOG_FILE" 2>>"$LOG_FILE"
+
+# Console output helpers: minimal lines to terminal (fd 3) and one line to log
+console_success() {
+  echo "[$(date -u)] [SUCCESS] $*"
+  echo -e "${SUCCESS}${*}${RESET_TEXT_COLOR}" >&3
+}
+console_error() {
+  echo "[$(date -u)] [ERROR] $*"
+  echo -e "${ERROR}${*}${RESET_TEXT_COLOR}" >&3
+}
+console_info() {
+  echo "[$(date -u)] [INFO] $*"
+  echo -e "${INFO}${*}${RESET_TEXT_COLOR}" >&3
+}
+
+echo "Detailed log: $LOG_FILE"
+console_info "Log file: $LOG_FILE"
+
+echo "Requesting sudo privileges for setup..."
+console_info "Hello $USER! We start the setup by allowing you to run commands with admin-privileges (reverted at the end)."
 if [[ "$(id)" == *"(sudo)"* ]]; then
-	echo "For this change please enter your password..."
+	echo "For this change please enter your password..." >&3
 	sudo bash -c "echo '$USER ALL=(ALL) NOPASSWD:ALL' | tee /etc/sudoers.d/$USER"
 else
-	echo "For this change please enter the root-password. It is most likely just your normal one..."
+	echo "For this change please enter the root-password. It is most likely just your normal one..." >&3
 	su root bash -c "usermod -aG sudo $USER ; echo '$USER ALL=(ALL) NOPASSWD:ALL' | tee /etc/sudoers.d/$USER"
 fi
+console_success "Privileges set"
 
 
 DISTRIBUTION=$(get_distribution) # e.g., 'ubuntu'
@@ -349,10 +446,18 @@ check_distribution
 
 
 # VALIDATE CLI ARGUMENTS
-BRANCH_BACKEND="main"
+# Default backend branch: use the branch this script is running from (if inside a git repo),
+# so that running setup-pib.sh from a PR checkout automatically installs that PR branch.
+_detected_branch=""
+if command_exists git; then
+  _detected_branch="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --abbrev-ref HEAD 2>/dev/null)"
+  # Ignore detached HEAD or empty result
+  if [[ "$_detected_branch" == "HEAD" || -z "$_detected_branch" ]]; then
+    _detected_branch=""
+  fi
+fi
+BRANCH_BACKEND="${_detected_branch:-main}"
 BRANCH_FRONTEND="main"
-INSTALL_METHOD="docker"
-# Check if branch was specified
 while [ $# -gt 0 ]; do
   case "$1" in
     -f=* | --frontend-branch=*)
@@ -361,44 +466,62 @@ while [ $# -gt 0 ]; do
     -b=* | --backend-branch=*)
       BRANCH_BACKEND="${1#*=}"
       ;;
-    -l | --legacy)
-      INSTALL_METHOD="legacy"
-      ;;
     -h | --help)
       show_help
       ;;
     *)
       print ERROR "invalid input options"
+      console_error "Invalid input options"
+      exit 1
   esac
   shift
 done
 
 if is_ubuntu_noble; then
-  remove_apps || print ERROR "failed to remove default software"
+  remove_apps || { print ERROR "failed to remove default software"; console_error "Failed to remove default software"; exit 1; }
+  console_success "Removed default software"
 fi
 
 if is_supported_raspbian; then
-  disable_power_notification || print ERROR "failed to disable power notifications"
+  disable_power_notification || { print ERROR "failed to disable power notifications"; console_error "Failed to disable power notifications"; exit 1; }
+  console_success "Power notifications disabled"
 fi
 
-install_system_packages || { print ERROR "failed to install system packages"; return 1; }
-install_locale || { print ERROR "failed to install locale"; return 1; }
-clone_repositories || { print ERROR "failed to clone repositories"; return 1; }
-move_setup_files || print ERROR "failed to move setup files"
-install_DBbrowser || print ERROR "failed to install DB browser"
-install_tinkerforge || print ERROR "failed to install tinkerforge"
-setup_ip_dispatcher || print ERROR "failed to setup ip dispatcher"
-source "$SETUP_INSTALLATION_DIR/set_system_settings.sh" || print ERROR "failed to set system settings"
-print INFO "${INSTALL_METHOD}"
-if [ "$INSTALL_METHOD" = "legacy" ]; then
-  print INFO "Going to install Cerebra locally (LEGACY MODE NOT WORKING ON RASPBERRY PI 5)"
-  source "$SETUP_INSTALLATION_DIR/local_install.sh" || print ERROR "failed to install Cerebra locally"
-elif is_ubuntu_noble || is_supported_raspbian; then
-  print INFO "Going to install Cerebra via Docker"
-  source "$SETUP_INSTALLATION_DIR/docker_install.sh" || print ERROR "failed to install Cerebra via Docker"
-  sudo usermod -aG docker pib || { print ERROR "failed to add user 'pib' to docker group"; return 1; }
+install_system_packages || { print ERROR "failed to install system packages"; console_error "Failed to install system packages"; exit 1; }
+console_success "System packages installed"
+install_locale || { print ERROR "failed to install locale"; console_error "Failed to install locale"; exit 1; }
+console_success "Locale installed"
+clone_repositories || { print ERROR "failed to clone repositories"; console_error "Failed to clone repositories"; exit 1; }
+console_success "Repositories cloned"
+move_setup_files || { print ERROR "failed to move setup files"; console_error "Failed to move setup files"; exit 1; }
+console_success "Setup files moved"
+install_DBbrowser || { print ERROR "failed to install DB browser"; console_error "Failed to install DB browser"; exit 1; }
+console_success "DB browser installed"
+install_tinkerforge || { print ERROR "failed to install tinkerforge"; console_error "Failed to install tinkerforge"; exit 1; }
+console_success "Tinkerforge installed"
+setup_ip_dispatcher || { print ERROR "failed to setup ip dispatcher"; console_error "Failed to setup IP dispatcher"; exit 1; }
+console_success "IP dispatcher configured"
+source "$SETUP_INSTALLATION_DIR/set_system_settings.sh" || { print ERROR "failed to set system settings"; console_error "Failed to set system settings"; exit 1; }
+console_success "System settings applied"
+if is_ubuntu_noble; then
+  print INFO "Installing Cerebra natively (Ubuntu 24.04 development setup)"
+  source "$SETUP_INSTALLATION_DIR/local_install.sh" || { print ERROR "failed to install Cerebra natively"; console_error "Failed to install Cerebra natively"; exit 1; }
+  console_success "Cerebra installed natively"
+elif is_supported_raspbian; then
+  print INFO "Installing Cerebra via Docker (Raspberry Pi OS production)"
+  source "$SETUP_INSTALLATION_DIR/docker_install.sh" || { print ERROR "failed to install Cerebra via Docker"; console_error "Failed to install Cerebra via Docker"; exit 1; }
+  sudo usermod -aG docker pib || { print ERROR "failed to add user 'pib' to docker group"; console_error "Failed to add user to docker group"; exit 1; }
+  console_success "Cerebra installed via Docker"
+else
+  print ERROR "Unsupported OS. Use Ubuntu 24.04 for native (development) install or Raspberry Pi OS (bookworm/trixie) for Docker (production) install."
+  console_error "Unsupported OS. Use Ubuntu 24.04 or Raspberry Pi OS."
+  exit 1
 fi
+install_openclaw || print WARN "OpenClaw installation failed; pib will work normally but the AI assistant will not be available"
+console_success "OpenClaw installed"
 cleanup
+console_success "Cleanup done"
 
 print SUCCESS "Finished installation, for more information on how to use pib and Cerebra, visit https://pib-rocks.atlassian.net/wiki/spaces/kb/overview?homepageId=65077450"
 print SUCCESS "Reboot pib to apply all changes"
+console_success "Installation finished. Reboot to apply all changes."
