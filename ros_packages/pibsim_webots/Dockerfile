@@ -20,11 +20,13 @@ RUN apt-get update --fix-missing && apt-get install --no-install-recommends -y \
         python3-pip \
         /tmp/webots.deb \
         ros-humble-webots-ros2 \
+        ros-humble-rmw-cyclonedds-cpp \
     && rm /tmp/webots.deb \
     && rm -rf /var/lib/apt/lists/*
 
 
 
+COPY ./ros_packages/datatypes ros2_ws/datatypes
 COPY ./ros_packages/pibsim_webots ros2_ws/pibsim_webots
 
 RUN cd ros2_ws && \

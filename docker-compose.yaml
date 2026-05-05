@@ -79,11 +79,15 @@ services:
       - pib-network
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    volumes:
+      - ./ros_packages/cyclone_unicast.xml:/app/cyclone_unicast.xml
     environment:
       - FLASK_API_BASE_URL=http://flask-app:5000
       - PIB_BLOCKLY_SERVER_URL=http://pib-blockly-server:2442
       - TINKERFORGE_HOST=host.docker.internal
       - TINKERFORGE_PORT=4223
+      - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+      - CYCLONEDDS_URI=file:///app/cyclone_unicast.xml
     restart: always
     depends_on:
       - rosbridge-ws
@@ -101,13 +105,18 @@ services:
       # machine. By mounting the socket of the docker-host, the 
       # display-node uses the x-server running on the host for
       # graphics-related communication
-      - /tmp/.X11-unix:/tmp/.X11-unix 
+      - /tmp/.X11-unix:/tmp/.X11-unix
+      - ./ros_packages/cyclone_unicast.xml:/app/cyclone_unicast.xml
     profiles:
       - pibsim_webots
     networks:
       - pib-network
     environment:
       - DISPLAY=:0.0
+      - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+      - CYCLONEDDS_URI=file:///app/cyclone_unicast.xml
+    depends_on:
+      - ros-motors
     restart: no
 
   ros-voice-assistant:

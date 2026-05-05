@@ -16,6 +16,7 @@ RUN curl -sSL https://download.tinkerforge.com/apt/$(. /etc/os-release; echo $ID
         python3-pip \
         python3-tinkerforge \
         libusb-1.0-0-dev \
+        ros-humble-rmw-cyclonedds-cpp \
     && rm -rf /var/lib/apt/lists/*
 
 
