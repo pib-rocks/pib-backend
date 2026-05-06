@@ -8,7 +8,7 @@
     </General>
     <Discovery>
       <Peers>
-        <Peer Address="ros-motors"/>
+        <Peer Address="pibsim_webots"/>
         <Peer Address="rosbridge-ws"/>
       </Peers>
       <MaxAutoParticipantIndex>50</MaxAutoParticipantIndex>

@@ -80,7 +80,7 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
-      - ./ros_packages/cyclone_unicast.xml:/app/cyclone_unicast.xml
+      - ./ros_packages/cyclone_motors.xml:/app/cyclone_unicast.xml
     environment:
       - FLASK_API_BASE_URL=http://flask-app:5000
       - PIB_BLOCKLY_SERVER_URL=http://pib-blockly-server:2442
@@ -106,7 +106,7 @@ services:
       # display-node uses the x-server running on the host for
       # graphics-related communication
       - /tmp/.X11-unix:/tmp/.X11-unix
-      - ./ros_packages/cyclone_unicast.xml:/app/cyclone_unicast.xml
+      - ./ros_packages/cyclone_webots.xml:/app/cyclone_unicast.xml
     profiles:
       - pibsim_webots
     networks:
