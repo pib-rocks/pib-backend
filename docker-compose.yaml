@@ -76,7 +76,9 @@ services:
       - all
       - motors
     networks:
-      - pib-network
+      pib-network:
+        aliases:
+          - ros-motors-dds
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -86,6 +88,8 @@ services:
       - PIB_BLOCKLY_SERVER_URL=http://pib-blockly-server:2442
       - TINKERFORGE_HOST=host.docker.internal
       - TINKERFORGE_PORT=4223
+      - ROS_DOMAIN_ID=0
+      - ROS_LOCALHOST_ONLY=0
       - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
       - CYCLONEDDS_URI=file:///app/cyclone_unicast.xml
     restart: always
@@ -110,9 +114,13 @@ services:
     profiles:
       - pibsim_webots
     networks:
-      - pib-network
+      pib-network:
+        aliases:
+          - pibsim-webots-dds
     environment:
       - DISPLAY=:0.0
+      - ROS_DOMAIN_ID=0
+      - ROS_LOCALHOST_ONLY=0
       - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
       - CYCLONEDDS_URI=file:///app/cyclone_unicast.xml
     depends_on:
