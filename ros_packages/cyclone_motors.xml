@@ -8,8 +8,9 @@
     </General>
     <Discovery>
       <ParticipantIndex>auto</ParticipantIndex>
-      <Peers AddLocalhost="true">
+      <Peers>
         <Peer Address="pibsim-webots-dds"/>
+        <Peer Address="localhost"/>
         <Peer Address="rosbridge-ws"/>
       </Peers>
       <MaxAutoParticipantIndex>120</MaxAutoParticipantIndex>
