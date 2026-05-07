@@ -7,12 +7,12 @@
       <AllowMulticast>false</AllowMulticast>
     </General>
     <Discovery>
-      <Peers>
+      <ParticipantIndex>auto</ParticipantIndex>
+      <Peers AddLocalhost="true">
         <Peer Address="ros-motors-dds"/>
-        <Peer Address="localhost"/>
         <Peer Address="rosbridge-ws"/>
       </Peers>
-      <MaxAutoParticipantIndex>50</MaxAutoParticipantIndex>
+      <MaxAutoParticipantIndex>120</MaxAutoParticipantIndex>
     </Discovery>
   </Domain>
 </CycloneDDS>
