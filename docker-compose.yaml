@@ -119,6 +119,8 @@ services:
           - pibsim-webots-dds
     environment:
       - DISPLAY=:0.0
+      - USER=root
+      - USERNAME=root
       - ROS_DOMAIN_ID=0
       - ROS_LOCALHOST_ONLY=0
       - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp

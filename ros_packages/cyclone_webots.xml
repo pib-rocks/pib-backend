@@ -9,6 +9,7 @@
     <Discovery>
       <Peers>
         <Peer Address="ros-motors-dds"/>
+        <Peer Address="localhost"/>
         <Peer Address="rosbridge-ws"/>
       </Peers>
       <MaxAutoParticipantIndex>50</MaxAutoParticipantIndex>
