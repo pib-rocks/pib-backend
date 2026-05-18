@@ -6,7 +6,8 @@ RUN apt update && apt upgrade -y && apt install -y \
     build-essential \
     python3-colcon-common-extensions \
     python3-colcon-mixin \
-    ros-$ROS_DISTRO-rosbridge-server&& \
+    ros-$ROS_DISTRO-rosbridge-server \
+    ros-$ROS_DISTRO-rmw-cyclonedds-cpp && \
     apt-get autoremove -y && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*

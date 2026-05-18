@@ -39,7 +39,16 @@ services:
       dockerfile: ./rosbridge/Dockerfile
     command: ros2 launch rosbridge_server rosbridge_websocket_launch.xml
     networks:
-      - pib-network
+      pib-network:
+        aliases:
+          - rosbridge-dds
+    volumes:
+      - ./ros_packages/cyclone_rosbridge.xml:/app/cyclone_unicast.xml
+    environment:
+      - ROS_DOMAIN_ID=0
+      - ROS_LOCALHOST_ONLY=0
+      - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+      - CYCLONEDDS_URI=file:///app/cyclone_unicast.xml
     restart: always
     ports:
       - "9090:9090"
