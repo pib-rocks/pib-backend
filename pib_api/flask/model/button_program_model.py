@@ -10,3 +10,6 @@ class ButtonProgram(db.Model):
     program_id = db.Column(
         db.Integer, db.ForeignKey("program.id", ondelete="SET NULL"), nullable=True
     )
+
+    bricklet = db.relationship("Bricklet", lazy="joined")
+    program = db.relationship("Program", lazy="joined")
