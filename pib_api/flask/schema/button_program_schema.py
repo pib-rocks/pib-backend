@@ -4,14 +4,29 @@ from model.button_program_model import ButtonProgram
 from schema.sql_auto_with_camel_case_schema import SQLAutoWithCamelCaseSchema
 
 
-class ButtonProgramSchemaSQLAutoWith(SQLAutoWithCamelCaseSchema):
+class ButtonProgramLoadSchema(SQLAutoWithCamelCaseSchema):
+    class Meta:
+        model = ButtonProgram
+        exclude = ("id", "bricklet_id", "program_id")
+
+    brickletNumber = fields.Integer(required=True)
+    programNumber = fields.String(allow_none=True)
+
+
+button_programs_load_schema = ButtonProgramLoadSchema(many=True)
+
+
+class ButtonProgramDumpSchema(SQLAutoWithCamelCaseSchema):
     class Meta:
         model = ButtonProgram
         exclude = ("id", "bricklet_id", "program_id")
 
     brickletNumber = fields.Integer(attribute="bricklet.bricklet_number")
-    programNumber = fields.Integer(attribute="program.program_number", allow_none=True)
+    brickletUid = fields.String(attribute="bricklet.uid")
+    programNumber = fields.Method("get_program_number", allow_none=True)
+
+    def get_program_number(self, obj):
+        return obj.program.program_number if obj.program else None
 
 
-button_program_schema = ButtonProgramSchemaSQLAutoWith()
-button_programs_schema = ButtonProgramSchemaSQLAutoWith(many=True)
+button_programs_schema = ButtonProgramDumpSchema(many=True)
