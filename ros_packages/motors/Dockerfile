@@ -29,6 +29,9 @@ RUN pip install ./client
 COPY ./ros_packages/motors/pib_motors ./motors/pib_motors
 RUN pip install ./motors/pib_motors
 
+COPY ./scripts/trajectory_relay_sender.py /app/trajectory_relay_sender.py
+COPY ./scripts/trajectory_relay_receiver.py /app/trajectory_relay_receiver.py
+
 COPY ./ros_packages/datatypes ros2_ws/datatypes
 COPY ./ros_packages/motors ros2_ws/motors
 

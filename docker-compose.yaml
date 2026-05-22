@@ -108,6 +108,58 @@ services:
     depends_on:
       - rosbridge-ws
       - flask-app
+
+  trajectory-relay-sender:
+    image: ros_motors
+    command: bash -lc "source /opt/ros/humble/setup.bash && source /app/ros2_ws/install/setup.bash && python3 /app/trajectory_relay_sender.py"
+    profiles:
+      - relay_sender
+    networks:
+      pib-network:
+        aliases:
+          - trajectory-relay-sender
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+      - "remote-pib-dds:${REMOTE_PIB_DDS_IP:-127.0.0.1}"
+    volumes:
+      - ./ros_packages/cyclone_motors.xml:/app/cyclone_unicast.xml
+    environment:
+      - ROS_DOMAIN_ID=0
+      - ROS_LOCALHOST_ONLY=0
+      - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+      - CYCLONEDDS_URI=file:///app/cyclone_unicast.xml
+      - TRAJECTORY_RELAY_REMOTE_HOST=${TRAJECTORY_RELAY_REMOTE_HOST:-}
+      - TRAJECTORY_RELAY_REMOTE_PORT=${TRAJECTORY_RELAY_REMOTE_PORT:-15555}
+    restart: always
+    depends_on:
+      - ros-motors
+
+  trajectory-relay-receiver:
+    image: ros_motors
+    command: bash -lc "source /opt/ros/humble/setup.bash && source /app/ros2_ws/install/setup.bash && python3 /app/trajectory_relay_receiver.py"
+    profiles:
+      - relay_receiver
+    networks:
+      pib-network:
+        aliases:
+          - trajectory-relay-receiver
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+      - "remote-pib-dds:${REMOTE_PIB_DDS_IP:-127.0.0.1}"
+    volumes:
+      - ./ros_packages/cyclone_motors.xml:/app/cyclone_unicast.xml
+    environment:
+      - ROS_DOMAIN_ID=0
+      - ROS_LOCALHOST_ONLY=0
+      - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+      - CYCLONEDDS_URI=file:///app/cyclone_unicast.xml
+      - TRAJECTORY_RELAY_LISTEN_HOST=0.0.0.0
+      - TRAJECTORY_RELAY_LISTEN_PORT=${TRAJECTORY_RELAY_LISTEN_PORT:-15555}
+    ports:
+      - "${TRAJECTORY_RELAY_LISTEN_PORT:-15555}:${TRAJECTORY_RELAY_LISTEN_PORT:-15555}"
+    restart: always
+    depends_on:
+      - ros-motors
       
   pibsim_webots:
     image: pibsim_webots
