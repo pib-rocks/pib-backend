@@ -1,4 +1,4 @@
-FROM luxonis/depthai-ros:humble-latest
+FROM luxonis/depthai-ros:humble-arm64-latest
 SHELL ["/bin/bash", "-c"]
 
 WORKDIR /app
