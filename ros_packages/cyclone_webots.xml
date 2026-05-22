@@ -10,7 +10,6 @@
       <ParticipantIndex>auto</ParticipantIndex>
       <Peers>
         <Peer Address="ros-motors-dds"/>
-        <Peer Address="remote-pib-dds"/>
         <Peer Address="localhost"/>
         <Peer Address="rosbridge-ws"/>
       </Peers>
