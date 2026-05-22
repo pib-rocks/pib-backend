@@ -44,6 +44,8 @@ services:
           - rosbridge-dds
     volumes:
       - ./ros_packages/cyclone_rosbridge.xml:/app/cyclone_unicast.xml
+    extra_hosts:
+      - "remote-pib-dds:${REMOTE_PIB_DDS_IP:-127.0.0.1}"
     environment:
       - ROS_DOMAIN_ID=0
       - ROS_LOCALHOST_ONLY=0
@@ -90,6 +92,7 @@ services:
           - ros-motors-dds
     extra_hosts:
       - "host.docker.internal:host-gateway"
+      - "remote-pib-dds:${REMOTE_PIB_DDS_IP:-127.0.0.1}"
     volumes:
       - ./ros_packages/cyclone_motors.xml:/app/cyclone_unicast.xml
     environment:
@@ -122,6 +125,8 @@ services:
       - ./ros_packages/cyclone_webots.xml:/app/cyclone_unicast.xml
     profiles:
       - pibsim_webots
+    extra_hosts:
+      - "remote-pib-dds:${REMOTE_PIB_DDS_IP:-127.0.0.1}"
     networks:
       pib-network:
         aliases:
