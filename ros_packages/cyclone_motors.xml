@@ -10,6 +10,9 @@
       <ParticipantIndex>auto</ParticipantIndex>
       <Peers>
         <Peer Address="pibsim-webots-dds"/>
+        <Peer Address="ros-motors-dds"/>
+        <Peer Address="trajectory-relay-sender"/>
+        <Peer Address="trajectory-relay-receiver"/>
         <Peer Address="localhost"/>
         <Peer Address="rosbridge-ws"/>
       </Peers>
