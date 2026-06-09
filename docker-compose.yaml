@@ -38,11 +38,11 @@ services:
       context: ./ros_packages
       dockerfile: ./rosbridge/Dockerfile
     command: ros2 launch rosbridge_server rosbridge_websocket_launch.xml
-    networks:
-      - pib-network
+    network_mode: host
+    environment:
+      - ROS_LOCALHOST_ONLY=${ROS_LOCALHOST_ONLY:-0}
+      - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}
     restart: always
-    ports:
-      - "9090:9090"
 
   ros-camera:
     image: ros-camera
@@ -60,8 +60,10 @@ services:
       - /dev/:/dev/
     devices:
       - /dev/bus/usb:/dev/bus/usb
-    networks:
-      - pib-network
+    network_mode: host
+    environment:
+      - ROS_LOCALHOST_ONLY=${ROS_LOCALHOST_ONLY:-0}
+      - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}
     restart: always
     depends_on:
       - rosbridge-ws
@@ -75,15 +77,16 @@ services:
     profiles:
       - all
       - motors
-    networks:
-      - pib-network
+    network_mode: host
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
-      - FLASK_API_BASE_URL=http://flask-app:5000
-      - PIB_BLOCKLY_SERVER_URL=http://pib-blockly-server:2442
+      - FLASK_API_BASE_URL=http://127.0.0.1:5000
+      - PIB_BLOCKLY_SERVER_URL=http://127.0.0.1:2442
       - TINKERFORGE_HOST=host.docker.internal
       - TINKERFORGE_PORT=4223
+      - ROS_LOCALHOST_ONLY=${ROS_LOCALHOST_ONLY:-0}
+      - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}
     restart: always
     depends_on:
       - rosbridge-ws
@@ -104,10 +107,11 @@ services:
       - /tmp/.X11-unix:/tmp/.X11-unix 
     profiles:
       - pibsim_webots
-    networks:
-      - pib-network
+    network_mode: host
     environment:
       - DISPLAY=:0.0
+      - ROS_LOCALHOST_ONLY=${ROS_LOCALHOST_ONLY:-0}
+      - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}
     restart: no
 
   ros-voice-assistant:
@@ -120,16 +124,17 @@ services:
     profiles:
       - all
       - voice_assistant
-    networks:
-      - pib-network
+    network_mode: host
     env_file:
       - ros-audio.env
       - password.env
     environment:
       - PULSE_SERVER=unix:${XDG_RUNTIME_DIR:-/run/user/1000}/pulse/native
       - ALSA_CARD=Generic
-      - FLASK_API_BASE_URL=http://flask-app:5000
+      - FLASK_API_BASE_URL=http://127.0.0.1:5000
       - VOICE_ASSISTANT_DIR=/app/ros2_ws/voice_assistant
+      - ROS_LOCALHOST_ONLY=${ROS_LOCALHOST_ONLY:-0}
+      - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}
     volumes:
       - /media/dyan/project/projects/voice/:/data/voice
       - /dev/snd:/dev/snd
@@ -157,18 +162,19 @@ services:
       - all
       - programs
     environment:
-      - FLASK_API_BASE_URL=http://flask-app:5000
-      - PIB_BLOCKLY_SERVER_URL=http://pib-blockly-server:2442
+      - FLASK_API_BASE_URL=http://127.0.0.1:5000
+      - PIB_BLOCKLY_SERVER_URL=http://127.0.0.1:2442
       - TINKERFORGE_HOST=host.docker.internal
       - TINKERFORGE_PORT=4223
       - PYTHON_BINARY=/usr/bin/python3
       - PROGRAM_DIR=/ros2_ws/cerebra_programs
       - VOICE_ASSISTANT_DIR=/app/ros2_ws/voice_assistant
+      - ROS_LOCALHOST_ONLY=${ROS_LOCALHOST_ONLY:-0}
+      - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}
     volumes:
       - programs:/ros2_ws/cerebra_programs
     restart: always
-    networks:
-      - pib-network
+    network_mode: host
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
@@ -195,10 +201,11 @@ services:
     environment:
       - STATIC_IMAGE_DIR=/app/ros2_ws/display/static_images
       - DISPLAY=:0.0
+      - ROS_LOCALHOST_ONLY=${ROS_LOCALHOST_ONLY:-0}
+      - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}
     command: ros2 launch display launch.py
     restart: always
-    networks:
-      - pib-network
+    network_mode: host
 
   ros-audio-io:
     image: ros-audio-io
@@ -210,12 +217,13 @@ services:
       - all
       - ros_audio_io
       - voice_assistant
-    networks:
-      - pib-network
+    network_mode: host
     env_file:
       - ros-audio.env
     environment:
       - PULSE_SERVER=unix:${XDG_RUNTIME_DIR:-/run/user/1000}/pulse/native
+      - ROS_LOCALHOST_ONLY=${ROS_LOCALHOST_ONLY:-0}
+      - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}
     devices:
       - /dev/snd:/dev/snd
       - /dev/bus/usb:/dev/bus/usb1

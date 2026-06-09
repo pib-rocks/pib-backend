@@ -55,7 +55,7 @@ function install_ros() {
   sudo apt -qq update  && \
   sudo apt -qq -y install python3 python3-pip python3-tk python3-colcon-common-extensions && \
   echo 'source /home/pib/ros_working_dir/install/setup.bash' >> "$HOME/.bashrc" && \
-  echo "export ROS_LOCALHOST_ONLY=1" >> "$HOME/.bashrc"
+  echo "export ROS_LOCALHOST_ONLY=0" >> "$HOME/.bashrc"
   print INFO "Installed colcon"
 
 

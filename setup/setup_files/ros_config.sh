@@ -1,4 +1,4 @@
 #!/bin/bash
-#Prevents talking to other robots on the same network
-export ROS_LOCALHOST_ONLY=1
+# Allows ROS 2 discovery and topics across the network
+export ROS_LOCALHOST_ONLY=0
 
