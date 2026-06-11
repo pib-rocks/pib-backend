@@ -24,6 +24,8 @@ tags:
     description: CRUD-Operations for poses
   - name: bricklet
     description: Read- and Update-Operations for bricklets
+  - name: button-programs
+    description: Read- and Update-Operations for button programs
 paths:
   /voice-assistant/personality:
     post:
@@ -1002,6 +1004,46 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+  /button-programs:
+    get:
+      tags:
+        - button-programs
+      summary: Get all button-program assignments
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ButtonPrograms'
+        '400':
+          $ref: '#/components/responses/400'
+        '500':
+          $ref: '#/components/responses/500'
+    put:
+      tags:
+        - button-programs
+      summary: Update button-program assignments
+      requestBody:
+        description: List of button-program assignments to update
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ButtonProgramsUpdate'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ButtonPrograms'
+        '400':
+          $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
+        '500':
+          $ref: '#/components/responses/500'
 components:
   schemas:
     VoiceAssistantPersonality:
@@ -1573,7 +1615,9 @@ components:
           enum:
             - Solid State Relay Bricklet
             - Servo Bricklet
-          example: Servo Bricklet
+            - RGB LED Button Bricklet
+          examples:
+            - Servo Bricklet
         uid:
           type: [string, "null"]
           examples:
@@ -1638,6 +1682,61 @@ components:
           type: string
           examples: 
             - 192.168.220.243
+    ButtonProgram:
+      type: object
+      properties:
+        brickletNumber:
+          type: integer
+          description: the number of the bricklet
+          examples:
+            - 5
+            - 6
+            - 7
+        brickletUid:
+          type: [string, "null"]
+          description: The UID of the bricklet
+          examples:
+            - "XYZ"
+            - null
+        programNumber:
+          type: [string, "null"]
+          format: uuid
+          description: The number of the assigned program, null if no program is assigned
+          examples:
+            - "bb13a553-f5de-49d2-96df-985152e125c7"
+            - null
+    ButtonPrograms:
+      type: object
+      properties:
+        buttonPrograms:
+          type: array
+          items:
+            $ref: '#/components/schemas/ButtonProgram'
+    ButtonProgramUpdate:
+      type: object
+      properties:
+        brickletNumber:
+          type: integer
+          description: The number of the bricklet
+          examples:
+            - 5
+        programNumber:
+          type: [string, "null"]
+          format: uuid
+          description: The number of the program to assign, null to remove assignment
+          examples:
+            - "bb13a553-f5de-49d2-96df-985152e125c7"
+            - null
+      required:
+        - brickletNumber
+        - programNumber
+    ButtonProgramsUpdate:
+      type: object
+      properties:
+        buttonProgramUpdates:
+          type: array
+          items:
+            $ref: '#/components/schemas/ButtonProgramUpdate'
     Error:
       required:
         - Error
