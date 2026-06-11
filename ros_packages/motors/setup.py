@@ -26,6 +26,7 @@ setup(
             "motor_control = motors.motor_control:main",
             "motor_current = motors.motor_current:main",
             "relay_control = motors.relay_control:main",
+            "rgb_button_control = motors.rgb_button_control:main",
         ],
     },
 )
