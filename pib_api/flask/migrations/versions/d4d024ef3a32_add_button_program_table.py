@@ -32,9 +32,19 @@ def upgrade():
     )
     conn = op.get_bind()
     conn.execute(sa.text("""
+        INSERT OR IGNORE INTO bricklet (type, uid, bricklet_number) VALUES 
+        ('RGB LED Button Bricklet', null, 5),
+        ('RGB LED Button Bricklet', null, 6),
+        ('RGB LED Button Bricklet', null, 7);
+            """))
+    conn.execute(sa.text("""
         INSERT OR IGNORE INTO button_program (bricklet_id, program_id) SELECT id, NULL FROM bricklet WHERE type = 'RGB LED Button Bricklet';
             """))
 
 
 def downgrade():
     op.drop_table("button_program")
+    conn = op.get_bind()
+    conn.execute(sa.text("""
+        DELETE FROM bricklet WHERE type = 'RGB LED Button Bricklet';
+            """))
