@@ -31,15 +31,22 @@ def upgrade():
         sa.UniqueConstraint("bricklet_id"),
     )
     conn = op.get_bind()
-    conn.execute(sa.text("""
-        INSERT OR IGNORE INTO bricklet (type, uid, bricklet_number) VALUES 
-        ('RGB LED Button Bricklet', null, 5),
-        ('RGB LED Button Bricklet', null, 6),
-        ('RGB LED Button Bricklet', null, 7);
-            """))
-    conn.execute(sa.text("""
-        INSERT OR IGNORE INTO button_program (bricklet_id, program_id) SELECT id, NULL FROM bricklet WHERE type = 'RGB LED Button Bricklet';
-            """))
+
+    # only add new bricklet and button_program data if the table is not empty - otherwise, the commands.py will fill in all default values
+    result = conn.execute(sa.text("SELECT COUNT(*) FROM bricklet"))
+    count = result.scalar()
+
+    if count > 0:
+        conn.execute(sa.text("""
+            INSERT OR IGNORE INTO bricklet (type, uid, bricklet_number) VALUES 
+            ('RGB LED Button Bricklet', null, 5),
+            ('RGB LED Button Bricklet', null, 6),
+            ('RGB LED Button Bricklet', null, 7);
+                """))
+
+        conn.execute(sa.text("""
+            INSERT OR IGNORE INTO button_program (bricklet_id, program_id) SELECT id, NULL FROM bricklet WHERE type = 'RGB LED Button Bricklet';
+                """))
 
 
 def downgrade():
