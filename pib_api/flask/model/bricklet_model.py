@@ -10,7 +10,12 @@ class Bricklet(db.Model):
     uid = db.Column(db.String(30), nullable=True, unique=True)
     bricklet_number = db.Column(db.Integer, nullable=False, unique=True)
     type = db.Column(
-        db.Enum("Solid State Relay Bricklet", "Servo Bricklet", name="bricklet_type"),
+        db.Enum(
+            "Solid State Relay Bricklet",
+            "Servo Bricklet",
+            "RGB LED Button Bricklet",
+            name="bricklet_type",
+        ),
         nullable=False,
     )
     bricklet_pins = db.relationship(
