@@ -500,7 +500,6 @@ class VoiceAssistantNode(Node):
             ):
                 if self.gemini_loop.is_listening:
                     self.gemini_loop.stop()
-                self.play_audio_from_file(STOP_SIGNAL_FILE)
 
                 self.state.turned_on = False
                 # keep the current chat id if none was provided
@@ -570,7 +569,6 @@ class VoiceAssistantNode(Node):
         if "gemini" in api_name:
             if not self.gemini_loop.is_listening:
                 self.gemini_loop.start(chat_id=chat_id)
-                self.play_audio_from_file(START_SIGNAL_FILE)
             else:
                 self.get_logger().debug("Gemini already running; no-op")
 
