@@ -1,42 +1,138 @@
-# Software setup
+# Installation
 
-This script assumes:
+`setup-pib.sh` is a single script that installs the complete pib software stack.
+It detects the operating system automatically and chooses the appropriate installation method:
 
-- that the newest Raspberry Pi OS is installed
-- the user running it is **pib**
+| OS | Method | Intended for |
+|----|--------|--------------|
+| Raspberry Pi OS (bookworm / trixie) | Docker | **Users** (production) |
+| Ubuntu 24.04 Noble | Native (ROS2 Jazzy, systemd) | **Developers** |
 
-## Installing pibs software
+> **The script must be run as the user `pib`.**
 
-All the software pib requires can be installed by running our setup script.
-Follow these steps to run it:
+---
 
-1. Open a terminal in Raspberry Pi OS
+## Method 1 — Docker on Raspberry Pi OS (recommended for users)
 
-2. Insert the following command into the terminal to download the script:
+This is the default production method. Cerebra and pib-backend run inside Docker containers managed by `docker compose`. No ROS installation on the host is required.
 
-        wget https://raw.githubusercontent.com/pib-rocks/pib-backend/main/setup/setup-pib.sh
+**Requirements:** Raspberry Pi OS Bookworm or Trixie, user `pib`.
 
-   (or download it manually: https://github.com/pib-rocks/pib-backend/blob/main/setup/setup-pib.sh)
+```bash
+# 1. Download the setup script
+wget https://raw.githubusercontent.com/pib-rocks/pib-backend/main/setup/setup-pib.sh
 
-3. Insert this command to run the script:
+# 2. Run it
+bash setup-pib.sh
+```
 
-        bash setup-pib.sh
+The script will:
+- Install Docker and pull the pib containers
+- Configure all required systemd services
+- Add user `pib` to the `docker` group
+- Install [OpenClaw](https://openclaw.ai) AI assistant and start its gateway service
 
-   If you want to run the setup-script in legacy mode (for Raspberry Pi 4), insert:
-               
-         bash setup-pib.sh -l
+Once complete, **reboot** to apply all changes.
 
-The setup then adds Cerebra and it's dependencies, including ROS2, Tinkerforge,...
-Once the installation is complete, please restart the system to apply all the changes.
+---
+
+## Method 2 — Native install on Ubuntu 24.04 (for developers)
+
+On Ubuntu 24.04 Noble the script installs everything directly on the host:
+ROS2 Jazzy, Flask API, Blockly server, Tinkerforge tools, Cerebra frontend (Angular), and all ROS nodes — each managed by a dedicated systemd service.
+
+Python packages are installed into a dedicated virtual environment at `~/pib-venv` (PEP 668 compliance).
+
+**Requirements:** Ubuntu 24.04 Noble, user `pib`.
+
+```bash
+# 1. Download the setup script
+wget https://raw.githubusercontent.com/pib-rocks/pib-backend/main/setup/setup-pib.sh
+
+# 2. Run it
+bash setup-pib.sh
+```
+
+The script will:
+- Install ROS2 Jazzy, rosbridge, and colcon
+- Create `~/pib-venv` and install all Python dependencies into it
+- Install and configure Flask API, Blockly server, Tinkerforge, phpLiteAdmin, nginx
+- Build and deploy the Cerebra Angular frontend
+- Register and enable all systemd boot services
+- Install [OpenClaw](https://openclaw.ai) AI assistant and start its gateway service
+
+Once complete, **reboot** to apply all changes.
+
+---
+
+## Script flags
+
+All flags are optional. When no flags are given, both repositories are cloned from the branch that matches the current git checkout of the script (falling back to `main`).
+
+| Flag | Long form | Description |
+|------|-----------|-------------|
+| `-b=BRANCH` | `--backend-branch=BRANCH` | Branch of [pib-backend](https://github.com/pib-rocks/pib-backend) to clone and install. |
+| `-f=BRANCH` | `--frontend-branch=BRANCH` | Branch of [cerebra](https://github.com/pib-rocks/cerebra) to clone and install. |
+| `-h` | `--help` | Print usage information and exit. |
+
+**Examples:**
+
+```bash
+# Install the main branch of both repos (default)
+bash setup-pib.sh
+
+# Install a specific backend PR branch, keep frontend on main
+bash setup-pib.sh -b=PR-1098
+
+# Install specific branches for both repos
+bash setup-pib.sh -b=PR-1098 -f=PR-566
+
+# Verbose form
+bash setup-pib.sh --backend-branch=PR-1098 --frontend-branch=PR-566
+```
+
+A detailed log of the installation is written to `setup-pib.log` in the same directory as the script.
+
+---
+
+## OpenClaw AI Assistant
+
+`setup-pib.sh` automatically installs [OpenClaw](https://openclaw.ai) — a personal AI assistant — on both Raspberry Pi OS and Ubuntu 24.04.
+
+**What gets installed:**
+
+- Node 22 (via NodeSource, system-wide — does not affect the pib Node 18 used by Cerebra)
+- `openclaw` npm package (global, in `~/.npm-global`)
+- OpenClaw gateway configured on port `18789` (loopback only)
+- `openclaw-gateway.service` systemd user unit, enabled to start on boot
+
+**After installation, configure your AI provider:**
+
+```bash
+# Interactive setup wizard (adds API keys, channels, etc.)
+openclaw onboard
+```
+
+**Useful commands:**
+
+```bash
+openclaw status          # check gateway health
+openclaw daemon restart  # restart the gateway service
+openclaw agent --message "Hello pib!"  # send a message to the assistant
+```
+
+The gateway runs as a user service. If it is not running, start it with:
+
+```bash
+systemctl --user start openclaw-gateway.service
+```
+
+---
 
 # Updating the Software
 
-This script assumes that the setup script was executed successfully
-
-1. Open a terminal
-2. Enter this command: `update-pib`
-
-This script will update your docker containers (Front- and Backend)
+- **Docker (Raspberry Pi OS):** Open a terminal and run `update-pib` to pull and restart the latest containers.
+- **Native (Ubuntu 24.04):** Pull the latest code in `~/app/pib-backend` and `~/app/cerebra`, then restart the relevant systemd services (e.g. `sudo systemctl restart pib_api_boot.service`).
 
 ## Webots
 

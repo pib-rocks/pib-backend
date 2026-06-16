@@ -1,2 +1,2 @@
 string proxy_goal_id
-uint8 exit_code
+int8 exit_code

@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# This script is responsible to setup the Docker Engine + Containers to run Cerebra
-# To properly run it, is relies on being sourced by the setup-pib.sh script
+# This script sets up the Docker Engine and containers to run Cerebra (Raspberry Pi OS production path).
+# It is sourced by setup-pib.sh when running on Raspberry Pi OS (bookworm/trixie).
 # Also see: https://github.com/docker/docker-install for a more comprehensive docker installation script
 
 
@@ -89,7 +89,14 @@ function setup_docker_cleaner_service() {
 function start_container() {
     print INFO "Starting container"
     echo "TRYB_URL_PREFIX=https://platform.tryb.ai" > "$BACKEND_DIR"/password.env
-    sudo docker compose -f "$BACKEND_DIR/docker-compose.yaml" --profile all up -d || return 1
+    
+    if [ "$(uname -m)" = "aarch64" ]; then
+        DEPTHAI_TAG="jazzy-arm64-latest"
+    else
+        DEPTHAI_TAG="jazzy-latest"
+    fi
+
+    sudo env DEPTHAI_TAG=$DEPTHAI_TAG docker compose -f "$BACKEND_DIR/docker-compose.yaml" --profile all up -d || return 1
     print SUCCESS "Started pib-backend container"
     sudo docker compose -f "$FRONTEND_DIR/docker-compose.yaml" up -d || return 1
     print SUCCESS "Started cerebra container"
