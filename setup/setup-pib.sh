@@ -97,6 +97,9 @@ function is_supported_raspbian(){
 function check_distribution() {
   if is_ubuntu_noble || is_supported_raspbian; then
     print INFO "You are running the setup-script on: $DISTRIBUTION $DIST_VERSION which is one of the supported operating-systems! So, we can happily start the setup…"
+    if is_supported_raspbian && [ "$DIST_VERSION" = "bookworm" ]; then
+      print WARN "Raspberry Pi OS bookworm is deprecated for pib setup. ROS 2 Jazzy (Rospian) requires Trixie. Consider upgrading to Pi OS Trixie."
+    fi
     return 0
   else
     print WARN "This script expects Raspberry Pi OS on pib or Ubuntu 24.04 for systems that run the digital twin only. We detected $DISTRIBUTION $DIST_VERSION. Do you want to continue? (Y/N):"
@@ -141,7 +144,7 @@ function remove_apps() {
 function install_system_packages() {
     print INFO "Installing system packages"
     sudo apt update -qq && \
-    sudo apt-get install -y git curl openssh-server >/dev/null
+    sudo apt-get install -y git curl gnupg openssh-server >/dev/null
     print SUCCESS "Installing system packages completed"
 }
 
@@ -384,6 +387,9 @@ fi
 install_system_packages || { print ERROR "failed to install system packages"; return 1; }
 install_locale || { print ERROR "failed to install locale"; return 1; }
 clone_repositories || { print ERROR "failed to clone repositories"; return 1; }
+if is_supported_raspbian && [ "$DIST_VERSION" = "trixie" ]; then
+  source "$SETUP_INSTALLATION_DIR/ros_jazzy_install.sh" || { print ERROR "failed to install ROS 2 Jazzy"; return 1; }
+fi
 move_setup_files || print ERROR "failed to move setup files"
 install_DBbrowser || print ERROR "failed to install DB browser"
 install_tinkerforge || print ERROR "failed to install tinkerforge"
