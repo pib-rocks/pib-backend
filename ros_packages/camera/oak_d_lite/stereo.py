@@ -1,18 +1,15 @@
 #!/usr/bin/python3
 import base64
-
+import os
 import cv2
 import depthai as dai
 import rclpy
 from datatypes.srv import GetCameraImage
 from rclpy.node import Node
-from std_msgs.msg import String, Float64, Int32, Int32MultiArray
+from std_msgs.msg import Float32MultiArray, Float64, Int32, Int32MultiArray, String
 
 
 class ErrorPublisher(Node):
-
-    # def __new__(cls, error_message):
-    #    print("creating new ErrorPublisher with Error message" + error_message)
 
     def __init__(self):
         super().__init__("error_publisher")
@@ -25,14 +22,30 @@ class ErrorPublisher(Node):
         msg = String()
         msg.data = "Camera not available: "
         self.publisher_.publish(msg)
-        # self.get_logger().info('Publishing: "%s"' % msg.data)
 
 
 class CameraNode(Node):
 
     def __init__(self):
         super().__init__("camera_node")
+
         self.publisher_ = self.create_publisher(String, "camera_topic", 10)
+        self.face_center_publisher_ = self.create_publisher(
+            Float32MultiArray, "face_center", 10
+        )
+
+        cascade_paths = [
+            "/usr/share/opencv4/haarcascades/haarcascade_frontalface_default.xml",
+            "/usr/share/opencv/haarcascades/haarcascade_frontalface_default.xml",
+        ]
+
+        cascade_path = next((p for p in cascade_paths if os.path.exists(p)), None)
+
+        if cascade_path is None:
+            raise RuntimeError("haarcascade_frontalface_default.xml not found")
+
+        self.face_cascade = cv2.CascadeClassifier(cascade_path)
+
         self.timer_subscription = self.create_subscription(
             Float64, "timer_period_topic", self.timer_period_callback, 10
         )
@@ -43,12 +56,11 @@ class CameraNode(Node):
             Int32MultiArray, "size_topic", self.preview_size_callback, 10
         )
 
-        # Initialize default preview size and quality factor
         self.preview_width = 1280
         self.preview_height = 720
         self.quality_factor = 80
+        self.current_image = ""
 
-        # Initialize pipeline when camera is available
         self.camera_available = self.init_pipeline()
 
         if self.camera_available:
@@ -71,57 +83,84 @@ class CameraNode(Node):
         try:
             self.pipeline = dai.Pipeline()
 
-            # Define a source - color camera
             self.camRgb = self.pipeline.createColorCamera()
             self.camRgb.setPreviewSize(self.preview_width, self.preview_height)
             self.camRgb.setInterleaved(False)
 
-            # Create output
             xoutRgb = self.pipeline.createXLinkOut()
             xoutRgb.setStreamName("rgb")
             self.camRgb.preview.link(xoutRgb.input)
 
-            # Try to connect to device
             self.device = dai.Device(self.pipeline)
 
-            # Output queue will be used to get the rgb frames from the output defined above
             self.queue = self.device.getOutputQueue(
                 name="rgb", maxSize=4, blocking=False
             )
             return True
 
         except Exception as e:
+            import traceback
+
+            print("====================================")
+            print("CAMERA INIT FAILED")
+            traceback.print_exc()
+            print("====================================")
+
             self.get_logger().error(f"Camera not found: {e}")
             self.device = None
             self.queue = None
             return False
 
+    def publish_face_center(self, frame):
+        face_msg = Float32MultiArray()
+
+        if self.face_cascade.empty():
+            face_msg.data = [0.0, 0.0]
+            self.face_center_publisher_.publish(face_msg)
+            return
+
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        faces = self.face_cascade.detectMultiScale(gray, 1.1, 5)
+
+        if len(faces) > 0:
+            x, y, w, h = max(faces, key=lambda f: f[2] * f[3])
+            x_center = (x + w / 2) - (frame.shape[1] / 2)
+            y_center = (frame.shape[0] / 2) - (y + h / 2)
+            face_msg.data = [float(x_center), float(y_center)]
+        else:
+            face_msg.data = [0.0, 0.0]
+
+        self.face_center_publisher_.publish(face_msg)
+
     def timer_callback(self):
         if not self.queue:
             return
-        image_rgb = self.queue.tryGet()  # non-blocking call
+
+        image_rgb = self.queue.tryGet()
         if image_rgb is None:
             return
-        # data is originally represented as a flat 1D array, it needs to be converted into HxWxC form
+
         frame = image_rgb.getCvFrame()
 
-        # Convert the image to base64
+        self.publish_face_center(frame)
+
         retval, buffer = cv2.imencode(
             ".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), self.quality_factor]
         )
+        if not retval:
+            return
+
         jpg_as_text = base64.b64encode(buffer)
 
         msg = String()
-        msg.data = jpg_as_text.decode("utf-8")  # convert bytes to string
+        msg.data = jpg_as_text.decode("utf-8")
         self.current_image = msg.data
         self.publisher_.publish(msg)
 
     def timer_period_callback(self, msg):
         self.timer_period = msg.data
-        self.timer.cancel()  # cancel the old timer
-        self.timer = self.create_timer(
-            self.timer_period, self.timer_callback
-        )  # create a new timer with updated period
+        self.timer.cancel()
+        self.timer = self.create_timer(self.timer_period, self.timer_callback)
 
     def quality_factor_callback(self, msg):
         self.quality_factor = msg.data
@@ -129,17 +168,16 @@ class CameraNode(Node):
     def preview_size_callback(self, msg):
         self.preview_width, self.preview_height = msg.data
 
-        # Reset pipeline with new preview size
-        self.device.close()
+        if self.device is not None:
+            self.device.close()
+
         self.init_pipeline()
 
 
 def spin_camera(times):
     cnt = times
     if cnt == 0:
-        print(
-            "Couldn't restart camera due to displayed error/s, publishing error message"
-        )
+        print("Couldn't restart camera due to displayed error/s, publishing error message")
         rclpy.spin(error_publisher)
     else:
         try:

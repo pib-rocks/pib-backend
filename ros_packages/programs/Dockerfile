@@ -13,14 +13,17 @@ WORKDIR /app
 COPY ./pib_blockly/pib_blockly_client /tmp/pib_blockly_client
 COPY ./pib_api/client /tmp/pib_api_client
 COPY ./ros_packages/motors/pib_motors /tmp/pib_motors
+COPY ./ros_packages/datatypes ros2_ws/datatypes
+COPY ./ros_packages/programs ros2_ws/programs
+COPY ./ros_packages/button_service ros2_ws/button_service
 RUN apt-get update --fix-missing && \
     apt-get install --no-install-recommends -y python3-pip && \
     pip install /tmp/pib_blockly_client && \
     pip install /tmp/pib_api_client && \
     pip install /tmp/pib_motors && \
     pip install requests==2.32.3 && \
-    pip install tinkerforge
-
+    pip install tinkerforge && \
+    pip install opencv-python-headless "depthai<3" blobconverter
 
 
 COPY ./ros_packages/datatypes ros2_ws/datatypes
