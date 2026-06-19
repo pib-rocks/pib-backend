@@ -10,7 +10,9 @@ from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 class StartupPoseExecutor:
     STARTUP_POSE_NAME: str = "Startup/Resting"
     STARTUP_POSE_VELOCITY: int = 1000  # Reduced velocity for startup pose
-    STARTUP_TIMEOUT: float = 20.0
+    STARTUP_TIMEOUT: float = (
+        5.0  # Maximum time to wait for each motor to reach its startup position
+    )
     WAIT_INTERVAL: float = 0.01
 
     def __init__(self, node: Node, motors: list[Motor]):
@@ -27,7 +29,7 @@ class StartupPoseExecutor:
         self._reduce_motor_speeds(original_settings)
 
         try:
-            success = self._move_and_wait(motor_positions)
+            success = self._move_sequentially(motor_positions)
         finally:
             self._restore_settings(original_settings)
 
@@ -69,45 +71,57 @@ class StartupPoseExecutor:
             if motor.name in original_settings:
                 reduced_speed_settings = original_settings[motor.name].copy()
                 reduced_speed_settings["velocity"] = self.STARTUP_POSE_VELOCITY
+                # do not enable motors yet
+                reduced_speed_settings["turnedOn"] = False
+
                 motor.apply_settings(reduced_speed_settings)
 
-    def _move_and_wait(self, motor_positions: list[dict[str, Any]]) -> bool:
-        jt = JointTrajectory()
-        jt.joint_names = []
-
+    # First move then enable:
+    def _move_sequentially(self, motor_positions: list[dict[str, Any]]) -> bool:
         for motor_position in motor_positions:
             motor_name = motor_position["motorName"]
             position = motor_position["position"]
 
-            jt.joint_names.append(motor_name)
+            motor = next((m for m in self.motors if m.name == motor_name), None)
+            if motor is None:
+                continue
+
+            # 1. set position with reduced speed but motor turned off
+            jt = JointTrajectory()
+            jt.joint_names = [motor_name]
             point = JointTrajectoryPoint()
             point.positions.append(position)
             jt.points.append(point)
 
-        req = ApplyJointTrajectory.Request()
-        req.joint_trajectory = jt
+            req = ApplyJointTrajectory.Request()
+            req.joint_trajectory = jt
 
-        self.node.get_logger().info("Applying startup pose...")
-        self.node.apply_joint_trajectory(req, ApplyJointTrajectory.Response())
+            self.node.get_logger().info(
+                f"Moving motor '{motor_name}' to startup position..."
+            )
+            self.node.apply_joint_trajectory(req, ApplyJointTrajectory.Response())
 
-        if not self._wait_for_connected_motors(timeout=self.STARTUP_TIMEOUT):
-            self.node.get_logger().warn("Not all motors reached startup position")
-            return False
+            # 2. then enable motor
+            settings = motor.get_settings()
+            settings["turnedOn"] = True
+            motor.apply_settings(settings)
+            self.node.get_logger().info(f"Enabling motor '{motor_name}'...")
+
+            if motor.check_if_motor_is_connected():
+                if not self._wait_for_motor(motor):
+                    self.node.get_logger().warn(
+                        f"Motor '{motor_name}' did not reach startup position in time"
+                    )
+
         return True
 
-    def _wait_for_connected_motors(self, timeout: float | None = None) -> bool:
+    def _wait_for_motor(self, motor: Motor, timeout: float | None = None) -> bool:
         if timeout is None:
             timeout = self.STARTUP_TIMEOUT
         start = time.time()
 
-        motors_to_check = [
-            motor for motor in self.motors if motor.check_if_motor_is_connected()
-        ]
-        if not motors_to_check:
-            return True  # nothing to wait for
-
         while time.time() - start < timeout:
-            if all(motor.has_reached_position() for motor in motors_to_check):
+            if motor.has_reached_position():
                 return True
             time.sleep(self.WAIT_INTERVAL)
 

@@ -80,6 +80,8 @@ class MotorControl(Node):
             MotorSettings, "motor_settings", 10
         )
 
+        self._startup_done = False
+
         # load motor-settings if not in dev mode
         if not self.dev:
             for motor in motors:
@@ -87,6 +89,8 @@ class MotorControl(Node):
                     successful, motor_settings_dto = motor_client.get_motor_settings(
                         motor.name
                     )
+                    if not self._startup_done:
+                        motor_settings_dto["turnedOn"] = False
                     if successful:
                         motor.apply_settings(motor_settings_dto)
 
@@ -97,7 +101,6 @@ class MotorControl(Node):
         ipcon.register_callback(ipcon.CALLBACK_ENUMERATE, connected_enumerate)
         ipcon.enumerate()
 
-        self._startup_done = False
         self.ssr_subscriber = self.create_subscription(
             SolidStateRelayState,
             "solid_state_relay_state",
