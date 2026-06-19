@@ -179,8 +179,8 @@ function clone_repositories() {
     print INFO "${APP_DIR} created"
   fi
 
-  git clone --recurse-submodules -b "$BRANCH_BACKEND" $BACKEND "$BACKEND_DIR" || print WARN "pib-backend repository already exists"
-  git clone --recurse-submodules -b "$BRANCH_FRONTEND" $FRONTEND "$FRONTEND_DIR" || print WARN "cerebra repository already exists"
+  git clone -b "$BRANCH_BACKEND" "$BACKEND" "$BACKEND_DIR" || print WARN "pib-backend repository already exists"
+  git clone -b "$BRANCH_FRONTEND" "$FRONTEND" "$FRONTEND_DIR" || print WARN "cerebra repository already exists"
 
   print SUCCESS "Completed cloning repositories to $APP_DIR"
 }
