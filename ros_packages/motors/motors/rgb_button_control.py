@@ -3,9 +3,10 @@ import rclpy
 from rclpy.node import Node
 from rclpy.client import Client
 from rclpy.task import Future
+from rclpy.service import Service
 from tinkerforge.bricklet_rgb_led_button import BrickletRGBLEDButton
 from pib_motors.bricklet import uid_to_rgb_led_bricklet
-from datatypes.srv import ProxyRunProgramStart, ProxyRunProgramStop
+from datatypes.srv import ProxyRunProgramStart, ProxyRunProgramStop, SetButtonColor
 from datatypes.msg import ProxyRunProgramResult
 from pib_api_client import button_programs_client
 
@@ -13,7 +14,6 @@ ERROR_COLOR_DURATION_SECONDS = 2.0  # how long red stays before reverting to blu
 BLUE_COLOR = (0, 0, 255)  # blue color for idle state
 GREEN_COLOR = (0, 255, 0)  # green color for program running state
 RED_COLOR = (255, 0, 0)  # red color for error state
-POLL_INTERVAL_SECONDS = 5.0
 
 
 class RGBButtonControl(Node):
@@ -23,7 +23,7 @@ class RGBButtonControl(Node):
             uid_to_rgb_led_bricklet
         )
         if not self.rgb_led_bricklets:
-            self.get_logger().info("No RGB Led Button Bricklet found")
+            self.get_logger().info("No RGB Button Bricklet found")
 
         for uid, bricklet in self.rgb_led_bricklets.items():
             try:
@@ -31,13 +31,17 @@ class RGBButtonControl(Node):
                     BrickletRGBLEDButton.CALLBACK_BUTTON_STATE_CHANGED,
                     lambda state, uid=uid: self.on_button_state_changed(uid, state),
                 )
-                self.get_logger().info(
-                    f"Registered callback for RGB Button Bricklet with UID {uid}"
-                )
             except Exception as e:
                 self.get_logger().error(
                     f"Error registering callback for RGB Button Bricklet with UID {uid}: {str(e)}"
                 )
+
+        # Service for setting the button color
+        self.set_button_color_service: Service = self.create_service(
+            SetButtonColor,
+            "set_button_color",
+            self.set_button_color_callback,
+        )
 
         self.start_program_client: Client = self.create_client(
             ProxyRunProgramStart, "proxy_run_program_start"
@@ -56,14 +60,24 @@ class RGBButtonControl(Node):
             10,
         )
 
-        # maps proxy_goal_id -> uid
         self.goal_to_uid: dict[str, str] = {}
 
-        self.update_button_colors()
-
-        self.create_timer(POLL_INTERVAL_SECONDS, self.update_button_colors)
+        self.set_button_startup_color()
 
         self.get_logger().info("Now Running RGB_BUTTON_CONTROL")
+
+    def set_button_color_callback(
+        self, request: SetButtonColor.Request, response: SetButtonColor.Response
+    ):
+        """callback function for 'set_button_color' service"""
+        uid = request.uid
+        r = request.r
+        g = request.g
+        b = request.b
+
+        successful = self.set_button_color(uid, r, g, b)
+        response.successful = successful
+        return response
 
     def program_result_callback(self, msg: ProxyRunProgramResult) -> None:
         """Set button color to red on error (temporary), blue on success."""
@@ -73,12 +87,15 @@ class RGBButtonControl(Node):
 
         if msg.exit_code != 0:
             self.set_button_color(uid, *RED_COLOR)
+            timer = self.create_timer(
+                ERROR_COLOR_DURATION_SECONDS,
+                lambda: (self.set_button_color(uid, *BLUE_COLOR), timer.cancel()),
+            )
             self.get_logger().warning(
                 f"Program failed for UID {uid}, exit_code={msg.exit_code}"
             )
         else:
             self.set_button_color(uid, *BLUE_COLOR)
-            self.get_logger().info(f"Program finished successfully for UID {uid}")
 
     def on_button_state_changed(self, uid: str, state) -> None:
         """Callback function for button press events."""
@@ -92,13 +109,10 @@ class RGBButtonControl(Node):
             self.load_button_programs()
             program_number = self.uid_to_program.get(uid)
             if program_number:
-                self.get_logger().info(
-                    f"Starting program {program_number} for button with UID {uid}."
-                )
                 self.start_program(program_number, uid)
             else:
                 self.get_logger().warning(
-                    f"No program assigned to button with UID {uid}."
+                    f"No program assigned to RGB Button with UID {uid}."
                 )
 
     def get_running_goal_id(self, uid: str) -> str | None:
@@ -119,9 +133,6 @@ class RGBButtonControl(Node):
             if response:
                 self.goal_to_uid.pop(proxy_goal_id, None)
                 self.set_button_color(uid, *BLUE_COLOR)
-                self.get_logger().info(
-                    f"Stopped program for UID {uid}, proxy_goal_id={proxy_goal_id}"
-                )
 
         future.add_done_callback(on_response)
 
@@ -139,6 +150,7 @@ class RGBButtonControl(Node):
                 self.uid_to_program[uid] = button_program.get("programNumber")
 
     def start_program(self, program_number: str, uid: str) -> None:
+        """Starts a program and stores the goal_id to uid mapping."""
         request = ProxyRunProgramStart.Request()
         request.program_number = program_number
         self.set_button_color(uid, *GREEN_COLOR)
@@ -148,31 +160,26 @@ class RGBButtonControl(Node):
             response = fut.result()
             if response:
                 self.goal_to_uid[response.proxy_goal_id] = uid
-                self.get_logger().info(
-                    f"Started program {program_number} for UID {uid}, proxy_goal_id={response.proxy_goal_id}"
-                )
 
         future.add_done_callback(on_response)
 
-    def set_button_color(self, uid: str, r: int, g: int, b: int) -> None:
+    def set_button_color(self, uid: str, r: int, g: int, b: int) -> bool:
+        """Sets the LED color of the RGB Button with the given UID."""
         bricklet = self.rgb_led_bricklets.get(uid)
         if not bricklet:
-            return
+            return False
         try:
             bricklet.set_color(r, g, b)
+            return True
         except Exception as e:
             self.get_logger().error(f"Error setting color for UID {uid}: {str(e)}")
+            return False
 
-    def update_button_colors(self) -> None:
-        """Periodically updates button colors based on current program assignments."""
+    def set_button_startup_color(self) -> None:
+        """Sets button colors based on program assignments on startup."""
         self.load_button_programs()
         for uid in self.rgb_led_bricklets:
-            if uid in self.goal_to_uid.values():
-                continue  # don't override color while program is running
-            if self.uid_to_program.get(uid):
-                self.set_button_color(uid, *BLUE_COLOR)
-            else:
-                self.set_button_color(uid, 0, 0, 0)
+            self.set_button_color(uid, *BLUE_COLOR)
 
 
 def main(args=None):
