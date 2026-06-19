@@ -9,8 +9,8 @@ export RESET_TEXT_COLOR="\e[0m"
 export NEW_LINE="\n"
 
 # Github repositories
-export FRONTEND="https://github.com/pib-rocks/cerebra.git"
-export BACKEND="https://github.com/pib-rocks/pib-backend.git"
+export FRONTEND="git@github.com:Joshi-1337/cerebra.git"
+export BACKEND="git@github.com:Joshi-1337/pib-backend.git"
 export APP_DIR="$HOME/app"
 export BACKEND_DIR="$APP_DIR/pib-backend"
 export FRONTEND_DIR="$APP_DIR/cerebra"
