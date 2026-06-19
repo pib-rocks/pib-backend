@@ -88,7 +88,7 @@ services:
     depends_on:
       - rosbridge-ws
       - flask-app
-      
+
   pibsim_webots:
     image: pibsim_webots
     build:
@@ -101,7 +101,7 @@ services:
       # machine. By mounting the socket of the docker-host, the 
       # display-node uses the x-server running on the host for
       # graphics-related communication
-      - /tmp/.X11-unix:/tmp/.X11-unix 
+      - /tmp/.X11-unix:/tmp/.X11-uni 
     profiles:
       - pibsim_webots
     networks:
@@ -137,6 +137,7 @@ services:
       - /etc/machine-id:/etc/machine-id
       - ${XDG_RUNTIME_DIR:-/run/user/1000}/pulse/native:${XDG_RUNTIME_DIR:-/run/user/1000}/pulse/native
       - /home/pib/.config/pulse/cookie:/root/.config/pulse/cookie
+      - /home/pib/wav-files:/home/pib/wav-files:ro
     devices:
       - /dev/snd:/dev/snd
       - /dev/bus/usb:/dev/bus/usb1
@@ -152,7 +153,13 @@ services:
     build:
       context: .
       dockerfile: ./ros_packages/programs/Dockerfile
-    command: ros2 launch programs launch.py
+    command: >
+      bash -lc "
+        source /opt/ros/humble/setup.bash &&
+        source /app/ros2_ws/install/setup.bash &&
+        ros2 run button_service button_service_node &
+        ros2 launch programs launch.py
+      "
     profiles:
       - all
       - programs
@@ -164,8 +171,14 @@ services:
       - PYTHON_BINARY=/usr/bin/python3
       - PROGRAM_DIR=/ros2_ws/cerebra_programs
       - VOICE_ASSISTANT_DIR=/app/ros2_ws/voice_assistant
+      - TF_HOST=host.docker.internal
+      - TF_PORT=4223
+      - TF_BUTTON_BRICKLET_NUMBERS=5,6,7
     volumes:
       - programs:/ros2_ws/cerebra_programs
+      - /dev/bus/usb:/dev/bus/usb
+    device_cgroup_rules:
+      - 'c 189:* rmw'
     restart: always
     networks:
       - pib-network
@@ -191,7 +204,7 @@ services:
       # machine. By mounting the socket of the docker-host, the 
       # display-node uses the x-server running on the host for
       # graphics-related communication
-      - /tmp/.X11-unix:/tmp/.X11-unix 
+      - /tmp/.X11-unix:/tmp/.X11-uni 
     environment:
       - STATIC_IMAGE_DIR=/app/ros2_ws/display/static_images
       - DISPLAY=:0.0
@@ -227,6 +240,7 @@ services:
       - /etc/machine-id:/etc/machine-id
       - ${XDG_RUNTIME_DIR:-/run/user/1000}/pulse/native:${XDG_RUNTIME_DIR:-/run/user/1000}/pulse/native
       - /home/pib/.config/pulse/cookie:/root/.config/pulse/cookie
+      - /home/pib/wav-files:/home/pib/wav-files:ro
     restart: always
     depends_on:
       - rosbridge-ws
