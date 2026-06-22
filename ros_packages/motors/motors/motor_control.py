@@ -89,9 +89,9 @@ class MotorControl(Node):
                     successful, motor_settings_dto = motor_client.get_motor_settings(
                         motor.name
                     )
-                    if not self._startup_done:
-                        motor_settings_dto["turnedOn"] = False
                     if successful:
+                        if not self._startup_done:
+                            motor_settings_dto["turnedOn"] = False
                         motor.apply_settings(motor_settings_dto)
 
         # Log that initialization is complete
