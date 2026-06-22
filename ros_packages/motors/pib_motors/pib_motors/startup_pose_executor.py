@@ -10,9 +10,10 @@ from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 class StartupPoseExecutor:
     STARTUP_POSE_NAME: str = "Startup/Resting"
     STARTUP_POSE_VELOCITY: int = 1000  # Reduced velocity for startup pose
-    STARTUP_TIMEOUT: float = (
-        5.0  # Maximum time to wait for each motor to reach its startup position
+    DELAY_BETWEEN_MOTORS: float = (
+        1.0  # Delay between moving each motor to allow for sequential execution
     )
+    ALL_MOTORS_TIMEOUT: float = 15.0  # Limit: max wait for all motors combined
     WAIT_INTERVAL: float = 0.01
 
     def __init__(self, node: Node, motors: list[Motor]):
@@ -76,14 +77,21 @@ class StartupPoseExecutor:
 
                 motor.apply_settings(reduced_speed_settings)
 
-    # First move then enable:
     def _move_sequentially(self, motor_positions: list[dict[str, Any]]) -> bool:
+        moved_motors: list[Motor] = []
+
         for motor_position in motor_positions:
             motor_name = motor_position["motorName"]
             position = motor_position["position"]
 
             motor = next((m for m in self.motors if m.name == motor_name), None)
             if motor is None:
+                continue
+
+            if not motor.check_if_motor_is_connected():
+                self.node.get_logger().info(
+                    f"Skipping motor '{motor_name}' (not connected)"
+                )
                 continue
 
             # 1. set position with reduced speed but motor turned off
@@ -106,26 +114,28 @@ class StartupPoseExecutor:
             settings["turnedOn"] = True
             motor.apply_settings(settings)
             self.node.get_logger().info(f"Enabling motor '{motor_name}'...")
+            moved_motors.append(motor)
 
-            if motor.check_if_motor_is_connected():
-                if not self._wait_for_motor(motor):
-                    self.node.get_logger().warn(
-                        f"Motor '{motor_name}' did not reach startup position in time"
-                    )
+            # 3. short delay to stagger motor activations
+            time.sleep(self.DELAY_BETWEEN_MOTORS)
+
+        # 4. wait for ALL motors to finish before restoring speed
+        self._wait_for_all_motors(moved_motors)
 
         return True
 
-    def _wait_for_motor(self, motor: Motor, timeout: float | None = None) -> bool:
-        if timeout is None:
-            timeout = self.STARTUP_TIMEOUT
+    def _wait_for_all_motors(self, motors: list[Motor]) -> None:
         start = time.time()
-
-        while time.time() - start < timeout:
-            if motor.has_reached_position():
-                return True
+        while time.time() - start < self.ALL_MOTORS_TIMEOUT:
+            if all(
+                not m.check_if_motor_is_connected() or m.has_reached_position()
+                for m in motors
+            ):
+                return
             time.sleep(self.WAIT_INTERVAL)
-
-        return False
+        self.node.get_logger().warn(
+            "Not all motors reached startup position before restoring settings"
+        )
 
     def _restore_settings(self, original_settings: dict[str, dict[str, Any]]) -> None:
         for motor in self.motors:
