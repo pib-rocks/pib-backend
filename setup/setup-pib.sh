@@ -1,3 +1,16 @@
+## Why this fork exists
+
+##This fork was created to extend the original pib-rocks platform with additional educational and robotics functionality that was not available in the upstream project.
+
+##The project focuses on:
+
+##- Improved Blockly integration
+##- Extended TinkerForge support
+##- Better face tracking
+##- Pose and program portability
+##- Additional audio capabilities
+##- Simplified deployment without external Blockly submodules
+
 #!/bin/bash
 
 # Color definitions for logging
@@ -400,5 +413,6 @@ elif is_ubuntu_noble || is_supported_raspbian; then
 fi
 cleanup
 
-print SUCCESS "Finished installation, for more information on how to use pib and Cerebra, visit https://pib-rocks.atlassian.net/wiki/spaces/kb/overview?homepageId=65077450"
+print SUCCESS "Installation completed"
+print SUCCESS "Repository: https://github.com/Joshi-1337"
 print SUCCESS "Reboot pib to apply all changes"
