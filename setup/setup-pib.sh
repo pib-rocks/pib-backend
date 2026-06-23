@@ -1,3 +1,5 @@
+#!/bin/bash
+
 ## Why this fork exists
 
 ##This fork was created to extend the original pib-rocks platform with additional educational and robotics functionality that was not available in the upstream project.
@@ -10,8 +12,6 @@
 ##- Pose and program portability
 ##- Additional audio capabilities
 ##- Simplified deployment without external Blockly submodules
-
-#!/bin/bash
 
 # Color definitions for logging
 export ERROR="\e[31m"
