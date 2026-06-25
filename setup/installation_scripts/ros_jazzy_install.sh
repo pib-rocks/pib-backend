@@ -20,6 +20,42 @@ function configure_ros_jazzy_bashrc() {
     fi
 }
 
+function build_ros_datatypes() {
+    if [ -z "$BACKEND_DIR" ]; then
+        print ERROR "BACKEND_DIR is not set; cannot locate ros_packages/datatypes"
+        return 1
+    fi
+
+    print INFO "Building pib ROS 2 datatypes"
+
+    # ros-jazzy-ros-base ships the rosidl runtime but not the build-time tooling
+    # needed to compile an interface package, so install those here.
+    sudo apt install -y \
+        python3-colcon-common-extensions \
+        ros-jazzy-rosidl-default-generators \
+        ros-jazzy-trajectory-msgs \
+        ros-jazzy-action-msgs
+
+    # Build in a separate workspace rather than in-place to keep the git checkout
+    # free of build/, install/ and log/ artifacts.
+    local ws="$HOME/ros_working_dir"
+    mkdir -p "$ws/src"
+    cp -r "$BACKEND_DIR/ros_packages/datatypes" "$ws/src/"
+
+    source /opt/ros/jazzy/setup.bash
+    ( cd "$ws" && colcon build --packages-select datatypes ) \
+        || { print ERROR "colcon build of datatypes failed"; return 1; }
+
+    if ! grep -q "source $ws/install/setup.bash" "$HOME/.bashrc"; then
+        echo "source $ws/install/setup.bash" >> "$HOME/.bashrc"
+        print INFO "Added datatypes overlay sourcing to ~/.bashrc"
+    else
+        print INFO "datatypes overlay sourcing already present in ~/.bashrc"
+    fi
+
+    print SUCCESS "Built pib ROS 2 datatypes"
+}
+
 function install_ros_jazzy() {
     if ! is_supported_raspbian || [ "$DIST_VERSION" != "trixie" ]; then
         print WARN "ROS 2 Jazzy (Rospian) is only supported on Raspberry Pi OS Trixie; skipping"
@@ -34,6 +70,7 @@ function install_ros_jazzy() {
     if [ -f /opt/ros/jazzy/setup.bash ]; then
         print WARN "ROS 2 Jazzy already installed; skipping installation"
         configure_ros_jazzy_bashrc
+        build_ros_datatypes
         return 0
     fi
 
@@ -58,6 +95,7 @@ function install_ros_jazzy() {
     sudo apt install -y ros-jazzy-ros-base
 
     configure_ros_jazzy_bashrc
+    build_ros_datatypes
     print SUCCESS "Installed ROS 2 Jazzy (ros-jazzy-ros-base)"
 }
 
