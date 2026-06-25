@@ -200,6 +200,103 @@ class ${generator.FUNCTION_NAME_PLACEHOLDER_}():
             self.node = None
 `;
 
+// vision
+
+export const VISION_HELPER_CLASS = (generator: CodeGenerator) => `
+import os
+import rclpy
+from datatypes.srv import VisionPrompt
+
+class ${generator.FUNCTION_NAME_PLACEHOLDER_}():
+
+    def __init__(self):
+        if not rclpy.ok():
+            rclpy.init(args=None)
+
+        self.node = rclpy.create_node(f"blockly_vision_helper_{os.getpid()}")
+        self.client = self.node.create_client(VisionPrompt, "vision_prompt")
+        if not self.client.wait_for_service(timeout_sec=10.0):
+            raise RuntimeError("vision_prompt service is not available")
+
+    def ask(self, prompt: str) -> str:
+        request = VisionPrompt.Request()
+        request.prompt = str(prompt)
+
+        future = self.client.call_async(request)
+        rclpy.spin_until_future_complete(self.node, future, timeout_sec=60.0)
+
+        if not future.done():
+            raise RuntimeError("vision_prompt service call timed out")
+
+        result = future.result()
+        if result is None:
+            return ""
+
+        return str(result.response).strip()
+
+    def _to_bool_number(self, response: str) -> int:
+        cleaned = str(response).strip().lower()
+
+        if cleaned.startswith("1"):
+            return 1
+
+        if cleaned.startswith("0"):
+            return 0
+
+        if cleaned in ["ja", "yes", "true", "wahr"]:
+            return 1
+
+        return 0
+
+    def object_detected(self, object_name: str) -> int:
+        prompt = (
+            "Check the current camera image. "
+            f"Is at least one object visible that matches this description: '{object_name}'? "
+            "The description may be in English or German. "
+            "Answer only with 1 for yes or 0 for no."
+        )
+        return self._to_bool_number(self.ask(prompt))
+
+    def object_count(self, object_name: str, count: int) -> int:
+        prompt = (
+            "Check the current camera image. "
+            f"Are at least {int(count)} objects visible that match this description: '{object_name}'? "
+            "The description may be in English or German. "
+            "Answer only with 1 for yes or 0 for no."
+        )
+        return self._to_bool_number(self.ask(prompt))
+
+    def objects_different(self, object_a: str, object_b: str) -> int:
+        prompt = (
+            "Check the current camera image. "
+            f"Are two shown objects visible where one matches '{object_a}' and one matches '{object_b}', "
+            "and are they different object types? "
+            "The descriptions may be in English or German. "
+            "Examples: apple and banana returns 1. apple and apple returns 0. "
+            "Answer only with 1 for yes or 0 for no."
+        )
+        return self._to_bool_number(self.ask(prompt))
+
+    def describe_image(self, language: str = "de") -> str:
+        if str(language).lower().startswith("en"):
+            prompt = (
+                "Describe the current camera image briefly and factually in one single English sentence."
+            )
+        else:
+            prompt = (
+                "Beschreibe das aktuelle Kamerabild kurz und sachlich in einem einzigen deutschen Satz."
+            )
+
+        return self.ask(prompt)
+
+    def close(self):
+        if self.node is not None:
+            self.node.destroy_node()
+            self.node = None
+`;
+
+
+
 export const TF_BUTTON_TASTER_FUNCTION = (generator: CodeGenerator) => `
 def ${generator.FUNCTION_NAME_PLACEHOLDER_}(button_id: int, red: int, green: int, blue: int) -> int:
     logging.info(f"reading Tinkerforge button {button_id} as taster.")
