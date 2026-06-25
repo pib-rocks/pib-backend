@@ -20,6 +20,7 @@ export const IMPORT_JOINT_TRAJECTORY_MESSAGES =
     "from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint";
 export const IMPORT_POSE_CLIENT = "from pib_api_client import pose_client";
 export const IMPORT_SET_SOLID_STATE_RELAY = "from datatypes.srv import SetSolidStateRelay";
+export const IMPORT_VISION_PROMPT = "from datatypes.srv import VisionPrompt";
 export const IMPORT_SOLID_STATE_RELAY_STATE = "from datatypes.msg import SolidStateRelayState";
 
 // ros
@@ -109,6 +110,17 @@ logging.info(f"service now available")
 
 export const IMPORT_TF_BUTTON_SERVICES =
 "from button_service.srv import ReadButton, SetButtonColor";
+
+export const INIT_VISION_PROMPT_CLIENT = `
+vision_prompt_client = node.create_client(
+    VisionPrompt,
+    'vision_prompt'
+)
+
+logging.info("waiting for 'vision_prompt' service to become available...")
+vision_prompt_client.wait_for_service()
+logging.info("vision_prompt service now available")
+`;
 
 export const INIT_TF_BUTTON_CLIENTS = `
 tf_button_read_client = node.create_client(
