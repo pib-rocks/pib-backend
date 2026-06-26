@@ -11,9 +11,11 @@ export NEW_LINE="\n"
 # Github repositories
 export FRONTEND="https://github.com/pib-rocks/cerebra.git"
 export BACKEND="https://github.com/pib-rocks/pib-backend.git"
+export IMITATION="https://github.com/pib-rocks/imitation.git"
 export APP_DIR="$HOME/app"
 export BACKEND_DIR="$APP_DIR/pib-backend"
 export FRONTEND_DIR="$APP_DIR/cerebra"
+export IMITATION_DIR="$HOME/imitation"
 export SETUP_INSTALLATION_DIR="$BACKEND_DIR/setup/installation_scripts"
 
 # Function to support printing consistent log messages
@@ -186,6 +188,32 @@ function clone_repositories() {
   git clone --recurse-submodules -b "$BRANCH_FRONTEND" $FRONTEND "$FRONTEND_DIR" || print WARN "cerebra repository already exists"
 
   print SUCCESS "Completed cloning repositories to $APP_DIR"
+}
+
+
+# Clone the imitation project into the home directory and set up its virtual environment
+function install_imitation() {
+  if ! command_exists git; then
+    print ERROR "git not found"
+    return 1
+  fi
+
+  print INFO "Cloning imitation project to $IMITATION_DIR"
+  git clone "$IMITATION" "$IMITATION_DIR" || print WARN "imitation repository already exists"
+
+  # venv tooling is not guaranteed to be present on a fresh system
+  sudo apt-get install -y python3-venv python3-pip
+
+  # Create the venv with access to the system ROS packages (rclpy, datatypes,
+  # trajectory_msgs) which are provided by the ROS overlay, not pip.
+  python3 -m venv --system-site-packages "$IMITATION_DIR/.venv" \
+    || { print ERROR "failed to create imitation virtual environment"; return 1; }
+
+  "$IMITATION_DIR/.venv/bin/pip" install --upgrade pip
+  "$IMITATION_DIR/.venv/bin/pip" install -r "$IMITATION_DIR/requirements.txt" \
+    || { print ERROR "failed to install imitation requirements"; return 1; }
+
+  print SUCCESS "Installed imitation project and its virtual environment"
 }
 
 
@@ -387,6 +415,7 @@ fi
 install_system_packages || { print ERROR "failed to install system packages"; return 1; }
 install_locale || { print ERROR "failed to install locale"; return 1; }
 clone_repositories || { print ERROR "failed to clone repositories"; return 1; }
+install_imitation || print ERROR "failed to install imitation project"
 if is_supported_raspbian && [ "$DIST_VERSION" = "trixie" ]; then
   source "$SETUP_INSTALLATION_DIR/ros_jazzy_install.sh" || { print ERROR "failed to install ROS 2 Jazzy"; return 1; }
 fi
