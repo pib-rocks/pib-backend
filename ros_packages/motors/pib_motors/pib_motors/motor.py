@@ -13,7 +13,7 @@ class Motor:
     def __init__(self, name: str, bricklet_pins: list[BrickletPin], invert: bool):
         self.name: str = name
         self.visible: bool = True
-        self.bricklet_pins = bricklet_pins
+        self.bricklet_pins: list[BrickletPin] = bricklet_pins
         self.invert: bool = invert
         self.rotation_range_min: int = Motor.MIN_ROTATION
         self.rotation_range_max: int = Motor.MAX_ROTATION
@@ -62,10 +62,22 @@ class Motor:
         return all(bp.set_position(position) for bp in self.bricklet_pins)
 
     def get_position(self) -> int:
-        """returns the postion of the motor or '0' if no bricklet-pin is connected"""
+        """returns the target position of the motor as set by the last command, or '0' if no bricklet-pin is connected"""
         if not self.bricklet_pins:
             return 0
         return self.bricklet_pins[0].get_position()
+
+    def get_current_position(self) -> int:
+        """returns the actual physical position of the motor at this moment, or '0' if no bricklet-pin is connected"""
+        if not self.bricklet_pins:
+            return 0
+        return self.bricklet_pins[0].get_current_position()
+
+    def has_reached_position(self) -> bool:
+        """returns 'True' if all bricklet-pins of this motor have reached their target position"""
+        if not self.bricklet_pins:
+            return True
+        return all(bp.has_reached_target() for bp in self.bricklet_pins)
 
     def get_current(self) -> int:
         """returns the maximum current of all bricklet-pins, or NO_CURRENT, if not bricklet-pin is connected"""

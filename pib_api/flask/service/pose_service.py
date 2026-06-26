@@ -14,6 +14,10 @@ def get_pose(pose_id: str) -> Pose:
     return Pose.query.filter(Pose.pose_id == pose_id).one()
 
 
+def get_pose_by_name(pose_name: str) -> Pose:
+    return Pose.query.filter(Pose.name == pose_name).one()
+
+
 def create_pose(pose_dto: dict[str, Any]) -> Pose:
     motor_position_dtos = pose_dto["motor_positions"]
     motor_positions = [_create_motor_position(dto) for dto in motor_position_dtos]
