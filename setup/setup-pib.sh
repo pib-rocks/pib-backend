@@ -191,6 +191,25 @@ function clone_repositories() {
 }
 
 
+# Install Luxonis udev rules so depthai can access the OAK camera as a non-root user.
+# Without this, depthai logs "Insufficient permissions to communicate with
+# X_LINK_UNBOOTED device ... Make sure udev rules are set" and cannot boot the device.
+function install_depthai_udev_rules() {
+  local rules_file="/etc/udev/rules.d/80-movidius.rules"
+  local rule='SUBSYSTEM=="usb", ATTRS{idVendor}=="03e7", MODE="0666"'
+
+  if [ -f "$rules_file" ] && grep -q '03e7' "$rules_file"; then
+    print INFO "Luxonis udev rules already present"
+  else
+    echo "$rule" | sudo tee "$rules_file" > /dev/null
+    print INFO "Installed Luxonis udev rules to $rules_file"
+  fi
+
+  # Reload so the rule applies without a reboot (no-op effect if udev is unavailable).
+  sudo udevadm control --reload-rules && sudo udevadm trigger \
+    || print WARN "could not reload udev rules; a reboot/replug may be required"
+}
+
 # Clone the imitation project into the home directory and set up its virtual environment
 function install_imitation() {
   if ! command_exists git; then
@@ -212,6 +231,9 @@ function install_imitation() {
   "$IMITATION_DIR/.venv/bin/pip" install --upgrade pip
   "$IMITATION_DIR/.venv/bin/pip" install -r "$IMITATION_DIR/requirements.txt" \
     || { print ERROR "failed to install imitation requirements"; return 1; }
+
+  # The imitation script drives the OAK camera via depthai, which needs udev rules.
+  install_depthai_udev_rules || print WARN "failed to install depthai udev rules"
 
   print SUCCESS "Installed imitation project and its virtual environment"
 }
