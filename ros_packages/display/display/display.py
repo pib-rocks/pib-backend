@@ -521,7 +521,14 @@ class DisplayNode(Node):
 def run_gui(command_queue: Queue[DisplayCommand]) -> None:
     root = Tk()
     root.bind("<Escape>", lambda _: root.destroy())
+
+    # Apply fullscreen after Tk mapped the window.
+    root.update_idletasks()
+    root.geometry(f"{root.winfo_screenwidth()}x{root.winfo_screenheight()}+0+0")
+    root.overrideredirect(True)
     root.attributes("-fullscreen", True)
+    root.lift()
+    root.focus_force()
 
     width = root.winfo_screenwidth()
     height = root.winfo_screenheight()

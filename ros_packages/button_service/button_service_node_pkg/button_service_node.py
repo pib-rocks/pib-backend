@@ -82,8 +82,26 @@ class TinkerforgeButtonService(Node):
                 url = f"{self.api_base_url}/bricklet/{bricklet_number}"
                 self.get_logger().info(f"Loading button UID from {url}")
 
-                response = requests.get(url, timeout=5)
-                response.raise_for_status()
+                response = None
+                last_error = None
+
+                for attempt in range(1, 31):
+                    try:
+                        response = requests.get(url, timeout=5)
+                        response.raise_for_status()
+                        break
+                    except Exception as exc:
+                        last_error = exc
+                        self.get_logger().warn(
+                            f"Could not load button UID from {url} "
+                            f"(attempt {attempt}/30): {exc}"
+                        )
+                        time.sleep(2)
+
+                if response is None:
+                    raise RuntimeError(
+                        f"Could not load button UID from {url} after 30 attempts: {last_error}"
+                    )
 
                 uid = response.json().get("uid")
                 if not uid:
