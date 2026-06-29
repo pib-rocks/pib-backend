@@ -19,6 +19,7 @@ RUN apt-get update --fix-missing && \
     pip install /tmp/pib_api_client && \
     pip install /tmp/pib_motors && \
     pip install requests==2.32.3 && \
+    pip install paramiko==3.5.1 && \
     pip install tinkerforge
 
 
