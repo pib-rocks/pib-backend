@@ -54,8 +54,6 @@ services:
     profiles:
       - all
       - camera
-    # Volume binding should not be necessary here,
-    # but removing will stop the camera from showing pictures for some reason
     volumes:
       - /dev/:/dev/
     devices:
@@ -96,12 +94,7 @@ services:
       dockerfile: ./ros_packages/pibsim_webots/Dockerfile
     command: ros2 launch pibsim_webots pib_launch.py
     volumes:
-      # this is a socket that is used by the x-windowing-system
-      # for communication between clients and servers on the same
-      # machine. By mounting the socket of the docker-host, the 
-      # display-node uses the x-server running on the host for
-      # graphics-related communication
-      - /tmp/.X11-unix:/tmp/.X11-uni 
+      - /tmp/.X11-unix:/tmp/.X11-unix
     profiles:
       - pibsim_webots
     networks:
@@ -199,14 +192,14 @@ services:
       - all
       - display
     volumes:
-      # this is a socket that is used by the x-windowing-system
-      # for cmmunication betweem clients and servers on the same
-      # machine. By mounting the socket of the docker-host, the 
-      # display-node uses the x-server running on the host for
-      # graphics-related communication
-      - /tmp/.X11-unix:/tmp/.X11-uni 
+      - /root/app/pib-expression-faces:/app/pib-expression-faces:ro
+      - /tmp/.X11-unix:/tmp/.X11-unix
     environment:
       - STATIC_IMAGE_DIR=/app/ros2_ws/display/static_images
+      - PIB_EXPRESSION_DIR=/app/pib-expression-faces
+      - PIB_DISPLAY_TEXT_MAX_CHARS=40
+      - PIB_DISPLAY_POLL_MS=5
+      - PIB_DISPLAY_IDLE_SECONDS=10
       - DISPLAY=:0.0
     command: ros2 launch display launch.py
     restart: always
@@ -216,8 +209,8 @@ services:
   ros-audio-io:
     image: ros-audio-io
     build:
-     context: .
-     dockerfile: ./ros_packages/ros_audio_io/Dockerfile
+      context: .
+      dockerfile: ./ros_packages/ros_audio_io/Dockerfile
     command: ros2 launch ros_audio_io launch.py
     profiles:
       - all
@@ -251,4 +244,3 @@ volumes:
 networks:
   pib-network:
     driver: bridge
-

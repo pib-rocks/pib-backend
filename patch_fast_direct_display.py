@@ -1,4 +1,12 @@
-from queue import Queue, Empty
+from pathlib import Path
+import re
+
+ROOT = Path("/root/app/pib-backend")
+DISPLAY = ROOT / "ros_packages/display/display/display.py"
+PACKAGE = ROOT / "ros_packages/display/package.xml"
+COMPOSE = ROOT / "docker-compose.yaml"
+
+DISPLAY.write_text(r'''from queue import Queue, Empty
 import base64
 from dataclasses import dataclass
 from hashlib import sha1
@@ -544,3 +552,7 @@ def main(args=None) -> None:
 
 if __name__ == "__main__":
     main()
+''')
+
+
+print("fast direct display.py written")
