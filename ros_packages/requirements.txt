@@ -7,3 +7,4 @@ depthai==2.25.1.0
 numpy==1.26.3
 blobconverter==1.4.2
 google-genai
+paramiko==3.5.1
