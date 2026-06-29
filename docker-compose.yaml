@@ -192,7 +192,7 @@ services:
       - all
       - display
     volumes:
-      - /root/app/pib-expression-faces:/app/pib-expression-faces:ro
+      - ./ros_packages/display/expression_faces:/app/pib-expression-faces:ro
       - /tmp/.X11-unix:/tmp/.X11-unix
     environment:
       - STATIC_IMAGE_DIR=/app/ros2_ws/display/static_images
