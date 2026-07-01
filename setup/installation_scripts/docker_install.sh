@@ -86,10 +86,25 @@ function setup_docker_cleaner_service() {
     print SUCCESS "Docker container cleanup service installed and started"
 }
 
+function init_backend_submodules() {
+    print INFO "Initializing git submodules for pib-backend"
+
+    cd "$BACKEND_DIR" || return 1
+    git submodule update --init --recursive || return 1
+
+    local blockly_blocks="$BACKEND_DIR/pib_blockly/pib_blockly_server/src/pib-blockly/program-blocks/custom-blocks.ts"
+    if [ ! -f "$blockly_blocks" ]; then
+        print ERROR "pib-blockly submodule is missing required files at ${blockly_blocks}"
+        return 1
+    fi
+
+    print SUCCESS "Git submodules initialized for pib-backend"
+}
+
 function start_container() {
     print INFO "Starting container"
     echo "TRYB_URL_PREFIX=https://platform.tryb.ai" > "$BACKEND_DIR"/password.env
-    sudo docker compose -f "$BACKEND_DIR/docker-compose.yaml" --profile all up -d || return 1
+    sudo docker compose -f "$BACKEND_DIR/docker-compose.yaml" --profile all up -d --build || return 1
     print SUCCESS "Started pib-backend container"
     sudo docker compose -f "$FRONTEND_DIR/docker-compose.yaml" up -d || return 1
     print SUCCESS "Started cerebra container"
@@ -97,6 +112,7 @@ function start_container() {
 
 create_xhost_service || print ERROR "failed to create service for xhost permission management"
 install_docker_engine || print ERROR "failed to install docker engine"
+init_backend_submodules || print ERROR "failed to initialize pib-backend submodules"
 start_container || print ERROR "failed to start containers"
 setup_docker_cleaner_service || print ERROR "failed to setup docker cleaner service"
 sudo chmod 777 "$BACKEND_DIR/pib_api/flask/pibdata.db"
