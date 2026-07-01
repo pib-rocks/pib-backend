@@ -187,6 +187,16 @@ function clone_repositories() {
   git clone --recurse-submodules -b "$BRANCH_BACKEND" $BACKEND "$BACKEND_DIR" || print WARN "pib-backend repository already exists"
   git clone --recurse-submodules -b "$BRANCH_FRONTEND" $FRONTEND "$FRONTEND_DIR" || print WARN "cerebra repository already exists"
 
+  # Ensure submodules are checked out even when the clone was skipped above.
+  if [ -d "$BACKEND_DIR/.git" ]; then
+    cd "$BACKEND_DIR" || return 1
+    git submodule update --init --recursive || return 1
+  fi
+  if [ -d "$FRONTEND_DIR/.git" ]; then
+    cd "$FRONTEND_DIR" || return 1
+    git submodule update --init --recursive || return 1
+  fi
+
   print SUCCESS "Completed cloning repositories to $APP_DIR"
 }
 
