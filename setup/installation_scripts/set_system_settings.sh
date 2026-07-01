@@ -38,6 +38,20 @@ if is_supported_raspbian; then
 fi
 
 
+if is_supported_raspbian && [ "$DIST_VERSION" = "trixie" ]; then
+    local browser_desktop="$HOME/.local/share/applications/x-www-browser.desktop"
+    mkdir -p "$(dirname "$browser_desktop")"
+    if [ -f /usr/share/applications/x-www-browser.desktop ]; then
+        cp /usr/share/applications/x-www-browser.desktop "$browser_desktop"
+        if ! grep -q 'password-store=basic' "$browser_desktop"; then
+            sed -i 's|^Exec=x-www-browser %U|Exec=x-www-browser --password-store=basic %U|' "$browser_desktop"
+        fi
+        update-desktop-database "$HOME/.local/share/applications" 2>/dev/null || true
+        print INFO "Configured Chromium to use basic password store"
+    fi
+fi
+
+
 if is_ubuntu_noble; then
     # Activate automatic login settings via regex
     sudo sed -i '/#  AutomaticLogin/{s/#//;s/user1/pib/}' /etc/gdm3/custom.conf
