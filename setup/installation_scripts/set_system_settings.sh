@@ -35,19 +35,18 @@ if is_supported_raspbian; then
         done
         print INFO "Adjusted display resolution and settings"
     fi
-fi
 
-
-if is_supported_raspbian && [ "$DIST_VERSION" = "trixie" ]; then
-    local browser_desktop="$HOME/.local/share/applications/x-www-browser.desktop"
-    mkdir -p "$(dirname "$browser_desktop")"
-    if [ -f /usr/share/applications/x-www-browser.desktop ]; then
-        cp /usr/share/applications/x-www-browser.desktop "$browser_desktop"
-        if ! grep -q 'password-store=basic' "$browser_desktop"; then
-            sed -i 's|^Exec=x-www-browser %U|Exec=x-www-browser --password-store=basic %U|' "$browser_desktop"
-        fi
-        update-desktop-database "$HOME/.local/share/applications" 2>/dev/null || true
-        print INFO "Configured Chromium to use basic password store"
+    # Chromium uses gnome-keyring via libsecret; auto-login leaves the keyring locked
+    # and prompts on every browser start. The launcher sources /etc/chromium.d/* for all
+    # entry points (chromium.desktop, x-www-browser, HTML file handlers).
+    local chromium_flags_file="/etc/chromium.d/pib-password-store"
+    local chromium_flags_source="$BACKEND_DIR/setup/setup_files/chromium-password-store"
+    if [ -f "$chromium_flags_source" ]; then
+        sudo cp "$chromium_flags_source" "$chromium_flags_file"
+        sudo chmod 644 "$chromium_flags_file"
+        print INFO "Configured Chromium to bypass gnome-keyring"
+    else
+        print WARN "Chromium keyring fix not found at $chromium_flags_source"
     fi
 fi
 
