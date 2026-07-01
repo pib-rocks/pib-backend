@@ -161,6 +161,7 @@ services:
       - PIB_BLOCKLY_SERVER_URL=http://pib-blockly-server:2442
       - TINKERFORGE_HOST=host.docker.internal
       - TINKERFORGE_PORT=4223
+      - SSH_HOST=host.docker.internal
       - PYTHON_BINARY=/usr/bin/python3
       - PROGRAM_DIR=/ros2_ws/cerebra_programs
       - VOICE_ASSISTANT_DIR=/app/ros2_ws/voice_assistant
