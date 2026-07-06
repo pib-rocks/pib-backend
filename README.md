@@ -61,6 +61,15 @@ Changes:
 * Improved Blockly generator compatibility
 * Reliable Python runtime behaviour
 
+### Implemented Object recognition
+* detect object as specified
+* count specified object
+* detect difference between specified objects
+* image description 
+
+### Implemented "Facial" Expressions
+* Display 10 expressions like angry, sad or happy
+
 ### Program and Pose Transfer Support
 
 Added backend support required for:
