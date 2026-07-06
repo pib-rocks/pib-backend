@@ -1,4 +1,4 @@
-⚠️ This repository is a custom fork of the original pib-rocks project and contains significant modifications not available upstream.
+⚠️ This repository is a custom fork of the original pib-rocks project and contains significant modifications which are not available in the upstream repository.
 
 pib-backend (Joshi-1337 Fork)
 
