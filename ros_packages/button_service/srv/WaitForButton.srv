@@ -1,0 +1,11 @@
+uint8 button_id
+uint8 red
+uint8 green
+uint8 blue
+bool switch_mode
+float32 timeout_sec
+---
+bool success
+bool pressed
+bool switched_on
+string message
