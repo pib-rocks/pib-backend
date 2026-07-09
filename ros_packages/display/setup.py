@@ -24,6 +24,7 @@ setup(
     entry_points={
         "console_scripts": [
             "display = display.display:main",
+            "expression_manager = display.expression_manager:main",
         ],
     },
 )

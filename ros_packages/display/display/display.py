@@ -1,320 +1,558 @@
-from queue import Queue
+from __future__ import annotations
+
 import base64
+from collections import OrderedDict
+import os
+import re
+import time
 from dataclasses import dataclass
+from hashlib import sha1
 from io import BytesIO
 from itertools import cycle
-import os
+from pathlib import Path
+from queue import Empty, Queue
 from threading import Thread
 from typing import Iterable, Iterator, Optional
 
+import PIL.Image
 import rclpy
-from rclpy.node import Node
+from PIL import Image as PILImage, ImageDraw, ImageFont
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
-import PIL.Image
-
+from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
+from std_msgs.msg import String
 from tkinter import *
 
 from datatypes.msg import DisplayImage, ImageFormat, ImageId
 
-import os
 
 os.environ.setdefault("DISPLAY", ":0.0")
 
+STATIC_IMAGE_DIR = Path(os.getenv("STATIC_IMAGE_DIR", "/app/ros2_ws/display/static_images"))
+EXPRESSION_DIR = Path(os.getenv("PIB_EXPRESSION_DIR", "/app/pib-expression-faces"))
 
-# points to the directory, where all static images are
-# stored that are managed by the display-node
-STATIC_IMAGE_DIR: str = os.getenv(
-    "STATIC_IMAGE_DIR",
-    "/home/pib/ros_working_dir/src/display/static_images",
-)
+DISPLAY_TEXT_MAX_CHARS = int(os.getenv("PIB_DISPLAY_TEXT_MAX_CHARS", "40"))
+DISPLAY_TEXT_PADDING = int(os.getenv("PIB_DISPLAY_TEXT_PADDING", "40"))
+DISPLAY_POLL_MS = int(os.getenv("PIB_DISPLAY_POLL_MS", "5"))
+DISPLAY_IDLE_SECONDS = float(os.getenv("PIB_DISPLAY_IDLE_SECONDS", "10"))
+DISPLAY_VERBOSE = os.getenv("PIB_DISPLAY_NODE_VERBOSE", "0") == "1"
+DISPLAY_TEXT_CACHE_MAX = int(os.getenv("PIB_DISPLAY_TEXT_CACHE_MAX", "50"))
 
-
-@dataclass
-class ImageFile:
-    """represents an image stored in the filesystem"""
-
-    format_value: bytes
-    filepath: str
+TEXT_CANVAS_WIDTH = int(os.getenv("PIB_DISPLAY_TEXT_WIDTH", "800"))
+TEXT_CANVAS_HEIGHT = int(os.getenv("PIB_DISPLAY_TEXT_HEIGHT", "480"))
 
 
-@dataclass
+def log_debug(message: str) -> None:
+    if DISPLAY_VERBOSE:
+        print(f"[display-v2-debug] {time.monotonic():.6f} {message}", flush=True)
+
+
+def log_info(message: str) -> None:
+    print(f"[display-v2] {message}", flush=True)
+
+
+@dataclass(frozen=True)
 class RawImage:
-    """an image whose data was loaded into main-memory"""
-
-    format_value: bytes
+    format_value: int
     data: bytes
-
-    @staticmethod
-    def from_display_image(display_image: DisplayImage):
-        """turns a DisplayImage into a RawImage"""
-        image_id = display_image.id.value
-        match image_id:
-            case ImageId.CUSTOM:
-                return RawImage(
-                    display_image.format.value, b"".join(display_image.data)
-                )
-            case ImageId.NONE:
-                return None
-            case _:
-                image_file = IMAGE_ID_TO_STATIC_IMAGES.get(image_id)
-                if image_file is None:
-                    raise Exception(f"illegal image-id: '{image_id}'.")
-                return RawImage.from_image_file(image_file)
-
-    @staticmethod
-    def from_image_file(image_file: ImageFile):
-        """turns a ImageFile into a RawImage"""
-        with open(image_file.filepath, "rb") as file:
-            data = file.read()
-        return RawImage(image_file.format_value, data)
 
 
 @dataclass
 class AnimationFrame:
-    """represents one frame of an animated gif"""
-
     duration_ms: int
     photo_image: PhotoImage
 
 
 class Animation:
-    """can be used to iterate over the frames of an animated gif"""
-
-    def __init__(self, data: bytes, width: int, height: int):
-        """initalizes the animation, with the given image-data"""
-        self._frames: Iterable[AnimationFrame] = self._as_frames(data, width, height)
-        self._frame_iterator = iter(cycle(self._frames))
-        self._stopped = False
+    def __init__(self, frames: Iterable[AnimationFrame]):
+        self.frames = list(frames)
+        self.iterator = iter(cycle(self.frames))
+        self.stopped = False
 
     def stop(self) -> None:
-        """stop the iterator"""
-        self._stopped = True
+        self.stopped = True
 
     def __iter__(self) -> Iterator[AnimationFrame]:
         return self
 
     def __next__(self) -> AnimationFrame:
-        if self._stopped:
+        if self.stopped:
             raise StopIteration()
-        else:
-            return next(self._frame_iterator)
+        return next(self.iterator)
 
-    def _as_frames(
-        self, data: bytes, width: int, height: int
-    ) -> Iterable[AnimationFrame]:
-        queue = Queue()
-        Thread(
-            target=self._load_frames_into_queue, args=(queue, data, width, height)
-        ).start()
-        while True:
-            data, duration_ms = queue.get()
-            if data is None:
+
+@dataclass(frozen=True)
+class DisplayCommand:
+    kind: str
+    value: object = None
+
+
+class ImageCache:
+    def __init__(self, width: int, height: int):
+        self.width = width
+        self.height = height
+        self.static_images: dict[str, PhotoImage] = {}
+        self.animations: dict[str, list[AnimationFrame]] = {}
+
+    def preload_default_eyes(self) -> None:
+        path = STATIC_IMAGE_DIR / "pib-eyes-animated.gif"
+        if not path.exists():
+            raise FileNotFoundError(f"default eyes missing: {path}")
+
+        raw = RawImage(ImageFormat.ANIMATED_GIF, path.read_bytes())
+        self.animations["default"] = self._build_animation_frames(raw)
+        log_info("default animated eyes preloaded")
+
+    def preload_expressions(self) -> None:
+        if not EXPRESSION_DIR.exists():
+            log_info(f"expression directory missing: {EXPRESSION_DIR}")
+            return
+
+        start = time.monotonic()
+        count = 0
+
+        for path in sorted(EXPRESSION_DIR.iterdir()):
+            if not path.is_file() or path.suffix.lower() not in (".png", ".gif", ".jpg", ".jpeg"):
+                continue
+
+            expression = self.normalize_expression(path.stem)
+            raw = RawImage(self.format_from_path(path), path.read_bytes())
+
+            if raw.format_value == ImageFormat.ANIMATED_GIF:
+                self.animations[f"expression:{expression}"] = self._build_animation_frames(raw)
+            else:
+                self.static_images[f"expression:{expression}"] = self._build_static_photo(raw)
+
+            count += 1
+
+        log_info(f"preloaded {count} expression files in {(time.monotonic() - start) * 1000:.1f} ms")
+
+    def get_expression(self, expression: str) -> tuple[str, object] | None:
+        expression = self.normalize_expression(expression)
+        key = f"expression:{expression}"
+
+        if key in self.static_images:
+            return ("static", self.static_images[key])
+
+        if key in self.animations:
+            return ("animation", self.animations[key])
+
+        return None
+
+    def get_default_animation(self) -> list[AnimationFrame]:
+        return self.animations["default"]
+
+    def get_raw_image(self, raw: RawImage) -> tuple[str, object]:
+        key = f"raw:{raw.format_value}:{sha1(raw.data).hexdigest()}"
+
+        if raw.format_value == ImageFormat.ANIMATED_GIF:
+            if key not in self.animations:
+                self.animations[key] = self._build_animation_frames(raw)
+            return ("animation", self.animations[key])
+
+        if key not in self.static_images:
+            self.static_images[key] = self._build_static_photo(raw)
+        return ("static", self.static_images[key])
+
+    @staticmethod
+    def normalize_expression(value: str) -> str:
+        value = value.strip().lower()
+        value = value.replace("-", "_").replace(" ", "_")
+        return re.sub(r"[^a-z0-9_]", "", value)
+
+    @staticmethod
+    def format_from_path(path: Path) -> int:
+        suffix = path.suffix.lower()
+        if suffix == ".gif":
+            return ImageFormat.ANIMATED_GIF
+        if suffix == ".png":
+            return ImageFormat.PNG
+        if suffix in (".jpg", ".jpeg"):
+            return ImageFormat.JPEG
+        raise RuntimeError(f"unsupported image format: {path}")
+
+    @staticmethod
+    def format_to_str(format_value: int) -> str:
+        if format_value == ImageFormat.ANIMATED_GIF:
+            return "gif"
+        if format_value == ImageFormat.PNG:
+            return "png"
+        if format_value == ImageFormat.JPEG:
+            return "jpeg"
+        raise RuntimeError(f"unsupported image format value: {format_value}")
+
+    def _build_static_photo(self, raw: RawImage) -> PhotoImage:
+        start = time.monotonic()
+        format_str = self.format_to_str(raw.format_value)
+
+        with PIL.Image.open(BytesIO(raw.data)) as image:
+            resized = image.resize((self.width, self.height))
+            buffer = BytesIO()
+            resized.save(buffer, format_str)
+            data = base64.b64encode(buffer.getvalue())
+
+        photo = PhotoImage(data=data, format=format_str)
+        log_debug(f"static photo built in {(time.monotonic() - start) * 1000:.1f} ms")
+        return photo
+
+    def _build_animation_frames(self, raw: RawImage) -> list[AnimationFrame]:
+        start = time.monotonic()
+        frames: list[AnimationFrame] = []
+
+        with PIL.Image.open(BytesIO(raw.data)) as image:
+            for index in range(image.n_frames):
+                image.seek(index)
+                resized = image.resize((self.width, self.height))
+
+                buffer = BytesIO()
+                resized.save(buffer, "gif")
+                data = base64.b64encode(buffer.getvalue())
+                duration_ms = image.info.get("duration", 80)
+
+                frames.append(AnimationFrame(duration_ms, PhotoImage(data=data)))
+
+        log_debug(f"animation built frames={len(frames)} in {(time.monotonic() - start) * 1000:.1f} ms")
+        return frames
+
+
+class TextRenderer:
+    def __init__(self, width: int, height: int):
+        self.width = width
+        self.height = height
+        self.cache: OrderedDict[str, PhotoImage] = OrderedDict()
+
+    def render(self, value: str) -> PhotoImage:
+        value = str(value).strip()[:DISPLAY_TEXT_MAX_CHARS]
+
+        if value in self.cache:
+            photo = self.cache.pop(value)
+            self.cache[value] = photo
+            return photo
+
+        start = time.monotonic()
+        photo = self._build_text_photo(value)
+        self.cache[value] = photo
+
+        while len(self.cache) > DISPLAY_TEXT_CACHE_MAX:
+            self.cache.popitem(last=False)
+
+        log_debug(f"text rendered in {(time.monotonic() - start) * 1000:.1f} ms")
+        return photo
+
+    def _build_text_photo(self, value: str) -> PhotoImage:
+        image = PILImage.new("RGBA", (self.width, self.height), (0, 0, 0, 255))
+        draw = ImageDraw.Draw(image)
+        color = (69, 183, 255, 255)
+
+        best_font = self.load_font(20)
+        best_lines = [value]
+
+        max_width = self.width - 2 * DISPLAY_TEXT_PADDING
+        max_height = self.height - 2 * DISPLAY_TEXT_PADDING
+
+        for size in range(180, 18, -4):
+            font = self.load_font(size)
+            lines = self.wrap_text(draw, value, font, max_width)
+
+            boxes = [draw.textbbox((0, 0), line, font=font) for line in lines]
+            heights = [box[3] - box[1] for box in boxes]
+            total_height = sum(heights) + max(0, len(lines) - 1) * int(size * 0.25)
+            max_line_width = max((box[2] - box[0]) for box in boxes) if boxes else 0
+
+            if max_line_width <= max_width and total_height <= max_height:
+                best_font = font
+                best_lines = lines
                 break
-            yield AnimationFrame(duration_ms, PhotoImage(data=data))
 
-    def _load_frames_into_queue(
-        self, queue: Queue, data: bytes, width: int, height: int
-    ) -> None:
-        with PIL.Image.open(BytesIO(data)) as image:
-            # iterate over frames of image
-            for i in range(image.n_frames):
-                # go to i-th frame of the image
-                image.seek(i)
-                # resize the current frame, to fit the screen-size
-                resized = (
-                    image.resize((width, height))
-                    if image.width != width or image.height != height
-                    else image
-                )
-                # buffer for storing binary data of image-frames
-                data_buffer = BytesIO()
-                # save the current frame in the data-buffer
-                resized.save(data_buffer, "gif")
-                # extract data from buffer and encode bytes as base64
-                data = base64.b64encode(data_buffer.getvalue())
-                # get the duration of the current frame
-                duration_ms = image.info["duration"]
-                # yield the extracted data
-                queue.put((data, duration_ms))
-            # 'None' -> all frames were processed
-            queue.put((None, -1))
+        boxes = [draw.textbbox((0, 0), line, font=best_font) for line in best_lines]
+        heights = [box[3] - box[1] for box in boxes]
+        spacing = 16
+        total_height = sum(heights) + max(0, len(best_lines) - 1) * spacing
+        y = (self.height - total_height) // 2
+
+        for line, box, height in zip(best_lines, boxes, heights):
+            line_width = box[2] - box[0]
+            x = (self.width - line_width) // 2
+            draw.text((x, y), line, font=best_font, fill=color)
+            y += height + spacing
+
+        buffer = BytesIO()
+        image.save(buffer, "png")
+        data = base64.b64encode(buffer.getvalue())
+        return PhotoImage(data=data, format="png")
+
+    @staticmethod
+    def load_font(size: int):
+        candidates = [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf",
+            "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf",
+            "/usr/share/fonts/truetype/msttcorefonts/Arial.ttf",
+        ]
+
+        for candidate in candidates:
+            try:
+                return ImageFont.truetype(candidate, size)
+            except Exception:
+                pass
+
+        return ImageFont.load_default()
+
+    @staticmethod
+    def wrap_text(draw, value: str, font, max_width: int) -> list[str]:
+        words = value.split()
+        if not words:
+            return [""]
+
+        lines = []
+        line = words[0]
+
+        for word in words[1:]:
+            test = line + " " + word
+            box = draw.textbbox((0, 0), test, font=font)
+
+            if box[2] - box[0] <= max_width:
+                line = test
+            else:
+                lines.append(line)
+                line = word
+
+        lines.append(line)
+        return lines
 
 
-# maps an image-id to its corresponding image in the filesystem
-IMAGE_ID_TO_STATIC_IMAGES: dict[int, ImageFile] = {
-    ImageId.PIB_EYES_ANIMATED: ImageFile(
-        ImageFormat.ANIMATED_GIF, STATIC_IMAGE_DIR + "/pib-eyes-animated.gif"
-    ),
-}
+class DisplayController:
+    def __init__(self, canvas: Canvas, root: Widget, image_cache: ImageCache, text_renderer: TextRenderer):
+        self.canvas = canvas
+        self.root = root
+        self.image_cache = image_cache
+        self.text_renderer = text_renderer
+        self.current_content: PhotoImage | Animation | None = None
+        self.default_timer_id: Optional[str] = None
+        self.animation_generation = 0
 
-FORMAT_VALUE_TO_STR: dict[int, str] = {
-    ImageFormat.ANIMATED_GIF: "gif",
-    ImageFormat.PNG: "png",
-    ImageFormat.JPEG: "jpeg",
-}
+    def show_default(self) -> None:
+        self.cancel_default_timer()
+        self.show_animation(self.image_cache.get_default_animation())
+
+    def show_expression(self, expression: str) -> None:
+        start = time.monotonic()
+        result = self.image_cache.get_expression(expression)
+
+        if result is None:
+            log_info(f"expression not found: {expression}")
+            return
+
+        kind, payload = result
+        self.show_payload(kind, payload)
+        self.schedule_default()
+
+        log_info(f"expression shown: {expression} total={(time.monotonic() - start) * 1000:.1f} ms")
+
+    def show_text(self, value: str) -> None:
+        start = time.monotonic()
+        photo = self.text_renderer.render(value)
+        self.show_photo(photo)
+        self.schedule_default()
+        log_info(f"text shown: {str(value)[:DISPLAY_TEXT_MAX_CHARS]} total={(time.monotonic() - start) * 1000:.1f} ms")
+
+    def show_raw(self, raw: RawImage) -> None:
+        kind, payload = self.image_cache.get_raw_image(raw)
+        self.show_payload(kind, payload)
+
+    def show_payload(self, kind: str, payload: object) -> None:
+        if kind == "static":
+            self.show_photo(payload)
+        elif kind == "animation":
+            self.show_animation(payload)
+        else:
+            log_info(f"unknown payload kind: {kind}")
+
+    def show_photo(self, photo: PhotoImage) -> None:
+        self.stop_current_animation()
+        self.canvas.delete("all")
+        self.current_content = photo
+        self.canvas.create_image(0, 0, image=self.current_content, anchor="nw")
+
+    def show_animation(self, frames: list[AnimationFrame]) -> None:
+        self.stop_current_animation()
+        self.canvas.delete("all")
+        animation = Animation(frames)
+        self.current_content = animation
+        generation = self.animation_generation
+        self.show_next_frame(animation, generation)
+
+    def show_next_frame(self, animation: Animation, generation: int) -> None:
+        if generation != self.animation_generation:
+            return
+
+        try:
+            frame = next(animation)
+        except StopIteration:
+            return
+
+        if generation != self.animation_generation:
+            return
+
+        self.canvas.delete("all")
+        self.canvas.create_image(0, 0, image=frame.photo_image, anchor="nw")
+        self.canvas.after(frame.duration_ms, self.show_next_frame, animation, generation)
+
+    def stop_current_animation(self) -> None:
+        self.animation_generation += 1
+        if isinstance(self.current_content, Animation):
+            self.current_content.stop()
+
+    def schedule_default(self) -> None:
+        self.cancel_default_timer()
+        self.default_timer_id = self.canvas.after(int(DISPLAY_IDLE_SECONDS * 1000), self.show_default)
+
+    def cancel_default_timer(self) -> None:
+        if self.default_timer_id is not None:
+            try:
+                self.canvas.after_cancel(self.default_timer_id)
+            except Exception:
+                pass
+            self.default_timer_id = None
 
 
 class GuiApplication(Frame):
+    def __init__(self, parent: Widget, command_queue: Queue[DisplayCommand], *args, **kwargs):
+        self.width = kwargs.setdefault("width", 100)
+        self.height = kwargs.setdefault("height", 100)
 
-    def __init__(
-        self,
-        parent: Widget,
-        image_queue: Queue[RawImage | None],
-        inital_image: RawImage,
-        *args,
-        **kwargs,
-    ):
-
-        self._width = kwargs.setdefault("width", 100)
-        self._height = kwargs.setdefault("height", 100)
-
-        # call to the constructor of the superclass
         Frame.__init__(self, parent, *args, **kwargs)
 
-        # store the image_queue to poll from it for images to show
-        self.image_queue = image_queue
+        self.command_queue = command_queue
 
-        # define a canvas where the main-image is displayed
         self.canvas = Canvas(
             self,
-            width=self._width,
-            height=self._height,
+            width=self.width,
+            height=self.height,
             borderwidth=0,
             highlightthickness=0,
         )
         self.canvas.place(x=0, y=0)
 
-        # the current static-image/animation that is shown is stored here
-        self.current_main_content: PhotoImage | Animation | None = None
+        self.image_cache = ImageCache(self.width, self.height)
+        self.text_renderer = TextRenderer(self.width, self.height)
+        self.controller = DisplayController(self.canvas, parent, self.image_cache, self.text_renderer)
 
-        self._show_image(inital_image)
+        self.image_cache.preload_default_eyes()
+        self.image_cache.preload_expressions()
+        self.controller.show_default()
 
-        # time until attempt to poll next image (in milliseconds)
-        self.polling_timeout_ms = 10
-
-        # intiate periodically polling for images in the queue
-        self._poll_next_image()
-
-        # position the widget in its parent
+        self._poll_commands()
         self.grid()
 
-    def _show_image(self, raw_image: RawImage) -> None:
-        """update the main background image"""
-        self.canvas.delete("all")
-        if isinstance(self.current_main_content, Animation):
-            self.current_main_content.stop()
-        if raw_image.format_value == ImageFormat.ANIMATED_GIF:
-            self._show_animated_gif(raw_image)
-        else:
-            self._show_static_image(raw_image)
-
-    def _show_animated_gif(self, raw_image: RawImage) -> None:
-        animation = Animation(raw_image.data, self._width, self._height)
-        self.current_main_content = animation
-        self._show_next_frame(animation)
-
-    def _show_static_image(self, raw_image: RawImage) -> None:
-        format_str = FORMAT_VALUE_TO_STR[raw_image.format_value]
-        with PIL.Image.open(BytesIO(raw_image.data)) as image:
-            resized = image.resize((self._width, self._height))
-            # buffer for storing binary data of image
-            data_buffer = BytesIO()
-            # save the current frame in the data-buffer
-            resized.save(data_buffer, format_str)
-            data = base64.b64encode(data_buffer.getvalue())
-        self.current_main_content = PhotoImage(data=data, format=format_str)
-        self.canvas.create_image(0, 0, image=self.current_main_content, anchor="nw")
-
-    def _show_next_frame(self, animation: Animation) -> None:
+    def _poll_commands(self) -> None:
         try:
-            frame: AnimationFrame = next(animation)
-        except StopIteration:
-            return
-        self.canvas.delete("all")
-        self.canvas.create_image(0, 0, image=frame.photo_image, anchor="nw")
-        self.canvas.after(frame.duration_ms, self._show_next_frame, animation)
+            while True:
+                command = self.command_queue.get_nowait()
+                self.handle_command(command)
+        except Empty:
+            pass
 
-    def _poll_next_image(self) -> None:
-        if self.image_queue.qsize() != 0:
-            image: Optional[RawImage] = self.image_queue.get()
-            if image is None:
-                self.winfo_toplevel().destroy()
-                return
-            else:
-                # if an image is received, reset the timeout to the lowest
-                # possible value
-                self.polling_timeout_ms = 10
-                self._show_image(image)
-        else:
-            # if no image, was received, increase the polling timeout
-            # (value is capped at 160ms)
-            self.polling_timeout_ms = min(2 * self.polling_timeout_ms, 160)
-        self.after(self.polling_timeout_ms, self._poll_next_image)
+        self.after(DISPLAY_POLL_MS, self._poll_commands)
+
+    def handle_command(self, command: DisplayCommand) -> None:
+        if command.kind == "expression":
+            self.controller.show_expression(str(command.value))
+        elif command.kind == "text":
+            self.controller.show_text(str(command.value))
+        elif command.kind == "raw":
+            self.controller.show_raw(command.value)
+        elif command.kind == "default":
+            self.controller.show_default()
+        elif command.kind == "quit":
+            self.winfo_toplevel().destroy()
 
 
 class DisplayNode(Node):
-
-    def __init__(self, image_queue: Queue[RawImage | None]) -> None:
-
+    def __init__(self, command_queue: Queue[DisplayCommand]) -> None:
         super().__init__("display")
+        self.command_queue = command_queue
 
-        self.create_subscription(
-            DisplayImage, "display_image", self.on_display_image_received, 1
+        display_qos = QoSProfile(
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1,
         )
 
-        self.image_queue = image_queue
+        self.create_subscription(DisplayImage, "/display_image", self.on_display_image, display_qos)
+        self.create_subscription(String, "/pib/expression", self.on_expression, 10)
+        self.create_subscription(String, "/pib/display_text", self.on_text, 10)
 
-        pib_eyes_animated = RawImage.from_image_file(
-            IMAGE_ID_TO_STATIC_IMAGES[ImageId.PIB_EYES_ANIMATED]
-        )
-        self.image_queue.put(pib_eyes_animated)
+        self.get_logger().info("Display V2 running")
+        self.get_logger().info(f"Expression directory: {EXPRESSION_DIR}")
 
-        self.get_logger().info("Now Running DISPLAY")
+    def enqueue_latest(self, command: DisplayCommand) -> None:
+        self.command_queue.put(command)
 
-    def on_display_image_received(self, display_image: DisplayImage):
-        """callback function for the 'display_image'-topic subscriber"""
+    def on_expression(self, msg: String) -> None:
+        self.enqueue_latest(DisplayCommand("expression", msg.data))
+
+    def on_text(self, msg: String) -> None:
+        self.enqueue_latest(DisplayCommand("text", msg.data))
+
+    def on_display_image(self, msg: DisplayImage) -> None:
         try:
-            raw_image = RawImage.from_display_image(display_image)
-            self.image_queue.put(raw_image)
-        except Exception as e:
-            self.get_logger().error(f"error while showing image from topic: {e}.")
+            raw = self.raw_from_display_image(msg)
+            if raw is not None:
+                self.enqueue_latest(DisplayCommand("raw", raw))
+        except Exception as exc:
+            self.get_logger().error(f"DisplayImage conversion failed: {exc}")
+
+    @staticmethod
+    def raw_from_display_image(msg: DisplayImage) -> RawImage | None:
+        if msg.id.value == ImageId.NONE:
+            return None
+
+        if msg.id.value == ImageId.CUSTOM:
+            return RawImage(msg.format.value, b"".join(msg.data))
+
+        if msg.id.value == ImageId.PIB_EYES_ANIMATED:
+            path = STATIC_IMAGE_DIR / "pib-eyes-animated.gif"
+            return RawImage(ImageFormat.ANIMATED_GIF, path.read_bytes())
+
+        raise RuntimeError(f"unsupported image id: {msg.id.value}")
 
 
-def run_gui_application(image_queue: Queue[RawImage | None]) -> None:
-    while True:
-        image = image_queue.get()
-        if image is None:
-            continue
-        root = Tk()
-        root.bind("<Escape>", lambda _: root.destroy())
-        root.attributes("-fullscreen", True)
-        width = root.winfo_screenwidth()
-        height = root.winfo_screenheight()
-        GuiApplication(root, image_queue, image, width=width, height=height)
-        root.mainloop()
+def run_gui(command_queue: Queue[DisplayCommand]) -> None:
+    root = Tk()
+    root.bind("<Escape>", lambda _: root.destroy())
+
+    # Apply fullscreen after Tk mapped the window.
+    root.update_idletasks()
+    root.geometry(f"{root.winfo_screenwidth()}x{root.winfo_screenheight()}+0+0")
+    root.overrideredirect(True)
+    root.attributes("-fullscreen", True)
+    root.lift()
+    root.focus_force()
+
+    width = root.winfo_screenwidth()
+    height = root.winfo_screenheight()
+
+    GuiApplication(root, command_queue, width=width, height=height)
+    root.mainloop()
 
 
-def run_display_node(image_queue: Queue[RawImage | None]) -> None:
+def run_ros(command_queue: Queue[DisplayCommand]) -> None:
     rclpy.init()
     executor = SingleThreadedExecutor()
-    display_node = DisplayNode(image_queue)
-    executor.add_node(display_node)
+    node = DisplayNode(command_queue)
+    executor.add_node(node)
     executor.spin()
-    display_node.destroy_node()
+    node.destroy_node()
     rclpy.shutdown()
 
 
 def main(args=None) -> None:
-    # the image-queue is used to send images from the ros-node to the
-    # gui-application. The value is either a 'RawImage', which
-    # the ros-node requests do be shown, or alternatively 'None', in
-    # order to indicate that nothing should be shown (i.e. the gui-window
-    # is closed)
-    image_queue: Queue[RawImage | None] = Queue(maxsize=1)
-    # run hui-application and ros in two separate threads
-    Thread(daemon=True, target=run_display_node, args=(image_queue,)).start()
-    run_gui_application(image_queue)
+    command_queue: Queue[DisplayCommand] = Queue(maxsize=100)
+    Thread(daemon=True, target=run_ros, args=(command_queue,)).start()
+    run_gui(command_queue)
 
 
 if __name__ == "__main__":

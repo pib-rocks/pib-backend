@@ -5,7 +5,6 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
-# find dependencies
 find_package(ament_cmake REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 find_package(trajectory_msgs REQUIRED)
@@ -21,10 +20,10 @@ rosidl_generate_interfaces(${PROJECT_NAME}
 	"msg/SolidStateRelayState.msg"
 	"msg/ProgramInput.msg"
 	"msg/ChatIsListening.msg"
-	"srv/ApplyMotorSettings.srv"
 	"msg/ImageId.msg"
 	"msg/ImageFormat.msg"
 	"msg/DisplayImage.msg"
+	"srv/ApplyMotorSettings.srv"
 	"srv/PlayAudioFromFile.srv"
 	"srv/PlayAudioFromSpeech.srv"
 	"srv/GetVoiceAssistantState.srv"
@@ -35,17 +34,18 @@ rosidl_generate_interfaces(${PROJECT_NAME}
 	"srv/ProxyRunProgramStop.srv"
 	"srv/ClearPlaybackQueue.srv"
 	"srv/GetCameraImage.srv"
+	"srv/VisionPrompt.srv"
 	"srv/ApplyJointTrajectory.srv"
 	"srv/GetJointPosition.srv"
 	"srv/EncryptToken.srv"
 	"srv/DecryptToken.srv"
 	"srv/GetTokenExists.srv"
 	"srv/SetSolidStateRelay.srv"
+	"srv/GetMicConfiguration.srv"
+	"srv/CreateOrUpdateChatMessage.srv"
 	"action/RunProgram.action"
 	"action/RecordAudio.action"
 	"action/Chat.action"
-	"srv/GetMicConfiguration.srv"
-	"srv/CreateOrUpdateChatMessage.srv"
 	DEPENDENCIES trajectory_msgs
 )
 
