@@ -26,7 +26,7 @@ from tkinter import *
 from datatypes.msg import DisplayImage, ImageFormat, ImageId
 
 
-os.environ.setdefault("DISPLAY", ":0.0")
+os.environ.setdefault("DISPLAY", ":0")
 
 STATIC_IMAGE_DIR = Path(os.getenv("STATIC_IMAGE_DIR", "/app/ros2_ws/display/static_images"))
 EXPRESSION_DIR = Path(os.getenv("PIB_EXPRESSION_DIR", "/app/pib-expression-faces"))

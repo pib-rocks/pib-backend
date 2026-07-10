@@ -15,9 +15,27 @@ version_gte() {
 # create a systemd-service that adds the 'local:'-host to the x-server's access-control-list on each startup,
 # allowing applications from within a docker container to access the x-server on the host os
 function create_xhost_service() {
-    sudo mv "$BACKEND_DIR/setup/setup_files/xhost_enable_local.service" /etc/systemd/xhost_enable_local.service
-    sudo chmod 700 /etc/systemd/xhost_enable_local.service
-    sudo systemctl enable /etc/systemd/xhost_enable_local.service --now
+    local service_path="/etc/systemd/system/xhost_enable_local.service"
+    sudo cp "$BACKEND_DIR/setup/setup_files/xhost_enable_local.service" "$service_path"
+    sudo chmod 644 "$service_path"
+    sudo systemctl daemon-reload
+    sudo systemctl enable xhost_enable_local.service
+    sudo systemctl start xhost_enable_local.service || print WARN "system xhost service will retry after graphical login"
+
+    local autostart_dir="/home/pib/.config/autostart"
+    sudo -u pib mkdir -p "$autostart_dir"
+    sudo cp "$BACKEND_DIR/setup/setup_files/xhost-docker.desktop" "$autostart_dir/"
+    sudo chown pib:pib "$autostart_dir/xhost-docker.desktop"
+
+    local user_unit_dir="/home/pib/.config/systemd/user"
+    sudo -u pib mkdir -p "$user_unit_dir"
+    sudo cp "$BACKEND_DIR/setup/setup_files/xhost_enable_local_user.service" "$user_unit_dir/"
+    sudo chown pib:pib "$user_unit_dir/xhost_enable_local_user.service"
+    if command_exists loginctl; then
+        sudo loginctl enable-linger pib || print WARN "could not enable linger for pib"
+    fi
+
+    print SUCCESS "Configured XWayland access for Docker (Wayland-compatible)"
 }
 
 
