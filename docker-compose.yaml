@@ -205,6 +205,8 @@ services:
       - PIB_DISPLAY_IDLE_SECONDS=10
       - DISPLAY=${DISPLAY:-:0}
       - XAUTHORITY=/tmp/.host-xauthority
+      - HOME=/tmp
+      - ROS_HOME=/tmp/.ros
     user: "1000:1000"
     command: ros2 launch display launch.py
     restart: always
