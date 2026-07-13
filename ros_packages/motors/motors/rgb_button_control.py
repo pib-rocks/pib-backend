@@ -8,6 +8,7 @@ from pib_motors.bricklet import uid_to_rgb_led_bricklet
 from datatypes.srv import ProxyRunProgramStart, ProxyRunProgramStop
 from datatypes.msg import ProxyRunProgramResult
 from pib_api_client import button_programs_client
+from button_service.srv import SetButtonManualOverride
 
 ERROR_COLOR_DURATION_SECONDS = 2.0  # how long red stays before reverting to blue
 BLUE_COLOR = (0, 0, 255)  # blue color for idle state
@@ -59,11 +60,52 @@ class RGBButtonControl(Node):
         # maps proxy_goal_id -> uid
         self.goal_to_uid: dict[str, str] = {}
 
+        # maps uid -> (r,g,b) for manual override colors (set via Blockly)
+        self.manual_overrides: dict[str, tuple[int, int, int]] = {}
+
+        self.manual_override_service = self.create_service(
+            SetButtonManualOverride,
+            "/rgb_button/manual_override",
+            self.handle_manual_override,
+        )
+
         self.update_button_colors()
 
         self.create_timer(POLL_INTERVAL_SECONDS, self.update_button_colors)
 
         self.get_logger().info("Now Running RGB_BUTTON_CONTROL")
+
+    def handle_manual_override(self, request, response):
+        uid = str(request.bricklet_uid)
+        if not uid:
+            response.success = False
+            response.message = "bricklet_uid is required"
+            return response
+
+        if uid not in self.rgb_led_bricklets:
+            response.success = False
+            response.message = f"Unknown bricklet_uid {uid}"
+            return response
+
+        if request.enabled:
+            r = int(request.red)
+            g = int(request.green)
+            b = int(request.blue)
+            self.manual_overrides[uid] = (r, g, b)
+
+            # If a program is running for this UID, program state has priority.
+            # Otherwise apply override immediately.
+            if uid not in self.goal_to_uid.values():
+                self.set_button_color(uid, r, g, b)
+
+            response.success = True
+            response.message = "OK"
+            return response
+
+        self.manual_overrides.pop(uid, None)
+        response.success = True
+        response.message = "OK"
+        return response
 
     def program_result_callback(self, msg: ProxyRunProgramResult) -> None:
         """Set button color to red on error (temporary), blue on success."""
@@ -169,6 +211,8 @@ class RGBButtonControl(Node):
         for uid in self.rgb_led_bricklets:
             if uid in self.goal_to_uid.values():
                 continue  # don't override color while program is running
+            if uid in self.manual_overrides:
+                continue  # respect manual override (e.g. Blockly set-color)
             if self.uid_to_program.get(uid):
                 self.set_button_color(uid, *BLUE_COLOR)
             else:

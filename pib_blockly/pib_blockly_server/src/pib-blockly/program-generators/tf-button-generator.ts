@@ -7,6 +7,7 @@ import {
   IMPORT_RCLPY,
   IMPORT_SYS,
   IMPORT_TF_BUTTON_SERVICES,
+  IMPORT_TF_BUTTON_BLOCKLY_CLIENT,
   INIT_ROS,
   INIT_TF_BUTTON_CLIENTS,
 } from "./util/definitions";
@@ -93,12 +94,11 @@ export function tf_button_set_color(
 
   configureGenerator(generator);
 
-  const functionName = generator.provideFunction_(
-    "tf_button_set_color",
-    TF_BUTTON_SET_COLOR_FUNCTION(generator),
-  );
+  Object.assign(generator.definitions_, {
+    IMPORT_TF_BUTTON_BLOCKLY_CLIENT,
+  });
 
-  return `${functionName}(${buttonId}, ${red}, ${green}, ${blue})\n`;
+  return `blockly_client.set_button_manual_override(${buttonId}, ${red}, ${green}, ${blue})\n`;
 }
 
 export {pythonGenerator};

@@ -111,6 +111,9 @@ logging.info(f"service now available")
 export const IMPORT_TF_BUTTON_SERVICES =
 "from button_service.srv import ReadButton, SetButtonColor";
 
+export const IMPORT_TF_BUTTON_BLOCKLY_CLIENT =
+    "from button_service_node_pkg import blockly_client";
+
 export const INIT_VISION_PROMPT_CLIENT = `
 vision_prompt_client = node.create_client(
     VisionPrompt,
