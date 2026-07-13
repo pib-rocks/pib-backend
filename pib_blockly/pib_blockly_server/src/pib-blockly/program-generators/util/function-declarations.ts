@@ -301,20 +301,8 @@ export const TF_BUTTON_TASTER_FUNCTION = (generator: CodeGenerator) => `
 def ${generator.FUNCTION_NAME_PLACEHOLDER_}(button_id: int, red: int, green: int, blue: int) -> int:
     logging.info(f"reading Tinkerforge button {button_id} as taster.")
 
-    color_request = SetButtonColor.Request()
-    color_request.button_id = int(button_id)
-    color_request.red = int(red)
-    color_request.green = int(green)
-    color_request.blue = int(blue)
-
-    color_future = tf_button_set_color_client.call_async(color_request)
-    rclpy.spin_until_future_complete(node, color_future)
-
-    color_result = color_future.result()
-    if color_result is None:
-        raise RuntimeError("Tinkerforge button color service returned no result.")
-    if not color_result.success:
-        raise RuntimeError(color_result.message)
+    # Use consolidated topic API; do not persist color for read helpers.
+    blockly_client.set_button_color(button_id, red, green, blue, sticky=False)
 
     read_request = ReadButton.Request()
     read_request.button_id = int(button_id)
@@ -335,20 +323,8 @@ export const TF_BUTTON_SWITCH_FUNCTION = (generator: CodeGenerator) => `
 def ${generator.FUNCTION_NAME_PLACEHOLDER_}(button_id: int, red: int, green: int, blue: int) -> int:
     logging.info(f"reading Tinkerforge button {button_id} as switch.")
 
-    color_request = SetButtonColor.Request()
-    color_request.button_id = int(button_id)
-    color_request.red = int(red)
-    color_request.green = int(green)
-    color_request.blue = int(blue)
-
-    color_future = tf_button_set_color_client.call_async(color_request)
-    rclpy.spin_until_future_complete(node, color_future)
-
-    color_result = color_future.result()
-    if color_result is None:
-        raise RuntimeError("Tinkerforge button color service returned no result.")
-    if not color_result.success:
-        raise RuntimeError(color_result.message)
+    # Use consolidated topic API; do not persist color for read helpers.
+    blockly_client.set_button_color(button_id, red, green, blue, sticky=False)
 
     read_request = ReadButton.Request()
     read_request.button_id = int(button_id)
@@ -369,18 +345,6 @@ export const TF_BUTTON_SET_COLOR_FUNCTION = (generator: CodeGenerator) => `
 def ${generator.FUNCTION_NAME_PLACEHOLDER_}(button_id: int, red: int, green: int, blue: int) -> None:
     logging.info(f"setting Tinkerforge button {button_id} color to rgb({red}, {green}, {blue}).")
 
-    request = SetButtonColor.Request()
-    request.button_id = int(button_id)
-    request.red = int(red)
-    request.green = int(green)
-    request.blue = int(blue)
-
-    future = tf_button_set_color_client.call_async(request)
-    rclpy.spin_until_future_complete(node, future)
-
-    result = future.result()
-    if result is None:
-        raise RuntimeError("Tinkerforge button color service returned no result.")
-    if not result.success:
-        raise RuntimeError(result.message)
+    # Consolidated API: publish sticky color until overwritten.
+    blockly_client.set_button_color(button_id, red, green, blue)
 `;

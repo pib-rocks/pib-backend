@@ -109,7 +109,7 @@ logging.info(f"service now available")
 `;
 
 export const IMPORT_TF_BUTTON_SERVICES =
-"from button_service.srv import ReadButton, SetButtonColor";
+"from button_service.srv import ReadButton";
 
 export const IMPORT_TF_BUTTON_BLOCKLY_CLIENT =
     "from button_service_node_pkg import blockly_client";
@@ -131,16 +131,8 @@ tf_button_read_client = node.create_client(
     '/tf_button/read'
 )
 
-tf_button_set_color_client = node.create_client(
-    SetButtonColor,
-    '/tf_button/set_color'
-)
-
 logging.info("waiting for '/tf_button/read' service to become available...")
 tf_button_read_client.wait_for_service()
-
-logging.info("waiting for '/tf_button/set_color' service to become available...")
-tf_button_set_color_client.wait_for_service()
 
 logging.info("Tinkerforge button services now available")
 `;

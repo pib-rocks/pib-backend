@@ -11,6 +11,7 @@
   <buildtool_depend>rosidl_default_generators</buildtool_depend>
 
   <depend>rclpy</depend>
+  <depend>datatypes</depend>
 
   <exec_depend>rosidl_default_runtime</exec_depend>
 
