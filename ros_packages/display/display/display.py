@@ -11,7 +11,7 @@ from io import BytesIO
 from itertools import cycle
 from pathlib import Path
 from queue import Empty, Queue
-from threading import Event, Lock, Thread
+from threading import Event as ThreadEvent, Lock, Thread
 from typing import Iterable, Iterator, Optional
 
 import PIL.Image
@@ -108,7 +108,7 @@ class GuiLifecycle:
         self.preload_queue = preload_queue
         self._thread: Thread | None = None
         self._lock = Lock()
-        self._tk_ready = Event()
+        self._tk_ready = ThreadEvent()
 
     def ensure_started(self) -> None:
         if not DISPLAY_ON_DEMAND:
@@ -126,7 +126,8 @@ class GuiLifecycle:
             )
             self._thread.start()
 
-        self._tk_ready.wait(timeout=10.0)
+        if not self._tk_ready.wait(timeout=10.0):
+            log_info("warning: display GUI did not become ready within 10s")
 
     def mark_tk_ready(self) -> None:
         self._tk_ready.set()
