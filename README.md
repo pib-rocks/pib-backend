@@ -43,13 +43,10 @@ This script will update your docker containers (Front- and Backend)
 Starting the webots simulation:
 
 1. Complete all steps of the "Installing pibs software"-section of this readme document
-2. If you are running simulation in a virtual machine ubuntu, make sure your graphics stack supports the simulator GUI
-   (Wayland vs X11 forwarding differs by environment).
-4. Navigate to app/pib-backend
-   `cd app/pib-backend`
-5. Enter the following command into a terminal:  
-   `sudo docker compose --profile pibsim_webots up`  
-   (The first time this command is entered, webots will be installed. Webots should open automatically afterwards, to close it you should stop the container by closing the terminal window which is open or by pressing ctrl + c. To run it again just restart the container and if you turned off the virtual machine repeat step 2)
+2. Webots GUI is intended to run **natively on the host Wayland session** (not inside Docker).
+3. Install Webots on the host OS and then run the simulator launch on the host:
+   - `ros2 launch pibsim_webots pib_launch.py`
+4. Ensure ROS networking between host and Docker works (same `ROS_DOMAIN_ID`, multicast not blocked).
 
 Webots may throw error messages saying it crashed (especially on VM). This can usually be ignored by clicking on "wait".
 

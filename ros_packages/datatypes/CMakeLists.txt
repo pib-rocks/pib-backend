@@ -23,6 +23,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
 	"msg/ImageId.msg"
 	"msg/ImageFormat.msg"
 	"msg/DisplayImage.msg"
+	"msg/ButtonColor.msg"
 	"srv/ApplyMotorSettings.srv"
 	"srv/PlayAudioFromFile.srv"
 	"srv/PlayAudioFromSpeech.srv"

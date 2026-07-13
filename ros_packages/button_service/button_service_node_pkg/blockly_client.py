@@ -6,18 +6,22 @@ import requests
 import rclpy
 from rclpy.node import Node
 
-from button_service.srv import ReadButton, SetButtonColor, WaitForButton, SetButtonManualOverride
+from button_service.srv import ReadButton, WaitForButton, SetButtonManualOverride
+from datatypes.msg import ButtonColor
 
 
 _node: Optional[Node] = None
+_set_button_color_publisher = None
 
 
 def _ensure_node() -> Node:
     global _node
+    global _set_button_color_publisher
     if not rclpy.ok():
         rclpy.init(args=None)
     if _node is None:
         _node = rclpy.create_node("pib_button_blockly_client")
+        _set_button_color_publisher = _node.create_publisher(ButtonColor, "set_button_color", 10)
     return _node
 
 
@@ -44,13 +48,27 @@ def _call(service_type, service_name: str, request, timeout_sec: float = 10.0):
     return result
 
 
-def set_button_color(button_id: int, red: int, green: int, blue: int) -> None:
-    req = SetButtonColor.Request()
-    req.button_id = int(button_id)
-    req.red = int(red)
-    req.green = int(green)
-    req.blue = int(blue)
-    _call(SetButtonColor, "/tf_button/set_color", req)
+def set_button_color(button_id: int, red: int, green: int, blue: int, *, sticky: bool = True, clear: bool = False) -> None:
+    node = _ensure_node()
+    uid = _button_id_to_uid(button_id)
+
+    msg = ButtonColor()
+    msg.bricklet_uid = str(uid)
+    msg.red = int(red)
+    msg.green = int(green)
+    msg.blue = int(blue)
+    msg.sticky = bool(sticky)
+    msg.clear = bool(clear)
+
+    node.get_logger().info(
+        f"Publishing set_button_color for button_id={int(button_id)} uid={uid} "
+        f"rgb=({int(red)},{int(green)},{int(blue)}) sticky={bool(sticky)} clear={bool(clear)}"
+    )
+
+    global _set_button_color_publisher
+    _set_button_color_publisher.publish(msg)
+    # Give DDS a moment to deliver; Blockly programs often exit immediately.
+    rclpy.spin_once(node, timeout_sec=0.05)
 
 
 def _button_id_to_uid(button_id: int) -> str:
@@ -84,14 +102,8 @@ def _button_id_to_uid(button_id: int) -> str:
 
 
 def set_button_manual_override(button_id: int, red: int, green: int, blue: int) -> None:
-    uid = _button_id_to_uid(button_id)
-    req = SetButtonManualOverride.Request()
-    req.bricklet_uid = uid
-    req.enabled = True
-    req.red = int(red)
-    req.green = int(green)
-    req.blue = int(blue)
-    _call(SetButtonManualOverride, "/rgb_button/manual_override", req)
+    # Backwards-compatible shim: manual_override is now just a sticky set via topic.
+    set_button_color(button_id, red, green, blue, sticky=True, clear=False)
 
 
 def is_button_pressed(button_id: int) -> bool:

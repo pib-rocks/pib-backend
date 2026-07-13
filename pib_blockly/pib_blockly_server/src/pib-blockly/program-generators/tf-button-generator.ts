@@ -98,7 +98,7 @@ export function tf_button_set_color(
     IMPORT_TF_BUTTON_BLOCKLY_CLIENT,
   });
 
-  return `blockly_client.set_button_manual_override(${buttonId}, ${red}, ${green}, ${blue})\n`;
+  return `blockly_client.set_button_color(${buttonId}, ${red}, ${green}, ${blue})\n`;
 }
 
 export {pythonGenerator};

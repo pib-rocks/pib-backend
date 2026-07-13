@@ -87,22 +87,6 @@ services:
       - rosbridge-ws
       - flask-app
 
-  pibsim_webots:
-    image: pibsim_webots
-    build:
-      context: .
-      dockerfile: ./ros_packages/pibsim_webots/Dockerfile
-    command: ros2 launch pibsim_webots pib_launch.py
-    volumes:
-      - /tmp/.X11-unix:/tmp/.X11-unix
-    profiles:
-      - pibsim_webots
-    networks:
-      - pib-network
-    environment:
-      - DISPLAY=:0.0
-    restart: no
-
   ros-voice-assistant:
     image: ros_voice_assistant
     build:

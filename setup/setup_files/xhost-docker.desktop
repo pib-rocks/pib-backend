@@ -1,8 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=Allow Docker XWayland access
-Comment=Runs xhost +local: so containerized display can use XWayland on Wayland sessions
-Exec=/usr/bin/sh -c "DISPLAY=:0 /usr/bin/xhost +local:"
-Terminal=false
-Hidden=false
-X-GNOME-Autostart-enabled=true
