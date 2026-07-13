@@ -10,6 +10,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/SetButtonColor.srv"
   "srv/ReadButton.srv"
   "srv/WaitForButton.srv"
+  "srv/SetButtonManualOverride.srv"
 )
 
 ament_python_install_package(button_service_node_pkg)

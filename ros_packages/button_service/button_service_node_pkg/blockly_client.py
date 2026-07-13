@@ -1,10 +1,12 @@
-import time
+import os
 from typing import Optional
+
+import requests
 
 import rclpy
 from rclpy.node import Node
 
-from button_service.srv import ReadButton, SetButtonColor, WaitForButton
+from button_service.srv import ReadButton, SetButtonColor, WaitForButton, SetButtonManualOverride
 
 
 _node: Optional[Node] = None
@@ -49,6 +51,47 @@ def set_button_color(button_id: int, red: int, green: int, blue: int) -> None:
     req.green = int(green)
     req.blue = int(blue)
     _call(SetButtonColor, "/tf_button/set_color", req)
+
+
+def _button_id_to_uid(button_id: int) -> str:
+    """
+    Resolve button_id (1..3) to a bricklet UID using the same backend lookup
+    strategy as the button service.
+    """
+    button_id = int(button_id)
+    if button_id not in (1, 2, 3):
+        raise ValueError("button_id must be 1, 2, or 3")
+
+    api_base_url = os.getenv("FLASK_API_BASE_URL", "http://flask-app:5000").rstrip("/")
+    bricklet_numbers = [
+        int(number.strip())
+        for number in os.getenv("TF_BUTTON_BRICKLET_NUMBERS", "").split(",")
+        if number.strip()
+    ]
+    if len(bricklet_numbers) < button_id:
+        raise RuntimeError(
+            "TF_BUTTON_BRICKLET_NUMBERS must contain at least 3 entries to resolve UIDs"
+        )
+
+    bricklet_number = bricklet_numbers[button_id - 1]
+    url = f"{api_base_url}/bricklet/{bricklet_number}"
+    response = requests.get(url, timeout=5)
+    response.raise_for_status()
+    uid = response.json().get("uid")
+    if not uid:
+        raise RuntimeError(f"Bricklet {bricklet_number} has no UID configured in Cerebra.")
+    return str(uid)
+
+
+def set_button_manual_override(button_id: int, red: int, green: int, blue: int) -> None:
+    uid = _button_id_to_uid(button_id)
+    req = SetButtonManualOverride.Request()
+    req.bricklet_uid = uid
+    req.enabled = True
+    req.red = int(red)
+    req.green = int(green)
+    req.blue = int(blue)
+    _call(SetButtonManualOverride, "/rgb_button/manual_override", req)
 
 
 def is_button_pressed(button_id: int) -> bool:
