@@ -63,6 +63,7 @@ class RGBButtonControl(Node):
 
         # maps uid -> (r,g,b) for manual override colors (set via Blockly)
         self.sticky_colors: dict[str, tuple[int, int, int]] = {}
+        self.uid_to_program: dict[str, str] = {}
 
         self.set_button_color_publisher = self.create_publisher(
             ButtonColor,
@@ -119,6 +120,11 @@ class RGBButtonControl(Node):
         if not uid:
             return
         if uid not in self.rgb_led_bricklets:
+            known_uids = ", ".join(sorted(self.rgb_led_bricklets.keys()))
+            self.get_logger().warning(
+                f"Ignoring set_button_color for unknown bricklet_uid {uid}. "
+                f"Known UIDs: {known_uids or '(none)'}"
+            )
             return
 
         if bool(msg.clear) or not bool(msg.sticky):
@@ -150,7 +156,7 @@ class RGBButtonControl(Node):
                 f"Program failed for UID {uid}, exit_code={msg.exit_code}"
             )
         else:
-            self.set_button_color(uid, *BLUE_COLOR)
+            self.restore_idle_color(uid)
             self.get_logger().info(f"Program finished successfully for UID {uid}")
 
     def on_button_state_changed(self, uid: str, state) -> None:
@@ -191,7 +197,7 @@ class RGBButtonControl(Node):
             response = fut.result()
             if response:
                 self.goal_to_uid.pop(proxy_goal_id, None)
-                self.set_button_color(uid, *BLUE_COLOR)
+                self.restore_idle_color(uid)
                 self.get_logger().info(
                     f"Stopped program for UID {uid}, proxy_goal_id={proxy_goal_id}"
                 )
@@ -236,6 +242,18 @@ class RGBButtonControl(Node):
         except Exception as e:
             self.get_logger().error(f"Error setting color for UID {uid}: {str(e)}")
 
+    def restore_idle_color(self, uid: str) -> None:
+        """Restore sticky color if set, otherwise fall back to assignment blue/off."""
+        sticky = self.sticky_colors.get(uid)
+        if sticky:
+            self.set_button_color(uid, *sticky)
+            return
+        self.load_button_programs()
+        if self.uid_to_program.get(uid):
+            self.set_button_color(uid, *BLUE_COLOR)
+        else:
+            self.set_button_color(uid, 0, 0, 0)
+
     def update_button_colors(self) -> None:
         """Periodically updates button colors based on current program assignments."""
         self.load_button_programs()
@@ -243,7 +261,8 @@ class RGBButtonControl(Node):
             if uid in self.goal_to_uid.values():
                 continue  # don't override color while program is running
             if uid in self.sticky_colors:
-                continue  # respect sticky color until overwritten
+                self.set_button_color(uid, *self.sticky_colors[uid])
+                continue
             if self.uid_to_program.get(uid):
                 self.set_button_color(uid, *BLUE_COLOR)
             else:
