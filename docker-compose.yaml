@@ -199,6 +199,9 @@ services:
     environment:
       - STATIC_IMAGE_DIR=/app/ros2_ws/display/static_images
       - PIB_EXPRESSION_DIR=/app/pib-expression-faces
+      - PIB_DISPLAY_WIDTH=1024
+      - PIB_DISPLAY_HEIGHT=600
+      - PIB_DISPLAY_ON_DEMAND=1
       - PIB_DISPLAY_TEXT_MAX_CHARS=40
       - PIB_DISPLAY_TEXT_CACHE_MAX=50
       - PIB_DISPLAY_POLL_MS=5
