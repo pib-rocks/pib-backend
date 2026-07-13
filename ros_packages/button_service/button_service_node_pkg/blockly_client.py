@@ -1,3 +1,4 @@
+import logging
 import os
 import time
 from typing import Optional
@@ -61,7 +62,7 @@ def set_button_color(button_id: int, red: int, green: int, blue: int, *, sticky:
     msg.sticky = bool(sticky)
     msg.clear = bool(clear)
 
-    node.get_logger().info(
+    logging.info(
         f"Publishing set_button_color for button_id={int(button_id)} uid={uid} "
         f"rgb=({int(red)},{int(green)},{int(blue)}) sticky={bool(sticky)} clear={bool(clear)}"
     )
@@ -73,7 +74,7 @@ def set_button_color(button_id: int, red: int, green: int, blue: int, *, sticky:
             break
         rclpy.spin_once(node, timeout_sec=0.1)
     else:
-        node.get_logger().warning(
+        logging.warning(
             "No subscribers on set_button_color after 3s; publishing anyway"
         )
 
