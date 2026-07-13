@@ -29,6 +29,7 @@ COPY ./ros_packages/motors/pib_motors ./motors/pib_motors
 RUN pip install ./motors/pib_motors
 
 COPY ./ros_packages/datatypes ros2_ws/datatypes
+COPY ./ros_packages/button_service ros2_ws/button_service
 COPY ./ros_packages/motors ros2_ws/motors
 
 RUN cd ros2_ws && \

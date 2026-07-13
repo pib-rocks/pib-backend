@@ -1,4 +1,5 @@
 import os
+import time
 from typing import Optional
 
 import requests
@@ -66,9 +67,19 @@ def set_button_color(button_id: int, red: int, green: int, blue: int, *, sticky:
     )
 
     global _set_button_color_publisher
+    deadline = time.monotonic() + 3.0
+    while time.monotonic() < deadline:
+        if _set_button_color_publisher.get_subscription_count() > 0:
+            break
+        rclpy.spin_once(node, timeout_sec=0.1)
+    else:
+        node.get_logger().warning(
+            "No subscribers on set_button_color after 3s; publishing anyway"
+        )
+
     _set_button_color_publisher.publish(msg)
     # Give DDS a moment to deliver; Blockly programs often exit immediately.
-    rclpy.spin_once(node, timeout_sec=0.05)
+    rclpy.spin_once(node, timeout_sec=0.25)
 
 
 def _button_id_to_uid(button_id: int) -> str:
@@ -88,16 +99,24 @@ def _button_id_to_uid(button_id: int) -> str:
     ]
     if len(bricklet_numbers) < button_id:
         raise RuntimeError(
-            "TF_BUTTON_BRICKLET_NUMBERS must contain at least 3 entries to resolve UIDs"
+            "TF_BUTTON_BRICKLET_NUMBERS must contain at least 3 entries to resolve UIDs "
+            f"(got {bricklet_numbers!r}, button_id={button_id})"
         )
 
     bricklet_number = bricklet_numbers[button_id - 1]
     url = f"{api_base_url}/bricklet/{bricklet_number}"
-    response = requests.get(url, timeout=5)
-    response.raise_for_status()
+    try:
+        response = requests.get(url, timeout=5)
+        response.raise_for_status()
+    except Exception as exc:
+        raise RuntimeError(
+            f"Failed to resolve button_id {button_id} via {url}: {exc}"
+        ) from exc
     uid = response.json().get("uid")
     if not uid:
-        raise RuntimeError(f"Bricklet {bricklet_number} has no UID configured in Cerebra.")
+        raise RuntimeError(
+            f"Bricklet {bricklet_number} has no UID configured in Cerebra (url={url})."
+        )
     return str(uid)
 
 

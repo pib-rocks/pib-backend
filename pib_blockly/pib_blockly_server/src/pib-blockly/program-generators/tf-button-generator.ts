@@ -32,6 +32,7 @@ function configureGenerator(generator: typeof pythonGenerator): void {
     IMPORT_SYS,
     IMPORT_LOGGING,
     IMPORT_TF_BUTTON_SERVICES,
+    IMPORT_TF_BUTTON_BLOCKLY_CLIENT,
     CONFIGURE_LOGGING,
     INIT_ROS,
     INIT_TF_BUTTON_CLIENTS,
@@ -93,10 +94,6 @@ export function tf_button_set_color(
   const {red, green, blue} = hexToRgb(color);
 
   configureGenerator(generator);
-
-  Object.assign(generator.definitions_, {
-    IMPORT_TF_BUTTON_BLOCKLY_CLIENT,
-  });
 
   return `blockly_client.set_button_color(${buttonId}, ${red}, ${green}, ${blue})\n`;
 }
