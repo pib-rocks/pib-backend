@@ -45,14 +45,28 @@ PRELOAD_POLL_MS = int(os.getenv("PIB_DISPLAY_PRELOAD_POLL_MS", "10"))
 TEXT_CANVAS_WIDTH = int(os.getenv("PIB_DISPLAY_TEXT_WIDTH", "800"))
 TEXT_CANVAS_HEIGHT = int(os.getenv("PIB_DISPLAY_TEXT_HEIGHT", "480"))
 
+_ros_logger: Optional[Node] = None
+
+
+def set_ros_logger(node: Node) -> None:
+    global _ros_logger
+    _ros_logger = node
+
 
 def log_debug(message: str) -> None:
-    if DISPLAY_VERBOSE:
+    if not DISPLAY_VERBOSE:
+        return
+    if _ros_logger is not None:
+        _ros_logger.get_logger().info(f"[display-v2-debug] {message}")
+    else:
         print(f"[display-v2-debug] {time.monotonic():.6f} {message}", flush=True)
 
 
 def log_info(message: str) -> None:
-    print(f"[display-v2] {message}", flush=True)
+    if _ros_logger is not None:
+        _ros_logger.get_logger().info(message)
+    else:
+        print(f"[display-v2] {message}", flush=True)
 
 
 @dataclass(frozen=True)
@@ -721,6 +735,7 @@ class GuiApplication(Frame):
 class DisplayNode(Node):
     def __init__(self, command_queue: Queue[DisplayCommand], gui_lifecycle: GuiLifecycle) -> None:
         super().__init__("display")
+        set_ros_logger(self)
         self.command_queue = command_queue
         self.gui_lifecycle = gui_lifecycle
 
@@ -752,12 +767,15 @@ class DisplayNode(Node):
         self.command_queue.put(command)
 
     def on_expression(self, msg: String) -> None:
+        self.get_logger().info(f"expression requested: {msg.data}")
         self.enqueue(DisplayCommand("expression", msg.data))
 
     def on_text(self, msg: String) -> None:
+        self.get_logger().info(f"display text requested: {msg.data[:DISPLAY_TEXT_MAX_CHARS]}")
         self.enqueue(DisplayCommand("text", msg.data))
 
     def on_hide(self, msg: String) -> None:
+        self.get_logger().info("display hide requested")
         self.enqueue(DisplayCommand("hide"))
 
     def on_display_image(self, msg: DisplayImage) -> None:

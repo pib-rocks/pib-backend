@@ -37,7 +37,7 @@ try:
 except NameError:
     _pib_display_ready = False
 
-def _pib_wait_for_subscriber(pub, label="display handler", timeout_sec=1.0):
+def _pib_wait_for_subscriber(pub, label="display handler", timeout_sec=3.0):
     print(f"waiting for {label} to become available...")
     deadline = time.time() + timeout_sec
     while time.time() < deadline:
@@ -65,7 +65,7 @@ def _pib_publish_string(pub, value, label="display"):
     pub.publish(_msg)
     print(f"now displaying {label}: {value}")
 
-    deadline = time.time() + 0.15
+    deadline = time.time() + 0.25
     while time.time() < deadline:
         rclpy.spin_once(_pib_display_node, timeout_sec=0.02)
         time.sleep(0.01)
