@@ -43,8 +43,8 @@ This script will update your docker containers (Front- and Backend)
 Starting the webots simulation:
 
 1. Complete all steps of the "Installing pibs software"-section of this readme document
-2. If you are running simulation in a virtual machine ubuntu type the following command
-   `xhost +local:root`
+2. If you are running simulation in a virtual machine ubuntu, make sure your graphics stack supports the simulator GUI
+   (Wayland vs X11 forwarding differs by environment).
 4. Navigate to app/pib-backend
    `cd app/pib-backend`
 5. Enter the following command into a terminal:  

@@ -1,49 +1,41 @@
 from __future__ import annotations
 
-import base64
-from collections import OrderedDict
 import os
 import re
 import time
 from dataclasses import dataclass
 from hashlib import sha1
 from io import BytesIO
-from itertools import cycle
 from pathlib import Path
 from queue import Empty, Queue
 from threading import Event as ThreadEvent, Lock, Thread
-from typing import Iterable, Iterator, Optional
+from typing import Optional
 
 import PIL.Image
+import pygame
 import rclpy
 from PIL import Image as PILImage, ImageDraw, ImageFont
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 from std_msgs.msg import String
-from tkinter import *
 
 from datatypes.msg import DisplayImage, ImageFormat, ImageId
 
 
-os.environ.setdefault("DISPLAY", ":0")
-
 STATIC_IMAGE_DIR = Path(os.getenv("STATIC_IMAGE_DIR", "/app/ros2_ws/display/static_images"))
 EXPRESSION_DIR = Path(os.getenv("PIB_EXPRESSION_DIR", "/app/pib-expression-faces"))
 
-DISPLAY_WIDTH = int(os.getenv("PIB_DISPLAY_WIDTH", "0"))
-DISPLAY_HEIGHT = int(os.getenv("PIB_DISPLAY_HEIGHT", "0"))
+DISPLAY_WIDTH = int(os.getenv("PIB_DISPLAY_WIDTH", "1024"))
+DISPLAY_HEIGHT = int(os.getenv("PIB_DISPLAY_HEIGHT", "600"))
 DISPLAY_TEXT_MAX_CHARS = int(os.getenv("PIB_DISPLAY_TEXT_MAX_CHARS", "40"))
 DISPLAY_TEXT_PADDING = int(os.getenv("PIB_DISPLAY_TEXT_PADDING", "40"))
-DISPLAY_POLL_MS = int(os.getenv("PIB_DISPLAY_POLL_MS", "5"))
-DISPLAY_IDLE_SECONDS = float(os.getenv("PIB_DISPLAY_IDLE_SECONDS", "10"))
 DISPLAY_ON_DEMAND = os.getenv("PIB_DISPLAY_ON_DEMAND", "1") == "1"
 DISPLAY_VERBOSE = os.getenv("PIB_DISPLAY_NODE_VERBOSE", "0") == "1"
 DISPLAY_TEXT_CACHE_MAX = int(os.getenv("PIB_DISPLAY_TEXT_CACHE_MAX", "50"))
-PRELOAD_POLL_MS = int(os.getenv("PIB_DISPLAY_PRELOAD_POLL_MS", "10"))
 
-TEXT_CANVAS_WIDTH = int(os.getenv("PIB_DISPLAY_TEXT_WIDTH", "800"))
-TEXT_CANVAS_HEIGHT = int(os.getenv("PIB_DISPLAY_TEXT_HEIGHT", "480"))
+TEXT_CANVAS_WIDTH = int(os.getenv("PIB_DISPLAY_TEXT_WIDTH", str(DISPLAY_WIDTH)))
+TEXT_CANVAS_HEIGHT = int(os.getenv("PIB_DISPLAY_TEXT_HEIGHT", str(DISPLAY_HEIGHT)))
 
 _ros_logger: Optional[Node] = None
 
@@ -75,56 +67,34 @@ class RawImage:
     data: bytes
 
 
-@dataclass
-class AnimationFrame:
+@dataclass(frozen=True)
+class SurfaceFrame:
     duration_ms: int
-    photo_image: PhotoImage
+    surface: pygame.Surface
 
 
 @dataclass(frozen=True)
 class PreloadItem:
     cache_key: str
-    kind: str
-    frames: list[tuple[int, bytes]]
-
-
-class Animation:
-    def __init__(self, frames: Iterable[AnimationFrame]):
-        self.frames = list(frames)
-        self.iterator = iter(cycle(self.frames))
-        self.stopped = False
-
-    def stop(self) -> None:
-        self.stopped = True
-
-    def __iter__(self) -> Iterator[AnimationFrame]:
-        return self
-
-    def __next__(self) -> AnimationFrame:
-        if self.stopped:
-            raise StopIteration()
-        return next(self.iterator)
+    kind: str  # "static" | "animation"
+    width: int
+    height: int
+    frames: list[tuple[int, bytes]]  # [(duration_ms, rgba_bytes)]
 
 
 @dataclass(frozen=True)
 class DisplayCommand:
-    kind: str
+    kind: str  # "expression" | "text" | "raw" | "hide" | "quit"
     value: object = None
 
 
-class GuiLifecycle:
-    def __init__(
-        self,
-        command_queue: Queue[DisplayCommand],
-        preload_queue: Queue[PreloadItem | None],
-    ):
-        self.command_queue = command_queue
-        self.preload_queue = preload_queue
+class RendererLifecycle:
+    def __init__(self) -> None:
         self._thread: Thread | None = None
         self._lock = Lock()
-        self._tk_ready = ThreadEvent()
+        self._ready = ThreadEvent()
 
-    def ensure_started(self) -> None:
+    def ensure_started(self, command_queue: Queue[DisplayCommand], preload_queue: Queue[PreloadItem | None]) -> None:
         if not DISPLAY_ON_DEMAND:
             return
 
@@ -132,19 +102,19 @@ class GuiLifecycle:
             if self._thread is not None and self._thread.is_alive():
                 return
 
-            self._tk_ready.clear()
+            self._ready.clear()
             self._thread = Thread(
-                target=run_gui,
-                args=(self.command_queue, self.preload_queue, self),
+                target=run_renderer,
+                args=(command_queue, preload_queue, self),
                 daemon=True,
             )
             self._thread.start()
 
-        if not self._tk_ready.wait(timeout=10.0):
-            log_info("warning: display GUI did not become ready within 10s")
+        if not self._ready.wait(timeout=10.0):
+            log_info("warning: renderer did not become ready within 10s")
 
-    def mark_tk_ready(self) -> None:
-        self._tk_ready.set()
+    def mark_ready(self) -> None:
+        self._ready.set()
 
 
 class ImageCache:
@@ -614,15 +584,13 @@ class DisplayController:
 
     def schedule_idle_action(self) -> None:
         self.cancel_default_timer()
+        if DISPLAY_ON_DEMAND:
+            return
+
         if DISPLAY_IDLE_SECONDS <= 0:
             return
 
-        if DISPLAY_ON_DEMAND:
-            callback = self.hide_window
-        else:
-            callback = self.show_default
-
-        self.default_timer_id = self.canvas.after(int(DISPLAY_IDLE_SECONDS * 1000), callback)
+        self.default_timer_id = self.canvas.after(int(DISPLAY_IDLE_SECONDS * 1000), self.show_default)
 
     def schedule_default(self) -> None:
         self.schedule_idle_action()
@@ -671,6 +639,12 @@ class GuiApplication(Frame):
         self.text_renderer = TextRenderer(self.width, self.height)
         self.controller = DisplayController(self.canvas, parent, self.image_cache, self.text_renderer)
 
+        if DISPLAY_ON_DEMAND:
+            toplevel = self.winfo_toplevel()
+            toplevel.bind("<Escape>", self._dismiss_display)
+            self.canvas.bind("<Button-1>", self._dismiss_display)
+            self.canvas.bind("<ButtonRelease-1>", self._dismiss_display)
+
         self.controller.show_placeholder()
         if not DISPLAY_ON_DEMAND:
             AsyncImagePreloader(self.width, self.height, self.preload_queue).start()
@@ -680,6 +654,12 @@ class GuiApplication(Frame):
 
         if gui_lifecycle is not None:
             gui_lifecycle.mark_tk_ready()
+
+    def _dismiss_display(self, _event=None) -> None:
+        if not self.controller.window_visible:
+            return
+        self.controller.hide_window()
+        log_info("display dismissed by user")
 
     def _poll_preload(self) -> None:
         try:
@@ -817,9 +797,7 @@ def run_gui(
     root = Tk()
 
     def on_escape(_event) -> None:
-        if DISPLAY_ON_DEMAND:
-            command_queue.put(DisplayCommand("hide"))
-        else:
+        if not DISPLAY_ON_DEMAND:
             root.destroy()
 
     root.bind("<Escape>", on_escape)
