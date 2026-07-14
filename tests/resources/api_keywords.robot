@@ -50,12 +50,13 @@ Get Motor Rotation Range
 
 Put Button Program Mapping
     [Arguments]    ${bricklet_number}    ${program_number}=${None}
-    ${payload}=    Create Dictionary    buttonProgramUpdates=${EMPTY LIST}
+    ${updates}=    Create List
     ${update}=    Create Dictionary    brickletNumber=${bricklet_number}
     Run Keyword If    '${program_number}' != '${None}' and '${program_number}' != 'None'
     ...    Set To Dictionary    ${update}    programNumber=${program_number}
     ...    ELSE    Set To Dictionary    ${update}    programNumber=${None}
-    Append To List    ${payload}[buttonProgramUpdates]    ${update}
+    Append To List    ${updates}    ${update}
+    ${payload}=    Create Dictionary    buttonProgramUpdates=${updates}
     PUT    ${FLASK_BASE_URL}/button-programs    json=${payload}    expected_status=200
 
 Get Host IP
