@@ -33,8 +33,8 @@ E2E-BDD-SAF-003 Unknown Motor Returns 404 Not 503
 E2E-BDD-SAF-004 Duplicate Program Name Returns 400
     [Documentation]    Given duplicate program name When POST Then integrity-style 400.
     ${program_number}    ${name}=    Create Unique Program    safety_dup
-    ${response}=    POST    ${FLASK_BASE_URL}/program    json={"name": "${name}"}
-    Should Be Equal As Integers    ${response.status_code}    400
+    ${payload}=    Create Dictionary    name=${name}
+    ${response}=    POST    ${FLASK_BASE_URL}/program    json=${payload}    expected_status=400
     Should Be Equal    ${response.json()}[error]    Bad request.
     [Teardown]    Run Keyword And Ignore Error    Delete Program    ${program_number}
 

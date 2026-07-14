@@ -17,7 +17,8 @@ Flask API Is Reachable
 
 Create Program
     [Arguments]    ${name}
-    ${response}=    POST    ${FLASK_BASE_URL}/program    json={"name": "${name}"}    expected_status=201
+    ${payload}=    Create Dictionary    name=${name}
+    ${response}=    POST    ${FLASK_BASE_URL}/program    json=${payload}    expected_status=201
     ${body}=    Set Variable    ${response.json()}
     RETURN    ${body}[programNumber]
 

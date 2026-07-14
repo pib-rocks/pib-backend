@@ -6,6 +6,9 @@ module.exports = {
   testMatch: ["**/*.test.ts"],
   moduleFileExtensions: ["ts", "js"],
   clearMocks: true,
+  moduleNameMapper: {
+    "^blockly/(.*)$": "<rootDir>/node_modules/blockly/$1",
+  },
   transform: {
     "^.+\\.tsx?$": [
       "ts-jest",
