@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import os
+import socket
 import subprocess
 import time
 from pathlib import Path
+from typing import Any
 
 import pytest
 import requests
@@ -13,11 +15,6 @@ import requests
 REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPOSE_FILE = REPO_ROOT / "docker-compose.yaml"
 COMPOSE_PORTS_FILE = Path(__file__).resolve().parent / "docker-compose.test-ports.yaml"
-
-# Alternate host ports — must match docker-compose.test-ports.yaml
-TEST_FLASK_PORT = 15000
-TEST_BLOCKLY_PORT = 12442
-TEST_ROSBRIDGE_PORT = 19090
 
 
 def docker_available() -> bool:
@@ -42,6 +39,39 @@ def _compose_cmd(*args: str) -> list[str]:
     ]
 
 
+def _container_ip(client: Any, project: str, service: str) -> str:
+    network_name = f"{project}_pib-network"
+    matches = [
+        c
+        for c in client.containers.list(all=True)
+        if project in c.name and service in c.name and c.status == "running"
+    ]
+    assert matches, f"running container for {service} not found in project {project}"
+    container = matches[0]
+    networks = container.attrs["NetworkSettings"]["Networks"]
+    assert network_name in networks, f"{container.name} not attached to {network_name}"
+    ip = networks[network_name]["IPAddress"]
+    assert ip, f"no IP for {container.name} on {network_name}"
+    return ip
+
+
+def _wait_for_flask(project: str, timeout_sec: float = 180) -> str:
+    import docker
+
+    client = docker.from_env()
+    deadline = time.time() + timeout_sec
+    while time.time() < deadline:
+        try:
+            ip = _container_ip(client, project, "flask-app")
+            response = requests.get(f"http://{ip}:5000/motor", timeout=3)
+            if response.status_code == 200:
+                return ip
+        except (AssertionError, requests.RequestException):
+            pass
+        time.sleep(3)
+    raise TimeoutError(f"flask-app not ready within {timeout_sec}s for project {project}")
+
+
 pytestmark = pytest.mark.docker
 
 
@@ -61,6 +91,15 @@ def compose_stack(compose_project_name):
     env["COMPOSE_PROJECT_NAME"] = compose_project_name
 
     subprocess.run(
+        _compose_cmd("down", "-v"),
+        cwd=REPO_ROOT,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    subprocess.run(
         _compose_cmd(
             "up",
             "-d",
@@ -76,33 +115,21 @@ def compose_stack(compose_project_name):
         text=True,
     )
 
-    flask_url = f"http://localhost:{TEST_FLASK_PORT}/motor"
-    deadline = time.time() + 180
-    flask_ready = False
-    while time.time() < deadline:
-        try:
-            response = requests.get(flask_url, timeout=3)
-            if response.status_code == 200:
-                flask_ready = True
-                break
-        except requests.RequestException:
-            pass
-        time.sleep(3)
-
-    if not flask_ready:
-        subprocess.run(
-            _compose_cmd("logs", "flask-app"),
-            cwd=REPO_ROOT,
-            env=env,
-        )
+    try:
+        flask_ip = _wait_for_flask(compose_project_name)
+    except TimeoutError:
+        subprocess.run(_compose_cmd("logs", "flask-app"), cwd=REPO_ROOT, env=env)
         subprocess.run(_compose_cmd("down", "-v"), cwd=REPO_ROOT, env=env)
         pytest.fail("flask-app did not become ready within 180 seconds")
 
+    import docker
+
+    client = docker.from_env()
     yield {
         "project": compose_project_name,
-        "flask_port": TEST_FLASK_PORT,
-        "blockly_port": TEST_BLOCKLY_PORT,
-        "rosbridge_port": TEST_ROSBRIDGE_PORT,
+        "flask_ip": flask_ip,
+        "blockly_ip": _container_ip(client, compose_project_name, "pib-blockly-server"),
+        "rosbridge_ip": _container_ip(client, compose_project_name, "rosbridge-ws"),
     }
 
     subprocess.run(_compose_cmd("down", "-v"), cwd=REPO_ROOT, env=env, check=False)
@@ -111,23 +138,19 @@ def compose_stack(compose_project_name):
 @pytest.mark.slow
 class TestDockerDeployment:
     def test_flask_motor_endpoint_responds(self, compose_stack):
-        port = compose_stack["flask_port"]
-        response = requests.get(f"http://localhost:{port}/motor", timeout=10)
+        ip = compose_stack["flask_ip"]
+        response = requests.get(f"http://{ip}:5000/motor", timeout=10)
         assert response.status_code == 200
         assert "motors" in response.json()
 
     def test_blockly_server_port_open(self, compose_stack):
-        import socket
-
-        port = compose_stack["blockly_port"]
-        sock = socket.create_connection(("localhost", port), timeout=5)
+        ip = compose_stack["blockly_ip"]
+        sock = socket.create_connection((ip, 2442), timeout=5)
         sock.close()
 
     def test_rosbridge_port_open(self, compose_stack):
-        import socket
-
-        port = compose_stack["rosbridge_port"]
-        sock = socket.create_connection(("localhost", port), timeout=5)
+        ip = compose_stack["rosbridge_ip"]
+        sock = socket.create_connection((ip, 9090), timeout=5)
         sock.close()
 
     def test_containers_on_pib_network(self, compose_stack):
@@ -151,7 +174,6 @@ class TestDockerDeployment:
 
         client = docker.from_env()
         project = compose_stack["project"]
-        port = compose_stack["flask_port"]
         flask_containers = [
             c
             for c in client.containers.list(all=True)
@@ -163,7 +185,8 @@ class TestDockerDeployment:
         time.sleep(8)
         container.reload()
         assert container.status == "running"
-        response = requests.get(f"http://localhost:{port}/motor", timeout=15)
+        ip = _wait_for_flask(project, timeout_sec=60)
+        response = requests.get(f"http://{ip}:5000/motor", timeout=15)
         assert response.status_code == 200
 
 
