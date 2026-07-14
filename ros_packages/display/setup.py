@@ -23,7 +23,8 @@ setup(
     tests_require=["pytest"],
     entry_points={
         "console_scripts": [
-            "display = display.display:main",
+            "display = display.display_wayland_gtk:main",
+            "expression_manager = display.expression_manager:main",
         ],
     },
 )

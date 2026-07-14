@@ -103,8 +103,7 @@ function update_backend() {
     if [ -d "$BACKEND_DIR" ]; then
         print INFO "Updating backend:"
         cd "$BACKEND_DIR" || { print ERROR "Cannot get to $BACKEND_DIR"; exit 1; }
-        git pull --recurse-submodules || { print ERROR "backend git pull error"; exit 1; }
-        git submodule update --init --recursive || { print ERROR "backend submodule update error"; exit 1; }
+        git pull --ff-only origin main || { print ERROR "backend git pull error"; exit 1; }
         # Ensure that the IP dispatcher script is set up so the IP display works correctly
         ensure_host_ip
         sudo docker compose --profile all up --force-recreate --build -d || { print ERROR "docker compose backend build error"; exit 1; }
