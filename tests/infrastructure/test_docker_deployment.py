@@ -182,9 +182,15 @@ class TestDockerDeployment:
         assert flask_containers, "flask-app container not found"
         container = flask_containers[0]
         container.kill()
-        time.sleep(8)
-        container.reload()
-        assert container.status == "running"
+        deadline = time.time() + 60
+        restarted = False
+        while time.time() < deadline:
+            container.reload()
+            if container.status == "running":
+                restarted = True
+                break
+            time.sleep(2)
+        assert restarted, f"flask-app did not restart within 60s (status={container.status})"
         ip = _wait_for_flask(project, timeout_sec=60)
         response = requests.get(f"http://{ip}:5000/motor", timeout=15)
         assert response.status_code == 200
