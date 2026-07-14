@@ -4,6 +4,7 @@ Resource            ../resources/api_keywords.robot
 Library             ../resources/ROS2TestLibrary.py
 Library             RequestsLibrary
 Library             Collections
+Library             OperatingSystem
 
 Suite Setup         Initialize E2E Environment
 Suite Teardown      Shutdown E2E Environment
@@ -40,7 +41,7 @@ E2E-BDD-SYS-004 Startup Pose Available For Motor Boot Sequence
 
 E2E-BDD-SYS-005 Button Program Mapping Round Trip
     [Documentation]    Given program created When mapped to bricklet 5 Then PUT /button-programs succeeds.
-    ${program_number}=    Create Program    e2e_button_map
+    ${program_number}    ${name}=    Create Unique Program    e2e_button_map
     Put Button Program Mapping    5    ${program_number}
     Put Button Program Mapping    5    ${None}
     [Teardown]    Run Keyword And Ignore Error    Delete Program    ${program_number}

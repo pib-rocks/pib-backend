@@ -3,6 +3,7 @@ Documentation     Safety and anti-pattern scenarios from docs/test-basis/backend
 Resource            ../resources/api_keywords.robot
 Library             ../resources/ROS2TestLibrary.py
 Library             RequestsLibrary
+Library             OperatingSystem
 
 Suite Setup         Initialize Safety Test Environment
 Suite Teardown      Shutdown Safety Test Environment
@@ -22,8 +23,7 @@ E2E-BDD-SAF-002 Non Deletable Calibration Pose Rejects Delete
     ${response}=    GET    ${FLASK_BASE_URL}/pose    expected_status=200
     ${poses}=    Set Variable    ${response.json()}[poses]
     ${cal_id}=    Evaluate    next(p['poseId'] for p in $poses if p['name'] == 'Calibration')
-    ${delete}=    DELETE    ${FLASK_BASE_URL}/pose/${cal_id}
-    Should Be Equal As Integers    ${delete.status_code}    500
+    ${response}=    DELETE    ${FLASK_BASE_URL}/pose/${cal_id}    expected_status=500
 
 E2E-BDD-SAF-003 Unknown Motor Returns 404 Not 503
     [Documentation]    Given unknown motor path When GET Then 404 entity not found envelope.
@@ -32,10 +32,11 @@ E2E-BDD-SAF-003 Unknown Motor Returns 404 Not 503
 
 E2E-BDD-SAF-004 Duplicate Program Name Returns 400
     [Documentation]    Given duplicate program name When POST Then integrity-style 400.
-    Create Program    safety_dup_program
-    ${response}=    POST    ${FLASK_BASE_URL}/program    json={"name": "safety_dup_program"}
+    ${program_number}    ${name}=    Create Unique Program    safety_dup
+    ${response}=    POST    ${FLASK_BASE_URL}/program    json={"name": "${name}"}
     Should Be Equal As Integers    ${response.status_code}    400
     Should Be Equal    ${response.json()}[error]    Bad request.
+    [Teardown]    Run Keyword And Ignore Error    Delete Program    ${program_number}
 
 E2E-BDD-SAF-005 Host IP Missing File Returns 500
     [Documentation]    Documented edge case — requires isolated Flask; verified via integration pytest.

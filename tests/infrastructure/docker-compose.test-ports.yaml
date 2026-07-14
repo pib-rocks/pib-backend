@@ -1,0 +1,11 @@
+# Alternate host ports for isolated pytest docker stacks (avoids conflict with multirepo-*).
+services:
+  pib-blockly-server:
+    ports:
+      - "12442:2442"
+  flask-app:
+    ports:
+      - "15000:5000"
+  rosbridge-ws:
+    ports:
+      - "19090:9090"

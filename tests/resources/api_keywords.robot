@@ -21,6 +21,13 @@ Create Program
     ${body}=    Set Variable    ${response.json()}
     RETURN    ${body}[programNumber]
 
+Create Unique Program
+    [Arguments]    ${prefix}
+    ${suffix}=    Evaluate    __import__('uuid').uuid4().hex[:8]
+    ${name}=    Set Variable    ${prefix}_${suffix}
+    ${program_number}=    Create Program    ${name}
+    RETURN    ${program_number}    ${name}
+
 Delete Program
     [Arguments]    ${program_number}
     DELETE    ${FLASK_BASE_URL}/program/${program_number}    expected_status=204
