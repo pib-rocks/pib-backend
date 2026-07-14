@@ -13,6 +13,20 @@ Generated from `docs/test-basis/` specifications.
 | `blockly_generator/` | Jest | Blockly Python code generator unit tests |
 | `resources/` | Python/Robot | Shared keywords and `ROS2TestLibrary.py` |
 
+## Run everything (Pi)
+
+From the `tests/` directory on the Pi:
+
+```bash
+cd ~/app/pib-backend/tests
+chmod +x run_all_tests.sh   # once
+./run_all_tests.sh
+```
+
+Options: `--skip-docker`, `--skip-jest`, `--skip-robot`, `--include-frontend`, `--help`.
+
+Results are written to `tests/results/run-<timestamp>/`.
+
 ## Pytest
 
 ```bash
