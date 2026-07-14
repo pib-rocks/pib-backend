@@ -6,7 +6,21 @@ RUN apt-get update && apt-get install --no-install-recommends -y \
     build-essential \
     python3-colcon-common-extensions \
     python3-colcon-mixin \
-    python3-tk \
+    python3-gi \
+    libgirepository-1.0-1 \
+    gir1.2-gtk-4.0 \
+    libgtk-4-1 \
+    libwayland-client0 \
+    libwayland-egl1 \
+    libwayland-cursor0 \
+    libdecor-0-0 \
+    libxkbcommon0 \
+    libegl1 \
+    libgles2 \
+    libdrm2 \
+    libdbus-1-3 \
+    libglib2.0-0 \
+    fonts-dejavu \
     && rm -rf /var/lib/apt/lists/*
     
 WORKDIR /app
