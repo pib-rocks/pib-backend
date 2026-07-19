@@ -147,6 +147,22 @@ function install_system_packages() {
     print INFO "Installing system packages"
     sudo apt update -qq && \
     sudo apt-get install -y git curl gnupg openssh-server >/dev/null
+
+    # Install Node.js (LTS) via NodeSource — needed for Cerebra frontend build
+    # and for running Jest/Blockly generator tests without a Docker fallback.
+    if ! command_exists node; then
+        print INFO "Installing Node.js (LTS) via NodeSource"
+        curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash - >/dev/null 2>&1
+        sudo apt-get install -y nodejs >/dev/null
+        if command_exists node; then
+            print SUCCESS "Node.js $(node --version) installed"
+        else
+            print ERROR "Failed to install Node.js"
+        fi
+    else
+        print INFO "Node.js $(node --version) already installed"
+    fi
+
     print SUCCESS "Installing system packages completed"
 }
 
