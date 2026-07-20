@@ -1,4 +1,4 @@
-FROM ros:humble-ros-core
+FROM ros:jazzy-ros-core
 
 SHELL ["/bin/bash", "-c"]
 
@@ -33,7 +33,7 @@ COPY ./ros_packages/button_service ros2_ws/button_service
 COPY ./ros_packages/motors ros2_ws/motors
 
 RUN cd ros2_ws && \
-    source /opt/ros/humble/setup.bash && \
+    source /opt/ros/jazzy/setup.bash && \
     colcon build
 
 COPY ./ros_packages/ros_entrypoint.sh /
