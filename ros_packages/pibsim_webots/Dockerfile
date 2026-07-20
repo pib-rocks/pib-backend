@@ -1,4 +1,4 @@
-FROM ros:humble-ros-core
+FROM ros:jazzy-ros-core
 
 SHELL ["/bin/bash", "-c"]
 
@@ -19,7 +19,7 @@ RUN apt-get update --fix-missing && apt-get install --no-install-recommends -y \
         python3-colcon-mixin \
         python3-pip \
         /tmp/webots.deb \
-        ros-humble-webots-ros2 \
+        ros-jazzy-webots-ros2 \
     && rm /tmp/webots.deb \
     && rm -rf /var/lib/apt/lists/*
 
@@ -28,7 +28,7 @@ RUN apt-get update --fix-missing && apt-get install --no-install-recommends -y \
 COPY ./ros_packages/pibsim_webots ros2_ws/pibsim_webots
 
 RUN cd ros2_ws && \
-    source /opt/ros/humble/setup.bash && \
+    source /opt/ros/jazzy/setup.bash && \
     colcon build
 
 COPY ./ros_packages/ros_entrypoint.sh /
