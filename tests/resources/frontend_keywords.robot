@@ -99,7 +99,7 @@ Wait For Element By Css Prefix
     [Arguments]    ${css_prefix}    ${state}=visible    ${timeout}=${DEFAULT_TIMEOUT}
     [Documentation]    Waits for an element matching a CSS prefix selector
     ...               (e.g. `[data-test^="BTN_Touchpoint_"]`) to reach `state`.
-    Wait For Elements State    css=[data-test^="${css_prefix}"]    ${state}    timeout=${timeout}
+    Wait For Elements State    css=[data-test^="${css_prefix}"] >> nth=0    ${state}    timeout=${timeout}
 
 Click Element By Css Prefix
     [Arguments]    ${css_prefix}    ${timeout}=${DEFAULT_TIMEOUT}
@@ -113,13 +113,13 @@ Wait For Element By Css Selector
     [Arguments]    ${css_selector}    ${state}=visible    ${timeout}=${DEFAULT_TIMEOUT}
     [Documentation]    Waits for an element matching an arbitrary CSS selector.
     ...               Used for complex selectors with :not() etc.
-    Wait For Elements State    css=${css_selector}    ${state}    timeout=${timeout}
+    Wait For Elements State    css=${css_selector} >> nth=0    ${state}    timeout=${timeout}
 
 Click Element By Css Selector
     [Arguments]    ${css_selector}    ${timeout}=${DEFAULT_TIMEOUT}
     [Documentation]    Waits for the first element matching an arbitrary CSS selector
     ...               to be visible, then clicks it.
-    Wait For Elements State    css=${css_selector}    visible    timeout=${timeout}
+    Wait For Elements State    css=${css_selector} >> nth=0    visible    timeout=${timeout}
     Click    css=${css_selector} >> nth=0
 
 Get Property By Css Selector

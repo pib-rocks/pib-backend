@@ -95,7 +95,7 @@ Verifies all 6 sidebar nav items navigate to the correct Angular route AND that 
 
 | Test ID | Nav item clicked | Functional assertion |
 |---|---|---|
-| E2E-BDD-FE-NAV-001 | `LNK_Joint_Control` | URL contains `/joint-control` + `BTN_Motor_Settings_Toggle_Extended` visible |
+| E2E-BDD-FE-NAV-001 | `LNK_Joint_Control` | URL contains `/joint-control` + `BTN_Touchpoint_*` elements visible |
 | E2E-BDD-FE-NAV-002 | `LNK_Poses` | URL contains `/pose` + `BTN_Apply_pose` visible |
 | E2E-BDD-FE-NAV-003 | `LNK_Camera` | URL contains `/camera` + `TGL_Camera_On_Off` visible |
 | E2E-BDD-FE-NAV-004 | `LNK_Voice_Assistant` | URL contains `/voice-assistant` + `BTN_Add_Personality` visible |
@@ -110,10 +110,10 @@ Verifies motor expansion preconditions and slider value changes.
 |---|---|---|
 | E2E-BDD-FE-JC-001 | navigate to Joint Control | view container visible + `GET /motor` observed |
 | E2E-BDD-FE-JC-002 | navigate to Joint Control | head joint tab visible |
-| E2E-BDD-FE-JC-003 | click `BTN_Motor_Settings_Toggle_Extended` | `SLD_Motor_Settings_Acceleration` becomes visible |
-| E2E-BDD-FE-JC-004 | click `BTN_Motor_Settings_Toggle_Extended` | `SLD_Motor_Settings_Velocity`, `..._Acceleration`, `..._Deceleration` all visible |
-| E2E-BDD-FE-JC-005 | click `BTN_Motor_Settings_Toggle_Extended` | extended sliders appear (toggle flips) |
-| E2E-BDD-FE-JC-006 | click `BTN_Motor_Settings_Toggle_Extended` | `TXT_Threshold`, `BTN_Threshold_up`, `BTN_Threshold_down` visible |
+| E2E-BDD-FE-JC-003 | click `BTN_Touchpoint_*` then `BTN_Motor_Settings_*` (not `_Close`) | `SLD_Motor_Settings_Acceleration` becomes visible |
+| E2E-BDD-FE-JC-004 | click `BTN_Touchpoint_*` then `BTN_Motor_Settings_*` (not `_Close`) | `SLD_Motor_Settings_Velocity`, `..._Acceleration`, `..._Deceleration` all visible |
+| E2E-BDD-FE-JC-005 | click `BTN_Touchpoint_*` then `BTN_Motor_Settings_*` (not `_Close`) | extended sliders appear (toggle flips) |
+| E2E-BDD-FE-JC-006 | click `BTN_Touchpoint_*` then `BTN_Motor_Settings_*` (not `_Close`) | `BTN_Threshold_up`, `BTN_Threshold_down` visible |
 | E2E-BDD-FE-JC-007 | expand motor, focus `SLD_Motor_Settings_Velocity`, press ArrowUp | `TXT_Slider_BubbleInput` value changes |
 
 ### 3. `poses.robot` — Poses View (E2E-BDD-FE-PS-*)

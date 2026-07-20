@@ -38,7 +38,10 @@ E2E-BDD-FE-CAM-003 Resolution Dropdown Change Keeps On Off Working
     Wait For Load State    networkidle
     Wait For Element By Data Test    DDN_Camera_resolution    visible
     # Functional: change the resolution to 720p
-    Select Option By Data Test    DDN_Camera_resolution    720p
+    # DDN_Camera_resolution is an ngbDropdown (not a native <select>), so we click it open then click the option
+    Click Element By Data Test    DDN_Camera_resolution
+    Sleep    1s
+    Click Element By Data Test    BTN_Camera_resolution_720p
     # ...and verify the on/off toggle is still present and checkable
     Wait For Element By Data Test    TGL_Camera_On_Off    visible
     ${checked}=    Get Property By Data Test    TGL_Camera_On_Off    checked
