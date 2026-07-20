@@ -1,4 +1,0 @@
-[submodule "pib-blockly"]
-	path = pib_blockly/pib_blockly_server/src/pib-blockly
-	url = https://github.com/pib-rocks/pib-blockly.git
-	branch = main

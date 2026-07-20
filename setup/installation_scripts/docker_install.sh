@@ -12,14 +12,6 @@ version_gte() {
 	version_compare "$VERSION" "$1"
 }
 
-# create a systemd-service that adds the 'local:'-host to the x-server's access-control-list on each startup,
-# allowing applications from within a docker container to access the x-server on the host os
-function create_xhost_service() {
-    sudo mv "$BACKEND_DIR/setup/setup_files/xhost_enable_local.service" /etc/systemd/xhost_enable_local.service
-    sudo chmod 700 /etc/systemd/xhost_enable_local.service
-    sudo systemctl enable /etc/systemd/xhost_enable_local.service --now
-}
-
 
 # Installs the Docker Engine on supported linux distributions (ubuntu, debian, raspbian)
 function install_docker_engine() {
@@ -86,19 +78,16 @@ function setup_docker_cleaner_service() {
     print SUCCESS "Docker container cleanup service installed and started"
 }
 
-function init_backend_submodules() {
-    print INFO "Initializing git submodules for pib-backend"
-
-    cd "$BACKEND_DIR" || return 1
-    git submodule update --init --recursive || return 1
+function verify_vendored_blockly() {
+    print INFO "Verifying vendored pib-blockly sources"
 
     local blockly_blocks="$BACKEND_DIR/pib_blockly/pib_blockly_server/src/pib-blockly/program-blocks/custom-blocks.ts"
     if [ ! -f "$blockly_blocks" ]; then
-        print ERROR "pib-blockly submodule is missing required files at ${blockly_blocks}"
+        print ERROR "vendored pib-blockly is missing required files at ${blockly_blocks}"
         return 1
     fi
 
-    print SUCCESS "Git submodules initialized for pib-backend"
+    print SUCCESS "Vendored pib-blockly sources found"
 }
 
 function start_container() {
@@ -110,9 +99,8 @@ function start_container() {
     print SUCCESS "Started cerebra container"
 }
 
-create_xhost_service || print ERROR "failed to create service for xhost permission management"
 install_docker_engine || print ERROR "failed to install docker engine"
-init_backend_submodules || print ERROR "failed to initialize pib-backend submodules"
+verify_vendored_blockly || print ERROR "failed to verify vendored pib-blockly sources"
 start_container || print ERROR "failed to start containers"
 setup_docker_cleaner_service || print ERROR "failed to setup docker cleaner service"
 sudo chmod 777 "$BACKEND_DIR/pib_api/flask/pibdata.db"

@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>button_service</name>
+  <version>0.1.0</version>
+  <description>Tinkerforge RGB LED Button service for pib Blockly blocks.</description>
+  <maintainer email="pib@example.local">pib</maintainer>
+  <license>AGPL-3.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <buildtool_depend>ament_cmake_python</buildtool_depend>
+  <buildtool_depend>rosidl_default_generators</buildtool_depend>
+
+  <depend>rclpy</depend>
+  <depend>datatypes</depend>
+
+  <exec_depend>rosidl_default_runtime</exec_depend>
+
+  <member_of_group>rosidl_interface_packages</member_of_group>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

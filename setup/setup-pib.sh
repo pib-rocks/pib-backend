@@ -147,6 +147,22 @@ function install_system_packages() {
     print INFO "Installing system packages"
     sudo apt update -qq && \
     sudo apt-get install -y git curl gnupg openssh-server >/dev/null
+
+    # Install Node.js (LTS) via NodeSource — needed for Cerebra frontend build
+    # and for running Jest/Blockly generator tests without a Docker fallback.
+    if ! command_exists node; then
+        print INFO "Installing Node.js (LTS) via NodeSource"
+        curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash - >/dev/null 2>&1
+        sudo apt-get install -y nodejs >/dev/null
+        if command_exists node; then
+            print SUCCESS "Node.js $(node --version) installed"
+        else
+            print ERROR "Failed to install Node.js"
+        fi
+    else
+        print INFO "Node.js $(node --version) already installed"
+    fi
+
     print SUCCESS "Installing system packages completed"
 }
 
@@ -184,17 +200,18 @@ function clone_repositories() {
     print INFO "${APP_DIR} created"
   fi
 
-  git clone --recurse-submodules -b "$BRANCH_BACKEND" $BACKEND "$BACKEND_DIR" || print WARN "pib-backend repository already exists"
-  git clone --recurse-submodules -b "$BRANCH_FRONTEND" $FRONTEND "$FRONTEND_DIR" || print WARN "cerebra repository already exists"
+  git clone -b "$BRANCH_BACKEND" "$BACKEND" "$BACKEND_DIR" || print WARN "pib-backend repository already exists"
+  git clone --recurse-submodules -b "$BRANCH_FRONTEND" "$FRONTEND" "$FRONTEND_DIR" || print WARN "cerebra repository already exists"
 
-  # Ensure submodules are checked out even when the clone was skipped above.
-  if [ -d "$BACKEND_DIR/.git" ]; then
-    cd "$BACKEND_DIR" || return 1
-    git submodule update --init --recursive || return 1
-  fi
   if [ -d "$FRONTEND_DIR/.git" ]; then
     cd "$FRONTEND_DIR" || return 1
     git submodule update --init --recursive || return 1
+  fi
+
+  local blockly_blocks="$BACKEND_DIR/pib_blockly/pib_blockly_server/src/pib-blockly/program-blocks/custom-blocks.ts"
+  if [ ! -f "$blockly_blocks" ]; then
+    print ERROR "vendored pib-blockly is missing required files at ${blockly_blocks}"
+    return 1
   fi
 
   print SUCCESS "Completed cloning repositories to $APP_DIR"
@@ -467,5 +484,5 @@ elif is_ubuntu_noble || is_supported_raspbian; then
 fi
 cleanup
 
-print SUCCESS "Finished installation, for more information on how to use pib and Cerebra, visit https://pib-rocks.atlassian.net/wiki/spaces/kb/overview?homepageId=65077450"
+print SUCCESS "Installation completed"
 print SUCCESS "Reboot pib to apply all changes"

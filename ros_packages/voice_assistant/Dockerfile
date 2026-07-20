@@ -1,4 +1,4 @@
-FROM ros:humble-ros-core
+FROM ros:jazzy-ros-core
 
 SHELL ["/bin/bash", "-c"]
 
@@ -19,21 +19,20 @@ RUN apt-get update --fix-missing && \
 
 COPY ./ros_packages/requirements.txt .
 
-RUN pip install requests
-RUN pip install pyaudio
-RUN pip install google-genai
+# PEP 668: Jazzy (Ubuntu 24.04, Python 3.12) requires --break-system-packages
+RUN pip install --break-system-packages --no-cache-dir requests pyaudio google-genai
 
 COPY ./pib_api/client ./client
-RUN pip install ./client
+RUN pip install --break-system-packages --no-cache-dir ./client
 
 COPY ./public_api_client ./public_api_client
-RUN pip install ./public_api_client/
+RUN pip install --break-system-packages --no-cache-dir ./public_api_client/
 
 COPY ./ros_packages/datatypes ros2_ws/datatypes
 COPY ./ros_packages/voice_assistant ros2_ws/voice_assistant
 
 RUN cd ros2_ws && \
-    source /opt/ros/humble/setup.bash && \
+    source /opt/ros/jazzy/setup.bash && \
     colcon build
 
 COPY ./ros_packages/ros_entrypoint.sh /
