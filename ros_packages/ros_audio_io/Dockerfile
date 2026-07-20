@@ -1,4 +1,4 @@
-FROM ros:humble-ros-core
+FROM ros:jazzy-ros-core
 
 SHELL ["/bin/bash", "-c"]
 
@@ -11,8 +11,8 @@ RUN apt-get update --fix-missing && \
     apt-get install --no-install-recommends -y \
         python3-pip \
         python3-colcon-common-extensions \
-        ros-humble-rclpy \
-        ros-humble-std-msgs \
+        ros-jazzy-rclpy \
+        ros-jazzy-std-msgs \
         python3-usb \
         portaudio19-dev \
         build-essential \
@@ -31,7 +31,7 @@ COPY ./ros_packages/datatypes ros2_ws/datatypes
 COPY ./ros_packages/ros_audio_io ros2_ws/ros_audio_io
 
 RUN cd ros2_ws && \
-    source /opt/ros/humble/setup.bash && \
+    source /opt/ros/jazzy/setup.bash && \
     colcon build
 
 COPY ./ros_packages/ros_entrypoint.sh /
