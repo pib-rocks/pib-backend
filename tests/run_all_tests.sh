@@ -118,6 +118,10 @@ run_jest() {
     if command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then
         cd "${jest_dir}"
         npm install --silent
+        # npm install can drop the exec bit on the jest launcher (observed on
+        # the Pi filesystem), which makes `npx jest` fail with "Permission
+        # denied". Restore it defensively before running.
+        chmod +x node_modules/.bin/jest 2>/dev/null || true
         npx jest --config jest.config.js
         return
     fi
@@ -149,7 +153,11 @@ run_robot_e2e() {
 
 run_robot_frontend() {
     cd "${REPO_ROOT}"
-    if ! python -c "import Browser" 2>/dev/null; then
+    # `import Browser` succeeds even when the Node.js wrapper dependencies are
+    # missing, so check for the actual node_modules directory instead.
+    local browser_wrapper
+    browser_wrapper="$(python -c 'import os, Browser; print(os.path.join(os.path.dirname(Browser.__file__), "wrapper", "node_modules"))' 2>/dev/null)"
+    if [[ -z "${browser_wrapper}" ]] || [[ ! -d "${browser_wrapper}" ]]; then
         echo "Installing Browser library node dependencies ..."
         # --skip-browsers: do not download Playwright's bundled Chromium (the
         # download is unsupported on Raspberry Pi / arm64). The tests use the
