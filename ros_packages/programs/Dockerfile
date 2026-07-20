@@ -1,4 +1,4 @@
-FROM ros:humble-ros-core
+FROM ros:jazzy-ros-core
 
 SHELL ["/bin/bash", "-c"]
 
@@ -27,7 +27,7 @@ RUN apt-get update --fix-missing && \
     pip install opencv-python-headless "depthai<3" blobconverter
 
 RUN cd ros2_ws && \
-    source /opt/ros/humble/setup.bash && \
+    source /opt/ros/jazzy/setup.bash && \
     colcon build
 
 COPY ./ros_packages/ros_entrypoint.sh /
