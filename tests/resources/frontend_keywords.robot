@@ -12,6 +12,11 @@ ${CEREBRA_BASE_URL}     http://localhost:80
 ${FLASK_BASE_URL}       http://localhost:5000
 ${HEADLESS}             ${True}
 ${DEFAULT_TIMEOUT}      20s
+# System Chromium path — used when Playwright's bundled browser is unavailable
+# (e.g. on Raspberry Pi where the Playwright chromium download is not supported).
+# Override with -v BROWSER_EXECUTABLE:<path> or set to ${EMPTY} to use the
+# Playwright-bundled browser.
+${BROWSER_EXECUTABLE}   /usr/bin/chromium
 
 
 *** Keywords ***
@@ -19,7 +24,12 @@ ${DEFAULT_TIMEOUT}      20s
 # Suite setup / teardown
 # ===========================================================================
 Set Suite Variables
-    New Browser    headless=${HEADLESS}    timeout=30s
+    ${use_system}=    Evaluate    "${BROWSER_EXECUTABLE}" != "" and __import__("os").path.exists("${BROWSER_EXECUTABLE}")
+    IF    ${use_system}
+        New Browser    chromium    headless=${HEADLESS}    timeout=30s    executablePath=${BROWSER_EXECUTABLE}
+    ELSE
+        New Browser    headless=${HEADLESS}    timeout=30s
+    END
     New Context    viewport={'width': 1280, 'height': 720}
 
 Close Cerebra Application

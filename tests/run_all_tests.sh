@@ -79,10 +79,12 @@ ensure_venv() {
     fi
     # shellcheck source=/dev/null
     source "${VENV_DIR}/bin/activate"
-    pip install -q -r "${SCRIPT_DIR}/integration/requirements.txt" \
+    # --prefer-binary: use prebuilt wheels instead of compiling C extensions
+    # (e.g. grpcio) from source, which is slow and fragile on arm64 / Raspberry Pi.
+    pip install -q --prefer-binary -r "${SCRIPT_DIR}/integration/requirements.txt" \
         -r "${SCRIPT_DIR}/infrastructure/requirements.txt"
     if [[ ${SKIP_ROBOT} -eq 0 ]] || [[ ${INCLUDE_FRONTEND} -eq 1 ]]; then
-        pip install -q -r "${SCRIPT_DIR}/requirements-robot.txt"
+        pip install -q --prefer-binary -r "${SCRIPT_DIR}/requirements-robot.txt"
     fi
     echo -e "${GREEN}OK:${NC} venv ready"
 }
@@ -116,6 +118,10 @@ run_jest() {
     if command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then
         cd "${jest_dir}"
         npm install --silent
+        # npm install can drop the exec bit on the jest launcher (observed on
+        # the Pi filesystem), which makes `npx jest` fail with "Permission
+        # denied". Restore it defensively before running.
+        chmod +x node_modules/.bin/jest 2>/dev/null || true
         npx jest --config jest.config.js
         return
     fi
@@ -147,9 +153,17 @@ run_robot_e2e() {
 
 run_robot_frontend() {
     cd "${REPO_ROOT}"
-    if ! python -c "import Browser" 2>/dev/null; then
-        echo "Installing Browser library and Playwright browsers ..."
-        rfbrowser init
+    # `import Browser` succeeds even when the Node.js wrapper dependencies are
+    # missing, so check for the actual node_modules directory instead.
+    local browser_wrapper
+    browser_wrapper="$(python -c 'import os, Browser; print(os.path.join(os.path.dirname(Browser.__file__), "wrapper", "node_modules"))' 2>/dev/null)"
+    if [[ -z "${browser_wrapper}" ]] || [[ ! -d "${browser_wrapper}" ]]; then
+        echo "Installing Browser library node dependencies ..."
+        # --skip-browsers: do not download Playwright's bundled Chromium (the
+        # download is unsupported on Raspberry Pi / arm64). The tests use the
+        # system Chromium via the BROWSER_EXECUTABLE variable in
+        # tests/resources/frontend_keywords.robot instead.
+        rfbrowser init --skip-browsers || rfbrowser init
     fi
     mkdir -p "${RESULTS_DIR}"
     robot --outputdir "${RESULTS_DIR}" "${SCRIPT_DIR}/frontend/"
