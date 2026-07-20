@@ -1,49 +1,46 @@
-changelog:
-  exclude:
-    labels:
-      - duplicate
-      - wontfix
-      - question
-  categories:
-    - title: 🚀 Features
-      labels:
-        - feature
-        - enhancement
-    - title: 🧪 Testing
-      labels:
-        - testing
-    - title: 🐛 Bug Fixes
-      labels:
-        - bug
-    - title: 📝 Documentation
-      labels:
-        - documentation
-    - title: ♻️ Refactoring
-      labels:
-        - refactor
-    - title: 🔧 Maintenance
-      labels:
-        - maintenance
-  template: |
-    ## Changes since $PREVIOUS_TAG
-
-    $CHANGES
-
 name-template: 'v$RESOLVED_VERSION'
 tag-template: 'v$RESOLVED_VERSION'
+categories:
+  - title: '🚀 Features'
+    labels:
+      - 'feature'
+      - 'enhancement'
+  - title: '🧪 Testing'
+    labels:
+      - 'testing'
+  - title: '🐛 Bug Fixes'
+    labels:
+      - 'bug'
+  - title: '📝 Documentation'
+    labels:
+      - 'documentation'
+  - title: '♻️ Refactoring'
+    labels:
+      - 'refactor'
+  - title: '🔧 Maintenance'
+    labels:
+      - 'maintenance'
+exclude-labels:
+  - 'duplicate'
+  - 'wontfix'
+  - 'question'
 version-resolver:
   major:
     labels:
-      - major
+      - 'major'
   minor:
     labels:
-      - feature
-      - enhancement
+      - 'feature'
+      - 'enhancement'
   patch:
     labels:
-      - bug
-      - testing
-      - documentation
-      - refactor
-      - maintenance
+      - 'bug'
+      - 'testing'
+      - 'documentation'
+      - 'refactor'
+      - 'maintenance'
   default: patch
+template: |
+  ## Changes since $PREVIOUS_TAG
+
+  $CHANGES
