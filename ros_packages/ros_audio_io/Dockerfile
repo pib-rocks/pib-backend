@@ -11,8 +11,8 @@ RUN apt-get update --fix-missing && \
     apt-get install --no-install-recommends -y \
         python3-pip \
         python3-colcon-common-extensions \
-        ros-jazzy-rclpy \
-        ros-jazzy-std-msgs \
+        ros-${ROS_DISTRO}-rclpy \
+        ros-${ROS_DISTRO}-std-msgs \
         python3-usb \
         portaudio19-dev \
         build-essential \
@@ -21,11 +21,12 @@ RUN apt-get update --fix-missing && \
         libusb-1.0-0-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python audio packages
-RUN pip install pyaudio numpy scipy taskgroup
+# PEP 668: Jazzy (Ubuntu 24.04, Python 3.12) requires --break-system-packages
+# --ignore-installed: avoid conflict with system numpy (installed by ros:jazzy-ros-core)
+RUN pip install --break-system-packages --no-cache-dir --ignore-installed pyaudio numpy scipy taskgroup
 
 COPY ./pib_api/client ./client
-RUN pip install ./client
+RUN pip install --break-system-packages --no-cache-dir ./client
 
 COPY ./ros_packages/datatypes ros2_ws/datatypes
 COPY ./ros_packages/ros_audio_io ros2_ws/ros_audio_io
@@ -40,4 +41,3 @@ RUN chmod +x /ros_entrypoint.sh
 
 ENTRYPOINT ["/ros_entrypoint.sh"]
 CMD ["bash"]
-
