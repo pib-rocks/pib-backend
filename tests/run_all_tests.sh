@@ -79,10 +79,12 @@ ensure_venv() {
     fi
     # shellcheck source=/dev/null
     source "${VENV_DIR}/bin/activate"
-    pip install -q -r "${SCRIPT_DIR}/integration/requirements.txt" \
+    # --prefer-binary: use prebuilt wheels instead of compiling C extensions
+    # (e.g. grpcio) from source, which is slow and fragile on arm64 / Raspberry Pi.
+    pip install -q --prefer-binary -r "${SCRIPT_DIR}/integration/requirements.txt" \
         -r "${SCRIPT_DIR}/infrastructure/requirements.txt"
     if [[ ${SKIP_ROBOT} -eq 0 ]] || [[ ${INCLUDE_FRONTEND} -eq 1 ]]; then
-        pip install -q -r "${SCRIPT_DIR}/requirements-robot.txt"
+        pip install -q --prefer-binary -r "${SCRIPT_DIR}/requirements-robot.txt"
     fi
     echo -e "${GREEN}OK:${NC} venv ready"
 }
@@ -148,8 +150,12 @@ run_robot_e2e() {
 run_robot_frontend() {
     cd "${REPO_ROOT}"
     if ! python -c "import Browser" 2>/dev/null; then
-        echo "Installing Browser library and Playwright browsers ..."
-        rfbrowser init
+        echo "Installing Browser library node dependencies ..."
+        # --skip-browsers: do not download Playwright's bundled Chromium (the
+        # download is unsupported on Raspberry Pi / arm64). The tests use the
+        # system Chromium via the BROWSER_EXECUTABLE variable in
+        # tests/resources/frontend_keywords.robot instead.
+        rfbrowser init --skip-browsers || rfbrowser init
     fi
     mkdir -p "${RESULTS_DIR}"
     robot --outputdir "${RESULTS_DIR}" "${SCRIPT_DIR}/frontend/"
