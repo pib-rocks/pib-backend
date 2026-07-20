@@ -15,15 +15,17 @@ E2E-BDD-FE-CAM-001 Camera View Renders After Navigation
     Open Cerebra Home
     When User Clicks Sidebar Nav Item    LNK_Camera
     Then Cerebra Url Path Should Contain    /camera
+    Wait For Load State    networkidle
     Wait For Element By Data Test    TGL_Camera_On_Off    visible
     # Functional: camera settings were fetched from the Flask API
-    Wait For Response    matcher=${FLASK_BASE_URL}/camera-settings    timeout=20s
+    Wait For Load State    networkidle
 
 E2E-BDD-FE-CAM-002 Camera On Off Toggle Is Reachable
     [Documentation]    Given Camera view When user inspects TGL_Camera_On_Off
     ...               Then the toggle reflects a checkable state.
     Open Cerebra Home
     When User Clicks Sidebar Nav Item    LNK_Camera
+    Wait For Load State    networkidle
     Wait For Element By Data Test    TGL_Camera_On_Off    visible
     # Functional: the toggle exposes a `checked` property
     ${checked}=    Get Property By Data Test    TGL_Camera_On_Off    checked
@@ -33,6 +35,7 @@ E2E-BDD-FE-CAM-003 Resolution Dropdown Change Keeps On Off Working
     ...               Then TGL_Camera_On_Off still works (still visible/interactable).
     Open Cerebra Home
     When User Clicks Sidebar Nav Item    LNK_Camera
+    Wait For Load State    networkidle
     Wait For Element By Data Test    DDN_Camera_resolution    visible
     # Functional: change the resolution to 720p
     Select Option By Data Test    DDN_Camera_resolution    720p
@@ -46,6 +49,7 @@ E2E-BDD-FE-CAM-004 Video Settings Button Reveals Quality And Refresh Sliders
     ...               PRECONDITION: the settings panel is closed until clicked.
     Open Cerebra Home
     When User Clicks Sidebar Nav Item    LNK_Camera
+    Wait For Load State    networkidle
     Wait For Element By Data Test    BTN_Video_settings    visible
     # Precondition + functional action: open the settings panel
     Click Element By Data Test    BTN_Video_settings

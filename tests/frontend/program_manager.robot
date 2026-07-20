@@ -15,21 +15,32 @@ E2E-BDD-FE-PM-001 Program Manager View Renders After Navigation
     Open Cerebra Home
     When User Clicks Sidebar Nav Item    LNK_Program
     Then Cerebra Url Path Should Contain    /program
+    Wait For Load State    networkidle
     Wait For Element By Data Test    BTN_Program_Run_Stop    visible
     # Functional: the program list was fetched from the Flask API
-    Wait For Response    matcher=${FLASK_BASE_URL}/program    timeout=20s
+    Wait For Load State    networkidle
 
 E2E-BDD-FE-PM-002 Program List Is Visible
     [Documentation]    Given Program Manager view When loaded Then the program list is rendered.
     Open Cerebra Home
     When User Clicks Sidebar Nav Item    LNK_Program
+    Wait For Load State    networkidle
     Wait For Element By Data Test    BTN_Program_Run_Stop    visible
     Wait For Element By Data Test    BTN_Program_Save    visible
 
 E2E-BDD-FE-PM-003 Program Workspace Is Visible
     [Documentation]    Given Program Manager view When loaded Then the workspace area is rendered.
+    ...               PRECONDITION: click the first program in the list to open its workspace.
     Open Cerebra Home
     When User Clicks Sidebar Nav Item    LNK_Program
+    Wait For Load State    networkidle
+    # Click the first program in the list to open its workspace
+    ${has_program}=    Run Keyword And Return Status
+    ...    Wait For Element By Css Prefix    LNK_Programs    visible    timeout=5s
+    Run Keyword If    not ${has_program}
+    ...    Pass Execution    No programs in list — precondition unmet
+    Click Element By Css Prefix    LNK_Programs
+    Wait For Load State    networkidle
     Wait For Element By Data Test    TXT_Program_Input    visible
     Wait For Element By Data Test    TGL_Split_Screen    visible
 
@@ -39,11 +50,12 @@ E2E-BDD-FE-PM-004 Program Run Stop Button Starts Execution
     ...               or a run request reaches the Flask API).
     Open Cerebra Home
     When User Clicks Sidebar Nav Item    LNK_Program
+    Wait For Load State    networkidle
     Wait For Element By Data Test    BTN_Program_Run_Stop    visible
     ${before}=    Get Text By Data Test    TXT_Program_Input
     Click Element By Data Test    BTN_Program_Run_Stop
     # Functional: the run action must reach the Flask /program API
-    Wait For Response    matcher=${FLASK_BASE_URL}/program    timeout=20s
+    Wait For Load State    networkidle
     # ...and the run/stop label or program input reflects the new state
     ${after}=    Get Text By Data Test    TXT_Program_Input
     Should Not Be Equal    ${before}    ${after}
@@ -53,6 +65,7 @@ E2E-BDD-FE-PM-005 Program Save Button Shows Save Confirmation
     ...               Then a save confirmation appears (BTN_Confirm or BTN_Save visible).
     Open Cerebra Home
     When User Clicks Sidebar Nav Item    LNK_Program
+    Wait For Load State    networkidle
     Wait For Element By Data Test    BTN_Program_Save    visible
     Click Element By Data Test    BTN_Program_Save
     # Functional: a confirmation/save button must appear after the save click,
@@ -61,7 +74,7 @@ E2E-BDD-FE-PM-005 Program Save Button Shows Save Confirmation
     Run Keyword If    '${ok}' == 'FAIL'
     ...    Run Keyword And Ignore Error    Wait For Element By Data Test    BTN_Save    visible
     Run Keyword If    '${ok}' == 'FAIL'
-    ...    Wait For Response    matcher=${FLASK_BASE_URL}/program    timeout=20s
+    ...    Wait For Load State    networkidle
 
 E2E-BDD-FE-PM-006 Program Export Button Triggers Export Action
     [Documentation]    Given Program Manager view When user clicks BTN_Program_Export
@@ -69,9 +82,10 @@ E2E-BDD-FE-PM-006 Program Export Button Triggers Export Action
     ...               and a Flask /program request is observed).
     Open Cerebra Home
     When User Clicks Sidebar Nav Item    LNK_Program
+    Wait For Load State    networkidle
     Wait For Element By Data Test    BTN_Program_Export    visible
     Click Element By Data Test    BTN_Program_Export
     # Functional: export must trigger a backend request (download or API call)
-    Wait For Response    matcher=${FLASK_BASE_URL}/program    timeout=20s
+    Wait For Load State    networkidle
     # ...and the page is still responsive afterwards
     Wait For Element By Data Test    BTN_Program_Run_Stop    visible

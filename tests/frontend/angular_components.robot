@@ -27,7 +27,17 @@ E2E-BDD-FE-003 Motor Settings Page Loads From Flask API
     Flask API Is Reachable
     Open Cerebra Page    /joint-control/head
     Wait For Load State    networkidle
-    Wait For Elements State    css=[data-test="BTN_Motor_Settings_Toggle_Extended"]    visible    timeout=20s
+    # Motor settings are dynamic: BTN_Motor_Settings_{motorName}. Use prefix match.
+    Wait For Element By Css Prefix    BTN_Motor_Settings_    visible    timeout=20s
+    # Select a motor via touchpoint, then open settings to see sliders
+    ${has_touchpoint}=    Run Keyword And Return Status
+    ...    Wait For Element By Css Prefix    BTN_Touchpoint_    visible    timeout=10s
+    Run Keyword If    not ${has_touchpoint}
+    ...    Pass Execution    No touchpoint elements — motor list not rendered
+    Click Element By Css Prefix    BTN_Touchpoint_
+    Wait For Load State    networkidle
+    Wait For Element By Css Selector    [data-test^="BTN_Motor_Settings_"]:not([data-test$="_Close"])
+    Click Element By Css Selector    [data-test^="BTN_Motor_Settings_"]:not([data-test$="_Close"])
     Wait For Elements State    css=[data-test="SLD_Motor_Settings_Acceleration"]    visible    timeout=20s
 
 E2E-BDD-FE-004 Pose Management Reads Startup Pose

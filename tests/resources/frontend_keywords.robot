@@ -85,7 +85,7 @@ Select Option By Data Test
     [Documentation]    Selects an option from a `<select>` / dropdown identified by data-test
     ...               by visible label.
     Wait For Elements State    css=[data-test="${data_test}"]    visible    timeout=${timeout}
-    Select Options By    label    ${option_label}
+    Select Options By    css=[data-test="${data_test}"]    label    ${option_label}
 
 Element Count By Data Test
     [Arguments]    ${data_test}    ${timeout}=${DEFAULT_TIMEOUT}
@@ -94,6 +94,41 @@ Element Count By Data Test
     Wait For Elements State    css=[data-test="${data_test}"]    attached    timeout=${timeout}
     ${count}=    Get Element Count    css=[data-test="${data_test}"]
     RETURN    ${count}
+
+Wait For Element By Css Prefix
+    [Arguments]    ${css_prefix}    ${state}=visible    ${timeout}=${DEFAULT_TIMEOUT}
+    [Documentation]    Waits for an element matching a CSS prefix selector
+    ...               (e.g. `[data-test^="BTN_Touchpoint_"]`) to reach `state`.
+    Wait For Elements State    css=[data-test^="${css_prefix}"]    ${state}    timeout=${timeout}
+
+Click Element By Css Prefix
+    [Arguments]    ${css_prefix}    ${timeout}=${DEFAULT_TIMEOUT}
+    [Documentation]    Waits for the first element matching a CSS prefix selector
+    ...               to be visible, then clicks it. Used for dynamic data-test
+    ...               attributes like `BTN_Touchpoint_{motorName}`.
+    Wait For Elements State    css=[data-test^="${css_prefix}"]    visible    timeout=${timeout}
+    Click    css=[data-test^="${css_prefix}"] >> nth=0
+
+Wait For Element By Css Selector
+    [Arguments]    ${css_selector}    ${state}=visible    ${timeout}=${DEFAULT_TIMEOUT}
+    [Documentation]    Waits for an element matching an arbitrary CSS selector.
+    ...               Used for complex selectors with :not() etc.
+    Wait For Elements State    css=${css_selector}    ${state}    timeout=${timeout}
+
+Click Element By Css Selector
+    [Arguments]    ${css_selector}    ${timeout}=${DEFAULT_TIMEOUT}
+    [Documentation]    Waits for the first element matching an arbitrary CSS selector
+    ...               to be visible, then clicks it.
+    Wait For Elements State    css=${css_selector}    visible    timeout=${timeout}
+    Click    css=${css_selector} >> nth=0
+
+Get Property By Css Selector
+    [Arguments]    ${css_selector}    ${property}    ${timeout}=${DEFAULT_TIMEOUT}
+    [Documentation]    Returns a DOM property of the first element matching an
+    ...               arbitrary CSS selector.
+    Wait For Elements State    css=${css_selector}    visible    timeout=${timeout}
+    ${value}=    Get Property    css=${css_selector} >> nth=0    ${property}
+    RETURN    ${value}
 
 # ===========================================================================
 # Navigation helpers (thin wrappers over primitives)
