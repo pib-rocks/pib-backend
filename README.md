@@ -43,13 +43,10 @@ This script will update your docker containers (Front- and Backend)
 Starting the webots simulation:
 
 1. Complete all steps of the "Installing pibs software"-section of this readme document
-2. If you are running simulation in a virtual machine ubuntu type the following command
-   `xhost +local:root`
-4. Navigate to app/pib-backend
-   `cd app/pib-backend`
-5. Enter the following command into a terminal:  
-   `sudo docker compose --profile pibsim_webots up`  
-   (The first time this command is entered, webots will be installed. Webots should open automatically afterwards, to close it you should stop the container by closing the terminal window which is open or by pressing ctrl + c. To run it again just restart the container and if you turned off the virtual machine repeat step 2)
+2. Webots GUI is intended to run **natively on the host Wayland session** (not inside Docker).
+3. Install Webots on the host OS and then run the simulator launch on the host:
+   - `ros2 launch pibsim_webots pib_launch.py`
+4. Ensure ROS networking between host and Docker works (same `ROS_DOMAIN_ID`, multicast not blocked).
 
 Webots may throw error messages saying it crashed (especially on VM). This can usually be ignored by clicking on "wait".
 
@@ -101,3 +98,14 @@ TRYB_URL_PREFIX=<BASE_URL_Tryb>
 ### Contributing to pib
 
 For the development process, external developers are requested to refer to the following explanation: https://pib-rocks.atlassian.net/wiki/spaces/kb/pages/435486721/Contributing+to+pib
+
+## Custom backend extensions (PR-1461)
+
+This branch integrates custom features previously maintained in a separate repository:
+
+- Vendored `pib-blockly` sources with button, audio, object detection, and display blocks
+- `ros_packages/button_service` for TinkerForge RGB button control
+- Facial expressions and display text support in the ROS display service
+- Face tracking and vision prompt integration in the camera stack
+
+Cerebra UI updates may be required for new Blockly block categories to appear in the editor.

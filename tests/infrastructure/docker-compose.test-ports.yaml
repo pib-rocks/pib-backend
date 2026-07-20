@@ -1,0 +1,8 @@
+# Isolated pytest stack: no host port bindings (avoids all conflicts with multirepo-*).
+services:
+  pib-blockly-server:
+    ports: !override []
+  flask-app:
+    ports: !override []
+  rosbridge-ws:
+    ports: !override []

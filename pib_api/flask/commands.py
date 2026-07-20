@@ -96,7 +96,6 @@ def _create_bricklet_data() -> None:
                 )
             )
         db.session.flush()
-
     b1 = Bricklet(bricklet_number=1, type="Servo Bricklet")
     b2 = Bricklet(bricklet_number=2, type="Servo Bricklet")
     b3 = Bricklet(bricklet_number=3, type="Servo Bricklet")

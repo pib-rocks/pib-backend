@@ -54,8 +54,6 @@ services:
     profiles:
       - all
       - camera
-    # Volume binding should not be necessary here,
-    # but removing will stop the camera from showing pictures for some reason
     volumes:
       - /dev/:/dev/
     devices:
@@ -88,27 +86,6 @@ services:
     depends_on:
       - rosbridge-ws
       - flask-app
-      
-  pibsim_webots:
-    image: pibsim_webots
-    build:
-      context: .
-      dockerfile: ./ros_packages/pibsim_webots/Dockerfile
-    command: ros2 launch pibsim_webots pib_launch.py
-    volumes:
-      # this is a socket that is used by the x-windowing-system
-      # for communication between clients and servers on the same
-      # machine. By mounting the socket of the docker-host, the 
-      # display-node uses the x-server running on the host for
-      # graphics-related communication
-      - /tmp/.X11-unix:/tmp/.X11-unix 
-    profiles:
-      - pibsim_webots
-    networks:
-      - pib-network
-    environment:
-      - DISPLAY=:0.0
-    restart: no
 
   ros-voice-assistant:
     image: ros_voice_assistant
@@ -137,6 +114,7 @@ services:
       - /etc/machine-id:/etc/machine-id
       - ${XDG_RUNTIME_DIR:-/run/user/1000}/pulse/native:${XDG_RUNTIME_DIR:-/run/user/1000}/pulse/native
       - /home/pib/.config/pulse/cookie:/root/.config/pulse/cookie
+      - /home/pib/wav-files:/home/pib/wav-files:ro
     devices:
       - /dev/snd:/dev/snd
       - /dev/bus/usb:/dev/bus/usb1
@@ -152,7 +130,13 @@ services:
     build:
       context: .
       dockerfile: ./ros_packages/programs/Dockerfile
-    command: ros2 launch programs launch.py
+    command: >
+      bash -lc "
+        source /opt/ros/jazzy/setup.bash &&
+        source /app/ros2_ws/install/setup.bash &&
+        ros2 run button_service button_service_node &
+        ros2 launch programs launch.py
+      "
     profiles:
       - all
       - programs
@@ -165,8 +149,14 @@ services:
       - PYTHON_BINARY=/usr/bin/python3
       - PROGRAM_DIR=/ros2_ws/cerebra_programs
       - VOICE_ASSISTANT_DIR=/app/ros2_ws/voice_assistant
+      - TF_HOST=host.docker.internal
+      - TF_PORT=4223
+      - TF_BUTTON_BRICKLET_NUMBERS=5,6,7
     volumes:
       - programs:/ros2_ws/cerebra_programs
+      - /dev/bus/usb:/dev/bus/usb
+    device_cgroup_rules:
+      - 'c 189:* rmw'
     restart: always
     networks:
       - pib-network
@@ -187,15 +177,25 @@ services:
       - all
       - display
     volumes:
-      # this is a socket that is used by the x-windowing-system
-      # for cmmunication betweem clients and servers on the same
-      # machine. By mounting the socket of the docker-host, the 
-      # display-node uses the x-server running on the host for
-      # graphics-related communication
-      - /tmp/.X11-unix:/tmp/.X11-unix 
+      - ./ros_packages/display/expression_faces:/app/pib-expression-faces:ro
+      - ${XDG_RUNTIME_DIR:-/run/user/1000}:/run/user/1000
+      - /dev/dri:/dev/dri
     environment:
       - STATIC_IMAGE_DIR=/app/ros2_ws/display/static_images
-      - DISPLAY=:0.0
+      - PIB_EXPRESSION_DIR=/app/pib-expression-faces
+      - PIB_DISPLAY_WIDTH=1024
+      - PIB_DISPLAY_HEIGHT=600
+      - PIB_DISPLAY_ON_DEMAND=1
+      - PIB_DISPLAY_TEXT_MAX_CHARS=40
+      - PIB_DISPLAY_TEXT_CACHE_MAX=50
+      - PIB_DISPLAY_POLL_MS=5
+      - PIB_DISPLAY_IDLE_SECONDS=0
+      - XDG_RUNTIME_DIR=/run/user/1000
+      - WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-wayland-0}
+      - GDK_BACKEND=wayland
+      - HOME=/tmp
+      - ROS_HOME=/tmp/.ros
+    user: "1000:1000"
     command: ros2 launch display launch.py
     restart: always
     networks:
@@ -204,8 +204,8 @@ services:
   ros-audio-io:
     image: ros-audio-io
     build:
-     context: .
-     dockerfile: ./ros_packages/ros_audio_io/Dockerfile
+      context: .
+      dockerfile: ./ros_packages/ros_audio_io/Dockerfile
     command: ros2 launch ros_audio_io launch.py
     profiles:
       - all
@@ -228,6 +228,7 @@ services:
       - /etc/machine-id:/etc/machine-id
       - ${XDG_RUNTIME_DIR:-/run/user/1000}/pulse/native:${XDG_RUNTIME_DIR:-/run/user/1000}/pulse/native
       - /home/pib/.config/pulse/cookie:/root/.config/pulse/cookie
+      - /home/pib/wav-files:/home/pib/wav-files:ro
     restart: always
     depends_on:
       - rosbridge-ws
@@ -238,4 +239,3 @@ volumes:
 networks:
   pib-network:
     driver: bridge
-

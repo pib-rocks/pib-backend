@@ -6,7 +6,7 @@ import rclpy
 import datetime
 from datatypes.action import Chat
 from datatypes.msg import ChatMessage
-from datatypes.srv import GetCameraImage
+from datatypes.srv import GetCameraImage, VisionPrompt
 
 # NEW: service for AudioLoop → ChatNode bridge (keeps AudioLoop thin)
 from datatypes.srv import CreateOrUpdateChatMessage
@@ -94,6 +94,13 @@ class ChatNode(Node):
             CreateOrUpdateChatMessage,
             "create_or_update_chat_message",
             self._handle_create_or_update_chat_message,
+            callback_group=ReentrantCallbackGroup(),
+        )
+
+        self.vision_prompt_service: Service = self.create_service(
+            VisionPrompt,
+            "vision_prompt",
+            self._handle_vision_prompt,
             callback_group=ReentrantCallbackGroup(),
         )
 
@@ -248,6 +255,96 @@ class ChatNode(Node):
             resp.message_id = req.message_id
             resp.content = req.text
             return resp
+
+    def _handle_vision_prompt(
+        self,
+        req: VisionPrompt.Request,
+        resp: VisionPrompt.Response,
+    ) -> VisionPrompt.Response:
+        prompt = (req.prompt or "").strip()
+
+        if not prompt:
+            resp.response = "0"
+            return resp
+
+        if self.token is None:
+            self.get_logger().error("VisionPrompt failed: public_api_token is not available.")
+            resp.response = "0"
+            return resp
+
+        image_base64 = None
+
+        if not self.get_camera_image_client.service_is_ready():
+            self.get_logger().warn(
+                "VisionPrompt: get_camera_image service is not ready."
+            )
+            resp.response = "0"
+            return resp
+
+        try:
+            camera_request = GetCameraImage.Request()
+
+            tmp_node = rclpy.create_node("vision_prompt_camera_client")
+            try:
+                tmp_client = tmp_node.create_client(GetCameraImage, "get_camera_image")
+
+                if not tmp_client.wait_for_service(timeout_sec=5.0):
+                    self.get_logger().error("VisionPrompt: get_camera_image service unavailable.")
+                    resp.response = "0"
+                    return resp
+
+                camera_future = tmp_client.call_async(camera_request)
+                rclpy.spin_until_future_complete(
+                    tmp_node,
+                    camera_future,
+                    timeout_sec=5.0,
+                )
+
+                if not camera_future.done():
+                    self.get_logger().error("VisionPrompt: get_camera_image request timed out.")
+                    resp.response = "0"
+                    return resp
+
+                camera_response = camera_future.result()
+            finally:
+                tmp_node.destroy_node()
+
+            if camera_response is None or not camera_response.image_base64:
+                self.get_logger().warn("VisionPrompt: camera returned no image.")
+                resp.response = "0"
+                return resp
+
+            image_base64 = camera_response.image_base64
+
+        except Exception as exc:
+            self.get_logger().error(f"VisionPrompt camera request failed: {exc}")
+            resp.response = "0"
+            return resp
+
+        try:
+            with self.public_voice_client_lock:
+                tokens = public_voice_client.chat_completion(
+                    text=prompt,
+                    description=(
+                        "Du bist ein Vision-Erkennungsmodul fuer Blockly. "
+                        "Befolge das verlangte Antwortformat exakt."
+                    ),
+                    message_history=[],
+                    image_base64=image_base64,
+                    model="gpt-4o",
+                    public_api_token=self.token,
+                )
+
+                response_text = "".join(tokens).strip()
+
+            resp.response = response_text
+            return resp
+
+        except Exception as exc:
+            self.get_logger().error(f"VisionPrompt public API request failed: {exc}")
+            resp.response = "0"
+            return resp
+
 
     # ---------- Action server (unchanged) ----------
 

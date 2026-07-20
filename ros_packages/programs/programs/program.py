@@ -38,7 +38,6 @@ class ProgramNode(Node):
 
         super().__init__("program")
 
-        # Quality-of-Service profile for feedback
         feedback_profile = qos.QoSProfile(
             history=qos.HistoryPolicy.KEEP_ALL,
             reliability=qos.ReliabilityPolicy.RELIABLE,
@@ -46,7 +45,6 @@ class ProgramNode(Node):
             lifespan=Duration(seconds=100),
         )
 
-        # server for running local python-programs generated with blockly
         self.run_program_server = ActionServer(
             self,
             RunProgram,
@@ -64,14 +62,11 @@ class ProgramNode(Node):
             qos.QoSProfile(history=qos.HistoryPolicy.KEEP_ALL),
         )
 
-        # perform cleanup periodically
         self.cleanup_timer = self.create_timer(30, self.cleanup)
 
-        # the mpid is used to identify a running instance of a program
         self.next_mpid = 0
         self.next_mpid_lock = Lock()
 
-        # access processes via their mpid
         self.mpid_to_process: dict[int, Popen] = {}
         self.process_lock = Lock()
 
@@ -106,7 +101,6 @@ class ProgramNode(Node):
 
     def run_program_callback(self, goal_handle: ServerGoalHandle) -> RunProgram.Result:
 
-        # digest the code-source and create a path to the resulting python-code file that should be executed
         request: RunProgram.Goal = goal_handle.request
         if request.source_type == RunProgram.Goal.SOURCE_PROGRAM_NUMBER:
             program_number = request.source
@@ -140,7 +134,6 @@ class ProgramNode(Node):
             mpid = self.next_mpid
             self.next_mpid += 1
 
-        # publish only the mpid as initial feedback
         init_feedback = RunProgram.Feedback()
         init_feedback.mpid = mpid
         goal_handle.publish_feedback(init_feedback)
@@ -149,10 +142,15 @@ class ProgramNode(Node):
             self.get_logger().info("starting execution of program...")
 
             run_python_program = [
-                PYTHON_BINARY,
-                UNBUFFERED_OUTPUT_FLAG,
-                code_python_file_path,
+                "bash",
+                "-lc",
+                (
+                    "source /opt/ros/humble/setup.bash && "
+                    "source /app/ros2_ws/install/setup.bash && "
+                    f"{PYTHON_BINARY} {UNBUFFERED_OUTPUT_FLAG} {code_python_file_path}"
+                ),
             ]
+
             process = Popen(
                 run_python_program,
                 stdout=PIPE,
@@ -180,16 +178,12 @@ class ProgramNode(Node):
             forward_stdout.start()
             forward_stderr.start()
 
-            # loop until either cancellation of goal is requested, or python-program terminated
             while True:
-
-                # if cancellation of the goal if requested, terminate the process
                 if goal_handle.is_cancel_requested:
                     goal_handle.canceled()
                     process.terminate()
                     return RunProgram.Result(exit_code=2)
 
-                # collect output of the user-program
                 output_lines: list[ProgramOutputLine] = []
                 while not output_queue.empty():
                     line, is_stderr = output_queue.get()
@@ -198,7 +192,6 @@ class ProgramNode(Node):
                     output_line.is_stderr = is_stderr
                     output_lines.append(output_line)
 
-                # if at least one line of stdout/stderr output was collected, send it as feedback
                 if len(output_lines) > 0:
                     feedback = RunProgram.Feedback()
                     feedback.output_lines = output_lines
@@ -217,7 +210,6 @@ class ProgramNode(Node):
 
                 time.sleep(ACTION_LOOP_WAITING_PERIOD_SECONDS)
 
-        # if the code-source is visual-code, a temp. file was created, which must now be deleted
         finally:
             self.get_logger().info("execution finished, cleaning up...")
             if request.source_type == RunProgram.Goal.SOURCE_CODE_VISUAL:
