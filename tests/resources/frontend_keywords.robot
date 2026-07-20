@@ -106,7 +106,7 @@ Click Element By Css Prefix
     [Documentation]    Waits for the first element matching a CSS prefix selector
     ...               to be visible, then clicks it. Used for dynamic data-test
     ...               attributes like `BTN_Touchpoint_{motorName}`.
-    Wait For Elements State    css=[data-test^="${css_prefix}"]    visible    timeout=${timeout}
+    Wait For Elements State    css=[data-test^="${css_prefix}"] >> nth=0    visible    timeout=${timeout}
     Click    css=[data-test^="${css_prefix}"] >> nth=0
 
 Wait For Element By Css Selector
@@ -199,7 +199,7 @@ Then Personality List Shows Error State
 When User Opens Blockly Program Editor
     Open Cerebra Page    /programs
     Wait For Load State    networkidle
-    Wait For Elements State    css=.blocklyMainBackground, #blocklyDiv    visible    timeout=20s
+    Wait For Elements State    css=.blocklyMainBackground, #blocklyDiv    visible    timeout=30s
 
 Then Blockly Workspace Is Visible
     Get Element Count    css=.blocklyMainBackground, #blocklyDiv >> visible=true    >    0

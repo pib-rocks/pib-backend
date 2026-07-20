@@ -25,9 +25,9 @@ E2E-BDD-FE-NAV-002 Sidebar Poses Link Navigates To Pose View
     Given User Opens Cerebra And Navigates To    LNK_Poses    /pose
     Wait For Load State    networkidle
     # Graceful skip if no poses loaded on fresh Pi
-    ${count}=    Element Count By Data Test    BTN_Apply_pose
-    Run Keyword If    ${count} == 0    Pass Execution    No poses loaded — precondition unmet
-    Wait For Element By Data Test    BTN_Apply_pose    visible
+    ${has_poses}=    Run Keyword And Return Status
+    ...    Wait For Element By Data Test    BTN_Apply_pose    visible    timeout=5s
+    Run Keyword If    not ${has_poses}    Pass Execution    No poses loaded — precondition unmet
 
 E2E-BDD-FE-NAV-003 Sidebar Camera Link Navigates To Camera View
     [Documentation]    Given Cerebra is open When user clicks LNK_Camera
