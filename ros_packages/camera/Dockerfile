@@ -28,7 +28,8 @@ RUN apt-get update && apt-get install --no-install-recommends -y \
     libusb-1.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip install --no-cache-dir depthai==2.25.1.0
+# PEP 668: Jazzy (Ubuntu 24.04, Python 3.12) requires --break-system-packages
+RUN pip install --break-system-packages --no-cache-dir depthai==2.25.1.0
 
 WORKDIR /app
 
