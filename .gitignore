@@ -61,3 +61,4 @@ pib_blockly/pib_blockly_server/node_modules/**
 package-lock.json
 /Pipfile
 /Pipfile.lock
+.test-venv/
