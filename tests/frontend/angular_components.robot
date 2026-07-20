@@ -25,14 +25,16 @@ E2E-BDD-FE-002 Personality List Error State With Mocked API
 E2E-BDD-FE-003 Motor Settings Page Loads From Flask API
     [Documentation]    Given Flask /motor responds When motors page opens Then list is populated.
     Flask API Is Reachable
-    Open Cerebra Page    /settings/motors
+    Open Cerebra Page    /joint-control/head
     Wait For Load State    networkidle
-    Wait For Elements State    css=table, .motor-list, [data-testid="motor-list"]    visible    timeout=20s
+    Wait For Elements State    css=[data-test="BTN_Motor_Settings_Toggle_Extended"]    visible    timeout=20s
+    Wait For Elements State    css=[data-test="SLD_Motor_Settings_Acceleration"]    visible    timeout=20s
 
 E2E-BDD-FE-004 Pose Management Reads Startup Pose
     [Documentation]    Given Startup/Resting pose exists When poses page loads Then pose name is shown.
     ${pose}=    Get Startup Pose By Name
     Should Be Equal    ${pose}[name]    Startup/Resting
     Should Be Equal    ${pose}[deletable]    ${False}
-    Open Cerebra Page    /settings/poses
+    Open Cerebra Page    /pose
     Wait For Load State    networkidle
+    Wait For Elements State    css=[data-test="BTN_Apply_pose"]    visible    timeout=20s

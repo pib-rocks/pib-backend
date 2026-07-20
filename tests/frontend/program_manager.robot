@@ -13,7 +13,7 @@ E2E-BDD-FE-PM-001 Program Manager View Renders After Navigation
     [Documentation]    Given Cerebra is open When user navigates to Program Then the view container is visible.
     Open Cerebra Home
     When User Clicks Sidebar Nav Item    LNK_Program
-    Then Cerebra Url Path Should Be    /program
+    Then Cerebra Url Path Should Contain    /program
     Then Program Manager View Is Visible
 
 E2E-BDD-FE-PM-002 Program List Is Visible

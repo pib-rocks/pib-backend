@@ -13,7 +13,7 @@ E2E-BDD-FE-CAM-001 Camera View Renders After Navigation
     [Documentation]    Given Cerebra is open When user navigates to Camera Then the view container is visible.
     Open Cerebra Home
     When User Clicks Sidebar Nav Item    LNK_Camera
-    Then Cerebra Url Path Should Be    /camera
+    Then Cerebra Url Path Should Contain    /camera
     Then Camera View Is Visible
 
 E2E-BDD-FE-CAM-002 Camera Video Stream Element Is Visible

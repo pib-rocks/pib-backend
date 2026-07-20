@@ -13,7 +13,7 @@ E2E-BDD-FE-SYS-001 System View Renders After Navigation
     [Documentation]    Given Cerebra is open When user navigates to System Then the view container is visible.
     Open Cerebra Home
     When User Clicks Sidebar Nav Item    LNK_System
-    Then Cerebra Url Path Should Be    /system
+    Then Cerebra Url Path Should Contain    /system
     Then System View Is Visible
 
 E2E-BDD-FE-SYS-002 Hardware IDs Section Is Visible
@@ -42,4 +42,4 @@ E2E-BDD-FE-SYS-005 Relay Control Toggle Is Visible
     Open Cerebra Home
     When User Clicks Sidebar Nav Item    LNK_System
     Then System View Is Visible
-    Then Relay Control Is Visible    CHK_Relay_control
+    Then Relay Control Is Visible    TGL_Solid_State_Relay

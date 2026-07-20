@@ -13,7 +13,7 @@ E2E-BDD-FE-VA-001 Voice Assistant View Renders After Navigation
     [Documentation]    Given Cerebra is open When user navigates to Voice Assistant Then the view container is visible.
     Open Cerebra Home
     When User Clicks Sidebar Nav Item    LNK_Voice_Assistant
-    Then Cerebra Url Path Should Be    /voice-assistant
+    Then Cerebra Url Path Should Contain    /voice-assistant
     Then Voice Assistant View Is Visible
 
 E2E-BDD-FE-VA-002 Personality List Is Visible

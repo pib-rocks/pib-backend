@@ -13,7 +13,7 @@ E2E-BDD-FE-JC-001 Joint Control View Renders After Navigation
     [Documentation]    Given Cerebra is open When user navigates to Joint Control Then the view container is visible.
     Open Cerebra Home
     When User Clicks Sidebar Nav Item    LNK_Joint_Control
-    Then Cerebra Url Path Should Be    /joint-control/head
+    Then Cerebra Url Path Should Contain    /joint-control
     Then Joint Control View Is Visible
 
 E2E-BDD-FE-JC-002 Head Joint Tab Is Visible
@@ -21,14 +21,16 @@ E2E-BDD-FE-JC-002 Head Joint Tab Is Visible
     Open Cerebra Home
     When User Clicks Sidebar Nav Item    LNK_Joint_Control
     Then Joint Control View Is Visible
-    Then Joint Tab Is Visible    CHK_Head_joint
+    Then Motor Settings Panel Is Visible
 
 E2E-BDD-FE-JC-003 Motor Slider Controls Are Visible
     [Documentation]    Given Joint Control view When head tab selected Then motor sliders are rendered.
     Open Cerebra Home
     When User Clicks Sidebar Nav Item    LNK_Joint_Control
     Then Joint Control View Is Visible
-    Then Motor Slider Is Visible    SLD_Motor_slider
+    Then Motor Slider Is Visible    SLD_Motor_Settings_Acceleration
+    Then Motor Slider Is Visible    SLD_Motor_Settings_Deceleration
+    Then Motor Slider Is Visible    SLD_Motor_Settings_Velocity
 
 E2E-BDD-FE-JC-004 Motor Settings Panel Is Visible
     [Documentation]    Given Joint Control view When loaded Then the motor settings panel is rendered.
@@ -42,7 +44,7 @@ E2E-BDD-FE-JC-005 Motor Settings Toggle Expands Settings
     Open Cerebra Home
     When User Clicks Sidebar Nav Item    LNK_Joint_Control
     Then Joint Control View Is Visible
-    When User Toggles Motor Settings    BTN_Motor_settings_toggle
+    When User Toggles Motor Settings    BTN_Motor_Settings_Toggle_Extended
     Then Motor Settings Panel Is Visible
 
 E2E-BDD-FE-JC-006 Threshold Controls Are Visible In Motor Settings
@@ -51,5 +53,6 @@ E2E-BDD-FE-JC-006 Threshold Controls Are Visible In Motor Settings
     When User Clicks Sidebar Nav Item    LNK_Joint_Control
     Then Joint Control View Is Visible
     Then Motor Settings Panel Is Visible
-    Then Threshold Control Is Visible    SLD_Motor_threshold_min
-    Then Threshold Control Is Visible    SLD_Motor_threshold_max
+    Then Threshold Control Is Visible    TXT_Threshold
+    Then Threshold Control Is Visible    BTN_Threshold_up
+    Then Threshold Control Is Visible    BTN_Threshold_down

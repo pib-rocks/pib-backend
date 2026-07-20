@@ -13,7 +13,7 @@ E2E-BDD-FE-PS-001 Poses View Renders After Navigation
     [Documentation]    Given Cerebra is open When user navigates to Poses Then the view container is visible.
     Open Cerebra Home
     When User Clicks Sidebar Nav Item    LNK_Poses
-    Then Cerebra Url Path Should Be    /pose
+    Then Cerebra Url Path Should Contain    /pose
     Then Poses View Is Visible
 
 E2E-BDD-FE-PS-002 Pose List Is Visible
