@@ -1,0 +1,160 @@
+name: Sync Blockly to cerebra
+
+# Single source of truth: pib-backend owns all pib-blockly code (blocks + generators).
+# On any push that touches the blockly source, mirror the tree into cerebra via an
+# auto-generated pull request. See Jira PR-1477 and the KB page
+# "Blockly Code: Single-Source Architecture & Sync".
+
+on:
+  push:
+    branches:
+      - "**"
+    paths:
+      - "pib_blockly/pib_blockly_server/src/pib-blockly/**"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  # one run per source branch; newer pushes cancel in-flight runs for that branch
+  group: sync-blockly-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # path mapping (PR-1477 technical notes)
+  SRC_PATH: pib_blockly/pib_blockly_server/src/pib-blockly
+  DST_PATH: src/app/program/pib-blockly
+  CEREBRA_REPO: pib-rocks/cerebra
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    # main is excluded: syncs flow from feature branches and develop only
+    if: github.ref != 'refs/heads/main'
+    steps:
+      - name: Checkout pib-backend (source)
+        uses: actions/checkout@v4
+        with:
+          path: pib-backend
+
+      - name: Derive branch names
+        id: names
+        run: |
+          SRC_BRANCH="${GITHUB_REF#refs/heads/}"
+          # sanitize for use as a branch segment (slashes -> dashes)
+          SAFE_BRANCH="${SRC_BRANCH//\//-}"
+          echo "src_branch=$SRC_BRANCH"          >> "$GITHUB_OUTPUT"
+          echo "sync_branch=sync/blockly-from-${SAFE_BRANCH}" >> "$GITHUB_OUTPUT"
+          echo "Source branch:  $SRC_BRANCH"
+          echo "Cerebra branch: sync/blockly-from-${SAFE_BRANCH}"
+
+      - name: Checkout cerebra (target)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.CEREBRA_REPO }}
+          token: ${{ secrets.CEREBRA_SYNC_TOKEN }}
+          path: cerebra
+          fetch-depth: 0
+          ref: develop
+
+      - name: Prepare / reset sync branch from develop
+        working-directory: cerebra
+        run: |
+          git config user.name  "pib-sync-bot"
+          git config user.email "pib-sync-bot@users.noreply.github.com"
+          SYNC_BRANCH="${{ steps.names.outputs.sync_branch }}"
+
+          # Determine whether an OPEN PR already exists for this sync branch.
+          OPEN_PR=$(gh pr list --repo "${{ env.CEREBRA_REPO }}" \
+                      --head "$SYNC_BRANCH" --state open --json number \
+                      --jq '.[0].number // empty' 2>/dev/null || true)
+
+          if git ls-remote --exit-code --heads origin "$SYNC_BRANCH" >/dev/null 2>&1; then
+            if [ -n "$OPEN_PR" ]; then
+              # Branch exists + PR open -> update PR in place (keep branch, will force content on top)
+              echo "Existing open PR #$OPEN_PR on $SYNC_BRANCH -> updating in place."
+              git fetch origin "$SYNC_BRANCH"
+              git checkout -B "$SYNC_BRANCH" "origin/$SYNC_BRANCH"
+            else
+              # Branch exists but PR already merged/closed -> reset to fresh develop HEAD
+              echo "Branch exists but no open PR -> resetting $SYNC_BRANCH to develop HEAD."
+              git checkout -B "$SYNC_BRANCH" origin/develop
+            fi
+          else
+            # Branch missing -> (re)create from develop HEAD
+            echo "Sync branch missing -> creating $SYNC_BRANCH from develop HEAD."
+            git checkout -B "$SYNC_BRANCH" origin/develop
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.CEREBRA_SYNC_TOKEN }}
+
+      - name: Mirror blockly tree (adds, modifies, deletions)
+        run: |
+          SRC="pib-backend/${SRC_PATH}/"
+          DST="cerebra/${DST_PATH}/"
+          mkdir -p "$DST"
+          # --delete removes files in cerebra that no longer exist in pib-backend.
+          # Preserve cerebra's auto-generated README banner (managed separately).
+          rsync -a --delete \
+                --exclude 'README.md' \
+                "$SRC" "$DST"
+          echo "Mirrored $SRC -> $DST"
+
+      - name: Detect changes
+        id: diff
+        working-directory: cerebra
+        run: |
+          if git status --porcelain -- "${DST_PATH}" | grep -q .; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "Changes detected:"
+            git status --porcelain -- "${DST_PATH}"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "No differences - cerebra already in sync. No PR will be created."
+          fi
+
+      - name: Commit & push sync branch
+        if: steps.diff.outputs.changed == 'true'
+        working-directory: cerebra
+        run: |
+          SYNC_BRANCH="${{ steps.names.outputs.sync_branch }}"
+          git add -A -- "${DST_PATH}"
+          git commit -m "chore(blockly): sync from pib-backend@${GITHUB_SHA:0:7} (${{ steps.names.outputs.src_branch }})"
+          # force-with-lease keeps an open PR updated in place; safe (re)create otherwise
+          git push --force-with-lease origin "$SYNC_BRANCH"
+
+      - name: Open or update pull request
+        if: steps.diff.outputs.changed == 'true'
+        working-directory: cerebra
+        env:
+          GH_TOKEN: ${{ secrets.CEREBRA_SYNC_TOKEN }}
+        run: |
+          SYNC_BRANCH="${{ steps.names.outputs.sync_branch }}"
+          SRC_BRANCH="${{ steps.names.outputs.src_branch }}"
+          TITLE="chore(blockly): sync from pib-backend (${SRC_BRANCH})"
+          BODY=$(cat <<EOF
+          Automated sync of the single-source pib-blockly code.
+
+          - Source: [pib-rocks/pib-backend@\`${GITHUB_SHA:0:7}\`](https://github.com/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}) on branch \`${SRC_BRANCH}\`
+          - Path: \`${SRC_PATH}\` -> \`${DST_PATH}\`
+
+          Do not edit \`${DST_PATH}\` directly in cerebra - change it in pib-backend.
+          Generated by the \`Sync Blockly to cerebra\` workflow (Jira PR-1477).
+          EOF
+          )
+
+          EXISTING=$(gh pr list --repo "${{ env.CEREBRA_REPO }}" \
+                       --head "$SYNC_BRANCH" --state open --json number \
+                       --jq '.[0].number // empty')
+
+          if [ -n "$EXISTING" ]; then
+            echo "Updating existing PR #$EXISTING"
+            gh pr edit "$EXISTING" --repo "${{ env.CEREBRA_REPO }}" \
+               --title "$TITLE" --body "$BODY" --add-label maintenance || true
+          else
+            echo "Creating new PR"
+            gh pr create --repo "${{ env.CEREBRA_REPO }}" \
+               --base develop --head "$SYNC_BRANCH" \
+               --title "$TITLE" --body "$BODY" --label maintenance
+          fi
