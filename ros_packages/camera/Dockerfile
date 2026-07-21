@@ -26,16 +26,23 @@ SHELL ["/bin/bash", "-c"]
 RUN apt-get update && apt-get install --no-install-recommends -y \
     python3-pip \
     libusb-1.0-0 \
+    libgl1 \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender1 \
     && rm -rf /var/lib/apt/lists/*
 
 # PEP 668: Jazzy (Ubuntu 24.04, Python 3.12) requires --break-system-packages
 # --ignore-installed: avoid conflict with system numpy (installed by ros:jazzy-ros-core)
-# opencv-python-headless: stereo.py imports cv2 directly (was missing from the
-# runtime stage — only depthai was installed, causing "ModuleNotFoundError: cv2"
-# and a container restart loop).
+# opencv-python (NOT -headless): stereo.py needs cv2.data.haarcascades at
+# runtime for face detection (CameraNode raises RuntimeError and falls back
+# to the error-only publisher if the cascade XML is missing). The -headless
+# wheel's bundled cv2/data/ directory was empty on this arm64 build; the full
+# opencv-python wheel reliably ships the haarcascade XML files.
 RUN pip install --break-system-packages --no-cache-dir --ignore-installed \
         depthai==2.25.1.0 \
-        opencv-python-headless
+        opencv-python
 
 WORKDIR /app
 
