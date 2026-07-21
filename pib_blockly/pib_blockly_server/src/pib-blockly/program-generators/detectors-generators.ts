@@ -1,9 +1,6 @@
 import {Block} from "blockly/core/block";
 import {pythonGenerator} from "blockly/python";
-import {
-    IMPORT_LOGGING,
-    IMPORT_VISION_PROMPT,
-} from "./util/definitions";
+import {IMPORT_LOGGING, IMPORT_VISION_PROMPT} from "./util/definitions";
 import {
     FACE_DETECTOR_CLASS,
     VISION_HELPER_CLASS,
@@ -13,7 +10,7 @@ function ensureVisionHelper(generator: typeof pythonGenerator): string {
     Object.assign(generator.definitions_, {
         IMPORT_LOGGING,
         IMPORT_VISION_PROMPT,
-        });
+    });
 
     return generator.provideFunction_(
         "VisionHelper",
@@ -101,7 +98,9 @@ export function vision_objects_different(
 
     return [
         `vision = ${className}()`,
-        `${result} = vision.objects_different(${pyString(objectA)}, ${pyString(objectB)})`,
+        `${result} = vision.objects_different(${pyString(objectA)}, ${pyString(
+            objectB,
+        )})`,
         "",
     ].join("\n");
 }

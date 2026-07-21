@@ -8,6 +8,7 @@ import * as motor_blocks from "./motor-generators";
 import * as playAudioFromSpeech from "./play-audio-from-speech-generator";
 import * as moveToPose from "./pose-generator";
 import * as setSolidStateRelay from "./solid-state-relay-generator";
+import * as runScript from "./run-script-generator";
 import {RESERVED_WORDS} from "./util/reserved-words";
 import * as displayGenerators from "./display-generators";
 
@@ -25,6 +26,7 @@ const generators: typeof pythonGenerator.forBlock = {
     ...playWav,
     ...tfButton,
     ...displayGenerators,
+    ...runScript,
 };
 
 for (const name in generators) {
@@ -37,7 +39,7 @@ pythonGenerator.forBlock["play_audio_from_speech"] =
 pythonGenerator.forBlock["move_to_pose"] = generators["moveToPoseGenerator"];
 
 pythonGenerator.forBlock["set_face_expression"] =
-  generators["setFaceExpressionGenerator"];
+    generators["setFaceExpressionGenerator"];
 
 pythonGenerator.forBlock["show_face_text"] =
-  generators["showFaceTextGenerator"];
+    generators["showFaceTextGenerator"];

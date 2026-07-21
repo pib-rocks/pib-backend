@@ -19,10 +19,10 @@ export const moveToPose = (Blockly.Blocks["move_to_pose"] = {
 });
 class CustomFieldDropdown extends Blockly.FieldDropdown {
     constructor(menuGenerator: any, opt_validator?: any, opt_config?: any) {
-      super(menuGenerator, opt_validator, opt_config);
+        super(menuGenerator, opt_validator, opt_config);
     }
     // Override the default validation function
     override doClassValidation_(newValue: any) {
-      return newValue;
+        return newValue;
     }
 }

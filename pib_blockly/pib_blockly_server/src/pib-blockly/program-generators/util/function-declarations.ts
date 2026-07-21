@@ -154,6 +154,75 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(status: str) -> None:
         logging.error(f"setting solid state relay failed.")
 `;
 
+// get-solid-state-relay
+
+export const GET_SOLID_STATE_RELAY_FUNCTION = (generator: CodeGenerator) => `
+
+def ${generator.FUNCTION_NAME_PLACEHOLDER_}() -> bool:
+
+    received = {}
+
+    def _on_relay_state(msg):
+        received["turned_on"] = msg.turned_on
+
+    subscription = node.create_subscription(
+        SolidStateRelayState, "solid_state_relay_state", _on_relay_state, 10
+    )
+
+    logging.info(f"waiting for solid state relay state...")
+    while "turned_on" not in received:
+        rclpy.spin_once(node)
+    node.destroy_subscription(subscription)
+
+    logging.info(f"solid state relay is {'ON' if received['turned_on'] else 'OFF'}.")
+    return received["turned_on"]
+`;
+
+// run-script
+
+export const RUN_SCRIPT_FUNCTION = (generator: CodeGenerator) => `
+
+def ${generator.FUNCTION_NAME_PLACEHOLDER_}(script: str, host: str, user: str, password: str, port: int) -> None:
+
+    effective_host = host
+    if host in ("localhost", "127.0.0.1"):
+        effective_host = os.environ.get("SSH_HOST", host)
+
+    logging.info(f"connecting to {user}@{effective_host}:{port} via ssh...")
+
+    client = paramiko.SSHClient()
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+    try:
+        client.connect(
+            hostname=effective_host,
+            port=port,
+            username=user,
+            password=password,
+            allow_agent=False,
+            look_for_keys=False,
+            timeout=10,
+        )
+
+        logging.info(f"running script on {effective_host}...")
+        stdin, stdout, stderr = client.exec_command(script)
+        exit_status = stdout.channel.recv_exit_status()
+
+        out = stdout.read().decode()
+        err = stderr.read().decode()
+
+        if out:
+            logging.info(out)
+        if err:
+            logging.error(err)
+
+        logging.info(f"script finished with exit code {exit_status}.")
+    except Exception as e:
+        logging.error(f"Cannot connect to {effective_host} via ssh: {e}")
+    finally:
+        client.close()
+`;
+
 // face-detector
 
 export const FACE_DETECTOR_CLASS = (generator: CodeGenerator) => `
@@ -294,8 +363,6 @@ class ${generator.FUNCTION_NAME_PLACEHOLDER_}():
             self.node.destroy_node()
             self.node = None
 `;
-
-
 
 export const TF_BUTTON_TASTER_FUNCTION = (generator: CodeGenerator) => `
 def ${generator.FUNCTION_NAME_PLACEHOLDER_}(button_id: int, red: int, green: int, blue: int) -> int:
