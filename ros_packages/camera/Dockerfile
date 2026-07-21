@@ -32,9 +32,12 @@ RUN apt-get update && apt-get install --no-install-recommends -y \
 
 # PEP 668: Jazzy (Ubuntu 24.04, Python 3.12) requires --break-system-packages
 # --ignore-installed: avoid conflict with system numpy (installed by ros:jazzy-ros-core)
+# opencv-python-headless pinned to 4.x: the latest 5.x release removed
+# cv2.CascadeClassifier from the core module (stereo.py's face detection
+# needs it), causing "module 'cv2' has no attribute 'CascadeClassifier'".
 RUN pip install --break-system-packages --no-cache-dir --ignore-installed \
         depthai==2.25.1.0 \
-        opencv-python-headless
+        "opencv-python-headless<5"
 
 # stereo.py needs cv2.data.haarcascades at runtime for face detection
 # (CameraNode raises RuntimeError and permanently falls back to an
