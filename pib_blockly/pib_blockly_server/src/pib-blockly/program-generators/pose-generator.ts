@@ -9,7 +9,7 @@ import {
     IMPORT_JOINT_TRAJECTORY_MESSAGES,
     INIT_ROS,
     INIT_APPLY_JOINT_TRASJECTORY_CLIENT,
-    IMPORT_POSE_CLIENT
+    IMPORT_POSE_CLIENT,
 } from "./util/definitions";
 import {APPLY_POSE_FUNCTION} from "./util/function-declarations";
 
@@ -30,7 +30,7 @@ export function moveToPoseGenerator(
         CONFIGURE_LOGGING,
         INIT_ROS,
         IMPORT_POSE_CLIENT,
-        INIT_APPLY_JOINT_TRASJECTORY_CLIENT
+        INIT_APPLY_JOINT_TRASJECTORY_CLIENT,
     });
 
     // declare the 'apply_pose'-function
