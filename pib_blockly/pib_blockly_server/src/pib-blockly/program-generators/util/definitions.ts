@@ -6,8 +6,10 @@ export const IMPORT_CV2 = "import cv2";
 export const IMPORT_DEPTHAI = "import depthai as dai";
 export const IMPORT_BLOBCONVERTER = "import blobconverter";
 export const IMPORT_SYS = "import sys";
+export const IMPORT_OS = "import os";
 export const IMPORT_TIME = "import time";
 export const IMPORT_LOGGING = "import logging";
+export const IMPORT_PARAMIKO = "import paramiko";
 export const IMPORT_PLAY_AUDIO_FROM_SPREECH =
     "from datatypes.srv import PlayAudioFromSpeech";
 export const IMPORT_PLAY_AUDIO_FROM_FILE =
@@ -19,9 +21,11 @@ export const IMPORT_GET_JOINT_POSITION =
 export const IMPORT_JOINT_TRAJECTORY_MESSAGES =
     "from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint";
 export const IMPORT_POSE_CLIENT = "from pib_api_client import pose_client";
-export const IMPORT_SET_SOLID_STATE_RELAY = "from datatypes.srv import SetSolidStateRelay";
+export const IMPORT_SET_SOLID_STATE_RELAY =
+    "from datatypes.srv import SetSolidStateRelay";
 export const IMPORT_VISION_PROMPT = "from datatypes.srv import VisionPrompt";
-export const IMPORT_SOLID_STATE_RELAY_STATE = "from datatypes.msg import SolidStateRelayState";
+export const IMPORT_SOLID_STATE_RELAY_STATE =
+    "from datatypes.msg import SolidStateRelayState";
 
 // ros
 
@@ -109,7 +113,7 @@ logging.info(f"service now available")
 `;
 
 export const IMPORT_TF_BUTTON_SERVICES =
-"from button_service.srv import ReadButton";
+    "from button_service.srv import ReadButton";
 
 export const IMPORT_TF_BUTTON_BLOCKLY_CLIENT =
     "from button_service_node_pkg import blockly_client";

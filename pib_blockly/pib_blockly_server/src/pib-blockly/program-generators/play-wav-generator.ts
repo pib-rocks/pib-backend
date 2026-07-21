@@ -14,8 +14,7 @@ import {PLAY_AUDIO_FROM_FILE_FUNCTION} from "./util/function-declarations";
 
 export function play_wav(block: Block, generator: typeof pythonGenerator) {
     const wavFile =
-        block.getFieldValue("WAVFILE") ||
-        "/home/pib/wav-files/R2D2.wav";
+        block.getFieldValue("WAVFILE") || "/home/pib/wav-files/R2D2.wav";
 
     Object.assign(generator.definitions_, {
         IMPORT_RCLPY,

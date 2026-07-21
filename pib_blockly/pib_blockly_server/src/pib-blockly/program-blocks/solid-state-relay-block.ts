@@ -18,8 +18,16 @@ export const setSolidStateRelay =
             previousStatement: null,
             nextStatement: null,
             colour: 355,
+            tooltip: "Turns the Solid-State Relay on or off.",
+            helpUrl: "",
+        },
+        {
+            type: "get_solid_state_relay",
+            message0: "Solid-State Relay is on",
+            output: "Boolean",
+            colour: 355,
             tooltip:
-                "Turns the Solid-State Relay on or off.",
+                "Returns whether the Solid-State Relay is currently turned on.",
             helpUrl: "",
         },
     ]);
