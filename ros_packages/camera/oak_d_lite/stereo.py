@@ -83,28 +83,23 @@ class CameraNode(Node):
         try:
             self.pipeline = dai.Pipeline()
 
-            self.camRgb = self.pipeline.createColorCamera()
-            # NOTE: the ColorCamera 'preview' output produces all-black frames on
-            # this OAK-D-Lite + depthai 2.25 setup (auto-exposure never converges
+            # depthai v3 API: Camera node replaces deprecated ColorCamera.
+            # XLinkOut no longer exists — use requestIspOutput() to get a
+            # Node.Output, then createOutputQueue() on it after startPipeline.
+            # NOTE: the ColorCamera 'preview' output produced all-black frames
+            # on this OAK-D-Lite + depthai 2.25 (auto-exposure never converges
             # on the preview path — verified: 0/236 frames had content, std=0).
-            # The 'isp' output works correctly with auto-exposure (std~70), so we
-            # stream the full-resolution ISP frame and resize it in software to the
-            # requested preview size. See Jira PR-1480.
-            self.camRgb.setResolution(
-                dai.ColorCameraProperties.SensorResolution.THE_1080_P
-            )
-            self.camRgb.setBoardSocket(dai.CameraBoardSocket.CAM_A)
-            self.camRgb.setInterleaved(False)
+            # The 'isp' output works correctly with auto-exposure (std~70), so
+            # we stream the full-resolution ISP frame and resize it in software
+            # to the requested preview size. See Jira PR-1480.
+            self.camRgb = self.pipeline.create(dai.node.Camera)
+            self.camRgb.build(dai.CameraBoardSocket.CAM_A)
+            self.isp_out = self.camRgb.requestIspOutput()
 
-            xoutRgb = self.pipeline.createXLinkOut()
-            xoutRgb.setStreamName("rgb")
-            self.camRgb.isp.link(xoutRgb.input)
+            self.device = dai.Device()
+            self.device.startPipeline(self.pipeline)
 
-            self.device = dai.Device(self.pipeline)
-
-            self.queue = self.device.getOutputQueue(
-                name="rgb", maxSize=4, blocking=False
-            )
+            self.queue = self.isp_out.createOutputQueue()
             return True
 
         except Exception as e:
