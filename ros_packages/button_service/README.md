@@ -22,7 +22,7 @@ In Docker ist `TF_HOST` abhängig davon, wo `brickd` läuft:
 ## Start
 
 ```bash
-source /opt/ros/humble/setup.bash
+source /opt/ros/jazzy/setup.bash
 source /app/ros2_ws/install/setup.bash
 ros2 run button_service button_service_node
 ```
