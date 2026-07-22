@@ -12,7 +12,10 @@ import {
     INIT_GET_JOINT_POSITION_CLIENT,
     INIT_ROS,
 } from "./util/definitions";
-import {APPLY_JOINT_TRAJECTORY_FUNCTION, GET_JOINT_POSITION_FUNCTION} from "./util/function-declarations";
+import {
+    APPLY_JOINT_TRAJECTORY_FUNCTION,
+    GET_JOINT_POSITION_FUNCTION,
+} from "./util/function-declarations";
 
 const motorOptionToMotorName = new Map()
     .set("THUMB_LEFT_OPPOSITION", "thumb_left_opposition")
@@ -92,8 +95,7 @@ export function move_motor(block: Block, generator: typeof pythonGenerator) {
             "get_joint_position",
             GET_JOINT_POSITION_FUNCTION(generator),
         );
-        positionString = 
-            `${getPositionFunctionName}('${selectedMotorName}') + ${positionInput}`;
+        positionString = `${getPositionFunctionName}('${selectedMotorName}') + ${positionInput}`;
     } else {
         throw new Error(`unexpected input-mode: ${modeInput}.`);
     }

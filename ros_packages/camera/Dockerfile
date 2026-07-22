@@ -30,12 +30,26 @@ RUN apt-get update && apt-get install --no-install-recommends -y \
 
 # PEP 668: Jazzy (Ubuntu 24.04, Python 3.12) requires --break-system-packages
 # --ignore-installed: avoid conflict with system numpy (installed by ros:jazzy-ros-core)
-# opencv-python-headless: stereo.py imports cv2 directly (was missing from the
-# runtime stage — only depthai was installed, causing "ModuleNotFoundError: cv2"
-# and a container restart loop).
+# opencv-python-headless pinned to 4.x: the latest 5.x release removed
+# cv2.CascadeClassifier from the core module (stereo.py's face detection
+# needs it), causing "module 'cv2' has no attribute 'CascadeClassifier'".
+# depthai pinned to 2.30.0.0: version 2.25.1.0 produced only blank/zero frames
+# from this OAK-D-Lite (IMX214) — verified that the identical pipeline yields a
+# real image on 2.30.0.0 but std=0 (blank) on 2.25.1.0. The working imitation
+# app uses 2.30.0.0. See Jira PR-1480.
 RUN pip install --break-system-packages --no-cache-dir --ignore-installed \
-        depthai==2.25.1.0 \
-        opencv-python-headless
+        depthai==2.30.0.0 \
+        "opencv-python-headless<5"
+
+# stereo.py needs cv2.data.haarcascades at runtime for face detection
+# (CameraNode raises RuntimeError and permanently falls back to an
+# error-only publisher if the cascade XML is missing). Neither the
+# opencv-python nor opencv-python-headless PyPI wheels ship the haarcascade
+# data files on this arm64/Python 3.12 build. The XML is vendored in the repo
+# (assets/) and COPYed in, so the image builds offline / on a fresh Raspi
+# without depending on network access to GitHub at build time.
+COPY ./camera/assets/haarcascade_frontalface_default.xml \
+     /usr/share/opencv4/haarcascades/haarcascade_frontalface_default.xml
 
 WORKDIR /app
 

@@ -19,5 +19,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: release-drafter/release-drafter@v6
+        with:
+          # Build the draft from develop's history, not the default branch (main).
+          # PRs are merged to develop continuously; main only receives them on the
+          # rare develop->main sync. Without this, PRs merged to develop after the
+          # last main-merge are missing from the notes.
+          commitish: refs/heads/develop
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

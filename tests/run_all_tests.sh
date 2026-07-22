@@ -122,6 +122,30 @@ run_jest() {
         # the Pi filesystem), which makes `npx jest` fail with "Permission
         # denied". Restore it defensively before running.
         chmod +x node_modules/.bin/jest 2>/dev/null || true
+
+        # On arm64 (Pi) an npm install is occasionally incomplete: files such as
+        # node_modules/jest-cli/build/index.js go missing, so `npx jest` dies
+        # with "Cannot find module .../jest-cli/build/index.js" (MODULE_NOT_FOUND)
+        # even though the tests themselves are fine. Detect a broken install and
+        # self-heal with one clean reinstall + retry before giving up.
+        if [[ ! -f node_modules/.bin/jest || ! -f node_modules/jest-cli/build/index.js ]]; then
+            echo "Jest install looks incomplete — reinstalling cleanly ..." >&2
+            rm -rf node_modules package-lock.json
+            npm install --silent
+            chmod +x node_modules/.bin/jest 2>/dev/null || true
+        fi
+
+        if npx jest --config jest.config.js; then
+            return 0
+        fi
+
+        # First attempt failed. If it was a broken-install symptom, do a clean
+        # reinstall and retry once. A genuine test failure will fail again here
+        # and still fail the step (no masking of real failures).
+        echo "Jest failed — attempting one clean reinstall + retry ..." >&2
+        rm -rf node_modules package-lock.json
+        npm install --silent
+        chmod +x node_modules/.bin/jest 2>/dev/null || true
         npx jest --config jest.config.js
         return
     fi
