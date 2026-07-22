@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <package format="3">
   <name>button_service</name>
-  <version>0.1.0</version>
+  <version>0.5.0</version>
   <description>Tinkerforge RGB LED Button service for pib Blockly blocks.</description>
   <maintainer email="pib@example.local">pib</maintainer>
   <license>AGPL-3.0</license>
