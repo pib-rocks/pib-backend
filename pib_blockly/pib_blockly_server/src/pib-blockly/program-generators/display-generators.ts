@@ -1,8 +1,8 @@
-import { Block } from "blockly/core/block";
-import { pythonGenerator } from "blockly/python";
+import {Block} from "blockly/core/block";
+import {pythonGenerator} from "blockly/python";
 
 function pibDisplayRuntime() {
-  return `
+    return `
 import time
 import rclpy
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
@@ -73,20 +73,20 @@ def _pib_publish_string(pub, value, label="display"):
 }
 
 export function setFaceExpressionGenerator(block: Block) {
-  const expression = block.getFieldValue("EXPRESSION");
+    const expression = block.getFieldValue("EXPRESSION");
 
-  return `${pibDisplayRuntime()}
+    return `${pibDisplayRuntime()}
 _pib_publish_string(_pib_expression_pub, "${expression}", "expression")
 `;
 }
 
 export function showFaceTextGenerator(block: Block) {
-  const rawText = block.getFieldValue("TEXT") || "";
-  const safeText = JSON.stringify(rawText.slice(0, 40));
+    const rawText = block.getFieldValue("TEXT") || "";
+    const safeText = JSON.stringify(rawText.slice(0, 40));
 
-  return `${pibDisplayRuntime()}
+    return `${pibDisplayRuntime()}
 _pib_publish_string(_pib_display_text_pub, ${safeText}[:40], "text")
 `;
 }
 
-export { pythonGenerator };
+export {pythonGenerator};

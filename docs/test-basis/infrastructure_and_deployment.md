@@ -158,7 +158,7 @@ flask --app run db upgrade && flask --app run seed_db && flask --app run run --h
 ### ros-programs container command
 
 ```bash
-source /opt/ros/humble/setup.bash &&
+source /opt/ros/jazzy/setup.bash &&
 source /app/ros2_ws/install/setup.bash &&
 ros2 run button_service button_service_node &
 ros2 launch programs launch.py

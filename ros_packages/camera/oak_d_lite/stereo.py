@@ -84,12 +84,21 @@ class CameraNode(Node):
             self.pipeline = dai.Pipeline()
 
             self.camRgb = self.pipeline.createColorCamera()
-            self.camRgb.setPreviewSize(self.preview_width, self.preview_height)
+            # NOTE: the ColorCamera 'preview' output produces all-black frames on
+            # this OAK-D-Lite + depthai 2.25 setup (auto-exposure never converges
+            # on the preview path — verified: 0/236 frames had content, std=0).
+            # The 'isp' output works correctly with auto-exposure (std~70), so we
+            # stream the full-resolution ISP frame and resize it in software to the
+            # requested preview size. See Jira PR-1480.
+            self.camRgb.setResolution(
+                dai.ColorCameraProperties.SensorResolution.THE_1080_P
+            )
+            self.camRgb.setBoardSocket(dai.CameraBoardSocket.CAM_A)
             self.camRgb.setInterleaved(False)
 
             xoutRgb = self.pipeline.createXLinkOut()
             xoutRgb.setStreamName("rgb")
-            self.camRgb.preview.link(xoutRgb.input)
+            self.camRgb.isp.link(xoutRgb.input)
 
             self.device = dai.Device(self.pipeline)
 
@@ -141,6 +150,17 @@ class CameraNode(Node):
             return
 
         frame = image_rgb.getCvFrame()
+
+        # The ISP output is full sensor resolution (1920x1080). Resize to the
+        # configured preview size so downstream consumers and the JPEG match the
+        # requested dimensions (see PR-1480 — 'preview' output was black).
+        if (
+            frame.shape[1] != self.preview_width
+            or frame.shape[0] != self.preview_height
+        ):
+            frame = cv2.resize(
+                frame, (self.preview_width, self.preview_height)
+            )
 
         self.publish_face_center(frame)
 

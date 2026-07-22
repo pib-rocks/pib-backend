@@ -145,7 +145,7 @@ class ProgramNode(Node):
                 "bash",
                 "-lc",
                 (
-                    "source /opt/ros/humble/setup.bash && "
+                    "source /opt/ros/jazzy/setup.bash && "
                     "source /app/ros2_ws/install/setup.bash && "
                     f"{PYTHON_BINARY} {UNBUFFERED_OUTPUT_FLAG} {code_python_file_path}"
                 ),
