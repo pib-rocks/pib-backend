@@ -81,27 +81,20 @@ class CameraNode(Node):
 
     def init_pipeline(self) -> bool:
         try:
+            # depthai v3 API:
+            # Camera node replaces deprecated ColorCamera.
+            # XLinkOut is completely removed in DepthAI v3.
+            # Output queues are created directly from node outputs via requestIspOutput().
+            # Pipeline is started via pipeline.start().
             self.pipeline = dai.Pipeline()
-
-            # depthai v3 API: Camera node replaces deprecated ColorCamera.
-            # XLinkOut no longer exists — use requestIspOutput() to get a
-            # Node.Output, then createOutputQueue() on it after startPipeline.
-            # NOTE: the ColorCamera 'preview' output produced all-black frames
-            # on this OAK-D-Lite + depthai 2.25 (auto-exposure never converges
-            # on the preview path — verified: 0/236 frames had content, std=0).
-            # The 'isp' output works correctly with auto-exposure (std~70), so
-            # we stream the full-resolution ISP frame and resize it in software
-            # to the requested preview size. See Jira PR-1480.
             self.camRgb = self.pipeline.create(dai.node.Camera)
             self.camRgb.build(dai.CameraBoardSocket.CAM_A)
             self.isp_out = self.camRgb.requestIspOutput()
 
-            # Force USB 2.0 (HIGH) speed to avoid XLink / USB 3.0 re-enumeration
-            # bugs on Raspberry Pi 5 which cause X_LINK_DEVICE_ALREADY_IN_USE.
-            self.device = dai.Device(dai.UsbSpeed.HIGH)
-            self.device.startPipeline(self.pipeline)
-
             self.queue = self.isp_out.createOutputQueue()
+            self.pipeline.start()
+
+            self.get_logger().info("DepthAI v3 pipeline started successfully.")
             return True
 
         except Exception as e:
@@ -113,7 +106,7 @@ class CameraNode(Node):
             print("====================================")
 
             self.get_logger().error(f"Camera not found: {e}")
-            self.device = None
+            self.pipeline = None
             self.queue = None
             return False
 
@@ -148,9 +141,6 @@ class CameraNode(Node):
 
         frame = image_rgb.getCvFrame()
 
-        # The ISP output is full sensor resolution (1920x1080). Resize to the
-        # configured preview size so downstream consumers and the JPEG match the
-        # requested dimensions (see PR-1480 — 'preview' output was black).
         if (
             frame.shape[1] != self.preview_width
             or frame.shape[0] != self.preview_height
@@ -185,8 +175,8 @@ class CameraNode(Node):
     def preview_size_callback(self, msg):
         self.preview_width, self.preview_height = msg.data
 
-        if self.device is not None:
-            self.device.close()
+        if self.pipeline is not None:
+            self.pipeline.stop()
 
         self.init_pipeline()
 
@@ -197,6 +187,7 @@ def spin_camera(times):
         print("Couldn't restart camera due to displayed error/s, publishing error message")
         rclpy.spin(error_publisher)
     else:
+        camera_node = None
         try:
             camera_node = CameraNode()
             rclpy.spin(camera_node)
@@ -204,7 +195,7 @@ def spin_camera(times):
             error_publisher.timer_callback()
             print(exc)
         finally:
-            if "camera_node" in locals():
+            if camera_node is not None:
                 camera_node.destroy_node()
                 print("camera_node destroyed")
             cnt = times - 1
