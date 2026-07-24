@@ -16,10 +16,6 @@ import wave
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-import numpy as np
-
-import logging
-
 logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL_PATH = "/data/voice/models/supertone/"
@@ -223,6 +219,7 @@ class SupertoneTTSEngine:
                 wav, dur = self._supertonic_tts.synthesize(
                     chunk, voice_style=style, lang=lang_code, speed=speed, total_steps=2
                 )
+                import numpy as np  # type: ignore
                 pcm_int16 = (np.clip(wav, -1.0, 1.0) * 32767.0).astype(np.int16)
                 pcm_chunks.append(pcm_int16.tobytes())
             return b"".join(pcm_chunks)
