@@ -17,7 +17,7 @@ RUN apt-get update --fix-missing && \
         libusb-1.0-0-dev \
     && rm -rf /var/lib/apt/lists/*
 
-COPY ./ros_packages/requirements.txt .
+COPY ./ros_packages/voice_assistant/requirements.txt .
 
 # PEP 668: Jazzy (Ubuntu 24.04, Python 3.12) requires --break-system-packages
 RUN pip install --break-system-packages --no-cache-dir --ignore-installed requests pyaudio google-genai supertonic faster-whisper onnxruntime scipy soundfile

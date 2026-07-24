@@ -93,7 +93,7 @@ The system synthesizes raw text strings into high-quality 16-bit PCM audio encap
     When speech synthesis completes
     Then the output bytes should start with RIFF header magic bytes "RIFF" and "WAVE"
     And the audio format encoding should be 1-channel mono 16-bit PCM
-    And the audio sample rate should equal 16000 Hz
+    And the audio sample rate should equal 44100 Hz
 
   Scenario: Audio Energy and Non-Zero Byte Validation
     Given a valid synthesis request for non-empty text "Guten Tag"

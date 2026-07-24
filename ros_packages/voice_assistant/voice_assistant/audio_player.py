@@ -65,11 +65,13 @@ class PlaybackItem:
             self.finished_playing.set()
             return
 
+        pya = None
+        stream = None
         try:
             with util.surpress_stderr():
                 pya = pyaudio.PyAudio()
 
-                stream: pyaudio.Stream = pya.open(
+                stream = pya.open(
                     format=pya.get_format_from_width(self.encoding.bytes_per_sample),
                     channels=self.encoding.num_channels,
                     rate=self.encoding.frames_per_second,
@@ -81,19 +83,22 @@ class PlaybackItem:
                         break
                     stream.write(chunk)
 
-                self.finished_playing.set()
-
                 time.sleep(self.pause_seconds)
-
-                stream.stop_stream()
-                stream.close()
-                pya.terminate()
-
-        except OSError as e:
-            # ToDo - Get better logging for non-ROS packages
+        except Exception as e:
             print(f"failed to playback audio: {e}", file=sys.stderr)
-            pya.terminate()
-            return
+        finally:
+            self.finished_playing.set()
+            if stream is not None:
+                try:
+                    stream.stop_stream()
+                    stream.close()
+                except Exception:
+                    pass
+            if pya is not None:
+                try:
+                    pya.terminate()
+                except Exception:
+                    pass
 
 
 SPEECH_ENCODING = AudioEncoding(2, 1, 44100)

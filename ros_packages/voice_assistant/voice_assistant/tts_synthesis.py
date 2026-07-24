@@ -6,8 +6,8 @@ expressive parameters, robust fallback mechanisms, and audio quality validation.
 """
 
 from __future__ import annotations
-
 import io
+import logging
 import math
 import os
 import re
@@ -15,6 +15,8 @@ import struct
 import wave
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
+
+import numpy as np
 
 import logging
 
@@ -99,10 +101,6 @@ class SupertoneTTSEngine:
             self.active_backend = "supertone-supertonic-3"
             self._primary_engine = "supertone_simulated"
             return True
-
-            self.is_loaded = False
-            self.active_backend = "fallback"
-            return False
 
         except Exception:
             self.is_loaded = False
@@ -219,12 +217,12 @@ class SupertoneTTSEngine:
         if hasattr(self, "_supertonic_tts") and self._supertonic_tts is not None:
             style = self._supertonic_tts.get_voice_style("F1")
             pcm_chunks = []
-            lang_code = "de" if "de" in language.lower() or "ger" in language.lower() else "en" if "en" in language.lower() else "na"
+            lang_str = (language or self.default_language or "de").lower()
+            lang_code = "de" if "de" in lang_str or "ger" in lang_str else "en" if "en" in lang_str else "na"
             for chunk in chunks:
                 wav, dur = self._supertonic_tts.synthesize(
                     chunk, voice_style=style, lang=lang_code, speed=speed, total_steps=2
                 )
-                import numpy as np
                 pcm_int16 = (np.clip(wav, -1.0, 1.0) * 32767.0).astype(np.int16)
                 pcm_chunks.append(pcm_int16.tobytes())
             return b"".join(pcm_chunks)
