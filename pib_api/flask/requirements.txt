@@ -19,3 +19,5 @@ SQLAlchemy==2.0.26
 typing_extensions==4.9.0
 Werkzeug==3.0.1
 requests==2.31.0
+docker==7.1.0
+tinkerforge==2.1.36

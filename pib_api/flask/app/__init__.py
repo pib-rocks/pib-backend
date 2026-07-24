@@ -10,6 +10,7 @@ from controller import (
     pose_controller,
     ip_controller,
     button_program_controller,
+    system_controller,
 )
 
 app.register_blueprint(program_controller.bp, url_prefix="/program", name="program")
@@ -34,3 +35,4 @@ app.register_blueprint(ip_controller.bp, url_prefix="/host-ip", name="host-ip")
 app.register_blueprint(
     button_program_controller.bp, url_prefix="/button-programs", name="button-programs"
 )
+app.register_blueprint(system_controller.bp, url_prefix="/system", name="system")

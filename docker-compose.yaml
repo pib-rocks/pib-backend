@@ -23,12 +23,31 @@ services:
       - pib-network
     ports:
       - "5000:5000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       - SQLALCHEMY_DATABASE_URI=sqlite:////app/pibdata.db
       - PIB_BLOCKLY_SERVER_URL=http://pib-blockly-server:2442
+      - TINKERFORGE_HOST=host.docker.internal
+      - TINKERFORGE_PORT=4223
+      - HOST_PROC_PATH=/host/proc
+      - HOST_OS_RELEASE_PATH=/host/os-release
+      - HOST_THERMAL_PATH=/sys/class/thermal/thermal_zone0/temp
+      - DIAGNOSTICS_HOST_ROOT=/host/root
     volumes:
       - ./pib_api/flask/:/app
       - programs:/root/cerebra_programs
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /proc:/host/proc:ro
+      - /etc/os-release:/host/os-release:ro
+      - /sys/class/thermal:/sys/class/thermal:ro
+      # Host diagnostics mounts (best-effort directory mounts)
+      - /:/host/root:ro
+      - /home/pib:/host/pib:ro
+      - /tmp:/host/tmp:ro
+      - /etc:/host/etc:ro
+      - /boot:/host/boot:ro
+      - /var/log:/host/var-log:ro
     restart: always
     depends_on:
       - pib-blockly-server
