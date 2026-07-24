@@ -21,7 +21,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL_PATH = "/data/voice/models/supertone/"
-DEFAULT_SAMPLE_RATE = 24000
+DEFAULT_SAMPLE_RATE = 44100
 DEFAULT_CHANNELS = 1
 DEFAULT_SAMPLE_WIDTH = 2  # 16-bit PCM
 

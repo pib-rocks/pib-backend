@@ -96,7 +96,7 @@ class PlaybackItem:
             return
 
 
-SPEECH_ENCODING = AudioEncoding(2, 1, 24000)
+SPEECH_ENCODING = AudioEncoding(2, 1, 44100)
 CHUNKS_PER_SECOND = 10
 FRAMES_PER_CHUNK = SPEECH_ENCODING.frames_per_second // CHUNKS_PER_SECOND
 BYTES_PER_FRAME = SPEECH_ENCODING.bytes_per_sample * SPEECH_ENCODING.num_channels
