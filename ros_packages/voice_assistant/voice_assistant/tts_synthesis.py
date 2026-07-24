@@ -16,6 +16,10 @@ import wave
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 DEFAULT_MODEL_PATH = "/data/voice/models/supertone/"
 DEFAULT_SAMPLE_RATE = 16000
 DEFAULT_CHANNELS = 1
@@ -76,25 +80,25 @@ class SupertoneTTSEngine:
 
             # Try importing supertonic / supertone runtime or initializing ONNX session if present
             try:
-                from supertonic import TTS  # type: ignore # noqa: F401
-                self._primary_engine = "supertonic_sdk"
-            except ImportError:
+                from supertonic import TTS  # type: ignore
+                self._supertonic_tts = TTS(model="supertonic-3", auto_download=True)
+                self.is_loaded = True
+                self.active_backend = "supertone-supertonic-3"
+                return True
+            except Exception as e:
+                logger.warning(f"Failed to load supertonic TTS: {e}")
                 try:
                     import supertone  # type: ignore # noqa: F401
                     self._primary_engine = "supertone_sdk"
+                    self.is_loaded = True
+                    self.active_backend = "supertone-supertonic-3"
+                    return True
                 except ImportError:
-                    try:
-                        import onnxruntime as ort  # type: ignore
-                        if weights_file.exists():
-                            self._primary_engine = ort.InferenceSession(str(weights_file))
-                        else:
-                            self._primary_engine = "supertone_simulated"
-                    except Exception:
-                        self._primary_engine = "supertone_simulated"
+                    pass
 
-            self.is_loaded = True
-            self.active_backend = "supertone-supertonic-3"
-            return True
+            self.is_loaded = False
+            self.active_backend = "fallback"
+            return False
 
         except Exception:
             self.is_loaded = False
@@ -208,6 +212,19 @@ class SupertoneTTSEngine:
         """
         Execute primary synthesis with Supertone supertonic-3 engine.
         """
+        if hasattr(self, "_supertonic_tts") and self._supertonic_tts is not None:
+            style = self._supertonic_tts.get_voice_style("F1")
+            pcm_chunks = []
+            lang_code = "de" if "de" in language.lower() or "ger" in language.lower() else "en" if "en" in language.lower() else "na"
+            for chunk in chunks:
+                wav, dur = self._supertonic_tts.synthesize(
+                    chunk, voice_style=style, lang=lang_code, speed=speed
+                )
+                import numpy as np
+                pcm_int16 = (np.clip(wav, -1.0, 1.0) * 32767.0).astype(np.int16)
+                pcm_chunks.append(pcm_int16.tobytes())
+            return b"".join(pcm_chunks)
+
         pcm_chunks = []
         for chunk in chunks:
             pcm = self._generate_expressive_pcm(chunk, language, speed, emotion, pitch)
