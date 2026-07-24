@@ -74,19 +74,23 @@ class SupertoneTTSEngine:
                 self.active_backend = "fallback"
                 return False
 
-            # Try importing supertone runtime or initializing ONNX session if present
+            # Try importing supertonic / supertone runtime or initializing ONNX session if present
             try:
-                import supertone  # type: ignore # noqa: F401
-                self._primary_engine = "supertone_sdk"
+                from supertonic import TTS  # type: ignore # noqa: F401
+                self._primary_engine = "supertonic_sdk"
             except ImportError:
                 try:
-                    import onnxruntime as ort  # type: ignore
-                    if weights_file.exists():
-                        self._primary_engine = ort.InferenceSession(str(weights_file))
-                    else:
+                    import supertone  # type: ignore # noqa: F401
+                    self._primary_engine = "supertone_sdk"
+                except ImportError:
+                    try:
+                        import onnxruntime as ort  # type: ignore
+                        if weights_file.exists():
+                            self._primary_engine = ort.InferenceSession(str(weights_file))
+                        else:
+                            self._primary_engine = "supertone_simulated"
+                    except Exception:
                         self._primary_engine = "supertone_simulated"
-                except Exception:
-                    self._primary_engine = "supertone_simulated"
 
             self.is_loaded = True
             self.active_backend = "supertone-supertonic-3"
