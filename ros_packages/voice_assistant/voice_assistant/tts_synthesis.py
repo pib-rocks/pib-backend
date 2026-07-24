@@ -65,7 +65,13 @@ class SupertoneTTSEngine:
             try:
                 from supertonic import TTS  # type: ignore
                 model_dir = str(self.model_path) if self.model_path.exists() and self.model_path.is_dir() else None
-                self._supertonic_tts = TTS(model="supertonic-3", model_dir=model_dir, auto_download=True)
+                self._supertonic_tts = TTS(
+                    model="supertonic-3",
+                    model_dir=model_dir,
+                    auto_download=True,
+                    intra_op_num_threads=4,
+                    inter_op_num_threads=2,
+                )
                 self.is_loaded = True
                 self.active_backend = "supertone-supertonic-3"
                 return True
@@ -216,7 +222,7 @@ class SupertoneTTSEngine:
             lang_code = "de" if "de" in language.lower() or "ger" in language.lower() else "en" if "en" in language.lower() else "na"
             for chunk in chunks:
                 wav, dur = self._supertonic_tts.synthesize(
-                    chunk, voice_style=style, lang=lang_code, speed=speed
+                    chunk, voice_style=style, lang=lang_code, speed=speed, total_steps=2
                 )
                 import numpy as np
                 pcm_int16 = (np.clip(wav, -1.0, 1.0) * 32767.0).astype(np.int16)
