@@ -61,6 +61,17 @@ class SupertoneTTSEngine:
         Falls back gracefully if directory or required weights are missing.
         """
         try:
+            # 1. Try importing supertonic Python SDK
+            try:
+                from supertonic import TTS  # type: ignore
+                model_dir = str(self.model_path) if self.model_path.exists() and self.model_path.is_dir() else None
+                self._supertonic_tts = TTS(model="supertonic-3", model_dir=model_dir, auto_download=True)
+                self.is_loaded = True
+                self.active_backend = "supertone-supertonic-3"
+                return True
+            except Exception as e:
+                logger.warning(f"Failed to load supertonic TTS SDK: {e}")
+
             if not self.model_path.exists() or not self.model_path.is_dir():
                 self.is_loaded = False
                 self.active_backend = "fallback"
