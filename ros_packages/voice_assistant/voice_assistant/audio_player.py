@@ -1,3 +1,4 @@
+import io
 import sys
 import time
 import wave
@@ -5,7 +6,10 @@ from queue import Queue
 from threading import Lock, Event, Thread
 from typing import Iterable, Optional
 
-import pyaudio
+try:
+    import pyaudio
+except ImportError:
+    pyaudio = None
 import rclpy
 from datatypes.srv import PlayAudioFromFile, PlayAudioFromSpeech, ClearPlaybackQueue
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
@@ -15,6 +19,7 @@ from std_msgs.msg import String
 
 from public_api_client import public_voice_client
 from . import util
+from .tts_synthesis import SupertoneTTSEngine
 
 
 class AudioEncoding:
@@ -55,7 +60,7 @@ class PlaybackItem:
 
     def play(self) -> None:
 
-        if self.is_cleared():
+        if self.is_cleared() or pyaudio is None:
             self.finished_playing.set()
             return
 
@@ -138,6 +143,8 @@ class AudioPlayerNode(Node):
             String, "public_api_token", self.get_public_api_token_listener, 10
         )
 
+        self.tts_engine = SupertoneTTSEngine()
+
         self.get_logger().info("Now running AUDIO PLAYER")
 
     def get_public_api_token_listener(self, msg):
@@ -209,12 +216,33 @@ class AudioPlayerNode(Node):
         order = self.counter_next()
 
         try:
-            data = public_voice_client.text_to_speech(
-                request.speech, request.gender, request.language, self.token
+            # Use local Supertone supertonic-3 expressive TTS engine
+            wav_bytes = self.tts_engine.synthesize(
+                text=request.speech,
+                language=request.language or "de",
+                emotion="expressive",
             )
+            buf = io.BytesIO(wav_bytes)
+            with wave.open(buf, "rb") as wf:
+                nframes = wf.getnframes()
+                raw_pcm = wf.readframes(nframes)
+
+            data = [
+                raw_pcm[i : i + BYTES_PER_CHUNK]
+                for i in range(0, len(raw_pcm), BYTES_PER_CHUNK)
+            ]
         except Exception as e:
-            self.get_logger().error(f"text_to_speech failed: {e}")
-            return response
+            self.get_logger().warning(
+                f"Local Supertone TTS synthesis error, attempting public voice client: {e}"
+            )
+            try:
+                data = public_voice_client.text_to_speech(
+                    request.speech, request.gender, request.language, self.token
+                )
+            except Exception as e2:
+                self.get_logger().error(f"text_to_speech failed: {e2}")
+                return response
+
         data = self.adjust_data_granularity(data, BYTES_PER_CHUNK)
 
         playback_item = PlaybackItem(data, SPEECH_ENCODING, 0.2, order)
