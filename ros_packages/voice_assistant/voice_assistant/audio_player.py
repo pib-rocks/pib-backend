@@ -1,4 +1,5 @@
 import io
+import os
 import sys
 import time
 import wave
@@ -185,26 +186,36 @@ class AudioPlayerNode(Node):
 
         order = self.counter_next()
 
-        with wave.open(request.filepath, "rb") as wf:
-
-            encoding = AudioEncoding(
-                wf.getsampwidth(), wf.getnchannels(), wf.getframerate()
+        if not os.path.exists(request.filepath):
+            self.get_logger().warning(
+                f"Audio file not found '{request.filepath}', skipping file playback."
             )
+            return response
 
-            frames_per_chunk = encoding.frames_per_second // CHUNKS_PER_SECOND
+        try:
+            with wave.open(request.filepath, "rb") as wf:
 
-            data = []
-            while True:
-                chunk = wf.readframes(frames_per_chunk)
-                data.append(chunk)
-                if len(chunk) < frames_per_chunk:
-                    break
+                encoding = AudioEncoding(
+                    wf.getsampwidth(), wf.getnchannels(), wf.getframerate()
+                )
 
-        playback_item = PlaybackItem(data, encoding, 0.0, order)
-        self.playback_queue.put(playback_item, True)
+                frames_per_chunk = encoding.frames_per_second // CHUNKS_PER_SECOND
 
-        if request.join:
-            playback_item.finished_playing.wait()
+                data = []
+                while True:
+                    chunk = wf.readframes(frames_per_chunk)
+                    data.append(chunk)
+                    if len(chunk) < frames_per_chunk:
+                        break
+
+            playback_item = PlaybackItem(data, encoding, 0.0, order)
+            self.playback_queue.put(playback_item, True)
+
+            if request.join:
+                playback_item.finished_playing.wait()
+        except Exception as e:
+            self.get_logger().error(f"Error reading audio file '{request.filepath}': {e}")
+
         return response
 
     def play_audio_from_speech(
