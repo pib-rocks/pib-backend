@@ -67,3 +67,7 @@ urllib3==2.2.1
 zipp==1.0.0
 pyaudio==0.2.14
 google-genai
+supertone-supertonic>=3.0.0
+onnxruntime>=1.16.0
+scipy>=1.10.0
+soundfile>=0.12.1
