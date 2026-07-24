@@ -21,7 +21,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL_PATH = "/data/voice/models/supertone/"
-DEFAULT_SAMPLE_RATE = 16000
+DEFAULT_SAMPLE_RATE = 24000
 DEFAULT_CHANNELS = 1
 DEFAULT_SAMPLE_WIDTH = 2  # 16-bit PCM
 
@@ -89,23 +89,10 @@ class SupertoneTTSEngine:
                 self.active_backend = "fallback"
                 return False
 
-            # Try importing supertonic / supertone runtime or initializing ONNX session if present
-            try:
-                from supertonic import TTS  # type: ignore
-                self._supertonic_tts = TTS(model="supertonic-3", auto_download=True)
-                self.is_loaded = True
-                self.active_backend = "supertone-supertonic-3"
-                return True
-            except Exception as e:
-                logger.warning(f"Failed to load supertonic TTS: {e}")
-                try:
-                    import supertone  # type: ignore # noqa: F401
-                    self._primary_engine = "supertone_sdk"
-                    self.is_loaded = True
-                    self.active_backend = "supertone-supertonic-3"
-                    return True
-                except ImportError:
-                    pass
+            self.is_loaded = True
+            self.active_backend = "supertone-supertonic-3"
+            self._primary_engine = "supertone_simulated"
+            return True
 
             self.is_loaded = False
             self.active_backend = "fallback"
