@@ -26,6 +26,7 @@ services:
     environment:
       - SQLALCHEMY_DATABASE_URI=sqlite:////app/pibdata.db
       - PIB_BLOCKLY_SERVER_URL=http://pib-blockly-server:2442
+      - PYTHON_CODE_DIR=/root/cerebra_programs
     volumes:
       - ./pib_api/flask/:/app
       - programs:/root/cerebra_programs
