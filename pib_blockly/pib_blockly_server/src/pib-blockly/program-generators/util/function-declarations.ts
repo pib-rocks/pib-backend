@@ -11,25 +11,26 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(speech: str, voice: str) -> None:
     request.speech = speech
     request.join = True
 
-    if voice == 'Hannah':
+    if voice == 'Hannah' or voice == 'supertonic_female_de':
         request.gender = "Female"
         request.language = "German"
-    elif voice == 'Daniel':
+    elif voice == 'Daniel' or voice == 'supertonic_male_de':
         request.gender = "Male"
         request.language = "German"
-    elif voice == 'Emma':
+    elif voice == 'Emma' or voice == 'supertonic_female_en':
         request.gender = "Female"
         request.language = "English"
-    elif voice == 'Brian':
+    elif voice == 'Brian' or voice == 'supertonic_male_en':
         request.gender = "Male"
         request.language = "English"
     else:
-        logging.error(f"unrecognized voice: '{voice}', aborting...")
-        return
+        logging.warning(f"unrecognized voice: '{voice}', defaulting to local Supertonic German Female...")
+        request.gender = "Female"
+        request.language = "German"
 
     future = play_audio_from_speech_client.call_async(request)
 
-    logging.info(f"now speaking...")
+    logging.info(f"now speaking via local Supertonic TTS...")
     rclpy.spin_until_future_complete(node, future)
     logging.info("finished speaking.")
 `;
