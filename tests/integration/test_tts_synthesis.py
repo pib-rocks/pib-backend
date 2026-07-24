@@ -114,7 +114,7 @@ class TestTTSAudioOutputQuality:
     """Test WAV/PCM headers, sample rate, bit depth, non-zero audio bytes, and RMS."""
 
     def test_wav_header_and_pcm_specifications(self, tmp_path: Path):
-        engine = SupertoneTTSEngine(model_path=tmp_path, sample_rate=16000)
+        engine = SupertoneTTSEngine(model_path=tmp_path, sample_rate=24000)
         wav_bytes = engine.synthesize("Standard audio quality test sentence.")
 
         analysis = analyze_wav_bytes(wav_bytes)
@@ -122,7 +122,7 @@ class TestTTSAudioOutputQuality:
         assert analysis["header_valid"] is True
         assert analysis["channels"] == 1  # Mono
         assert analysis["sample_width"] == 2  # 16-bit
-        assert analysis["sample_rate"] == 16000
+        assert analysis["sample_rate"] == 24000
         assert analysis["pcm_bytes_len"] > 0
 
     def test_custom_sample_rate(self, tmp_path: Path):
