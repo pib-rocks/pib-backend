@@ -20,9 +20,11 @@ RUN apt-get update --fix-missing && \
 COPY ./ros_packages/requirements.txt .
 
 # PEP 668: Jazzy (Ubuntu 24.04, Python 3.12) requires --break-system-packages
-RUN pip install --break-system-packages --no-cache-dir --ignore-installed requests pyaudio google-genai supertonic onnxruntime scipy soundfile
+RUN pip install --break-system-packages --no-cache-dir --ignore-installed requests pyaudio google-genai supertonic faster-whisper onnxruntime scipy soundfile
 
 ENV SUPERTONE_MODEL_PATH=/data/voice/models/supertone/
+ENV WHISPER_MODEL_SIZE=base
+ENV WHISPER_MODEL_PATH=/data/voice/models/whisper/
 
 COPY ./pib_api/client ./client
 RUN pip install --break-system-packages --no-cache-dir ./client
