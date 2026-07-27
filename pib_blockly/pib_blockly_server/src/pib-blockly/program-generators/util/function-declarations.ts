@@ -3,30 +3,15 @@ import {CodeGenerator} from "blockly";
 // play-audio-from-speech
 
 export const PLAY_AUDIO_FROM_SPEECH_FUNCTION = (generator: CodeGenerator) => `
-def ${generator.FUNCTION_NAME_PLACEHOLDER_}(speech: str, voice: str) -> None:
+def ${generator.FUNCTION_NAME_PLACEHOLDER_}(speech: str, voice: str = "F1", language: str = "auto") -> None:
 
-    logging.info(f"received request to say '{speech}' as '{voice}'.")
+    logging.info(f"received request to say '{speech}' with voice '{voice}' in language '{language}'.")
 
     request = PlayAudioFromSpeech.Request()
     request.speech = speech
+    request.gender = voice
+    request.language = language
     request.join = True
-
-    if voice == 'Hannah' or voice == 'supertonic_female_de':
-        request.gender = "Female"
-        request.language = "German"
-    elif voice == 'Daniel' or voice == 'supertonic_male_de':
-        request.gender = "Male"
-        request.language = "German"
-    elif voice == 'Emma' or voice == 'supertonic_female_en':
-        request.gender = "Female"
-        request.language = "English"
-    elif voice == 'Brian' or voice == 'supertonic_male_en':
-        request.gender = "Male"
-        request.language = "English"
-    else:
-        logging.warning(f"unrecognized voice: '{voice}', defaulting to local Supertonic German Female...")
-        request.gender = "Female"
-        request.language = "German"
 
     future = play_audio_from_speech_client.call_async(request)
 

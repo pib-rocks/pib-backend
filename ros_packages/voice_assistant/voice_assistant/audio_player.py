@@ -235,7 +235,8 @@ class AudioPlayerNode(Node):
             # Use local Supertone supertonic-3 expressive TTS engine
             wav_bytes = self.tts_engine.synthesize(
                 text=request.speech,
-                language=request.language or "de",
+                language=request.language or "auto",
+                voice=request.gender or "F1",
                 emotion="expressive",
             )
             buf = io.BytesIO(wav_bytes)

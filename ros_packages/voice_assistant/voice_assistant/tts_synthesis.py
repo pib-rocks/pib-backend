@@ -157,6 +157,7 @@ class SupertoneTTSEngine:
         self,
         text: str,
         language: Optional[str] = None,
+        voice: Optional[str] = None,
         speed: float = 1.0,
         emotion: str = "expressive",
         pitch: float = 1.0,
@@ -188,7 +189,7 @@ class SupertoneTTSEngine:
         # Primary synthesis attempt if offline model is loaded
         if self.is_loaded and self.active_backend == "supertone-supertonic-3":
             try:
-                pcm_data = self._synthesize_primary(chunks, lang, speed, emotion, pitch)
+                pcm_data = self._synthesize_primary(chunks, lang, voice, speed, emotion, pitch)
                 if pcm_data and len(pcm_data) > 0:
                     return self._build_wav_bytes(pcm_data, self.sample_rate)
             except Exception:
@@ -203,6 +204,7 @@ class SupertoneTTSEngine:
         self,
         chunks: List[str],
         language: str,
+        voice: Optional[str],
         speed: float,
         emotion: str,
         pitch: float,
@@ -211,9 +213,17 @@ class SupertoneTTSEngine:
         Execute primary synthesis with Supertone supertonic-3 engine.
         """
         if hasattr(self, "_supertonic_tts") and self._supertonic_tts is not None:
-            style = self._supertonic_tts.get_voice_style("F1")
+            # Resolve requested voice style (F1-F5, M1-M5) or fallback
+            requested_voice = (voice or "").upper()
+            if requested_voice not in ["F1", "F2", "F3", "F4", "F5", "M1", "M2", "M3", "M4", "M5"]:
+                if "MALE" in requested_voice or "DANIEL" in requested_voice or "BRIAN" in requested_voice:
+                    requested_voice = "M1"
+                else:
+                    requested_voice = "F1"
+
+            style = self._supertonic_tts.get_voice_style(requested_voice)
             pcm_chunks = []
-            lang_str = (language or self.default_language or "de").lower()
+            lang_str = (language or self.default_language or "auto").lower()
             lang_code = "de" if "de" in lang_str or "ger" in lang_str else "en" if "en" in lang_str else "na"
             for chunk in chunks:
                 wav, dur = self._supertonic_tts.synthesize(
