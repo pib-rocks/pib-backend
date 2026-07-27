@@ -3,6 +3,7 @@ from schema.personality_schema import (
     personality_schema,
     personalities_schema,
     upload_personality_schema,
+    update_personality_schema,
 )
 from flask import jsonify, request, Blueprint
 
@@ -31,7 +32,7 @@ def create_personality():
 
 @bp.route("/<string:personality_id>", methods=["PUT"])
 def update_personality(personality_id: str):
-    personality_dto = upload_personality_schema.load(request.json)
+    personality_dto = update_personality_schema.load(request.json)
     personality = personality_service.update_personality(
         personality_id, personality_dto
     )

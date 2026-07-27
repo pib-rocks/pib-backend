@@ -163,6 +163,7 @@ def _create_chat_data_and_assistant() -> None:
         pause_threshold=0.8,
         message_history=5,
         assistant_model_id=claude.id,
+        stt_engine="local_whisper",
     )
     p_thomas = Personality(
         name="Thomas",
@@ -171,6 +172,7 @@ def _create_chat_data_and_assistant() -> None:
         pause_threshold=1.0,
         message_history=15,
         assistant_model_id=gpt4o1.id,
+        stt_engine="local_whisper",
     )
     db.session.add_all([p_eva, p_thomas])
     db.session.flush()

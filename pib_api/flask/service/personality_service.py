@@ -11,14 +11,17 @@ def get_personality(personality_id: str) -> Personality:
     return Personality.query.filter(Personality.personality_id == personality_id).one()
 
 
-def create_personality(personality_dto: Any) -> List[Personality]:
+def create_personality(personality_dto: Any) -> Personality:
     personality = Personality(
         name=personality_dto["name"],
         gender=personality_dto["gender"],
         pause_threshold=personality_dto["pause_threshold"],
         message_history=personality_dto["message_history"],
         assistant_model_id=personality_dto["assistant_model_id"],
+        stt_engine=personality_dto.get("stt_engine", "local_whisper"),
     )
+    if "description" in personality_dto:
+        personality.description = personality_dto["description"]
     db.session.add(personality)
     db.session.flush()
     return personality
@@ -33,6 +36,8 @@ def update_personality(personality_id: str, personality_dto: Any) -> Personality
     if "description" in personality_dto:
         personality.description = personality_dto["description"]
     personality.assistant_model_id = personality_dto["assistant_model_id"]
+    if "stt_engine" in personality_dto:
+        personality.stt_engine = personality_dto["stt_engine"]
     db.session.flush()
     return personality
 

@@ -25,6 +25,7 @@ class Personality:
         self.pause_threshold = personality_dto["pauseThreshold"]
         self.message_history = personality_dto["messageHistory"]
         self.description = personality_dto.get("description")
+        self.stt_engine = personality_dto.get("sttEngine", "local_whisper")
         self.assistant_model = self._get_assistant_model(
             personality_dto["assistantModelId"]
         )
