@@ -175,6 +175,7 @@ function install_ros_packages() {
   python3 -m pip install depthai==2.24.0.0
   python3 -m pip install blobconverter==1.4.2
   python3 -m pip install paramiko==3.5.1
+  python3 -m pip install pib-sdk
   python3 -m pip install "$PIB_API_SETUP_DIR/client"
   deactivate
   print INFO "Installed programs dependencies"

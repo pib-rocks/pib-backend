@@ -24,6 +24,7 @@ RUN pip install --break-system-packages --no-cache-dir --ignore-installed \
         /tmp/pib_blockly_client \
         /tmp/pib_api_client \
         /tmp/pib_motors \
+        pib-sdk \
         requests==2.32.3 \
         paramiko==3.5.1 \
         tinkerforge \
