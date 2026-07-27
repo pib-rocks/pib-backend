@@ -3,6 +3,7 @@ import {pythonGenerator} from "blockly/python";
 import {
     CONFIGURE_LOGGING,
     IMPORT_LOGGING,
+    IMPORT_OS,
     IMPORT_PIB_SDK,
     IMPORT_POSE_CLIENT,
     IMPORT_RCLPY,
@@ -22,11 +23,12 @@ export function moveToPoseGenerator(
     Object.assign(generator.definitions_, {
         IMPORT_RCLPY,
         IMPORT_SYS,
+        IMPORT_OS,
         IMPORT_LOGGING,
         IMPORT_PIB_SDK,
+        IMPORT_POSE_CLIENT,
         CONFIGURE_LOGGING,
         INIT_ROS,
-        IMPORT_POSE_CLIENT,
     });
 
     // declare the 'apply_pose'-function

@@ -4,6 +4,7 @@ import {
     CONFIGURE_LOGGING,
     IMPORT_GET_JOINT_POSITION,
     IMPORT_LOGGING,
+    IMPORT_OS,
     IMPORT_PIB_SDK,
     IMPORT_RCLPY,
     IMPORT_SYS,
@@ -63,6 +64,7 @@ export function move_motor(block: Block, generator: typeof pythonGenerator) {
     Object.assign(generator.definitions_, {
         IMPORT_RCLPY,
         IMPORT_SYS,
+        IMPORT_OS,
         IMPORT_LOGGING,
         IMPORT_PIB_SDK,
         CONFIGURE_LOGGING,

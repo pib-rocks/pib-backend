@@ -59,7 +59,11 @@ export const APPLY_JOINT_TRAJECTORY_FUNCTION = (generator: CodeGenerator) => `
 def ${generator.FUNCTION_NAME_PLACEHOLDER_}(motor_name: str, position: int) -> None:
 
     logging.info(f"setting position of '{motor_name}' to {position}.")
-    pib_sdk.Write().move(motor_name, position)
+    rosbridge_host = os.getenv("ROSBRIDGE_HOST", "rosbridge-ws")
+    try:
+        pib_sdk.Write(host=rosbridge_host, port=9090).move(motor_name, position)
+    except Exception:
+        pib_sdk.Write(host="localhost", port=9090).move(motor_name, position)
 `;
 
 // pose
@@ -77,10 +81,14 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(poseId: str) -> None:
         logging.error(f"getting motor-positions of pose failed.")
         return
 
+    rosbridge_host = os.getenv("ROSBRIDGE_HOST", "rosbridge-ws")
     for motor_position in motor_positions["motorPositions"]:
         motor_name = motor_position["motorName"]
         position = motor_position["position"]
-        pib_sdk.Write().move(motor_name, position)
+        try:
+            pib_sdk.Write(host=rosbridge_host, port=9090).move(motor_name, position)
+        except Exception:
+            pib_sdk.Write(host="localhost", port=9090).move(motor_name, position)
 `;
 
 // set-solid-state-relay

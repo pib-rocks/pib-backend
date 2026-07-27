@@ -45,7 +45,7 @@ describe("move_motor generator", () => {
 
     expect(code).toBe('apply_joint_trajectory("elbow_left", 1000)\n');
     expect(Object.values(generator.definitions_).join("\n")).toContain(
-      "pib_sdk.Write().move",
+      "pib_sdk.Write",
     );
     expect(Object.values(generator.definitions_).join("\n")).toContain("import pib_sdk");
   });
