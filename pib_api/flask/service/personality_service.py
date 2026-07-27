@@ -29,13 +29,18 @@ def create_personality(personality_dto: Any) -> Personality:
 
 def update_personality(personality_id: str, personality_dto: Any) -> Personality:
     personality = get_personality(personality_id)
-    personality.name = personality_dto["name"]
-    personality.gender = personality_dto["gender"].title()
-    personality.pause_threshold = personality_dto["pause_threshold"]
-    personality.message_history = personality_dto["message_history"]
+    if "name" in personality_dto:
+        personality.name = personality_dto["name"]
+    if "gender" in personality_dto and personality_dto["gender"]:
+        personality.gender = personality_dto["gender"].title()
+    if "pause_threshold" in personality_dto:
+        personality.pause_threshold = personality_dto["pause_threshold"]
+    if "message_history" in personality_dto:
+        personality.message_history = personality_dto["message_history"]
     if "description" in personality_dto:
         personality.description = personality_dto["description"]
-    personality.assistant_model_id = personality_dto["assistant_model_id"]
+    if "assistant_model_id" in personality_dto:
+        personality.assistant_model_id = personality_dto["assistant_model_id"]
     if "stt_engine" in personality_dto:
         personality.stt_engine = personality_dto["stt_engine"]
     db.session.flush()

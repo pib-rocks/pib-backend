@@ -21,7 +21,7 @@ class TestSTTConfigurationAPI:
         assert len(personalities) > 0
 
         first_p = personalities[0]
-        p_id = first_p.get("personalityNumber") or first_p.get("personality_number")
+        p_id = first_p.get("personalityId") or first_p.get("personality_id") or first_p.get("personalityNumber")
         assert p_id is not None
 
         # Fetch detail
@@ -36,7 +36,7 @@ class TestSTTConfigurationAPI:
         data = r.json()
         personalities = data.get("voiceAssistantPersonalities") or data.get("personalities") or []
         first_p = personalities[0]
-        p_id = first_p.get("personalityNumber") or first_p.get("personality_number")
+        p_id = first_p.get("personalityId") or first_p.get("personality_id") or first_p.get("personalityNumber")
 
         # Switch to tryb_api
         payload_tryb = {"sttEngine": "tryb_api"}
