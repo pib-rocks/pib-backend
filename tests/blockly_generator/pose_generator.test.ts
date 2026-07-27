@@ -34,6 +34,7 @@ describe("moveToPoseGenerator", () => {
     expect(code).toBe(`apply_pose("${poseId}")\n`);
     const defs = Object.values(generator.definitions_).join("\n");
     expect(defs).toContain("from pib_api_client import pose_client");
-    expect(defs).toContain("apply_joint_trajectory_client.call_async");
+    expect(defs).toContain("pib_sdk.Write().move");
+    expect(defs).toContain("import pib_sdk");
   });
 });

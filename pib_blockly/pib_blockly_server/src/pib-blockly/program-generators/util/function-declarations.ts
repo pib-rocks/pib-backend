@@ -59,23 +59,7 @@ export const APPLY_JOINT_TRAJECTORY_FUNCTION = (generator: CodeGenerator) => `
 def ${generator.FUNCTION_NAME_PLACEHOLDER_}(motor_name: str, position: int) -> None:
 
     logging.info(f"setting position of '{motor_name}' to {position}.")
-
-    request = ApplyJointTrajectory.Request()
-    point = JointTrajectoryPoint()
-    point.positions.append(position)
-    jt = JointTrajectory()
-    jt.joint_names = [motor_name]
-    jt.points = [point]
-    request.joint_trajectory = jt
-
-    future = apply_joint_trajectory_client.call_async(request)
-    rclpy.spin_until_future_complete(node, future)
-
-    response: ApplyJointTrajectory.Response = future.result()
-    if response.successful:
-        logging.info(f"position of '{motor_name}' was successfully set.")
-    else:
-        logging.error(f"setting position of '{motor_name}' failed.")
+    pib_sdk.Write().move(motor_name, position)
 `;
 
 // pose
@@ -93,29 +77,10 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(poseId: str) -> None:
         logging.error(f"getting motor-positions of pose failed.")
         return
 
-    jt = JointTrajectory()
-    jt.joint_names = []
-
     for motor_position in motor_positions["motorPositions"]:
         motor_name = motor_position["motorName"]
         position = motor_position["position"]
-
-        jt.joint_names.append(motor_name)
-        point = JointTrajectoryPoint()
-        point.positions.append(position)
-        jt.points.append(point)
-
-    request = ApplyJointTrajectory.Request()
-    request.joint_trajectory = jt
-
-    future = apply_joint_trajectory_client.call_async(request)
-    rclpy.spin_until_future_complete(node, future)
-
-    response: ApplyJointTrajectory.Response = future.result()
-    if response.successful:
-        logging.info(f"pose was successfully applied.")
-    else:
-        logging.error(f"applying pose failed.")
+        pib_sdk.Write().move(motor_name, position)
 `;
 
 // set-solid-state-relay

@@ -10,6 +10,7 @@ export const IMPORT_OS = "import os";
 export const IMPORT_TIME = "import time";
 export const IMPORT_LOGGING = "import logging";
 export const IMPORT_PARAMIKO = "import paramiko";
+export const IMPORT_PIB_SDK = "import pib_sdk";
 export const IMPORT_PLAY_AUDIO_FROM_SPREECH =
     "from datatypes.srv import PlayAudioFromSpeech";
 export const IMPORT_PLAY_AUDIO_FROM_FILE =
