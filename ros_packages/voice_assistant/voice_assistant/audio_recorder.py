@@ -17,6 +17,7 @@ from rclpy.node import Node
 from std_msgs.msg import String, Int16MultiArray
 
 from public_api_client import public_voice_client
+from voice_assistant.stt_transcription import FasterWhisperSTTEngine
 from . import util
 
 # these values define the PCM encoding in which the recorded
@@ -55,6 +56,7 @@ class AudioRecorderNode(Node):
             return
 
         self.token: Optional[str] = None
+        self.stt_engine = FasterWhisperSTTEngine()
 
         self.goal_queue: deque[ServerGoalHandle] = deque()
         self.goal_queue_lock = Lock()
@@ -293,9 +295,13 @@ class AudioRecorderNode(Node):
             goal_handle.abort()
             return self.create_result("")
 
-        # Call the public‐API to transcribe, then finish the goal
+        # Perform STT transcription using local faster-whisper or tryb API based on configuration
+        stt_mode = os.getenv("STT_ENGINE", "local_whisper")
         try:
-            text = public_voice_client.speech_to_text(wav_data, self.token)
+            if stt_mode == "tryb_api":
+                text = public_voice_client.speech_to_text(wav_data, self.token)
+            else:
+                text, _ = self.stt_engine.transcribe(wav_data)
         except Exception as e:
             self.get_logger().error(f"failed speech_to_text: {e}")
             goal_handle.abort()
