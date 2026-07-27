@@ -227,7 +227,7 @@ class SupertoneTTSEngine:
             lang_code = "de" if "de" in lang_str or "ger" in lang_str else "en" if "en" in lang_str else "na"
             for chunk in chunks:
                 wav, dur = self._supertonic_tts.synthesize(
-                    chunk, voice_style=style, lang=lang_code, speed=speed, total_steps=2
+                    chunk, voice_style=style, lang=lang_code, speed=speed, total_steps=8
                 )
                 import numpy as np  # type: ignore
                 pcm_int16 = (np.clip(wav, -1.0, 1.0) * 32767.0).astype(np.int16)
