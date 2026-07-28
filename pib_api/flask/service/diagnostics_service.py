@@ -94,6 +94,25 @@ def _query_docker_containers() -> List[Dict[str, Any]]:
         ]
 
 
+def _get_tf_ipcon():
+    try:
+        from tinkerforge.ip_connection import IPConnection
+        hosts = [os.getenv("TINKERFORGE_HOST"), "172.17.0.1", "192.168.1.28", "host.docker.internal", "localhost"]
+        port = int(os.getenv("TINKERFORGE_PORT", 4223))
+        for h in hosts:
+            if not h:
+                continue
+            try:
+                ipcon = IPConnection()
+                ipcon.connect(h, port)
+                return ipcon
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return None
+
+
 def get_bricklets_telemetry() -> List[Dict[str, Any]]:
     try:
         bricklets = bricklet_service.get_all_bricklets()
@@ -109,100 +128,56 @@ def get_bricklets_telemetry() -> List[Dict[str, Any]]:
                 pin_num = getattr(pin, "pin", getattr(pin, "pin_number", 0))
                 pins_data.append({
                     "pin": pin_num,
-                    "voltage": 5.0,
-                    "current": round(20.0 + (pin_num * 5.0), 1),
+                    "voltage": 0.0,
+                    "current": 0.0,
                 })
-        else:
-            pins_data = [
-                {"pin": 0, "voltage": 5.0, "current": 25.0},
-                {"pin": 1, "voltage": 5.0, "current": 30.0},
-            ]
 
-        # Default telemetry values
-        voltage = round(5.0 + ((b.bricklet_number or 0) % 3) * 0.05, 2)
-        current = round(100.0 + ((b.bricklet_number or 0) * 15.5), 1)
+        # Default telemetry values for external motor power & status
+        voltage = 0.0
+        current = 0.0
         status = "ok"
-        color = "#00FF00"
+        color = "#000000"
         press_state = "Released"
         relay_state = False
 
         # Query live Tinkerforge hardware if possible
         if b.uid:
-            if b.type == "Servo Bricklet":
+            ipcon = _get_tf_ipcon()
+            if ipcon:
                 try:
-                    from tinkerforge.ip_connection import IPConnection
-                    from tinkerforge.bricklet_servo_v2 import BrickletServoV2
-
-                    host = os.getenv("TINKERFORGE_HOST", "localhost")
-                    port = int(os.getenv("TINKERFORGE_PORT", 4223))
-
-                    ipcon = IPConnection()
-                    ipcon.connect(host, port)
-                    try:
+                    if b.type == "Servo Bricklet":
+                        from tinkerforge.bricklet_servo_v2 import BrickletServoV2
                         servo = BrickletServoV2(b.uid, ipcon)
                         live_voltage_mv = servo.get_input_voltage()
                         voltage = round(live_voltage_mv / 1000.0, 2)
                         current = float(servo.get_overall_current())
 
-                        # Per-pin currents
                         for pin_entry in pins_data:
                             try:
                                 pin_entry["current"] = float(servo.get_servo_current(pin_entry["pin"]))
                                 pin_entry["voltage"] = voltage
                             except Exception:
                                 pass
-                    finally:
-                        try:
-                            ipcon.disconnect()
-                        except Exception:
-                            pass
-                except Exception:
-                    pass
 
-            elif b.type == "RGB LED Button Bricklet":
-                try:
-                    from tinkerforge.ip_connection import IPConnection
-                    from tinkerforge.bricklet_rgb_led_button import BrickletRGBLEDButton
-
-                    host = os.getenv("TINKERFORGE_HOST", "localhost")
-                    port = int(os.getenv("TINKERFORGE_PORT", 4223))
-
-                    ipcon = IPConnection()
-                    ipcon.connect(host, port)
-                    try:
+                    elif b.type == "RGB LED Button Bricklet":
+                        from tinkerforge.bricklet_rgb_led_button import BrickletRGBLEDButton
                         btn = BrickletRGBLEDButton(b.uid, ipcon)
                         r, g, b_val = btn.get_color()
                         color = f"#{r:02x}{g:02x}{b_val:02x}".upper()
                         state_val = btn.get_button_state()
                         press_state = "Pressed" if state_val == BrickletRGBLEDButton.BUTTON_STATE_PRESSED else "Released"
-                    finally:
-                        try:
-                            ipcon.disconnect()
-                        except Exception:
-                            pass
-                except Exception:
-                    pass
 
-            elif b.type in ("Solid State Relay Bricklet", "Solid State Relay", "Solid-State Relay"):
-                try:
-                    from tinkerforge.ip_connection import IPConnection
-                    from tinkerforge.bricklet_solid_state_relay_v2 import BrickletSolidStateRelayV2
-
-                    host = os.getenv("TINKERFORGE_HOST", "localhost")
-                    port = int(os.getenv("TINKERFORGE_PORT", 4223))
-
-                    ipcon = IPConnection()
-                    ipcon.connect(host, port)
-                    try:
+                    elif b.type in ("Solid State Relay Bricklet", "Solid State Relay", "Solid-State Relay"):
+                        from tinkerforge.bricklet_solid_state_relay_v2 import BrickletSolidStateRelayV2
                         ssr = BrickletSolidStateRelayV2(b.uid, ipcon)
                         relay_state = ssr.get_state()
-                    finally:
-                        try:
-                            ipcon.disconnect()
-                        except Exception:
-                            pass
                 except Exception:
-                    pass
+                    status = "warning"
+                finally:
+                    try:
+                        ipcon.disconnect()
+                    except Exception:
+                        pass
 
         telemetry.append({
             "brickletNumber": b.bricklet_number,
