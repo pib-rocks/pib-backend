@@ -36,5 +36,11 @@ app.register_blueprint(
     button_program_controller.bp, url_prefix="/button-programs", name="button-programs"
 )
 app.register_blueprint(
-    diagnostics_controller.bp, url_prefix="/api/v1/diagnostics", name="diagnostics"
+    diagnostics_controller.bp, url_prefix="/v1/diagnostics", name="diagnostics_v1"
+)
+app.register_blueprint(
+    diagnostics_controller.bp, url_prefix="/diagnostics", name="diagnostics"
+)
+app.register_blueprint(
+    diagnostics_controller.bp, url_prefix="/api/v1/diagnostics", name="diagnostics_api_v1"
 )
