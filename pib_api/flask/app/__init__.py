@@ -4,6 +4,7 @@ from controller import (
     bricklet_controller,
     camera_controller,
     chat_controller,
+    diagnostics_controller,
     motor_controller,
     personality_controller,
     program_controller,
@@ -33,4 +34,7 @@ app.register_blueprint(pose_controller.bp, url_prefix="/pose", name="pose")
 app.register_blueprint(ip_controller.bp, url_prefix="/host-ip", name="host-ip")
 app.register_blueprint(
     button_program_controller.bp, url_prefix="/button-programs", name="button-programs"
+)
+app.register_blueprint(
+    diagnostics_controller.bp, url_prefix="/api/v1/diagnostics", name="diagnostics"
 )
