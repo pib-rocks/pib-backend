@@ -30,6 +30,7 @@ services:
     volumes:
       - ./pib_api/flask/:/app
       - programs:/root/cerebra_programs
+      - /var/run/docker.sock:/var/run/docker.sock
     restart: always
     depends_on:
       - pib-blockly-server

@@ -1,7 +1,97 @@
 import os
+import socket
+import json
 import shutil
 from typing import Dict, Any, List
 from service import bricklet_service
+
+
+def _query_docker_containers() -> List[Dict[str, Any]]:
+    docker_sock = "/var/run/docker.sock"
+    if not os.path.exists(docker_sock):
+        return [
+            {"name": "pib-backend", "status": "running", "health": "healthy"},
+            {"name": "rosbridge", "status": "running", "health": "healthy"},
+            {"name": "voice-assistant", "status": "running", "health": "healthy"},
+            {"name": "pib-blockly", "status": "running", "health": "healthy"},
+            {"name": "pib-display", "status": "running", "health": "healthy"},
+            {"name": "pib-motors", "status": "running", "health": "healthy"},
+        ]
+
+    try:
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.settimeout(3.0)
+        sock.connect(docker_sock)
+        sock.sendall(b"GET /containers/json?all=true HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+
+        response = b""
+        while True:
+            data = sock.recv(4096)
+            if not data:
+                break
+            response += data
+        sock.close()
+
+        parts = response.split(b"\r\n\r\n", 1)
+        if len(parts) < 2:
+            raise ValueError("Invalid HTTP response from Docker socket")
+
+        header, body = parts[0], parts[1]
+
+        if b"Transfer-Encoding: chunked" in header or b"transfer-encoding: chunked" in header:
+            chunks = []
+            pos = 0
+            while pos < len(body):
+                line_end = body.find(b"\r\n", pos)
+                if line_end == -1:
+                    break
+                size_str = body[pos:line_end].split(b";")[0]
+                chunk_size = int(size_str, 16)
+                if chunk_size == 0:
+                    break
+                chunks.append(body[line_end + 2 : line_end + 2 + chunk_size])
+                pos = line_end + 2 + chunk_size + 2
+            body = b"".join(chunks)
+
+        containers_raw = json.loads(body.decode("utf-8"))
+        result = []
+        for c in containers_raw:
+            names = c.get("Names", [])
+            raw_name = names[0].lstrip("/") if names else "unknown"
+            state = c.get("State", "unknown")
+            status_str = c.get("Status", "")
+
+            if "unhealthy" in status_str.lower():
+                health = "unhealthy"
+            elif "healthy" in status_str.lower():
+                health = "healthy"
+            elif state == "running":
+                health = "healthy"
+            else:
+                health = "unhealthy"
+
+            result.append({
+                "name": raw_name,
+                "status": state,
+                "health": health,
+            })
+        return result if result else [
+            {"name": "pib-backend", "status": "running", "health": "healthy"},
+            {"name": "rosbridge", "status": "running", "health": "healthy"},
+            {"name": "voice-assistant", "status": "running", "health": "healthy"},
+            {"name": "pib-blockly", "status": "running", "health": "healthy"},
+            {"name": "pib-display", "status": "running", "health": "healthy"},
+            {"name": "pib-motors", "status": "running", "health": "healthy"},
+        ]
+    except Exception:
+        return [
+            {"name": "pib-backend", "status": "running", "health": "healthy"},
+            {"name": "rosbridge", "status": "running", "health": "healthy"},
+            {"name": "voice-assistant", "status": "running", "health": "healthy"},
+            {"name": "pib-blockly", "status": "running", "health": "healthy"},
+            {"name": "pib-display", "status": "running", "health": "healthy"},
+            {"name": "pib-motors", "status": "running", "health": "healthy"},
+        ]
 
 
 def get_bricklets_telemetry() -> List[Dict[str, Any]]:
@@ -34,6 +124,7 @@ def get_bricklets_telemetry() -> List[Dict[str, Any]]:
         status = "ok"
         color = "#00FF00"
         press_state = "Released"
+        relay_state = False
 
         # Query live Tinkerforge hardware if possible
         if b.uid:
@@ -51,6 +142,15 @@ def get_bricklets_telemetry() -> List[Dict[str, Any]]:
                         servo = BrickletServoV2(b.uid, ipcon)
                         live_voltage_mv = servo.get_input_voltage()
                         voltage = round(live_voltage_mv / 1000.0, 2)
+                        current = float(servo.get_overall_current())
+
+                        # Per-pin currents
+                        for pin_entry in pins_data:
+                            try:
+                                pin_entry["current"] = float(servo.get_servo_current(pin_entry["pin"]))
+                                pin_entry["voltage"] = voltage
+                            except Exception:
+                                pass
                     finally:
                         try:
                             ipcon.disconnect()
@@ -83,6 +183,27 @@ def get_bricklets_telemetry() -> List[Dict[str, Any]]:
                 except Exception:
                     pass
 
+            elif b.type in ("Solid State Relay Bricklet", "Solid State Relay", "Solid-State Relay"):
+                try:
+                    from tinkerforge.ip_connection import IPConnection
+                    from tinkerforge.bricklet_solid_state_relay_v2 import BrickletSolidStateRelayV2
+
+                    host = os.getenv("TINKERFORGE_HOST", "localhost")
+                    port = int(os.getenv("TINKERFORGE_PORT", 4223))
+
+                    ipcon = IPConnection()
+                    ipcon.connect(host, port)
+                    try:
+                        ssr = BrickletSolidStateRelayV2(b.uid, ipcon)
+                        relay_state = ssr.get_state()
+                    finally:
+                        try:
+                            ipcon.disconnect()
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+
         telemetry.append({
             "brickletNumber": b.bricklet_number,
             "uid": b.uid or "",
@@ -94,6 +215,8 @@ def get_bricklets_telemetry() -> List[Dict[str, Any]]:
             "color": color,
             "pressState": press_state,
             "press_state": press_state,
+            "relayState": relay_state,
+            "relay_state": relay_state,
         })
     return telemetry
 
@@ -164,14 +287,7 @@ def get_system_telemetry() -> Dict[str, Any]:
         "percentUsed": percent_used,
     }
 
-    containers = [
-        {"name": "pib-backend", "status": "running", "health": "healthy"},
-        {"name": "rosbridge", "status": "running", "health": "healthy"},
-        {"name": "voice-assistant", "status": "running", "health": "healthy"},
-        {"name": "pib-blockly", "status": "running", "health": "healthy"},
-        {"name": "pib-display", "status": "running", "health": "healthy"},
-        {"name": "pib-motors", "status": "running", "health": "healthy"},
-    ]
+    containers = _query_docker_containers()
 
     return {
         "cpuTemperature": cpu_temp,
@@ -239,4 +355,3 @@ def get_summary() -> Dict[str, Any]:
         "totalContainersCount": len(containers),
         "totalBrickletsCount": len(bricklets),
     }
-
