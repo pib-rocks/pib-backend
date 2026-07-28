@@ -28,14 +28,72 @@ def get_bricklets_telemetry() -> List[Dict[str, Any]]:
                 {"pin": 1, "voltage": 5.0, "current": 30.0},
             ]
 
+        # Default telemetry values
+        voltage = round(5.0 + ((b.bricklet_number or 0) % 3) * 0.05, 2)
+        current = round(100.0 + ((b.bricklet_number or 0) * 15.5), 1)
+        status = "ok"
+        color = "#00FF00"
+        press_state = "Released"
+
+        # Query live Tinkerforge hardware if possible
+        if b.uid:
+            if b.type == "Servo Bricklet":
+                try:
+                    from tinkerforge.ip_connection import IPConnection
+                    from tinkerforge.bricklet_servo_v2 import BrickletServoV2
+
+                    host = os.getenv("TINKERFORGE_HOST", "localhost")
+                    port = int(os.getenv("TINKERFORGE_PORT", 4223))
+
+                    ipcon = IPConnection()
+                    ipcon.connect(host, port)
+                    try:
+                        servo = BrickletServoV2(b.uid, ipcon)
+                        live_voltage_mv = servo.get_input_voltage()
+                        voltage = round(live_voltage_mv / 1000.0, 2)
+                    finally:
+                        try:
+                            ipcon.disconnect()
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+
+            elif b.type == "RGB LED Button Bricklet":
+                try:
+                    from tinkerforge.ip_connection import IPConnection
+                    from tinkerforge.bricklet_rgb_led_button import BrickletRGBLEDButton
+
+                    host = os.getenv("TINKERFORGE_HOST", "localhost")
+                    port = int(os.getenv("TINKERFORGE_PORT", 4223))
+
+                    ipcon = IPConnection()
+                    ipcon.connect(host, port)
+                    try:
+                        btn = BrickletRGBLEDButton(b.uid, ipcon)
+                        r, g, b_val = btn.get_color()
+                        color = f"#{r:02x}{g:02x}{b_val:02x}".upper()
+                        state_val = btn.get_button_state()
+                        press_state = "Pressed" if state_val == BrickletRGBLEDButton.BUTTON_STATE_PRESSED else "Released"
+                    finally:
+                        try:
+                            ipcon.disconnect()
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+
         telemetry.append({
             "brickletNumber": b.bricklet_number,
             "uid": b.uid or "",
             "type": b.type,
-            "voltage": round(5.0 + ((b.bricklet_number or 0) % 3) * 0.05, 2),
-            "current": round(100.0 + ((b.bricklet_number or 0) * 15.5), 1),
-            "status": "ok",
+            "voltage": voltage,
+            "current": current,
+            "status": status,
             "pins": pins_data,
+            "color": color,
+            "pressState": press_state,
+            "press_state": press_state,
         })
     return telemetry
 
@@ -50,6 +108,42 @@ def get_system_telemetry() -> Dict[str, Any]:
                 raw_temp = f.read().strip()
                 if raw_temp.isdigit():
                     cpu_temp = round(float(raw_temp) / 1000.0, 1)
+        except Exception:
+            pass
+
+    # Memory / RAM Usage
+    memory_usage = {
+        "total": "8.0 GB",
+        "used": "3.2 GB",
+        "free": "4.8 GB",
+        "percentUsed": 40.0,
+    }
+    meminfo_path = "/proc/meminfo"
+    if os.path.exists(meminfo_path):
+        try:
+            mem_data = {}
+            with open(meminfo_path, "r") as f:
+                for line in f:
+                    parts = line.split(":")
+                    if len(parts) == 2:
+                        key = parts[0].strip()
+                        val = parts[1].strip().split()[0]
+                        if val.isdigit():
+                            mem_data[key] = int(val)
+            if "MemTotal" in mem_data and "MemAvailable" in mem_data:
+                total_kb = mem_data["MemTotal"]
+                avail_kb = mem_data["MemAvailable"]
+                used_kb = total_kb - avail_kb
+                total_gb = round(total_kb / (1024**2), 1)
+                used_gb = round(used_kb / (1024**2), 1)
+                free_gb = round(avail_kb / (1024**2), 1)
+                percent_used = round((used_kb / total_kb) * 100, 1) if total_kb > 0 else 0.0
+                memory_usage = {
+                    "total": f"{total_gb} GB",
+                    "used": f"{used_gb} GB",
+                    "free": f"{free_gb} GB",
+                    "percentUsed": percent_used,
+                }
         except Exception:
             pass
 
@@ -81,6 +175,7 @@ def get_system_telemetry() -> Dict[str, Any]:
 
     return {
         "cpuTemperature": cpu_temp,
+        "memoryUsage": memory_usage,
         "diskSpace": disk_space,
         "containers": containers,
         "status": "ok",
@@ -99,6 +194,14 @@ def get_summary() -> Dict[str, Any]:
     else:
         cpu_status = "error"
 
+    memory_percent = system["memoryUsage"]["percentUsed"]
+    if memory_percent < 80.0:
+        memory_status = "ok"
+    elif memory_percent < 90.0:
+        memory_status = "warning"
+    else:
+        memory_status = "error"
+
     disk_percent = system["diskSpace"]["percentUsed"]
     if disk_percent < 80.0:
         disk_status = "ok"
@@ -114,7 +217,7 @@ def get_summary() -> Dict[str, Any]:
     unhealthy_bricklets = [b for b in bricklets if b.get("status") != "ok"]
     bricklets_status = "ok" if not unhealthy_bricklets else "warning"
 
-    statuses = [cpu_status, disk_status, containers_status, bricklets_status]
+    statuses = [cpu_status, memory_status, disk_status, containers_status, bricklets_status]
     if "error" in statuses:
         overall_status = "error"
     elif "warning" in statuses:
@@ -126,6 +229,8 @@ def get_summary() -> Dict[str, Any]:
         "overallStatus": overall_status,
         "cpuTemperature": cpu_temp,
         "cpuStatus": cpu_status,
+        "memoryUsage": system["memoryUsage"],
+        "memoryStatus": memory_status,
         "diskSpace": system["diskSpace"],
         "diskStatus": disk_status,
         "containersStatus": containers_status,
@@ -134,3 +239,4 @@ def get_summary() -> Dict[str, Any]:
         "totalContainersCount": len(containers),
         "totalBrickletsCount": len(bricklets),
     }
+
