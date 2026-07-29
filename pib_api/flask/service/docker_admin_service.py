@@ -139,7 +139,7 @@ def get_containers() -> List[Dict[str, Any]]:
 
 def start_container(name: str) -> Tuple[int, Dict[str, Any]]:
     try:
-        status_code, body = _docker_request("POST", f"/containers/{name}/start")
+        status_code, body = _docker_request("POST", f"/containers/{name}/start", timeout=20.0)
         if status_code in (200, 204, 304):
             return 200, {"status": "success", "message": f"Container '{name}' started successfully."}
         elif status_code == 404:
@@ -153,7 +153,8 @@ def start_container(name: str) -> Tuple[int, Dict[str, Any]]:
 
 def stop_container(name: str) -> Tuple[int, Dict[str, Any]]:
     try:
-        status_code, body = _docker_request("POST", f"/containers/{name}/stop")
+        # Use t=5 second stop timeout and 30s HTTP socket timeout
+        status_code, body = _docker_request("POST", f"/containers/{name}/stop?t=5", timeout=30.0)
         if status_code in (200, 204, 304):
             return 200, {"status": "success", "message": f"Container '{name}' stopped successfully."}
         elif status_code == 404:
@@ -167,7 +168,7 @@ def stop_container(name: str) -> Tuple[int, Dict[str, Any]]:
 
 def restart_container(name: str) -> Tuple[int, Dict[str, Any]]:
     try:
-        status_code, body = _docker_request("POST", f"/containers/{name}/restart")
+        status_code, body = _docker_request("POST", f"/containers/{name}/restart?t=5", timeout=30.0)
         if status_code in (200, 204, 304):
             return 200, {"status": "success", "message": f"Container '{name}' restarted successfully."}
         elif status_code == 404:
