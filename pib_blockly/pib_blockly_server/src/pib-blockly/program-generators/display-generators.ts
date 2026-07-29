@@ -89,4 +89,10 @@ _pib_publish_string(_pib_display_text_pub, ${safeText}[:40], "text")
 `;
 }
 
+export function toggleCerebraFullscreenGenerator(block: Block) {
+    return `${pibDisplayRuntime()}
+_pib_publish_string(_pib_display_text_pub, "TOGGLE_CEREBRA_FULLSCREEN", "toggle_cerebra_fullscreen")
+`;
+}
+
 export {pythonGenerator};

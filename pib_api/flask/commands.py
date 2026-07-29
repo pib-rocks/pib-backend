@@ -108,9 +108,12 @@ def _create_bricklet_data() -> None:
 
 
 def _create_button_program_data():
+    cerebra_prog = Program.query.filter_by(name="toggle_cerebra_fullscreen").first()
+    prog_id = cerebra_prog.id if cerebra_prog else None
+
     button_program1 = ButtonProgram(bricklet_id=5, program_id=None)
     button_program2 = ButtonProgram(bricklet_id=6, program_id=None)
-    button_program3 = ButtonProgram(bricklet_id=7, program_id=None)
+    button_program3 = ButtonProgram(bricklet_id=7, program_id=prog_id)
     db.session.add_all([button_program1, button_program2, button_program3])
     db.session.flush()
 
@@ -129,7 +132,12 @@ def _create_program_data() -> None:
         code_visual=_get_example_program(),
         program_number="e1d46e2a-935e-4e2b-b2f9-0856af4257c5",
     )
-    db.session.add(program)
+    cerebra_program = Program(
+        name="toggle_cerebra_fullscreen",
+        code_visual='<xml xmlns="https://developers.google.com/blockly/xml"><block type="toggle_cerebra_fullscreen" id="cerebra_toggle" x="10" y="10"></block></xml>',
+        program_number="c3r3br4-f-u-l-l-s-c-r-e-e-n-001",
+    )
+    db.session.add_all([program, cerebra_program])
     db.session.flush()
 
 

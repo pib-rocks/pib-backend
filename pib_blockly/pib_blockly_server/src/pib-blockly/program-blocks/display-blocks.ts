@@ -46,5 +46,14 @@ export const displayBlocks = Blockly.common.createBlockDefinitionsFromJsonArray(
             tooltip: "Shows short text on Pib's face. Max 40 characters.",
             helpUrl: "",
         },
+        {
+            type: "toggle_cerebra_fullscreen",
+            message0: "Toggle Cerebra Fullscreen Display",
+            previousStatement: null,
+            nextStatement: null,
+            colour: 180,
+            tooltip: "Opens or closes Cerebra UI in fullscreen mode on pib's display as a toggle.",
+            helpUrl: "",
+        },
     ],
 );
