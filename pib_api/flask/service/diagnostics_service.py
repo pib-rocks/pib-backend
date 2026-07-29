@@ -58,6 +58,13 @@ def _query_docker_containers() -> List[Dict[str, Any]]:
         for c in containers_raw:
             names = c.get("Names", [])
             raw_name = names[0].lstrip("/") if names else "unknown"
+            labels = c.get("Labels") or {}
+            proj = labels.get("com.docker.compose.project", "")
+
+            # Exclude temporary test runner containers
+            if raw_name.startswith("pibtest_") or raw_name.startswith("test_") or proj.startswith("pibtest"):
+                continue
+
             state = c.get("State", "unknown")
             status_str = c.get("Status", "")
 
