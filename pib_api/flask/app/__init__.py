@@ -11,6 +11,7 @@ from controller import (
     pose_controller,
     ip_controller,
     button_program_controller,
+    docker_controller,
 )
 
 app.register_blueprint(program_controller.bp, url_prefix="/program", name="program")
@@ -44,3 +45,6 @@ app.register_blueprint(
 app.register_blueprint(
     diagnostics_controller.bp, url_prefix="/api/v1/diagnostics", name="diagnostics_api_v1"
 )
+app.register_blueprint(docker_controller.bp, url_prefix="/docker", name="docker")
+app.register_blueprint(docker_controller.bp, url_prefix="/v1/docker", name="docker_v1")
+app.register_blueprint(docker_controller.bp, url_prefix="/api/v1/docker", name="docker_api_v1")
