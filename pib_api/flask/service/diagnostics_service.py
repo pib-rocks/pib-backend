@@ -77,9 +77,11 @@ def _query_docker_containers() -> List[Dict[str, Any]]:
             else:
                 health = "unhealthy"
 
+            display_status = "stopped" if state == "exited" else state
+
             result.append({
                 "name": raw_name,
-                "status": state,
+                "status": display_status,
                 "health": health,
             })
         return result if result else [

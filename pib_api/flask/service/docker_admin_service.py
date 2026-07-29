@@ -122,11 +122,13 @@ def get_containers() -> List[Dict[str, Any]]:
             else:
                 health = "unhealthy"
 
+            display_status = "stopped" if state == "exited" else state
+
             result.append({
                 "id": c.get("Id", "")[:12],
                 "name": raw_name,
                 "image": c.get("Image", ""),
-                "status": state,
+                "status": display_status,
                 "statusText": status_str,
                 "health": health,
                 "created": c.get("Created", 0),
