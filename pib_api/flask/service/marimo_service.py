@@ -3,7 +3,7 @@ import re
 import logging
 from typing import List, Dict, Any, Optional, Tuple
 
-NOTEBOOKS_DIR = os.path.expanduser(os.getenv("MARIMO_NOTEBOOKS_DIR", "~/programs/notebooks"))
+NOTEBOOKS_DIR = os.getenv("MARIMO_NOTEBOOKS_DIR", "/home/pib/programs/notebooks")
 
 DEFAULT_DEMO_NOTEBOOK = """import marimo
 
