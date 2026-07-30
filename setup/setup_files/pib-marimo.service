@@ -5,6 +5,7 @@ After=network.target
 [Service]
 Type=simple
 User=pib
+Environment="MARIMO_CONFIG_OVERRIDES={\"display\": {\"theme\": \"dark\"}}"
 WorkingDirectory=/home/pib/programs/notebooks
 ExecStart=/usr/bin/python3 -m marimo edit --host 0.0.0.0 --port 2718 --no-token --headless
 Restart=always
