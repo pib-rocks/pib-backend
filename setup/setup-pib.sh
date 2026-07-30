@@ -300,6 +300,23 @@ function install_tinkerforge() {
   echo "deb https://download.tinkerforge.com/apt/$(. /etc/os-release; echo $ID $VERSION_CODENAME) main" | sudo tee /etc/apt/sources.list.d/tinkerforge.list
   sudo apt update
   sudo apt install -y brickd brickv python3-tinkerforge
+
+  # Disable unused mesh gateway server to save CPU resources
+  if [ -f /etc/brickd.conf ]; then
+    sudo sed -i 's/^listen\.mesh_gateway_port = .*/listen.mesh_gateway_port = 0/' /etc/brickd.conf
+  fi
+
+  # Apply CPUQuota and Nice limit override for brickd
+  sudo mkdir -p /etc/systemd/system/brickd.service.d
+  cat << 'EOF' | sudo tee /etc/systemd/system/brickd.service.d/override.conf > /dev/null
+[Service]
+CPUQuota=15%
+Nice=10
+EOF
+
+  sudo systemctl daemon-reload
+  sudo systemctl restart brickd
+
   print SUCCESS "Installed tinkerforge"
 }
 

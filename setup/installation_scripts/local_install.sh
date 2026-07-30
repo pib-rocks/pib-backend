@@ -90,6 +90,22 @@ function install_tinkerforge() {
     print INFO "Installed brick daemon"
   fi
 
+  # Disable unused mesh gateway server to save CPU resources
+  if [ -f /etc/brickd.conf ]; then
+    sudo sed -i 's/^listen\.mesh_gateway_port = .*/listen.mesh_gateway_port = 0/' /etc/brickd.conf
+  fi
+
+  # Apply CPUQuota and Nice limit override for brickd
+  sudo mkdir -p /etc/systemd/system/brickd.service.d
+  cat << 'EOF' | sudo tee /etc/systemd/system/brickd.service.d/override.conf > /dev/null
+[Service]
+CPUQuota=15%
+Nice=10
+EOF
+
+  sudo systemctl daemon-reload
+  sudo systemctl restart brickd
+
   print INFO "Setting up pib motors"
 
 

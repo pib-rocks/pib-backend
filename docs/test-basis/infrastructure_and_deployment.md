@@ -234,17 +234,18 @@ ros2 launch programs launch.py
 
 ---
 
-## systemd Services (Bare Metal — from health-check)
+## systemd Services & Host Daemons (Bare Metal / Host Services)
 
-| Service | Component |
-|---|---|
-| `pib_api_boot.service` | Flask API |
-| `ros_motor_control_node_boot.service` | Motor control |
-| `ros_program_boot.service` / `ros_proxy_program_boot.service` | Programs |
-| `ros_cerebra_boot.service` | Cerebra frontend |
-| `ros_voice_assistant_boot.service` | Voice assistant |
-| `ros_camera_boot.service` | Camera |
-| `docker_cleaner.service` | Periodic Docker cleanup (Docker install path) |
+| Service | Component | Configuration & Resource Overrides |
+|---|---|---|
+| `brickd.service` | Tinkerforge Daemon | `/etc/brickd.conf`: `listen.mesh_gateway_port = 0`<br>`/etc/systemd/system/brickd.service.d/override.conf`: `CPUQuota=15%`, `Nice=10` |
+| `pib_api_boot.service` | Flask API | — |
+| `ros_motor_control_node_boot.service` | Motor control | — |
+| `ros_program_boot.service` / `ros_proxy_program_boot.service` | Programs | — |
+| `ros_cerebra_boot.service` | Cerebra frontend | — |
+| `ros_voice_assistant_boot.service` | Voice assistant | — |
+| `ros_camera_boot.service` | Camera | — |
+| `docker_cleaner.service` | Periodic Docker cleanup (Docker install path) | — |
 
 ---
 
