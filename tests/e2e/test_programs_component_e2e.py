@@ -116,3 +116,61 @@ class TestProgramsComponentE2E:
         # Delete created notebook via REST API
         del_resp = requests.delete(f"{BASE_URL}/api/v1/marimo/notebooks/{test_filename}")
         assert del_resp.status_code == 200
+
+    def test_05_click_two_notebooks_navigates_to_each(self, page: Page):
+        """
+        Create two notebooks, then CLICK each link in the sidebar and verify the
+        browser navigates to /program/marimo/<file> and the iframe loads that file.
+        """
+        unique_id = str(int(time.time()))
+        file_a = f"e2enav_a_{unique_id}.py"
+        file_b = f"e2enav_b_{unique_id}.py"
+        title_a = f"E2Enav A {unique_id}"
+        title_b = f"E2Enav B {unique_id}"
+
+        # 1. Create two notebooks via REST API
+        for fn in (file_a, file_b):
+            resp = requests.post(f"{BASE_URL}/api/v1/marimo/notebooks", json={"name": fn})
+            assert resp.status_code in (200, 201), f"Failed to create {fn}: {resp.text}"
+
+        try:
+            # 2. Open Marimo tab
+            page.locator("#program-nav").click()
+            page.wait_for_selector('a[data-test="LNK_Marimo"]', timeout=15000)
+            with page.expect_response("**/marimo/notebooks"):
+                page.locator('a[data-test="LNK_Marimo"]').click()
+
+            sidebar = page.locator("app-sidebar-right")
+            expect(sidebar).to_be_visible(timeout=15000)
+
+            # 3. Both created notebooks must appear as clickable links in the sidebar
+            link_a = sidebar.locator(f'a[href$="/program/marimo/{file_a}"]')
+            link_b = sidebar.locator(f'a[href$="/program/marimo/{file_b}"]')
+            expect(link_a).to_be_visible(timeout=15000)
+            expect(link_b).to_be_visible(timeout=15000)
+            expect(link_a).to_contain_text(title_a, ignore_case=True)
+            expect(link_b).to_contain_text(title_b, ignore_case=True)
+
+            # 4. Click notebook A -> URL navigates and iframe loads file A
+            link_a.click()
+            expect(page).to_have_url(
+                re.compile(rf".*/program/marimo/{re.escape(file_a)}$"), timeout=10000
+            )
+            iframe_a = page.locator("app-marimo iframe")
+            expect(iframe_a).to_have_attribute(
+                "src", re.compile(rf".*[?&]file={re.escape(file_a)}(&|$)"), timeout=10000
+            )
+
+            # 5. Click notebook B -> URL navigates and iframe loads file B
+            link_b.click()
+            expect(page).to_have_url(
+                re.compile(rf".*/program/marimo/{re.escape(file_b)}$"), timeout=10000
+            )
+            iframe_b = page.locator("app-marimo iframe")
+            expect(iframe_b).to_have_attribute(
+                "src", re.compile(rf".*[?&]file={re.escape(file_b)}(&|$)"), timeout=10000
+            )
+        finally:
+            # Cleanup: delete both notebooks via REST API
+            for fn in (file_a, file_b):
+                requests.delete(f"{BASE_URL}/api/v1/marimo/notebooks/{fn}")
