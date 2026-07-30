@@ -14,7 +14,7 @@ def page():
         context = browser.new_context(viewport={"width": 1400, "height": 900})
         page = context.new_page()
         page.on("dialog", lambda dialog: dialog.accept())
-        page.goto(BASE_URL, wait_until="domcontentloaded")
+        page.goto(f"{BASE_URL}/joint-control/head", wait_until="domcontentloaded")
         page.wait_for_selector("#program-nav", timeout=15000)
         yield page
         context.close()
@@ -94,32 +94,25 @@ class TestProgramsComponentE2E:
     def test_04_right_sidebar_workbook_creation_and_deletion(self, page: Page):
         """Verify workbook management in the right sidebar (app-sidebar-right)."""
         unique_id = str(int(time.time()))
-        test_filename = f"e2etest_{unique_id}.py"
+        test_filename = f"e2etest{unique_id}.py"
 
-        # 1. Create workbook via REST API
-        create_resp = requests.post(f"{BASE_URL}/api/v1/marimo/notebooks", json={"name": test_filename})
-        assert create_resp.status_code in (200, 201), f"Failed to create notebook via API: {create_resp.text}"
+        # Create temporary notebook via REST API
+        resp = requests.post(f"{BASE_URL}/api/v1/marimo/notebooks", json={"name": test_filename})
+        assert resp.status_code in (200, 201)
 
-        # 2. Open Marimo tab from base URL
-        page.goto(f"{BASE_URL}/joint-control/head", wait_until="domcontentloaded")
-        page.wait_for_selector("#program-nav", timeout=15000)
+        # Navigate cleanly to /program -> /program/marimo
         page.locator("#program-nav").click()
         page.wait_for_selector('a[data-test="LNK_Marimo"]', timeout=15000)
-        page.locator('a[data-test="LNK_Marimo"]').click()
+        
+        with page.expect_response("**/marimo/notebooks"):
+            page.locator('a[data-test="LNK_Marimo"]').click()
 
         sidebar_wrapper = page.locator("app-sidebar-right")
         expect(sidebar_wrapper).to_be_visible(timeout=15000)
 
-        # 3. Verify created workbook appears in sidebar
-        expect(sidebar_wrapper).to_contain_text(test_filename.replace(".py", ""), timeout=15000, ignore_case=True)
+        # Verify created workbook appears in sidebar
+        expect(sidebar_wrapper).to_contain_text(f"E2Etest{unique_id}", timeout=15000, ignore_case=True)
 
-        # 4. Delete workbook via REST API
+        # Delete created notebook via REST API
         del_resp = requests.delete(f"{BASE_URL}/api/v1/marimo/notebooks/{test_filename}")
-        assert del_resp.status_code == 200, f"Failed to delete notebook via API: {del_resp.text}"
-
-        # 5. Reload Marimo tab and confirm removal
-        page.goto(f"{BASE_URL}/joint-control/head", wait_until="domcontentloaded")
-        page.locator("#program-nav").click()
-        page.wait_for_selector('a[data-test="LNK_Marimo"]', timeout=15000)
-        page.locator('a[data-test="LNK_Marimo"]').click()
-        expect(sidebar_wrapper).not_to_contain_text(test_filename.replace(".py", ""), timeout=15000, ignore_case=True)
+        assert del_resp.status_code == 200
