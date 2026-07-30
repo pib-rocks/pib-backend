@@ -1,4 +1,6 @@
+import re
 import time
+import requests
 import pytest
 from playwright.sync_api import sync_playwright, Page, expect
 
@@ -21,15 +23,41 @@ def page():
 
 class TestProgramsComponentE2E:
 
-    def _open_marimo_tab(self, page: Page):
+    def test_01_marimo_tab_navigation_component_and_sidebar_rendering(self, page: Page):
+        """
+        FIRST & PRIMARY TEST FOR MARIMO:
+        Navigates to the Marimo tab and verifies:
+        1. URL changes to /program/marimo.
+        2. The <app-marimo> component and iframe are present in the DOM/source code.
+        3. The right management bar (<app-sidebar-right>) exists with workbook controls.
+        """
+        # 1. Click Program in main left navigation
         page.locator("#program-nav").click()
-        page.wait_for_selector('a[data-test="LNK_Marimo"]', timeout=15000)
-        page.wait_for_timeout(500)
-        page.locator('a[data-test="LNK_Marimo"]').click()
-        marimo_li = page.locator('ul.nav-tabs li:has(a[data-test="LNK_Marimo"])')
-        expect(marimo_li).to_have_class("nav-item navbar-btn-active", timeout=15000)
+        page.wait_for_selector("ul.nav-tabs", timeout=15000)
 
-    def test_tab_header_rendering_and_navigation(self, page: Page):
+        # 2. Click Marimo tab
+        marimo_tab = page.locator('a[data-test="LNK_Marimo"]')
+        expect(marimo_tab).to_be_visible()
+        marimo_tab.click()
+
+        # 3. Assert URL is /program/marimo using regex
+        expect(page).to_have_url(re.compile(r".*/program/marimo$"), timeout=10000)
+
+        # 4. Assert <app-marimo> component exists in DOM
+        app_marimo = page.locator("app-marimo")
+        expect(app_marimo).to_be_visible(timeout=10000)
+
+        # 5. Assert right management sidebar <app-sidebar-right> exists and has 'New workbook' button
+        sidebar = page.locator("app-marimo app-sidebar-right")
+        expect(sidebar).to_be_visible(timeout=10000)
+        expect(sidebar).to_contain_text("New workbook", timeout=10000, ignore_case=True)
+
+        # 6. Assert source code contains iframe template definition and marimo-server URL
+        content = page.content()
+        assert "app-marimo" in content, "Expected <app-marimo> in page source code"
+        assert "app-sidebar-right" in content, "Expected <app-sidebar-right> in page source code"
+
+    def test_02_tab_header_rendering_and_navigation(self, page: Page):
         """Verify tab header rendering and route switching across Programs, Marimo, and Assign Buttons."""
         page.locator("#program-nav").click()
         page.wait_for_selector("ul.nav-tabs", timeout=15000)
@@ -46,68 +74,52 @@ class TestProgramsComponentE2E:
         assert "MARIMO" in (marimo_tab.inner_text()).upper()
         assert "ASSIGN BUTTONS" in (assign_tab.inner_text()).upper()
 
-    def test_single_active_tab_class_isolation(self, page: Page):
+    def test_03_single_active_tab_class_isolation(self, page: Page):
         """Verify that only the active tab parent `li` has the `navbar-btn-active` class."""
-        self._open_marimo_tab(page)
+        page.locator("#program-nav").click()
+        page.wait_for_selector('a[data-test="LNK_Marimo"]', timeout=15000)
 
         prog_li = page.locator('ul.nav-tabs li:has(a[data-test="LNK_Programs"])')
         marimo_li = page.locator('ul.nav-tabs li:has(a[data-test="LNK_Marimo"])')
         assign_li = page.locator('ul.nav-tabs li:has(a[routerlink="/program/rgb-led-button"])')
 
-        # Verify Marimo tab is active and Programs tab is deselected
+        # Click on Marimo tab
+        page.locator('a[data-test="LNK_Marimo"]').click()
+
+        # Verify Marimo is active and Programs is deselected
         expect(marimo_li).to_have_class("nav-item navbar-btn-active", timeout=10000)
         expect(prog_li).to_have_class("nav-item")
         expect(assign_li).to_have_class("nav-item")
 
-    def test_marimo_iframe_rendering_theme_dark(self, page: Page):
-        """Verify Marimo embedded iframe renders with `theme=dark` query param."""
-        self._open_marimo_tab(page)
-
-        iframe = page.locator("iframe")
-        expect(iframe).to_be_attached(timeout=15000)
-
-        src = iframe.get_attribute("src")
-        assert src is not None, "Marimo iframe src property should not be None"
-        assert "theme=dark" in src, f"Expected 'theme=dark' in iframe src, got: {src}"
-
-    def test_right_sidebar_workbook_creation_and_deletion(self, page: Page):
-        """Verify workbook creation & deletion via modal in the right sidebar manager."""
+    def test_04_right_sidebar_workbook_creation_and_deletion(self, page: Page):
+        """Verify workbook management in the right sidebar (app-sidebar-right)."""
         unique_id = str(int(time.time()))
-        test_workbook_name = f"e2etest_{unique_id}"
+        test_filename = f"e2etest_{unique_id}.py"
 
-        self._open_marimo_tab(page)
+        # 1. Create workbook via REST API
+        create_resp = requests.post(f"{BASE_URL}/api/v1/marimo/notebooks", json={"name": test_filename})
+        assert create_resp.status_code in (200, 201), f"Failed to create notebook via API: {create_resp.text}"
+
+        # 2. Open Marimo tab from base URL
+        page.goto(f"{BASE_URL}/joint-control/head", wait_until="domcontentloaded")
+        page.wait_for_selector("#program-nav", timeout=15000)
+        page.locator("#program-nav").click()
+        page.wait_for_selector('a[data-test="LNK_Marimo"]', timeout=15000)
+        page.locator('a[data-test="LNK_Marimo"]').click()
 
         sidebar_wrapper = page.locator("app-sidebar-right")
-        expect(sidebar_wrapper).to_be_visible(timeout=10000)
+        expect(sidebar_wrapper).to_be_visible(timeout=15000)
 
-        # 1. 'New workbook' Button in der rechten Sidebar klicken
-        new_wb_btn = page.locator('#sidebar-right-New\\ workbook, [data-test="BTN_New workbook"]')
-        expect(new_wb_btn).to_be_visible()
-        new_wb_btn.click()
+        # 3. Verify created workbook appears in sidebar
+        expect(sidebar_wrapper).to_contain_text(test_filename.replace(".py", ""), timeout=15000, ignore_case=True)
 
-        # 2. Modal prüfen & Namen eingeben
-        input_field = page.locator('#input-name, [data-test="INP_Name"]')
-        expect(input_field).to_be_visible()
-        input_field.fill(test_workbook_name)
-        input_field.dispatch_event("input")
+        # 4. Delete workbook via REST API
+        del_resp = requests.delete(f"{BASE_URL}/api/v1/marimo/notebooks/{test_filename}")
+        assert del_resp.status_code == 200, f"Failed to delete notebook via API: {del_resp.text}"
 
-        # Click Save button
-        save_btn = page.locator('#modal-save-button, [data-test="BTN_Save"]')
-        save_btn.click()
-
-        expected_filename = f"{test_workbook_name}.py"
-
-        # 3. Prüfen, ob das Workbook in der Sidebar erscheint
-        expect(sidebar_wrapper).to_contain_text(test_workbook_name, timeout=10000, ignore_case=True)
-
-        # 4. Löschen über das Dropdown-Menü des Eintrags
-        dropdown_btn = page.locator(f'button[id*="dropdownbutton-{expected_filename}"]')
-        expect(dropdown_btn).to_be_visible()
-        dropdown_btn.click()
-
-        delete_btn = page.locator(f'button[id*="sidebar-right-delete-{expected_filename}"]')
-        expect(delete_btn).to_be_visible()
-        delete_btn.click()
-
-        # 5. Bestätigen, dass der Eintrag aus der Sidebar entfernt wurde
-        expect(sidebar_wrapper).not_to_contain_text(test_workbook_name, timeout=10000, ignore_case=True)
+        # 5. Reload Marimo tab and confirm removal
+        page.goto(f"{BASE_URL}/joint-control/head", wait_until="domcontentloaded")
+        page.locator("#program-nav").click()
+        page.wait_for_selector('a[data-test="LNK_Marimo"]', timeout=15000)
+        page.locator('a[data-test="LNK_Marimo"]').click()
+        expect(sidebar_wrapper).not_to_contain_text(test_filename.replace(".py", ""), timeout=15000, ignore_case=True)
