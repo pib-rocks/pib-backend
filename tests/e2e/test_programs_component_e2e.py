@@ -174,3 +174,117 @@ class TestProgramsComponentE2E:
             # Cleanup: delete both notebooks via REST API
             for fn in (file_a, file_b):
                 requests.delete(f"{BASE_URL}/api/v1/marimo/notebooks/{fn}")
+
+    def _open_marimo(self, page: Page):
+        """Helper: open Programs -> Marimo tab and wait for the sidebar."""
+        page.locator("#program-nav").click()
+        page.wait_for_selector('a[data-test="LNK_Marimo"]', timeout=15000)
+        with page.expect_response("**/marimo/notebooks"):
+            page.locator('a[data-test="LNK_Marimo"]').click()
+        expect(page.locator("app-sidebar-right")).to_be_visible(timeout=15000)
+
+    def _row(self, page: Page, filename: str):
+        """Helper: the .element-div row that contains the link for <filename>."""
+        return page.locator(
+            f'app-sidebar-right .element-div:has(a[href$="/program/marimo/{filename}"])'
+        )
+
+    def test_06_create_rename_delete_workbook_via_ui(self, page: Page):
+        """
+        Full workbook CRUD lifecycle driven ONLY through the UI (modal + dropdown),
+        not the REST API. Covers: New-workbook modal, '.py' suffix normalization,
+        rename via dropdown, and delete via dropdown (with confirm()).
+        """
+        unique_id = str(int(time.time()))
+        create_name = f"uicrud{unique_id}"          # entered without .py
+        expected_file = f"{create_name}.py"
+        expected_title = f"Uicrud{unique_id}"
+        rename_name = f"uirenamed{unique_id}"
+        renamed_file = f"{rename_name}.py"
+        renamed_title = f"Uirenamed{unique_id}"
+
+        try:
+            self._open_marimo(page)
+            sidebar = page.locator("app-sidebar-right")
+
+            # 1. CREATE via New-workbook modal
+            page.locator('[data-test="BTN_New workbook"]').click()
+            name_input = page.locator("#input-name")
+            expect(name_input).to_be_visible(timeout=10000)
+            name_input.fill(create_name)
+            page.locator("#modal-save-button").click()
+
+            # Notebook appears in sidebar with normalized .py filename
+            create_link = sidebar.locator(f'a[href$="/program/marimo/{expected_file}"]')
+            expect(create_link).to_be_visible(timeout=15000)
+
+            # 2. RENAME via the row's dropdown menu
+            self._row(page, expected_file).locator('button[id^="dropdownbutton-"]').click()
+            page.locator(f'button[id="sidebar-right-rename-{expected_title}"]').click()
+            name_input = page.locator("#input-name")
+            expect(name_input).to_be_visible(timeout=10000)
+            name_input.fill(rename_name)
+            page.locator("#modal-save-button").click()
+
+            # Old link disappears, renamed link appears
+            expect(create_link).not_to_be_visible(timeout=15000)
+            renamed_link = sidebar.locator(f'a[href$="/program/marimo/{renamed_file}"]')
+            expect(renamed_link).to_be_visible(timeout=15000)
+
+            # 3. DELETE via the row's dropdown menu (confirm() auto-accepted by fixture)
+            self._row(page, renamed_file).locator('button[id^="dropdownbutton-"]').click()
+            page.locator(f'button[id="sidebar-right-delete-{renamed_title}"]').click()
+            expect(renamed_link).not_to_be_visible(timeout=15000)
+        finally:
+            # Cleanup safety net (both possible filenames)
+            for fn in (expected_file, renamed_file):
+                requests.delete(f"{BASE_URL}/api/v1/marimo/notebooks/{fn}")
+
+    def test_07_delete_selected_notebook_reselects_another(self, page: Page):
+        """
+        When the CURRENTLY OPEN notebook is deleted and others remain, the component
+        must auto-select another remaining notebook: the iframe reloads a different
+        existing file and the app stays on /program/marimo (no wildcard redirect).
+        """
+        unique_id = str(int(time.time()))
+        sel_file = f"uisel{unique_id}.py"
+        keep_file = f"uikeep{unique_id}.py"
+        sel_title = f"Uisel{unique_id}"
+
+        # Setup: two notebooks via REST API
+        for fn in (sel_file, keep_file):
+            resp = requests.post(f"{BASE_URL}/api/v1/marimo/notebooks", json={"name": fn})
+            assert resp.status_code in (200, 201), f"Failed to create {fn}: {resp.text}"
+
+        try:
+            self._open_marimo(page)
+            sidebar = page.locator("app-sidebar-right")
+
+            # Open sel_file so it becomes the selected/open notebook
+            sel_link = sidebar.locator(f'a[href$="/program/marimo/{sel_file}"]')
+            expect(sel_link).to_be_visible(timeout=15000)
+            sel_link.click()
+            expect(page).to_have_url(
+                re.compile(rf".*/program/marimo/{re.escape(sel_file)}$"), timeout=10000
+            )
+            iframe = page.locator("app-marimo iframe")
+            expect(iframe).to_have_attribute(
+                "src", re.compile(rf".*[?&]file={re.escape(sel_file)}(&|$)"), timeout=10000
+            )
+
+            # Delete the currently-open notebook via its dropdown (confirm auto-accepted)
+            self._row(page, sel_file).locator('button[id^="dropdownbutton-"]').click()
+            page.locator(f'button[id="sidebar-right-delete-{sel_title}"]').click()
+
+            # Row gone; still on /program/marimo (NOT redirected to joint-control);
+            # iframe re-selected a DIFFERENT existing notebook (src has ?file= but not sel_file)
+            expect(sel_link).not_to_be_visible(timeout=15000)
+            expect(page).to_have_url(re.compile(r".*/program/marimo.*"), timeout=10000)
+            expect(iframe).to_have_attribute(
+                "src",
+                re.compile(rf"^(?!.*file={re.escape(sel_file)}).*[?&]file=.+"),
+                timeout=10000,
+            )
+        finally:
+            for fn in (sel_file, keep_file):
+                requests.delete(f"{BASE_URL}/api/v1/marimo/notebooks/{fn}")
