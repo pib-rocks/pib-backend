@@ -12,6 +12,7 @@ from controller import (
     ip_controller,
     button_program_controller,
     docker_controller,
+    marimo_controller,
 )
 
 app.register_blueprint(program_controller.bp, url_prefix="/program", name="program")
@@ -48,3 +49,6 @@ app.register_blueprint(
 app.register_blueprint(docker_controller.bp, url_prefix="/docker", name="docker")
 app.register_blueprint(docker_controller.bp, url_prefix="/v1/docker", name="docker_v1")
 app.register_blueprint(docker_controller.bp, url_prefix="/api/v1/docker", name="docker_api_v1")
+app.register_blueprint(marimo_controller.marimo_bp, url_prefix="/marimo", name="marimo")
+app.register_blueprint(marimo_controller.marimo_bp, url_prefix="/v1/marimo", name="marimo_v1")
+app.register_blueprint(marimo_controller.marimo_bp, url_prefix="/api/v1/marimo", name="marimo_api_v1")
