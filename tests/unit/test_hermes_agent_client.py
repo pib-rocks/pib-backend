@@ -50,3 +50,14 @@ def test_run_turn_on_error_returns_fallback():
     completed = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="boom")
     with patch("subprocess.run", return_value=completed):
         assert run_turn("hi", "c1")
+
+
+def test_delete_session_invokes_hermes_sessions_delete():
+    from public_api_client.hermes_agent_client import delete_session
+
+    completed = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+    with patch("subprocess.run", return_value=completed) as run:
+        assert delete_session("abc-123") is True
+        args = run.call_args.args[0]
+        assert args[-2:] == ["delete", "pib_chat_abc-123"]
+        assert "sessions" in args

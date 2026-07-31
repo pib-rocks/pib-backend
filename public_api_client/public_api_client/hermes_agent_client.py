@@ -130,3 +130,16 @@ def run_turn(
 
     reply = (result.stdout or "").strip()
     return reply or FALLBACK_REPLY
+
+
+def delete_session(chat_id: str, timeout: int = 30) -> bool:
+    """Remove the Hermes session backing this pib chat. Best-effort."""
+    try:
+        result = subprocess.run(
+            [HERMES_BIN, "sessions", "delete", session_name_for(chat_id)],
+            capture_output=True, text=True, timeout=timeout, check=False,
+        )
+        return result.returncode == 0
+    except Exception as exc:
+        logging.warning("could not delete hermes session for %s: %s", chat_id, exc)
+        return False
