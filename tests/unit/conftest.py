@@ -41,6 +41,21 @@ from model.personality_model import Personality  # noqa: E402
 from service import personality_service  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def sandboxed_hermes_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Point every Hermes path at the sandbox before a test can forget to.
+
+    The defaults are the robot's real, shared locations, so a test that provisions
+    a profile without overriding them writes into the developer's own
+    ``~/.hermes``. Tests may still override either variable.
+    """
+    home = tmp_path / "hermes-home"
+    home.mkdir()
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    monkeypatch.setenv("PIB_HERMES_PROFILES_DIR", str(home / "profiles"))
+    return home
+
+
 @pytest.fixture()
 def app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     db_file = tmp_path / "test.db"

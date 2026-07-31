@@ -13,12 +13,14 @@ symlinked into it — probe_binary() is what catches a deployment that forgot it
 import logging
 import os
 import re
+import shutil
 import subprocess
 from typing import Optional
 
 from pib_hermes_config import (
     DEFAULT_SOUL,
     PROFILE_PREFIX,
+    align_profile_ownership,
     profile_dir_for,
     profile_name_for,
     profiles_dir,
@@ -26,9 +28,14 @@ from pib_hermes_config import (
 )
 
 DEFAULT_HERMES_BIN = "/home/pib/.local/bin/hermes"
+DEFAULT_HERMES_HOME = "/home/pib/.hermes"
 SESSION_PREFIX = "pib_chat_"
 HERMES_API_NAME = "hermes-agent"
 DEFAULT_TIMEOUT_SECONDS = int(os.environ.get("PIB_HERMES_TIMEOUT", "120"))
+
+CONFIG_FILENAME = "config.yaml"
+ENV_FILENAME = ".env"
+ENV_FILE_MODE = 0o600
 
 # Startup liveness probe only. Deliberately small: it runs before the chat node
 # is up, so it must diagnose a broken install without delaying startup. A real
@@ -41,6 +48,11 @@ _UNSAFE = re.compile(r"[^A-Za-z0-9_-]")
 def hermes_bin() -> str:
     """Path of the Hermes CLI. One explicit location, never probed or guessed."""
     return os.environ.get("PIB_HERMES_BIN") or DEFAULT_HERMES_BIN
+
+
+def hermes_home() -> str:
+    """Base Hermes install: the profile-independent config and credentials."""
+    return os.environ.get("HERMES_HOME") or DEFAULT_HERMES_HOME
 
 
 def hermes_binary_available() -> bool:
@@ -118,30 +130,96 @@ def build_command(
     return cmd
 
 
+def _create_profile_with_cli(personality_id: str, timeout: int) -> bool:
+    """Optional enhancement: let the CLI create the profile. True when it did.
+
+    Not a precondition for a working profile: whichever container calls
+    ensure_profile() may not have the CLI mounted at all (the Flask API does
+    not), and this used to fail silently there and leave behind a profile with a
+    SOUL.md but no credentials.
+    """
+    name = profile_name_for(personality_id)
+    if not hermes_binary_available():
+        logging.info(
+            "hermes CLI %s is not available here; provisioning profile %s with "
+            "filesystem operations only", hermes_bin(), name,
+        )
+        return False
+    try:
+        result = subprocess.run(
+            [hermes_bin(), "profile", "create", name,
+             "--clone", "--no-alias",
+             "--description", f"pib personality {personality_id}"],
+            capture_output=True, text=True, timeout=timeout, check=False,
+        )
+    except Exception as exc:
+        logging.warning("hermes profile create %s could not be run: %s", name, exc)
+        return False
+    if result.returncode != 0:
+        logging.warning(
+            "hermes profile create %s exited %s: %s",
+            name, result.returncode, (result.stderr or "")[:500],
+        )
+        return False
+    logging.info("created hermes profile %s with the CLI (--clone)", name)
+    return True
+
+
+def _inherit_base_config(pdir: str) -> None:
+    """Materialize the provider config a profile needs, from HERMES_HOME.
+
+    `hermes -p <profile>` resolves its LLM provider from the profile, so a
+    profile holding only a SOUL.md fails every turn with "No LLM provider
+    configured". Copies rather than symlinks, so that a later `hermes profile
+    delete` cannot damage the base install, and never replaces a file the profile
+    already has, which may have been customized on purpose.
+    """
+    base = hermes_home()
+    for name, mode in ((CONFIG_FILENAME, None), (ENV_FILENAME, ENV_FILE_MODE)):
+        target = os.path.join(pdir, name)
+        if os.path.exists(target):
+            logging.debug("hermes profile keeps its own %s (%s)", name, target)
+            continue
+        source = os.path.join(base, name)
+        if not os.path.isfile(source):
+            logging.warning(
+                "hermes base install has no %s at %s: hermes-agent personalities "
+                "will answer with the fallback reply until credentials are "
+                "configured there (`sudo -u pib -H hermes setup`)",
+                name, source,
+            )
+            continue
+        try:
+            shutil.copyfile(source, target)
+            if mode is not None:
+                os.chmod(target, mode)
+        except OSError as exc:
+            logging.warning(
+                "could not copy %s from %s into %s: %s", name, base, pdir, exc
+            )
+            continue
+        logging.info("copied %s from %s into hermes profile %s", name, base, pdir)
+
+
 def ensure_profile(personality_id: str, soul_text: str, timeout: int = 60) -> str:
     """Create the personality's Hermes profile if needed and write its SOUL.md.
 
-    Uses --clone so config.yaml AND the provider credentials are inherited from
-    the active profile; without this the profile has no LLM provider configured.
+    Provisioning is done with filesystem operations alone, because the CLI is not
+    installed in every container that calls this. config.yaml and .env are copied
+    in from the base install (HERMES_HOME) so that `hermes -p <profile>` finds a
+    provider; the base install must therefore hold working credentials.
+
     Returns the profile directory.
     """
     pdir = profile_dir_for(personality_id)
     if not os.path.isdir(pdir):
-        if hermes_binary_available():
-            subprocess.run(
-                [hermes_bin(), "profile", "create", profile_name_for(personality_id),
-                 "--clone", "--no-alias",
-                 "--description", f"pib personality {personality_id}"],
-                capture_output=True, text=True, timeout=timeout, check=False,
-            )
-        else:
-            logging.error(
-                "cannot create hermes profile %s: binary %s is missing",
-                profile_name_for(personality_id), hermes_bin(),
-            )
+        _create_profile_with_cli(personality_id, timeout)
     os.makedirs(pdir, exist_ok=True)
     with open(soul_path_for(personality_id), "w", encoding="utf-8") as fh:
         fh.write(soul_text or DEFAULT_SOUL)
+    # Also repairs a profile that an earlier deployment left without credentials.
+    _inherit_base_config(pdir)
+    align_profile_ownership(pdir)
     return pdir
 
 
