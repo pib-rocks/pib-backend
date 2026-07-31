@@ -12,6 +12,7 @@ import os
 
 from pib_hermes_config import (
     DEFAULT_SOUL,
+    align_profile_ownership,
     profile_name_for,
     profiles_dir,
     soul_path_for,
@@ -30,9 +31,13 @@ __all__ = [
 def write_soul(personality_id: str, text: str) -> str:
     """Write the SOUL text to the profile, creating parent dirs. Returns the path."""
     path = soul_path_for(personality_id)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
+    profile_dir = os.path.dirname(path)
+    os.makedirs(profile_dir, exist_ok=True)
     with open(path, "w", encoding="utf-8") as fh:
         fh.write(text or DEFAULT_SOUL)
+    # This API runs as root in its container; without this the profile it just
+    # created belongs to root and the pib user cannot even list it.
+    align_profile_ownership(profile_dir)
     return path
 
 
