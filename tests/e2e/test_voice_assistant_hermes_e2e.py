@@ -13,7 +13,7 @@ import requests
 
 
 ROBOT_URL = os.environ.get("PIB_E2E_BASE_URL", "http://192.168.1.28").rstrip("/")
-API_URL = f"{ROBOT_URL}/api/v1"
+API_URL = f"{ROBOT_URL}/api"
 REQUEST_TIMEOUT = 5
 TURN_TIMEOUT = int(os.environ.get("PIB_HERMES_E2E_TURN_TIMEOUT", "180"))
 
