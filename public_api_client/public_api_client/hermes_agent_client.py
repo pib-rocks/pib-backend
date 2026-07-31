@@ -93,3 +93,40 @@ def delete_profile(personality_id: str, timeout: int = 60) -> bool:
     except Exception as exc:
         logging.warning("could not delete hermes profile %s: %s", name, exc)
         return False
+
+
+FALLBACK_REPLY = (
+    "Entschuldige, das hat gerade einen Moment zu lange gedauert. "
+    "Frag mich bitte später noch einmal."
+)
+
+
+def run_turn(
+    text: str,
+    chat_id: str,
+    personality_id: Optional[str] = None,
+    toolsets: Optional[str] = None,
+    timeout: int = DEFAULT_TIMEOUT_SECONDS,
+) -> str:
+    """Run one conversational turn. Always returns speakable text."""
+    cmd = build_command(text, chat_id, personality_id, toolsets)
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=timeout, check=False
+        )
+    except subprocess.TimeoutExpired:
+        logging.warning("hermes turn timed out after %ss (chat=%s)", timeout, chat_id)
+        return FALLBACK_REPLY
+    except Exception as exc:
+        logging.error("hermes turn failed (chat=%s): %s", chat_id, exc)
+        return FALLBACK_REPLY
+
+    if result.returncode != 0:
+        logging.error(
+            "hermes exited %s (chat=%s): %s",
+            result.returncode, chat_id, (result.stderr or "")[:500],
+        )
+        return FALLBACK_REPLY
+
+    reply = (result.stdout or "").strip()
+    return reply or FALLBACK_REPLY
