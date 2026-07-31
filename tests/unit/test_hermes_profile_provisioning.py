@@ -2,7 +2,13 @@ import os
 import stat
 from unittest.mock import patch
 
-from public_api_client.hermes_agent_client import ensure_profile, profile_dir_for
+import yaml
+
+from public_api_client.hermes_agent_client import (
+    PIB_MCP_SERVER,
+    ensure_profile,
+    profile_dir_for,
+)
 
 BASE_ENV = "OPENROUTER_API_KEY=sk-base-key\n"
 BASE_CONFIG = "model: anthropic/claude-opus-5\n"
@@ -17,6 +23,15 @@ def _base_install_with_credentials(home):
     """A HERMES_HOME that has been through `hermes setup`."""
     (home / ".env").write_text(BASE_ENV, encoding="utf-8")
     (home / "config.yaml").write_text(BASE_CONFIG, encoding="utf-8")
+
+
+def _load_profile_config(pdir):
+    with open(os.path.join(pdir, "config.yaml"), encoding="utf-8") as fh:
+        return yaml.safe_load(fh)
+
+
+def _assert_mcp_servers_pib(cfg):
+    assert cfg["mcp_servers"]["pib"] == PIB_MCP_SERVER
 
 
 def test_ensure_profile_creates_profile_when_missing(
@@ -73,8 +88,9 @@ def test_ensure_profile_copies_base_credentials_without_the_binary(
         assert fh.read() == "Du bist pib."
     with open(os.path.join(pdir, ".env"), encoding="utf-8") as fh:
         assert fh.read() == BASE_ENV
-    with open(os.path.join(pdir, "config.yaml"), encoding="utf-8") as fh:
-        assert fh.read() == BASE_CONFIG
+    cfg = _load_profile_config(pdir)
+    assert cfg["model"] == "anthropic/claude-opus-5"
+    _assert_mcp_servers_pib(cfg)
 
 
 def test_credentials_are_copied_not_symlinked(
@@ -196,3 +212,54 @@ def test_profile_directory_stays_private_to_its_owner(
     pdir = ensure_profile("p-9", soul_text="Du bist pib.")
 
     assert stat.S_IMODE(os.stat(pdir).st_mode) == 0o700
+
+
+def test_ensure_profile_seeds_mcp_servers_pib_on_fresh_profile(
+    tmp_path, monkeypatch, sandboxed_hermes_home
+):
+    """Fresh profiles get mcp_servers.pib even when the base config lacks it."""
+    _base_install_with_credentials(sandboxed_hermes_home)
+    _absent_binary(tmp_path, monkeypatch)
+
+    pdir = ensure_profile("p-9", soul_text="Du bist pib.")
+
+    _assert_mcp_servers_pib(_load_profile_config(pdir))
+
+
+def test_ensure_profile_seeds_mcp_servers_pib_into_existing_config(
+    tmp_path, monkeypatch, sandboxed_hermes_home
+):
+    """An existing profile config.yaml still receives mcp_servers.pib."""
+    _base_install_with_credentials(sandboxed_hermes_home)
+    _absent_binary(tmp_path, monkeypatch)
+    pdir = profile_dir_for("p-9")
+    os.makedirs(pdir)
+    with open(os.path.join(pdir, "config.yaml"), "w", encoding="utf-8") as fh:
+        fh.write("model: custom/operator-model\n")
+
+    ensure_profile("p-9", soul_text="Du bist pib.")
+
+    cfg = _load_profile_config(pdir)
+    assert cfg["model"] == "custom/operator-model"
+    _assert_mcp_servers_pib(cfg)
+
+
+def test_ensure_profile_keeps_an_existing_mcp_servers_pib_entry(
+    tmp_path, monkeypatch, sandboxed_hermes_home
+):
+    """A customized mcp_servers.pib entry must not be replaced."""
+    _base_install_with_credentials(sandboxed_hermes_home)
+    _absent_binary(tmp_path, monkeypatch)
+    pdir = profile_dir_for("p-9")
+    os.makedirs(pdir)
+    custom = {"command": "python3", "args": ["-m", "custom_mcp"]}
+    with open(os.path.join(pdir, "config.yaml"), "w", encoding="utf-8") as fh:
+        yaml.safe_dump(
+            {"model": "custom/operator-model", "mcp_servers": {"pib": custom}},
+            fh,
+        )
+
+    ensure_profile("p-9", soul_text="Du bist pib.")
+
+    cfg = _load_profile_config(pdir)
+    assert cfg["mcp_servers"]["pib"] == custom

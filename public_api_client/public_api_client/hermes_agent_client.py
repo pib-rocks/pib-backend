@@ -17,6 +17,8 @@ import shutil
 import subprocess
 from typing import Optional
 
+import yaml
+
 from pib_hermes_config import (
     DEFAULT_SOUL,
     PROFILE_PREFIX,
@@ -36,6 +38,12 @@ DEFAULT_TIMEOUT_SECONDS = int(os.environ.get("PIB_HERMES_TIMEOUT", "120"))
 CONFIG_FILENAME = "config.yaml"
 ENV_FILENAME = ".env"
 ENV_FILE_MODE = 0o600
+
+# Default MCP entry for pib robot tools. Kept in sync with setup/setup-pib.sh.
+PIB_MCP_SERVER = {
+    "command": "python3",
+    "args": ["-m", "pib_mcp_server"],
+}
 
 # Startup liveness probe only. Deliberately small: it runs before the chat node
 # is up, so it must diagnose a broken install without delaying startup. A real
@@ -165,6 +173,46 @@ def _create_profile_with_cli(personality_id: str, timeout: int) -> bool:
     return True
 
 
+def _ensure_mcp_servers_pib(pdir: str) -> None:
+    """Merge mcp_servers.pib into the profile config.yaml if it is missing.
+
+    Runs even when config.yaml already exists, so profiles created before
+    auto-seeding still get pib_mcp_server on the next ensure_profile call.
+    """
+    target = os.path.join(pdir, CONFIG_FILENAME)
+    cfg = {}
+    if os.path.isfile(target):
+        try:
+            with open(target, encoding="utf-8") as fh:
+                loaded = yaml.safe_load(fh) or {}
+            if not isinstance(loaded, dict):
+                logging.warning(
+                    "hermes profile %s is not a mapping; rewriting mcp_servers.pib",
+                    target,
+                )
+                loaded = {}
+            cfg = loaded
+        except (OSError, yaml.YAMLError) as exc:
+            logging.warning("could not read %s for mcp seeding: %s", target, exc)
+            return
+
+    servers = cfg.get("mcp_servers")
+    if not isinstance(servers, dict):
+        servers = {}
+        cfg["mcp_servers"] = servers
+    if "pib" in servers:
+        return
+
+    servers["pib"] = dict(PIB_MCP_SERVER)
+    try:
+        with open(target, "w", encoding="utf-8") as fh:
+            yaml.safe_dump(cfg, fh, default_flow_style=False, sort_keys=False)
+    except OSError as exc:
+        logging.warning("could not write mcp_servers.pib into %s: %s", target, exc)
+        return
+    logging.info("seeded mcp_servers.pib into hermes profile %s", pdir)
+
+
 def _inherit_base_config(pdir: str) -> None:
     """Materialize the provider config a profile needs, from HERMES_HOME.
 
@@ -173,6 +221,9 @@ def _inherit_base_config(pdir: str) -> None:
     configured". Copies rather than symlinks, so that a later `hermes profile
     delete` cannot damage the base install, and never replaces a file the profile
     already has, which may have been customized on purpose.
+
+    Always ensures mcp_servers.pib is present afterwards, including when the
+    profile already had its own config.yaml.
     """
     base = hermes_home()
     for name, mode in ((CONFIG_FILENAME, None), (ENV_FILENAME, ENV_FILE_MODE)):
@@ -199,6 +250,8 @@ def _inherit_base_config(pdir: str) -> None:
             )
             continue
         logging.info("copied %s from %s into hermes profile %s", name, base, pdir)
+
+    _ensure_mcp_servers_pib(pdir)
 
 
 def ensure_profile(personality_id: str, soul_text: str, timeout: int = 60) -> str:

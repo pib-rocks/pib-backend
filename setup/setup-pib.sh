@@ -277,6 +277,29 @@ function install_imitation() {
 # Provider credentials are NOT configured here — after install, run
 # `sudo -u pib -H hermes setup` (or write /home/pib/.hermes/.env) once before
 # hermes-agent personalities can talk to a model.
+# Seed mcp_servers.pib into the Hermes base config so fresh installs expose
+# pib_mcp_server tools without a manual `hermes mcp add`.
+function seed_hermes_mcp_config() {
+  sudo apt-get install -y python3-yaml >/dev/null
+  sudo -u pib -H mkdir -p /home/pib/.hermes
+  sudo -u pib -H python3 -c "
+import yaml, os
+cfg_path = '/home/pib/.hermes/config.yaml'
+cfg = {}
+if os.path.exists(cfg_path):
+    with open(cfg_path, 'r') as f:
+        cfg = yaml.safe_load(f) or {}
+if 'mcp_servers' not in cfg or 'pib' not in cfg.get('mcp_servers', {}):
+    cfg.setdefault('mcp_servers', {})['pib'] = {
+        'command': 'python3',
+        'args': ['-m', 'pib_mcp_server'],
+    }
+    with open(cfg_path, 'w') as f:
+        yaml.dump(cfg, f, default_flow_style=False)
+"
+  print SUCCESS "Seeded mcp_servers.pib into /home/pib/.hermes/config.yaml"
+}
+
 function install_hermes_cli() {
   local hermes_bin="/home/pib/.local/bin/hermes"
   local hermes_profiles="/home/pib/.hermes/profiles"
@@ -285,6 +308,7 @@ function install_hermes_cli() {
     print INFO "Hermes CLI already installed at $hermes_bin"
     # Keep the shared profiles dir present for the flask/voice-assistant mounts.
     sudo -u pib -H mkdir -p "$hermes_profiles"
+    seed_hermes_mcp_config
     return 0
   fi
 
@@ -310,6 +334,8 @@ function install_hermes_cli() {
     print ERROR "Hermes CLI install finished but $hermes_bin is missing"
     return 1
   fi
+
+  seed_hermes_mcp_config
 }
 
 
