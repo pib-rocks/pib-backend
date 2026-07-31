@@ -353,6 +353,100 @@ class ChatNode(Node):
         token = msg.data
         self.token = token
 
+    def _stream_chunks_to_goal(
+        self, goal_handle, chat_id: str, tokens
+    ) -> tuple[Optional[str], Optional[int], str]:
+        """Consume a token iterable, publishing sentence/code chunks as feedback.
+
+        Returns (prev_text, prev_text_type, curr_text) so the caller can build Chat.Result.
+        Behavior is identical to the previous inline implementation.
+        """
+        # Regex for sentence / code chunking
+        sentence_pattern = re.compile(
+            r"^(?!<pib-program>)(.*?)(([^\d | ^A-Z][\.|!|\?|:])|<pib-program>)",
+            re.DOTALL,
+        )
+        code_visual_pattern = re.compile(
+            r"^<pib-program>(.*?)</pib-program>", re.DOTALL
+        )
+
+        # Current and previous text fragments for feedback + persistence
+        curr_text: str = ""
+        prev_text: Optional[str] = None
+        prev_text_type = None
+        bool_update_chat_message: bool = False  # controls create vs update
+
+        for token in tokens:
+            # Publish previous chunk as feedback (Action protocol)
+            if prev_text is not None:
+                feedback = Chat.Feedback()
+                feedback.text = prev_text
+                feedback.text_type = prev_text_type
+                goal_handle.publish_feedback(feedback)
+                prev_text = None
+                prev_text_type = None
+
+            # Accumulate token (strip leading spaces if first)
+            curr_text = curr_text + (
+                token if len(curr_text) > 0 else token.lstrip()
+            )
+
+            # Strip off complete chunks (code/sentences)
+            while True:
+                if goal_handle.is_cancel_requested:
+                    goal_handle.canceled()
+                    return prev_text, prev_text_type, curr_text
+
+                # Visual code block
+                code_visual_match = code_visual_pattern.search(curr_text)
+                if code_visual_match is not None:
+                    code_visual = code_visual_match.group(1)
+                    prev_text = code_visual
+                    prev_text_type = Chat.Goal.TEXT_TYPE_CODE_VISUAL
+                    chat_message_text = code_visual_match.group(0)
+                    self.executor.create_task(
+                        self.create_chat_message,
+                        chat_id,
+                        chat_message_text,
+                        False,
+                        bool_update_chat_message,
+                        True,
+                    )
+                    bool_update_chat_message = True
+                    curr_text = curr_text[code_visual_match.end() :].rstrip()
+                    continue
+
+                # Sentence
+                sentence_match = sentence_pattern.search(curr_text)
+                if sentence_match is not None:
+                    sentence = sentence_match.group(1) + (
+                        sentence_match.group(3)
+                        if sentence_match.group(3) is not None
+                        else ""
+                    )
+                    prev_text = sentence
+                    prev_text_type = Chat.Goal.TEXT_TYPE_SENTENCE
+                    chat_message_text = sentence
+                    self.executor.create_task(
+                        self.create_chat_message,
+                        chat_id,
+                        chat_message_text,
+                        False,
+                        bool_update_chat_message,
+                        True,
+                    )
+                    bool_update_chat_message = True
+                    curr_text = curr_text[
+                        sentence_match.end(
+                            3 if sentence_match.group(3) is not None else 1
+                        ) :
+                    ].rstrip()
+                    continue
+
+                break
+
+        return prev_text, prev_text_type, curr_text
+
     async def chat(self, goal_handle: ServerGoalHandle):
         """
         Action server callback for 'chat':
@@ -436,89 +530,11 @@ class ChatNode(Node):
                     public_api_token=self.token,
                 )
 
-            # Regex for sentence / code chunking
-            sentence_pattern = re.compile(
-                r"^(?!<pib-program>)(.*?)(([^\d | ^A-Z][\.|!|\?|:])|<pib-program>)",
-                re.DOTALL,
+            prev_text, prev_text_type, curr_text = self._stream_chunks_to_goal(
+                goal_handle, chat_id, tokens
             )
-            code_visual_pattern = re.compile(
-                r"^<pib-program>(.*?)</pib-program>", re.DOTALL
-            )
-
-            # Current and previous text fragments for feedback + persistence
-            curr_text: str = ""
-            prev_text: Optional[str] = None
-            prev_text_type = None
-            bool_update_chat_message: bool = False  # controls create vs update
-
-            for token in tokens:
-                # Publish previous chunk as feedback (Action protocol)
-                if prev_text is not None:
-                    feedback = Chat.Feedback()
-                    feedback.text = prev_text
-                    feedback.text_type = prev_text_type
-                    goal_handle.publish_feedback(feedback)
-                    prev_text = None
-                    prev_text_type = None
-
-                # Accumulate token (strip leading spaces if first)
-                curr_text = curr_text + (
-                    token if len(curr_text) > 0 else token.lstrip()
-                )
-
-                # Strip off complete chunks (code/sentences)
-                while True:
-                    if goal_handle.is_cancel_requested:
-                        goal_handle.canceled()
-                        return Chat.Result()
-
-                    # Visual code block
-                    code_visual_match = code_visual_pattern.search(curr_text)
-                    if code_visual_match is not None:
-                        code_visual = code_visual_match.group(1)
-                        prev_text = code_visual
-                        prev_text_type = Chat.Goal.TEXT_TYPE_CODE_VISUAL
-                        chat_message_text = code_visual_match.group(0)
-                        self.executor.create_task(
-                            self.create_chat_message,
-                            chat_id,
-                            chat_message_text,
-                            False,
-                            bool_update_chat_message,
-                            True,
-                        )
-                        bool_update_chat_message = True
-                        curr_text = curr_text[code_visual_match.end() :].rstrip()
-                        continue
-
-                    # Sentence
-                    sentence_match = sentence_pattern.search(curr_text)
-                    if sentence_match is not None:
-                        sentence = sentence_match.group(1) + (
-                            sentence_match.group(3)
-                            if sentence_match.group(3) is not None
-                            else ""
-                        )
-                        prev_text = sentence
-                        prev_text_type = Chat.Goal.TEXT_TYPE_SENTENCE
-                        chat_message_text = sentence
-                        self.executor.create_task(
-                            self.create_chat_message,
-                            chat_id,
-                            chat_message_text,
-                            False,
-                            bool_update_chat_message,
-                            True,
-                        )
-                        bool_update_chat_message = True
-                        curr_text = curr_text[
-                            sentence_match.end(
-                                3 if sentence_match.group(3) is not None else 1
-                            ) :
-                        ].rstrip()
-                        continue
-
-                    break
+            if goal_handle.is_cancel_requested:
+                return Chat.Result()
 
         except Exception as e:
             self.get_logger().error(f"failed to send request to public-api: {e}")
