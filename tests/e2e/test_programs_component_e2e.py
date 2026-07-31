@@ -288,3 +288,44 @@ class TestProgramsComponentE2E:
         finally:
             for fn in (sel_file, keep_file):
                 requests.delete(f"{BASE_URL}/api/v1/marimo/notebooks/{fn}")
+
+    def test_08_new_workbook_form_validation_blocks_invalid_names(self, page: Page):
+        """
+        The New-workbook modal must NOT create a notebook when the name fails
+        validation (required, minLength 2). Clicking Save with an invalid name is a
+        no-op: no new notebook appears and no create request is sent.
+        """
+        unique_id = str(int(time.time()))
+        # A single character violates minLength(2) -> invalid.
+        too_short = "x"
+        expected_file = f"{too_short}.py"
+
+        # Snapshot current notebook count via REST for a robust before/after comparison.
+        before = requests.get(f"{BASE_URL}/api/v1/marimo/notebooks").json()["notebooks"]
+        before_names = {nb["name"] for nb in before}
+
+        try:
+            self._open_marimo(page)
+            sidebar = page.locator("app-sidebar-right")
+
+            # Open modal, enter an invalid (too short) name, try to save.
+            page.locator('[data-test="BTN_New workbook"]').click()
+            name_input = page.locator("#input-name")
+            expect(name_input).to_be_visible(timeout=10000)
+            name_input.fill(too_short)
+            page.locator("#modal-save-button").click()
+
+            # The invalid name must NOT create a notebook link in the sidebar.
+            invalid_link = sidebar.locator(f'a[href$="/program/marimo/{expected_file}"]')
+            expect(invalid_link).to_have_count(0, timeout=5000)
+
+            # And the backend notebook set must be unchanged.
+            after = requests.get(f"{BASE_URL}/api/v1/marimo/notebooks").json()["notebooks"]
+            after_names = {nb["name"] for nb in after}
+            assert after_names == before_names, (
+                f"Invalid name should not create a notebook. "
+                f"Added: {after_names - before_names}"
+            )
+        finally:
+            # Safety net in case validation regressed and it got created.
+            requests.delete(f"{BASE_URL}/api/v1/marimo/notebooks/{expected_file}")
