@@ -1,6 +1,8 @@
-import asyncio
 import os
 import re
+import time
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from threading import Lock
 from typing import Optional
 
@@ -31,6 +33,13 @@ from public_api_client import hermes_agent_client, public_voice_client
 # if it is specified that code should be generated. The text will contain
 # instruction for the LLM on how to generate the code. For now, it is left blank.
 CODE_DESCRIPTION_PREFIX = ""
+
+# How often the hermes turn is interrupted to notice a cancel request.
+HERMES_CANCEL_POLL_SECONDS = 0.2
+
+# Slack on top of the hermes turn's own subprocess timeout, so a wedged worker
+# can never hold a goal open forever.
+HERMES_WAIT_GRACE_SECONDS = 15
 
 
 class ChatNode(Node):
@@ -106,9 +115,22 @@ class ChatNode(Node):
             callback_group=ReentrantCallbackGroup(),
         )
 
+        # Hermes turns shell out to a CLI that blocks for as long as the LLM
+        # takes. One pool for the whole node: rclpy's executor threads stay free
+        # for cancel requests and concurrent goals, and no request creates
+        # threads of its own.
+        self._hermes_executor = ThreadPoolExecutor(
+            max_workers=4, thread_name_prefix="hermes-turn"
+        )
+
         self._preflight_hermes_binary()
 
         self.get_logger().info("Now running CHAT")
+
+    def destroy_node(self):
+        # Abandoned hermes workers must not keep the process alive on shutdown.
+        self._hermes_executor.shutdown(wait=False, cancel_futures=True)
+        return super().destroy_node()
 
     def _preflight_hermes_binary(self) -> bool:
         """Report at startup whether the configured Hermes CLI can be executed.
@@ -472,6 +494,80 @@ class ChatNode(Node):
 
         return prev_text, prev_text_type, curr_text
 
+    def _hermes_timeout(self) -> int:
+        """Timeout for one hermes turn, read live so ops can tune it via env."""
+        return int(
+            os.environ.get(
+                "PIB_HERMES_TIMEOUT", hermes_agent_client.DEFAULT_TIMEOUT_SECONDS
+            )
+        )
+
+    def _run_hermes_turn(
+        self,
+        text: str,
+        chat_id: str,
+        personality_id: Optional[str],
+        description: str,
+        timeout: Optional[int] = None,
+        goal_handle=None,
+    ) -> str:
+        """Run one hermes turn and return speakable text. Never raises.
+
+        Deliberately synchronous and asyncio-free: rclpy drives the action
+        server's execute_callback with its own executor, so the calling thread
+        has no asyncio event loop and asyncio.get_running_loop() would raise
+        RuntimeError('no running event loop').
+
+        Returns "" only when the goal was cancelled while the agent was running;
+        every agent failure yields the fallback sentence so the goal can still
+        succeed.
+        """
+        if timeout is None:
+            timeout = self._hermes_timeout()
+
+        def _turn() -> str:
+            # Hermes keeps its own durable memory per chat, so no history is
+            # replayed: persona comes from the profile (-p), memory from the
+            # named session (-c).
+            if personality_id:
+                hermes_agent_client.ensure_profile(
+                    personality_id, soul_text=description
+                )
+            return hermes_agent_client.run_turn(
+                text=text,
+                chat_id=chat_id,
+                personality_id=personality_id,
+                timeout=timeout,
+            )
+
+        future = self._hermes_executor.submit(_turn)
+        deadline = time.monotonic() + timeout + HERMES_WAIT_GRACE_SECONDS
+
+        while True:
+            try:
+                return future.result(timeout=HERMES_CANCEL_POLL_SECONDS)
+            except FutureTimeoutError:
+                pass
+            except Exception as exc:
+                self.get_logger().error(f"hermes agent turn failed: {exc}")
+                return hermes_agent_client.FALLBACK_REPLY
+
+            if goal_handle is not None and goal_handle.is_cancel_requested:
+                # The worker is left to finish on its own; it only touches the
+                # hermes CLI, and the pool outlives this goal, so nothing here
+                # breaks when the subprocess returns later.
+                self.get_logger().info(
+                    f"hermes turn abandoned, goal cancelled (chat={chat_id})"
+                )
+                return ""
+
+            if time.monotonic() > deadline:
+                self.get_logger().error(
+                    f"hermes turn exceeded {timeout}s plus grace "
+                    f"(chat={chat_id}); answering with the fallback reply"
+                )
+                return hermes_agent_client.FALLBACK_REPLY
+
     async def chat(self, goal_handle: ServerGoalHandle):
         """
         Action server callback for 'chat':
@@ -517,33 +613,16 @@ class ChatNode(Node):
 
         try:
             if is_hermes:
-                # Hermes keeps its own durable memory per chat → do NOT replay history.
-                # Persona comes from the personality's Hermes profile (-p), memory from the
-                # named session (-c). Verified: both compose correctly.
-                personality_id = getattr(personality, "personality_id", None)
-                # Prefer live env so launch.py / ops can tune without code changes.
-                timeout = int(
-                    os.environ.get(
-                        "PIB_HERMES_TIMEOUT",
-                        hermes_agent_client.DEFAULT_TIMEOUT_SECONDS,
-                    )
+                reply_text = self._run_hermes_turn(
+                    text=content,
+                    chat_id=chat_id,
+                    personality_id=getattr(personality, "personality_id", None),
+                    description=description,
+                    goal_handle=goal_handle,
                 )
-
-                def _hermes_turn():
-                    if personality_id:
-                        hermes_agent_client.ensure_profile(
-                            personality_id, soul_text=description
-                        )
-                    return hermes_agent_client.run_turn(
-                        text=content,
-                        chat_id=chat_id,
-                        personality_id=personality_id,
-                        timeout=timeout,
-                    )
-
-                reply_text = await asyncio.get_running_loop().run_in_executor(
-                    None, _hermes_turn
-                )
+                if goal_handle.is_cancel_requested:
+                    goal_handle.canceled()
+                    return Chat.Result()
                 tokens = [reply_text]
             else:
                 # Pull recent message history for context

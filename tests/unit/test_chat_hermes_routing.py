@@ -5,8 +5,11 @@ rclpy / ROS message types are stubbed so these run without a live ROS env.
 
 from __future__ import annotations
 
+import subprocess
 import sys
+import threading
 import types
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -208,7 +211,36 @@ def chat_node(chat_module):
     node.token = "tok"
     node.history_length = 10
     node.get_camera_image_client = MagicMock()
-    return node
+    node._hermes_executor = ThreadPoolExecutor(
+        max_workers=2, thread_name_prefix="test-hermes-turn"
+    )
+    yield node
+    node._hermes_executor.shutdown(wait=False, cancel_futures=True)
+
+
+def drive_like_rclpy(coro):
+    """Step a coroutine the way rclpy's executor does, with no asyncio loop.
+
+    rclpy.task.Task drives an async execute_callback by calling send() itself; it
+    never installs an asyncio event loop. Using asyncio.run() in a test would
+    therefore hide exactly the failure the robot hits.
+    """
+    assert not _asyncio_loop_running(), "this helper must run without an asyncio loop"
+    try:
+        while True:
+            coro.send(None)
+    except StopIteration as stop:
+        return stop.value
+
+
+def _asyncio_loop_running() -> bool:
+    import asyncio
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return False
+    return True
 
 
 def test_uses_hermes_backend_routing_decision():
@@ -303,7 +335,6 @@ def test_stream_chunks_to_goal_extracts_pib_program(chat_module, chat_node):
 
 
 def test_chat_routes_hermes_without_replaying_history(chat_module, chat_node):
-    import asyncio
     import os
 
     from public_api_client import hermes_agent_client
@@ -346,7 +377,7 @@ def test_chat_routes_hermes_without_replaying_history(chat_module, chat_node):
         os.environ, {"PIB_HERMES_TIMEOUT": "95"}, clear=False
     ):
 
-        result = asyncio.run(chat_node.chat(goal_handle))
+        result = drive_like_rclpy(chat_node.chat(goal_handle))
 
     get_history.assert_not_called()
     chat_completion.assert_not_called()
@@ -361,6 +392,257 @@ def test_chat_routes_hermes_without_replaying_history(chat_module, chat_node):
     assert streamed_tokens == ["Antwort vom Agent."]
     goal_handle.succeed.assert_called_once()
     assert result.text == "Antwort vom Agent."
+
+
+def test_run_hermes_turn_needs_no_asyncio_event_loop(
+    chat_module, chat_node, installed_hermes_bin, tmp_path, monkeypatch
+):
+    """The robot aborted every hermes goal with 'no running event loop'.
+
+    rclpy runs execute_callback on its own executor, so the hermes turn must work
+    from a plain synchronous thread that has no asyncio loop at all.
+    """
+    monkeypatch.setenv("PIB_HERMES_PROFILES_DIR", str(tmp_path / "profiles"))
+    assert not _asyncio_loop_running()
+
+    completed = subprocess.CompletedProcess(
+        args=["hermes"], returncode=0, stdout="Antwort vom Agent.\n", stderr=""
+    )
+    with patch("subprocess.run", return_value=completed):
+        reply = chat_node._run_hermes_turn(
+            text="Hi",
+            chat_id="chat-9",
+            personality_id="pers-1",
+            description="Du bist pib.",
+        )
+
+    assert reply == "Antwort vom Agent."
+
+
+def test_run_hermes_turn_reuses_the_shared_pool(chat_module, chat_node):
+    """A pool per request would leak threads under repeated chat goals."""
+    seen = []
+
+    def record(fn):
+        seen.append(fn)
+        future = MagicMock()
+        future.result.return_value = "ok"
+        return future
+
+    with patch.object(chat_node._hermes_executor, "submit", side_effect=record):
+        for _ in range(3):
+            chat_node._run_hermes_turn(
+                text="Hi", chat_id="c", personality_id=None, description="d"
+            )
+
+    assert len(seen) == 3
+
+
+def test_chat_hermes_branch_survives_the_rclpy_task_driver(chat_module, chat_node):
+    """End-to-end regression for the aborted goal, driven exactly like rclpy does."""
+    from public_api_client import hermes_agent_client
+
+    Chat = chat_module.Chat
+
+    personality = MagicMock()
+    personality.message_history = 5
+    personality.description = "Du bist pib."
+    personality.personality_id = "pers-1"
+    personality.assistant_model.api_name = "hermes-agent"
+    personality.assistant_model.has_image_support = True
+
+    goal_handle = MagicMock()
+    goal_handle.is_cancel_requested = False
+    goal_handle.request = Chat.Goal()
+    goal_handle.request.chat_id = "chat-9"
+    goal_handle.request.text = "Hi"
+    goal_handle.request.generate_code = False
+
+    with patch.object(
+        chat_module.voice_assistant_client,
+        "get_personality_from_chat",
+        return_value=(True, personality),
+    ), patch.object(
+        hermes_agent_client, "ensure_profile", return_value="/tmp/p"
+    ), patch.object(
+        hermes_agent_client, "run_turn", return_value="Antwort vom Agent."
+    ), patch.object(
+        chat_node,
+        "_stream_chunks_to_goal",
+        return_value=(None, None, "Antwort vom Agent."),
+    ):
+        result = drive_like_rclpy(chat_node.chat(goal_handle))
+
+    goal_handle.abort.assert_not_called()
+    goal_handle.succeed.assert_called_once()
+    assert result.text == "Antwort vom Agent."
+
+
+def test_run_hermes_turn_falls_back_when_the_agent_times_out(
+    chat_module, chat_node, installed_hermes_bin, tmp_path, monkeypatch
+):
+    from public_api_client import hermes_agent_client
+
+    monkeypatch.setenv("PIB_HERMES_PROFILES_DIR", str(tmp_path / "profiles"))
+
+    with patch(
+        "subprocess.run",
+        side_effect=subprocess.TimeoutExpired(cmd="hermes", timeout=1),
+    ):
+        reply = chat_node._run_hermes_turn(
+            text="Hi",
+            chat_id="chat-9",
+            personality_id="pers-1",
+            description="Du bist pib.",
+            timeout=1,
+        )
+
+    assert reply == hermes_agent_client.FALLBACK_REPLY
+
+
+def test_run_hermes_turn_falls_back_when_the_worker_raises(chat_module, chat_node):
+    """Even a broken profile write must yield speakable text, never an exception."""
+    from public_api_client import hermes_agent_client
+
+    with patch.object(
+        hermes_agent_client, "ensure_profile", side_effect=OSError("read-only fs")
+    ):
+        reply = chat_node._run_hermes_turn(
+            text="Hi", chat_id="chat-9", personality_id="pers-1", description="d"
+        )
+
+    assert reply == hermes_agent_client.FALLBACK_REPLY
+
+
+def test_chat_hermes_goal_succeeds_with_fallback_when_the_agent_fails(
+    chat_module, chat_node
+):
+    """A failing agent must not abort the goal: the fallback sentence is spoken."""
+    from public_api_client import hermes_agent_client
+
+    Chat = chat_module.Chat
+
+    personality = MagicMock()
+    personality.message_history = 5
+    personality.description = "Du bist pib."
+    personality.personality_id = "pers-1"
+    personality.assistant_model.api_name = "hermes-agent"
+    personality.assistant_model.has_image_support = False
+
+    goal_handle = MagicMock()
+    goal_handle.is_cancel_requested = False
+    goal_handle.request = Chat.Goal()
+    goal_handle.request.chat_id = "chat-9"
+    goal_handle.request.text = "Hi"
+    goal_handle.request.generate_code = False
+
+    with patch.object(
+        chat_module.voice_assistant_client,
+        "get_personality_from_chat",
+        return_value=(True, personality),
+    ), patch.object(
+        hermes_agent_client, "ensure_profile", return_value="/tmp/p"
+    ), patch.object(
+        hermes_agent_client, "run_turn", side_effect=RuntimeError("agent exploded")
+    ), patch.object(
+        chat_node,
+        "_stream_chunks_to_goal",
+        return_value=(None, None, hermes_agent_client.FALLBACK_REPLY),
+    ):
+        result = drive_like_rclpy(chat_node.chat(goal_handle))
+
+    goal_handle.abort.assert_not_called()
+    goal_handle.succeed.assert_called_once()
+    assert result.text == hermes_agent_client.FALLBACK_REPLY
+
+
+def test_run_hermes_turn_gives_up_when_the_goal_is_cancelled(chat_module, chat_node):
+    """Cancelling mid-subprocess returns control without crashing the node."""
+    from public_api_client import hermes_agent_client
+
+    release = threading.Event()
+    goal_handle = MagicMock()
+    goal_handle.is_cancel_requested = True
+
+    def _blocking_turn(*_args, **_kwargs):
+        release.wait(timeout=5)
+        return "too late"
+
+    with patch.object(hermes_agent_client, "run_turn", side_effect=_blocking_turn):
+        reply = chat_node._run_hermes_turn(
+            text="Hi",
+            chat_id="chat-9",
+            personality_id=None,
+            description="d",
+            goal_handle=goal_handle,
+        )
+    release.set()
+
+    assert reply == ""
+
+
+def test_chat_hermes_cancelled_goal_is_marked_canceled(chat_module, chat_node):
+    from public_api_client import hermes_agent_client
+
+    Chat = chat_module.Chat
+
+    personality = MagicMock()
+    personality.message_history = 5
+    personality.description = "Du bist pib."
+    personality.personality_id = "pers-1"
+    personality.assistant_model.api_name = "hermes-agent"
+    personality.assistant_model.has_image_support = False
+
+    goal_handle = MagicMock()
+    goal_handle.is_cancel_requested = True
+    goal_handle.request = Chat.Goal()
+    goal_handle.request.chat_id = "chat-9"
+    goal_handle.request.text = "Hi"
+    goal_handle.request.generate_code = False
+
+    with patch.object(
+        chat_module.voice_assistant_client,
+        "get_personality_from_chat",
+        return_value=(True, personality),
+    ), patch.object(
+        hermes_agent_client, "ensure_profile", return_value="/tmp/p"
+    ), patch.object(
+        hermes_agent_client, "run_turn", return_value="ignored"
+    ), patch.object(
+        chat_node, "_stream_chunks_to_goal"
+    ) as stream:
+        result = drive_like_rclpy(chat_node.chat(goal_handle))
+
+    stream.assert_not_called()
+    goal_handle.canceled.assert_called_once()
+    goal_handle.abort.assert_not_called()
+    goal_handle.succeed.assert_not_called()
+    assert result.text == ""
+
+
+def test_chat_module_does_not_reintroduce_asyncio_loop_lookup():
+    """Guard the regression at the source level, not just behaviourally.
+
+    Checked on the AST so the explanatory docstrings may keep naming the call
+    that broke the robot.
+    """
+    import ast
+
+    source = (
+        REPO_ROOT / "ros_packages" / "voice_assistant" / "voice_assistant" / "chat.py"
+    ).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+
+    referenced = {
+        node.id for node in ast.walk(tree) if isinstance(node, ast.Name)
+    } | {
+        alias.name.split(".")[0]
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Import)
+        for alias in node.names
+    }
+
+    assert "asyncio" not in referenced
 
 
 def test_chat_legacy_path_still_uses_public_api(chat_module, chat_node):
