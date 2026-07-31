@@ -277,6 +277,79 @@ def test_preflight_accepts_an_installed_binary(
     logger.error.assert_not_called()
 
 
+def test_preflight_runs_a_bounded_liveness_probe(
+    chat_module, chat_node, installed_hermes_bin
+):
+    """The probe must execute the CLI, not just stat it, and stay bounded."""
+    logger = MagicMock()
+    chat_node.get_logger = MagicMock(return_value=logger)
+    completed = subprocess.CompletedProcess(
+        args=[str(installed_hermes_bin), "--version"],
+        returncode=0,
+        stdout="Hermes Agent v0.18.2\nPython: 3.11.15\n",
+        stderr="",
+    )
+
+    with patch("subprocess.run", return_value=completed) as run:
+        assert chat_node._preflight_hermes_binary() is True
+
+    argv, kwargs = run.call_args[0][0], run.call_args[1]
+    assert argv == [str(installed_hermes_bin), "--version"]
+    assert 0 < kwargs["timeout"] <= 10
+    logger.error.assert_not_called()
+    # The version banner belongs in the healthy log line, as the proof of life.
+    assert "Hermes Agent v0.18.2" in logger.info.call_args[0][0]
+
+
+def test_preflight_fails_and_reports_stderr_when_the_probe_exits_nonzero(
+    chat_module, chat_node, installed_hermes_bin
+):
+    """The exact failure seen on the robot: wrapper present, interpreter gone.
+
+    The captured stderr is what pinpointed the missing uv mount, so it has to
+    reach the log; without it the operator only sees 'agent unavailable'.
+    """
+    stderr = (
+        "/home/pib/.local/bin/hermes: line 4: "
+        "/home/pib/.hermes/hermes-agent/venv/bin/python: "
+        "No such file or directory\n"
+    )
+    completed = subprocess.CompletedProcess(
+        args=[str(installed_hermes_bin), "--version"],
+        returncode=127,
+        stdout="",
+        stderr=stderr,
+    )
+    logger = MagicMock()
+    chat_node.get_logger = MagicMock(return_value=logger)
+
+    with patch("subprocess.run", return_value=completed):
+        assert chat_node._preflight_hermes_binary() is False
+
+    logger.error.assert_called_once()
+    message = logger.error.call_args[0][0]
+    assert "127" in message
+    assert "venv/bin/python: No such file or directory" in message
+    assert "fall back" in message
+
+
+def test_preflight_fails_without_raising_when_the_probe_times_out(
+    chat_module, chat_node, installed_hermes_bin
+):
+    """A wedged CLI must not turn into a node that refuses to start."""
+    logger = MagicMock()
+    chat_node.get_logger = MagicMock(return_value=logger)
+
+    with patch(
+        "subprocess.run",
+        side_effect=subprocess.TimeoutExpired(cmd="hermes --version", timeout=5),
+    ):
+        assert chat_node._preflight_hermes_binary() is False
+
+    logger.error.assert_called_once()
+    assert "fall back" in logger.error.call_args[0][0]
+
+
 def test_stream_chunks_to_goal_splits_sentences(chat_module, chat_node):
     goal_handle = MagicMock()
     goal_handle.is_cancel_requested = False

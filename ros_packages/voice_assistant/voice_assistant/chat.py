@@ -41,6 +41,11 @@ HERMES_CANCEL_POLL_SECONDS = 0.2
 # can never hold a goal open forever.
 HERMES_WAIT_GRACE_SECONDS = 15
 
+# Upper bound for the startup liveness probe. Node construction blocks on it, so
+# it stays short; a failed probe only downgrades hermes personalities to the
+# fallback reply and must never keep the node from starting.
+HERMES_PROBE_TIMEOUT_SECONDS = 5
+
 
 class ChatNode(Node):
     """
@@ -133,23 +138,39 @@ class ChatNode(Node):
         return super().destroy_node()
 
     def _preflight_hermes_binary(self) -> bool:
-        """Report at startup whether the configured Hermes CLI can be executed.
+        """Report at startup whether the configured Hermes CLI actually runs.
 
         Without this, a robot whose hermes install is missing or not mounted looks
         healthy while every hermes-agent personality quietly answers with the
         fallback sentence. Legacy personalities are unaffected, so this only logs.
+
+        This runs the CLI instead of merely stat-ing it. A file check passed on a
+        live robot whose CLI died with exit 127 on every turn, because the wrapper
+        execs a venv interpreter that was not mounted into the container.
         """
         path = hermes_agent_client.hermes_bin()
-        if hermes_agent_client.hermes_binary_available():
-            self.get_logger().info(f"hermes agent binary available at {path}")
+        try:
+            ok, detail = hermes_agent_client.probe_binary(
+                timeout=HERMES_PROBE_TIMEOUT_SECONDS
+            )
+        except Exception as exc:
+            # The probe may never be the reason the chat node fails to come up.
+            ok, detail = False, f"probe raised {exc!r}"
+
+        if ok:
+            self.get_logger().info(
+                f"hermes agent binary available at {path}"
+                + (f" ({detail})" if detail else "")
+            )
             return True
 
         self.get_logger().error(
-            f"hermes agent binary not found or not executable at '{path}': "
-            "personalities using the 'hermes-agent' model will fall back to a "
-            "canned reply. Install the hermes CLI for the pib user and check the "
-            "PIB_HERMES_BIN value and bind mount of the ros-voice-assistant "
-            "service."
+            f"hermes agent preflight failed for '{path}': {detail}. "
+            "Personalities using the 'hermes-agent' model will fall back to a "
+            "canned reply. Check that the hermes CLI is installed for the pib "
+            "user, that PIB_HERMES_BIN points at it, and that ~/.hermes, the "
+            "wrapper and the uv-managed Python directory are all bind-mounted "
+            "into the ros-voice-assistant service."
         )
         return False
 

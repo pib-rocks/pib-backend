@@ -6,7 +6,9 @@ retains memory across turns and across robot restarts.
 The profile location is imported from pib_hermes_config, which the Flask API uses
 as well: the SOUL.md the API writes must be the very file this agent reads. Both
 the binary and the profiles directory are bind-mounted into the voice-assistant
-container; see docker-compose.yaml.
+container; see docker-compose.yaml. That mount list also needs the uv-managed
+Python directory, because the CLI is a wrapper that execs a venv interpreter
+symlinked into it — probe_binary() is what catches a deployment that forgot it.
 """
 import logging
 import os
@@ -28,6 +30,11 @@ SESSION_PREFIX = "pib_chat_"
 HERMES_API_NAME = "hermes-agent"
 DEFAULT_TIMEOUT_SECONDS = int(os.environ.get("PIB_HERMES_TIMEOUT", "120"))
 
+# Startup liveness probe only. Deliberately small: it runs before the chat node
+# is up, so it must diagnose a broken install without delaying startup. A real
+# `hermes --version` answers in well under a second.
+PROBE_TIMEOUT_SECONDS = 5
+
 _UNSAFE = re.compile(r"[^A-Za-z0-9_-]")
 
 
@@ -40,6 +47,43 @@ def hermes_binary_available() -> bool:
     """True when the configured Hermes CLI exists and may be executed."""
     path = hermes_bin()
     return os.path.isfile(path) and os.access(path, os.X_OK)
+
+
+def probe_binary(timeout: int = PROBE_TIMEOUT_SECONDS) -> tuple[bool, str]:
+    """Check that the configured CLI actually runs. Returns (ok, detail).
+
+    An existence check is not sufficient and has already produced a false green
+    on a live robot: the CLI is a small wrapper script that execs an interpreter
+    inside the hermes venv, and that interpreter is a symlink into uv-managed
+    Python outside HERMES_HOME. When that directory is not mounted, the wrapper
+    is present and executable yet exits 127. Only running it reveals that.
+
+    `--version` is used because it is cheap, offline and needs no LLM provider.
+    `detail` carries the captured stderr on failure; that text is what pinpoints
+    a broken install, so callers should log it verbatim.
+    """
+    path = hermes_bin()
+    if not hermes_binary_available():
+        return False, f"no executable file at '{path}'"
+    try:
+        result = subprocess.run(
+            [path, "--version"],
+            capture_output=True, text=True, timeout=timeout, check=False,
+        )
+    except subprocess.TimeoutExpired:
+        # A probe timeout condemns the probe, not the install: report it as a
+        # failure but never let it hold up node startup any longer than this.
+        return False, f"'{path} --version' did not answer within {timeout}s"
+    except Exception as exc:
+        return False, f"'{path} --version' could not be started: {exc}"
+
+    if result.returncode != 0:
+        stderr = (result.stderr or result.stdout or "").strip()[:500]
+        return False, (
+            f"'{path} --version' exited {result.returncode}: {stderr}"
+        )
+    banner = (result.stdout or "").strip().splitlines()
+    return True, (banner[0][:200] if banner else "")
 
 
 def uses_hermes_backend(api_name: Optional[str]) -> bool:
