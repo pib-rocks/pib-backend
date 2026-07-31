@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 from typing import Generator
 
 import pytest
+
+# public_api_client.__init__ requires a tryb URL; unit tests never hit the network.
+os.environ.setdefault("TRYB_URL_PREFIX", "http://localhost/test")
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 FLASK_DIR = REPO_ROOT / "pib_api" / "flask"
