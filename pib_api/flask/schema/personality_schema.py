@@ -1,6 +1,7 @@
 from marshmallow import fields, validate
 from model.personality_model import Personality
 from schema.sql_auto_with_camel_case_schema import SQLAutoWithCamelCaseSchema
+from service import soul_service
 
 
 class PersonalitySchemaSQLAutoWith(SQLAutoWithCamelCaseSchema):
@@ -13,6 +14,10 @@ class PersonalitySchemaSQLAutoWith(SQLAutoWithCamelCaseSchema):
         dump_default="local_whisper",
         load_default="local_whisper",
     )
+    soul_path = fields.Method("get_soul_path", dump_only=True)
+
+    def get_soul_path(self, obj: Personality) -> str:
+        return soul_service.soul_path_for(obj.personality_id)
 
 
 personality_schema = PersonalitySchemaSQLAutoWith(exclude=("id",))

@@ -20,6 +20,8 @@ class AssistantModel:
 
 class Personality:
     def __init__(self, personality_dto: dict[str, Any]):
+        self.personality_id = personality_dto.get("personalityId")
+        self.soul_path = personality_dto.get("soulPath")
         self.gender = personality_dto["gender"]
         self.language = "German"  # TODO: language should be stored as part of a personality -> personality_dto["language"]
         self.pause_threshold = personality_dto["pauseThreshold"]
