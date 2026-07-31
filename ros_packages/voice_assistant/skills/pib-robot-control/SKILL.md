@@ -1,23 +1,34 @@
 ---
 name: pib-robot-control
-description: Interim reference for pib voice-assistant REST and Blockly controls.
+description: Use schema-validated pib MCP tools for robot capabilities.
 ---
 
-# pib robot control — INTERIM
+# pib robot control
 
-> **INTERIM ONLY:** This skill is a bridge for PR-1505 and will be superseded by
-> the schema-validated pib MCP server in Jira PR-1506. The `terminal` toolset
-> stays disabled for now. Do not use a shell, `curl`, or arbitrary commands to
-> reach these APIs.
+Use the `pib_*` MCP tools. The `terminal` toolset stays disabled; do not use a
+shell, `curl`, arbitrary commands, or raw ROS calls to control the robot.
 
-Use only the HTTP capability explicitly supplied by the runtime and only against
-the robot's configured API origin. Paths below are rooted at `/api/v1`. Treat
-actuator writes and program execution as side effects: perform them only when
-the user clearly requests them, preserve configured limits, and never invent
-identifiers or payload fields. Prefer a GET before a write.
+Treat actuator writes and program execution as side effects: perform them only
+when the user clearly requests them, preserve configured limits, and never
+invent identifiers or payload fields. Prefer a read tool before a write.
 
-## Voice-assistant REST surface
+## MCP tool surface
 
+- Inspect with `pib_list_motors`, `pib_get_state`, `pib_list_poses`, and
+  `pib_list_programs`.
+- Capture a camera frame with `pib_capture_image`.
+- Actuate only on explicit request with `pib_move_motor`, `pib_apply_pose`,
+  `pib_run_program`, `pib_set_led`, or `pib_set_relay`. These tools are blocked
+  by default and require operator enablement.
+- Append one durable lesson with `pib_soul_append`. Lessons must be non-empty
+  and no longer than 500 characters; this operation never replaces the SOUL.
+
+## Backend reference
+
+The MCP server owns access to the following implementation interfaces. They are
+listed for context, not for direct invocation:
+
+### Voice-assistant REST surface
 - `GET /api/v1/assistant-model` — list selectable assistant models.
 - `GET /api/v1/voice-assistant/personality` — list personalities.
 - `GET /api/v1/voice-assistant/personality/{personality_id}` — read one

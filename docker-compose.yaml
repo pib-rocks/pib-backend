@@ -117,6 +117,9 @@ services:
       - ALSA_CARD=Generic
       - FLASK_API_BASE_URL=http://flask-app:5000
       - VOICE_ASSISTANT_DIR=/app/ros2_ws/voice_assistant
+      - PIB_MCP_ROSBRIDGE_URL=ws://rosbridge-ws:9090
+      # Hardware-changing MCP calls remain blocked unless explicitly enabled.
+      - PIB_MCP_ENABLE_ACTUATION=false
       # Hermes-agent personalities: same profiles dir as flask-app, so the
       # SOUL.md the API writes is the file the agent loads.
       - PIB_HERMES_PROFILES_DIR=/home/pib/.hermes/profiles
