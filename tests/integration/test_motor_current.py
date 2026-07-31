@@ -26,6 +26,9 @@ if "rclpy" not in sys.modules:
         def create_publisher(self, msg_type, topic, qos):
             return self.motor_current_publisher
 
+        def create_timer(self, period, callback):
+            return MagicMock(period=period, callback=callback)
+
     mock_node_mod.Node = FakeNode
     mock_rclpy.node = mock_node_mod
     sys.modules["rclpy"] = mock_rclpy

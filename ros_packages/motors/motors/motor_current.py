@@ -19,6 +19,7 @@ class MotorCurrent(Node):
 
         self.pin_to_motors = {}
         self.setup_callbacks()
+        self.timer = self.create_timer(1.0, self.publish_motor_current)
 
         self.get_logger().info("Now Running MOTOR CURRENT")
 
