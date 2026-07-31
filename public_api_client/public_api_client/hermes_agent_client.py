@@ -83,12 +83,18 @@ def ensure_profile(personality_id: str, soul_text: str, timeout: int = 60) -> st
     """
     pdir = profile_dir_for(personality_id)
     if not os.path.isdir(pdir):
-        subprocess.run(
-            [hermes_bin(), "profile", "create", profile_name_for(personality_id),
-             "--clone", "--no-alias",
-             "--description", f"pib personality {personality_id}"],
-            capture_output=True, text=True, timeout=timeout, check=False,
-        )
+        if hermes_binary_available():
+            subprocess.run(
+                [hermes_bin(), "profile", "create", profile_name_for(personality_id),
+                 "--clone", "--no-alias",
+                 "--description", f"pib personality {personality_id}"],
+                capture_output=True, text=True, timeout=timeout, check=False,
+            )
+        else:
+            logging.error(
+                "cannot create hermes profile %s: binary %s is missing",
+                profile_name_for(personality_id), hermes_bin(),
+            )
     os.makedirs(pdir, exist_ok=True)
     with open(soul_path_for(personality_id), "w", encoding="utf-8") as fh:
         fh.write(soul_text or DEFAULT_SOUL)
@@ -127,6 +133,16 @@ def run_turn(
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
 ) -> str:
     """Run one conversational turn. Always returns speakable text."""
+    if not hermes_binary_available():
+        # Distinct from a timeout: the agent was never started at all.
+        logging.error(
+            "hermes binary %s is missing or not executable (chat=%s); "
+            "answering with the fallback reply. Install the hermes CLI for the "
+            "pib user and check the PIB_HERMES_BIN mount.",
+            hermes_bin(), chat_id,
+        )
+        return FALLBACK_REPLY
+
     cmd = build_command(text, chat_id, personality_id, toolsets)
     try:
         result = subprocess.run(

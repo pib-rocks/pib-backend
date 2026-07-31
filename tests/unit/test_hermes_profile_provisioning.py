@@ -4,7 +4,9 @@ from unittest.mock import patch
 from public_api_client.hermes_agent_client import ensure_profile, profile_dir_for
 
 
-def test_ensure_profile_creates_profile_when_missing(tmp_path, monkeypatch):
+def test_ensure_profile_creates_profile_when_missing(
+    tmp_path, monkeypatch, installed_hermes_bin
+):
     monkeypatch.setenv("PIB_HERMES_PROFILES_DIR", str(tmp_path))
     with patch("public_api_client.hermes_agent_client.subprocess.run") as run:
         pdir = ensure_profile("p-9", soul_text="Du bist pib.")
@@ -27,5 +29,17 @@ def test_ensure_profile_is_idempotent_when_present(tmp_path, monkeypatch):
         ensure_profile("p-9", soul_text="Du bist pib.")
 
     run.assert_not_called()          # no re-create
+    with open(os.path.join(pdir, "SOUL.md"), encoding="utf-8") as fh:
+        assert fh.read() == "Du bist pib."
+
+
+def test_ensure_profile_still_writes_the_soul_without_a_binary(tmp_path, monkeypatch):
+    monkeypatch.setenv("PIB_HERMES_PROFILES_DIR", str(tmp_path / "profiles"))
+    monkeypatch.setenv("PIB_HERMES_BIN", str(tmp_path / "not-installed" / "hermes"))
+
+    with patch("public_api_client.hermes_agent_client.subprocess.run") as run:
+        pdir = ensure_profile("p-9", soul_text="Du bist pib.")
+
+    run.assert_not_called()
     with open(os.path.join(pdir, "SOUL.md"), encoding="utf-8") as fh:
         assert fh.read() == "Du bist pib."

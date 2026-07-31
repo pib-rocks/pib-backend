@@ -220,6 +220,31 @@ def test_uses_hermes_backend_routing_decision():
     assert uses_hermes_backend(None) is False
 
 
+def test_preflight_logs_an_error_when_the_binary_is_missing(
+    chat_module, chat_node, tmp_path, monkeypatch
+):
+    monkeypatch.setenv("PIB_HERMES_BIN", str(tmp_path / "not-installed" / "hermes"))
+    logger = MagicMock()
+    chat_node.get_logger = MagicMock(return_value=logger)
+
+    assert chat_node._preflight_hermes_binary() is False
+
+    logger.error.assert_called_once()
+    message = logger.error.call_args[0][0]
+    assert "hermes" in message and "fall back" in message
+
+
+def test_preflight_accepts_an_installed_binary(
+    chat_module, chat_node, installed_hermes_bin
+):
+    logger = MagicMock()
+    chat_node.get_logger = MagicMock(return_value=logger)
+
+    assert chat_node._preflight_hermes_binary() is True
+
+    logger.error.assert_not_called()
+
+
 def test_stream_chunks_to_goal_splits_sentences(chat_module, chat_node):
     goal_handle = MagicMock()
     goal_handle.is_cancel_requested = False

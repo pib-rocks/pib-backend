@@ -106,7 +106,30 @@ class ChatNode(Node):
             callback_group=ReentrantCallbackGroup(),
         )
 
+        self._preflight_hermes_binary()
+
         self.get_logger().info("Now running CHAT")
+
+    def _preflight_hermes_binary(self) -> bool:
+        """Report at startup whether the configured Hermes CLI can be executed.
+
+        Without this, a robot whose hermes install is missing or not mounted looks
+        healthy while every hermes-agent personality quietly answers with the
+        fallback sentence. Legacy personalities are unaffected, so this only logs.
+        """
+        path = hermes_agent_client.hermes_bin()
+        if hermes_agent_client.hermes_binary_available():
+            self.get_logger().info(f"hermes agent binary available at {path}")
+            return True
+
+        self.get_logger().error(
+            f"hermes agent binary not found or not executable at '{path}': "
+            "personalities using the 'hermes-agent' model will fall back to a "
+            "canned reply. Install the hermes CLI for the pib user and check the "
+            "PIB_HERMES_BIN value and bind mount of the ros-voice-assistant "
+            "service."
+        )
+        return False
 
     # ---------- common helpers used by Action and Service ----------
 

@@ -80,6 +80,21 @@ def app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.fixture()
+def installed_hermes_bin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A real executable at PIB_HERMES_BIN, so the preflight passes anywhere.
+
+    Tests that mock out subprocess still have to get past the binary check, and
+    the developer machines that happen to have hermes installed must not be what
+    makes them pass.
+    """
+    binary = tmp_path / "hermes"
+    binary.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    binary.chmod(0o755)
+    monkeypatch.setenv("PIB_HERMES_BIN", str(binary))
+    return binary
+
+
+@pytest.fixture()
 def app_ctx(app) -> Generator:
     with app.app_context():
         yield
