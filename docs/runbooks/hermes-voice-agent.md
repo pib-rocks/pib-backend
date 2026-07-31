@@ -37,7 +37,45 @@ success (`soulPath=...`) while the agent sees nothing on disk.
 
 `ros-voice-assistant` additionally mounts all of `/home/pib/.hermes` (sessions,
 credentials, the hermes-agent venv) and the CLI wrapper
-`/home/pib/.local/bin/hermes`.
+`/home/pib/.local/bin/hermes`. Those two are not sufficient on their own — see
+2a.
+
+### 2a. uv-managed Python directory (easy to miss, breaks everything)
+
+`/home/pib/.local/share/uv` must be bind-mounted into `ros-voice-assistant` at
+**the same path**, read-only. Three mounts are required together, and the CLI is
+non-functional if any one of them is absent:
+
+| Host path | Why |
+|---|---|
+| `/home/pib/.hermes` | profiles, sessions, credentials, the hermes-agent venv |
+| `/home/pib/.local/bin/hermes` | the CLI wrapper (entry point) |
+| `/home/pib/.local/share/uv` | the interpreter and stdlib the venv symlinks to |
+
+The reason for the third one: `/home/pib/.local/bin/hermes` is a tiny wrapper
+script that execs the interpreter inside the venv, and that interpreter is a
+symlink out of `~/.hermes` into uv-managed Python:
+
+```text
+/home/pib/.hermes/hermes-agent/venv/bin/python
+  -> /home/pib/.local/share/uv/python/cpython-3.11-linux-<arch>-gnu/bin/python3.11
+```
+
+Mounting only `~/.hermes` and the wrapper leaves that symlink dangling inside the
+container, so every hermes call dies immediately:
+
+```text
+/home/pib/.local/bin/hermes: line 4:
+  /home/pib/.hermes/hermes-agent/venv/bin/python: No such file or directory
+```
+
+The exit status is `127`, and the only user-visible symptom is that every
+hermes-agent personality answers with the fallback sentence. The container's own
+`python3.12` cannot be substituted, because the venv is built against 3.11.
+
+Mount the whole `uv` directory rather than one versioned `cpython-3.11.x` path: a
+`hermes update` can change the patch version, which would silently break a
+pinned mount.
 
 ### 3. Environment variables
 
@@ -55,16 +93,37 @@ Defaults in code match those values; prefer setting them explicitly in compose.
 
 ## Verify the wiring end to end
 
-1. **ChatNode preflight** — after starting `ros-voice-assistant`, the chat node
-   logs either:
-   - `hermes agent binary available at /home/pib/.local/bin/hermes`, or
-   - an error that the binary is missing and hermes-agent personalities will fall
-     back.
-2. **Binary visible inside the container:**
+1. **Run the CLI inside the container — the definitive check:**
+
    ```bash
-   docker exec <ros-voice-assistant-container> ls -l /home/pib/.local/bin/hermes
-   docker exec <ros-voice-assistant-container> /home/pib/.local/bin/hermes --help
+   docker exec <ros-voice-assistant-container> /home/pib/.local/bin/hermes --version
    ```
+
+   Use the absolute path: `/home/pib/.local/bin` is not on the container's `PATH`,
+   so a bare `docker exec <container> hermes --version` fails with "executable
+   file not found" even on a healthy robot. The absolute path is also exactly what
+   `PIB_HERMES_BIN` points at, so this runs the same binary the chat node runs.
+
+   A zero exit status with a version banner is the only trustworthy evidence that
+   the agent path works. Do **not** rely on file-existence checks such as
+   `ls -l /home/pib/.local/bin/hermes`: the wrapper file was present, executable
+   and correctly mounted on a robot where every turn failed with exit `127`,
+   because the interpreter it execs was not mounted (see 2a). That check reported
+   a false green while the agent was completely broken.
+
+   If it exits non-zero, read the stderr it prints — that message names the exact
+   missing path. Exit `127` naming a path under `venv/bin` means the uv mount from
+   2a is missing.
+
+2. **ChatNode preflight** — at startup the chat node now *executes*
+   `<PIB_HERMES_BIN> --version` with a short timeout, and logs either:
+   - `hermes agent binary available at /home/pib/.local/bin/hermes (Hermes Agent
+     v...)`, or
+   - `hermes agent preflight failed for '<path>': ...` including the captured
+     stderr, plus a note that hermes-agent personalities will fall back.
+
+   A failed probe never blocks or crashes startup; legacy personalities keep
+   working.
 3. **SOUL.md on the host** — edit a personality description in Cerebra (or PUT
    the personality). Confirm the file appears on the **host**, not only inside
    the flask container:
