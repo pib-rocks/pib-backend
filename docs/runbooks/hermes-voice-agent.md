@@ -1,5 +1,77 @@
 # Hermes Voice Agent Runbook
 
+## Host deployment requirements
+
+These are preconditions discovered on a live robot. Without them, hermes-agent
+personalities appear healthy in Cerebra / the API while every turn falls back.
+
+### 1. Hermes CLI on the host (pib user)
+
+The CLI must be installed for the `pib` user at:
+
+```text
+/home/pib/.local/bin/hermes
+```
+
+`setup/setup-pib.sh` installs it idempotently (`install_hermes_cli`). Manual
+equivalent:
+
+```bash
+sudo -u pib -H bash -c \
+  'curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash -s -- --skip-setup --skip-browser'
+```
+
+Provider credentials are still a one-time step after install:
+
+```bash
+sudo -u pib -H hermes setup
+# or write keys into /home/pib/.hermes/.env
+```
+
+### 2. Shared profiles directory (bind-mounted into both services)
+
+`/home/pib/.hermes/profiles` must exist on the **host** and is bind-mounted into
+**both** `flask-app` and `ros-voice-assistant` at the same path. The API writes
+`SOUL.md` there; the agent reads it. If the mount is missing, the API reports
+success (`soulPath=...`) while the agent sees nothing on disk.
+
+`ros-voice-assistant` additionally mounts all of `/home/pib/.hermes` (sessions,
+credentials, the hermes-agent venv) and the CLI wrapper
+`/home/pib/.local/bin/hermes`.
+
+### 3. Environment variables
+
+Set in `docker-compose.yaml` and forwarded into the chat node via
+`ros_packages/voice_assistant/launch/launch.py`:
+
+| Variable | Typical value | Purpose |
+|---|---|---|
+| `PIB_HERMES_PROFILES_DIR` | `/home/pib/.hermes/profiles` | Shared profiles root (flask-app + ros-voice-assistant) |
+| `PIB_HERMES_BIN` | `/home/pib/.local/bin/hermes` | CLI wrapper path (ros-voice-assistant / ChatNode) |
+| `HERMES_HOME` | `/home/pib/.hermes` | Sessions, credentials, hermes-agent install (ros-voice-assistant) |
+| `PIB_HERMES_TIMEOUT` | `120` (default) | Per-turn subprocess timeout in seconds |
+
+Defaults in code match those values; prefer setting them explicitly in compose.
+
+## Verify the wiring end to end
+
+1. **ChatNode preflight** — after starting `ros-voice-assistant`, the chat node
+   logs either:
+   - `hermes agent binary available at /home/pib/.local/bin/hermes`, or
+   - an error that the binary is missing and hermes-agent personalities will fall
+     back.
+2. **Binary visible inside the container:**
+   ```bash
+   docker exec <ros-voice-assistant-container> ls -l /home/pib/.local/bin/hermes
+   docker exec <ros-voice-assistant-container> /home/pib/.local/bin/hermes --help
+   ```
+3. **SOUL.md on the host** — edit a personality description in Cerebra (or PUT
+   the personality). Confirm the file appears on the **host**, not only inside
+   the flask container:
+   ```bash
+   ls -l /home/pib/.hermes/profiles/pib_<personality_id>/SOUL.md
+   ```
+
 ## Switch a personality to Hermes
 
 In Cerebra, open **Voice Assistant**, edit the personality, and select

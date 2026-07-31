@@ -20,12 +20,28 @@ explicit reason when those prerequisites are absent. Set
 `PIB_HERMES_E2E_PERSONALITY_ID` to select the personality and optionally
 `PIB_E2E_BASE_URL` and `PIB_E2E_ROSBRIDGE_URL` for non-default robot addresses.
 
+## Deployment preconditions (not code behaviour)
+
+AC2 (editor text → profile `SOUL.md`) and the whole hermes-agent path depend on
+**deployment wiring**, not on application logic alone:
+
+1. **Host-side Hermes CLI** installed for the `pib` user at
+   `/home/pib/.local/bin/hermes` (provisioned by `setup/setup-pib.sh`).
+2. **Shared profiles bind mount:** `/home/pib/.hermes/profiles` on the host,
+   mounted into both `flask-app` and `ros-voice-assistant` at the same path so
+   the API write and the agent read are the same files.
+
+Unit tests cover the code paths that sync and load `SOUL.md`; they do not prove
+those mounts or the host CLI install exist on a robot. Treat both as deployment
+preconditions when judging live AC2 / hermes-path failures. See
+`docs/runbooks/hermes-voice-agent.md`.
+
 ## Acceptance-criteria traceability
 
 | AC | Acceptance criterion | Coverage | Status |
 |---|---|---|---|
 | AC1 | `hermes-agent` model is selectable. | `tests/unit/test_hermes_assistant_model_seed.py::test_seed_includes_hermes_agent_assistant_model`; live selection in `tests/e2e/test_voice_assistant_hermes_e2e.py::test_voice_assistant_hermes_persists_reply_and_recalls_prior_fact` | Automated; live path is prerequisite-gated |
-| AC2 | Editor text is written to the profile `SOUL.md`. | `tests/unit/test_personality_soul_sync.py::test_update_description_writes_soul_file`; path and round-trip tests in `tests/unit/test_soul_service.py` | Automated backend synchronization; Cerebra editor interaction is covered in the Cerebra repository |
+| AC2 | Editor text is written to the profile `SOUL.md`. | `tests/unit/test_personality_soul_sync.py::test_update_description_writes_soul_file`; path and round-trip tests in `tests/unit/test_soul_service.py` | Automated backend synchronization; **live AC2 also requires the shared profiles bind mount + host CLI install (deployment preconditions, not code behaviour)**; Cerebra editor interaction is covered in the Cerebra repository |
 | AC3 | A non-empty assistant reply is persisted and published. | Live persistence assertion in `test_voice_assistant_hermes_persists_reply_and_recalls_prior_fact`; publication/action result assertions in `tests/unit/test_chat_hermes_routing.py::test_stream_chunks_to_goal_publishes_prior_sentence_as_feedback` and `::test_chat_routes_hermes_without_replaying_history` | Automated; live path is prerequisite-gated |
 | AC4 | Memory is durable across turns and after restart. | Earlier-turn recall assertion in `test_voice_assistant_hermes_persists_reply_and_recalls_prior_fact`; deterministic named-session coverage in `tests/unit/test_hermes_agent_client.py::test_build_command_uses_oneshot_named_session_and_profile` | Cross-turn automated; restart verification manual/pending |
 | AC5 | Chats have isolated Hermes sessions. | Session derivation in `tests/unit/test_hermes_agent_client.py::test_session_name_is_prefixed_and_sanitized` and `::test_session_name_strips_unsafe_chars` | Mapping automated; live two-chat non-leakage test pending |
