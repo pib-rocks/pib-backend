@@ -47,3 +47,49 @@ def build_command(
     if toolsets:
         cmd += ["-t", toolsets]
     return cmd
+
+
+HERMES_HOME = os.environ.get("HERMES_HOME", "/home/pib/.hermes")
+
+
+def profile_dir_for(personality_id: str) -> str:
+    return os.path.join(HERMES_HOME, "profiles", profile_name_for(personality_id))
+
+
+def ensure_profile(personality_id: str, soul_text: str, timeout: int = 60) -> str:
+    """Create the personality's Hermes profile if needed and write its SOUL.md.
+
+    Uses --clone so config.yaml AND the provider credentials are inherited from
+    the active profile; without this the profile has no LLM provider configured.
+    Returns the profile directory.
+    """
+    pdir = profile_dir_for(personality_id)
+    if not os.path.isdir(pdir):
+        subprocess.run(
+            [HERMES_BIN, "profile", "create", profile_name_for(personality_id),
+             "--clone", "--no-alias",
+             "--description", f"pib personality {personality_id}"],
+            capture_output=True, text=True, timeout=timeout, check=False,
+        )
+    os.makedirs(pdir, exist_ok=True)
+    with open(os.path.join(pdir, "SOUL.md"), "w", encoding="utf-8") as fh:
+        fh.write(soul_text or "Du bist pib, ein humanoider Roboter.")
+    return pdir
+
+
+def delete_profile(personality_id: str, timeout: int = 60) -> bool:
+    """Remove a personality's Hermes profile (best-effort).
+
+    NOTE: `hermes profile delete` prompts for confirmation — feed the name on stdin.
+    """
+    name = profile_name_for(personality_id)
+    try:
+        result = subprocess.run(
+            [HERMES_BIN, "profile", "delete", name],
+            input=name + "\n",
+            capture_output=True, text=True, timeout=timeout, check=False,
+        )
+        return result.returncode == 0
+    except Exception as exc:
+        logging.warning("could not delete hermes profile %s: %s", name, exc)
+        return False
