@@ -12,9 +12,15 @@ from typing import Optional
 HERMES_BIN = os.environ.get("PIB_HERMES_BIN", "/home/pib/.local/bin/hermes")
 SESSION_PREFIX = "pib_chat_"
 PROFILE_PREFIX = "pib_"
+HERMES_API_NAME = "hermes-agent"
 DEFAULT_TIMEOUT_SECONDS = int(os.environ.get("PIB_HERMES_TIMEOUT", "120"))
 
 _UNSAFE = re.compile(r"[^A-Za-z0-9_-]")
+
+
+def uses_hermes_backend(api_name: Optional[str]) -> bool:
+    """True when the personality's assistant model should route to Hermes Agent."""
+    return api_name == HERMES_API_NAME
 
 
 def session_name_for(chat_id: str) -> str:

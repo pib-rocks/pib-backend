@@ -3,6 +3,7 @@ from public_api_client.hermes_agent_client import (
     build_command,
     profile_name_for,
     run_turn,
+    uses_hermes_backend,
 )
 import subprocess
 from unittest.mock import patch
@@ -14,6 +15,11 @@ def test_session_name_is_prefixed_and_sanitized():
 
 def test_session_name_strips_unsafe_chars():
     assert session_name_for("a/b c!") == "pib_chat_ab_c"
+
+
+def test_uses_hermes_backend_for_hermes_api_name():
+    assert uses_hermes_backend("hermes-agent") is True
+    assert uses_hermes_backend("gpt-4o") is False
 
 
 def test_profile_name_is_derived_from_personality():

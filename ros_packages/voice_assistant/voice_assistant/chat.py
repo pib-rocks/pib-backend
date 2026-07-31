@@ -1,3 +1,4 @@
+import asyncio
 import re
 from threading import Lock
 from typing import Optional
@@ -23,7 +24,7 @@ from rclpy.publisher import Publisher
 from rclpy.service import Service
 from std_msgs.msg import String
 
-from public_api_client import public_voice_client
+from public_api_client import hermes_agent_client, public_voice_client
 
 # In future, this code will be prepended to the description in a chat-request
 # if it is specified that code should be generated. The text will contain
@@ -486,49 +487,77 @@ class ChatNode(Node):
         if generate_code:
             description = CODE_DESCRIPTION_PREFIX + description
 
-        # Pull recent message history for context
-        with self.voice_assistant_client_lock:
-            successful, chat_messages = voice_assistant_client.get_chat_history(
-                chat_id, self.history_length
-            )
-        if not successful:
-            self.get_logger().error(f"chat with id'{chat_id}' does not exist...")
-            goal_handle.abort()
-            return Chat.Result()
-        message_history = [
-            PublicApiChatMessage(message.content, message.is_user)
-            for message in chat_messages
-        ]
-
-        # get the current image from the camera if available
-        image_base64 = None
-        if personality.assistant_model.has_image_support:
-            if not self.get_camera_image_client.service_is_ready():
-                self.get_logger().warn(
-                    "get_camera_image service is not ready, proceeding without image."
-                )
-                image_base64 = None
-            else:
-                request = GetCameraImage.Request()
-                try:
-                    future = self.get_camera_image_client.call_async(request)
-                    response = await future
-                    image_base64 = response.image_base64
-                except Exception as e:
-                    self.get_logger().error(f"Camera service call failed: {e}")
-                    image_base64 = None
+        is_hermes = hermes_agent_client.uses_hermes_backend(
+            personality.assistant_model.api_name
+        )
 
         try:
-            # Stream tokens from public API (yields text tokens)
-            with self.public_voice_client_lock:
-                tokens = public_voice_client.chat_completion(
-                    text=content,
-                    description=description,
-                    message_history=message_history,
-                    image_base64=image_base64,
-                    model=personality.assistant_model.api_name,
-                    public_api_token=self.token,
+            if is_hermes:
+                # Hermes keeps its own durable memory per chat → do NOT replay history.
+                # Persona comes from the personality's Hermes profile (-p), memory from the
+                # named session (-c). Verified: both compose correctly.
+                personality_id = getattr(personality, "personality_id", None)
+                timeout = hermes_agent_client.DEFAULT_TIMEOUT_SECONDS
+
+                def _hermes_turn():
+                    if personality_id:
+                        hermes_agent_client.ensure_profile(
+                            personality_id, soul_text=description
+                        )
+                    return hermes_agent_client.run_turn(
+                        text=content,
+                        chat_id=chat_id,
+                        personality_id=personality_id,
+                        timeout=timeout,
+                    )
+
+                reply_text = await asyncio.get_running_loop().run_in_executor(
+                    None, _hermes_turn
                 )
+                tokens = [reply_text]
+            else:
+                # Pull recent message history for context
+                with self.voice_assistant_client_lock:
+                    successful, chat_messages = voice_assistant_client.get_chat_history(
+                        chat_id, self.history_length
+                    )
+                if not successful:
+                    self.get_logger().error(f"chat with id'{chat_id}' does not exist...")
+                    goal_handle.abort()
+                    return Chat.Result()
+                message_history = [
+                    PublicApiChatMessage(message.content, message.is_user)
+                    for message in chat_messages
+                ]
+
+                # get the current image from the camera if available
+                image_base64 = None
+                if personality.assistant_model.has_image_support:
+                    if not self.get_camera_image_client.service_is_ready():
+                        self.get_logger().warn(
+                            "get_camera_image service is not ready, proceeding without image."
+                        )
+                        image_base64 = None
+                    else:
+                        request = GetCameraImage.Request()
+                        try:
+                            future = self.get_camera_image_client.call_async(request)
+                            response = await future
+                            image_base64 = response.image_base64
+                        except Exception as e:
+                            self.get_logger().error(f"Camera service call failed: {e}")
+                            image_base64 = None
+
+                # Stream tokens from public API (yields text tokens)
+                with self.public_voice_client_lock:
+                    tokens = public_voice_client.chat_completion(
+                        text=content,
+                        description=description,
+                        message_history=message_history,
+                        image_base64=image_base64,
+                        model=personality.assistant_model.api_name,
+                        public_api_token=self.token,
+                    )
 
             prev_text, prev_text_type, curr_text = self._stream_chunks_to_goal(
                 goal_handle, chat_id, tokens
@@ -537,7 +566,8 @@ class ChatNode(Node):
                 return Chat.Result()
 
         except Exception as e:
-            self.get_logger().error(f"failed to send request to public-api: {e}")
+            backend = "hermes-agent" if is_hermes else "public-api"
+            self.get_logger().error(f"failed to send request to {backend}: {e}")
             goal_handle.abort()
             return Chat.Result()
 
