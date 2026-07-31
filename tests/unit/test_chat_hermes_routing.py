@@ -279,6 +279,7 @@ def test_stream_chunks_to_goal_extracts_pib_program(chat_module, chat_node):
 
 def test_chat_routes_hermes_without_replaying_history(chat_module, chat_node):
     import asyncio
+    import os
 
     from public_api_client import hermes_agent_client
 
@@ -316,7 +317,9 @@ def test_chat_routes_hermes_without_replaying_history(chat_module, chat_node):
         chat_node,
         "_stream_chunks_to_goal",
         return_value=(None, None, "Antwort vom Agent."),
-    ) as stream:
+    ) as stream, patch.dict(
+        os.environ, {"PIB_HERMES_TIMEOUT": "95"}, clear=False
+    ):
 
         result = asyncio.run(chat_node.chat(goal_handle))
 
@@ -327,6 +330,7 @@ def test_chat_routes_hermes_without_replaying_history(chat_module, chat_node):
     assert run_turn.call_args.kwargs["text"] == "Hi"
     assert run_turn.call_args.kwargs["chat_id"] == "chat-9"
     assert run_turn.call_args.kwargs["personality_id"] == "pers-1"
+    assert run_turn.call_args.kwargs["timeout"] == 95
     stream.assert_called_once()
     streamed_tokens = stream.call_args[0][2]
     assert streamed_tokens == ["Antwort vom Agent."]

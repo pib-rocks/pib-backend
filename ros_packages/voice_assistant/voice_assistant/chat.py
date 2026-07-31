@@ -1,4 +1,5 @@
 import asyncio
+import os
 import re
 from threading import Lock
 from typing import Optional
@@ -497,7 +498,13 @@ class ChatNode(Node):
                 # Persona comes from the personality's Hermes profile (-p), memory from the
                 # named session (-c). Verified: both compose correctly.
                 personality_id = getattr(personality, "personality_id", None)
-                timeout = hermes_agent_client.DEFAULT_TIMEOUT_SECONDS
+                # Prefer live env so launch.py / ops can tune without code changes.
+                timeout = int(
+                    os.environ.get(
+                        "PIB_HERMES_TIMEOUT",
+                        hermes_agent_client.DEFAULT_TIMEOUT_SECONDS,
+                    )
+                )
 
                 def _hermes_turn():
                     if personality_id:

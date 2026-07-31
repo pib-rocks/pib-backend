@@ -67,3 +67,16 @@ def test_delete_session_invokes_hermes_sessions_delete():
         args = run.call_args.args[0]
         assert args[-2:] == ["delete", "pib_chat_abc-123"]
         assert "sessions" in args
+
+
+def test_default_timeout_reads_pib_hermes_timeout_env(monkeypatch):
+    monkeypatch.setenv("PIB_HERMES_TIMEOUT", "77")
+    import importlib
+    import public_api_client.hermes_agent_client as hac
+
+    importlib.reload(hac)
+    try:
+        assert hac.DEFAULT_TIMEOUT_SECONDS == 77
+    finally:
+        monkeypatch.delenv("PIB_HERMES_TIMEOUT", raising=False)
+        importlib.reload(hac)
