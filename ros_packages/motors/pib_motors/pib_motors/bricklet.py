@@ -1,5 +1,7 @@
 import os
 import logging
+import time
+from typing import Any
 
 from pib_api_client import bricklet_client
 from pib_motors.config import cfg
@@ -18,9 +20,47 @@ hat = BrickHAT("X", ipcon)
 ipcon.connect(cfg.TINKERFORGE_HOST, cfg.TINKERFORGE_PORT)
 
 # get data from pib-api
-successful, bricklet_dtos = bricklet_client.get_all_bricklets()
-if not successful:
+BRICKLET_LOAD_RETRY_INTERVAL_SECONDS = 2.0
+BRICKLET_LOAD_TIMEOUT_SECONDS = 60.0
+
+
+def load_bricklets(
+    retry_interval_seconds: float = BRICKLET_LOAD_RETRY_INTERVAL_SECONDS,
+    timeout_seconds: float = BRICKLET_LOAD_TIMEOUT_SECONDS,
+) -> dict[str, Any]:
+    """Load the bricklet configuration from pib-api, retrying while it starts up.
+
+    After a reboot this module is imported before pib-api accepts connections,
+    so a single refused request must not be fatal for the motor_control node.
+    """
+    attempts = max(1, int(timeout_seconds // retry_interval_seconds))
+
+    for attempt in range(1, attempts + 1):
+        try:
+            successful, bricklet_dtos = bricklet_client.get_all_bricklets()
+        except Exception as error:
+            successful, bricklet_dtos = False, None
+            reason = f"{type(error).__name__}: {error}"
+        else:
+            reason = "pib-api did not return a bricklet configuration"
+
+        if successful:
+            if attempt > 1:
+                logging.info(f"loaded bricklets from pib-api on attempt {attempt}")
+            return bricklet_dtos
+
+        if attempt < attempts:
+            logging.warning(
+                f"could not load bricklets from pib-api ({reason}) - "
+                f"attempt {attempt}/{attempts}, "
+                f"retrying in {retry_interval_seconds}s..."
+            )
+            time.sleep(retry_interval_seconds)
+
     raise RuntimeError("failed to load bricklets from pib-api...")
+
+
+bricklet_dtos = load_bricklets()
 
 servo_bricklet_uids = []
 solid_state_relay_bricklet_uid = None
