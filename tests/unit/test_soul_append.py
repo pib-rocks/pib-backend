@@ -11,7 +11,7 @@ def client(app):
 def test_soul_append_is_bounded_and_appends(
     client, make_personality, tmp_path, monkeypatch
 ):
-    monkeypatch.setattr("service.soul_service.HERMES_HOME", str(tmp_path))
+    monkeypatch.setenv("PIB_HERMES_PROFILES_DIR", str(tmp_path))
     personality = make_personality(description="Basis.")
 
     response = client.post(
@@ -40,7 +40,7 @@ def test_soul_append_is_bounded_and_appends(
 def test_soul_append_rejects_oversized_lesson(
     client, make_personality, tmp_path, monkeypatch
 ):
-    monkeypatch.setattr("service.soul_service.HERMES_HOME", str(tmp_path))
+    monkeypatch.setenv("PIB_HERMES_PROFILES_DIR", str(tmp_path))
     personality = make_personality(description="Basis.")
 
     response = client.post(

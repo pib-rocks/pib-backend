@@ -4,27 +4,27 @@ The Hermes Agent reads the SOUL.md of the profile it runs under (-p) to establis
 pib's identity/persona. The authoritative copy lives in the personality.description
 DB column; this module mirrors it into the profile directory.
 
-Verified: ~/.hermes/profiles/<profile>/SOUL.md is injected when running
-`hermes -p <profile> -z ...`.
+The profile location comes from pib_hermes_config so that this API and the ROS
+voice assistant that runs the agent cannot drift apart; see that module and the
+profiles bind mount in docker-compose.yaml.
 """
 import os
 
-HERMES_HOME = os.environ.get("HERMES_HOME", "/home/pib/.hermes")
-PROFILE_PREFIX = "pib_"
+from pib_hermes_config import (
+    DEFAULT_SOUL,
+    profile_name_for,
+    profiles_dir,
+    soul_path_for,
+)
 
-DEFAULT_SOUL = "Du bist pib, ein humanoider Roboter."
-
-
-def profile_name_for(personality_id: str) -> str:
-    """Name of the Hermes profile that hosts this personality."""
-    return PROFILE_PREFIX + personality_id
-
-
-def soul_path_for(personality_id: str) -> str:
-    """Absolute path of the SOUL.md belonging to one personality."""
-    return os.path.join(
-        HERMES_HOME, "profiles", profile_name_for(personality_id), "SOUL.md"
-    )
+__all__ = [
+    "DEFAULT_SOUL",
+    "profile_name_for",
+    "profiles_dir",
+    "soul_path_for",
+    "write_soul",
+    "read_soul",
+]
 
 
 def write_soul(personality_id: str, text: str) -> str:

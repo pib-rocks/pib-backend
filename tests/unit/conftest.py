@@ -17,12 +17,14 @@ FLASK_DIR = REPO_ROOT / "pib_api" / "flask"
 BLOCKLY_CLIENT_DIR = REPO_ROOT / "pib_blockly" / "pib_blockly_client"
 API_CLIENT_DIR = REPO_ROOT / "pib_api" / "client"
 PUBLIC_API_CLIENT_DIR = REPO_ROOT / "public_api_client"
+HERMES_CONFIG_DIR = REPO_ROOT / "pib_hermes_config"
 
 for path in (
     str(FLASK_DIR),
     str(BLOCKLY_CLIENT_DIR),
     str(API_CLIENT_DIR),
     str(PUBLIC_API_CLIENT_DIR),
+    str(HERMES_CONFIG_DIR),
 ):
     if path not in sys.path:
         sys.path.insert(0, path)
@@ -50,6 +52,9 @@ def app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("SQLALCHEMY_DATABASE_URI", f"sqlite:///{db_file}")
     monkeypatch.setenv("PYTHON_CODE_DIR", str(programs_dir))
     monkeypatch.setenv("HOST_IP_FILE", str(host_ip_file))
+    # Keep SOUL materialization inside the test sandbox instead of the robot's
+    # real, container-shared profiles directory.
+    monkeypatch.setenv("PIB_HERMES_PROFILES_DIR", str(tmp_path / "hermes-profiles"))
     # Avoid public_api_client import failure when hermes tests pull it in.
     monkeypatch.setenv("TRYB_URL_PREFIX", "http://localhost/test")
 

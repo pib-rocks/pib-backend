@@ -29,6 +29,10 @@ ENV WHISPER_MODEL_PATH=/data/voice/models/whisper/
 COPY ./pib_api/client ./client
 RUN pip install --break-system-packages --no-cache-dir ./client
 
+# Shared with the flask API so both resolve the same Hermes profiles dir.
+COPY ./pib_hermes_config ./pib_hermes_config
+RUN pip install --break-system-packages --no-cache-dir ./pib_hermes_config/
+
 COPY ./public_api_client ./public_api_client
 RUN pip install --break-system-packages --no-cache-dir ./public_api_client/
 
