@@ -28,10 +28,16 @@ services:
       - PIB_BLOCKLY_SERVER_URL=http://pib-blockly-server:2442
       - PYTHON_CODE_DIR=/root/cerebra_programs
       - MARIMO_NOTEBOOKS_DIR=/home/pib/programs/notebooks
+      - PIB_HERMES_PROFILES_DIR=/home/pib/.hermes/profiles
     volumes:
       - ./pib_api/flask/:/app
       - programs:/root/cerebra_programs
       - /home/pib/programs/notebooks:/home/pib/programs/notebooks
+      # A personality's SOUL.md must land on the host, at the same path the
+      # ros-voice-assistant service reads it from. Only profiles/ is shared here;
+      # the rest of HERMES_HOME holds the agent's credentials, which this
+      # externally reachable API has no reason to see.
+      - /home/pib/.hermes/profiles:/home/pib/.hermes/profiles
       - /var/run/docker.sock:/var/run/docker.sock
     restart: always
     depends_on:
@@ -111,6 +117,14 @@ services:
       - ALSA_CARD=Generic
       - FLASK_API_BASE_URL=http://flask-app:5000
       - VOICE_ASSISTANT_DIR=/app/ros2_ws/voice_assistant
+      - PIB_MCP_ROSBRIDGE_URL=ws://rosbridge-ws:9090
+      # Hardware-changing MCP calls remain blocked unless explicitly enabled.
+      - PIB_MCP_ENABLE_ACTUATION=false
+      # Hermes-agent personalities: same profiles dir as flask-app, so the
+      # SOUL.md the API writes is the file the agent loads.
+      - PIB_HERMES_PROFILES_DIR=/home/pib/.hermes/profiles
+      - HERMES_HOME=/home/pib/.hermes
+      - PIB_HERMES_BIN=/home/pib/.local/bin/hermes
     volumes:
       - /media/dyan/project/projects/voice/:/data/voice
       - /dev/snd:/dev/snd
@@ -119,6 +133,22 @@ services:
       - ${XDG_RUNTIME_DIR:-/run/user/1000}/pulse/native:${XDG_RUNTIME_DIR:-/run/user/1000}/pulse/native
       - /home/pib/.config/pulse/cookie:/root/.config/pulse/cookie
       - /home/pib/wav-files:/home/pib/wav-files:ro
+      # HERMES_HOME carries the shared profiles/ dir (with each personality's
+      # SOUL.md), the durable pib_chat_* sessions, the provider credentials and
+      # the hermes installation itself under hermes-agent/venv. The CLI entry
+      # point is the separate wrapper script that execs that venv.
+      - /home/pib/.hermes:/home/pib/.hermes
+      - /home/pib/.local/bin/hermes:/home/pib/.local/bin/hermes:ro
+      # REQUIRED, do not remove: the hermes wrapper execs the venv interpreter
+      # under /home/pib/.hermes/hermes-agent/venv/bin, and that interpreter is a
+      # symlink into uv-managed Python here, outside both mounts above. Without
+      # this directory the symlink dangles inside the container and every hermes
+      # call dies with exit 127 ("No such file or directory"), which surfaces
+      # only as the fallback reply. The container's own python3.12 cannot stand
+      # in, since the venv is built against 3.11. Mounted whole rather than as a
+      # pinned cpython-3.11.x path, because `hermes update` may change the patch
+      # version and would silently break a pinned mount.
+      - /home/pib/.local/share/uv:/home/pib/.local/share/uv:ro
     devices:
       - /dev/snd:/dev/snd
       - /dev/bus/usb:/dev/bus/usb1

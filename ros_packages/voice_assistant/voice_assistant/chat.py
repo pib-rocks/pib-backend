@@ -1,4 +1,8 @@
+import os
 import re
+import time
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from threading import Lock
 from typing import Optional
 
@@ -23,12 +27,24 @@ from rclpy.publisher import Publisher
 from rclpy.service import Service
 from std_msgs.msg import String
 
-from public_api_client import public_voice_client
+from public_api_client import hermes_agent_client, public_voice_client
 
 # In future, this code will be prepended to the description in a chat-request
 # if it is specified that code should be generated. The text will contain
 # instruction for the LLM on how to generate the code. For now, it is left blank.
 CODE_DESCRIPTION_PREFIX = ""
+
+# How often the hermes turn is interrupted to notice a cancel request.
+HERMES_CANCEL_POLL_SECONDS = 0.2
+
+# Slack on top of the hermes turn's own subprocess timeout, so a wedged worker
+# can never hold a goal open forever.
+HERMES_WAIT_GRACE_SECONDS = 15
+
+# Upper bound for the startup liveness probe. Node construction blocks on it, so
+# it stays short; a failed probe only downgrades hermes personalities to the
+# fallback reply and must never keep the node from starting.
+HERMES_PROBE_TIMEOUT_SECONDS = 5
 
 
 class ChatNode(Node):
@@ -104,7 +120,59 @@ class ChatNode(Node):
             callback_group=ReentrantCallbackGroup(),
         )
 
+        # Hermes turns shell out to a CLI that blocks for as long as the LLM
+        # takes. One pool for the whole node: rclpy's executor threads stay free
+        # for cancel requests and concurrent goals, and no request creates
+        # threads of its own.
+        self._hermes_executor = ThreadPoolExecutor(
+            max_workers=4, thread_name_prefix="hermes-turn"
+        )
+
+        self._preflight_hermes_binary()
+
         self.get_logger().info("Now running CHAT")
+
+    def destroy_node(self):
+        # Abandoned hermes workers must not keep the process alive on shutdown.
+        self._hermes_executor.shutdown(wait=False, cancel_futures=True)
+        return super().destroy_node()
+
+    def _preflight_hermes_binary(self) -> bool:
+        """Report at startup whether the configured Hermes CLI actually runs.
+
+        Without this, a robot whose hermes install is missing or not mounted looks
+        healthy while every hermes-agent personality quietly answers with the
+        fallback sentence. Legacy personalities are unaffected, so this only logs.
+
+        This runs the CLI instead of merely stat-ing it. A file check passed on a
+        live robot whose CLI died with exit 127 on every turn, because the wrapper
+        execs a venv interpreter that was not mounted into the container.
+        """
+        path = hermes_agent_client.hermes_bin()
+        try:
+            ok, detail = hermes_agent_client.probe_binary(
+                timeout=HERMES_PROBE_TIMEOUT_SECONDS
+            )
+        except Exception as exc:
+            # The probe may never be the reason the chat node fails to come up.
+            ok, detail = False, f"probe raised {exc!r}"
+
+        if ok:
+            self.get_logger().info(
+                f"hermes agent binary available at {path}"
+                + (f" ({detail})" if detail else "")
+            )
+            return True
+
+        self.get_logger().error(
+            f"hermes agent preflight failed for '{path}': {detail}. "
+            "Personalities using the 'hermes-agent' model will fall back to a "
+            "canned reply. Check that the hermes CLI is installed for the pib "
+            "user, that PIB_HERMES_BIN points at it, and that ~/.hermes, the "
+            "wrapper and the uv-managed Python directory are all bind-mounted "
+            "into the ros-voice-assistant service."
+        )
+        return False
 
     # ---------- common helpers used by Action and Service ----------
 
@@ -353,6 +421,174 @@ class ChatNode(Node):
         token = msg.data
         self.token = token
 
+    def _stream_chunks_to_goal(
+        self, goal_handle, chat_id: str, tokens
+    ) -> tuple[Optional[str], Optional[int], str]:
+        """Consume a token iterable, publishing sentence/code chunks as feedback.
+
+        Returns (prev_text, prev_text_type, curr_text) so the caller can build Chat.Result.
+        Behavior is identical to the previous inline implementation.
+        """
+        # Regex for sentence / code chunking
+        sentence_pattern = re.compile(
+            r"^(?!<pib-program>)(.*?)(([^\d | ^A-Z][\.|!|\?|:])|<pib-program>)",
+            re.DOTALL,
+        )
+        code_visual_pattern = re.compile(
+            r"^<pib-program>(.*?)</pib-program>", re.DOTALL
+        )
+
+        # Current and previous text fragments for feedback + persistence
+        curr_text: str = ""
+        prev_text: Optional[str] = None
+        prev_text_type = None
+        bool_update_chat_message: bool = False  # controls create vs update
+
+        for token in tokens:
+            # Publish previous chunk as feedback (Action protocol)
+            if prev_text is not None:
+                feedback = Chat.Feedback()
+                feedback.text = prev_text
+                feedback.text_type = prev_text_type
+                goal_handle.publish_feedback(feedback)
+                prev_text = None
+                prev_text_type = None
+
+            # Accumulate token (strip leading spaces if first)
+            curr_text = curr_text + (
+                token if len(curr_text) > 0 else token.lstrip()
+            )
+
+            # Strip off complete chunks (code/sentences)
+            while True:
+                if goal_handle.is_cancel_requested:
+                    goal_handle.canceled()
+                    return prev_text, prev_text_type, curr_text
+
+                # Visual code block
+                code_visual_match = code_visual_pattern.search(curr_text)
+                if code_visual_match is not None:
+                    code_visual = code_visual_match.group(1)
+                    prev_text = code_visual
+                    prev_text_type = Chat.Goal.TEXT_TYPE_CODE_VISUAL
+                    chat_message_text = code_visual_match.group(0)
+                    self.executor.create_task(
+                        self.create_chat_message,
+                        chat_id,
+                        chat_message_text,
+                        False,
+                        bool_update_chat_message,
+                        True,
+                    )
+                    bool_update_chat_message = True
+                    curr_text = curr_text[code_visual_match.end() :].rstrip()
+                    continue
+
+                # Sentence
+                sentence_match = sentence_pattern.search(curr_text)
+                if sentence_match is not None:
+                    sentence = sentence_match.group(1) + (
+                        sentence_match.group(3)
+                        if sentence_match.group(3) is not None
+                        else ""
+                    )
+                    prev_text = sentence
+                    prev_text_type = Chat.Goal.TEXT_TYPE_SENTENCE
+                    chat_message_text = sentence
+                    self.executor.create_task(
+                        self.create_chat_message,
+                        chat_id,
+                        chat_message_text,
+                        False,
+                        bool_update_chat_message,
+                        True,
+                    )
+                    bool_update_chat_message = True
+                    curr_text = curr_text[
+                        sentence_match.end(
+                            3 if sentence_match.group(3) is not None else 1
+                        ) :
+                    ].rstrip()
+                    continue
+
+                break
+
+        return prev_text, prev_text_type, curr_text
+
+    def _hermes_timeout(self) -> int:
+        """Timeout for one hermes turn, read live so ops can tune it via env."""
+        return int(
+            os.environ.get(
+                "PIB_HERMES_TIMEOUT", hermes_agent_client.DEFAULT_TIMEOUT_SECONDS
+            )
+        )
+
+    def _run_hermes_turn(
+        self,
+        text: str,
+        chat_id: str,
+        personality_id: Optional[str],
+        description: str,
+        timeout: Optional[int] = None,
+        goal_handle=None,
+    ) -> str:
+        """Run one hermes turn and return speakable text. Never raises.
+
+        Deliberately synchronous and asyncio-free: rclpy drives the action
+        server's execute_callback with its own executor, so the calling thread
+        has no asyncio event loop and asyncio.get_running_loop() would raise
+        RuntimeError('no running event loop').
+
+        Returns "" only when the goal was cancelled while the agent was running;
+        every agent failure yields the fallback sentence so the goal can still
+        succeed.
+        """
+        if timeout is None:
+            timeout = self._hermes_timeout()
+
+        def _turn() -> str:
+            # Hermes keeps its own durable memory per chat, so no history is
+            # replayed: persona comes from the profile (-p), memory from the
+            # named session (-c).
+            if personality_id:
+                hermes_agent_client.ensure_profile(
+                    personality_id, soul_text=description
+                )
+            return hermes_agent_client.run_turn(
+                text=text,
+                chat_id=chat_id,
+                personality_id=personality_id,
+                timeout=timeout,
+            )
+
+        future = self._hermes_executor.submit(_turn)
+        deadline = time.monotonic() + timeout + HERMES_WAIT_GRACE_SECONDS
+
+        while True:
+            try:
+                return future.result(timeout=HERMES_CANCEL_POLL_SECONDS)
+            except FutureTimeoutError:
+                pass
+            except Exception as exc:
+                self.get_logger().error(f"hermes agent turn failed: {exc}")
+                return hermes_agent_client.FALLBACK_REPLY
+
+            if goal_handle is not None and goal_handle.is_cancel_requested:
+                # The worker is left to finish on its own; it only touches the
+                # hermes CLI, and the pool outlives this goal, so nothing here
+                # breaks when the subprocess returns later.
+                self.get_logger().info(
+                    f"hermes turn abandoned, goal cancelled (chat={chat_id})"
+                )
+                return ""
+
+            if time.monotonic() > deadline:
+                self.get_logger().error(
+                    f"hermes turn exceeded {timeout}s plus grace "
+                    f"(chat={chat_id}); answering with the fallback reply"
+                )
+                return hermes_agent_client.FALLBACK_REPLY
+
     async def chat(self, goal_handle: ServerGoalHandle):
         """
         Action server callback for 'chat':
@@ -392,136 +628,76 @@ class ChatNode(Node):
         if generate_code:
             description = CODE_DESCRIPTION_PREFIX + description
 
-        # Pull recent message history for context
-        with self.voice_assistant_client_lock:
-            successful, chat_messages = voice_assistant_client.get_chat_history(
-                chat_id, self.history_length
-            )
-        if not successful:
-            self.get_logger().error(f"chat with id'{chat_id}' does not exist...")
-            goal_handle.abort()
-            return Chat.Result()
-        message_history = [
-            PublicApiChatMessage(message.content, message.is_user)
-            for message in chat_messages
-        ]
-
-        # get the current image from the camera if available
-        image_base64 = None
-        if personality.assistant_model.has_image_support:
-            if not self.get_camera_image_client.service_is_ready():
-                self.get_logger().warn(
-                    "get_camera_image service is not ready, proceeding without image."
-                )
-                image_base64 = None
-            else:
-                request = GetCameraImage.Request()
-                try:
-                    future = self.get_camera_image_client.call_async(request)
-                    response = await future
-                    image_base64 = response.image_base64
-                except Exception as e:
-                    self.get_logger().error(f"Camera service call failed: {e}")
-                    image_base64 = None
+        is_hermes = hermes_agent_client.uses_hermes_backend(
+            personality.assistant_model.api_name
+        )
 
         try:
-            # Stream tokens from public API (yields text tokens)
-            with self.public_voice_client_lock:
-                tokens = public_voice_client.chat_completion(
+            if is_hermes:
+                reply_text = self._run_hermes_turn(
                     text=content,
+                    chat_id=chat_id,
+                    personality_id=getattr(personality, "personality_id", None),
                     description=description,
-                    message_history=message_history,
-                    image_base64=image_base64,
-                    model=personality.assistant_model.api_name,
-                    public_api_token=self.token,
+                    goal_handle=goal_handle,
                 )
+                if goal_handle.is_cancel_requested:
+                    goal_handle.canceled()
+                    return Chat.Result()
+                tokens = [reply_text]
+            else:
+                # Pull recent message history for context
+                with self.voice_assistant_client_lock:
+                    successful, chat_messages = voice_assistant_client.get_chat_history(
+                        chat_id, self.history_length
+                    )
+                if not successful:
+                    self.get_logger().error(f"chat with id'{chat_id}' does not exist...")
+                    goal_handle.abort()
+                    return Chat.Result()
+                message_history = [
+                    PublicApiChatMessage(message.content, message.is_user)
+                    for message in chat_messages
+                ]
 
-            # Regex for sentence / code chunking
-            sentence_pattern = re.compile(
-                r"^(?!<pib-program>)(.*?)(([^\d | ^A-Z][\.|!|\?|:])|<pib-program>)",
-                re.DOTALL,
+                # get the current image from the camera if available
+                image_base64 = None
+                if personality.assistant_model.has_image_support:
+                    if not self.get_camera_image_client.service_is_ready():
+                        self.get_logger().warn(
+                            "get_camera_image service is not ready, proceeding without image."
+                        )
+                        image_base64 = None
+                    else:
+                        request = GetCameraImage.Request()
+                        try:
+                            future = self.get_camera_image_client.call_async(request)
+                            response = await future
+                            image_base64 = response.image_base64
+                        except Exception as e:
+                            self.get_logger().error(f"Camera service call failed: {e}")
+                            image_base64 = None
+
+                # Stream tokens from public API (yields text tokens)
+                with self.public_voice_client_lock:
+                    tokens = public_voice_client.chat_completion(
+                        text=content,
+                        description=description,
+                        message_history=message_history,
+                        image_base64=image_base64,
+                        model=personality.assistant_model.api_name,
+                        public_api_token=self.token,
+                    )
+
+            prev_text, prev_text_type, curr_text = self._stream_chunks_to_goal(
+                goal_handle, chat_id, tokens
             )
-            code_visual_pattern = re.compile(
-                r"^<pib-program>(.*?)</pib-program>", re.DOTALL
-            )
-
-            # Current and previous text fragments for feedback + persistence
-            curr_text: str = ""
-            prev_text: Optional[str] = None
-            prev_text_type = None
-            bool_update_chat_message: bool = False  # controls create vs update
-
-            for token in tokens:
-                # Publish previous chunk as feedback (Action protocol)
-                if prev_text is not None:
-                    feedback = Chat.Feedback()
-                    feedback.text = prev_text
-                    feedback.text_type = prev_text_type
-                    goal_handle.publish_feedback(feedback)
-                    prev_text = None
-                    prev_text_type = None
-
-                # Accumulate token (strip leading spaces if first)
-                curr_text = curr_text + (
-                    token if len(curr_text) > 0 else token.lstrip()
-                )
-
-                # Strip off complete chunks (code/sentences)
-                while True:
-                    if goal_handle.is_cancel_requested:
-                        goal_handle.canceled()
-                        return Chat.Result()
-
-                    # Visual code block
-                    code_visual_match = code_visual_pattern.search(curr_text)
-                    if code_visual_match is not None:
-                        code_visual = code_visual_match.group(1)
-                        prev_text = code_visual
-                        prev_text_type = Chat.Goal.TEXT_TYPE_CODE_VISUAL
-                        chat_message_text = code_visual_match.group(0)
-                        self.executor.create_task(
-                            self.create_chat_message,
-                            chat_id,
-                            chat_message_text,
-                            False,
-                            bool_update_chat_message,
-                            True,
-                        )
-                        bool_update_chat_message = True
-                        curr_text = curr_text[code_visual_match.end() :].rstrip()
-                        continue
-
-                    # Sentence
-                    sentence_match = sentence_pattern.search(curr_text)
-                    if sentence_match is not None:
-                        sentence = sentence_match.group(1) + (
-                            sentence_match.group(3)
-                            if sentence_match.group(3) is not None
-                            else ""
-                        )
-                        prev_text = sentence
-                        prev_text_type = Chat.Goal.TEXT_TYPE_SENTENCE
-                        chat_message_text = sentence
-                        self.executor.create_task(
-                            self.create_chat_message,
-                            chat_id,
-                            chat_message_text,
-                            False,
-                            bool_update_chat_message,
-                            True,
-                        )
-                        bool_update_chat_message = True
-                        curr_text = curr_text[
-                            sentence_match.end(
-                                3 if sentence_match.group(3) is not None else 1
-                            ) :
-                        ].rstrip()
-                        continue
-
-                    break
+            if goal_handle.is_cancel_requested:
+                return Chat.Result()
 
         except Exception as e:
-            self.get_logger().error(f"failed to send request to public-api: {e}")
+            backend = "hermes-agent" if is_hermes else "public-api"
+            self.get_logger().error(f"failed to send request to {backend}: {e}")
             goal_handle.abort()
             return Chat.Result()
 

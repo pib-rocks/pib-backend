@@ -161,7 +161,12 @@ def _create_chat_data_and_assistant() -> None:
         api_name="gemini-2.5-flash",
         has_image_support=False,
     )
-    db.session.add_all([gpt4o2, gpt4o1, gpt3, claude, gemini_text])
+    hermes_agent = AssistantModel(
+        visual_name="Hermes Agent (selbstlernend)",
+        api_name="hermes-agent",
+        has_image_support=True,
+    )
+    db.session.add_all([gpt4o2, gpt4o1, gpt3, claude, gemini_text, hermes_agent])
     db.session.flush()
 
     p_eva = Personality(

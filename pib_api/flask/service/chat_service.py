@@ -45,6 +45,13 @@ def update_chat(chat_id: str, chat_dto: Any) -> Chat:
 def delete_chat(chat_id: str) -> None:
     db.session.delete(get_chat(chat_id))
     db.session.flush()
+    try:
+        from public_api_client.hermes_agent_client import delete_session
+
+        delete_session(chat_id)
+    except Exception:
+        # Best-effort: orphaned Hermes sessions can be pruned later.
+        pass
 
 
 def create_chat_message(chat_id: str, chat_message_dto: Any) -> ChatMessage:
