@@ -21,7 +21,10 @@ sudo -u pib -H bash -c \
   'curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash -s -- --skip-setup --skip-browser'
 ```
 
-Provider credentials are still a one-time step after install:
+Provider credentials are still a one-time step after install, and they must be in
+place **before** a hermes-agent personality is used: each personality profile
+inherits its credentials by copying them from this base install (see "How a
+personality profile is provisioned").
 
 ```bash
 sudo -u pib -H hermes setup
@@ -153,7 +156,8 @@ curl -X PUT http://localhost/api/v1/voice-assistant/personality/<personality_id>
 ```
 
 The first Hermes turn ensures that profile `pib_<personality_id>` exists,
-materializes the personality description as its `SOUL.md`, and uses session
+materializes the personality description as its `SOUL.md`, copies the base
+install's `config.yaml` and `.env` into it, and uses session
 `pib_chat_<chat_id>`.
 
 ## Roll back without a redeploy
@@ -181,6 +185,9 @@ Hermes data belongs to the robot user under `HERMES_HOME`, which defaults to
   `/home/pib/.hermes/profiles/pib_<personality_id>/`.
 - Personality SOUL:
   `/home/pib/.hermes/profiles/pib_<personality_id>/SOUL.md`.
+- Personality provider config, copied from the base install:
+  `.../pib_<personality_id>/config.yaml` and `.../pib_<personality_id>/.env`
+  (mode `0600`). All of it owned by the `pib` user.
 - Interim skill template:
   `ros_packages/voice_assistant/skills/pib-robot-control/SKILL.md`; a provisioned
   copy belongs under the profile's `skills/pib-robot-control/`.
@@ -214,17 +221,78 @@ Compare that file with the personality returned by:
 curl -s http://localhost/api/v1/voice-assistant/personality/<personality_id>
 ```
 
-## Fresh-profile credential pitfall
+## How a personality profile is provisioned
 
-A newly created Hermes profile has isolated configuration and credentials. A
-plain `hermes profile create` can therefore fail on its first turn with
-`No LLM provider configured`. Always clone the active profile when provisioning:
+A Hermes profile has its own configuration and credentials, and `hermes -p
+<profile>` resolves the LLM provider from the profile — not from the base
+install. A profile that holds only a `SOUL.md` therefore fails every turn with
+`agent failed: No LLM provider configured`, while the default profile keeps
+working, which is exactly what a `docker exec <container> hermes -z "..."` check
+shows.
 
-```bash
-sudo -u pib -H hermes profile create pib_<personality_id> \
-  --clone --no-alias --description "pib personality <personality_id>"
+The backend provisions a profile with **filesystem operations only**, because the
+hermes CLI is not mounted into every container that provisions one (the flask
+service does not have it). On the first turn of a hermes-agent personality it:
+
+1. creates `<profiles_dir>/pib_<personality_id>/`,
+2. writes `SOUL.md` from the personality description,
+3. **copies `config.yaml` and `.env` from the base `HERMES_HOME`** into the
+   profile when the profile does not have them yet,
+4. aligns ownership of the profile with the owner of the profiles directory.
+
+Consequences to plan for:
+
+- **The base install must have working credentials _before_ any hermes-agent
+  personality is used.** There is nothing to copy otherwise, and the profile is
+  provisioned without a provider. Run `sudo -u pib -H hermes setup` (or write the
+  keys into `/home/pib/.hermes/.env`) first, then verify:
+
+  ```bash
+  sudo -u pib -H ls -l /home/pib/.hermes/.env /home/pib/.hermes/config.yaml
+  ```
+
+  When either file is absent, the log carries a `WARNING` naming the missing file
+  and stating that hermes-agent personalities fall back until it is configured.
+- **Copies, not symlinks.** A later `hermes profile delete` cannot damage the base
+  install, and a per-personality key can be set without affecting other
+  personalities.
+- **An existing profile `.env`/`config.yaml` is never overwritten**, so a manual
+  customization survives every personality update. To re-inherit the base
+  credentials, delete the file from the profile and trigger one turn.
+- The copied `.env` keeps mode `0600`. Never copy credentials into logs or
+  support tickets.
+- The CLI is used only as an optional extra: when `PIB_HERMES_BIN` exists,
+  `hermes profile create --clone --no-alias` runs first and the log says so;
+  when it does not, the log says the profile was provisioned from the filesystem
+  alone. Both paths yield a usable profile.
+
+### Profile ownership (must be the pib user)
+
+Both writers (flask-app and ros-voice-assistant) run as **root** inside their
+containers, so everything they create in the bind-mounted profiles directory is
+root-owned. The profile must instead belong to the **`pib` user** that owns
+`/home/pib/.hermes/profiles` on the host; otherwise the host user is locked out
+of its own directory:
+
+```text
+drwx------ 13 root root  /home/pib/.hermes/profiles/pib_<personality_id>
+$ ls /home/pib/.hermes/profiles/pib_<personality_id>
+ls: cannot open directory ...: Permission denied
 ```
 
-The backend's automatic profile provisioning uses `--clone`. Verify the cloned
-profile appears in `hermes profile list` before diagnosing model or network
-errors. Never copy credentials into logs or support tickets.
+Provisioning therefore `chown`s the profile and its contents to the owner of the
+parent profiles directory (read with `stat`, never hardcoded to uid 1000) and
+keeps the directory at mode `0700`. The `chown` is best effort: when the caller
+is not root it is only logged at debug level and never fails the request. Check
+it on the host with:
+
+```bash
+ls -ld /home/pib/.hermes/profiles/pib_<personality_id>
+```
+
+Expect `pib pib`. If it shows `root root`, the profile predates this fix — one
+personality update or one hermes turn repairs it, or fix it by hand:
+
+```bash
+sudo chown -R pib:pib /home/pib/.hermes/profiles/pib_<personality_id>
+```
