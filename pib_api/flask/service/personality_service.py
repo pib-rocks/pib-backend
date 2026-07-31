@@ -50,6 +50,17 @@ def update_personality(personality_id: str, personality_dto: Any) -> Personality
     return personality
 
 
+def append_soul_lesson(personality_id: str, lesson: str) -> Personality:
+    """Append one durable lesson without replacing any existing SOUL text."""
+    personality = get_personality(personality_id)
+    existing = personality.description or ""
+    separator = "" if not existing or existing.endswith("\n") else "\n"
+    personality.description = existing + separator + lesson
+    soul_service.write_soul(personality.personality_id, personality.description)
+    db.session.flush()
+    return personality
+
+
 def delete_personality(personality_id: str) -> None:
     db.session.delete(get_personality(personality_id))
     db.session.flush()
