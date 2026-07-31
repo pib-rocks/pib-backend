@@ -266,6 +266,53 @@ function install_imitation() {
 }
 
 
+# Install the Hermes CLI for the pib user.
+#
+# WHY: docker-compose bind-mounts /home/pib/.hermes and
+# /home/pib/.local/bin/hermes into ros-voice-assistant (and the profiles/
+# subtree into flask-app). hermes-agent personalities need that host-side CLI
+# plus the ~/.hermes profiles dir; without the install those mounts resolve to
+# nothing and every hermes turn silently falls back.
+#
+# Provider credentials are NOT configured here — after install, run
+# `sudo -u pib -H hermes setup` (or write /home/pib/.hermes/.env) once before
+# hermes-agent personalities can talk to a model.
+function install_hermes_cli() {
+  local hermes_bin="/home/pib/.local/bin/hermes"
+  local hermes_profiles="/home/pib/.hermes/profiles"
+
+  if [ -x "$hermes_bin" ]; then
+    print INFO "Hermes CLI already installed at $hermes_bin"
+    # Keep the shared profiles dir present for the flask/voice-assistant mounts.
+    sudo -u pib -H mkdir -p "$hermes_profiles"
+    return 0
+  fi
+
+  print INFO "Installing Hermes CLI for user pib (idempotent; lands under /home/pib/.hermes)"
+
+  # Official installer downloads Node as a .tar.xz; curl is already installed above.
+  sudo apt-get install -y xz-utils >/dev/null
+
+  # Match the NodeSource install style already used in this file (curl | bash).
+  # --skip-setup keeps provisioning non-interactive; credentials come later.
+  # --skip-browser skips Playwright — the voice path does not need Chromium.
+  if ! sudo -u pib -H bash -c \
+    'curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash -s -- --skip-setup --skip-browser'; then
+    print ERROR "Hermes CLI installer failed"
+    return 1
+  fi
+
+  sudo -u pib -H mkdir -p "$hermes_profiles"
+
+  if [ -x "$hermes_bin" ]; then
+    print SUCCESS "Hermes CLI installed at $hermes_bin"
+  else
+    print ERROR "Hermes CLI install finished but $hermes_bin is missing"
+    return 1
+  fi
+}
+
+
 # Install update script; move animated eyes, etc.
 function move_setup_files() {
   local update_target_dir="/usr/local/bin"
@@ -481,6 +528,9 @@ fi
 install_system_packages || { print ERROR "failed to install system packages"; return 1; }
 install_locale || { print ERROR "failed to install locale"; return 1; }
 clone_repositories || { print ERROR "failed to clone repositories"; return 1; }
+# Before docker-compose starts: hermes must exist on the host so the
+# ros-voice-assistant / flask-app bind mounts resolve to real paths.
+install_hermes_cli || print ERROR "failed to install Hermes CLI"
 install_imitation || print ERROR "failed to install imitation project"
 if is_supported_raspbian && [ "$DIST_VERSION" = "trixie" ]; then
   source "$SETUP_INSTALLATION_DIR/ros_jazzy_install.sh" || { print ERROR "failed to install ROS 2 Jazzy"; return 1; }
