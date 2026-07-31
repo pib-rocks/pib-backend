@@ -5,7 +5,13 @@ from __future__ import annotations
 import os
 from typing import Annotated, Any, Callable
 
-from mcp.server.fastmcp import FastMCP
+try:
+    from mcp.server.fastmcp import FastMCP
+except ImportError:
+    try:
+        from mcp.server.mcpserver import FastMCP
+    except ImportError:
+        from mcp.server.mcpserver import MCPServer as FastMCP
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
