@@ -71,7 +71,7 @@ class TestProgramsComponentE2E:
         expect(assign_tab).to_be_visible()
 
         assert "PROGRAMS" in (programs_tab.inner_text()).upper()
-        assert "MARIMO" in (marimo_tab.inner_text()).upper()
+        assert "NOTEBOOKS" in (marimo_tab.inner_text()).upper()
         assert "ASSIGN BUTTONS" in (assign_tab.inner_text()).upper()
 
     def test_03_single_active_tab_class_isolation(self, page: Page):
