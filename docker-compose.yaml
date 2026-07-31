@@ -136,6 +136,16 @@ services:
       # point is the separate wrapper script that execs that venv.
       - /home/pib/.hermes:/home/pib/.hermes
       - /home/pib/.local/bin/hermes:/home/pib/.local/bin/hermes:ro
+      # REQUIRED, do not remove: the hermes wrapper execs the venv interpreter
+      # under /home/pib/.hermes/hermes-agent/venv/bin, and that interpreter is a
+      # symlink into uv-managed Python here, outside both mounts above. Without
+      # this directory the symlink dangles inside the container and every hermes
+      # call dies with exit 127 ("No such file or directory"), which surfaces
+      # only as the fallback reply. The container's own python3.12 cannot stand
+      # in, since the venv is built against 3.11. Mounted whole rather than as a
+      # pinned cpython-3.11.x path, because `hermes update` may change the patch
+      # version and would silently break a pinned mount.
+      - /home/pib/.local/share/uv:/home/pib/.local/share/uv:ro
     devices:
       - /dev/snd:/dev/snd
       - /dev/bus/usb:/dev/bus/usb1
