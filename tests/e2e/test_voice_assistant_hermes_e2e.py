@@ -163,7 +163,7 @@ def test_voice_assistant_hermes_persists_reply_and_recalls_prior_fact():
         first_ids = {message["messageId"] for message in first_messages}
         _send_chat_message(
             chat_id,
-            "What exact code did I ask you to remember in my previous message?",
+            "What is the exact code I told you to remember? Output ONLY the code.",
         )
         recalled_reply, _ = _wait_for_new_assistant_message(chat_id, first_ids)
         assert token in recalled_reply["content"]
