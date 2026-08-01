@@ -4,6 +4,9 @@ SHELL ["/bin/bash", "-c"]
 
 WORKDIR /app
 
+# Force IPv4 preference in glibc getaddrinfo to prevent 10s IPv6 route timeout on Pi
+RUN echo "precedence ::ffff:0:0/96 100" >> /etc/gai.conf
+
 RUN apt-get update && apt-get install --no-install-recommends -y curl
 
 RUN apt-get update --fix-missing && \

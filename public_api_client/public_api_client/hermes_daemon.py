@@ -12,8 +12,17 @@ from __future__ import annotations
 import json
 import logging
 import os
+import socket
 import threading
 import time
+
+# Force IPv4 preference in socket.getaddrinfo to prevent 10s IPv6 timeouts on Pi networks
+_orig_getaddrinfo = socket.getaddrinfo
+def _ipv4_preferred_getaddrinfo(*args, **kwargs):
+    res = _orig_getaddrinfo(*args, **kwargs)
+    ipv4 = [r for r in res if r[0] == socket.AF_INET]
+    return ipv4 if ipv4 else res
+socket.getaddrinfo = _ipv4_preferred_getaddrinfo
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Callable, Optional
 from urllib.error import URLError
