@@ -120,7 +120,7 @@ def test_voice_assistant_hermes_persists_reply_and_recalls_prior_fact():
     personality_id = personality["personalityId"]
     original_model_id = personality["assistantModelId"]
     chat_id = None
-    token = f"HERMES-MEMORY-{uuid.uuid4().hex[:12]}"
+    token = f"PIB-E2E-{uuid.uuid4().hex[:8].upper()}"
 
     try:
         update = requests.put(
