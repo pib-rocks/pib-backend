@@ -134,7 +134,7 @@ def test_schema_declares_required_parameters_and_constraints():
     assert led["red"]["minimum"] == 0
     assert led["red"]["maximum"] == 255
 
-    soul = tools["pib_soul_append"].inputSchema["properties"]["lesson"]
+    soul = _get_schema(tools["pib_soul_append"])["properties"]["lesson"]
     assert soul["minLength"] == 1
     assert soul["maxLength"] == 500
 
