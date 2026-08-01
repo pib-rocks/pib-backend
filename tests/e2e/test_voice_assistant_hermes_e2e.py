@@ -265,3 +265,112 @@ def test_create_personality_via_browser_ui_generates_soul_md():
                     f"{API_URL}/voice-assistant/personality/{created_personality_id}",
                     timeout=REQUEST_TIMEOUT,
                 )
+
+
+def test_chat_send_button_activation_with_smartconnect():
+    """
+    E2E UI test verifying SmartConnect token/password setup ('12345678'),
+    Hermes Agent persona chat creation, and that typing > 2 chars in #message-input
+    enables the #chat-send-button.
+    """
+    from playwright.sync_api import sync_playwright
+
+    # 1. Activate SmartConnect via API or UI with token/password 12345678
+    requests.post(
+        f"{API_URL}/system/smart-connect",
+        json={"token": "12345678", "password": "12345678"},
+        timeout=REQUEST_TIMEOUT,
+    )
+
+    created_chat_id = None
+    created_p_id = None
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(
+            headless=True, executable_path="/usr/bin/chromium-browser"
+        )
+        context = browser.new_context(viewport={"width": 1400, "height": 900})
+        page = context.new_page()
+
+        try:
+            # 2. Open Voice Assistant
+            page.goto(f"{ROBOT_URL}/voice-assistant", wait_until="networkidle")
+            page.wait_for_timeout(2000)
+
+            # 3. Create a persona with Hermes Agent backend
+            res_models = requests.get(f"{API_URL}/assistant-model", timeout=REQUEST_TIMEOUT).json()
+            models = res_models.get("assistantModels", []) if isinstance(res_models, dict) else res_models
+            hermes_model = [m for m in models if "hermes" in m.get("apiName", "").lower()][0]
+            hermes_model_id = hermes_model["id"]
+
+            persona_res = requests.post(
+                f"{API_URL}/voice-assistant/personality",
+                json={
+                    "name": "SendButtonTester",
+                    "gender": "Female",
+                    "pauseThreshold": 0.8,
+                    "assistantModelId": hermes_model_id,
+                    "messageHistory": 5,
+                },
+                timeout=REQUEST_TIMEOUT,
+            ).json()
+            created_p_id = persona_res["personalityId"]
+
+            # Create a chat for this persona
+            chat_res = requests.post(
+                f"{API_URL}/voice-assistant/chat",
+                json={"topic": "Send Button E2E", "personalityId": created_p_id},
+                timeout=REQUEST_TIMEOUT,
+            ).json()
+            created_chat_id = chat_res["chatId"]
+
+            # 4. Open chat window in browser via UI navigation
+            page.goto(f"{ROBOT_URL}/voice-assistant/{created_p_id}/chat", wait_until="networkidle")
+            page.wait_for_timeout(1500)
+
+            # Click the created chat item in sidebar or navigate directly
+            chat_item = page.locator(f"text='Send Button E2E'").first
+            if chat_item.is_visible(timeout=3000):
+                chat_item.click()
+                page.wait_for_timeout(1000)
+
+            # Turn ON Voice Assistant toggle if off
+            va_toggle = page.locator("#sidebar-right-toggle-voice-assistant, [data-test='TGL_Voice_Assistant']").first
+            if va_toggle.is_visible(timeout=3000):
+                va_toggle.click()
+                page.wait_for_timeout(1000)
+
+            msg_input = page.locator("#message-input")
+            send_btn = page.locator("#chat-send-button")
+            if not msg_input.is_visible(timeout=3000):
+                page.goto(f"{ROBOT_URL}/voice-assistant/{created_p_id}/chat/{created_chat_id}", wait_until="networkidle")
+                page.wait_for_timeout(1500)
+
+            expect(msg_input).to_be_visible(timeout=10000)
+            page.wait_for_function("!document.querySelector('#message-input').disabled", timeout=10000)
+
+            # 5. Check when text length <= 2 chars, send button is DISABLED
+            msg_input.click()
+            msg_input.press_sequentially("12")
+            msg_input.evaluate("el => { el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); }")
+            page.wait_for_timeout(500)
+            assert send_btn.is_disabled(), "Expected #chat-send-button to be disabled for <= 2 chars"
+
+            # 6. Check when text length > 2 chars ('12345678'), send button becomes ENABLED
+            msg_input.fill("")
+            msg_input.press_sequentially("12345678")
+            msg_input.evaluate("el => { el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); }")
+            page.wait_for_timeout(500)
+            assert send_btn.is_enabled(), "Expected #chat-send-button to be enabled for > 2 chars ('12345678')"
+
+            # 7. Click send button to submit
+            send_btn.click()
+            page.wait_for_timeout(2000)
+
+        finally:
+            browser.close()
+            # Cleanup
+            if "created_chat_id" in locals():
+                requests.delete(f"{API_URL}/voice-assistant/chat/{created_chat_id}", timeout=REQUEST_TIMEOUT)
+            if "created_p_id" in locals():
+                requests.delete(f"{API_URL}/voice-assistant/personality/{created_p_id}", timeout=REQUEST_TIMEOUT)
