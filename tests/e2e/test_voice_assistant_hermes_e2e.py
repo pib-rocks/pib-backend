@@ -154,8 +154,7 @@ def test_voice_assistant_hermes_persists_reply_and_recalls_prior_fact():
 
         _send_chat_message(
             chat_id,
-            f"Remember this exact code for our conversation: {token}. "
-            "Acknowledge briefly.",
+            f"My favourite fruit is {token}. Acknowledge briefly.",
         )
         first_reply, first_messages = _wait_for_new_assistant_message(chat_id, set())
         assert first_reply["content"].strip()
@@ -163,7 +162,7 @@ def test_voice_assistant_hermes_persists_reply_and_recalls_prior_fact():
         first_ids = {message["messageId"] for message in first_messages}
         _send_chat_message(
             chat_id,
-            "What is the exact code I told you to remember? Output ONLY the code.",
+            "What is my favourite fruit?",
         )
         recalled_reply, _ = _wait_for_new_assistant_message(chat_id, first_ids)
         assert token in recalled_reply["content"]
