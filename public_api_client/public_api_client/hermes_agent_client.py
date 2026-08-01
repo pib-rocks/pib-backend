@@ -261,6 +261,21 @@ def _inherit_base_config(pdir: str) -> None:
                 except OSError as exc:
                     logging.warning("could not copy %s into %s: %s", name, pdir, exc)
 
+    # Always ensure config.yaml in profile has valid provider/model
+    cfg_target = os.path.join(pdir, CONFIG_FILENAME)
+    if not os.path.exists(cfg_target):
+        default_cfg = {
+            "provider": DEFAULT_HERMES_PROVIDER,
+            "model": DEFAULT_HERMES_MODEL,
+            "mcp_servers": {"pib": dict(PIB_MCP_SERVER)},
+        }
+        try:
+            with open(cfg_target, "w", encoding="utf-8") as fh:
+                yaml.safe_dump(default_cfg, fh, default_flow_style=False)
+            logging.info("seeded default config.yaml in profile at %s", cfg_target)
+        except OSError as exc:
+            logging.warning("could not seed config.yaml in profile %s: %s", pdir, exc)
+
     # Always ensure .env in profile carries GEMINI_API_KEY / GOOGLE_API_KEY if present in env
     env_target = os.path.join(pdir, ENV_FILENAME)
     existing_env = ""
