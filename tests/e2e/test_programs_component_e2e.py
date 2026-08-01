@@ -349,3 +349,86 @@ class TestProgramsComponentE2E:
         finally:
             # Safety net in case validation regressed and it got created.
             requests.delete(f"{BASE_URL}/api/v1/marimo/notebooks/{expected_file}")
+
+    def test_09_create_notebook_write_time_program_and_run_in_marimo(self, page: Page):
+        """
+        Create a new notebook via the UI, write a small time-printing Python cell
+        inside the Marimo iframe editor, run it, assert the output, then clean up.
+        """
+        unique_id = str(int(time.time()))
+        create_name = f"pib_time_demo_{unique_id}"
+        expected_file = f"{create_name}.py"
+        code = (
+            "import time\n"
+            "print('Hello World, current time:', time.ctime())"
+        )
+
+        try:
+            # 1. Navigate to /program/marimo
+            self._open_marimo(page)
+            sidebar = page.locator("app-sidebar-right")
+
+            # 2–3. New notebook modal → name → Save
+            page.locator('[data-test="BTN_New notebook"]').click()
+            name_input = page.locator("#input-name")
+            expect(name_input).to_be_visible(timeout=30000)
+            name_input.fill(create_name)
+            page.locator("#modal-save-button").click()
+
+            # 4. Notebook created and selected
+            create_link = sidebar.locator(
+                f'a[href$="/program/marimo/{expected_file}"]'
+            )
+            expect(create_link).to_be_visible(timeout=30000)
+            create_link.click()
+            expect(page).to_have_url(
+                re.compile(rf".*/program/marimo/{re.escape(expected_file)}$"),
+                timeout=30000,
+            )
+            iframe = page.locator("app-marimo iframe")
+            expect(iframe).to_have_attribute(
+                "src",
+                re.compile(rf".*[?&]file={re.escape(expected_file)}(&|$)"),
+                timeout=30000,
+            )
+
+            # 5. Frame-switch into app-marimo iframe
+            frame = page.frame_locator("app-marimo iframe")
+            editor = frame.locator(".cm-editor").first
+            expect(editor).to_be_visible(timeout=30000)
+
+            # 6. Verify the notebook starts clean (only starter 'import marimo as mo' template)
+            cm_content = frame.locator(".cm-content").first
+            expect(cm_content).to_be_visible(timeout=30000)
+            initial_text = cm_content.inner_text()
+            assert "Hello World, current time:" not in initial_text
+            assert "import time" not in initial_text
+            assert "import marimo" in initial_text, (
+                f"Expected initial marimo starter template, got: {initial_text!r}"
+            )
+            expect(
+                frame.get_by_text("Hello World, current time:", exact=False)
+            ).to_have_count(0)
+
+            # 7. Write Python code that imports time and prints Hello World + time
+            editor.click()
+            page.keyboard.press("Control+A")
+            page.keyboard.press("Backspace")
+            page.keyboard.type(code, delay=20)
+
+            # 8. Execute the cell (hover reveals run button; Ctrl+Enter as fallback)
+            editor.hover()
+            run_button = frame.get_by_test_id("run-button").locator("visible=true").first
+            try:
+                expect(run_button).to_be_visible(timeout=5000)
+                run_button.click()
+            except Exception:
+                page.keyboard.press("Control+Enter")
+
+            # 9. Verify execution output
+            expect(
+                frame.get_by_text("Hello World, current time:", exact=False)
+            ).to_be_visible(timeout=30000)
+        finally:
+            # 10. Cleanup: delete the created test notebook
+            requests.delete(f"{BASE_URL}/api/v1/marimo/notebooks/{expected_file}")
