@@ -33,7 +33,7 @@ def test_build_command_uses_oneshot_named_session_and_profile():
     assert cmd[0].endswith("hermes")
     assert "-p" in cmd and "pib_p-9" in cmd          # profile carries the SOUL.md
     assert "-z" in cmd and "hallo" in cmd
-    assert "-c" in cmd and "pib_chat_chat-1" in cmd  # durable per-chat session
+    assert "--continue" in cmd and "pib_chat_chat-1" in cmd  # durable per-chat session
 
 
 def test_build_command_without_personality_omits_profile():

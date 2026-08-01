@@ -132,9 +132,10 @@ def build_command(
     cmd = [hermes_bin()]
     if personality_id:
         cmd += ["-p", profile_name_for(personality_id)]
-    cmd += ["-z", text, "-c", session_name_for(chat_id)]
+    cmd += ["--continue", session_name_for(chat_id)]
     if toolsets:
         cmd += ["-t", toolsets]
+    cmd += ["-z", text]
     return cmd
 
 
