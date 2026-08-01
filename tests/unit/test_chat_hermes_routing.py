@@ -392,9 +392,66 @@ def test_stream_chunks_to_goal_splits_sentences(chat_module, chat_node):
     assert prev == "Hallo Welt."
     assert ptype == TEXT_TYPE_SENTENCE
     assert curr == ""
-    chat_node.executor.create_task.assert_called()
+    chat_node.create_chat_message.assert_called()
     # Single sentence → no prior feedback published yet (result carries it).
     goal_handle.publish_feedback.assert_not_called()
+
+
+def test_stream_chunks_to_goal_writes_chunks_in_order(chat_module, chat_node):
+    """A CREATE must complete before the UPDATE that targets its message id.
+
+    Scheduling the writes as executor tasks let them overlap, so the UPDATEs
+    hit the previous message and the created one kept only the first sentence.
+    """
+    goal_handle = MagicMock()
+    goal_handle.is_cancel_requested = False
+
+    chat_node._stream_chunks_to_goal(
+        goal_handle, "chat-1", ["Eins. ", "Zwei. ", "Drei."]
+    )
+
+    chat_node.executor.create_task.assert_not_called()
+    updates = [call[0][3] for call in chat_node.create_chat_message.call_args_list]
+    # First write creates the assistant message, every later one updates it.
+    assert updates == [False, True, True]
+
+
+def test_stream_chunks_to_goal_persists_text_without_terminator(
+    chat_module, chat_node
+):
+    """The tail of a reply used to be dropped when it had no '.', '?' or '!'."""
+    goal_handle = MagicMock()
+    goal_handle.is_cancel_requested = False
+
+    prev, ptype, curr = chat_node._stream_chunks_to_goal(
+        goal_handle, "chat-1", ["Eins. ", "Zwei ohne Punkt"]
+    )
+
+    texts = [call[0][1] for call in chat_node.create_chat_message.call_args_list]
+    assert texts == ["Eins.", "Zwei ohne Punkt"]
+    # The completed sentence goes out as feedback so the tail can ride along in
+    # Chat.Result, which the caller only fills from curr_text when prev is None.
+    assert prev is None
+    assert ptype is None
+    assert curr == "Zwei ohne Punkt"
+    assert goal_handle.publish_feedback.call_args[0][0].text == "Eins."
+
+
+def test_stream_chunks_to_goal_creates_when_only_unterminated_text_arrives(
+    chat_module, chat_node
+):
+    goal_handle = MagicMock()
+    goal_handle.is_cancel_requested = False
+
+    prev, _ptype, curr = chat_node._stream_chunks_to_goal(
+        goal_handle, "chat-1", ["Antwort ohne Satzzeichen"]
+    )
+
+    chat_node.create_chat_message.assert_called_once_with(
+        "chat-1", "Antwort ohne Satzzeichen", False, False, True
+    )
+    assert prev is None
+    assert curr == "Antwort ohne Satzzeichen"
 
 
 def test_stream_chunks_to_goal_publishes_prior_sentence_as_feedback(
