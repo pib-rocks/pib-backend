@@ -64,19 +64,30 @@ These tests verify the **functional behavior** of the Cerebra frontend — not j
 
 ## Selector Convention
 
-Cerebra uses `data-test` attributes throughout its HTML templates for stable element identification:
+Cerebra uses `data-test` attributes throughout its Angular HTML templates for stable element identification:
 
 | Prefix | Element type | Examples |
 |---|---|---|
-| `BTN_` | Button | `BTN_Apply_pose`, `BTN_Save_pose`, `BTN_Chat_Send`, `BTN_Smart_Connect` |
+| `BTN_` | Button | `BTN_Apply_pose`, `BTN_Save_pose`, `BTN_Smart_Connect` |
 | `LNK_` | Link / sidebar nav | `LNK_Joint_Control`, `LNK_Poses`, `LNK_Camera` |
 | `DDN_` | Dropdown | `DDN_Camera_resolution` |
 | `TGL_` | Toggle | `TGL_Camera_On_Off`, `TGL_Solid_State_Relay` |
 | `SLD_` | Slider | `SLD_Motor_Settings_Velocity`, `SLD_Camera_qualityFactor` |
-| `TXT_` | Text / input | `TXT_Peronality`, `TXT_Chat_Message`, `TXT_Message_history`, `TXT_Slider_BubbleInput` |
+| `TXT_` | Text / input | `TXT_Peronality`, `TXT_Message_history`, `TXT_Slider_BubbleInput` |
 | `LBL_` | Label | `LBL_IP_Address` |
 
 **CSS selector pattern:** `css=[data-test="BTN_Apply_pose"]`
+
+The Voice-Assistant chat is a deep-chat web component with an open shadow root.
+Its internal controls use deep-chat's native CSS selectors instead of stamped
+`data-test` names:
+
+| Purpose | CSS selector | Contract |
+|---|---|---|
+| Message input | `deep-chat #text-input` | contenteditable `div`; type with keyboard input |
+| Submit state | `deep-chat .input-button.input-button-svg` | disabled: class `disabled-button` and `aria-disabled="true"`; enabled: class `submit-button` and no `aria-disabled` |
+| Submit click target | `deep-chat #submit-icon` | icon only; it carries no enabled/disabled state |
+| Message history | `deep-chat #messages` | submitted marker must appear in its text |
 
 ---
 
@@ -152,9 +163,9 @@ Verifies personality creation and chat message sending.
 | E2E-BDD-FE-VA-003 | navigate to Voice Assistant | click `BTN_Add_Personality`, type name, confirm → `POST /voice-assistant/personality` + count not decreased |
 | E2E-BDD-FE-VA-004 | click first personality (select) | `BTN_Delete_Persona` visible for selected persona |
 | E2E-BDD-FE-VA-005 | click first personality (open chat) | `TXT_Message_history` visible |
-| E2E-BDD-FE-VA-006 | click first personality (open chat) | `BTN_Chat_Send` visible |
-| E2E-BDD-FE-VA-007 | click first personality (open chat) | `TXT_Chat_Message` visible |
-| E2E-BDD-FE-VA-008 | open chat, type marker in `TXT_Chat_Message` | click `BTN_Chat_Send` → `POST /voice-assistant/chat` + message appears in `TXT_Message_history` |
+| E2E-BDD-FE-VA-006 | click first personality (open chat) | deep-chat click target `deep-chat #submit-icon` visible |
+| E2E-BDD-FE-VA-007 | click first personality (open chat) | contenteditable input `deep-chat #text-input` visible |
+| E2E-BDD-FE-VA-008 | open chat, type marker via keyboard into `deep-chat #text-input`; wrapper has `submit-button` after >2 characters | click `deep-chat #submit-icon` → marker appears in `deep-chat #messages` |
 
 ### 6. `program_manager.robot` — Program Manager View (E2E-BDD-FE-PM-*)
 
