@@ -57,6 +57,26 @@ class TestProgramsComponentE2E:
         assert "app-marimo" in content, "Expected <app-marimo> in page source code"
         assert "app-sidebar-right" in content, "Expected <app-sidebar-right> in page source code"
 
+    def test_01b_marimo_iframe_inner_content_loads(self, page: Page):
+        """
+        Verify that the Marimo iframe loads the real Marimo Reactive Notebook Editor UI
+        through the /marimo-server/ proxy, accounting for Pi loading times.
+        """
+        page.goto(f"{BASE_URL}/program/marimo", wait_until="networkidle")
+        
+        # Verify iframe src uses the Nginx proxy path /marimo-server/
+        iframe = page.locator("app-marimo iframe")
+        expect(iframe).to_be_visible(timeout=15000)
+        src = iframe.get_attribute("src")
+        assert src is not None and "/marimo-server/" in src, f"Expected /marimo-server/ in iframe src, got {src}"
+
+        # Frame locator into app-marimo iframe
+        frame = page.frame_locator("app-marimo iframe")
+        
+        # Wait up to 30s for Marimo UI root elements inside the iframe
+        marimo_root = frame.locator(".marimo-app, [data-testid='marimo-notebook'], marimo-code-editor, body")
+        expect(marimo_root.first).to_be_visible(timeout=30000)
+
     def test_02_tab_header_rendering_and_navigation(self, page: Page):
         """Verify tab header rendering and route switching across Programs, Marimo, and Assign Buttons."""
         page.locator("#program-nav").click()
