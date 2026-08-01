@@ -38,7 +38,10 @@ def _wait_for_new_assistant_message(chat_id: str, previous_ids: set[str]):
             and message["content"].strip()
         ]
         if new_replies:
-            return new_replies[-1], messages
+            combined_content = " ".join(m["content"] for m in new_replies)
+            last_reply = new_replies[-1].copy()
+            last_reply["content"] = combined_content
+            return last_reply, messages
         time.sleep(1)
     pytest.fail(f"No persisted assistant reply arrived within {TURN_TIMEOUT} seconds")
 
