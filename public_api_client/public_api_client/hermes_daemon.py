@@ -71,6 +71,74 @@ def daemon_health_url() -> str:
     return daemon_base_url() + "/health"
 
 
+def run_turn_in_process(
+    text: str,
+    chat_id: str,
+    personality_id: Optional[str] = None,
+    toolsets: Optional[str] = None,
+    timeout: Optional[int] = None,
+) -> str:
+    """Execute one turn via the in-process Hermes Agent Python API.
+
+    Prefers ``hermes.run_agent.run_agent`` to avoid subprocess spawn / cold
+    import overhead. Falls back to ``run_turn_subprocess`` when the Hermes
+    Python package is not importable.
+    """
+    from public_api_client.hermes_agent_client import (
+        FALLBACK_REPLY,
+        ensure_profile,
+        run_turn_subprocess,
+    )
+
+    try:
+        from hermes.run_agent import run_agent
+    except ImportError:
+        logging.info(
+            "hermes.run_agent unavailable; falling back to CLI subprocess (chat=%s)",
+            chat_id,
+        )
+        kwargs = {
+            "text": text,
+            "chat_id": chat_id,
+            "personality_id": personality_id,
+            "toolsets": toolsets,
+        }
+        if timeout is not None:
+            kwargs["timeout"] = timeout
+        return run_turn_subprocess(**kwargs)
+
+    profile_name: Optional[str] = None
+    if personality_id:
+        try:
+            ensure_profile(personality_id)
+        except Exception as exc:
+            logging.warning(
+                "ensure_profile failed for personality %s (chat=%s): %s",
+                personality_id, chat_id, exc,
+            )
+        from pib_hermes_config import profile_name_for
+
+        profile_name = profile_name_for(personality_id)
+
+    try:
+        reply = run_agent(
+            prompt=text,
+            session_id=f"pib_chat_{chat_id}",
+            profile=profile_name,
+            timeout=timeout,
+        )
+    except Exception as exc:
+        logging.exception(
+            "in-process hermes turn failed (chat=%s): %s", chat_id, exc,
+        )
+        return FALLBACK_REPLY
+
+    if reply is None:
+        return FALLBACK_REPLY
+    reply_str = reply if isinstance(reply, str) else str(reply)
+    return reply_str.strip() or FALLBACK_REPLY
+
+
 def _default_turn_runner(
     text: str,
     chat_id: str,
@@ -78,18 +146,14 @@ def _default_turn_runner(
     toolsets: Optional[str] = None,
     timeout: Optional[int] = None,
 ) -> str:
-    """Execute one turn via the Hermes CLI subprocess (no daemon recursion)."""
-    from public_api_client.hermes_agent_client import run_turn_subprocess
-
-    kwargs = {
-        "text": text,
-        "chat_id": chat_id,
-        "personality_id": personality_id,
-        "toolsets": toolsets,
-    }
-    if timeout is not None:
-        kwargs["timeout"] = timeout
-    return run_turn_subprocess(**kwargs)
+    """Execute one turn in-process via Hermes Agent (subprocess fallback)."""
+    return run_turn_in_process(
+        text=text,
+        chat_id=chat_id,
+        personality_id=personality_id,
+        toolsets=toolsets,
+        timeout=timeout,
+    )
 
 
 class HermesDaemonHandler(BaseHTTPRequestHandler):

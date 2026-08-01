@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import json
+import sys
 import threading
 import time
+import types
+from unittest.mock import MagicMock, patch
 from urllib.request import Request, urlopen
 
 import pytest
-
-from unittest.mock import patch
 
 from public_api_client import hermes_daemon as hd
 
@@ -197,3 +198,120 @@ def test_client_uses_session_pooling_for_daemon(daemon_server, monkeypatch):
     assert reply2 == "daemon-says-hi"
     assert session_after_first is not None
     assert session_after_first is session_after_second
+
+
+def test_run_turn_in_process_calls_hermes_run_agent(tmp_path, monkeypatch):
+    """Default daemon turn path must invoke Hermes in-process when available."""
+    monkeypatch.setenv("PIB_HERMES_PROFILES_DIR", str(tmp_path / "profiles"))
+    fake_run_agent = MagicMock(return_value="  in-process-reply  ")
+    fake_module = types.ModuleType("hermes.run_agent")
+    fake_module.run_agent = fake_run_agent
+
+    with patch.dict(
+        sys.modules,
+        {
+            "hermes": types.ModuleType("hermes"),
+            "hermes.run_agent": fake_module,
+        },
+    ), patch(
+        "public_api_client.hermes_agent_client.ensure_profile",
+        return_value=str(tmp_path / "profiles" / "pib_pers-1"),
+    ) as ensure_profile, patch(
+        "public_api_client.hermes_agent_client.run_turn_subprocess",
+    ) as subprocess_runner:
+        reply = hd.run_turn_in_process(
+            text="Hallo",
+            chat_id="chat-42",
+            personality_id="pers-1",
+            timeout=30,
+        )
+
+    assert reply == "in-process-reply"
+    ensure_profile.assert_called_once_with("pers-1")
+    fake_run_agent.assert_called_once_with(
+        prompt="Hallo",
+        session_id="pib_chat_chat-42",
+        profile="pib_pers-1",
+        timeout=30,
+    )
+    subprocess_runner.assert_not_called()
+
+
+def test_run_turn_in_process_falls_back_to_subprocess_when_import_fails():
+    """Missing hermes.run_agent must fall back to the CLI subprocess path."""
+    import builtins
+
+    real_import = builtins.__import__
+
+    def _block_hermes_run_agent(name, *args, **kwargs):
+        if name == "hermes.run_agent" or name == "hermes":
+            raise ImportError("no hermes package")
+        return real_import(name, *args, **kwargs)
+
+    with patch("builtins.__import__", side_effect=_block_hermes_run_agent), patch(
+        "public_api_client.hermes_agent_client.run_turn_subprocess",
+        return_value="subprocess-reply",
+    ) as subprocess_runner:
+        reply = hd.run_turn_in_process(
+            text="Hallo",
+            chat_id="chat-7",
+            personality_id="pers-1",
+            toolsets="pib",
+            timeout=45,
+        )
+
+    assert reply == "subprocess-reply"
+    subprocess_runner.assert_called_once_with(
+        text="Hallo",
+        chat_id="chat-7",
+        personality_id="pers-1",
+        toolsets="pib",
+        timeout=45,
+    )
+
+
+def test_default_turn_runner_uses_in_process_path():
+    """create_server default runner must be the in-process implementation."""
+    with patch.object(
+        hd, "run_turn_in_process", return_value="from-default"
+    ) as in_process:
+        reply = hd._default_turn_runner(
+            text="hi",
+            chat_id="c1",
+            personality_id="p1",
+            toolsets=None,
+            timeout=10,
+        )
+
+    assert reply == "from-default"
+    in_process.assert_called_once_with(
+        text="hi",
+        chat_id="c1",
+        personality_id="p1",
+        toolsets=None,
+        timeout=10,
+    )
+
+
+def test_run_turn_in_process_returns_fallback_on_agent_error(tmp_path, monkeypatch):
+    from public_api_client.hermes_agent_client import FALLBACK_REPLY
+
+    monkeypatch.setenv("PIB_HERMES_PROFILES_DIR", str(tmp_path / "profiles"))
+    fake_module = types.ModuleType("hermes.run_agent")
+    fake_module.run_agent = MagicMock(side_effect=RuntimeError("boom"))
+
+    with patch.dict(
+        sys.modules,
+        {
+            "hermes": types.ModuleType("hermes"),
+            "hermes.run_agent": fake_module,
+        },
+    ), patch(
+        "public_api_client.hermes_agent_client.ensure_profile",
+        return_value="/tmp/p",
+    ):
+        reply = hd.run_turn_in_process(
+            text="Hi", chat_id="c", personality_id="pers-1",
+        )
+
+    assert reply == FALLBACK_REPLY

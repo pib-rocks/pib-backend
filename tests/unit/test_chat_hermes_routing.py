@@ -380,6 +380,139 @@ def test_ensure_hermes_daemon_never_raises(chat_module, chat_node):
     assert "oneshot subprocess fallback" in logger.warning.call_args[0][0]
 
 
+def test_warm_daemon_turn_uses_in_process_runner(chat_module, chat_node, monkeypatch):
+    """Warm daemon must answer chat turns via hermes.run_agent, not CLI spawn."""
+    import threading
+    import time
+    import types
+    from urllib.request import urlopen
+
+    from public_api_client import hermes_agent_client
+    from public_api_client import hermes_daemon as hd
+
+    fake_run_agent = MagicMock(return_value="in-process-via-daemon")
+    fake_module = types.ModuleType("hermes.run_agent")
+    fake_module.run_agent = fake_run_agent
+
+    with patch.dict(
+        sys.modules,
+        {
+            "hermes": types.ModuleType("hermes"),
+            "hermes.run_agent": fake_module,
+        },
+    ), patch(
+        "public_api_client.hermes_agent_client.ensure_profile",
+        return_value="/tmp/p",
+    ), patch(
+        "public_api_client.hermes_agent_client.run_turn_subprocess",
+    ) as subprocess_runner:
+        probe = hd.create_server(host="127.0.0.1", port=0)
+        host, port = probe.server_address
+        monkeypatch.setenv("PIB_HERMES_DAEMON_HOST", host)
+        monkeypatch.setenv("PIB_HERMES_DAEMON_PORT", str(port))
+        monkeypatch.setenv("PIB_HERMES_DAEMON_URL", f"http://{host}:{port}")
+
+        thread = threading.Thread(target=probe.serve_forever, daemon=True)
+        thread.start()
+        try:
+            deadline = time.monotonic() + 2.0
+            while time.monotonic() < deadline:
+                try:
+                    with urlopen(f"http://{host}:{port}/health", timeout=0.1) as resp:
+                        if resp.status == 200:
+                            break
+                except Exception:
+                    time.sleep(0.02)
+            else:
+                pytest.fail("daemon did not become reachable")
+
+            hermes_agent_client._daemon_http_session = None
+            with patch.object(
+                hermes_agent_client, "is_warm_daemon_active", return_value=True
+            ):
+                reply = chat_node._run_hermes_turn(
+                    text="Hi",
+                    chat_id="chat-ip",
+                    personality_id="pers-1",
+                    description="Du bist pib.",
+                )
+        finally:
+            probe.shutdown()
+            probe.server_close()
+            thread.join(timeout=2.0)
+
+    assert reply == "in-process-via-daemon"
+    fake_run_agent.assert_called_once()
+    assert fake_run_agent.call_args.kwargs["prompt"] == "Hi"
+    assert fake_run_agent.call_args.kwargs["session_id"] == "pib_chat_chat-ip"
+    assert fake_run_agent.call_args.kwargs["profile"] == "pib_pers-1"
+    subprocess_runner.assert_not_called()
+
+
+def test_warm_daemon_falls_back_to_subprocess_when_run_agent_missing(
+    chat_module, chat_node, monkeypatch
+):
+    """If hermes.run_agent cannot be imported, daemon must use CLI subprocess."""
+    import threading
+    import time
+    from urllib.request import urlopen
+
+    from public_api_client import hermes_agent_client
+    from public_api_client import hermes_daemon as hd
+
+    import builtins
+
+    real_import = builtins.__import__
+
+    def _block_hermes(name, *args, **kwargs):
+        if name == "hermes.run_agent" or name == "hermes":
+            raise ImportError("no hermes")
+        return real_import(name, *args, **kwargs)
+
+    with patch("builtins.__import__", side_effect=_block_hermes), patch(
+        "public_api_client.hermes_agent_client.run_turn_subprocess",
+        return_value="subprocess-via-daemon",
+    ) as subprocess_runner:
+        probe = hd.create_server(host="127.0.0.1", port=0)
+        host, port = probe.server_address
+        monkeypatch.setenv("PIB_HERMES_DAEMON_HOST", host)
+        monkeypatch.setenv("PIB_HERMES_DAEMON_PORT", str(port))
+        monkeypatch.setenv("PIB_HERMES_DAEMON_URL", f"http://{host}:{port}")
+
+        thread = threading.Thread(target=probe.serve_forever, daemon=True)
+        thread.start()
+        try:
+            deadline = time.monotonic() + 2.0
+            while time.monotonic() < deadline:
+                try:
+                    with urlopen(f"http://{host}:{port}/health", timeout=0.1) as resp:
+                        if resp.status == 200:
+                            break
+                except Exception:
+                    time.sleep(0.02)
+            else:
+                pytest.fail("daemon did not become reachable")
+
+            hermes_agent_client._daemon_http_session = None
+            with patch.object(
+                hermes_agent_client, "is_warm_daemon_active", return_value=True
+            ):
+                reply = chat_node._run_hermes_turn(
+                    text="Hi",
+                    chat_id="chat-fb",
+                    personality_id="pers-1",
+                    description="d",
+                )
+        finally:
+            probe.shutdown()
+            probe.server_close()
+            thread.join(timeout=2.0)
+
+    assert reply == "subprocess-via-daemon"
+    subprocess_runner.assert_called_once()
+    assert subprocess_runner.call_args.kwargs["chat_id"] == "chat-fb"
+
+
 def test_stream_chunks_to_goal_splits_sentences(chat_module, chat_node):
     goal_handle = MagicMock()
     goal_handle.is_cancel_requested = False
