@@ -3,6 +3,21 @@ from pib_hermes_config import build_default_soul_text
 from service import personality_service, soul_service
 
 
+EXPECTED_MCP_TOOLS = (
+    "mcp_pib_pib_list_motors",
+    "mcp_pib_pib_get_state",
+    "mcp_pib_pib_list_poses",
+    "mcp_pib_pib_list_programs",
+    "mcp_pib_pib_capture_image",
+    "mcp_pib_pib_move_motor",
+    "mcp_pib_pib_apply_pose",
+    "mcp_pib_pib_run_program",
+    "mcp_pib_pib_set_led",
+    "mcp_pib_pib_set_relay",
+    "mcp_pib_pib_soul_append",
+)
+
+
 @pytest.fixture()
 def client(app):
     return app.test_client()
@@ -29,6 +44,8 @@ def test_create_personality_populates_description_with_full_soul(
     assert soul_service.read_soul(p.personality_id) == expected
     assert "Du bist der humanoide Roboter Eva." in p.description
     assert "## Verfügbare MCP-Werkzeuge (pib_mcp_server)" in p.description
+    for tool in EXPECTED_MCP_TOOLS:
+        assert tool in p.description
 
 
 def test_create_personality_embeds_custom_description_in_soul(
@@ -42,6 +59,8 @@ def test_create_personality_embeds_custom_description_in_soul(
     assert p.description == expected
     assert "Sei freundlich und neugierig." in p.description
     assert soul_service.read_soul(p.personality_id) == expected
+    for tool in EXPECTED_MCP_TOOLS:
+        assert tool in p.description
 
 
 def test_get_personality_backfills_empty_description_from_soul(
@@ -99,6 +118,8 @@ def test_api_create_and_get_return_full_soul_description(
     created = create_resp.get_json()
     expected = build_default_soul_text("ApiSoulBot")
     assert created["description"] == expected
+    for tool in EXPECTED_MCP_TOOLS:
+        assert tool in created["description"]
 
     get_resp = client.get(
         f"/voice-assistant/personality/{created['personalityId']}"

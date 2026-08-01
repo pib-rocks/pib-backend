@@ -1,6 +1,5 @@
 from public_api_client.hermes_agent_client import (
     FALLBACK_REPLY,
-    MCP_TOOLS_SOUL_SECTION,
     build_default_soul_text,
     ensure_profile,
     session_name_for,
@@ -10,18 +9,24 @@ from public_api_client.hermes_agent_client import (
     run_turn,
     uses_hermes_backend,
 )
+from pib_hermes_config import MCP_TOOLS_SOUL_SECTION
 import os
 import subprocess
 from unittest.mock import patch
 
 
 EXPECTED_MCP_TOOLS = (
-    "mcp_pib_get_motor_currents",
-    "mcp_pib_set_servo_angle",
-    "mcp_pib_speak",
-    "mcp_pib_get_bricklets",
-    "mcp_pib_move_head",
-    "mcp_pib_get_head_pose",
+    "mcp_pib_pib_list_motors",
+    "mcp_pib_pib_get_state",
+    "mcp_pib_pib_list_poses",
+    "mcp_pib_pib_list_programs",
+    "mcp_pib_pib_capture_image",
+    "mcp_pib_pib_move_motor",
+    "mcp_pib_pib_apply_pose",
+    "mcp_pib_pib_run_program",
+    "mcp_pib_pib_set_led",
+    "mcp_pib_pib_set_relay",
+    "mcp_pib_pib_soul_append",
 )
 
 

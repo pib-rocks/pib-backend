@@ -92,47 +92,59 @@ def align_profile_ownership(profile_dir: str) -> None:
     except OSError as exc:
         logging.debug("could not chmod %s to %o: %s", profile_dir, PROFILE_DIR_MODE, exc)
 
+# Seeded into every personality SOUL.md so the agent knows its real FastMCP tools.
+# Names use Hermes' mcp_<server>_ prefix on the pib_mcp_server tool names.
+MCP_TOOLS_SOUL_SECTION = """## Verfügbare MCP-Werkzeuge (pib_mcp_server)
+
+Nutze die folgenden MCP-Werkzeuge, um den Roboter wahrzunehmen und zu steuern.
+Der MCP-Server heißt `pib`; Hermes stellt die Tools unter dem Präfix `mcp_pib_` bereit.
+
+### mcp_pib_pib_list_motors
+Listet konfigurierte Motoren und Bricklets inklusive aktueller Motorpositionen.
+
+### mcp_pib_pib_get_state
+Liefert den aktuellen Gelenkzustand, Diagnosen und Roboter-Telemetrie.
+
+### mcp_pib_pib_list_poses
+Listet gespeicherte Posen.
+
+### mcp_pib_pib_list_programs
+Listet gespeicherte Blockly-/Python-Programme.
+
+### mcp_pib_pib_capture_image
+Nimmt ein Kamerabild als base64-kodiertes JPEG auf.
+
+### mcp_pib_pib_move_motor
+Bewegt einen Motor innerhalb seiner konfigurierten Rotationsgrenzen.
+
+### mcp_pib_pib_apply_pose
+Wendet eine gespeicherte Pose anhand ihres genauen Namens an.
+
+### mcp_pib_pib_run_program
+Startet ein gespeichertes Programm anhand seiner Program-ID.
+
+### mcp_pib_pib_set_led
+Setzt die RGB-LED eines Buttons (Button 1–3, Kanäle 0–255).
+
+### mcp_pib_pib_set_relay
+Schaltet das Solid-State-Relais ein oder aus.
+
+### mcp_pib_pib_soul_append
+Hängt eine dauerhafte Lektion an die SOUL.md einer Persönlichkeit an; ersetzt sie nie.
+"""
+
+
 def build_default_soul_text(
     personality_name: str,
     custom_description: str | None = None,
 ) -> str:
     """Build the standard SOUL.md with robot identity and MCP tools documentation."""
     name = (personality_name or "").strip() or "pib"
-    lines = [f"Du bist der humanoide Roboter {name}."]
+    parts = [f"Du bist der humanoide Roboter {name}."]
     if custom_description and custom_description.strip():
-        lines.append("")
-        lines.append(custom_description.strip())
-
-    lines.extend([
-        "",
-        "## Verfügbare MCP-Werkzeuge (pib_mcp_server)",
-        "",
-        "Nutze die folgenden MCP-Werkzeuge, um den Roboter wahrzunehmen und zu steuern.",
-        "Der MCP-Server heißt `pib`; Hermes stellt die Tools unter dem Präfix `mcp_pib_` bereit.",
-        "",
-        "### mcp_pib_get_motor_currents",
-        "Auslesen der aktuellen Motor-Ströme in Milliampere (mA). Hilfreich zur Diagnose von Last,",
-        "Blockaden oder ungewöhnlichem Stromverbrauch einzelner Antriebe.",
-        "",
-        "### mcp_pib_set_servo_angle",
-        "Ansteuern einzelner Servo-Gelenke durch Setzen eines Zielwinkels. Damit kannst du Arme,",
-        "Beine und andere Gelenke gezielt bewegen.",
-        "",
-        "### mcp_pib_speak",
-        "Sprachausgabe über das Roboter-Audio-System. Verwende dieses Werkzeug, um gesprochene",
-        "Antworten oder Ansagen über die Lautsprecher auszugeben.",
-        "",
-        "### mcp_pib_get_bricklets",
-        "Status-Abfrage der verbundenen Tinkerforge Bricklets. Liefert Informationen darüber,",
-        "welche Hardware-Module erreichbar sind und welchen Zustand sie melden.",
-        "",
-        "### mcp_pib_move_head",
-        "Bewegung der Kopf-Orientierung. Ermogllicht gezieltes Ausrichten des Kopfes",
-        "(z. B. Nicken, Drehen), um Blickrichtung oder Gestik anzupassen.",
-        "",
-        "### mcp_pib_get_head_pose",
-        "Abfrage der aktuellen Kopf-Orientierung (Pose). Nutze dies, um zu wissen, wohin der",
-        "Kopf gerade ausgerichtet ist, bevor du ihn bewegst.",
-    ])
-    return "\n".join(lines) + "\n"
+        parts.append("")
+        parts.append(custom_description.strip())
+    parts.append("")
+    parts.append(MCP_TOOLS_SOUL_SECTION.strip())
+    return "\n".join(parts) + "\n"
 

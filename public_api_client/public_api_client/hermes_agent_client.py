@@ -45,37 +45,6 @@ PIB_MCP_SERVER = {
     "args": ["-m", "pib_mcp_server"],
 }
 
-# Seeded into every provisioned profile SOUL.md so the agent knows its tools.
-MCP_TOOLS_SOUL_SECTION = """## Verfügbare MCP-Werkzeuge (pib_mcp_server)
-
-Nutze die folgenden MCP-Werkzeuge, um den Roboter wahrzunehmen und zu steuern.
-Der MCP-Server heißt `pib`; Hermes stellt die Tools unter dem Präfix `mcp_pib_` bereit.
-
-### mcp_pib_get_motor_currents
-Auslesen der aktuellen Motor-Ströme in Milliampere (mA). Hilfreich zur Diagnose von Last,
-Blockaden oder ungewöhnlichem Stromverbrauch einzelner Antriebe.
-
-### mcp_pib_set_servo_angle
-Ansteuern einzelner Servo-Gelenke durch Setzen eines Zielwinkels. Damit kannst du Arme,
-Beine und andere Gelenke gezielt bewegen.
-
-### mcp_pib_speak
-Sprachausgabe über das Roboter-Audio-System. Verwende dieses Werkzeug, um gesprochene
-Antworten oder Ansagen über die Lautsprecher auszugeben.
-
-### mcp_pib_get_bricklets
-Status-Abfrage der verbundenen Tinkerforge Bricklets. Liefert Informationen darüber,
-welche Hardware-Module erreichbar sind und welchen Zustand sie melden.
-
-### mcp_pib_move_head
-Bewegung der Kopf-Orientierung. Ermöglicht gezieltes Ausrichten des Kopfes
-(z. B. Nicken, Drehen), um Blickrichtung oder Gestik anzupassen.
-
-### mcp_pib_get_head_pose
-Abfrage der aktuellen Kopf-Orientierung (Pose). Nutze dies, um zu wissen, wohin der
-Kopf gerade ausgerichtet ist, bevor du ihn bewegst.
-"""
-
 # Startup liveness probe only. Deliberately small: it runs before the chat node
 # is up, so it must diagnose a broken install without delaying startup. A real
 # `hermes --version` answers in well under a second.
@@ -284,27 +253,6 @@ def _inherit_base_config(pdir: str) -> None:
         logging.info("copied %s from %s into hermes profile %s", name, base, pdir)
 
     _ensure_mcp_servers_pib(pdir)
-
-
-def build_default_soul_text(
-    personality_name: str,
-    custom_description: Optional[str] = None,
-) -> str:
-    """Build the default SOUL.md for a provisioned Hermes personality profile.
-
-    Every profile starts with a fixed robot-identity line that substitutes the
-    personality name, optionally continues with a custom description/prompt, and
-    always ends with documentation of the pib MCP tools.
-    """
-    name = (personality_name or "").strip() or "pib"
-    parts = [f"Du bist der humanoide Roboter {name}."]
-    if custom_description and custom_description.strip():
-        parts.append("")
-        parts.append(custom_description.strip())
-    parts.append("")
-    parts.append(MCP_TOOLS_SOUL_SECTION.strip())
-    parts.append("")
-    return "\n".join(parts)
 
 
 def ensure_profile(
