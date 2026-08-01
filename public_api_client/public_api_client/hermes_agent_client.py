@@ -43,6 +43,11 @@ ENV_FILE_MODE = 0o600
 PIB_MCP_SERVER = {
     "command": "python3",
     "args": ["-m", "pib_mcp_server"],
+    "env": {
+        "FLASK_API_BASE_URL": os.getenv("FLASK_API_BASE_URL", "http://flask-app:5000"),
+        "PIB_MCP_API_BASE_URL": os.getenv("FLASK_API_BASE_URL", "http://flask-app:5000"),
+        "PIB_MCP_ROSBRIDGE_URL": os.getenv("PIB_MCP_ROSBRIDGE_URL", "ws://rosbridge-ws:9090"),
+    },
 }
 
 # Permanent Hermes LLM pin. Kept in sync with setup/setup-pib.sh.
