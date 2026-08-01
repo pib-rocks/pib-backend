@@ -26,6 +26,8 @@ def _get_json(path: str):
 
 def _wait_for_new_assistant_message(chat_id: str, previous_ids: set[str]):
     deadline = time.monotonic() + TURN_TIMEOUT
+    last_count = 0
+    stable_ticks = 0
     while time.monotonic() < deadline:
         messages = _get_json(
             f"/voice-assistant/chat/{chat_id}/messages"
@@ -38,21 +40,16 @@ def _wait_for_new_assistant_message(chat_id: str, previous_ids: set[str]):
             and message["content"].strip()
         ]
         if new_replies:
-            time.sleep(2)  # Wait for remaining sentence chunks of this turn
-            messages = _get_json(
-                f"/voice-assistant/chat/{chat_id}/messages"
-            ).get("messages", [])
-            new_replies = [
-                message
-                for message in messages
-                if not message["isUser"]
-                and message["messageId"] not in previous_ids
-                and message["content"].strip()
-            ]
-            combined_content = " ".join(m["content"] for m in new_replies)
-            last_reply = new_replies[-1].copy()
-            last_reply["content"] = combined_content
-            return last_reply, messages
+            if len(new_replies) == last_count:
+                stable_ticks += 1
+                if stable_ticks >= 3:
+                    combined_content = " ".join(m["content"] for m in new_replies)
+                    last_reply = new_replies[-1].copy()
+                    last_reply["content"] = combined_content
+                    return last_reply, messages
+            else:
+                last_count = len(new_replies)
+                stable_ticks = 0
         time.sleep(1)
     pytest.fail(f"No persisted assistant reply arrived within {TURN_TIMEOUT} seconds")
 
