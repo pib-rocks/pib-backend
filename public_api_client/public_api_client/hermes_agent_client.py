@@ -239,42 +239,50 @@ def _ensure_mcp_servers_pib(pdir: str) -> None:
 
 
 def _inherit_base_config(pdir: str) -> None:
-    """Materialize the provider config a profile needs, from HERMES_HOME.
+    """Materialize the provider config a profile needs, from HERMES_HOME or environment.
 
     `hermes -p <profile>` resolves its LLM provider from the profile, so a
     profile holding only a SOUL.md fails every turn with "No LLM provider
     configured". Copies rather than symlinks, so that a later `hermes profile
-    delete` cannot damage the base install, and never replaces a file the profile
-    already has, which may have been customized on purpose.
-
-    Always ensures mcp_servers.pib is present afterwards, including when the
-    profile already had its own config.yaml.
+    delete` cannot damage the base install. Also ensures API keys in .env
+    are populated from environment variables if missing.
     """
     base = hermes_home()
     for name, mode in ((CONFIG_FILENAME, None), (ENV_FILENAME, ENV_FILE_MODE)):
         target = os.path.join(pdir, name)
-        if os.path.exists(target):
-            logging.debug("hermes profile keeps its own %s (%s)", name, target)
-            continue
-        source = os.path.join(base, name)
-        if not os.path.isfile(source):
-            logging.warning(
-                "hermes base install has no %s at %s: hermes-agent personalities "
-                "will answer with the fallback reply until credentials are "
-                "configured there (`sudo -u pib -H hermes setup`)",
-                name, source,
-            )
-            continue
+        if not os.path.exists(target):
+            source = os.path.join(base, name)
+            if os.path.isfile(source):
+                try:
+                    shutil.copyfile(source, target)
+                    if mode is not None:
+                        os.chmod(target, mode)
+                    logging.info("copied %s from %s into hermes profile %s", name, base, pdir)
+                except OSError as exc:
+                    logging.warning("could not copy %s into %s: %s", name, pdir, exc)
+
+    # Always ensure .env in profile carries GEMINI_API_KEY / GOOGLE_API_KEY if present in env
+    env_target = os.path.join(pdir, ENV_FILENAME)
+    existing_env = ""
+    if os.path.exists(env_target):
         try:
-            shutil.copyfile(source, target)
-            if mode is not None:
-                os.chmod(target, mode)
+            with open(env_target, "r", encoding="utf-8") as fh:
+                existing_env = fh.read()
+        except OSError:
+            pass
+
+    gemini_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+    if gemini_key and ("GEMINI_API_KEY" not in existing_env or "GOOGLE_API_KEY" not in existing_env):
+        try:
+            with open(env_target, "a", encoding="utf-8") as fh:
+                if "GEMINI_API_KEY" not in existing_env:
+                    fh.write(f"\nGEMINI_API_KEY={gemini_key}\n")
+                if "GOOGLE_API_KEY" not in existing_env:
+                    fh.write(f"\nGOOGLE_API_KEY={gemini_key}\n")
+            os.chmod(env_target, ENV_FILE_MODE)
+            logging.info("ensured GEMINI_API_KEY/GOOGLE_API_KEY in profile .env at %s", env_target)
         except OSError as exc:
-            logging.warning(
-                "could not copy %s from %s into %s: %s", name, base, pdir, exc
-            )
-            continue
-        logging.info("copied %s from %s into hermes profile %s", name, base, pdir)
+            logging.warning("could not update profile .env at %s: %s", env_target, exc)
 
     _ensure_mcp_servers_pib(pdir)
 
