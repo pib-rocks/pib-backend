@@ -131,7 +131,7 @@ def test_voice_assistant_hermes_persists_reply_and_recalls_prior_fact():
     personality_id = personality["personalityId"]
     original_model_id = personality["assistantModelId"]
     chat_id = None
-    token = f"PIB-E2E-{uuid.uuid4().hex[:8].upper()}"
+    token = f"PIB-COLOR-{uuid.uuid4().hex[:8].upper()}"
 
     try:
         update = requests.put(
@@ -154,7 +154,7 @@ def test_voice_assistant_hermes_persists_reply_and_recalls_prior_fact():
 
         _send_chat_message(
             chat_id,
-            f"My favourite fruit is {token}. Acknowledge briefly.",
+            f"My favourite color is {token}. Answer with OK.",
         )
         first_reply, first_messages = _wait_for_new_assistant_message(chat_id, set())
         assert first_reply["content"].strip()
@@ -162,7 +162,7 @@ def test_voice_assistant_hermes_persists_reply_and_recalls_prior_fact():
         first_ids = {message["messageId"] for message in first_messages}
         _send_chat_message(
             chat_id,
-            "What is my favourite fruit?",
+            "What is my favourite color?",
         )
         recalled_reply, _ = _wait_for_new_assistant_message(chat_id, first_ids)
         assert token in recalled_reply["content"]
