@@ -10,6 +10,10 @@ from pib_mcp_server.server import ACTUATING_TOOLS, create_server
 class FakeBackend:
     def __init__(self):
         self.calls = []
+        self.poses = [
+            {"name": "Startup/Resting", "deletable": False},
+            {"name": "Calibration", "deletable": False},
+        ]
         self.motors = [
             {
                 "name": "head",
@@ -29,7 +33,7 @@ class FakeBackend:
         return {"motors": self.motors, "diagnostics": {}}
 
     def list_poses(self):
-        return [{"name": "Home"}]
+        return self.poses
 
     def list_programs(self):
         return [{"programNumber": "7", "name": "Wave"}]
@@ -94,6 +98,21 @@ def _call(server, name, arguments):
                 return c0.text
         return c0
     return result
+
+
+def test_pib_list_poses_returns_default_poses():
+    backend = FakeBackend()
+    backend.poses = [
+        {"name": "Startup/Resting", "deletable": False},
+        {"name": "Calibration", "deletable": False},
+    ]
+    backend.list_poses = lambda: backend.poses
+    server = create_server(backend)
+    res = _call(server, "pib_list_poses", {})
+    assert res["ok"] is True
+    pose_names = [p["name"] for p in res["result"]]
+    assert "Startup/Resting" in pose_names
+    assert "Calibration" in pose_names
 
 
 def test_tool_discovery_exposes_complete_declared_surface():
