@@ -406,3 +406,113 @@ def test_chat_send_button_activation_with_smartconnect():
                 requests.delete(f"{API_URL}/voice-assistant/chat/{created_chat_id}", timeout=REQUEST_TIMEOUT)
             if "created_p_id" in locals():
                 requests.delete(f"{API_URL}/voice-assistant/personality/{created_p_id}", timeout=REQUEST_TIMEOUT)
+
+
+def test_voice_assistant_latency_and_smartconnect_e2e():
+    """
+    E2E UI Test according to user specification:
+    1. Activates SmartConnect with Token '1234567890' and Password '1234567890'.
+    2. Creates a new personality with configured Hermes Agent (unique name).
+    3. Types 'Wie geht es dir?' in deep-chat UI and measures response latency
+       from Submit click until the assistant's reply appears in the UI.
+    """
+    from playwright.sync_api import sync_playwright
+
+    # 1. Activate SmartConnect with token '1234567890' and password '1234567890'
+    requests.post(
+        f"{API_URL}/system/smart-connect",
+        json={"token": "1234567890", "password": "1234567890"},
+        timeout=REQUEST_TIMEOUT,
+    )
+
+    unique_persona_name = f"HermesLatencyTester_{uuid.uuid4().hex[:6]}"
+    created_chat_id = None
+    created_p_id = None
+
+    # Get Hermes Agent assistant model ID
+    res_models = requests.get(f"{API_URL}/assistant-model", timeout=REQUEST_TIMEOUT).json()
+    models = res_models.get("assistantModels", []) if isinstance(res_models, dict) else res_models
+    hermes_model = [m for m in models if "hermes" in m.get("apiName", "").lower()][0]
+    hermes_model_id = hermes_model["id"]
+
+    # 2. Create new personality with configured Hermes Agent
+    persona_res = requests.post(
+        f"{API_URL}/voice-assistant/personality",
+        json={
+            "name": unique_persona_name,
+            "gender": "Female",
+            "pauseThreshold": 0.8,
+            "assistantModelId": hermes_model_id,
+            "messageHistory": 5,
+        },
+        timeout=REQUEST_TIMEOUT,
+    ).json()
+    created_p_id = persona_res["personalityId"]
+
+    # Create a chat for this new personality
+    chat_res = requests.post(
+        f"{API_URL}/voice-assistant/chat",
+        json={"topic": "Latency Test Chat", "personalityId": created_p_id},
+        timeout=REQUEST_TIMEOUT,
+    ).json()
+    created_chat_id = chat_res["chatId"]
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(
+            headless=True, executable_path="/usr/bin/chromium-browser"
+        )
+        context = browser.new_context(viewport={"width": 1400, "height": 900})
+        page = context.new_page()
+
+        try:
+            # Open Voice Assistant UI
+            page.goto(f"{ROBOT_URL}/voice-assistant", wait_until="networkidle")
+            page.wait_for_timeout(1000)
+
+            # Click newly created personality in sidebar
+            p_link = page.locator(f"a:has-text('{unique_persona_name}')").first
+            expect(p_link).to_be_visible(timeout=10000)
+            p_link.click()
+            page.wait_for_timeout(1000)
+
+            # Click chat topic
+            chat_item = page.locator("text='Latency Test Chat'").first
+            expect(chat_item).to_be_visible(timeout=10000)
+            chat_item.click()
+            page.wait_for_timeout(1000)
+
+            # Locate deep-chat elements
+            page.wait_for_selector("deep-chat #text-input", state="visible", timeout=30000)
+            msg_input = page.locator("deep-chat #text-input")
+            submit_icon = page.locator("deep-chat #submit-icon")
+            messages = page.locator("deep-chat #messages")
+
+            # Type 'Wie geht es dir?' into deep-chat input
+            prompt = "Wie geht es dir?"
+            msg_input.click()
+            page.keyboard.type(prompt)
+            page.wait_for_timeout(300)
+
+            # 3. Measure response time from Submit click until assistant reply appears in UI
+            t0 = time.monotonic()
+            submit_icon.click()
+
+            # Wait for assistant response message to render in deep-chat
+            expect(messages).to_contain_text("Roboter", timeout=20000)
+            t1 = time.monotonic()
+
+            latency_ms = (t1 - t0) * 1000.0
+            print(f"\n==================================================")
+            print(f"[E2E_PERF_TRACE] UI Response Latency for '{prompt}': {latency_ms:.2f} ms ({latency_ms/1000.0:.2f} s)")
+            print(f"==================================================")
+
+            assert latency_ms > 0, "Latency measurement failed"
+
+        finally:
+            browser.close()
+            # Cleanup
+            if created_chat_id:
+                requests.delete(f"{API_URL}/voice-assistant/chat/{created_chat_id}", timeout=REQUEST_TIMEOUT)
+            if created_p_id:
+                requests.delete(f"{API_URL}/voice-assistant/personality/{created_p_id}", timeout=REQUEST_TIMEOUT)
+
