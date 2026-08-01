@@ -82,7 +82,7 @@ E2E-BDD-FE-VA-005 Chat Window Visible After Opening Personality Chat
 
 E2E-BDD-FE-VA-006 Chat Send Button Visible In Open Chat
     [Documentation]    Given a personality chat is open When user looks for the send button
-    ...               Then BTN_Chat_Send is visible.
+    ...               Then deep-chat #submit-icon is visible.
     Open Cerebra Home
     When User Clicks Sidebar Nav Item    LNK_Voice_Assistant
     Wait For Load State    networkidle
@@ -94,13 +94,13 @@ E2E-BDD-FE-VA-006 Chat Send Button Visible In Open Chat
     Click Element By Css Selector    a[data-test^="LNK_"][href*="/voice-assistant/"]
     Wait For Load State    networkidle
     ${has_chat}=    Run Keyword And Return Status
-    ...    Wait For Element By Data Test    BTN_Chat_Send    visible    timeout=10s
+    ...    Wait For Element By Css Selector    deep-chat #submit-icon    visible    timeout=10s
     Run Keyword If    not ${has_chat}
     ...    Pass Execution    Chat send button not available for this personality
 
 E2E-BDD-FE-VA-007 Chat Input Field Visible In Open Chat
     [Documentation]    Given a personality chat is open When user looks for the input field
-    ...               Then TXT_Chat_Message is visible.
+    ...               Then deep-chat #text-input is visible.
     Open Cerebra Home
     When User Clicks Sidebar Nav Item    LNK_Voice_Assistant
     Wait For Load State    networkidle
@@ -112,13 +112,13 @@ E2E-BDD-FE-VA-007 Chat Input Field Visible In Open Chat
     Click Element By Css Selector    a[data-test^="LNK_"][href*="/voice-assistant/"]
     Wait For Load State    networkidle
     ${has_chat}=    Run Keyword And Return Status
-    ...    Wait For Element By Data Test    TXT_Chat_Message    visible    timeout=10s
+    ...    Wait For Element By Css Selector    deep-chat #text-input    visible    timeout=10s
     Run Keyword If    not ${has_chat}
     ...    Pass Execution    Chat input field not available for this personality
 
 E2E-BDD-FE-VA-008 Chat Send Appends Message To History
     [Documentation]    Given a personality chat is open When user types and clicks send
-    ...               Then the message appears in TXT_Message_history.
+    ...               Then the message appears in deep-chat #messages.
     Open Cerebra Home
     When User Clicks Sidebar Nav Item    LNK_Voice_Assistant
     Wait For Load State    networkidle
@@ -130,18 +130,14 @@ E2E-BDD-FE-VA-008 Chat Send Appends Message To History
     Click Element By Css Selector    a[data-test^="LNK_"][href*="/voice-assistant/"]
     Wait For Load State    networkidle
     ${has_chat}=    Run Keyword And Return Status
-    ...    Wait For Element By Data Test    TXT_Chat_Message    visible    timeout=10s
+    ...    Wait For Element By Css Selector    deep-chat #text-input    visible    timeout=10s
     Run Keyword If    not ${has_chat}
     ...    Pass Execution    Chat not available — precondition unmet
     ${marker}=    Evaluate    __import__('uuid').uuid4().hex[:8]
-    Type Into Element By Data Test    TXT_Chat_Message    robot_msg_${marker}
-    ${has_history}=    Run Keyword And Return Status
-    ...    Wait For Element By Data Test    TXT_Message_history    visible    timeout=5s
-    Run Keyword If    not ${has_history}
-    ...    Pass Execution    Chat history not available — skipping message verification
-    ${before}=    Get Text By Data Test    TXT_Message_history
-    Click Element By Data Test    BTN_Chat_Send
-    Wait For Load State    networkidle
-    ${after}=    Get Text By Data Test    TXT_Message_history
-    Should Not Be Equal    ${before}    ${after}
-    Should Contain    ${after}    robot_msg_${marker}
+    Click Element By Css Selector    deep-chat #text-input
+    Keyboard Input    type    robot_msg_${marker}
+    Wait For Element By Css Selector    deep-chat .input-button.input-button-svg.submit-button    visible
+    Click Element By Css Selector    deep-chat #submit-icon
+    Wait For Element By Css Selector    deep-chat #messages    visible
+    ${messages}=    Get Text    css=deep-chat #messages
+    Should Contain    ${messages}    robot_msg_${marker}
