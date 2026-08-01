@@ -350,6 +350,36 @@ def test_preflight_fails_without_raising_when_the_probe_times_out(
     assert "fall back" in logger.error.call_args[0][0]
 
 
+def test_ensure_hermes_daemon_logs_when_available(chat_module, chat_node):
+    logger = MagicMock()
+    chat_node.get_logger = MagicMock(return_value=logger)
+
+    with patch(
+        "public_api_client.hermes_daemon.ensure_daemon_running", return_value=True
+    ), patch(
+        "public_api_client.hermes_daemon.daemon_base_url",
+        return_value="http://127.0.0.1:8088",
+    ):
+        assert chat_node._ensure_hermes_daemon() is True
+
+    logger.info.assert_called()
+    assert "hermes daemon available" in logger.info.call_args[0][0]
+
+
+def test_ensure_hermes_daemon_never_raises(chat_module, chat_node):
+    logger = MagicMock()
+    chat_node.get_logger = MagicMock(return_value=logger)
+
+    with patch(
+        "public_api_client.hermes_daemon.ensure_daemon_running",
+        side_effect=RuntimeError("bind failed"),
+    ):
+        assert chat_node._ensure_hermes_daemon() is False
+
+    logger.warning.assert_called()
+    assert "oneshot subprocess fallback" in logger.warning.call_args[0][0]
+
+
 def test_stream_chunks_to_goal_splits_sentences(chat_module, chat_node):
     goal_handle = MagicMock()
     goal_handle.is_cancel_requested = False

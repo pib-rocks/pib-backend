@@ -336,17 +336,87 @@ FALLBACK_REPLY = (
     "Frag mich bitte später noch einmal."
 )
 
+# Local warm daemon (see hermes_daemon.py). Overridable for tests / custom binds.
+DEFAULT_DAEMON_TURN_URL = "http://127.0.0.1:8088/turn"
 
-def run_turn(
+
+def daemon_turn_url() -> str:
+    """POST target for a warm-daemon turn. Trailing path is always /turn."""
+    override = os.environ.get("PIB_HERMES_DAEMON_URL")
+    if override:
+        base = override.rstrip("/")
+        return base if base.endswith("/turn") else base + "/turn"
+    return DEFAULT_DAEMON_TURN_URL
+
+
+def _try_daemon_turn(
+    text: str,
+    chat_id: str,
+    personality_id: Optional[str] = None,
+    toolsets: Optional[str] = None,
+    timeout: int = DEFAULT_TIMEOUT_SECONDS,
+) -> Optional[str]:
+    """POST /turn to the warm daemon. None means unreachable or non-200."""
+    try:
+        import requests
+    except ImportError:
+        return None
+
+    payload = {"text": text, "chat_id": chat_id, "timeout": timeout}
+    if personality_id is not None:
+        payload["personality_id"] = personality_id
+    if toolsets is not None:
+        payload["toolsets"] = toolsets
+
+    try:
+        response = requests.post(
+            daemon_turn_url(),
+            json=payload,
+            timeout=timeout,
+        )
+    except requests.exceptions.RequestException as exc:
+        logging.debug(
+            "hermes daemon unreachable (chat=%s): %s; falling back to subprocess",
+            chat_id, exc,
+        )
+        return None
+
+    if response.status_code != 200:
+        logging.warning(
+            "hermes daemon returned %s (chat=%s); falling back to subprocess",
+            response.status_code, chat_id,
+        )
+        return None
+
+    try:
+        data = response.json()
+    except ValueError:
+        logging.warning(
+            "hermes daemon returned non-json body (chat=%s); falling back",
+            chat_id,
+        )
+        return None
+
+    reply = data.get("reply") if isinstance(data, dict) else None
+    if not isinstance(reply, str):
+        logging.warning(
+            "hermes daemon response missing reply string (chat=%s); falling back",
+            chat_id,
+        )
+        return None
+
+    return reply.strip() or FALLBACK_REPLY
+
+
+def run_turn_subprocess(
     text: str,
     chat_id: str,
     personality_id: Optional[str] = None,
     toolsets: Optional[str] = None,
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
 ) -> str:
-    """Run one conversational turn. Always returns speakable text."""
+    """Run one turn via a oneshot Hermes CLI subprocess. Always returns text."""
     if not hermes_binary_available():
-        # Distinct from a timeout: the agent was never started at all.
         logging.error(
             "hermes binary %s is missing or not executable (chat=%s); "
             "answering with the fallback reply. Install the hermes CLI for the "
@@ -376,6 +446,40 @@ def run_turn(
 
     reply = (result.stdout or "").strip()
     return reply or FALLBACK_REPLY
+
+
+def run_turn(
+    text: str,
+    chat_id: str,
+    personality_id: Optional[str] = None,
+    toolsets: Optional[str] = None,
+    timeout: int = DEFAULT_TIMEOUT_SECONDS,
+) -> str:
+    """Run one conversational turn. Always returns speakable text.
+
+    Prefers the warm localhost daemon (POST /turn). If the daemon is
+    unreachable or fails, falls back to a oneshot ``subprocess.run`` of the
+    Hermes CLI.
+    """
+    if not hermes_binary_available():
+        # Distinct from a timeout: the agent was never started at all.
+        logging.error(
+            "hermes binary %s is missing or not executable (chat=%s); "
+            "answering with the fallback reply. Install the hermes CLI for the "
+            "pib user and check the PIB_HERMES_BIN mount.",
+            hermes_bin(), chat_id,
+        )
+        return FALLBACK_REPLY
+
+    daemon_reply = _try_daemon_turn(
+        text, chat_id, personality_id, toolsets, timeout=timeout,
+    )
+    if daemon_reply is not None:
+        return daemon_reply
+
+    return run_turn_subprocess(
+        text, chat_id, personality_id, toolsets, timeout=timeout,
+    )
 
 
 def delete_session(chat_id: str, timeout: int = 30) -> bool:

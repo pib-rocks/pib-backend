@@ -135,20 +135,24 @@ def test_ensure_profile_defaults_personality_name_to_pib(tmp_path, monkeypatch):
     assert "Hallo." in content
 
 
-def test_run_turn_returns_stdout(installed_hermes_bin):
+def test_run_turn_returns_stdout(installed_hermes_bin, monkeypatch):
+    # Force subprocess path: no warm daemon on this port.
+    monkeypatch.setenv("PIB_HERMES_DAEMON_URL", "http://127.0.0.1:1")
     completed = subprocess.CompletedProcess(args=[], returncode=0, stdout="Hallo!\n", stderr="")
     with patch("subprocess.run", return_value=completed):
         assert run_turn("hi", "c1") == "Hallo!"
 
 
-def test_run_turn_on_timeout_returns_fallback(installed_hermes_bin):
+def test_run_turn_on_timeout_returns_fallback(installed_hermes_bin, monkeypatch):
+    monkeypatch.setenv("PIB_HERMES_DAEMON_URL", "http://127.0.0.1:1")
     with patch("subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="x", timeout=1)):
         out = run_turn("hi", "c1")
         assert out  # non-empty graceful sentence
         assert "moment" in out.lower() or "später" in out.lower()
 
 
-def test_run_turn_on_error_returns_fallback(installed_hermes_bin):
+def test_run_turn_on_error_returns_fallback(installed_hermes_bin, monkeypatch):
+    monkeypatch.setenv("PIB_HERMES_DAEMON_URL", "http://127.0.0.1:1")
     completed = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="boom")
     with patch("subprocess.run", return_value=completed):
         assert run_turn("hi", "c1")
@@ -176,6 +180,53 @@ def test_run_turn_treats_a_non_executable_binary_as_missing(tmp_path, monkeypatc
     run.assert_not_called()
 
 
+def test_run_turn_prefers_daemon_reply_over_subprocess(installed_hermes_bin, monkeypatch):
+    monkeypatch.setenv("PIB_HERMES_DAEMON_URL", "http://127.0.0.1:8088")
+
+    with patch(
+        "public_api_client.hermes_agent_client._try_daemon_turn",
+        return_value="from-daemon",
+    ) as daemon:
+        with patch("public_api_client.hermes_agent_client.subprocess.run") as run:
+            assert run_turn("hi", "c1", personality_id="p-1") == "from-daemon"
+
+    daemon.assert_called_once()
+    run.assert_not_called()
+
+
+def test_run_turn_falls_back_to_subprocess_when_daemon_unreachable(
+    installed_hermes_bin, monkeypatch
+):
+    monkeypatch.setenv("PIB_HERMES_DAEMON_URL", "http://127.0.0.1:1")
+    completed = subprocess.CompletedProcess(
+        args=[], returncode=0, stdout="via-subprocess\n", stderr=""
+    )
+    with patch("subprocess.run", return_value=completed) as run:
+        assert run_turn("hi", "c1") == "via-subprocess"
+    run.assert_called_once()
+
+
+def test_run_turn_falls_back_when_daemon_returns_non_200(
+    installed_hermes_bin, monkeypatch
+):
+    monkeypatch.setenv("PIB_HERMES_DAEMON_URL", "http://127.0.0.1:8088/turn")
+
+    class _Resp:
+        status_code = 503
+
+        def json(self):
+            return {"error": "busy"}
+
+    with patch(
+        "requests.post", return_value=_Resp()
+    ):
+        completed = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="fallback-ok\n", stderr=""
+        )
+        with patch("subprocess.run", return_value=completed):
+            assert run_turn("hi", "c1") == "fallback-ok"
+
+
 def test_hermes_binary_available_reflects_the_configured_path(
     installed_hermes_bin, monkeypatch
 ):
@@ -198,6 +249,10 @@ def test_delete_session_invokes_hermes_sessions_delete():
 
 def test_default_timeout_reads_pib_hermes_timeout_env(monkeypatch):
     monkeypatch.setenv("PIB_HERMES_TIMEOUT", "77")
+    # Ambient FLASK_API_BASE_URL (e.g. from bricklet tests) must not rewrite
+    # PIB_MCP_SERVER on reload — sibling profile tests compare against the
+    # collection-time constant.
+    monkeypatch.delenv("FLASK_API_BASE_URL", raising=False)
     import importlib
     import public_api_client.hermes_agent_client as hac
 

@@ -129,6 +129,7 @@ class ChatNode(Node):
         )
 
         self._preflight_hermes_binary()
+        self._ensure_hermes_daemon()
 
         self.get_logger().info("Now running CHAT")
 
@@ -136,6 +137,34 @@ class ChatNode(Node):
         # Abandoned hermes workers must not keep the process alive on shutdown.
         self._hermes_executor.shutdown(wait=False, cancel_futures=True)
         return super().destroy_node()
+
+    def _ensure_hermes_daemon(self) -> bool:
+        """Start the warm Hermes daemon in the background if it is not up yet.
+
+        Best-effort: a failed start never blocks ChatNode construction. Turns
+        fall back to oneshot subprocess when the daemon is unreachable.
+        """
+        try:
+            from public_api_client import hermes_daemon
+
+            ok = hermes_daemon.ensure_daemon_running()
+        except Exception as exc:
+            self.get_logger().warning(
+                f"hermes daemon could not be started: {exc}; "
+                "turns will use oneshot subprocess fallback"
+            )
+            return False
+
+        if ok:
+            self.get_logger().info(
+                f"hermes daemon available at {hermes_daemon.daemon_base_url()}"
+            )
+        else:
+            self.get_logger().warning(
+                "hermes daemon did not become reachable; "
+                "turns will use oneshot subprocess fallback"
+            )
+        return ok
 
     def _preflight_hermes_binary(self) -> bool:
         """Report at startup whether the configured Hermes CLI actually runs.
