@@ -92,47 +92,69 @@ def align_profile_ownership(profile_dir: str) -> None:
     except OSError as exc:
         logging.debug("could not chmod %s to %o: %s", profile_dir, PROFILE_DIR_MODE, exc)
 
+# The one callable name per tool, as Hermes builds it in
+# tools/mcp_tool.py::mcp_prefixed_tool_name: "mcp__" + server + "__" + tool. The
+# double underscores are part of the name; no shorter or single-underscore spelling
+# is registered.
+MCP_TOOL_NAME_PREFIX = "mcp__pib__"
+
+# (tool, German one-line description) for every tool pib_mcp_server exports.
+MCP_TOOLS = (
+    (
+        "list_motors",
+        "Listet konfigurierte Motoren und Bricklets inklusive aktueller Motorpositionen.",
+    ),
+    ("get_state", "Liefert den aktuellen Gelenkzustand, Diagnosen und Roboter-Telemetrie."),
+    ("list_poses", "Listet gespeicherte Posen."),
+    ("list_programs", "Listet gespeicherte Blockly-/Python-Programme."),
+    ("capture_image", "Nimmt ein Kamerabild als base64-kodiertes JPEG auf."),
+    ("move_motor", "Bewegt einen Motor innerhalb seiner konfigurierten Rotationsgrenzen."),
+    ("apply_pose", "Wendet eine gespeicherte Pose anhand ihres genauen Namens an."),
+    ("run_program", "Startet ein gespeichertes Programm anhand seiner Program-ID."),
+    ("set_led", "Setzt die RGB-LED eines Buttons (Button 1–3, Kanäle 0–255)."),
+    ("set_relay", "Schaltet das Solid-State-Relais ein oder aus."),
+    (
+        "soul_append",
+        "Hängt eine dauerhafte Lektion an die SOUL.md einer Persönlichkeit an; "
+        "ersetzt sie nie.",
+    ),
+)
+
+
+def mcp_tool_name(tool: str) -> str:
+    """The exact name a model must emit to call one pib FastMCP tool."""
+    return MCP_TOOL_NAME_PREFIX + tool
+
+
+MCP_TOOL_NAMES = tuple(mcp_tool_name(tool) for tool, _ in MCP_TOOLS)
+
+
+def _build_mcp_tools_soul_section() -> str:
+    """Render the SOUL section that teaches the agent its real tool names.
+
+    Generated rather than written out, because the failure this prevents is a
+    second spelling creeping into the prose. A SOUL that offered both
+    ``mcp__pib__list_poses`` and an ``mcp_pib_list_poses`` "alias" made
+    gemini-3.6-flash pick the one Hermes never registered, and every such turn
+    died as "Model generated invalid tool call" after three retries. Exactly one
+    name per tool can be documented here by construction.
+    """
+    lines = [
+        "## Verfügbare MCP-Werkzeuge (pib_mcp_server)",
+        "",
+        "Nutze diese Werkzeuge, um den Roboter wahrzunehmen und zu steuern.",
+        "Jede Überschrift ist der vollständige, exakte Funktionsname: rufe ihn",
+        "genau so auf, inklusive der doppelten Unterstriche. Kurzformen wie",
+        "`list_poses` oder `pib_list_poses` existieren nicht.",
+        "",
+    ]
+    for tool, description in MCP_TOOLS:
+        lines += [f"### {mcp_tool_name(tool)}", description, ""]
+    return "\n".join(lines).rstrip() + "\n"
+
+
 # Seeded into every personality SOUL.md so the agent knows its real FastMCP tools.
-# Hermes exposes server `pib` tools as mcp__pib__<tool> (and mcp_pib_<tool> aliases).
-MCP_TOOLS_SOUL_SECTION = """## Verfügbare MCP-Werkzeuge (pib_mcp_server)
-
-Nutze die folgenden MCP-Werkzeuge, um den Roboter wahrzunehmen und zu steuern.
-Der MCP-Server heißt `pib`; Hermes stellt die Tools als `mcp__pib__<tool>` bereit
-(Alias-Form: `mcp_pib_<tool>`).
-
-### mcp__pib__list_motors / mcp_pib_list_motors
-Listet konfigurierte Motoren und Bricklets inklusive aktueller Motorpositionen.
-
-### mcp__pib__get_state / mcp_pib_get_state
-Liefert den aktuellen Gelenkzustand, Diagnosen und Roboter-Telemetrie.
-
-### mcp__pib__list_poses / mcp_pib_list_poses
-Listet gespeicherte Posen.
-
-### mcp__pib__list_programs / mcp_pib_list_programs
-Listet gespeicherte Blockly-/Python-Programme.
-
-### mcp__pib__capture_image / mcp_pib_capture_image
-Nimmt ein Kamerabild als base64-kodiertes JPEG auf.
-
-### mcp__pib__move_motor / mcp_pib_move_motor
-Bewegt einen Motor innerhalb seiner konfigurierten Rotationsgrenzen.
-
-### mcp__pib__apply_pose / mcp_pib_apply_pose
-Wendet eine gespeicherte Pose anhand ihres genauen Namens an.
-
-### mcp__pib__run_program / mcp_pib_run_program
-Startet ein gespeichertes Programm anhand seiner Program-ID.
-
-### mcp__pib__set_led / mcp_pib_set_led
-Setzt die RGB-LED eines Buttons (Button 1–3, Kanäle 0–255).
-
-### mcp__pib__set_relay / mcp_pib_set_relay
-Schaltet das Solid-State-Relais ein oder aus.
-
-### mcp__pib__soul_append / mcp_pib_soul_append
-Hängt eine dauerhafte Lektion an die SOUL.md einer Persönlichkeit an; ersetzt sie nie.
-"""
+MCP_TOOLS_SOUL_SECTION = _build_mcp_tools_soul_section()
 
 
 def build_default_soul_text(
