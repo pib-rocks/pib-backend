@@ -44,6 +44,9 @@ def _wait_for_new_assistant_message(chat_id: str, previous_ids: set[str]):
                 stable_ticks += 1
                 combined_content = " ".join(m["content"] for m in new_replies).strip()
                 if (stable_ticks >= 3 and not combined_content.endswith(":")) or stable_ticks >= 6:
+                    messages = _get_json(f"/voice-assistant/chat/{chat_id}/messages").get("messages", [])
+                    new_replies = [m for m in messages if not m["isUser"] and m["messageId"] not in previous_ids and m["content"].strip()]
+                    combined_content = " ".join(m["content"] for m in new_replies).strip()
                     last_reply = new_replies[-1].copy()
                     last_reply["content"] = combined_content
                     return last_reply, messages
