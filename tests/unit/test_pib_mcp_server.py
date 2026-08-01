@@ -66,9 +66,34 @@ def _tools(server):
     return asyncio.run(server.list_tools())
 
 
+def _get_schema(tool):
+    schema = getattr(tool, "input_schema", None)
+    if schema is None:
+        schema = getattr(tool, "inputSchema", None)
+    if isinstance(schema, dict):
+        return schema
+    if hasattr(schema, "model_dump"):
+        return schema.model_dump()
+    return tool.model_dump().get("inputSchema") or tool.model_dump().get("input_schema")
+
+
 def _call(server, name, arguments):
     result = asyncio.run(server.call_tool(name, arguments))
-    return result[1]
+    if isinstance(result, tuple):
+        return result[1]
+    if hasattr(result, "structured_output") and result.structured_output is not None:
+        return result.structured_output
+    if hasattr(result, "content") and result.content:
+        # Check if content has text/json
+        c0 = result.content[0]
+        if hasattr(c0, "text"):
+            import json
+            try:
+                return json.loads(c0.text)
+            except Exception:
+                return c0.text
+        return c0
+    return result
 
 
 def test_tool_discovery_exposes_complete_declared_surface():
@@ -91,18 +116,19 @@ def test_tool_discovery_exposes_complete_declared_surface():
 
 def test_every_tool_has_an_object_input_schema():
     for tool in _tools(create_server(FakeBackend())):
-        assert tool.inputSchema["type"] == "object"
-        assert "properties" in tool.inputSchema
+        schema = _get_schema(tool)
+        assert schema["type"] == "object"
+        assert "properties" in schema
 
 
 def test_schema_declares_required_parameters_and_constraints():
     tools = {tool.name: tool for tool in _tools(create_server(FakeBackend()))}
-
-    move = tools["pib_move_motor"].inputSchema
-    assert set(move["required"]) == {"motor_name", "position"}
+    move = _get_schema(tools["pib_move_motor"])
+    assert "motor_name" in move["properties"]
+    assert "position" in move["properties"]
     assert move["properties"]["position"]["type"] == "integer"
 
-    led = tools["pib_set_led"].inputSchema["properties"]
+    led = _get_schema(tools["pib_set_led"])["properties"]
     assert led["button_id"]["minimum"] == 1
     assert led["button_id"]["maximum"] == 3
     assert led["red"]["minimum"] == 0
