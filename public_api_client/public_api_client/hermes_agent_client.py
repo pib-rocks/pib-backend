@@ -45,6 +45,10 @@ PIB_MCP_SERVER = {
     "args": ["-m", "pib_mcp_server"],
 }
 
+# Permanent Hermes LLM pin. Kept in sync with setup/setup-pib.sh.
+DEFAULT_HERMES_MODEL = "gemini-3.6-flash"
+DEFAULT_HERMES_PROVIDER = "gemini"
+
 # Startup liveness probe only. Deliberately small: it runs before the chat node
 # is up, so it must diagnose a broken install without delaying startup. A real
 # `hermes --version` answers in well under a second.
@@ -175,10 +179,11 @@ def _create_profile_with_cli(personality_id: str, timeout: int) -> bool:
 
 
 def _ensure_mcp_servers_pib(pdir: str) -> None:
-    """Merge mcp_servers.pib into the profile config.yaml if it is missing.
+    """Pin the Hermes model/provider and merge mcp_servers.pib if missing.
 
-    Runs even when config.yaml already exists, so profiles created before
-    auto-seeding still get pib_mcp_server on the next ensure_profile call.
+    Always sets model/provider to the permanent Gemini defaults. Runs even when
+    config.yaml already exists, so profiles created before auto-seeding still get
+    pib_mcp_server (and the pinned model) on the next ensure_profile call.
     """
     target = os.path.join(pdir, CONFIG_FILENAME)
     cfg = {}
@@ -197,21 +202,34 @@ def _ensure_mcp_servers_pib(pdir: str) -> None:
             logging.warning("could not read %s for mcp seeding: %s", target, exc)
             return
 
+    changed = False
+    if (
+        cfg.get("model") != DEFAULT_HERMES_MODEL
+        or cfg.get("provider") != DEFAULT_HERMES_PROVIDER
+    ):
+        cfg["model"] = DEFAULT_HERMES_MODEL
+        cfg["provider"] = DEFAULT_HERMES_PROVIDER
+        changed = True
+
     servers = cfg.get("mcp_servers")
     if not isinstance(servers, dict):
         servers = {}
         cfg["mcp_servers"] = servers
-    if "pib" in servers:
+        changed = True
+    if "pib" not in servers:
+        servers["pib"] = dict(PIB_MCP_SERVER)
+        changed = True
+
+    if not changed:
         return
 
-    servers["pib"] = dict(PIB_MCP_SERVER)
     try:
         with open(target, "w", encoding="utf-8") as fh:
             yaml.safe_dump(cfg, fh, default_flow_style=False, sort_keys=False)
     except OSError as exc:
-        logging.warning("could not write mcp_servers.pib into %s: %s", target, exc)
+        logging.warning("could not write profile config into %s: %s", target, exc)
         return
-    logging.info("seeded mcp_servers.pib into hermes profile %s", pdir)
+    logging.info("ensured hermes model/provider and mcp_servers.pib in %s", pdir)
 
 
 def _inherit_base_config(pdir: str) -> None:

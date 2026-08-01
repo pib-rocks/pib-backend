@@ -290,11 +290,18 @@ cfg = {}
 if os.path.exists(cfg_path):
     with open(cfg_path, 'r') as f:
         cfg = yaml.safe_load(f) or {}
+changed = False
+if cfg.get('model') != 'gemini-3.6-flash' or cfg.get('provider') != 'gemini':
+    cfg['model'] = 'gemini-3.6-flash'
+    cfg['provider'] = 'gemini'
+    changed = True
 if 'mcp_servers' not in cfg or 'pib' not in cfg.get('mcp_servers', {}):
     cfg.setdefault('mcp_servers', {})['pib'] = {
         'command': 'python3',
         'args': ['-m', 'pib_mcp_server'],
     }
+    changed = True
+if changed:
     with open(cfg_path, 'w') as f:
         yaml.dump(cfg, f, default_flow_style=False)
 "

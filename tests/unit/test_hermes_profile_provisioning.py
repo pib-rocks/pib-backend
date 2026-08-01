@@ -5,6 +5,8 @@ from unittest.mock import patch
 import yaml
 
 from public_api_client.hermes_agent_client import (
+    DEFAULT_HERMES_MODEL,
+    DEFAULT_HERMES_PROVIDER,
     PIB_MCP_SERVER,
     build_default_soul_text,
     ensure_profile,
@@ -33,6 +35,11 @@ def _load_profile_config(pdir):
 
 def _assert_mcp_servers_pib(cfg):
     assert cfg["mcp_servers"]["pib"] == PIB_MCP_SERVER
+
+
+def _assert_pinned_gemini_model(cfg):
+    assert cfg["model"] == DEFAULT_HERMES_MODEL
+    assert cfg["provider"] == DEFAULT_HERMES_PROVIDER
 
 
 def test_ensure_profile_creates_profile_when_missing(
@@ -90,7 +97,7 @@ def test_ensure_profile_copies_base_credentials_without_the_binary(
     with open(os.path.join(pdir, ".env"), encoding="utf-8") as fh:
         assert fh.read() == BASE_ENV
     cfg = _load_profile_config(pdir)
-    assert cfg["model"] == "anthropic/claude-opus-5"
+    _assert_pinned_gemini_model(cfg)
     _assert_mcp_servers_pib(cfg)
 
 
@@ -224,13 +231,15 @@ def test_ensure_profile_seeds_mcp_servers_pib_on_fresh_profile(
 
     pdir = ensure_profile("p-9", soul_text="Du bist pib.")
 
-    _assert_mcp_servers_pib(_load_profile_config(pdir))
+    cfg = _load_profile_config(pdir)
+    _assert_mcp_servers_pib(cfg)
+    _assert_pinned_gemini_model(cfg)
 
 
 def test_ensure_profile_seeds_mcp_servers_pib_into_existing_config(
     tmp_path, monkeypatch, sandboxed_hermes_home
 ):
-    """An existing profile config.yaml still receives mcp_servers.pib."""
+    """An existing profile config.yaml still receives mcp_servers.pib and the pinned model."""
     _base_install_with_credentials(sandboxed_hermes_home)
     _absent_binary(tmp_path, monkeypatch)
     pdir = profile_dir_for("p-9")
@@ -241,7 +250,7 @@ def test_ensure_profile_seeds_mcp_servers_pib_into_existing_config(
     ensure_profile("p-9", soul_text="Du bist pib.")
 
     cfg = _load_profile_config(pdir)
-    assert cfg["model"] == "custom/operator-model"
+    _assert_pinned_gemini_model(cfg)
     _assert_mcp_servers_pib(cfg)
 
 
@@ -264,3 +273,29 @@ def test_ensure_profile_keeps_an_existing_mcp_servers_pib_entry(
 
     cfg = _load_profile_config(pdir)
     assert cfg["mcp_servers"]["pib"] == custom
+    _assert_pinned_gemini_model(cfg)
+
+
+def test_ensure_profile_pins_gemini_model_even_when_already_configured(
+    tmp_path, monkeypatch, sandboxed_hermes_home
+):
+    """Model/provider are permanently pinned even if mcp_servers.pib already exists."""
+    _base_install_with_credentials(sandboxed_hermes_home)
+    _absent_binary(tmp_path, monkeypatch)
+    pdir = profile_dir_for("p-9")
+    os.makedirs(pdir)
+    with open(os.path.join(pdir, "config.yaml"), "w", encoding="utf-8") as fh:
+        yaml.safe_dump(
+            {
+                "model": "anthropic/claude-opus-5",
+                "provider": "openrouter",
+                "mcp_servers": {"pib": dict(PIB_MCP_SERVER)},
+            },
+            fh,
+        )
+
+    ensure_profile("p-9", soul_text="Du bist pib.")
+
+    cfg = _load_profile_config(pdir)
+    _assert_pinned_gemini_model(cfg)
+    _assert_mcp_servers_pib(cfg)

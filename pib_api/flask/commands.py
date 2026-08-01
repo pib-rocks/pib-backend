@@ -157,8 +157,8 @@ def _create_chat_data_and_assistant() -> None:
         has_image_support=True,
     )
     gemini_text = AssistantModel(
-        visual_name="Gemini 2.5 Flash",
-        api_name="gemini-2.5-flash",
+        visual_name="Gemini 3.6 Flash",
+        api_name="gemini-3.6-flash",
         has_image_support=False,
     )
     hermes_agent = AssistantModel(
