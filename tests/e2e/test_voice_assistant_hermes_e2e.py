@@ -40,18 +40,13 @@ def _wait_for_new_assistant_message(chat_id: str, previous_ids: set[str]):
             and message["content"].strip()
         ]
         if new_replies:
-            combined_content = " ".join(m["content"] for m in new_replies).strip()
-            # If the response ends in a colon, the statement is unfinished — keep waiting
-            if not combined_content.endswith(":"):
-                if len(new_replies) == last_count:
-                    stable_ticks += 1
-                    if stable_ticks >= 3:
-                        last_reply = new_replies[-1].copy()
-                        last_reply["content"] = combined_content
-                        return last_reply, messages
-                else:
-                    last_count = len(new_replies)
-                    stable_ticks = 0
+            if len(new_replies) == last_count:
+                stable_ticks += 1
+                combined_content = " ".join(m["content"] for m in new_replies).strip()
+                if (stable_ticks >= 3 and not combined_content.endswith(":")) or stable_ticks >= 6:
+                    last_reply = new_replies[-1].copy()
+                    last_reply["content"] = combined_content
+                    return last_reply, messages
             else:
                 last_count = len(new_replies)
                 stable_ticks = 0
