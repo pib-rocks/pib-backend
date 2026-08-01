@@ -42,7 +42,7 @@ def _wait_for_new_assistant_message(chat_id: str, previous_ids: set[str]):
         if new_replies:
             if len(new_replies) == last_count:
                 stable_ticks += 1
-                if stable_ticks >= 3:
+                if stable_ticks >= 5:
                     combined_content = " ".join(m["content"] for m in new_replies)
                     last_reply = new_replies[-1].copy()
                     last_reply["content"] = combined_content
