@@ -1,15 +1,39 @@
 from typing import Any, List
 from model.personality_model import Personality
 from app.app import db
+from pib_hermes_config import build_default_soul_text
 from service import soul_service
 
 
+def _ensure_description_from_soul(personality: Personality) -> bool:
+    """Backfill empty description from SOUL.md. Returns True if updated."""
+    if personality.description and personality.description.strip():
+        return False
+    soul = soul_service.read_soul(personality.personality_id)
+    if not soul:
+        return False
+    personality.description = soul
+    return True
+
+
 def get_all_personalities() -> List[Personality]:
-    return Personality.query.all()
+    personalities = Personality.query.all()
+    updated = False
+    for personality in personalities:
+        if _ensure_description_from_soul(personality):
+            updated = True
+    if updated:
+        db.session.flush()
+    return personalities
 
 
 def get_personality(personality_id: str) -> Personality:
-    return Personality.query.filter(Personality.personality_id == personality_id).one()
+    personality = Personality.query.filter(
+        Personality.personality_id == personality_id
+    ).one()
+    if _ensure_description_from_soul(personality):
+        db.session.flush()
+    return personality
 
 
 def create_personality(personality_dto: Any) -> Personality:
@@ -21,12 +45,19 @@ def create_personality(personality_dto: Any) -> Personality:
         assistant_model_id=personality_dto["assistant_model_id"],
         stt_engine=personality_dto.get("stt_engine", "local_whisper"),
     )
-    if "description" in personality_dto:
-        personality.description = personality_dto["description"]
+    custom = ""
+    if "description" in personality_dto and personality_dto["description"]:
+        custom = str(personality_dto["description"]).strip()
+    # Always seed the full SOUL.md (identity + optional custom + MCP docs) so
+    # Cerebra's SOUL.md editor receives complete content, not an empty placeholder.
+    soul_content = build_default_soul_text(personality.name, custom or None)
+    personality.description = soul_content
     db.session.add(personality)
     db.session.flush()
-    soul_service.write_soul(
-        personality.personality_id, personality.description, personality_name=personality.name
+    personality.description = soul_service.write_soul(
+        personality.personality_id,
+        soul_content,
+        personality_name=personality.name,
     )
     return personality
 

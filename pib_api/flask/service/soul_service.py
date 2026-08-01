@@ -30,21 +30,34 @@ __all__ = [
 
 
 def write_soul(personality_id: str, text: str, personality_name: str = "pib") -> str:
-    """Write the SOUL text to the profile, creating parent dirs. Returns the path."""
+    """Write the SOUL text to the profile, creating parent dirs.
+
+    When ``text`` is blank, seeds the default SOUL template for ``personality_name``.
+    Otherwise writes ``text`` as-is so the DB/editor content stays authoritative.
+
+    Returns the full written soul content string.
+    """
     path = soul_path_for(personality_id)
     profile_dir = os.path.dirname(path)
     os.makedirs(profile_dir, exist_ok=True)
-    soul_content = build_default_soul_text(personality_name, text)
+    if text and text.strip():
+        soul_content = text
+    else:
+        soul_content = build_default_soul_text(personality_name)
     with open(path, "w", encoding="utf-8") as fh:
         fh.write(soul_content)
-    # This API runs as root in its container; without this the profile it just
+    try:
+        os.chmod(path, 0o664)
+    except OSError:
+        pass
+    align_profile_ownership(profile_dir)
     # created belongs to root and the pib user cannot even list it.
     align_profile_ownership(profile_dir)
-    return path
+    return soul_content
 
 
 def read_soul(personality_id: str) -> str:
-    """Read the SOUL text, or '' when it does not exist yet."""
+    """Read the full SOUL.md content, or '' when it does not exist yet."""
     path = soul_path_for(personality_id)
     if not os.path.isfile(path):
         return ""
