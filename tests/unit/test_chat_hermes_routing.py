@@ -393,8 +393,9 @@ def test_stream_chunks_to_goal_splits_sentences(chat_module, chat_node):
     assert ptype == TEXT_TYPE_SENTENCE
     assert curr == ""
     chat_node.create_chat_message.assert_called()
-    # Single sentence → no prior feedback published yet (result carries it).
-    goal_handle.publish_feedback.assert_not_called()
+    # TTFT fast-path publishes the first token immediately as feedback.
+    assert goal_handle.publish_feedback.call_count == 1
+    assert goal_handle.publish_feedback.call_args[0][0].text == "Hallo Welt. "
 
 
 def test_stream_chunks_to_goal_writes_chunks_in_order(chat_module, chat_node):
@@ -434,7 +435,12 @@ def test_stream_chunks_to_goal_persists_text_without_terminator(
     assert prev is None
     assert ptype is None
     assert curr == "Zwei ohne Punkt"
-    assert goal_handle.publish_feedback.call_args[0][0].text == "Eins."
+    # First call is TTFT immediate emit of "Eins. "; later call publishes prior sentence.
+    feedback_texts = [
+        call[0][0].text for call in goal_handle.publish_feedback.call_args_list
+    ]
+    assert "Eins. " in feedback_texts
+    assert "Eins." in feedback_texts
 
 
 def test_stream_chunks_to_goal_creates_when_only_unterminated_text_arrives(
@@ -452,6 +458,12 @@ def test_stream_chunks_to_goal_creates_when_only_unterminated_text_arrives(
     )
     assert prev is None
     assert curr == "Antwort ohne Satzzeichen"
+    # TTFT: first token is published immediately even without a terminator.
+    assert goal_handle.publish_feedback.call_count >= 1
+    assert (
+        goal_handle.publish_feedback.call_args_list[0][0][0].text
+        == "Antwort ohne Satzzeichen"
+    )
 
 
 def test_stream_chunks_to_goal_publishes_prior_sentence_as_feedback(
@@ -461,14 +473,17 @@ def test_stream_chunks_to_goal_publishes_prior_sentence_as_feedback(
     goal_handle.is_cancel_requested = False
 
     # Feedback for a completed sentence is published when the *next* token arrives.
+    # Plus TTFT immediate emit of the first token.
     prev, ptype, curr = chat_node._stream_chunks_to_goal(
         goal_handle, "chat-1", ["Eins. ", "Zwei."]
     )
 
-    assert goal_handle.publish_feedback.call_count == 1
-    feedback = goal_handle.publish_feedback.call_args[0][0]
-    assert feedback.text == "Eins."
-    assert feedback.text_type == TEXT_TYPE_SENTENCE
+    assert goal_handle.publish_feedback.call_count >= 2
+    feedback_texts = [
+        call[0][0].text for call in goal_handle.publish_feedback.call_args_list
+    ]
+    assert "Eins. " in feedback_texts  # TTFT first-token emit
+    assert "Eins." in feedback_texts   # prior completed sentence
     assert prev == "Zwei."
     assert ptype == TEXT_TYPE_SENTENCE
     assert curr == ""
@@ -485,13 +500,29 @@ def test_stream_chunks_to_goal_extracts_pib_program(chat_module, chat_node):
         goal_handle, "chat-1", tokens
     )
 
-    assert goal_handle.publish_feedback.call_count == 1
-    feedback = goal_handle.publish_feedback.call_args[0][0]
-    assert feedback.text == "Hallo."
-    assert feedback.text_type == TEXT_TYPE_SENTENCE
+    assert goal_handle.publish_feedback.call_count >= 2
+    feedback_texts = [
+        call[0][0].text for call in goal_handle.publish_feedback.call_args_list
+    ]
+    assert "Hallo. " in feedback_texts
+    assert "Hallo." in feedback_texts
     assert prev == "xml-here"
     assert ptype == TEXT_TYPE_CODE_VISUAL
     assert curr == ""
+
+
+def test_stream_chunks_to_goal_emits_perf_trace_on_first_chunk(
+    chat_module, chat_node
+):
+    goal_handle = MagicMock()
+    goal_handle.is_cancel_requested = False
+    logger = MagicMock()
+    chat_node.get_logger = MagicMock(return_value=logger)
+
+    chat_node._stream_chunks_to_goal(goal_handle, "chat-1", ["Hallo."])
+
+    info_messages = [call[0][0] for call in logger.info.call_args_list]
+    assert any("[PERF_TRACE] FIRST_CHUNK_EMITTED" in msg for msg in info_messages)
 
 
 def test_chat_routes_hermes_without_replaying_history(chat_module, chat_node):
@@ -526,6 +557,8 @@ def test_chat_routes_hermes_without_replaying_history(chat_module, chat_node):
         chat_module.public_voice_client,
         "chat_completion",
     ) as chat_completion, patch.object(
+        hermes_agent_client, "is_warm_daemon_active", return_value=False
+    ), patch.object(
         hermes_agent_client, "ensure_profile", return_value="/tmp/p"
     ) as ensure_profile, patch.object(
         hermes_agent_client, "run_turn", return_value="Antwort vom Agent."
@@ -552,6 +585,89 @@ def test_chat_routes_hermes_without_replaying_history(chat_module, chat_node):
     assert streamed_tokens == ["Antwort vom Agent."]
     goal_handle.succeed.assert_called_once()
     assert result.text == "Antwort vom Agent."
+
+
+def test_chat_skips_ensure_profile_when_warm_daemon_active(chat_module, chat_node):
+    """Warm daemon path must not re-validate profiles on the filesystem."""
+    from public_api_client import hermes_agent_client
+
+    Chat = chat_module.Chat
+
+    personality = MagicMock()
+    personality.message_history = 5
+    personality.description = "Du bist pib."
+    personality.personality_id = "pers-1"
+    personality.assistant_model.api_name = "hermes-agent"
+    personality.assistant_model.has_image_support = False
+
+    goal_handle = MagicMock()
+    goal_handle.is_cancel_requested = False
+    goal_handle.request = Chat.Goal()
+    goal_handle.request.chat_id = "chat-9"
+    goal_handle.request.text = "Hi"
+    goal_handle.request.generate_code = False
+
+    with patch.object(
+        chat_module.voice_assistant_client,
+        "get_personality_from_chat",
+        return_value=(True, personality),
+    ), patch.object(
+        hermes_agent_client, "is_warm_daemon_active", return_value=True
+    ), patch.object(
+        hermes_agent_client, "ensure_profile", return_value="/tmp/p"
+    ) as ensure_profile, patch.object(
+        hermes_agent_client, "run_turn", return_value="schnell"
+    ), patch.object(
+        chat_node,
+        "_stream_chunks_to_goal",
+        return_value=(None, None, "schnell"),
+    ):
+        result = drive_like_rclpy(chat_node.chat(goal_handle))
+
+    ensure_profile.assert_not_called()
+    goal_handle.succeed.assert_called_once()
+    assert result.text == "schnell"
+
+
+def test_chat_emits_ros_perf_trace_logs(chat_module, chat_node):
+    from public_api_client import hermes_agent_client
+
+    Chat = chat_module.Chat
+    logger = MagicMock()
+    chat_node.get_logger = MagicMock(return_value=logger)
+
+    personality = MagicMock()
+    personality.message_history = 5
+    personality.description = "Du bist pib."
+    personality.personality_id = "pers-1"
+    personality.assistant_model.api_name = "hermes-agent"
+    personality.assistant_model.has_image_support = False
+
+    goal_handle = MagicMock()
+    goal_handle.is_cancel_requested = False
+    goal_handle.request = Chat.Goal()
+    goal_handle.request.chat_id = "chat-9"
+    goal_handle.request.text = "Hi"
+    goal_handle.request.generate_code = False
+
+    with patch.object(
+        chat_module.voice_assistant_client,
+        "get_personality_from_chat",
+        return_value=(True, personality),
+    ), patch.object(
+        hermes_agent_client, "is_warm_daemon_active", return_value=True
+    ), patch.object(
+        hermes_agent_client, "run_turn", return_value="ok"
+    ), patch.object(
+        chat_node,
+        "_stream_chunks_to_goal",
+        return_value=(None, None, "ok"),
+    ):
+        drive_like_rclpy(chat_node.chat(goal_handle))
+
+    info_messages = [call[0][0] for call in logger.info.call_args_list]
+    assert any("[PERF_TRACE] ROS_SERVICE_RECV" in msg for msg in info_messages)
+    assert any("[PERF_TRACE] ROS_SERVICE_DONE" in msg for msg in info_messages)
 
 
 def test_run_hermes_turn_needs_no_asyncio_event_loop(
@@ -623,6 +739,8 @@ def test_chat_hermes_branch_survives_the_rclpy_task_driver(chat_module, chat_nod
         "get_personality_from_chat",
         return_value=(True, personality),
     ), patch.object(
+        hermes_agent_client, "is_warm_daemon_active", return_value=False
+    ), patch.object(
         hermes_agent_client, "ensure_profile", return_value="/tmp/p"
     ), patch.object(
         hermes_agent_client, "run_turn", return_value="Antwort vom Agent."
@@ -665,6 +783,8 @@ def test_run_hermes_turn_falls_back_when_the_worker_raises(chat_module, chat_nod
     from public_api_client import hermes_agent_client
 
     with patch.object(
+        hermes_agent_client, "is_warm_daemon_active", return_value=False
+    ), patch.object(
         hermes_agent_client, "ensure_profile", side_effect=OSError("read-only fs")
     ):
         reply = chat_node._run_hermes_turn(
@@ -700,6 +820,8 @@ def test_chat_hermes_goal_succeeds_with_fallback_when_the_agent_fails(
         chat_module.voice_assistant_client,
         "get_personality_from_chat",
         return_value=(True, personality),
+    ), patch.object(
+        hermes_agent_client, "is_warm_daemon_active", return_value=False
     ), patch.object(
         hermes_agent_client, "ensure_profile", return_value="/tmp/p"
     ), patch.object(
@@ -764,6 +886,8 @@ def test_chat_hermes_cancelled_goal_is_marked_canceled(chat_module, chat_node):
         chat_module.voice_assistant_client,
         "get_personality_from_chat",
         return_value=(True, personality),
+    ), patch.object(
+        hermes_agent_client, "is_warm_daemon_active", return_value=False
     ), patch.object(
         hermes_agent_client, "ensure_profile", return_value="/tmp/p"
     ), patch.object(

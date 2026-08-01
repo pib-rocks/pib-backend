@@ -9,6 +9,8 @@ from urllib.request import Request, urlopen
 
 import pytest
 
+from unittest.mock import patch
+
 from public_api_client import hermes_daemon as hd
 
 
@@ -147,3 +149,51 @@ def test_ensure_daemon_running_is_idempotent_when_already_up(daemon_server):
 def test_is_daemon_reachable_false_when_down(monkeypatch):
     monkeypatch.setenv("PIB_HERMES_DAEMON_URL", "http://127.0.0.1:1")
     assert hd.is_daemon_reachable(timeout=0.2) is False
+
+
+def test_turn_emits_perf_trace_logs(daemon_server, caplog):
+    """Daemon /turn path must emit [PERF_TRACE] markers for latency profiling."""
+    import logging
+
+    server, _ = daemon_server
+    host, port = server.server_address
+    body = json.dumps({"text": "hallo", "chat_id": "c-perf"}).encode()
+    req = Request(
+        f"http://{host}:{port}/turn",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+    with caplog.at_level(logging.INFO):
+        with urlopen(req, timeout=2) as resp:
+            assert resp.status == 200
+
+    messages = [rec.getMessage() for rec in caplog.records]
+    assert any("[PERF_TRACE] DAEMON_RECV" in m for m in messages)
+    assert any("[PERF_TRACE] DAEMON_TURN_START" in m for m in messages)
+    assert any("[PERF_TRACE] DAEMON_FIRST_TOKEN" in m for m in messages)
+    assert any("[PERF_TRACE] DAEMON_DONE" in m for m in messages)
+
+
+def test_client_uses_session_pooling_for_daemon(daemon_server, monkeypatch):
+    """Warm-daemon turns must reuse a persistent requests.Session."""
+    from public_api_client import hermes_agent_client as hac
+
+    server, _ = daemon_server
+    host, port = server.server_address
+    monkeypatch.setenv("PIB_HERMES_DAEMON_URL", f"http://{host}:{port}")
+
+    # Reset singleton so this test owns a fresh session.
+    hac._daemon_http_session = None
+
+    with patch.object(hac, "hermes_binary_available", return_value=True):
+        reply1 = hac.run_turn("hi", "c1")
+        session_after_first = hac._daemon_http_session
+        reply2 = hac.run_turn("hi again", "c1")
+        session_after_second = hac._daemon_http_session
+
+    assert reply1 == "daemon-says-hi"
+    assert reply2 == "daemon-says-hi"
+    assert session_after_first is not None
+    assert session_after_first is session_after_second

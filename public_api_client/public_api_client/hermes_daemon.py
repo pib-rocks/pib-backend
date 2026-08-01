@@ -111,6 +111,9 @@ class HermesDaemonHandler(BaseHTTPRequestHandler):
             self._send_json(404, {"error": "not found"})
             return
 
+        t0 = time.monotonic()
+        logging.info("[PERF_TRACE] DAEMON_RECV elapsed_ms=0.00")
+
         length = int(self.headers.get("Content-Length") or 0)
         raw = self.rfile.read(length) if length > 0 else b"{}"
         try:
@@ -143,6 +146,11 @@ class HermesDaemonHandler(BaseHTTPRequestHandler):
             return
 
         runner = getattr(self.server, "turn_runner", None) or _default_turn_runner
+        turn_start = time.monotonic()
+        logging.info(
+            "[PERF_TRACE] DAEMON_TURN_START chat=%s elapsed_ms=%.2f",
+            chat_id, (turn_start - t0) * 1000.0,
+        )
         try:
             reply = runner(
                 text=text,
@@ -156,6 +164,15 @@ class HermesDaemonHandler(BaseHTTPRequestHandler):
             self._send_json(500, {"error": str(exc)})
             return
 
+        # Full reply is available at once from the runner; treat that as first token.
+        logging.info(
+            "[PERF_TRACE] DAEMON_FIRST_TOKEN chat=%s elapsed_ms=%.2f",
+            chat_id, (time.monotonic() - t0) * 1000.0,
+        )
+        logging.info(
+            "[PERF_TRACE] DAEMON_DONE chat=%s elapsed_ms=%.2f",
+            chat_id, (time.monotonic() - t0) * 1000.0,
+        )
         self._send_json(200, {"reply": reply if isinstance(reply, str) else str(reply)})
 
 

@@ -451,13 +451,19 @@ class ChatNode(Node):
         self.token = token
 
     def _stream_chunks_to_goal(
-        self, goal_handle, chat_id: str, tokens
+        self, goal_handle, chat_id: str, tokens, t0: Optional[float] = None
     ) -> tuple[Optional[str], Optional[int], str]:
         """Consume a token iterable, publishing sentence/code chunks as feedback.
 
         Returns (prev_text, prev_text_type, curr_text) so the caller can build Chat.Result.
-        Behavior is identical to the previous inline implementation.
+
+        For TTFT, the first non-empty token is published as Action feedback
+        immediately (before sentence buffering completes) so downstream TTS can
+        start without waiting for a terminator.
         """
+        if t0 is None:
+            t0 = time.monotonic()
+
         # Regex for sentence / code chunking
         sentence_pattern = re.compile(
             r"^(?!<pib-program>)(.*?)(([^\d | ^A-Z][\.|!|\?|:])|<pib-program>)",
@@ -472,9 +478,25 @@ class ChatNode(Node):
         prev_text: Optional[str] = None
         prev_text_type = None
         bool_update_chat_message: bool = False  # controls create vs update
+        first_chunk_emitted = False
 
         for token in tokens:
-            # Publish previous chunk as feedback (Action protocol)
+            # TTFT fast-path: emit the first generated token immediately, before
+            # waiting for a sentence terminator / next-token publish cycle.
+            if not first_chunk_emitted and token:
+                immediate = token.lstrip() if len(curr_text) == 0 else token
+                if immediate:
+                    feedback = Chat.Feedback()
+                    feedback.text = immediate
+                    feedback.text_type = Chat.Goal.TEXT_TYPE_SENTENCE
+                    goal_handle.publish_feedback(feedback)
+                    first_chunk_emitted = True
+                    self.get_logger().info(
+                        f"[PERF_TRACE] FIRST_CHUNK_EMITTED chat={chat_id} "
+                        f"elapsed_ms={(time.monotonic() - t0) * 1000.0:.2f}"
+                    )
+
+            # Publish previous completed chunk as feedback (Action protocol)
             if prev_text is not None:
                 feedback = Chat.Feedback()
                 feedback.text = prev_text
@@ -555,6 +577,12 @@ class ChatNode(Node):
                 bool_update_chat_message,
                 True,
             )
+            if not first_chunk_emitted:
+                first_chunk_emitted = True
+                self.get_logger().info(
+                    f"[PERF_TRACE] FIRST_CHUNK_EMITTED chat={chat_id} "
+                    f"elapsed_ms={(time.monotonic() - t0) * 1000.0:.2f}"
+                )
             if prev_text is not None:
                 # Hand the completed chunk over as feedback the way the next
                 # token would have, so the tail can travel in Chat.Result.
@@ -602,7 +630,11 @@ class ChatNode(Node):
             # Hermes keeps its own durable memory per chat, so no history is
             # replayed: persona comes from the profile (-p), memory from the
             # named session (-c).
-            if personality_id:
+            # When the warm daemon is already up, skip filesystem profile
+            # re-validation — profiles were provisioned at personality create
+            # time / prior cold starts and re-writing SOUL.md adds multi-second
+            # latency on the Pi.
+            if personality_id and not hermes_agent_client.is_warm_daemon_active():
                 hermes_agent_client.ensure_profile(
                     personality_id, soul_text=description
                 )
@@ -649,6 +681,7 @@ class ChatNode(Node):
         - Splits assistant output into sentences (and <pib-program> blocks),
           publishing each chunk as an updated ChatMessage via create_chat_message().
         """
+        t0 = time.monotonic()
         self.get_logger().info("start chat request")
 
         # Unpack request data
@@ -656,6 +689,10 @@ class ChatNode(Node):
         chat_id: str = request.chat_id
         content: str = request.text
         generate_code: bool = request.generate_code
+
+        self.get_logger().info(
+            f"[PERF_TRACE] ROS_SERVICE_RECV chat={chat_id} elapsed_ms=0.00"
+        )
 
         # Create the user message (first chunk) via Action path helper. This
         # write also sets last_pib_message_id, so it has to land before the
@@ -742,7 +779,7 @@ class ChatNode(Node):
                     )
 
             prev_text, prev_text_type, curr_text = self._stream_chunks_to_goal(
-                goal_handle, chat_id, tokens
+                goal_handle, chat_id, tokens, t0=t0
             )
             if goal_handle.is_cancel_requested:
                 return Chat.Result()
@@ -762,6 +799,10 @@ class ChatNode(Node):
         else:
             result.text = prev_text
             result.text_type = prev_text_type
+        self.get_logger().info(
+            f"[PERF_TRACE] ROS_SERVICE_DONE chat={chat_id} "
+            f"elapsed_ms={(time.monotonic() - t0) * 1000.0:.2f}"
+        )
         return result
 
 

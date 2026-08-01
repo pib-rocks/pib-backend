@@ -15,6 +15,7 @@ import os
 import re
 import shutil
 import subprocess
+import time
 from typing import Optional
 
 import yaml
@@ -339,6 +340,15 @@ FALLBACK_REPLY = (
 # Local warm daemon (see hermes_daemon.py). Overridable for tests / custom binds.
 DEFAULT_DAEMON_TURN_URL = "http://127.0.0.1:8088/turn"
 
+# Persistent HTTP session for warm-daemon turns (connection pooling / keep-alive).
+_daemon_http_session = None
+_daemon_http_session_lock = None
+
+
+def _perf_ms(start: float) -> float:
+    """Elapsed milliseconds since ``start`` (from time.monotonic())."""
+    return (time.monotonic() - start) * 1000.0
+
 
 def daemon_turn_url() -> str:
     """POST target for a warm-daemon turn. Trailing path is always /turn."""
@@ -347,6 +357,40 @@ def daemon_turn_url() -> str:
         base = override.rstrip("/")
         return base if base.endswith("/turn") else base + "/turn"
     return DEFAULT_DAEMON_TURN_URL
+
+
+def _get_daemon_session():
+    """Lazy singleton ``requests.Session`` for pooled daemon HTTP calls."""
+    global _daemon_http_session, _daemon_http_session_lock
+    try:
+        import requests
+        import threading
+    except ImportError:
+        return None
+
+    if _daemon_http_session_lock is None:
+        _daemon_http_session_lock = threading.Lock()
+
+    with _daemon_http_session_lock:
+        if _daemon_http_session is None:
+            _daemon_http_session = requests.Session()
+        return _daemon_http_session
+
+
+def is_warm_daemon_active(timeout: float = 0.15) -> bool:
+    """True when the warm Hermes daemon answers GET /health quickly.
+
+    Used to skip expensive filesystem profile re-validation on the hot path
+    when turns can be served by the already-warm process at 127.0.0.1:8088.
+    """
+    try:
+        from public_api_client import hermes_daemon
+    except ImportError:
+        return False
+    try:
+        return hermes_daemon.is_daemon_reachable(timeout=timeout)
+    except Exception:
+        return False
 
 
 def _try_daemon_turn(
@@ -368,8 +412,17 @@ def _try_daemon_turn(
     if toolsets is not None:
         payload["toolsets"] = toolsets
 
+    http_start = time.monotonic()
+    logging.info(
+        "[PERF_TRACE] DAEMON_HTTP_START chat=%s elapsed_ms=0.00",
+        chat_id,
+    )
+
+    session = _get_daemon_session()
+    post = session.post if session is not None else requests.post
+
     try:
-        response = requests.post(
+        response = post(
             daemon_turn_url(),
             json=payload,
             timeout=timeout,
@@ -380,6 +433,12 @@ def _try_daemon_turn(
             chat_id, exc,
         )
         return None
+
+    ttft_ms = _perf_ms(http_start)
+    logging.info(
+        "[PERF_TRACE] DAEMON_TTFT_MS chat=%s elapsed_ms=%.2f status=%s",
+        chat_id, ttft_ms, response.status_code,
+    )
 
     if response.status_code != 200:
         logging.warning(
@@ -457,10 +516,28 @@ def run_turn(
 ) -> str:
     """Run one conversational turn. Always returns speakable text.
 
-    Prefers the warm localhost daemon (POST /turn). If the daemon is
-    unreachable or fails, falls back to a oneshot ``subprocess.run`` of the
-    Hermes CLI.
+    Prefers the warm localhost daemon (POST /turn) without requiring a local
+    Hermes binary check first. If the daemon is unreachable or fails, falls
+    back to a oneshot ``subprocess.run`` of the Hermes CLI (which does check
+    the binary).
     """
+    t0 = time.monotonic()
+    logging.info(
+        "[PERF_TRACE] HERMES_CLIENT_START chat=%s elapsed_ms=0.00",
+        chat_id,
+    )
+
+    # Try the warm daemon first — no filesystem binary/profile checks on this path.
+    daemon_reply = _try_daemon_turn(
+        text, chat_id, personality_id, toolsets, timeout=timeout,
+    )
+    if daemon_reply is not None:
+        logging.info(
+            "[PERF_TRACE] HERMES_CLIENT_DONE chat=%s via=daemon elapsed_ms=%.2f",
+            chat_id, _perf_ms(t0),
+        )
+        return daemon_reply
+
     if not hermes_binary_available():
         # Distinct from a timeout: the agent was never started at all.
         logging.error(
@@ -469,17 +546,20 @@ def run_turn(
             "pib user and check the PIB_HERMES_BIN mount.",
             hermes_bin(), chat_id,
         )
+        logging.info(
+            "[PERF_TRACE] HERMES_CLIENT_DONE chat=%s via=fallback elapsed_ms=%.2f",
+            chat_id, _perf_ms(t0),
+        )
         return FALLBACK_REPLY
 
-    daemon_reply = _try_daemon_turn(
+    reply = run_turn_subprocess(
         text, chat_id, personality_id, toolsets, timeout=timeout,
     )
-    if daemon_reply is not None:
-        return daemon_reply
-
-    return run_turn_subprocess(
-        text, chat_id, personality_id, toolsets, timeout=timeout,
+    logging.info(
+        "[PERF_TRACE] HERMES_CLIENT_DONE chat=%s via=subprocess elapsed_ms=%.2f",
+        chat_id, _perf_ms(t0),
     )
+    return reply
 
 
 def delete_session(chat_id: str, timeout: int = 30) -> bool:
