@@ -87,3 +87,48 @@ def align_profile_ownership(profile_dir: str) -> None:
         os.chmod(profile_dir, PROFILE_DIR_MODE)
     except OSError as exc:
         logging.debug("could not chmod %s to %o: %s", profile_dir, PROFILE_DIR_MODE, exc)
+
+def build_default_soul_text(
+    personality_name: str,
+    custom_description: str | None = None,
+) -> str:
+    """Build the standard SOUL.md with robot identity and MCP tools documentation."""
+    name = (personality_name or "").strip() or "pib"
+    lines = [f"Du bist der humanoide Roboter {name}."]
+    if custom_description and custom_description.strip():
+        lines.append("")
+        lines.append(custom_description.strip())
+
+    lines.extend([
+        "",
+        "## Verfügbare MCP-Werkzeuge (pib_mcp_server)",
+        "",
+        "Nutze die folgenden MCP-Werkzeuge, um den Roboter wahrzunehmen und zu steuern.",
+        "Der MCP-Server heißt `pib`; Hermes stellt die Tools unter dem Präfix `mcp_pib_` bereit.",
+        "",
+        "### mcp_pib_get_motor_currents",
+        "Auslesen der aktuellen Motor-Ströme in Milliampere (mA). Hilfreich zur Diagnose von Last,",
+        "Blockaden oder ungewöhnlichem Stromverbrauch einzelner Antriebe.",
+        "",
+        "### mcp_pib_set_servo_angle",
+        "Ansteuern einzelner Servo-Gelenke durch Setzen eines Zielwinkels. Damit kannst du Arme,",
+        "Beine und andere Gelenke gezielt bewegen.",
+        "",
+        "### mcp_pib_speak",
+        "Sprachausgabe über das Roboter-Audio-System. Verwende dieses Werkzeug, um gesprochene",
+        "Antworten oder Ansagen über die Lautsprecher auszugeben.",
+        "",
+        "### mcp_pib_get_bricklets",
+        "Status-Abfrage der verbundenen Tinkerforge Bricklets. Liefert Informationen darüber,",
+        "welche Hardware-Module erreichbar sind und welchen Zustand sie melden.",
+        "",
+        "### mcp_pib_move_head",
+        "Bewegung der Kopf-Orientierung. Ermogllicht gezieltes Ausrichten des Kopfes",
+        "(z. B. Nicken, Drehen), um Blickrichtung oder Gestik anzupassen.",
+        "",
+        "### mcp_pib_get_head_pose",
+        "Abfrage der aktuellen Kopf-Orientierung (Pose). Nutze dies, um zu wissen, wohin der",
+        "Kopf gerade ausgerichtet ist, bevor du ihn bewegst.",
+    ])
+    return "\n".join(lines) + "\n"
+

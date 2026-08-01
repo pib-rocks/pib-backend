@@ -13,6 +13,7 @@ import os
 from pib_hermes_config import (
     DEFAULT_SOUL,
     align_profile_ownership,
+    build_default_soul_text,
     profile_name_for,
     profiles_dir,
     soul_path_for,
@@ -30,8 +31,6 @@ __all__ = [
 
 def write_soul(personality_id: str, text: str, personality_name: str = "pib") -> str:
     """Write the SOUL text to the profile, creating parent dirs. Returns the path."""
-    from public_api_client.hermes_agent_client import build_default_soul_text
-
     path = soul_path_for(personality_id)
     profile_dir = os.path.dirname(path)
     os.makedirs(profile_dir, exist_ok=True)

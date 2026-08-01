@@ -193,17 +193,9 @@ def test_create_personality_via_browser_ui_generates_soul_md():
     unique_name = f"E2ERoboPib_{unique_id}"
     created_personality_id = None
 
-    def _capture_response(response):
-        nonlocal created_personality_id
-        if (
-            "/voice-assistant/personality" in response.url
-            and response.request.method == "POST"
-        ):
-            try:
-                data = response.json()
-                created_personality_id = data.get("personalityId")
-            except Exception:
-                pass
+    # Get list of existing personalities before creation
+    before = requests.get(f"{API_URL}/voice-assistant/personality", timeout=REQUEST_TIMEOUT).json().get("personalities", [])
+    before_ids = {p["personalityId"] for p in before}
 
     with sync_playwright() as p:
         browser = p.chromium.launch(
@@ -211,7 +203,6 @@ def test_create_personality_via_browser_ui_generates_soul_md():
         )
         context = browser.new_context(viewport={"width": 1400, "height": 900})
         page = context.new_page()
-        page.on("response", _capture_response)
 
         try:
             # 1. Open Voice Assistant UI
@@ -223,22 +214,30 @@ def test_create_personality_via_browser_ui_generates_soul_md():
             expect(add_btn).to_be_visible(timeout=15000)
             add_btn.click()
 
-            # 3. Fill #name-input with unique robot name
+            # 3. Fill #name-input and select gender radio
             name_input = page.locator("#name-input")
             expect(name_input).to_be_visible(timeout=10000)
             name_input.fill(unique_name)
 
+            # Select Female radio button via label to ensure form is valid
+            female_label = page.locator('label[for="new-radio-female"]').first
+            if female_label.is_visible():
+                female_label.click()
+
             # 4. Save personality via UI
-            save_btn = page.locator(
-                'button:has-text("SAVE"), button:has-text("Save"), #save-personality-button'
-            ).first
+            save_btn = page.locator("#modal-save-button")
             expect(save_btn).to_be_visible(timeout=10000)
             save_btn.click()
 
             # Wait for creation API call to complete
             page.wait_for_timeout(3000)
 
-            assert created_personality_id is not None, "Failed to capture created personality ID from POST response"
+            # Detect created personality ID via difference in API personality set
+            after = requests.get(f"{API_URL}/voice-assistant/personality", timeout=REQUEST_TIMEOUT).json().get("personalities", [])
+            after_ids = {p["personalityId"] for p in after}
+            new_ids = after_ids - before_ids
+            assert len(new_ids) == 1, f"Expected 1 new personality created via UI, got: {new_ids}"
+            created_personality_id = list(new_ids)[0]
 
             # 5. Verify SOUL.md on Pi host filesystem
             soul_file_path = f"/home/pib/.hermes/profiles/pib_{created_personality_id}/SOUL.md"

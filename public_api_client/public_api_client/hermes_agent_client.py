@@ -18,10 +18,11 @@ import subprocess
 from typing import Optional
 
 import yaml
-
 from pib_hermes_config import (
+    DEFAULT_SOUL,
     PROFILE_PREFIX,
     align_profile_ownership,
+    build_default_soul_text,
     profile_dir_for,
     profile_name_for,
     profiles_dir,
