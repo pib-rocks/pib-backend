@@ -17,7 +17,7 @@ from playwright.sync_api import Page, expect
 
 ROBOT_URL = os.environ.get("PIB_E2E_BASE_URL", "http://192.168.1.28").rstrip("/")
 API_URL = f"{ROBOT_URL}/api"
-REQUEST_TIMEOUT = 5
+REQUEST_TIMEOUT = 15
 TURN_TIMEOUT = int(os.environ.get("PIB_HERMES_E2E_TURN_TIMEOUT", "180"))
 
 
@@ -80,7 +80,7 @@ def _send_chat_message(chat_id: str, content: str):
     }
 
     try:
-        connection = websocket.create_connection(rosbridge_url, timeout=REQUEST_TIMEOUT)
+        connection = websocket.create_connection(rosbridge_url, timeout=30)
     except Exception as exc:
         pytest.skip(
             f"live Hermes E2E prerequisite absent: rosbridge is unreachable ({exc})"
