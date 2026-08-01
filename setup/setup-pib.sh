@@ -249,6 +249,7 @@ function install_imitation() {
 
   # venv tooling is not guaranteed to be present on a fresh system
   sudo apt-get install -y python3-venv python3-pip
+  pip install --break-system-packages pib-sdk || true
 
   # Create the venv with access to the system ROS packages (rclpy, datatypes,
   # trajectory_msgs) which are provided by the ROS overlay, not pip.
