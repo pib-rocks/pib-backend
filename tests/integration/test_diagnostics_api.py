@@ -17,6 +17,9 @@ def test_get_diagnostics_summary(client):
     data = response.get_json()
     assert "overallStatus" in data
     assert "cpuTemperature" in data
+    assert "cpuUsagePercent" in data
+    assert isinstance(data["cpuUsagePercent"], (int, float))
+    assert 0.0 <= data["cpuUsagePercent"] <= 100.0
     assert "memoryUsage" in data
     assert "memoryStatus" in data
     assert "diskSpace" in data
@@ -36,6 +39,9 @@ def test_get_diagnostics_system(client):
     assert response.status_code == 200
     data = response.get_json()
     assert "cpuTemperature" in data
+    assert "cpuUsagePercent" in data
+    assert isinstance(data["cpuUsagePercent"], (int, float))
+    assert 0.0 <= data["cpuUsagePercent"] <= 100.0
     assert "memoryUsage" in data
     assert "diskSpace" in data
     assert "containers" in data

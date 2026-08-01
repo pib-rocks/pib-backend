@@ -2,8 +2,50 @@ import os
 import socket
 import json
 import shutil
-from typing import Dict, Any, List
+import time
+from typing import Dict, Any, List, Optional, Tuple
 from service import bricklet_service
+
+
+def _read_proc_stat_cpu_times() -> Optional[Tuple[int, int]]:
+    """Return (idle_plus_iowait, total) jiffies from /proc/stat, or None."""
+    try:
+        with open("/proc/stat", "r") as f:
+            fields = f.readline().split()
+        if not fields or fields[0] != "cpu" or len(fields) < 5:
+            return None
+        values = [int(v) for v in fields[1:]]
+        idle = values[3] + (values[4] if len(values) > 4 else 0)
+        total = sum(values)
+        return idle, total
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def _get_cpu_usage_percent(sample_interval: float = 0.1) -> float:
+    """Measure CPU usage percent via two /proc/stat samples.
+
+    Falls back to a load-average estimate when /proc/stat is unavailable.
+    """
+    first = _read_proc_stat_cpu_times()
+    if first is not None:
+        time.sleep(sample_interval)
+        second = _read_proc_stat_cpu_times()
+        if second is not None:
+            idle1, total1 = first
+            idle2, total2 = second
+            idle_delta = idle2 - idle1
+            total_delta = total2 - total1
+            if total_delta > 0:
+                usage = (1.0 - (idle_delta / total_delta)) * 100.0
+                return round(max(0.0, min(100.0, usage)), 1)
+
+    try:
+        load1, _, _ = os.getloadavg()
+        cpu_count = os.cpu_count() or 1
+        return round(min(100.0, (load1 / cpu_count) * 100.0), 1)
+    except (OSError, AttributeError):
+        return 0.0
 
 
 def _query_docker_containers() -> List[Dict[str, Any]]:
@@ -297,9 +339,11 @@ def get_system_telemetry() -> Dict[str, Any]:
     }
 
     containers = _query_docker_containers()
+    cpu_usage_percent = _get_cpu_usage_percent()
 
     return {
         "cpuTemperature": cpu_temp,
+        "cpuUsagePercent": cpu_usage_percent,
         "memoryUsage": memory_usage,
         "diskSpace": disk_space,
         "containers": containers,
@@ -354,6 +398,7 @@ def get_summary() -> Dict[str, Any]:
         "overallStatus": overall_status,
         "cpuTemperature": cpu_temp,
         "cpuStatus": cpu_status,
+        "cpuUsagePercent": system["cpuUsagePercent"],
         "memoryUsage": system["memoryUsage"],
         "memoryStatus": memory_status,
         "diskSpace": system["diskSpace"],
