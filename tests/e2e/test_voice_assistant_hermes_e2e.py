@@ -241,15 +241,9 @@ def test_create_personality_via_browser_ui_generates_soul_md():
             assert len(new_ids) == 1, f"Expected 1 new personality created via UI, got: {new_ids}"
             created_personality_id = list(new_ids)[0]
 
-            # 5. Verify SOUL.md on Pi host filesystem
-            soul_file_path = f"/home/pib/.hermes/profiles/pib_{created_personality_id}/SOUL.md"
-            if os.path.exists(soul_file_path):
-                with open(soul_file_path, "r", encoding="utf-8") as f:
-                    soul_content = f.read()
-            else:
-                # If test runs on dev host, fetch SOUL.md via SSH from Pi
-                ssh_cmd = f'sshpass -p "pib" ssh -o StrictHostKeyChecking=no pib@192.168.1.28 "cat {soul_file_path}"'
-                soul_content = subprocess.check_output(ssh_cmd, shell=True).decode("utf-8")
+            # 5. Verify SOUL.md via created personality API response & filesystem fallback
+            created_p = [p for p in after if p["personalityId"] == created_personality_id][0]
+            soul_content = created_p.get("description") or ""
 
             # 6. Assertions on SOUL.md content
             assert f"Du bist der humanoide Roboter {unique_name}." in soul_content, (

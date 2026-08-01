@@ -69,9 +69,9 @@ def align_profile_ownership(profile_dir: str) -> None:
     for path in paths:
         try:
             os.chown(path, intended.st_uid, intended.st_gid)
-            if os.path.isdir(path):
-                os.chmod(path, PROFILE_DIR_MODE)
-            else:
+            if os.path.basename(path) == ".env":
+                os.chmod(path, 0o600)
+            elif os.path.isfile(path):
                 os.chmod(path, 0o664)
         except OSError as exc:
             # Typically: not running as root. Every remaining path would fail the
