@@ -20,7 +20,6 @@ from typing import Optional
 import yaml
 
 from pib_hermes_config import (
-    DEFAULT_SOUL,
     PROFILE_PREFIX,
     align_profile_ownership,
     profile_dir_for,
@@ -44,6 +43,37 @@ PIB_MCP_SERVER = {
     "command": "python3",
     "args": ["-m", "pib_mcp_server"],
 }
+
+# Seeded into every provisioned profile SOUL.md so the agent knows its tools.
+MCP_TOOLS_SOUL_SECTION = """## Verfügbare MCP-Werkzeuge (pib_mcp_server)
+
+Nutze die folgenden MCP-Werkzeuge, um den Roboter wahrzunehmen und zu steuern.
+Der MCP-Server heißt `pib`; Hermes stellt die Tools unter dem Präfix `mcp_pib_` bereit.
+
+### mcp_pib_get_motor_currents
+Auslesen der aktuellen Motor-Ströme in Milliampere (mA). Hilfreich zur Diagnose von Last,
+Blockaden oder ungewöhnlichem Stromverbrauch einzelner Antriebe.
+
+### mcp_pib_set_servo_angle
+Ansteuern einzelner Servo-Gelenke durch Setzen eines Zielwinkels. Damit kannst du Arme,
+Beine und andere Gelenke gezielt bewegen.
+
+### mcp_pib_speak
+Sprachausgabe über das Roboter-Audio-System. Verwende dieses Werkzeug, um gesprochene
+Antworten oder Ansagen über die Lautsprecher auszugeben.
+
+### mcp_pib_get_bricklets
+Status-Abfrage der verbundenen Tinkerforge Bricklets. Liefert Informationen darüber,
+welche Hardware-Module erreichbar sind und welchen Zustand sie melden.
+
+### mcp_pib_move_head
+Bewegung der Kopf-Orientierung. Ermöglicht gezieltes Ausrichten des Kopfes
+(z. B. Nicken, Drehen), um Blickrichtung oder Gestik anzupassen.
+
+### mcp_pib_get_head_pose
+Abfrage der aktuellen Kopf-Orientierung (Pose). Nutze dies, um zu wissen, wohin der
+Kopf gerade ausgerichtet ist, bevor du ihn bewegst.
+"""
 
 # Startup liveness probe only. Deliberately small: it runs before the chat node
 # is up, so it must diagnose a broken install without delaying startup. A real
@@ -255,7 +285,33 @@ def _inherit_base_config(pdir: str) -> None:
     _ensure_mcp_servers_pib(pdir)
 
 
-def ensure_profile(personality_id: str, soul_text: str, timeout: int = 60) -> str:
+def build_default_soul_text(
+    personality_name: str,
+    custom_description: Optional[str] = None,
+) -> str:
+    """Build the default SOUL.md for a provisioned Hermes personality profile.
+
+    Every profile starts with a fixed robot-identity line that substitutes the
+    personality name, optionally continues with a custom description/prompt, and
+    always ends with documentation of the pib MCP tools.
+    """
+    name = (personality_name or "").strip() or "pib"
+    parts = [f"Du bist der humanoide Roboter {name}."]
+    if custom_description and custom_description.strip():
+        parts.append("")
+        parts.append(custom_description.strip())
+    parts.append("")
+    parts.append(MCP_TOOLS_SOUL_SECTION.strip())
+    parts.append("")
+    return "\n".join(parts)
+
+
+def ensure_profile(
+    personality_id: str,
+    soul_text: str = "",
+    timeout: int = 60,
+    personality_name: Optional[str] = None,
+) -> str:
     """Create the personality's Hermes profile if needed and write its SOUL.md.
 
     Provisioning is done with filesystem operations alone, because the CLI is not
@@ -263,14 +319,22 @@ def ensure_profile(personality_id: str, soul_text: str, timeout: int = 60) -> st
     in from the base install (HERMES_HOME) so that `hermes -p <profile>` finds a
     provider; the base install must therefore hold working credentials.
 
+    The SOUL.md is always seeded from ``build_default_soul_text`` so every profile
+    knows its robot identity and the available pib MCP tools. ``soul_text`` is
+    treated as an optional custom description appended after the identity line.
+
     Returns the profile directory.
     """
     pdir = profile_dir_for(personality_id)
     if not os.path.isdir(pdir):
         _create_profile_with_cli(personality_id, timeout)
     os.makedirs(pdir, exist_ok=True)
+    text = build_default_soul_text(
+        personality_name or "pib",
+        custom_description=soul_text or None,
+    )
     with open(soul_path_for(personality_id), "w", encoding="utf-8") as fh:
-        fh.write(soul_text or DEFAULT_SOUL)
+        fh.write(text)
     # Also repairs a profile that an earlier deployment left without credentials.
     _inherit_base_config(pdir)
     align_profile_ownership(pdir)

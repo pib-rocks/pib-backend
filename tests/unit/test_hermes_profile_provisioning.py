@@ -6,6 +6,7 @@ import yaml
 
 from public_api_client.hermes_agent_client import (
     PIB_MCP_SERVER,
+    build_default_soul_text,
     ensure_profile,
     profile_dir_for,
 )
@@ -47,7 +48,7 @@ def test_ensure_profile_creates_profile_when_missing(
 
     assert pdir == os.path.join(str(tmp_path), "pib_p-9")
     with open(os.path.join(pdir, "SOUL.md"), encoding="utf-8") as fh:
-        assert fh.read() == "Du bist pib."
+        assert fh.read() == build_default_soul_text("pib", "Du bist pib.")
 
 
 def test_ensure_profile_is_idempotent_when_present(tmp_path, monkeypatch):
@@ -60,7 +61,7 @@ def test_ensure_profile_is_idempotent_when_present(tmp_path, monkeypatch):
 
     run.assert_not_called()          # no re-create
     with open(os.path.join(pdir, "SOUL.md"), encoding="utf-8") as fh:
-        assert fh.read() == "Du bist pib."
+        assert fh.read() == build_default_soul_text("pib", "Du bist pib.")
 
 
 def test_ensure_profile_still_writes_the_soul_without_a_binary(tmp_path, monkeypatch):
@@ -72,7 +73,7 @@ def test_ensure_profile_still_writes_the_soul_without_a_binary(tmp_path, monkeyp
 
     run.assert_not_called()
     with open(os.path.join(pdir, "SOUL.md"), encoding="utf-8") as fh:
-        assert fh.read() == "Du bist pib."
+        assert fh.read() == build_default_soul_text("pib", "Du bist pib.")
 
 
 def test_ensure_profile_copies_base_credentials_without_the_binary(
@@ -85,7 +86,7 @@ def test_ensure_profile_copies_base_credentials_without_the_binary(
     pdir = ensure_profile("p-9", soul_text="Du bist pib.")
 
     with open(os.path.join(pdir, "SOUL.md"), encoding="utf-8") as fh:
-        assert fh.read() == "Du bist pib."
+        assert fh.read() == build_default_soul_text("pib", "Du bist pib.")
     with open(os.path.join(pdir, ".env"), encoding="utf-8") as fh:
         assert fh.read() == BASE_ENV
     cfg = _load_profile_config(pdir)

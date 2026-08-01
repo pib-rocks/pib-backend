@@ -1,5 +1,8 @@
 from public_api_client.hermes_agent_client import (
     FALLBACK_REPLY,
+    MCP_TOOLS_SOUL_SECTION,
+    build_default_soul_text,
+    ensure_profile,
     session_name_for,
     build_command,
     hermes_binary_available,
@@ -7,8 +10,19 @@ from public_api_client.hermes_agent_client import (
     run_turn,
     uses_hermes_backend,
 )
+import os
 import subprocess
 from unittest.mock import patch
+
+
+EXPECTED_MCP_TOOLS = (
+    "mcp_pib_get_motor_currents",
+    "mcp_pib_set_servo_angle",
+    "mcp_pib_speak",
+    "mcp_pib_get_bricklets",
+    "mcp_pib_move_head",
+    "mcp_pib_get_head_pose",
+)
 
 
 def test_session_name_is_prefixed_and_sanitized():
@@ -39,6 +53,70 @@ def test_build_command_uses_oneshot_named_session_and_profile():
 def test_build_command_without_personality_omits_profile():
     cmd = build_command("hallo", "chat-1", personality_id=None)
     assert "-p" not in cmd
+
+
+def test_build_default_soul_text_starts_with_robot_identity():
+    text = build_default_soul_text("Eva")
+    assert text.startswith("Du bist der humanoide Roboter Eva.")
+
+
+def test_build_default_soul_text_substitutes_personality_name():
+    text = build_default_soul_text("Thomas")
+    assert "Du bist der humanoide Roboter Thomas." in text
+    assert "{personality_name}" not in text
+
+
+def test_build_default_soul_text_includes_custom_description():
+    text = build_default_soul_text("Eva", custom_description="Sei freundlich und neugierig.")
+    assert text.startswith("Du bist der humanoide Roboter Eva.")
+    assert "Sei freundlich und neugierig." in text
+
+
+def test_build_default_soul_text_documents_mcp_tools():
+    text = build_default_soul_text("pib")
+    assert "## Verfügbare MCP-Werkzeuge (pib_mcp_server)" in text
+    for tool in EXPECTED_MCP_TOOLS:
+        assert tool in text
+    # Section body stays in sync with the module constant.
+    assert MCP_TOOLS_SOUL_SECTION.strip() in text
+
+
+def test_build_default_soul_text_defaults_blank_name_to_pib():
+    text = build_default_soul_text("  ")
+    assert text.startswith("Du bist der humanoide Roboter pib.")
+
+
+def test_ensure_profile_writes_templated_soul_with_name_and_mcp_docs(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("PIB_HERMES_PROFILES_DIR", str(tmp_path / "profiles"))
+    monkeypatch.setenv("PIB_HERMES_BIN", str(tmp_path / "not-installed" / "hermes"))
+
+    with patch("public_api_client.hermes_agent_client.subprocess.run") as run:
+        pdir = ensure_profile(
+            "p-9",
+            soul_text="Sei neugierig.",
+            personality_name="Eva",
+        )
+
+    run.assert_not_called()
+    with open(os.path.join(pdir, "SOUL.md"), encoding="utf-8") as fh:
+        content = fh.read()
+    assert content.startswith("Du bist der humanoide Roboter Eva.")
+    assert "Sei neugierig." in content
+    for tool in EXPECTED_MCP_TOOLS:
+        assert tool in content
+
+
+def test_ensure_profile_defaults_personality_name_to_pib(tmp_path, monkeypatch):
+    monkeypatch.setenv("PIB_HERMES_PROFILES_DIR", str(tmp_path / "profiles"))
+    monkeypatch.setenv("PIB_HERMES_BIN", str(tmp_path / "not-installed" / "hermes"))
+
+    pdir = ensure_profile("p-9", soul_text="Hallo.")
+    with open(os.path.join(pdir, "SOUL.md"), encoding="utf-8") as fh:
+        content = fh.read()
+    assert content.startswith("Du bist der humanoide Roboter pib.")
+    assert "Hallo." in content
 
 
 def test_run_turn_returns_stdout(installed_hermes_bin):
