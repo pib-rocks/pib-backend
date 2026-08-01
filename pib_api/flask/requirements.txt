@@ -21,3 +21,4 @@ Werkzeug==3.0.1
 requests==2.31.0
 tinkerforge==2.1.31
 marimo>=0.10.0
+pyusb>=1.2.1

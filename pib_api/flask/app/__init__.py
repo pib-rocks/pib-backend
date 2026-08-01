@@ -13,6 +13,7 @@ from controller import (
     button_program_controller,
     docker_controller,
     marimo_controller,
+    microphone_array_controller,
 )
 
 app.register_blueprint(program_controller.bp, url_prefix="/program", name="program")
@@ -52,3 +53,13 @@ app.register_blueprint(docker_controller.bp, url_prefix="/api/v1/docker", name="
 app.register_blueprint(marimo_controller.marimo_bp, url_prefix="/marimo", name="marimo")
 app.register_blueprint(marimo_controller.marimo_bp, url_prefix="/v1/marimo", name="marimo_v1")
 app.register_blueprint(marimo_controller.marimo_bp, url_prefix="/api/v1/marimo", name="marimo_api_v1")
+app.register_blueprint(
+    microphone_array_controller.bp,
+    url_prefix="/system/microphone-array",
+    name="microphone_array",
+)
+app.register_blueprint(
+    microphone_array_controller.bp,
+    url_prefix="/v1/system/microphone-array",
+    name="microphone_array_v1",
+)
