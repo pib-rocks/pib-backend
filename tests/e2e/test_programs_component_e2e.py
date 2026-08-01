@@ -47,10 +47,10 @@ class TestProgramsComponentE2E:
         app_marimo = page.locator("app-marimo")
         expect(app_marimo).to_be_visible(timeout=10000)
 
-        # 5. Assert right management sidebar <app-sidebar-right> exists and has 'New workbook' button
+        # 5. Assert right management sidebar <app-sidebar-right> exists and has 'New notebook' button
         sidebar = page.locator("app-marimo app-sidebar-right")
         expect(sidebar).to_be_visible(timeout=10000)
-        expect(sidebar).to_contain_text("New workbook", timeout=10000, ignore_case=True)
+        expect(sidebar).to_contain_text("New notebook", timeout=10000, ignore_case=True)
 
         # 6. Assert source code contains iframe template definition and marimo-server URL
         content = page.content()
@@ -227,8 +227,8 @@ class TestProgramsComponentE2E:
             self._open_marimo(page)
             sidebar = page.locator("app-sidebar-right")
 
-            # 1. CREATE via New-workbook modal
-            page.locator('[data-test="BTN_New workbook"]').click()
+            # 1. CREATE via New-notebook modal
+            page.locator('[data-test="BTN_New notebook"]').click()
             name_input = page.locator("#input-name")
             expect(name_input).to_be_visible(timeout=10000)
             name_input.fill(create_name)
@@ -329,7 +329,7 @@ class TestProgramsComponentE2E:
             sidebar = page.locator("app-sidebar-right")
 
             # Open modal, enter an invalid (too short) name, try to save.
-            page.locator('[data-test="BTN_New workbook"]').click()
+            page.locator('[data-test="BTN_New notebook"]').click()
             name_input = page.locator("#input-name")
             expect(name_input).to_be_visible(timeout=10000)
             name_input.fill(too_short)
