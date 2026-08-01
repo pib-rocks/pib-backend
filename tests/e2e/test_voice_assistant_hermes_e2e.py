@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
+import subprocess
 import time
 import uuid
 from urllib.parse import urlparse
 
 import pytest
 import requests
+from playwright.sync_api import Page, expect
 
 
 ROBOT_URL = os.environ.get("PIB_E2E_BASE_URL", "http://192.168.1.28").rstrip("/")
@@ -176,3 +179,94 @@ def test_voice_assistant_hermes_persists_reply_and_recalls_prior_fact():
             json={"assistantModelId": original_model_id},
             timeout=REQUEST_TIMEOUT,
         )
+
+def test_create_personality_via_browser_ui_generates_soul_md():
+    """
+    Create a new personality via the real browser UI (#add-personality-button),
+    and verify on the Pi host filesystem that its SOUL.md is automatically created,
+    contains the replaced name ('Du bist der humanoide Roboter <Name>.'), and documents
+    all available MCP tools.
+    """
+    from playwright.sync_api import sync_playwright
+
+    unique_id = str(int(time.time()))
+    unique_name = f"E2ERoboPib_{unique_id}"
+    created_personality_id = None
+
+    def _capture_response(response):
+        nonlocal created_personality_id
+        if (
+            "/voice-assistant/personality" in response.url
+            and response.request.method == "POST"
+        ):
+            try:
+                data = response.json()
+                created_personality_id = data.get("personalityId")
+            except Exception:
+                pass
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(
+            headless=True, executable_path="/usr/bin/chromium-browser"
+        )
+        context = browser.new_context(viewport={"width": 1400, "height": 900})
+        page = context.new_page()
+        page.on("response", _capture_response)
+
+        try:
+            # 1. Open Voice Assistant UI
+            page.goto(f"{ROBOT_URL}/voice-assistant", wait_until="networkidle")
+            page.wait_for_timeout(2000)
+
+            # 2. Click #add-personality-button to open form
+            add_btn = page.locator("#add-personality-button")
+            expect(add_btn).to_be_visible(timeout=15000)
+            add_btn.click()
+
+            # 3. Fill #name-input with unique robot name
+            name_input = page.locator("#name-input")
+            expect(name_input).to_be_visible(timeout=10000)
+            name_input.fill(unique_name)
+
+            # 4. Save personality via UI
+            save_btn = page.locator(
+                'button:has-text("SAVE"), button:has-text("Save"), #save-personality-button'
+            ).first
+            expect(save_btn).to_be_visible(timeout=10000)
+            save_btn.click()
+
+            # Wait for creation API call to complete
+            page.wait_for_timeout(3000)
+
+            assert created_personality_id is not None, "Failed to capture created personality ID from POST response"
+
+            # 5. Verify SOUL.md on Pi host filesystem
+            soul_file_path = f"/home/pib/.hermes/profiles/pib_{created_personality_id}/SOUL.md"
+            if os.path.exists(soul_file_path):
+                with open(soul_file_path, "r", encoding="utf-8") as f:
+                    soul_content = f.read()
+            else:
+                # If test runs on dev host, fetch SOUL.md via SSH from Pi
+                ssh_cmd = f'sshpass -p "pib" ssh -o StrictHostKeyChecking=no pib@192.168.1.28 "cat {soul_file_path}"'
+                soul_content = subprocess.check_output(ssh_cmd, shell=True).decode("utf-8")
+
+            # 6. Assertions on SOUL.md content
+            assert f"Du bist der humanoide Roboter {unique_name}." in soul_content, (
+                f"Expected robot name identity in SOUL.md, got:\n{soul_content}"
+            )
+            assert "## Verfügbare MCP-Werkzeuge (pib_mcp_server)" in soul_content
+            assert "mcp_pib_get_motor_currents" in soul_content
+            assert "mcp_pib_set_servo_angle" in soul_content
+            assert "mcp_pib_speak" in soul_content
+            assert "mcp_pib_get_bricklets" in soul_content
+            assert "mcp_pib_move_head" in soul_content
+            assert "mcp_pib_get_head_pose" in soul_content
+
+        finally:
+            browser.close()
+            # 7. Cleanup: Delete the created test personality
+            if created_personality_id is not None:
+                requests.delete(
+                    f"{API_URL}/voice-assistant/personality/{created_personality_id}",
+                    timeout=REQUEST_TIMEOUT,
+                )

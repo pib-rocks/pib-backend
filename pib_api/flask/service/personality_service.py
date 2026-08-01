@@ -25,7 +25,9 @@ def create_personality(personality_dto: Any) -> Personality:
         personality.description = personality_dto["description"]
     db.session.add(personality)
     db.session.flush()
-    soul_service.write_soul(personality.personality_id, personality.description)
+    soul_service.write_soul(
+        personality.personality_id, personality.description, personality_name=personality.name
+    )
     return personality
 
 
@@ -41,7 +43,9 @@ def update_personality(personality_id: str, personality_dto: Any) -> Personality
         personality.message_history = personality_dto["message_history"]
     if "description" in personality_dto:
         personality.description = personality_dto["description"]
-        soul_service.write_soul(personality.personality_id, personality.description)
+        soul_service.write_soul(
+            personality.personality_id, personality.description, personality_name=personality.name
+        )
     if "assistant_model_id" in personality_dto:
         personality.assistant_model_id = personality_dto["assistant_model_id"]
     if "stt_engine" in personality_dto:
