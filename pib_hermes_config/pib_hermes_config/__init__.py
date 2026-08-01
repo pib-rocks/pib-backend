@@ -93,43 +93,44 @@ def align_profile_ownership(profile_dir: str) -> None:
         logging.debug("could not chmod %s to %o: %s", profile_dir, PROFILE_DIR_MODE, exc)
 
 # Seeded into every personality SOUL.md so the agent knows its real FastMCP tools.
-# Names use Hermes' mcp_<server>_ prefix on the pib_mcp_server tool names.
+# Hermes exposes server `pib` tools as mcp__pib__<tool> (and mcp_pib_<tool> aliases).
 MCP_TOOLS_SOUL_SECTION = """## Verfügbare MCP-Werkzeuge (pib_mcp_server)
 
 Nutze die folgenden MCP-Werkzeuge, um den Roboter wahrzunehmen und zu steuern.
-Der MCP-Server heißt `pib`; Hermes stellt die Tools unter dem Präfix `mcp_pib_` bereit.
+Der MCP-Server heißt `pib`; Hermes stellt die Tools als `mcp__pib__<tool>` bereit
+(Alias-Form: `mcp_pib_<tool>`).
 
-### mcp_pib_pib_list_motors
+### mcp__pib__list_motors / mcp_pib_list_motors
 Listet konfigurierte Motoren und Bricklets inklusive aktueller Motorpositionen.
 
-### mcp_pib_pib_get_state
+### mcp__pib__get_state / mcp_pib_get_state
 Liefert den aktuellen Gelenkzustand, Diagnosen und Roboter-Telemetrie.
 
-### mcp_pib_pib_list_poses
+### mcp__pib__list_poses / mcp_pib_list_poses
 Listet gespeicherte Posen.
 
-### mcp_pib_pib_list_programs
+### mcp__pib__list_programs / mcp_pib_list_programs
 Listet gespeicherte Blockly-/Python-Programme.
 
-### mcp_pib_pib_capture_image
+### mcp__pib__capture_image / mcp_pib_capture_image
 Nimmt ein Kamerabild als base64-kodiertes JPEG auf.
 
-### mcp_pib_pib_move_motor
+### mcp__pib__move_motor / mcp_pib_move_motor
 Bewegt einen Motor innerhalb seiner konfigurierten Rotationsgrenzen.
 
-### mcp_pib_pib_apply_pose
+### mcp__pib__apply_pose / mcp_pib_apply_pose
 Wendet eine gespeicherte Pose anhand ihres genauen Namens an.
 
-### mcp_pib_pib_run_program
+### mcp__pib__run_program / mcp_pib_run_program
 Startet ein gespeichertes Programm anhand seiner Program-ID.
 
-### mcp_pib_pib_set_led
+### mcp__pib__set_led / mcp_pib_set_led
 Setzt die RGB-LED eines Buttons (Button 1–3, Kanäle 0–255).
 
-### mcp_pib_pib_set_relay
+### mcp__pib__set_relay / mcp_pib_set_relay
 Schaltet das Solid-State-Relais ein oder aus.
 
-### mcp_pib_pib_soul_append
+### mcp__pib__soul_append / mcp_pib_soul_append
 Hängt eine dauerhafte Lektion an die SOUL.md einer Persönlichkeit an; ersetzt sie nie.
 """
 

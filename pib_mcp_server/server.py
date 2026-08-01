@@ -18,11 +18,11 @@ from pydantic import Field
 from .backend import BackendError, PibBackend
 
 ACTUATING_TOOLS = {
-    "pib_move_motor",
-    "pib_apply_pose",
-    "pib_run_program",
-    "pib_set_led",
-    "pib_set_relay",
+    "move_motor",
+    "apply_pose",
+    "run_program",
+    "set_led",
+    "set_relay",
 }
 MAX_SOUL_LESSON_CHARS = 500
 
@@ -103,42 +103,42 @@ def create_server(
         )
 
     @server.tool(annotations=read_annotations, structured_output=True)
-    def pib_list_motors() -> dict[str, Any]:
+    def list_motors() -> dict[str, Any]:
         """List configured motors and bricklets, including live motor positions."""
 
         return _invoke(robot.list_motors)
 
     @server.tool(annotations=read_annotations, structured_output=True)
-    def pib_get_state() -> dict[str, Any]:
+    def get_state() -> dict[str, Any]:
         """Return current joint state, diagnostics, and robot telemetry."""
 
         return _invoke(robot.get_state)
 
     @server.tool(annotations=read_annotations, structured_output=True)
-    def pib_list_poses() -> dict[str, Any]:
+    def list_poses() -> dict[str, Any]:
         """List stored robot poses."""
 
         return _invoke(robot.list_poses)
 
     @server.tool(annotations=read_annotations, structured_output=True)
-    def pib_list_programs() -> dict[str, Any]:
+    def list_programs() -> dict[str, Any]:
         """List stored Blockly/Python programs."""
 
         return _invoke(robot.list_programs)
 
     @server.tool(annotations=read_annotations, structured_output=True)
-    def pib_capture_image() -> dict[str, Any]:
+    def capture_image() -> dict[str, Any]:
         """Capture one camera frame as a base64-encoded JPEG."""
 
         return _invoke(robot.capture_image)
 
     @server.tool(annotations=actuation_annotations, structured_output=True)
-    def pib_move_motor(
+    def move_motor(
         motor_name: NonEmptyString, position: MotorPosition
     ) -> dict[str, Any]:
         """Move one motor after validating its configured rotation limits."""
 
-        disabled = require_actuation("pib_move_motor")
+        disabled = require_actuation("move_motor")
         if disabled:
             return disabled
         motor_name = motor_name.strip()
@@ -174,10 +174,10 @@ def create_server(
         return _invoke(robot.move_motor, motor_name, position)
 
     @server.tool(annotations=actuation_annotations, structured_output=True)
-    def pib_apply_pose(pose_name: NonEmptyString) -> dict[str, Any]:
+    def apply_pose(pose_name: NonEmptyString) -> dict[str, Any]:
         """Apply a stored pose by its exact name."""
 
-        disabled = require_actuation("pib_apply_pose")
+        disabled = require_actuation("apply_pose")
         if disabled:
             return disabled
         pose_name = pose_name.strip()
@@ -186,10 +186,10 @@ def create_server(
         return _invoke(robot.apply_pose, pose_name)
 
     @server.tool(annotations=actuation_annotations, structured_output=True)
-    def pib_run_program(program_id: NonEmptyString) -> dict[str, Any]:
+    def run_program(program_id: NonEmptyString) -> dict[str, Any]:
         """Start a stored program by program number/ID."""
 
-        disabled = require_actuation("pib_run_program")
+        disabled = require_actuation("run_program")
         if disabled:
             return disabled
         program_id = program_id.strip()
@@ -198,7 +198,7 @@ def create_server(
         return _invoke(robot.run_program, program_id)
 
     @server.tool(annotations=actuation_annotations, structured_output=True)
-    def pib_set_led(
+    def set_led(
         button_id: ButtonId,
         red: ColorChannel,
         green: ColorChannel,
@@ -206,22 +206,22 @@ def create_server(
     ) -> dict[str, Any]:
         """Set one RGB button LED (button 1-3, channels 0-255)."""
 
-        disabled = require_actuation("pib_set_led")
+        disabled = require_actuation("set_led")
         if disabled:
             return disabled
         return _invoke(robot.set_led, button_id, red, green, blue)
 
     @server.tool(annotations=actuation_annotations, structured_output=True)
-    def pib_set_relay(turned_on: bool) -> dict[str, Any]:
+    def set_relay(turned_on: bool) -> dict[str, Any]:
         """Turn the solid-state relay on or off."""
 
-        disabled = require_actuation("pib_set_relay")
+        disabled = require_actuation("set_relay")
         if disabled:
             return disabled
         return _invoke(robot.set_relay, turned_on)
 
     @server.tool(annotations=write_annotations, structured_output=True)
-    def pib_soul_append(
+    def soul_append(
         personality_id: NonEmptyString, lesson: SoulLesson
     ) -> dict[str, Any]:
         """Append one durable lesson to a personality SOUL; never replace it."""

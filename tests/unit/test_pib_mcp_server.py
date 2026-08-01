@@ -100,7 +100,7 @@ def _call(server, name, arguments):
     return result
 
 
-def test_pib_list_poses_returns_default_poses():
+def test_list_poses_returns_default_poses():
     backend = FakeBackend()
     backend.poses = [
         {"name": "Startup/Resting", "deletable": False},
@@ -108,7 +108,7 @@ def test_pib_list_poses_returns_default_poses():
     ]
     backend.list_poses = lambda: backend.poses
     server = create_server(backend)
-    res = _call(server, "pib_list_poses", {})
+    res = _call(server, "list_poses", {})
     assert res["ok"] is True
     pose_names = [p["name"] for p in res["result"]]
     assert "Startup/Resting" in pose_names
@@ -119,17 +119,17 @@ def test_tool_discovery_exposes_complete_declared_surface():
     names = {tool.name for tool in _tools(create_server(FakeBackend()))}
 
     assert names == {
-        "pib_list_motors",
-        "pib_get_state",
-        "pib_list_poses",
-        "pib_list_programs",
-        "pib_capture_image",
-        "pib_move_motor",
-        "pib_apply_pose",
-        "pib_run_program",
-        "pib_set_led",
-        "pib_set_relay",
-        "pib_soul_append",
+        "list_motors",
+        "get_state",
+        "list_poses",
+        "list_programs",
+        "capture_image",
+        "move_motor",
+        "apply_pose",
+        "run_program",
+        "set_led",
+        "set_relay",
+        "soul_append",
     }
 
 
@@ -142,18 +142,18 @@ def test_every_tool_has_an_object_input_schema():
 
 def test_schema_declares_required_parameters_and_constraints():
     tools = {tool.name: tool for tool in _tools(create_server(FakeBackend()))}
-    move = _get_schema(tools["pib_move_motor"])
+    move = _get_schema(tools["move_motor"])
     assert "motor_name" in move["properties"]
     assert "position" in move["properties"]
     assert move["properties"]["position"]["type"] == "integer"
 
-    led = _get_schema(tools["pib_set_led"])["properties"]
+    led = _get_schema(tools["set_led"])["properties"]
     assert led["button_id"]["minimum"] == 1
     assert led["button_id"]["maximum"] == 3
     assert led["red"]["minimum"] == 0
     assert led["red"]["maximum"] == 255
 
-    soul = _get_schema(tools["pib_soul_append"])["properties"]["lesson"]
+    soul = _get_schema(tools["soul_append"])["properties"]["lesson"]
     assert soul["minLength"] == 1
     assert soul["maxLength"] == 500
 
@@ -163,7 +163,7 @@ def test_invalid_schema_rejection_happens_before_backend():
     server = create_server(backend, actuating_enabled=True)
 
     with pytest.raises(Exception, match="validation error"):
-        _call(server, "pib_move_motor", {"motor_name": "head"})
+        _call(server, "move_motor", {"motor_name": "head"})
 
     assert backend.calls == []
 
@@ -173,7 +173,7 @@ def test_motor_position_range_is_rejected_before_hardware(position):
     backend = FakeBackend()
     result = _call(
         create_server(backend, actuating_enabled=True),
-        "pib_move_motor",
+        "move_motor",
         {"motor_name": "head", "position": position},
     )
 
@@ -187,7 +187,7 @@ def test_motor_position_at_configured_boundary_is_allowed(position):
     backend = FakeBackend()
     result = _call(
         create_server(backend, actuating_enabled=True),
-        "pib_move_motor",
+        "move_motor",
         {"motor_name": "head", "position": position},
     )
 
@@ -201,7 +201,7 @@ def test_actuating_tools_are_disabled_by_default(monkeypatch):
     server = create_server(backend)
 
     result = _call(
-        server, "pib_move_motor", {"motor_name": "head", "position": 0}
+        server, "move_motor", {"motor_name": "head", "position": 0}
     )
 
     assert ACTUATING_TOOLS
@@ -213,7 +213,7 @@ def test_soul_append_accepts_exactly_500_characters():
     backend = FakeBackend()
     result = _call(
         create_server(backend),
-        "pib_soul_append",
+        "soul_append",
         {"personality_id": "personality-1", "lesson": "x" * 500},
     )
 
@@ -228,7 +228,7 @@ def test_soul_append_rejects_oversized_lesson_before_backend():
     with pytest.raises(Exception, match="500 characters"):
         _call(
             server,
-            "pib_soul_append",
+            "soul_append",
             {"personality_id": "personality-1", "lesson": "x" * 501},
         )
 
