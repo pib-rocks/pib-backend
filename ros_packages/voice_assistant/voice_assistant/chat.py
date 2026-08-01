@@ -501,8 +501,11 @@ class ChatNode(Node):
                     prev_text = code_visual
                     prev_text_type = Chat.Goal.TEXT_TYPE_CODE_VISUAL
                     chat_message_text = code_visual_match.group(0)
-                    self.executor.create_task(
-                        self.create_chat_message,
+                    # Written inline instead of as an executor task: an UPDATE
+                    # may only run once the preceding CREATE has recorded the
+                    # message id it targets, otherwise the concurrent writes
+                    # race and the rest of the reply lands on the wrong row.
+                    self.create_chat_message(
                         chat_id,
                         chat_message_text,
                         False,
@@ -524,8 +527,7 @@ class ChatNode(Node):
                     prev_text = sentence
                     prev_text_type = Chat.Goal.TEXT_TYPE_SENTENCE
                     chat_message_text = sentence
-                    self.executor.create_task(
-                        self.create_chat_message,
+                    self.create_chat_message(
                         chat_id,
                         chat_message_text,
                         False,
@@ -541,6 +543,27 @@ class ChatNode(Node):
                     continue
 
                 break
+
+        # A reply can end without a sentence terminator. That tail is part of
+        # the answer, so it is persisted here instead of being dropped.
+        leftover = curr_text.strip()
+        if leftover:
+            self.create_chat_message(
+                chat_id,
+                leftover,
+                False,
+                bool_update_chat_message,
+                True,
+            )
+            if prev_text is not None:
+                # Hand the completed chunk over as feedback the way the next
+                # token would have, so the tail can travel in Chat.Result.
+                feedback = Chat.Feedback()
+                feedback.text = prev_text
+                feedback.text_type = prev_text_type
+                goal_handle.publish_feedback(feedback)
+                prev_text = None
+                prev_text_type = None
 
         return prev_text, prev_text_type, curr_text
 
@@ -634,10 +657,10 @@ class ChatNode(Node):
         content: str = request.text
         generate_code: bool = request.generate_code
 
-        # Create the user message (first chunk) via Action path helper
-        self.executor.create_task(
-            self.create_chat_message, chat_id, content, True, False, True
-        )
+        # Create the user message (first chunk) via Action path helper. This
+        # write also sets last_pib_message_id, so it has to land before the
+        # assistant chunks start creating and updating their own message.
+        self.create_chat_message(chat_id, content, True, False, True)
 
         # Get personality (also sets how much history to include)
         with self.voice_assistant_client_lock:
