@@ -142,7 +142,6 @@ def build_command(
     if personality_id:
         cmd += ["-p", profile_name_for(personality_id)]
     cmd += ["--continue", session_name_for(chat_id)]
-    toolsets = toolsets if toolsets is not None else "pib"
     if toolsets:
         cmd += ["-t", toolsets]
     cmd += ["-z", text]
