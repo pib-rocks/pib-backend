@@ -13,6 +13,7 @@ def test_soul_append_is_bounded_and_appends(
 ):
     monkeypatch.setenv("PIB_HERMES_PROFILES_DIR", str(tmp_path))
     personality = make_personality(description="Basis.")
+    base_description = personality.description
 
     response = client.post(
         f"/voice-assistant/personality/{personality.personality_id}/soul/append",
@@ -23,7 +24,8 @@ def test_soul_append_is_bounded_and_appends(
     description = personality_service.get_personality(
         personality.personality_id
     ).description
-    assert description == "Basis.\nDer Nutzer heißt Jürgen."
+    # Default SOUL already ends with "\n", so append_soul_lesson adds no extra separator.
+    assert description == base_description + "Der Nutzer heißt Jürgen."
     assert soul_service.read_soul(personality.personality_id) == description
 
     empty_response = client.post(
@@ -42,6 +44,7 @@ def test_soul_append_rejects_oversized_lesson(
 ):
     monkeypatch.setenv("PIB_HERMES_PROFILES_DIR", str(tmp_path))
     personality = make_personality(description="Basis.")
+    original = personality.description
 
     response = client.post(
         f"/voice-assistant/personality/{personality.personality_id}/soul/append",
@@ -51,6 +54,6 @@ def test_soul_append_rejects_oversized_lesson(
     assert response.status_code == 400
     assert (
         personality_service.get_personality(personality.personality_id).description
-        == "Basis."
+        == original
     )
-    assert soul_service.read_soul(personality.personality_id) == "Basis."
+    assert soul_service.read_soul(personality.personality_id) == original
