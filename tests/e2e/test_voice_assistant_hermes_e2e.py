@@ -194,7 +194,8 @@ def test_create_personality_via_browser_ui_generates_soul_md():
     created_personality_id = None
 
     # Get list of existing personalities before creation
-    before = requests.get(f"{API_URL}/voice-assistant/personality", timeout=REQUEST_TIMEOUT).json().get("personalities", [])
+    res_before = requests.get(f"{API_URL}/voice-assistant/personality", timeout=REQUEST_TIMEOUT).json()
+    before = res_before.get("voiceAssistantPersonalities", []) if isinstance(res_before, dict) else res_before
     before_ids = {p["personalityId"] for p in before}
 
     with sync_playwright() as p:
@@ -217,7 +218,7 @@ def test_create_personality_via_browser_ui_generates_soul_md():
             # 3. Fill #name-input and select gender radio
             name_input = page.locator("#name-input")
             expect(name_input).to_be_visible(timeout=10000)
-            name_input.fill(unique_name)
+            name_input.type(unique_name)
 
             # Select Female radio button via label to ensure form is valid
             female_label = page.locator('label[for="new-radio-female"]').first
@@ -233,7 +234,8 @@ def test_create_personality_via_browser_ui_generates_soul_md():
             page.wait_for_timeout(3000)
 
             # Detect created personality ID via difference in API personality set
-            after = requests.get(f"{API_URL}/voice-assistant/personality", timeout=REQUEST_TIMEOUT).json().get("personalities", [])
+            res_after = requests.get(f"{API_URL}/voice-assistant/personality", timeout=REQUEST_TIMEOUT).json()
+            after = res_after.get("voiceAssistantPersonalities", []) if isinstance(res_after, dict) else res_after
             after_ids = {p["personalityId"] for p in after}
             new_ids = after_ids - before_ids
             assert len(new_ids) == 1, f"Expected 1 new personality created via UI, got: {new_ids}"

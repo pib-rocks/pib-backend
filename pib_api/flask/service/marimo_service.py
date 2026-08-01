@@ -31,12 +31,31 @@ def __(mo):
 @app.cell
 def __():
     try:
-        from pib_sdk import Pib
+        try:
+            from pib_sdk import Pib
+        except ImportError:
+            from pib_sdk import Write as Pib
         pib = Pib()
         print("Successfully connected to pib SDK!")
     except Exception as e:
         print("SDK notice:", e)
     return Pib, pib
+
+
+if __name__ == "__main__":
+    app.run()
+"""
+
+# Fresh notebooks created via "New notebook" start with one blank cell.
+EMPTY_NOTEBOOK = """import marimo
+
+__generated_with = "0.10.0"
+app = marimo.App(width="medium")
+
+
+@app.cell
+def __():
+    return
 
 
 if __name__ == "__main__":
@@ -86,7 +105,7 @@ def create_notebook(name: str, content: Optional[str] = None) -> Tuple[int, Dict
     if os.path.exists(fpath):
         return 400, {"status": "error", "message": f"Notebook '{clean_name}' already exists."}
 
-    initial_content = content if content else DEFAULT_DEMO_NOTEBOOK
+    initial_content = content if content else EMPTY_NOTEBOOK
     try:
         with open(fpath, "w", encoding="utf-8") as f:
             f.write(initial_content)
