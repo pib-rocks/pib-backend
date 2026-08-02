@@ -122,50 +122,21 @@ run_pytest_docker() {
 }
 
 run_jest() {
-    local jest_dir="${SCRIPT_DIR}/blockly_generator"
-    if command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then
-        cd "${jest_dir}"
-        npm install --silent
-        # npm install can drop the exec bit on the jest launcher (observed on
-        # the Pi filesystem), which makes `npx jest` fail with "Permission
-        # denied". Restore it defensively before running.
-        chmod +x node_modules/.bin/jest 2>/dev/null || true
-
-        # On arm64 (Pi) an npm install is occasionally incomplete: files such as
-        # node_modules/jest-cli/build/index.js go missing, so `npx jest` dies
-        # with "Cannot find module .../jest-cli/build/index.js" (MODULE_NOT_FOUND)
-        # even though the tests themselves are fine. Detect a broken install and
-        # self-heal with one clean reinstall + retry before giving up.
-        if [[ ! -f node_modules/.bin/jest || ! -f node_modules/jest-cli/build/index.js ]]; then
-            echo "Jest install looks incomplete — reinstalling cleanly ..." >&2
-            rm -rf node_modules package-lock.json
-            npm install --silent
-            chmod +x node_modules/.bin/jest 2>/dev/null || true
-        fi
-
-        if npx jest --config jest.config.js; then
-            return 0
-        fi
-
-        # First attempt failed. If it was a broken-install symptom, do a clean
-        # reinstall and retry once. A genuine test failure will fail again here
-        # and still fail the step (no masking of real failures).
-        echo "Jest failed — attempting one clean reinstall + retry ..." >&2
-        rm -rf node_modules package-lock.json
-        npm install --silent
-        chmod +x node_modules/.bin/jest 2>/dev/null || true
-        npx jest --config jest.config.js
-        return
+    cd "${SCRIPT_DIR}/blockly_generator"
+    if command -v docker >/dev/null 2>&1; then
+        docker run --rm \
+            -v "${REPO_ROOT}:/work" \
+            -w "/work/tests/blockly_generator" \
+            node:18-bookworm \
+            bash -lc 'npm install --silent && npx jest --config jest.config.js'
+        return $?
     fi
-    if ! command -v docker >/dev/null 2>&1; then
-        echo "Neither node/npm nor docker found — cannot run Jest" >&2
-        return 1
+    if command -v npm >/dev/null 2>&1; then
+        npm install --silent && npx jest --config jest.config.js
+        return $?
     fi
-    docker run --rm \
-        -v "${REPO_ROOT}:/work" \
-        -w "/work/tests/blockly_generator" \
-        node:18-bookworm \
-        bash -lc 'rm -rf node_modules && npm install --silent && npx jest --config jest.config.js'
+    echo "Neither docker nor npm found — cannot run Jest" >&2
+    return 1
 }
 
 run_robot_e2e() {
