@@ -123,16 +123,17 @@ run_pytest_docker() {
 
 run_jest() {
     cd "${SCRIPT_DIR}/blockly_generator"
+    chmod +x node_modules/.bin/* 2>/dev/null || true
     if command -v docker >/dev/null 2>&1; then
         docker run --rm \
             -v "${REPO_ROOT}:/work" \
             -w "/work/tests/blockly_generator" \
             node:18-bookworm \
-            bash -lc 'npm install --silent && npx jest --config jest.config.js'
+            bash -lc 'chmod +x node_modules/.bin/* 2>/dev/null || true; npm install --silent && chmod +x node_modules/.bin/* 2>/dev/null || true; npx jest --config jest.config.js'
         return $?
     fi
     if command -v npm >/dev/null 2>&1; then
-        npm install --silent && npx jest --config jest.config.js
+        npm install --silent && chmod +x node_modules/.bin/* 2>/dev/null || true; npx jest --config jest.config.js
         return $?
     fi
     echo "Neither docker nor npm found — cannot run Jest" >&2
