@@ -44,10 +44,11 @@ def _is_empty_db() -> bool:
     for table in inspector.get_table_names():
         if table == "alembic_version":
             continue
-        table_class = db.Model.metadata.tables[table]
-        count = db.session.query(table_class).count()
-        if count > 0:
-            return False
+        table_class = db.Model.metadata.tables.get(table)
+        if table_class is not None:
+            count = db.session.query(table_class).count()
+            if count > 0:
+                return False
     return True
 
 
