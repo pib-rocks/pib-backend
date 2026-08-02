@@ -510,6 +510,7 @@ class TestProgramsComponentE2E:
             ).to_be_visible(timeout=15000)
 
             # Testfall 4: Delete via UI dropdown + confirm()
+            page.once("dialog", lambda dialog: dialog.accept())
             self._row(page, expected_file).locator('button[id^="dropdownbutton-"]').click()
             page.locator(f'button[id="sidebar-right-delete-{expected_title}"]').click()
             expect(create_link).not_to_be_visible(timeout=15000)
