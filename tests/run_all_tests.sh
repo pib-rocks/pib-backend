@@ -83,7 +83,11 @@ ensure_venv() {
     # --prefer-binary: use prebuilt wheels instead of compiling C extensions
     # (e.g. grpcio) from source, which is slow and fragile on arm64 / Raspberry Pi.
     pip install -q --prefer-binary -r "${SCRIPT_DIR}/integration/requirements.txt" \
-        -r "${SCRIPT_DIR}/infrastructure/requirements.txt"
+        -r "${SCRIPT_DIR}/infrastructure/requirements.txt" \
+        playwright
+    pip install -q -e "${REPO_ROOT}/pib_hermes_config" \
+        -e "${REPO_ROOT}/pib_mcp_server" \
+        -e "${REPO_ROOT}/public_api_client"
     if [[ ${SKIP_ROBOT} -eq 0 ]] || [[ ${INCLUDE_FRONTEND} -eq 1 ]]; then
         pip install -q --prefer-binary -r "${SCRIPT_DIR}/requirements-robot.txt"
     fi
@@ -102,7 +106,7 @@ check_flask() {
 
 run_pytest_integration() {
     cd "${REPO_ROOT}"
-    PYTHONPATH="${REPO_ROOT}/pib_api/flask" \
+    PYTHONPATH="${REPO_ROOT}/pib_api/flask:${REPO_ROOT}/pib_hermes_config:${REPO_ROOT}/pib_mcp_server:${REPO_ROOT}/public_api_client" \
         pytest "${SCRIPT_DIR}" -q \
         --ignore="${SCRIPT_DIR}/blockly_generator" \
         -m "not docker"
