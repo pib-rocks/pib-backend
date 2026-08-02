@@ -70,7 +70,7 @@ def align_profile_ownership(profile_dir: str) -> None:
         try:
             os.chown(path, intended.st_uid, intended.st_gid)
             if os.path.basename(path) == ".env":
-                os.chmod(path, 0o600)
+                os.chmod(path, 0o664)
             elif os.path.isfile(path):
                 os.chmod(path, 0o664)
         except OSError as exc:
