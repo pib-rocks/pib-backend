@@ -78,9 +78,23 @@ def app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         SQLALCHEMY_DATABASE_URI=f"sqlite:///{db_file}",
         PYTHON_CODE_DIR=str(programs_dir),
         HOST_IP_FILE=str(host_ip_file),
+        SQLALCHEMY_ENGINE_OPTIONS={"connect_args": {"timeout": 15.0}},
     )
 
     with flask_app.app_context():
+        db.session.remove()
+        # Flask-SQLAlchemy builds engines in init_app; recreate so the sandboxed
+        # URI and connect timeout from config actually take effect.
+        engines = db._app_engines[flask_app]
+        options = {
+            "url": f"sqlite:///{db_file}",
+            **flask_app.config.get("SQLALCHEMY_ENGINE_OPTIONS", {}),
+        }
+        db._apply_driver_defaults(options, flask_app)
+        if None in engines:
+            engines[None].dispose()
+        engines[None] = db._make_engine(None, options, flask_app)
+
         db.drop_all()
         db.create_all()
         result = CliRunner().invoke(seed_db, [])
