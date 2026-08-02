@@ -90,9 +90,21 @@ def run_turn_in_process(
         run_turn_subprocess,
     )
 
+    import sys
+    for path_entry in ("/home/pib/.hermes/hermes-agent", "/home/pib/.hermes/hermes-agent/venv/lib/python3.11/site-packages"):
+        if path_entry not in sys.path and os.path.exists(path_entry):
+            sys.path.insert(0, path_entry)
+
+    run_agent_fn = None
     try:
-        from hermes.run_agent import run_agent
+        from hermes.run_agent import run_agent as run_agent_fn
     except ImportError:
+        try:
+            from run_agent import main as run_agent_fn
+        except ImportError:
+            pass
+
+    if run_agent_fn is None:
         logging.info(
             "hermes.run_agent unavailable; falling back to CLI subprocess (chat=%s)",
             chat_id,
@@ -121,12 +133,15 @@ def run_turn_in_process(
         profile_name = profile_name_for(personality_id)
 
     try:
-        reply = run_agent(
-            prompt=text,
-            session_id=f"pib_chat_{chat_id}",
-            profile=profile_name,
-            timeout=timeout,
+        reply = run_agent_fn(
+            query=text,
+            model="gemini-3.5-flash",
         )
+        if hasattr(reply, "content"):
+            reply = reply.content
+        elif isinstance(reply, dict) and "response" in reply:
+            reply = reply["response"]
+        reply = str(reply) if reply is not None else FALLBACK_REPLY
     except Exception as exc:
         logging.exception(
             "in-process hermes turn failed (chat=%s): %s", chat_id, exc,
