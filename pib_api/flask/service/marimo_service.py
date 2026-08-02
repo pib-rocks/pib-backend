@@ -26,17 +26,16 @@ def __(mo):
         \"\"\"
     )
     return
-
-
 @app.cell
 def __():
+    import pib_sdk
     try:
-        from pib_sdk import Pib
-        pib = Pib()
-        print("Successfully connected to pib SDK!")
-    except Exception as e:
-        print("SDK notice:", e)
-    return Pib, pib
+        from pib_sdk import Write
+        pib = Write()
+    except Exception:
+        pib = pib_sdk
+    print("Successfully connected to pib SDK v", getattr(pib_sdk, "__version__", "0.4"))
+    return pib_sdk, pib
 
 
 if __name__ == "__main__":
