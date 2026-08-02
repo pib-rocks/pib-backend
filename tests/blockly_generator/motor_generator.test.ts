@@ -45,9 +45,9 @@ describe("move_motor generator", () => {
 
     expect(code).toBe('apply_joint_trajectory("elbow_left", 1000)\n');
     expect(Object.values(generator.definitions_).join("\n")).toContain(
-      "apply_joint_trajectory_client.call_async",
+      "pib_sdk.Write",
     );
-    expect(Object.values(generator.definitions_).join("\n")).toContain("import rclpy");
+    expect(Object.values(generator.definitions_).join("\n")).toContain("import pib_sdk");
   });
 
   it("generates relative position using get_joint_position", () => {

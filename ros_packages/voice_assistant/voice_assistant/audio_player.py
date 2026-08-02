@@ -1,3 +1,5 @@
+import io
+import os
 import sys
 import time
 import wave
@@ -5,7 +7,10 @@ from queue import Queue
 from threading import Lock, Event, Thread
 from typing import Iterable, Optional
 
-import pyaudio
+try:
+    import pyaudio
+except ImportError:
+    pyaudio = None
 import rclpy
 from datatypes.srv import PlayAudioFromFile, PlayAudioFromSpeech, ClearPlaybackQueue
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
@@ -15,6 +20,7 @@ from std_msgs.msg import String
 
 from public_api_client import public_voice_client
 from . import util
+from .tts_synthesis import SupertoneTTSEngine
 
 
 class AudioEncoding:
@@ -55,15 +61,17 @@ class PlaybackItem:
 
     def play(self) -> None:
 
-        if self.is_cleared():
+        if self.is_cleared() or pyaudio is None:
             self.finished_playing.set()
             return
 
+        pya = None
+        stream = None
         try:
             with util.surpress_stderr():
                 pya = pyaudio.PyAudio()
 
-                stream: pyaudio.Stream = pya.open(
+                stream = pya.open(
                     format=pya.get_format_from_width(self.encoding.bytes_per_sample),
                     channels=self.encoding.num_channels,
                     rate=self.encoding.frames_per_second,
@@ -75,22 +83,25 @@ class PlaybackItem:
                         break
                     stream.write(chunk)
 
-                self.finished_playing.set()
-
                 time.sleep(self.pause_seconds)
-
-                stream.stop_stream()
-                stream.close()
-                pya.terminate()
-
-        except OSError as e:
-            # ToDo - Get better logging for non-ROS packages
+        except Exception as e:
             print(f"failed to playback audio: {e}", file=sys.stderr)
-            pya.terminate()
-            return
+        finally:
+            self.finished_playing.set()
+            if stream is not None:
+                try:
+                    stream.stop_stream()
+                    stream.close()
+                except Exception:
+                    pass
+            if pya is not None:
+                try:
+                    pya.terminate()
+                except Exception:
+                    pass
 
 
-SPEECH_ENCODING = AudioEncoding(2, 1, 16000)
+SPEECH_ENCODING = AudioEncoding(2, 1, 44100)
 CHUNKS_PER_SECOND = 10
 FRAMES_PER_CHUNK = SPEECH_ENCODING.frames_per_second // CHUNKS_PER_SECOND
 BYTES_PER_FRAME = SPEECH_ENCODING.bytes_per_sample * SPEECH_ENCODING.num_channels
@@ -138,6 +149,8 @@ class AudioPlayerNode(Node):
             String, "public_api_token", self.get_public_api_token_listener, 10
         )
 
+        self.tts_engine = SupertoneTTSEngine()
+
         self.get_logger().info("Now running AUDIO PLAYER")
 
     def get_public_api_token_listener(self, msg):
@@ -178,26 +191,36 @@ class AudioPlayerNode(Node):
 
         order = self.counter_next()
 
-        with wave.open(request.filepath, "rb") as wf:
-
-            encoding = AudioEncoding(
-                wf.getsampwidth(), wf.getnchannels(), wf.getframerate()
+        if not os.path.exists(request.filepath):
+            self.get_logger().warning(
+                f"Audio file not found '{request.filepath}', skipping file playback."
             )
+            return response
 
-            frames_per_chunk = encoding.frames_per_second // CHUNKS_PER_SECOND
+        try:
+            with wave.open(request.filepath, "rb") as wf:
 
-            data = []
-            while True:
-                chunk = wf.readframes(frames_per_chunk)
-                data.append(chunk)
-                if len(chunk) < frames_per_chunk:
-                    break
+                encoding = AudioEncoding(
+                    wf.getsampwidth(), wf.getnchannels(), wf.getframerate()
+                )
 
-        playback_item = PlaybackItem(data, encoding, 0.0, order)
-        self.playback_queue.put(playback_item, True)
+                frames_per_chunk = encoding.frames_per_second // CHUNKS_PER_SECOND
 
-        if request.join:
-            playback_item.finished_playing.wait()
+                data = []
+                while True:
+                    chunk = wf.readframes(frames_per_chunk)
+                    data.append(chunk)
+                    if len(chunk) < frames_per_chunk:
+                        break
+
+            playback_item = PlaybackItem(data, encoding, 0.0, order)
+            self.playback_queue.put(playback_item, True)
+
+            if request.join:
+                playback_item.finished_playing.wait()
+        except Exception as e:
+            self.get_logger().error(f"Error reading audio file '{request.filepath}': {e}")
+
         return response
 
     def play_audio_from_speech(
@@ -209,12 +232,34 @@ class AudioPlayerNode(Node):
         order = self.counter_next()
 
         try:
-            data = public_voice_client.text_to_speech(
-                request.speech, request.gender, request.language, self.token
+            # Use local Supertone supertonic-3 expressive TTS engine
+            wav_bytes = self.tts_engine.synthesize(
+                text=request.speech,
+                language=request.language or "auto",
+                voice=request.gender or "F1",
+                emotion="expressive",
             )
+            buf = io.BytesIO(wav_bytes)
+            with wave.open(buf, "rb") as wf:
+                nframes = wf.getnframes()
+                raw_pcm = wf.readframes(nframes)
+
+            data = [
+                raw_pcm[i : i + BYTES_PER_CHUNK]
+                for i in range(0, len(raw_pcm), BYTES_PER_CHUNK)
+            ]
         except Exception as e:
-            self.get_logger().error(f"text_to_speech failed: {e}")
-            return response
+            self.get_logger().warning(
+                f"Local Supertone TTS synthesis error, attempting public voice client: {e}"
+            )
+            try:
+                data = public_voice_client.text_to_speech(
+                    request.speech, request.gender, request.language, self.token
+                )
+            except Exception as e2:
+                self.get_logger().error(f"text_to_speech failed: {e2}")
+                return response
+
         data = self.adjust_data_granularity(data, BYTES_PER_CHUNK)
 
         playback_item = PlaybackItem(data, SPEECH_ENCODING, 0.2, order)

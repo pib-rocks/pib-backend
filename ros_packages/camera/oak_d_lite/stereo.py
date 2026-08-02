@@ -8,6 +8,10 @@ from datatypes.srv import GetCameraImage
 from rclpy.node import Node
 from std_msgs.msg import Float32MultiArray, Float64, Int32, Int32MultiArray, String
 
+# Downscaled resolution for Haar cascade face detection (maps back to full frame).
+FACE_DETECT_WIDTH = 320
+FACE_DETECT_HEIGHT = 180
+
 
 class ErrorPublisher(Node):
 
@@ -60,6 +64,7 @@ class CameraNode(Node):
         self.preview_height = 720
         self.quality_factor = 80
         self.current_image = ""
+        self.current_frame = None
 
         self.camera_available = self.init_pipeline()
 
@@ -74,7 +79,21 @@ class CameraNode(Node):
         self.timer_period = 0.1  # seconds
         self.timer = self.create_timer(self.timer_period, self.timer_callback)
 
+    def _encode_frame(self, frame):
+        """JPEG-encode and base64 a frame; returns None on failure."""
+        retval, buffer = cv2.imencode(
+            ".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), self.quality_factor]
+        )
+        if not retval:
+            return None
+        return base64.b64encode(buffer).decode("utf-8")
+
     def get_camera_image_callback(self, request, response):
+        # Encode on demand when the service is requested and we have a cached frame.
+        if self.current_frame is not None:
+            encoded = self._encode_frame(self.current_frame)
+            if encoded is not None:
+                self.current_image = encoded
         self.get_logger().info(f"LEN IMAGE: {len(self.current_image)}")
         response.image_base64 = self.current_image
         return response
@@ -111,6 +130,10 @@ class CameraNode(Node):
             return False
 
     def publish_face_center(self, frame):
+        # Skip expensive Haar cascade when nobody is listening to face_center.
+        if self.face_center_publisher_.get_subscription_count() == 0:
+            return
+
         face_msg = Float32MultiArray()
 
         if self.face_cascade.empty():
@@ -118,13 +141,21 @@ class CameraNode(Node):
             self.face_center_publisher_.publish(face_msg)
             return
 
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        full_h, full_w = frame.shape[:2]
+        small = cv2.resize(frame, (FACE_DETECT_WIDTH, FACE_DETECT_HEIGHT))
+        gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
         faces = self.face_cascade.detectMultiScale(gray, 1.1, 5)
 
         if len(faces) > 0:
             x, y, w, h = max(faces, key=lambda f: f[2] * f[3])
-            x_center = (x + w / 2) - (frame.shape[1] / 2)
-            y_center = (frame.shape[0] / 2) - (y + h / 2)
+            scale_x = full_w / FACE_DETECT_WIDTH
+            scale_y = full_h / FACE_DETECT_HEIGHT
+            x_full = x * scale_x
+            y_full = y * scale_y
+            w_full = w * scale_x
+            h_full = h * scale_y
+            x_center = (x_full + w_full / 2) - (full_w / 2)
+            y_center = (full_h / 2) - (y_full + h_full / 2)
             face_msg.data = [float(x_center), float(y_center)]
         else:
             face_msg.data = [0.0, 0.0]
@@ -149,19 +180,21 @@ class CameraNode(Node):
                 frame, (self.preview_width, self.preview_height)
             )
 
+        self.current_frame = frame
         self.publish_face_center(frame)
 
-        retval, buffer = cv2.imencode(
-            ".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), self.quality_factor]
-        )
-        if not retval:
+        # Only JPEG/base64 encode when someone is subscribed to camera_topic.
+        # get_camera_image encodes on demand from current_frame instead.
+        if self.publisher_.get_subscription_count() == 0:
             return
 
-        jpg_as_text = base64.b64encode(buffer)
+        encoded = self._encode_frame(frame)
+        if encoded is None:
+            return
 
+        self.current_image = encoded
         msg = String()
-        msg.data = jpg_as_text.decode("utf-8")
-        self.current_image = msg.data
+        msg.data = encoded
         self.publisher_.publish(msg)
 
     def timer_period_callback(self, msg):

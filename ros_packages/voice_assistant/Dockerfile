@@ -4,6 +4,9 @@ SHELL ["/bin/bash", "-c"]
 
 WORKDIR /app
 
+# Force IPv4 preference in glibc getaddrinfo to prevent 10s IPv6 route timeout on Pi
+RUN echo "precedence ::ffff:0:0/96 100" >> /etc/gai.conf
+
 RUN apt-get update && apt-get install --no-install-recommends -y curl
 
 RUN apt-get update --fix-missing && \
@@ -17,16 +20,27 @@ RUN apt-get update --fix-missing && \
         libusb-1.0-0-dev \
     && rm -rf /var/lib/apt/lists/*
 
-COPY ./ros_packages/requirements.txt .
+COPY ./ros_packages/voice_assistant/requirements.txt .
 
 # PEP 668: Jazzy (Ubuntu 24.04, Python 3.12) requires --break-system-packages
-RUN pip install --break-system-packages --no-cache-dir requests pyaudio google-genai
+RUN pip install --break-system-packages --no-cache-dir --ignore-installed requests pyaudio google-genai supertonic faster-whisper onnxruntime scipy soundfile hermes-agent
+
+ENV SUPERTONE_MODEL_PATH=/data/voice/models/supertone/
+ENV WHISPER_MODEL_SIZE=base
+ENV WHISPER_MODEL_PATH=/data/voice/models/whisper/
 
 COPY ./pib_api/client ./client
 RUN pip install --break-system-packages --no-cache-dir ./client
 
+# Shared with the flask API so both resolve the same Hermes profiles dir.
+COPY ./pib_hermes_config ./pib_hermes_config
+RUN pip install --break-system-packages --no-cache-dir ./pib_hermes_config/
+
 COPY ./public_api_client ./public_api_client
 RUN pip install --break-system-packages --no-cache-dir ./public_api_client/
+
+COPY ./pib_mcp_server ./pib_mcp_server
+RUN pip install --break-system-packages --no-cache-dir ./pib_mcp_server/
 
 COPY ./ros_packages/datatypes ros2_ws/datatypes
 COPY ./ros_packages/voice_assistant ros2_ws/voice_assistant

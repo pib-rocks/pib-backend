@@ -3,13 +3,12 @@ import {pythonGenerator} from "blockly/python";
 import {
     CONFIGURE_LOGGING,
     IMPORT_LOGGING,
+    IMPORT_OS,
+    IMPORT_PIB_SDK,
+    IMPORT_POSE_CLIENT,
     IMPORT_RCLPY,
     IMPORT_SYS,
-    IMPORT_APPLY_JOINT_TRAJECTORY,
-    IMPORT_JOINT_TRAJECTORY_MESSAGES,
     INIT_ROS,
-    INIT_APPLY_JOINT_TRASJECTORY_CLIENT,
-    IMPORT_POSE_CLIENT,
 } from "./util/definitions";
 import {APPLY_POSE_FUNCTION} from "./util/function-declarations";
 
@@ -24,13 +23,12 @@ export function moveToPoseGenerator(
     Object.assign(generator.definitions_, {
         IMPORT_RCLPY,
         IMPORT_SYS,
+        IMPORT_OS,
         IMPORT_LOGGING,
-        IMPORT_APPLY_JOINT_TRAJECTORY,
-        IMPORT_JOINT_TRAJECTORY_MESSAGES,
+        IMPORT_PIB_SDK,
+        IMPORT_POSE_CLIENT,
         CONFIGURE_LOGGING,
         INIT_ROS,
-        IMPORT_POSE_CLIENT,
-        INIT_APPLY_JOINT_TRASJECTORY_CLIENT,
     });
 
     // declare the 'apply_pose'-function

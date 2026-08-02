@@ -7,6 +7,10 @@ COPY ./pib_api/flask/requirements.txt /app
 COPY ./pib_blockly/pib_blockly_client /tmp/pib_blockly_client
 RUN pip install /tmp/pib_blockly_client
 
+# Shared with the voice assistant so both resolve the same Hermes profiles dir.
+COPY ./pib_hermes_config /tmp/pib_hermes_config
+RUN pip install /tmp/pib_hermes_config
+
 RUN pip install -r requirements.txt
 
 COPY ./pib_api/flask/ .

@@ -12,8 +12,14 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 FLASK_DIR = REPO_ROOT / "pib_api" / "flask"
 BLOCKLY_CLIENT_DIR = REPO_ROOT / "pib_blockly" / "pib_blockly_client"
 API_CLIENT_DIR = REPO_ROOT / "pib_api" / "client"
+HERMES_CONFIG_DIR = REPO_ROOT / "pib_hermes_config"
 
-for path in (str(FLASK_DIR), str(BLOCKLY_CLIENT_DIR), str(API_CLIENT_DIR)):
+for path in (
+    str(FLASK_DIR),
+    str(BLOCKLY_CLIENT_DIR),
+    str(API_CLIENT_DIR),
+    str(HERMES_CONFIG_DIR),
+):
     if path not in sys.path:
         sys.path.insert(0, path)
 
@@ -46,6 +52,18 @@ def app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     )
 
     with flask_app.app_context():
+        try:
+            db.session.remove()
+            sa_ext = flask_app.extensions.get("sqlalchemy")
+            if sa_ext and hasattr(sa_ext, "_engines"):
+                for key, eng in list(sa_ext._engines.items()):
+                    try:
+                        eng.dispose()
+                    except Exception:
+                        pass
+                sa_ext._engines.clear()
+        except Exception:
+            pass
         db.drop_all()
         db.create_all()
         result = CliRunner().invoke(seed_db, [])

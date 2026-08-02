@@ -3,33 +3,19 @@ import {CodeGenerator} from "blockly";
 // play-audio-from-speech
 
 export const PLAY_AUDIO_FROM_SPEECH_FUNCTION = (generator: CodeGenerator) => `
-def ${generator.FUNCTION_NAME_PLACEHOLDER_}(speech: str, voice: str) -> None:
+def ${generator.FUNCTION_NAME_PLACEHOLDER_}(speech: str, voice: str = "F1", language: str = "auto") -> None:
 
-    logging.info(f"received request to say '{speech}' as '{voice}'.")
+    logging.info(f"received request to say '{speech}' with voice '{voice}' in language '{language}'.")
 
     request = PlayAudioFromSpeech.Request()
     request.speech = speech
+    request.gender = voice
+    request.language = language
     request.join = True
-
-    if voice == 'Hannah':
-        request.gender = "Female"
-        request.language = "German"
-    elif voice == 'Daniel':
-        request.gender = "Male"
-        request.language = "German"
-    elif voice == 'Emma':
-        request.gender = "Female"
-        request.language = "English"
-    elif voice == 'Brian':
-        request.gender = "Male"
-        request.language = "English"
-    else:
-        logging.error(f"unrecognized voice: '{voice}', aborting...")
-        return
 
     future = play_audio_from_speech_client.call_async(request)
 
-    logging.info(f"now speaking...")
+    logging.info(f"now speaking via local Supertonic TTS...")
     rclpy.spin_until_future_complete(node, future)
     logging.info("finished speaking.")
 `;
@@ -73,23 +59,11 @@ export const APPLY_JOINT_TRAJECTORY_FUNCTION = (generator: CodeGenerator) => `
 def ${generator.FUNCTION_NAME_PLACEHOLDER_}(motor_name: str, position: int) -> None:
 
     logging.info(f"setting position of '{motor_name}' to {position}.")
-
-    request = ApplyJointTrajectory.Request()
-    point = JointTrajectoryPoint()
-    point.positions.append(position)
-    jt = JointTrajectory()
-    jt.joint_names = [motor_name]
-    jt.points = [point]
-    request.joint_trajectory = jt
-
-    future = apply_joint_trajectory_client.call_async(request)
-    rclpy.spin_until_future_complete(node, future)
-
-    response: ApplyJointTrajectory.Response = future.result()
-    if response.successful:
-        logging.info(f"position of '{motor_name}' was successfully set.")
-    else:
-        logging.error(f"setting position of '{motor_name}' failed.")
+    rosbridge_host = os.getenv("ROSBRIDGE_HOST", "rosbridge-ws")
+    try:
+        pib_sdk.Write(host=rosbridge_host, port=9090).move(motor_name, position)
+    except Exception:
+        pib_sdk.Write(host="localhost", port=9090).move(motor_name, position)
 `;
 
 // pose
@@ -107,29 +81,14 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(poseId: str) -> None:
         logging.error(f"getting motor-positions of pose failed.")
         return
 
-    jt = JointTrajectory()
-    jt.joint_names = []
-
+    rosbridge_host = os.getenv("ROSBRIDGE_HOST", "rosbridge-ws")
     for motor_position in motor_positions["motorPositions"]:
         motor_name = motor_position["motorName"]
         position = motor_position["position"]
-
-        jt.joint_names.append(motor_name)
-        point = JointTrajectoryPoint()
-        point.positions.append(position)
-        jt.points.append(point)
-
-    request = ApplyJointTrajectory.Request()
-    request.joint_trajectory = jt
-
-    future = apply_joint_trajectory_client.call_async(request)
-    rclpy.spin_until_future_complete(node, future)
-
-    response: ApplyJointTrajectory.Response = future.result()
-    if response.successful:
-        logging.info(f"pose was successfully applied.")
-    else:
-        logging.error(f"applying pose failed.")
+        try:
+            pib_sdk.Write(host=rosbridge_host, port=9090).move(motor_name, position)
+        except Exception:
+            pib_sdk.Write(host="localhost", port=9090).move(motor_name, position)
 `;
 
 // set-solid-state-relay

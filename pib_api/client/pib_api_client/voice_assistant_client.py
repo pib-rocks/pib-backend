@@ -20,11 +20,14 @@ class AssistantModel:
 
 class Personality:
     def __init__(self, personality_dto: dict[str, Any]):
+        self.personality_id = personality_dto.get("personalityId")
+        self.soul_path = personality_dto.get("soulPath")
         self.gender = personality_dto["gender"]
         self.language = "German"  # TODO: language should be stored as part of a personality -> personality_dto["language"]
         self.pause_threshold = personality_dto["pauseThreshold"]
         self.message_history = personality_dto["messageHistory"]
         self.description = personality_dto.get("description")
+        self.stt_engine = personality_dto.get("sttEngine", "local_whisper")
         self.assistant_model = self._get_assistant_model(
             personality_dto["assistantModelId"]
         )

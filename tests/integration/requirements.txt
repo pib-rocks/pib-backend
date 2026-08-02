@@ -10,3 +10,4 @@ marshmallow-sqlalchemy==1.0.0
 SQLAlchemy>=2.0.26
 Werkzeug==3.0.1
 requests==2.31.0
+pib-sdk

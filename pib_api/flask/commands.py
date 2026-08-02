@@ -44,10 +44,11 @@ def _is_empty_db() -> bool:
     for table in inspector.get_table_names():
         if table == "alembic_version":
             continue
-        table_class = db.Model.metadata.tables[table]
-        count = db.session.query(table_class).count()
-        if count > 0:
-            return False
+        table_class = db.Model.metadata.tables.get(table)
+        if table_class is not None:
+            count = db.session.query(table_class).count()
+            if count > 0:
+                return False
     return True
 
 
@@ -108,9 +109,12 @@ def _create_bricklet_data() -> None:
 
 
 def _create_button_program_data():
+    cerebra_prog = Program.query.filter_by(name="toggle_cerebra_fullscreen").first()
+    prog_id = cerebra_prog.id if cerebra_prog else None
+
     button_program1 = ButtonProgram(bricklet_id=5, program_id=None)
     button_program2 = ButtonProgram(bricklet_id=6, program_id=None)
-    button_program3 = ButtonProgram(bricklet_id=7, program_id=None)
+    button_program3 = ButtonProgram(bricklet_id=7, program_id=prog_id)
     db.session.add_all([button_program1, button_program2, button_program3])
     db.session.flush()
 
@@ -129,7 +133,12 @@ def _create_program_data() -> None:
         code_visual=_get_example_program(),
         program_number="e1d46e2a-935e-4e2b-b2f9-0856af4257c5",
     )
-    db.session.add(program)
+    cerebra_program = Program(
+        name="toggle_cerebra_fullscreen",
+        code_visual='<xml xmlns="https://developers.google.com/blockly/xml"><block type="toggle_cerebra_fullscreen" id="cerebra_toggle" x="10" y="10"></block></xml>',
+        program_number="c3r3br4-f-u-l-l-s-c-r-e-e-n-001",
+    )
+    db.session.add_all([program, cerebra_program])
     db.session.flush()
 
 
@@ -149,11 +158,16 @@ def _create_chat_data_and_assistant() -> None:
         has_image_support=True,
     )
     gemini_text = AssistantModel(
-        visual_name="Gemini 2.5 Flash",
-        api_name="gemini-2.5-flash",
+        visual_name="Gemini 3.5 Flash",
+        api_name="gemini-3.5-flash",
         has_image_support=False,
     )
-    db.session.add_all([gpt4o2, gpt4o1, gpt3, claude, gemini_text])
+    hermes_agent = AssistantModel(
+        visual_name="Hermes Agent (selbstlernend)",
+        api_name="hermes-agent",
+        has_image_support=True,
+    )
+    db.session.add_all([gpt4o2, gpt4o1, gpt3, claude, gemini_text, hermes_agent])
     db.session.flush()
 
     p_eva = Personality(
@@ -163,6 +177,7 @@ def _create_chat_data_and_assistant() -> None:
         pause_threshold=0.8,
         message_history=5,
         assistant_model_id=claude.id,
+        stt_engine="local_whisper",
     )
     p_thomas = Personality(
         name="Thomas",
@@ -171,6 +186,7 @@ def _create_chat_data_and_assistant() -> None:
         pause_threshold=1.0,
         message_history=15,
         assistant_model_id=gpt4o1.id,
+        stt_engine="local_whisper",
     )
     db.session.add_all([p_eva, p_thomas])
     db.session.flush()

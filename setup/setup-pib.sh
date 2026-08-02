@@ -237,6 +237,18 @@ function install_depthai_udev_rules() {
     || print WARN "could not reload udev rules; a reboot/replug may be required"
 }
 
+# Install pib-sdk and pib_mcp_server into system Python so Marimo notebooks,
+# Hermes MCP, and host scripts can import them without sys.path hacks.
+function install_pib_python_packages() {
+  print INFO "Installing pib-sdk and pib_mcp_server into system Python"
+  pip install --break-system-packages pib-sdk \
+    || print WARN "failed to install pib-sdk"
+  pip install --break-system-packages -e "$BACKEND_DIR/pib_mcp_server" \
+    || print WARN "failed to install pib_mcp_server"
+  print SUCCESS "Installed pib Python packages system-wide"
+}
+
+
 # Clone the imitation project into the home directory and set up its virtual environment
 function install_imitation() {
   if ! command_exists git; then
@@ -265,6 +277,106 @@ function install_imitation() {
   print SUCCESS "Installed imitation project and its virtual environment"
 }
 
+
+# Install the Hermes CLI for the pib user.
+#
+# WHY: docker-compose bind-mounts /home/pib/.hermes and
+# /home/pib/.local/bin/hermes into ros-voice-assistant (and the profiles/
+# subtree into flask-app). hermes-agent personalities need that host-side CLI
+# plus the ~/.hermes profiles dir; without the install those mounts resolve to
+# nothing and every hermes turn silently falls back.
+#
+# Provider credentials are NOT configured here — after install, run
+# `sudo -u pib -H hermes setup` (or write /home/pib/.hermes/.env) once before
+# hermes-agent personalities can talk to a model.
+# Seed mcp_servers.pib into the Hermes base config so fresh installs expose
+# pib_mcp_server tools without a manual `hermes mcp add`.
+function seed_hermes_mcp_config() {
+  sudo apt-get install -y python3-yaml >/dev/null
+  sudo -u pib -H mkdir -p /home/pib/.hermes
+  sudo -u pib -H python3 -c "
+import yaml, os
+cfg_path = '/home/pib/.hermes/config.yaml'
+cfg = {}
+if os.path.exists(cfg_path):
+    with open(cfg_path, 'r') as f:
+        cfg = yaml.safe_load(f) or {}
+changed = False
+if cfg.get('model') != 'gemini-3.5-flash' or cfg.get('provider') != 'gemini':
+    cfg['model'] = 'gemini-3.5-flash'
+    cfg['provider'] = 'gemini'
+    changed = True
+if 'mcp_servers' not in cfg or 'pib' not in cfg.get('mcp_servers', {}):
+    cfg.setdefault('mcp_servers', {})['pib'] = {
+        'command': 'python3',
+        'args': ['-m', 'pib_mcp_server'],
+    }
+    changed = True
+if changed:
+    with open(cfg_path, 'w') as f:
+        yaml.dump(cfg, f, default_flow_style=False)
+"
+  print SUCCESS "Seeded mcp_servers.pib into /home/pib/.hermes/config.yaml"
+}
+
+function install_hermes_cli() {
+  local hermes_bin="/home/pib/.local/bin/hermes"
+  local hermes_profiles="/home/pib/.hermes/profiles"
+
+  if [ -x "$hermes_bin" ]; then
+    print INFO "Hermes CLI already installed at $hermes_bin"
+    # Keep the shared profiles dir present for the flask/voice-assistant mounts.
+    sudo -u pib -H mkdir -p "$hermes_profiles"
+    seed_hermes_mcp_config
+    return 0
+  fi
+
+  print INFO "Installing Hermes CLI for user pib (idempotent; lands under /home/pib/.hermes)"
+
+  # Official installer downloads Node as a .tar.xz; curl is already installed above.
+  sudo apt-get install -y xz-utils >/dev/null
+
+  # Match the NodeSource install style already used in this file (curl | bash).
+  # --skip-setup keeps provisioning non-interactive; credentials come later.
+  # --skip-browser skips Playwright — the voice path does not need Chromium.
+  if ! sudo -u pib -H bash -c \
+    'curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash -s -- --skip-setup --skip-browser'; then
+    print ERROR "Hermes CLI installer failed"
+    return 1
+  fi
+
+  sudo -u pib -H mkdir -p "$hermes_profiles"
+
+  if [ -x "$hermes_bin" ]; then
+    print SUCCESS "Hermes CLI installed at $hermes_bin"
+  else
+    print ERROR "Hermes CLI install finished but $hermes_bin is missing"
+    return 1
+  fi
+
+  seed_hermes_mcp_config
+}
+
+
+function setup_pib_marimo_service() {
+  print INFO "Setting up pib Marimo Reactive Python Notebook Service..."
+  sudo -u pib -H mkdir -p /home/pib/programs/notebooks
+  sudo chmod 777 /home/pib/programs/notebooks 2>/dev/null || true
+  pip install --break-system-packages marimo 2>/dev/null || true
+
+  local service_src="$BACKEND_DIR/setup/setup_files/pib-marimo.service"
+  local service_target="/etc/systemd/system/pib-marimo.service"
+  if [ -f "$service_src" ]; then
+    sudo cp "$service_src" "$service_target"
+    sudo chmod 644 "$service_target"
+    sudo systemctl daemon-reload
+    sudo systemctl enable pib-marimo.service
+    sudo systemctl restart pib-marimo.service 2>/dev/null || true
+    print SUCCESS "Installed and enabled pib-marimo.service"
+  else
+    print ERROR "pib-marimo.service template not found at $service_src"
+  fi
+}
 
 # Install update script; move animated eyes, etc.
 function move_setup_files() {
@@ -300,6 +412,23 @@ function install_tinkerforge() {
   echo "deb https://download.tinkerforge.com/apt/$(. /etc/os-release; echo $ID $VERSION_CODENAME) main" | sudo tee /etc/apt/sources.list.d/tinkerforge.list
   sudo apt update
   sudo apt install -y brickd brickv python3-tinkerforge
+
+  # Disable unused mesh gateway server to save CPU resources
+  if [ -f /etc/brickd.conf ]; then
+    sudo sed -i 's/^listen\.mesh_gateway_port = .*/listen.mesh_gateway_port = 0/' /etc/brickd.conf
+  fi
+
+  # Apply CPUQuota and Nice limit override for brickd
+  sudo mkdir -p /etc/systemd/system/brickd.service.d
+  cat << 'EOF' | sudo tee /etc/systemd/system/brickd.service.d/override.conf > /dev/null
+[Service]
+CPUQuota=15%
+Nice=10
+EOF
+
+  sudo systemctl daemon-reload
+  sudo systemctl restart brickd
+
   print SUCCESS "Installed tinkerforge"
 }
 
@@ -464,11 +593,16 @@ fi
 install_system_packages || { print ERROR "failed to install system packages"; return 1; }
 install_locale || { print ERROR "failed to install locale"; return 1; }
 clone_repositories || { print ERROR "failed to clone repositories"; return 1; }
+install_pib_python_packages || print ERROR "failed to install pib Python packages"
+# Before docker-compose starts: hermes must exist on the host so the
+# ros-voice-assistant / flask-app bind mounts resolve to real paths.
+install_hermes_cli || print ERROR "failed to install Hermes CLI"
 install_imitation || print ERROR "failed to install imitation project"
 if is_supported_raspbian && [ "$DIST_VERSION" = "trixie" ]; then
   source "$SETUP_INSTALLATION_DIR/ros_jazzy_install.sh" || { print ERROR "failed to install ROS 2 Jazzy"; return 1; }
 fi
 move_setup_files || print ERROR "failed to move setup files"
+setup_pib_marimo_service || print ERROR "failed to setup pib marimo service"
 install_DBbrowser || print ERROR "failed to install DB browser"
 install_tinkerforge || print ERROR "failed to install tinkerforge"
 setup_ip_dispatcher || print ERROR "failed to setup ip dispatcher"
