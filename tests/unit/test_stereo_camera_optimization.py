@@ -5,12 +5,16 @@ import sys
 import unittest
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../ros_packages/camera/oak_d_lite")))
 
+depthai = pytest.importorskip("depthai")
+rclpy = pytest.importorskip("rclpy")
+
 import numpy as np
 
-# Import CameraNode module
 from ros_packages.camera.oak_d_lite.stereo import CameraNode, FACE_DETECT_WIDTH, FACE_DETECT_HEIGHT
 
 

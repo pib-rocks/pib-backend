@@ -15,6 +15,7 @@ import os
 import re
 import shutil
 import subprocess
+import time
 from typing import Optional
 
 import yaml
@@ -50,8 +51,9 @@ PIB_MCP_SERVER = {
     },
 }
 
-# Permanent Hermes LLM pin. Kept in sync with setup/setup-pib.sh.
-DEFAULT_HERMES_MODEL = "gemini-3.6-flash"
+# Permanent Hermes LLM pin. Kept in sync with setup/setup-pib.sh
+# and pib_hermes_config.DEFAULT_HERMES_MODEL.
+DEFAULT_HERMES_MODEL = "gemini-3.5-flash"
 DEFAULT_HERMES_PROVIDER = "gemini"
 
 # Startup liveness probe only. Deliberately small: it runs before the chat node
@@ -238,42 +240,65 @@ def _ensure_mcp_servers_pib(pdir: str) -> None:
 
 
 def _inherit_base_config(pdir: str) -> None:
-    """Materialize the provider config a profile needs, from HERMES_HOME.
+    """Materialize the provider config a profile needs, from HERMES_HOME or environment.
 
     `hermes -p <profile>` resolves its LLM provider from the profile, so a
     profile holding only a SOUL.md fails every turn with "No LLM provider
     configured". Copies rather than symlinks, so that a later `hermes profile
-    delete` cannot damage the base install, and never replaces a file the profile
-    already has, which may have been customized on purpose.
-
-    Always ensures mcp_servers.pib is present afterwards, including when the
-    profile already had its own config.yaml.
+    delete` cannot damage the base install. Also ensures API keys in .env
+    are populated from environment variables if missing.
     """
     base = hermes_home()
     for name, mode in ((CONFIG_FILENAME, None), (ENV_FILENAME, ENV_FILE_MODE)):
         target = os.path.join(pdir, name)
-        if os.path.exists(target):
-            logging.debug("hermes profile keeps its own %s (%s)", name, target)
-            continue
-        source = os.path.join(base, name)
-        if not os.path.isfile(source):
-            logging.warning(
-                "hermes base install has no %s at %s: hermes-agent personalities "
-                "will answer with the fallback reply until credentials are "
-                "configured there (`sudo -u pib -H hermes setup`)",
-                name, source,
-            )
-            continue
+        if not os.path.exists(target):
+            source = os.path.join(base, name)
+            if os.path.isfile(source):
+                try:
+                    shutil.copyfile(source, target)
+                    if mode is not None:
+                        os.chmod(target, mode)
+                    logging.info("copied %s from %s into hermes profile %s", name, base, pdir)
+                except OSError as exc:
+                    logging.warning("could not copy %s into %s: %s", name, pdir, exc)
+
+    # Always ensure config.yaml in profile has valid provider/model
+    cfg_target = os.path.join(pdir, CONFIG_FILENAME)
+    if not os.path.exists(cfg_target):
+        default_cfg = {
+            "provider": DEFAULT_HERMES_PROVIDER,
+            "model": DEFAULT_HERMES_MODEL,
+            "mcp_servers": {"pib": dict(PIB_MCP_SERVER)},
+        }
         try:
-            shutil.copyfile(source, target)
-            if mode is not None:
-                os.chmod(target, mode)
+            with open(cfg_target, "w", encoding="utf-8") as fh:
+                yaml.safe_dump(default_cfg, fh, default_flow_style=False)
+            logging.info("seeded default config.yaml in profile at %s", cfg_target)
         except OSError as exc:
-            logging.warning(
-                "could not copy %s from %s into %s: %s", name, base, pdir, exc
-            )
-            continue
-        logging.info("copied %s from %s into hermes profile %s", name, base, pdir)
+            logging.warning("could not seed config.yaml in profile %s: %s", pdir, exc)
+
+    # Always ensure .env in profile carries GEMINI_API_KEY / GOOGLE_API_KEY if present in env
+    env_target = os.path.join(pdir, ENV_FILENAME)
+    existing_env = ""
+    if os.path.exists(env_target):
+        try:
+            with open(env_target, "r", encoding="utf-8") as fh:
+                existing_env = fh.read()
+        except OSError:
+            pass
+
+    gemini_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+    if gemini_key and ("GEMINI_API_KEY" not in existing_env or "GOOGLE_API_KEY" not in existing_env):
+        try:
+            with open(env_target, "a", encoding="utf-8") as fh:
+                if "GEMINI_API_KEY" not in existing_env:
+                    fh.write(f"\nGEMINI_API_KEY={gemini_key}\n")
+                if "GOOGLE_API_KEY" not in existing_env:
+                    fh.write(f"\nGOOGLE_API_KEY={gemini_key}\n")
+            os.chmod(env_target, ENV_FILE_MODE)
+            logging.info("ensured GEMINI_API_KEY/GOOGLE_API_KEY in profile .env at %s", env_target)
+        except OSError as exc:
+            logging.warning("could not update profile .env at %s: %s", env_target, exc)
 
     _ensure_mcp_servers_pib(pdir)
 
@@ -339,6 +364,15 @@ FALLBACK_REPLY = (
 # Local warm daemon (see hermes_daemon.py). Overridable for tests / custom binds.
 DEFAULT_DAEMON_TURN_URL = "http://127.0.0.1:8088/turn"
 
+# Persistent HTTP session for warm-daemon turns (connection pooling / keep-alive).
+_daemon_http_session = None
+_daemon_http_session_lock = None
+
+
+def _perf_ms(start: float) -> float:
+    """Elapsed milliseconds since ``start`` (from time.monotonic())."""
+    return (time.monotonic() - start) * 1000.0
+
 
 def daemon_turn_url() -> str:
     """POST target for a warm-daemon turn. Trailing path is always /turn."""
@@ -347,6 +381,40 @@ def daemon_turn_url() -> str:
         base = override.rstrip("/")
         return base if base.endswith("/turn") else base + "/turn"
     return DEFAULT_DAEMON_TURN_URL
+
+
+def _get_daemon_session():
+    """Lazy singleton ``requests.Session`` for pooled daemon HTTP calls."""
+    global _daemon_http_session, _daemon_http_session_lock
+    try:
+        import requests
+        import threading
+    except ImportError:
+        return None
+
+    if _daemon_http_session_lock is None:
+        _daemon_http_session_lock = threading.Lock()
+
+    with _daemon_http_session_lock:
+        if _daemon_http_session is None:
+            _daemon_http_session = requests.Session()
+        return _daemon_http_session
+
+
+def is_warm_daemon_active(timeout: float = 0.15) -> bool:
+    """True when the warm Hermes daemon answers GET /health quickly.
+
+    Used to skip expensive filesystem profile re-validation on the hot path
+    when turns can be served by the already-warm process at 127.0.0.1:8088.
+    """
+    try:
+        from public_api_client import hermes_daemon
+    except ImportError:
+        return False
+    try:
+        return hermes_daemon.is_daemon_reachable(timeout=timeout)
+    except Exception:
+        return False
 
 
 def _try_daemon_turn(
@@ -368,8 +436,17 @@ def _try_daemon_turn(
     if toolsets is not None:
         payload["toolsets"] = toolsets
 
+    http_start = time.monotonic()
+    logging.info(
+        "[PERF_TRACE] DAEMON_HTTP_START chat=%s elapsed_ms=0.00",
+        chat_id,
+    )
+
+    session = _get_daemon_session()
+    post = session.post if session is not None else requests.post
+
     try:
-        response = requests.post(
+        response = post(
             daemon_turn_url(),
             json=payload,
             timeout=timeout,
@@ -380,6 +457,12 @@ def _try_daemon_turn(
             chat_id, exc,
         )
         return None
+
+    ttft_ms = _perf_ms(http_start)
+    logging.info(
+        "[PERF_TRACE] DAEMON_TTFT_MS chat=%s elapsed_ms=%.2f status=%s",
+        chat_id, ttft_ms, response.status_code,
+    )
 
     if response.status_code != 200:
         logging.warning(
@@ -457,10 +540,28 @@ def run_turn(
 ) -> str:
     """Run one conversational turn. Always returns speakable text.
 
-    Prefers the warm localhost daemon (POST /turn). If the daemon is
-    unreachable or fails, falls back to a oneshot ``subprocess.run`` of the
-    Hermes CLI.
+    Prefers the warm localhost daemon (POST /turn) without requiring a local
+    Hermes binary check first. If the daemon is unreachable or fails, falls
+    back to a oneshot ``subprocess.run`` of the Hermes CLI (which does check
+    the binary).
     """
+    t0 = time.monotonic()
+    logging.info(
+        "[PERF_TRACE] HERMES_CLIENT_START chat=%s elapsed_ms=0.00",
+        chat_id,
+    )
+
+    # Try the warm daemon first — no filesystem binary/profile checks on this path.
+    daemon_reply = _try_daemon_turn(
+        text, chat_id, personality_id, toolsets, timeout=timeout,
+    )
+    if daemon_reply is not None:
+        logging.info(
+            "[PERF_TRACE] HERMES_CLIENT_DONE chat=%s via=daemon elapsed_ms=%.2f",
+            chat_id, _perf_ms(t0),
+        )
+        return daemon_reply
+
     if not hermes_binary_available():
         # Distinct from a timeout: the agent was never started at all.
         logging.error(
@@ -469,17 +570,20 @@ def run_turn(
             "pib user and check the PIB_HERMES_BIN mount.",
             hermes_bin(), chat_id,
         )
+        logging.info(
+            "[PERF_TRACE] HERMES_CLIENT_DONE chat=%s via=fallback elapsed_ms=%.2f",
+            chat_id, _perf_ms(t0),
+        )
         return FALLBACK_REPLY
 
-    daemon_reply = _try_daemon_turn(
+    reply = run_turn_subprocess(
         text, chat_id, personality_id, toolsets, timeout=timeout,
     )
-    if daemon_reply is not None:
-        return daemon_reply
-
-    return run_turn_subprocess(
-        text, chat_id, personality_id, toolsets, timeout=timeout,
+    logging.info(
+        "[PERF_TRACE] HERMES_CLIENT_DONE chat=%s via=subprocess elapsed_ms=%.2f",
+        chat_id, _perf_ms(t0),
     )
+    return reply
 
 
 def delete_session(chat_id: str, timeout: int = 30) -> bool:

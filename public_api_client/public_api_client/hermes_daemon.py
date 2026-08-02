@@ -9,11 +9,23 @@ Endpoints:
 """
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import logging
 import os
+import re
+import socket
 import threading
 import time
+
+# Force IPv4 preference in socket.getaddrinfo to prevent 10s IPv6 timeouts on Pi networks
+_orig_getaddrinfo = socket.getaddrinfo
+def _ipv4_preferred_getaddrinfo(*args, **kwargs):
+    res = _orig_getaddrinfo(*args, **kwargs)
+    ipv4 = [r for r in res if r[0] == socket.AF_INET]
+    return ipv4 if ipv4 else res
+socket.getaddrinfo = _ipv4_preferred_getaddrinfo
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Callable, Optional
 from urllib.error import URLError
@@ -33,6 +45,65 @@ _server_thread: Optional[threading.Thread] = None
 _server_lock = threading.Lock()
 
 TurnRunner = Callable[..., str]
+
+# Model used for the in-process ``run_agent.main`` entry point.
+IN_PROCESS_MODEL = "gemini-3.5-flash"
+
+# ``run_agent.main`` has no return value: it prints the answer to stdout below a
+# "FINAL RESPONSE:" banner, followed by decorative dashes and closing status
+# lines. The daemon captures that stdout and extracts the answer from it.
+_FINAL_RESPONSE_MARKER = "FINAL RESPONSE:"
+_DECORATION_LINE = re.compile(r"^[-=\s]*$")
+_TRAILING_MARKERS = (
+    "Agent execution completed",
+    "Sample trajectory saved to",
+    "Failed to save sample",
+)
+
+# redirect_stdout swaps a process-global, so parallel /turn requests would read
+# each other's output. Serialize the captured runs.
+_stdout_capture_lock = threading.Lock()
+
+
+def extract_final_response(stdout_text: str) -> str:
+    """Pull the answer text out of ``run_agent.main`` stdout.
+
+    Returns an empty string when the banner is absent or carries no text.
+    """
+    if not stdout_text:
+        return ""
+
+    marker_at = stdout_text.rfind(_FINAL_RESPONSE_MARKER)
+    if marker_at < 0:
+        return ""
+
+    lines = stdout_text[marker_at + len(_FINAL_RESPONSE_MARKER):].splitlines()
+    while lines and _DECORATION_LINE.match(lines[0]):
+        lines.pop(0)
+
+    body: list[str] = []
+    for line in lines:
+        if any(marker in line for marker in _TRAILING_MARKERS):
+            break
+        body.append(line)
+
+    while body and _DECORATION_LINE.match(body[-1]):
+        body.pop()
+
+    return "\n".join(body).strip()
+
+
+def _coerce_reply(reply: object) -> str:
+    """Normalise the various shapes ``run_agent`` implementations return."""
+    if reply is None:
+        return ""
+    if hasattr(reply, "content"):
+        reply = reply.content
+    elif isinstance(reply, dict) and "response" in reply:
+        reply = reply["response"]
+    if reply is None:
+        return ""
+    return (reply if isinstance(reply, str) else str(reply)).strip()
 
 
 def daemon_host() -> str:
@@ -62,6 +133,116 @@ def daemon_health_url() -> str:
     return daemon_base_url() + "/health"
 
 
+def run_turn_in_process(
+    text: str,
+    chat_id: str,
+    personality_id: Optional[str] = None,
+    toolsets: Optional[str] = None,
+    timeout: Optional[int] = None,
+) -> str:
+    """Execute one turn via the in-process Hermes Agent Python API.
+
+    Prefers ``hermes.run_agent.run_agent`` to avoid subprocess spawn / cold
+    import overhead, then ``run_agent.main``, whose answer is read back from
+    captured stdout because it prints instead of returning. Falls back to
+    ``run_turn_subprocess`` when neither is importable or yields text.
+    """
+    from public_api_client.hermes_agent_client import (
+        FALLBACK_REPLY,
+        ensure_profile,
+        run_turn_subprocess,
+    )
+
+    import sys
+    for path_entry in ("/home/pib/.hermes/hermes-agent", "/home/pib/.hermes/hermes-agent/venv/lib/python3.11/site-packages"):
+        if path_entry not in sys.path and os.path.exists(path_entry):
+            sys.path.insert(0, path_entry)
+
+    run_agent_fn = None
+    prints_to_stdout = False
+    try:
+        from hermes.run_agent import run_agent as run_agent_fn
+    except ImportError:
+        try:
+            from run_agent import main as run_agent_fn
+
+            prints_to_stdout = True
+        except ImportError:
+            pass
+
+    def _subprocess_reply() -> str:
+        kwargs = {
+            "text": text,
+            "chat_id": chat_id,
+            "personality_id": personality_id,
+            "toolsets": toolsets,
+        }
+        if timeout is not None:
+            kwargs["timeout"] = timeout
+        return run_turn_subprocess(**kwargs)
+
+    if run_agent_fn is None:
+        logging.info(
+            "hermes.run_agent unavailable; falling back to CLI subprocess (chat=%s)",
+            chat_id,
+        )
+        return _subprocess_reply()
+
+    profile_name: Optional[str] = None
+    if personality_id:
+        try:
+            ensure_profile(personality_id)
+        except Exception as exc:
+            logging.warning(
+                "ensure_profile failed for personality %s (chat=%s): %s",
+                personality_id, chat_id, exc,
+            )
+        from pib_hermes_config import profile_name_for
+
+        profile_name = profile_name_for(personality_id)
+
+    try:
+        if prints_to_stdout:
+            captured = io.StringIO()
+            with _stdout_capture_lock, contextlib.redirect_stdout(captured):
+                returned = run_agent_fn(query=text, model=IN_PROCESS_MODEL)
+            reply = extract_final_response(captured.getvalue())
+            if not reply:
+                # Some builds do return the answer; use it before giving up.
+                reply = _coerce_reply(returned)
+            if not reply:
+                logging.warning(
+                    "no FINAL RESPONSE in run_agent stdout (chat=%s, %d chars captured)",
+                    chat_id, len(captured.getvalue()),
+                )
+        else:
+            reply = _coerce_reply(
+                run_agent_fn(
+                    prompt=text,
+                    session_id=f"pib_chat_{chat_id}",
+                    profile=profile_name,
+                    timeout=timeout,
+                )
+            )
+    except Exception as exc:
+        logging.exception(
+            "in-process hermes turn failed (chat=%s): %s", chat_id, exc,
+        )
+        return FALLBACK_REPLY
+
+    if reply:
+        return reply
+
+    try:
+        return _subprocess_reply() or FALLBACK_REPLY
+    except Exception as exc:
+        logging.exception(
+            "subprocess fallback after empty in-process reply failed (chat=%s): %s",
+            chat_id, exc,
+        )
+        return FALLBACK_REPLY
+
+
 def _default_turn_runner(
     text: str,
     chat_id: str,
@@ -69,18 +250,14 @@ def _default_turn_runner(
     toolsets: Optional[str] = None,
     timeout: Optional[int] = None,
 ) -> str:
-    """Execute one turn via the Hermes CLI subprocess (no daemon recursion)."""
-    from public_api_client.hermes_agent_client import run_turn_subprocess
-
-    kwargs = {
-        "text": text,
-        "chat_id": chat_id,
-        "personality_id": personality_id,
-        "toolsets": toolsets,
-    }
-    if timeout is not None:
-        kwargs["timeout"] = timeout
-    return run_turn_subprocess(**kwargs)
+    """Execute one turn in-process via Hermes Agent (subprocess fallback)."""
+    return run_turn_in_process(
+        text=text,
+        chat_id=chat_id,
+        personality_id=personality_id,
+        toolsets=toolsets,
+        timeout=timeout,
+    )
 
 
 class HermesDaemonHandler(BaseHTTPRequestHandler):
@@ -110,6 +287,9 @@ class HermesDaemonHandler(BaseHTTPRequestHandler):
         if self.path.rstrip("/") != "/turn":
             self._send_json(404, {"error": "not found"})
             return
+
+        t0 = time.monotonic()
+        logging.info("[PERF_TRACE] DAEMON_RECV elapsed_ms=0.00")
 
         length = int(self.headers.get("Content-Length") or 0)
         raw = self.rfile.read(length) if length > 0 else b"{}"
@@ -143,6 +323,11 @@ class HermesDaemonHandler(BaseHTTPRequestHandler):
             return
 
         runner = getattr(self.server, "turn_runner", None) or _default_turn_runner
+        turn_start = time.monotonic()
+        logging.info(
+            "[PERF_TRACE] DAEMON_TURN_START chat=%s elapsed_ms=%.2f",
+            chat_id, (turn_start - t0) * 1000.0,
+        )
         try:
             reply = runner(
                 text=text,
@@ -156,6 +341,15 @@ class HermesDaemonHandler(BaseHTTPRequestHandler):
             self._send_json(500, {"error": str(exc)})
             return
 
+        # Full reply is available at once from the runner; treat that as first token.
+        logging.info(
+            "[PERF_TRACE] DAEMON_FIRST_TOKEN chat=%s elapsed_ms=%.2f",
+            chat_id, (time.monotonic() - t0) * 1000.0,
+        )
+        logging.info(
+            "[PERF_TRACE] DAEMON_DONE chat=%s elapsed_ms=%.2f",
+            chat_id, (time.monotonic() - t0) * 1000.0,
+        )
         self._send_json(200, {"reply": reply if isinstance(reply, str) else str(reply)})
 
 

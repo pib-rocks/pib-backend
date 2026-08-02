@@ -27,17 +27,6 @@ EXPECTED_MCP_TOOLS = (
     "mcp__pib__set_led",
     "mcp__pib__set_relay",
     "mcp__pib__soul_append",
-    "mcp_pib_list_motors",
-    "mcp_pib_get_state",
-    "mcp_pib_list_poses",
-    "mcp_pib_list_programs",
-    "mcp_pib_capture_image",
-    "mcp_pib_move_motor",
-    "mcp_pib_apply_pose",
-    "mcp_pib_run_program",
-    "mcp_pib_set_led",
-    "mcp_pib_set_relay",
-    "mcp_pib_soul_append",
 )
 
 
@@ -160,6 +149,7 @@ def test_run_turn_on_error_returns_fallback(installed_hermes_bin, monkeypatch):
 
 def test_run_turn_without_installed_binary_returns_fallback(tmp_path, monkeypatch):
     monkeypatch.setenv("PIB_HERMES_BIN", str(tmp_path / "not-installed" / "hermes"))
+    monkeypatch.setenv("PIB_HERMES_DAEMON_URL", "http://127.0.0.1:1")
 
     with patch("public_api_client.hermes_agent_client.subprocess.run") as run:
         out = run_turn("hi", "c1")
@@ -173,6 +163,7 @@ def test_run_turn_treats_a_non_executable_binary_as_missing(tmp_path, monkeypatc
     binary.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     binary.chmod(0o644)
     monkeypatch.setenv("PIB_HERMES_BIN", str(binary))
+    monkeypatch.setenv("PIB_HERMES_DAEMON_URL", "http://127.0.0.1:1")
 
     with patch("public_api_client.hermes_agent_client.subprocess.run") as run:
         assert run_turn("hi", "c1") == FALLBACK_REPLY

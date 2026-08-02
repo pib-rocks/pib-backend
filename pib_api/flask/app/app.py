@@ -1,4 +1,5 @@
 import os
+import sqlite3
 from os.path import dirname, abspath
 from flask.wrappers import Response
 
@@ -7,6 +8,7 @@ from flask_cors import CORS
 from flask_marshmallow import Marshmallow
 from flask_migrate import Migrate
 from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import event, Engine
 
 # BASE_DIR should be the working directory of the app, e.g. 'flask/'
 BASE_DIR = dirname(dirname(abspath(__file__)))  # not used yet
@@ -14,6 +16,15 @@ BASE_DIR = dirname(dirname(abspath(__file__)))  # not used yet
 app = Flask(__name__)
 app.config.from_object("config.Config")
 db = SQLAlchemy(app)
+
+@event.listens_for(Engine, "connect")
+def set_sqlite_pragma(dbapi_connection, connection_record):
+    if isinstance(dbapi_connection, sqlite3.Connection):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA busy_timeout=15000")
+        cursor.close()
+
 ma = Marshmallow(app)
 migrate = Migrate(app, db)
 CORS(app)

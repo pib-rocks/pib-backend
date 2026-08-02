@@ -291,8 +291,8 @@ if os.path.exists(cfg_path):
     with open(cfg_path, 'r') as f:
         cfg = yaml.safe_load(f) or {}
 changed = False
-if cfg.get('model') != 'gemini-3.6-flash' or cfg.get('provider') != 'gemini':
-    cfg['model'] = 'gemini-3.6-flash'
+if cfg.get('model') != 'gemini-3.5-flash' or cfg.get('provider') != 'gemini':
+    cfg['model'] = 'gemini-3.5-flash'
     cfg['provider'] = 'gemini'
     changed = True
 if 'mcp_servers' not in cfg or 'pib' not in cfg.get('mcp_servers', {}):

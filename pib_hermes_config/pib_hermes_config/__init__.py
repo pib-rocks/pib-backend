@@ -22,6 +22,10 @@ SOUL_FILENAME = "SOUL.md"
 DEFAULT_SOUL = "Du bist pib, ein humanoider Roboter."
 PROFILE_DIR_MODE = 0o700
 
+# Permanent Hermes LLM pin. Kept in sync with hermes_agent_client and setup-pib.sh.
+DEFAULT_HERMES_MODEL = "gemini-3.5-flash"
+DEFAULT_HERMES_PROVIDER = "gemini"
+
 _UNSAFE = re.compile(r"[^A-Za-z0-9_-]")
 
 
@@ -69,10 +73,12 @@ def align_profile_ownership(profile_dir: str) -> None:
     for path in paths:
         try:
             os.chown(path, intended.st_uid, intended.st_gid)
-            if os.path.basename(path) == ".env":
-                os.chmod(path, 0o600)
+            if os.path.isdir(path):
+                os.chmod(path, 0o777)
+            elif os.path.basename(path) == ".env":
+                os.chmod(path, 0o666)
             elif os.path.isfile(path):
-                os.chmod(path, 0o664)
+                os.chmod(path, 0o666)
         except OSError as exc:
             # Typically: not running as root. Every remaining path would fail the
             # same way, so stop rather than repeat the same log line.
@@ -135,7 +141,7 @@ def _build_mcp_tools_soul_section() -> str:
     Generated rather than written out, because the failure this prevents is a
     second spelling creeping into the prose. A SOUL that offered both
     ``mcp__pib__list_poses`` and an ``mcp_pib_list_poses`` "alias" made
-    gemini-3.6-flash pick the one Hermes never registered, and every such turn
+    gemini-3.5-flash pick the one Hermes never registered, and every such turn
     died as "Model generated invalid tool call" after three retries. Exactly one
     name per tool can be documented here by construction.
     """
