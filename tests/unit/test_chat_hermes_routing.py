@@ -248,7 +248,7 @@ def test_uses_hermes_backend_routing_decision():
 
     assert uses_hermes_backend("hermes-agent") is True
     assert uses_hermes_backend("gpt-4o") is False
-    assert uses_hermes_backend("gemini-3.6-flash") is False
+    assert uses_hermes_backend("gemini-3.5-flash") is False
     assert uses_hermes_backend(None) is False
 
 

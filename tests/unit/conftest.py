@@ -53,6 +53,9 @@ def sandboxed_hermes_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Pa
     home.mkdir()
     monkeypatch.setenv("HERMES_HOME", str(home))
     monkeypatch.setenv("PIB_HERMES_PROFILES_DIR", str(home / "profiles"))
+    # Host Gemini keys must not leak into profile-provisioning assertions.
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
     return home
 
 

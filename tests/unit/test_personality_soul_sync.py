@@ -15,17 +15,6 @@ EXPECTED_MCP_TOOLS = (
     "mcp__pib__set_led",
     "mcp__pib__set_relay",
     "mcp__pib__soul_append",
-    "mcp_pib_list_motors",
-    "mcp_pib_get_state",
-    "mcp_pib_list_poses",
-    "mcp_pib_list_programs",
-    "mcp_pib_capture_image",
-    "mcp_pib_move_motor",
-    "mcp_pib_apply_pose",
-    "mcp_pib_run_program",
-    "mcp_pib_set_led",
-    "mcp_pib_set_relay",
-    "mcp_pib_soul_append",
 )
 
 

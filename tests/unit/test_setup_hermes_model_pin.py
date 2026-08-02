@@ -37,7 +37,7 @@ def test_setup_pib_pins_gemini_model_in_hermes_config(tmp_path, monkeypatch):
     with open(cfg_path, encoding="utf-8") as fh:
         cfg = yaml.safe_load(fh)
 
-    assert cfg["model"] == "gemini-3.6-flash"
+    assert cfg["model"] == "gemini-3.5-flash"
     assert cfg["provider"] == "gemini"
     assert cfg["mcp_servers"]["pib"] == {
         "command": "python3",
@@ -66,6 +66,6 @@ def test_setup_pib_overwrites_existing_model_and_keeps_mcp(tmp_path):
     with open(cfg_path, encoding="utf-8") as fh:
         cfg = yaml.safe_load(fh)
 
-    assert cfg["model"] == "gemini-3.6-flash"
+    assert cfg["model"] == "gemini-3.5-flash"
     assert cfg["provider"] == "gemini"
     assert cfg["mcp_servers"]["pib"]["args"] == ["-m", "pib_mcp_server"]

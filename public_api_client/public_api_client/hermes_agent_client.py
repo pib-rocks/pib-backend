@@ -51,8 +51,9 @@ PIB_MCP_SERVER = {
     },
 }
 
-# Permanent Hermes LLM pin. Kept in sync with setup/setup-pib.sh.
-DEFAULT_HERMES_MODEL = "gemini-2.5-flash"
+# Permanent Hermes LLM pin. Kept in sync with setup/setup-pib.sh
+# and pib_hermes_config.DEFAULT_HERMES_MODEL.
+DEFAULT_HERMES_MODEL = "gemini-3.5-flash"
 DEFAULT_HERMES_PROVIDER = "gemini"
 
 # Startup liveness probe only. Deliberately small: it runs before the chat node

@@ -22,6 +22,10 @@ SOUL_FILENAME = "SOUL.md"
 DEFAULT_SOUL = "Du bist pib, ein humanoider Roboter."
 PROFILE_DIR_MODE = 0o700
 
+# Permanent Hermes LLM pin. Kept in sync with hermes_agent_client and setup-pib.sh.
+DEFAULT_HERMES_MODEL = "gemini-3.5-flash"
+DEFAULT_HERMES_PROVIDER = "gemini"
+
 _UNSAFE = re.compile(r"[^A-Za-z0-9_-]")
 
 
@@ -135,7 +139,7 @@ def _build_mcp_tools_soul_section() -> str:
     Generated rather than written out, because the failure this prevents is a
     second spelling creeping into the prose. A SOUL that offered both
     ``mcp__pib__list_poses`` and an ``mcp_pib_list_poses`` "alias" made
-    gemini-3.6-flash pick the one Hermes never registered, and every such turn
+    gemini-3.5-flash pick the one Hermes never registered, and every such turn
     died as "Model generated invalid tool call" after three retries. Exactly one
     name per tool can be documented here by construction.
     """
