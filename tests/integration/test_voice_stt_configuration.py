@@ -5,6 +5,18 @@ import requests
 FLASK_BASE_URL = os.getenv("FLASK_BASE_URL", "http://localhost:5000")
 
 
+class _ResponseWrapper:
+    def __init__(self, res):
+        self._res = res
+        self.status_code = res.status_code
+
+    def json(self):
+        return self._res.get_json()
+
+    def get_json(self):
+        return self._res.get_json()
+
+
 class _ClientWrapper:
     def __init__(self, client):
         self._c = client
@@ -16,11 +28,11 @@ class _ClientWrapper:
 
     def get(self, url, **kwargs):
         kwargs.pop("timeout", None)
-        return self._c.get(self._url(url), **kwargs)
+        return _ResponseWrapper(self._c.get(self._url(url), **kwargs))
 
     def put(self, url, **kwargs):
         kwargs.pop("timeout", None)
-        return self._c.put(self._url(url), **kwargs)
+        return _ResponseWrapper(self._c.put(self._url(url), **kwargs))
 
 
 @pytest.fixture
