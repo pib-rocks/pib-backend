@@ -84,10 +84,12 @@ ensure_venv() {
     # (e.g. grpcio) from source, which is slow and fragile on arm64 / Raspberry Pi.
     pip install -q --prefer-binary -r "${SCRIPT_DIR}/integration/requirements.txt" \
         -r "${SCRIPT_DIR}/infrastructure/requirements.txt" \
-        playwright
+        playwright \
+        lark
     pip install -q -e "${REPO_ROOT}/pib_hermes_config" \
         -e "${REPO_ROOT}/pib_mcp_server" \
         -e "${REPO_ROOT}/public_api_client"
+    playwright install chromium 2>/dev/null || true
     if [[ ${SKIP_ROBOT} -eq 0 ]] || [[ ${INCLUDE_FRONTEND} -eq 1 ]]; then
         pip install -q --prefer-binary -r "${SCRIPT_DIR}/requirements-robot.txt"
     fi

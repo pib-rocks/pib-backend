@@ -53,10 +53,12 @@ def app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
     with flask_app.app_context():
         try:
+            db.session.remove()
             db.engine.dispose()
+            if hasattr(db, "engines"):
+                db.engines.clear()
         except Exception:
             pass
-        db.drop_all()
         db.create_all()
         result = CliRunner().invoke(seed_db, [])
         if result.exception:
