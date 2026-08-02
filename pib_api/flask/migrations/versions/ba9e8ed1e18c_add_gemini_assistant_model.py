@@ -23,7 +23,7 @@ def upgrade():
     if count > 0:
         conn.execute(sa.text("""
                 INSERT OR IGNORE INTO assistant_model (api_name, visual_name, has_image_support)
-                VALUES ('gemini-3.6-flash', 'Gemini 3.6 Flash', false)
+                VALUES ('gemini-2.5-flash', 'Gemini 2.5 Flash', false)
                 """))
 
 
