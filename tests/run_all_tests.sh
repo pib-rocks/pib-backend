@@ -79,6 +79,7 @@ ensure_venv() {
     fi
     # shellcheck source=/dev/null
     source "${VENV_DIR}/bin/activate"
+    pip install -q --upgrade pip setuptools
     # --prefer-binary: use prebuilt wheels instead of compiling C extensions
     # (e.g. grpcio) from source, which is slow and fragile on arm64 / Raspberry Pi.
     pip install -q --prefer-binary -r "${SCRIPT_DIR}/integration/requirements.txt" \
