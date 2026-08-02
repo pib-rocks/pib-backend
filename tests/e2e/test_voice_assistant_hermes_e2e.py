@@ -12,6 +12,15 @@ from urllib.parse import urlparse
 
 import pytest
 import requests
+import shutil
+
+def _get_chromium_launch_kwargs() -> dict:
+    kwargs = {"headless": True}
+    for p in ["/usr/bin/chromium-browser", "/usr/bin/chromium"]:
+        if os.path.exists(p):
+            kwargs["executable_path"] = p
+            break
+    return kwargs
 from playwright.sync_api import Page, expect
 
 
@@ -224,9 +233,7 @@ def test_create_personality_via_browser_ui_generates_soul_md():
     before_ids = {p["personalityId"] for p in before}
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=True, executable_path="/usr/bin/chromium-browser"
-        )
+        browser = p.chromium.launch(**_get_chromium_launch_kwargs())
         context = browser.new_context(viewport={"width": 1400, "height": 900})
         page = context.new_page()
 
@@ -311,9 +318,7 @@ def test_chat_send_button_activation_with_smartconnect():
     created_p_id = None
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=True, executable_path="/usr/bin/chromium-browser"
-        )
+        browser = p.chromium.launch(**_get_chromium_launch_kwargs())
         context = browser.new_context(viewport={"width": 1400, "height": 900})
         page = context.new_page()
 
@@ -461,9 +466,7 @@ def test_voice_assistant_latency_and_smartconnect_e2e():
     created_chat_id = chat_res["chatId"]
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=True, executable_path="/usr/bin/chromium-browser"
-        )
+        browser = p.chromium.launch(**_get_chromium_launch_kwargs())
         context = browser.new_context(viewport={"width": 1400, "height": 900})
         page = context.new_page()
 

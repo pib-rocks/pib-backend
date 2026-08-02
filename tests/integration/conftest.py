@@ -52,6 +52,10 @@ def app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     )
 
     with flask_app.app_context():
+        try:
+            db.engine.dispose()
+        except Exception:
+            pass
         db.drop_all()
         db.create_all()
         result = CliRunner().invoke(seed_db, [])

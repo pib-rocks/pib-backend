@@ -106,6 +106,7 @@ check_flask() {
 
 run_pytest_integration() {
     cd "${REPO_ROOT}"
+    rm -rf /tmp/pytest-of-* /tmp/pytest-* 2>/dev/null || true
     PYTHONPATH="${REPO_ROOT}/pib_api/flask:${REPO_ROOT}/pib_hermes_config:${REPO_ROOT}/pib_mcp_server:${REPO_ROOT}/public_api_client" \
         pytest "${SCRIPT_DIR}" -q \
         --ignore="${SCRIPT_DIR}/blockly_generator" \
