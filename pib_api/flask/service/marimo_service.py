@@ -30,6 +30,24 @@ def __(mo):
 
 @app.cell
 def __():
+    import glob
+    import os
+    import sys
+
+    # Marimo may run with a Python that does not see pip-installed pib_sdk.
+    # Prefetch common install / checkout roots before importing.
+    _candidate_roots = [
+        *glob.glob("/usr/local/lib/python3.*/dist-packages"),
+        *glob.glob(os.path.expanduser("~/.local/lib/python3.*/site-packages")),
+        "/home/pib/app/pib-backend",
+        "/home/pib/opencode/pib-backend",
+    ]
+    for _root in _candidate_roots:
+        if os.path.isdir(_root) and _root not in sys.path:
+            sys.path.insert(0, _root)
+
+    Pib = None
+    pib = None
     try:
         try:
             from pib_sdk import Pib
@@ -63,10 +81,34 @@ if __name__ == "__main__":
 """
 
 
+def _demo_needs_sdk_path_bootstrap(content: str) -> bool:
+    """True when an existing demo is missing pib_sdk sys.path resolution."""
+    markers = (
+        "sys.path",
+        "/usr/local/lib/python3.*/dist-packages",
+        "~/.local/lib/python3.*/site-packages",
+        "/home/pib/app/pib-backend",
+        "/home/pib/opencode/pib-backend",
+    )
+    return any(marker not in content for marker in markers)
+
+
 def _ensure_dir():
     os.makedirs(NOTEBOOKS_DIR, exist_ok=True)
     demo_path = os.path.join(NOTEBOOKS_DIR, "pib_sdk_demo.py")
+    should_write = False
     if not os.path.exists(demo_path):
+        should_write = True
+    else:
+        try:
+            with open(demo_path, "r", encoding="utf-8") as f:
+                existing = f.read()
+            if _demo_needs_sdk_path_bootstrap(existing):
+                should_write = True
+        except Exception as e:
+            logging.error(f"Failed to read default demo notebook: {e}")
+            should_write = True
+    if should_write:
         try:
             with open(demo_path, "w", encoding="utf-8") as f:
                 f.write(DEFAULT_DEMO_NOTEBOOK)
