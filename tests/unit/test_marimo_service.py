@@ -3,18 +3,18 @@
 from service.marimo_service import DEFAULT_DEMO_NOTEBOOK, EMPTY_NOTEBOOK
 
 
-def test_default_demo_notebook_imports_pib_with_write_fallback():
-    """Demo must accept both legacy Pib and current Write SDK exports."""
+def test_default_demo_notebook_uses_clean_pib_sdk_import():
+    """Demo must import Pib directly; system Python provides pib_sdk via setup."""
     assert "from pib_sdk import Pib" in DEFAULT_DEMO_NOTEBOOK
-    assert "except ImportError:" in DEFAULT_DEMO_NOTEBOOK
-    assert "from pib_sdk import Write as Pib" in DEFAULT_DEMO_NOTEBOOK
-    # Outer handler must not be the only path for missing Pib (avoids noisy
-    # "cannot import name Pib" when Write is available).
-    pib_import_idx = DEFAULT_DEMO_NOTEBOOK.index("from pib_sdk import Pib")
-    write_fallback_idx = DEFAULT_DEMO_NOTEBOOK.index(
-        "from pib_sdk import Write as Pib"
-    )
-    assert pib_import_idx < write_fallback_idx
+    assert "pib = Pib()" in DEFAULT_DEMO_NOTEBOOK
+    assert "sys.path" not in DEFAULT_DEMO_NOTEBOOK
+    assert "import glob" not in DEFAULT_DEMO_NOTEBOOK
+    assert "/usr/local/lib/python3.*/dist-packages" not in DEFAULT_DEMO_NOTEBOOK
+    assert "from pib_sdk import Write as Pib" not in DEFAULT_DEMO_NOTEBOOK
+
+    import_idx = DEFAULT_DEMO_NOTEBOOK.index("from pib_sdk import Pib")
+    instantiate_idx = DEFAULT_DEMO_NOTEBOOK.index("pib = Pib()")
+    assert import_idx < instantiate_idx
 
 
 def test_empty_notebook_is_minimal_starter():

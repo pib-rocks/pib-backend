@@ -237,6 +237,18 @@ function install_depthai_udev_rules() {
     || print WARN "could not reload udev rules; a reboot/replug may be required"
 }
 
+# Install pib-sdk and pib_mcp_server into system Python so Marimo notebooks,
+# Hermes MCP, and host scripts can import them without sys.path hacks.
+function install_pib_python_packages() {
+  print INFO "Installing pib-sdk and pib_mcp_server into system Python"
+  pip install --break-system-packages pib-sdk \
+    || print WARN "failed to install pib-sdk"
+  pip install --break-system-packages -e "$BACKEND_DIR/pib_mcp_server" \
+    || print WARN "failed to install pib_mcp_server"
+  print SUCCESS "Installed pib Python packages system-wide"
+}
+
+
 # Clone the imitation project into the home directory and set up its virtual environment
 function install_imitation() {
   if ! command_exists git; then
@@ -249,7 +261,6 @@ function install_imitation() {
 
   # venv tooling is not guaranteed to be present on a fresh system
   sudo apt-get install -y python3-venv python3-pip
-  pip install --break-system-packages pib-sdk || true
 
   # Create the venv with access to the system ROS packages (rclpy, datatypes,
   # trajectory_msgs) which are provided by the ROS overlay, not pip.
@@ -562,6 +573,7 @@ fi
 install_system_packages || { print ERROR "failed to install system packages"; return 1; }
 install_locale || { print ERROR "failed to install locale"; return 1; }
 clone_repositories || { print ERROR "failed to clone repositories"; return 1; }
+install_pib_python_packages || print ERROR "failed to install pib Python packages"
 # Before docker-compose starts: hermes must exist on the host so the
 # ros-voice-assistant / flask-app bind mounts resolve to real paths.
 install_hermes_cli || print ERROR "failed to install Hermes CLI"
