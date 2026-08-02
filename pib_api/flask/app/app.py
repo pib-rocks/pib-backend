@@ -8,7 +8,8 @@ from flask_cors import CORS
 from flask_marshmallow import Marshmallow
 from flask_migrate import Migrate
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import event, Engine
+from sqlalchemy import event
+from sqlalchemy.engine import Engine
 
 # BASE_DIR should be the working directory of the app, e.g. 'flask/'
 BASE_DIR = dirname(dirname(abspath(__file__)))  # not used yet
@@ -19,6 +20,7 @@ db = SQLAlchemy(app)
 
 @event.listens_for(Engine, "connect")
 def set_sqlite_pragma(dbapi_connection, connection_record):
+    """Enable WAL and a 15s busy timeout on every SQLite connection."""
     if isinstance(dbapi_connection, sqlite3.Connection):
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA journal_mode=WAL")
@@ -28,6 +30,7 @@ def set_sqlite_pragma(dbapi_connection, connection_record):
 ma = Marshmallow(app)
 migrate = Migrate(app, db)
 CORS(app)
+
 
 if not os.path.exists(app.config.get("PYTHON_CODE_DIR")):
     os.makedirs(app.config.get("PYTHON_CODE_DIR"))
