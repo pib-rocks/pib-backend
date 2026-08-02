@@ -55,8 +55,6 @@ def app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         try:
             db.session.remove()
             db.engine.dispose()
-            if hasattr(db, "engines"):
-                db.engines.clear()
         except Exception:
             pass
         db.create_all()
