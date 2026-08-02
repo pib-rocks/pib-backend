@@ -12,8 +12,14 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 FLASK_DIR = REPO_ROOT / "pib_api" / "flask"
 BLOCKLY_CLIENT_DIR = REPO_ROOT / "pib_blockly" / "pib_blockly_client"
 API_CLIENT_DIR = REPO_ROOT / "pib_api" / "client"
+HERMES_CONFIG_DIR = REPO_ROOT / "pib_hermes_config"
 
-for path in (str(FLASK_DIR), str(BLOCKLY_CLIENT_DIR), str(API_CLIENT_DIR)):
+for path in (
+    str(FLASK_DIR),
+    str(BLOCKLY_CLIENT_DIR),
+    str(API_CLIENT_DIR),
+    str(HERMES_CONFIG_DIR),
+):
     if path not in sys.path:
         sys.path.insert(0, path)
 

@@ -14,6 +14,7 @@ from controller import (
     docker_controller,
     marimo_controller,
     microphone_array_controller,
+    system_controller,
 )
 
 app.register_blueprint(program_controller.bp, url_prefix="/program", name="program")
@@ -62,4 +63,24 @@ app.register_blueprint(
     microphone_array_controller.bp,
     url_prefix="/v1/system/microphone-array",
     name="microphone_array_v1",
+)
+app.register_blueprint(
+    system_controller.bp,
+    url_prefix="/system",
+    name="system",
+)
+app.register_blueprint(
+    system_controller.bp,
+    url_prefix="/v1/system",
+    name="system_v1",
+)
+app.register_blueprint(
+    system_controller.bp,
+    url_prefix="/api/system",
+    name="system_api",
+)
+app.register_blueprint(
+    system_controller.bp,
+    url_prefix="/api/v1/system",
+    name="system_api_v1",
 )
