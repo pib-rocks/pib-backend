@@ -358,6 +358,26 @@ function install_hermes_cli() {
 }
 
 
+function setup_pib_marimo_service() {
+  print INFO "Setting up pib Marimo Reactive Python Notebook Service..."
+  sudo -u pib -H mkdir -p /home/pib/programs/notebooks
+  sudo chmod 777 /home/pib/programs/notebooks 2>/dev/null || true
+  pip install --break-system-packages marimo 2>/dev/null || true
+
+  local service_src="$BACKEND_DIR/setup/setup_files/pib-marimo.service"
+  local service_target="/etc/systemd/system/pib-marimo.service"
+  if [ -f "$service_src" ]; then
+    sudo cp "$service_src" "$service_target"
+    sudo chmod 644 "$service_target"
+    sudo systemctl daemon-reload
+    sudo systemctl enable pib-marimo.service
+    sudo systemctl restart pib-marimo.service 2>/dev/null || true
+    print SUCCESS "Installed and enabled pib-marimo.service"
+  else
+    print ERROR "pib-marimo.service template not found at $service_src"
+  fi
+}
+
 # Install update script; move animated eyes, etc.
 function move_setup_files() {
   local update_target_dir="/usr/local/bin"
@@ -582,6 +602,7 @@ if is_supported_raspbian && [ "$DIST_VERSION" = "trixie" ]; then
   source "$SETUP_INSTALLATION_DIR/ros_jazzy_install.sh" || { print ERROR "failed to install ROS 2 Jazzy"; return 1; }
 fi
 move_setup_files || print ERROR "failed to move setup files"
+setup_pib_marimo_service || print ERROR "failed to setup pib marimo service"
 install_DBbrowser || print ERROR "failed to install DB browser"
 install_tinkerforge || print ERROR "failed to install tinkerforge"
 setup_ip_dispatcher || print ERROR "failed to setup ip dispatcher"
