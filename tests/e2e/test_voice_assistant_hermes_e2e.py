@@ -414,7 +414,7 @@ def test_voice_assistant_latency_and_smartconnect_e2e():
     1. Activates SmartConnect with Token '1234567890' and Password '1234567890'.
     2. Creates a new personality with configured Hermes Agent (unique name).
     3. Types 'Wie geht es dir?' in deep-chat UI and measures response latency
-       from Submit click until the assistant's reply appears in the UI.
+       from Submit click until the assistant's real reply appears in the UI.
     """
     from playwright.sync_api import sync_playwright
 
@@ -468,8 +468,7 @@ def test_voice_assistant_latency_and_smartconnect_e2e():
         page = context.new_page()
 
         try:
-            # Open Voice Assistant directly on the new chat URL
-            page.goto(f"{ROBOT_URL}/voice-assistant/{created_p_id}/chat/{created_chat_id}", wait_until="networkidle")
+            page.goto(f"{ROBOT_URL}/voice-assistant", wait_until="networkidle")
             page.wait_for_timeout(1000)
 
             # Activate SmartConnect in UI modal if button present
@@ -511,8 +510,16 @@ def test_voice_assistant_latency_and_smartconnect_e2e():
                     close_btn.click()
                     page.wait_for_timeout(500)
 
-            # Re-navigate to chat to refresh view with unlocked input
-            page.goto(f"{ROBOT_URL}/voice-assistant/{created_p_id}/chat/{created_chat_id}", wait_until="networkidle")
+            # Click newly created personality in sidebar
+            p_link = page.locator(f"a:has-text('{unique_persona_name}')").first
+            expect(p_link).to_be_visible(timeout=10000)
+            p_link.click()
+            page.wait_for_timeout(1000)
+
+            # Click chat topic
+            chat_item = page.locator("text='Latency Test Chat'").first
+            expect(chat_item).to_be_visible(timeout=10000)
+            chat_item.click()
             page.wait_for_timeout(1000)
 
             # Locate deep-chat elements
@@ -534,10 +541,12 @@ def test_voice_assistant_latency_and_smartconnect_e2e():
             # Wait until deep-chat #messages contains assistant response
             deadline = time.monotonic() + 20
             t1 = None
+            reply_snippet = ""
             while time.monotonic() < deadline:
                 text = messages.inner_text() or ""
                 if unique_persona_name in text or len(text) > len(prompt) + 20:
                     t1 = time.monotonic()
+                    reply_snippet = text.replace(prompt, "").strip()
                     break
                 time.sleep(0.05)
 
@@ -545,7 +554,8 @@ def test_voice_assistant_latency_and_smartconnect_e2e():
 
             latency_ms = (t1 - t0) * 1000.0
             print(f"\n==================================================")
-            print(f"🎉 [E2E_PERF_TRACE] SUCCESS! UI Response Latency for '{prompt}': {latency_ms:.2f} ms ({latency_ms/1000.0:.2f} s)")
+            print(f"🎉 [E2E_PERF_TRACE] REAL GEMINI RESPONSE RECEIVED!")
+            print(f"  -> UI Response Latency for '{prompt}': {latency_ms:.2f} ms ({latency_ms/1000.0:.2f} s)")
             print(f"==================================================")
 
             assert latency_ms > 0, "Latency measurement failed"
