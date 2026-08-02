@@ -235,6 +235,10 @@ def test_create_personality_via_browser_ui_generates_soul_md():
     with sync_playwright() as p:
         browser = p.chromium.launch(**_get_chromium_launch_kwargs())
         context = browser.new_context(viewport={"width": 1400, "height": 900})
+        context.add_init_script("""
+            localStorage.setItem('token', '12345678');
+            localStorage.setItem('password', '12345678');
+        """)
         page = context.new_page()
 
         try:
@@ -320,6 +324,10 @@ def test_chat_send_button_activation_with_smartconnect():
     with sync_playwright() as p:
         browser = p.chromium.launch(**_get_chromium_launch_kwargs())
         context = browser.new_context(viewport={"width": 1400, "height": 900})
+        context.add_init_script("""
+            localStorage.setItem('token', '12345678');
+            localStorage.setItem('password', '12345678');
+        """)
         page = context.new_page()
 
         try:
@@ -468,6 +476,10 @@ def test_voice_assistant_latency_and_smartconnect_e2e():
     with sync_playwright() as p:
         browser = p.chromium.launch(**_get_chromium_launch_kwargs())
         context = browser.new_context(viewport={"width": 1400, "height": 900})
+        context.add_init_script("""
+            localStorage.setItem('token', '12345678');
+            localStorage.setItem('password', '12345678');
+        """)
         page = context.new_page()
 
         try:
