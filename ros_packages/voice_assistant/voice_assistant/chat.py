@@ -636,7 +636,7 @@ class ChatNode(Node):
             # latency on the Pi.
             # Always ensure new profile directories receive config.yaml / .env
             if personality_id:
-                pdir = hermes_agent_client.profile_dir(personality_id)
+                pdir = hermes_agent_client.profile_dir_for(personality_id)
                 cfg_file = os.path.join(pdir, "config.yaml")
                 if not os.path.exists(cfg_file) or not hermes_agent_client.is_warm_daemon_active():
                     hermes_agent_client.ensure_profile(
