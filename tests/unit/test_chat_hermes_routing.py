@@ -465,7 +465,7 @@ def test_warm_daemon_falls_back_to_subprocess_when_run_agent_missing(
     real_import = builtins.__import__
 
     def _block_hermes(name, *args, **kwargs):
-        if name == "hermes.run_agent" or name == "hermes":
+        if name in ("hermes", "hermes.run_agent", "run_agent"):
             raise ImportError("no hermes")
         return real_import(name, *args, **kwargs)
 
@@ -720,11 +720,17 @@ def test_chat_routes_hermes_without_replaying_history(chat_module, chat_node):
     assert result.text == "Antwort vom Agent."
 
 
-def test_chat_skips_ensure_profile_when_warm_daemon_active(chat_module, chat_node):
-    """Warm daemon path must not re-validate profiles on the filesystem."""
+def test_chat_skips_ensure_profile_when_warm_daemon_active(
+    chat_module, chat_node, tmp_path
+):
+    """Warm daemon path must not re-validate an already provisioned profile."""
     from public_api_client import hermes_agent_client
 
     Chat = chat_module.Chat
+
+    profile_dir = tmp_path / "pib_pers-1"
+    profile_dir.mkdir()
+    (profile_dir / "config.yaml").write_text("model: x\n", encoding="utf-8")
 
     personality = MagicMock()
     personality.message_history = 5
@@ -747,7 +753,9 @@ def test_chat_skips_ensure_profile_when_warm_daemon_active(chat_module, chat_nod
     ), patch.object(
         hermes_agent_client, "is_warm_daemon_active", return_value=True
     ), patch.object(
-        hermes_agent_client, "ensure_profile", return_value="/tmp/p"
+        hermes_agent_client, "profile_dir_for", return_value=str(profile_dir)
+    ), patch.object(
+        hermes_agent_client, "ensure_profile", return_value=str(profile_dir)
     ) as ensure_profile, patch.object(
         hermes_agent_client, "run_turn", return_value="schnell"
     ), patch.object(

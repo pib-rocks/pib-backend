@@ -9,9 +9,12 @@ Endpoints:
 """
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import logging
 import os
+import re
 import socket
 import threading
 import time
@@ -42,6 +45,65 @@ _server_thread: Optional[threading.Thread] = None
 _server_lock = threading.Lock()
 
 TurnRunner = Callable[..., str]
+
+# Model used for the in-process ``run_agent.main`` entry point.
+IN_PROCESS_MODEL = "gemini-3.5-flash"
+
+# ``run_agent.main`` has no return value: it prints the answer to stdout below a
+# "FINAL RESPONSE:" banner, followed by decorative dashes and closing status
+# lines. The daemon captures that stdout and extracts the answer from it.
+_FINAL_RESPONSE_MARKER = "FINAL RESPONSE:"
+_DECORATION_LINE = re.compile(r"^[-=\s]*$")
+_TRAILING_MARKERS = (
+    "Agent execution completed",
+    "Sample trajectory saved to",
+    "Failed to save sample",
+)
+
+# redirect_stdout swaps a process-global, so parallel /turn requests would read
+# each other's output. Serialize the captured runs.
+_stdout_capture_lock = threading.Lock()
+
+
+def extract_final_response(stdout_text: str) -> str:
+    """Pull the answer text out of ``run_agent.main`` stdout.
+
+    Returns an empty string when the banner is absent or carries no text.
+    """
+    if not stdout_text:
+        return ""
+
+    marker_at = stdout_text.rfind(_FINAL_RESPONSE_MARKER)
+    if marker_at < 0:
+        return ""
+
+    lines = stdout_text[marker_at + len(_FINAL_RESPONSE_MARKER):].splitlines()
+    while lines and _DECORATION_LINE.match(lines[0]):
+        lines.pop(0)
+
+    body: list[str] = []
+    for line in lines:
+        if any(marker in line for marker in _TRAILING_MARKERS):
+            break
+        body.append(line)
+
+    while body and _DECORATION_LINE.match(body[-1]):
+        body.pop()
+
+    return "\n".join(body).strip()
+
+
+def _coerce_reply(reply: object) -> str:
+    """Normalise the various shapes ``run_agent`` implementations return."""
+    if reply is None:
+        return ""
+    if hasattr(reply, "content"):
+        reply = reply.content
+    elif isinstance(reply, dict) and "response" in reply:
+        reply = reply["response"]
+    if reply is None:
+        return ""
+    return (reply if isinstance(reply, str) else str(reply)).strip()
 
 
 def daemon_host() -> str:
@@ -81,8 +143,9 @@ def run_turn_in_process(
     """Execute one turn via the in-process Hermes Agent Python API.
 
     Prefers ``hermes.run_agent.run_agent`` to avoid subprocess spawn / cold
-    import overhead. Falls back to ``run_turn_subprocess`` when the Hermes
-    Python package is not importable.
+    import overhead, then ``run_agent.main``, whose answer is read back from
+    captured stdout because it prints instead of returning. Falls back to
+    ``run_turn_subprocess`` when neither is importable or yields text.
     """
     from public_api_client.hermes_agent_client import (
         FALLBACK_REPLY,
@@ -96,19 +159,18 @@ def run_turn_in_process(
             sys.path.insert(0, path_entry)
 
     run_agent_fn = None
+    prints_to_stdout = False
     try:
         from hermes.run_agent import run_agent as run_agent_fn
     except ImportError:
         try:
             from run_agent import main as run_agent_fn
+
+            prints_to_stdout = True
         except ImportError:
             pass
 
-    if run_agent_fn is None:
-        logging.info(
-            "hermes.run_agent unavailable; falling back to CLI subprocess (chat=%s)",
-            chat_id,
-        )
+    def _subprocess_reply() -> str:
         kwargs = {
             "text": text,
             "chat_id": chat_id,
@@ -118,6 +180,13 @@ def run_turn_in_process(
         if timeout is not None:
             kwargs["timeout"] = timeout
         return run_turn_subprocess(**kwargs)
+
+    if run_agent_fn is None:
+        logging.info(
+            "hermes.run_agent unavailable; falling back to CLI subprocess (chat=%s)",
+            chat_id,
+        )
+        return _subprocess_reply()
 
     profile_name: Optional[str] = None
     if personality_id:
@@ -133,25 +202,45 @@ def run_turn_in_process(
         profile_name = profile_name_for(personality_id)
 
     try:
-        reply = run_agent_fn(
-            query=text,
-            model="gemini-3.5-flash",
-        )
-        if hasattr(reply, "content"):
-            reply = reply.content
-        elif isinstance(reply, dict) and "response" in reply:
-            reply = reply["response"]
-        reply = str(reply) if reply is not None else FALLBACK_REPLY
+        if prints_to_stdout:
+            captured = io.StringIO()
+            with _stdout_capture_lock, contextlib.redirect_stdout(captured):
+                returned = run_agent_fn(query=text, model=IN_PROCESS_MODEL)
+            reply = extract_final_response(captured.getvalue())
+            if not reply:
+                # Some builds do return the answer; use it before giving up.
+                reply = _coerce_reply(returned)
+            if not reply:
+                logging.warning(
+                    "no FINAL RESPONSE in run_agent stdout (chat=%s, %d chars captured)",
+                    chat_id, len(captured.getvalue()),
+                )
+        else:
+            reply = _coerce_reply(
+                run_agent_fn(
+                    prompt=text,
+                    session_id=f"pib_chat_{chat_id}",
+                    profile=profile_name,
+                    timeout=timeout,
+                )
+            )
     except Exception as exc:
         logging.exception(
             "in-process hermes turn failed (chat=%s): %s", chat_id, exc,
         )
         return FALLBACK_REPLY
 
-    if reply is None:
+    if reply:
+        return reply
+
+    try:
+        return _subprocess_reply() or FALLBACK_REPLY
+    except Exception as exc:
+        logging.exception(
+            "subprocess fallback after empty in-process reply failed (chat=%s): %s",
+            chat_id, exc,
+        )
         return FALLBACK_REPLY
-    reply_str = reply if isinstance(reply, str) else str(reply)
-    return reply_str.strip() or FALLBACK_REPLY
 
 
 def _default_turn_runner(

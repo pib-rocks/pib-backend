@@ -244,7 +244,7 @@ def test_run_turn_in_process_falls_back_to_subprocess_when_import_fails():
     real_import = builtins.__import__
 
     def _block_hermes_run_agent(name, *args, **kwargs):
-        if name == "hermes.run_agent" or name == "hermes":
+        if name in ("hermes", "hermes.run_agent", "run_agent"):
             raise ImportError("no hermes package")
         return real_import(name, *args, **kwargs)
 
@@ -291,6 +291,141 @@ def test_default_turn_runner_uses_in_process_path():
         toolsets=None,
         timeout=10,
     )
+
+
+def _install_fake_run_agent_main(monkeypatch, main_fn):
+    """Make ``from run_agent import main`` resolve to main_fn, hiding hermes.*."""
+    import builtins
+
+    real_import = builtins.__import__
+    module = types.ModuleType("run_agent")
+    module.main = main_fn
+
+    def _import(name, *args, **kwargs):
+        if name in ("hermes", "hermes.run_agent"):
+            raise ImportError("no hermes package")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", _import)
+    monkeypatch.setitem(sys.modules, "run_agent", module)
+
+
+def test_extract_final_response_strips_decoration_and_trailing_output():
+    stdout = (
+        "\U0001f916 AI Agent with Tool Calling\n"
+        "==================================================\n"
+        "\U0001f4dd User Query: Wie geht es dir?\n"
+        "\n\U0001f3af FINAL RESPONSE:\n"
+        "------------------------------\n"
+        "Mir geht es gut!\n"
+        "Und dir?\n"
+        "\n"
+        "\U0001f44b Agent execution completed!\n"
+    )
+
+    assert hd.extract_final_response(stdout) == "Mir geht es gut!\nUnd dir?"
+
+
+def test_extract_final_response_without_marker_is_empty():
+    assert hd.extract_final_response("no banner here\n") == ""
+    assert hd.extract_final_response("") == ""
+
+
+def test_extract_final_response_ignores_earlier_banner_occurrence():
+    stdout = (
+        "\U0001f3af FINAL RESPONSE:\n----\nalte Antwort\n"
+        "\U0001f44b Agent execution completed!\n"
+        "\U0001f3af FINAL RESPONSE:\n----\nneue Antwort\n"
+    )
+
+    assert hd.extract_final_response(stdout) == "neue Antwort"
+
+
+def test_run_turn_in_process_reads_reply_from_run_agent_stdout(tmp_path, monkeypatch):
+    """run_agent.main prints its answer, so the daemon must parse stdout."""
+    monkeypatch.setenv("PIB_HERMES_PROFILES_DIR", str(tmp_path / "profiles"))
+    calls = {}
+
+    def fake_main(query=None, model="", **kwargs):
+        calls["query"] = query
+        calls["model"] = model
+        print("\U0001f916 AI Agent with Tool Calling")
+        print("\n\U0001f3af FINAL RESPONSE:")
+        print("-" * 30)
+        print("Hallo, mir geht es gut!")
+        print("\n\U0001f44b Agent execution completed!")
+
+    _install_fake_run_agent_main(monkeypatch, fake_main)
+
+    with patch(
+        "public_api_client.hermes_agent_client.ensure_profile",
+        return_value=str(tmp_path / "profiles" / "pib_pers-1"),
+    ), patch(
+        "public_api_client.hermes_agent_client.run_turn_subprocess",
+    ) as subprocess_runner:
+        reply = hd.run_turn_in_process(
+            text="Wie geht es dir?",
+            chat_id="chat-1",
+            personality_id="pers-1",
+            timeout=30,
+        )
+
+    assert reply == "Hallo, mir geht es gut!"
+    assert calls == {"query": "Wie geht es dir?", "model": hd.IN_PROCESS_MODEL}
+    subprocess_runner.assert_not_called()
+
+
+def test_run_turn_in_process_restores_stdout_after_capture(monkeypatch, capsys):
+    def fake_main(query=None, model="", **kwargs):
+        print("\U0001f3af FINAL RESPONSE:\n---\nAntwort")
+
+    _install_fake_run_agent_main(monkeypatch, fake_main)
+
+    reply = hd.run_turn_in_process(text="hi", chat_id="c-1")
+
+    assert reply == "Antwort"
+    assert sys.stdout is not None
+    assert "FINAL RESPONSE" not in capsys.readouterr().out
+
+
+def test_run_turn_in_process_falls_back_when_stdout_has_no_final_response(monkeypatch):
+    def fake_main(query=None, model="", **kwargs):
+        print("\U0001f916 AI Agent with Tool Calling")
+        print("\u274c Failed to initialize agent: boom")
+
+    _install_fake_run_agent_main(monkeypatch, fake_main)
+
+    with patch(
+        "public_api_client.hermes_agent_client.run_turn_subprocess",
+        return_value="subprocess-reply",
+    ) as subprocess_runner:
+        reply = hd.run_turn_in_process(text="Hallo", chat_id="chat-3", timeout=45)
+
+    assert reply == "subprocess-reply"
+    subprocess_runner.assert_called_once_with(
+        text="Hallo",
+        chat_id="chat-3",
+        personality_id=None,
+        toolsets=None,
+        timeout=45,
+    )
+
+
+def test_run_turn_in_process_uses_fallback_reply_when_subprocess_also_empty(monkeypatch):
+    from public_api_client.hermes_agent_client import FALLBACK_REPLY
+
+    def fake_main(query=None, model="", **kwargs):
+        print("nothing useful")
+
+    _install_fake_run_agent_main(monkeypatch, fake_main)
+
+    with patch(
+        "public_api_client.hermes_agent_client.run_turn_subprocess",
+        return_value="",
+    ):
+        reply = hd.run_turn_in_process(text="Hallo", chat_id="chat-4")
+
+    assert reply == FALLBACK_REPLY
 
 
 def test_run_turn_in_process_returns_fallback_on_agent_error(tmp_path, monkeypatch):

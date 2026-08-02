@@ -114,9 +114,10 @@ def test_credentials_are_copied_not_symlinked(
     assert not os.path.islink(os.path.join(pdir, "config.yaml"))
 
 
-def test_copied_env_keeps_owner_only_permissions(
+def test_copied_env_is_writable_by_every_container_user(
     tmp_path, monkeypatch, sandboxed_hermes_home
 ):
+    """flask and voice-assistant write the profile under different uids."""
     _base_install_with_credentials(sandboxed_hermes_home)
     (sandboxed_hermes_home / ".env").chmod(0o644)
     _absent_binary(tmp_path, monkeypatch)
@@ -124,7 +125,7 @@ def test_copied_env_keeps_owner_only_permissions(
     pdir = ensure_profile("p-9", soul_text="Du bist pib.")
 
     mode = stat.S_IMODE(os.stat(os.path.join(pdir, ".env")).st_mode)
-    assert mode == 0o664
+    assert mode == 0o666
 
 
 def test_ensure_profile_does_not_overwrite_an_existing_profile_env(
