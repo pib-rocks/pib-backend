@@ -634,10 +634,14 @@ class ChatNode(Node):
             # re-validation — profiles were provisioned at personality create
             # time / prior cold starts and re-writing SOUL.md adds multi-second
             # latency on the Pi.
-            if personality_id and not hermes_agent_client.is_warm_daemon_active():
-                hermes_agent_client.ensure_profile(
-                    personality_id, soul_text=description
-                )
+            # Always ensure new profile directories receive config.yaml / .env
+            if personality_id:
+                pdir = hermes_agent_client.profile_dir(personality_id)
+                cfg_file = os.path.join(pdir, "config.yaml")
+                if not os.path.exists(cfg_file) or not hermes_agent_client.is_warm_daemon_active():
+                    hermes_agent_client.ensure_profile(
+                        personality_id, soul_text=description
+                    )
             return hermes_agent_client.run_turn(
                 text=text,
                 chat_id=chat_id,
