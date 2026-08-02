@@ -52,7 +52,18 @@ def app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     )
 
     with flask_app.app_context():
-        db.session.remove()
+        try:
+            db.session.remove()
+            sa_ext = flask_app.extensions.get("sqlalchemy")
+            if sa_ext and hasattr(sa_ext, "_engines"):
+                for key, eng in list(sa_ext._engines.items()):
+                    try:
+                        eng.dispose()
+                    except Exception:
+                        pass
+                sa_ext._engines.clear()
+        except Exception:
+            pass
         db.drop_all()
         db.create_all()
         result = CliRunner().invoke(seed_db, [])
