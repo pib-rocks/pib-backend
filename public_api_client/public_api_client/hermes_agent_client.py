@@ -54,7 +54,12 @@ PIB_MCP_SERVER = {
 # Permanent Hermes LLM pin. Kept in sync with setup/setup-pib.sh
 # and pib_hermes_config.DEFAULT_HERMES_MODEL.
 DEFAULT_HERMES_MODEL = "gemini-3.5-flash"
+DEFAULT_HERMES_LITE_MODEL = "gemini-3.5-flash-lite"
 DEFAULT_HERMES_PROVIDER = "gemini"
+# High-speed defaults for Gemini Flash / Flash-Lite (PR-1524).
+DEFAULT_REASONING_EFFORT = "low"
+DEFAULT_MAX_TOKENS = 1024
+DEFAULT_TEMPERATURE = 0.3
 
 # Startup liveness probe only. Deliberately small: it runs before the chat node
 # is up, so it must diagnose a broken install without delaying startup. A real
@@ -186,11 +191,12 @@ def _create_profile_with_cli(personality_id: str, timeout: int) -> bool:
 
 
 def _ensure_mcp_servers_pib(pdir: str) -> None:
-    """Pin the Hermes model/provider and merge mcp_servers.pib if missing.
+    """Pin Hermes model/provider/speed defaults and merge mcp_servers.pib if missing.
 
-    Always sets model/provider to the permanent Gemini defaults. Runs even when
-    config.yaml already exists, so profiles created before auto-seeding still get
-    pib_mcp_server (and the pinned model) on the next ensure_profile call.
+    Always sets model/provider and high-speed defaults (reasoning_effort, max_tokens,
+    temperature) to the permanent Gemini Flash values. Runs even when config.yaml
+    already exists, so profiles created before auto-seeding still get pib_mcp_server
+    (and the pinned model/speed settings) on the next ensure_profile call.
     """
     target = os.path.join(pdir, CONFIG_FILENAME)
     cfg = {}
@@ -218,6 +224,16 @@ def _ensure_mcp_servers_pib(pdir: str) -> None:
         cfg["provider"] = DEFAULT_HERMES_PROVIDER
         changed = True
 
+    if cfg.get("reasoning_effort") != DEFAULT_REASONING_EFFORT:
+        cfg["reasoning_effort"] = DEFAULT_REASONING_EFFORT
+        changed = True
+    if cfg.get("max_tokens") != DEFAULT_MAX_TOKENS:
+        cfg["max_tokens"] = DEFAULT_MAX_TOKENS
+        changed = True
+    if cfg.get("temperature") != DEFAULT_TEMPERATURE:
+        cfg["temperature"] = DEFAULT_TEMPERATURE
+        changed = True
+
     servers = cfg.get("mcp_servers")
     if not isinstance(servers, dict):
         servers = {}
@@ -236,7 +252,10 @@ def _ensure_mcp_servers_pib(pdir: str) -> None:
     except OSError as exc:
         logging.warning("could not write profile config into %s: %s", target, exc)
         return
-    logging.info("ensured hermes model/provider and mcp_servers.pib in %s", pdir)
+    logging.info(
+        "ensured hermes model/provider/speed defaults and mcp_servers.pib in %s",
+        pdir,
+    )
 
 
 def _inherit_base_config(pdir: str) -> None:
@@ -262,12 +281,15 @@ def _inherit_base_config(pdir: str) -> None:
                 except OSError as exc:
                     logging.warning("could not copy %s into %s: %s", name, pdir, exc)
 
-    # Always ensure config.yaml in profile has valid provider/model
+    # Always ensure config.yaml in profile has valid provider/model/speed defaults
     cfg_target = os.path.join(pdir, CONFIG_FILENAME)
     if not os.path.exists(cfg_target):
         default_cfg = {
             "provider": DEFAULT_HERMES_PROVIDER,
             "model": DEFAULT_HERMES_MODEL,
+            "reasoning_effort": DEFAULT_REASONING_EFFORT,
+            "max_tokens": DEFAULT_MAX_TOKENS,
+            "temperature": DEFAULT_TEMPERATURE,
             "mcp_servers": {"pib": dict(PIB_MCP_SERVER)},
         }
         try:

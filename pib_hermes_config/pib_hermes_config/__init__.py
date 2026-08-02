@@ -24,7 +24,11 @@ PROFILE_DIR_MODE = 0o700
 
 # Permanent Hermes LLM pin. Kept in sync with hermes_agent_client and setup-pib.sh.
 DEFAULT_HERMES_MODEL = "gemini-3.5-flash"
+DEFAULT_HERMES_LITE_MODEL = "gemini-3.5-flash-lite"
 DEFAULT_HERMES_PROVIDER = "gemini"
+DEFAULT_REASONING_EFFORT = "low"
+DEFAULT_MAX_TOKENS = 1024
+DEFAULT_TEMPERATURE = 0.3
 
 _UNSAFE = re.compile(r"[^A-Za-z0-9_-]")
 
