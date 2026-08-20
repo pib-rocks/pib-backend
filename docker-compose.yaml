@@ -18,6 +18,11 @@ services:
     build:
       context: .
       dockerfile: ./pib_api/flask/Dockerfile
+      args:
+        # Release tag from the git checkout, injected into /etc/pib_version.
+        # Override at build time:
+        #   docker compose build --build-arg APP_VERSION="$(git tag --points-at HEAD^2)" flask-app
+        APP_VERSION: ""
     command: "bash -c 'flask --app run db upgrade && flask --app run seed_db && flask --app run run --host 0.0.0.0'"
     networks:
       - pib-network
