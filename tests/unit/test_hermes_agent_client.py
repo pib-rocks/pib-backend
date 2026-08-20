@@ -14,7 +14,6 @@ import os
 import subprocess
 from unittest.mock import patch
 
-
 EXPECTED_MCP_TOOLS = (
     "mcp__pib__list_motors",
     "mcp__pib__get_state",
@@ -50,7 +49,7 @@ def test_profile_name_is_derived_from_personality():
 def test_build_command_uses_oneshot_named_session_and_profile():
     cmd = build_command("hallo", "chat-1", personality_id="p-9")
     assert cmd[0].endswith("hermes")
-    assert "-p" in cmd and "pib_p-9" in cmd          # profile carries the SOUL.md
+    assert "-p" in cmd and "pib_p-9" in cmd  # profile carries the SOUL.md
     assert "-z" in cmd and "hallo" in cmd
     assert "--continue" in cmd and "pib_chat_chat-1" in cmd  # durable per-chat session
 
@@ -72,7 +71,9 @@ def test_build_default_soul_text_substitutes_personality_name():
 
 
 def test_build_default_soul_text_includes_custom_description():
-    text = build_default_soul_text("Eva", custom_description="Sei freundlich und neugierig.")
+    text = build_default_soul_text(
+        "Eva", custom_description="Sei freundlich und neugierig."
+    )
     assert text.startswith("Du bist der humanoide Roboter Eva.")
     assert "Sei freundlich und neugierig." in text
 
@@ -127,14 +128,18 @@ def test_ensure_profile_defaults_personality_name_to_pib(tmp_path, monkeypatch):
 def test_run_turn_returns_stdout(installed_hermes_bin, monkeypatch):
     # Force subprocess path: no warm daemon on this port.
     monkeypatch.setenv("PIB_HERMES_DAEMON_URL", "http://127.0.0.1:1")
-    completed = subprocess.CompletedProcess(args=[], returncode=0, stdout="Hallo!\n", stderr="")
+    completed = subprocess.CompletedProcess(
+        args=[], returncode=0, stdout="Hallo!\n", stderr=""
+    )
     with patch("subprocess.run", return_value=completed):
         assert run_turn("hi", "c1") == "Hallo!"
 
 
 def test_run_turn_on_timeout_returns_fallback(installed_hermes_bin, monkeypatch):
     monkeypatch.setenv("PIB_HERMES_DAEMON_URL", "http://127.0.0.1:1")
-    with patch("subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="x", timeout=1)):
+    with patch(
+        "subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="x", timeout=1)
+    ):
         out = run_turn("hi", "c1")
         assert out  # non-empty graceful sentence
         assert "moment" in out.lower() or "später" in out.lower()
@@ -142,7 +147,9 @@ def test_run_turn_on_timeout_returns_fallback(installed_hermes_bin, monkeypatch)
 
 def test_run_turn_on_error_returns_fallback(installed_hermes_bin, monkeypatch):
     monkeypatch.setenv("PIB_HERMES_DAEMON_URL", "http://127.0.0.1:1")
-    completed = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="boom")
+    completed = subprocess.CompletedProcess(
+        args=[], returncode=1, stdout="", stderr="boom"
+    )
     with patch("subprocess.run", return_value=completed):
         assert run_turn("hi", "c1")
 
@@ -171,7 +178,9 @@ def test_run_turn_treats_a_non_executable_binary_as_missing(tmp_path, monkeypatc
     run.assert_not_called()
 
 
-def test_run_turn_prefers_daemon_reply_over_subprocess(installed_hermes_bin, monkeypatch):
+def test_run_turn_prefers_daemon_reply_over_subprocess(
+    installed_hermes_bin, monkeypatch
+):
     monkeypatch.setenv("PIB_HERMES_DAEMON_URL", "http://127.0.0.1:8088")
 
     with patch(
@@ -208,9 +217,7 @@ def test_run_turn_falls_back_when_daemon_returns_non_200(
         def json(self):
             return {"error": "busy"}
 
-    with patch(
-        "requests.post", return_value=_Resp()
-    ):
+    with patch("requests.post", return_value=_Resp()):
         completed = subprocess.CompletedProcess(
             args=[], returncode=0, stdout="fallback-ok\n", stderr=""
         )

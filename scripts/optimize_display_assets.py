@@ -68,7 +68,9 @@ def optimize_gif(path: Path, width: int, height: int) -> bytes | None:
         return buffer.getvalue()
 
 
-def process_file(path: Path, width: int, height: int, in_place: bool, output_dir: Path | None) -> bool:
+def process_file(
+    path: Path, width: int, height: int, in_place: bool, output_dir: Path | None
+) -> bool:
     start = time.monotonic()
     original_size = path.stat().st_size
 
@@ -120,7 +122,9 @@ def iter_images(directory: Path) -> list[Path]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Optimize display assets to a fixed resolution.")
+    parser = argparse.ArgumentParser(
+        description="Optimize display assets to a fixed resolution."
+    )
     parser.add_argument("--width", type=int, default=1024)
     parser.add_argument("--height", type=int, default=600)
     parser.add_argument("--expressions-dir", type=Path, required=True)
@@ -138,7 +142,9 @@ def main() -> int:
     changed = 0
     for directory in (args.expressions_dir, args.static_dir):
         for path in iter_images(directory):
-            if process_file(path, args.width, args.height, args.in_place, args.output_dir):
+            if process_file(
+                path, args.width, args.height, args.in_place, args.output_dir
+            ):
                 changed += 1
 
     logging.info("done, updated %d file(s)", changed)

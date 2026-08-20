@@ -29,7 +29,9 @@ class PibExpressionManager(Node):
             depth=1,
         )
 
-        self.publisher = self.create_publisher(DisplayImage, "/display_image", self.display_qos)
+        self.publisher = self.create_publisher(
+            DisplayImage, "/display_image", self.display_qos
+        )
         self.expression_cache = {}
         self.auto_return_seconds = float(os.environ.get("PIB_EXPRESSION_TIMEOUT", "15"))
         self.last_expression_time = time.monotonic()
@@ -105,14 +107,16 @@ class PibExpressionManager(Node):
     def publish_expression_file(self, path: Path):
         t0 = time.monotonic()
         msg = self.get_cached_expression_message(path)
-        self.debug_log(f"message ready for '{path.name}' in {(time.monotonic() - t0) * 1000:.1f} ms")
+        self.debug_log(
+            f"message ready for '{path.name}' in {(time.monotonic() - t0) * 1000:.1f} ms"
+        )
         self.publisher.publish(msg)
         self.debug_log(f"ros publish called for '{path.name}'")
 
     def show_default_animation(self):
         msg = DisplayImage()
-        msg.id.value = 2       # PIB_EYES_ANIMATED
-        msg.format.value = 0   # ANIMATED_GIF
+        msg.id.value = 2  # PIB_EYES_ANIMATED
+        msg.format.value = 0  # ANIMATED_GIF
         msg.data = []
 
         self.publisher.publish(msg)
@@ -129,7 +133,6 @@ class PibExpressionManager(Node):
         elapsed = time.monotonic() - self.last_expression_time
         if elapsed >= self.auto_return_seconds:
             self.show_default_animation()
-
 
     def publish_png_bytes(self, data: bytes):
         msg = DisplayImage()
@@ -197,7 +200,10 @@ class PibExpressionManager(Node):
             total_height = sum(line_heights) + max(0, len(lines) - 1) * int(size * 0.25)
             max_line_width = max((box[2] - box[0]) for box in boxes) if boxes else 0
 
-            if max_line_width <= width - 2 * padding and total_height <= height - 2 * padding:
+            if (
+                max_line_width <= width - 2 * padding
+                and total_height <= height - 2 * padding
+            ):
                 best_font = font
                 best_lines = lines
                 break
@@ -230,16 +236,21 @@ class PibExpressionManager(Node):
 
             t_render = time.monotonic()
             png = self.render_text_png(raw)
-            self.debug_log(f"text rendered png_bytes={len(png)} in {(time.monotonic() - t_render) * 1000:.1f} ms")
+            self.debug_log(
+                f"text rendered png_bytes={len(png)} in {(time.monotonic() - t_render) * 1000:.1f} ms"
+            )
 
             t_publish = time.monotonic()
             self.publish_png_bytes(png)
-            self.debug_log(f"text published in {(time.monotonic() - t_publish) * 1000:.1f} ms")
+            self.debug_log(
+                f"text published in {(time.monotonic() - t_publish) * 1000:.1f} ms"
+            )
 
-            self.get_logger().info(f"Display text shown: {raw[:40]} total={(time.monotonic() - t0) * 1000:.1f} ms")
+            self.get_logger().info(
+                f"Display text shown: {raw[:40]} total={(time.monotonic() - t0) * 1000:.1f} ms"
+            )
         except Exception as exc:
             self.get_logger().error(f"Could not show display text: {exc}")
-
 
     def on_expression(self, msg: String):
         t0 = time.monotonic()
@@ -255,11 +266,15 @@ class PibExpressionManager(Node):
         try:
             t_find = time.monotonic()
             path = self.find_expression_file(expression)
-            self.debug_log(f"file resolved expression='{expression}' file='{path}' in {(time.monotonic() - t_find) * 1000:.1f} ms")
+            self.debug_log(
+                f"file resolved expression='{expression}' file='{path}' in {(time.monotonic() - t_find) * 1000:.1f} ms"
+            )
 
             t_pub = time.monotonic()
             self.publish_expression_file(path)
-            self.debug_log(f"published expression='{expression}' in {(time.monotonic() - t_pub) * 1000:.1f} ms")
+            self.debug_log(
+                f"published expression='{expression}' in {(time.monotonic() - t_pub) * 1000:.1f} ms"
+            )
 
             self.get_logger().info(
                 f"Expression shown: {expression} -> {path.name} total={(time.monotonic() - t0) * 1000:.1f} ms"

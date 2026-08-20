@@ -17,7 +17,9 @@ from typing import Any, Dict, Optional, Tuple, Union
 logger = logging.getLogger(__name__)
 
 DEFAULT_WHISPER_MODEL_SIZE = os.getenv("WHISPER_MODEL_SIZE", "base")
-DEFAULT_WHISPER_MODEL_PATH = os.getenv("WHISPER_MODEL_PATH", "/data/voice/models/whisper/")
+DEFAULT_WHISPER_MODEL_PATH = os.getenv(
+    "WHISPER_MODEL_PATH", "/data/voice/models/whisper/"
+)
 DEFAULT_COMPUTE_TYPE = os.getenv("WHISPER_COMPUTE_TYPE", "int8")
 
 
@@ -34,7 +36,9 @@ class FasterWhisperSTTEngine:
         device: str = "cpu",
     ) -> None:
         self.model_size = model_size or "base"
-        self.model_path = Path(model_path) if model_path else Path(DEFAULT_WHISPER_MODEL_PATH)
+        self.model_path = (
+            Path(model_path) if model_path else Path(DEFAULT_WHISPER_MODEL_PATH)
+        )
         self.compute_type = compute_type
         self.device = device
 
@@ -65,11 +69,15 @@ class FasterWhisperSTTEngine:
             )
             self.is_loaded = True
             self.active_backend = f"faster-whisper-{self.model_size}"
-            logger.info(f"Loaded faster-whisper model '{self.model_size}' successfully.")
+            logger.info(
+                f"Loaded faster-whisper model '{self.model_size}' successfully."
+            )
             return True
 
         except Exception as e:
-            logger.warning(f"Failed to load faster-whisper model '{self.model_size}': {e}")
+            logger.warning(
+                f"Failed to load faster-whisper model '{self.model_size}': {e}"
+            )
             self.is_loaded = False
             self.active_backend = "fallback"
             return False
@@ -92,7 +100,11 @@ class FasterWhisperSTTEngine:
             Tuple of (transcribed_text, metadata_dict)
         """
         if not audio_input:
-            return "", {"language": "unknown", "probability": 0.0, "backend": "empty_input"}
+            return "", {
+                "language": "unknown",
+                "probability": 0.0,
+                "backend": "empty_input",
+            }
 
         if self.is_loaded and self._model is not None:
             try:
@@ -111,7 +123,9 @@ class FasterWhisperSTTEngine:
                     vad_filter=True,
                 )
 
-                text_parts = [segment.text.strip() for segment in segments if segment.text]
+                text_parts = [
+                    segment.text.strip() for segment in segments if segment.text
+                ]
                 full_text = " ".join(text_parts).strip()
 
                 metadata = {
@@ -136,4 +150,8 @@ class FasterWhisperSTTEngine:
         """
         Fallback path when primary engine is uninitialized or fails.
         """
-        return "", {"language": language or "unknown", "probability": 0.0, "backend": "fallback"}
+        return "", {
+            "language": language or "unknown",
+            "probability": 0.0,
+            "backend": "fallback",
+        }

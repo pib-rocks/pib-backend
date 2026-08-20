@@ -18,6 +18,7 @@ app = Flask(__name__)
 app.config.from_object("config.Config")
 db = SQLAlchemy(app)
 
+
 @event.listens_for(Engine, "connect")
 def set_sqlite_pragma(dbapi_connection, connection_record):
     """Enable WAL and a 15s busy timeout on every SQLite connection."""
@@ -28,7 +29,9 @@ def set_sqlite_pragma(dbapi_connection, connection_record):
         cursor.close()
         # Ensure WAL/SHM files are world-writable across container/host user boundaries
         try:
-            db_path = app.config.get("SQLALCHEMY_DATABASE_URI", "").replace("sqlite:///", "")
+            db_path = app.config.get("SQLALCHEMY_DATABASE_URI", "").replace(
+                "sqlite:///", ""
+            )
             if db_path and os.path.exists(db_path):
                 for suffix in ["", "-wal", "-shm"]:
                     target = db_path + suffix
@@ -36,6 +39,7 @@ def set_sqlite_pragma(dbapi_connection, connection_record):
                         os.chmod(target, 0o666)
         except Exception:
             pass
+
 
 ma = Marshmallow(app)
 migrate = Migrate(app, db)

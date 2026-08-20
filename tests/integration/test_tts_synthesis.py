@@ -40,7 +40,9 @@ class TestTTSEngineInitialization:
         assert engine.model_path == Path(DEFAULT_MODEL_PATH)
         assert engine.sample_rate == DEFAULT_SAMPLE_RATE
 
-    def test_custom_env_var_model_path(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    def test_custom_env_var_model_path(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ):
         custom_dir = tmp_path / "custom_supertone"
         custom_dir.mkdir()
         monkeypatch.setenv("SUPERTONE_MODEL_PATH", str(custom_dir))
@@ -61,7 +63,9 @@ class TestTTSEngineInitialization:
     def test_model_loading_with_valid_files(self, tmp_path: Path):
         model_dir = tmp_path / "supertone_model"
         model_dir.mkdir()
-        (model_dir / "config.json").write_text('{"model": "supertonic-3"}', encoding="utf-8")
+        (model_dir / "config.json").write_text(
+            '{"model": "supertonic-3"}', encoding="utf-8"
+        )
         (model_dir / "supertonic_v3.bin").write_bytes(b"dummy_weights_data")
 
         engine = SupertoneTTSEngine(model_path=model_dir)
@@ -87,7 +91,9 @@ class TestTTSFallbackBehavior:
         assert analysis["non_zero_bytes"] is True
         assert analysis["rms_amplitude"] > 0.0001
 
-    def test_fallback_on_runtime_synthesis_error(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    def test_fallback_on_runtime_synthesis_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
         model_dir = tmp_path / "supertone_model"
         model_dir.mkdir()
         (model_dir / "config.json").write_text("{}", encoding="utf-8")
@@ -168,7 +174,9 @@ class TestTTSBoundaryConditionsAndEdgeCases:
         engine = SupertoneTTSEngine(model_path=tmp_path)
 
         german_text = "Hallo, ich bin der Roboter PIB und steuere Motoren."
-        english_text = "Hello world, Supertone supertonic-3 expressive local TTS engine."
+        english_text = (
+            "Hello world, Supertone supertonic-3 expressive local TTS engine."
+        )
 
         wav_de = engine.synthesize(german_text, language="de")
         wav_en = engine.synthesize(english_text, language="en")
@@ -221,7 +229,10 @@ class TestTTSAudioPlayerIntegration:
             from voice_assistant.audio_player import AudioPlayerNode
         except ImportError:
             import pytest
-            pytest.skip("rclpy not installed in host environment (runs in ROS2 container)")
+
+            pytest.skip(
+                "rclpy not installed in host environment (runs in ROS2 container)"
+            )
 
         engine = SupertoneTTSEngine(model_path=tmp_path)
         wav_bytes = engine.synthesize("Test Integration")

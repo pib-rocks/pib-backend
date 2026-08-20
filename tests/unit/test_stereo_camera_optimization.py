@@ -8,14 +8,23 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../ros_packages/camera/oak_d_lite")))
+sys.path.insert(
+    0,
+    os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "../../ros_packages/camera/oak_d_lite")
+    ),
+)
 
 depthai = pytest.importorskip("depthai")
 rclpy = pytest.importorskip("rclpy")
 
 import numpy as np
 
-from ros_packages.camera.oak_d_lite.stereo import CameraNode, FACE_DETECT_WIDTH, FACE_DETECT_HEIGHT
+from ros_packages.camera.oak_d_lite.stereo import (
+    CameraNode,
+    FACE_DETECT_WIDTH,
+    FACE_DETECT_HEIGHT,
+)
 
 
 class TestStereoCameraOptimization(unittest.TestCase):
@@ -23,7 +32,9 @@ class TestStereoCameraOptimization(unittest.TestCase):
     @patch("ros_packages.camera.oak_d_lite.stereo.cv2.CascadeClassifier")
     @patch("ros_packages.camera.oak_d_lite.stereo.dai")
     @patch("ros_packages.camera.oak_d_lite.stereo.os.path.exists", return_value=True)
-    def test_publish_face_center_skips_when_no_subscribers(self, mock_exists, mock_dai, mock_cascade):
+    def test_publish_face_center_skips_when_no_subscribers(
+        self, mock_exists, mock_dai, mock_cascade
+    ):
         with patch.object(CameraNode, "init_pipeline", return_value=True):
             node = CameraNode()
             node.face_center_publisher_ = MagicMock()
@@ -38,7 +49,9 @@ class TestStereoCameraOptimization(unittest.TestCase):
     @patch("ros_packages.camera.oak_d_lite.stereo.cv2.CascadeClassifier")
     @patch("ros_packages.camera.oak_d_lite.stereo.dai")
     @patch("ros_packages.camera.oak_d_lite.stereo.os.path.exists", return_value=True)
-    def test_publish_face_center_downscales_frame_when_subscribed(self, mock_exists, mock_dai, mock_cascade):
+    def test_publish_face_center_downscales_frame_when_subscribed(
+        self, mock_exists, mock_dai, mock_cascade
+    ):
         with patch.object(CameraNode, "init_pipeline", return_value=True):
             node = CameraNode()
             node.face_center_publisher_ = MagicMock()
@@ -57,7 +70,9 @@ class TestStereoCameraOptimization(unittest.TestCase):
 
     @patch("ros_packages.camera.oak_d_lite.stereo.dai")
     @patch("ros_packages.camera.oak_d_lite.stereo.os.path.exists", return_value=True)
-    def test_timer_callback_skips_encoding_when_no_camera_subscribers(self, mock_exists, mock_dai):
+    def test_timer_callback_skips_encoding_when_no_camera_subscribers(
+        self, mock_exists, mock_dai
+    ):
         with patch.object(CameraNode, "init_pipeline", return_value=True):
             node = CameraNode()
             node.publisher_ = MagicMock()

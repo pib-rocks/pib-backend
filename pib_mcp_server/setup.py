@@ -1,6 +1,5 @@
 from setuptools import setup
 
-
 setup(
     name="pib_mcp_server",
     version="0.1.0",

@@ -1,10 +1,16 @@
 name: Lint
 
-on: [ push ]
+on: [push]
 
 jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      - uses: psf/black@stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install black
+        run: pip install black==26.5.1
+      - name: Run black --check
+        run: python -m black --check . --diff

@@ -33,7 +33,9 @@ def test_export_endpoint_returns_attachment(client):
 
     data = response.get_json()
     assert data["version"] == 1
-    assert any(b["brickletNumber"] == 1 and b["uid"] == "EXP001" for b in data["bricklets"])
+    assert any(
+        b["brickletNumber"] == 1 and b["uid"] == "EXP001" for b in data["bricklets"]
+    )
     assert any(m["name"] == "elbow_left" for m in data["motors"])
 
 
@@ -72,7 +74,9 @@ def test_import_endpoint_rejects_invalid_schema(client):
         "/api/system/hardware-config/import",
         json={
             "version": 1,
-            "bricklets": [{"brickletNumber": 1, "uid": "!!bad!!", "type": "Servo Bricklet"}],
+            "bricklets": [
+                {"brickletNumber": 1, "uid": "!!bad!!", "type": "Servo Bricklet"}
+            ],
             "motors": [],
         },
     )

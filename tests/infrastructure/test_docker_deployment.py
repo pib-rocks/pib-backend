@@ -69,7 +69,9 @@ def _wait_for_flask(project: str, timeout_sec: float = 180) -> str:
         except (AssertionError, requests.RequestException):
             pass
         time.sleep(3)
-    raise TimeoutError(f"flask-app not ready within {timeout_sec}s for project {project}")
+    raise TimeoutError(
+        f"flask-app not ready within {timeout_sec}s for project {project}"
+    )
 
 
 pytestmark = pytest.mark.docker

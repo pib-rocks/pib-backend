@@ -148,9 +148,7 @@ def create_server(
             motors = robot.get_motors()
         except BackendError as exc:
             return _error(exc.code, exc.message, exc.details)
-        motor = next(
-            (item for item in motors if item.get("name") == motor_name), None
-        )
+        motor = next((item for item in motors if item.get("name") == motor_name), None)
         if motor is None:
             return _error("motor_not_found", f"unknown motor {motor_name!r}")
         minimum = motor.get("rotationRangeMin", motor.get("rotation_range_min"))

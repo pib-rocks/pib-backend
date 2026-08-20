@@ -62,7 +62,12 @@ class SupertoneTTSEngine:
             # 1. Try importing supertonic Python SDK
             try:
                 from supertonic import TTS  # type: ignore
-                model_dir = str(self.model_path) if self.model_path.exists() and self.model_path.is_dir() else None
+
+                model_dir = (
+                    str(self.model_path)
+                    if self.model_path.exists() and self.model_path.is_dir()
+                    else None
+                )
                 self._supertonic_tts = TTS(
                     model="supertonic-3",
                     model_dir=model_dir,
@@ -86,7 +91,9 @@ class SupertoneTTSEngine:
             weights_file = self.model_path / "model.onnx"
             weights_bin = self.model_path / "supertonic_v3.bin"
 
-            has_model_files = config_file.exists() or weights_file.exists() or weights_bin.exists()
+            has_model_files = (
+                config_file.exists() or weights_file.exists() or weights_bin.exists()
+            )
 
             if not has_model_files:
                 self.is_loaded = False
@@ -189,7 +196,9 @@ class SupertoneTTSEngine:
         # Primary synthesis attempt if offline model is loaded
         if self.is_loaded and self.active_backend == "supertone-supertonic-3":
             try:
-                pcm_data = self._synthesize_primary(chunks, lang, voice, speed, emotion, pitch)
+                pcm_data = self._synthesize_primary(
+                    chunks, lang, voice, speed, emotion, pitch
+                )
                 if pcm_data and len(pcm_data) > 0:
                     return self._build_wav_bytes(pcm_data, self.sample_rate)
             except Exception:
@@ -215,8 +224,23 @@ class SupertoneTTSEngine:
         if hasattr(self, "_supertonic_tts") and self._supertonic_tts is not None:
             # Resolve requested voice style (F1-F5, M1-M5) or fallback
             requested_voice = (voice or "").upper()
-            if requested_voice not in ["F1", "F2", "F3", "F4", "F5", "M1", "M2", "M3", "M4", "M5"]:
-                if "MALE" in requested_voice or "DANIEL" in requested_voice or "BRIAN" in requested_voice:
+            if requested_voice not in [
+                "F1",
+                "F2",
+                "F3",
+                "F4",
+                "F5",
+                "M1",
+                "M2",
+                "M3",
+                "M4",
+                "M5",
+            ]:
+                if (
+                    "MALE" in requested_voice
+                    or "DANIEL" in requested_voice
+                    or "BRIAN" in requested_voice
+                ):
                     requested_voice = "M1"
                 else:
                     requested_voice = "F1"
@@ -224,12 +248,17 @@ class SupertoneTTSEngine:
             style = self._supertonic_tts.get_voice_style(requested_voice)
             pcm_chunks = []
             lang_str = (language or self.default_language or "auto").lower()
-            lang_code = "de" if "de" in lang_str or "ger" in lang_str else "en" if "en" in lang_str else "na"
+            lang_code = (
+                "de"
+                if "de" in lang_str or "ger" in lang_str
+                else "en" if "en" in lang_str else "na"
+            )
             for chunk in chunks:
                 wav, dur = self._supertonic_tts.synthesize(
                     chunk, voice_style=style, lang=lang_code, speed=speed, total_steps=8
                 )
                 import numpy as np  # type: ignore
+
                 pcm_int16 = (np.clip(wav, -1.0, 1.0) * 32767.0).astype(np.int16)
                 pcm_chunks.append(pcm_int16.tobytes())
             return b"".join(pcm_chunks)
@@ -278,7 +307,9 @@ class SupertoneTTSEngine:
             t = i / self.sample_rate
             # Synthesize fundamental frequency with formants and envelope for speech-like waveform
             envelope = math.sin(math.pi * (i / num_samples))
-            vocal_tone = math.sin(2 * math.pi * base_freq * t) + 0.3 * math.sin(2 * math.pi * base_freq * 2 * t)
+            vocal_tone = math.sin(2 * math.pi * base_freq * t) + 0.3 * math.sin(
+                2 * math.pi * base_freq * 2 * t
+            )
             expression_vibrato = 0.05 * math.sin(2 * math.pi * 5.0 * t * emotion_mod)
 
             sample_val = int(3000 * envelope * (vocal_tone + expression_vibrato))

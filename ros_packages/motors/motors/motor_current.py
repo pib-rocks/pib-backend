@@ -50,14 +50,10 @@ class MotorCurrent(Node):
 
     def _configure_servo_current(self, bricklet, pin: int) -> None:
         try:
-            bricklet.set_servo_current_configuration(
-                pin, 100, value_has_to_change=True
-            )
+            bricklet.set_servo_current_configuration(pin, 100, value_has_to_change=True)
         except TypeError:
             try:
-                bricklet.set_servo_current_configuration(
-                    pin, value_has_to_change=True
-                )
+                bricklet.set_servo_current_configuration(pin, value_has_to_change=True)
             except TypeError:
                 bricklet.set_servo_current_configuration(pin, 100)
         except Exception as e:

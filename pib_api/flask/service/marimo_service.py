@@ -79,27 +79,34 @@ def list_notebooks() -> List[Dict[str, Any]]:
                 fpath = os.path.join(NOTEBOOKS_DIR, fname)
                 mtime = os.path.getmtime(fpath)
                 size = os.path.getsize(fpath)
-                notebooks.append({
-                    "name": fname,
-                    "title": fname.replace(".py", "").replace("_", " ").title(),
-                    "path": fpath,
-                    "updatedAt": mtime,
-                    "sizeBytes": size
-                })
+                notebooks.append(
+                    {
+                        "name": fname,
+                        "title": fname.replace(".py", "").replace("_", " ").title(),
+                        "path": fpath,
+                        "updatedAt": mtime,
+                        "sizeBytes": size,
+                    }
+                )
     except Exception as e:
         logging.error(f"Error listing Marimo notebooks: {e}")
     return notebooks
 
 
-def create_notebook(name: str, content: Optional[str] = None) -> Tuple[int, Dict[str, Any]]:
+def create_notebook(
+    name: str, content: Optional[str] = None
+) -> Tuple[int, Dict[str, Any]]:
     _ensure_dir()
     if not name.endswith(".py"):
         name += ".py"
-    clean_name = re.sub(r'[^a-zA-Z0-9_\-\.]', '_', name)
+    clean_name = re.sub(r"[^a-zA-Z0-9_\-\.]", "_", name)
     fpath = os.path.join(NOTEBOOKS_DIR, clean_name)
 
     if os.path.exists(fpath):
-        return 400, {"status": "error", "message": f"Notebook '{clean_name}' already exists."}
+        return 400, {
+            "status": "error",
+            "message": f"Notebook '{clean_name}' already exists.",
+        }
 
     initial_content = content if content else EMPTY_NOTEBOOK
     try:
@@ -107,10 +114,7 @@ def create_notebook(name: str, content: Optional[str] = None) -> Tuple[int, Dict
             f.write(initial_content)
         return 201, {
             "status": "success",
-            "notebook": {
-                "name": clean_name,
-                "path": fpath
-            }
+            "notebook": {"name": clean_name, "path": fpath},
         }
     except Exception as e:
         return 500, {"status": "error", "message": str(e)}
@@ -138,7 +142,7 @@ def rename_notebook(old_name: str, new_name: str) -> Tuple[int, Dict[str, Any]]:
         old_name += ".py"
     if not new_name.endswith(".py"):
         new_name += ".py"
-    clean_new = re.sub(r'[^a-zA-Z0-9_\-\.]', '_', new_name)
+    clean_new = re.sub(r"[^a-zA-Z0-9_\-\.]", "_", new_name)
 
     old_path = os.path.join(NOTEBOOKS_DIR, old_name)
     new_path = os.path.join(NOTEBOOKS_DIR, clean_new)
@@ -146,7 +150,10 @@ def rename_notebook(old_name: str, new_name: str) -> Tuple[int, Dict[str, Any]]:
     if not os.path.exists(old_path):
         return 404, {"status": "error", "message": f"Notebook '{old_name}' not found."}
     if os.path.exists(new_path) and old_path != new_path:
-        return 400, {"status": "error", "message": f"Target notebook '{clean_new}' already exists."}
+        return 400, {
+            "status": "error",
+            "message": f"Target notebook '{clean_new}' already exists.",
+        }
 
     try:
         os.rename(old_path, new_path)
@@ -166,6 +173,9 @@ def delete_notebook(name: str) -> Tuple[int, Dict[str, Any]]:
 
     try:
         os.remove(fpath)
-        return 200, {"status": "success", "message": f"Notebook '{name}' deleted successfully."}
+        return 200, {
+            "status": "success",
+            "message": f"Notebook '{name}' deleted successfully.",
+        }
     except Exception as e:
         return 500, {"status": "error", "message": str(e)}

@@ -22,11 +22,19 @@ class TestErrorEnvelope:
         [
             ("post", "/program", "{}", "application/json", 400),
             ("post", "/program", "not-json", "application/json", 400),
-            ("get", "/program/missing-00000000-0000-0000-0000-000000000099", None, None, 404),
+            (
+                "get",
+                "/program/missing-00000000-0000-0000-0000-000000000099",
+                None,
+                None,
+                404,
+            ),
             ("get", "/motor/no_such_motor_xyz", None, None, 404),
         ],
     )
-    def test_error_envelope(self, client, method, path, body, content_type, expected_status):
+    def test_error_envelope(
+        self, client, method, path, body, content_type, expected_status
+    ):
         if body is None:
             response = client.open(path, method=method.upper())
         else:
@@ -69,7 +77,9 @@ class TestProgramEndpoints:
     @patch("service.program_service.pib_blockly_client.code_visual_to_python")
     def test_put_code_compilation_failure_500(self, mock_compile, client):
         mock_compile.return_value = (False, None)
-        pn = client.post("/program", json={"name": "compile_fail"}).get_json()["programNumber"]
+        pn = client.post("/program", json={"name": "compile_fail"}).get_json()[
+            "programNumber"
+        ]
         response = client.put(f"/program/{pn}/code", json={"codeVisual": "{}"})
         assert response.status_code == 500
         assert _error(response)["error"] == "an unknown error occured."
@@ -136,7 +146,9 @@ class TestBrickletAndButtonPrograms:
         assert any(b["type"] == "RGB LED Button Bricklet" for b in bricklets)
 
     def test_put_button_program_mapping(self, client):
-        pn = client.post("/program", json={"name": "btn_map_prog"}).get_json()["programNumber"]
+        pn = client.post("/program", json={"name": "btn_map_prog"}).get_json()[
+            "programNumber"
+        ]
         response = client.put(
             "/button-programs",
             json={"buttonProgramUpdates": [{"brickletNumber": 5, "programNumber": pn}]},
@@ -144,7 +156,9 @@ class TestBrickletAndButtonPrograms:
         assert response.status_code == 200
         client.put(
             "/button-programs",
-            json={"buttonProgramUpdates": [{"brickletNumber": 5, "programNumber": None}]},
+            json={
+                "buttonProgramUpdates": [{"brickletNumber": 5, "programNumber": None}]
+            },
         )
 
 
@@ -180,7 +194,9 @@ class TestVoiceAssistant:
         assert client.delete(f"/voice-assistant/personality/{pid}").status_code == 204
 
     def test_chat_message_create(self, client):
-        chat_id = client.get("/voice-assistant/chat").get_json()["voiceAssistantChats"][0]["chatId"]
+        chat_id = client.get("/voice-assistant/chat").get_json()["voiceAssistantChats"][
+            0
+        ]["chatId"]
         msg = client.post(
             f"/voice-assistant/chat/{chat_id}/messages",
             json={"isUser": True, "content": "contract test"},

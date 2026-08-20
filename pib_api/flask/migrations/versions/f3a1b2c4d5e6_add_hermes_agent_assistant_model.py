@@ -21,14 +21,10 @@ def upgrade():
     count = result.scalar()
 
     if count > 0:
-        conn.execute(
-            sa.text(
-                """
+        conn.execute(sa.text("""
                 INSERT OR IGNORE INTO assistant_model (api_name, visual_name, has_image_support)
                 VALUES ('hermes-agent', 'Hermes Agent (selbstlernend)', true)
-                """
-            )
-        )
+                """))
 
 
 def downgrade():

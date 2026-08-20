@@ -125,9 +125,7 @@ def test_import_rejects_missing_bricklets_array(seeded):
 
 def test_import_rejects_unsupported_version(seeded):
     with pytest.raises(ValueError, match="Unsupported hardware config version"):
-        hcs.import_hardware_config(
-            {"version": 99, "bricklets": [], "motors": []}
-        )
+        hcs.import_hardware_config({"version": 99, "bricklets": [], "motors": []})
 
 
 def test_import_rejects_unknown_bricklet_type(seeded):
@@ -188,9 +186,7 @@ def test_validate_accepts_snake_case_aliases(seeded):
             {
                 "name": "elbow_left",
                 "pulse_width_min": 800,
-                "bricklet_pins": [
-                    {"bricklet_number": 3, "pin": 8, "invert": False}
-                ],
+                "bricklet_pins": [{"bricklet_number": 3, "pin": 8, "invert": False}],
             }
         ],
     }

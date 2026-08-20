@@ -43,9 +43,7 @@ class PibBackend:
             or "http://localhost:5000"
         ).rstrip("/")
         self.rosbridge_url = (
-            rosbridge_url
-            or os.getenv("PIB_MCP_ROSBRIDGE_URL")
-            or "ws://localhost:9090"
+            rosbridge_url or os.getenv("PIB_MCP_ROSBRIDGE_URL") or "ws://localhost:9090"
         )
         self.timeout = float(
             timeout
@@ -75,7 +73,9 @@ class PibBackend:
                 {"status": exc.code, "body": body},
             ) from exc
         except (URLError, TimeoutError, ValueError) as exc:
-            raise BackendError("api_unavailable", f"pib API request failed: {exc}") from exc
+            raise BackendError(
+                "api_unavailable", f"pib API request failed: {exc}"
+            ) from exc
 
     def _ros_service(
         self, service: str, service_type: str, arguments: dict[str, Any]
@@ -116,7 +116,8 @@ class PibBackend:
                 if isinstance(values, dict):
                     return values
             raise BackendError(
-                "ros_timeout", f"ROS service {service} timed out after {self.timeout:g}s"
+                "ros_timeout",
+                f"ROS service {service} timed out after {self.timeout:g}s",
             )
         except BackendError:
             raise
@@ -194,7 +195,9 @@ class PibBackend:
         pose = self._http("GET", f"/pose/by-name/{quote(pose_name, safe='')}")
         motor_positions = pose.get("motorPositions", pose.get("motor_positions", []))
         if not motor_positions:
-            raise BackendError("pose_empty", f"pose {pose_name!r} has no motor positions")
+            raise BackendError(
+                "pose_empty", f"pose {pose_name!r} has no motor positions"
+            )
         names = [
             item.get("motorName", item.get("motor_name")) for item in motor_positions
         ]
@@ -221,7 +224,9 @@ class PibBackend:
         )
         goal_id = response.get("proxy_goal_id", response.get("proxyGoalId"))
         if not goal_id:
-            raise BackendError("program_failed", f"program {program_id!r} did not start")
+            raise BackendError(
+                "program_failed", f"program {program_id!r} did not start"
+            )
         return {"programId": program_id, "goalId": goal_id}
 
     def set_led(

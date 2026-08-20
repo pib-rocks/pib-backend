@@ -18,7 +18,10 @@ def create_notebook():
     name = data.get("name")
     content = data.get("content")
     if not name:
-        return jsonify({"status": "error", "message": "Notebook name is required."}), 400
+        return (
+            jsonify({"status": "error", "message": "Notebook name is required."}),
+            400,
+        )
 
     code, res = marimo_service.create_notebook(name, content)
     return jsonify(res), code
@@ -37,7 +40,10 @@ def rename_notebook(name):
     data = request.get_json() or {}
     new_name = data.get("newName")
     if not new_name:
-        return jsonify({"status": "error", "message": "New notebook name is required."}), 400
+        return (
+            jsonify({"status": "error", "message": "New notebook name is required."}),
+            400,
+        )
 
     code, res = marimo_service.rename_notebook(name, new_name)
     return jsonify(res), code

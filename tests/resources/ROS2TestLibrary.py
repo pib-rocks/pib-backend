@@ -34,7 +34,9 @@ class ROS2TestLibrary:
         )
         self._mock_positions: dict[str, int] = {}
 
-    def ros2_initialize_test_node(self, node_name: str = "robot_framework_test") -> None:
+    def ros2_initialize_test_node(
+        self, node_name: str = "robot_framework_test"
+    ) -> None:
         if self._mock_mode:
             return
         if not _RCLPY_AVAILABLE:
@@ -42,7 +44,9 @@ class ROS2TestLibrary:
         if not rclpy.ok():
             rclpy.init()
         self._node = rclpy.create_node(node_name)
-        self._spin_thread = threading.Thread(target=rclpy.spin, args=(self._node,), daemon=True)
+        self._spin_thread = threading.Thread(
+            target=rclpy.spin, args=(self._node,), daemon=True
+        )
         self._spin_thread.start()
 
     def ros2_shutdown_test_node(self) -> None:
@@ -53,7 +57,9 @@ class ROS2TestLibrary:
             rclpy.shutdown()
         self._node = None
 
-    def ros2_wait_for_service(self, service_name: str, timeout_sec: float = 10.0) -> bool:
+    def ros2_wait_for_service(
+        self, service_name: str, timeout_sec: float = 10.0
+    ) -> bool:
         if self._mock_mode:
             return True
         assert self._node is not None
@@ -68,7 +74,9 @@ class ROS2TestLibrary:
             self._mock_positions[motor_name] = clamped
             return True
         assert self._node is not None
-        client = self._node.create_client(ApplyJointTrajectory, "apply_joint_trajectory")
+        client = self._node.create_client(
+            ApplyJointTrajectory, "apply_joint_trajectory"
+        )
         if not client.wait_for_service(timeout_sec=timeout_sec):
             return False
         request = ApplyJointTrajectory.Request()
@@ -82,7 +90,9 @@ class ROS2TestLibrary:
         response = future.result()
         return bool(response.successful)
 
-    def ros2_get_joint_position(self, motor_name: str, timeout_sec: float = 10.0) -> int:
+    def ros2_get_joint_position(
+        self, motor_name: str, timeout_sec: float = 10.0
+    ) -> int:
         if self._mock_mode:
             return self._mock_positions.get(motor_name, 0)
         assert self._node is not None

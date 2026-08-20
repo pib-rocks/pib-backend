@@ -11,7 +11,6 @@ from rclpy.node import Node
 from button_service.srv import ReadButton, WaitForButton, SetButtonManualOverride
 from datatypes.msg import ButtonColor
 
-
 _node: Optional[Node] = None
 _set_button_color_publisher = None
 
@@ -23,7 +22,9 @@ def _ensure_node() -> Node:
         rclpy.init(args=None)
     if _node is None:
         _node = rclpy.create_node("pib_button_blockly_client")
-        _set_button_color_publisher = _node.create_publisher(ButtonColor, "set_button_color", 10)
+        _set_button_color_publisher = _node.create_publisher(
+            ButtonColor, "set_button_color", 10
+        )
     return _node
 
 
@@ -50,7 +51,15 @@ def _call(service_type, service_name: str, request, timeout_sec: float = 10.0):
     return result
 
 
-def set_button_color(button_id: int, red: int, green: int, blue: int, *, sticky: bool = True, clear: bool = False) -> None:
+def set_button_color(
+    button_id: int,
+    red: int,
+    green: int,
+    blue: int,
+    *,
+    sticky: bool = True,
+    clear: bool = False,
+) -> None:
     node = _ensure_node()
     uid = _button_id_to_uid(button_id)
 
@@ -140,7 +149,9 @@ def is_button_switched_on(button_id: int) -> bool:
     return bool(res.switched_on)
 
 
-def wait_for_button_press(button_id: int, red: int, green: int, blue: int, timeout_sec: float = 0.0) -> bool:
+def wait_for_button_press(
+    button_id: int, red: int, green: int, blue: int, timeout_sec: float = 0.0
+) -> bool:
     req = WaitForButton.Request()
     req.button_id = int(button_id)
     req.red = int(red)
@@ -148,11 +159,18 @@ def wait_for_button_press(button_id: int, red: int, green: int, blue: int, timeo
     req.blue = int(blue)
     req.switch_mode = False
     req.timeout_sec = float(timeout_sec)
-    res = _call(WaitForButton, "/tf_button/wait", req, timeout_sec=max(10.0, float(timeout_sec) + 1.0))
+    res = _call(
+        WaitForButton,
+        "/tf_button/wait",
+        req,
+        timeout_sec=max(10.0, float(timeout_sec) + 1.0),
+    )
     return bool(res.pressed)
 
 
-def wait_for_button_switch(button_id: int, red: int, green: int, blue: int, timeout_sec: float = 0.0) -> bool:
+def wait_for_button_switch(
+    button_id: int, red: int, green: int, blue: int, timeout_sec: float = 0.0
+) -> bool:
     req = WaitForButton.Request()
     req.button_id = int(button_id)
     req.red = int(red)
@@ -160,5 +178,10 @@ def wait_for_button_switch(button_id: int, red: int, green: int, blue: int, time
     req.blue = int(blue)
     req.switch_mode = True
     req.timeout_sec = float(timeout_sec)
-    res = _call(WaitForButton, "/tf_button/wait", req, timeout_sec=max(10.0, float(timeout_sec) + 1.0))
+    res = _call(
+        WaitForButton,
+        "/tf_button/wait",
+        req,
+        timeout_sec=max(10.0, float(timeout_sec) + 1.0),
+    )
     return bool(res.switched_on)

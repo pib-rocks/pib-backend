@@ -88,19 +88,27 @@ def align_profile_ownership(profile_dir: str) -> None:
             # same way, so stop rather than repeat the same log line.
             logging.debug(
                 "could not chown %s to %s:%s: %s",
-                path, intended.st_uid, intended.st_gid, exc,
+                path,
+                intended.st_uid,
+                intended.st_gid,
+                exc,
             )
             break
     else:
         logging.debug(
             "hermes profile %s now owned by %s:%s",
-            profile_dir, intended.st_uid, intended.st_gid,
+            profile_dir,
+            intended.st_uid,
+            intended.st_gid,
         )
 
     try:
         os.chmod(profile_dir, PROFILE_DIR_MODE)
     except OSError as exc:
-        logging.debug("could not chmod %s to %o: %s", profile_dir, PROFILE_DIR_MODE, exc)
+        logging.debug(
+            "could not chmod %s to %o: %s", profile_dir, PROFILE_DIR_MODE, exc
+        )
+
 
 # The one callable name per tool, as Hermes builds it in
 # tools/mcp_tool.py::mcp_prefixed_tool_name: "mcp__" + server + "__" + tool. The
@@ -114,11 +122,17 @@ MCP_TOOLS = (
         "list_motors",
         "Listet konfigurierte Motoren und Bricklets inklusive aktueller Motorpositionen.",
     ),
-    ("get_state", "Liefert den aktuellen Gelenkzustand, Diagnosen und Roboter-Telemetrie."),
+    (
+        "get_state",
+        "Liefert den aktuellen Gelenkzustand, Diagnosen und Roboter-Telemetrie.",
+    ),
     ("list_poses", "Listet gespeicherte Posen."),
     ("list_programs", "Listet gespeicherte Blockly-/Python-Programme."),
     ("capture_image", "Nimmt ein Kamerabild als base64-kodiertes JPEG auf."),
-    ("move_motor", "Bewegt einen Motor innerhalb seiner konfigurierten Rotationsgrenzen."),
+    (
+        "move_motor",
+        "Bewegt einen Motor innerhalb seiner konfigurierten Rotationsgrenzen.",
+    ),
     ("apply_pose", "Wendet eine gespeicherte Pose anhand ihres genauen Namens an."),
     ("run_program", "Startet ein gespeichertes Programm anhand seiner Program-ID."),
     ("set_led", "Setzt die RGB-LED eines Buttons (Button 1–3, Kanäle 0–255)."),
@@ -180,4 +194,3 @@ def build_default_soul_text(
     parts.append("")
     parts.append(MCP_TOOLS_SOUL_SECTION.strip())
     return "\n".join(parts) + "\n"
-

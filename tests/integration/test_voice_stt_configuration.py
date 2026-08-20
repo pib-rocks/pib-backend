@@ -23,7 +23,9 @@ class _ClientWrapper:
 
     def _url(self, path):
         if path.startswith("http://") or path.startswith("https://"):
-            return path.split("http://localhost:5000")[-1].split("http://127.0.0.1:5000")[-1]
+            return path.split("http://localhost:5000")[-1].split(
+                "http://127.0.0.1:5000"
+            )[-1]
         return path
 
     def get(self, url, **kwargs):
@@ -53,15 +55,23 @@ class TestSTTConfigurationAPI:
         r = http_client.get(f"{FLASK_BASE_URL}/voice-assistant/personality")
         assert r.status_code == 200
         data = r.json()
-        personalities = data.get("voiceAssistantPersonalities") or data.get("personalities") or []
+        personalities = (
+            data.get("voiceAssistantPersonalities") or data.get("personalities") or []
+        )
         assert len(personalities) > 0
 
         first_p = personalities[0]
-        p_id = first_p.get("personalityId") or first_p.get("personality_id") or first_p.get("personalityNumber")
+        p_id = (
+            first_p.get("personalityId")
+            or first_p.get("personality_id")
+            or first_p.get("personalityNumber")
+        )
         assert p_id is not None
 
         # Fetch detail
-        r_detail = http_client.get(f"{FLASK_BASE_URL}/voice-assistant/personality/{p_id}")
+        r_detail = http_client.get(
+            f"{FLASK_BASE_URL}/voice-assistant/personality/{p_id}"
+        )
         assert r_detail.status_code == 200
         p_detail = r_detail.json()
         assert p_detail.get("sttEngine") in ["local_whisper", "tryb_api"]
@@ -70,13 +80,21 @@ class TestSTTConfigurationAPI:
         r = http_client.get(f"{FLASK_BASE_URL}/voice-assistant/personality")
         assert r.status_code == 200
         data = r.json()
-        personalities = data.get("voiceAssistantPersonalities") or data.get("personalities") or []
+        personalities = (
+            data.get("voiceAssistantPersonalities") or data.get("personalities") or []
+        )
         first_p = personalities[0]
-        p_id = first_p.get("personalityId") or first_p.get("personality_id") or first_p.get("personalityNumber")
+        p_id = (
+            first_p.get("personalityId")
+            or first_p.get("personality_id")
+            or first_p.get("personalityNumber")
+        )
 
         # Switch to tryb_api
         payload_tryb = {"sttEngine": "tryb_api"}
-        r_put = http_client.put(f"{FLASK_BASE_URL}/voice-assistant/personality/{p_id}", json=payload_tryb)
+        r_put = http_client.put(
+            f"{FLASK_BASE_URL}/voice-assistant/personality/{p_id}", json=payload_tryb
+        )
         assert r_put.status_code in [200, 204]
 
         # Verify detail
@@ -86,10 +104,14 @@ class TestSTTConfigurationAPI:
 
         # Switch back to local_whisper
         payload_local = {"sttEngine": "local_whisper"}
-        r_put_back = http_client.put(f"{FLASK_BASE_URL}/voice-assistant/personality/{p_id}", json=payload_local)
+        r_put_back = http_client.put(
+            f"{FLASK_BASE_URL}/voice-assistant/personality/{p_id}", json=payload_local
+        )
         assert r_put_back.status_code in [200, 204]
 
         # Verify detail
-        r_get_back = http_client.get(f"{FLASK_BASE_URL}/voice-assistant/personality/{p_id}")
+        r_get_back = http_client.get(
+            f"{FLASK_BASE_URL}/voice-assistant/personality/{p_id}"
+        )
         assert r_get_back.status_code == 200
         assert r_get_back.json().get("sttEngine") == "local_whisper"

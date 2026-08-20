@@ -25,7 +25,9 @@ class _ClientWrapper:
 
     def _url(self, path):
         if path.startswith("http://") or path.startswith("https://"):
-            return path.split("http://localhost:5000")[-1].split("http://127.0.0.1:5000")[-1]
+            return path.split("http://localhost:5000")[-1].split(
+                "http://127.0.0.1:5000"
+            )[-1]
         return path
 
     def get(self, url, **kwargs):
@@ -91,31 +93,37 @@ class TestProgramCRUDAndExecution:
             assert "codeVisual" in r_code_get.json()
 
             # 4. Update program visual code (Hello World print block)
-            hello_world_visual = json.dumps({
-                "blocks": {
-                    "languageVersion": 0,
-                    "blocks": [
-                        {
-                            "type": "text_print",
-                            "id": "print_block_001",
-                            "x": 100,
-                            "y": 100,
-                            "inputs": {
-                                "TEXT": {
-                                    "shadow": {
-                                        "type": "text",
-                                        "id": "text_block_001",
-                                        "fields": {"TEXT": "Hello World Automated Test"}
+            hello_world_visual = json.dumps(
+                {
+                    "blocks": {
+                        "languageVersion": 0,
+                        "blocks": [
+                            {
+                                "type": "text_print",
+                                "id": "print_block_001",
+                                "x": 100,
+                                "y": 100,
+                                "inputs": {
+                                    "TEXT": {
+                                        "shadow": {
+                                            "type": "text",
+                                            "id": "text_block_001",
+                                            "fields": {
+                                                "TEXT": "Hello World Automated Test"
+                                            },
+                                        }
                                     }
-                                }
+                                },
                             }
-                        }
-                    ]
+                        ],
+                    }
                 }
-            })
+            )
 
             put_code_payload = {"codeVisual": hello_world_visual}
-            r_code_put = http_client.put(f"{FLASK_BASE_URL}/program/{prog_id}/code", json=put_code_payload)
+            r_code_put = http_client.put(
+                f"{FLASK_BASE_URL}/program/{prog_id}/code", json=put_code_payload
+            )
             assert r_code_put.status_code == 200
             assert "codeVisual" in r_code_put.json()
 
@@ -148,7 +156,9 @@ class TestProgramCRUDAndExecution:
         prog_id1 = r1.json()["programNumber"]
 
         try:
-            r2 = http_client.post(f"{FLASK_BASE_URL}/program", json={"name": unique_name})
+            r2 = http_client.post(
+                f"{FLASK_BASE_URL}/program", json={"name": unique_name}
+            )
             assert r2.status_code == 400
         finally:
             http_client.delete(f"{FLASK_BASE_URL}/program/{prog_id1}")

@@ -92,6 +92,7 @@ def _call(server, name, arguments):
         c0 = result.content[0]
         if hasattr(c0, "text"):
             import json
+
             try:
                 return json.loads(c0.text)
             except Exception:
@@ -200,9 +201,7 @@ def test_actuating_tools_are_disabled_by_default(monkeypatch):
     backend = FakeBackend()
     server = create_server(backend)
 
-    result = _call(
-        server, "move_motor", {"motor_name": "head", "position": 0}
-    )
+    result = _call(server, "move_motor", {"motor_name": "head", "position": 0})
 
     assert ACTUATING_TOOLS
     assert result["error"]["code"] == "actuation_disabled"

@@ -207,18 +207,22 @@ def test_run_turn_in_process_calls_hermes_run_agent(tmp_path, monkeypatch):
     fake_module = types.ModuleType("hermes.run_agent")
     fake_module.run_agent = fake_run_agent
 
-    with patch.dict(
-        sys.modules,
-        {
-            "hermes": types.ModuleType("hermes"),
-            "hermes.run_agent": fake_module,
-        },
-    ), patch(
-        "public_api_client.hermes_agent_client.ensure_profile",
-        return_value=str(tmp_path / "profiles" / "pib_pers-1"),
-    ) as ensure_profile, patch(
-        "public_api_client.hermes_agent_client.run_turn_subprocess",
-    ) as subprocess_runner:
+    with (
+        patch.dict(
+            sys.modules,
+            {
+                "hermes": types.ModuleType("hermes"),
+                "hermes.run_agent": fake_module,
+            },
+        ),
+        patch(
+            "public_api_client.hermes_agent_client.ensure_profile",
+            return_value=str(tmp_path / "profiles" / "pib_pers-1"),
+        ) as ensure_profile,
+        patch(
+            "public_api_client.hermes_agent_client.run_turn_subprocess",
+        ) as subprocess_runner,
+    ):
         reply = hd.run_turn_in_process(
             text="Hallo",
             chat_id="chat-42",
@@ -248,10 +252,13 @@ def test_run_turn_in_process_falls_back_to_subprocess_when_import_fails():
             raise ImportError("no hermes package")
         return real_import(name, *args, **kwargs)
 
-    with patch("builtins.__import__", side_effect=_block_hermes_run_agent), patch(
-        "public_api_client.hermes_agent_client.run_turn_subprocess",
-        return_value="subprocess-reply",
-    ) as subprocess_runner:
+    with (
+        patch("builtins.__import__", side_effect=_block_hermes_run_agent),
+        patch(
+            "public_api_client.hermes_agent_client.run_turn_subprocess",
+            return_value="subprocess-reply",
+        ) as subprocess_runner,
+    ):
         reply = hd.run_turn_in_process(
             text="Hallo",
             chat_id="chat-7",
@@ -357,12 +364,15 @@ def test_run_turn_in_process_reads_reply_from_run_agent_stdout(tmp_path, monkeyp
 
     _install_fake_run_agent_main(monkeypatch, fake_main)
 
-    with patch(
-        "public_api_client.hermes_agent_client.ensure_profile",
-        return_value=str(tmp_path / "profiles" / "pib_pers-1"),
-    ), patch(
-        "public_api_client.hermes_agent_client.run_turn_subprocess",
-    ) as subprocess_runner:
+    with (
+        patch(
+            "public_api_client.hermes_agent_client.ensure_profile",
+            return_value=str(tmp_path / "profiles" / "pib_pers-1"),
+        ),
+        patch(
+            "public_api_client.hermes_agent_client.run_turn_subprocess",
+        ) as subprocess_runner,
+    ):
         reply = hd.run_turn_in_process(
             text="Wie geht es dir?",
             chat_id="chat-1",
@@ -411,7 +421,9 @@ def test_run_turn_in_process_falls_back_when_stdout_has_no_final_response(monkey
     )
 
 
-def test_run_turn_in_process_uses_fallback_reply_when_subprocess_also_empty(monkeypatch):
+def test_run_turn_in_process_uses_fallback_reply_when_subprocess_also_empty(
+    monkeypatch,
+):
     from public_api_client.hermes_agent_client import FALLBACK_REPLY
 
     def fake_main(query=None, model="", **kwargs):
@@ -435,18 +447,23 @@ def test_run_turn_in_process_returns_fallback_on_agent_error(tmp_path, monkeypat
     fake_module = types.ModuleType("hermes.run_agent")
     fake_module.run_agent = MagicMock(side_effect=RuntimeError("boom"))
 
-    with patch.dict(
-        sys.modules,
-        {
-            "hermes": types.ModuleType("hermes"),
-            "hermes.run_agent": fake_module,
-        },
-    ), patch(
-        "public_api_client.hermes_agent_client.ensure_profile",
-        return_value="/tmp/p",
+    with (
+        patch.dict(
+            sys.modules,
+            {
+                "hermes": types.ModuleType("hermes"),
+                "hermes.run_agent": fake_module,
+            },
+        ),
+        patch(
+            "public_api_client.hermes_agent_client.ensure_profile",
+            return_value="/tmp/p",
+        ),
     ):
         reply = hd.run_turn_in_process(
-            text="Hi", chat_id="c", personality_id="pers-1",
+            text="Hi",
+            chat_id="c",
+            personality_id="pers-1",
         )
 
     assert reply == FALLBACK_REPLY

@@ -68,7 +68,9 @@ class TinkerforgeButtonService(Node):
 
         self._connect_buttons()
 
-        self.create_service(SetButtonColor, "/tf_button/set_color", self.handle_set_color)
+        self.create_service(
+            SetButtonColor, "/tf_button/set_color", self.handle_set_color
+        )
         self.create_service(ReadButton, "/tf_button/read", self.handle_read)
         self.create_service(WaitForButton, "/tf_button/wait", self.handle_wait)
 
@@ -126,7 +128,9 @@ class TinkerforgeButtonService(Node):
                 f"Current count: {len(self.uids)}"
             )
 
-        self.get_logger().info(f"Connecting to Tinkerforge brickd at {self.host}:{self.port}")
+        self.get_logger().info(
+            f"Connecting to Tinkerforge brickd at {self.host}:{self.port}"
+        )
         self.ipcon.connect(self.host, self.port)
 
         for button_id, uid in enumerate(self.uids, start=1):
@@ -142,6 +146,7 @@ class TinkerforgeButtonService(Node):
             def make_callback(current_button_id: int):
                 def callback(state_value: int) -> None:
                     self._on_button_state_changed(current_button_id, state_value)
+
                 return callback
 
             device.register_callback(
@@ -176,7 +181,9 @@ class TinkerforgeButtonService(Node):
         runtime = self._button(request.button_id)
         if runtime is None:
             response.success = False
-            response.message = f"Unknown button_id {request.button_id}. Valid ids are 1, 2, 3."
+            response.message = (
+                f"Unknown button_id {request.button_id}. Valid ids are 1, 2, 3."
+            )
             return response
 
         try:
@@ -197,7 +204,9 @@ class TinkerforgeButtonService(Node):
         runtime = self._button(request.button_id)
         if runtime is None:
             response.success = False
-            response.message = f"Unknown button_id {request.button_id}. Valid ids are 1, 2, 3."
+            response.message = (
+                f"Unknown button_id {request.button_id}. Valid ids are 1, 2, 3."
+            )
             return response
 
         try:
@@ -220,7 +229,9 @@ class TinkerforgeButtonService(Node):
         runtime = self._button(request.button_id)
         if runtime is None:
             response.success = False
-            response.message = f"Unknown button_id {request.button_id}. Valid ids are 1, 2, 3."
+            response.message = (
+                f"Unknown button_id {request.button_id}. Valid ids are 1, 2, 3."
+            )
             return response
 
         timeout_sec = float(request.timeout_sec)
