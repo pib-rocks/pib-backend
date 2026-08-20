@@ -6,7 +6,6 @@ import types
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-
 MODULE_PATH = (
     Path(__file__).resolve().parents[2]
     / "ros_packages"
@@ -92,7 +91,9 @@ def _load_motor_current(motors):
         "tinkerforge.bricklet_servo_v2": servo_v2,
     }
 
-    spec = importlib.util.spec_from_file_location("motor_current_timer_under_test", MODULE_PATH)
+    spec = importlib.util.spec_from_file_location(
+        "motor_current_timer_under_test", MODULE_PATH
+    )
     module = importlib.util.module_from_spec(spec)
     with patch.dict(sys.modules, dependencies):
         spec.loader.exec_module(module)

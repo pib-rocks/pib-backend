@@ -354,11 +354,14 @@ def test_ensure_hermes_daemon_logs_when_available(chat_module, chat_node):
     logger = MagicMock()
     chat_node.get_logger = MagicMock(return_value=logger)
 
-    with patch(
-        "public_api_client.hermes_daemon.ensure_daemon_running", return_value=True
-    ), patch(
-        "public_api_client.hermes_daemon.daemon_base_url",
-        return_value="http://127.0.0.1:8088",
+    with (
+        patch(
+            "public_api_client.hermes_daemon.ensure_daemon_running", return_value=True
+        ),
+        patch(
+            "public_api_client.hermes_daemon.daemon_base_url",
+            return_value="http://127.0.0.1:8088",
+        ),
     ):
         assert chat_node._ensure_hermes_daemon() is True
 
@@ -394,18 +397,22 @@ def test_warm_daemon_turn_uses_in_process_runner(chat_module, chat_node, monkeyp
     fake_module = types.ModuleType("hermes.run_agent")
     fake_module.run_agent = fake_run_agent
 
-    with patch.dict(
-        sys.modules,
-        {
-            "hermes": types.ModuleType("hermes"),
-            "hermes.run_agent": fake_module,
-        },
-    ), patch(
-        "public_api_client.hermes_agent_client.ensure_profile",
-        return_value="/tmp/p",
-    ), patch(
-        "public_api_client.hermes_agent_client.run_turn_subprocess",
-    ) as subprocess_runner:
+    with (
+        patch.dict(
+            sys.modules,
+            {
+                "hermes": types.ModuleType("hermes"),
+                "hermes.run_agent": fake_module,
+            },
+        ),
+        patch(
+            "public_api_client.hermes_agent_client.ensure_profile",
+            return_value="/tmp/p",
+        ),
+        patch(
+            "public_api_client.hermes_agent_client.run_turn_subprocess",
+        ) as subprocess_runner,
+    ):
         probe = hd.create_server(host="127.0.0.1", port=0)
         host, port = probe.server_address
         monkeypatch.setenv("PIB_HERMES_DAEMON_HOST", host)
@@ -469,10 +476,13 @@ def test_warm_daemon_falls_back_to_subprocess_when_run_agent_missing(
             raise ImportError("no hermes")
         return real_import(name, *args, **kwargs)
 
-    with patch("builtins.__import__", side_effect=_block_hermes), patch(
-        "public_api_client.hermes_agent_client.run_turn_subprocess",
-        return_value="subprocess-via-daemon",
-    ) as subprocess_runner:
+    with (
+        patch("builtins.__import__", side_effect=_block_hermes),
+        patch(
+            "public_api_client.hermes_agent_client.run_turn_subprocess",
+            return_value="subprocess-via-daemon",
+        ) as subprocess_runner,
+    ):
         probe = hd.create_server(host="127.0.0.1", port=0)
         host, port = probe.server_address
         monkeypatch.setenv("PIB_HERMES_DAEMON_HOST", host)
@@ -550,9 +560,7 @@ def test_stream_chunks_to_goal_writes_chunks_in_order(chat_module, chat_node):
     assert updates == [False, True, True]
 
 
-def test_stream_chunks_to_goal_persists_text_without_terminator(
-    chat_module, chat_node
-):
+def test_stream_chunks_to_goal_persists_text_without_terminator(chat_module, chat_node):
     """The tail of a reply used to be dropped when it had no '.', '?' or '!'."""
     goal_handle = MagicMock()
     goal_handle.is_cancel_requested = False
@@ -616,7 +624,7 @@ def test_stream_chunks_to_goal_publishes_prior_sentence_as_feedback(
         call[0][0].text for call in goal_handle.publish_feedback.call_args_list
     ]
     assert "Eins. " in feedback_texts  # TTFT first-token emit
-    assert "Eins." in feedback_texts   # prior completed sentence
+    assert "Eins." in feedback_texts  # prior completed sentence
     assert prev == "Zwei."
     assert ptype == TEXT_TYPE_SENTENCE
     assert curr == ""
@@ -629,9 +637,7 @@ def test_stream_chunks_to_goal_extracts_pib_program(chat_module, chat_node):
     # Sentence completes in first token; program completes in later tokens so the
     # sentence is published as feedback (same Action contract as the legacy path).
     tokens = ["Hallo. ", "<pib-program>xml-here</pib-program>"]
-    prev, ptype, curr = chat_node._stream_chunks_to_goal(
-        goal_handle, "chat-1", tokens
-    )
+    prev, ptype, curr = chat_node._stream_chunks_to_goal(goal_handle, "chat-1", tokens)
 
     assert goal_handle.publish_feedback.call_count >= 2
     feedback_texts = [
@@ -644,9 +650,7 @@ def test_stream_chunks_to_goal_extracts_pib_program(chat_module, chat_node):
     assert curr == ""
 
 
-def test_stream_chunks_to_goal_emits_perf_trace_on_first_chunk(
-    chat_module, chat_node
-):
+def test_stream_chunks_to_goal_emits_perf_trace_on_first_chunk(chat_module, chat_node):
     goal_handle = MagicMock()
     goal_handle.is_cancel_requested = False
     logger = MagicMock()
@@ -679,28 +683,33 @@ def test_chat_routes_hermes_without_replaying_history(chat_module, chat_node):
     goal_handle.request.text = "Hi"
     goal_handle.request.generate_code = False
 
-    with patch.object(
-        chat_module.voice_assistant_client,
-        "get_personality_from_chat",
-        return_value=(True, personality),
-    ), patch.object(
-        chat_module.voice_assistant_client,
-        "get_chat_history",
-    ) as get_history, patch.object(
-        chat_module.public_voice_client,
-        "chat_completion",
-    ) as chat_completion, patch.object(
-        hermes_agent_client, "is_warm_daemon_active", return_value=False
-    ), patch.object(
-        hermes_agent_client, "ensure_profile", return_value="/tmp/p"
-    ) as ensure_profile, patch.object(
-        hermes_agent_client, "run_turn", return_value="Antwort vom Agent."
-    ) as run_turn, patch.object(
-        chat_node,
-        "_stream_chunks_to_goal",
-        return_value=(None, None, "Antwort vom Agent."),
-    ) as stream, patch.dict(
-        os.environ, {"PIB_HERMES_TIMEOUT": "95"}, clear=False
+    with (
+        patch.object(
+            chat_module.voice_assistant_client,
+            "get_personality_from_chat",
+            return_value=(True, personality),
+        ),
+        patch.object(
+            chat_module.voice_assistant_client,
+            "get_chat_history",
+        ) as get_history,
+        patch.object(
+            chat_module.public_voice_client,
+            "chat_completion",
+        ) as chat_completion,
+        patch.object(hermes_agent_client, "is_warm_daemon_active", return_value=False),
+        patch.object(
+            hermes_agent_client, "ensure_profile", return_value="/tmp/p"
+        ) as ensure_profile,
+        patch.object(
+            hermes_agent_client, "run_turn", return_value="Antwort vom Agent."
+        ) as run_turn,
+        patch.object(
+            chat_node,
+            "_stream_chunks_to_goal",
+            return_value=(None, None, "Antwort vom Agent."),
+        ) as stream,
+        patch.dict(os.environ, {"PIB_HERMES_TIMEOUT": "95"}, clear=False),
     ):
 
         result = drive_like_rclpy(chat_node.chat(goal_handle))
@@ -746,22 +755,25 @@ def test_chat_skips_ensure_profile_when_warm_daemon_active(
     goal_handle.request.text = "Hi"
     goal_handle.request.generate_code = False
 
-    with patch.object(
-        chat_module.voice_assistant_client,
-        "get_personality_from_chat",
-        return_value=(True, personality),
-    ), patch.object(
-        hermes_agent_client, "is_warm_daemon_active", return_value=True
-    ), patch.object(
-        hermes_agent_client, "profile_dir_for", return_value=str(profile_dir)
-    ), patch.object(
-        hermes_agent_client, "ensure_profile", return_value=str(profile_dir)
-    ) as ensure_profile, patch.object(
-        hermes_agent_client, "run_turn", return_value="schnell"
-    ), patch.object(
-        chat_node,
-        "_stream_chunks_to_goal",
-        return_value=(None, None, "schnell"),
+    with (
+        patch.object(
+            chat_module.voice_assistant_client,
+            "get_personality_from_chat",
+            return_value=(True, personality),
+        ),
+        patch.object(hermes_agent_client, "is_warm_daemon_active", return_value=True),
+        patch.object(
+            hermes_agent_client, "profile_dir_for", return_value=str(profile_dir)
+        ),
+        patch.object(
+            hermes_agent_client, "ensure_profile", return_value=str(profile_dir)
+        ) as ensure_profile,
+        patch.object(hermes_agent_client, "run_turn", return_value="schnell"),
+        patch.object(
+            chat_node,
+            "_stream_chunks_to_goal",
+            return_value=(None, None, "schnell"),
+        ),
     ):
         result = drive_like_rclpy(chat_node.chat(goal_handle))
 
@@ -791,18 +803,19 @@ def test_chat_emits_ros_perf_trace_logs(chat_module, chat_node):
     goal_handle.request.text = "Hi"
     goal_handle.request.generate_code = False
 
-    with patch.object(
-        chat_module.voice_assistant_client,
-        "get_personality_from_chat",
-        return_value=(True, personality),
-    ), patch.object(
-        hermes_agent_client, "is_warm_daemon_active", return_value=True
-    ), patch.object(
-        hermes_agent_client, "run_turn", return_value="ok"
-    ), patch.object(
-        chat_node,
-        "_stream_chunks_to_goal",
-        return_value=(None, None, "ok"),
+    with (
+        patch.object(
+            chat_module.voice_assistant_client,
+            "get_personality_from_chat",
+            return_value=(True, personality),
+        ),
+        patch.object(hermes_agent_client, "is_warm_daemon_active", return_value=True),
+        patch.object(hermes_agent_client, "run_turn", return_value="ok"),
+        patch.object(
+            chat_node,
+            "_stream_chunks_to_goal",
+            return_value=(None, None, "ok"),
+        ),
     ):
         drive_like_rclpy(chat_node.chat(goal_handle))
 
@@ -875,20 +888,22 @@ def test_chat_hermes_branch_survives_the_rclpy_task_driver(chat_module, chat_nod
     goal_handle.request.text = "Hi"
     goal_handle.request.generate_code = False
 
-    with patch.object(
-        chat_module.voice_assistant_client,
-        "get_personality_from_chat",
-        return_value=(True, personality),
-    ), patch.object(
-        hermes_agent_client, "is_warm_daemon_active", return_value=False
-    ), patch.object(
-        hermes_agent_client, "ensure_profile", return_value="/tmp/p"
-    ), patch.object(
-        hermes_agent_client, "run_turn", return_value="Antwort vom Agent."
-    ), patch.object(
-        chat_node,
-        "_stream_chunks_to_goal",
-        return_value=(None, None, "Antwort vom Agent."),
+    with (
+        patch.object(
+            chat_module.voice_assistant_client,
+            "get_personality_from_chat",
+            return_value=(True, personality),
+        ),
+        patch.object(hermes_agent_client, "is_warm_daemon_active", return_value=False),
+        patch.object(hermes_agent_client, "ensure_profile", return_value="/tmp/p"),
+        patch.object(
+            hermes_agent_client, "run_turn", return_value="Antwort vom Agent."
+        ),
+        patch.object(
+            chat_node,
+            "_stream_chunks_to_goal",
+            return_value=(None, None, "Antwort vom Agent."),
+        ),
     ):
         result = drive_like_rclpy(chat_node.chat(goal_handle))
 
@@ -923,10 +938,11 @@ def test_run_hermes_turn_falls_back_when_the_worker_raises(chat_module, chat_nod
     """Even a broken profile write must yield speakable text, never an exception."""
     from public_api_client import hermes_agent_client
 
-    with patch.object(
-        hermes_agent_client, "is_warm_daemon_active", return_value=False
-    ), patch.object(
-        hermes_agent_client, "ensure_profile", side_effect=OSError("read-only fs")
+    with (
+        patch.object(hermes_agent_client, "is_warm_daemon_active", return_value=False),
+        patch.object(
+            hermes_agent_client, "ensure_profile", side_effect=OSError("read-only fs")
+        ),
     ):
         reply = chat_node._run_hermes_turn(
             text="Hi", chat_id="chat-9", personality_id="pers-1", description="d"
@@ -957,20 +973,22 @@ def test_chat_hermes_goal_succeeds_with_fallback_when_the_agent_fails(
     goal_handle.request.text = "Hi"
     goal_handle.request.generate_code = False
 
-    with patch.object(
-        chat_module.voice_assistant_client,
-        "get_personality_from_chat",
-        return_value=(True, personality),
-    ), patch.object(
-        hermes_agent_client, "is_warm_daemon_active", return_value=False
-    ), patch.object(
-        hermes_agent_client, "ensure_profile", return_value="/tmp/p"
-    ), patch.object(
-        hermes_agent_client, "run_turn", side_effect=RuntimeError("agent exploded")
-    ), patch.object(
-        chat_node,
-        "_stream_chunks_to_goal",
-        return_value=(None, None, hermes_agent_client.FALLBACK_REPLY),
+    with (
+        patch.object(
+            chat_module.voice_assistant_client,
+            "get_personality_from_chat",
+            return_value=(True, personality),
+        ),
+        patch.object(hermes_agent_client, "is_warm_daemon_active", return_value=False),
+        patch.object(hermes_agent_client, "ensure_profile", return_value="/tmp/p"),
+        patch.object(
+            hermes_agent_client, "run_turn", side_effect=RuntimeError("agent exploded")
+        ),
+        patch.object(
+            chat_node,
+            "_stream_chunks_to_goal",
+            return_value=(None, None, hermes_agent_client.FALLBACK_REPLY),
+        ),
     ):
         result = drive_like_rclpy(chat_node.chat(goal_handle))
 
@@ -1023,19 +1041,17 @@ def test_chat_hermes_cancelled_goal_is_marked_canceled(chat_module, chat_node):
     goal_handle.request.text = "Hi"
     goal_handle.request.generate_code = False
 
-    with patch.object(
-        chat_module.voice_assistant_client,
-        "get_personality_from_chat",
-        return_value=(True, personality),
-    ), patch.object(
-        hermes_agent_client, "is_warm_daemon_active", return_value=False
-    ), patch.object(
-        hermes_agent_client, "ensure_profile", return_value="/tmp/p"
-    ), patch.object(
-        hermes_agent_client, "run_turn", return_value="ignored"
-    ), patch.object(
-        chat_node, "_stream_chunks_to_goal"
-    ) as stream:
+    with (
+        patch.object(
+            chat_module.voice_assistant_client,
+            "get_personality_from_chat",
+            return_value=(True, personality),
+        ),
+        patch.object(hermes_agent_client, "is_warm_daemon_active", return_value=False),
+        patch.object(hermes_agent_client, "ensure_profile", return_value="/tmp/p"),
+        patch.object(hermes_agent_client, "run_turn", return_value="ignored"),
+        patch.object(chat_node, "_stream_chunks_to_goal") as stream,
+    ):
         result = drive_like_rclpy(chat_node.chat(goal_handle))
 
     stream.assert_not_called()
@@ -1058,9 +1074,7 @@ def test_chat_module_does_not_reintroduce_asyncio_loop_lookup():
     ).read_text(encoding="utf-8")
     tree = ast.parse(source)
 
-    referenced = {
-        node.id for node in ast.walk(tree) if isinstance(node, ast.Name)
-    } | {
+    referenced = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)} | {
         alias.name.split(".")[0]
         for node in ast.walk(tree)
         if isinstance(node, ast.Import)
@@ -1089,25 +1103,29 @@ def test_chat_legacy_path_still_uses_public_api(chat_module, chat_node):
     goal_handle.request.text = "Hallo"
     goal_handle.request.generate_code = False
 
-    with patch.object(
-        chat_module.voice_assistant_client,
-        "get_personality_from_chat",
-        return_value=(True, personality),
-    ), patch.object(
-        chat_module.voice_assistant_client,
-        "get_chat_history",
-        return_value=(True, []),
-    ) as get_history, patch.object(
-        chat_module.public_voice_client,
-        "chat_completion",
-        return_value=iter(["Hi."]),
-    ) as chat_completion, patch.object(
-        chat_node,
-        "_stream_chunks_to_goal",
-        return_value=("Hi.", TEXT_TYPE_SENTENCE, ""),
-    ) as stream, patch(
-        "public_api_client.hermes_agent_client.run_turn"
-    ) as run_turn:
+    with (
+        patch.object(
+            chat_module.voice_assistant_client,
+            "get_personality_from_chat",
+            return_value=(True, personality),
+        ),
+        patch.object(
+            chat_module.voice_assistant_client,
+            "get_chat_history",
+            return_value=(True, []),
+        ) as get_history,
+        patch.object(
+            chat_module.public_voice_client,
+            "chat_completion",
+            return_value=iter(["Hi."]),
+        ) as chat_completion,
+        patch.object(
+            chat_node,
+            "_stream_chunks_to_goal",
+            return_value=("Hi.", TEXT_TYPE_SENTENCE, ""),
+        ) as stream,
+        patch("public_api_client.hermes_agent_client.run_turn") as run_turn,
+    ):
 
         result = asyncio.run(chat_node.chat(goal_handle))
 

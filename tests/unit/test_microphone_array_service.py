@@ -161,9 +161,10 @@ def test_hardware_path_uses_usb_when_device_present():
     )
 
     with patch.dict(os.environ, {"MICROPHONE_ARRAY_SIMULATION": "0"}):
-        with patch.object(mas, "_USB_AVAILABLE", True), patch.object(
-            mas, "usb"
-        ) as mock_usb:
+        with (
+            patch.object(mas, "_USB_AVAILABLE", True),
+            patch.object(mas, "usb") as mock_usb,
+        ):
             mock_usb.core.find.return_value = mock_dev
             mock_usb.util.CTRL_OUT = 0x40
             mock_usb.util.CTRL_IN = 0xC0

@@ -78,7 +78,8 @@ def create_chat_message(chat_id: str, chat_message_dto: Any) -> ChatMessage:
     db.session.flush()
     logger.info(
         "[PERF_TRACE] API_EXIT create_chat_message chat=%s elapsed_ms=%.2f",
-        chat_id, _perf_ms(t0),
+        chat_id,
+        _perf_ms(t0),
     )
     return chat_message
 
@@ -96,7 +97,8 @@ def update_chat_message(
     db.session.flush()
     logger.info(
         "[PERF_TRACE] API_EXIT update_chat_message message=%s elapsed_ms=%.2f",
-        message_id, _perf_ms(t0),
+        message_id,
+        _perf_ms(t0),
     )
     return chat_message
 

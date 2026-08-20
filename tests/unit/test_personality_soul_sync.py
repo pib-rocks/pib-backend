@@ -2,7 +2,6 @@ import pytest
 from pib_hermes_config import build_default_soul_text
 from service import personality_service, soul_service
 
-
 EXPECTED_MCP_TOOLS = (
     "mcp__pib__list_motors",
     "mcp__pib__get_state",
@@ -23,7 +22,9 @@ def client(app):
     return app.test_client()
 
 
-def test_update_description_writes_soul_file(tmp_path, monkeypatch, app_ctx, make_personality):
+def test_update_description_writes_soul_file(
+    tmp_path, monkeypatch, app_ctx, make_personality
+):
     monkeypatch.setenv("PIB_HERMES_PROFILES_DIR", str(tmp_path))
 
     p = make_personality(description="alt")
@@ -121,8 +122,6 @@ def test_api_create_and_get_return_full_soul_description(
     for tool in EXPECTED_MCP_TOOLS:
         assert tool in created["description"]
 
-    get_resp = client.get(
-        f"/voice-assistant/personality/{created['personalityId']}"
-    )
+    get_resp = client.get(f"/voice-assistant/personality/{created['personalityId']}")
     assert get_resp.status_code == 200
     assert get_resp.get_json()["description"] == expected

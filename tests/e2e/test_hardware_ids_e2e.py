@@ -73,7 +73,9 @@ class TestHardwareIDsE2E:
                 export_btn = page.locator("[data-test='BTN_Export_Hardware_IDs']")
                 expect(export_btn).to_be_visible(timeout=10000)
 
-                with page.expect_response("**/hardware-config/export", timeout=15000) as resp_info:
+                with page.expect_response(
+                    "**/hardware-config/export", timeout=15000
+                ) as resp_info:
                     export_btn.click()
 
                 exported_content = resp_info.value.text()
@@ -108,8 +110,12 @@ class TestHardwareIDsE2E:
                 page.wait_for_selector(".import-preview", timeout=10000)
 
                 # Step 6: Click "Confirm import" button
-                with page.expect_response("**/hardware-config/import", timeout=15000) as import_resp_info:
-                    page.evaluate("() => document.querySelector('[data-test=\"BTN_Import_Hardware_IDs_Confirm\"]').click()")
+                with page.expect_response(
+                    "**/hardware-config/import", timeout=15000
+                ) as import_resp_info:
+                    page.evaluate(
+                        "() => document.querySelector('[data-test=\"BTN_Import_Hardware_IDs_Confirm\"]').click()"
+                    )
 
                 assert import_resp_info.value.status == 200
 

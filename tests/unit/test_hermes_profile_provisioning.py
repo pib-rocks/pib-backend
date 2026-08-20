@@ -66,7 +66,7 @@ def test_ensure_profile_is_idempotent_when_present(tmp_path, monkeypatch):
     with patch("public_api_client.hermes_agent_client.subprocess.run") as run:
         ensure_profile("p-9", soul_text="Du bist pib.")
 
-    run.assert_not_called()          # no re-create
+    run.assert_not_called()  # no re-create
     with open(os.path.join(pdir, "SOUL.md"), encoding="utf-8") as fh:
         assert fh.read() == build_default_soul_text("pib", "Du bist pib.")
 
@@ -169,10 +169,20 @@ def test_ensure_profile_takes_its_owner_from_the_profiles_directory(
     monkeypatch.setenv("PIB_HERMES_PROFILES_DIR", profiles_root)
 
     real = os.stat(profiles_root)
-    spoofed = os.stat_result((
-        real.st_mode, real.st_ino, real.st_dev, real.st_nlink, 4242, 4343,
-        real.st_size, int(real.st_atime), int(real.st_mtime), int(real.st_ctime),
-    ))
+    spoofed = os.stat_result(
+        (
+            real.st_mode,
+            real.st_ino,
+            real.st_dev,
+            real.st_nlink,
+            4242,
+            4343,
+            real.st_size,
+            int(real.st_atime),
+            int(real.st_mtime),
+            int(real.st_ctime),
+        )
+    )
     real_stat = os.stat
 
     def stat_with_spoofed_owner(path, *args, **kwargs):

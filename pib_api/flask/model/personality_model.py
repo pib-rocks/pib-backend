@@ -16,7 +16,10 @@ class Personality(db.Model):
     pause_threshold = db.Column(db.Float, nullable=False)
     message_history = db.Column(db.Integer, nullable=False)
     stt_engine = db.Column(
-        db.String(255), nullable=False, default="local_whisper", server_default="local_whisper"
+        db.String(255),
+        nullable=False,
+        default="local_whisper",
+        server_default="local_whisper",
     )
     chats = db.relationship(
         "Chat", backref="personality", lazy=True, cascade="all,delete"

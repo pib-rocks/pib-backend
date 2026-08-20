@@ -76,7 +76,9 @@ def _fake_tinkerforge_modules() -> dict[str, types.ModuleType]:
 
     return {
         "tinkerforge": module("tinkerforge"),
-        "tinkerforge.brick_hat": module("tinkerforge.brick_hat", BrickHAT=_FakeBricklet),
+        "tinkerforge.brick_hat": module(
+            "tinkerforge.brick_hat", BrickHAT=_FakeBricklet
+        ),
         "tinkerforge.bricklet_servo_v2": module(
             "tinkerforge.bricklet_servo_v2", BrickletServoV2=_FakeBricklet
         ),
@@ -102,9 +104,11 @@ def _import_bricklet_module(get_all_bricklets, sleep):
     )
     module = importlib.util.module_from_spec(spec)
 
-    with mock.patch.dict(sys.modules, _fake_tinkerforge_modules()), mock.patch.object(
-        bricklet_client, "get_all_bricklets", get_all_bricklets
-    ), mock.patch("time.sleep", sleep):
+    with (
+        mock.patch.dict(sys.modules, _fake_tinkerforge_modules()),
+        mock.patch.object(bricklet_client, "get_all_bricklets", get_all_bricklets),
+        mock.patch("time.sleep", sleep),
+    ):
         spec.loader.exec_module(module)
 
     return module
@@ -129,7 +133,9 @@ class TestBrickletLoadRetry(unittest.TestCase):
         self.assertEqual(sleep.call_args_list, [mock.call(2.0), mock.call(2.0)])
 
     def test_bricklets_are_wired_up_after_a_retry(self):
-        get_all_bricklets = mock.Mock(side_effect=[(False, None), (True, BRICKLET_DTOS)])
+        get_all_bricklets = mock.Mock(
+            side_effect=[(False, None), (True, BRICKLET_DTOS)]
+        )
 
         module = _import_bricklet_module(get_all_bricklets, mock.Mock())
 
@@ -146,9 +152,10 @@ class TestBrickletLoadRetry(unittest.TestCase):
         )
         sleep = mock.Mock()
 
-        with mock.patch.object(
-            bricklet_client, "get_all_bricklets", get_all_bricklets
-        ), mock.patch("time.sleep", sleep):
+        with (
+            mock.patch.object(bricklet_client, "get_all_bricklets", get_all_bricklets),
+            mock.patch("time.sleep", sleep),
+        ):
             dtos = module.load_bricklets()
 
         self.assertEqual(dtos, BRICKLET_DTOS)
@@ -159,11 +166,15 @@ class TestBrickletLoadRetry(unittest.TestCase):
         module = _import_bricklet_module(
             mock.Mock(return_value=(True, BRICKLET_DTOS)), mock.Mock()
         )
-        get_all_bricklets = mock.Mock(side_effect=[(False, None), (True, BRICKLET_DTOS)])
+        get_all_bricklets = mock.Mock(
+            side_effect=[(False, None), (True, BRICKLET_DTOS)]
+        )
 
-        with mock.patch.object(
-            bricklet_client, "get_all_bricklets", get_all_bricklets
-        ), mock.patch("time.sleep"), self.assertLogs(level="WARNING") as logs:
+        with (
+            mock.patch.object(bricklet_client, "get_all_bricklets", get_all_bricklets),
+            mock.patch("time.sleep"),
+            self.assertLogs(level="WARNING") as logs,
+        ):
             module.load_bricklets()
 
         self.assertEqual(len(logs.records), 1)

@@ -7,7 +7,9 @@ from typing import Dict, Any, List, Tuple, Optional
 DOCKER_SOCK = "/var/run/docker.sock"
 
 
-def _docker_request(method: str, path: str, payload: Optional[dict] = None, timeout: float = 10.0) -> Tuple[int, bytes]:
+def _docker_request(
+    method: str, path: str, payload: Optional[dict] = None, timeout: float = 10.0
+) -> Tuple[int, bytes]:
     if not os.path.exists(DOCKER_SOCK):
         raise FileNotFoundError(f"Docker socket not found at {DOCKER_SOCK}")
 
@@ -18,7 +20,7 @@ def _docker_request(method: str, path: str, payload: Optional[dict] = None, time
         req_lines = [
             f"{method.upper()} {path} HTTP/1.1",
             "Host: localhost",
-            "Connection: close"
+            "Connection: close",
         ]
         if payload is not None:
             body_bytes = json.dumps(payload).encode("utf-8")
@@ -49,7 +51,10 @@ def _docker_request(method: str, path: str, payload: Optional[dict] = None, time
         if len(first_line_parts) >= 2 and first_line_parts[1].isdigit():
             status_code = int(first_line_parts[1])
 
-        if b"Transfer-Encoding: chunked" in header or b"transfer-encoding: chunked" in header:
+        if (
+            b"Transfer-Encoding: chunked" in header
+            or b"transfer-encoding: chunked" in header
+        ):
             chunks = []
             pos = 0
             while pos < len(body):
@@ -124,15 +129,17 @@ def get_containers() -> List[Dict[str, Any]]:
 
             display_status = "stopped" if state == "exited" else state
 
-            result.append({
-                "id": c.get("Id", "")[:12],
-                "name": raw_name,
-                "image": c.get("Image", ""),
-                "status": display_status,
-                "statusText": status_str,
-                "health": health,
-                "created": c.get("Created", 0),
-            })
+            result.append(
+                {
+                    "id": c.get("Id", "")[:12],
+                    "name": raw_name,
+                    "image": c.get("Image", ""),
+                    "status": display_status,
+                    "statusText": status_str,
+                    "health": health,
+                    "created": c.get("Created", 0),
+                }
+            )
         return result
     except Exception as e:
         logging.error(f"Error fetching docker containers: {e}")
@@ -141,14 +148,22 @@ def get_containers() -> List[Dict[str, Any]]:
 
 def start_container(name: str) -> Tuple[int, Dict[str, Any]]:
     try:
-        status_code, body = _docker_request("POST", f"/containers/{name}/start", timeout=20.0)
+        status_code, body = _docker_request(
+            "POST", f"/containers/{name}/start", timeout=20.0
+        )
         if status_code in (200, 204, 304):
-            return 200, {"status": "success", "message": f"Container '{name}' started successfully."}
+            return 200, {
+                "status": "success",
+                "message": f"Container '{name}' started successfully.",
+            }
         elif status_code == 404:
             return 404, {"status": "error", "message": f"Container '{name}' not found."}
         else:
             err_msg = body.decode("utf-8", errors="ignore")
-            return status_code, {"status": "error", "message": err_msg or f"Failed to start container '{name}'."}
+            return status_code, {
+                "status": "error",
+                "message": err_msg or f"Failed to start container '{name}'.",
+            }
     except Exception as e:
         return 500, {"status": "error", "message": str(e)}
 
@@ -156,35 +171,53 @@ def start_container(name: str) -> Tuple[int, Dict[str, Any]]:
 def stop_container(name: str) -> Tuple[int, Dict[str, Any]]:
     try:
         # Use t=5 second stop timeout and 30s HTTP socket timeout
-        status_code, body = _docker_request("POST", f"/containers/{name}/stop?t=5", timeout=30.0)
+        status_code, body = _docker_request(
+            "POST", f"/containers/{name}/stop?t=5", timeout=30.0
+        )
         if status_code in (200, 204, 304):
-            return 200, {"status": "success", "message": f"Container '{name}' stopped successfully."}
+            return 200, {
+                "status": "success",
+                "message": f"Container '{name}' stopped successfully.",
+            }
         elif status_code == 404:
             return 404, {"status": "error", "message": f"Container '{name}' not found."}
         else:
             err_msg = body.decode("utf-8", errors="ignore")
-            return status_code, {"status": "error", "message": err_msg or f"Failed to stop container '{name}'."}
+            return status_code, {
+                "status": "error",
+                "message": err_msg or f"Failed to stop container '{name}'.",
+            }
     except Exception as e:
         return 500, {"status": "error", "message": str(e)}
 
 
 def restart_container(name: str) -> Tuple[int, Dict[str, Any]]:
     try:
-        status_code, body = _docker_request("POST", f"/containers/{name}/restart?t=5", timeout=30.0)
+        status_code, body = _docker_request(
+            "POST", f"/containers/{name}/restart?t=5", timeout=30.0
+        )
         if status_code in (200, 204, 304):
-            return 200, {"status": "success", "message": f"Container '{name}' restarted successfully."}
+            return 200, {
+                "status": "success",
+                "message": f"Container '{name}' restarted successfully.",
+            }
         elif status_code == 404:
             return 404, {"status": "error", "message": f"Container '{name}' not found."}
         else:
             err_msg = body.decode("utf-8", errors="ignore")
-            return status_code, {"status": "error", "message": err_msg or f"Failed to restart container '{name}'."}
+            return status_code, {
+                "status": "error",
+                "message": err_msg or f"Failed to restart container '{name}'.",
+            }
     except Exception as e:
         return 500, {"status": "error", "message": str(e)}
 
 
 def get_container_logs(name: str, tail: int = 500) -> Tuple[int, Dict[str, Any]]:
     try:
-        status_code, body = _docker_request("GET", f"/containers/{name}/logs?stdout=1&stderr=1&tail={tail}")
+        status_code, body = _docker_request(
+            "GET", f"/containers/{name}/logs?stdout=1&stderr=1&tail={tail}"
+        )
         if status_code == 200:
             logs = _clean_docker_logs(body)
             return 200, {"status": "success", "container": name, "logs": logs}
@@ -192,7 +225,10 @@ def get_container_logs(name: str, tail: int = 500) -> Tuple[int, Dict[str, Any]]
             return 404, {"status": "error", "message": f"Container '{name}' not found."}
         else:
             err_msg = body.decode("utf-8", errors="ignore")
-            return status_code, {"status": "error", "message": err_msg or f"Failed to get logs for container '{name}'."}
+            return status_code, {
+                "status": "error",
+                "message": err_msg or f"Failed to get logs for container '{name}'.",
+            }
     except Exception as e:
         return 500, {"status": "error", "message": str(e)}
 
@@ -202,8 +238,14 @@ def clear_container_logs(name: str) -> Tuple[int, Dict[str, Any]]:
         status_code, body = _docker_request("GET", f"/containers/{name}/json")
         if status_code != 200:
             if status_code == 404:
-                return 404, {"status": "error", "message": f"Container '{name}' not found."}
-            return status_code, {"status": "error", "message": f"Failed to inspect container '{name}'."}
+                return 404, {
+                    "status": "error",
+                    "message": f"Container '{name}' not found.",
+                }
+            return status_code, {
+                "status": "error",
+                "message": f"Failed to inspect container '{name}'.",
+            }
 
         info = json.loads(body.decode("utf-8"))
         log_path = info.get("LogPath", "")
@@ -214,7 +256,10 @@ def clear_container_logs(name: str) -> Tuple[int, Dict[str, Any]]:
             except Exception as e:
                 logging.warning(f"Failed to truncate log file at {log_path}: {e}")
 
-        return 200, {"status": "success", "message": f"Logs cleared for container '{name}'."}
+        return 200, {
+            "status": "success",
+            "message": f"Logs cleared for container '{name}'.",
+        }
     except Exception as e:
         return 500, {"status": "error", "message": str(e)}
 

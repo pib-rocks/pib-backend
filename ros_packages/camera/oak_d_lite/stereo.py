@@ -176,9 +176,7 @@ class CameraNode(Node):
             frame.shape[1] != self.preview_width
             or frame.shape[0] != self.preview_height
         ):
-            frame = cv2.resize(
-                frame, (self.preview_width, self.preview_height)
-            )
+            frame = cv2.resize(frame, (self.preview_width, self.preview_height))
 
         self.current_frame = frame
         self.publish_face_center(frame)
@@ -217,7 +215,9 @@ class CameraNode(Node):
 def spin_camera(times):
     cnt = times
     if cnt == 0:
-        print("Couldn't restart camera due to displayed error/s, publishing error message")
+        print(
+            "Couldn't restart camera due to displayed error/s, publishing error message"
+        )
         rclpy.spin(error_publisher)
     else:
         camera_node = None

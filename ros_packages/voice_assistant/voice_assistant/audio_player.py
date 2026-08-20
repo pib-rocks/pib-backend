@@ -219,7 +219,9 @@ class AudioPlayerNode(Node):
             if request.join:
                 playback_item.finished_playing.wait()
         except Exception as e:
-            self.get_logger().error(f"Error reading audio file '{request.filepath}': {e}")
+            self.get_logger().error(
+                f"Error reading audio file '{request.filepath}': {e}"
+            )
 
         return response
 

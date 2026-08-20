@@ -72,11 +72,17 @@ def validate_hardware_config(payload: Any) -> Dict[str, Any]:
     if "motors" not in payload or not isinstance(payload["motors"], list):
         raise ValueError("Hardware config requires a 'motors' array")
 
-    bricklets = [_validate_bricklet_entry(entry, index) for index, entry in enumerate(payload["bricklets"])]
+    bricklets = [
+        _validate_bricklet_entry(entry, index)
+        for index, entry in enumerate(payload["bricklets"])
+    ]
     _assert_unique_uids(bricklets)
     _assert_unique_bricklet_numbers(bricklets)
 
-    motors = [_validate_motor_entry(entry, index) for index, entry in enumerate(payload["motors"])]
+    motors = [
+        _validate_motor_entry(entry, index)
+        for index, entry in enumerate(payload["motors"])
+    ]
     _assert_unique_motor_names(motors)
     _assert_pin_bricklets_exist(motors, bricklets)
 
@@ -138,7 +144,10 @@ def _validate_bricklet_entry(entry: Any, index: int) -> Dict[str, Any]:
 
     bricklet_type = entry.get("type")
     if bricklet_type is not None:
-        if not isinstance(bricklet_type, str) or bricklet_type not in VALID_BRICKLET_TYPES:
+        if (
+            not isinstance(bricklet_type, str)
+            or bricklet_type not in VALID_BRICKLET_TYPES
+        ):
             raise ValueError(
                 f"bricklets[{index}].type '{bricklet_type}' is not a supported Bricklet type"
             )
@@ -172,7 +181,14 @@ def _validate_motor_entry(entry: Any, index: int) -> Dict[str, Any]:
         elif snake in entry:
             settings[snake] = entry[snake]
 
-    for key in ("velocity", "acceleration", "deceleration", "period", "visible", "invert"):
+    for key in (
+        "velocity",
+        "acceleration",
+        "deceleration",
+        "period",
+        "visible",
+        "invert",
+    ):
         if key in entry:
             settings[key] = entry[key]
 
@@ -189,13 +205,18 @@ def _validate_motor_entry(entry: Any, index: int) -> Dict[str, Any]:
     if not isinstance(pins_raw, list):
         raise ValueError(f"motors[{index}].brickletPins must be an array")
 
-    pins = [_validate_pin_entry(pin, index, pin_index) for pin_index, pin in enumerate(pins_raw)]
+    pins = [
+        _validate_pin_entry(pin, index, pin_index)
+        for pin_index, pin in enumerate(pins_raw)
+    ]
     return {"name": name.strip(), "settings": settings, "bricklet_pins": pins}
 
 
 def _validate_pin_entry(entry: Any, motor_index: int, pin_index: int) -> Dict[str, Any]:
     if not isinstance(entry, dict):
-        raise ValueError(f"motors[{motor_index}].brickletPins[{pin_index}] must be an object")
+        raise ValueError(
+            f"motors[{motor_index}].brickletPins[{pin_index}] must be an object"
+        )
 
     bricklet_number = entry.get("brickletNumber", entry.get("bricklet_number"))
     if not isinstance(bricklet_number, int) or isinstance(bricklet_number, bool):
@@ -205,11 +226,15 @@ def _validate_pin_entry(entry: Any, motor_index: int, pin_index: int) -> Dict[st
 
     pin = entry.get("pin")
     if not isinstance(pin, int) or isinstance(pin, bool):
-        raise ValueError(f"motors[{motor_index}].brickletPins[{pin_index}].pin must be an integer")
+        raise ValueError(
+            f"motors[{motor_index}].brickletPins[{pin_index}].pin must be an integer"
+        )
 
     invert = entry.get("invert", False)
     if not isinstance(invert, bool):
-        raise ValueError(f"motors[{motor_index}].brickletPins[{pin_index}].invert must be a boolean")
+        raise ValueError(
+            f"motors[{motor_index}].brickletPins[{pin_index}].invert must be a boolean"
+        )
 
     return {"bricklet_number": bricklet_number, "pin": pin, "invert": invert}
 

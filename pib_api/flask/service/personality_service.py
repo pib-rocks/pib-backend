@@ -75,7 +75,9 @@ def update_personality(personality_id: str, personality_dto: Any) -> Personality
     if "description" in personality_dto:
         personality.description = personality_dto["description"]
         soul_service.write_soul(
-            personality.personality_id, personality.description, personality_name=personality.name
+            personality.personality_id,
+            personality.description,
+            personality_name=personality.name,
         )
     if "assistant_model_id" in personality_dto:
         personality.assistant_model_id = personality_dto["assistant_model_id"]

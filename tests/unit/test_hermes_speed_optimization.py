@@ -1,4 +1,5 @@
 """PR-1524: Hermes high-speed Gemini Flash / Flash-Lite configuration defaults."""
+
 import os
 from unittest.mock import patch
 

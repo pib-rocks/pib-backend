@@ -11,21 +11,26 @@ def test_get_cpu_usage_percent_from_proc_stat():
         (1050, 2200),  # idle_delta=50, total_delta=200 -> 75% used
     ]
 
-    with patch(
-        "service.diagnostics_service._read_proc_stat_cpu_times",
-        side_effect=samples,
-    ), patch("service.diagnostics_service.time.sleep"):
+    with (
+        patch(
+            "service.diagnostics_service._read_proc_stat_cpu_times",
+            side_effect=samples,
+        ),
+        patch("service.diagnostics_service.time.sleep"),
+    ):
         percent = diagnostics_service._get_cpu_usage_percent()
 
     assert percent == 75.0
 
 
 def test_get_cpu_usage_percent_falls_back_to_loadavg():
-    with patch(
-        "service.diagnostics_service._read_proc_stat_cpu_times",
-        return_value=None,
-    ), patch("os.getloadavg", return_value=(1.5, 1.0, 0.5)), patch(
-        "os.cpu_count", return_value=4
+    with (
+        patch(
+            "service.diagnostics_service._read_proc_stat_cpu_times",
+            return_value=None,
+        ),
+        patch("os.getloadavg", return_value=(1.5, 1.0, 0.5)),
+        patch("os.cpu_count", return_value=4),
     ):
         percent = diagnostics_service._get_cpu_usage_percent()
 
@@ -33,12 +38,15 @@ def test_get_cpu_usage_percent_falls_back_to_loadavg():
 
 
 def test_get_system_telemetry_includes_cpu_usage_percent():
-    with patch(
-        "service.diagnostics_service._get_cpu_usage_percent",
-        return_value=42.5,
-    ), patch(
-        "service.diagnostics_service._query_docker_containers",
-        return_value=[],
+    with (
+        patch(
+            "service.diagnostics_service._get_cpu_usage_percent",
+            return_value=42.5,
+        ),
+        patch(
+            "service.diagnostics_service._query_docker_containers",
+            return_value=[],
+        ),
     ):
         telemetry = diagnostics_service.get_system_telemetry()
 
@@ -68,12 +76,15 @@ def test_get_summary_includes_cpu_usage_percent():
         "status": "ok",
     }
 
-    with patch(
-        "service.diagnostics_service.get_system_telemetry",
-        return_value=fake_system,
-    ), patch(
-        "service.diagnostics_service.get_bricklets_telemetry",
-        return_value=[],
+    with (
+        patch(
+            "service.diagnostics_service.get_system_telemetry",
+            return_value=fake_system,
+        ),
+        patch(
+            "service.diagnostics_service.get_bricklets_telemetry",
+            return_value=[],
+        ),
     ):
         summary = diagnostics_service.get_summary()
 

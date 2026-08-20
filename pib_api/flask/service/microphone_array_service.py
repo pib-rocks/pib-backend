@@ -26,7 +26,15 @@ PARAMETERS: Dict[str, tuple] = {
     "AGCDESIREDLEVEL": (19, 2, "float", 0.99, 1e-08, "rw", "Target power level."),
     "AGCTIME": (19, 4, "float", 1, 0.1, "rw", "AGC ramp time-constant in seconds."),
     "STATNOISEONOFF": (19, 8, "int", 1, 0, "rw", "Stationary noise suppression."),
-    "NONSTATNOISEONOFF": (19, 11, "int", 1, 0, "rw", "Non-stationary noise suppression."),
+    "NONSTATNOISEONOFF": (
+        19,
+        11,
+        "int",
+        1,
+        0,
+        "rw",
+        "Non-stationary noise suppression.",
+    ),
     "ECHOONOFF": (19, 14, "int", 1, 0, "rw", "Echo suppression."),
     "SPEECHDETECTED": (19, 22, "int", 1, 0, "ro", "Speech detection status."),
     "VOICEACTIVITY": (19, 32, "int", 1, 0, "ro", "VAD voice activity status."),
@@ -287,9 +295,7 @@ def _validate_param(name: str, value: Any) -> Any:
         coerced = float(value)
     minimum, maximum = meta[4], meta[3]
     if coerced < minimum or coerced > maximum:
-        raise ValueError(
-            f"{name} out of range [{minimum}, {maximum}]; got {coerced}"
-        )
+        raise ValueError(f"{name} out of range [{minimum}, {maximum}]; got {coerced}")
     return coerced
 
 
@@ -324,7 +330,11 @@ class MicrophoneArrayService:
         self._tuning = ReSpeakerTuning(dev)
         self._pixel_ring = PixelRing(dev)
         self._simulation = False
-        logger.info("Microphone array: connected to ReSpeaker (0x%04x:0x%04x)", VENDOR_ID, PRODUCT_ID)
+        logger.info(
+            "Microphone array: connected to ReSpeaker (0x%04x:0x%04x)",
+            VENDOR_ID,
+            PRODUCT_ID,
+        )
         try:
             self._apply_tuning_dict(self._tuning_state)
             self._apply_led_state(self._led_state)

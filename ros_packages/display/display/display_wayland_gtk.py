@@ -29,8 +29,9 @@ gi.require_version("GLib", "2.0")
 
 from gi.repository import Gdk, GLib, Gtk  # noqa: E402
 
-
-STATIC_IMAGE_DIR = Path(os.getenv("STATIC_IMAGE_DIR", "/app/ros2_ws/display/static_images"))
+STATIC_IMAGE_DIR = Path(
+    os.getenv("STATIC_IMAGE_DIR", "/app/ros2_ws/display/static_images")
+)
 EXPRESSION_DIR = Path(os.getenv("PIB_EXPRESSION_DIR", "/app/pib-expression-faces"))
 
 DISPLAY_WIDTH = int(os.getenv("PIB_DISPLAY_WIDTH", "1024"))
@@ -76,7 +77,9 @@ def normalize_expression(value: str) -> str:
 def memory_texture_from_rgba(rgba: bytes, width: int, height: int) -> Gdk.Texture:
     stride = width * 4
     glib_bytes = GLib.Bytes.new(rgba)
-    return Gdk.MemoryTexture.new(width, height, Gdk.MemoryFormat.R8G8B8A8, glib_bytes, stride)
+    return Gdk.MemoryTexture.new(
+        width, height, Gdk.MemoryFormat.R8G8B8A8, glib_bytes, stride
+    )
 
 
 class TextRenderer:
@@ -261,7 +264,12 @@ def find_expression_path(expression: str) -> Path | None:
         return None
     normalized = normalize_expression(expression)
     for path in sorted(EXPRESSION_DIR.iterdir()):
-        if not path.is_file() or path.suffix.lower() not in (".png", ".gif", ".jpg", ".jpeg"):
+        if not path.is_file() or path.suffix.lower() not in (
+            ".png",
+            ".gif",
+            ".jpg",
+            ".jpeg",
+        ):
             continue
         if normalize_expression(path.stem) == normalized:
             return path
@@ -297,11 +305,15 @@ class DisplayNode(Node):
             depth=1,
         )
 
-        self.create_subscription(DisplayImage, "/display_image", self.on_display_image, display_qos)
+        self.create_subscription(
+            DisplayImage, "/display_image", self.on_display_image, display_qos
+        )
         self.create_subscription(String, "/pib/expression", self.on_expression, 10)
         self.create_subscription(String, "/pib/display_text", self.on_text, 10)
         self.create_subscription(String, "/pib/display_hide", self.on_hide, 10)
-        self.ready_pub = self.create_publisher(String, "/pib/display_ready", display_qos)
+        self.ready_pub = self.create_publisher(
+            String, "/pib/display_ready", display_qos
+        )
 
         msg = String()
         msg.data = "ready"
@@ -361,4 +373,3 @@ def main(args=None) -> None:
 
 if __name__ == "__main__":
     main()
-

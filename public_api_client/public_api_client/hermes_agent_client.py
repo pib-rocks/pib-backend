@@ -10,6 +10,7 @@ container; see docker-compose.yaml. That mount list also needs the uv-managed
 Python directory, because the CLI is a wrapper that execs a venv interpreter
 symlinked into it — probe_binary() is what catches a deployment that forgot it.
 """
+
 import logging
 import os
 import re
@@ -46,8 +47,12 @@ PIB_MCP_SERVER = {
     "args": ["-m", "pib_mcp_server"],
     "env": {
         "FLASK_API_BASE_URL": os.getenv("FLASK_API_BASE_URL", "http://flask-app:5000"),
-        "PIB_MCP_API_BASE_URL": os.getenv("FLASK_API_BASE_URL", "http://flask-app:5000"),
-        "PIB_MCP_ROSBRIDGE_URL": os.getenv("PIB_MCP_ROSBRIDGE_URL", "ws://rosbridge-ws:9090"),
+        "PIB_MCP_API_BASE_URL": os.getenv(
+            "FLASK_API_BASE_URL", "http://flask-app:5000"
+        ),
+        "PIB_MCP_ROSBRIDGE_URL": os.getenv(
+            "PIB_MCP_ROSBRIDGE_URL", "ws://rosbridge-ws:9090"
+        ),
     },
 }
 
@@ -104,7 +109,10 @@ def probe_binary(timeout: int = PROBE_TIMEOUT_SECONDS) -> tuple[bool, str]:
     try:
         result = subprocess.run(
             [path, "--version"],
-            capture_output=True, text=True, timeout=timeout, check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
         )
     except subprocess.TimeoutExpired:
         # A probe timeout condemns the probe, not the install: report it as a
@@ -115,9 +123,7 @@ def probe_binary(timeout: int = PROBE_TIMEOUT_SECONDS) -> tuple[bool, str]:
 
     if result.returncode != 0:
         stderr = (result.stderr or result.stdout or "").strip()[:500]
-        return False, (
-            f"'{path} --version' exited {result.returncode}: {stderr}"
-        )
+        return False, (f"'{path} --version' exited {result.returncode}: {stderr}")
     banner = (result.stdout or "").strip().splitlines()
     return True, (banner[0][:200] if banner else "")
 
@@ -167,15 +173,27 @@ def _create_profile_with_cli(personality_id: str, timeout: int) -> bool:
     if not hermes_binary_available():
         logging.info(
             "hermes CLI %s is not available here; provisioning profile %s with "
-            "filesystem operations only", hermes_bin(), name,
+            "filesystem operations only",
+            hermes_bin(),
+            name,
         )
         return False
     try:
         result = subprocess.run(
-            [hermes_bin(), "profile", "create", name,
-             "--clone", "--no-alias",
-             "--description", f"pib personality {personality_id}"],
-            capture_output=True, text=True, timeout=timeout, check=False,
+            [
+                hermes_bin(),
+                "profile",
+                "create",
+                name,
+                "--clone",
+                "--no-alias",
+                "--description",
+                f"pib personality {personality_id}",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
         )
     except Exception as exc:
         logging.warning("hermes profile create %s could not be run: %s", name, exc)
@@ -183,7 +201,9 @@ def _create_profile_with_cli(personality_id: str, timeout: int) -> bool:
     if result.returncode != 0:
         logging.warning(
             "hermes profile create %s exited %s: %s",
-            name, result.returncode, (result.stderr or "")[:500],
+            name,
+            result.returncode,
+            (result.stderr or "")[:500],
         )
         return False
     logging.info("created hermes profile %s with the CLI (--clone)", name)
@@ -277,7 +297,9 @@ def _inherit_base_config(pdir: str) -> None:
                     shutil.copyfile(source, target)
                     if mode is not None:
                         os.chmod(target, mode)
-                    logging.info("copied %s from %s into hermes profile %s", name, base, pdir)
+                    logging.info(
+                        "copied %s from %s into hermes profile %s", name, base, pdir
+                    )
                 except OSError as exc:
                     logging.warning("could not copy %s into %s: %s", name, pdir, exc)
 
@@ -310,7 +332,9 @@ def _inherit_base_config(pdir: str) -> None:
             pass
 
     gemini_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
-    if gemini_key and ("GEMINI_API_KEY" not in existing_env or "GOOGLE_API_KEY" not in existing_env):
+    if gemini_key and (
+        "GEMINI_API_KEY" not in existing_env or "GOOGLE_API_KEY" not in existing_env
+    ):
         try:
             with open(env_target, "a", encoding="utf-8") as fh:
                 if "GEMINI_API_KEY" not in existing_env:
@@ -318,7 +342,10 @@ def _inherit_base_config(pdir: str) -> None:
                 if "GOOGLE_API_KEY" not in existing_env:
                     fh.write(f"\nGOOGLE_API_KEY={gemini_key}\n")
             os.chmod(env_target, ENV_FILE_MODE)
-            logging.info("ensured GEMINI_API_KEY/GOOGLE_API_KEY in profile .env at %s", env_target)
+            logging.info(
+                "ensured GEMINI_API_KEY/GOOGLE_API_KEY in profile .env at %s",
+                env_target,
+            )
         except OSError as exc:
             logging.warning("could not update profile .env at %s: %s", env_target, exc)
 
@@ -370,7 +397,10 @@ def delete_profile(personality_id: str, timeout: int = 60) -> bool:
         result = subprocess.run(
             [hermes_bin(), "profile", "delete", name],
             input=name + "\n",
-            capture_output=True, text=True, timeout=timeout, check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
         )
         return result.returncode == 0
     except Exception as exc:
@@ -476,20 +506,24 @@ def _try_daemon_turn(
     except requests.exceptions.RequestException as exc:
         logging.debug(
             "hermes daemon unreachable (chat=%s): %s; falling back to subprocess",
-            chat_id, exc,
+            chat_id,
+            exc,
         )
         return None
 
     ttft_ms = _perf_ms(http_start)
     logging.info(
         "[PERF_TRACE] DAEMON_TTFT_MS chat=%s elapsed_ms=%.2f status=%s",
-        chat_id, ttft_ms, response.status_code,
+        chat_id,
+        ttft_ms,
+        response.status_code,
     )
 
     if response.status_code != 200:
         logging.warning(
             "hermes daemon returned %s (chat=%s); falling back to subprocess",
-            response.status_code, chat_id,
+            response.status_code,
+            chat_id,
         )
         return None
 
@@ -526,7 +560,8 @@ def run_turn_subprocess(
             "hermes binary %s is missing or not executable (chat=%s); "
             "answering with the fallback reply. Install the hermes CLI for the "
             "pib user and check the PIB_HERMES_BIN mount.",
-            hermes_bin(), chat_id,
+            hermes_bin(),
+            chat_id,
         )
         return FALLBACK_REPLY
 
@@ -545,7 +580,9 @@ def run_turn_subprocess(
     if result.returncode != 0:
         logging.error(
             "hermes exited %s (chat=%s): %s",
-            result.returncode, chat_id, (result.stderr or "")[:500],
+            result.returncode,
+            chat_id,
+            (result.stderr or "")[:500],
         )
         return FALLBACK_REPLY
 
@@ -575,12 +612,17 @@ def run_turn(
 
     # Try the warm daemon first — no filesystem binary/profile checks on this path.
     daemon_reply = _try_daemon_turn(
-        text, chat_id, personality_id, toolsets, timeout=timeout,
+        text,
+        chat_id,
+        personality_id,
+        toolsets,
+        timeout=timeout,
     )
     if daemon_reply is not None:
         logging.info(
             "[PERF_TRACE] HERMES_CLIENT_DONE chat=%s via=daemon elapsed_ms=%.2f",
-            chat_id, _perf_ms(t0),
+            chat_id,
+            _perf_ms(t0),
         )
         return daemon_reply
 
@@ -590,20 +632,27 @@ def run_turn(
             "hermes binary %s is missing or not executable (chat=%s); "
             "answering with the fallback reply. Install the hermes CLI for the "
             "pib user and check the PIB_HERMES_BIN mount.",
-            hermes_bin(), chat_id,
+            hermes_bin(),
+            chat_id,
         )
         logging.info(
             "[PERF_TRACE] HERMES_CLIENT_DONE chat=%s via=fallback elapsed_ms=%.2f",
-            chat_id, _perf_ms(t0),
+            chat_id,
+            _perf_ms(t0),
         )
         return FALLBACK_REPLY
 
     reply = run_turn_subprocess(
-        text, chat_id, personality_id, toolsets, timeout=timeout,
+        text,
+        chat_id,
+        personality_id,
+        toolsets,
+        timeout=timeout,
     )
     logging.info(
         "[PERF_TRACE] HERMES_CLIENT_DONE chat=%s via=subprocess elapsed_ms=%.2f",
-        chat_id, _perf_ms(t0),
+        chat_id,
+        _perf_ms(t0),
     )
     return reply
 
@@ -613,7 +662,10 @@ def delete_session(chat_id: str, timeout: int = 30) -> bool:
     try:
         result = subprocess.run(
             [hermes_bin(), "sessions", "delete", session_name_for(chat_id)],
-            capture_output=True, text=True, timeout=timeout, check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
         )
         return result.returncode == 0
     except Exception as exc:

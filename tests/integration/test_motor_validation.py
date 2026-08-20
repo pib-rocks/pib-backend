@@ -22,7 +22,10 @@ for name, mod in [
     ("tinkerforge", _tinkerforge),
     ("tinkerforge.brick_hat", _tinkerforge.brick_hat),
     ("tinkerforge.bricklet_servo_v2", _tinkerforge.bricklet_servo_v2),
-    ("tinkerforge.bricklet_solid_state_relay_v2", _tinkerforge.bricklet_solid_state_relay_v2),
+    (
+        "tinkerforge.bricklet_solid_state_relay_v2",
+        _tinkerforge.bricklet_solid_state_relay_v2,
+    ),
     ("tinkerforge.bricklet_rgb_led_button", _tinkerforge.bricklet_rgb_led_button),
     ("tinkerforge.ip_connection", _ip_connection),
 ]:
@@ -44,8 +47,11 @@ def motor_class():
             sys.modules.pop(name, None)
     empty = (True, {"motors": []})
     bricklets = (True, {"bricklets": []})
-    with patch("pib_api_client.motor_client.get_all_motors", return_value=empty), patch(
-        "pib_api_client.bricklet_client.get_all_bricklets", return_value=bricklets
+    with (
+        patch("pib_api_client.motor_client.get_all_motors", return_value=empty),
+        patch(
+            "pib_api_client.bricklet_client.get_all_bricklets", return_value=bricklets
+        ),
     ):
         from pib_motors.motor import Motor
 

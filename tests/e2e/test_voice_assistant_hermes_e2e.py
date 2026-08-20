@@ -14,6 +14,7 @@ import pytest
 import requests
 import shutil
 
+
 def _get_chromium_launch_kwargs() -> dict:
     kwargs = {"headless": True}
     for p in ["/usr/bin/chromium-browser", "/usr/bin/chromium"]:
@@ -21,8 +22,9 @@ def _get_chromium_launch_kwargs() -> dict:
             kwargs["executable_path"] = p
             break
     return kwargs
-from playwright.sync_api import Page, expect
 
+
+from playwright.sync_api import Page, expect
 
 ROBOT_URL = os.environ.get("PIB_E2E_BASE_URL", "http://192.168.1.28").rstrip("/")
 API_URL = f"{ROBOT_URL}/api"
@@ -41,9 +43,9 @@ def _wait_for_new_assistant_message(chat_id: str, previous_ids: set[str]):
     last_count = 0
     stable_ticks = 0
     while time.monotonic() < deadline:
-        messages = _get_json(
-            f"/voice-assistant/chat/{chat_id}/messages"
-        ).get("messages", [])
+        messages = _get_json(f"/voice-assistant/chat/{chat_id}/messages").get(
+            "messages", []
+        )
         new_replies = [
             message
             for message in messages
@@ -55,10 +57,22 @@ def _wait_for_new_assistant_message(chat_id: str, previous_ids: set[str]):
             if len(new_replies) == last_count:
                 stable_ticks += 1
                 combined_content = " ".join(m["content"] for m in new_replies).strip()
-                if (stable_ticks >= 3 and not combined_content.endswith(":")) or stable_ticks >= 6:
-                    messages = _get_json(f"/voice-assistant/chat/{chat_id}/messages").get("messages", [])
-                    new_replies = [m for m in messages if not m["isUser"] and m["messageId"] not in previous_ids and m["content"].strip()]
-                    combined_content = " ".join(m["content"] for m in new_replies).strip()
+                if (
+                    stable_ticks >= 3 and not combined_content.endswith(":")
+                ) or stable_ticks >= 6:
+                    messages = _get_json(
+                        f"/voice-assistant/chat/{chat_id}/messages"
+                    ).get("messages", [])
+                    new_replies = [
+                        m
+                        for m in messages
+                        if not m["isUser"]
+                        and m["messageId"] not in previous_ids
+                        and m["content"].strip()
+                    ]
+                    combined_content = " ".join(
+                        m["content"] for m in new_replies
+                    ).strip()
                     last_reply = new_replies[-1].copy()
                     last_reply["content"] = combined_content
                     return last_reply, messages
@@ -73,7 +87,9 @@ def _send_chat_message(chat_id: str, content: str) -> None:
     try:
         import websocket
     except ImportError:
-        pytest.skip("live Hermes E2E prerequisite absent: websocket-client is not installed")
+        pytest.skip(
+            "live Hermes E2E prerequisite absent: websocket-client is not installed"
+        )
 
     parsed = urlparse(ROBOT_URL)
     rosbridge_url = os.environ.get(
@@ -90,13 +106,17 @@ def _send_chat_message(chat_id: str, content: str) -> None:
     try:
         # 1. Turn ON voice assistant listening for this chat
         turn_on_id = f"hermes-e2e-turnon-{uuid.uuid4()}"
-        connection.send(json.dumps({
-            "op": "call_service",
-            "id": turn_on_id,
-            "service": "/set_voice_assistant_state",
-            "type": "datatypes/srv/SetVoiceAssistantState",
-            "args": {"state": {"chat_id": chat_id, "turned_on": True}},
-        }))
+        connection.send(
+            json.dumps(
+                {
+                    "op": "call_service",
+                    "id": turn_on_id,
+                    "service": "/set_voice_assistant_state",
+                    "type": "datatypes/srv/SetVoiceAssistantState",
+                    "args": {"state": {"chat_id": chat_id, "turned_on": True}},
+                }
+            )
+        )
 
         # Wait for turn_on response
         deadline = time.monotonic() + 10
@@ -121,7 +141,9 @@ def _send_chat_message(chat_id: str, content: str) -> None:
             response = json.loads(connection.recv())
             if response.get("id") == request_id:
                 # Accept both immediate OK and service timeout (background turn processing continues in ROS node)
-                is_ok = response.get("result") is True or "Timeout exceeded" in str(response.get("values"))
+                is_ok = response.get("result") is True or "Timeout exceeded" in str(
+                    response.get("values")
+                )
                 assert is_ok, f"ROS service call failed unexpectedly: {response}"
                 return
         pytest.fail("rosbridge did not return the send_chat_message service response")
@@ -138,7 +160,9 @@ def test_voice_assistant_hermes_persists_reply_and_recalls_prior_fact():
     try:
         models = _get_json("/assistant-model").get("assistantModels", [])
     except (requests.RequestException, ValueError) as exc:
-        pytest.skip(f"live Hermes E2E prerequisite absent: robot API is unreachable ({exc})")
+        pytest.skip(
+            f"live Hermes E2E prerequisite absent: robot API is unreachable ({exc})"
+        )
 
     hermes_model = next(
         (model for model in models if model.get("apiName") == "hermes-agent"), None
@@ -148,9 +172,9 @@ def test_voice_assistant_hermes_persists_reply_and_recalls_prior_fact():
             "live Hermes E2E prerequisite absent: no hermes-agent assistant model exists"
         )
 
-    personalities = _get_json(
-        "/voice-assistant/personality"
-    ).get("voiceAssistantPersonalities", [])
+    personalities = _get_json("/voice-assistant/personality").get(
+        "voiceAssistantPersonalities", []
+    )
     requested_id = os.environ.get("PIB_HERMES_E2E_PERSONALITY_ID")
     personality = next(
         (
@@ -214,6 +238,7 @@ def test_voice_assistant_hermes_persists_reply_and_recalls_prior_fact():
             timeout=REQUEST_TIMEOUT,
         )
 
+
 def test_create_personality_via_browser_ui_generates_soul_md():
     """
     Create a new personality via the real browser UI (#add-personality-button),
@@ -228,8 +253,14 @@ def test_create_personality_via_browser_ui_generates_soul_md():
     created_personality_id = None
 
     # Get list of existing personalities before creation
-    res_before = requests.get(f"{API_URL}/voice-assistant/personality", timeout=REQUEST_TIMEOUT).json()
-    before = res_before.get("voiceAssistantPersonalities", []) if isinstance(res_before, dict) else res_before
+    res_before = requests.get(
+        f"{API_URL}/voice-assistant/personality", timeout=REQUEST_TIMEOUT
+    ).json()
+    before = (
+        res_before.get("voiceAssistantPersonalities", [])
+        if isinstance(res_before, dict)
+        else res_before
+    )
     before_ids = {p["personalityId"] for p in before}
 
     with sync_playwright() as p:
@@ -270,21 +301,31 @@ def test_create_personality_via_browser_ui_generates_soul_md():
             page.wait_for_timeout(3000)
 
             # Detect created personality ID via difference in API personality set
-            res_after = requests.get(f"{API_URL}/voice-assistant/personality", timeout=REQUEST_TIMEOUT).json()
-            after = res_after.get("voiceAssistantPersonalities", []) if isinstance(res_after, dict) else res_after
+            res_after = requests.get(
+                f"{API_URL}/voice-assistant/personality", timeout=REQUEST_TIMEOUT
+            ).json()
+            after = (
+                res_after.get("voiceAssistantPersonalities", [])
+                if isinstance(res_after, dict)
+                else res_after
+            )
             after_ids = {p["personalityId"] for p in after}
             new_ids = after_ids - before_ids
-            assert len(new_ids) == 1, f"Expected 1 new personality created via UI, got: {new_ids}"
+            assert (
+                len(new_ids) == 1
+            ), f"Expected 1 new personality created via UI, got: {new_ids}"
             created_personality_id = list(new_ids)[0]
 
             # 5. Verify SOUL.md via created personality API response & filesystem fallback
-            created_p = [p for p in after if p["personalityId"] == created_personality_id][0]
+            created_p = [
+                p for p in after if p["personalityId"] == created_personality_id
+            ][0]
             soul_content = created_p.get("description") or ""
 
             # 6. Assertions on SOUL.md content
-            assert f"Du bist der humanoide Roboter {unique_name}." in soul_content, (
-                f"Expected robot name identity in SOUL.md, got:\n{soul_content}"
-            )
+            assert (
+                f"Du bist der humanoide Roboter {unique_name}." in soul_content
+            ), f"Expected robot name identity in SOUL.md, got:\n{soul_content}"
             assert "## Verfügbare MCP-Werkzeuge (pib_mcp_server)" in soul_content
             assert "mcp__pib__list_motors" in soul_content
             assert "mcp__pib__get_state" in soul_content
@@ -336,9 +377,17 @@ def test_chat_send_button_activation_with_smartconnect():
             page.wait_for_timeout(2000)
 
             # 3. Create a persona with Hermes Agent backend
-            res_models = requests.get(f"{API_URL}/assistant-model", timeout=REQUEST_TIMEOUT).json()
-            models = res_models.get("assistantModels", []) if isinstance(res_models, dict) else res_models
-            hermes_model = [m for m in models if "hermes" in m.get("apiName", "").lower()][0]
+            res_models = requests.get(
+                f"{API_URL}/assistant-model", timeout=REQUEST_TIMEOUT
+            ).json()
+            models = (
+                res_models.get("assistantModels", [])
+                if isinstance(res_models, dict)
+                else res_models
+            )
+            hermes_model = [
+                m for m in models if "hermes" in m.get("apiName", "").lower()
+            ][0]
             hermes_model_id = hermes_model["id"]
 
             persona_res = requests.post(
@@ -382,9 +431,7 @@ def test_chat_send_button_activation_with_smartconnect():
                 "deep-chat #text-input", state="visible", timeout=30000
             )
             msg_input = page.locator("deep-chat #text-input")
-            submit_wrap = page.locator(
-                "deep-chat .input-button.input-button-svg"
-            )
+            submit_wrap = page.locator("deep-chat .input-button.input-button-svg")
             submit_icon = page.locator("deep-chat #submit-icon")
             messages = page.locator("deep-chat #messages")
 
@@ -416,9 +463,15 @@ def test_chat_send_button_activation_with_smartconnect():
             browser.close()
             # Cleanup
             if "created_chat_id" in locals():
-                requests.delete(f"{API_URL}/voice-assistant/chat/{created_chat_id}", timeout=REQUEST_TIMEOUT)
+                requests.delete(
+                    f"{API_URL}/voice-assistant/chat/{created_chat_id}",
+                    timeout=REQUEST_TIMEOUT,
+                )
             if "created_p_id" in locals():
-                requests.delete(f"{API_URL}/voice-assistant/personality/{created_p_id}", timeout=REQUEST_TIMEOUT)
+                requests.delete(
+                    f"{API_URL}/voice-assistant/personality/{created_p_id}",
+                    timeout=REQUEST_TIMEOUT,
+                )
 
 
 def test_voice_assistant_latency_and_smartconnect_e2e():
@@ -446,8 +499,14 @@ def test_voice_assistant_latency_and_smartconnect_e2e():
     created_p_id = None
 
     # Get Hermes Agent assistant model ID
-    res_models = requests.get(f"{API_URL}/assistant-model", timeout=REQUEST_TIMEOUT).json()
-    models = res_models.get("assistantModels", []) if isinstance(res_models, dict) else res_models
+    res_models = requests.get(
+        f"{API_URL}/assistant-model", timeout=REQUEST_TIMEOUT
+    ).json()
+    models = (
+        res_models.get("assistantModels", [])
+        if isinstance(res_models, dict)
+        else res_models
+    )
     hermes_model = [m for m in models if "hermes" in m.get("apiName", "").lower()][0]
     hermes_model_id = hermes_model["id"]
 
@@ -492,15 +551,17 @@ def test_voice_assistant_latency_and_smartconnect_e2e():
                 sc_btn.click()
                 page.wait_for_timeout(500)
 
-                token_input = page.locator("input#token, input[data-test='TXT_Token']").first
+                token_input = page.locator(
+                    "input#token, input[data-test='TXT_Token']"
+                ).first
                 if token_input.is_visible():
                     token_input.fill(token)
                     token_input.dispatch_event("input")
-                    
+
                     pwd1 = page.locator("input#encrypt-password").first
                     pwd1.fill(password)
                     pwd1.dispatch_event("input")
-                    
+
                     pwd2 = page.locator("input#confirmPassword").first
                     pwd2.fill(password)
                     pwd2.dispatch_event("input")
@@ -511,16 +572,22 @@ def test_voice_assistant_latency_and_smartconnect_e2e():
                         encrypt_btn.click()
                         page.wait_for_timeout(1500)
                 else:
-                    pwd_input = page.locator("input#password, input[data-test='TXT_Password']").first
+                    pwd_input = page.locator(
+                        "input#password, input[data-test='TXT_Password']"
+                    ).first
                     if pwd_input.is_visible() and pwd_input.is_enabled():
                         pwd_input.fill(password)
                         pwd_input.dispatch_event("input")
-                        connect_btn = page.locator("button[data-test='BTN_Connect']").first
+                        connect_btn = page.locator(
+                            "button[data-test='BTN_Connect']"
+                        ).first
                         if connect_btn.is_enabled():
                             connect_btn.click()
                             page.wait_for_timeout(1500)
 
-                close_btn = page.locator("button#modal-close-button, button[data-test='BTN_Close'], button[data-test='BTN_OK']").first
+                close_btn = page.locator(
+                    "button#modal-close-button, button[data-test='BTN_Close'], button[data-test='BTN_OK']"
+                ).first
                 if close_btn.is_visible():
                     close_btn.click()
                     page.wait_for_timeout(500)
@@ -538,7 +605,11 @@ def test_voice_assistant_latency_and_smartconnect_e2e():
             page.wait_for_timeout(1000)
 
             # Locate deep-chat elements
-            page.wait_for_selector("deep-chat #text-input:not([aria-disabled='true'])", state="visible", timeout=30000)
+            page.wait_for_selector(
+                "deep-chat #text-input:not([aria-disabled='true'])",
+                state="visible",
+                timeout=30000,
+            )
             msg_input = page.locator("deep-chat #text-input")
             submit_icon = page.locator("deep-chat #submit-icon")
             messages = page.locator("deep-chat #messages")
@@ -565,12 +636,16 @@ def test_voice_assistant_latency_and_smartconnect_e2e():
                     break
                 time.sleep(0.05)
 
-            assert t1 is not None, "Assistant response was not rendered in deep-chat UI within 20s"
+            assert (
+                t1 is not None
+            ), "Assistant response was not rendered in deep-chat UI within 20s"
 
             latency_ms = (t1 - t0) * 1000.0
             print(f"\n==================================================")
             print(f"🎉 [E2E_PERF_TRACE] REAL GEMINI RESPONSE RECEIVED!")
-            print(f"  -> UI Response Latency for '{prompt}': {latency_ms:.2f} ms ({latency_ms/1000.0:.2f} s)")
+            print(
+                f"  -> UI Response Latency for '{prompt}': {latency_ms:.2f} ms ({latency_ms/1000.0:.2f} s)"
+            )
             print(f"==================================================")
 
             assert latency_ms > 0, "Latency measurement failed"
@@ -579,7 +654,12 @@ def test_voice_assistant_latency_and_smartconnect_e2e():
             browser.close()
             # Cleanup
             if created_chat_id:
-                requests.delete(f"{API_URL}/voice-assistant/chat/{created_chat_id}", timeout=REQUEST_TIMEOUT)
+                requests.delete(
+                    f"{API_URL}/voice-assistant/chat/{created_chat_id}",
+                    timeout=REQUEST_TIMEOUT,
+                )
             if created_p_id:
-                requests.delete(f"{API_URL}/voice-assistant/personality/{created_p_id}", timeout=REQUEST_TIMEOUT)
-
+                requests.delete(
+                    f"{API_URL}/voice-assistant/personality/{created_p_id}",
+                    timeout=REQUEST_TIMEOUT,
+                )

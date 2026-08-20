@@ -21,4 +21,4 @@ def test_default_demo_notebook_uses_clean_pib_sdk_import():
 def test_empty_notebook_is_minimal_starter():
     assert "import marimo" in EMPTY_NOTEBOOK
     assert "from pib_sdk" not in EMPTY_NOTEBOOK
-    assert 'def __():\n    return' in EMPTY_NOTEBOOK
+    assert "def __():\n    return" in EMPTY_NOTEBOOK

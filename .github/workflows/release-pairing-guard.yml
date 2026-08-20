@@ -1,0 +1,76 @@
+name: Release Pairing Guard
+
+# pib-backend and cerebra share ONE version number and are released as a pair.
+#
+# Release order is fixed: pib-backend FIRST, cerebra second.
+#
+# Because pib-backend goes first it cannot verify cerebra up front - at that
+# moment cerebra legitimately has no release yet. So this guard runs the other
+# way round: after a pib-backend release is published it checks that cerebra
+# follows, reporting PENDING during a grace period and failing only if cerebra
+# never catches up.
+#
+# The hard, build-blocking guard lives on the cerebra side
+# (.github/workflows/docker-build.yml): it refuses to publish a Docker image
+# unless the matching pib-backend release already exists.
+
+on:
+  release:
+    types: [published]
+  schedule:
+    # Hourly re-check, so an incomplete pair becomes visible.
+    - cron: '17 * * * *'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to verify (e.g. v0.6.1)'
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  verify-pairing:
+    name: Verify cerebra has the same release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Determine the tag to verify
+        id: tag
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EVENT_TAG: ${{ github.event.release.tag_name }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          TAG="${INPUT_TAG:-$EVENT_TAG}"
+
+          if [ -z "$TAG" ]; then
+            # Scheduled run: verify the latest published release.
+            TAG=$(curl -sS \
+                    -H "Accept: application/vnd.github+json" \
+                    -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+                    "https://api.github.com/repos/${{ github.repository }}/releases/latest" \
+                    -o /tmp/latest.json \
+                  && python3 -c "import json;print(json.load(open('/tmp/latest.json')).get('tag_name',''))")
+          fi
+
+          if [ -z "$TAG" ]; then
+            echo "No published release to verify - nothing to do."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=$TAG"   >> "$GITHUB_OUTPUT"
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Verify the cerebra counterpart
+        if: steps.tag.outputs.skip == 'false'
+        env:
+          # Optional: raises the API rate limit from 60/h to 5000/h.
+          # Both repos are public, so the check also works without it.
+          GH_TOKEN: ${{ secrets.RELEASE_GUARD_TOKEN }}
+        run: |
+          python3 .github/scripts/verify_release_pairing.py \
+            "${{ steps.tag.outputs.tag }}" --grace-minutes 120

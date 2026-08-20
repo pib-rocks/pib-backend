@@ -42,7 +42,9 @@ class TestProgramsComponentE2E:
         iframe = page.locator(MARIMO_IFRAME)
         expect(iframe).to_be_visible(timeout=30000)
         src = iframe.get_attribute("src") or ""
-        assert "marimo-server" in src, f"Expected marimo-server in iframe src, got {src!r}"
+        assert (
+            "marimo-server" in src
+        ), f"Expected marimo-server in iframe src, got {src!r}"
 
         frame = page.frame_locator(MARIMO_IFRAME)
         # Fail fast on proxy / empty error pages (Testfall 5).
@@ -54,7 +56,9 @@ class TestProgramsComponentE2E:
         expect(editor_root.first).to_be_visible(timeout=30000)
         return frame
 
-    def _run_cell_and_assert_output(self, page: Page, frame: FrameLocator, code: str, expected: str):
+    def _run_cell_and_assert_output(
+        self, page: Page, frame: FrameLocator, code: str, expected: str
+    ):
         """Write code into the first cell, execute it, assert DOM output node text."""
         editor = frame.locator(".cm-editor").first
         expect(editor).to_be_visible(timeout=30000)
@@ -107,7 +111,9 @@ class TestProgramsComponentE2E:
         # 6. Assert source code contains iframe template definition and marimo-server URL
         content = page.content()
         assert "app-marimo" in content, "Expected <app-marimo> in page source code"
-        assert "app-sidebar-right" in content, "Expected <app-sidebar-right> in page source code"
+        assert (
+            "app-sidebar-right" in content
+        ), "Expected <app-sidebar-right> in page source code"
 
     def test_01b_marimo_iframe_inner_content_loads(self, page: Page):
         """
@@ -143,7 +149,9 @@ class TestProgramsComponentE2E:
 
         prog_li = page.locator('ul.nav-tabs li:has(a[data-test="LNK_Programs"])')
         marimo_li = page.locator('ul.nav-tabs li:has(a[data-test="LNK_Marimo"])')
-        assign_li = page.locator('ul.nav-tabs li:has(a[routerlink="/program/rgb-led-button"])')
+        assign_li = page.locator(
+            'ul.nav-tabs li:has(a[routerlink="/program/rgb-led-button"])'
+        )
 
         # Click on Marimo tab
         page.locator('a[data-test="LNK_Marimo"]').click()
@@ -159,13 +167,15 @@ class TestProgramsComponentE2E:
         test_filename = f"e2etest{unique_id}.py"
 
         # Create temporary notebook via REST API
-        resp = requests.post(f"{BASE_URL}/api/v1/marimo/notebooks", json={"name": test_filename})
+        resp = requests.post(
+            f"{BASE_URL}/api/v1/marimo/notebooks", json={"name": test_filename}
+        )
         assert resp.status_code in (200, 201)
 
         # Navigate cleanly to /program -> /program/marimo
         page.locator("#program-nav").click()
         page.wait_for_selector('a[data-test="LNK_Marimo"]', timeout=15000)
-        
+
         with page.expect_response("**/marimo/notebooks"):
             page.locator('a[data-test="LNK_Marimo"]').click()
 
@@ -173,10 +183,14 @@ class TestProgramsComponentE2E:
         expect(sidebar_wrapper).to_be_visible(timeout=15000)
 
         # Verify created workbook appears in sidebar
-        expect(sidebar_wrapper).to_contain_text(f"E2Etest{unique_id}", timeout=15000, ignore_case=True)
+        expect(sidebar_wrapper).to_contain_text(
+            f"E2Etest{unique_id}", timeout=15000, ignore_case=True
+        )
 
         # Delete created notebook via REST API
-        del_resp = requests.delete(f"{BASE_URL}/api/v1/marimo/notebooks/{test_filename}")
+        del_resp = requests.delete(
+            f"{BASE_URL}/api/v1/marimo/notebooks/{test_filename}"
+        )
         assert del_resp.status_code == 200
 
     def test_05_click_two_notebooks_navigates_to_each(self, page: Page):
@@ -192,7 +206,9 @@ class TestProgramsComponentE2E:
 
         # 1. Create two notebooks via REST API
         for fn in (file_a, file_b):
-            resp = requests.post(f"{BASE_URL}/api/v1/marimo/notebooks", json={"name": fn})
+            resp = requests.post(
+                f"{BASE_URL}/api/v1/marimo/notebooks", json={"name": fn}
+            )
             assert resp.status_code in (200, 201), f"Failed to create {fn}: {resp.text}"
 
         try:
@@ -220,7 +236,9 @@ class TestProgramsComponentE2E:
             )
             iframe_a = page.locator("app-marimo iframe")
             expect(iframe_a).to_have_attribute(
-                "src", re.compile(rf".*[?&]file={re.escape(file_a)}(&|$)"), timeout=10000
+                "src",
+                re.compile(rf".*[?&]file={re.escape(file_a)}(&|$)"),
+                timeout=10000,
             )
 
             # 5. Click notebook B -> URL navigates and iframe loads file B
@@ -230,7 +248,9 @@ class TestProgramsComponentE2E:
             )
             iframe_b = page.locator("app-marimo iframe")
             expect(iframe_b).to_have_attribute(
-                "src", re.compile(rf".*[?&]file={re.escape(file_b)}(&|$)"), timeout=10000
+                "src",
+                re.compile(rf".*[?&]file={re.escape(file_b)}(&|$)"),
+                timeout=10000,
             )
         finally:
             # Cleanup: delete both notebooks via REST API
@@ -258,7 +278,7 @@ class TestProgramsComponentE2E:
         rename via dropdown, and delete via dropdown (with confirm()).
         """
         unique_id = str(int(time.time()))
-        create_name = f"uicrud{unique_id}"          # entered without .py
+        create_name = f"uicrud{unique_id}"  # entered without .py
         expected_file = f"{create_name}.py"
         expected_title = f"Uicrud{unique_id}"
         rename_name = f"uirenamed{unique_id}"
@@ -281,7 +301,9 @@ class TestProgramsComponentE2E:
             expect(create_link).to_be_visible(timeout=15000)
 
             # 2. RENAME via the row's dropdown menu
-            self._row(page, expected_file).locator('button[id^="dropdownbutton-"]').click()
+            self._row(page, expected_file).locator(
+                'button[id^="dropdownbutton-"]'
+            ).click()
             page.locator(f'button[id="sidebar-right-rename-{expected_title}"]').click()
             name_input = page.locator("#input-name")
             expect(name_input).to_be_visible(timeout=10000)
@@ -294,7 +316,9 @@ class TestProgramsComponentE2E:
             expect(renamed_link).to_be_visible(timeout=15000)
 
             # 3. DELETE via the row's dropdown menu (confirm() auto-accepted by fixture)
-            self._row(page, renamed_file).locator('button[id^="dropdownbutton-"]').click()
+            self._row(page, renamed_file).locator(
+                'button[id^="dropdownbutton-"]'
+            ).click()
             page.locator(f'button[id="sidebar-right-delete-{renamed_title}"]').click()
             expect(renamed_link).not_to_be_visible(timeout=15000)
         finally:
@@ -315,7 +339,9 @@ class TestProgramsComponentE2E:
 
         # Setup: two notebooks via REST API
         for fn in (sel_file, keep_file):
-            resp = requests.post(f"{BASE_URL}/api/v1/marimo/notebooks", json={"name": fn})
+            resp = requests.post(
+                f"{BASE_URL}/api/v1/marimo/notebooks", json={"name": fn}
+            )
             assert resp.status_code in (200, 201), f"Failed to create {fn}: {resp.text}"
 
         try:
@@ -331,7 +357,9 @@ class TestProgramsComponentE2E:
             )
             iframe = page.locator("app-marimo iframe")
             expect(iframe).to_have_attribute(
-                "src", re.compile(rf".*[?&]file={re.escape(sel_file)}(&|$)"), timeout=10000
+                "src",
+                re.compile(rf".*[?&]file={re.escape(sel_file)}(&|$)"),
+                timeout=10000,
             )
 
             # Delete the currently-open notebook via its dropdown (confirm auto-accepted)
@@ -378,11 +406,15 @@ class TestProgramsComponentE2E:
             page.locator("#modal-save-button").click()
 
             # The invalid name must NOT create a notebook link in the sidebar.
-            invalid_link = sidebar.locator(f'a[href$="/program/marimo/{expected_file}"]')
+            invalid_link = sidebar.locator(
+                f'a[href$="/program/marimo/{expected_file}"]'
+            )
             expect(invalid_link).to_have_count(0, timeout=5000)
 
             # And the backend notebook set must be unchanged.
-            after = requests.get(f"{BASE_URL}/api/v1/marimo/notebooks").json()["notebooks"]
+            after = requests.get(f"{BASE_URL}/api/v1/marimo/notebooks").json()[
+                "notebooks"
+            ]
             after_names = {nb["name"] for nb in after}
             assert after_names == before_names, (
                 f"Invalid name should not create a notebook. "
@@ -401,10 +433,7 @@ class TestProgramsComponentE2E:
         create_name = f"pib_time_demo_{unique_id}"
         expected_file = f"{create_name}.py"
         expected_output = "Hello World, current time:"
-        code = (
-            "import time\n"
-            "print('Hello World, current time:', time.ctime())"
-        )
+        code = "import time\n" "print('Hello World, current time:', time.ctime())"
 
         try:
             # 1. Navigate to /program/marimo
@@ -419,9 +448,7 @@ class TestProgramsComponentE2E:
             page.locator("#modal-save-button").click()
 
             # 4. Notebook created and selected
-            create_link = sidebar.locator(
-                f'a[href$="/program/marimo/{expected_file}"]'
-            )
+            create_link = sidebar.locator(f'a[href$="/program/marimo/{expected_file}"]')
             expect(create_link).to_be_visible(timeout=30000)
             create_link.click()
             expect(page).to_have_url(
@@ -479,16 +506,16 @@ class TestProgramsComponentE2E:
             name_input.fill(create_name)
             page.locator("#modal-save-button").click()
 
-            create_link = sidebar.locator(
-                f'a[href$="/program/marimo/{expected_file}"]'
-            )
+            create_link = sidebar.locator(f'a[href$="/program/marimo/{expected_file}"]')
             expect(create_link).to_be_visible(timeout=15000)
 
             # Backend persistence
-            listed = requests.get(f"{BASE_URL}/api/v1/marimo/notebooks").json()["notebooks"]
-            assert any(nb["name"] == expected_file for nb in listed), (
-                f"{expected_file} missing from backend notebook list"
-            )
+            listed = requests.get(f"{BASE_URL}/api/v1/marimo/notebooks").json()[
+                "notebooks"
+            ]
+            assert any(
+                nb["name"] == expected_file for nb in listed
+            ), f"{expected_file} missing from backend notebook list"
 
             create_link.click()
             expect(page).to_have_url(
@@ -511,13 +538,17 @@ class TestProgramsComponentE2E:
 
             # Testfall 4: Delete via UI dropdown + confirm()
             page.once("dialog", lambda dialog: dialog.accept())
-            self._row(page, expected_file).locator('button[id^="dropdownbutton-"]').click()
+            self._row(page, expected_file).locator(
+                'button[id^="dropdownbutton-"]'
+            ).click()
             page.locator(f'button[id="sidebar-right-delete-{expected_title}"]').click()
             expect(create_link).not_to_be_visible(timeout=15000)
 
-            after = requests.get(f"{BASE_URL}/api/v1/marimo/notebooks").json()["notebooks"]
-            assert not any(nb["name"] == expected_file for nb in after), (
-                f"{expected_file} still present in backend after UI delete"
-            )
+            after = requests.get(f"{BASE_URL}/api/v1/marimo/notebooks").json()[
+                "notebooks"
+            ]
+            assert not any(
+                nb["name"] == expected_file for nb in after
+            ), f"{expected_file} still present in backend after UI delete"
         finally:
             requests.delete(f"{BASE_URL}/api/v1/marimo/notebooks/{expected_file}")

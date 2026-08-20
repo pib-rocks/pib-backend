@@ -7,12 +7,19 @@ from pathlib import Path
 import pytest
 
 # Ensure voice_assistant package is in sys.path
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "ros_packages" / "voice_assistant"))
+sys.path.insert(
+    0, str(Path(__file__).resolve().parents[2] / "ros_packages" / "voice_assistant")
+)
 
-from voice_assistant.stt_transcription import FasterWhisperSTTEngine, DEFAULT_WHISPER_MODEL_SIZE
+from voice_assistant.stt_transcription import (
+    FasterWhisperSTTEngine,
+    DEFAULT_WHISPER_MODEL_SIZE,
+)
 
 
-def generate_dummy_wav_bytes(duration_sec: float = 1.0, sample_rate: int = 16000) -> bytes:
+def generate_dummy_wav_bytes(
+    duration_sec: float = 1.0, sample_rate: int = 16000
+) -> bytes:
     """Generate a dummy 16kHz PCM WAV byte stream for testing."""
     num_samples = int(sample_rate * duration_sec)
     raw_pcm = struct.pack(f"<{num_samples}h", *[0] * num_samples)
@@ -46,6 +53,7 @@ class TestSTTEngineInitialization:
 
         try:
             import faster_whisper
+
             monkeypatch.setattr(faster_whisper, "WhisperModel", mock_init)
         except ImportError:
             pass

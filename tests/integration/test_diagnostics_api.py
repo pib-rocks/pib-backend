@@ -67,16 +67,23 @@ def test_servo_bricklet_live_telemetry_query():
     mock_servo_inst = MagicMock()
     mock_servo_inst.get_input_voltage.return_value = 5250  # 5.25 V
     mock_servo_inst.get_overall_current.return_value = 180  # 180 mA
-    mock_servo_inst.get_servo_current.return_value = 45     # 45 mA
+    mock_servo_inst.get_servo_current.return_value = 45  # 45 mA
     mock_servo_cls.return_value = mock_servo_inst
 
     with app.app_context():
-        with patch("service.bricklet_service.get_all_bricklets", return_value=[mock_bricklet]):
-            with patch.dict("sys.modules", {
-                "tinkerforge": MagicMock(),
-                "tinkerforge.ip_connection": MagicMock(IPConnection=mock_ipcon_cls),
-                "tinkerforge.bricklet_servo_v2": MagicMock(BrickletServoV2=mock_servo_cls),
-            }):
+        with patch(
+            "service.bricklet_service.get_all_bricklets", return_value=[mock_bricklet]
+        ):
+            with patch.dict(
+                "sys.modules",
+                {
+                    "tinkerforge": MagicMock(),
+                    "tinkerforge.ip_connection": MagicMock(IPConnection=mock_ipcon_cls),
+                    "tinkerforge.bricklet_servo_v2": MagicMock(
+                        BrickletServoV2=mock_servo_cls
+                    ),
+                },
+            ):
                 telemetry = diagnostics_service.get_bricklets_telemetry()
                 assert len(telemetry) == 1
                 assert telemetry[0]["uid"] == "SERVO123"
@@ -106,16 +113,23 @@ def test_rgb_led_button_live_telemetry_query():
     mock_btn_cls.BUTTON_STATE_RELEASED = 1
     mock_btn_inst = MagicMock()
     mock_btn_inst.get_color.return_value = (255, 0, 128)  # #FF0080
-    mock_btn_inst.get_button_state.return_value = 0      # Pressed
+    mock_btn_inst.get_button_state.return_value = 0  # Pressed
     mock_btn_cls.return_value = mock_btn_inst
 
     with app.app_context():
-        with patch("service.bricklet_service.get_all_bricklets", return_value=[mock_bricklet]):
-            with patch.dict("sys.modules", {
-                "tinkerforge": MagicMock(),
-                "tinkerforge.ip_connection": MagicMock(IPConnection=mock_ipcon_cls),
-                "tinkerforge.bricklet_rgb_led_button": MagicMock(BrickletRGBLEDButton=mock_btn_cls),
-            }):
+        with patch(
+            "service.bricklet_service.get_all_bricklets", return_value=[mock_bricklet]
+        ):
+            with patch.dict(
+                "sys.modules",
+                {
+                    "tinkerforge": MagicMock(),
+                    "tinkerforge.ip_connection": MagicMock(IPConnection=mock_ipcon_cls),
+                    "tinkerforge.bricklet_rgb_led_button": MagicMock(
+                        BrickletRGBLEDButton=mock_btn_cls
+                    ),
+                },
+            ):
                 telemetry = diagnostics_service.get_bricklets_telemetry()
                 assert len(telemetry) == 1
                 assert telemetry[0]["uid"] == "BTN123"
@@ -142,12 +156,19 @@ def test_solid_state_relay_live_telemetry_query():
     mock_ssr_cls.return_value = mock_ssr_inst
 
     with app.app_context():
-        with patch("service.bricklet_service.get_all_bricklets", return_value=[mock_bricklet]):
-            with patch.dict("sys.modules", {
-                "tinkerforge": MagicMock(),
-                "tinkerforge.ip_connection": MagicMock(IPConnection=mock_ipcon_cls),
-                "tinkerforge.bricklet_solid_state_relay_v2": MagicMock(BrickletSolidStateRelayV2=mock_ssr_cls),
-            }):
+        with patch(
+            "service.bricklet_service.get_all_bricklets", return_value=[mock_bricklet]
+        ):
+            with patch.dict(
+                "sys.modules",
+                {
+                    "tinkerforge": MagicMock(),
+                    "tinkerforge.ip_connection": MagicMock(IPConnection=mock_ipcon_cls),
+                    "tinkerforge.bricklet_solid_state_relay_v2": MagicMock(
+                        BrickletSolidStateRelayV2=mock_ssr_cls
+                    ),
+                },
+            ):
                 telemetry = diagnostics_service.get_bricklets_telemetry()
                 assert len(telemetry) == 1
                 assert telemetry[0]["uid"] == "SSR123"
@@ -158,8 +179,16 @@ def test_docker_containers_live_query():
     from service import diagnostics_service
 
     fake_containers = [
-        {"Names": ["/pib-backend"], "State": "running", "Status": "Up 2 hours (healthy)"},
-        {"Names": ["/rosbridge"], "State": "running", "Status": "Up 2 hours (unhealthy)"},
+        {
+            "Names": ["/pib-backend"],
+            "State": "running",
+            "Status": "Up 2 hours (healthy)",
+        },
+        {
+            "Names": ["/rosbridge"],
+            "State": "running",
+            "Status": "Up 2 hours (unhealthy)",
+        },
     ]
     body_str = json.dumps(fake_containers)
     http_response = (

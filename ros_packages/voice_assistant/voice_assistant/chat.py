@@ -365,7 +365,9 @@ class ChatNode(Node):
             return resp
 
         if self.token is None:
-            self.get_logger().error("VisionPrompt failed: public_api_token is not available.")
+            self.get_logger().error(
+                "VisionPrompt failed: public_api_token is not available."
+            )
             resp.response = "0"
             return resp
 
@@ -386,7 +388,9 @@ class ChatNode(Node):
                 tmp_client = tmp_node.create_client(GetCameraImage, "get_camera_image")
 
                 if not tmp_client.wait_for_service(timeout_sec=5.0):
-                    self.get_logger().error("VisionPrompt: get_camera_image service unavailable.")
+                    self.get_logger().error(
+                        "VisionPrompt: get_camera_image service unavailable."
+                    )
                     resp.response = "0"
                     return resp
 
@@ -398,7 +402,9 @@ class ChatNode(Node):
                 )
 
                 if not camera_future.done():
-                    self.get_logger().error("VisionPrompt: get_camera_image request timed out.")
+                    self.get_logger().error(
+                        "VisionPrompt: get_camera_image request timed out."
+                    )
                     resp.response = "0"
                     return resp
 
@@ -441,7 +447,6 @@ class ChatNode(Node):
             self.get_logger().error(f"VisionPrompt public API request failed: {exc}")
             resp.response = "0"
             return resp
-
 
     # ---------- Action server (unchanged) ----------
 
@@ -506,9 +511,7 @@ class ChatNode(Node):
                 prev_text_type = None
 
             # Accumulate token (strip leading spaces if first)
-            curr_text = curr_text + (
-                token if len(curr_text) > 0 else token.lstrip()
-            )
+            curr_text = curr_text + (token if len(curr_text) > 0 else token.lstrip())
 
             # Strip off complete chunks (code/sentences)
             while True:
@@ -638,7 +641,10 @@ class ChatNode(Node):
             if personality_id:
                 pdir = hermes_agent_client.profile_dir_for(personality_id)
                 cfg_file = os.path.join(pdir, "config.yaml")
-                if not os.path.exists(cfg_file) or not hermes_agent_client.is_warm_daemon_active():
+                if (
+                    not os.path.exists(cfg_file)
+                    or not hermes_agent_client.is_warm_daemon_active()
+                ):
                     hermes_agent_client.ensure_profile(
                         personality_id, soul_text=description
                     )
@@ -745,7 +751,9 @@ class ChatNode(Node):
                         chat_id, self.history_length
                     )
                 if not successful:
-                    self.get_logger().error(f"chat with id'{chat_id}' does not exist...")
+                    self.get_logger().error(
+                        f"chat with id'{chat_id}' does not exist..."
+                    )
                     goal_handle.abort()
                     return Chat.Result()
                 message_history = [

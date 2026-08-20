@@ -64,7 +64,9 @@ def _query_docker_containers() -> List[Dict[str, Any]]:
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         sock.settimeout(3.0)
         sock.connect(docker_sock)
-        sock.sendall(b"GET /containers/json?all=true HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+        sock.sendall(
+            b"GET /containers/json?all=true HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+        )
 
         response = b""
         while True:
@@ -80,7 +82,10 @@ def _query_docker_containers() -> List[Dict[str, Any]]:
 
         header, body = parts[0], parts[1]
 
-        if b"Transfer-Encoding: chunked" in header or b"transfer-encoding: chunked" in header:
+        if (
+            b"Transfer-Encoding: chunked" in header
+            or b"transfer-encoding: chunked" in header
+        ):
             chunks = []
             pos = 0
             while pos < len(body):
@@ -104,7 +109,11 @@ def _query_docker_containers() -> List[Dict[str, Any]]:
             proj = labels.get("com.docker.compose.project", "")
 
             # Exclude temporary test runner containers
-            if raw_name.startswith("pibtest_") or raw_name.startswith("test_") or proj.startswith("pibtest"):
+            if (
+                raw_name.startswith("pibtest_")
+                or raw_name.startswith("test_")
+                or proj.startswith("pibtest")
+            ):
                 continue
 
             state = c.get("State", "unknown")
@@ -121,19 +130,25 @@ def _query_docker_containers() -> List[Dict[str, Any]]:
 
             display_status = "stopped" if state == "exited" else state
 
-            result.append({
-                "name": raw_name,
-                "status": display_status,
-                "health": health,
-            })
-        return result if result else [
-            {"name": "pib-backend", "status": "running", "health": "healthy"},
-            {"name": "rosbridge", "status": "running", "health": "healthy"},
-            {"name": "voice-assistant", "status": "running", "health": "healthy"},
-            {"name": "pib-blockly", "status": "running", "health": "healthy"},
-            {"name": "pib-display", "status": "running", "health": "healthy"},
-            {"name": "pib-motors", "status": "running", "health": "healthy"},
-        ]
+            result.append(
+                {
+                    "name": raw_name,
+                    "status": display_status,
+                    "health": health,
+                }
+            )
+        return (
+            result
+            if result
+            else [
+                {"name": "pib-backend", "status": "running", "health": "healthy"},
+                {"name": "rosbridge", "status": "running", "health": "healthy"},
+                {"name": "voice-assistant", "status": "running", "health": "healthy"},
+                {"name": "pib-blockly", "status": "running", "health": "healthy"},
+                {"name": "pib-display", "status": "running", "health": "healthy"},
+                {"name": "pib-motors", "status": "running", "health": "healthy"},
+            ]
+        )
     except Exception:
         return [
             {"name": "pib-backend", "status": "running", "health": "healthy"},
@@ -162,7 +177,13 @@ def _get_tf_ipcon():
                 conn_state = getattr(IPConnection, "CONNECTION_STATE_CONNECTED", 1)
                 if state == conn_state or type(state).__name__ in ("MagicMock", "Mock"):
                     return _tf_ipcon
-                hosts = [os.getenv("TINKERFORGE_HOST"), "172.17.0.1", "192.168.1.28", "host.docker.internal", "localhost"]
+                hosts = [
+                    os.getenv("TINKERFORGE_HOST"),
+                    "172.17.0.1",
+                    "192.168.1.28",
+                    "host.docker.internal",
+                    "localhost",
+                ]
                 port = int(os.getenv("TINKERFORGE_PORT", 4223))
                 for h in hosts:
                     if not h:
@@ -176,7 +197,13 @@ def _get_tf_ipcon():
             _tf_ipcon = None
 
     try:
-        hosts = [os.getenv("TINKERFORGE_HOST"), "172.17.0.1", "192.168.1.28", "host.docker.internal", "localhost"]
+        hosts = [
+            os.getenv("TINKERFORGE_HOST"),
+            "172.17.0.1",
+            "192.168.1.28",
+            "host.docker.internal",
+            "localhost",
+        ]
         port = int(os.getenv("TINKERFORGE_PORT", 4223))
         for h in hosts:
             if not h:
@@ -209,11 +236,13 @@ def get_bricklets_telemetry() -> List[Dict[str, Any]]:
         if bricklet_pins:
             for pin in bricklet_pins:
                 pin_num = getattr(pin, "pin", getattr(pin, "pin_number", 0))
-                pins_data.append({
-                    "pin": pin_num,
-                    "voltage": 0.0,
-                    "current": 0.0,
-                })
+                pins_data.append(
+                    {
+                        "pin": pin_num,
+                        "voltage": 0.0,
+                        "current": 0.0,
+                    }
+                )
 
         # Default telemetry values for external motor power & status
         voltage = 0.0
@@ -228,6 +257,7 @@ def get_bricklets_telemetry() -> List[Dict[str, Any]]:
             try:
                 if b.type == "Servo Bricklet":
                     from tinkerforge.bricklet_servo_v2 import BrickletServoV2
+
                     servo = BrickletServoV2(b.uid, ipcon)
                     live_voltage_mv = servo.get_input_voltage()
                     voltage = round(live_voltage_mv / 1000.0, 2)
@@ -235,40 +265,56 @@ def get_bricklets_telemetry() -> List[Dict[str, Any]]:
 
                     for pin_entry in pins_data:
                         try:
-                            pin_entry["current"] = float(servo.get_servo_current(pin_entry["pin"]))
+                            pin_entry["current"] = float(
+                                servo.get_servo_current(pin_entry["pin"])
+                            )
                             pin_entry["voltage"] = voltage
                         except Exception:
                             pass
 
                 elif b.type == "RGB LED Button Bricklet":
                     from tinkerforge.bricklet_rgb_led_button import BrickletRGBLEDButton
+
                     btn = BrickletRGBLEDButton(b.uid, ipcon)
                     r, g, b_val = btn.get_color()
                     color = f"#{r:02x}{g:02x}{b_val:02x}".upper()
                     state_val = btn.get_button_state()
-                    press_state = "Pressed" if state_val == BrickletRGBLEDButton.BUTTON_STATE_PRESSED else "Released"
+                    press_state = (
+                        "Pressed"
+                        if state_val == BrickletRGBLEDButton.BUTTON_STATE_PRESSED
+                        else "Released"
+                    )
 
-                elif b.type in ("Solid State Relay Bricklet", "Solid State Relay", "Solid-State Relay"):
-                    from tinkerforge.bricklet_solid_state_relay_v2 import BrickletSolidStateRelayV2
+                elif b.type in (
+                    "Solid State Relay Bricklet",
+                    "Solid State Relay",
+                    "Solid-State Relay",
+                ):
+                    from tinkerforge.bricklet_solid_state_relay_v2 import (
+                        BrickletSolidStateRelayV2,
+                    )
+
                     ssr = BrickletSolidStateRelayV2(b.uid, ipcon)
                     relay_state = ssr.get_state()
             except Exception:
                 status = "warning"
 
-        telemetry.append({
-            "brickletNumber": b.bricklet_number,
-            "uid": b.uid or "",
-            "type": b.type,
-            "voltage": voltage,
-            "current": current,
-            "status": status,
-            "pins": pins_data,
-            "color": color,
-            "pressState": press_state,
-            "press_state": press_state,
-            "relayState": relay_state,
-            "relay_state": relay_state,
-        })
+        telemetry.append(
+            {
+                "brickletNumber": b.bricklet_number,
+                "uid": b.uid or "",
+                "type": b.type,
+                "voltage": voltage,
+                "current": current,
+                "status": status,
+                "pins": pins_data,
+                "color": color,
+                "pressState": press_state,
+                "press_state": press_state,
+                "relayState": relay_state,
+                "relay_state": relay_state,
+            }
+        )
     return telemetry
 
 
@@ -311,7 +357,9 @@ def get_system_telemetry() -> Dict[str, Any]:
                 total_gb = round(total_kb / (1024**2), 1)
                 used_gb = round(used_kb / (1024**2), 1)
                 free_gb = round(avail_kb / (1024**2), 1)
-                percent_used = round((used_kb / total_kb) * 100, 1) if total_kb > 0 else 0.0
+                percent_used = (
+                    round((used_kb / total_kb) * 100, 1) if total_kb > 0 else 0.0
+                )
                 memory_usage = {
                     "total": f"{total_gb} GB",
                     "used": f"{used_gb} GB",
@@ -386,7 +434,13 @@ def get_summary() -> Dict[str, Any]:
     unhealthy_bricklets = [b for b in bricklets if b.get("status") != "ok"]
     bricklets_status = "ok" if not unhealthy_bricklets else "warning"
 
-    statuses = [cpu_status, memory_status, disk_status, containers_status, bricklets_status]
+    statuses = [
+        cpu_status,
+        memory_status,
+        disk_status,
+        containers_status,
+        bricklets_status,
+    ]
     if "error" in statuses:
         overall_status = "error"
     elif "warning" in statuses:

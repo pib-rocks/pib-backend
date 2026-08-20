@@ -8,6 +8,7 @@ The profile location comes from pib_hermes_config so that this API and the ROS
 voice assistant that runs the agent cannot drift apart; see that module and the
 profiles bind mount in docker-compose.yaml.
 """
+
 import os
 
 from pib_hermes_config import (

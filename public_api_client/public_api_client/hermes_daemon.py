@@ -7,6 +7,7 @@ Endpoints:
   GET  /health  → 200 {"status": "ok"}
   POST /turn    → JSON {text, chat_id, personality_id?, toolsets?} → {"reply": "..."}
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -21,10 +22,14 @@ import time
 
 # Force IPv4 preference in socket.getaddrinfo to prevent 10s IPv6 timeouts on Pi networks
 _orig_getaddrinfo = socket.getaddrinfo
+
+
 def _ipv4_preferred_getaddrinfo(*args, **kwargs):
     res = _orig_getaddrinfo(*args, **kwargs)
     ipv4 = [r for r in res if r[0] == socket.AF_INET]
     return ipv4 if ipv4 else res
+
+
 socket.getaddrinfo = _ipv4_preferred_getaddrinfo
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Callable, Optional
@@ -77,7 +82,7 @@ def extract_final_response(stdout_text: str) -> str:
     if marker_at < 0:
         return ""
 
-    lines = stdout_text[marker_at + len(_FINAL_RESPONSE_MARKER):].splitlines()
+    lines = stdout_text[marker_at + len(_FINAL_RESPONSE_MARKER) :].splitlines()
     while lines and _DECORATION_LINE.match(lines[0]):
         lines.pop(0)
 
@@ -154,7 +159,11 @@ def run_turn_in_process(
     )
 
     import sys
-    for path_entry in ("/home/pib/.hermes/hermes-agent", "/home/pib/.hermes/hermes-agent/venv/lib/python3.11/site-packages"):
+
+    for path_entry in (
+        "/home/pib/.hermes/hermes-agent",
+        "/home/pib/.hermes/hermes-agent/venv/lib/python3.11/site-packages",
+    ):
         if path_entry not in sys.path and os.path.exists(path_entry):
             sys.path.insert(0, path_entry)
 
@@ -195,7 +204,9 @@ def run_turn_in_process(
         except Exception as exc:
             logging.warning(
                 "ensure_profile failed for personality %s (chat=%s): %s",
-                personality_id, chat_id, exc,
+                personality_id,
+                chat_id,
+                exc,
             )
         from pib_hermes_config import profile_name_for
 
@@ -213,7 +224,8 @@ def run_turn_in_process(
             if not reply:
                 logging.warning(
                     "no FINAL RESPONSE in run_agent stdout (chat=%s, %d chars captured)",
-                    chat_id, len(captured.getvalue()),
+                    chat_id,
+                    len(captured.getvalue()),
                 )
         else:
             reply = _coerce_reply(
@@ -226,7 +238,9 @@ def run_turn_in_process(
             )
     except Exception as exc:
         logging.exception(
-            "in-process hermes turn failed (chat=%s): %s", chat_id, exc,
+            "in-process hermes turn failed (chat=%s): %s",
+            chat_id,
+            exc,
         )
         return FALLBACK_REPLY
 
@@ -238,7 +252,8 @@ def run_turn_in_process(
     except Exception as exc:
         logging.exception(
             "subprocess fallback after empty in-process reply failed (chat=%s): %s",
-            chat_id, exc,
+            chat_id,
+            exc,
         )
         return FALLBACK_REPLY
 
@@ -326,7 +341,8 @@ class HermesDaemonHandler(BaseHTTPRequestHandler):
         turn_start = time.monotonic()
         logging.info(
             "[PERF_TRACE] DAEMON_TURN_START chat=%s elapsed_ms=%.2f",
-            chat_id, (turn_start - t0) * 1000.0,
+            chat_id,
+            (turn_start - t0) * 1000.0,
         )
         try:
             reply = runner(
@@ -344,11 +360,13 @@ class HermesDaemonHandler(BaseHTTPRequestHandler):
         # Full reply is available at once from the runner; treat that as first token.
         logging.info(
             "[PERF_TRACE] DAEMON_FIRST_TOKEN chat=%s elapsed_ms=%.2f",
-            chat_id, (time.monotonic() - t0) * 1000.0,
+            chat_id,
+            (time.monotonic() - t0) * 1000.0,
         )
         logging.info(
             "[PERF_TRACE] DAEMON_DONE chat=%s elapsed_ms=%.2f",
-            chat_id, (time.monotonic() - t0) * 1000.0,
+            chat_id,
+            (time.monotonic() - t0) * 1000.0,
         )
         self._send_json(200, {"reply": reply if isinstance(reply, str) else str(reply)})
 
@@ -409,7 +427,11 @@ def start_daemon(
     global _server, _server_thread
 
     with _server_lock:
-        if _server is not None and _server_thread is not None and _server_thread.is_alive():
+        if (
+            _server is not None
+            and _server_thread is not None
+            and _server_thread.is_alive()
+        ):
             return _server
 
         server = create_server(host=host, port=port, turn_runner=turn_runner)
