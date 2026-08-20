@@ -108,5 +108,12 @@ cerebra counterpart — that is exactly the drift this process prevents.
 
 - pib-backend has **no** Docker build pipeline: its containers are built on the Pi
   from source (`docker compose build <service> && docker compose up -d`).
+- On-Pi `flask-app` builds inject the release tag into `GET /api/version` via
+  `--build-arg APP_VERSION`. After the `develop -> main` merge (two parents),
+  the merge commit's second parent is `develop`, where the release tag lives:
+
+```bash
+docker compose build --build-arg APP_VERSION="$(git tag --points-at HEAD^2)" flask-app
+```
 - The per-package `setup.py` versions (`pib_api/client`, `pib_mcp_server`, …) are
   unrelated to the release version and are not touched by this process.

@@ -15,6 +15,7 @@ from controller import (
     marimo_controller,
     microphone_array_controller,
     system_controller,
+    version_controller,
 )
 
 app.register_blueprint(program_controller.bp, url_prefix="/program", name="program")
@@ -92,3 +93,4 @@ app.register_blueprint(
     url_prefix="/api/v1/system",
     name="system_api_v1",
 )
+app.register_blueprint(version_controller.bp, url_prefix="/version", name="version")
