@@ -3,6 +3,7 @@ FROM python:3.10-slim
 WORKDIR /app
 
 ARG APP_VERSION
+RUN printf '%s\n' "$APP_VERSION" > /etc/pib_version
 
 COPY ./pib_api/flask/requirements.txt /app
 
@@ -19,7 +20,5 @@ COPY ./pib_api/flask/ .
 
 RUN flask --app run db upgrade
 RUN flask --app run seed_db
-
-RUN printf 'APP_VERSION="%s"\n' "$APP_VERSION" > /app/version.py
 
 CMD ["flask", "--app", "run", "run"]
