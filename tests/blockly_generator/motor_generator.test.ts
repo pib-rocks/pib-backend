@@ -1,6 +1,6 @@
 import { Block } from "blockly/core/block";
 import { Order, pythonGenerator } from "blockly/python";
-import { move_motor } from "../../pib_blockly/pib_blockly_server/src/pib-blockly/program-generators/motor-generators";
+import { move_motor, set_hand_position_xyz } from "../../pib_blockly/pib_blockly_server/src/pib-blockly/program-generators/motor-generators";
 
 type MockGenerator = typeof pythonGenerator & {
   definitions_: Record<string, string>;
@@ -68,5 +68,32 @@ describe("move_motor generator", () => {
     const block = createMotorBlock("TILT_FORWARD_HEAD", "ABSOLUTE");
     const code = move_motor(block, generator);
     expect(code).toContain('"tilt_forward_motor"');
+  });
+});
+
+describe("set_hand_position_xyz generator", () => {
+  it("generates ik + Write.move for left arm XYZ", () => {
+    const generator = createMockGenerator();
+    generator.valueToCode = (_block, name) => {
+      if (name === "X") return "0.2";
+      if (name === "Y") return "0.1";
+      if (name === "Z") return "0.3";
+      throw new Error(`unexpected input ${name}`);
+    };
+    const block = {
+      getFieldValue: (field: string) => {
+        if (field === "SIDE") return "left";
+        throw new Error(`unexpected field ${field}`);
+      },
+    } as unknown as Block;
+
+    const code = set_hand_position_xyz(block, generator);
+
+    expect(code).toBe('set_hand_position_xyz("left", 0.2, 0.1, 0.3)\n');
+    const defs = Object.values(generator.definitions_).join("\n");
+    expect(defs).toContain("from pib_sdk import ik, Write, right_arm, left_arm");
+    expect(defs).toContain("q_deg = ik(side, xyz=[x, y, z])");
+    expect(defs).toContain("pib.move(arm, *q_deg)");
+    expect(defs).toContain('os.getenv("ROSBRIDGE_HOST", "rosbridge-ws")');
   });
 });

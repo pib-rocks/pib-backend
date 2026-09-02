@@ -55,6 +55,21 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(motor_name: str) -> int:
         return 0
 `;
 
+export const SET_HAND_POSITION_XYZ_FUNCTION = (generator: CodeGenerator) => `
+def ${generator.FUNCTION_NAME_PLACEHOLDER_}(side: str, x, y, z) -> None:
+
+    logging.info(f"setting {side} hand position to xyz=[{x}, {y}, {z}].")
+    q_deg = ik(side, xyz=[x, y, z])
+    arm = left_arm if side == "left" else right_arm
+    rosbridge_host = os.getenv("ROSBRIDGE_HOST", "rosbridge-ws")
+    try:
+        with Write(host=rosbridge_host, port=9090) as pib:
+            pib.move(arm, *q_deg)
+    except Exception:
+        with Write(host="localhost", port=9090) as pib:
+            pib.move(arm, *q_deg)
+`;
+
 export const APPLY_JOINT_TRAJECTORY_FUNCTION = (generator: CodeGenerator) => `
 def ${generator.FUNCTION_NAME_PLACEHOLDER_}(motor_name: str, position: int) -> None:
 

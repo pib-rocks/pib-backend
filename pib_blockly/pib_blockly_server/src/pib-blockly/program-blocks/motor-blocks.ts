@@ -63,4 +63,48 @@ export const motor_blocks = Blockly.common.createBlockDefinitionsFromJsonArray([
         tooltip: "",
         helpUrl: "",
     },
+    {
+        type: "set_hand_position_xyz",
+        message0: "Set Hand Position at XYZ %1 %2 X %3 Y %4 Z %5",
+        args0: [
+            {
+                type: "field_dropdown",
+                name: "SIDE",
+                options: [
+                    ["left", "left"],
+                    ["right", "right"],
+                ],
+            },
+            {
+                type: "input_dummy",
+            },
+            {
+                type: "input_value",
+                name: "X",
+                check: "Number",
+                align: "RIGHT",
+                extensions: "number_validation",
+            },
+            {
+                type: "input_value",
+                name: "Y",
+                check: "Number",
+                align: "RIGHT",
+                extensions: "number_validation",
+            },
+            {
+                type: "input_value",
+                name: "Z",
+                check: "Number",
+                align: "RIGHT",
+                extensions: "number_validation",
+            },
+        ],
+        inputsInline: false,
+        previousStatement: null,
+        nextStatement: null,
+        colour: 355,
+        tooltip: "Moves the selected hand to a target XYZ position using inverse kinematics.",
+        helpUrl: "",
+    },
 ]);

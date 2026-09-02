@@ -6,6 +6,7 @@ import {
     IMPORT_LOGGING,
     IMPORT_OS,
     IMPORT_PIB_SDK,
+    IMPORT_PIB_SDK_IK,
     IMPORT_RCLPY,
     IMPORT_SYS,
     INIT_GET_JOINT_POSITION_CLIENT,
@@ -14,6 +15,7 @@ import {
 import {
     APPLY_JOINT_TRAJECTORY_FUNCTION,
     GET_JOINT_POSITION_FUNCTION,
+    SET_HAND_POSITION_XYZ_FUNCTION,
 } from "./util/function-declarations";
 
 const motorOptionToMotorName = new Map()
@@ -98,6 +100,36 @@ export function move_motor(block: Block, generator: typeof pythonGenerator) {
         throw new Error(`unexpected input-mode: ${modeInput}.`);
     }
     return `${functionName}("${selectedMotorName}", ${positionString})\n`;
+}
+
+export function set_hand_position_xyz(
+    block: Block,
+    generator: typeof pythonGenerator,
+) {
+    const side = <string>block.getFieldValue("SIDE");
+    if (side !== "left" && side !== "right") {
+        throw new Error(`'${side}' is not a valid value for 'SIDE'.`);
+    }
+    const xInput = String(generator.valueToCode(block, "X", Order.ATOMIC) || "0");
+    const yInput = String(generator.valueToCode(block, "Y", Order.ATOMIC) || "0");
+    const zInput = String(generator.valueToCode(block, "Z", Order.ATOMIC) || "0");
+
+    Object.assign(generator.definitions_, {
+        IMPORT_RCLPY,
+        IMPORT_SYS,
+        IMPORT_OS,
+        IMPORT_LOGGING,
+        IMPORT_PIB_SDK_IK,
+        CONFIGURE_LOGGING,
+        INIT_ROS,
+    });
+
+    const functionName = generator.provideFunction_(
+        "set_hand_position_xyz",
+        SET_HAND_POSITION_XYZ_FUNCTION(generator),
+    );
+
+    return `${functionName}("${side}", ${xInput}, ${yInput}, ${zInput})\n`;
 }
 
 export {pythonGenerator};

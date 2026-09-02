@@ -14,6 +14,10 @@ export const RESERVED_WORDS = [
     "PlayAudioFromSpeech",
     "play_audio_from_speech_client",
     // motor
+    "ik",
+    "Write",
+    "right_arm",
+    "left_arm",
     "ApplyJointTrajectory",
     "GetJointPosition",
     "JointTrajectory",
