@@ -55,11 +55,36 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(motor_name: str) -> int:
         return 0
 `;
 
-export const SET_HAND_POSITION_XYZ_FUNCTION = (generator: CodeGenerator) => `
-def ${generator.FUNCTION_NAME_PLACEHOLDER_}(side: str, x, y, z) -> None:
+export const GET_CURRENT_HAND_POSITION_FUNCTION = (
+    generator: CodeGenerator,
+    getJointPositionFunctionName: string,
+) => `
+def ${generator.FUNCTION_NAME_PLACEHOLDER_}(side: str):
 
-    logging.info(f"setting {side} hand position to xyz=[{x}, {y}, {z}].")
-    q_deg = ik(side, xyz=[x, y, z])
+    from pib_sdk import fk, get_arm_model
+
+    motor_names = get_arm_model(side).motor_names
+    q_deg = [
+        ${getJointPositionFunctionName}(motor_name) / 100.0
+        for motor_name in motor_names
+    ]
+    return fk(side, q_deg).translation
+`;
+
+export const SET_HAND_POSITION_XYZ_FUNCTION = (
+    generator: CodeGenerator,
+    getCurrentHandPositionFunctionName: string,
+) => `
+def ${generator.FUNCTION_NAME_PLACEHOLDER_}(side: str, mode: str, x, y, z) -> None:
+
+    if mode == "RELATIVE":
+        current = ${getCurrentHandPositionFunctionName}(side)
+        target = [current[0] + x, current[1] + y, current[2] + z]
+    else:
+        target = [x, y, z]
+
+    logging.info(f"setting {side} hand position to xyz={target}.")
+    q_deg = ik(side, xyz=target)
     arm = left_arm if side == "left" else right_arm
     rosbridge_host = os.getenv("ROSBRIDGE_HOST", "rosbridge-ws")
     try:

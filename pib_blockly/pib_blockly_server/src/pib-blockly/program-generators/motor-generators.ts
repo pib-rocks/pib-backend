@@ -14,6 +14,7 @@ import {
 } from "./util/definitions";
 import {
     APPLY_JOINT_TRAJECTORY_FUNCTION,
+    GET_CURRENT_HAND_POSITION_FUNCTION,
     GET_JOINT_POSITION_FUNCTION,
     SET_HAND_POSITION_XYZ_FUNCTION,
 } from "./util/function-declarations";
@@ -106,6 +107,10 @@ export function set_hand_position_xyz(
     block: Block,
     generator: typeof pythonGenerator,
 ) {
+    const mode = <string>block.getFieldValue("MODE");
+    if (mode !== "ABSOLUTE" && mode !== "RELATIVE") {
+        throw new Error(`unexpected input-mode: ${mode}.`);
+    }
     const side = <string>block.getFieldValue("SIDE");
     if (side !== "left" && side !== "right") {
         throw new Error(`'${side}' is not a valid value for 'SIDE'.`);
@@ -124,12 +129,34 @@ export function set_hand_position_xyz(
         INIT_ROS,
     });
 
+    let getCurrentHandPositionFunctionName = "get_current_hand_position";
+    if (mode === "RELATIVE") {
+        Object.assign(generator.definitions_, {
+            IMPORT_GET_JOINT_POSITION,
+            INIT_GET_JOINT_POSITION_CLIENT,
+        });
+        const getJointPositionFunctionName = generator.provideFunction_(
+            "get_joint_position",
+            GET_JOINT_POSITION_FUNCTION(generator),
+        );
+        getCurrentHandPositionFunctionName = generator.provideFunction_(
+            "get_current_hand_position",
+            GET_CURRENT_HAND_POSITION_FUNCTION(
+                generator,
+                getJointPositionFunctionName,
+            ),
+        );
+    }
+
     const functionName = generator.provideFunction_(
         "set_hand_position_xyz",
-        SET_HAND_POSITION_XYZ_FUNCTION(generator),
+        SET_HAND_POSITION_XYZ_FUNCTION(
+            generator,
+            getCurrentHandPositionFunctionName,
+        ),
     );
 
-    return `${functionName}("${side}", ${xInput}, ${yInput}, ${zInput})\n`;
+    return `${functionName}("${side}", "${mode}", ${xInput}, ${yInput}, ${zInput})\n`;
 }
 
 export {pythonGenerator};

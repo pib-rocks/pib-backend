@@ -37,6 +37,19 @@ function createMotorBlock(
   } as unknown as Block;
 }
 
+function createHandPositionBlock(
+  side: "left" | "right",
+  mode: "ABSOLUTE" | "RELATIVE",
+): Block {
+  return {
+    getFieldValue: (field: string) => {
+      if (field === "SIDE") return side;
+      if (field === "MODE") return mode;
+      throw new Error(`unexpected field ${field}`);
+    },
+  } as unknown as Block;
+}
+
 describe("move_motor generator", () => {
   it("generates absolute apply_joint_trajectory for elbow_left", () => {
     const generator = createMockGenerator("1000");
@@ -72,7 +85,7 @@ describe("move_motor generator", () => {
 });
 
 describe("set_hand_position_xyz generator", () => {
-  it("generates ik + Write.move for left arm XYZ", () => {
+  function createXyzGenerator() {
     const generator = createMockGenerator();
     generator.valueToCode = (_block, name) => {
       if (name === "X") return "0.2";
@@ -80,20 +93,44 @@ describe("set_hand_position_xyz generator", () => {
       if (name === "Z") return "0.3";
       throw new Error(`unexpected input ${name}`);
     };
-    const block = {
-      getFieldValue: (field: string) => {
-        if (field === "SIDE") return "left";
-        throw new Error(`unexpected field ${field}`);
-      },
-    } as unknown as Block;
+    return generator;
+  }
+
+  it("generates an absolute XYZ target without reading current joints", () => {
+    const generator = createXyzGenerator();
+    const block = createHandPositionBlock("left", "ABSOLUTE");
 
     const code = set_hand_position_xyz(block, generator);
 
-    expect(code).toBe('set_hand_position_xyz("left", 0.2, 0.1, 0.3)\n');
+    expect(code).toBe(
+      'set_hand_position_xyz("left", "ABSOLUTE", 0.2, 0.1, 0.3)\n',
+    );
     const defs = Object.values(generator.definitions_).join("\n");
     expect(defs).toContain("from pib_sdk import ik, Write, right_arm, left_arm");
-    expect(defs).toContain("q_deg = ik(side, xyz=[x, y, z])");
+    expect(defs).toContain("target = [x, y, z]");
+    expect(defs).toContain("q_deg = ik(side, xyz=target)");
     expect(defs).toContain("pib.move(arm, *q_deg)");
     expect(defs).toContain('os.getenv("ROSBRIDGE_HOST", "rosbridge-ws")');
+    expect(defs).not.toContain("get_joint_position_client.call_async");
+  });
+
+  it("generates a relative XYZ target from the current hand position", () => {
+    const generator = createXyzGenerator();
+    const block = createHandPositionBlock("right", "RELATIVE");
+
+    const code = set_hand_position_xyz(block, generator);
+
+    expect(code).toBe(
+      'set_hand_position_xyz("right", "RELATIVE", 0.2, 0.1, 0.3)\n',
+    );
+    const defs = Object.values(generator.definitions_).join("\n");
+    expect(defs).toContain("get_joint_position_client.call_async");
+    expect(defs).toContain("from pib_sdk import fk, get_arm_model");
+    expect(defs).toContain("motor_names = get_arm_model(side).motor_names");
+    expect(defs).toContain("get_joint_position(motor_name) / 100.0");
+    expect(defs).toContain("return fk(side, q_deg).translation");
+    expect(defs).toContain(
+      "target = [current[0] + x, current[1] + y, current[2] + z]",
+    );
   });
 });
