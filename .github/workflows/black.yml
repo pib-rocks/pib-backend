@@ -13,4 +13,8 @@ jobs:
       - name: Install black
         run: pip install black==26.5.1
       - name: Run black --check
-        run: python -m black --check . --diff
+        # Restrict to Python files only: running `black --check .` over the whole
+        # repo breaks on TypeScript/Blockly `.ts` files (black cannot parse TS),
+        # failing every PR that touches blockly. `--include '\.py$'` limits the
+        # check to Python files. See Jira PR-1658.
+        run: python -m black --check --include '\.py$' . --diff
