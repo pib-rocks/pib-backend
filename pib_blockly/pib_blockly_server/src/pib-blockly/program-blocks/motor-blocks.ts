@@ -1,5 +1,17 @@
 import * as Blockly from "blockly";
 
+const SIDE_DROPDOWN = {
+    type: "field_dropdown",
+    name: "SIDE",
+    options: [
+        ["left", "left"],
+        ["right", "right"],
+    ],
+};
+
+const handPositionTooltip = (axis: string) =>
+    `Returns the ${axis} coordinate of the selected hand in millimeters. The value is the position the hand was last commanded to move to, not live encoder feedback. Left/right is from pib's own perspective: imagine standing in front of pib and looking at him (the same binding used across pib part numbering e.g. C35R/C35L).`;
+
 export const motor_blocks = Blockly.common.createBlockDefinitionsFromJsonArray([
     {
         type: "move_motor",
@@ -113,6 +125,33 @@ export const motor_blocks = Blockly.common.createBlockDefinitionsFromJsonArray([
         nextStatement: null,
         colour: 355,
         tooltip: "Moves the selected hand to a target XYZ position using inverse kinematics. Left/right is from pib's own perspective: imagine standing in front of pib and looking at him (the same binding used across pib part numbering e.g. C35R/C35L).",
+        helpUrl: "",
+    },
+    {
+        type: "get_hand_x",
+        message0: "Get hand position X of %1",
+        args0: [SIDE_DROPDOWN],
+        output: "Number",
+        colour: 355,
+        tooltip: handPositionTooltip("X"),
+        helpUrl: "",
+    },
+    {
+        type: "get_hand_y",
+        message0: "Get hand position Y of %1",
+        args0: [SIDE_DROPDOWN],
+        output: "Number",
+        colour: 355,
+        tooltip: handPositionTooltip("Y"),
+        helpUrl: "",
+    },
+    {
+        type: "get_hand_z",
+        message0: "Get hand position Z of %1",
+        args0: [SIDE_DROPDOWN],
+        output: "Number",
+        colour: 355,
+        tooltip: handPositionTooltip("Z"),
         helpUrl: "",
     },
 ]);
