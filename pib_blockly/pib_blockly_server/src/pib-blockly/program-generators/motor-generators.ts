@@ -14,10 +14,12 @@ import {
 } from "./util/definitions";
 import {
     APPLY_JOINT_TRAJECTORY_FUNCTION,
-    GET_CURRENT_HAND_POSITION_FUNCTION,
     GET_JOINT_POSITION_FUNCTION,
     SET_HAND_POSITION_XYZ_FUNCTION,
 } from "./util/function-declarations";
+
+const IMPORT_PIB_SDK_GET_HAND_POSITION_XYZ =
+    "from pib_sdk import get_hand_position_xyz";
 
 const motorOptionToMotorName = new Map()
     .set("THUMB_LEFT_OPPOSITION", "thumb_left_opposition")
@@ -111,10 +113,7 @@ export function set_hand_position_xyz(
     if (mode !== "ABSOLUTE" && mode !== "RELATIVE") {
         throw new Error(`unexpected input-mode: ${mode}.`);
     }
-    const side = <string>block.getFieldValue("SIDE");
-    if (side !== "left" && side !== "right") {
-        throw new Error(`'${side}' is not a valid value for 'SIDE'.`);
-    }
+    const side = readSide(block);
     const xInput = String(generator.valueToCode(block, "X", Order.ATOMIC) || "0");
     const yInput = String(generator.valueToCode(block, "Y", Order.ATOMIC) || "0");
     const zInput = String(generator.valueToCode(block, "Z", Order.ATOMIC) || "0");
@@ -125,38 +124,51 @@ export function set_hand_position_xyz(
         IMPORT_OS,
         IMPORT_LOGGING,
         IMPORT_PIB_SDK_IK,
+        IMPORT_PIB_SDK_GET_HAND_POSITION_XYZ,
         CONFIGURE_LOGGING,
         INIT_ROS,
     });
 
-    let getCurrentHandPositionFunctionName = "get_current_hand_position";
-    if (mode === "RELATIVE") {
-        Object.assign(generator.definitions_, {
-            IMPORT_GET_JOINT_POSITION,
-            INIT_GET_JOINT_POSITION_CLIENT,
-        });
-        const getJointPositionFunctionName = generator.provideFunction_(
-            "get_joint_position",
-            GET_JOINT_POSITION_FUNCTION(generator),
-        );
-        getCurrentHandPositionFunctionName = generator.provideFunction_(
-            "get_current_hand_position",
-            GET_CURRENT_HAND_POSITION_FUNCTION(
-                generator,
-                getJointPositionFunctionName,
-            ),
-        );
-    }
-
     const functionName = generator.provideFunction_(
         "set_hand_position_xyz",
-        SET_HAND_POSITION_XYZ_FUNCTION(
-            generator,
-            getCurrentHandPositionFunctionName,
-        ),
+        SET_HAND_POSITION_XYZ_FUNCTION(generator),
     );
 
     return `${functionName}("${side}", "${mode}", ${xInput}, ${yInput}, ${zInput})\n`;
+}
+
+function readSide(block: Block): string {
+    const side = <string>block.getFieldValue("SIDE");
+    if (side !== "left" && side !== "right") {
+        throw new Error(`'${side}' is not a valid value for 'SIDE'.`);
+    }
+    return side;
+}
+
+function getHandPositionComponent(
+    block: Block,
+    generator: typeof pythonGenerator,
+    index: number,
+): [string, Order] {
+    const side = readSide(block);
+
+    Object.assign(generator.definitions_, {
+        IMPORT_PIB_SDK_GET_HAND_POSITION_XYZ,
+    });
+
+    return [`get_hand_position_xyz("${side}")[${index}]`, Order.MEMBER];
+}
+
+export function get_hand_x(block: Block, generator: typeof pythonGenerator) {
+    return getHandPositionComponent(block, generator, 0);
+}
+
+export function get_hand_y(block: Block, generator: typeof pythonGenerator) {
+    return getHandPositionComponent(block, generator, 1);
+}
+
+export function get_hand_z(block: Block, generator: typeof pythonGenerator) {
+    return getHandPositionComponent(block, generator, 2);
 }
 
 export {pythonGenerator};
