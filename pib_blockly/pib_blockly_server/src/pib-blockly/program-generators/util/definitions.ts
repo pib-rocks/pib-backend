@@ -13,6 +13,15 @@ export const IMPORT_PARAMIKO = "import paramiko";
 export const IMPORT_PIB_SDK = "import pib_sdk";
 export const IMPORT_PIB_SDK_IK =
     "from pib_sdk import ik, Write, right_arm, left_arm";
+export const IMPORT_PIB_SDK_POSES =
+    "from pib_sdk.features.poses import save_current_pose, list_poses, get_pose";
+export const IMPORT_PIB_SDK_POSE_CONTROL =
+    "from pib_sdk.control import All, _expand_motor_specs";
+export const IMPORT_PIB_SDK_TELEMETRY =
+    "from pib_sdk.telemetry import Telemetry";
+export const IMPORT_PIB_SDK_BACKEND =
+    "from pib_sdk.backend import BackendClient";
+export const IMPORT_URLPARSE = "from urllib.parse import urlparse";
 export const IMPORT_PLAY_AUDIO_FROM_SPREECH =
     "from datatypes.srv import PlayAudioFromSpeech";
 export const IMPORT_PLAY_AUDIO_FROM_FILE =
@@ -35,6 +44,17 @@ export const IMPORT_SOLID_STATE_RELAY_STATE =
 export const INIT_ROS = `
 rclpy.init()
 node = rclpy.create_node("blockly_node")
+`;
+
+export const INIT_PIB_SDK_POSE_BACKEND = `
+rosbridge_host = os.getenv("ROSBRIDGE_HOST", "rosbridge-ws")
+backend_url = urlparse(
+    os.getenv("FLASK_API_BASE_URL", "http://flask-app:5000")
+)
+pose_backend = BackendClient(
+    host=backend_url.hostname or "flask-app",
+    port=backend_url.port or 5000,
+)
 `;
 
 // logging

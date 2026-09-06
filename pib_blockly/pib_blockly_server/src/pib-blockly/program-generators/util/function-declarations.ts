@@ -112,6 +112,17 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(poseId: str) -> None:
             pib_sdk.Write(host="localhost", port=9090).move(motor_name, position)
 `;
 
+export const SAVE_CURRENT_POSE_FUNCTION = (generator: CodeGenerator) => `
+def ${generator.FUNCTION_NAME_PLACEHOLDER_}(name: str) -> None:
+
+    motor_names = _expand_motor_specs([All])
+    assert "turn_head_motor" in motor_names
+    assert "tilt_forward_motor" in motor_names
+
+    with Telemetry(host=rosbridge_host, port=9090) as telemetry:
+        save_current_pose(telemetry, pose_backend, name, motor_names)
+`;
+
 // set-solid-state-relay
 
 export const SET_SOLID_STATE_RELAY_FUNCTION = (generator: CodeGenerator) => `

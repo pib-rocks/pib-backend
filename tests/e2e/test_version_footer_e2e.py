@@ -11,6 +11,7 @@ RED/GREEN: this test asserts a real well-formed version. On a build without the
 feature it fails (placeholder 'dev' or absent element) - i.e. it goes RED before
 the fix is deployed and GREEN after.
 """
+
 import os
 import re
 import requests
@@ -57,7 +58,9 @@ class TestVersionFooterE2E:
         data = resp.json()
         ver = data.get("version")
         assert isinstance(ver, str) and ver.strip(), f"empty version: {data}"
-        assert VERSION_RE.match(ver.strip()), f"backend version not well-formed: {ver!r}"
+        assert VERSION_RE.match(
+            ver.strip()
+        ), f"backend version not well-formed: {ver!r}"
 
     def test_single_value_footer_matches_backend(self, page: Page) -> None:
         """The one footer value equals the one backend value (single source of truth)."""
@@ -68,6 +71,6 @@ class TestVersionFooterE2E:
 
         # strip an optional leading 'v' on both sides before comparing
         norm = lambda s: s.lstrip("v") if s.startswith("v") else s  # noqa: E731
-        assert norm(footer) == norm(backend), (
-            f"footer {footer!r} != backend {backend!r}"
-        )
+        assert norm(footer) == norm(
+            backend
+        ), f"footer {footer!r} != backend {backend!r}"

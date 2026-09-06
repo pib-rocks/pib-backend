@@ -3,7 +3,10 @@ from flask import Blueprint, jsonify
 bp = Blueprint("version_controller", __name__)
 
 
-VERSION_FILES = ("/etc/pib_version", "/app/version.py")  # /etc survives the /app volume mount
+VERSION_FILES = (
+    "/etc/pib_version",
+    "/app/version.py",
+)  # /etc survives the /app volume mount
 
 
 def _read_app_version():
