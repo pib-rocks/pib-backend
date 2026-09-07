@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import subprocess
 import time
 import uuid
@@ -25,11 +26,23 @@ def _get_chromium_launch_kwargs() -> dict:
 
 
 from playwright.sync_api import Page, expect
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 ROBOT_URL = os.environ.get("PIB_E2E_BASE_URL", "http://192.168.1.28").rstrip("/")
 API_URL = f"{ROBOT_URL}/api"
 REQUEST_TIMEOUT = 15
-TURN_TIMEOUT = int(os.environ.get("PIB_HERMES_E2E_TURN_TIMEOUT", "180"))
+TURN_TIMEOUT = int(os.environ.get("PIB_HERMES_E2E_TURN_TIMEOUT", "300"))
+# rosbridge forwards /send_chat_message to a ROS node that may already be busy with
+# an LLM turn, so the service acknowledgement can lag well past REQUEST_TIMEOUT.
+SERVICE_ACK_TIMEOUT = int(os.environ.get("PIB_HERMES_E2E_SERVICE_TIMEOUT", "60"))
+
+# Browser-side timeouts. Defaults are generous because the suite runs on the Pi,
+# where Angular bootstrap and deep-chat hydration are slow under load.
+UI_TIMEOUT_MS = int(os.environ.get("PIB_E2E_UI_TIMEOUT_MS", "30000"))
+NAV_TIMEOUT_MS = int(os.environ.get("PIB_E2E_NAV_TIMEOUT_MS", "60000"))
+UI_REPLY_TIMEOUT_S = int(os.environ.get("PIB_E2E_UI_REPLY_TIMEOUT_S", "20"))
+# Budget for a UI-triggered write to become observable through the REST API.
+API_SETTLE_TIMEOUT_S = int(os.environ.get("PIB_E2E_API_SETTLE_TIMEOUT_S", "30"))
 
 
 def _get_json(path: str):
@@ -38,14 +51,57 @@ def _get_json(path: str):
     return response.json()
 
 
+def _configure_page(page: "Page") -> "Page":
+    page.set_default_timeout(UI_TIMEOUT_MS)
+    page.set_default_navigation_timeout(NAV_TIMEOUT_MS)
+    return page
+
+
+def _open_voice_assistant(page: "Page") -> None:
+    """Navigate to the Voice Assistant view and wait for it to be interactive.
+
+    "networkidle" is unusable against Cerebra: it holds a rosbridge socket open and
+    polls, so the network never goes idle and goto() times out at random on the Pi.
+    """
+    page.goto(f"{ROBOT_URL}/voice-assistant", wait_until="domcontentloaded")
+    page.wait_for_selector(
+        "#add-personality-button", state="visible", timeout=NAV_TIMEOUT_MS
+    )
+
+
+def _personality_ids() -> set:
+    payload = _get_json("/voice-assistant/personality")
+    items = (
+        payload.get("voiceAssistantPersonalities", [])
+        if isinstance(payload, dict)
+        else payload
+    )
+    return {item["personalityId"] for item in items}
+
+
+def _poll_messages(chat_id: str):
+    """Read chat messages, returning None on a transient API hiccup.
+
+    A single 5xx or a dropped connection while the Pi is under load must not abort
+    the whole turn wait, so callers keep polling instead of raising.
+    """
+    try:
+        return _get_json(f"/voice-assistant/chat/{chat_id}/messages").get(
+            "messages", []
+        )
+    except (requests.RequestException, ValueError):
+        return None
+
+
 def _wait_for_new_assistant_message(chat_id: str, previous_ids: set[str]):
     deadline = time.monotonic() + TURN_TIMEOUT
     last_count = 0
     stable_ticks = 0
     while time.monotonic() < deadline:
-        messages = _get_json(f"/voice-assistant/chat/{chat_id}/messages").get(
-            "messages", []
-        )
+        messages = _poll_messages(chat_id)
+        if messages is None:
+            time.sleep(1)
+            continue
         new_replies = [
             message
             for message in messages
@@ -60,9 +116,11 @@ def _wait_for_new_assistant_message(chat_id: str, previous_ids: set[str]):
                 if (
                     stable_ticks >= 3 and not combined_content.endswith(":")
                 ) or stable_ticks >= 6:
-                    messages = _get_json(
-                        f"/voice-assistant/chat/{chat_id}/messages"
-                    ).get("messages", [])
+                    final_messages = _poll_messages(chat_id)
+                    if final_messages is None:
+                        time.sleep(1)
+                        continue
+                    messages = final_messages
                     new_replies = [
                         m
                         for m in messages
@@ -81,6 +139,69 @@ def _wait_for_new_assistant_message(chat_id: str, previous_ids: set[str]):
                 stable_ticks = 0
         time.sleep(1)
     pytest.fail(f"No persisted assistant reply arrived within {TURN_TIMEOUT} seconds")
+
+
+def _await_service_response(connection, request_id: str, timeout_s: float):
+    """Drain rosbridge frames until the response for `request_id` arrives.
+
+    Returns the response dict, or None if the budget runs out. Every recv() gets a
+    socket timeout derived from the remaining budget; otherwise a quiet socket blocks
+    for the full connection timeout and leaves the loop via an exception rather than
+    honouring its own deadline.
+    """
+    import websocket
+
+    deadline = time.monotonic() + timeout_s
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return None
+        try:
+            connection.settimeout(min(remaining, 5))
+            frame = connection.recv()
+        except (websocket.WebSocketTimeoutException, TimeoutError):
+            continue
+        except (websocket.WebSocketException, OSError):
+            return None
+
+        if not frame:
+            continue
+        try:
+            message = json.loads(frame)
+        except (TypeError, ValueError):
+            continue
+        if isinstance(message, dict) and message.get("id") == request_id:
+            return message
+
+
+def _turn_off_voice_assistant(chat_id: str) -> None:
+    """Best-effort teardown of the listening state opened by `_send_chat_message`."""
+    try:
+        import websocket
+
+        parsed = urlparse(ROBOT_URL)
+        rosbridge_url = os.environ.get(
+            "PIB_E2E_ROSBRIDGE_URL", f"ws://{parsed.hostname}:9090"
+        )
+        connection = websocket.create_connection(rosbridge_url, timeout=10)
+        try:
+            request_id = f"hermes-e2e-turnoff-{uuid.uuid4()}"
+            connection.send(
+                json.dumps(
+                    {
+                        "op": "call_service",
+                        "id": request_id,
+                        "service": "/set_voice_assistant_state",
+                        "type": "datatypes/srv/SetVoiceAssistantState",
+                        "args": {"state": {"chat_id": chat_id, "turned_on": False}},
+                    }
+                )
+            )
+            _await_service_response(connection, request_id, 10)
+        finally:
+            connection.close()
+    except Exception:
+        pass
 
 
 def _send_chat_message(chat_id: str, content: str) -> None:
@@ -118,12 +239,9 @@ def _send_chat_message(chat_id: str, content: str) -> None:
             )
         )
 
-        # Wait for turn_on response
-        deadline = time.monotonic() + 10
-        while time.monotonic() < deadline:
-            resp = json.loads(connection.recv())
-            if resp.get("id") == turn_on_id:
-                break
+        # Wait for turn_on response. Missing the acknowledgement is not fatal:
+        # the state change is applied by the ROS node regardless.
+        _await_service_response(connection, turn_on_id, 10)
 
         # 2. Call /send_chat_message service
         request_id = f"hermes-e2e-{uuid.uuid4()}"
@@ -136,27 +254,31 @@ def _send_chat_message(chat_id: str, content: str) -> None:
         }
         connection.send(json.dumps(request))
 
-        deadline = time.monotonic() + REQUEST_TIMEOUT
-        while time.monotonic() < deadline:
-            response = json.loads(connection.recv())
-            if response.get("id") == request_id:
-                # Accept both immediate OK and service timeout (background turn processing continues in ROS node)
-                is_ok = response.get("result") is True or "Timeout exceeded" in str(
-                    response.get("values")
-                )
-                assert is_ok, f"ROS service call failed unexpectedly: {response}"
-                return
-        pytest.fail("rosbridge did not return the send_chat_message service response")
+        response = _await_service_response(connection, request_id, SERVICE_ACK_TIMEOUT)
+        if response is None:
+            pytest.fail(
+                "rosbridge did not return the send_chat_message service response "
+                f"within {SERVICE_ACK_TIMEOUT} seconds"
+            )
+        # Accept both immediate OK and service timeout (background turn processing continues in ROS node)
+        is_ok = response.get("result") is True or "Timeout exceeded" in str(
+            response.get("values")
+        )
+        assert is_ok, f"ROS service call failed unexpectedly: {response}"
     finally:
         connection.close()
 
 
 def test_voice_assistant_hermes_persists_reply_and_recalls_prior_fact():
-    requests.post(
-        f"{API_URL}/system/smart-connect",
-        json={"token": "12345678", "password": "12345678"},
-        timeout=REQUEST_TIMEOUT,
-    )
+    try:
+        requests.post(
+            f"{API_URL}/system/smart-connect",
+            json={"token": "12345678", "password": "12345678"},
+            timeout=REQUEST_TIMEOUT,
+        )
+    except requests.RequestException:
+        # Reachability is reported as a skip by the assistant-model probe below.
+        pass
     try:
         models = _get_json("/assistant-model").get("assistantModels", [])
     except (requests.RequestException, ValueError) as exc:
@@ -172,9 +294,14 @@ def test_voice_assistant_hermes_persists_reply_and_recalls_prior_fact():
             "live Hermes E2E prerequisite absent: no hermes-agent assistant model exists"
         )
 
-    personalities = _get_json("/voice-assistant/personality").get(
-        "voiceAssistantPersonalities", []
-    )
+    try:
+        personalities = _get_json("/voice-assistant/personality").get(
+            "voiceAssistantPersonalities", []
+        )
+    except (requests.RequestException, ValueError) as exc:
+        pytest.skip(
+            f"live Hermes E2E prerequisite absent: robot API is unreachable ({exc})"
+        )
     requested_id = os.environ.get("PIB_HERMES_E2E_PERSONALITY_ID")
     personality = next(
         (
@@ -228,15 +355,24 @@ def test_voice_assistant_hermes_persists_reply_and_recalls_prior_fact():
         recalled_reply, _ = _wait_for_new_assistant_message(chat_id, first_ids)
         assert token in recalled_reply["content"]
     finally:
+        # Each cleanup step is isolated so a failing one cannot mask the real result,
+        # and so a leftover "listening" chat cannot slow down the following tests.
         if chat_id is not None:
-            requests.delete(
-                f"{API_URL}/voice-assistant/chat/{chat_id}", timeout=REQUEST_TIMEOUT
+            _turn_off_voice_assistant(chat_id)
+            try:
+                requests.delete(
+                    f"{API_URL}/voice-assistant/chat/{chat_id}", timeout=REQUEST_TIMEOUT
+                )
+            except requests.RequestException:
+                pass
+        try:
+            requests.put(
+                f"{API_URL}/voice-assistant/personality/{personality_id}",
+                json={"assistantModelId": original_model_id},
+                timeout=REQUEST_TIMEOUT,
             )
-        requests.put(
-            f"{API_URL}/voice-assistant/personality/{personality_id}",
-            json={"assistantModelId": original_model_id},
-            timeout=REQUEST_TIMEOUT,
-        )
+        except requests.RequestException:
+            pass
 
 
 def test_create_personality_via_browser_ui_generates_soul_md():
@@ -270,57 +406,71 @@ def test_create_personality_via_browser_ui_generates_soul_md():
             localStorage.setItem('token', '12345678');
             localStorage.setItem('password', '12345678');
         """)
-        page = context.new_page()
+        page = _configure_page(context.new_page())
 
         try:
             # 1. Open Voice Assistant UI
-            page.goto(f"{ROBOT_URL}/voice-assistant", wait_until="networkidle")
-            page.wait_for_timeout(2000)
+            _open_voice_assistant(page)
 
             # 2. Click #add-personality-button to open form
             add_btn = page.locator("#add-personality-button")
-            expect(add_btn).to_be_visible(timeout=15000)
+            expect(add_btn).to_be_visible(timeout=UI_TIMEOUT_MS)
+            expect(add_btn).to_be_enabled(timeout=UI_TIMEOUT_MS)
             add_btn.click()
 
             # 3. Fill #name-input and select gender radio
             name_input = page.locator("#name-input")
-            expect(name_input).to_be_visible(timeout=10000)
+            expect(name_input).to_be_visible(timeout=UI_TIMEOUT_MS)
             name_input.type(unique_name)
+            expect(name_input).to_have_value(unique_name, timeout=UI_TIMEOUT_MS)
 
-            # Select Female radio button via label to ensure form is valid
+            # Select Female radio button via label to ensure form is valid. The label
+            # renders with the modal, so wait for it instead of sampling is_visible().
             female_label = page.locator('label[for="new-radio-female"]').first
-            if female_label.is_visible():
+            try:
+                female_label.wait_for(state="visible", timeout=5000)
                 female_label.click()
+            except PlaywrightTimeoutError:
+                pass
 
             # 4. Save personality via UI
             save_btn = page.locator("#modal-save-button")
-            expect(save_btn).to_be_visible(timeout=10000)
+            expect(save_btn).to_be_visible(timeout=UI_TIMEOUT_MS)
+            expect(save_btn).to_be_enabled(timeout=UI_TIMEOUT_MS)
             save_btn.click()
 
-            # Wait for creation API call to complete
-            page.wait_for_timeout(3000)
-
-            # Detect created personality ID via difference in API personality set
-            res_after = requests.get(
-                f"{API_URL}/voice-assistant/personality", timeout=REQUEST_TIMEOUT
-            ).json()
-            after = (
-                res_after.get("voiceAssistantPersonalities", [])
-                if isinstance(res_after, dict)
-                else res_after
-            )
-            after_ids = {p["personalityId"] for p in after}
-            new_ids = after_ids - before_ids
+            # Detect created personality ID by polling the API until the new entry
+            # shows up, rather than sleeping and hoping the POST already landed.
+            deadline = time.monotonic() + API_SETTLE_TIMEOUT_S
+            new_ids = set()
+            while time.monotonic() < deadline:
+                try:
+                    new_ids = _personality_ids() - before_ids
+                except (requests.RequestException, ValueError):
+                    new_ids = set()
+                if new_ids:
+                    break
+                time.sleep(0.5)
             assert (
                 len(new_ids) == 1
             ), f"Expected 1 new personality created via UI, got: {new_ids}"
             created_personality_id = list(new_ids)[0]
 
-            # 5. Verify SOUL.md via created personality API response & filesystem fallback
-            created_p = [
-                p for p in after if p["personalityId"] == created_personality_id
-            ][0]
-            soul_content = created_p.get("description") or ""
+            # 5. Verify SOUL.md via created personality API response. The file is
+            # written asynchronously after the POST returns, so poll for content.
+            soul_content = ""
+            deadline = time.monotonic() + API_SETTLE_TIMEOUT_S
+            while time.monotonic() < deadline:
+                try:
+                    created_p = _get_json(
+                        f"/voice-assistant/personality/{created_personality_id}"
+                    )
+                except (requests.RequestException, ValueError):
+                    created_p = {}
+                soul_content = created_p.get("description") or ""
+                if unique_name in soul_content:
+                    break
+                time.sleep(0.5)
 
             # 6. Assertions on SOUL.md content
             assert (
@@ -338,10 +488,13 @@ def test_create_personality_via_browser_ui_generates_soul_md():
             browser.close()
             # 7. Cleanup: Delete the created test personality
             if created_personality_id is not None:
-                requests.delete(
-                    f"{API_URL}/voice-assistant/personality/{created_personality_id}",
-                    timeout=REQUEST_TIMEOUT,
-                )
+                try:
+                    requests.delete(
+                        f"{API_URL}/voice-assistant/personality/{created_personality_id}",
+                        timeout=REQUEST_TIMEOUT,
+                    )
+                except requests.RequestException:
+                    pass
 
 
 def test_chat_send_button_activation_with_smartconnect():
@@ -369,12 +522,11 @@ def test_chat_send_button_activation_with_smartconnect():
             localStorage.setItem('token', '12345678');
             localStorage.setItem('password', '12345678');
         """)
-        page = context.new_page()
+        page = _configure_page(context.new_page())
 
         try:
             # 2. Open Voice Assistant
-            page.goto(f"{ROBOT_URL}/voice-assistant", wait_until="networkidle")
-            page.wait_for_timeout(2000)
+            _open_voice_assistant(page)
 
             # 3. Create a persona with Hermes Agent backend
             res_models = requests.get(
@@ -390,10 +542,15 @@ def test_chat_send_button_activation_with_smartconnect():
             ][0]
             hermes_model_id = hermes_model["id"]
 
+            # Names are unique per run: a leftover persona/chat from an aborted run
+            # would otherwise be matched first by the sidebar locators below.
+            persona_name = f"SendButtonTester_{uuid.uuid4().hex[:6]}"
+            chat_topic = f"Send Button E2E {uuid.uuid4().hex[:6]}"
+
             persona_res = requests.post(
                 f"{API_URL}/voice-assistant/personality",
                 json={
-                    "name": "SendButtonTester",
+                    "name": persona_name,
                     "gender": "Female",
                     "pauseThreshold": 0.8,
                     "assistantModelId": hermes_model_id,
@@ -406,72 +563,83 @@ def test_chat_send_button_activation_with_smartconnect():
             # Create a chat for this persona
             chat_res = requests.post(
                 f"{API_URL}/voice-assistant/chat",
-                json={"topic": "Send Button E2E", "personalityId": created_p_id},
+                json={"topic": chat_topic, "personalityId": created_p_id},
                 timeout=REQUEST_TIMEOUT,
             ).json()
             created_chat_id = chat_res["chatId"]
 
-            # 4. Open chat window in browser via UI clicks
-            page.goto(f"{ROBOT_URL}/voice-assistant", wait_until="networkidle")
-            page.wait_for_timeout(1000)
+            # 4. Open chat window in browser via UI clicks. The reload is what makes
+            # the persona created above appear in the sidebar.
+            _open_voice_assistant(page)
 
-            # Click persona 'SendButtonTester' in sidebar
-            p_link = page.locator("a:has-text('SendButtonTester')").first
-            expect(p_link).to_be_visible(timeout=10000)
+            # Click the persona in the sidebar
+            p_link = page.locator(f"a:has-text('{persona_name}')").first
+            expect(p_link).to_be_visible(timeout=UI_TIMEOUT_MS)
             p_link.click()
-            page.wait_for_timeout(1000)
 
-            # Click chat topic 'Send Button E2E'
-            chat_item = page.locator("text='Send Button E2E'").first
-            expect(chat_item).to_be_visible(timeout=10000)
+            # Click the chat topic
+            chat_item = page.locator(f"text='{chat_topic}'").first
+            expect(chat_item).to_be_visible(timeout=UI_TIMEOUT_MS)
             chat_item.click()
-            page.wait_for_timeout(1000)
 
             page.wait_for_selector(
-                "deep-chat #text-input", state="visible", timeout=30000
+                "deep-chat #text-input", state="visible", timeout=UI_TIMEOUT_MS
             )
             msg_input = page.locator("deep-chat #text-input")
             submit_wrap = page.locator("deep-chat .input-button.input-button-svg")
             submit_icon = page.locator("deep-chat #submit-icon")
             messages = page.locator("deep-chat #messages")
 
-            # 5. Check when text length <= 2 chars, send button is DISABLED
+            # 5. Check when text length <= 2 chars, send button is DISABLED.
+            # expect(...) polls, so deep-chat's own state update is awaited instead
+            # of sampled once after a fixed sleep.
             msg_input.click()
             page.keyboard.type("12")
-            page.wait_for_timeout(500)
-            assert msg_input.inner_text() == "12"
-            disabled_class = submit_wrap.get_attribute("class") or ""
-            assert "disabled-button" in disabled_class
-            assert submit_wrap.get_attribute("aria-disabled") == "true"
+            expect(msg_input).to_have_text("12", timeout=UI_TIMEOUT_MS)
+            expect(submit_wrap).to_have_class(
+                re.compile(r"disabled-button"), timeout=UI_TIMEOUT_MS
+            )
+            expect(submit_wrap).to_have_attribute(
+                "aria-disabled", "true", timeout=UI_TIMEOUT_MS
+            )
 
             # 6. Check when text length > 2 chars, send button becomes ENABLED
             marker = f"12345678-{uuid.uuid4().hex[:8]}"
             page.keyboard.press("Control+a")
             page.keyboard.press("Delete")
             page.keyboard.type(marker)
-            page.wait_for_timeout(500)
-            assert msg_input.inner_text() == marker
-            enabled_class = submit_wrap.get_attribute("class") or ""
-            assert "submit-button" in enabled_class
+            expect(msg_input).to_have_text(marker, timeout=UI_TIMEOUT_MS)
+            expect(submit_wrap).to_have_class(
+                re.compile(r"submit-button"), timeout=UI_TIMEOUT_MS
+            )
+            # Read only once the class assertion above proves the button has
+            # re-rendered into its enabled state.
             assert submit_wrap.get_attribute("aria-disabled") is None
 
             # 7. Click the submit icon and verify the message was rendered
+            expect(submit_icon).to_be_visible(timeout=UI_TIMEOUT_MS)
             submit_icon.click()
-            expect(messages).to_contain_text(marker, timeout=10000)
+            expect(messages).to_contain_text(marker, timeout=UI_TIMEOUT_MS)
 
         finally:
             browser.close()
-            # Cleanup
-            if "created_chat_id" in locals():
-                requests.delete(
-                    f"{API_URL}/voice-assistant/chat/{created_chat_id}",
-                    timeout=REQUEST_TIMEOUT,
-                )
-            if "created_p_id" in locals():
-                requests.delete(
-                    f"{API_URL}/voice-assistant/personality/{created_p_id}",
-                    timeout=REQUEST_TIMEOUT,
-                )
+            # Cleanup (isolated so a failing delete cannot mask the test result)
+            if created_chat_id:
+                try:
+                    requests.delete(
+                        f"{API_URL}/voice-assistant/chat/{created_chat_id}",
+                        timeout=REQUEST_TIMEOUT,
+                    )
+                except requests.RequestException:
+                    pass
+            if created_p_id:
+                try:
+                    requests.delete(
+                        f"{API_URL}/voice-assistant/personality/{created_p_id}",
+                        timeout=REQUEST_TIMEOUT,
+                    )
+                except requests.RequestException:
+                    pass
 
 
 def test_voice_assistant_latency_and_smartconnect_e2e():
@@ -524,10 +692,12 @@ def test_voice_assistant_latency_and_smartconnect_e2e():
     ).json()
     created_p_id = persona_res["personalityId"]
 
-    # Create a chat for this new personality
+    # Create a chat for this new personality. Unique topic so a leftover chat from an
+    # aborted run cannot be matched first by the sidebar locator below.
+    chat_topic = f"Latency Test Chat {uuid.uuid4().hex[:6]}"
     chat_res = requests.post(
         f"{API_URL}/voice-assistant/chat",
-        json={"topic": "Latency Test Chat", "personalityId": created_p_id},
+        json={"topic": chat_topic, "personalityId": created_p_id},
         timeout=REQUEST_TIMEOUT,
     ).json()
     created_chat_id = chat_res["chatId"]
@@ -539,17 +709,33 @@ def test_voice_assistant_latency_and_smartconnect_e2e():
             localStorage.setItem('token', '12345678');
             localStorage.setItem('password', '12345678');
         """)
-        page = context.new_page()
+        page = _configure_page(context.new_page())
 
         try:
-            page.goto(f"{ROBOT_URL}/voice-assistant", wait_until="networkidle")
-            page.wait_for_timeout(1000)
+            # "networkidle" never settles against Cerebra (rosbridge socket + polling),
+            # so wait for whichever of the sidebar / SmartConnect modal renders first.
+            page.goto(f"{ROBOT_URL}/voice-assistant", wait_until="domcontentloaded")
+            page.wait_for_selector(
+                "#add-personality-button, button[data-test='BTN_Smart_Connect']",
+                state="visible",
+                timeout=NAV_TIMEOUT_MS,
+            )
 
             # Activate SmartConnect in UI modal if button present
             sc_btn = page.locator("button[data-test='BTN_Smart_Connect']").first
             if sc_btn.is_visible():
                 sc_btn.click()
-                page.wait_for_timeout(500)
+                # Which branch below applies depends on which inputs the modal
+                # renders, so wait for them instead of sampling after a fixed sleep.
+                try:
+                    page.wait_for_selector(
+                        "input#token, input[data-test='TXT_Token'], "
+                        "input#password, input[data-test='TXT_Password']",
+                        state="visible",
+                        timeout=10000,
+                    )
+                except PlaywrightTimeoutError:
+                    pass
 
                 token_input = page.locator(
                     "input#token, input[data-test='TXT_Token']"
@@ -594,21 +780,19 @@ def test_voice_assistant_latency_and_smartconnect_e2e():
 
             # Click newly created personality in sidebar
             p_link = page.locator(f"a:has-text('{unique_persona_name}')").first
-            expect(p_link).to_be_visible(timeout=10000)
+            expect(p_link).to_be_visible(timeout=UI_TIMEOUT_MS)
             p_link.click()
-            page.wait_for_timeout(1000)
 
             # Click chat topic
-            chat_item = page.locator("text='Latency Test Chat'").first
-            expect(chat_item).to_be_visible(timeout=10000)
+            chat_item = page.locator(f"text='{chat_topic}'").first
+            expect(chat_item).to_be_visible(timeout=UI_TIMEOUT_MS)
             chat_item.click()
-            page.wait_for_timeout(1000)
 
             # Locate deep-chat elements
             page.wait_for_selector(
                 "deep-chat #text-input:not([aria-disabled='true'])",
                 state="visible",
-                timeout=30000,
+                timeout=UI_TIMEOUT_MS,
             )
             msg_input = page.locator("deep-chat #text-input")
             submit_icon = page.locator("deep-chat #submit-icon")
@@ -618,14 +802,15 @@ def test_voice_assistant_latency_and_smartconnect_e2e():
             prompt = "Wie geht es dir?"
             msg_input.click()
             page.keyboard.type(prompt)
-            page.wait_for_timeout(300)
+            expect(msg_input).to_have_text(prompt, timeout=UI_TIMEOUT_MS)
+            expect(submit_icon).to_be_visible(timeout=UI_TIMEOUT_MS)
 
             # 3. Measure response time from Submit click until assistant reply appears in UI
             t0 = time.monotonic()
             submit_icon.click()
 
             # Wait until deep-chat #messages contains assistant response
-            deadline = time.monotonic() + 20
+            deadline = time.monotonic() + UI_REPLY_TIMEOUT_S
             t1 = None
             reply_snippet = ""
             while time.monotonic() < deadline:
@@ -636,9 +821,10 @@ def test_voice_assistant_latency_and_smartconnect_e2e():
                     break
                 time.sleep(0.05)
 
-            assert (
-                t1 is not None
-            ), "Assistant response was not rendered in deep-chat UI within 20s"
+            assert t1 is not None, (
+                "Assistant response was not rendered in deep-chat UI within "
+                f"{UI_REPLY_TIMEOUT_S}s"
+            )
 
             latency_ms = (t1 - t0) * 1000.0
             print(f"\n==================================================")
@@ -652,14 +838,20 @@ def test_voice_assistant_latency_and_smartconnect_e2e():
 
         finally:
             browser.close()
-            # Cleanup
+            # Cleanup (isolated so a failing delete cannot mask the test result)
             if created_chat_id:
-                requests.delete(
-                    f"{API_URL}/voice-assistant/chat/{created_chat_id}",
-                    timeout=REQUEST_TIMEOUT,
-                )
+                try:
+                    requests.delete(
+                        f"{API_URL}/voice-assistant/chat/{created_chat_id}",
+                        timeout=REQUEST_TIMEOUT,
+                    )
+                except requests.RequestException:
+                    pass
             if created_p_id:
-                requests.delete(
-                    f"{API_URL}/voice-assistant/personality/{created_p_id}",
-                    timeout=REQUEST_TIMEOUT,
-                )
+                try:
+                    requests.delete(
+                        f"{API_URL}/voice-assistant/personality/{created_p_id}",
+                        timeout=REQUEST_TIMEOUT,
+                    )
+                except requests.RequestException:
+                    pass
