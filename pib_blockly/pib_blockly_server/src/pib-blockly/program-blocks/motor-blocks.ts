@@ -9,6 +9,37 @@ const SIDE_DROPDOWN = {
     ],
 };
 
+const MOTOR_NAME_DROPDOWN_OPTIONS = [
+    ["thumb left opposition", "THUMB_LEFT_OPPOSITION"],
+    ["thumb left stretch", "THUMB_LEFT_STRETCH"],
+    ["index finger left stretch", "INDEX_LEFT_STRETCH"],
+    ["middle finger left stretch", "MIDDLE_LEFT_STRETCH"],
+    ["ring finger left stretch", "RING_LEFT_STRETCH"],
+    ["pinky finger left stretch", "PINKY_LEFT_STRETCH"],
+    ["all fingers left", "ALL_FINGERS_LEFT_STRETCH"],
+    ["thumb right opposition", "THUMB_RIGHT_OPPOSITION"],
+    ["thumb right stretch", "THUMB_RIGHT_STRETCH"],
+    ["index finger right stretch", "INDEX_RIGHT_STRETCH"],
+    ["middle finger right stretch", "MIDDLE_RIGHT_STRETCH"],
+    ["ring finger right stretch", "RING_RIGHT_STRETCH"],
+    ["pinky finger right stretch", "PINKY_RIGHT_STRETCH"],
+    ["all fingers right", "ALL_FINGERS_RIGHT_STRETCH"],
+    ["upper left arm rotation", "UPPER_ARM_LEFT_ROTATION"],
+    ["elbow left", "ELBOW_LEFT"],
+    ["lower left arm rotation", "LOWER_ARM_LEFT_ROTATION"],
+    ["wrist left", "WRIST_LEFT"],
+    ["left shoulder vertical", "SHOULDER_VERTICAL_LEFT"],
+    ["left shoulder horizontal", "SHOULDER_HORIZONTAL_LEFT"],
+    ["upper right arm rotation", "UPPER_ARM_RIGHT_ROTATION"],
+    ["elbow right", "ELBOW_RIGHT"],
+    ["lower right arm rotation", "LOWER_ARM_RIGHT_ROTATION"],
+    ["wrist right", "WRIST_RIGHT"],
+    ["right shoulder vertical", "SHOULDER_VERTICAL_RIGHT"],
+    ["right shoulder horizontal", "SHOULDER_HORIZONTAL_RIGHT"],
+    ["tilt head forward", "TILT_FORWARD_HEAD"],
+    ["turn head", "TURN_HEAD"],
+];
+
 const handPositionTooltip = (axis: string) =>
     `Returns the ${axis} coordinate of the selected hand in millimeters. The value is the position the hand was last commanded to move to, not live encoder feedback. Left/right is from pib's own perspective: imagine standing in front of pib and looking at him (the same binding used across pib part numbering e.g. C35R/C35L).`;
 
@@ -20,36 +51,7 @@ export const motor_blocks = Blockly.common.createBlockDefinitionsFromJsonArray([
             {
                 type: "field_dropdown",
                 name: "MOTORNAME",
-                options: [
-                    ["thumb left opposition", "THUMB_LEFT_OPPOSITION"],
-                    ["thumb left stretch", "THUMB_LEFT_STRETCH"],
-                    ["index finger left stretch", "INDEX_LEFT_STRETCH"],
-                    ["middle finger left stretch", "MIDDLE_LEFT_STRETCH"],
-                    ["ring finger left stretch", "RING_LEFT_STRETCH"],
-                    ["pinky finger left stretch", "PINKY_LEFT_STRETCH"],
-                    ["all fingers left", "ALL_FINGERS_LEFT_STRETCH"],
-                    ["thumb right opposition", "THUMB_RIGHT_OPPOSITION"],
-                    ["thumb right stretch", "THUMB_RIGHT_STRETCH"],
-                    ["index finger right stretch", "INDEX_RIGHT_STRETCH"],
-                    ["middle finger right stretch", "MIDDLE_RIGHT_STRETCH"],
-                    ["ring finger right stretch", "RING_RIGHT_STRETCH"],
-                    ["pinky finger right stretch", "PINKY_RIGHT_STRETCH"],
-                    ["all fingers right", "ALL_FINGERS_RIGHT_STRETCH"],
-                    ["upper left arm rotation", "UPPER_ARM_LEFT_ROTATION"],
-                    ["elbow left", "ELBOW_LEFT"],
-                    ["lower left arm rotation", "LOWER_ARM_LEFT_ROTATION"],
-                    ["wrist left", "WRIST_LEFT"],
-                    ["left shoulder vertical", "SHOULDER_VERTICAL_LEFT"],
-                    ["left shoulder horizontal", "SHOULDER_HORIZONTAL_LEFT"],
-                    ["upper right arm rotation", "UPPER_ARM_RIGHT_ROTATION"],
-                    ["elbow right", "ELBOW_RIGHT"],
-                    ["lower right arm rotation", "LOWER_ARM_RIGHT_ROTATION"],
-                    ["wrist right", "WRIST_RIGHT"],
-                    ["right shoulder vertical", "SHOULDER_VERTICAL_RIGHT"],
-                    ["right shoulder horizontal", "SHOULDER_HORIZONTAL_RIGHT"],
-                    ["tilt head forward", "TILT_FORWARD_HEAD"],
-                    ["turn head", "TURN_HEAD"],
-                ],
+                options: MOTOR_NAME_DROPDOWN_OPTIONS,
             },
             {
                 type: "input_dummy",
@@ -73,6 +75,22 @@ export const motor_blocks = Blockly.common.createBlockDefinitionsFromJsonArray([
         nextStatement: null,
         colour: 355,
         tooltip: "",
+        helpUrl: "",
+    },
+    {
+        type: "motor_current",
+        message0: "Motor current of %1",
+        args0: [
+            {
+                type: "field_dropdown",
+                name: "MOTORNAME",
+                options: MOTOR_NAME_DROPDOWN_OPTIONS,
+            },
+        ],
+        output: "Number",
+        colour: 355,
+        tooltip:
+            "Returns the motor's electrical current draw in milliamps (from the servo bricklet). May be 0 or time out for a motor without a connected bricklet.",
         helpUrl: "",
     },
     {
