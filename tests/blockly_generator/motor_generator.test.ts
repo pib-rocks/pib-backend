@@ -4,6 +4,7 @@ import {
   get_hand_x,
   get_hand_y,
   get_hand_z,
+  motor_current,
   move_motor,
   set_hand_position_xyz,
 } from "../../pib_blockly/pib_blockly_server/src/pib-blockly/program-generators/motor-generators";
@@ -87,6 +88,39 @@ describe("move_motor generator", () => {
     const block = createMotorBlock("TILT_FORWARD_HEAD", "ABSOLUTE");
     const code = move_motor(block, generator);
     expect(code).toContain('"tilt_forward_motor"');
+  });
+});
+
+describe("motor_current generator", () => {
+  it("maps SHOULDER_VERTICAL_LEFT and emits get_current_ma", () => {
+    const generator = createMockGenerator();
+    const block = {
+      getFieldValue: (field: string) => {
+        if (field === "MOTORNAME") return "SHOULDER_VERTICAL_LEFT";
+        throw new Error(`unexpected field ${field}`);
+      },
+    } as unknown as Block;
+
+    const [code, order] = motor_current(block, generator);
+
+    expect(code).toBe('get_motor_current_ma("shoulder_vertical_left")');
+    expect(order).toBe(Order.FUNCTION_CALL);
+    const defs = Object.values(generator.definitions_).join("\n");
+    expect(defs).toContain("from pib_sdk.telemetry import Telemetry");
+    expect(defs).toContain('os.getenv("ROSBRIDGE_HOST", "rosbridge-ws")');
+    expect(defs).toContain("get_current_ma(");
+    expect(defs).toContain('Telemetry(host="localhost", port=9090)');
+  });
+
+  it("rejects an unknown motor option", () => {
+    const generator = createMockGenerator();
+    const block = {
+      getFieldValue: () => "NOT_A_MOTOR",
+    } as unknown as Block;
+
+    expect(() => motor_current(block, generator)).toThrow(
+      "'NOT_A_MOTOR' is not a valid value for 'MOTORNAME'.",
+    );
   });
 });
 

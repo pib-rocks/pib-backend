@@ -7,6 +7,7 @@ import {
     IMPORT_OS,
     IMPORT_PIB_SDK,
     IMPORT_PIB_SDK_IK,
+    IMPORT_PIB_SDK_TELEMETRY,
     IMPORT_RCLPY,
     IMPORT_SYS,
     INIT_GET_JOINT_POSITION_CLIENT,
@@ -15,6 +16,7 @@ import {
 import {
     APPLY_JOINT_TRAJECTORY_FUNCTION,
     GET_JOINT_POSITION_FUNCTION,
+    GET_MOTOR_CURRENT_MA_FUNCTION,
     SET_HAND_POSITION_XYZ_FUNCTION,
 } from "./util/function-declarations";
 
@@ -103,6 +105,29 @@ export function move_motor(block: Block, generator: typeof pythonGenerator) {
         throw new Error(`unexpected input-mode: ${modeInput}.`);
     }
     return `${functionName}("${selectedMotorName}", ${positionString})\n`;
+}
+
+export function motor_current(
+    block: Block,
+    generator: typeof pythonGenerator,
+): [string, Order] {
+    const motorOption = <string>block.getFieldValue("MOTORNAME");
+    const selectedMotorName: string = motorOptionToMotorName.get(motorOption);
+    if (selectedMotorName === undefined) {
+        throw new Error(`'${motorOption}' is not a valid value for 'MOTORNAME'.`);
+    }
+
+    Object.assign(generator.definitions_, {
+        IMPORT_OS,
+        IMPORT_PIB_SDK_TELEMETRY,
+    });
+
+    const functionName = generator.provideFunction_(
+        "get_motor_current_ma",
+        GET_MOTOR_CURRENT_MA_FUNCTION(generator),
+    );
+
+    return [`${functionName}("${selectedMotorName}")`, Order.FUNCTION_CALL];
 }
 
 export function set_hand_position_xyz(

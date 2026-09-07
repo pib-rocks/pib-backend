@@ -87,6 +87,18 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(motor_name: str, position: int) -> N
         pib_sdk.Write(host="localhost", port=9090).move(motor_name, position)
 `;
 
+export const GET_MOTOR_CURRENT_MA_FUNCTION = (generator: CodeGenerator) => `
+def ${generator.FUNCTION_NAME_PLACEHOLDER_}(motor_name: str) -> int:
+
+    rosbridge_host = os.getenv("ROSBRIDGE_HOST", "rosbridge-ws")
+    try:
+        with Telemetry(host=rosbridge_host, port=9090) as telemetry:
+            return telemetry.get_current_ma(motor_name)
+    except Exception:
+        with Telemetry(host="localhost", port=9090) as telemetry:
+            return telemetry.get_current_ma(motor_name)
+`;
+
 // pose
 
 export const APPLY_POSE_FUNCTION = (generator: CodeGenerator) => `
