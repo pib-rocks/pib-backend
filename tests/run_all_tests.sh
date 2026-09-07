@@ -123,20 +123,28 @@ run_pytest_docker() {
 
 run_jest() {
     cd "${SCRIPT_DIR}/blockly_generator"
-    chmod +x node_modules/.bin/* 2>/dev/null || true
+    # tests/blockly_generator/node_modules is vendored in the repo, so use it as-is and only
+    # install when it is missing. Jest is started via `node .../jest.js` so no executable bit
+    # on node_modules/.bin is required.
+    local jest_cmd='set -e
+if [ ! -f node_modules/jest/bin/jest.js ]; then npm install --silent --no-audit --no-fund; fi
+node node_modules/jest/bin/jest.js --config jest.config.js'
     if command -v docker >/dev/null 2>&1; then
         docker run --rm \
             -v "${REPO_ROOT}:/work" \
             -w "/work/tests/blockly_generator" \
+            --user "$(id -u):$(id -g)" \
+            -e HOME=/tmp \
+            -e npm_config_cache=/tmp/.npm \
             node:18-bookworm \
-            bash -lc 'rm -rf node_modules package-lock.json && npm install --silent && chmod +x node_modules/.bin/* 2>/dev/null || true && npx jest --config jest.config.js'
+            bash -lc "${jest_cmd}"
         return $?
     fi
-    if command -v npm >/dev/null 2>&1; then
-        rm -rf node_modules package-lock.json && npm install --silent && chmod +x node_modules/.bin/* 2>/dev/null || true && npx jest --config jest.config.js
+    if command -v node >/dev/null 2>&1; then
+        bash -c "${jest_cmd}"
         return $?
     fi
-    echo "Neither docker nor npm found — cannot run Jest" >&2
+    echo "Neither docker nor node found — cannot run Jest" >&2
     return 1
 }
 
