@@ -35,6 +35,8 @@ rosidl_generate_interfaces(${PROJECT_NAME}
 	"srv/ProxyRunProgramStop.srv"
 	"srv/ClearPlaybackQueue.srv"
 	"srv/GetCameraImage.srv"
+	"srv/GetDepthFrame.srv"
+	"srv/GetDistanceAtPx.srv"
 	"srv/VisionPrompt.srv"
 	"srv/ApplyJointTrajectory.srv"
 	"srv/GetJointPosition.srv"

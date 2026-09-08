@@ -4,6 +4,7 @@ import os
 import sys
 import unittest
 from unittest.mock import MagicMock, patch
+import base64
 
 import pytest
 
@@ -17,6 +18,38 @@ sys.path.insert(
 
 depthai = pytest.importorskip("depthai")
 rclpy = pytest.importorskip("rclpy")
+
+import types
+
+try:
+    import datatypes.srv as _datatypes_srv
+except ImportError:
+    _datatypes = types.ModuleType("datatypes")
+    _datatypes_srv = types.ModuleType("datatypes.srv")
+    sys.modules["datatypes"] = _datatypes
+    sys.modules["datatypes.srv"] = _datatypes_srv
+
+    class _DummySrv:
+        class Request:
+            pass
+
+        class Response:
+            pass
+
+    _datatypes_srv.GetCameraImage = _DummySrv
+    _datatypes_srv.GetDepthFrame = _DummySrv
+    _datatypes_srv.GetDistanceAtPx = _DummySrv
+else:
+    if not hasattr(_datatypes_srv, "GetDepthFrame"):
+        class _DummySrv:
+            class Request:
+                pass
+
+            class Response:
+                pass
+
+        _datatypes_srv.GetDepthFrame = _DummySrv
+        _datatypes_srv.GetDistanceAtPx = _DummySrv
 
 import numpy as np
 
@@ -93,6 +126,113 @@ class TestStereoCameraOptimization(unittest.TestCase):
             # _encode_frame NOT called since no subscribers on camera_topic
             node._encode_frame.assert_not_called()
             node.publisher_.publish.assert_not_called()
+
+
+class TestStereoDepthInterfaces(unittest.TestCase):
+
+    def _make_node(self):
+        with patch.object(CameraNode, "init_pipeline", return_value=True):
+            node = CameraNode()
+        node.publisher_ = MagicMock()
+        node.publisher_.get_subscription_count.return_value = 0
+        node.depth_publisher_ = MagicMock()
+        node.depth_publisher_.get_subscription_count.return_value = 0
+        node.publish_face_center = MagicMock()
+        return node
+
+    @patch("ros_packages.camera.oak_d_lite.stereo.dai")
+    @patch("ros_packages.camera.oak_d_lite.stereo.os.path.exists", return_value=True)
+    def test_timer_callback_caches_depth_without_publishing(
+        self, mock_exists, mock_dai
+    ):
+        node = self._make_node()
+        node.queue = MagicMock()
+        node.queue.tryGet.return_value = None
+
+        mock_depth = MagicMock()
+        depth = np.array([[0, 1200], [800, 1500]], dtype=np.uint16)
+        mock_depth.getFrame.return_value = depth
+        node.depth_queue = MagicMock()
+        node.depth_queue.tryGet.return_value = mock_depth
+
+        node.timer_callback()
+
+        np.testing.assert_array_equal(node.current_depth, depth)
+        node.depth_publisher_.publish.assert_not_called()
+
+    @patch("ros_packages.camera.oak_d_lite.stereo.dai")
+    @patch("ros_packages.camera.oak_d_lite.stereo.os.path.exists", return_value=True)
+    def test_get_distance_at_px_reads_cached_depth(self, mock_exists, mock_dai):
+        node = self._make_node()
+        node.current_depth = np.array([[0, 1200], [800, 1500]], dtype=np.uint16)
+        node.pipeline = MagicMock()
+
+        request = MagicMock()
+        request.x = 1
+        request.y = 0
+        response = MagicMock()
+        node.get_distance_at_px_callback(request, response)
+
+        self.assertEqual(response.distance_mm, 1200.0)
+        node.pipeline.start.assert_not_called()
+
+    @patch("ros_packages.camera.oak_d_lite.stereo.dai")
+    @patch("ros_packages.camera.oak_d_lite.stereo.os.path.exists", return_value=True)
+    def test_get_depth_frame_encodes_cached_depth(self, mock_exists, mock_dai):
+        node = self._make_node()
+        node.current_depth = np.array([[42, 100], [200, 300]], dtype=np.uint16)
+        node.pipeline = MagicMock()
+
+        request = MagicMock()
+        response = MagicMock()
+        node.get_depth_frame_callback(request, response)
+
+        self.assertEqual(response.width, 2)
+        self.assertEqual(response.height, 2)
+        self.assertEqual(response.encoding, "16UC1")
+        decoded = np.frombuffer(
+            base64.b64decode(response.depth_base64), dtype=np.uint16
+        ).reshape((2, 2))
+        np.testing.assert_array_equal(decoded, node.current_depth)
+        node.pipeline.start.assert_not_called()
+
+    @patch("ros_packages.camera.oak_d_lite.stereo.dai")
+    @patch("ros_packages.camera.oak_d_lite.stereo.os.path.exists", return_value=True)
+    def test_init_pipeline_starts_once_with_stereo(self, mock_exists, mock_dai):
+        with patch.object(CameraNode, "__init__", lambda self: None):
+            node = CameraNode()
+        node.get_logger = MagicMock()
+
+        class _StereoType:
+            class PresetMode:
+                DEFAULT = "DEFAULT"
+
+        pipeline = MagicMock()
+        mock_dai.Pipeline.return_value = pipeline
+        cam = MagicMock()
+        stereo = MagicMock()
+        mock_dai.node.Camera = object()
+        mock_dai.node.StereoDepth = _StereoType
+        mock_dai.CameraBoardSocket.CAM_A = "CAM_A"
+        mock_dai.CameraBoardSocket.CAM_B = "CAM_B"
+        mock_dai.CameraBoardSocket.CAM_C = "CAM_C"
+
+        created = []
+
+        def create(kind):
+            created.append(kind)
+            if kind is _StereoType:
+                return stereo
+            return cam
+
+        pipeline.create.side_effect = create
+
+        ok = CameraNode.init_pipeline(node)
+
+        self.assertTrue(ok)
+        pipeline.start.assert_called_once()
+        self.assertIn(_StereoType, created)
+        stereo.depth.createOutputQueue.assert_called()
 
 
 if __name__ == "__main__":
