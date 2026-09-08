@@ -99,6 +99,30 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(motor_name: str) -> int:
             return telemetry.get_current_ma(motor_name)
 `;
 
+export const GET_CAMERA_DEPTH_FRAME_FUNCTION = (generator: CodeGenerator) => `
+def ${generator.FUNCTION_NAME_PLACEHOLDER_}():
+
+    rosbridge_host = os.getenv("ROSBRIDGE_HOST", "rosbridge-ws")
+    try:
+        with Camera(host=rosbridge_host, port=9090) as cam:
+            return cam.get_depth_frame()
+    except Exception:
+        with Camera(host="localhost", port=9090) as cam:
+            return cam.get_depth_frame()
+`;
+
+export const GET_CAMERA_DISTANCE_AT_PX_FUNCTION = (generator: CodeGenerator) => `
+def ${generator.FUNCTION_NAME_PLACEHOLDER_}(x, y):
+
+    rosbridge_host = os.getenv("ROSBRIDGE_HOST", "rosbridge-ws")
+    try:
+        with Camera(host=rosbridge_host, port=9090) as cam:
+            return cam.get_distance_at_px(int(x), int(y))
+    except Exception:
+        with Camera(host="localhost", port=9090) as cam:
+            return cam.get_distance_at_px(int(x), int(y))
+`;
+
 // pose
 
 export const APPLY_POSE_FUNCTION = (generator: CodeGenerator) => `

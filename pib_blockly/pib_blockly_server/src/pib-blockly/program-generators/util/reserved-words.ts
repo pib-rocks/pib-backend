@@ -24,6 +24,7 @@ export const RESERVED_WORDS = [
     "JointTrajectoryPoint",
     "apply_joint_trajectory_client",
     "get_joint_position_client",
+    "Camera",
     // face detector
     "fd",
     // pose
