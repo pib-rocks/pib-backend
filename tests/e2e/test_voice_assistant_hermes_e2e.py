@@ -32,9 +32,14 @@ ROBOT_URL = os.environ.get("PIB_E2E_BASE_URL", "http://192.168.1.28").rstrip("/"
 API_URL = f"{ROBOT_URL}/api"
 REQUEST_TIMEOUT = 15
 TURN_TIMEOUT = int(os.environ.get("PIB_HERMES_E2E_TURN_TIMEOUT", "300"))
+TURN_ATTEMPTS = int(os.environ.get("PIB_HERMES_E2E_TURN_ATTEMPTS", "2"))
 # rosbridge forwards /send_chat_message to a ROS node that may already be busy with
 # an LLM turn, so the service acknowledgement can lag well past REQUEST_TIMEOUT.
 SERVICE_ACK_TIMEOUT = int(os.environ.get("PIB_HERMES_E2E_SERVICE_TIMEOUT", "60"))
+HERMES_TIMEOUT_REPLY = (
+    "Entschuldige, das hat gerade einen Moment zu lange gedauert. "
+    "Frag mich bitte später noch einmal."
+)
 
 # Browser-side timeouts. Defaults are generous because the suite runs on the Pi,
 # where Angular bootstrap and deep-chat hydration are slow under load.
@@ -93,6 +98,28 @@ def _poll_messages(chat_id: str):
         return None
 
 
+def _activate_smart_connect(token: str, password: str) -> None:
+    """Wait until the SmartConnect setup request has completed successfully."""
+    deadline = time.monotonic() + API_SETTLE_TIMEOUT_S
+    last_error = None
+    while time.monotonic() < deadline:
+        try:
+            response = requests.post(
+                f"{API_URL}/system/smart-connect",
+                json={"token": token, "password": password},
+                timeout=REQUEST_TIMEOUT,
+            )
+            response.raise_for_status()
+            return
+        except requests.RequestException as exc:
+            last_error = exc
+            time.sleep(1)
+    raise requests.RequestException(
+        "SmartConnect token/password setup did not complete successfully within "
+        f"{API_SETTLE_TIMEOUT_S}s ({last_error})"
+    )
+
+
 def _wait_for_new_assistant_message(chat_id: str, previous_ids: set[str]):
     deadline = time.monotonic() + TURN_TIMEOUT
     last_count = 0
@@ -139,6 +166,48 @@ def _wait_for_new_assistant_message(chat_id: str, previous_ids: set[str]):
                 stable_ticks = 0
         time.sleep(1)
     pytest.fail(f"No persisted assistant reply arrived within {TURN_TIMEOUT} seconds")
+
+
+def _run_hermes_turn(chat_id: str, content: str, previous_ids: set[str]):
+    """Run a logical Hermes turn, retrying only its explicit timeout reply.
+
+    The Pi's voice node has a shorter per-agent timeout than this E2E poll budget.
+    A timed-out cold/model turn is therefore persisted as an ordinary assistant
+    message. Retrying that explicit failure gives the warmed session one bounded
+    second attempt; arbitrary wrong answers are never retried or accepted.
+    """
+    messages = []
+    for attempt in range(1, TURN_ATTEMPTS + 1):
+        _send_chat_message(chat_id, content)
+        reply, messages = _wait_for_new_assistant_message(chat_id, previous_ids)
+        if reply["content"].strip() != HERMES_TIMEOUT_REPLY:
+            return reply, messages
+        previous_ids = {message["messageId"] for message in messages}
+        if attempt < TURN_ATTEMPTS:
+            print(
+                f"Hermes turn timed out on attempt {attempt}/{TURN_ATTEMPTS}; "
+                "retrying against the same persistent chat session"
+            )
+    pytest.fail(
+        f"Hermes returned its timeout reply for all {TURN_ATTEMPTS} bounded attempts"
+    )
+
+
+def _wait_for_persisted_user_message(chat_id: str, content: str) -> None:
+    """Wait until a UI submission is observable in the backend chat history."""
+    deadline = time.monotonic() + API_SETTLE_TIMEOUT_S
+    while time.monotonic() < deadline:
+        messages = _poll_messages(chat_id)
+        if messages is not None and any(
+            message["isUser"] and message["content"] == content
+            for message in messages
+        ):
+            return
+        time.sleep(0.5)
+    pytest.fail(
+        "Message submitted through deep-chat was not persisted by the backend "
+        f"within {API_SETTLE_TIMEOUT_S}s"
+    )
 
 
 def _await_service_response(connection, request_id: str, timeout_s: float):
@@ -271,11 +340,7 @@ def _send_chat_message(chat_id: str, content: str) -> None:
 
 def test_voice_assistant_hermes_persists_reply_and_recalls_prior_fact():
     try:
-        requests.post(
-            f"{API_URL}/system/smart-connect",
-            json={"token": "12345678", "password": "12345678"},
-            timeout=REQUEST_TIMEOUT,
-        )
+        _activate_smart_connect("12345678", "12345678")
     except requests.RequestException:
         # Reachability is reported as a skip by the assistant-model probe below.
         pass
@@ -340,19 +405,21 @@ def test_voice_assistant_hermes_persists_reply_and_recalls_prior_fact():
         created.raise_for_status()
         chat_id = created.json()["chatId"]
 
-        _send_chat_message(
+        first_reply, first_messages = _run_hermes_turn(
             chat_id,
-            f"My favourite color is {token}. Answer with OK.",
+            f"Remember this exact fact for this conversation: my favourite color "
+            f"is {token}. Reply only with OK and do not use tools.",
+            set(),
         )
-        first_reply, first_messages = _wait_for_new_assistant_message(chat_id, set())
         assert first_reply["content"].strip()
 
         first_ids = {message["messageId"] for message in first_messages}
-        _send_chat_message(
+        recalled_reply, _ = _run_hermes_turn(
             chat_id,
-            "What is my favourite color?",
+            "What is my favourite color? Reply only with the exact stored value "
+            "and do not use tools.",
+            first_ids,
         )
-        recalled_reply, _ = _wait_for_new_assistant_message(chat_id, first_ids)
         assert token in recalled_reply["content"]
     finally:
         # Each cleanup step is isolated so a failing one cannot mask the real result,
@@ -506,11 +573,7 @@ def test_chat_send_button_activation_with_smartconnect():
     from playwright.sync_api import sync_playwright
 
     # 1. Activate SmartConnect via API or UI with token/password 12345678
-    requests.post(
-        f"{API_URL}/system/smart-connect",
-        json={"token": "12345678", "password": "12345678"},
-        timeout=REQUEST_TIMEOUT,
-    )
+    _activate_smart_connect("12345678", "12345678")
 
     created_chat_id = None
     created_p_id = None
@@ -582,8 +645,13 @@ def test_chat_send_button_activation_with_smartconnect():
             expect(chat_item).to_be_visible(timeout=UI_TIMEOUT_MS)
             chat_item.click()
 
+            # TokenService updates deep-chat only after rosbridge reports both
+            # token_exists and token_active. Waiting for the enabled state proves
+            # SmartConnect and the browser's ROS connection are ready.
             page.wait_for_selector(
-                "deep-chat #text-input", state="visible", timeout=UI_TIMEOUT_MS
+                "deep-chat #text-input:not([aria-disabled='true'])",
+                state="visible",
+                timeout=UI_TIMEOUT_MS,
             )
             msg_input = page.locator("deep-chat #text-input")
             submit_wrap = page.locator("deep-chat .input-button.input-button-svg")
@@ -620,6 +688,7 @@ def test_chat_send_button_activation_with_smartconnect():
             expect(submit_icon).to_be_visible(timeout=UI_TIMEOUT_MS)
             submit_icon.click()
             expect(messages).to_contain_text(marker, timeout=UI_TIMEOUT_MS)
+            _wait_for_persisted_user_message(created_chat_id, marker)
 
         finally:
             browser.close()
