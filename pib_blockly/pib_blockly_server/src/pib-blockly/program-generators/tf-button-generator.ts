@@ -1,6 +1,6 @@
 import * as Blockly from "blockly";
 import {Block} from "blockly/core/block";
-import {pythonGenerator} from "blockly/python";
+import {Order, pythonGenerator} from "blockly/python";
 import {
     CONFIGURE_LOGGING,
     IMPORT_LOGGING,
@@ -90,6 +90,19 @@ export function tf_button_set_color(
     configureGenerator(generator);
 
     return `blockly_client.set_button_color(${buttonId}, ${red}, ${green}, ${blue})\n`;
+}
+
+export function tf_button_set_color_from_var(
+    block: Block,
+    generator: typeof pythonGenerator,
+) {
+    const buttonId = block.getFieldValue("BUTTON_ID") || "1";
+    const colorCode =
+        generator.valueToCode(block, "COLOR", Order.MEMBER) || "'#00ff00'";
+
+    configureGenerator(generator);
+
+    return `blockly_client.set_button_color(${buttonId}, int(${colorCode}[1:3], 16), int(${colorCode}[3:5], 16), int(${colorCode}[5:7], 16))\n`;
 }
 
 export {pythonGenerator};
