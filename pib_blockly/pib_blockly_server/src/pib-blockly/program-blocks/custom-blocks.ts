@@ -5,6 +5,7 @@ import {playWav} from "./play-wav-block";
 import {time_blocks} from "./time-blocks";
 import {face_detector_blocks} from "./detectors-blocks";
 import {motor_blocks} from "./motor-blocks";
+import {camera_blocks} from "./camera-blocks";
 import {playAudioFromSpeech} from "./play-audio-from-speech-block";
 import {moveToPose, poseBlocks} from "./pose-block";
 import {setSolidStateRelay} from "./solid-state-relay-block";
@@ -16,6 +17,7 @@ export function customBlockDefinition() {
     Blockly.common.defineBlocks(time_blocks);
     Blockly.common.defineBlocks(face_detector_blocks);
     Blockly.common.defineBlocks(motor_blocks);
+    Blockly.common.defineBlocks(camera_blocks);
     Blockly.common.defineBlocks(playAudioFromSpeech);
     Blockly.common.defineBlocks(moveToPose);
     Blockly.common.defineBlocks(poseBlocks);

@@ -21,6 +21,8 @@ export const IMPORT_PIB_SDK_TELEMETRY =
     "from pib_sdk.telemetry import Telemetry";
 export const IMPORT_PIB_SDK_BACKEND =
     "from pib_sdk.backend import BackendClient";
+export const IMPORT_PIB_SDK_CAMERA =
+    "from pib_sdk.features.camera import Camera";
 export const IMPORT_URLPARSE = "from urllib.parse import urlparse";
 export const IMPORT_PLAY_AUDIO_FROM_SPREECH =
     "from datatypes.srv import PlayAudioFromSpeech";

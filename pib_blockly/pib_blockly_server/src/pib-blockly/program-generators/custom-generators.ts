@@ -5,6 +5,7 @@ import * as playWav from "./play-wav-generator";
 import * as face_detector_blocks from "./detectors-generators";
 import * as time_blocks from "./time-generators";
 import * as motor_blocks from "./motor-generators";
+import * as camera_blocks from "./camera-generators";
 import * as playAudioFromSpeech from "./play-audio-from-speech-generator";
 import * as moveToPose from "./pose-generator";
 import * as setSolidStateRelay from "./solid-state-relay-generator";
@@ -20,6 +21,7 @@ const generators: typeof pythonGenerator.forBlock = {
     ...face_detector_blocks,
     ...time_blocks,
     ...motor_blocks,
+    ...camera_blocks,
     ...playAudioFromSpeech,
     ...moveToPose,
     ...setSolidStateRelay,
