@@ -442,3 +442,29 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(button_id: int, red: int, green: int
     # Consolidated API: publish sticky color until overwritten.
     blockly_client.set_button_color(button_id, red, green, blue)
 `;
+
+export const PROGRAM_LOG_PATH_FUNCTION = (generator: CodeGenerator) => `
+def ${generator.FUNCTION_NAME_PLACEHOLDER_}() -> str:
+    program_number = os.path.splitext(os.path.basename(__file__))[0]
+    log_dir = os.path.join(os.getenv("PROGRAM_DIR", "/home/pib/cerebra_programs"), "program-logs")
+    os.makedirs(log_dir, exist_ok=True)
+    return os.path.join(log_dir, f"{program_number}.log")
+`;
+
+export const PROGRAM_LOG_FUNCTION = (
+    generator: CodeGenerator,
+    pathFunctionName: string,
+) => `
+def ${generator.FUNCTION_NAME_PLACEHOLDER_}(level, text) -> None:
+    with open(${pathFunctionName}(), "a", encoding="utf-8") as log_file:
+        log_file.write(f"[{datetime.datetime.now()}] {level} {text}\\n")
+`;
+
+export const PROGRAM_RESET_LOG_FUNCTION = (
+    generator: CodeGenerator,
+    pathFunctionName: string,
+) => `
+def ${generator.FUNCTION_NAME_PLACEHOLDER_}() -> None:
+    with open(${pathFunctionName}(), "w", encoding="utf-8") as log_file:
+        log_file.write("")
+`;

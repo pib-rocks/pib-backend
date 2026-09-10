@@ -12,6 +12,7 @@ import * as setSolidStateRelay from "./solid-state-relay-generator";
 import * as runScript from "./run-script-generator";
 import {RESERVED_WORDS} from "./util/reserved-words";
 import * as displayGenerators from "./display-generators";
+import * as programLog from "./program-log-generator";
 
 export * from "blockly/python";
 
@@ -29,6 +30,7 @@ const generators: typeof pythonGenerator.forBlock = {
     ...tfButton,
     ...displayGenerators,
     ...runScript,
+    ...programLog,
 };
 
 for (const name in generators) {
