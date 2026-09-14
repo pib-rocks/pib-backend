@@ -25,16 +25,16 @@ export const poseBlocks =
             message0: "Save current pose as %1",
             args0: [
                 {
-                    type: "field_input",
+                    type: "input_value",
                     name: "NAME",
-                    text: "pose name",
+                    check: "String",
                 },
             ],
             previousStatement: null,
             nextStatement: null,
             colour: 355,
             tooltip:
-                "Saves the last commanded position of every motor, including both head motors.",
+                "Records the current pose and saves it to the pose list. The name comes from the string or variable connected on the right.",
             helpUrl: "",
         },
         {

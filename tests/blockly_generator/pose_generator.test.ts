@@ -63,10 +63,20 @@ function blockWithName(name: string): Block {
   } as unknown as Block;
 }
 
+function generatorWithNameValue(nameCode?: string): MockGenerator {
+  const generator = createMockGenerator();
+  generator.valueToCode = (block, name, order) => {
+    expect(name).toBe("NAME");
+    expect(order).toBe(Order.NONE);
+    return nameCode ?? "";
+  };
+  return generator;
+}
+
 describe("pose SDK generators", () => {
   it("saves every motor through All and explicitly includes the head", () => {
-    const generator = createMockGenerator();
-    const code = save_current_pose(blockWithName('rest "pose"'), generator);
+    const generator = generatorWithNameValue("'rest \"pose\"'");
+    const code = save_current_pose({} as Block, generator);
 
     expect(code).toBe(
       "save_current_pose_with_all_motors('rest \"pose\"')\n",
@@ -172,16 +182,45 @@ describe("play_pose_sequence generator", () => {
   });
 });
 
+describe("save_current_pose generator", () => {
+  it("emits the helper call with a connected string literal", () => {
+    const generator = generatorWithNameValue('"wave"');
+    expect(save_current_pose({} as Block, generator)).toBe(
+      'save_current_pose_with_all_motors("wave")\n',
+    );
+  });
+
+  it("passes a connected variable through instead of a hardcoded name", () => {
+    const generator = generatorWithNameValue("pose_name");
+    expect(save_current_pose({} as Block, generator)).toBe(
+      "save_current_pose_with_all_motors(pose_name)\n",
+    );
+  });
+
+  it("falls back to a default name when the input is unconnected", () => {
+    const generator = generatorWithNameValue("");
+    expect(save_current_pose({} as Block, generator)).toBe(
+      'save_current_pose_with_all_motors("pose name")\n',
+    );
+  });
+});
+
 describe("save current pose block", () => {
   beforeAll(() => Blockly.common.defineBlocks(poseBlocks));
 
-  it("has one name field and no arm or range dropdown", () => {
+  it("has a string value input for the name and no arm or range dropdown", () => {
     const workspace = new Blockly.Workspace();
     Blockly.Events.disable();
     try {
       const block = workspace.newBlock("save_current_pose");
+      const nameInput = block.getInput("NAME");
 
-      expect(block.getField("NAME")).toBeInstanceOf(Blockly.FieldTextInput);
+      expect(nameInput).not.toBeNull();
+      expect(nameInput?.type).toBe(Blockly.inputs.inputTypes.VALUE);
+      expect(nameInput?.connection?.getCheck()).toEqual(["String"]);
+      expect(block.getField("NAME")).toBeNull();
+      expect(block.previousConnection).not.toBeNull();
+      expect(block.nextConnection).not.toBeNull();
       expect(block.getField("SIDE")).toBeNull();
       expect(block.getField("RANGE")).toBeNull();
       expect(
