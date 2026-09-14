@@ -84,7 +84,10 @@ export function save_current_pose(
         SAVE_CURRENT_POSE_FUNCTION(generator),
     );
 
-    return `${functionName}(${quotedField(block, generator, "NAME")})\n`;
+    const name =
+        generator.valueToCode(block, "NAME", Order.NONE) || '"pose name"';
+
+    return `${functionName}(${name})\n`;
 }
 
 export function get_all_poses(
