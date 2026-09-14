@@ -228,6 +228,35 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}() -> bool:
     return received["turned_on"]
 `;
 
+// get-sound-direction (DOA)
+
+export const GET_SOUND_DIRECTION_FUNCTION = (generator: CodeGenerator) => `
+
+def ${generator.FUNCTION_NAME_PLACEHOLDER_}() -> int:
+
+    received = {}
+    timeout_sec = 5.0
+
+    def _on_doa_angle(msg):
+        received["data"] = msg.data
+
+    subscription = node.create_subscription(
+        Int32, "/doa_angle", _on_doa_angle, 10
+    )
+
+    logging.info("waiting for sound direction...")
+    deadline = time.time() + timeout_sec
+    while "data" not in received and time.time() < deadline:
+        rclpy.spin_once(node, timeout_sec=0.1)
+    node.destroy_subscription(subscription)
+
+    if "data" not in received:
+        logging.warning("no sound direction received within 5.0 s; returning 0.")
+        return 0
+
+    return int(received["data"])
+`;
+
 // run-script
 
 export const RUN_SCRIPT_FUNCTION = (generator: CodeGenerator) => `

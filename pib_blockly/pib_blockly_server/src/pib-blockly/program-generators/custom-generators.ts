@@ -14,6 +14,7 @@ import {RESERVED_WORDS} from "./util/reserved-words";
 import * as displayGenerators from "./display-generators";
 import * as programLog from "./program-log-generator";
 import * as setVolume from "./set-volume-generator";
+import * as getSoundDirection from "./sound-direction-generator";
 
 export * from "blockly/python";
 
@@ -33,6 +34,7 @@ const generators: typeof pythonGenerator.forBlock = {
     ...runScript,
     ...programLog,
     ...setVolume,
+    ...getSoundDirection,
 };
 
 for (const name in generators) {

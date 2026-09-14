@@ -41,4 +41,6 @@ export const RESERVED_WORDS = [
     // solid-state relay
     "SetSolidStateRelay",
     "set_solid_state_relay_state_client",
+    // sound direction (DOA)
+    "Int32",
 ].join(",");
