@@ -33,6 +33,8 @@ export const RESERVED_WORDS = [
     "fd",
     // pose
     "pose_client",
+    "pose_backend",
+    "play_pose_sequence_timed",
     // solid-state relay
     "SetSolidStateRelay",
     "set_solid_state_relay_state_client",

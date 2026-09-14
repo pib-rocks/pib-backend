@@ -84,6 +84,22 @@ export const poseBlocks =
             tooltip: "Returns the number of saved poses.",
             helpUrl: "",
         },
+        {
+            type: "play_pose_sequence",
+            message0: "play pose sequence %1",
+            args0: [
+                {
+                    type: "input_value",
+                    name: "SEQUENCE",
+                },
+            ],
+            previousStatement: null,
+            nextStatement: null,
+            colour: 355,
+            tooltip:
+                "Plays a list of [pose name, seconds] waypoints as one timed trajectory with smooth blending.",
+            helpUrl: "",
+        },
     ]);
 
 class CustomFieldDropdown extends Blockly.FieldDropdown {

@@ -42,6 +42,9 @@ pythonGenerator.forBlock["play_audio_from_speech"] =
 
 pythonGenerator.forBlock["move_to_pose"] = generators["moveToPoseGenerator"];
 
+pythonGenerator.forBlock["play_pose_sequence"] =
+    generators["play_pose_sequence"];
+
 pythonGenerator.forBlock["set_face_expression"] =
     generators["setFaceExpressionGenerator"];
 
