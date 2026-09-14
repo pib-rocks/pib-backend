@@ -42,6 +42,38 @@ function command_exists() {
     command -v "$@" >/dev/null 2>&1
 }
 
+function set_default_output_volume() {
+  local pib_uid
+
+  if ! command_exists wpctl; then
+    print WARN "wpctl is not installed; default output volume was not changed"
+    return 0
+  fi
+
+  pib_uid="$(id -u pib 2>/dev/null)" || {
+    print WARN "user 'pib' does not exist; default output volume was not changed"
+    return 0
+  }
+
+  if ! sudo -u pib XDG_RUNTIME_DIR="/run/user/${pib_uid}" \
+    wpctl set-volume @DEFAULT_AUDIO_SINK@ 1.0; then
+    print WARN "PipeWire is not available for user 'pib'; default output volume was not changed"
+    return 0
+  fi
+
+  local volume
+  if ! volume="$(sudo -u pib XDG_RUNTIME_DIR="/run/user/${pib_uid}" \
+    wpctl get-volume @DEFAULT_AUDIO_SINK@)"; then
+    print WARN "could not verify the default output volume for user 'pib'"
+    return 0
+  fi
+
+  print INFO "Default output volume: ${volume}"
+  if [[ "$volume" != *"Volume: 1.00"* ]]; then
+    print WARN "default output volume verification did not report Volume: 1.00"
+  fi
+}
+
 # Get Linux distribution name, e.g. 'ubuntu', 'debian'
 get_distribution() {
     local distribution=""
@@ -607,6 +639,7 @@ install_DBbrowser || print ERROR "failed to install DB browser"
 install_tinkerforge || print ERROR "failed to install tinkerforge"
 setup_ip_dispatcher || print ERROR "failed to setup ip dispatcher"
 source "$SETUP_INSTALLATION_DIR/set_system_settings.sh" || print ERROR "failed to set system settings"
+set_default_output_volume || print WARN "failed to set default output volume"
 print INFO "${INSTALL_METHOD}"
 if [ "$INSTALL_METHOD" = "legacy" ]; then
   print INFO "Going to install Cerebra locally (LEGACY MODE NOT WORKING ON RASPBERRY PI 5)"

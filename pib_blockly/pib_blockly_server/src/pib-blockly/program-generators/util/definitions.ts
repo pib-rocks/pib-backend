@@ -31,6 +31,7 @@ export const IMPORT_PLAY_AUDIO_FROM_SPREECH =
     "from datatypes.srv import PlayAudioFromSpeech";
 export const IMPORT_PLAY_AUDIO_FROM_FILE =
     "from datatypes.srv import PlayAudioFromFile";
+export const IMPORT_SET_VOLUME = "from datatypes.srv import SetVolume";
 export const IMPORT_APPLY_JOINT_TRAJECTORY =
     "from datatypes.srv import ApplyJointTrajectory";
 export const IMPORT_GET_JOINT_POSITION =
@@ -100,6 +101,17 @@ play_audio_from_file_client = node.create_client(
 
 logging.info(f"waiting for 'play_audio_from_file' service to become available...")
 play_audio_from_file_client.wait_for_service()
+logging.info(f"service now available")
+`;
+
+export const INIT_SET_VOLUME_CLIENT = `
+set_volume_client = node.create_client(
+    SetVolume,
+    'set_volume'
+)
+
+logging.info(f"waiting for 'set_volume' service to become available...")
+set_volume_client.wait_for_service()
 logging.info(f"service now available")
 `;
 

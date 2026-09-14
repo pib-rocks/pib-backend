@@ -27,6 +27,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
 	"srv/ApplyMotorSettings.srv"
 	"srv/PlayAudioFromFile.srv"
 	"srv/PlayAudioFromSpeech.srv"
+	"srv/SetVolume.srv"
 	"srv/GetVoiceAssistantState.srv"
 	"srv/SetVoiceAssistantState.srv"
 	"srv/GetChatIsListening.srv"

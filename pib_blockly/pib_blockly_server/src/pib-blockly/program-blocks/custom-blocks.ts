@@ -12,6 +12,7 @@ import {setSolidStateRelay} from "./solid-state-relay-block";
 import {displayBlocks} from "./display-blocks";
 import {runScriptBlocks} from "./run-script-block";
 import {programLogBlocks} from "./program-log-blocks";
+import {setVolume} from "./set-volume-block";
 
 export function customBlockDefinition() {
     Blockly.common.defineBlocks(displayBlocks);
@@ -27,6 +28,7 @@ export function customBlockDefinition() {
     Blockly.common.defineBlocks(tfButton);
     Blockly.common.defineBlocks(runScriptBlocks);
     Blockly.common.defineBlocks(programLogBlocks);
+    Blockly.common.defineBlocks(setVolume);
 
     face_detector_blocks["face_detector_running"].editable_ = false;
 }
