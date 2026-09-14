@@ -16,6 +16,8 @@ export const IMPORT_PIB_SDK_IK =
     "from pib_sdk import ik, Write, right_arm, left_arm";
 export const IMPORT_PIB_SDK_POSES =
     "from pib_sdk.features.poses import save_current_pose, list_poses, get_pose";
+export const IMPORT_PIB_SDK_PLAY_POSE_SEQUENCE_TIMED =
+    "from pib_sdk.features.poses import play_pose_sequence_timed";
 export const IMPORT_PIB_SDK_POSE_CONTROL =
     "from pib_sdk.control import All, _expand_motor_specs";
 export const IMPORT_PIB_SDK_TELEMETRY =

@@ -7,6 +7,7 @@ import {
     IMPORT_PIB_SDK,
     IMPORT_PIB_SDK_BACKEND,
     IMPORT_PIB_SDK_POSE_CONTROL,
+    IMPORT_PIB_SDK_PLAY_POSE_SEQUENCE_TIMED,
     IMPORT_PIB_SDK_POSES,
     IMPORT_PIB_SDK_TELEMETRY,
     IMPORT_POSE_CLIENT,
@@ -18,6 +19,7 @@ import {
 } from "./util/definitions";
 import {
     APPLY_POSE_FUNCTION,
+    PLAY_POSE_SEQUENCE_TIMED_FUNCTION,
     SAVE_CURRENT_POSE_FUNCTION,
 } from "./util/function-declarations";
 
@@ -123,6 +125,30 @@ export function pose_count(
 ): [string, Order] {
     addPoseSdkDefinitions(generator);
     return ["len(list_poses(pose_backend))", Order.FUNCTION_CALL];
+}
+
+export function play_pose_sequence(
+    block: Block,
+    generator: typeof pythonGenerator,
+) {
+    const sequence =
+        generator.valueToCode(block, "SEQUENCE", Order.NONE) || "[]";
+
+    Object.assign(generator.definitions_, {
+        IMPORT_OS,
+        IMPORT_PIB_SDK,
+        IMPORT_PIB_SDK_PLAY_POSE_SEQUENCE_TIMED,
+        IMPORT_PIB_SDK_BACKEND,
+        IMPORT_URLPARSE,
+        INIT_PIB_SDK_POSE_BACKEND,
+    });
+
+    const functionName = generator.provideFunction_(
+        "play_pose_sequence",
+        PLAY_POSE_SEQUENCE_TIMED_FUNCTION(generator),
+    );
+
+    return `${functionName}(${sequence})\n`;
 }
 
 export {pythonGenerator};

@@ -159,6 +159,19 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(name: str) -> None:
         save_current_pose(telemetry, pose_backend, name, motor_names)
 `;
 
+export const PLAY_POSE_SEQUENCE_TIMED_FUNCTION = (generator: CodeGenerator) => `
+def ${generator.FUNCTION_NAME_PLACEHOLDER_}(sequence) -> None:
+
+    steps = [(str(item[0]), float(item[1])) for item in (sequence or [])]
+    rosbridge_host = os.getenv("ROSBRIDGE_HOST", "rosbridge-ws")
+    try:
+        with pib_sdk.Write(host=rosbridge_host, port=9090) as writer:
+            play_pose_sequence_timed(writer, pose_backend, steps)
+    except Exception:
+        with pib_sdk.Write(host="localhost", port=9090) as writer:
+            play_pose_sequence_timed(writer, pose_backend, steps)
+`;
+
 // set-solid-state-relay
 
 export const SET_SOLID_STATE_RELAY_FUNCTION = (generator: CodeGenerator) => `

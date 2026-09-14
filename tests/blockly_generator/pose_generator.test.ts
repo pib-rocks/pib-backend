@@ -6,6 +6,7 @@ import {
   get_pose_joints,
   has_pose,
   moveToPoseGenerator,
+  play_pose_sequence,
   pose_count,
   save_current_pose,
 } from "../../pib_blockly/pib_blockly_server/src/pib-blockly/program-generators/pose-generator";
@@ -14,6 +15,11 @@ import { poseBlocks } from "../../pib_blockly/pib_blockly_server/src/pib-blockly
 type MockGenerator = typeof pythonGenerator & {
   definitions_: Record<string, string>;
   provideFunction_: (name: string, code: string) => string;
+  valueToCode: (
+    block: Block,
+    name: string,
+    order: Order,
+  ) => string;
 };
 
 function createMockGenerator(): MockGenerator {
@@ -125,6 +131,47 @@ describe("pose SDK generators", () => {
   });
 });
 
+describe("play_pose_sequence generator", () => {
+  function createSequenceGenerator(sequenceCode?: string): MockGenerator {
+    const generator = createMockGenerator();
+    generator.valueToCode = (block, name, order) => {
+      expect(name).toBe("SEQUENCE");
+      expect(order).toBe(Order.NONE);
+      return sequenceCode ?? "";
+    };
+    return generator;
+  }
+
+  it("emits a timed helper call with the coerced sequence literal", () => {
+    const sequenceLiteral = "[['wave', 1.5], ['rest', 2]]";
+    const generator = createSequenceGenerator(sequenceLiteral);
+    const code = play_pose_sequence({} as Block, generator);
+
+    expect(code).toBe(`play_pose_sequence(${sequenceLiteral})\n`);
+    const defs = Object.values(generator.definitions_).join("\n");
+    expect(defs).toContain(
+      "from pib_sdk.features.poses import play_pose_sequence_timed",
+    );
+    expect(defs).toContain(
+      "steps = [(str(item[0]), float(item[1])) for item in (sequence or [])]",
+    );
+    expect(defs).toContain(
+      "play_pose_sequence_timed(writer, pose_backend, steps)",
+    );
+    expect(defs).toContain('os.getenv("ROSBRIDGE_HOST", "rosbridge-ws")');
+    expect(defs).toContain("pib_sdk.Write");
+    expect(defs).toContain("pose_backend = BackendClient(");
+    expect(defs).not.toContain("play_pose_sequence(writer");
+  });
+
+  it("defaults a missing sequence input to an empty list", () => {
+    const generator = createSequenceGenerator("");
+    expect(play_pose_sequence({} as Block, generator)).toBe(
+      "play_pose_sequence([])\n",
+    );
+  });
+});
+
 describe("save current pose block", () => {
   beforeAll(() => Blockly.common.defineBlocks(poseBlocks));
 
@@ -142,6 +189,22 @@ describe("save current pose block", () => {
           (field) => field instanceof Blockly.FieldDropdown,
         ),
       ).toBe(false);
+    } finally {
+      workspace.dispose();
+      Blockly.Events.enable();
+    }
+  });
+
+  it("defines play_pose_sequence as a statement with a SEQUENCE value input", () => {
+    const workspace = new Blockly.Workspace();
+    Blockly.Events.disable();
+    try {
+      const block = workspace.newBlock("play_pose_sequence");
+
+      expect(block.getInput("SEQUENCE")).not.toBeNull();
+      expect(block.previousConnection).not.toBeNull();
+      expect(block.nextConnection).not.toBeNull();
+      expect(block.outputConnection).toBeNull();
     } finally {
       workspace.dispose();
       Blockly.Events.enable();
