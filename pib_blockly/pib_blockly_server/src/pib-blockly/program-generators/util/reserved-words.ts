@@ -17,6 +17,9 @@ export const RESERVED_WORDS = [
     // play-audio-from-speech
     "PlayAudioFromSpeech",
     "play_audio_from_speech_client",
+    // set-volume
+    "SetVolume",
+    "set_volume_client",
     // motor
     "ik",
     "Write",

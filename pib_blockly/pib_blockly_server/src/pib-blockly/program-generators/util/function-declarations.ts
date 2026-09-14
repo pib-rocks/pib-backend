@@ -36,6 +36,16 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(filepath: str) -> None:
     logging.info("finished playing audio file.")
 `;
 
+export const SET_VOLUME_FUNCTION = (generator: CodeGenerator) => `
+def ${generator.FUNCTION_NAME_PLACEHOLDER_}(percent: int) -> None:
+
+    request = SetVolume.Request()
+    request.percent = int(percent)
+
+    future = set_volume_client.call_async(request)
+    rclpy.spin_until_future_complete(node, future)
+`;
+
 // motor
 
 export const GET_JOINT_POSITION_FUNCTION = (generator: CodeGenerator) => `
