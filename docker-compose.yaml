@@ -71,6 +71,7 @@ services:
       - camera
     volumes:
       - /dev/:/dev/
+      - ${PIB_MODEL_STORE:-/home/pib/app/pib-models}:/models:ro
     devices:
       - /dev/bus/usb:/dev/bus/usb
     networks:

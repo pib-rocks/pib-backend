@@ -534,6 +534,165 @@ EOF
   fi
 }
 
+# Persistent OAK blob store (bind-mounted into ros-camera). Never downloaded or
+# compiled on the robot; setup copies vendored artefacts from models/.
+PIB_MODEL_STORE_DEFAULT="/home/pib/app/pib-models"
+
+function curated_models_dir() {
+  local script_root
+  script_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+  if [ -f "$script_root/models/manifest.yaml" ]; then
+    echo "$script_root/models"
+  else
+    echo "$BACKEND_DIR/models"
+  fi
+}
+
+function file_sha256() {
+  local path="$1"
+  if command_exists sha256sum; then
+    sha256sum -- "$path" 2>/dev/null | awk '{print $1}'
+  elif command_exists python3; then
+    python3 -c 'import hashlib,sys; h=hashlib.sha256(); f=open(sys.argv[1],"rb");
+h.update(f.read()); print(h.hexdigest())' "$path" 2>/dev/null
+  fi
+}
+
+# Emit model_id<TAB>file<TAB>sha256 for each models/manifest.yaml entry.
+function parse_model_manifest() {
+  local manifest="$1"
+  awk '
+    /^[[:space:]]*-[[:space:]]*model_id:[[:space:]]*/ {
+      sub(/^[[:space:]]*-[[:space:]]*model_id:[[:space:]]*/, "")
+      gsub(/[[:space:]]+$/, "")
+      model_id = $0
+      file = ""
+      sha = ""
+      next
+    }
+    /^[[:space:]]*file:[[:space:]]*/ {
+      sub(/^[[:space:]]*file:[[:space:]]*/, "")
+      gsub(/[[:space:]]+$/, "")
+      file = $0
+      next
+    }
+    /^[[:space:]]*sha256:[[:space:]]*/ {
+      sub(/^[[:space:]]*sha256:[[:space:]]*/, "")
+      gsub(/[[:space:]]+$/, "")
+      sha = $0
+      if (model_id != "" && file != "" && sha != "") {
+        printf "%s\t%s\t%s\n", model_id, file, sha
+      }
+      next
+    }
+  ' "$manifest"
+}
+
+# Reusable by full install, --models, and --verify-models.
+# mode=provision copies missing/stale blobs (failures are WARN-only).
+# mode=verify only checks the store; returns 1 on any mismatch.
+function provision_curated_models() {
+  local mode="${1:-provision}"
+  local store="${PIB_MODEL_STORE:-$PIB_MODEL_STORE_DEFAULT}"
+  local models_dir manifest
+  local placed=0 already_current=0 failed=0
+  local model_id rel_file expected_sha src dest actual
+
+  models_dir="$(curated_models_dir)"
+  manifest="${models_dir}/manifest.yaml"
+
+  print INFO "Curated model store: ${store}"
+
+  if [ ! -f "$manifest" ]; then
+    print WARN "model manifest not found at ${manifest}"
+    failed=1
+    print INFO "Models summary: placed=${placed} already current=${already_current} failed=${failed} store=${store}"
+    [ "$mode" = "verify" ] && return 1
+    return 0
+  fi
+
+  if [ "$mode" != "verify" ]; then
+    if ! mkdir -p "$store"; then
+      print WARN "could not create model store ${store}"
+      print INFO "Models summary: placed=${placed} already current=${already_current} failed=1 store=${store}"
+      return 0
+    fi
+  fi
+
+  while IFS=$'\t' read -r model_id rel_file expected_sha; do
+    [ -n "$model_id" ] || continue
+    src="${models_dir}/${rel_file}"
+    dest="${store}/${rel_file}"
+
+    if [ "$mode" = "verify" ]; then
+      if [ ! -f "$dest" ]; then
+        print WARN "${model_id}: missing in store (${dest})"
+        failed=$((failed + 1))
+        continue
+      fi
+      actual="$(file_sha256 "$dest")"
+      if [ "$actual" = "$expected_sha" ]; then
+        print INFO "${model_id}: already current"
+        already_current=$((already_current + 1))
+      else
+        print WARN "${model_id}: sha256 mismatch in store"
+        failed=$((failed + 1))
+      fi
+      continue
+    fi
+
+    if [ -f "$dest" ]; then
+      actual="$(file_sha256 "$dest")"
+      if [ "$actual" = "$expected_sha" ]; then
+        print INFO "${model_id}: already current"
+        already_current=$((already_current + 1))
+        continue
+      fi
+    fi
+
+    if [ ! -f "$src" ]; then
+      print WARN "${model_id}: vendored file missing (${src})"
+      failed=$((failed + 1))
+      continue
+    fi
+
+    actual="$(file_sha256 "$src")"
+    if [ "$actual" != "$expected_sha" ]; then
+      print WARN "${model_id}: vendored file sha256 mismatch"
+      failed=$((failed + 1))
+      continue
+    fi
+
+    if ! mkdir -p "$(dirname "$dest")"; then
+      print WARN "${model_id}: could not create store directory"
+      failed=$((failed + 1))
+      continue
+    fi
+
+    local tmp="${dest}.tmp.$$"
+    if cp -f "$src" "$tmp" && mv -f "$tmp" "$dest"; then
+      print INFO "${model_id}: placed"
+      placed=$((placed + 1))
+    else
+      rm -f "$tmp"
+      print WARN "${model_id}: failed to copy into store"
+      failed=$((failed + 1))
+    fi
+  done < <(parse_model_manifest "$manifest")
+
+  if [ "$placed" -eq 0 ] && [ "$already_current" -eq 0 ] && [ "$failed" -eq 0 ]; then
+    print WARN "no models parsed from ${manifest}"
+    failed=1
+  fi
+
+  print INFO "Models summary: placed=${placed} already current=${already_current} failed=${failed} store=${store}"
+
+  if [ "$mode" = "verify" ] && [ "$failed" -gt 0 ]; then
+    return 1
+  fi
+  return 0
+}
+
 # clean setup files if local install + remove user from sudoers file again
 function cleanup() {
   if [ "$INSTALL_METHOD" = "legacy" ]; then
@@ -557,16 +716,69 @@ show_help()
 	echo -e "-f=YourBranchName or --frontend-branch=YourBranchName"
 	echo -e "-b=YourBranchName or --backend-branch=YourBranchName"
 	echo -e "-l or --local for a local installation of the software over using a containerized setup using Docker"
+	echo -e "--models refresh the persistent OAK model store from models/ and exit"
+	echo -e "--verify-models check the model store against models/manifest.yaml and exit non-zero on mismatch"
 
 	echo -e "$NEW_LINE""Examples:"
 	echo -e "    ./setup-pib -b=main -f=PR-566"
     echo -e "    ./setup-pib --backend-branch=main --frontend-branch=PR-566"
+	echo -e "    ./setup-pib --models"
+	echo -e "    ./setup-pib --verify-models"
 
 	exit
 }
 
 
 # ---------- SETUP STARTS FROM HERE -----------
+
+# VALIDATE CLI ARGUMENTS (before sudo so --models / --verify-models stay offline and local)
+BRANCH_BACKEND="main"
+BRANCH_FRONTEND="main"
+INSTALL_METHOD="docker"
+MODELS_ONLY=false
+VERIFY_MODELS_ONLY=false
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -f=* | --frontend-branch=*)
+      BRANCH_FRONTEND="${1#*=}"
+      ;;
+    -b=* | --backend-branch=*)
+      BRANCH_BACKEND="${1#*=}"
+      ;;
+    -l | --legacy)
+      INSTALL_METHOD="legacy"
+      ;;
+    --models)
+      MODELS_ONLY=true
+      ;;
+    --verify-models)
+      VERIFY_MODELS_ONLY=true
+      ;;
+    -h | --help)
+      show_help
+      ;;
+    *)
+      print ERROR "invalid input options"
+      exit 1
+      ;;
+  esac
+  shift
+done
+
+if [ "$MODELS_ONLY" = true ] && [ "$VERIFY_MODELS_ONLY" = true ]; then
+  print ERROR "use either --models or --verify-models, not both"
+  exit 1
+fi
+
+if [ "$MODELS_ONLY" = true ]; then
+  provision_curated_models provision
+  exit 0
+fi
+
+if [ "$VERIFY_MODELS_ONLY" = true ]; then
+  provision_curated_models verify
+  exit $?
+fi
 
 # Reduplicate output to an extra log file as well
 LOG_FILE="$HOME/setup-pib.log"
@@ -588,32 +800,6 @@ DIST_VERSION=$(get_dist_version "$DISTRIBUTION")  # e.g., 'noble'
 export DIST_VERSION
 check_distribution
 
-
-# VALIDATE CLI ARGUMENTS
-BRANCH_BACKEND="main"
-BRANCH_FRONTEND="main"
-INSTALL_METHOD="docker"
-# Check if branch was specified
-while [ $# -gt 0 ]; do
-  case "$1" in
-    -f=* | --frontend-branch=*)
-      BRANCH_FRONTEND="${1#*=}"
-      ;;
-    -b=* | --backend-branch=*)
-      BRANCH_BACKEND="${1#*=}"
-      ;;
-    -l | --legacy)
-      INSTALL_METHOD="legacy"
-      ;;
-    -h | --help)
-      show_help
-      ;;
-    *)
-      print ERROR "invalid input options"
-  esac
-  shift
-done
-
 if is_ubuntu_noble; then
   remove_apps || print ERROR "failed to remove default software"
 fi
@@ -625,6 +811,8 @@ fi
 install_system_packages || { print ERROR "failed to install system packages"; return 1; }
 install_locale || { print ERROR "failed to install locale"; return 1; }
 clone_repositories || { print ERROR "failed to clone repositories"; return 1; }
+# After checkout, before containers: copy vendored OAK blobs into the bind-mounted store.
+provision_curated_models provision
 install_pib_python_packages || print ERROR "failed to install pib Python packages"
 # Before docker-compose starts: hermes must exist on the host so the
 # ros-voice-assistant / flask-app bind mounts resolve to real paths.
