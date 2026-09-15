@@ -100,6 +100,7 @@ except ImportError:
     _datatypes_srv.GetDistanceAtPx = _DummySrv
 else:
     if not hasattr(_datatypes_srv, "GetDepthFrame"):
+
         class _DummySrv:
             class Request:
                 pass

@@ -202,9 +202,7 @@ class CameraNode(Node):
         return mode
 
     def _read_stereo_timeout(self):
-        value = os.environ.get(
-            "PIB_CAMERA_STEREO_TIMEOUT", str(DEFAULT_STEREO_TIMEOUT)
-        )
+        value = os.environ.get("PIB_CAMERA_STEREO_TIMEOUT", str(DEFAULT_STEREO_TIMEOUT))
         try:
             timeout = float(value)
             if timeout < 0 or not math.isfinite(timeout):
