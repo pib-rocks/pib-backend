@@ -241,9 +241,9 @@ class CameraNode(Node):
             detections.frame_width = 0
             detections.frame_height = 0
         else:
-            detections.frame_height, detections.frame_width = (
-                self.current_frame.shape[:2]
-            )
+            detections.frame_height, detections.frame_width = self.current_frame.shape[
+                :2
+            ]
         detections.detections = []
         return detections
 

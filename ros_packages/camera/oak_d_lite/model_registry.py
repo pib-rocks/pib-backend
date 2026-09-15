@@ -66,9 +66,8 @@ class ModelRegistry:
 
             loaded = {}
             for entry in entries:
-                if (
-                    not isinstance(entry, dict)
-                    or not self.REQUIRED_FIELDS.issubset(entry)
+                if not isinstance(entry, dict) or not self.REQUIRED_FIELDS.issubset(
+                    entry
                 ):
                     raise ValueError("manifest contains an incomplete model entry")
                 model_id = str(entry["model_id"]).strip()
