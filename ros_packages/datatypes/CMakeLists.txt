@@ -8,6 +8,7 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 find_package(trajectory_msgs REQUIRED)
+find_package(std_msgs REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
 	"msg/MotorSettings.msg"
@@ -24,6 +25,11 @@ rosidl_generate_interfaces(${PROJECT_NAME}
 	"msg/ImageFormat.msg"
 	"msg/DisplayImage.msg"
 	"msg/ButtonColor.msg"
+	"msg/Detection.msg"
+	"msg/DetectionArray.msg"
+	"msg/ModelStatus.msg"
+	"msg/ModelStatusArray.msg"
+	"msg/ModelInfo.msg"
 	"srv/ApplyMotorSettings.srv"
 	"srv/PlayAudioFromFile.srv"
 	"srv/PlayAudioFromSpeech.srv"
@@ -47,10 +53,14 @@ rosidl_generate_interfaces(${PROJECT_NAME}
 	"srv/SetSolidStateRelay.srv"
 	"srv/GetMicConfiguration.srv"
 	"srv/CreateOrUpdateChatMessage.srv"
+	"srv/ListModels.srv"
+	"srv/StartModel.srv"
+	"srv/StopModel.srv"
+	"srv/GetDetections.srv"
 	"action/RunProgram.action"
 	"action/RecordAudio.action"
 	"action/Chat.action"
-	DEPENDENCIES trajectory_msgs
+	DEPENDENCIES trajectory_msgs std_msgs
 )
 
 ament_export_dependencies(rosidl_default_runtime)
