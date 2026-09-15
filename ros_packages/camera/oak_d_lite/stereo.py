@@ -1,6 +1,8 @@
 #!/usr/bin/python3
 import base64
+import math
 import os
+import time
 import cv2
 import depthai as dai
 import numpy as np
@@ -12,6 +14,10 @@ from std_msgs.msg import Float32MultiArray, Float64, Int32, Int32MultiArray, Str
 # Downscaled resolution for Haar cascade face detection (maps back to full frame).
 FACE_DETECT_WIDTH = 320
 FACE_DETECT_HEIGHT = 180
+STEREO_MODES = {"auto", "on", "off"}
+DEFAULT_STEREO_TIMEOUT = 5.0
+PIPELINE_START_ATTEMPTS = 3
+PIPELINE_START_BACKOFF = 0.25
 
 
 class ErrorPublisher(Node):
@@ -71,6 +77,10 @@ class CameraNode(Node):
         self.pipeline = None
         self.queue = None
         self.depth_queue = None
+        self.depth_available = False
+        self.stereo_mode = self._read_stereo_mode()
+        self.stereo_timeout = self._read_stereo_timeout()
+        self._pending_color_packet = None
 
         self.camera_available = self.init_pipeline()
 
@@ -125,6 +135,12 @@ class CameraNode(Node):
 
     def get_depth_frame_callback(self, request, response):
         # Read cached depth from the persistent pipeline; do not reconnect.
+        if not self.depth_available:
+            response.width = 0
+            response.height = 0
+            response.encoding = ""
+            response.depth_base64 = ""
+            return response
         packed = self._encode_depth_frame(self.current_depth)
         if packed is None:
             response.width = 0
@@ -140,7 +156,7 @@ class CameraNode(Node):
     def get_distance_at_px_callback(self, request, response):
         # Pixel lookup against cached depth (mm). 0 means invalid / out of range.
         response.distance_mm = 0.0
-        if self.current_depth is None:
+        if not self.depth_available or self.current_depth is None:
             return response
         height, width = self.current_depth.shape[:2]
         x, y = int(request.x), int(request.y)
@@ -175,48 +191,131 @@ class CameraNode(Node):
         mono_right_out.link(stereo.right)
 
         self.depth_queue = stereo.depth.createOutputQueue()
-        self.get_logger().info("Stereo depth outputs added to pipeline.")
+
+    def _read_stereo_mode(self):
+        mode = os.environ.get("PIB_CAMERA_STEREO", "auto").strip().lower()
+        if mode not in STEREO_MODES:
+            self.get_logger().warning(
+                f"Invalid PIB_CAMERA_STEREO={mode!r}; using 'auto'."
+            )
+            return "auto"
+        return mode
+
+    def _read_stereo_timeout(self):
+        value = os.environ.get("PIB_CAMERA_STEREO_TIMEOUT", str(DEFAULT_STEREO_TIMEOUT))
+        try:
+            timeout = float(value)
+            if timeout < 0 or not math.isfinite(timeout):
+                raise ValueError
+            return timeout
+        except ValueError:
+            self.get_logger().warning(
+                "Invalid PIB_CAMERA_STEREO_TIMEOUT; using 5.0 seconds."
+            )
+            return DEFAULT_STEREO_TIMEOUT
+
+    def _build_pipeline(self, include_stereo):
+        """Build one colour pipeline, optionally including the stereo path."""
+        self.pipeline = dai.Pipeline()
+        self.camRgb = self.pipeline.create(dai.node.Camera)
+        self.camRgb.build(dai.CameraBoardSocket.CAM_A)
+        self.isp_out = self.camRgb.requestIspOutput()
+        self.queue = self.isp_out.createOutputQueue()
+        self.depth_queue = None
+
+        if include_stereo:
+            self._init_stereo_depth()
+
+    def _stop_pipeline(self):
+        if self.pipeline is not None:
+            try:
+                self.pipeline.stop()
+            except Exception:
+                pass
+        self.pipeline = None
+        self.queue = None
+        self.depth_queue = None
+
+    def _start_pipeline(self, include_stereo):
+        """Build and start a fresh pipeline with bounded, silent retries."""
+        for attempt in range(PIPELINE_START_ATTEMPTS):
+            try:
+                self._build_pipeline(include_stereo)
+                self.pipeline.start()
+                return True
+            except Exception:
+                self._stop_pipeline()
+                if attempt + 1 < PIPELINE_START_ATTEMPTS:
+                    time.sleep(PIPELINE_START_BACKOFF * (2**attempt))
+        return False
+
+    def _wait_for_color_frame(self, timeout):
+        """Return the first measured colour packet, or None at the deadline."""
+        deadline = time.monotonic() + timeout
+        while True:
+            packet = self.queue.tryGet()
+            if packet is not None:
+                return packet
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return None
+            time.sleep(min(0.05, remaining))
 
     def init_pipeline(self) -> bool:
-        try:
-            # depthai v3 API:
-            # Camera node replaces deprecated ColorCamera.
-            # XLinkOut is completely removed in DepthAI v3.
-            # Output queues are created directly from node outputs via requestIspOutput().
-            # Pipeline is started via pipeline.start() once (OAK-D-Lite 1-pipeline constraint).
-            # Color ISP and StereoDepth share this single pipeline.
-            self.pipeline = dai.Pipeline()
-            self.camRgb = self.pipeline.create(dai.node.Camera)
-            self.camRgb.build(dai.CameraBoardSocket.CAM_A)
-            self.isp_out = self.camRgb.requestIspOutput()
+        self.depth_available = False
+        self.current_depth = None
+        self._pending_color_packet = None
 
-            self.queue = self.isp_out.createOutputQueue()
-            self.depth_queue = None
-
-            try:
-                self._init_stereo_depth()
-            except Exception as stereo_exc:
-                self.get_logger().warning(f"Stereo depth not available: {stereo_exc}")
-                self.depth_queue = None
-
-            self.pipeline.start()
-
-            self.get_logger().info("DepthAI v3 pipeline started successfully.")
+        if self.stereo_mode == "off":
+            if not self._start_pipeline(include_stereo=False):
+                self.get_logger().error(
+                    "Camera not found: colour pipeline failed to start."
+                )
+                return False
+            self.get_logger().warning(
+                "Stereo depth disabled - using colour-only pipeline (depth disabled)"
+            )
             return True
 
-        except Exception as e:
-            import traceback
+        stereo_started = self._start_pipeline(include_stereo=True)
+        if self.stereo_mode == "on":
+            if not stereo_started:
+                self.get_logger().error(
+                    "Camera not found: stereo pipeline failed to start."
+                )
+                return False
+            self.depth_available = True
+            self.get_logger().info(
+                "Stereo depth available - full colour + stereo pipeline active "
+                "(mode=on)"
+            )
+            return True
 
-            print("====================================")
-            print("CAMERA INIT FAILED")
-            traceback.print_exc()
-            print("====================================")
+        if stereo_started:
+            try:
+                first_packet = self._wait_for_color_frame(self.stereo_timeout)
+            except Exception:
+                first_packet = None
+            if first_packet is not None:
+                self._pending_color_packet = first_packet
+                self.depth_available = True
+                self.get_logger().info(
+                    "Stereo depth available - full colour + stereo pipeline active "
+                    "(mode=auto)"
+                )
+                return True
 
-            self.get_logger().error(f"Camera not found: {e}")
-            self.pipeline = None
-            self.queue = None
-            self.depth_queue = None
+        self._stop_pipeline()
+        if not self._start_pipeline(include_stereo=False):
+            self.get_logger().error(
+                "Camera not found: colour pipeline failed to start."
+            )
             return False
+        self.get_logger().warning(
+            "Stereo depth unavailable - falling back to colour-only pipeline "
+            "(depth disabled)"
+        )
+        return True
 
     def publish_face_center(self, frame):
         # Skip expensive Haar cascade when nobody is listening to face_center.
@@ -266,7 +365,10 @@ class CameraNode(Node):
 
     def timer_callback(self):
         if self.queue:
-            image_rgb = self.queue.tryGet()
+            image_rgb = self._pending_color_packet
+            self._pending_color_packet = None
+            if image_rgb is None:
+                image_rgb = self.queue.tryGet()
             if image_rgb is not None:
                 frame = image_rgb.getCvFrame()
 
@@ -311,10 +413,8 @@ class CameraNode(Node):
     def preview_size_callback(self, msg):
         self.preview_width, self.preview_height = msg.data
 
-        if self.pipeline is not None:
-            self.pipeline.stop()
-
-        self.init_pipeline()
+        self._stop_pipeline()
+        self.camera_available = self.init_pipeline()
 
 
 def spin_camera(times):

@@ -199,8 +199,7 @@ def _wait_for_persisted_user_message(chat_id: str, content: str) -> None:
     while time.monotonic() < deadline:
         messages = _poll_messages(chat_id)
         if messages is not None and any(
-            message["isUser"] and message["content"] == content
-            for message in messages
+            message["isUser"] and message["content"] == content for message in messages
         ):
             return
         time.sleep(0.5)
