@@ -44,6 +44,7 @@ export const IMPORT_SET_SOLID_STATE_RELAY =
 export const IMPORT_VISION_PROMPT = "from datatypes.srv import VisionPrompt";
 export const IMPORT_SOLID_STATE_RELAY_STATE =
     "from datatypes.msg import SolidStateRelayState";
+export const IMPORT_INT32 = "from std_msgs.msg import Int32";
 
 // ros
 

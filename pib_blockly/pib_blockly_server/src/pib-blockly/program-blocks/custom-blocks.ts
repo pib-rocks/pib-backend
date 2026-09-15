@@ -13,6 +13,7 @@ import {displayBlocks} from "./display-blocks";
 import {runScriptBlocks} from "./run-script-block";
 import {programLogBlocks} from "./program-log-blocks";
 import {setVolume} from "./set-volume-block";
+import {getSoundDirection} from "./sound-direction-block";
 
 export function customBlockDefinition() {
     Blockly.common.defineBlocks(displayBlocks);
@@ -29,6 +30,7 @@ export function customBlockDefinition() {
     Blockly.common.defineBlocks(runScriptBlocks);
     Blockly.common.defineBlocks(programLogBlocks);
     Blockly.common.defineBlocks(setVolume);
+    Blockly.common.defineBlocks(getSoundDirection);
 
     face_detector_blocks["face_detector_running"].editable_ = false;
 }
