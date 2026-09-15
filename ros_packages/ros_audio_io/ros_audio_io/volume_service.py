@@ -8,9 +8,7 @@ from rclpy.node import Node
 class VolumeService(Node):
     def __init__(self):
         super().__init__("volume_service")
-        self.service = self.create_service(
-            SetVolume, "set_volume", self.set_volume
-        )
+        self.service = self.create_service(SetVolume, "set_volume", self.set_volume)
         self.get_logger().info("Volume service ready (set_volume)")
 
     def set_volume(self, request, response):
