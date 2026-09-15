@@ -116,7 +116,7 @@ fi
 if [ $run_python_package_check = $true ]; then
     echo -e "$new_line""$yellow_text_color""--- checking python packages ---""$reset_text_color"
 
-    pip_packages=([1]=depthai [2]=tinkerforge [3]=openai [4]=google-cloud-speech [5]=google-cloud-texttospeech [6]=pyaudio [7]=opencv-python [8]=setuptools [9]=google-genai)
+    pip_packages=([1]=tinkerforge [2]=openai [3]=google-cloud-speech [4]=google-cloud-texttospeech [5]=pyaudio [6]=opencv-python [7]=setuptools [8]=google-genai)
     for package in "${pip_packages[@]}"
     do
         if ! pip show "$package" >/dev/null 2>&1; then
@@ -125,6 +125,17 @@ if [ $run_python_package_check = $true ]; then
             echo -e "$package is installed"
         fi
     done
+    # depthai is installed in the ros-camera image (depthai==3.8.0), not host pip.
+    camera_container="$(docker ps --format '{{.Names}}' 2>/dev/null | grep -E 'ros-camera' | head -n1 || true)"
+    if [ -n "$camera_container" ]; then
+        if docker exec "$camera_container" pip show depthai >/dev/null 2>&1; then
+            echo -e "depthai is installed in container $camera_container"
+        else
+            echo -e "$red_text_color""The Python-Package depthai is not installed in container $camera_container""$reset_text_color"
+        fi
+    else
+        echo -e "$red_text_color""ros-camera container is not running; cannot verify depthai""$reset_text_color"
+    fi
     echo -e "$yellow_text_color""--- python package check completed ---""$reset_text_color"
 fi
 

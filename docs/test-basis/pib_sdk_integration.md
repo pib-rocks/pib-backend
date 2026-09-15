@@ -64,7 +64,7 @@ And commands are issued across the entire group for both positions
 
 ### Scenario 5: Container Execution Environment Parity
 ```gherkin
-Given the `ros_packages/programs/Dockerfile` and `ros_packages/requirements.txt` build configuration
+Given the `ros_packages/programs/Dockerfile` build configuration
 When the container image is built
 Then `pib-sdk` is installed into the Python runtime environment
 And programs executing inside the `ros-programs` container can import and run `pib-sdk` without missing dependencies
