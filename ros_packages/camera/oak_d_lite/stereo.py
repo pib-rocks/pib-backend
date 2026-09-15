@@ -1,5 +1,6 @@
 #!/usr/bin/python3
 import base64
+from collections import deque
 import math
 import os
 import time
@@ -7,7 +8,13 @@ import cv2
 import depthai as dai
 import numpy as np
 import rclpy
-from datatypes.msg import DetectionArray, ModelInfo, ModelStatus, ModelStatusArray
+from datatypes.msg import (
+    Detection,
+    DetectionArray,
+    ModelInfo,
+    ModelStatus,
+    ModelStatusArray,
+)
 from datatypes.srv import (
     GetCameraImage,
     GetDepthFrame,
@@ -22,6 +29,11 @@ from std_msgs.msg import Float32MultiArray, Float64, Int32, Int32MultiArray, Str
 
 from .model_registry import ModelRegistry
 from .pipeline_manager import PipelineManager
+from .hand_tracking import (
+    HAND_KEYPOINT_NAMES,
+    decode_palm_result,
+    map_landmarks_to_frame,
+)
 
 # Downscaled resolution for Haar cascade face detection (maps back to full frame).
 FACE_DETECT_WIDTH = 320
@@ -88,6 +100,7 @@ class CameraNode(Node):
         self.quality_factor = 80
         self.current_image = ""
         self.current_frame = None
+        self.current_source_size = (0, 0)
         self.current_depth = None
         self.pipeline = None
         self.queue = None
@@ -99,6 +112,19 @@ class CameraNode(Node):
         self.stereo_timeout = self._read_stereo_timeout()
         self._pending_color_packet = None
         self.model_registry = ModelRegistry(logger=self.get_logger())
+        self.detection_publishers = {
+            model.model_id: self.create_publisher(
+                DetectionArray, model.publish_topic, 10
+            )
+            for model in self.model_registry.models()
+            if model.publish_topic
+        }
+        self.hand_decoder_queue = None
+        self.hand_landmark_queue = None
+        self.hand_landmark_config_queue = None
+        self.hand_landmark_input_size = 0
+        self._pending_hands = deque()
+        self._hand_warnings = set()
 
         self.camera_available = self.init_pipeline()
         self.pipeline_manager = PipelineManager(
@@ -253,6 +279,167 @@ class CameraNode(Node):
         )
         return response
 
+    def _warn_hand_once(self, message):
+        if message not in self._hand_warnings:
+            self._hand_warnings.add(message)
+            self.get_logger().warning(message)
+
+    @staticmethod
+    def _nn_layer(packet, name):
+        return np.asarray(packet.getLayerFp16(name), dtype=np.float32)
+
+    def _publish_hand_detections(self, frame_width, frame_height, detections):
+        message = DetectionArray()
+        message.header.stamp = self.get_clock().now().to_msg()
+        message.model_id = "hand_tracking"
+        message.frame_width = frame_width
+        message.frame_height = frame_height
+        message.detections = detections
+        self.last_detections["hand_tracking"] = message
+        publisher = self.detection_publishers.get("hand_tracking")
+        if publisher is not None:
+            publisher.publish(message)
+        self.pipeline_manager.record_packet("hand_tracking")
+
+    def _hand_detection_message(
+        self,
+        palm,
+        landmarks,
+        frame_width,
+        frame_height,
+        source_width,
+        source_height,
+    ):
+        detection = Detection()
+        detection.label = "hand"
+        detection.score = palm.score
+        (
+            detection.x_min,
+            detection.y_min,
+            detection.x_max,
+            detection.y_max,
+        ) = palm.bbox_pixels(
+            frame_width, frame_height, source_width, source_height
+        )
+        detection.keypoint_names = list(HAND_KEYPOINT_NAMES)
+        detection.keypoint_x = [point[0] for point in landmarks]
+        detection.keypoint_y = [point[1] for point in landmarks]
+        detection.keypoint_z = [0.0] * len(HAND_KEYPOINT_NAMES)
+        detection.scalar_names = ["z_source"]
+        detection.scalar_values = [0.0]
+        return detection
+
+    def _queue_landmark_crops(
+        self,
+        palms,
+        frame_width,
+        frame_height,
+        source_width,
+        source_height,
+    ):
+        batch = {
+            "remaining": len(palms),
+            "detections": [],
+            "frame_width": frame_width,
+            "frame_height": frame_height,
+            "source_width": source_width,
+            "source_height": source_height,
+        }
+        for index, palm in enumerate(palms):
+            roi_x, roi_y, roi_width, roi_height = palm.roi_for_frame(
+                source_width, source_height
+            )
+            rotated = dai.RotatedRect()
+            rotated.center.x = roi_x
+            rotated.center.y = roi_y
+            rotated.size.width = roi_width
+            rotated.size.height = roi_height
+            rotated.angle = math.degrees(palm.rotation)
+            config = dai.ImageManipConfig()
+            config.addCropRotatedRect(rotated, True)
+            config.setOutputSize(
+                self.hand_landmark_input_size,
+                self.hand_landmark_input_size,
+                dai.ImageManipConfig.ResizeMode.STRETCH,
+            )
+            config.setFrameType(dai.ImgFrame.Type.BGR888p)
+            config.setReusePreviousImage(index + 1 < len(palms))
+            self.hand_landmark_config_queue.send(config)
+            self._pending_hands.append((palm, batch))
+
+    def _process_hand_tracking(self):
+        if self.hand_decoder_queue is None or self.current_frame is None:
+            return
+
+        while self._pending_hands:
+            packet = self.hand_landmark_queue.tryGet()
+            if packet is None:
+                break
+            palm, batch = self._pending_hands.popleft()
+            try:
+                score = self._nn_layer(packet, "Identity_1")
+                landmarks_tensor = self._nn_layer(
+                    packet, "Identity_dense/BiasAdd/Add"
+                )
+                if score.size != 1:
+                    raise ValueError("landmark confidence must contain one value")
+                if score[0] >= 0.5:
+                    landmarks = map_landmarks_to_frame(
+                        landmarks_tensor,
+                        palm,
+                        batch["frame_width"],
+                        batch["frame_height"],
+                        self.hand_landmark_input_size,
+                        batch["source_width"],
+                        batch["source_height"],
+                    )
+                    batch["detections"].append(
+                        self._hand_detection_message(
+                            palm,
+                            landmarks,
+                            batch["frame_width"],
+                            batch["frame_height"],
+                            batch["source_width"],
+                            batch["source_height"],
+                        )
+                    )
+            except (RuntimeError, ValueError) as exc:
+                self._warn_hand_once(f"Invalid hand landmark output: {exc}")
+            batch["remaining"] -= 1
+            if batch["remaining"] == 0:
+                self._publish_hand_detections(
+                    batch["frame_width"],
+                    batch["frame_height"],
+                    batch["detections"],
+                )
+
+        # Keep decoder and landmark packets paired; accept the next palm frame
+        # only after all landmark crops from the previous one have completed.
+        if self._pending_hands:
+            return
+        packet = self.hand_decoder_queue.tryGet()
+        if packet is None:
+            return
+        frame_height, frame_width = self.current_frame.shape[:2]
+        source_width, source_height = self.current_source_size
+        if not source_width or not source_height:
+            source_width, source_height = frame_width, frame_height
+        try:
+            palms = decode_palm_result(self._nn_layer(packet, "result"))
+        except (RuntimeError, ValueError) as exc:
+            self._warn_hand_once(f"Invalid palm decoder output: {exc}")
+            palms = []
+        if not palms:
+            self._publish_hand_detections(frame_width, frame_height, [])
+            return
+        self._queue_landmark_crops(
+            palms,
+            frame_width,
+            frame_height,
+            source_width,
+            source_height,
+        )
+
     def publish_model_statuses(self):
         self.pipeline_manager.refresh_fps()
         statuses = self.pipeline_manager.statuses()
@@ -329,12 +516,23 @@ class CameraNode(Node):
         self.queue = self.isp_out.createOutputQueue()
         self.depth_queue = None
         self.nn_queues = {}
+        self.hand_decoder_queue = None
+        self.hand_landmark_queue = None
+        self.hand_landmark_config_queue = None
+        self.hand_landmark_input_size = 0
+        if hasattr(self, "_pending_hands"):
+            self._pending_hands.clear()
+        else:
+            self._pending_hands = deque()
 
         if include_stereo:
             self._init_stereo_depth()
 
         for active_model in getattr(self, "_pipeline_models", []):
             model = active_model.model
+            if model.model_id == "hand_tracking":
+                self._build_hand_pipeline(model)
+                continue
             neural_network = self.pipeline.create(dai.node.NeuralNetwork)
             neural_network.setBlobPath(model.blob_path)
             nn_input = self.camRgb.requestOutput(
@@ -343,6 +541,52 @@ class CameraNode(Node):
             )
             nn_input.link(neural_network.input)
             self.nn_queues[model.model_id] = neural_network.out.createOutputQueue()
+
+    def _build_hand_pipeline(self, composite):
+        """Add palm resize/detect/decode and dynamic hand ROI landmarks."""
+        artifacts = {
+            model_id: self.model_registry.get(model_id)
+            for model_id in composite.artifact_ids
+        }
+        palm = artifacts["palm_detection_128x128"]
+        decoder = artifacts["palm_detection_128x128_decoding"]
+        landmark = artifacts["hand_landmark_224x224"]
+        self.hand_landmark_input_size = landmark.input_width
+
+        palm_manip = self.pipeline.create(dai.node.ImageManip)
+        palm_manip.initialConfig.setOutputSize(
+            palm.input_width,
+            palm.input_height,
+            dai.ImageManipConfig.ResizeMode.LETTERBOX,
+        )
+        palm_manip.initialConfig.setFrameType(dai.ImgFrame.Type.BGR888p)
+        self.isp_out.link(palm_manip.inputImage)
+
+        palm_nn = self.pipeline.create(dai.node.NeuralNetwork)
+        palm_nn.setBlobPath(palm.blob_path)
+        palm_manip.out.link(palm_nn.input)
+
+        decoder_nn = self.pipeline.create(dai.node.NeuralNetwork)
+        decoder_nn.setBlobPath(decoder.blob_path)
+        palm_nn.out.link(decoder_nn.input)
+        self.hand_decoder_queue = decoder_nn.out.createOutputQueue()
+
+        landmark_manip = self.pipeline.create(dai.node.ImageManip)
+        landmark_manip.initialConfig.setOutputSize(
+            landmark.input_width,
+            landmark.input_height,
+            dai.ImageManipConfig.ResizeMode.STRETCH,
+        )
+        landmark_manip.initialConfig.setFrameType(dai.ImgFrame.Type.BGR888p)
+        self.isp_out.link(landmark_manip.inputImage)
+        self.hand_landmark_config_queue = (
+            landmark_manip.inputConfig.createInputQueue(maxSize=16, blocking=False)
+        )
+
+        landmark_nn = self.pipeline.create(dai.node.NeuralNetwork)
+        landmark_nn.setBlobPath(landmark.blob_path)
+        landmark_manip.out.link(landmark_nn.input)
+        self.hand_landmark_queue = landmark_nn.out.createOutputQueue()
 
     def _stop_pipeline(self):
         if self.pipeline is not None:
@@ -354,6 +598,12 @@ class CameraNode(Node):
         self.queue = None
         self.depth_queue = None
         self.nn_queues = {}
+        self.hand_decoder_queue = None
+        self.hand_landmark_queue = None
+        self.hand_landmark_config_queue = None
+        self.hand_landmark_input_size = 0
+        if hasattr(self, "_pending_hands"):
+            self._pending_hands.clear()
 
     def _start_pipeline(self, include_stereo):
         """Build and start a fresh pipeline with bounded, silent retries."""
@@ -514,6 +764,7 @@ class CameraNode(Node):
                 image_rgb = self.queue.tryGet()
             if image_rgb is not None:
                 frame = image_rgb.getCvFrame()
+                self.current_source_size = (frame.shape[1], frame.shape[0])
 
                 if (
                     frame.shape[1] != self.preview_width
@@ -539,6 +790,8 @@ class CameraNode(Node):
                 if nn_queue.tryGet() is None:
                     break
                 self.pipeline_manager.record_packet(model_id)
+
+        self._process_hand_tracking()
 
         if not self.depth_queue:
             return

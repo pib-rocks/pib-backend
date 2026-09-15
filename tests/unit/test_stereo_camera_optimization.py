@@ -111,6 +111,7 @@ except ImportError:
         def __init__(self):
             self.header = types.SimpleNamespace(stamp=None)
 
+    _datatypes_msg.Detection = _DummyMsg
     _datatypes_msg.DetectionArray = _DummyMsg
     _datatypes_msg.ModelInfo = _DummyMsg
     _datatypes_msg.ModelStatus = _DummyMsg

@@ -36,6 +36,34 @@ def _manifest(model_file="demo/demo.blob"):
     }
 
 
+def _composite_manifest():
+    manifest = {"models": []}
+    for model_id, size, shaves in (
+        ("palm", 4, 2),
+        ("decoder", 3, 1),
+        ("landmark", 5, 3),
+    ):
+        entry = _manifest(f"{model_id}/{model_id}.blob")["models"][0]
+        entry.update(
+            {
+                "model_id": model_id,
+                "size_bytes": size,
+                "shaves": shaves,
+            }
+        )
+        manifest["models"].append(entry)
+    manifest["models"].append(
+        {
+            "model_id": "hand_tracking",
+            "task": "hand_tracking",
+            "composite": True,
+            "artifacts": ["palm", "decoder", "landmark"],
+            "publish_topic": "detections/hand_tracking",
+        }
+    )
+    return manifest
+
+
 class TestModelRegistry(unittest.TestCase):
     def test_parses_manifest_and_marks_present_blob_available(self):
         with tempfile.TemporaryDirectory() as store:
@@ -90,6 +118,42 @@ class TestModelRegistry(unittest.TestCase):
 
         self.assertEqual(len(registry), 0)
         logger.warning.assert_called_once()
+
+    def test_composite_resolves_when_all_artifacts_are_present(self):
+        with tempfile.TemporaryDirectory() as store:
+            store_path = Path(store)
+            for model_id, content in (
+                ("palm", b"palm"),
+                ("decoder", b"dec"),
+                ("landmark", b"marks"),
+            ):
+                (store_path / model_id).mkdir()
+                (store_path / model_id / f"{model_id}.blob").write_bytes(content)
+            (store_path / "manifest.yaml").write_text(
+                yaml.safe_dump(_composite_manifest()), encoding="utf-8"
+            )
+
+            model = ModelRegistry(store_path).get("hand_tracking")
+
+        self.assertTrue(model.available)
+        self.assertTrue(model.composite)
+        self.assertEqual(model.artifact_ids, ("palm", "decoder", "landmark"))
+        self.assertEqual(model.size_bytes, 12)
+        self.assertEqual(model.shaves, 6)
+
+    def test_composite_is_unavailable_when_one_artifact_is_missing(self):
+        with tempfile.TemporaryDirectory() as store:
+            store_path = Path(store)
+            for model_id, content in (("palm", b"palm"), ("decoder", b"dec")):
+                (store_path / model_id).mkdir()
+                (store_path / model_id / f"{model_id}.blob").write_bytes(content)
+            (store_path / "manifest.yaml").write_text(
+                yaml.safe_dump(_composite_manifest()), encoding="utf-8"
+            )
+
+            model = ModelRegistry(store_path).get("hand_tracking")
+
+        self.assertFalse(model.available)
 
 
 class TestPipelineManager(unittest.TestCase):
@@ -180,6 +244,39 @@ class TestPipelineManager(unittest.TestCase):
         self.revert.assert_called_once()
         self.logger.warning.assert_called_once()
         self.assertEqual(manager.status("demo")["state"], "idle")
+
+    def test_composite_model_reference_counts_owners_as_one_model(self):
+        with tempfile.TemporaryDirectory() as store:
+            store_path = Path(store)
+            for model_id, content in (
+                ("palm", b"palm"),
+                ("decoder", b"dec"),
+                ("landmark", b"marks"),
+            ):
+                (store_path / model_id).mkdir()
+                (store_path / model_id / f"{model_id}.blob").write_bytes(content)
+            (store_path / "manifest.yaml").write_text(
+                yaml.safe_dump(_composite_manifest()), encoding="utf-8"
+            )
+            registry = ModelRegistry(store_path)
+            rebuilds = []
+            manager = PipelineManager(
+                registry,
+                lambda models: rebuilds.append(
+                    [(active.model.model_id, active.shaves) for active in models]
+                )
+                or True,
+                lambda timeout: True,
+                lambda: True,
+            )
+
+            self.assertTrue(manager.start("hand_tracking", 0, "ui")[0])
+            self.assertTrue(manager.start("hand_tracking", 0, "blockly")[0])
+            self.assertEqual(rebuilds, [[("hand_tracking", 6)]])
+            self.assertTrue(manager.stop("hand_tracking", "ui")[0])
+            self.assertEqual(len(rebuilds), 1)
+            self.assertTrue(manager.stop("hand_tracking", "blockly")[0])
+            self.assertEqual(rebuilds[-1], [])
 
 
 if __name__ == "__main__":

@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 import os
 from pathlib import Path
-from typing import Dict, Iterable, Optional
+from typing import Dict, Iterable, Optional, Tuple
 
 import yaml
 
@@ -19,6 +19,9 @@ class ModelRecord:
     available: bool
     input_width: int
     input_height: int
+    composite: bool = False
+    artifact_ids: Tuple[str, ...] = ()
+    publish_topic: str = ""
 
 
 class ModelRegistry:
@@ -37,6 +40,13 @@ class ModelRegistry:
         "format",
         "openvino_version",
         "notes",
+    }
+    COMPOSITE_FIELDS = {
+        "model_id",
+        "task",
+        "composite",
+        "artifacts",
+        "publish_topic",
     }
 
     def __init__(self, store_path=None, logger=None):
@@ -65,7 +75,11 @@ class ModelRegistry:
                 raise ValueError("manifest has no models list")
 
             loaded = {}
+            composite_entries = []
             for entry in entries:
+                if isinstance(entry, dict) and entry.get("composite") is True:
+                    composite_entries.append(entry)
+                    continue
                 if not isinstance(entry, dict) or not self.REQUIRED_FIELDS.issubset(
                     entry
                 ):
@@ -94,14 +108,54 @@ class ModelRegistry:
                     input_width=int(entry["input_width"]),
                     input_height=int(entry["input_height"]),
                 )
+
+            for entry in composite_entries:
+                if not self.COMPOSITE_FIELDS.issubset(entry):
+                    raise ValueError("manifest contains an incomplete composite entry")
+                model_id = str(entry["model_id"]).strip()
+                artifact_ids = tuple(str(item).strip() for item in entry["artifacts"])
+                if (
+                    not model_id
+                    or model_id in loaded
+                    or not artifact_ids
+                    or any(not artifact_id for artifact_id in artifact_ids)
+                ):
+                    raise ValueError("manifest contains an invalid composite entry")
+                artifacts = [loaded.get(artifact_id) for artifact_id in artifact_ids]
+                resolved = [artifact for artifact in artifacts if artifact is not None]
+                loaded[model_id] = ModelRecord(
+                    model_id=model_id,
+                    task=str(entry["task"]),
+                    licence="; ".join(
+                        dict.fromkeys(artifact.licence for artifact in resolved)
+                    ),
+                    shaves=sum(artifact.shaves for artifact in resolved),
+                    size_bytes=sum(artifact.size_bytes for artifact in resolved),
+                    blob_path="",
+                    available=(
+                        len(resolved) == len(artifact_ids)
+                        and all(artifact.available for artifact in resolved)
+                    ),
+                    input_width=0,
+                    input_height=0,
+                    composite=True,
+                    artifact_ids=artifact_ids,
+                    publish_topic=str(entry["publish_topic"]),
+                )
             unavailable = [
                 model.model_id for model in loaded.values() if not model.available
             ]
             if unavailable:
-                raise ValueError(
+                message = (
                     "model store is partial; unavailable artefacts: "
                     + ", ".join(unavailable)
                 )
+                # Preserve S4's all-or-empty behavior for legacy manifests.  A
+                # composite manifest must remain queryable so callers can report
+                # that the chain is unavailable when one dependency is missing.
+                if not composite_entries:
+                    raise ValueError(message)
+                self._warn_once(message)
             self._models = loaded
         except Exception as exc:
             self._models = {}
