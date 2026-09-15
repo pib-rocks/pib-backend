@@ -1,0 +1,6 @@
+# Start inference for model_id. shaves=0 uses the registry default.
+string model_id
+int32 shaves            # 0 = use the registry default
+---
+bool success
+string message

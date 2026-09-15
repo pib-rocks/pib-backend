@@ -1,0 +1,5 @@
+# Stop inference for model_id.
+string model_id
+---
+bool success
+string message
