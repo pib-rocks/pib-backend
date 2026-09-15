@@ -5,13 +5,11 @@ export const RESERVED_WORDS = [
     "time",
     "sys",
     "np",
-    "dai",
     "logging",
     "datetime",
     "program_log_path",
     "program_log",
     "program_reset_log",
-    "blobconverter",
     "stdout_handler",
     "stderr_handler",
     // play-audio-from-speech
