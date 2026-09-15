@@ -85,8 +85,12 @@ try:
 except ImportError:
     _datatypes = types.ModuleType("datatypes")
     _datatypes_srv = types.ModuleType("datatypes.srv")
+    _datatypes_msg = types.ModuleType("datatypes.msg")
+    _datatypes.msg = _datatypes_msg
+    _datatypes.srv = _datatypes_srv
     sys.modules["datatypes"] = _datatypes
     sys.modules["datatypes.srv"] = _datatypes_srv
+    sys.modules["datatypes.msg"] = _datatypes_msg
 
     class _DummySrv:
         class Request:
@@ -98,6 +102,19 @@ except ImportError:
     _datatypes_srv.GetCameraImage = _DummySrv
     _datatypes_srv.GetDepthFrame = _DummySrv
     _datatypes_srv.GetDistanceAtPx = _DummySrv
+    _datatypes_srv.GetDetections = _DummySrv
+    _datatypes_srv.ListModels = _DummySrv
+    _datatypes_srv.StartModel = _DummySrv
+    _datatypes_srv.StopModel = _DummySrv
+
+    class _DummyMsg:
+        def __init__(self):
+            self.header = types.SimpleNamespace(stamp=None)
+
+    _datatypes_msg.DetectionArray = _DummyMsg
+    _datatypes_msg.ModelInfo = _DummyMsg
+    _datatypes_msg.ModelStatus = _DummyMsg
+    _datatypes_msg.ModelStatusArray = _DummyMsg
 else:
     if not hasattr(_datatypes_srv, "GetDepthFrame"):
 

@@ -1,5 +1,6 @@
 # Stop inference for model_id.
 string model_id
+string owner
 ---
 bool success
 string message

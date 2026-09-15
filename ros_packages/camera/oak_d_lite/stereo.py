@@ -7,9 +7,21 @@ import cv2
 import depthai as dai
 import numpy as np
 import rclpy
-from datatypes.srv import GetCameraImage, GetDepthFrame, GetDistanceAtPx
+from datatypes.msg import DetectionArray, ModelInfo, ModelStatus, ModelStatusArray
+from datatypes.srv import (
+    GetCameraImage,
+    GetDepthFrame,
+    GetDetections,
+    GetDistanceAtPx,
+    ListModels,
+    StartModel,
+    StopModel,
+)
 from rclpy.node import Node
 from std_msgs.msg import Float32MultiArray, Float64, Int32, Int32MultiArray, String
+
+from .model_registry import ModelRegistry
+from .pipeline_manager import PipelineManager
 
 # Downscaled resolution for Haar cascade face detection (maps back to full frame).
 FACE_DETECT_WIDTH = 320
@@ -45,6 +57,9 @@ class CameraNode(Node):
         self.face_center_publisher_ = self.create_publisher(
             Float32MultiArray, "face_center", 10
         )
+        self.models_status_publisher_ = self.create_publisher(
+            ModelStatusArray, "models_status", 10
+        )
 
         cascade_paths = [
             "/usr/share/opencv4/haarcascades/haarcascade_frontalface_default.xml",
@@ -77,12 +92,24 @@ class CameraNode(Node):
         self.pipeline = None
         self.queue = None
         self.depth_queue = None
+        self.nn_queues = {}
+        self._pipeline_models = []
         self.depth_available = False
         self.stereo_mode = self._read_stereo_mode()
         self.stereo_timeout = self._read_stereo_timeout()
         self._pending_color_packet = None
+        self.model_registry = ModelRegistry(logger=self.get_logger())
 
         self.camera_available = self.init_pipeline()
+        self.pipeline_manager = PipelineManager(
+            registry=self.model_registry,
+            rebuild=self._rebuild_models,
+            verify_frames=self._verify_model_frames,
+            revert_to_color=self._revert_to_color_only,
+            on_change=self.publish_model_statuses,
+            logger=self.get_logger(),
+        )
+        self.last_detections = {}
 
         if self.camera_available:
             self.get_camera_image_service = self.create_service(
@@ -98,8 +125,21 @@ class CameraNode(Node):
         else:
             self.get_logger().error("Camera not available.")
 
+        self.list_models_service = self.create_service(
+            ListModels, "list_models", self.list_models_callback
+        )
+        self.start_model_service = self.create_service(
+            StartModel, "start_model", self.start_model_callback
+        )
+        self.stop_model_service = self.create_service(
+            StopModel, "stop_model", self.stop_model_callback
+        )
+        self.get_detections_service = self.create_service(
+            GetDetections, "get_detections", self.get_detections_callback
+        )
         self.timer_period = 0.1  # seconds
         self.timer = self.create_timer(self.timer_period, self.timer_callback)
+        self.models_status_timer = self.create_timer(1.0, self.publish_model_statuses)
 
     def _encode_frame(self, frame):
         """JPEG-encode and base64 a frame; returns None on failure."""
@@ -165,6 +205,72 @@ class CameraNode(Node):
         response.distance_mm = float(self.current_depth[y, x])
         return response
 
+    def list_models_callback(self, request, response):
+        statuses = self.pipeline_manager.statuses()
+        response.models = []
+        for model in self.model_registry.models():
+            status = statuses[model.model_id]
+            info = ModelInfo()
+            info.model_id = model.model_id
+            info.task = model.task
+            info.licence = model.licence
+            info.shaves = model.shaves
+            info.size_bytes = model.size_bytes
+            info.available = model.available
+            info.active = status["active"]
+            response.models.append(info)
+        return response
+
+    def start_model_callback(self, request, response):
+        response.success, response.message = self.pipeline_manager.start(
+            request.model_id, request.shaves, request.owner
+        )
+        return response
+
+    def stop_model_callback(self, request, response):
+        response.success, response.message = self.pipeline_manager.stop(
+            request.model_id, request.owner
+        )
+        return response
+
+    def _empty_detections(self, model_id):
+        detections = DetectionArray()
+        detections.header.stamp = self.get_clock().now().to_msg()
+        detections.model_id = model_id
+        if self.current_frame is None:
+            detections.frame_width = 0
+            detections.frame_height = 0
+        else:
+            detections.frame_height, detections.frame_width = (
+                self.current_frame.shape[:2]
+            )
+        detections.detections = []
+        return detections
+
+    def get_detections_callback(self, request, response):
+        response.detections = self.last_detections.get(
+            request.model_id, self._empty_detections(request.model_id)
+        )
+        return response
+
+    def publish_model_statuses(self):
+        self.pipeline_manager.refresh_fps()
+        statuses = self.pipeline_manager.statuses()
+        status_array = ModelStatusArray()
+        status_array.header.stamp = self.get_clock().now().to_msg()
+        status_array.models = []
+        for model in self.model_registry.models():
+            runtime = statuses[model.model_id]
+            status = ModelStatus()
+            status.model_id = model.model_id
+            status.active = runtime["active"]
+            status.fps = float(runtime["fps"])
+            status.shaves = runtime["shaves"]
+            status.state = runtime["state"]
+            status.message = runtime["message"]
+            status_array.models.append(status)
+        self.models_status_publisher_.publish(status_array)
+
     def _init_stereo_depth(self):
         """Add StereoDepth outputs to the existing pipeline (no extra start)."""
         mono_left = self.pipeline.create(dai.node.Camera)
@@ -222,9 +328,21 @@ class CameraNode(Node):
         self.isp_out = self.camRgb.requestIspOutput()
         self.queue = self.isp_out.createOutputQueue()
         self.depth_queue = None
+        self.nn_queues = {}
 
         if include_stereo:
             self._init_stereo_depth()
+
+        for active_model in getattr(self, "_pipeline_models", []):
+            model = active_model.model
+            neural_network = self.pipeline.create(dai.node.NeuralNetwork)
+            neural_network.setBlobPath(model.blob_path)
+            nn_input = self.camRgb.requestOutput(
+                (model.input_width, model.input_height),
+                type=dai.ImgFrame.Type.BGR888p,
+            )
+            nn_input.link(neural_network.input)
+            self.nn_queues[model.model_id] = neural_network.out.createOutputQueue()
 
     def _stop_pipeline(self):
         if self.pipeline is not None:
@@ -235,6 +353,7 @@ class CameraNode(Node):
         self.pipeline = None
         self.queue = None
         self.depth_queue = None
+        self.nn_queues = {}
 
     def _start_pipeline(self, include_stereo):
         """Build and start a fresh pipeline with bounded, silent retries."""
@@ -260,6 +379,30 @@ class CameraNode(Node):
             if remaining <= 0:
                 return None
             time.sleep(min(0.05, remaining))
+
+    def _rebuild_models(self, active_models):
+        self._pipeline_models = list(active_models)
+        self._stop_pipeline()
+        self.camera_available = self.init_pipeline()
+        return self.camera_available
+
+    def _verify_model_frames(self, timeout):
+        packet = self._wait_for_color_frame(timeout)
+        if packet is None:
+            return False
+        self._pending_color_packet = packet
+        return True
+
+    def _revert_to_color_only(self):
+        self._pipeline_models = []
+        self._stop_pipeline()
+        self.depth_available = False
+        self.current_depth = None
+        started = self._start_pipeline(include_stereo=False)
+        self.camera_available = started
+        if not started:
+            return False
+        return self._verify_model_frames(self.stereo_timeout)
 
     def init_pipeline(self) -> bool:
         self.depth_available = False
@@ -390,6 +533,12 @@ class CameraNode(Node):
                         msg = String()
                         msg.data = encoded
                         self.publisher_.publish(msg)
+
+        for model_id, nn_queue in self.nn_queues.items():
+            for _ in range(32):
+                if nn_queue.tryGet() is None:
+                    break
+                self.pipeline_manager.record_packet(model_id)
 
         if not self.depth_queue:
             return
