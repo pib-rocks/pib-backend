@@ -146,9 +146,8 @@ class ModelRegistry:
                 model.model_id for model in loaded.values() if not model.available
             ]
             if unavailable:
-                message = (
-                    "model store is partial; unavailable artefacts: "
-                    + ", ".join(unavailable)
+                message = "model store is partial; unavailable artefacts: " + ", ".join(
+                    unavailable
                 )
                 # Preserve S4's all-or-empty behavior for legacy manifests.  A
                 # composite manifest must remain queryable so callers can report

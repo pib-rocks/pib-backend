@@ -21,7 +21,6 @@ from typing import Iterable, List, Sequence, Tuple
 
 import numpy as np
 
-
 HAND_KEYPOINT_NAMES = (
     "wrist",
     "thumb_cmc",
@@ -135,16 +134,13 @@ def decode_palm_result(
     values = np.asarray(tensor, dtype=np.float32)
     if values.size != PALM_RESULT_COUNT * PALM_RESULT_WIDTH:
         raise ValueError(
-            "palm decoder result must contain exactly 80 values "
-            "(10 detections x 8)"
+            "palm decoder result must contain exactly 80 values " "(10 detections x 8)"
         )
     values = values.reshape(PALM_RESULT_COUNT, PALM_RESULT_WIDTH)
     palms = []
     for score, box_x, box_y, box_size, kp0_x, kp0_y, kp2_x, kp2_y in values:
         if not np.all(
-            np.isfinite(
-                (score, box_x, box_y, box_size, kp0_x, kp0_y, kp2_x, kp2_y)
-            )
+            np.isfinite((score, box_x, box_y, box_size, kp0_x, kp0_y, kp2_x, kp2_y))
         ):
             continue
         if score < score_threshold or box_size <= 0:
@@ -152,9 +148,7 @@ def decode_palm_result(
         delta_x = kp2_x - kp0_x
         delta_y = kp2_y - kp0_y
         rotation = 0.5 * math.pi - math.atan2(-delta_y, delta_x)
-        rotation -= 2 * math.pi * math.floor(
-            (rotation + math.pi) / (2 * math.pi)
-        )
+        rotation -= 2 * math.pi * math.floor((rotation + math.pi) / (2 * math.pi))
         palms.append(
             PalmRegion(
                 score=float(score),

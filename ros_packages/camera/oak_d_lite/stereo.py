@@ -318,9 +318,7 @@ class CameraNode(Node):
             detection.y_min,
             detection.x_max,
             detection.y_max,
-        ) = palm.bbox_pixels(
-            frame_width, frame_height, source_width, source_height
-        )
+        ) = palm.bbox_pixels(frame_width, frame_height, source_width, source_height)
         detection.keypoint_names = list(HAND_KEYPOINT_NAMES)
         detection.keypoint_x = [point[0] for point in landmarks]
         detection.keypoint_y = [point[1] for point in landmarks]
@@ -378,9 +376,7 @@ class CameraNode(Node):
             palm, batch = self._pending_hands.popleft()
             try:
                 score = self._nn_layer(packet, "Identity_1")
-                landmarks_tensor = self._nn_layer(
-                    packet, "Identity_dense/BiasAdd/Add"
-                )
+                landmarks_tensor = self._nn_layer(packet, "Identity_dense/BiasAdd/Add")
                 if score.size != 1:
                     raise ValueError("landmark confidence must contain one value")
                 if score[0] >= 0.5:
@@ -579,8 +575,8 @@ class CameraNode(Node):
         )
         landmark_manip.initialConfig.setFrameType(dai.ImgFrame.Type.BGR888p)
         self.isp_out.link(landmark_manip.inputImage)
-        self.hand_landmark_config_queue = (
-            landmark_manip.inputConfig.createInputQueue(maxSize=16, blocking=False)
+        self.hand_landmark_config_queue = landmark_manip.inputConfig.createInputQueue(
+            maxSize=16, blocking=False
         )
 
         landmark_nn = self.pipeline.create(dai.node.NeuralNetwork)
