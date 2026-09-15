@@ -21,6 +21,18 @@ BlobConverter service (`https://blobconverter.luxonis.com`, Python package
 zoo UI; unauthenticated HubAI SDK downloads require `HUBAI_API_KEY` and
 were **not** used.
 
+## Hand path (three artefacts)
+
+Palm / hand tracking needs **three** blobs, not two:
+
+1. `palm_detection_128x128` — MediaPipe palm **detector** (the network that
+   actually finds palms).
+2. `palm_detection_128x128_decoding` — **decoding head only**. Upstream README:
+   "This model decodes the palm_detection_128x128, so everything can run on
+   the edge. It returns only the TOP 10 most confident results." It is not a
+   detector and does nothing useful without (1).
+3. `hand_landmark_224x224` — hand landmark network on a cropped palm.
+
 Licences are recorded in `manifest.yaml` (not used as a download gate).
 Where the upstream `model.yml` `license` field is empty, the entry is
 `unknown - see source`.
@@ -37,6 +49,7 @@ import blobconverter
 blobconverter.set_defaults(shaves=4, version="2022.1")
 
 depthai = [
+    "palm_detection_128x128",
     "palm_detection_128x128_decoding",
     "hand_landmark_224x224",
     "face_detection_yunet_160x120",

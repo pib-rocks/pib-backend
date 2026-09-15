@@ -5,6 +5,21 @@ default_shaves: 4
 default_openvino_version: '2022.1'
 compile_params: -ip U8
 models:
+- model_id: palm_detection_128x128
+  task: palm_detection
+  source_upstream: luxonis/depthai-model-zoo (google/mediapipe)
+  source_url: https://github.com/luxonis/depthai-model-zoo/raw/main/models/palm_detection_128x128/palm_detection_128x128.xml
+  licence: Apache-2.0 License; https://github.com/google/mediapipe/blob/master/LICENSE
+  file: palm_detection_128x128/palm_detection_128x128.blob
+  sha256: 5889eab0cfc4687d2115e097028e7501d9a908b2539bd0d4d7cfbe5af396638a
+  size_bytes: 4663901
+  shaves: 4
+  input_width: 128
+  input_height: 128
+  format: blob
+  openvino_version: '2022.1'
+  zoo_type: depthai
+  notes: palm detector - required together with palm_detection_128x128_decoding. DepthAI zoo IR input 'images' 3x128x128, BGR [0-255], CHW. Compiled with compile_params '-ip U8'. Upstream model.yml license name Apache-2.0 License.
 - model_id: palm_detection_128x128_decoding
   task: palm_detection
   source_upstream: luxonis/depthai-model-zoo
@@ -19,7 +34,7 @@ models:
   format: blob
   openvino_version: '2022.1'
   zoo_type: depthai
-  notes: MediaPipe-style palm detector with an on-blob decoding head. DepthAI zoo IR expects BGR, [0-255], CHW. Compiled with compile_params '-ip U8'. Upstream model.yml licence is empty.
+  notes: Decoding head only (not a detector). Requires palm_detection_128x128; returns the TOP 10 most confident results so decoding can run on the edge. DepthAI zoo IR expects BGR, [0-255], CHW. Compiled with compile_params '-ip U8'. Upstream model.yml licence is empty.
 - model_id: hand_landmark_224x224
   task: hand_landmarks
   source_upstream: luxonis/depthai-model-zoo
