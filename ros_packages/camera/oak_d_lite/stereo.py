@@ -53,6 +53,7 @@ BRANCH_OUTPUT_QUEUE_DEPTH = 4
 COLOR_OUTPUT_QUEUE_DEPTH = 4
 STEREO_MODES = {"auto", "on", "off"}
 DEFAULT_STEREO_TIMEOUT = 5.0
+DEFAULT_HAND_STARTUP_GRACE = 5.0
 PIPELINE_START_ATTEMPTS = 3
 PIPELINE_START_BACKOFF = 0.25
 PIPELINE_STOP_TIMEOUT = 5.0
@@ -138,6 +139,7 @@ class CameraNode(Node):
         self.depth_available = False
         self.stereo_mode = self._read_stereo_mode()
         self.stereo_timeout = self._read_stereo_timeout()
+        self.hand_startup_grace = self._read_hand_startup_grace()
         self._pending_color_packet = None
         self.model_registry = ModelRegistry(logger=self.get_logger())
         self.detection_publishers = {
@@ -625,19 +627,23 @@ class CameraNode(Node):
     def publish_model_statuses(self):
         statuses = self.pipeline_manager.statuses()
         hand_status = statuses.get("hand_tracking")
-        if (
-            hand_status is not None
-            and hand_status["active"]
-            and not self._hand_chain_is_flowing()
-        ):
-            self.pipeline_manager.mark_failed(
+        hand_flowing = self._hand_chain_is_flowing()
+        if hand_status is not None and hand_flowing:
+            if self.pipeline_manager.mark_running("hand_tracking"):
+                self.get_logger().info(
+                    "hand_tracking recovered after downstream packet flow resumed."
+                )
+        elif hand_status is not None and hand_status["active"]:
+            marked_failed = self.pipeline_manager.mark_failed(
                 "hand_tracking",
                 "Hand pipeline is not producing startup stage packets",
+                startup_grace=self.hand_startup_grace,
             )
-            self.get_logger().error(
-                "hand_tracking was marked failed because its physical pipeline "
-                "is missing or has no startup packet flow."
-            )
+            if marked_failed:
+                self.get_logger().error(
+                    "hand_tracking was marked failed because its physical pipeline "
+                    "is missing or has no startup packet flow."
+                )
         self.pipeline_manager.refresh_fps()
         self._log_hand_stage_counters()
         statuses = self.pipeline_manager.statuses()
@@ -718,6 +724,21 @@ class CameraNode(Node):
                 "Invalid PIB_CAMERA_STEREO_TIMEOUT; using 5.0 seconds."
             )
             return DEFAULT_STEREO_TIMEOUT
+
+    def _read_hand_startup_grace(self):
+        value = os.environ.get(
+            "PIB_HAND_STARTUP_GRACE", str(DEFAULT_HAND_STARTUP_GRACE)
+        )
+        try:
+            grace = float(value)
+            if grace < 0 or not math.isfinite(grace):
+                raise ValueError
+            return grace
+        except ValueError:
+            self.get_logger().warning(
+                "Invalid PIB_HAND_STARTUP_GRACE; using 5.0 seconds."
+            )
+            return DEFAULT_HAND_STARTUP_GRACE
 
     def _build_pipeline(self, include_stereo):
         """Build one colour pipeline, optionally including the stereo path."""

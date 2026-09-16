@@ -24,6 +24,7 @@ class ModelRuntime:
     active: bool = False
     packet_count: int = 0
     fps_started_at: float = field(default_factory=time.monotonic)
+    startup_started_at: Optional[float] = None
 
 
 class PipelineManager:
@@ -77,6 +78,7 @@ class PipelineManager:
         return specs
 
     def _set_requested_state(self, state, message, active):
+        now = self._clock()
         for runtime in self._runtime.values():
             if runtime.owners:
                 runtime.state = state
@@ -84,6 +86,14 @@ class PipelineManager:
                 runtime.active = active
                 if not active:
                     runtime.fps = 0.0
+                if state == "starting":
+                    runtime.packet_count = 0
+                    runtime.fps_started_at = now
+                    runtime.startup_started_at = now
+                elif state == "running":
+                    runtime.packet_count = 0
+                    runtime.fps_started_at = now
+                    runtime.startup_started_at = now
 
     def _rebuild_and_verify(self):
         for attempt in range(self._attempts):
@@ -213,17 +223,39 @@ class PipelineManager:
             if runtime is not None and runtime.active:
                 runtime.packet_count += 1
 
-    def mark_failed(self, model_id: str, message: str) -> bool:
+    def mark_failed(
+        self, model_id: str, message: str, startup_grace: float = 0.0
+    ) -> bool:
         """Make a stale running status reflect a missing physical pipeline."""
         with self._lock:
             runtime = self._runtime.get(model_id)
             if runtime is None or not runtime.active:
+                return False
+            if (
+                runtime.startup_started_at is not None
+                and self._clock() - runtime.startup_started_at < startup_grace
+            ):
                 return False
             runtime.state = "failed"
             runtime.message = message
             runtime.active = False
             runtime.fps = 0.0
             runtime.packet_count = 0
+            return True
+
+    def mark_running(self, model_id: str, message: str = "Model is running") -> bool:
+        """Recover a requested model after physical packet flow is observed."""
+        with self._lock:
+            runtime = self._runtime.get(model_id)
+            if runtime is None or not runtime.owners or runtime.state == "running":
+                return False
+            runtime.state = "running"
+            runtime.message = message
+            runtime.active = True
+            runtime.fps = 0.0
+            runtime.packet_count = 0
+            runtime.fps_started_at = self._clock()
+            runtime.startup_started_at = runtime.fps_started_at
             return True
 
     def refresh_fps(self):

@@ -616,6 +616,75 @@ class TestHandStageCounters(unittest.TestCase):
         node.hand_landmark_queue = MagicMock()
         node.hand_landmark_config_queue = MagicMock()
 
+    def _set_status_publishing_dependencies(self, node, initial_status, final_status):
+        node.pipeline_manager = MagicMock()
+        node.pipeline_manager.statuses.side_effect = [
+            {"hand_tracking": initial_status},
+            {"hand_tracking": final_status},
+        ]
+        node.model_registry = MagicMock()
+        node.model_registry.models.return_value = []
+        node.models_status_publisher_ = MagicMock()
+        node.get_clock = MagicMock()
+        node._log_hand_stage_counters = MagicMock()
+
+    def test_status_failure_check_passes_configured_startup_grace(self):
+        node = self._make_node()
+        self._set_built_hand_chain(node)
+        node.hand_startup_grace = 7.5
+        running = {
+            "active": True,
+            "state": "running",
+            "owners": {"ui"},
+        }
+        failed = {
+            "active": False,
+            "state": "failed",
+            "owners": {"ui"},
+        }
+        self._set_status_publishing_dependencies(node, running, failed)
+        node.pipeline_manager.mark_failed.return_value = False
+
+        node.publish_model_statuses()
+
+        node.pipeline_manager.mark_failed.assert_called_once_with(
+            "hand_tracking",
+            "Hand pipeline is not producing startup stage packets",
+            startup_grace=7.5,
+        )
+        node.get_logger().error.assert_not_called()
+
+    def test_stage_counters_recover_failed_hand_status(self):
+        node = self._make_node()
+        self._set_built_hand_chain(node)
+        for stage in HAND_STAGE_NAMES:
+            node._count_hand_stage(stage)
+        failed = {
+            "active": False,
+            "state": "failed",
+            "owners": {"ui"},
+        }
+        running = {
+            "active": True,
+            "state": "running",
+            "owners": {"ui"},
+        }
+        self._set_status_publishing_dependencies(node, failed, running)
+        node.pipeline_manager.mark_running.return_value = True
+
+        node.publish_model_statuses()
+
+        node.pipeline_manager.mark_running.assert_called_once_with("hand_tracking")
+        node.pipeline_manager.mark_failed.assert_not_called()
+        node.get_logger().info.assert_called_once_with(
+            "hand_tracking recovered after downstream packet flow resumed."
+        )
+
+    def test_hand_startup_grace_is_configurable(self):
+        node = self._make_node()
+        with patch.dict(os.environ, {"PIB_HAND_STARTUP_GRACE": "7.5"}):
+            self.assertEqual(node._read_hand_startup_grace(), 7.5)
+
     @patch("ros_packages.camera.oak_d_lite.stereo.dai")
     def test_decoder_empty_result_sends_config_and_discards_sentinel_landmarks(
         self, mock_dai
