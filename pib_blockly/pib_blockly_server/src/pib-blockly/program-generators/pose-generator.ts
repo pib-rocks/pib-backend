@@ -90,6 +90,13 @@ export function save_current_pose(
     return `${functionName}(${name})\n`;
 }
 
+export function save_detection_as_pose(
+    block: Block,
+    generator: typeof pythonGenerator,
+) {
+    return save_current_pose(block, generator);
+}
+
 export function get_all_poses(
     _block: Block,
     generator: typeof pythonGenerator,

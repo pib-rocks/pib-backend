@@ -15,6 +15,7 @@ import * as displayGenerators from "./display-generators";
 import * as programLog from "./program-log-generator";
 import * as setVolume from "./set-volume-generator";
 import * as getSoundDirection from "./sound-direction-generator";
+import * as modelBlocks from "./model-generators";
 
 export * from "blockly/python";
 
@@ -35,6 +36,7 @@ const generators: typeof pythonGenerator.forBlock = {
     ...programLog,
     ...setVolume,
     ...getSoundDirection,
+    ...modelBlocks,
 };
 
 for (const name in generators) {

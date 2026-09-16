@@ -182,6 +182,131 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(sequence) -> None:
             play_pose_sequence_timed(writer, pose_backend, steps)
 `;
 
+// model inference
+
+export const MODEL_MANAGER_CLASS = (generator: CodeGenerator) => `
+class ${generator.FUNCTION_NAME_PLACEHOLDER_}:
+
+    def __init__(self, node, owner: str) -> None:
+        self.node = node
+        self.owner = owner
+        self.owned_models = set()
+        self.start_client = node.create_client(StartModel, "/start_model")
+        self.stop_client = node.create_client(StopModel, "/stop_model")
+        atexit.register(self.release_all)
+        signal.signal(signal.SIGTERM, self._on_signal)
+
+    def _on_signal(self, signum, _frame) -> None:
+        self.release_all()
+        raise SystemExit(128 + signum)
+
+    def _call(self, client, request, service_name: str):
+        if not client.wait_for_service(timeout_sec=10.0):
+            raise RuntimeError(f"{service_name} service is not available")
+
+        future = client.call_async(request)
+        rclpy.spin_until_future_complete(self.node, future, timeout_sec=30.0)
+        if not future.done() or future.result() is None:
+            raise RuntimeError(f"{service_name} service call timed out")
+
+        return future.result()
+
+    def start(self, model_id, shaves=0) -> None:
+        model_id = str(model_id)
+        request = StartModel.Request()
+        request.model_id = model_id
+        request.shaves = int(shaves)
+        request.owner = self.owner
+        response = self._call(self.start_client, request, "/start_model")
+        if not response.success:
+            raise RuntimeError(response.message)
+
+        self.owned_models.add(model_id)
+
+    def stop(self, model_id) -> None:
+        model_id = str(model_id)
+        request = StopModel.Request()
+        request.model_id = model_id
+        request.owner = self.owner
+        response = self._call(self.stop_client, request, "/stop_model")
+        if not response.success:
+            raise RuntimeError(response.message)
+
+        self.owned_models.discard(model_id)
+
+    def release_all(self) -> None:
+        for model_id in tuple(self.owned_models):
+            try:
+                self.stop(model_id)
+            except Exception as error:
+                logging.error(
+                    f"failed to release model '{model_id}' for owner "
+                    f"'{self.owner}': {error}"
+                )
+`;
+
+export const GET_DETECTION_FIELD_FUNCTION = (generator: CodeGenerator) => `
+def ${generator.FUNCTION_NAME_PLACEHOLDER_}(
+    model_id, detection_index, field, name="", timeout_sec=10.0
+):
+    model_id = str(model_id)
+    received = {}
+
+    def _on_detection(message):
+        received["message"] = message
+
+    subscription = node.create_subscription(
+        DetectionArray,
+        f"/detections/{model_id}",
+        _on_detection,
+        10,
+    )
+    deadline = time.monotonic() + timeout_sec
+    try:
+        while "message" not in received and time.monotonic() < deadline:
+            rclpy.spin_once(node, timeout_sec=0.1)
+    finally:
+        node.destroy_subscription(subscription)
+
+    message = received.get("message")
+    index = int(detection_index)
+    if message is None or index < 0 or index >= len(message.detections):
+        logging.warning(
+            f"no detection {index} received from model '{model_id}'"
+        )
+        return 0
+
+    detection = message.detections[index]
+    if field in ("label", "score", "x_min", "y_min", "x_max", "y_max"):
+        return getattr(detection, field)
+
+    name = str(name)
+    if field in ("keypoint_x", "keypoint_y", "keypoint_z"):
+        if name not in detection.keypoint_names:
+            logging.warning(
+                f"detection from '{model_id}' has no keypoint named '{name}'"
+            )
+            return 0
+        keypoint_index = detection.keypoint_names.index(name)
+        values = getattr(detection, field)
+        return values[keypoint_index] if keypoint_index < len(values) else 0
+
+    if field == "scalar_values":
+        if name not in detection.scalar_names:
+            logging.warning(
+                f"detection from '{model_id}' has no scalar named '{name}'"
+            )
+            return 0
+        scalar_index = detection.scalar_names.index(name)
+        return (
+            detection.scalar_values[scalar_index]
+            if scalar_index < len(detection.scalar_values)
+            else 0
+        )
+
+    raise ValueError(f"unsupported detection field: {field}")
+`;
+
 // set-solid-state-relay
 
 export const SET_SOLID_STATE_RELAY_FUNCTION = (generator: CodeGenerator) => `
