@@ -135,6 +135,7 @@ from ros_packages.camera.oak_d_lite.stereo import (
     CameraNode,
     FACE_DETECT_WIDTH,
     FACE_DETECT_HEIGHT,
+    HAND_STAGE_NAMES,
     HAND_NN_HEIGHT,
     HAND_NN_WIDTH,
 )
@@ -389,7 +390,92 @@ class TestHandPipelineInput(unittest.TestCase):
         created[1].setNumShavesPerInferenceThread.assert_called_once_with(4)
         created[2].setNumShavesPerInferenceThread.assert_called_once_with(1)
         created[4].setNumShavesPerInferenceThread.assert_called_once_with(4)
+        created[1].out.link.assert_has_calls(
+            [
+                unittest.mock.call(created[2].inputs["classificators"]),
+                unittest.mock.call(created[2].inputs["regressors"]),
+            ]
+        )
+        created[3].inputConfig.setWaitForMessage.assert_called_once_with(True)
+        created[1].out.createOutputQueue.assert_called_once_with()
+        created[3].out.createOutputQueue.assert_called_once_with()
         self.assertEqual(node.hand_source_size, (1280, 720))
+
+
+class TestHandStageCounters(unittest.TestCase):
+    def _make_node(self):
+        with patch.object(CameraNode, "__init__", lambda self: None):
+            node = CameraNode()
+        node._reset_hand_stage_counters()
+        node.get_logger = MagicMock()
+        return node
+
+    def test_decoder_empty_result_counts_decode_postprocess_and_publish(self):
+        node = self._make_node()
+        packet = MagicMock()
+        packet.getLayerFp16.return_value = [0.0] * 80
+        node.hand_decoder_queue = MagicMock()
+        node.hand_decoder_queue.tryGet.return_value = packet
+        node.hand_landmark_queue = MagicMock()
+        node.current_frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+        node.current_source_size = (1280, 720)
+        node.hand_source_size = (1280, 720)
+        node._pending_hand_decoder_packet = None
+        node._pending_hands = []
+        node._publish_hand_detections = MagicMock(
+            side_effect=lambda *_: node._count_hand_stage("publish")
+        )
+
+        node._process_hand_tracking()
+
+        self.assertEqual(node.hand_stage_counters["decoding_nn"], 1)
+        self.assertEqual(node.hand_stage_counters["post_processing"], 1)
+        self.assertEqual(node.hand_stage_counters["publish"], 1)
+
+    def test_counter_log_contains_all_raw_stages_and_last_flowing_stage(self):
+        node = self._make_node()
+        node._pipeline_models = [
+            types.SimpleNamespace(
+                model=types.SimpleNamespace(model_id="hand_tracking")
+            )
+        ]
+        node._count_hand_stage("colour_isp", 3)
+        node._count_hand_stage("palm_detector_nn", 2)
+
+        node._log_hand_stage_counters()
+
+        message = node.get_logger().info.call_args.args[0]
+        for stage in HAND_STAGE_NAMES:
+            self.assertIn(f"{stage}={node.hand_stage_counters[stage]}", message)
+        self.assertIn("last_flowing=palm_detector_nn", message)
+
+    def test_model_verification_requires_and_preserves_decoder_packet(self):
+        node = self._make_node()
+        colour_packet = object()
+        decoder_packet = object()
+        node._pending_color_packet = None
+        node._pending_hand_decoder_packet = None
+        node.hand_decoder_queue = MagicMock()
+        node._wait_for_color_frame = MagicMock(return_value=colour_packet)
+        node._wait_for_queue_packet = MagicMock(return_value=decoder_packet)
+
+        self.assertTrue(node._verify_model_frames(3.0))
+
+        self.assertIs(node._pending_color_packet, colour_packet)
+        self.assertIs(node._pending_hand_decoder_packet, decoder_packet)
+        node._wait_for_queue_packet.assert_called_once_with(
+            node.hand_decoder_queue, 3.0
+        )
+
+    def test_model_verification_fails_when_decoder_has_no_packets(self):
+        node = self._make_node()
+        node._pending_color_packet = None
+        node._pending_hand_decoder_packet = None
+        node.hand_decoder_queue = MagicMock()
+        node._wait_for_color_frame = MagicMock(return_value=object())
+        node._wait_for_queue_packet = MagicMock(return_value=None)
+
+        self.assertFalse(node._verify_model_frames(3.0))
 
 
 class TestStereoModeDecision(unittest.TestCase):
