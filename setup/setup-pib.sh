@@ -588,9 +588,30 @@ function parse_model_manifest() {
   ' "$manifest"
 }
 
+# Make a model-store directory writable by the invoking user. Docker creates a
+# missing bind-mount source as root, so recover that specific ownership problem
+# without recursively changing ownership of an existing store.
+function ensure_model_store_directory() {
+  local directory="$1"
+  local owner
+  owner="$(id -u):$(id -g)"
+
+  if ! mkdir -p -- "$directory" 2>/dev/null || [ ! -w "$directory" ]; then
+    if command_exists sudo; then
+      sudo mkdir -p -- "$directory" 2>/dev/null || true
+      sudo chown "$owner" -- "$directory" 2>/dev/null || true
+    fi
+  fi
+
+  if [ ! -d "$directory" ] || [ ! -w "$directory" ]; then
+    print ERROR "model store directory is not writable: ${directory}. Run: sudo chown ${owner} '${directory}'"
+    return 1
+  fi
+}
+
 # Reusable by full install, --models, and --verify-models.
-# mode=provision copies missing/stale blobs (failures are WARN-only).
-# mode=verify only checks the store; returns 1 on any mismatch.
+# mode=provision copies missing/stale blobs and manifest.yaml.
+# Both modes return non-zero on any failure.
 function provision_curated_models() {
   local mode="${1:-provision}"
   local store="${PIB_MODEL_STORE:-$PIB_MODEL_STORE_DEFAULT}"
@@ -604,18 +625,16 @@ function provision_curated_models() {
   print INFO "Curated model store: ${store}"
 
   if [ ! -f "$manifest" ]; then
-    print WARN "model manifest not found at ${manifest}"
+    print ERROR "model manifest not found at ${manifest}"
     failed=1
     print INFO "Models summary: placed=${placed} already current=${already_current} failed=${failed} store=${store}"
-    [ "$mode" = "verify" ] && return 1
-    return 0
+    return 1
   fi
 
   if [ "$mode" != "verify" ]; then
-    if ! mkdir -p "$store"; then
-      print WARN "could not create model store ${store}"
+    if ! ensure_model_store_directory "$store"; then
       print INFO "Models summary: placed=${placed} already current=${already_current} failed=1 store=${store}"
-      return 0
+      return 1
     fi
   fi
 
@@ -663,8 +682,8 @@ function provision_curated_models() {
       continue
     fi
 
-    if ! mkdir -p "$(dirname "$dest")"; then
-      print WARN "${model_id}: could not create store directory"
+    if ! ensure_model_store_directory "$(dirname "$dest")"; then
+      print ERROR "${model_id}: could not prepare writable store directory"
       failed=$((failed + 1))
       continue
     fi
@@ -681,13 +700,40 @@ function provision_curated_models() {
   done < <(parse_model_manifest "$manifest")
 
   if [ "$placed" -eq 0 ] && [ "$already_current" -eq 0 ] && [ "$failed" -eq 0 ]; then
-    print WARN "no models parsed from ${manifest}"
+    print ERROR "no models parsed from ${manifest}"
     failed=1
+  fi
+
+  local store_manifest="${store}/manifest.yaml"
+  if [ "$mode" = "verify" ]; then
+    if [ ! -f "$store_manifest" ]; then
+      print WARN "manifest.yaml: missing in store (${store_manifest})"
+      failed=$((failed + 1))
+    elif cmp -s "$manifest" "$store_manifest"; then
+      print INFO "manifest.yaml: already current"
+    else
+      print WARN "manifest.yaml: store copy differs from vendored manifest"
+      failed=$((failed + 1))
+    fi
+  elif [ "$failed" -eq 0 ]; then
+    if cmp -s "$manifest" "$store_manifest"; then
+      print INFO "manifest.yaml: already current"
+    else
+      local manifest_tmp="${store_manifest}.tmp.$$"
+      if cp -f "$manifest" "$manifest_tmp" && mv -f "$manifest_tmp" "$store_manifest"; then
+        print INFO "manifest.yaml: placed"
+      else
+        rm -f "$manifest_tmp"
+        print ERROR "manifest.yaml: failed to copy into store"
+        failed=$((failed + 1))
+      fi
+    fi
   fi
 
   print INFO "Models summary: placed=${placed} already current=${already_current} failed=${failed} store=${store}"
 
-  if [ "$mode" = "verify" ] && [ "$failed" -gt 0 ]; then
+  if [ "$failed" -gt 0 ]; then
+    print ERROR "Model provisioning failed. Fix the errors above, then run './setup/setup-pib.sh --models' before starting Docker containers."
     return 1
   fi
   return 0
@@ -724,6 +770,7 @@ show_help()
     echo -e "    ./setup-pib --backend-branch=main --frontend-branch=PR-566"
 	echo -e "    ./setup-pib --models"
 	echo -e "    ./setup-pib --verify-models"
+	echo -e "Provision models before starting Docker containers so the bind-mount store is created with the correct owner."
 
 	exit
 }
@@ -772,7 +819,7 @@ fi
 
 if [ "$MODELS_ONLY" = true ]; then
   provision_curated_models provision
-  exit 0
+  exit $?
 fi
 
 if [ "$VERIFY_MODELS_ONLY" = true ]; then
@@ -812,7 +859,10 @@ install_system_packages || { print ERROR "failed to install system packages"; re
 install_locale || { print ERROR "failed to install locale"; return 1; }
 clone_repositories || { print ERROR "failed to clone repositories"; return 1; }
 # After checkout, before containers: copy vendored OAK blobs into the bind-mounted store.
-provision_curated_models provision
+provision_curated_models provision || {
+  print ERROR "Model provisioning must succeed before containers are started"
+  exit 1
+}
 install_pib_python_packages || print ERROR "failed to install pib Python packages"
 # Before docker-compose starts: hermes must exist on the host so the
 # ros-voice-assistant / flask-app bind mounts resolve to real paths.

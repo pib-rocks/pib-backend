@@ -38,6 +38,11 @@ from .hand_tracking import (
 # Downscaled resolution for Haar cascade face detection (maps back to full frame).
 FACE_DETECT_WIDTH = 320
 FACE_DETECT_HEIGHT = 180
+# Keep ImageManip warp inputs below the full ISP resolution.  In particular,
+# dynamic landmark crops from the full OAK-D Lite ISP frame exceed RVC2's warp
+# cache; 1280x720 preserves useful hand detail while staying within that limit.
+HAND_NN_WIDTH = 1280
+HAND_NN_HEIGHT = 720
 STEREO_MODES = {"auto", "on", "off"}
 DEFAULT_STEREO_TIMEOUT = 5.0
 PIPELINE_START_ATTEMPTS = 3
@@ -123,6 +128,7 @@ class CameraNode(Node):
         self.hand_landmark_queue = None
         self.hand_landmark_config_queue = None
         self.hand_landmark_input_size = 0
+        self.hand_source_size = (0, 0)
         self._pending_hands = deque()
         self._hand_warnings = set()
 
@@ -417,7 +423,9 @@ class CameraNode(Node):
         if packet is None:
             return
         frame_height, frame_width = self.current_frame.shape[:2]
-        source_width, source_height = self.current_source_size
+        source_width, source_height = self.hand_source_size
+        if not source_width or not source_height:
+            source_width, source_height = self.current_source_size
         if not source_width or not source_height:
             source_width, source_height = frame_width, frame_height
         try:
@@ -516,6 +524,7 @@ class CameraNode(Node):
         self.hand_landmark_queue = None
         self.hand_landmark_config_queue = None
         self.hand_landmark_input_size = 0
+        self.hand_source_size = (0, 0)
         if hasattr(self, "_pending_hands"):
             self._pending_hands.clear()
         else:
@@ -548,6 +557,12 @@ class CameraNode(Node):
         decoder = artifacts["palm_detection_128x128_decoding"]
         landmark = artifacts["hand_landmark_224x224"]
         self.hand_landmark_input_size = landmark.input_width
+        self.hand_source_size = (HAND_NN_WIDTH, HAND_NN_HEIGHT)
+
+        hand_input = self.camRgb.requestOutput(
+            self.hand_source_size,
+            type=dai.ImgFrame.Type.BGR888p,
+        )
 
         palm_manip = self.pipeline.create(dai.node.ImageManip)
         palm_manip.initialConfig.setOutputSize(
@@ -556,7 +571,7 @@ class CameraNode(Node):
             dai.ImageManipConfig.ResizeMode.LETTERBOX,
         )
         palm_manip.initialConfig.setFrameType(dai.ImgFrame.Type.BGR888p)
-        self.isp_out.link(palm_manip.inputImage)
+        hand_input.link(palm_manip.inputImage)
 
         palm_nn = self.pipeline.create(dai.node.NeuralNetwork)
         palm_nn.setBlobPath(palm.blob_path)
@@ -574,7 +589,7 @@ class CameraNode(Node):
             dai.ImageManipConfig.ResizeMode.STRETCH,
         )
         landmark_manip.initialConfig.setFrameType(dai.ImgFrame.Type.BGR888p)
-        self.isp_out.link(landmark_manip.inputImage)
+        hand_input.link(landmark_manip.inputImage)
         self.hand_landmark_config_queue = landmark_manip.inputConfig.createInputQueue(
             maxSize=16, blocking=False
         )
@@ -598,6 +613,7 @@ class CameraNode(Node):
         self.hand_landmark_queue = None
         self.hand_landmark_config_queue = None
         self.hand_landmark_input_size = 0
+        self.hand_source_size = (0, 0)
         if hasattr(self, "_pending_hands"):
             self._pending_hands.clear()
 
