@@ -92,6 +92,8 @@ class _CachedAgent:
 
 _agent_cache: OrderedDict[str, _CachedAgent] = OrderedDict()
 _agent_cache_lock = threading.Lock()
+_mcp_discovery_attempted = False
+_mcp_discovery_lock = threading.Lock()
 
 
 def _toolset_list(toolsets: Optional[str]) -> Optional[list[str]]:
@@ -119,6 +121,55 @@ def clear_agent_cache() -> None:
         _close_agent(entry.agent)
 
 
+def _discover_mcp_tools() -> None:
+    """Run Hermes' bounded, non-interactive MCP startup path."""
+    from hermes_cli.mcp_startup import (
+        ensure_mcp_discovery_before_agent_build,
+        mcp_discovery_in_flight,
+    )
+
+    ensure_mcp_discovery_before_agent_build(
+        logger=logging.getLogger(__name__),
+        thread_name="pib-hermes-daemon-mcp",
+    )
+    if mcp_discovery_in_flight():
+        logging.warning(
+            "Hermes MCP discovery timed out before agent construction; "
+            "continuing without waiting"
+        )
+
+
+def _ensure_mcp_tools_discovered() -> None:
+    """Attempt MCP discovery once in this daemon process, without failing turns."""
+    global _mcp_discovery_attempted
+
+    with _mcp_discovery_lock:
+        if _mcp_discovery_attempted:
+            return
+        _mcp_discovery_attempted = True
+        try:
+            _discover_mcp_tools()
+        except Exception as exc:
+            logging.warning(
+                "Hermes MCP discovery failed; continuing without MCP tools: %s",
+                exc,
+                exc_info=True,
+            )
+
+
+def _registered_mcp_tool_count() -> int:
+    """Return the current process-wide MCP tool count, or zero if unavailable."""
+    try:
+        from tools.registry import registry
+
+        return sum(
+            1 for entry in registry.get_all_entries() if entry.name.startswith("mcp__")
+        )
+    except Exception:
+        logging.debug("could not inspect registered Hermes MCP tools", exc_info=True)
+        return 0
+
+
 def _agent_for_chat(chat_id: str, toolsets: Optional[str], max_turns: int, agent_cls):
     """Return the sole cached agent for a chat, evicting least-recently-used chats."""
     settings = (toolsets, max_turns)
@@ -131,6 +182,7 @@ def _agent_for_chat(chat_id: str, toolsets: Optional[str], max_turns: int, agent
             _agent_cache.pop(chat_id)
             _close_agent(cached.agent)
 
+        construction_started = time.monotonic()
         agent = agent_cls(
             model=IN_PROCESS_MODEL,
             session_id=f"pib_chat_{chat_id}",
@@ -138,6 +190,14 @@ def _agent_for_chat(chat_id: str, toolsets: Optional[str], max_turns: int, agent
             disabled_toolsets=_toolset_list(toolsets),
             max_iterations=max_turns,
             platform="cli",
+            skip_memory=True,
+        )
+        logging.info(
+            "[PERF_TRACE] HERMES_AGENT_CONSTRUCTED chat=%s "
+            "elapsed_ms=%.2f mcp_tools=%d",
+            chat_id,
+            (time.monotonic() - construction_started) * 1000.0,
+            _registered_mcp_tool_count(),
         )
         cached = _CachedAgent(agent, settings)
         _agent_cache[chat_id] = cached
@@ -334,6 +394,7 @@ def run_turn_in_process(
 
     try:
         if agent_cls is not None:
+            _ensure_mcp_tools_discovered()
             cached = _agent_for_chat(
                 chat_id, effective_toolsets, effective_max_turns, agent_cls
             )

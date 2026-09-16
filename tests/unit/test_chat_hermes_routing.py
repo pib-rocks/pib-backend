@@ -456,7 +456,10 @@ def test_warm_daemon_turn_uses_in_process_runner(chat_module, chat_node, monkeyp
         "terminal",
         "code_execution",
         "file",
+        "memory",
+        "session_search",
     ]
+    assert fake_agent_cls.call_args.kwargs["skip_memory"] is True
     fake_agent.chat.assert_called_once()
     assert fake_agent.chat.call_args.args == ("Hi",)
     assert callable(fake_agent.chat.call_args.kwargs["stream_callback"])

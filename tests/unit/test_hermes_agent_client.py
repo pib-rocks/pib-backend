@@ -306,3 +306,10 @@ def test_voice_defaults_are_configurable_and_budget_defaults_to_four(monkeypatch
         importlib.reload(hac)
 
     assert hac.DEFAULT_MAX_TURNS == 4
+    assert set(hac.DEFAULT_DISABLED_TOOLSETS.split(",")) >= {
+        "terminal",
+        "code_execution",
+        "file",
+        "memory",
+        "session_search",
+    }
