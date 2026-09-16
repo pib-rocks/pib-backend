@@ -3,6 +3,7 @@
 from pathlib import Path
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import MagicMock
 
@@ -197,7 +198,7 @@ class TestPipelineManager(unittest.TestCase):
     def tearDown(self):
         self.tempdir.cleanup()
 
-    def _manager(self, rebuild=None, verify=None, attempts=2):
+    def _manager(self, rebuild=None, verify=None, attempts=2, clock=None):
         def record_rebuild(models):
             self.rebuild_calls.append(
                 [(active.model.model_id, active.shaves) for active in models]
@@ -212,6 +213,7 @@ class TestPipelineManager(unittest.TestCase):
             logger=self.logger,
             attempts=attempts,
             sleep=lambda delay: None,
+            clock=clock or time.monotonic,
         )
 
     def test_reference_counts_owners_without_redundant_rebuilds(self):
@@ -261,6 +263,51 @@ class TestPipelineManager(unittest.TestCase):
         self.assertEqual(status["message"], "Physical model pipeline is not flowing")
         self.assertFalse(status["active"])
         self.assertEqual(status["fps"], 0.0)
+        self.assertEqual(status["owners"], {"ui"})
+
+    def test_startup_grace_delays_failure_but_does_not_hide_dead_chain(self):
+        now = [10.0]
+
+        def verify_after_slow_device_start(timeout):
+            now[0] = 20.0
+            return True
+
+        manager = self._manager(
+            verify=verify_after_slow_device_start, clock=lambda: now[0]
+        )
+        self.assertTrue(manager.start("demo", 4, "ui")[0])
+
+        now[0] = 24.9
+        self.assertFalse(
+            manager.mark_failed("demo", "No downstream packets", startup_grace=5.0)
+        )
+        self.assertEqual(manager.status("demo")["state"], "running")
+
+        now[0] = 25.0
+        self.assertTrue(
+            manager.mark_failed("demo", "No downstream packets", startup_grace=5.0)
+        )
+        self.assertEqual(manager.status("demo")["state"], "failed")
+        self.assertFalse(manager.status("demo")["active"])
+
+    def test_late_packet_flow_recovers_failed_model_and_real_fps(self):
+        now = [20.0]
+        manager = self._manager(clock=lambda: now[0])
+        self.assertTrue(manager.start("demo", 4, "ui")[0])
+        self.assertTrue(manager.mark_failed("demo", "No downstream packets"))
+
+        now[0] = 21.0
+        self.assertTrue(manager.mark_running("demo"))
+        manager.record_packet("demo")
+        manager.record_packet("demo")
+        now[0] = 21.5
+        manager.refresh_fps()
+
+        status = manager.status("demo")
+        self.assertEqual(status["state"], "running")
+        self.assertTrue(status["active"])
+        self.assertEqual(status["message"], "Model is running")
+        self.assertEqual(status["fps"], 4.0)
         self.assertEqual(status["owners"], {"ui"})
 
     def test_rejects_shaves_that_do_not_match_the_compiled_blob(self):
