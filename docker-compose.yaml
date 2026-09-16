@@ -132,10 +132,12 @@ services:
       - PIB_HERMES_PROFILES_DIR=/home/pib/.hermes/profiles
       - HERMES_HOME=/home/pib/.hermes
       - PIB_HERMES_BIN=/home/pib/.local/bin/hermes
-      # API keys come from the gitignored ./password.env (env_file above), NOT
-      # from defaults in this file. No hardcoded key / fallback default is kept.
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
-      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      # GEMINI_API_KEY / GOOGLE_API_KEY are deliberately NOT listed here: they
+      # come from the gitignored ./password.env (env_file above). Compose
+      # interpolates ${VAR} from the shell or the tracked project-root .env, not
+      # from env_file, so an `- GEMINI_API_KEY=${GEMINI_API_KEY}` entry resolves
+      # to an empty string when the variable is unset and then overrides the
+      # real value from password.env. No hardcoded key / fallback default here.
     volumes:
       - /media/dyan/project/projects/voice/:/data/voice
       - /dev/snd:/dev/snd

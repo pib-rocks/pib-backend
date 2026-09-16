@@ -11,6 +11,7 @@ Endpoints:
 from __future__ import annotations
 
 import contextlib
+import glob
 import io
 import json
 import logging
@@ -53,6 +54,12 @@ TurnRunner = Callable[..., str]
 
 # Model used for the in-process ``run_agent.main`` entry point.
 IN_PROCESS_MODEL = "gemini-3.5-flash"
+
+# Hermes install layout used to import the agent in-process.
+DEFAULT_HERMES_HOME = "/home/pib/.hermes"
+HERMES_AGENT_DIRNAME = "hermes-agent"
+_VENV_SITE_PACKAGES_GLOB = os.path.join("venv", "lib", "python3.*", "site-packages")
+_PYTHON_MINOR = re.compile(r"python3\.(\d+)")
 
 # ``run_agent.main`` has no return value: it prints the answer to stdout below a
 # "FINAL RESPONSE:" banner, followed by decorative dashes and closing status
@@ -111,6 +118,38 @@ def _coerce_reply(reply: object) -> str:
     return (reply if isinstance(reply, str) else str(reply)).strip()
 
 
+def hermes_agent_dir() -> str:
+    """Directory of the bundled hermes-agent sources inside HERMES_HOME."""
+    home = os.environ.get("HERMES_HOME") or DEFAULT_HERMES_HOME
+    return os.path.join(home, HERMES_AGENT_DIRNAME)
+
+
+def venv_site_packages(agent_dir: Optional[str] = None) -> list[str]:
+    """site-packages of the hermes venv, whichever Python minor version built it.
+
+    The path used to be pinned to python3.11 while the installs in the field run
+    3.13, which left a dead sys.path entry and the next `hermes update` would
+    have broken a re-pinned one again. Highest version first, so a leftover older
+    venv directory cannot shadow the current one. Empty when nothing matches.
+    """
+    base = agent_dir or hermes_agent_dir()
+    try:
+        matches = [
+            path
+            for path in glob.glob(os.path.join(base, _VENV_SITE_PACKAGES_GLOB))
+            if os.path.isdir(path)
+        ]
+    except OSError as exc:
+        logging.warning("could not scan %s for a hermes venv: %s", base, exc)
+        return []
+
+    def _minor(path: str) -> int:
+        found = _PYTHON_MINOR.search(path)
+        return int(found.group(1)) if found else -1
+
+    return sorted(matches, key=_minor, reverse=True)
+
+
 def daemon_host() -> str:
     return os.environ.get("PIB_HERMES_DAEMON_HOST") or DEFAULT_HOST
 
@@ -160,10 +199,8 @@ def run_turn_in_process(
 
     import sys
 
-    for path_entry in (
-        "/home/pib/.hermes/hermes-agent",
-        "/home/pib/.hermes/hermes-agent/venv/lib/python3.11/site-packages",
-    ):
+    agent_dir = hermes_agent_dir()
+    for path_entry in (agent_dir, *venv_site_packages(agent_dir)):
         if path_entry not in sys.path and os.path.exists(path_entry):
             sys.path.insert(0, path_entry)
 

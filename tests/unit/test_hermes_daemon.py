@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 import threading
 import time
 import types
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 from urllib.request import Request, urlopen
 
@@ -315,6 +317,72 @@ def _install_fake_run_agent_main(monkeypatch, main_fn):
 
     monkeypatch.setattr(builtins, "__import__", _import)
     monkeypatch.setitem(sys.modules, "run_agent", module)
+
+
+def _make_hermes_venv(home, minor: int):
+    """Create the hermes-agent venv layout of one Python minor version."""
+    site_packages = (
+        home / "hermes-agent" / "venv" / "lib" / f"python3.{minor}" / "site-packages"
+    )
+    site_packages.mkdir(parents=True)
+    return site_packages
+
+
+def test_venv_site_packages_finds_whatever_python_version_built_the_venv(
+    sandboxed_hermes_home,
+):
+    """The field installs moved from 3.11 to 3.13; no minor version may be pinned."""
+    site_packages = _make_hermes_venv(sandboxed_hermes_home, 13)
+
+    assert hd.venv_site_packages() == [str(site_packages)]
+
+
+def test_venv_site_packages_prefers_the_newest_of_several_venv_libs(
+    sandboxed_hermes_home,
+):
+    older = _make_hermes_venv(sandboxed_hermes_home, 9)
+    newer = (
+        sandboxed_hermes_home
+        / "hermes-agent"
+        / "venv"
+        / "lib"
+        / "python3.13"
+        / "site-packages"
+    )
+    newer.mkdir(parents=True)
+
+    assert hd.venv_site_packages() == [str(newer), str(older)]
+
+
+def test_venv_site_packages_is_empty_when_the_layout_is_unexpected(
+    sandboxed_hermes_home,
+):
+    """A missing or differently shaped install must not raise, just yield nothing."""
+    assert hd.venv_site_packages() == []
+    assert hd.venv_site_packages(str(sandboxed_hermes_home / "nope")) == []
+
+
+def test_daemon_does_not_pin_a_python_minor_version_in_its_sys_path():
+    """Guards the regression: the pinned python3.11 site-packages was dead on 3.13."""
+    source = Path(hd.__file__).read_text(encoding="utf-8")
+
+    assert not re.search(r"python3\.\d+[/\\]site-packages", source)
+
+
+def test_run_turn_in_process_adds_the_detected_site_packages_to_sys_path(
+    monkeypatch, sandboxed_hermes_home
+):
+    site_packages = _make_hermes_venv(sandboxed_hermes_home, 13)
+    monkeypatch.setattr(sys, "path", list(sys.path))
+
+    def fake_main(query=None, model="", **kwargs):
+        print("\U0001f3af FINAL RESPONSE:\n---\nAntwort")
+
+    _install_fake_run_agent_main(monkeypatch, fake_main)
+
+    assert hd.run_turn_in_process(text="hi", chat_id="c-1") == "Antwort"
+    assert str(site_packages) in sys.path
+    assert str(sandboxed_hermes_home / "hermes-agent") in sys.path
 
 
 def test_extract_final_response_strips_decoration_and_trailing_output():

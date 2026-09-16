@@ -11,6 +11,7 @@ Python directory, because the CLI is a wrapper that execs a venv interpreter
 symlinked into it — probe_binary() is what catches a deployment that forgot it.
 """
 
+import copy
 import logging
 import os
 import re
@@ -41,7 +42,12 @@ CONFIG_FILENAME = "config.yaml"
 ENV_FILENAME = ".env"
 ENV_FILE_MODE = 0o600
 
-# Default MCP entry for pib robot tools. Kept in sync with setup/setup-pib.sh.
+# Default MCP entry for pib robot tools, including the env the server needs:
+# Hermes spawns it as a subprocess without forwarding this process' environment,
+# so without `env` pib_mcp_server resolves the REST base URL to its own
+# http://localhost:5000 default and every robot tool call fails in the container.
+# The single definition of that entry — setup/setup-pib.sh seeds the same one and
+# tests/unit/test_setup_hermes_model_pin.py fails if the two ever drift.
 PIB_MCP_SERVER = {
     "command": "python3",
     "args": ["-m", "pib_mcp_server"],
@@ -210,13 +216,35 @@ def _create_profile_with_cli(personality_id: str, timeout: int) -> bool:
     return True
 
 
+def _merge_missing_mcp_env(entry: dict) -> bool:
+    """Fill the env keys PIB_MCP_SERVER needs into an existing entry. Returns changed.
+
+    Migration path for the profiles that were seeded before the entry carried an
+    `env` block. Only MISSING keys are added: an operator's own `command`, `args`
+    and any env value they set themselves stay exactly as they wrote them.
+    """
+    env = entry.get("env")
+    changed = False
+    if not isinstance(env, dict):
+        env = {}
+        entry["env"] = env
+        changed = True
+    for key, value in PIB_MCP_SERVER["env"].items():
+        if key not in env:
+            env[key] = value
+            changed = True
+    return changed
+
+
 def _ensure_mcp_servers_pib(pdir: str) -> None:
-    """Pin Hermes model/provider/speed defaults and merge mcp_servers.pib if missing.
+    """Pin Hermes model/provider/speed defaults and repair mcp_servers.pib.
 
     Always sets model/provider and high-speed defaults (reasoning_effort, max_tokens,
     temperature) to the permanent Gemini Flash values. Runs even when config.yaml
     already exists, so profiles created before auto-seeding still get pib_mcp_server
-    (and the pinned model/speed settings) on the next ensure_profile call.
+    (and the pinned model/speed settings) on the next ensure_profile call. An
+    mcp_servers.pib entry that is already there keeps its command/args and only
+    gets the env keys it is missing.
     """
     target = os.path.join(pdir, CONFIG_FILENAME)
     cfg = {}
@@ -259,8 +287,11 @@ def _ensure_mcp_servers_pib(pdir: str) -> None:
         servers = {}
         cfg["mcp_servers"] = servers
         changed = True
-    if "pib" not in servers:
-        servers["pib"] = dict(PIB_MCP_SERVER)
+    entry = servers.get("pib")
+    if not isinstance(entry, dict):
+        servers["pib"] = copy.deepcopy(PIB_MCP_SERVER)
+        changed = True
+    elif _merge_missing_mcp_env(entry):
         changed = True
 
     if not changed:
@@ -312,7 +343,7 @@ def _inherit_base_config(pdir: str) -> None:
             "reasoning_effort": DEFAULT_REASONING_EFFORT,
             "max_tokens": DEFAULT_MAX_TOKENS,
             "temperature": DEFAULT_TEMPERATURE,
-            "mcp_servers": {"pib": dict(PIB_MCP_SERVER)},
+            "mcp_servers": {"pib": copy.deepcopy(PIB_MCP_SERVER)},
         }
         try:
             with open(cfg_target, "w", encoding="utf-8") as fh:
