@@ -346,6 +346,95 @@ class TestStereoDepthInterfaces(unittest.TestCase):
         stereo.depth.createOutputQueue.assert_called()
 
 
+class _MonoCameraType:
+    pass
+
+
+class _StereoDepthType:
+    class PresetMode:
+        DEFAULT = "DEFAULT"
+
+
+class TestStereoDepthConfiguration(unittest.TestCase):
+    """The mono/stereo setup must match the reference proven on depthai 3.6.1."""
+
+    def _init_stereo(self, mock_dai):
+        with patch.object(CameraNode, "__init__", lambda self: None):
+            node = CameraNode()
+        node.get_logger = MagicMock()
+        node.pipeline = MagicMock()
+
+        mono_left = MagicMock()
+        mono_right = MagicMock()
+        stereo = MagicMock()
+        mock_dai.node.MonoCamera = _MonoCameraType
+        mock_dai.node.StereoDepth = _StereoDepthType
+        mock_dai.CameraBoardSocket.CAM_A = "CAM_A"
+        mock_dai.CameraBoardSocket.CAM_B = "CAM_B"
+        mock_dai.CameraBoardSocket.CAM_C = "CAM_C"
+        mock_dai.MonoCameraProperties.SensorResolution.THE_480_P = "THE_480_P"
+        mock_dai.MedianFilter.KERNEL_7x7 = "KERNEL_7x7"
+
+        monos = iter((mono_left, mono_right))
+        node.pipeline.create.side_effect = lambda kind: (
+            stereo if kind is _StereoDepthType else next(monos)
+        )
+
+        node._init_stereo_depth()
+        return node, mono_left, mono_right, stereo
+
+    @patch("ros_packages.camera.oak_d_lite.stereo.dai")
+    def test_mono_cameras_get_an_explicit_640x480_resolution(self, mock_dai):
+        _, mono_left, mono_right, _ = self._init_stereo(mock_dai)
+
+        mono_left.setBoardSocket.assert_called_once_with("CAM_B")
+        mono_right.setBoardSocket.assert_called_once_with("CAM_C")
+        for mono in (mono_left, mono_right):
+            mono.setResolution.assert_called_once_with("THE_480_P")
+            mono.requestFullResolutionOutput.assert_not_called()
+
+    @patch("ros_packages.camera.oak_d_lite.stereo.dai")
+    def test_depth_stays_native_instead_of_aligned_to_rgb(self, mock_dai):
+        _, _, _, stereo = self._init_stereo(mock_dai)
+
+        stereo.setDepthAlign.assert_not_called()
+
+    @patch("ros_packages.camera.oak_d_lite.stereo.dai")
+    def test_stereo_uses_lrc_extended_disparity_and_median_7x7(self, mock_dai):
+        node, mono_left, mono_right, stereo = self._init_stereo(mock_dai)
+
+        stereo.setLeftRightCheck.assert_called_once_with(True)
+        stereo.setExtendedDisparity.assert_called_once_with(True)
+        stereo.initialConfig.setMedianFilter.assert_called_once_with("KERNEL_7x7")
+        mono_left.out.link.assert_called_once_with(stereo.left)
+        mono_right.out.link.assert_called_once_with(stereo.right)
+        self.assertIs(node.depth_queue, stereo.depth.createOutputQueue.return_value)
+        node.get_logger().warning.assert_not_called()
+
+    @patch("ros_packages.camera.oak_d_lite.stereo.dai")
+    def test_unsupported_stereo_options_only_warn(self, mock_dai):
+        with patch.object(CameraNode, "__init__", lambda self: None):
+            node = CameraNode()
+        node.get_logger = MagicMock()
+        node.pipeline = MagicMock()
+        mock_dai.node.MonoCamera = _MonoCameraType
+        mock_dai.node.StereoDepth = _StereoDepthType
+
+        stereo = MagicMock()
+        stereo.setExtendedDisparity.side_effect = RuntimeError("not supported")
+        mono = MagicMock()
+        mono.setResolution.side_effect = RuntimeError("no such mode")
+        monos = iter((mono, MagicMock()))
+        node.pipeline.create.side_effect = lambda kind: (
+            stereo if kind is _StereoDepthType else next(monos)
+        )
+
+        node._init_stereo_depth()
+
+        self.assertEqual(node.get_logger().warning.call_count, 2)
+        self.assertIsNotNone(node.depth_queue)
+
+
 class TestHandPipelineInput(unittest.TestCase):
     @patch("ros_packages.camera.oak_d_lite.stereo.dai")
     def test_colour_tap_queue_is_bounded_and_non_blocking(self, mock_dai):

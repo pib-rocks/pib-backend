@@ -658,10 +658,20 @@ class CameraNode(Node):
 
     def _init_stereo_depth(self):
         """Add StereoDepth outputs to the existing pipeline (no extra start)."""
-        mono_left = self.pipeline.create(dai.node.Camera)
-        mono_left.build(dai.CameraBoardSocket.CAM_B)
-        mono_right = self.pipeline.create(dai.node.Camera)
-        mono_right.build(dai.CameraBoardSocket.CAM_C)
+        mono_left = self.pipeline.create(dai.node.MonoCamera)
+        mono_left.setBoardSocket(dai.CameraBoardSocket.CAM_B)
+        mono_right = self.pipeline.create(dai.node.MonoCamera)
+        mono_right.setBoardSocket(dai.CameraBoardSocket.CAM_C)
+        # The OAK-D Lite mono sensors offer only 640x400 and 640x480.  Without an
+        # explicit resolution they negotiate a mode the board cannot deliver and
+        # the sensor produces zero frames.
+        for side, mono in (("left", mono_left), ("right", mono_right)):
+            try:
+                mono.setResolution(dai.MonoCameraProperties.SensorResolution.THE_480_P)
+            except Exception as exc:
+                self.get_logger().warning(
+                    f"Mono {side} rejected 640x480: {type(exc).__name__}: {exc}"
+                )
 
         stereo = self.pipeline.create(dai.node.StereoDepth)
         try:
@@ -670,16 +680,20 @@ class CameraNode(Node):
             pass
         stereo.setLeftRightCheck(True)
         try:
-            stereo.setDepthAlign(dai.CameraBoardSocket.CAM_A)
-        except Exception:
+            stereo.initialConfig.setMedianFilter(dai.MedianFilter.KERNEL_7x7)
+        except Exception as exc:
             self.get_logger().warning(
-                "Depth-to-RGB align unavailable; using native depth."
+                f"Stereo median 7x7 unavailable: {type(exc).__name__}: {exc}"
+            )
+        try:
+            stereo.setExtendedDisparity(True)
+        except Exception as exc:
+            self.get_logger().warning(
+                f"Stereo extended disparity unavailable: {type(exc).__name__}: {exc}"
             )
 
-        mono_left_out = mono_left.requestFullResolutionOutput()
-        mono_right_out = mono_right.requestFullResolutionOutput()
-        mono_left_out.link(stereo.left)
-        mono_right_out.link(stereo.right)
+        mono_left.out.link(stereo.left)
+        mono_right.out.link(stereo.right)
 
         self.depth_queue = stereo.depth.createOutputQueue()
 
