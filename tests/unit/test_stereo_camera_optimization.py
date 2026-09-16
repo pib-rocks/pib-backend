@@ -386,9 +386,7 @@ class TestHandPipelineInput(unittest.TestCase):
         palm = MagicMock(rotation=np.pi / 4)
         palm.roi_for_frame.return_value = (0.5, 0.4, 0.25, 0.5)
 
-        result = node._landmark_crop_config(
-            palm, 1280, 720, reuse_previous=True
-        )
+        result = node._landmark_crop_config(palm, 1280, 720, reuse_previous=True)
 
         self.assertIs(result, config)
         rotated, normalized = config.addCropRotatedRect.call_args.args
@@ -450,9 +448,7 @@ class TestHandPipelineInput(unittest.TestCase):
         hand_tap = MagicMock()
         node.camRgb.requestOutput.return_value = hand_tap
 
-        node._build_hand_pipeline(
-            types.SimpleNamespace(artifact_ids=tuple(artifacts))
-        )
+        node._build_hand_pipeline(types.SimpleNamespace(artifact_ids=tuple(artifacts)))
 
         # A single downscaled output stays within the camera-output budget. Both
         # consumers are non-blocking, so the config-gated landmark branch cannot
@@ -504,9 +500,7 @@ class TestHandStageCounters(unittest.TestCase):
 
     def _set_built_hand_chain(self, node):
         node._pipeline_models = [
-            types.SimpleNamespace(
-                model=types.SimpleNamespace(model_id="hand_tracking")
-            )
+            types.SimpleNamespace(model=types.SimpleNamespace(model_id="hand_tracking"))
         ]
         node.hand_palm_queue = MagicMock()
         node.hand_decoder_queue = MagicMock()
@@ -539,9 +533,7 @@ class TestHandStageCounters(unittest.TestCase):
     def test_counter_log_contains_all_raw_stages_and_last_flowing_stage(self):
         node = self._make_node()
         node._pipeline_models = [
-            types.SimpleNamespace(
-                model=types.SimpleNamespace(model_id="hand_tracking")
-            )
+            types.SimpleNamespace(model=types.SimpleNamespace(model_id="hand_tracking"))
         ]
         node._count_hand_stage("colour_isp", 3)
         node._count_hand_stage("palm_detector_nn", 2)
@@ -595,9 +587,7 @@ class TestHandStageCounters(unittest.TestCase):
     def test_model_verification_fails_when_requested_hand_chain_is_absent(self):
         node = self._make_node()
         node._pipeline_models = [
-            types.SimpleNamespace(
-                model=types.SimpleNamespace(model_id="hand_tracking")
-            )
+            types.SimpleNamespace(model=types.SimpleNamespace(model_id="hand_tracking"))
         ]
         node.hand_palm_queue = None
         node.hand_decoder_queue = None
@@ -623,9 +613,7 @@ class TestHandStageCounters(unittest.TestCase):
         node.hand_landmark_queue = None
         node.hand_landmark_config_queue = None
         requested = [
-            types.SimpleNamespace(
-                model=types.SimpleNamespace(model_id="hand_tracking")
-            )
+            types.SimpleNamespace(model=types.SimpleNamespace(model_id="hand_tracking"))
         ]
 
         self.assertFalse(node._rebuild_models(requested))

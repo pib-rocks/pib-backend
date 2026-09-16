@@ -70,8 +70,7 @@ class TestModelRegistry(unittest.TestCase):
             (REPO_ROOT / "models/manifest.yaml").read_text(encoding="utf-8")
         )
         shaves = {
-            entry["model_id"]: entry.get("shaves")
-            for entry in manifest["models"]
+            entry["model_id"]: entry.get("shaves") for entry in manifest["models"]
         }
 
         self.assertEqual(
@@ -259,9 +258,7 @@ class TestPipelineManager(unittest.TestCase):
 
         status = manager.status("demo")
         self.assertEqual(status["state"], "failed")
-        self.assertEqual(
-            status["message"], "Physical model pipeline is not flowing"
-        )
+        self.assertEqual(status["message"], "Physical model pipeline is not flowing")
         self.assertFalse(status["active"])
         self.assertEqual(status["fps"], 0.0)
         self.assertEqual(status["owners"], {"ui"})

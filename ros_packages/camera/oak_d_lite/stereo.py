@@ -331,8 +331,7 @@ class CameraNode(Node):
         ):
             return
         interval = {
-            stage: self.hand_stage_counters[stage]
-            - self._hand_stage_last_logged[stage]
+            stage: self.hand_stage_counters[stage] - self._hand_stage_last_logged[stage]
             for stage in HAND_STAGE_NAMES
         }
         last_flowing = "none"
@@ -936,8 +935,7 @@ class CameraNode(Node):
 
     def _verify_model_frames(self, timeout):
         requested_ids = {
-            active.model.model_id
-            for active in getattr(self, "_pipeline_models", ())
+            active.model.model_id for active in getattr(self, "_pipeline_models", ())
         }
         if "hand_tracking" in requested_ids and not self._hand_chain_is_built():
             self.get_logger().error(
