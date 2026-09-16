@@ -348,13 +348,19 @@ class TestHandPipelineInput(unittest.TestCase):
 
         artifacts = {
             "palm_detection_128x128": types.SimpleNamespace(
-                input_width=128, input_height=128, blob_path="/palm.blob"
+                input_width=128,
+                input_height=128,
+                blob_path="/palm.blob",
+                shaves=4,
             ),
             "palm_detection_128x128_decoding": types.SimpleNamespace(
-                blob_path="/decoder.blob"
+                blob_path="/decoder.blob", shaves=1
             ),
             "hand_landmark_224x224": types.SimpleNamespace(
-                input_width=224, input_height=224, blob_path="/landmark.blob"
+                input_width=224,
+                input_height=224,
+                blob_path="/landmark.blob",
+                shaves=4,
             ),
         }
         node.model_registry = MagicMock()
@@ -380,6 +386,9 @@ class TestHandPipelineInput(unittest.TestCase):
                 unittest.mock.call(created[3].inputImage),
             ]
         )
+        created[1].setNumShavesPerInferenceThread.assert_called_once_with(4)
+        created[2].setNumShavesPerInferenceThread.assert_called_once_with(1)
+        created[4].setNumShavesPerInferenceThread.assert_called_once_with(4)
         self.assertEqual(node.hand_source_size, (1280, 720))
 
 
@@ -397,6 +406,22 @@ class TestStereoModeDecision(unittest.TestCase):
         node.depth_queue = None
         node._pending_color_packet = None
         return node
+
+    def test_stereo_mode_defaults_to_off(self):
+        node = self._make_node("unused")
+
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(node._read_stereo_mode(), "off")
+
+    def test_invalid_stereo_mode_falls_back_to_off(self):
+        node = self._make_node("unused")
+
+        with patch.dict(os.environ, {"PIB_CAMERA_STEREO": "invalid"}, clear=True):
+            self.assertEqual(node._read_stereo_mode(), "off")
+
+        node.get_logger().warning.assert_called_once_with(
+            "Invalid PIB_CAMERA_STEREO='invalid'; using 'off'."
+        )
 
     def test_mode_off_starts_colour_only(self):
         node = self._make_node("off")

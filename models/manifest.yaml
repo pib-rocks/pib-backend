@@ -28,7 +28,7 @@ models:
   file: palm_detection_128x128_decoding/palm_detection_128x128_decoding.blob
   sha256: 5fdba175b44761ca338abade5304ff7e1e8321a0656ca5abe71eba2df543907d
   size_bytes: 44282
-  shaves: 4
+  shaves: 1
   input_width: 128
   input_height: 128
   format: blob
