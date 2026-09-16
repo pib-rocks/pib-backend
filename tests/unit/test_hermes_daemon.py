@@ -463,30 +463,66 @@ def _make_hermes_venv(home, minor: int):
     return site_packages
 
 
-def test_venv_site_packages_finds_whatever_python_version_built_the_venv(
+def _agent_venv_site_packages(root: Path, minor: int) -> Path:
+    site_packages = root / "venv" / "lib" / f"python3.{minor}" / "site-packages"
+    site_packages.mkdir(parents=True)
+    return site_packages
+
+
+def _pretend_python(monkeypatch, minor: int):
+    monkeypatch.setattr(hd, "_running_python_version", lambda: (3, minor))
+
+
+def test_venv_site_packages_ignores_a_different_minor_when_it_is_the_only_tree(
+    tmp_path, monkeypatch, caplog
+):
+    """A 3.12 process must not receive a 3.13 tree (and the reverse)."""
+    import logging
+
+    agent = tmp_path / "agent"
+    _agent_venv_site_packages(agent, 13)
+    _pretend_python(monkeypatch, 12)
+
+    with caplog.at_level(logging.INFO):
+        assert hd.venv_site_packages(str(agent)) == []
+    assert any("inserting none" in rec.getMessage() for rec in caplog.records)
+
+    agent_other = tmp_path / "agent-other"
+    _agent_venv_site_packages(agent_other, 12)
+    _pretend_python(monkeypatch, 13)
+
+    assert hd.venv_site_packages(str(agent_other)) == []
+
+
+def test_venv_site_packages_returns_the_tree_matching_the_running_interpreter(
+    tmp_path, monkeypatch, caplog
+):
+    import logging
+
+    agent = tmp_path / "agent"
+    matching_12 = _agent_venv_site_packages(agent, 12)
+    _agent_venv_site_packages(agent, 13)
+    _pretend_python(monkeypatch, 12)
+
+    with caplog.at_level(logging.INFO):
+        assert hd.venv_site_packages(str(agent)) == [str(matching_12)]
+    assert any(str(matching_12) in rec.getMessage() for rec in caplog.records)
+
+    matching_13 = agent / "venv" / "lib" / "python3.13" / "site-packages"
+    _pretend_python(monkeypatch, 13)
+    assert hd.venv_site_packages(str(agent)) == [str(matching_13)]
+
+
+def test_venv_site_packages_finds_the_matching_python_version_without_pinning(
     sandboxed_hermes_home,
 ):
-    """The field installs moved from 3.11 to 3.13; no minor version may be pinned."""
-    site_packages = _make_hermes_venv(sandboxed_hermes_home, 13)
+    """Search stays version-agnostic; only the running interpreter's tree is used."""
+    running_minor = sys.version_info.minor
+    other_minor = 13 if running_minor != 13 else 12
+    matching = _make_hermes_venv(sandboxed_hermes_home, running_minor)
+    _make_hermes_venv(sandboxed_hermes_home, other_minor)
 
-    assert hd.venv_site_packages() == [str(site_packages)]
-
-
-def test_venv_site_packages_prefers_the_newest_of_several_venv_libs(
-    sandboxed_hermes_home,
-):
-    older = _make_hermes_venv(sandboxed_hermes_home, 9)
-    newer = (
-        sandboxed_hermes_home
-        / "hermes-agent"
-        / "venv"
-        / "lib"
-        / "python3.13"
-        / "site-packages"
-    )
-    newer.mkdir(parents=True)
-
-    assert hd.venv_site_packages() == [str(newer), str(older)]
+    assert hd.venv_site_packages() == [str(matching)]
 
 
 def test_venv_site_packages_is_empty_when_the_layout_is_unexpected(
@@ -507,7 +543,7 @@ def test_daemon_does_not_pin_a_python_minor_version_in_its_sys_path():
 def test_run_turn_in_process_adds_the_detected_site_packages_to_sys_path(
     monkeypatch, sandboxed_hermes_home
 ):
-    site_packages = _make_hermes_venv(sandboxed_hermes_home, 13)
+    site_packages = _make_hermes_venv(sandboxed_hermes_home, sys.version_info.minor)
     monkeypatch.setattr(sys, "path", list(sys.path))
 
     def fake_main(query=None, model="", **kwargs):
@@ -518,6 +554,46 @@ def test_run_turn_in_process_adds_the_detected_site_packages_to_sys_path(
     assert hd.run_turn_in_process(text="hi", chat_id="c-1") == "Antwort"
     assert str(site_packages) in sys.path
     assert str(sandboxed_hermes_home / "hermes-agent") in sys.path
+
+
+def test_run_turn_in_process_never_prepends_a_mismatched_venv_tree(
+    monkeypatch, sandboxed_hermes_home
+):
+    """Both directions: a 3.12 process must not get 3.13 on sys.path, and vice versa."""
+    mismatched_13 = _make_hermes_venv(sandboxed_hermes_home, 13)
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    _pretend_python(monkeypatch, 12)
+
+    class FakeAgent:
+        def __init__(self, **_kwargs):
+            pass
+
+        def chat(self, _text, stream_callback=None):
+            return "ok"
+
+    fake_module = types.ModuleType("run_agent")
+    fake_module.AIAgent = FakeAgent
+    hd.clear_agent_cache()
+
+    with patch.dict(sys.modules, {"run_agent": fake_module}):
+        assert hd.run_turn_in_process("hi", "c-mismatch-12") == "ok"
+
+    assert str(mismatched_13) not in sys.path
+    assert hd.venv_site_packages() == []
+
+    mismatched_12 = _make_hermes_venv(sandboxed_hermes_home, 12)
+    py313 = mismatched_13.parent
+    mismatched_13.rmdir()
+    py313.rmdir()
+    _pretend_python(monkeypatch, 13)
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    hd.clear_agent_cache()
+
+    with patch.dict(sys.modules, {"run_agent": fake_module}):
+        assert hd.run_turn_in_process("hi", "c-mismatch-13") == "ok"
+
+    assert str(mismatched_12) not in sys.path
+    assert hd.venv_site_packages() == []
 
 
 def test_extract_final_response_strips_decoration_and_trailing_output():

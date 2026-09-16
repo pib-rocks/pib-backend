@@ -21,6 +21,7 @@ import logging
 import os
 import re
 import socket
+import sys
 import threading
 import time
 from collections import OrderedDict
@@ -64,7 +65,7 @@ DEFAULT_AGENT_CACHE_SIZE = 32
 DEFAULT_HERMES_HOME = "/home/pib/.hermes"
 HERMES_AGENT_DIRNAME = "hermes-agent"
 _VENV_SITE_PACKAGES_GLOB = os.path.join("venv", "lib", "python3.*", "site-packages")
-_PYTHON_MINOR = re.compile(r"python3\.(\d+)")
+_PYTHON_VERSION = re.compile(r"python(\d+)\.(\d+)")
 
 # ``run_agent.main`` has no return value: it prints the answer to stdout below a
 # "FINAL RESPONSE:" banner, followed by decorative dashes and closing status
@@ -194,15 +195,27 @@ def hermes_agent_dir() -> str:
     return os.path.join(home, HERMES_AGENT_DIRNAME)
 
 
-def venv_site_packages(agent_dir: Optional[str] = None) -> list[str]:
-    """site-packages of the hermes venv, whichever Python minor version built it.
+def _running_python_version() -> tuple[int, int]:
+    return sys.version_info.major, sys.version_info.minor
 
-    The path used to be pinned to python3.11 while the installs in the field run
-    3.13, which left a dead sys.path entry and the next `hermes update` would
-    have broken a re-pinned one again. Highest version first, so a leftover older
-    venv directory cannot shadow the current one. Empty when nothing matches.
+
+def _python_version_from_site_packages(path: str) -> Optional[tuple[int, int]]:
+    found = _PYTHON_VERSION.search(path)
+    if found is None:
+        return None
+    return int(found.group(1)), int(found.group(2))
+
+
+def venv_site_packages(agent_dir: Optional[str] = None) -> list[str]:
+    """Hermes venv site-packages whose pythonX.Y matches this interpreter.
+
+    Native wheels in a 3.13 venv cannot load on 3.12 (and vice versa). Search
+    stays version-agnostic among matching trees; several hits are returned in
+    a deterministic path order. Empty when nothing matches — the in-process
+    turn then uses the interpreter's own packages.
     """
     base = agent_dir or hermes_agent_dir()
+    running = _running_python_version()
     try:
         matches = [
             path
@@ -213,11 +226,24 @@ def venv_site_packages(agent_dir: Optional[str] = None) -> list[str]:
         logging.warning("could not scan %s for a hermes venv: %s", base, exc)
         return []
 
-    def _minor(path: str) -> int:
-        found = _PYTHON_MINOR.search(path)
-        return int(found.group(1)) if found else -1
-
-    return sorted(matches, key=_minor, reverse=True)
+    compatible = [
+        path for path in matches if _python_version_from_site_packages(path) == running
+    ]
+    compatible.sort()
+    if compatible:
+        logging.info(
+            "prepending hermes venv site-packages matching Python %s.%s: %s",
+            running[0],
+            running[1],
+            compatible,
+        )
+    else:
+        logging.info(
+            "no hermes venv site-packages matching Python %s.%s; inserting none",
+            running[0],
+            running[1],
+        )
+    return compatible
 
 
 def daemon_host() -> str:
@@ -269,8 +295,6 @@ def run_turn_in_process(
         FALLBACK_REPLY,
         run_turn_subprocess,
     )
-
-    import sys
 
     agent_dir = hermes_agent_dir()
     for path_entry in (agent_dir, *venv_site_packages(agent_dir)):
