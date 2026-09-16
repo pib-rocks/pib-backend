@@ -5,6 +5,7 @@ import sys
 import types
 import unittest
 import weakref
+from collections import deque
 from unittest.mock import MagicMock, patch
 import base64
 
@@ -508,18 +509,25 @@ class TestHandStageCounters(unittest.TestCase):
         node.hand_landmark_queue = MagicMock()
         node.hand_landmark_config_queue = MagicMock()
 
-    def test_decoder_empty_result_counts_decode_postprocess_and_publish(self):
+    @patch("ros_packages.camera.oak_d_lite.stereo.dai")
+    def test_decoder_empty_result_sends_config_and_discards_sentinel_landmarks(
+        self, mock_dai
+    ):
         node = self._make_node()
-        packet = MagicMock()
-        packet.getLayerFp16.return_value = [0.0] * 80
+        decoder_packet = MagicMock()
+        decoder_packet.getLayerFp16.return_value = [0.0] * 80
+        landmark_packet = MagicMock()
         node.hand_decoder_queue = MagicMock()
-        node.hand_decoder_queue.tryGet.return_value = packet
+        node.hand_decoder_queue.tryGet.side_effect = [decoder_packet, None]
         node.hand_landmark_queue = MagicMock()
+        node.hand_landmark_queue.tryGet.return_value = landmark_packet
+        node.hand_landmark_config_queue = MagicMock()
+        node.hand_landmark_input_size = 224
         node.current_frame = np.zeros((720, 1280, 3), dtype=np.uint8)
         node.current_source_size = (1280, 720)
         node.hand_source_size = (1280, 720)
         node._pending_hand_decoder_packet = None
-        node._pending_hands = []
+        node._pending_hands = deque()
         node._publish_hand_detections = MagicMock(
             side_effect=lambda *_: node._count_hand_stage("publish")
         )
@@ -527,8 +535,33 @@ class TestHandStageCounters(unittest.TestCase):
         node._process_hand_tracking()
 
         self.assertEqual(node.hand_stage_counters["decoding_nn"], 1)
+        self.assertEqual(node.hand_stage_counters["decoding_result"], 1)
+        self.assertEqual(node.hand_stage_counters["image_manip_config"], 1)
+        self.assertEqual(node.hand_stage_counters["post_processing"], 0)
+        node.hand_landmark_config_queue.send.assert_called_once_with(
+            mock_dai.ImageManipConfig.return_value
+        )
+        rotated = (
+            mock_dai.ImageManipConfig.return_value.addCropRotatedRect.call_args.args[0]
+        )
+        self.assertEqual(
+            (
+                rotated.center.x,
+                rotated.center.y,
+                rotated.size.width,
+                rotated.size.height,
+                rotated.angle,
+            ),
+            (0.5, 0.5, 1.0, 1.0, 0.0),
+        )
+
+        node._process_hand_tracking()
+
+        self.assertEqual(node.hand_stage_counters["hand_landmark_nn"], 1)
         self.assertEqual(node.hand_stage_counters["post_processing"], 1)
         self.assertEqual(node.hand_stage_counters["publish"], 1)
+        node._publish_hand_detections.assert_called_once_with(1280, 720, [])
+        landmark_packet.getLayerFp16.assert_not_called()
 
     def test_counter_log_contains_all_raw_stages_and_last_flowing_stage(self):
         node = self._make_node()
@@ -570,8 +603,15 @@ class TestHandStageCounters(unittest.TestCase):
             ],
         )
         self.assertFalse(node._hand_chain_is_flowing())
-        node._count_hand_stage("post_processing")
-        node._count_hand_stage("publish")
+        for stage in (
+            "decoding_result",
+            "image_manip_config",
+            "image_manip_roi",
+            "hand_landmark_nn",
+            "post_processing",
+            "publish",
+        ):
+            node._count_hand_stage(stage)
         self.assertTrue(node._hand_chain_is_flowing())
 
     def test_model_verification_fails_when_decoder_has_no_packets(self):
