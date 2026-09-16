@@ -685,9 +685,7 @@ class TestHandStageCounters(unittest.TestCase):
         landmark_packet = MagicMock()
         landmark_packet.getTensor.side_effect = lambda name: {
             "Identity_1": [0.9],
-            "Identity_3_dense/BiasAdd/Add": np.tile(
-                [0.5, 0.25, 0.0], (21, 1)
-            ),
+            "Identity_3_dense/BiasAdd/Add": np.tile([0.5, 0.25, 0.0], (21, 1)),
         }[name]
         transformation = MagicMock()
         transformation.invTransformPoint.return_value = types.SimpleNamespace(
@@ -718,9 +716,7 @@ class TestHandStageCounters(unittest.TestCase):
             ],
         )
         landmark_packet.getTransformation.assert_called_once_with()
-        node._publish_hand_detections.assert_called_once_with(
-            1280, 720, ["detection"]
-        )
+        node._publish_hand_detections.assert_called_once_with(1280, 720, ["detection"])
 
     def test_counter_log_contains_all_raw_stages_and_last_flowing_stage(self):
         node = self._make_node()

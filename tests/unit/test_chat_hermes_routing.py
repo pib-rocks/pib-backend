@@ -394,10 +394,14 @@ def test_warm_daemon_turn_uses_in_process_runner(chat_module, chat_node, monkeyp
     from public_api_client import hermes_daemon as hd
 
     fake_agent = MagicMock()
-    fake_agent.chat.return_value = "in-process-via-daemon"
+    fake_agent.run_conversation.return_value = {
+        "final_response": "in-process-via-daemon"
+    }
     fake_agent_cls = MagicMock(return_value=fake_agent)
     fake_module = types.ModuleType("run_agent")
     fake_module.AIAgent = fake_agent_cls
+    # Never open the developer's live Hermes state.db from a unit test.
+    monkeypatch.setattr(hd, "_create_session_db", MagicMock(return_value=None))
     hd.clear_agent_cache()
 
     with (
@@ -460,9 +464,10 @@ def test_warm_daemon_turn_uses_in_process_runner(chat_module, chat_node, monkeyp
         "session_search",
     ]
     assert fake_agent_cls.call_args.kwargs["skip_memory"] is True
-    fake_agent.chat.assert_called_once()
-    assert fake_agent.chat.call_args.args == ("Hi",)
-    assert callable(fake_agent.chat.call_args.kwargs["stream_callback"])
+    fake_agent.run_conversation.assert_called_once()
+    assert fake_agent.run_conversation.call_args.kwargs["user_message"] == "Hi"
+    assert fake_agent.run_conversation.call_args.kwargs["conversation_history"] is None
+    assert callable(fake_agent.run_conversation.call_args.kwargs["stream_callback"])
     subprocess_runner.assert_not_called()
 
 

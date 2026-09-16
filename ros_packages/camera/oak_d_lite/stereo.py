@@ -837,9 +837,7 @@ class CameraNode(Node):
         self.hand_source_size = (HAND_NN_WIDTH, HAND_NN_HEIGHT)
 
         palm_manip = self.pipeline.create(dai.node.ImageManip)
-        palm_manip.setMaxOutputFrameSize(
-            palm.input_width * palm.input_height * 3
-        )
+        palm_manip.setMaxOutputFrameSize(palm.input_width * palm.input_height * 3)
         palm_manip.initialConfig.setOutputSize(
             palm.input_width,
             palm.input_height,
