@@ -6,6 +6,7 @@ export const RESERVED_WORDS = [
     "sys",
     "np",
     "logging",
+    "signal",
     "datetime",
     "program_log_path",
     "program_log",
@@ -41,4 +42,9 @@ export const RESERVED_WORDS = [
     "set_solid_state_relay_state_client",
     // sound direction (DOA)
     "Int32",
+    // model inference
+    "StartModel",
+    "StopModel",
+    "DetectionArray",
+    "_blockly_model_manager",
 ].join(",");

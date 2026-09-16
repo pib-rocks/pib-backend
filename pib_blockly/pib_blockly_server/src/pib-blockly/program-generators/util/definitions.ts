@@ -8,6 +8,8 @@ export const IMPORT_OS = "import os";
 export const IMPORT_DATETIME = "import datetime";
 export const IMPORT_TIME = "import time";
 export const IMPORT_LOGGING = "import logging";
+export const IMPORT_ATEXIT = "import atexit";
+export const IMPORT_SIGNAL = "import signal";
 export const IMPORT_PARAMIKO = "import paramiko";
 export const IMPORT_PIB_SDK = "import pib_sdk";
 export const IMPORT_PIB_SDK_IK =
@@ -43,6 +45,10 @@ export const IMPORT_VISION_PROMPT = "from datatypes.srv import VisionPrompt";
 export const IMPORT_SOLID_STATE_RELAY_STATE =
     "from datatypes.msg import SolidStateRelayState";
 export const IMPORT_INT32 = "from std_msgs.msg import Int32";
+export const IMPORT_MODEL_SERVICES =
+    "from datatypes.srv import StartModel, StopModel";
+export const IMPORT_DETECTION_ARRAY =
+    "from datatypes.msg import DetectionArray";
 
 // ros
 

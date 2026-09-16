@@ -38,6 +38,23 @@ export const poseBlocks =
             helpUrl: "",
         },
         {
+            type: "save_detection_as_pose",
+            message0: "save current detection as pose %1",
+            args0: [
+                {
+                    type: "input_value",
+                    name: "NAME",
+                    check: "String",
+                },
+            ],
+            previousStatement: null,
+            nextStatement: null,
+            colour: 355,
+            tooltip:
+                "Saves the robot's current detected motor positions through the existing pose list. The name may be a string variable.",
+            helpUrl: "",
+        },
+        {
             type: "get_all_poses",
             message0: "get all poses",
             output: "Array",
