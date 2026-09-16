@@ -393,17 +393,17 @@ def test_warm_daemon_turn_uses_in_process_runner(chat_module, chat_node, monkeyp
     from public_api_client import hermes_agent_client
     from public_api_client import hermes_daemon as hd
 
-    fake_run_agent = MagicMock(return_value="in-process-via-daemon")
-    fake_module = types.ModuleType("hermes.run_agent")
-    fake_module.run_agent = fake_run_agent
+    fake_agent = MagicMock()
+    fake_agent.chat.return_value = "in-process-via-daemon"
+    fake_agent_cls = MagicMock(return_value=fake_agent)
+    fake_module = types.ModuleType("run_agent")
+    fake_module.AIAgent = fake_agent_cls
+    hd.clear_agent_cache()
 
     with (
         patch.dict(
             sys.modules,
-            {
-                "hermes": types.ModuleType("hermes"),
-                "hermes.run_agent": fake_module,
-            },
+            {"run_agent": fake_module},
         ),
         patch(
             "public_api_client.hermes_agent_client.ensure_profile",
@@ -449,10 +449,17 @@ def test_warm_daemon_turn_uses_in_process_runner(chat_module, chat_node, monkeyp
             thread.join(timeout=2.0)
 
     assert reply == "in-process-via-daemon"
-    fake_run_agent.assert_called_once()
-    assert fake_run_agent.call_args.kwargs["prompt"] == "Hi"
-    assert fake_run_agent.call_args.kwargs["session_id"] == "pib_chat_chat-ip"
-    assert fake_run_agent.call_args.kwargs["profile"] == "pib_pers-1"
+    fake_agent_cls.assert_called_once()
+    assert fake_agent_cls.call_args.kwargs["session_id"] == "pib_chat_chat-ip"
+    assert fake_agent_cls.call_args.kwargs["max_iterations"] == 4
+    assert fake_agent_cls.call_args.kwargs["disabled_toolsets"] == [
+        "terminal",
+        "code_execution",
+        "file",
+    ]
+    fake_agent.chat.assert_called_once()
+    assert fake_agent.chat.call_args.args == ("Hi",)
+    assert callable(fake_agent.chat.call_args.kwargs["stream_callback"])
     subprocess_runner.assert_not_called()
 
 
@@ -477,6 +484,10 @@ def test_warm_daemon_falls_back_to_subprocess_when_run_agent_missing(
         return real_import(name, *args, **kwargs)
 
     with (
+        patch.dict(
+            sys.modules,
+            {"run_agent": None, "hermes.run_agent": None},
+        ),
         patch("builtins.__import__", side_effect=_block_hermes),
         patch(
             "public_api_client.hermes_agent_client.run_turn_subprocess",
@@ -697,13 +708,11 @@ def test_chat_routes_hermes_without_replaying_history(chat_module, chat_node):
             chat_module.public_voice_client,
             "chat_completion",
         ) as chat_completion,
-        patch.object(hermes_agent_client, "is_warm_daemon_active", return_value=False),
         patch.object(
-            hermes_agent_client, "ensure_profile", return_value="/tmp/p"
-        ) as ensure_profile,
-        patch.object(
-            hermes_agent_client, "run_turn", return_value="Antwort vom Agent."
-        ) as run_turn,
+            chat_node,
+            "_stream_hermes_turn",
+            return_value=["Antwort vom Agent."],
+        ) as hermes_stream,
         patch.object(
             chat_node,
             "_stream_chunks_to_goal",
@@ -716,12 +725,10 @@ def test_chat_routes_hermes_without_replaying_history(chat_module, chat_node):
 
     get_history.assert_not_called()
     chat_completion.assert_not_called()
-    ensure_profile.assert_called_once_with("pers-1", soul_text="Du bist pib.")
-    run_turn.assert_called_once()
-    assert run_turn.call_args.kwargs["text"] == "Hi"
-    assert run_turn.call_args.kwargs["chat_id"] == "chat-9"
-    assert run_turn.call_args.kwargs["personality_id"] == "pers-1"
-    assert run_turn.call_args.kwargs["timeout"] == 95
+    hermes_stream.assert_called_once()
+    assert hermes_stream.call_args.kwargs["text"] == "Hi"
+    assert hermes_stream.call_args.kwargs["chat_id"] == "chat-9"
+    assert hermes_stream.call_args.kwargs["personality_id"] == "pers-1"
     stream.assert_called_once()
     streamed_tokens = stream.call_args[0][2]
     assert streamed_tokens == ["Antwort vom Agent."]
@@ -866,6 +873,57 @@ def test_run_hermes_turn_reuses_the_shared_pool(chat_module, chat_node):
             )
 
     assert len(seen) == 3
+
+
+def test_run_hermes_turn_passes_voice_blacklist(chat_module, chat_node):
+    from public_api_client import hermes_agent_client
+
+    with patch.object(hermes_agent_client, "run_turn", return_value="ok") as run_turn:
+        assert (
+            chat_node._run_hermes_turn(
+                text="Hi", chat_id="c", personality_id=None, description="d"
+            )
+            == "ok"
+        )
+
+    assert (
+        run_turn.call_args.kwargs["toolsets"]
+        == hermes_agent_client.DEFAULT_DISABLED_TOOLSETS
+    )
+
+
+def test_streaming_error_falls_back_without_repeating_matching_prefix(
+    chat_module, chat_node
+):
+    from public_api_client import hermes_agent_client
+
+    def broken_stream(**_kwargs):
+        yield "Hallo"
+        raise RuntimeError("connection dropped")
+
+    with (
+        patch.object(
+            hermes_agent_client, "stream_turn", side_effect=broken_stream
+        ) as stream_turn,
+        patch.object(
+            hermes_agent_client, "run_turn", return_value="Hallo Welt."
+        ) as run_turn,
+    ):
+        chunks = list(
+            chat_node._stream_hermes_turn(
+                text="Hi",
+                chat_id="c",
+                personality_id=None,
+                description="d",
+            )
+        )
+
+    assert chunks == ["Hallo", " Welt."]
+    assert (
+        stream_turn.call_args.kwargs["toolsets"]
+        == hermes_agent_client.DEFAULT_DISABLED_TOOLSETS
+    )
+    run_turn.assert_called_once()
 
 
 def test_chat_hermes_branch_survives_the_rclpy_task_driver(chat_module, chat_node):

@@ -59,6 +59,16 @@ def test_build_command_without_personality_omits_profile():
     assert "-p" not in cmd
 
 
+def test_build_command_carries_explicit_toolsets():
+    cmd = build_command(
+        "hallo",
+        "chat-1",
+        toolsets="terminal,code_execution,file",
+    )
+    index = cmd.index("-t")
+    assert cmd[index + 1] == "terminal,code_execution,file"
+
+
 def test_build_default_soul_text_starts_with_robot_identity():
     text = build_default_soul_text("Eva")
     assert text.startswith("Du bist der humanoide Roboter Eva.")
@@ -133,6 +143,20 @@ def test_run_turn_returns_stdout(installed_hermes_bin, monkeypatch):
     )
     with patch("subprocess.run", return_value=completed):
         assert run_turn("hi", "c1") == "Hallo!"
+
+
+def test_subprocess_fallback_never_treats_voice_blacklist_as_cli_whitelist(
+    installed_hermes_bin,
+):
+    from public_api_client.hermes_agent_client import run_turn_subprocess
+
+    completed = subprocess.CompletedProcess(
+        args=[], returncode=0, stdout="Hallo!\n", stderr=""
+    )
+    with patch("subprocess.run", return_value=completed) as run:
+        assert run_turn_subprocess("hi", "c1") == "Hallo!"
+
+    assert "-t" not in run.call_args.args[0]
 
 
 def test_run_turn_on_timeout_returns_fallback(installed_hermes_bin, monkeypatch):
@@ -260,3 +284,25 @@ def test_default_timeout_reads_pib_hermes_timeout_env(monkeypatch):
     finally:
         monkeypatch.delenv("PIB_HERMES_TIMEOUT", raising=False)
         importlib.reload(hac)
+
+
+def test_voice_defaults_are_configurable_and_budget_defaults_to_four(monkeypatch):
+    import importlib
+    import public_api_client.hermes_agent_client as hac
+
+    # Keep the module-level MCP fixture stable when earlier tests leave an
+    # ambient local API URL behind.
+    monkeypatch.delenv("FLASK_API_BASE_URL", raising=False)
+    monkeypatch.setenv("PIB_HERMES_DISABLED_TOOLSETS", "terminal,file")
+    monkeypatch.setenv("PIB_HERMES_MAX_TURNS", "6")
+    importlib.reload(hac)
+    try:
+        assert hac.DEFAULT_DISABLED_TOOLSETS == "terminal,file"
+        assert hac.DEFAULT_MAX_TURNS == 6
+    finally:
+        monkeypatch.delenv("PIB_HERMES_DISABLED_TOOLSETS", raising=False)
+        monkeypatch.delenv("PIB_HERMES_MAX_TURNS", raising=False)
+        monkeypatch.delenv("FLASK_API_BASE_URL", raising=False)
+        importlib.reload(hac)
+
+    assert hac.DEFAULT_MAX_TURNS == 4

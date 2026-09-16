@@ -22,14 +22,26 @@ def daemon_server(monkeypatch):
     """Start an in-process daemon on an ephemeral port with a stub turn runner."""
     replies = {"value": "daemon-says-hi"}
 
-    def runner(*, text, chat_id, personality_id=None, toolsets=None, timeout=None):
+    def runner(
+        *,
+        text,
+        chat_id,
+        personality_id=None,
+        toolsets=None,
+        max_turns=None,
+        timeout=None,
+        stream_callback=None,
+    ):
         replies["last"] = {
             "text": text,
             "chat_id": chat_id,
             "personality_id": personality_id,
             "toolsets": toolsets,
+            "max_turns": max_turns,
             "timeout": timeout,
         }
+        for delta in replies.get("deltas", []):
+            stream_callback(delta)
         return replies["value"]
 
     # Bind to an ephemeral port so parallel tests / leftover daemons do not clash.
@@ -95,8 +107,28 @@ def test_turn_accepts_payload_and_returns_reply(daemon_server):
         "chat_id": "c-1",
         "personality_id": "p-9",
         "toolsets": "mcp",
+        "max_turns": None,
         "timeout": 30,
     }
+
+
+def test_streaming_turn_emits_deltas_and_final_reply(daemon_server):
+    server, replies = daemon_server
+    replies["deltas"] = ["Hallo", " Welt."]
+    host, port = server.server_address
+    body = json.dumps({"text": "hallo", "chat_id": "c-stream", "stream": True}).encode()
+    req = Request(
+        f"http://{host}:{port}/turn",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+    with urlopen(req, timeout=2) as resp:
+        chunks = [json.loads(line) for line in resp if line.strip()]
+
+    assert chunks[:-1] == [{"delta": "Hallo"}, {"delta": " Welt."}]
+    assert chunks[-1] == {"reply": "daemon-says-hi"}
 
 
 def test_turn_rejects_missing_fields(daemon_server):
@@ -183,7 +215,7 @@ def test_client_uses_session_pooling_for_daemon(daemon_server, monkeypatch):
     """Warm-daemon turns must reuse a persistent requests.Session."""
     from public_api_client import hermes_agent_client as hac
 
-    server, _ = daemon_server
+    server, replies = daemon_server
     host, port = server.server_address
     monkeypatch.setenv("PIB_HERMES_DAEMON_URL", f"http://{host}:{port}")
 
@@ -200,46 +232,141 @@ def test_client_uses_session_pooling_for_daemon(daemon_server, monkeypatch):
     assert reply2 == "daemon-says-hi"
     assert session_after_first is not None
     assert session_after_first is session_after_second
+    assert replies["last"]["toolsets"] == "terminal,code_execution,file"
+    assert replies["last"]["max_turns"] == 4
 
 
-def test_run_turn_in_process_calls_hermes_run_agent(tmp_path, monkeypatch):
-    """Default daemon turn path must invoke Hermes in-process when available."""
+def test_run_turn_in_process_constructs_and_reuses_one_agent_per_chat(
+    tmp_path, monkeypatch
+):
+    """Each chat owns one configured AIAgent and reuses it on later turns."""
     monkeypatch.setenv("PIB_HERMES_PROFILES_DIR", str(tmp_path / "profiles"))
-    fake_run_agent = MagicMock(return_value="  in-process-reply  ")
-    fake_module = types.ModuleType("hermes.run_agent")
-    fake_module.run_agent = fake_run_agent
+    created = []
+
+    class FakeAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.chat = MagicMock(return_value="  in-process-reply  ")
+            created.append(self)
+
+    fake_module = types.ModuleType("run_agent")
+    fake_module.AIAgent = FakeAgent
+    hd.clear_agent_cache()
 
     with (
         patch.dict(
             sys.modules,
-            {
-                "hermes": types.ModuleType("hermes"),
-                "hermes.run_agent": fake_module,
-            },
+            {"run_agent": fake_module},
         ),
         patch(
             "public_api_client.hermes_agent_client.ensure_profile",
             return_value=str(tmp_path / "profiles" / "pib_pers-1"),
-        ) as ensure_profile,
+        ),
         patch(
             "public_api_client.hermes_agent_client.run_turn_subprocess",
         ) as subprocess_runner,
     ):
-        reply = hd.run_turn_in_process(
+        first = hd.run_turn_in_process(
             text="Hallo",
             chat_id="chat-42",
             personality_id="pers-1",
+            toolsets="terminal,file",
+            max_turns=7,
             timeout=30,
         )
+        second = hd.run_turn_in_process(
+            text="Noch einmal",
+            chat_id="chat-42",
+            toolsets="terminal,file",
+            max_turns=7,
+        )
 
-    assert reply == "in-process-reply"
-    ensure_profile.assert_called_once_with("pers-1")
-    fake_run_agent.assert_called_once_with(
-        prompt="Hallo",
-        session_id="pib_chat_chat-42",
-        profile="pib_pers-1",
-        timeout=30,
-    )
+    assert first == second == "in-process-reply"
+    assert len(created) == 1
+    assert created[0].kwargs["session_id"] == "pib_chat_chat-42"
+    assert created[0].kwargs["enabled_toolsets"] is None
+    assert created[0].kwargs["disabled_toolsets"] == ["terminal", "file"]
+    assert created[0].kwargs["max_iterations"] == 7
+    assert created[0].chat.call_count == 2
+    subprocess_runner.assert_not_called()
+
+
+def test_run_turn_in_process_never_shares_agents_between_chat_ids(monkeypatch):
+    created = []
+
+    class FakeAgent:
+        def __init__(self, **kwargs):
+            self.session_id = kwargs["session_id"]
+            created.append(self)
+
+        def chat(self, _text, stream_callback=None):
+            return self.session_id
+
+    fake_module = types.ModuleType("run_agent")
+    fake_module.AIAgent = FakeAgent
+    hd.clear_agent_cache()
+
+    with patch.dict(sys.modules, {"run_agent": fake_module}):
+        first = hd.run_turn_in_process("one", "chat-a")
+        second = hd.run_turn_in_process("two", "chat-b")
+        again = hd.run_turn_in_process("three", "chat-a")
+
+    assert len(created) == 2
+    assert first == again == "pib_chat_chat-a"
+    assert second == "pib_chat_chat-b"
+    assert created[0] is not created[1]
+
+
+def test_agent_cache_evicts_the_least_recently_used_chat(monkeypatch):
+    created = []
+
+    class FakeAgent:
+        def __init__(self, **kwargs):
+            self.session_id = kwargs["session_id"]
+            self.close = MagicMock()
+            created.append(self)
+
+        def chat(self, _text, stream_callback=None):
+            return "ok"
+
+    fake_module = types.ModuleType("run_agent")
+    fake_module.AIAgent = FakeAgent
+    monkeypatch.setattr(hd, "DEFAULT_AGENT_CACHE_SIZE", 2)
+    hd.clear_agent_cache()
+
+    with patch.dict(sys.modules, {"run_agent": fake_module}):
+        hd.run_turn_in_process("one", "chat-a")
+        hd.run_turn_in_process("two", "chat-b")
+        hd.run_turn_in_process("three", "chat-a")
+        hd.run_turn_in_process("four", "chat-c")
+
+    assert len(hd._agent_cache) == 2
+    assert list(hd._agent_cache) == ["chat-a", "chat-c"]
+    created[1].close.assert_called_once()
+
+
+def test_run_turn_in_process_keeps_streamed_text_when_budget_ends_empty():
+    class BudgetAgent:
+        def __init__(self, **_kwargs):
+            pass
+
+        def chat(self, _text, stream_callback=None):
+            stream_callback("partial answer")
+            return ""
+
+    fake_module = types.ModuleType("run_agent")
+    fake_module.AIAgent = BudgetAgent
+    hd.clear_agent_cache()
+
+    with (
+        patch.dict(sys.modules, {"run_agent": fake_module}),
+        patch(
+            "public_api_client.hermes_agent_client.run_turn_subprocess"
+        ) as subprocess_runner,
+    ):
+        reply = hd.run_turn_in_process("one", "budget-chat", max_turns=1)
+
+    assert reply == "partial answer"
     subprocess_runner.assert_not_called()
 
 
@@ -255,6 +382,10 @@ def test_run_turn_in_process_falls_back_to_subprocess_when_import_fails():
         return real_import(name, *args, **kwargs)
 
     with (
+        patch.dict(
+            sys.modules,
+            {"run_agent": None, "hermes.run_agent": None},
+        ),
         patch("builtins.__import__", side_effect=_block_hermes_run_agent),
         patch(
             "public_api_client.hermes_agent_client.run_turn_subprocess",
@@ -289,7 +420,9 @@ def test_default_turn_runner_uses_in_process_path():
             chat_id="c1",
             personality_id="p1",
             toolsets=None,
+            max_turns=None,
             timeout=10,
+            stream_callback=None,
         )
 
     assert reply == "from-default"
@@ -298,7 +431,9 @@ def test_default_turn_runner_uses_in_process_path():
         chat_id="c1",
         personality_id="p1",
         toolsets=None,
+        max_turns=None,
         timeout=10,
+        stream_callback=None,
     )
 
 
@@ -424,6 +559,7 @@ def test_run_turn_in_process_reads_reply_from_run_agent_stdout(tmp_path, monkeyp
     def fake_main(query=None, model="", **kwargs):
         calls["query"] = query
         calls["model"] = model
+        calls.update(kwargs)
         print("\U0001f916 AI Agent with Tool Calling")
         print("\n\U0001f3af FINAL RESPONSE:")
         print("-" * 30)
@@ -449,7 +585,12 @@ def test_run_turn_in_process_reads_reply_from_run_agent_stdout(tmp_path, monkeyp
         )
 
     assert reply == "Hallo, mir geht es gut!"
-    assert calls == {"query": "Wie geht es dir?", "model": hd.IN_PROCESS_MODEL}
+    assert calls == {
+        "query": "Wie geht es dir?",
+        "model": hd.IN_PROCESS_MODEL,
+        "disabled_toolsets": "terminal,code_execution,file",
+        "max_turns": 4,
+    }
     subprocess_runner.assert_not_called()
 
 
@@ -484,7 +625,7 @@ def test_run_turn_in_process_falls_back_when_stdout_has_no_final_response(monkey
         text="Hallo",
         chat_id="chat-3",
         personality_id=None,
-        toolsets=None,
+        toolsets="terminal,code_execution,file",
         timeout=45,
     )
 
@@ -512,16 +653,19 @@ def test_run_turn_in_process_returns_fallback_on_agent_error(tmp_path, monkeypat
     from public_api_client.hermes_agent_client import FALLBACK_REPLY
 
     monkeypatch.setenv("PIB_HERMES_PROFILES_DIR", str(tmp_path / "profiles"))
-    fake_module = types.ModuleType("hermes.run_agent")
-    fake_module.run_agent = MagicMock(side_effect=RuntimeError("boom"))
+
+    class BrokenAgent:
+        def __init__(self, **_kwargs):
+            raise RuntimeError("boom")
+
+    fake_module = types.ModuleType("run_agent")
+    fake_module.AIAgent = BrokenAgent
+    hd.clear_agent_cache()
 
     with (
         patch.dict(
             sys.modules,
-            {
-                "hermes": types.ModuleType("hermes"),
-                "hermes.run_agent": fake_module,
-            },
+            {"run_agent": fake_module},
         ),
         patch(
             "public_api_client.hermes_agent_client.ensure_profile",

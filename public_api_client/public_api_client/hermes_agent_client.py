@@ -12,13 +12,14 @@ symlinked into it — probe_binary() is what catches a deployment that forgot it
 """
 
 import copy
+import json
 import logging
 import os
 import re
 import shutil
 import subprocess
 import time
-from typing import Optional
+from typing import Iterator, Optional
 
 import yaml
 from pib_hermes_config import (
@@ -37,6 +38,12 @@ DEFAULT_HERMES_HOME = "/home/pib/.hermes"
 SESSION_PREFIX = "pib_chat_"
 HERMES_API_NAME = "hermes-agent"
 DEFAULT_TIMEOUT_SECONDS = int(os.environ.get("PIB_HERMES_TIMEOUT", "120"))
+# Voice turns use a blacklist so dynamically registered MCP toolsets such as
+# mcp-pib remain available. Operators may tune both values without a rebuild.
+DEFAULT_DISABLED_TOOLSETS = os.environ.get(
+    "PIB_HERMES_DISABLED_TOOLSETS", "terminal,code_execution,file"
+)
+DEFAULT_MAX_TURNS = int(os.environ.get("PIB_HERMES_MAX_TURNS", "4"))
 
 CONFIG_FILENAME = "config.yaml"
 ENV_FILENAME = ".env"
@@ -504,7 +511,8 @@ def _try_daemon_turn(
     text: str,
     chat_id: str,
     personality_id: Optional[str] = None,
-    toolsets: Optional[str] = None,
+    toolsets: Optional[str] = DEFAULT_DISABLED_TOOLSETS,
+    max_turns: int = DEFAULT_MAX_TURNS,
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
 ) -> Optional[str]:
     """POST /turn to the warm daemon. None means unreachable or non-200."""
@@ -513,7 +521,12 @@ def _try_daemon_turn(
     except ImportError:
         return None
 
-    payload = {"text": text, "chat_id": chat_id, "timeout": timeout}
+    payload = {
+        "text": text,
+        "chat_id": chat_id,
+        "timeout": timeout,
+        "max_turns": max_turns,
+    }
     if personality_id is not None:
         payload["personality_id"] = personality_id
     if toolsets is not None:
@@ -578,11 +591,89 @@ def _try_daemon_turn(
     return reply.strip() or FALLBACK_REPLY
 
 
+def stream_turn(
+    text: str,
+    chat_id: str,
+    personality_id: Optional[str] = None,
+    toolsets: Optional[str] = DEFAULT_DISABLED_TOOLSETS,
+    max_turns: int = DEFAULT_MAX_TURNS,
+    timeout: int = DEFAULT_TIMEOUT_SECONDS,
+) -> Iterator[str]:
+    """Yield daemon text deltas.
+
+    Streaming is deliberately daemon-only. A transport or protocol failure
+    raises so the voice node can retry through the established non-streaming
+    path, including its subprocess fallback.
+    """
+    try:
+        import requests
+    except ImportError as exc:
+        raise RuntimeError("requests is required for Hermes streaming") from exc
+
+    payload = {
+        "text": text,
+        "chat_id": chat_id,
+        "timeout": timeout,
+        "max_turns": max_turns,
+        "stream": True,
+    }
+    if personality_id is not None:
+        payload["personality_id"] = personality_id
+    if toolsets is not None:
+        payload["toolsets"] = toolsets
+
+    session = _get_daemon_session()
+    post = session.post if session is not None else requests.post
+    try:
+        response = post(
+            daemon_turn_url(),
+            json=payload,
+            timeout=timeout,
+            stream=True,
+        )
+        response.raise_for_status()
+        saw_final = False
+        assembled = ""
+        for raw_line in response.iter_lines(decode_unicode=True):
+            if not raw_line:
+                continue
+            data = json.loads(raw_line)
+            if not isinstance(data, dict):
+                raise ValueError("Hermes stream chunk must be a JSON object")
+            if "error" in data:
+                raise RuntimeError(str(data["error"]))
+            delta = data.get("delta")
+            if delta is not None:
+                if not isinstance(delta, str):
+                    raise ValueError("Hermes stream delta must be a string")
+                if delta:
+                    assembled += delta
+                    yield delta
+            if "reply" in data:
+                final_reply = data["reply"]
+                if not isinstance(final_reply, str):
+                    raise ValueError("Hermes final stream reply must be a string")
+                if final_reply.startswith(assembled):
+                    remainder = final_reply[len(assembled) :]
+                    if remainder:
+                        yield remainder
+                elif final_reply != assembled:
+                    yield final_reply
+                saw_final = True
+        if not saw_final:
+            raise RuntimeError("Hermes stream ended without a final reply")
+    except requests.exceptions.RequestException as exc:
+        raise RuntimeError(f"Hermes streaming request failed: {exc}") from exc
+    finally:
+        if "response" in locals():
+            response.close()
+
+
 def run_turn_subprocess(
     text: str,
     chat_id: str,
     personality_id: Optional[str] = None,
-    toolsets: Optional[str] = None,
+    toolsets: Optional[str] = DEFAULT_DISABLED_TOOLSETS,
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
 ) -> str:
     """Run one turn via a oneshot Hermes CLI subprocess. Always returns text."""
@@ -596,7 +687,11 @@ def run_turn_subprocess(
         )
         return FALLBACK_REPLY
 
-    cmd = build_command(text, chat_id, personality_id, toolsets)
+    # Hermes CLI -t is an enabled-toolset selector, not a blacklist. Never feed
+    # the voice blacklist into it: that would silently remove mcp-pib. Explicit
+    # non-voice toolset selections retain the existing CLI plumbing.
+    cli_toolsets = None if toolsets == DEFAULT_DISABLED_TOOLSETS else toolsets
+    cmd = build_command(text, chat_id, personality_id, cli_toolsets)
     try:
         result = subprocess.run(
             cmd, capture_output=True, text=True, timeout=timeout, check=False
@@ -625,7 +720,8 @@ def run_turn(
     text: str,
     chat_id: str,
     personality_id: Optional[str] = None,
-    toolsets: Optional[str] = None,
+    toolsets: Optional[str] = DEFAULT_DISABLED_TOOLSETS,
+    max_turns: int = DEFAULT_MAX_TURNS,
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
 ) -> str:
     """Run one conversational turn. Always returns speakable text.
@@ -647,6 +743,7 @@ def run_turn(
         chat_id,
         personality_id,
         toolsets,
+        max_turns,
         timeout=timeout,
     )
     if daemon_reply is not None:
