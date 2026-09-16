@@ -9,6 +9,7 @@ import {
   play_pose_sequence,
   pose_count,
   save_current_pose,
+  save_detection_as_pose,
 } from "../../pib_blockly/pib_blockly_server/src/pib-blockly/program-generators/pose-generator";
 import { poseBlocks } from "../../pib_blockly/pib_blockly_server/src/pib-blockly/program-blocks/pose-block";
 
@@ -205,6 +206,38 @@ describe("save_current_pose generator", () => {
   });
 });
 
+describe("save_detection_as_pose generator", () => {
+  it("reuses the current-pose helper with a connected string literal", () => {
+    const generator = generatorWithNameValue('"detected_grip"');
+    const code = save_detection_as_pose({} as Block, generator);
+
+    expect(code).toBe(
+      'save_current_pose_with_all_motors("detected_grip")\n',
+    );
+    const defs = Object.values(generator.definitions_).join("\n");
+    expect(defs).toContain(
+      "from pib_sdk.features.poses import save_current_pose, list_poses, get_pose",
+    );
+    expect(defs).toContain(
+      "save_current_pose(telemetry, pose_backend, name, motor_names)",
+    );
+  });
+
+  it("passes a connected name variable through instead of a hardcoded pose name", () => {
+    const generator = generatorWithNameValue("pose_from_detection");
+    expect(save_detection_as_pose({} as Block, generator)).toBe(
+      "save_current_pose_with_all_motors(pose_from_detection)\n",
+    );
+  });
+
+  it("falls back to the default pose name when the input is unconnected", () => {
+    const generator = generatorWithNameValue("");
+    expect(save_detection_as_pose({} as Block, generator)).toBe(
+      'save_current_pose_with_all_motors("pose name")\n',
+    );
+  });
+});
+
 describe("save current pose block", () => {
   beforeAll(() => Blockly.common.defineBlocks(poseBlocks));
 
@@ -228,6 +261,25 @@ describe("save current pose block", () => {
           (field) => field instanceof Blockly.FieldDropdown,
         ),
       ).toBe(false);
+    } finally {
+      workspace.dispose();
+      Blockly.Events.enable();
+    }
+  });
+
+  it("defines save_detection_as_pose as a statement with a string NAME input", () => {
+    const workspace = new Blockly.Workspace();
+    Blockly.Events.disable();
+    try {
+      const block = workspace.newBlock("save_detection_as_pose");
+      const nameInput = block.getInput("NAME");
+
+      expect(nameInput).not.toBeNull();
+      expect(nameInput?.type).toBe(Blockly.inputs.inputTypes.VALUE);
+      expect(nameInput?.connection?.getCheck()).toEqual(["String"]);
+      expect(block.previousConnection).not.toBeNull();
+      expect(block.nextConnection).not.toBeNull();
+      expect(block.outputConnection).toBeNull();
     } finally {
       workspace.dispose();
       Blockly.Events.enable();
