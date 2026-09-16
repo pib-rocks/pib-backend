@@ -96,6 +96,7 @@ def daemon_server(monkeypatch):
         chat_id,
         personality_id=None,
         toolsets=None,
+        enabled_toolsets=None,
         max_turns=None,
         timeout=None,
         stream_callback=None,
@@ -105,6 +106,7 @@ def daemon_server(monkeypatch):
             "chat_id": chat_id,
             "personality_id": personality_id,
             "toolsets": toolsets,
+            "enabled_toolsets": enabled_toolsets,
             "max_turns": max_turns,
             "timeout": timeout,
         }
@@ -156,6 +158,7 @@ def test_turn_accepts_payload_and_returns_reply(daemon_server):
             "chat_id": "c-1",
             "personality_id": "p-9",
             "toolsets": "mcp",
+            "enabled_toolsets": "mcp-pib,vision",
             "timeout": 30,
         }
     ).encode()
@@ -175,6 +178,7 @@ def test_turn_accepts_payload_and_returns_reply(daemon_server):
         "chat_id": "c-1",
         "personality_id": "p-9",
         "toolsets": "mcp",
+        "enabled_toolsets": "mcp-pib,vision",
         "max_turns": None,
         "timeout": 30,
     }
@@ -213,6 +217,26 @@ def test_turn_rejects_missing_fields(daemon_server):
     with pytest.raises(HTTPError) as exc_info:
         urlopen(req, timeout=2)
     assert exc_info.value.code == 400
+
+
+def test_turn_rejects_invalid_enabled_toolsets(daemon_server):
+    from urllib.error import HTTPError
+
+    server, _ = daemon_server
+    host, port = server.server_address
+    req = Request(
+        f"http://{host}:{port}/turn",
+        data=b'{"text": "hi", "chat_id": "c-1", "enabled_toolsets": ["mcp-pib"]}',
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with pytest.raises(HTTPError) as exc_info:
+        urlopen(req, timeout=2)
+
+    assert exc_info.value.code == 400
+    assert json.loads(exc_info.value.read().decode()) == {
+        "error": "enabled_toolsets must be a string"
+    }
 
 
 def test_start_daemon_helper_serves_health(monkeypatch):
@@ -304,6 +328,7 @@ def test_client_uses_session_pooling_for_daemon(daemon_server, monkeypatch):
         replies["last"]["toolsets"]
         == "terminal,code_execution,file,memory,session_search"
     )
+    assert replies["last"]["enabled_toolsets"] == "mcp-pib,vision"
     assert replies["last"]["max_turns"] == 4
 
 
@@ -344,6 +369,7 @@ def test_run_turn_in_process_constructs_and_reuses_one_agent_per_chat(
             chat_id="chat-42",
             personality_id="pers-1",
             toolsets="terminal,file",
+            enabled_toolsets="mcp-pib,vision",
             max_turns=7,
             timeout=30,
         )
@@ -351,18 +377,34 @@ def test_run_turn_in_process_constructs_and_reuses_one_agent_per_chat(
             text="Noch einmal",
             chat_id="chat-42",
             toolsets="terminal,file",
+            enabled_toolsets="mcp-pib,vision",
             max_turns=7,
         )
 
     assert first == second == "in-process-reply"
     assert len(created) == 1
     assert created[0].kwargs["session_id"] == "pib_chat_chat-42"
-    assert created[0].kwargs["enabled_toolsets"] is None
+    assert created[0].kwargs["enabled_toolsets"] == ["mcp-pib", "vision"]
     assert created[0].kwargs["disabled_toolsets"] == ["terminal", "file"]
     assert created[0].kwargs["max_iterations"] == 7
     assert created[0].kwargs["skip_memory"] is True
     assert created[0].run_conversation.call_count == 2
     subprocess_runner.assert_not_called()
+
+
+def test_empty_enabled_toolsets_falls_back_to_voice_default(monkeypatch):
+    from public_api_client.hermes_agent_client import DEFAULT_ENABLED_TOOLSETS
+
+    created = []
+    hd.clear_agent_cache()
+
+    with patch.dict(sys.modules, {"run_agent": _fake_agent_module(created)}):
+        assert (
+            hd.run_turn_in_process("hi", "chat-default", enabled_toolsets="") == "OK."
+        )
+
+    assert created[0].kwargs["enabled_toolsets"] == DEFAULT_ENABLED_TOOLSETS.split(",")
+    assert "mcp-pib" in created[0].kwargs["enabled_toolsets"]
 
 
 def test_cached_agent_is_built_with_the_shared_store_and_the_chat_session_id(
@@ -684,6 +726,7 @@ def test_run_turn_in_process_falls_back_to_subprocess_when_import_fails():
             chat_id="chat-7",
             personality_id="pers-1",
             toolsets="pib",
+            enabled_toolsets="mcp-pib,vision",
             timeout=45,
         )
 
@@ -693,6 +736,7 @@ def test_run_turn_in_process_falls_back_to_subprocess_when_import_fails():
         chat_id="chat-7",
         personality_id="pers-1",
         toolsets="pib",
+        enabled_toolsets="mcp-pib,vision",
         timeout=45,
     )
 
@@ -707,6 +751,7 @@ def test_default_turn_runner_uses_in_process_path():
             chat_id="c1",
             personality_id="p1",
             toolsets=None,
+            enabled_toolsets="mcp-pib,vision",
             max_turns=None,
             timeout=10,
             stream_callback=None,
@@ -718,6 +763,7 @@ def test_default_turn_runner_uses_in_process_path():
         chat_id="c1",
         personality_id="p1",
         toolsets=None,
+        enabled_toolsets="mcp-pib,vision",
         max_turns=None,
         timeout=10,
         stream_callback=None,
@@ -943,6 +989,7 @@ def test_run_turn_in_process_reads_reply_from_run_agent_stdout(tmp_path, monkeyp
     assert calls == {
         "query": "Wie geht es dir?",
         "model": hd.IN_PROCESS_MODEL,
+        "enabled_toolsets": "mcp-pib,vision",
         "disabled_toolsets": "terminal,code_execution,file,memory,session_search",
         "max_turns": 4,
     }
@@ -981,6 +1028,7 @@ def test_run_turn_in_process_falls_back_when_stdout_has_no_final_response(monkey
         chat_id="chat-3",
         personality_id=None,
         toolsets="terminal,code_execution,file,memory,session_search",
+        enabled_toolsets="mcp-pib,vision",
         timeout=45,
     )
 

@@ -883,7 +883,7 @@ def test_run_hermes_turn_reuses_the_shared_pool(chat_module, chat_node):
     assert len(seen) == 3
 
 
-def test_run_hermes_turn_passes_voice_blacklist(chat_module, chat_node):
+def test_run_hermes_turn_passes_voice_toolset_filters(chat_module, chat_node):
     from public_api_client import hermes_agent_client
 
     with patch.object(hermes_agent_client, "run_turn", return_value="ok") as run_turn:
@@ -897,6 +897,10 @@ def test_run_hermes_turn_passes_voice_blacklist(chat_module, chat_node):
     assert (
         run_turn.call_args.kwargs["toolsets"]
         == hermes_agent_client.DEFAULT_DISABLED_TOOLSETS
+    )
+    assert (
+        run_turn.call_args.kwargs["enabled_toolsets"]
+        == hermes_agent_client.DEFAULT_ENABLED_TOOLSETS
     )
 
 
@@ -930,6 +934,10 @@ def test_streaming_error_falls_back_without_repeating_matching_prefix(
     assert (
         stream_turn.call_args.kwargs["toolsets"]
         == hermes_agent_client.DEFAULT_DISABLED_TOOLSETS
+    )
+    assert (
+        stream_turn.call_args.kwargs["enabled_toolsets"]
+        == hermes_agent_client.DEFAULT_ENABLED_TOOLSETS
     )
     run_turn.assert_called_once()
 

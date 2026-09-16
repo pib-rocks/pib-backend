@@ -654,6 +654,7 @@ class ChatNode(Node):
                 chat_id=chat_id,
                 personality_id=personality_id,
                 toolsets=hermes_agent_client.DEFAULT_DISABLED_TOOLSETS,
+                enabled_toolsets=hermes_agent_client.DEFAULT_ENABLED_TOOLSETS,
                 timeout=timeout,
             )
 
@@ -713,6 +714,7 @@ class ChatNode(Node):
                     chat_id=chat_id,
                     personality_id=personality_id,
                     toolsets=hermes_agent_client.DEFAULT_DISABLED_TOOLSETS,
+                    enabled_toolsets=hermes_agent_client.DEFAULT_ENABLED_TOOLSETS,
                     timeout=timeout,
                 ):
                     events.put(("delta", delta))
