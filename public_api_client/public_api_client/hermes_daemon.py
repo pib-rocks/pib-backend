@@ -20,11 +20,13 @@ import json
 import logging
 import os
 import re
+import shutil
 import socket
 import sys
 import threading
 import time
 from collections import OrderedDict
+from pathlib import Path
 
 # Force IPv4 preference in socket.getaddrinfo to prevent 10s IPv6 timeouts on Pi networks
 _orig_getaddrinfo = socket.getaddrinfo
@@ -40,6 +42,7 @@ socket.getaddrinfo = _ipv4_preferred_getaddrinfo
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Callable, Optional
 from urllib.error import URLError
+from urllib.parse import parse_qs, urlparse
 from urllib.request import Request, urlopen
 
 DEFAULT_HOST = "127.0.0.1"
@@ -60,6 +63,22 @@ TurnRunner = Callable[..., str]
 # Model used for the in-process ``run_agent.main`` entry point.
 IN_PROCESS_MODEL = "gemini-3.5-flash"
 DEFAULT_AGENT_CACHE_SIZE = 32
+DEFAULT_PROFILE_FACTORY_MODE = "require"
+PROFILE_FACTORY_ENV = "PIB_HERMES_PROFILE_FACTORY"
+PROFILE_DIRS = (
+    "memories",
+    "sessions",
+    "skills",
+    "skins",
+    "logs",
+    "plans",
+    "workspace",
+    "cron",
+    "home",
+)
+CLONE_CONFIG_FILES = ("config.yaml", ".env", "SOUL.md")
+CLONE_SUBDIR_FILES = ("memories/MEMORY.md", "memories/USER.md")
+_filesystem_factory_warned = False
 
 # Every chat gets its own Hermes session, so history never crosses chats.
 SESSION_ID_PREFIX = "pib_chat_"
@@ -93,21 +112,209 @@ class _CachedAgent:
         self.lock = threading.Lock()
 
 
-_agent_cache: OrderedDict[str, _CachedAgent] = OrderedDict()
+_agent_cache: OrderedDict[tuple[str, str], _CachedAgent] = OrderedDict()
 _agent_cache_lock = threading.Lock()
-_mcp_discovery_attempted = False
+_mcp_discovery_attempted: set[str] = set()
 _mcp_discovery_lock = threading.Lock()
 
-# One SQLite session store for the whole process: two handles on the same file
-# lock each other out.
-_session_db = None
-_session_db_attempted = False
+# One SQLite session store per personality home.
+_session_dbs: dict[str, object] = {}
+_session_db_attempted: set[str] = set()
 _session_db_lock = threading.Lock()
 
 
 def session_id_for_chat(chat_id: str) -> str:
     """Hermes session id backing one pib chat."""
     return f"{SESSION_ID_PREFIX}{chat_id}"
+
+
+def _profile_layout(personality_id: str) -> dict:
+    from pib_hermes_config import profile_dir_for
+
+    profile_dir = profile_dir_for(personality_id)
+    return {
+        "profile_dir": profile_dir,
+        "has_config": os.path.isfile(os.path.join(profile_dir, "config.yaml")),
+        "has_memories": os.path.isdir(os.path.join(profile_dir, "memories")),
+        "has_sessions": os.path.isdir(os.path.join(profile_dir, "sessions")),
+        "has_soul": os.path.isfile(os.path.join(profile_dir, "SOUL.md")),
+    }
+
+
+def _profile_is_complete(profile_dir: str) -> bool:
+    return all(
+        os.path.isfile(os.path.join(profile_dir, filename))
+        for filename in ("config.yaml", ".env")
+    ) and all(
+        os.path.isdir(os.path.join(profile_dir, dirname)) for dirname in PROFILE_DIRS
+    )
+
+
+def _profile_dirs_are_complete(profile_dir: str) -> bool:
+    return all(
+        os.path.isdir(os.path.join(profile_dir, dirname)) for dirname in PROFILE_DIRS
+    )
+
+
+def _filesystem_profile_factory(personality_id: str, profile_dir: str) -> None:
+    """Explicit emergency opt-out when the canonical Hermes API is unavailable."""
+    global _filesystem_factory_warned
+    if not _filesystem_factory_warned:
+        logging.warning(
+            "%s=filesystem: bypassing the canonical Hermes profile factory",
+            PROFILE_FACTORY_ENV,
+        )
+        _filesystem_factory_warned = True
+
+    from public_api_client.hermes_agent_client import hermes_home
+
+    os.makedirs(profile_dir, exist_ok=True)
+    for dirname in PROFILE_DIRS:
+        os.makedirs(os.path.join(profile_dir, dirname), exist_ok=True)
+    for relative in CLONE_CONFIG_FILES + CLONE_SUBDIR_FILES:
+        source = os.path.join(hermes_home(), relative)
+        target = os.path.join(profile_dir, relative)
+        if os.path.isfile(source) and not os.path.exists(target):
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            shutil.copyfile(source, target)
+    env_path = os.path.join(profile_dir, ".env")
+    if not os.path.exists(env_path):
+        Path(env_path).write_text(
+            "# Per-profile secrets for this Hermes profile.\n", encoding="utf-8"
+        )
+
+
+def ensure_profile_home(
+    personality_id: str,
+    personality_name: Optional[str] = None,
+    soul_text: Optional[str] = None,
+) -> dict:
+    """Create or repair one complete Hermes home with the canonical factory."""
+    from pib_hermes_config import (
+        align_profile_ownership,
+        build_default_soul_text,
+        profile_dir_for,
+        profile_name_for,
+    )
+    from public_api_client.hermes_agent_client import _ensure_mcp_servers_pib
+
+    if not isinstance(personality_id, str) or not personality_id:
+        raise ValueError("personality_id must be a non-empty string")
+
+    mode = os.environ.get(PROFILE_FACTORY_ENV, DEFAULT_PROFILE_FACTORY_MODE).lower()
+    if mode not in {"require", "filesystem"}:
+        raise ValueError(f"{PROFILE_FACTORY_ENV} must be 'require' or 'filesystem'")
+
+    profile_dir = profile_dir_for(personality_id)
+    complete = _profile_is_complete(profile_dir)
+    created = False
+    factory = "filesystem" if mode == "filesystem" else "hermes-cli-api"
+
+    if not complete:
+        if os.path.exists(profile_dir):
+            logging.warning("repairing incomplete Hermes profile at %s", profile_dir)
+        if mode == "filesystem":
+            _filesystem_profile_factory(personality_id, profile_dir)
+            created = True
+        else:
+            try:
+                from hermes_cli.profiles import create_profile, profile_exists
+            except Exception as exc:
+                logging.error("Hermes profile factory is unavailable: %s", exc)
+                raise RuntimeError("Hermes profile factory is unavailable") from exc
+
+            profile_name = profile_name_for(personality_id)
+            if profile_exists(profile_name) and not os.path.exists(profile_dir):
+                raise RuntimeError(
+                    f"Hermes profile {profile_name} resolves outside {profile_dir}"
+                )
+            backup = None
+            if os.path.exists(profile_dir):
+                backup = profile_dir + ".incomplete"
+                if os.path.exists(backup):
+                    shutil.rmtree(backup)
+                os.replace(profile_dir, backup)
+            try:
+                result = create_profile(
+                    name=profile_name,
+                    clone_from=None,
+                    clone_all=False,
+                    clone_config=True,
+                    no_alias=True,
+                    no_skills=False,
+                    description=f"pib personality {personality_id}",
+                    clone_channels=False,
+                )
+                if os.path.abspath(str(result)) != os.path.abspath(profile_dir):
+                    raise RuntimeError(
+                        f"Hermes factory created {result}, expected {profile_dir}"
+                    )
+                if not _profile_dirs_are_complete(profile_dir):
+                    raise RuntimeError("Hermes factory returned an incomplete profile")
+            except Exception as exc:
+                logging.error(
+                    "Hermes profile factory failed for %s: %s", personality_id, exc
+                )
+                if os.path.exists(profile_dir):
+                    shutil.rmtree(profile_dir)
+                if backup is not None:
+                    os.replace(backup, profile_dir)
+                raise RuntimeError(f"Hermes profile factory failed: {exc}") from exc
+            if backup is not None:
+                for filename in ("config.yaml", ".env"):
+                    old_file = os.path.join(backup, filename)
+                    if os.path.isfile(old_file):
+                        shutil.copyfile(old_file, os.path.join(profile_dir, filename))
+                shutil.rmtree(backup)
+            created = True
+
+    soul = build_default_soul_text(
+        personality_name or "pib", custom_description=soul_text or None
+    )
+    soul_path = os.path.join(profile_dir, "SOUL.md")
+    with open(soul_path, "w", encoding="utf-8") as fh:
+        fh.write(soul)
+    _ensure_mcp_servers_pib(profile_dir)
+    align_profile_ownership(profile_dir)
+    os.chmod(profile_dir, 0o700)
+    os.chmod(soul_path, 0o644)
+    env_path = os.path.join(profile_dir, ".env")
+    if os.path.exists(env_path):
+        os.chmod(env_path, 0o600)
+
+    return {
+        "ok": True,
+        "profile_dir": profile_dir,
+        "created": created,
+        "factory": factory,
+    }
+
+
+@contextlib.contextmanager
+def hermes_home_scope(profile_dir: str):
+    """Context-local Hermes home override; never mutates process HERMES_HOME."""
+    try:
+        from hermes_constants import (
+            reset_hermes_home_override,
+            set_hermes_home_override,
+        )
+    except ImportError as exc:
+        raise RuntimeError("Hermes home override API is unavailable") from exc
+
+    token = set_hermes_home_override(Path(profile_dir))
+    try:
+        yield
+    finally:
+        reset_hermes_home_override(token)
+
+
+def _current_home_key() -> str:
+    try:
+        from hermes_constants import get_hermes_home
+
+        return str(Path(get_hermes_home()).resolve())
+    except ImportError:
+        return str(Path(os.environ.get("HERMES_HOME") or DEFAULT_HERMES_HOME).resolve())
 
 
 def _create_session_db():
@@ -130,14 +337,13 @@ def _create_session_db():
 
 
 def _shared_session_db():
-    """Return this process' session store, opening it on first use."""
-    global _session_db, _session_db_attempted
-
+    """Return the session store for the current context-local Hermes home."""
+    home = _current_home_key()
     with _session_db_lock:
-        if not _session_db_attempted:
-            _session_db_attempted = True
-            _session_db = _create_session_db()
-        return _session_db
+        if home not in _session_db_attempted:
+            _session_db_attempted.add(home)
+            _session_dbs[home] = _create_session_db()
+        return _session_dbs.get(home)
 
 
 def _load_conversation_history(session_db, session_id: str) -> list:
@@ -188,8 +394,6 @@ def _close_agent(agent) -> None:
 
 def clear_agent_cache() -> None:
     """Close and remove all process-local chat agents (primarily for shutdown/tests)."""
-    global _session_db, _session_db_attempted
-
     with _agent_cache_lock:
         entries = list(_agent_cache.values())
         _agent_cache.clear()
@@ -197,10 +401,10 @@ def clear_agent_cache() -> None:
         _close_agent(entry.agent)
 
     with _session_db_lock:
-        store = _session_db
-        _session_db = None
-        _session_db_attempted = False
-    if store is not None:
+        stores = list(_session_dbs.values())
+        _session_dbs.clear()
+        _session_db_attempted.clear()
+    for store in stores:
         # The agents are gone, so nothing can write anymore: close to checkpoint the WAL.
         try:
             store.close()
@@ -227,13 +431,12 @@ def _discover_mcp_tools() -> None:
 
 
 def _ensure_mcp_tools_discovered() -> None:
-    """Attempt MCP discovery once in this daemon process, without failing turns."""
-    global _mcp_discovery_attempted
-
+    """Attempt MCP discovery once for each context-local Hermes home."""
+    home = _current_home_key()
     with _mcp_discovery_lock:
-        if _mcp_discovery_attempted:
+        if home in _mcp_discovery_attempted:
             return
-        _mcp_discovery_attempted = True
+        _mcp_discovery_attempted.add(home)
         try:
             _discover_mcp_tools()
         except Exception as exc:
@@ -266,13 +469,14 @@ def _agent_for_chat(
 ):
     """Return the sole cached agent for a chat, evicting least-recently-used chats."""
     settings = (enabled_toolsets, toolsets, max_turns)
+    key = (_current_home_key(), chat_id)
     with _agent_cache_lock:
-        cached = _agent_cache.get(chat_id)
+        cached = _agent_cache.get(key)
         if cached is not None and cached.settings == settings:
-            _agent_cache.move_to_end(chat_id)
+            _agent_cache.move_to_end(key)
             return cached
         if cached is not None:
-            _agent_cache.pop(chat_id)
+            _agent_cache.pop(key)
             _close_agent(cached.agent)
 
         construction_started = time.monotonic()
@@ -294,10 +498,10 @@ def _agent_for_chat(
             _registered_mcp_tool_count(),
         )
         cached = _CachedAgent(agent, settings)
-        _agent_cache[chat_id] = cached
+        _agent_cache[key] = cached
 
         while len(_agent_cache) > DEFAULT_AGENT_CACHE_SIZE:
-            _evicted_chat, evicted = _agent_cache.popitem(last=False)
+            _evicted_key, evicted = _agent_cache.popitem(last=False)
             _close_agent(evicted.agent)
         return cached
 
@@ -428,7 +632,7 @@ def daemon_health_url() -> str:
     return daemon_base_url() + "/health"
 
 
-def run_turn_in_process(
+def _run_turn_in_home(
     text: str,
     chat_id: str,
     personality_id: Optional[str] = None,
@@ -438,15 +642,10 @@ def run_turn_in_process(
     stream_callback: Optional[Callable[[str], None]] = None,
     enabled_toolsets: Optional[str] = None,
 ) -> str:
-    """Execute one turn via a cached ``AIAgent`` dedicated to this chat.
+    """Execute one turn after its Hermes home scope has been installed.
 
     The turn replays this chat's stored conversation, so what was said earlier is in
     context instead of the agent searching for it with its whole iteration budget.
-
-    Hermes resolves HERMES_HOME at import time, so the cached in-process API
-    cannot safely switch to a personality-specific profile. Profiles are still
-    provisioned for the CLI fallback, but in-process turns use the daemon's
-    startup profile.
     """
     from public_api_client.hermes_agent_client import (
         DEFAULT_DISABLED_TOOLSETS,
@@ -570,6 +769,48 @@ def run_turn_in_process(
         return FALLBACK_REPLY
 
 
+def run_turn_in_process(
+    text: str,
+    chat_id: str,
+    personality_id: Optional[str] = None,
+    toolsets: Optional[str] = None,
+    max_turns: Optional[int] = None,
+    timeout: Optional[int] = None,
+    stream_callback: Optional[Callable[[str], None]] = None,
+    enabled_toolsets: Optional[str] = None,
+) -> str:
+    """Execute a turn inside the personality's context-local Hermes home."""
+    scope = contextlib.nullcontext()
+    profile_dir = None
+    if personality_id:
+        from pib_hermes_config import profile_dir_for
+        from public_api_client.hermes_agent_client import ensure_profile
+
+        profile_dir = profile_dir_for(personality_id)
+        scope = hermes_home_scope(profile_dir)
+
+    with scope:
+        if personality_id:
+            profile_dir = ensure_profile(personality_id)
+            logging.info(
+                "HERMES_TURN_HOME personality=%s home=%s memory_dir=%s session_db=%s",
+                personality_id,
+                profile_dir,
+                os.path.join(profile_dir, "memories"),
+                os.path.join(profile_dir, "state.db"),
+            )
+        return _run_turn_in_home(
+            text=text,
+            chat_id=chat_id,
+            personality_id=personality_id,
+            toolsets=toolsets,
+            max_turns=max_turns,
+            timeout=timeout,
+            stream_callback=stream_callback,
+            enabled_toolsets=enabled_toolsets,
+        )
+
+
 def _default_turn_runner(
     text: str,
     chat_id: str,
@@ -594,7 +835,7 @@ def _default_turn_runner(
 
 
 class HermesDaemonHandler(BaseHTTPRequestHandler):
-    """Minimal request handler for /health and /turn."""
+    """Minimal request handler for health, profile provisioning, and turns."""
 
     # Injected on the server instance before serve_forever.
     turn_runner: TurnRunner = staticmethod(_default_turn_runner)  # type: ignore[assignment]
@@ -620,30 +861,81 @@ class HermesDaemonHandler(BaseHTTPRequestHandler):
         self.wfile.flush()
 
     def do_GET(self) -> None:  # noqa: N802 — http.server API
-        if self.path.rstrip("/") == "/health":
+        parsed = urlparse(self.path)
+        if parsed.path.rstrip("/") == "/health":
             self._send_json(200, {"status": "ok"})
+            return
+        if parsed.path.rstrip("/") == "/profile":
+            personality_ids = parse_qs(parsed.query).get("personality_id", [])
+            if not personality_ids or not personality_ids[0]:
+                self._send_json(
+                    400, {"ok": False, "error": "personality_id is required"}
+                )
+                return
+            self._send_json(200, {"ok": True, **_profile_layout(personality_ids[0])})
             return
         self._send_json(404, {"error": "not found"})
 
     def do_POST(self) -> None:  # noqa: N802 — http.server API
-        if self.path.rstrip("/") != "/turn":
+        path = urlparse(self.path).path.rstrip("/")
+        if path not in {"/turn", "/profile"}:
             self._send_json(404, {"error": "not found"})
             return
-
-        t0 = time.monotonic()
-        logging.info("[PERF_TRACE] DAEMON_RECV elapsed_ms=0.00")
 
         length = int(self.headers.get("Content-Length") or 0)
         raw = self.rfile.read(length) if length > 0 else b"{}"
         try:
             data = json.loads(raw.decode("utf-8") or "{}")
         except (UnicodeDecodeError, json.JSONDecodeError):
-            self._send_json(400, {"error": "invalid json"})
+            payload = {"error": "invalid json"}
+            if path == "/profile":
+                payload["ok"] = False
+            self._send_json(400, payload)
             return
 
         if not isinstance(data, dict):
-            self._send_json(400, {"error": "body must be a json object"})
+            payload = {"error": "body must be a json object"}
+            if path == "/profile":
+                payload["ok"] = False
+            self._send_json(400, payload)
             return
+
+        if path == "/profile":
+            personality_id = data.get("personality_id")
+            personality_name = data.get("personality_name")
+            soul_text = data.get("soul_text")
+            if not isinstance(personality_id, str) or not personality_id:
+                self._send_json(
+                    400,
+                    {"ok": False, "error": "personality_id is required"},
+                )
+                return
+            if personality_name is not None and not isinstance(personality_name, str):
+                self._send_json(
+                    400,
+                    {"ok": False, "error": "personality_name must be a string"},
+                )
+                return
+            if soul_text is not None and not isinstance(soul_text, str):
+                self._send_json(
+                    400, {"ok": False, "error": "soul_text must be a string"}
+                )
+                return
+            try:
+                result = ensure_profile_home(
+                    personality_id,
+                    personality_name=personality_name,
+                    soul_text=soul_text,
+                )
+            except Exception as exc:
+                logging.exception("hermes-daemon /profile failed: %s", exc)
+                self._send_json(500, {"ok": False, "error": str(exc)})
+                return
+            self._send_json(200, result)
+            return
+
+        t0 = time.monotonic()
+        logging.info("[PERF_TRACE] DAEMON_RECV elapsed_ms=0.00")
 
         text = data.get("text")
         chat_id = data.get("chat_id")

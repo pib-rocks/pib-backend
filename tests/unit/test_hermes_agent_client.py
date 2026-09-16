@@ -106,6 +106,7 @@ def test_ensure_profile_writes_templated_soul_with_name_and_mcp_docs(
     tmp_path, monkeypatch
 ):
     monkeypatch.setenv("PIB_HERMES_PROFILES_DIR", str(tmp_path / "profiles"))
+    monkeypatch.setenv("PIB_HERMES_PROFILE_FACTORY", "filesystem")
     monkeypatch.setenv("PIB_HERMES_BIN", str(tmp_path / "not-installed" / "hermes"))
 
     with patch("public_api_client.hermes_agent_client.subprocess.run") as run:
@@ -126,6 +127,7 @@ def test_ensure_profile_writes_templated_soul_with_name_and_mcp_docs(
 
 def test_ensure_profile_defaults_personality_name_to_pib(tmp_path, monkeypatch):
     monkeypatch.setenv("PIB_HERMES_PROFILES_DIR", str(tmp_path / "profiles"))
+    monkeypatch.setenv("PIB_HERMES_PROFILE_FACTORY", "filesystem")
     monkeypatch.setenv("PIB_HERMES_BIN", str(tmp_path / "not-installed" / "hermes"))
 
     pdir = ensure_profile("p-9", soul_text="Hallo.")

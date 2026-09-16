@@ -16,7 +16,6 @@ import json
 import logging
 import os
 import re
-import shutil
 import subprocess
 import time
 from typing import Iterator, Optional
@@ -178,55 +177,6 @@ def build_command(
     return cmd
 
 
-def _create_profile_with_cli(personality_id: str, timeout: int) -> bool:
-    """Optional enhancement: let the CLI create the profile. True when it did.
-
-    Not a precondition for a working profile: whichever container calls
-    ensure_profile() may not have the CLI mounted at all (the Flask API does
-    not), and this used to fail silently there and leave behind a profile with a
-    SOUL.md but no credentials.
-    """
-    name = profile_name_for(personality_id)
-    if not hermes_binary_available():
-        logging.info(
-            "hermes CLI %s is not available here; provisioning profile %s with "
-            "filesystem operations only",
-            hermes_bin(),
-            name,
-        )
-        return False
-    try:
-        result = subprocess.run(
-            [
-                hermes_bin(),
-                "profile",
-                "create",
-                name,
-                "--clone",
-                "--no-alias",
-                "--description",
-                f"pib personality {personality_id}",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            check=False,
-        )
-    except Exception as exc:
-        logging.warning("hermes profile create %s could not be run: %s", name, exc)
-        return False
-    if result.returncode != 0:
-        logging.warning(
-            "hermes profile create %s exited %s: %s",
-            name,
-            result.returncode,
-            (result.stderr or "")[:500],
-        )
-        return False
-    logging.info("created hermes profile %s with the CLI (--clone)", name)
-    return True
-
-
 def _merge_missing_mcp_env(entry: dict) -> bool:
     """Fill the env keys PIB_MCP_SERVER needs into an existing entry. Returns changed.
 
@@ -320,113 +270,22 @@ def _ensure_mcp_servers_pib(pdir: str) -> None:
     )
 
 
-def _inherit_base_config(pdir: str) -> None:
-    """Materialize the provider config a profile needs, from HERMES_HOME or environment.
-
-    `hermes -p <profile>` resolves its LLM provider from the profile, so a
-    profile holding only a SOUL.md fails every turn with "No LLM provider
-    configured". Copies rather than symlinks, so that a later `hermes profile
-    delete` cannot damage the base install. Also ensures API keys in .env
-    are populated from environment variables if missing.
-    """
-    base = hermes_home()
-    for name, mode in ((CONFIG_FILENAME, None), (ENV_FILENAME, ENV_FILE_MODE)):
-        target = os.path.join(pdir, name)
-        if not os.path.exists(target):
-            source = os.path.join(base, name)
-            if os.path.isfile(source):
-                try:
-                    shutil.copyfile(source, target)
-                    if mode is not None:
-                        os.chmod(target, mode)
-                    logging.info(
-                        "copied %s from %s into hermes profile %s", name, base, pdir
-                    )
-                except OSError as exc:
-                    logging.warning("could not copy %s into %s: %s", name, pdir, exc)
-
-    # Always ensure config.yaml in profile has valid provider/model/speed defaults
-    cfg_target = os.path.join(pdir, CONFIG_FILENAME)
-    if not os.path.exists(cfg_target):
-        default_cfg = {
-            "provider": DEFAULT_HERMES_PROVIDER,
-            "model": DEFAULT_HERMES_MODEL,
-            "reasoning_effort": DEFAULT_REASONING_EFFORT,
-            "max_tokens": DEFAULT_MAX_TOKENS,
-            "temperature": DEFAULT_TEMPERATURE,
-            "mcp_servers": {"pib": copy.deepcopy(PIB_MCP_SERVER)},
-        }
-        try:
-            with open(cfg_target, "w", encoding="utf-8") as fh:
-                yaml.safe_dump(default_cfg, fh, default_flow_style=False)
-            logging.info("seeded default config.yaml in profile at %s", cfg_target)
-        except OSError as exc:
-            logging.warning("could not seed config.yaml in profile %s: %s", pdir, exc)
-
-    # Always ensure .env in profile carries GEMINI_API_KEY / GOOGLE_API_KEY if present in env
-    env_target = os.path.join(pdir, ENV_FILENAME)
-    existing_env = ""
-    if os.path.exists(env_target):
-        try:
-            with open(env_target, "r", encoding="utf-8") as fh:
-                existing_env = fh.read()
-        except OSError:
-            pass
-
-    gemini_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
-    if gemini_key and (
-        "GEMINI_API_KEY" not in existing_env or "GOOGLE_API_KEY" not in existing_env
-    ):
-        try:
-            with open(env_target, "a", encoding="utf-8") as fh:
-                if "GEMINI_API_KEY" not in existing_env:
-                    fh.write(f"\nGEMINI_API_KEY={gemini_key}\n")
-                if "GOOGLE_API_KEY" not in existing_env:
-                    fh.write(f"\nGOOGLE_API_KEY={gemini_key}\n")
-            os.chmod(env_target, ENV_FILE_MODE)
-            logging.info(
-                "ensured GEMINI_API_KEY/GOOGLE_API_KEY in profile .env at %s",
-                env_target,
-            )
-        except OSError as exc:
-            logging.warning("could not update profile .env at %s: %s", env_target, exc)
-
-    _ensure_mcp_servers_pib(pdir)
-
-
 def ensure_profile(
     personality_id: str,
     soul_text: str = "",
     timeout: int = 60,
     personality_name: Optional[str] = None,
 ) -> str:
-    """Create the personality's Hermes profile if needed and write its SOUL.md.
+    """Loud local repair path, executed only where Hermes is importable."""
+    del timeout
+    from public_api_client.hermes_daemon import ensure_profile_home
 
-    Provisioning is done with filesystem operations alone, because the CLI is not
-    installed in every container that calls this. config.yaml and .env are copied
-    in from the base install (HERMES_HOME) so that `hermes -p <profile>` finds a
-    provider; the base install must therefore hold working credentials.
-
-    The SOUL.md is always seeded from ``build_default_soul_text`` so every profile
-    knows its robot identity and the available pib MCP tools. ``soul_text`` is
-    treated as an optional custom description appended after the identity line.
-
-    Returns the profile directory.
-    """
-    pdir = profile_dir_for(personality_id)
-    if not os.path.isdir(pdir):
-        _create_profile_with_cli(personality_id, timeout)
-    os.makedirs(pdir, exist_ok=True)
-    text = build_default_soul_text(
-        personality_name or "pib",
-        custom_description=soul_text or None,
+    result = ensure_profile_home(
+        personality_id,
+        personality_name=personality_name,
+        soul_text=soul_text,
     )
-    with open(soul_path_for(personality_id), "w", encoding="utf-8") as fh:
-        fh.write(text)
-    # Also repairs a profile that an earlier deployment left without credentials.
-    _inherit_base_config(pdir)
-    align_profile_ownership(pdir)
-    return pdir
+    return result["profile_dir"]
 
 
 def delete_profile(personality_id: str, timeout: int = 60) -> bool:
@@ -475,6 +334,54 @@ def daemon_turn_url() -> str:
         base = override.rstrip("/")
         return base if base.endswith("/turn") else base + "/turn"
     return DEFAULT_DAEMON_TURN_URL
+
+
+def daemon_profile_url() -> str:
+    """POST target for canonical profile provisioning."""
+    return daemon_turn_url().removesuffix("/turn") + "/profile"
+
+
+def provision_profile(
+    personality_id: str,
+    personality_name: Optional[str] = None,
+    soul_text: Optional[str] = None,
+    timeout: int = 60,
+) -> dict:
+    """Ask the Hermes daemon to create or repair a complete profile."""
+    try:
+        import requests
+    except ImportError as exc:
+        raise RuntimeError(
+            "requests is required for Hermes profile provisioning"
+        ) from exc
+
+    payload = {"personality_id": personality_id}
+    if personality_name is not None:
+        payload["personality_name"] = personality_name
+    if soul_text is not None:
+        payload["soul_text"] = soul_text
+
+    session = _get_daemon_session()
+    post = session.post if session is not None else requests.post
+    try:
+        response = post(daemon_profile_url(), json=payload, timeout=timeout)
+    except requests.exceptions.RequestException as exc:
+        raise RuntimeError(f"Hermes profile daemon is unreachable: {exc}") from exc
+
+    try:
+        result = response.json()
+    except ValueError as exc:
+        raise RuntimeError("Hermes profile daemon returned invalid JSON") from exc
+    if (
+        response.status_code >= 300
+        or not isinstance(result, dict)
+        or not result.get("ok")
+    ):
+        error = result.get("error") if isinstance(result, dict) else None
+        raise RuntimeError(
+            error or f"Hermes profile daemon returned {response.status_code}"
+        )
+    return result
 
 
 def _get_daemon_session():

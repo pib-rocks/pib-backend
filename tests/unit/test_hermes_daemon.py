@@ -8,6 +8,7 @@ import sys
 import threading
 import time
 import types
+from contextvars import ContextVar
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 from urllib.request import Request, urlopen
@@ -22,12 +23,23 @@ _REAL_DISCOVER_MCP_TOOLS = hd._discover_mcp_tools
 @pytest.fixture(autouse=True)
 def isolate_mcp_discovery(monkeypatch):
     """Keep daemon unit tests independent of the developer's Hermes config and state.db."""
-    monkeypatch.setattr(hd, "_mcp_discovery_attempted", False)
+    monkeypatch.setattr(hd, "_mcp_discovery_attempted", set())
     monkeypatch.setattr(hd, "_discover_mcp_tools", MagicMock())
     monkeypatch.setattr(hd, "_registered_mcp_tool_count", MagicMock(return_value=0))
-    monkeypatch.setattr(hd, "_session_db", None)
-    monkeypatch.setattr(hd, "_session_db_attempted", False)
+    monkeypatch.setattr(hd, "_session_dbs", {})
+    monkeypatch.setattr(hd, "_session_db_attempted", set())
     monkeypatch.setattr(hd, "_create_session_db", MagicMock(return_value=None))
+
+
+@pytest.fixture(autouse=True)
+def fake_hermes_home_override(monkeypatch, sandboxed_hermes_home):
+    current_home = ContextVar("test_hermes_home", default=sandboxed_hermes_home)
+    module = types.ModuleType("hermes_constants")
+    module.get_hermes_home = current_home.get
+    module.set_hermes_home_override = current_home.set
+    module.reset_hermes_home_override = current_home.reset
+    monkeypatch.setitem(sys.modules, "hermes_constants", module)
+    return current_home
 
 
 class _FakeSessionDB:
@@ -147,6 +159,78 @@ def test_health_returns_ok(daemon_server):
     with urlopen(f"http://{host}:{port}/health", timeout=1) as resp:
         assert resp.status == 200
         assert json.loads(resp.read().decode()) == {"status": "ok"}
+
+
+def test_profile_endpoint_creates_complete_layout_idempotently(
+    daemon_server, monkeypatch
+):
+    server, _ = daemon_server
+    monkeypatch.setenv("PIB_HERMES_PROFILE_FACTORY", "filesystem")
+    host, port = server.server_address
+    body = json.dumps(
+        {
+            "personality_id": "profile-1",
+            "personality_name": "Ada",
+            "soul_text": "Sei neugierig.",
+        }
+    ).encode()
+    request = Request(
+        f"http://{host}:{port}/profile",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+    with urlopen(request, timeout=2) as response:
+        first = json.loads(response.read().decode())
+    with urlopen(request, timeout=2) as response:
+        second = json.loads(response.read().decode())
+
+    profile_dir = Path(first["profile_dir"])
+    assert first["created"] is True
+    assert second["created"] is False
+    assert all((profile_dir / dirname).is_dir() for dirname in hd.PROFILE_DIRS)
+    assert (profile_dir / "config.yaml").is_file()
+    assert (profile_dir / "SOUL.md").is_file()
+
+    with urlopen(
+        f"http://{host}:{port}/profile?personality_id=profile-1", timeout=2
+    ) as response:
+        status = json.loads(response.read().decode())
+    assert status["ok"] is True
+    assert status["has_config"] is True
+    assert status["has_memories"] is True
+    assert status["has_sessions"] is True
+    assert status["has_soul"] is True
+
+
+def test_profile_endpoint_surfaces_factory_failure_without_profile(
+    daemon_server, monkeypatch, tmp_path
+):
+    from urllib.error import HTTPError
+
+    server, _ = daemon_server
+    monkeypatch.setenv("PIB_HERMES_PROFILES_DIR", str(tmp_path / "profiles"))
+    monkeypatch.setattr(
+        hd, "ensure_profile_home", MagicMock(side_effect=RuntimeError("factory failed"))
+    )
+    host, port = server.server_address
+    request = Request(
+        f"http://{host}:{port}/profile",
+        data=b'{"personality_id":"broken"}',
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+    with pytest.raises(HTTPError) as exc_info:
+        urlopen(request, timeout=2)
+
+    assert exc_info.value.code == 500
+    assert json.loads(exc_info.value.read().decode()) == {
+        "ok": False,
+        "error": "factory failed",
+    }
+    assert not (tmp_path / "profiles" / "pib_broken").exists()
 
 
 def test_turn_accepts_payload_and_returns_reply(daemon_server):
@@ -376,6 +460,7 @@ def test_run_turn_in_process_constructs_and_reuses_one_agent_per_chat(
         second = hd.run_turn_in_process(
             text="Noch einmal",
             chat_id="chat-42",
+            personality_id="pers-1",
             toolsets="terminal,file",
             enabled_toolsets="mcp-pib,vision",
             max_turns=7,
@@ -555,6 +640,77 @@ def test_mcp_discovery_is_attempted_once_before_reused_agent_turns(monkeypatch):
     discovery.assert_called_once_with()
 
 
+def test_personality_homes_isolate_stores_discovery_agents_and_history(
+    tmp_path, monkeypatch
+):
+    homes = {
+        "one": str(tmp_path / "profiles" / "pib_one"),
+        "two": str(tmp_path / "profiles" / "pib_two"),
+    }
+    stores = [_FakeSessionDB(), _FakeSessionDB()]
+    stores[0].append_turn("pib_chat_shared", "secret from one", "OK.")
+    creator = MagicMock(side_effect=stores)
+    discovery = MagicMock()
+    monkeypatch.setattr(hd, "_create_session_db", creator)
+    monkeypatch.setattr(hd, "_discover_mcp_tools", discovery)
+    created = []
+    hd.clear_agent_cache()
+
+    with (
+        patch.dict(sys.modules, {"run_agent": _fake_agent_module(created)}),
+        patch(
+            "public_api_client.hermes_agent_client.ensure_profile",
+            side_effect=lambda personality_id: homes[personality_id],
+        ),
+    ):
+        hd.run_turn_in_process("one", "shared", personality_id="one")
+        hd.run_turn_in_process("two", "shared", personality_id="two")
+
+    assert creator.call_count == 2
+    assert discovery.call_count == 2
+    assert len(created) == 2
+    assert created[0].kwargs["session_db"] is stores[0]
+    assert created[1].kwargs["session_db"] is stores[1]
+    assert created[0].histories[0][0]["content"] == "secret from one"
+    assert created[1].histories[0] is None
+
+
+def test_personality_home_override_is_reset_after_success_and_exception(
+    tmp_path, monkeypatch, fake_hermes_home_override
+):
+    from pib_hermes_config import profile_dir_for
+
+    base_home = fake_hermes_home_override.get()
+    profile_dir = profile_dir_for("one")
+    observed = []
+
+    def run_inside_scope(**_kwargs):
+        observed.append(str(fake_hermes_home_override.get()))
+        return "ok"
+
+    with (
+        patch(
+            "public_api_client.hermes_agent_client.ensure_profile",
+            return_value=profile_dir,
+        ),
+        patch.object(hd, "_run_turn_in_home", side_effect=run_inside_scope),
+    ):
+        assert hd.run_turn_in_process("one", "chat", personality_id="one") == "ok"
+    assert observed == [profile_dir]
+    assert fake_hermes_home_override.get() == base_home
+
+    with (
+        patch(
+            "public_api_client.hermes_agent_client.ensure_profile",
+            return_value=profile_dir,
+        ),
+        patch.object(hd, "_run_turn_in_home", side_effect=RuntimeError("turn failed")),
+        pytest.raises(RuntimeError, match="turn failed"),
+    ):
+        hd.run_turn_in_process("one", "chat", personality_id="one")
+    assert fake_hermes_home_override.get() == base_home
+
+
 def test_mcp_discovery_uses_hermes_noninteractive_startup_path():
     hermes_cli = types.ModuleType("hermes_cli")
     hermes_cli.__path__ = []
@@ -668,7 +824,7 @@ def test_agent_cache_evicts_the_least_recently_used_chat(monkeypatch):
         hd.run_turn_in_process("four", "chat-c")
 
     assert len(hd._agent_cache) == 2
-    assert list(hd._agent_cache) == ["chat-a", "chat-c"]
+    assert [key[1] for key in hd._agent_cache] == ["chat-a", "chat-c"]
     created[1].close.assert_called_once()
 
 
@@ -716,6 +872,10 @@ def test_run_turn_in_process_falls_back_to_subprocess_when_import_fails():
             {"run_agent": None, "hermes.run_agent": None},
         ),
         patch("builtins.__import__", side_effect=_block_hermes_run_agent),
+        patch(
+            "public_api_client.hermes_agent_client.ensure_profile",
+            return_value="/tmp/profiles/pib_pers-1",
+        ),
         patch(
             "public_api_client.hermes_agent_client.run_turn_subprocess",
             return_value="subprocess-reply",
