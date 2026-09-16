@@ -151,6 +151,36 @@ def _profile_is_complete(profile_dir: str) -> bool:
     )
 
 
+_HERMES_SOURCE_PREPARED = False
+
+
+def ensure_hermes_source_on_path() -> str:
+    """Put the mounted Hermes source in front of ``sys.path``, once per process.
+
+    Provisioning and turns must resolve the SAME Hermes. Live, provisioning imported
+    ``hermes_cli`` from the container's site-packages first; that foreign version then
+    stayed in ``sys.modules`` and the turn's ``run_agent`` import failed with an
+    ImportError, so every turn silently fell back to the (broken) CLI wrapper and
+    answered with the fallback sentence. Returns the source directory.
+    """
+    global _HERMES_SOURCE_PREPARED
+    agent_dir = hermes_agent_dir()
+    entries = [agent_dir, *venv_site_packages(agent_dir)]
+    for path_entry in entries:
+        if path_entry in sys.path:
+            sys.path.remove(path_entry)
+    for path_entry in reversed(entries):
+        if os.path.exists(path_entry):
+            sys.path.insert(0, path_entry)
+    if not _HERMES_SOURCE_PREPARED:
+        _HERMES_SOURCE_PREPARED = True
+        logging.info(
+            "hermes source on sys.path: %s",
+            [entry for entry in entries if os.path.exists(entry)],
+        )
+    return agent_dir
+
+
 def _profile_dirs_are_complete(profile_dir: str) -> bool:
     return all(
         os.path.isdir(os.path.join(profile_dir, dirname)) for dirname in PROFILE_DIRS
@@ -219,10 +249,15 @@ def ensure_profile_home(
             created = True
         else:
             try:
+                ensure_hermes_source_on_path()
                 from hermes_cli.profiles import create_profile, profile_exists
             except Exception as exc:
                 logging.error("Hermes profile factory is unavailable: %s", exc)
                 raise RuntimeError("Hermes profile factory is unavailable") from exc
+            logging.info(
+                "hermes profile factory source: %s",
+                inspect.getsourcefile(create_profile) or create_profile.__module__,
+            )
 
             profile_name = profile_name_for(personality_id)
             if profile_exists(profile_name) and not os.path.exists(profile_dir):
@@ -678,17 +713,19 @@ def _run_turn_in_home(
         run_turn_subprocess,
     )
 
-    agent_dir = hermes_agent_dir()
-    for path_entry in (agent_dir, *venv_site_packages(agent_dir)):
-        if path_entry not in sys.path and os.path.exists(path_entry):
-            sys.path.insert(0, path_entry)
+    ensure_hermes_source_on_path()
 
     agent_module = None
     for module_name in ("run_agent", "hermes.run_agent"):
         try:
             agent_module = importlib.import_module(module_name)
             break
-        except ImportError:
+        except ImportError as exc:
+            logging.info(
+                "run_agent import %s failed (%s); trying the next candidate",
+                module_name,
+                exc,
+            )
             continue
     agent_cls = getattr(agent_module, "AIAgent", None)
     run_agent_main = getattr(agent_module, "main", None)
