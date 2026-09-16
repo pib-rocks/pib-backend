@@ -47,6 +47,15 @@ STEREO_MODES = {"auto", "on", "off"}
 DEFAULT_STEREO_TIMEOUT = 5.0
 PIPELINE_START_ATTEMPTS = 3
 PIPELINE_START_BACKOFF = 0.25
+HAND_STAGE_NAMES = (
+    "colour_isp",
+    "palm_detector_nn",
+    "decoding_nn",
+    "image_manip_roi",
+    "hand_landmark_nn",
+    "post_processing",
+    "publish",
+)
 
 
 class ErrorPublisher(Node):
@@ -125,12 +134,16 @@ class CameraNode(Node):
             if model.publish_topic
         }
         self.hand_decoder_queue = None
+        self.hand_palm_queue = None
+        self.hand_roi_queue = None
         self.hand_landmark_queue = None
         self.hand_landmark_config_queue = None
         self.hand_landmark_input_size = 0
         self.hand_source_size = (0, 0)
+        self._pending_hand_decoder_packet = None
         self._pending_hands = deque()
         self._hand_warnings = set()
+        self._reset_hand_stage_counters()
 
         self.camera_available = self.init_pipeline()
         self.pipeline_manager = PipelineManager(
@@ -290,6 +303,40 @@ class CameraNode(Node):
             self._hand_warnings.add(message)
             self.get_logger().warning(message)
 
+    def _reset_hand_stage_counters(self):
+        self.hand_stage_counters = {stage: 0 for stage in HAND_STAGE_NAMES}
+        self._hand_stage_last_logged = dict(self.hand_stage_counters)
+
+    def _count_hand_stage(self, stage, count=1):
+        self.hand_stage_counters[stage] += count
+
+    def _log_hand_stage_counters(self):
+        if not any(
+            active.model.model_id == "hand_tracking"
+            for active in getattr(self, "_pipeline_models", ())
+        ):
+            return
+        interval = {
+            stage: self.hand_stage_counters[stage]
+            - self._hand_stage_last_logged[stage]
+            for stage in HAND_STAGE_NAMES
+        }
+        last_flowing = "none"
+        for stage in HAND_STAGE_NAMES:
+            if interval[stage] > 0:
+                last_flowing = stage
+        raw = " ".join(
+            f"{stage}={self.hand_stage_counters[stage]}" for stage in HAND_STAGE_NAMES
+        )
+        interval_raw = " ".join(
+            f"{stage}={interval[stage]}" for stage in HAND_STAGE_NAMES
+        )
+        self.get_logger().info(
+            f"hand_tracking stage packets total: {raw}; "
+            f"interval: {interval_raw}; last_flowing={last_flowing}"
+        )
+        self._hand_stage_last_logged = dict(self.hand_stage_counters)
+
     @staticmethod
     def _nn_layer(packet, name):
         return np.asarray(packet.getLayerFp16(name), dtype=np.float32)
@@ -305,6 +352,7 @@ class CameraNode(Node):
         publisher = self.detection_publishers.get("hand_tracking")
         if publisher is not None:
             publisher.publish(message)
+        self._count_hand_stage("publish")
         self.pipeline_manager.record_packet("hand_tracking")
 
     def _hand_detection_message(
@@ -379,6 +427,7 @@ class CameraNode(Node):
             packet = self.hand_landmark_queue.tryGet()
             if packet is None:
                 break
+            self._count_hand_stage("hand_landmark_nn")
             palm, batch = self._pending_hands.popleft()
             try:
                 score = self._nn_layer(packet, "Identity_1")
@@ -407,6 +456,7 @@ class CameraNode(Node):
                     )
             except (RuntimeError, ValueError) as exc:
                 self._warn_hand_once(f"Invalid hand landmark output: {exc}")
+            self._count_hand_stage("post_processing")
             batch["remaining"] -= 1
             if batch["remaining"] == 0:
                 self._publish_hand_detections(
@@ -419,9 +469,13 @@ class CameraNode(Node):
         # only after all landmark crops from the previous one have completed.
         if self._pending_hands:
             return
-        packet = self.hand_decoder_queue.tryGet()
+        packet = self._pending_hand_decoder_packet
+        self._pending_hand_decoder_packet = None
+        if packet is None:
+            packet = self.hand_decoder_queue.tryGet()
         if packet is None:
             return
+        self._count_hand_stage("decoding_nn")
         frame_height, frame_width = self.current_frame.shape[:2]
         source_width, source_height = self.hand_source_size
         if not source_width or not source_height:
@@ -434,6 +488,7 @@ class CameraNode(Node):
             self._warn_hand_once(f"Invalid palm decoder output: {exc}")
             palms = []
         if not palms:
+            self._count_hand_stage("post_processing")
             self._publish_hand_detections(frame_width, frame_height, [])
             return
         self._queue_landmark_crops(
@@ -446,6 +501,7 @@ class CameraNode(Node):
 
     def publish_model_statuses(self):
         self.pipeline_manager.refresh_fps()
+        self._log_hand_stage_counters()
         statuses = self.pipeline_manager.statuses()
         status_array = ModelStatusArray()
         status_array.header.stamp = self.get_clock().now().to_msg()
@@ -521,14 +577,18 @@ class CameraNode(Node):
         self.depth_queue = None
         self.nn_queues = {}
         self.hand_decoder_queue = None
+        self.hand_palm_queue = None
+        self.hand_roi_queue = None
         self.hand_landmark_queue = None
         self.hand_landmark_config_queue = None
         self.hand_landmark_input_size = 0
         self.hand_source_size = (0, 0)
+        self._pending_hand_decoder_packet = None
         if hasattr(self, "_pending_hands"):
             self._pending_hands.clear()
         else:
             self._pending_hands = deque()
+        self._reset_hand_stage_counters()
 
         if include_stereo:
             self._init_stereo_depth()
@@ -578,11 +638,13 @@ class CameraNode(Node):
         palm_nn.setBlobPath(palm.blob_path)
         palm_nn.setNumShavesPerInferenceThread(palm.shaves)
         palm_manip.out.link(palm_nn.input)
+        self.hand_palm_queue = palm_nn.out.createOutputQueue()
 
         decoder_nn = self.pipeline.create(dai.node.NeuralNetwork)
         decoder_nn.setBlobPath(decoder.blob_path)
         decoder_nn.setNumShavesPerInferenceThread(decoder.shaves)
-        palm_nn.out.link(decoder_nn.input)
+        palm_nn.out.link(decoder_nn.inputs["classificators"])
+        palm_nn.out.link(decoder_nn.inputs["regressors"])
         self.hand_decoder_queue = decoder_nn.out.createOutputQueue()
 
         landmark_manip = self.pipeline.create(dai.node.ImageManip)
@@ -593,9 +655,11 @@ class CameraNode(Node):
         )
         landmark_manip.initialConfig.setFrameType(dai.ImgFrame.Type.BGR888p)
         hand_input.link(landmark_manip.inputImage)
+        landmark_manip.inputConfig.setWaitForMessage(True)
         self.hand_landmark_config_queue = landmark_manip.inputConfig.createInputQueue(
             maxSize=16, blocking=False
         )
+        self.hand_roi_queue = landmark_manip.out.createOutputQueue()
 
         landmark_nn = self.pipeline.create(dai.node.NeuralNetwork)
         landmark_nn.setBlobPath(landmark.blob_path)
@@ -614,10 +678,13 @@ class CameraNode(Node):
         self.depth_queue = None
         self.nn_queues = {}
         self.hand_decoder_queue = None
+        self.hand_palm_queue = None
+        self.hand_roi_queue = None
         self.hand_landmark_queue = None
         self.hand_landmark_config_queue = None
         self.hand_landmark_input_size = 0
         self.hand_source_size = (0, 0)
+        self._pending_hand_decoder_packet = None
         if hasattr(self, "_pending_hands"):
             self._pending_hands.clear()
 
@@ -646,6 +713,19 @@ class CameraNode(Node):
                 return None
             time.sleep(min(0.05, remaining))
 
+    @staticmethod
+    def _wait_for_queue_packet(queue, timeout):
+        """Return the first packet from a non-colour queue before timeout."""
+        deadline = time.monotonic() + timeout
+        while True:
+            packet = queue.tryGet()
+            if packet is not None:
+                return packet
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return None
+            time.sleep(min(0.05, remaining))
+
     def _rebuild_models(self, active_models):
         self._pipeline_models = list(active_models)
         self._stop_pipeline()
@@ -657,6 +737,11 @@ class CameraNode(Node):
         if packet is None:
             return False
         self._pending_color_packet = packet
+        if self.hand_decoder_queue is not None:
+            packet = self._wait_for_queue_packet(self.hand_decoder_queue, timeout)
+            if packet is None:
+                return False
+            self._pending_hand_decoder_packet = packet
         return True
 
     def _revert_to_color_only(self):
@@ -789,6 +874,8 @@ class CameraNode(Node):
                     frame = cv2.resize(frame, (self.preview_width, self.preview_height))
 
                 self.current_frame = frame
+                if self.hand_decoder_queue is not None:
+                    self._count_hand_stage("colour_isp")
                 self.publish_face_center(frame)
 
                 # Only JPEG/base64 encode when someone is subscribed to camera_topic.
@@ -806,6 +893,17 @@ class CameraNode(Node):
                 if nn_queue.tryGet() is None:
                     break
                 self.pipeline_manager.record_packet(model_id)
+
+        for stage, queue in (
+            ("palm_detector_nn", self.hand_palm_queue),
+            ("image_manip_roi", self.hand_roi_queue),
+        ):
+            if queue is None:
+                continue
+            for _ in range(32):
+                if queue.tryGet() is None:
+                    break
+                self._count_hand_stage(stage)
 
         self._process_hand_tracking()
 
