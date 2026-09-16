@@ -30,7 +30,7 @@ def provision_profiles_in_sandbox(monkeypatch):
         soul_service.write_soul(personality_id, text, personality_name or "pib")
         return {"ok": True}
 
-    monkeypatch.setattr(personality_service, "provision_profile", provision)
+    monkeypatch.setattr(personality_service, "_provision_profile", provision)
 
 
 def test_update_description_writes_soul_file(
@@ -142,7 +142,7 @@ def test_api_creation_provisions_profile_immediately(client, app_ctx, monkeypatc
     from model.assistant_model import AssistantModel
 
     provision = MagicMock(return_value={"ok": True})
-    monkeypatch.setattr(personality_service, "provision_profile", provision)
+    monkeypatch.setattr(personality_service, "_provision_profile", provision)
     model = AssistantModel.query.first()
     response = client.post(
         "/voice-assistant/personality",
@@ -173,7 +173,7 @@ def test_api_creation_keeps_row_and_reports_profile_failure(
 
     monkeypatch.setattr(
         personality_service,
-        "provision_profile",
+        "_provision_profile",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("factory down")),
     )
     model = AssistantModel.query.first()

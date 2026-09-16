@@ -3,8 +3,20 @@ from typing import Any, List
 from model.personality_model import Personality
 from app.app import db
 from pib_hermes_config import build_default_soul_text
-from public_api_client.hermes_agent_client import provision_profile
 from service import soul_service
+
+
+def _provision_profile(*args, **kwargs):
+    """Ask the Hermes daemon to create/repair a personality's Hermes profile.
+
+    Imported lazily on purpose: this module is loaded by the Flask API, whose
+    image does not need the client package for any other request, and a
+    module-level import would take the whole API down when it is missing
+    (same pattern as ``chat_service``).
+    """
+    from public_api_client.hermes_agent_client import provision_profile
+
+    return provision_profile(*args, **kwargs)
 
 
 def _ensure_description_from_soul(personality: Personality) -> bool:
@@ -57,7 +69,7 @@ def create_personality(personality_dto: Any) -> Personality:
     db.session.add(personality)
     db.session.flush()
     try:
-        provision_profile(
+        _provision_profile(
             personality.personality_id,
             personality_name=personality.name,
             soul_text=custom or None,
@@ -94,7 +106,7 @@ def update_personality(personality_id: str, personality_dto: Any) -> Personality
         )
     if name_changed:
         try:
-            provision_profile(
+            _provision_profile(
                 personality.personality_id,
                 personality_name=personality.name,
                 soul_text=personality.description,
