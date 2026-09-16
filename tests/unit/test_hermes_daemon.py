@@ -16,6 +16,16 @@ import pytest
 
 from public_api_client import hermes_daemon as hd
 
+_REAL_DISCOVER_MCP_TOOLS = hd._discover_mcp_tools
+
+
+@pytest.fixture(autouse=True)
+def isolate_mcp_discovery(monkeypatch):
+    """Keep daemon unit tests independent of the developer's Hermes config."""
+    monkeypatch.setattr(hd, "_mcp_discovery_attempted", False)
+    monkeypatch.setattr(hd, "_discover_mcp_tools", MagicMock())
+    monkeypatch.setattr(hd, "_registered_mcp_tool_count", MagicMock(return_value=0))
+
 
 @pytest.fixture()
 def daemon_server(monkeypatch):
@@ -232,7 +242,10 @@ def test_client_uses_session_pooling_for_daemon(daemon_server, monkeypatch):
     assert reply2 == "daemon-says-hi"
     assert session_after_first is not None
     assert session_after_first is session_after_second
-    assert replies["last"]["toolsets"] == "terminal,code_execution,file"
+    assert (
+        replies["last"]["toolsets"]
+        == "terminal,code_execution,file,memory,session_search"
+    )
     assert replies["last"]["max_turns"] == 4
 
 
@@ -287,8 +300,106 @@ def test_run_turn_in_process_constructs_and_reuses_one_agent_per_chat(
     assert created[0].kwargs["enabled_toolsets"] is None
     assert created[0].kwargs["disabled_toolsets"] == ["terminal", "file"]
     assert created[0].kwargs["max_iterations"] == 7
+    assert created[0].kwargs["skip_memory"] is True
     assert created[0].chat.call_count == 2
     subprocess_runner.assert_not_called()
+
+
+def test_mcp_discovery_is_attempted_once_before_reused_agent_turns(monkeypatch):
+    discovery = MagicMock()
+    monkeypatch.setattr(hd, "_discover_mcp_tools", discovery)
+
+    class FakeAgent:
+        def __init__(self, **_kwargs):
+            pass
+
+        def chat(self, _text, stream_callback=None):
+            return "ok"
+
+    fake_module = types.ModuleType("run_agent")
+    fake_module.AIAgent = FakeAgent
+    hd.clear_agent_cache()
+
+    with patch.dict(sys.modules, {"run_agent": fake_module}):
+        assert hd.run_turn_in_process("one", "mcp-chat") == "ok"
+        assert hd.run_turn_in_process("two", "mcp-chat") == "ok"
+
+    discovery.assert_called_once_with()
+
+
+def test_mcp_discovery_uses_hermes_noninteractive_startup_path():
+    hermes_cli = types.ModuleType("hermes_cli")
+    hermes_cli.__path__ = []
+    startup = types.ModuleType("hermes_cli.mcp_startup")
+    startup.ensure_mcp_discovery_before_agent_build = MagicMock()
+    startup.mcp_discovery_in_flight = MagicMock(return_value=False)
+
+    with patch.dict(
+        sys.modules,
+        {
+            "hermes_cli": hermes_cli,
+            "hermes_cli.mcp_startup": startup,
+        },
+    ):
+        _REAL_DISCOVER_MCP_TOOLS()
+
+    startup.ensure_mcp_discovery_before_agent_build.assert_called_once()
+    assert (
+        startup.ensure_mcp_discovery_before_agent_build.call_args.kwargs["thread_name"]
+        == "pib-hermes-daemon-mcp"
+    )
+
+
+@pytest.mark.parametrize("failure", [RuntimeError("failed"), TimeoutError("timed out")])
+def test_mcp_discovery_failure_is_non_fatal(monkeypatch, failure):
+    monkeypatch.setattr(hd, "_discover_mcp_tools", MagicMock(side_effect=failure))
+
+    class FakeAgent:
+        def __init__(self, **_kwargs):
+            pass
+
+        def chat(self, _text, stream_callback=None):
+            return "reply despite discovery failure"
+
+    fake_module = types.ModuleType("run_agent")
+    fake_module.AIAgent = FakeAgent
+    hd.clear_agent_cache()
+
+    with patch.dict(sys.modules, {"run_agent": fake_module}):
+        reply = hd.run_turn_in_process("one", "failed-mcp-chat")
+
+    assert reply == "reply despite discovery failure"
+
+
+def test_agent_construction_logs_duration_and_registered_mcp_tool_count(
+    monkeypatch, caplog
+):
+    import logging
+
+    monkeypatch.setattr(hd, "_registered_mcp_tool_count", MagicMock(return_value=11))
+
+    class FakeAgent:
+        def __init__(self, **_kwargs):
+            pass
+
+        def chat(self, _text, stream_callback=None):
+            return "ok"
+
+    fake_module = types.ModuleType("run_agent")
+    fake_module.AIAgent = FakeAgent
+    hd.clear_agent_cache()
+
+    with (
+        patch.dict(sys.modules, {"run_agent": fake_module}),
+        caplog.at_level(logging.INFO),
+    ):
+        assert hd.run_turn_in_process("one", "logged-agent") == "ok"
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert any(
+        "[PERF_TRACE] HERMES_AGENT_CONSTRUCTED" in message and "mcp_tools=11" in message
+        for message in messages
+    )
 
 
 def test_run_turn_in_process_never_shares_agents_between_chat_ids(monkeypatch):
@@ -664,7 +775,7 @@ def test_run_turn_in_process_reads_reply_from_run_agent_stdout(tmp_path, monkeyp
     assert calls == {
         "query": "Wie geht es dir?",
         "model": hd.IN_PROCESS_MODEL,
-        "disabled_toolsets": "terminal,code_execution,file",
+        "disabled_toolsets": "terminal,code_execution,file,memory,session_search",
         "max_turns": 4,
     }
     subprocess_runner.assert_not_called()
@@ -701,7 +812,7 @@ def test_run_turn_in_process_falls_back_when_stdout_has_no_final_response(monkey
         text="Hallo",
         chat_id="chat-3",
         personality_id=None,
-        toolsets="terminal,code_execution,file",
+        toolsets="terminal,code_execution,file,memory,session_search",
         timeout=45,
     )
 

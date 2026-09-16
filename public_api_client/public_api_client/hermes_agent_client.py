@@ -41,7 +41,8 @@ DEFAULT_TIMEOUT_SECONDS = int(os.environ.get("PIB_HERMES_TIMEOUT", "120"))
 # Voice turns use a blacklist so dynamically registered MCP toolsets such as
 # mcp-pib remain available. Operators may tune both values without a rebuild.
 DEFAULT_DISABLED_TOOLSETS = os.environ.get(
-    "PIB_HERMES_DISABLED_TOOLSETS", "terminal,code_execution,file"
+    "PIB_HERMES_DISABLED_TOOLSETS",
+    "terminal,code_execution,file,memory,session_search",
 )
 DEFAULT_MAX_TURNS = int(os.environ.get("PIB_HERMES_MAX_TURNS", "4"))
 
