@@ -3,7 +3,9 @@ import base64
 from collections import deque
 import math
 import os
+import threading
 import time
+import weakref
 import cv2
 import depthai as dai
 import numpy as np
@@ -54,6 +56,8 @@ STEREO_MODES = {"auto", "on", "off"}
 DEFAULT_STEREO_TIMEOUT = 5.0
 PIPELINE_START_ATTEMPTS = 3
 PIPELINE_START_BACKOFF = 0.25
+PIPELINE_STOP_TIMEOUT = 5.0
+PIPELINE_STOP_POLL_INTERVAL = 0.05
 HAND_STAGE_NAMES = (
     "colour_isp",
     "palm_detector_nn",
@@ -81,6 +85,8 @@ class ErrorPublisher(Node):
 
 
 class CameraNode(Node):
+    _device_lifecycle_lock = threading.RLock()
+    _device_owner = None
 
     def __init__(self):
         super().__init__("camera_node")
@@ -150,6 +156,7 @@ class CameraNode(Node):
         self._pending_hand_decoder_packet = None
         self._pending_hands = deque()
         self._hand_warnings = set()
+        self._pipeline_lock = threading.RLock()
         self._reset_hand_stage_counters()
 
         self.camera_available = self.init_pipeline()
@@ -324,8 +331,7 @@ class CameraNode(Node):
         ):
             return
         interval = {
-            stage: self.hand_stage_counters[stage]
-            - self._hand_stage_last_logged[stage]
+            stage: self.hand_stage_counters[stage] - self._hand_stage_last_logged[stage]
             for stage in HAND_STAGE_NAMES
         }
         last_flowing = "none"
@@ -405,26 +411,52 @@ class CameraNode(Node):
             "source_height": source_height,
         }
         for index, palm in enumerate(palms):
-            roi_x, roi_y, roi_width, roi_height = palm.roi_for_frame(
-                source_width, source_height
+            config = self._landmark_crop_config(
+                palm,
+                source_width,
+                source_height,
+                reuse_previous=index + 1 < len(palms),
             )
-            rotated = dai.RotatedRect()
-            rotated.center.x = roi_x
-            rotated.center.y = roi_y
-            rotated.size.width = roi_width
-            rotated.size.height = roi_height
-            rotated.angle = math.degrees(palm.rotation)
-            config = dai.ImageManipConfig()
-            config.addCropRotatedRect(rotated, True)
-            config.setOutputSize(
-                self.hand_landmark_input_size,
-                self.hand_landmark_input_size,
-                dai.ImageManipConfig.ResizeMode.STRETCH,
-            )
-            config.setFrameType(dai.ImgFrame.Type.BGR888p)
-            config.setReusePreviousImage(index + 1 < len(palms))
             self.hand_landmark_config_queue.send(config)
             self._pending_hands.append((palm, batch))
+
+    def _landmark_crop_config(
+        self, palm, source_width, source_height, reuse_previous=False
+    ):
+        """Build a complete dynamic warp config for one decoded palm ROI."""
+        roi_x, roi_y, roi_width, roi_height = palm.roi_for_frame(
+            source_width, source_height
+        )
+        geometry = (roi_x, roi_y, roi_width, roi_height, palm.rotation)
+        if not all(math.isfinite(value) for value in geometry):
+            raise ValueError("hand ROI contains non-finite geometry")
+        if roi_width <= 0 or roi_height <= 0:
+            raise ValueError("hand ROI must have positive dimensions")
+
+        rotated = dai.RotatedRect()
+        rotated.center.x = roi_x
+        rotated.center.y = roi_y
+        rotated.size.width = roi_width
+        rotated.size.height = roi_height
+        rotated.angle = math.degrees(palm.rotation)
+
+        config = dai.ImageManipConfig()
+        # The decoder uses normalized letterboxed-square coordinates. roi_for_frame
+        # converts those to normalized coordinates of the 1280x720 hand tap.
+        config.addCropRotatedRect(rotated, True)
+        config.setOutputSize(
+            self.hand_landmark_input_size,
+            self.hand_landmark_input_size,
+            dai.ImageManipConfig.ResizeMode.LETTERBOX,
+        )
+        config.setFrameType(dai.ImgFrame.Type.BGR888p)
+        # Palm ROIs routinely cross an image edge. Explicit warp border handling
+        # keeps those valid instead of making ImageManip skip the frame.
+        border_replicate = getattr(config, "setWarpBorderReplicatePixels", None)
+        if border_replicate is not None:
+            border_replicate()
+        config.setReusePreviousImage(reuse_previous)
+        return config
 
     def _process_hand_tracking(self):
         if self.hand_decoder_queue is None or self.current_frame is None:
@@ -664,7 +696,13 @@ class CameraNode(Node):
     def _hand_chain_is_flowing(self):
         return self._hand_chain_is_built() and all(
             self.hand_stage_counters[stage] > 0
-            for stage in ("colour_isp", "palm_detector_nn", "decoding_nn")
+            for stage in (
+                "colour_isp",
+                "palm_detector_nn",
+                "decoding_nn",
+                "post_processing",
+                "publish",
+            )
         )
 
     def _relax_branch_input(self, node_input):
@@ -757,42 +795,92 @@ class CameraNode(Node):
         self.hand_landmark_queue = landmark_nn.out.createOutputQueue()
 
     def _stop_pipeline(self):
-        if self.pipeline is not None:
-            try:
-                self.pipeline.stop()
-            except Exception:
-                pass
-        self.pipeline = None
-        self.queue = None
-        self.depth_queue = None
-        self.nn_queues = {}
-        self.hand_decoder_queue = None
-        self.hand_palm_queue = None
-        self.hand_roi_queue = None
-        self.hand_landmark_queue = None
-        self.hand_landmark_config_queue = None
-        self.hand_landmark_input_size = 0
-        self.hand_source_size = (0, 0)
-        self._pending_hand_decoder_packet = None
-        if hasattr(self, "_pending_hands"):
-            self._pending_hands.clear()
+        pipeline_lock = getattr(self, "_pipeline_lock", None)
+        if pipeline_lock is None:
+            pipeline_lock = threading.RLock()
+            self._pipeline_lock = pipeline_lock
+        with pipeline_lock, CameraNode._device_lifecycle_lock:
+            pipeline = self.pipeline
+            if pipeline is not None:
+                stop_failed = False
+                try:
+                    pipeline.stop()
+                except Exception as exc:
+                    stop_failed = True
+                    self.get_logger().warning(
+                        f"Camera pipeline stop reported an error: {exc}"
+                    )
+                deadline = time.monotonic() + PIPELINE_STOP_TIMEOUT
+                released = False
+                while time.monotonic() < deadline:
+                    try:
+                        if pipeline.isRunning() is not True:
+                            released = True
+                            break
+                    except Exception:
+                        released = not stop_failed
+                        break
+                    time.sleep(PIPELINE_STOP_POLL_INTERVAL)
+                if not released:
+                    self.get_logger().warning(
+                        "Camera pipeline did not report stopped before timeout."
+                    )
+                    return False
+            owner_ref = CameraNode._device_owner
+            if owner_ref is not None and owner_ref() is self:
+                CameraNode._device_owner = None
+            self.pipeline = None
+            self.queue = None
+            self.depth_queue = None
+            self.nn_queues = {}
+            self.hand_decoder_queue = None
+            self.hand_palm_queue = None
+            self.hand_roi_queue = None
+            self.hand_landmark_queue = None
+            self.hand_landmark_config_queue = None
+            self.hand_landmark_input_size = 0
+            self.hand_source_size = (0, 0)
+            self._pending_hand_decoder_packet = None
+            if hasattr(self, "_pending_hands"):
+                self._pending_hands.clear()
+            return True
 
     def _start_pipeline(self, include_stereo):
         """Build and start a fresh pipeline with bounded retries."""
-        for attempt in range(PIPELINE_START_ATTEMPTS):
-            try:
-                self._build_pipeline(include_stereo)
-                self.pipeline.start()
-                return True
-            except Exception as exc:
+        pipeline_lock = getattr(self, "_pipeline_lock", None)
+        if pipeline_lock is None:
+            pipeline_lock = threading.RLock()
+            self._pipeline_lock = pipeline_lock
+        with pipeline_lock, CameraNode._device_lifecycle_lock:
+            owner_ref = CameraNode._device_owner
+            owner = owner_ref() if owner_ref is not None else None
+            if owner is not None and owner is not self:
                 self.get_logger().error(
-                    "Camera pipeline build/start attempt "
-                    f"{attempt + 1}/{PIPELINE_START_ATTEMPTS} failed: {exc}"
+                    "Camera pipeline start refused: this process already has "
+                    "another OAK device holder."
                 )
-                self._stop_pipeline()
-                if attempt + 1 < PIPELINE_START_ATTEMPTS:
-                    time.sleep(PIPELINE_START_BACKOFF * (2**attempt))
-        return False
+                return False
+            if owner is self and self.pipeline is not None:
+                self.get_logger().error(
+                    "Camera pipeline start refused: the previous OAK holder "
+                    "has not been released."
+                )
+                return False
+            for attempt in range(PIPELINE_START_ATTEMPTS):
+                try:
+                    self._build_pipeline(include_stereo)
+                    self.pipeline.start()
+                    CameraNode._device_owner = weakref.ref(self)
+                    return True
+                except Exception as exc:
+                    self.get_logger().error(
+                        "Camera pipeline build/start attempt "
+                        f"{attempt + 1}/{PIPELINE_START_ATTEMPTS} failed: {exc}"
+                    )
+                    self._stop_pipeline()
+                    if attempt + 1 < PIPELINE_START_ATTEMPTS:
+                        time.sleep(PIPELINE_START_BACKOFF * (2**attempt))
+            return False
 
     def _wait_for_color_frame(self, timeout):
         """Return the first measured colour packet, or None at the deadline."""
@@ -847,8 +935,7 @@ class CameraNode(Node):
 
     def _verify_model_frames(self, timeout):
         requested_ids = {
-            active.model.model_id
-            for active in getattr(self, "_pipeline_models", ())
+            active.model.model_id for active in getattr(self, "_pipeline_models", ())
         }
         if "hand_tracking" in requested_ids and not self._hand_chain_is_built():
             self.get_logger().error(
@@ -1063,8 +1150,13 @@ class CameraNode(Node):
     def preview_size_callback(self, msg):
         self.preview_width, self.preview_height = msg.data
 
+        with self._pipeline_lock:
+            self._stop_pipeline()
+            self.camera_available = self.init_pipeline()
+
+    def destroy_node(self):
         self._stop_pipeline()
-        self.camera_available = self.init_pipeline()
+        return super().destroy_node()
 
 
 def spin_camera(times):

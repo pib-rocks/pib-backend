@@ -4,6 +4,7 @@ import os
 import sys
 import types
 import unittest
+import weakref
 from unittest.mock import MagicMock, patch
 import base64
 
@@ -368,6 +369,55 @@ class TestHandPipelineInput(unittest.TestCase):
             node._request_camera_branch((HAND_NN_WIDTH, HAND_NN_HEIGHT))
 
     @patch("ros_packages.camera.oak_d_lite.stereo.dai")
+    def test_landmark_crop_config_contains_rotated_letterboxed_roi(self, mock_dai):
+        with patch.object(CameraNode, "__init__", lambda self: None):
+            node = CameraNode()
+        node.hand_landmark_input_size = 224
+
+        class _RotatedRect:
+            def __init__(self):
+                self.center = types.SimpleNamespace(x=0.0, y=0.0)
+                self.size = types.SimpleNamespace(width=0.0, height=0.0)
+                self.angle = 0.0
+
+        config = MagicMock()
+        mock_dai.RotatedRect.side_effect = _RotatedRect
+        mock_dai.ImageManipConfig.return_value = config
+        palm = MagicMock(rotation=np.pi / 4)
+        palm.roi_for_frame.return_value = (0.5, 0.4, 0.25, 0.5)
+
+        result = node._landmark_crop_config(palm, 1280, 720, reuse_previous=True)
+
+        self.assertIs(result, config)
+        rotated, normalized = config.addCropRotatedRect.call_args.args
+        self.assertTrue(normalized)
+        self.assertEqual(rotated.center.x, 0.5)
+        self.assertEqual(rotated.center.y, 0.4)
+        self.assertEqual(rotated.size.width, 0.25)
+        self.assertEqual(rotated.size.height, 0.5)
+        self.assertAlmostEqual(rotated.angle, 45.0)
+        config.setOutputSize.assert_called_once_with(
+            224,
+            224,
+            mock_dai.ImageManipConfig.ResizeMode.LETTERBOX,
+        )
+        config.setFrameType.assert_called_once_with(mock_dai.ImgFrame.Type.BGR888p)
+        config.setWarpBorderReplicatePixels.assert_called_once_with()
+        config.setReusePreviousImage.assert_called_once_with(True)
+
+    @patch("ros_packages.camera.oak_d_lite.stereo.dai")
+    def test_landmark_crop_config_rejects_invalid_geometry(self, mock_dai):
+        with patch.object(CameraNode, "__init__", lambda self: None):
+            node = CameraNode()
+        palm = MagicMock(rotation=0.0)
+        palm.roi_for_frame.return_value = (0.5, 0.5, 0.0, 0.25)
+
+        with self.assertRaisesRegex(ValueError, "positive dimensions"):
+            node._landmark_crop_config(palm, 1280, 720)
+
+        mock_dai.ImageManipConfig.assert_not_called()
+
+    @patch("ros_packages.camera.oak_d_lite.stereo.dai")
     def test_hand_manips_share_one_non_blocking_camera_tap(self, mock_dai):
         with patch.object(CameraNode, "__init__", lambda self: None):
             node = CameraNode()
@@ -398,9 +448,7 @@ class TestHandPipelineInput(unittest.TestCase):
         hand_tap = MagicMock()
         node.camRgb.requestOutput.return_value = hand_tap
 
-        node._build_hand_pipeline(
-            types.SimpleNamespace(artifact_ids=tuple(artifacts))
-        )
+        node._build_hand_pipeline(types.SimpleNamespace(artifact_ids=tuple(artifacts)))
 
         # A single downscaled output stays within the camera-output budget. Both
         # consumers are non-blocking, so the config-gated landmark branch cannot
@@ -452,9 +500,7 @@ class TestHandStageCounters(unittest.TestCase):
 
     def _set_built_hand_chain(self, node):
         node._pipeline_models = [
-            types.SimpleNamespace(
-                model=types.SimpleNamespace(model_id="hand_tracking")
-            )
+            types.SimpleNamespace(model=types.SimpleNamespace(model_id="hand_tracking"))
         ]
         node.hand_palm_queue = MagicMock()
         node.hand_decoder_queue = MagicMock()
@@ -487,9 +533,7 @@ class TestHandStageCounters(unittest.TestCase):
     def test_counter_log_contains_all_raw_stages_and_last_flowing_stage(self):
         node = self._make_node()
         node._pipeline_models = [
-            types.SimpleNamespace(
-                model=types.SimpleNamespace(model_id="hand_tracking")
-            )
+            types.SimpleNamespace(model=types.SimpleNamespace(model_id="hand_tracking"))
         ]
         node._count_hand_stage("colour_isp", 3)
         node._count_hand_stage("palm_detector_nn", 2)
@@ -525,6 +569,9 @@ class TestHandStageCounters(unittest.TestCase):
                 unittest.mock.call(node.hand_decoder_queue, 3.0),
             ],
         )
+        self.assertFalse(node._hand_chain_is_flowing())
+        node._count_hand_stage("post_processing")
+        node._count_hand_stage("publish")
         self.assertTrue(node._hand_chain_is_flowing())
 
     def test_model_verification_fails_when_decoder_has_no_packets(self):
@@ -540,9 +587,7 @@ class TestHandStageCounters(unittest.TestCase):
     def test_model_verification_fails_when_requested_hand_chain_is_absent(self):
         node = self._make_node()
         node._pipeline_models = [
-            types.SimpleNamespace(
-                model=types.SimpleNamespace(model_id="hand_tracking")
-            )
+            types.SimpleNamespace(model=types.SimpleNamespace(model_id="hand_tracking"))
         ]
         node.hand_palm_queue = None
         node.hand_decoder_queue = None
@@ -568,9 +613,7 @@ class TestHandStageCounters(unittest.TestCase):
         node.hand_landmark_queue = None
         node.hand_landmark_config_queue = None
         requested = [
-            types.SimpleNamespace(
-                model=types.SimpleNamespace(model_id="hand_tracking")
-            )
+            types.SimpleNamespace(model=types.SimpleNamespace(model_id="hand_tracking"))
         ]
 
         self.assertFalse(node._rebuild_models(requested))
@@ -679,6 +722,33 @@ class TestStereoModeDecision(unittest.TestCase):
             [call.args[0] for call in mock_sleep.call_args_list], [0.25, 0.5]
         )
         self.assertEqual(node.get_logger().error.call_count, 3)
+
+    @patch("ros_packages.camera.oak_d_lite.stereo.time.sleep")
+    def test_stop_waits_for_release_and_clears_process_owner(self, mock_sleep):
+        node = self._make_node("off")
+        pipeline = node.pipeline
+        pipeline.isRunning.side_effect = [True, False]
+        CameraNode._device_owner = weakref.ref(node)
+
+        self.assertTrue(node._stop_pipeline())
+
+        pipeline.stop.assert_called_once_with()
+        self.assertIsNone(node.pipeline)
+        self.assertIsNone(CameraNode._device_owner)
+        self.assertEqual(mock_sleep.call_count, 1)
+
+    def test_start_refuses_a_second_process_local_device_holder(self):
+        first = self._make_node("off")
+        second = self._make_node("off")
+        CameraNode._device_owner = weakref.ref(first)
+        second._build_pipeline = MagicMock()
+
+        try:
+            self.assertFalse(second._start_pipeline(include_stereo=False))
+            second._build_pipeline.assert_not_called()
+            second.get_logger().error.assert_called_once()
+        finally:
+            CameraNode._device_owner = None
 
 
 if __name__ == "__main__":

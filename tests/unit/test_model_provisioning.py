@@ -6,7 +6,6 @@ from pathlib import Path
 import shutil
 import subprocess
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SETUP_SCRIPT = REPO_ROOT / "setup" / "setup-pib.sh"
 
@@ -84,7 +83,10 @@ def test_verify_fails_with_actionable_message_for_corrupted_file(tmp_path):
 
     assert result.returncode != 0
     assert "demo: sha256 mismatch in store" in result.stdout
-    assert "'./setup/setup-pib.sh --models' before starting Docker containers" in result.stdout
+    assert (
+        "'./setup/setup-pib.sh --models' before starting Docker containers"
+        in result.stdout
+    )
 
 
 def test_provision_returns_nonzero_when_vendored_blob_is_missing(tmp_path):
