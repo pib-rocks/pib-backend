@@ -150,11 +150,11 @@ function install_ros_packages() {
   print INFO "Installing ros_packages"
 
   # Camera Dependencies (legacy INSTALL_METHOD=legacy only).
-  # Match ros-camera: depthai 3.8.0. Do not install depthai 2.x.
+  # Match ros-camera: depthai 3.6.1. Do not install depthai 2.x.
   # depthai-python examples and depthai_hand_tracker were 2.x-only and are unused
   # by oak_d_lite/stereo.py; they are not cloned here.
   sudo curl --silent --location https://docs.luxonis.com/install_dependencies.sh | sudo bash
-  python3 -m pip install 'depthai==3.8.0'
+  python3 -m pip install 'depthai==3.6.1'
   cd "$HOME" || { print ERROR "${HOME} not found"; return 1; }
 
   # SLAM dependencies (optional)

@@ -77,7 +77,7 @@ services:
     networks:
       - pib-network
     environment:
-      - PIB_CAMERA_STEREO=off
+      - PIB_CAMERA_STEREO=auto
     restart: always
     depends_on:
       - rosbridge-ws

@@ -33,11 +33,12 @@ RUN apt-get update && apt-get install --no-install-recommends -y \
 # opencv-python-headless pinned to 4.x: the latest 5.x release removed
 # cv2.CascadeClassifier from the core module (stereo.py's face detection
 # needs it), causing "module 'cv2' has no attribute 'CascadeClassifier'".
-# depthai upgraded to 3.8.0: migrated from v2 Pipeline API to v3 Node API.
-# The ISP output path continues to work correctly (preview path was black on 2.25).
-# See Jira PR-1484 for migration details.
+# depthai pinned to 3.6.1 (v3 Node API, same as PR-1484). 3.8.0 and 3.10.0
+# yield 0 mono frames on OAK-D Lite and crash the device (PlgSrcMipi);
+# 3.6.1 delivers stereo depth at ~29 FPS with real millimetres.
+# See Jira PR-1720.
 RUN pip install --break-system-packages --no-cache-dir --ignore-installed \
-        depthai==3.8.0 \
+        depthai==3.6.1 \
         "opencv-python-headless<5"
 
 # stereo.py needs cv2.data.haarcascades at runtime for face detection
