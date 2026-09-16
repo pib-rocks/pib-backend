@@ -135,6 +135,8 @@ from ros_packages.camera.oak_d_lite.stereo import (
     CameraNode,
     FACE_DETECT_WIDTH,
     FACE_DETECT_HEIGHT,
+    HAND_NN_HEIGHT,
+    HAND_NN_WIDTH,
 )
 
 
@@ -336,6 +338,49 @@ class TestStereoDepthInterfaces(unittest.TestCase):
         pipeline.start.assert_called_once()
         self.assertIn(_StereoType, created)
         stereo.depth.createOutputQueue.assert_called()
+
+
+class TestHandPipelineInput(unittest.TestCase):
+    @patch("ros_packages.camera.oak_d_lite.stereo.dai")
+    def test_hand_manips_share_bounded_camera_output(self, mock_dai):
+        with patch.object(CameraNode, "__init__", lambda self: None):
+            node = CameraNode()
+
+        artifacts = {
+            "palm_detection_128x128": types.SimpleNamespace(
+                input_width=128, input_height=128, blob_path="/palm.blob"
+            ),
+            "palm_detection_128x128_decoding": types.SimpleNamespace(
+                blob_path="/decoder.blob"
+            ),
+            "hand_landmark_224x224": types.SimpleNamespace(
+                input_width=224, input_height=224, blob_path="/landmark.blob"
+            ),
+        }
+        node.model_registry = MagicMock()
+        node.model_registry.get.side_effect = artifacts.get
+        node.pipeline = MagicMock()
+        created = [MagicMock() for _ in range(5)]
+        node.pipeline.create.side_effect = created
+        node.camRgb = MagicMock()
+        hand_input = MagicMock()
+        node.camRgb.requestOutput.return_value = hand_input
+
+        node._build_hand_pipeline(
+            types.SimpleNamespace(artifact_ids=tuple(artifacts))
+        )
+
+        node.camRgb.requestOutput.assert_called_once_with(
+            (HAND_NN_WIDTH, HAND_NN_HEIGHT),
+            type=mock_dai.ImgFrame.Type.BGR888p,
+        )
+        hand_input.link.assert_has_calls(
+            [
+                unittest.mock.call(created[0].inputImage),
+                unittest.mock.call(created[3].inputImage),
+            ]
+        )
+        self.assertEqual(node.hand_source_size, (1280, 720))
 
 
 class TestStereoModeDecision(unittest.TestCase):

@@ -24,6 +24,19 @@ def test_decoder_maps_top10_record_and_bbox_to_full_frame():
     assert palms[0].bbox_pixels(1000, 500) == (400, 150, 600, 350)
 
 
+def test_bbox_maps_from_letterboxed_nn_branch_to_preview_frame():
+    palm = PalmRegion(0.9, 0.5, 0.25, 0.0, 0.5, 0.25, 0.2, 0.0)
+
+    # The 1280x720 NN branch is letterboxed into a 1280x1280 square. A point
+    # at normalized y=0.25 therefore lies 1/18 down the unpadded source image.
+    assert palm.bbox_pixels(
+        frame_width=640,
+        frame_height=480,
+        source_width=1280,
+        source_height=720,
+    ) == (320, 27, 320, 27)
+
+
 def test_decoder_returns_empty_for_no_confident_hand():
     assert decode_palm_result(np.zeros(80, dtype=np.float32)) == []
 

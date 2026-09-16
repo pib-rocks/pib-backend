@@ -94,6 +94,23 @@ inputs and outputs with one friendly name: VariadicSplit_949`).
 
 ## Check
 
+Provision the host store **before starting Docker containers**. This creates
+the bind-mount source with the invoking user's ownership and installs both the
+blobs and the manifest that the camera registry reads at `/models/manifest.yaml`.
+
+```bash
+./setup/setup-pib.sh --models
+docker compose --profile camera up -d
+```
+
+Provisioning is idempotent. To check an existing store without changing it:
+
+```bash
+./setup/setup-pib.sh --verify-models
+```
+
+To verify the vendored source artefacts themselves:
+
 ```bash
 python3 models/verify_models.py
 ```
