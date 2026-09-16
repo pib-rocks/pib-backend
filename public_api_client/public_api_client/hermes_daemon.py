@@ -87,7 +87,7 @@ _stdout_capture_lock = threading.Lock()
 
 
 class _CachedAgent:
-    def __init__(self, agent, settings: tuple[Optional[str], int]):
+    def __init__(self, agent, settings: tuple[Optional[str], Optional[str], int]):
         self.agent = agent
         self.settings = settings
         self.lock = threading.Lock()
@@ -257,9 +257,15 @@ def _registered_mcp_tool_count() -> int:
         return 0
 
 
-def _agent_for_chat(chat_id: str, toolsets: Optional[str], max_turns: int, agent_cls):
+def _agent_for_chat(
+    chat_id: str,
+    enabled_toolsets: Optional[str],
+    toolsets: Optional[str],
+    max_turns: int,
+    agent_cls,
+):
     """Return the sole cached agent for a chat, evicting least-recently-used chats."""
-    settings = (toolsets, max_turns)
+    settings = (enabled_toolsets, toolsets, max_turns)
     with _agent_cache_lock:
         cached = _agent_cache.get(chat_id)
         if cached is not None and cached.settings == settings:
@@ -274,7 +280,7 @@ def _agent_for_chat(chat_id: str, toolsets: Optional[str], max_turns: int, agent
             model=IN_PROCESS_MODEL,
             session_db=_shared_session_db(),
             session_id=session_id_for_chat(chat_id),
-            enabled_toolsets=None,
+            enabled_toolsets=_toolset_list(enabled_toolsets),
             disabled_toolsets=_toolset_list(toolsets),
             max_iterations=max_turns,
             platform="cli",
@@ -430,6 +436,7 @@ def run_turn_in_process(
     max_turns: Optional[int] = None,
     timeout: Optional[int] = None,
     stream_callback: Optional[Callable[[str], None]] = None,
+    enabled_toolsets: Optional[str] = None,
 ) -> str:
     """Execute one turn via a cached ``AIAgent`` dedicated to this chat.
 
@@ -443,6 +450,7 @@ def run_turn_in_process(
     """
     from public_api_client.hermes_agent_client import (
         DEFAULT_DISABLED_TOOLSETS,
+        DEFAULT_ENABLED_TOOLSETS,
         DEFAULT_MAX_TURNS,
         FALLBACK_REPLY,
         run_turn_subprocess,
@@ -464,6 +472,7 @@ def run_turn_in_process(
     run_agent_main = getattr(agent_module, "main", None)
 
     effective_toolsets = DEFAULT_DISABLED_TOOLSETS if toolsets is None else toolsets
+    effective_enabled_toolsets = enabled_toolsets or DEFAULT_ENABLED_TOOLSETS
     effective_max_turns = DEFAULT_MAX_TURNS if max_turns is None else max_turns
 
     def _subprocess_reply() -> str:
@@ -472,6 +481,7 @@ def run_turn_in_process(
             "chat_id": chat_id,
             "personality_id": personality_id,
             "toolsets": effective_toolsets,
+            "enabled_toolsets": effective_enabled_toolsets,
         }
         if timeout is not None:
             kwargs["timeout"] = timeout
@@ -488,7 +498,11 @@ def run_turn_in_process(
         if agent_cls is not None:
             _ensure_mcp_tools_discovered()
             cached = _agent_for_chat(
-                chat_id, effective_toolsets, effective_max_turns, agent_cls
+                chat_id,
+                effective_enabled_toolsets,
+                effective_toolsets,
+                effective_max_turns,
+                agent_cls,
             )
             produced: list[str] = []
 
@@ -521,6 +535,7 @@ def run_turn_in_process(
                 returned = run_agent_main(
                     query=text,
                     model=IN_PROCESS_MODEL,
+                    enabled_toolsets=effective_enabled_toolsets,
                     disabled_toolsets=effective_toolsets,
                     max_turns=effective_max_turns,
                 )
@@ -563,6 +578,7 @@ def _default_turn_runner(
     max_turns: Optional[int] = None,
     timeout: Optional[int] = None,
     stream_callback: Optional[Callable[[str], None]] = None,
+    enabled_toolsets: Optional[str] = None,
 ) -> str:
     """Execute one turn in-process via Hermes Agent (subprocess fallback)."""
     return run_turn_in_process(
@@ -570,6 +586,7 @@ def _default_turn_runner(
         chat_id=chat_id,
         personality_id=personality_id,
         toolsets=toolsets,
+        enabled_toolsets=enabled_toolsets,
         max_turns=max_turns,
         timeout=timeout,
         stream_callback=stream_callback,
@@ -636,6 +653,7 @@ class HermesDaemonHandler(BaseHTTPRequestHandler):
 
         personality_id = data.get("personality_id")
         toolsets = data.get("toolsets")
+        enabled_toolsets = data.get("enabled_toolsets")
         max_turns = data.get("max_turns")
         timeout = data.get("timeout")
         stream = data.get("stream", False)
@@ -644,6 +662,9 @@ class HermesDaemonHandler(BaseHTTPRequestHandler):
             return
         if toolsets is not None and not isinstance(toolsets, str):
             self._send_json(400, {"error": "toolsets must be a string"})
+            return
+        if enabled_toolsets is not None and not isinstance(enabled_toolsets, str):
+            self._send_json(400, {"error": "enabled_toolsets must be a string"})
             return
         if max_turns is not None and (
             not isinstance(max_turns, int)
@@ -689,6 +710,7 @@ class HermesDaemonHandler(BaseHTTPRequestHandler):
             "chat_id": chat_id,
             "personality_id": personality_id,
             "toolsets": toolsets,
+            "enabled_toolsets": enabled_toolsets,
             "timeout": int(timeout) if timeout is not None else None,
         }
         if max_turns is not None:

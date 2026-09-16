@@ -38,8 +38,11 @@ DEFAULT_HERMES_HOME = "/home/pib/.hermes"
 SESSION_PREFIX = "pib_chat_"
 HERMES_API_NAME = "hermes-agent"
 DEFAULT_TIMEOUT_SECONDS = int(os.environ.get("PIB_HERMES_TIMEOUT", "120"))
-# Voice turns use a blacklist so dynamically registered MCP toolsets such as
-# mcp-pib remain available. Operators may tune both values without a rebuild.
+# Voice turns use a narrow allowlist, with the existing blacklist retained as a
+# second isolation layer. Operators may tune both values without a rebuild.
+DEFAULT_ENABLED_TOOLSETS = os.environ.get(
+    "PIB_HERMES_ENABLED_TOOLSETS", "mcp-pib,vision"
+)
 DEFAULT_DISABLED_TOOLSETS = os.environ.get(
     "PIB_HERMES_DISABLED_TOOLSETS",
     "terminal,code_execution,file,memory,session_search",
@@ -515,6 +518,7 @@ def _try_daemon_turn(
     toolsets: Optional[str] = DEFAULT_DISABLED_TOOLSETS,
     max_turns: int = DEFAULT_MAX_TURNS,
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
+    enabled_toolsets: Optional[str] = DEFAULT_ENABLED_TOOLSETS,
 ) -> Optional[str]:
     """POST /turn to the warm daemon. None means unreachable or non-200."""
     try:
@@ -532,6 +536,8 @@ def _try_daemon_turn(
         payload["personality_id"] = personality_id
     if toolsets is not None:
         payload["toolsets"] = toolsets
+    if enabled_toolsets is not None:
+        payload["enabled_toolsets"] = enabled_toolsets
 
     http_start = time.monotonic()
     logging.info(
@@ -599,6 +605,7 @@ def stream_turn(
     toolsets: Optional[str] = DEFAULT_DISABLED_TOOLSETS,
     max_turns: int = DEFAULT_MAX_TURNS,
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
+    enabled_toolsets: Optional[str] = DEFAULT_ENABLED_TOOLSETS,
 ) -> Iterator[str]:
     """Yield daemon text deltas.
 
@@ -622,6 +629,8 @@ def stream_turn(
         payload["personality_id"] = personality_id
     if toolsets is not None:
         payload["toolsets"] = toolsets
+    if enabled_toolsets is not None:
+        payload["enabled_toolsets"] = enabled_toolsets
 
     session = _get_daemon_session()
     post = session.post if session is not None else requests.post
@@ -676,6 +685,7 @@ def run_turn_subprocess(
     personality_id: Optional[str] = None,
     toolsets: Optional[str] = DEFAULT_DISABLED_TOOLSETS,
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
+    enabled_toolsets: Optional[str] = DEFAULT_ENABLED_TOOLSETS,
 ) -> str:
     """Run one turn via a oneshot Hermes CLI subprocess. Always returns text."""
     if not hermes_binary_available():
@@ -688,10 +698,12 @@ def run_turn_subprocess(
         )
         return FALLBACK_REPLY
 
-    # Hermes CLI -t is an enabled-toolset selector, not a blacklist. Never feed
-    # the voice blacklist into it: that would silently remove mcp-pib. Explicit
-    # non-voice toolset selections retain the existing CLI plumbing.
-    cli_toolsets = None if toolsets == DEFAULT_DISABLED_TOOLSETS else toolsets
+    # Hermes CLI -t is an enabled-toolset selector, not a blacklist. Prefer the
+    # voice allowlist; explicit legacy non-voice selections retain their existing
+    # CLI plumbing.
+    cli_toolsets = enabled_toolsets
+    if cli_toolsets is None and toolsets != DEFAULT_DISABLED_TOOLSETS:
+        cli_toolsets = toolsets
     cmd = build_command(text, chat_id, personality_id, cli_toolsets)
     try:
         result = subprocess.run(
@@ -724,6 +736,7 @@ def run_turn(
     toolsets: Optional[str] = DEFAULT_DISABLED_TOOLSETS,
     max_turns: int = DEFAULT_MAX_TURNS,
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
+    enabled_toolsets: Optional[str] = DEFAULT_ENABLED_TOOLSETS,
 ) -> str:
     """Run one conversational turn. Always returns speakable text.
 
@@ -746,6 +759,7 @@ def run_turn(
         toolsets,
         max_turns,
         timeout=timeout,
+        enabled_toolsets=enabled_toolsets,
     )
     if daemon_reply is not None:
         logging.info(
@@ -777,6 +791,7 @@ def run_turn(
         personality_id,
         toolsets,
         timeout=timeout,
+        enabled_toolsets=enabled_toolsets,
     )
     logging.info(
         "[PERF_TRACE] HERMES_CLIENT_DONE chat=%s via=subprocess elapsed_ms=%.2f",

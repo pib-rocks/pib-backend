@@ -145,10 +145,13 @@ def test_run_turn_returns_stdout(installed_hermes_bin, monkeypatch):
         assert run_turn("hi", "c1") == "Hallo!"
 
 
-def test_subprocess_fallback_never_treats_voice_blacklist_as_cli_whitelist(
+def test_subprocess_fallback_uses_voice_whitelist_not_blacklist(
     installed_hermes_bin,
 ):
-    from public_api_client.hermes_agent_client import run_turn_subprocess
+    from public_api_client.hermes_agent_client import (
+        DEFAULT_ENABLED_TOOLSETS,
+        run_turn_subprocess,
+    )
 
     completed = subprocess.CompletedProcess(
         args=[], returncode=0, stdout="Hallo!\n", stderr=""
@@ -156,7 +159,8 @@ def test_subprocess_fallback_never_treats_voice_blacklist_as_cli_whitelist(
     with patch("subprocess.run", return_value=completed) as run:
         assert run_turn_subprocess("hi", "c1") == "Hallo!"
 
-    assert "-t" not in run.call_args.args[0]
+    command = run.call_args.args[0]
+    assert command[command.index("-t") + 1] == DEFAULT_ENABLED_TOOLSETS
 
 
 def test_run_turn_on_timeout_returns_fallback(installed_hermes_bin, monkeypatch):
@@ -293,19 +297,23 @@ def test_voice_defaults_are_configurable_and_budget_defaults_to_four(monkeypatch
     # Keep the module-level MCP fixture stable when earlier tests leave an
     # ambient local API URL behind.
     monkeypatch.delenv("FLASK_API_BASE_URL", raising=False)
+    monkeypatch.setenv("PIB_HERMES_ENABLED_TOOLSETS", "mcp-pib,vision,custom")
     monkeypatch.setenv("PIB_HERMES_DISABLED_TOOLSETS", "terminal,file")
     monkeypatch.setenv("PIB_HERMES_MAX_TURNS", "6")
     importlib.reload(hac)
     try:
+        assert hac.DEFAULT_ENABLED_TOOLSETS == "mcp-pib,vision,custom"
         assert hac.DEFAULT_DISABLED_TOOLSETS == "terminal,file"
         assert hac.DEFAULT_MAX_TURNS == 6
     finally:
+        monkeypatch.delenv("PIB_HERMES_ENABLED_TOOLSETS", raising=False)
         monkeypatch.delenv("PIB_HERMES_DISABLED_TOOLSETS", raising=False)
         monkeypatch.delenv("PIB_HERMES_MAX_TURNS", raising=False)
         monkeypatch.delenv("FLASK_API_BASE_URL", raising=False)
         importlib.reload(hac)
 
     assert hac.DEFAULT_MAX_TURNS == 4
+    assert set(hac.DEFAULT_ENABLED_TOOLSETS.split(",")) >= {"mcp-pib", "vision"}
     assert set(hac.DEFAULT_DISABLED_TOOLSETS.split(",")) >= {
         "terminal",
         "code_execution",
