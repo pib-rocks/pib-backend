@@ -21,10 +21,68 @@ _REAL_DISCOVER_MCP_TOOLS = hd._discover_mcp_tools
 
 @pytest.fixture(autouse=True)
 def isolate_mcp_discovery(monkeypatch):
-    """Keep daemon unit tests independent of the developer's Hermes config."""
+    """Keep daemon unit tests independent of the developer's Hermes config and state.db."""
     monkeypatch.setattr(hd, "_mcp_discovery_attempted", False)
     monkeypatch.setattr(hd, "_discover_mcp_tools", MagicMock())
     monkeypatch.setattr(hd, "_registered_mcp_tool_count", MagicMock(return_value=0))
+    monkeypatch.setattr(hd, "_session_db", None)
+    monkeypatch.setattr(hd, "_session_db_attempted", False)
+    monkeypatch.setattr(hd, "_create_session_db", MagicMock(return_value=None))
+
+
+class _FakeSessionDB:
+    """Stand-in for ``hermes_state.SessionDB`` — no SQLite, one transcript per session."""
+
+    def __init__(self):
+        self.transcripts: dict[str, list[dict]] = {}
+        self.resume_calls: list[str] = []
+        self.reopened: list[str] = []
+        self.closed = 0
+
+    def append_turn(self, session_id, user_message, reply):
+        self.transcripts.setdefault(session_id, []).extend(
+            [
+                {"role": "user", "content": user_message},
+                {"role": "assistant", "content": reply},
+            ]
+        )
+
+    def get_resume_conversations(self, session_id):
+        self.resume_calls.append(session_id)
+        return list(self.transcripts.get(session_id, [])), []
+
+    def reopen_session(self, session_id):
+        self.reopened.append(session_id)
+
+    def close(self):
+        self.closed += 1
+
+
+def _fake_agent_module(created, *, store_turns=False, reply="OK."):
+    """A ``run_agent`` module whose AIAgent records the history each turn receives.
+
+    ``store_turns`` additionally appends the turn to the store it was constructed with,
+    the way a real AIAgent with a ``session_db`` persists its messages.
+    """
+
+    class FakeAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.histories = []
+            created.append(self)
+
+        def run_conversation(
+            self, user_message, conversation_history=None, stream_callback=None
+        ):
+            self.histories.append(conversation_history)
+            store = self.kwargs.get("session_db")
+            if store_turns and store is not None:
+                store.append_turn(self.kwargs["session_id"], user_message, reply)
+            return {"final_response": reply}
+
+    module = types.ModuleType("run_agent")
+    module.AIAgent = FakeAgent
+    return module
 
 
 @pytest.fixture()
@@ -259,7 +317,9 @@ def test_run_turn_in_process_constructs_and_reuses_one_agent_per_chat(
     class FakeAgent:
         def __init__(self, **kwargs):
             self.kwargs = kwargs
-            self.chat = MagicMock(return_value="  in-process-reply  ")
+            self.run_conversation = MagicMock(
+                return_value={"final_response": "  in-process-reply  "}
+            )
             created.append(self)
 
     fake_module = types.ModuleType("run_agent")
@@ -301,23 +361,149 @@ def test_run_turn_in_process_constructs_and_reuses_one_agent_per_chat(
     assert created[0].kwargs["disabled_toolsets"] == ["terminal", "file"]
     assert created[0].kwargs["max_iterations"] == 7
     assert created[0].kwargs["skip_memory"] is True
-    assert created[0].chat.call_count == 2
+    assert created[0].run_conversation.call_count == 2
     subprocess_runner.assert_not_called()
+
+
+def test_cached_agent_is_built_with_the_shared_store_and_the_chat_session_id(
+    monkeypatch,
+):
+    """The store is opened once per process and every chat agent gets that handle."""
+    store = _FakeSessionDB()
+    creator = MagicMock(return_value=store)
+    monkeypatch.setattr(hd, "_create_session_db", creator)
+    created = []
+    hd.clear_agent_cache()
+
+    with patch.dict(sys.modules, {"run_agent": _fake_agent_module(created)}):
+        hd.run_turn_in_process("eins", "chat-store")
+        hd.run_turn_in_process("zwei", "chat-store")
+        hd.run_turn_in_process("drei", "chat-other-store")
+
+    assert [agent.kwargs["session_db"] for agent in created] == [store, store]
+    assert [agent.kwargs["session_id"] for agent in created] == [
+        "pib_chat_chat-store",
+        "pib_chat_chat-other-store",
+    ]
+    assert created[0].kwargs["skip_memory"] is True
+    assert creator.call_count == 1
+
+
+def test_first_turn_has_no_history_and_the_second_replays_the_stored_one(monkeypatch):
+    """The regression: a codeword stored in turn one must reach the agent in turn two."""
+    store = _FakeSessionDB()
+    monkeypatch.setattr(hd, "_create_session_db", MagicMock(return_value=store))
+    created = []
+    module = _fake_agent_module(created, store_turns=True)
+    hd.clear_agent_cache()
+
+    with patch.dict(sys.modules, {"run_agent": module}):
+        hd.run_turn_in_process("Mein Codewort ist BLAU11.", "chat-memory")
+        hd.run_turn_in_process("Wie lautet mein Codewort?", "chat-memory")
+
+    agent = created[0]
+    assert agent.histories[0] is None
+    assert agent.histories[1] == [
+        {"role": "user", "content": "Mein Codewort ist BLAU11."},
+        {"role": "assistant", "content": "OK."},
+    ]
+    # Both turns reopen the row the previous turn closed, or recording would stop.
+    assert store.reopened == ["pib_chat_chat-memory", "pib_chat_chat-memory"]
+
+
+def test_history_is_never_taken_from_another_chat_id(monkeypatch):
+    store = _FakeSessionDB()
+    store.append_turn("pib_chat_chat-other", "Mein Codewort ist GRUEN22.", "OK.")
+    monkeypatch.setattr(hd, "_create_session_db", MagicMock(return_value=store))
+    created = []
+    module = _fake_agent_module(created, store_turns=True)
+    hd.clear_agent_cache()
+
+    with patch.dict(sys.modules, {"run_agent": module}):
+        hd.run_turn_in_process("Mein Codewort ist ROT33.", "chat-mine")
+        hd.run_turn_in_process("Wie lautet mein Codewort?", "chat-mine")
+
+    mine = created[0]
+    assert mine.histories[0] is None
+    assert [message["content"] for message in mine.histories[1]] == [
+        "Mein Codewort ist ROT33.",
+        "OK.",
+    ]
+    assert store.resume_calls == ["pib_chat_chat-mine", "pib_chat_chat-mine"]
+
+
+def test_stored_session_meta_rows_are_not_replayed_as_conversation(monkeypatch):
+    store = _FakeSessionDB()
+    store.transcripts["pib_chat_chat-meta"] = [
+        {"role": "session_meta", "content": "runtime"},
+        {"role": "user", "content": "Hallo"},
+    ]
+    monkeypatch.setattr(hd, "_create_session_db", MagicMock(return_value=store))
+    created = []
+    hd.clear_agent_cache()
+
+    with patch.dict(sys.modules, {"run_agent": _fake_agent_module(created)}):
+        hd.run_turn_in_process("Und weiter", "chat-meta")
+
+    assert created[0].histories == [[{"role": "user", "content": "Hallo"}]]
+
+
+def test_turn_still_answers_when_the_session_store_is_unavailable(monkeypatch):
+    monkeypatch.setattr(hd, "_create_session_db", MagicMock(return_value=None))
+    created = []
+    hd.clear_agent_cache()
+
+    with (
+        patch.dict(sys.modules, {"run_agent": _fake_agent_module(created)}),
+        patch(
+            "public_api_client.hermes_agent_client.run_turn_subprocess"
+        ) as subprocess_runner,
+    ):
+        assert hd.run_turn_in_process("eins", "chat-no-store") == "OK."
+        assert hd.run_turn_in_process("zwei", "chat-no-store") == "OK."
+
+    assert created[0].kwargs["session_db"] is None
+    assert created[0].histories == [None, None]
+    subprocess_runner.assert_not_called()
+
+
+def test_turn_still_answers_when_loading_the_history_fails(monkeypatch):
+    store = _FakeSessionDB()
+    store.get_resume_conversations = MagicMock(side_effect=RuntimeError("db locked"))
+    store.reopen_session = MagicMock(side_effect=RuntimeError("db locked"))
+    monkeypatch.setattr(hd, "_create_session_db", MagicMock(return_value=store))
+    created = []
+    hd.clear_agent_cache()
+
+    with patch.dict(sys.modules, {"run_agent": _fake_agent_module(created)}):
+        assert hd.run_turn_in_process("eins", "chat-broken-store") == "OK."
+
+    assert created[0].histories == [None]
+
+
+def test_clearing_the_agent_cache_closes_the_session_store(monkeypatch):
+    store = _FakeSessionDB()
+    creator = MagicMock(return_value=store)
+    monkeypatch.setattr(hd, "_create_session_db", creator)
+    module = _fake_agent_module([])
+    hd.clear_agent_cache()
+
+    with patch.dict(sys.modules, {"run_agent": module}):
+        hd.run_turn_in_process("eins", "chat-close")
+        hd.clear_agent_cache()
+        assert store.closed == 1
+
+        # A turn after the shutdown opens a fresh handle instead of the closed one.
+        hd.run_turn_in_process("zwei", "chat-close")
+
+    assert creator.call_count == 2
 
 
 def test_mcp_discovery_is_attempted_once_before_reused_agent_turns(monkeypatch):
     discovery = MagicMock()
     monkeypatch.setattr(hd, "_discover_mcp_tools", discovery)
 
-    class FakeAgent:
-        def __init__(self, **_kwargs):
-            pass
-
-        def chat(self, _text, stream_callback=None):
-            return "ok"
-
-    fake_module = types.ModuleType("run_agent")
-    fake_module.AIAgent = FakeAgent
+    fake_module = _fake_agent_module([], reply="ok")
     hd.clear_agent_cache()
 
     with patch.dict(sys.modules, {"run_agent": fake_module}):
@@ -354,15 +540,7 @@ def test_mcp_discovery_uses_hermes_noninteractive_startup_path():
 def test_mcp_discovery_failure_is_non_fatal(monkeypatch, failure):
     monkeypatch.setattr(hd, "_discover_mcp_tools", MagicMock(side_effect=failure))
 
-    class FakeAgent:
-        def __init__(self, **_kwargs):
-            pass
-
-        def chat(self, _text, stream_callback=None):
-            return "reply despite discovery failure"
-
-    fake_module = types.ModuleType("run_agent")
-    fake_module.AIAgent = FakeAgent
+    fake_module = _fake_agent_module([], reply="reply despite discovery failure")
     hd.clear_agent_cache()
 
     with patch.dict(sys.modules, {"run_agent": fake_module}):
@@ -378,15 +556,7 @@ def test_agent_construction_logs_duration_and_registered_mcp_tool_count(
 
     monkeypatch.setattr(hd, "_registered_mcp_tool_count", MagicMock(return_value=11))
 
-    class FakeAgent:
-        def __init__(self, **_kwargs):
-            pass
-
-        def chat(self, _text, stream_callback=None):
-            return "ok"
-
-    fake_module = types.ModuleType("run_agent")
-    fake_module.AIAgent = FakeAgent
+    fake_module = _fake_agent_module([], reply="ok")
     hd.clear_agent_cache()
 
     with (
@@ -410,8 +580,10 @@ def test_run_turn_in_process_never_shares_agents_between_chat_ids(monkeypatch):
             self.session_id = kwargs["session_id"]
             created.append(self)
 
-        def chat(self, _text, stream_callback=None):
-            return self.session_id
+        def run_conversation(
+            self, user_message, conversation_history=None, stream_callback=None
+        ):
+            return {"final_response": self.session_id}
 
     fake_module = types.ModuleType("run_agent")
     fake_module.AIAgent = FakeAgent
@@ -437,8 +609,10 @@ def test_agent_cache_evicts_the_least_recently_used_chat(monkeypatch):
             self.close = MagicMock()
             created.append(self)
 
-        def chat(self, _text, stream_callback=None):
-            return "ok"
+        def run_conversation(
+            self, user_message, conversation_history=None, stream_callback=None
+        ):
+            return {"final_response": "ok"}
 
     fake_module = types.ModuleType("run_agent")
     fake_module.AIAgent = FakeAgent
@@ -461,9 +635,11 @@ def test_run_turn_in_process_keeps_streamed_text_when_budget_ends_empty():
         def __init__(self, **_kwargs):
             pass
 
-        def chat(self, _text, stream_callback=None):
+        def run_conversation(
+            self, user_message, conversation_history=None, stream_callback=None
+        ):
             stream_callback("partial answer")
-            return ""
+            return {"final_response": ""}
 
     fake_module = types.ModuleType("run_agent")
     fake_module.AIAgent = BudgetAgent
@@ -675,15 +851,7 @@ def test_run_turn_in_process_never_prepends_a_mismatched_venv_tree(
     monkeypatch.setattr(sys, "path", list(sys.path))
     _pretend_python(monkeypatch, 12)
 
-    class FakeAgent:
-        def __init__(self, **_kwargs):
-            pass
-
-        def chat(self, _text, stream_callback=None):
-            return "ok"
-
-    fake_module = types.ModuleType("run_agent")
-    fake_module.AIAgent = FakeAgent
+    fake_module = _fake_agent_module([], reply="ok")
     hd.clear_agent_cache()
 
     with patch.dict(sys.modules, {"run_agent": fake_module}):

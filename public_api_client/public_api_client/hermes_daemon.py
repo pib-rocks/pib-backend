@@ -61,6 +61,9 @@ TurnRunner = Callable[..., str]
 IN_PROCESS_MODEL = "gemini-3.5-flash"
 DEFAULT_AGENT_CACHE_SIZE = 32
 
+# Every chat gets its own Hermes session, so history never crosses chats.
+SESSION_ID_PREFIX = "pib_chat_"
+
 # Hermes install layout used to import the agent in-process.
 DEFAULT_HERMES_HOME = "/home/pib/.hermes"
 HERMES_AGENT_DIRNAME = "hermes-agent"
@@ -95,6 +98,77 @@ _agent_cache_lock = threading.Lock()
 _mcp_discovery_attempted = False
 _mcp_discovery_lock = threading.Lock()
 
+# One SQLite session store for the whole process: two handles on the same file
+# lock each other out.
+_session_db = None
+_session_db_attempted = False
+_session_db_lock = threading.Lock()
+
+
+def session_id_for_chat(chat_id: str) -> str:
+    """Hermes session id backing one pib chat."""
+    return f"{SESSION_ID_PREFIX}{chat_id}"
+
+
+def _create_session_db():
+    """Best-effort SQLite session store, as ``hermes_cli.oneshot`` builds it.
+
+    Returns None when Hermes has no usable store; turns then run without history.
+    """
+    try:
+        from hermes_state import SessionDB
+
+        return SessionDB()
+    except Exception as exc:
+        logging.warning(
+            "Hermes session store unavailable; voice turns run without "
+            "conversation history: %s",
+            exc,
+            exc_info=True,
+        )
+        return None
+
+
+def _shared_session_db():
+    """Return this process' session store, opening it on first use."""
+    global _session_db, _session_db_attempted
+
+    with _session_db_lock:
+        if not _session_db_attempted:
+            _session_db_attempted = True
+            _session_db = _create_session_db()
+        return _session_db
+
+
+def _load_conversation_history(session_db, session_id: str) -> list:
+    """Stored turns of one chat session; empty for a chat that has none yet.
+
+    ``AIAgent`` never loads history itself, the caller owns it. The reopen clears the
+    ``ended_at`` a previous turn stamped, because ``end_session`` only writes rows whose
+    ``ended_at`` is null and a closed row would stop recording this chat.
+    """
+    if session_db is None:
+        return []
+
+    try:
+        restored, _display = session_db.get_resume_conversations(session_id)
+    except Exception:
+        logging.debug(
+            "could not load Hermes history for session %s", session_id, exc_info=True
+        )
+        return []
+
+    try:
+        session_db.reopen_session(session_id)
+    except Exception:
+        logging.debug("could not reopen session %s", session_id, exc_info=True)
+
+    return [
+        message
+        for message in restored or []
+        if not isinstance(message, dict) or message.get("role") != "session_meta"
+    ]
+
 
 def _toolset_list(toolsets: Optional[str]) -> Optional[list[str]]:
     if not toolsets:
@@ -114,11 +188,24 @@ def _close_agent(agent) -> None:
 
 def clear_agent_cache() -> None:
     """Close and remove all process-local chat agents (primarily for shutdown/tests)."""
+    global _session_db, _session_db_attempted
+
     with _agent_cache_lock:
         entries = list(_agent_cache.values())
         _agent_cache.clear()
     for entry in entries:
         _close_agent(entry.agent)
+
+    with _session_db_lock:
+        store = _session_db
+        _session_db = None
+        _session_db_attempted = False
+    if store is not None:
+        # The agents are gone, so nothing can write anymore: close to checkpoint the WAL.
+        try:
+            store.close()
+        except Exception:
+            logging.debug("could not close the Hermes session store", exc_info=True)
 
 
 def _discover_mcp_tools() -> None:
@@ -185,7 +272,8 @@ def _agent_for_chat(chat_id: str, toolsets: Optional[str], max_turns: int, agent
         construction_started = time.monotonic()
         agent = agent_cls(
             model=IN_PROCESS_MODEL,
-            session_id=f"pib_chat_{chat_id}",
+            session_db=_shared_session_db(),
+            session_id=session_id_for_chat(chat_id),
             enabled_toolsets=None,
             disabled_toolsets=_toolset_list(toolsets),
             max_iterations=max_turns,
@@ -242,8 +330,9 @@ def _coerce_reply(reply: object) -> str:
         return ""
     if hasattr(reply, "content"):
         reply = reply.content
-    elif isinstance(reply, dict) and "response" in reply:
-        reply = reply["response"]
+    elif isinstance(reply, dict):
+        # run_conversation returns the turn result; run_agent variants use "response".
+        reply = reply.get("final_response", reply.get("response", reply))
     if reply is None:
         return ""
     return (reply if isinstance(reply, str) else str(reply)).strip()
@@ -344,6 +433,9 @@ def run_turn_in_process(
 ) -> str:
     """Execute one turn via a cached ``AIAgent`` dedicated to this chat.
 
+    The turn replays this chat's stored conversation, so what was said earlier is in
+    context instead of the agent searching for it with its whole iteration budget.
+
     Hermes resolves HERMES_HOME at import time, so the cached in-process API
     cannot safely switch to a personality-specific profile. Profiles are still
     provisioned for the CLI fallback, but in-process turns use the daemon's
@@ -407,8 +499,19 @@ def run_turn_in_process(
                         stream_callback(delta)
 
             with cached.lock:
+                session_id = session_id_for_chat(chat_id)
+                history = _load_conversation_history(_shared_session_db(), session_id)
+                logging.info(
+                    "[PERF_TRACE] HERMES_TURN_HISTORY chat=%s messages=%d",
+                    chat_id,
+                    len(history),
+                )
                 reply = _coerce_reply(
-                    cached.agent.chat(text, stream_callback=capture_delta)
+                    cached.agent.run_conversation(
+                        user_message=text,
+                        conversation_history=history or None,
+                        stream_callback=capture_delta,
+                    )
                 )
             if not reply:
                 reply = "".join(produced).strip()
