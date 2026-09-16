@@ -387,7 +387,7 @@ class TestHandPipelineInput(unittest.TestCase):
         palm = MagicMock(rotation=np.pi / 4)
         palm.roi_for_frame.return_value = (0.5, 0.4, 0.25, 0.5)
 
-        result = node._landmark_crop_config(palm, 1280, 720, reuse_previous=True)
+        result = node._landmark_crop_config(palm, 640, 480, reuse_previous=True)
 
         self.assertIs(result, config)
         rotated, normalized = config.addCropRotatedRect.call_args.args
@@ -397,11 +397,7 @@ class TestHandPipelineInput(unittest.TestCase):
         self.assertEqual(rotated.size.width, 0.25)
         self.assertEqual(rotated.size.height, 0.5)
         self.assertAlmostEqual(rotated.angle, 45.0)
-        config.setOutputSize.assert_called_once_with(
-            224,
-            224,
-            mock_dai.ImageManipConfig.ResizeMode.LETTERBOX,
-        )
+        config.setOutputSize.assert_called_once_with(224, 224)
         config.setFrameType.assert_called_once_with(mock_dai.ImgFrame.Type.BGR888p)
         config.setWarpBorderReplicatePixels.assert_called_once_with()
         config.setReusePreviousImage.assert_called_once_with(True)
@@ -414,7 +410,7 @@ class TestHandPipelineInput(unittest.TestCase):
         palm.roi_for_frame.return_value = (0.5, 0.5, 0.0, 0.25)
 
         with self.assertRaisesRegex(ValueError, "positive dimensions"):
-            node._landmark_crop_config(palm, 1280, 720)
+            node._landmark_crop_config(palm, 640, 480)
 
         mock_dai.ImageManipConfig.assert_not_called()
 
@@ -475,6 +471,8 @@ class TestHandPipelineInput(unittest.TestCase):
         created[1].setNumShavesPerInferenceThread.assert_called_once_with(4)
         created[2].setNumShavesPerInferenceThread.assert_called_once_with(1)
         created[4].setNumShavesPerInferenceThread.assert_called_once_with(4)
+        created[0].setMaxOutputFrameSize.assert_called_once_with(128 * 128 * 3)
+        created[3].setMaxOutputFrameSize.assert_called_once_with(224 * 224 * 3)
         created[1].out.link.assert_has_calls(
             [
                 unittest.mock.call(created[2].inputs["classificators"]),
@@ -488,7 +486,27 @@ class TestHandPipelineInput(unittest.TestCase):
             )
         # Landmark results stay blocking so _pending_hands keeps its pairing.
         created[4].out.createOutputQueue.assert_called_once_with()
-        self.assertEqual(node.hand_source_size, (1280, 720))
+        self.assertEqual(node.hand_source_size, (640, 480))
+
+    @patch("ros_packages.camera.oak_d_lite.stereo.dai")
+    def test_landmarks_use_packet_transformation_to_map_to_preview(self, mock_dai):
+        with patch.object(CameraNode, "__init__", lambda self: None):
+            node = CameraNode()
+        node.hand_landmark_input_size = 224
+        mock_dai.Point2f.side_effect = lambda x, y: types.SimpleNamespace(x=x, y=y)
+        transformation = MagicMock()
+        transformation.invTransformPoint.side_effect = (
+            lambda point: types.SimpleNamespace(x=point.x + 10, y=point.y + 20)
+        )
+        packet = MagicMock()
+        packet.getTransformation.return_value = transformation
+        tensor = np.tile([0.5, 0.25, 0.0], (21, 1))
+
+        points = node._map_hand_landmarks(packet, tensor, 1280, 720, 640, 480)
+
+        self.assertEqual(len(points), 21)
+        self.assertEqual(points[0], (244.0, 114.0))
+        transformation.invTransformPoint.assert_called()
 
 
 class TestHandStageCounters(unittest.TestCase):
@@ -515,7 +533,7 @@ class TestHandStageCounters(unittest.TestCase):
     ):
         node = self._make_node()
         decoder_packet = MagicMock()
-        decoder_packet.getLayerFp16.return_value = [0.0] * 80
+        decoder_packet.getTensor.return_value = [0.0] * 80
         landmark_packet = MagicMock()
         node.hand_decoder_queue = MagicMock()
         node.hand_decoder_queue.tryGet.side_effect = [decoder_packet, None]
@@ -525,7 +543,7 @@ class TestHandStageCounters(unittest.TestCase):
         node.hand_landmark_input_size = 224
         node.current_frame = np.zeros((720, 1280, 3), dtype=np.uint8)
         node.current_source_size = (1280, 720)
-        node.hand_source_size = (1280, 720)
+        node.hand_source_size = (640, 480)
         node._pending_hand_decoder_packet = None
         node._pending_hands = deque()
         node._publish_hand_detections = MagicMock(
@@ -561,7 +579,59 @@ class TestHandStageCounters(unittest.TestCase):
         self.assertEqual(node.hand_stage_counters["post_processing"], 1)
         self.assertEqual(node.hand_stage_counters["publish"], 1)
         node._publish_hand_detections.assert_called_once_with(1280, 720, [])
-        landmark_packet.getLayerFp16.assert_not_called()
+        landmark_packet.getTensor.assert_not_called()
+
+    @patch("ros_packages.camera.oak_d_lite.stereo.dai")
+    def test_landmark_result_uses_image_tensor_and_packet_transform(self, mock_dai):
+        node = self._make_node()
+        palm = MagicMock(score=0.9)
+        batch = {
+            "remaining": 1,
+            "detections": [],
+            "frame_width": 1280,
+            "frame_height": 720,
+            "source_width": 640,
+            "source_height": 480,
+        }
+        landmark_packet = MagicMock()
+        landmark_packet.getTensor.side_effect = lambda name: {
+            "Identity_1": [0.9],
+            "Identity_3_dense/BiasAdd/Add": np.tile(
+                [0.5, 0.25, 0.0], (21, 1)
+            ),
+        }[name]
+        transformation = MagicMock()
+        transformation.invTransformPoint.return_value = types.SimpleNamespace(
+            x=320.0, y=240.0
+        )
+        landmark_packet.getTransformation.return_value = transformation
+        mock_dai.Point2f.side_effect = lambda x, y: types.SimpleNamespace(x=x, y=y)
+
+        node.hand_decoder_queue = MagicMock()
+        node.hand_decoder_queue.tryGet.return_value = None
+        node.hand_landmark_queue = MagicMock()
+        node.hand_landmark_queue.tryGet.return_value = landmark_packet
+        node.hand_landmark_input_size = 224
+        node.current_frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+        node.hand_source_size = (640, 480)
+        node._pending_hand_decoder_packet = None
+        node._pending_hands = deque([(palm, batch)])
+        node._hand_detection_message = MagicMock(return_value="detection")
+        node._publish_hand_detections = MagicMock()
+
+        node._process_hand_tracking()
+
+        self.assertEqual(
+            landmark_packet.getTensor.call_args_list,
+            [
+                unittest.mock.call("Identity_1"),
+                unittest.mock.call("Identity_3_dense/BiasAdd/Add"),
+            ],
+        )
+        landmark_packet.getTransformation.assert_called_once_with()
+        node._publish_hand_detections.assert_called_once_with(
+            1280, 720, ["detection"]
+        )
 
     def test_counter_log_contains_all_raw_stages_and_last_flowing_stage(self):
         node = self._make_node()

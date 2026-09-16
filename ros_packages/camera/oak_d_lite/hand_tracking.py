@@ -9,10 +9,10 @@ flattened values.  The head consumes detector tensors ``classificators``
 (1x896x1 anchors) and ``regressors`` (1x896x18: bbox plus seven palm
 keypoints), and emits anchor-decoded normalized coordinates after NMS.
 
-The same reference reads landmarks from ``Identity_dense/BiasAdd/Add`` as 21
-XYZ triples in 224-pixel crop coordinates, with confidence in ``Identity_1``.
-It rotates/scales those crop coordinates back through the palm ROI.  This
-module applies that transform to the actual camera frame dimensions.
+The landmark network exposes normalized image landmarks in
+``Identity_3_dense/BiasAdd/Add`` as 21 XYZ triples, with confidence in
+``Identity_1``. The runtime node maps them back through the
+``NNData.getTransformation()`` attached by DepthAI.
 """
 
 from dataclasses import dataclass
