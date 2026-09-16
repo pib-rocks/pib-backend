@@ -327,8 +327,25 @@ function seed_hermes_mcp_config() {
   sudo apt-get install -y python3-yaml >/dev/null
   sudo -u pib -H mkdir -p /home/pib/.hermes
   sudo -u pib -H python3 -c "
-import yaml, os
+import copy, yaml, os
 cfg_path = '/home/pib/.hermes/config.yaml'
+# Hermes starts the MCP server as a subprocess without handing it this process'
+# environment, so the entry has to carry its own env: without it pib_mcp_server
+# talks to its http://localhost:5000 default and every robot tool call fails.
+# Same entry as public_api_client.hermes_agent_client.PIB_MCP_SERVER;
+# tests/unit/test_setup_hermes_model_pin.py fails if the two ever drift.
+flask_url = os.environ.get('FLASK_API_BASE_URL', 'http://flask-app:5000')
+pib_mcp_server = {
+    'command': 'python3',
+    'args': ['-m', 'pib_mcp_server'],
+    'env': {
+        'FLASK_API_BASE_URL': flask_url,
+        'PIB_MCP_API_BASE_URL': flask_url,
+        'PIB_MCP_ROSBRIDGE_URL': os.environ.get(
+            'PIB_MCP_ROSBRIDGE_URL', 'ws://rosbridge-ws:9090'
+        ),
+    },
+}
 cfg = {}
 if os.path.exists(cfg_path):
     with open(cfg_path, 'r') as f:
@@ -338,12 +355,26 @@ if cfg.get('model') != 'gemini-3.5-flash' or cfg.get('provider') != 'gemini':
     cfg['model'] = 'gemini-3.5-flash'
     cfg['provider'] = 'gemini'
     changed = True
-if 'mcp_servers' not in cfg or 'pib' not in cfg.get('mcp_servers', {}):
-    cfg.setdefault('mcp_servers', {})['pib'] = {
-        'command': 'python3',
-        'args': ['-m', 'pib_mcp_server'],
-    }
+servers = cfg.get('mcp_servers')
+if not isinstance(servers, dict):
+    servers = {}
+    cfg['mcp_servers'] = servers
+entry = servers.get('pib')
+if not isinstance(entry, dict):
+    servers['pib'] = copy.deepcopy(pib_mcp_server)
     changed = True
+else:
+    # Re-run on an install seeded by an older setup: add only what is missing,
+    # never overwrite a command, args or env value the operator chose.
+    env = entry.get('env')
+    if not isinstance(env, dict):
+        env = {}
+        entry['env'] = env
+        changed = True
+    for key, value in pib_mcp_server['env'].items():
+        if key not in env:
+            env[key] = value
+            changed = True
 if changed:
     with open(cfg_path, 'w') as f:
         yaml.dump(cfg, f, default_flow_style=False)

@@ -264,26 +264,91 @@ def test_ensure_profile_seeds_mcp_servers_pib_into_existing_config(
     _assert_mcp_servers_pib(cfg)
 
 
+def _write_profile_config(pdir, cfg):
+    os.makedirs(pdir, exist_ok=True)
+    with open(os.path.join(pdir, "config.yaml"), "w", encoding="utf-8") as fh:
+        yaml.safe_dump(cfg, fh)
+
+
 def test_ensure_profile_keeps_an_existing_mcp_servers_pib_entry(
     tmp_path, monkeypatch, sandboxed_hermes_home
 ):
-    """A customized mcp_servers.pib entry must not be replaced."""
+    """A customized entry keeps its command/args, but still gets the missing env.
+
+    Hermes spawns the MCP server without this process' environment, so an entry
+    without `env` sends every tool call to pib_mcp_server's own localhost:5000
+    default. The repair therefore adds env and touches nothing else.
+    """
     _base_install_with_credentials(sandboxed_hermes_home)
     _absent_binary(tmp_path, monkeypatch)
     pdir = profile_dir_for("p-9")
-    os.makedirs(pdir)
     custom = {"command": "python3", "args": ["-m", "custom_mcp"]}
-    with open(os.path.join(pdir, "config.yaml"), "w", encoding="utf-8") as fh:
-        yaml.safe_dump(
-            {"model": "custom/operator-model", "mcp_servers": {"pib": custom}},
-            fh,
-        )
+    _write_profile_config(
+        pdir, {"model": "custom/operator-model", "mcp_servers": {"pib": dict(custom)}}
+    )
+
+    ensure_profile("p-9", soul_text="Du bist pib.")
+
+    entry = _load_profile_config(pdir)["mcp_servers"]["pib"]
+    assert entry["command"] == custom["command"]
+    assert entry["args"] == custom["args"]
+    assert entry["env"] == PIB_MCP_SERVER["env"]
+    _assert_pinned_gemini_model(_load_profile_config(pdir))
+
+
+def test_ensure_profile_adds_the_missing_env_to_a_seeded_mcp_servers_pib_entry(
+    tmp_path, monkeypatch, sandboxed_hermes_home
+):
+    """Migration for installs seeded before the entry carried its env block."""
+    _base_install_with_credentials(sandboxed_hermes_home)
+    _absent_binary(tmp_path, monkeypatch)
+    pdir = profile_dir_for("p-9")
+    _write_profile_config(
+        pdir,
+        {
+            "mcp_servers": {
+                "pib": {"command": "python3", "args": ["-m", "pib_mcp_server"]}
+            }
+        },
+    )
 
     ensure_profile("p-9", soul_text="Du bist pib.")
 
     cfg = _load_profile_config(pdir)
-    assert cfg["mcp_servers"]["pib"] == custom
-    _assert_pinned_gemini_model(cfg)
+    _assert_mcp_servers_pib(cfg)
+
+
+def test_ensure_profile_never_overwrites_an_operator_set_mcp_env_value(
+    tmp_path, monkeypatch, sandboxed_hermes_home
+):
+    """Only missing env keys are filled; the operator's own values survive."""
+    _base_install_with_credentials(sandboxed_hermes_home)
+    _absent_binary(tmp_path, monkeypatch)
+    pdir = profile_dir_for("p-9")
+    _write_profile_config(
+        pdir,
+        {
+            "mcp_servers": {
+                "pib": {
+                    "command": "python3",
+                    "args": ["-m", "pib_mcp_server"],
+                    "env": {
+                        "FLASK_API_BASE_URL": "http://operators-own-host:5000",
+                        "PIB_MCP_EXTRA": "keep-me",
+                    },
+                }
+            }
+        },
+    )
+
+    ensure_profile("p-9", soul_text="Du bist pib.")
+
+    env = _load_profile_config(pdir)["mcp_servers"]["pib"]["env"]
+    defaults = PIB_MCP_SERVER["env"]
+    assert env["FLASK_API_BASE_URL"] == "http://operators-own-host:5000"
+    assert env["PIB_MCP_EXTRA"] == "keep-me"
+    assert env["PIB_MCP_API_BASE_URL"] == defaults["PIB_MCP_API_BASE_URL"]
+    assert env["PIB_MCP_ROSBRIDGE_URL"] == defaults["PIB_MCP_ROSBRIDGE_URL"]
 
 
 def test_ensure_profile_pins_gemini_model_even_when_already_configured(
