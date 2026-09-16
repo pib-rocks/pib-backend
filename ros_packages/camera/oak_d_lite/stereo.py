@@ -34,17 +34,16 @@ from .pipeline_manager import PipelineManager
 from .hand_tracking import (
     HAND_KEYPOINT_NAMES,
     decode_palm_result,
-    map_landmarks_to_frame,
 )
 
 # Downscaled resolution for Haar cascade face detection (maps back to full frame).
 FACE_DETECT_WIDTH = 320
 FACE_DETECT_HEIGHT = 180
-# Keep ImageManip warp inputs below the full ISP resolution.  In particular,
-# dynamic landmark crops from the full OAK-D Lite ISP frame exceed RVC2's warp
-# cache; 1280x720 preserves useful hand detail while staying within that limit.
-HAND_NN_WIDTH = 1280
-HAND_NN_HEIGHT = 720
+# Keep ImageManip warp inputs below the full ISP resolution.  This exact size is
+# proven on the OAK-D Lite: larger inputs can overflow RVC2's warp cache and
+# make ImageManip skip every frame with WARP_SWCH_ERR_CACHE_TO_SMALL.
+HAND_NN_WIDTH = 640
+HAND_NN_HEIGHT = 480
 # Device-side queues on the camera branches stay shallow and non-blocking.  The
 # host drains them from the 10 Hz timer, far below the camera frame rate, and a
 # blocking queue back-pressures the Camera node and stalls every other branch
@@ -354,7 +353,51 @@ class CameraNode(Node):
 
     @staticmethod
     def _nn_layer(packet, name):
-        return np.asarray(packet.getLayerFp16(name), dtype=np.float32)
+        return np.asarray(packet.getTensor(name), dtype=np.float32)
+
+    def _map_hand_landmarks(
+        self,
+        packet,
+        tensor,
+        frame_width,
+        frame_height,
+        source_width,
+        source_height,
+    ):
+        """Map normalized landmark-crop coordinates through DepthAI's warp."""
+        values = np.asarray(tensor, dtype=np.float32)
+        if values.size != len(HAND_KEYPOINT_NAMES) * 3:
+            raise ValueError("landmark result must contain exactly 63 values (21 x 3)")
+        values = values.reshape(len(HAND_KEYPOINT_NAMES), 3)
+        if not np.all(np.isfinite(values)):
+            raise ValueError("landmark result contains non-finite values")
+
+        transformation = packet.getTransformation()
+        if transformation is None:
+            raise ValueError("landmark result has no image transformation")
+
+        scale_x = frame_width / float(source_width)
+        scale_y = frame_height / float(source_height)
+        points = []
+        for crop_x, crop_y, _ in values:
+            crop_point = dai.Point2f(
+                float(crop_x) * self.hand_landmark_input_size,
+                float(crop_y) * self.hand_landmark_input_size,
+            )
+            source_point = transformation.invTransformPoint(crop_point)
+            points.append(
+                (
+                    min(
+                        float(frame_width),
+                        max(0.0, float(source_point.x) * scale_x),
+                    ),
+                    min(
+                        float(frame_height),
+                        max(0.0, float(source_point.y) * scale_y),
+                    ),
+                )
+            )
+        return points
 
     def _publish_hand_detections(self, frame_width, frame_height, detections):
         message = DetectionArray()
@@ -476,15 +519,14 @@ class CameraNode(Node):
         rotated.angle = math.degrees(rotation)
 
         config = dai.ImageManipConfig()
-        # The decoder uses normalized letterboxed-square coordinates. roi_for_frame
-        # converts those to normalized coordinates of the 1280x720 hand tap.
-        config.addCropRotatedRect(rotated, True)
         config.setOutputSize(
             self.hand_landmark_input_size,
             self.hand_landmark_input_size,
-            dai.ImageManipConfig.ResizeMode.LETTERBOX,
         )
         config.setFrameType(dai.ImgFrame.Type.BGR888p)
+        # The decoder uses normalized letterboxed-square coordinates. roi_for_frame
+        # converts those to normalized coordinates of the 640x480 hand tap.
+        config.addCropRotatedRect(rotated, True)
         # Palm ROIs routinely cross an image edge. Explicit warp border handling
         # keeps those valid instead of making ImageManip skip the frame.
         border_replicate = getattr(config, "setWarpBorderReplicatePixels", None)
@@ -507,17 +549,16 @@ class CameraNode(Node):
                 if palm is not None:
                     score = self._nn_layer(packet, "Identity_1")
                     landmarks_tensor = self._nn_layer(
-                        packet, "Identity_dense/BiasAdd/Add"
+                        packet, "Identity_3_dense/BiasAdd/Add"
                     )
                     if score.size != 1:
                         raise ValueError("landmark confidence must contain one value")
                     if score[0] >= 0.5:
-                        landmarks = map_landmarks_to_frame(
+                        landmarks = self._map_hand_landmarks(
+                            packet,
                             landmarks_tensor,
-                            palm,
                             batch["frame_width"],
                             batch["frame_height"],
-                            self.hand_landmark_input_size,
                             batch["source_width"],
                             batch["source_height"],
                         )
@@ -782,6 +823,9 @@ class CameraNode(Node):
         self.hand_source_size = (HAND_NN_WIDTH, HAND_NN_HEIGHT)
 
         palm_manip = self.pipeline.create(dai.node.ImageManip)
+        palm_manip.setMaxOutputFrameSize(
+            palm.input_width * palm.input_height * 3
+        )
         palm_manip.initialConfig.setOutputSize(
             palm.input_width,
             palm.input_height,
@@ -814,10 +858,12 @@ class CameraNode(Node):
         )
 
         landmark_manip = self.pipeline.create(dai.node.ImageManip)
+        landmark_manip.setMaxOutputFrameSize(
+            landmark.input_width * landmark.input_height * 3
+        )
         landmark_manip.initialConfig.setOutputSize(
             landmark.input_width,
             landmark.input_height,
-            dai.ImageManipConfig.ResizeMode.STRETCH,
         )
         landmark_manip.initialConfig.setFrameType(dai.ImgFrame.Type.BGR888p)
         # This manip only consumes an image once the host has sent a crop
