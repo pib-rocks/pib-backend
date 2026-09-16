@@ -76,6 +76,8 @@ services:
       - /dev/bus/usb:/dev/bus/usb
     networks:
       - pib-network
+    environment:
+      - PIB_CAMERA_STEREO=off
     restart: always
     depends_on:
       - rosbridge-ws

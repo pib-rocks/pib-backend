@@ -490,12 +490,12 @@ class CameraNode(Node):
         self.depth_queue = stereo.depth.createOutputQueue()
 
     def _read_stereo_mode(self):
-        mode = os.environ.get("PIB_CAMERA_STEREO", "auto").strip().lower()
+        mode = os.environ.get("PIB_CAMERA_STEREO", "off").strip().lower()
         if mode not in STEREO_MODES:
             self.get_logger().warning(
-                f"Invalid PIB_CAMERA_STEREO={mode!r}; using 'auto'."
+                f"Invalid PIB_CAMERA_STEREO={mode!r}; using 'off'."
             )
-            return "auto"
+            return "off"
         return mode
 
     def _read_stereo_timeout(self):
@@ -540,6 +540,7 @@ class CameraNode(Node):
                 continue
             neural_network = self.pipeline.create(dai.node.NeuralNetwork)
             neural_network.setBlobPath(model.blob_path)
+            neural_network.setNumShavesPerInferenceThread(model.shaves)
             nn_input = self.camRgb.requestOutput(
                 (model.input_width, model.input_height),
                 type=dai.ImgFrame.Type.BGR888p,
@@ -575,10 +576,12 @@ class CameraNode(Node):
 
         palm_nn = self.pipeline.create(dai.node.NeuralNetwork)
         palm_nn.setBlobPath(palm.blob_path)
+        palm_nn.setNumShavesPerInferenceThread(palm.shaves)
         palm_manip.out.link(palm_nn.input)
 
         decoder_nn = self.pipeline.create(dai.node.NeuralNetwork)
         decoder_nn.setBlobPath(decoder.blob_path)
+        decoder_nn.setNumShavesPerInferenceThread(decoder.shaves)
         palm_nn.out.link(decoder_nn.input)
         self.hand_decoder_queue = decoder_nn.out.createOutputQueue()
 
@@ -596,6 +599,7 @@ class CameraNode(Node):
 
         landmark_nn = self.pipeline.create(dai.node.NeuralNetwork)
         landmark_nn.setBlobPath(landmark.blob_path)
+        landmark_nn.setNumShavesPerInferenceThread(landmark.shaves)
         landmark_manip.out.link(landmark_nn.input)
         self.hand_landmark_queue = landmark_nn.out.createOutputQueue()
 

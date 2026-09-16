@@ -39,9 +39,9 @@ def _manifest(model_file="demo/demo.blob"):
 def _composite_manifest():
     manifest = {"models": []}
     for model_id, size, shaves in (
-        ("palm", 4, 2),
+        ("palm", 4, 4),
         ("decoder", 3, 1),
-        ("landmark", 5, 3),
+        ("landmark", 5, 4),
     ):
         entry = _manifest(f"{model_id}/{model_id}.blob")["models"][0]
         entry.update(
@@ -65,6 +65,31 @@ def _composite_manifest():
 
 
 class TestModelRegistry(unittest.TestCase):
+    def test_hand_tracking_manifest_has_empirical_shave_budgets(self):
+        manifest = yaml.safe_load(
+            (REPO_ROOT / "models/manifest.yaml").read_text(encoding="utf-8")
+        )
+        shaves = {
+            entry["model_id"]: entry.get("shaves")
+            for entry in manifest["models"]
+        }
+
+        self.assertEqual(
+            {
+                model_id: shaves[model_id]
+                for model_id in (
+                    "palm_detection_128x128",
+                    "palm_detection_128x128_decoding",
+                    "hand_landmark_224x224",
+                )
+            },
+            {
+                "palm_detection_128x128": 4,
+                "palm_detection_128x128_decoding": 1,
+                "hand_landmark_224x224": 4,
+            },
+        )
+
     def test_parses_manifest_and_marks_present_blob_available(self):
         with tempfile.TemporaryDirectory() as store:
             store_path = Path(store)
@@ -139,7 +164,7 @@ class TestModelRegistry(unittest.TestCase):
         self.assertTrue(model.composite)
         self.assertEqual(model.artifact_ids, ("palm", "decoder", "landmark"))
         self.assertEqual(model.size_bytes, 12)
-        self.assertEqual(model.shaves, 6)
+        self.assertEqual(model.shaves, 9)
 
     def test_composite_is_unavailable_when_one_artifact_is_missing(self):
         with tempfile.TemporaryDirectory() as store:
@@ -272,7 +297,7 @@ class TestPipelineManager(unittest.TestCase):
 
             self.assertTrue(manager.start("hand_tracking", 0, "ui")[0])
             self.assertTrue(manager.start("hand_tracking", 0, "blockly")[0])
-            self.assertEqual(rebuilds, [[("hand_tracking", 6)]])
+            self.assertEqual(rebuilds, [[("hand_tracking", 9)]])
             self.assertTrue(manager.stop("hand_tracking", "ui")[0])
             self.assertEqual(len(rebuilds), 1)
             self.assertTrue(manager.stop("hand_tracking", "blockly")[0])
