@@ -50,6 +50,14 @@ models:
   openvino_version: '2022.1'
   zoo_type: depthai
   notes: Hand landmark network (weights on RobotHub CDN). DepthAI zoo IR expects BGR, [0-255], CHW. Compiled with '-ip U8'. Upstream model.yml licence is empty.
+- model_id: hand_tracking
+  task: hand_tracking
+  composite: true
+  artifacts:
+  - palm_detection_128x128
+  - palm_detection_128x128_decoding
+  - hand_landmark_224x224
+  publish_topic: detections/hand_tracking
 - model_id: face_detection_yunet_160x120
   task: face_detection
   source_upstream: luxonis/depthai-model-zoo (ShiqiYu/libfacedetection YuNet)
