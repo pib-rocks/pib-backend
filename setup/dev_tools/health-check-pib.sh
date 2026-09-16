@@ -125,7 +125,7 @@ if [ $run_python_package_check = $true ]; then
             echo -e "$package is installed"
         fi
     done
-    # depthai is installed in the ros-camera image (depthai==3.8.0), not host pip.
+    # depthai is installed in the ros-camera image (depthai==3.6.1), not host pip.
     camera_container="$(docker ps --format '{{.Names}}' 2>/dev/null | grep -E 'ros-camera' | head -n1 || true)"
     if [ -n "$camera_container" ]; then
         if docker exec "$camera_container" pip show depthai >/dev/null 2>&1; then

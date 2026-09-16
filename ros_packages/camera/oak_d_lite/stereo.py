@@ -643,7 +643,7 @@ class CameraNode(Node):
         self.depth_queue = stereo.depth.createOutputQueue()
 
     def _read_stereo_mode(self):
-        mode = os.environ.get("PIB_CAMERA_STEREO", "off").strip().lower()
+        mode = os.environ.get("PIB_CAMERA_STEREO", "auto").strip().lower()
         if mode not in STEREO_MODES:
             self.get_logger().warning(
                 f"Invalid PIB_CAMERA_STEREO={mode!r}; using 'off'."
