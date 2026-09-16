@@ -62,6 +62,8 @@ HAND_STAGE_NAMES = (
     "colour_isp",
     "palm_detector_nn",
     "decoding_nn",
+    "decoding_result",
+    "image_manip_config",
     "image_manip_roi",
     "hand_landmark_nn",
     "post_processing",
@@ -418,16 +420,49 @@ class CameraNode(Node):
                 reuse_previous=index + 1 < len(palms),
             )
             self.hand_landmark_config_queue.send(config)
+            self._count_hand_stage("image_manip_config")
             self._pending_hands.append((palm, batch))
+
+    def _queue_empty_landmark_frame(
+        self,
+        frame_width,
+        frame_height,
+        source_width,
+        source_height,
+    ):
+        """Advance the config-gated ROI branch for a frame with no palms."""
+        batch = {
+            "remaining": 1,
+            "detections": [],
+            "frame_width": frame_width,
+            "frame_height": frame_height,
+            "source_width": source_width,
+            "source_height": source_height,
+        }
+        config = self._landmark_crop_config(
+            None,
+            source_width,
+            source_height,
+        )
+        self.hand_landmark_config_queue.send(config)
+        self._count_hand_stage("image_manip_config")
+        # The full-frame landmark result is deliberately discarded. Keeping a
+        # sentinel in the pairing queue prevents its packet from being matched
+        # with a palm from a later decoder frame.
+        self._pending_hands.append((None, batch))
 
     def _landmark_crop_config(
         self, palm, source_width, source_height, reuse_previous=False
     ):
         """Build a complete dynamic warp config for one decoded palm ROI."""
-        roi_x, roi_y, roi_width, roi_height = palm.roi_for_frame(
-            source_width, source_height
-        )
-        geometry = (roi_x, roi_y, roi_width, roi_height, palm.rotation)
+        if palm is None:
+            roi_x, roi_y, roi_width, roi_height, rotation = 0.5, 0.5, 1.0, 1.0, 0.0
+        else:
+            roi_x, roi_y, roi_width, roi_height = palm.roi_for_frame(
+                source_width, source_height
+            )
+            rotation = palm.rotation
+        geometry = (roi_x, roi_y, roi_width, roi_height, rotation)
         if not all(math.isfinite(value) for value in geometry):
             raise ValueError("hand ROI contains non-finite geometry")
         if roi_width <= 0 or roi_height <= 0:
@@ -438,7 +473,7 @@ class CameraNode(Node):
         rotated.center.y = roi_y
         rotated.size.width = roi_width
         rotated.size.height = roi_height
-        rotated.angle = math.degrees(palm.rotation)
+        rotated.angle = math.degrees(rotation)
 
         config = dai.ImageManipConfig()
         # The decoder uses normalized letterboxed-square coordinates. roi_for_frame
@@ -469,30 +504,33 @@ class CameraNode(Node):
             self._count_hand_stage("hand_landmark_nn")
             palm, batch = self._pending_hands.popleft()
             try:
-                score = self._nn_layer(packet, "Identity_1")
-                landmarks_tensor = self._nn_layer(packet, "Identity_dense/BiasAdd/Add")
-                if score.size != 1:
-                    raise ValueError("landmark confidence must contain one value")
-                if score[0] >= 0.5:
-                    landmarks = map_landmarks_to_frame(
-                        landmarks_tensor,
-                        palm,
-                        batch["frame_width"],
-                        batch["frame_height"],
-                        self.hand_landmark_input_size,
-                        batch["source_width"],
-                        batch["source_height"],
+                if palm is not None:
+                    score = self._nn_layer(packet, "Identity_1")
+                    landmarks_tensor = self._nn_layer(
+                        packet, "Identity_dense/BiasAdd/Add"
                     )
-                    batch["detections"].append(
-                        self._hand_detection_message(
+                    if score.size != 1:
+                        raise ValueError("landmark confidence must contain one value")
+                    if score[0] >= 0.5:
+                        landmarks = map_landmarks_to_frame(
+                            landmarks_tensor,
                             palm,
-                            landmarks,
                             batch["frame_width"],
                             batch["frame_height"],
+                            self.hand_landmark_input_size,
                             batch["source_width"],
                             batch["source_height"],
                         )
-                    )
+                        batch["detections"].append(
+                            self._hand_detection_message(
+                                palm,
+                                landmarks,
+                                batch["frame_width"],
+                                batch["frame_height"],
+                                batch["source_width"],
+                                batch["source_height"],
+                            )
+                        )
             except (RuntimeError, ValueError) as exc:
                 self._warn_hand_once(f"Invalid hand landmark output: {exc}")
             self._count_hand_stage("post_processing")
@@ -526,9 +564,14 @@ class CameraNode(Node):
         except (RuntimeError, ValueError) as exc:
             self._warn_hand_once(f"Invalid palm decoder output: {exc}")
             palms = []
+        self._count_hand_stage("decoding_result")
         if not palms:
-            self._count_hand_stage("post_processing")
-            self._publish_hand_detections(frame_width, frame_height, [])
+            self._queue_empty_landmark_frame(
+                frame_width,
+                frame_height,
+                source_width,
+                source_height,
+            )
             return
         self._queue_landmark_crops(
             palms,
@@ -700,6 +743,10 @@ class CameraNode(Node):
                 "colour_isp",
                 "palm_detector_nn",
                 "decoding_nn",
+                "decoding_result",
+                "image_manip_config",
+                "image_manip_roi",
+                "hand_landmark_nn",
                 "post_processing",
                 "publish",
             )
