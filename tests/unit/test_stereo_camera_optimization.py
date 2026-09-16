@@ -368,7 +368,7 @@ class TestHandPipelineInput(unittest.TestCase):
             node._request_camera_branch((HAND_NN_WIDTH, HAND_NN_HEIGHT))
 
     @patch("ros_packages.camera.oak_d_lite.stereo.dai")
-    def test_hand_manips_get_separate_non_blocking_camera_taps(self, mock_dai):
+    def test_hand_manips_share_one_non_blocking_camera_tap(self, mock_dai):
         with patch.object(CameraNode, "__init__", lambda self: None):
             node = CameraNode()
 
@@ -395,26 +395,27 @@ class TestHandPipelineInput(unittest.TestCase):
         created = [MagicMock() for _ in range(5)]
         node.pipeline.create.side_effect = created
         node.camRgb = MagicMock()
-        palm_tap = MagicMock()
-        landmark_tap = MagicMock()
-        node.camRgb.requestOutput.side_effect = [palm_tap, landmark_tap]
+        hand_tap = MagicMock()
+        node.camRgb.requestOutput.return_value = hand_tap
 
         node._build_hand_pipeline(
             types.SimpleNamespace(artifact_ids=tuple(artifacts))
         )
 
-        # The palm branch and the config-gated landmark branch must not share a
-        # tap: the idle landmark manip would otherwise back-pressure the camera.
+        # A single downscaled output stays within the camera-output budget. Both
+        # consumers are non-blocking, so the config-gated landmark branch cannot
+        # back-pressure the palm branch while it is idle.
         expected_request = unittest.mock.call(
             (HAND_NN_WIDTH, HAND_NN_HEIGHT),
             type=mock_dai.ImgFrame.Type.BGR888p,
         )
-        self.assertEqual(
-            node.camRgb.requestOutput.call_args_list,
-            [expected_request, expected_request],
+        self.assertEqual(node.camRgb.requestOutput.call_args_list, [expected_request])
+        hand_tap.link.assert_has_calls(
+            [
+                unittest.mock.call(created[0].inputImage),
+                unittest.mock.call(created[3].inputImage),
+            ]
         )
-        palm_tap.link.assert_called_once_with(created[0].inputImage)
-        landmark_tap.link.assert_called_once_with(created[3].inputImage)
         for branch_input in (
             created[0].inputImage,
             created[1].input,
@@ -448,6 +449,18 @@ class TestHandStageCounters(unittest.TestCase):
         node._reset_hand_stage_counters()
         node.get_logger = MagicMock()
         return node
+
+    def _set_built_hand_chain(self, node):
+        node._pipeline_models = [
+            types.SimpleNamespace(
+                model=types.SimpleNamespace(model_id="hand_tracking")
+            )
+        ]
+        node.hand_palm_queue = MagicMock()
+        node.hand_decoder_queue = MagicMock()
+        node.hand_roi_queue = MagicMock()
+        node.hand_landmark_queue = MagicMock()
+        node.hand_landmark_config_queue = MagicMock()
 
     def test_decoder_empty_result_counts_decode_postprocess_and_publish(self):
         node = self._make_node()
@@ -490,31 +503,81 @@ class TestHandStageCounters(unittest.TestCase):
 
     def test_model_verification_requires_and_preserves_decoder_packet(self):
         node = self._make_node()
+        self._set_built_hand_chain(node)
         colour_packet = object()
+        palm_packet = object()
         decoder_packet = object()
         node._pending_color_packet = None
         node._pending_hand_decoder_packet = None
-        node.hand_decoder_queue = MagicMock()
         node._wait_for_color_frame = MagicMock(return_value=colour_packet)
-        node._wait_for_queue_packet = MagicMock(return_value=decoder_packet)
+        node._wait_for_queue_packet = MagicMock(
+            side_effect=[palm_packet, decoder_packet]
+        )
 
         self.assertTrue(node._verify_model_frames(3.0))
 
         self.assertIs(node._pending_color_packet, colour_packet)
         self.assertIs(node._pending_hand_decoder_packet, decoder_packet)
-        node._wait_for_queue_packet.assert_called_once_with(
-            node.hand_decoder_queue, 3.0
+        self.assertEqual(
+            node._wait_for_queue_packet.call_args_list,
+            [
+                unittest.mock.call(node.hand_palm_queue, 3.0),
+                unittest.mock.call(node.hand_decoder_queue, 3.0),
+            ],
         )
+        self.assertTrue(node._hand_chain_is_flowing())
 
     def test_model_verification_fails_when_decoder_has_no_packets(self):
         node = self._make_node()
+        self._set_built_hand_chain(node)
         node._pending_color_packet = None
         node._pending_hand_decoder_packet = None
-        node.hand_decoder_queue = MagicMock()
         node._wait_for_color_frame = MagicMock(return_value=object())
-        node._wait_for_queue_packet = MagicMock(return_value=None)
+        node._wait_for_queue_packet = MagicMock(side_effect=[object(), None])
 
         self.assertFalse(node._verify_model_frames(3.0))
+
+    def test_model_verification_fails_when_requested_hand_chain_is_absent(self):
+        node = self._make_node()
+        node._pipeline_models = [
+            types.SimpleNamespace(
+                model=types.SimpleNamespace(model_id="hand_tracking")
+            )
+        ]
+        node.hand_palm_queue = None
+        node.hand_decoder_queue = None
+        node.hand_roi_queue = None
+        node.hand_landmark_queue = None
+        node.hand_landmark_config_queue = None
+        node.nn_queues = {}
+        node._wait_for_color_frame = MagicMock(return_value=object())
+
+        self.assertFalse(node._verify_model_frames(3.0))
+
+        node._wait_for_color_frame.assert_not_called()
+        node.get_logger().error.assert_called_once()
+
+    def test_rebuild_rejects_colour_pipeline_missing_requested_hand_chain(self):
+        node = self._make_node()
+        node._stop_pipeline = MagicMock()
+        node.init_pipeline = MagicMock(return_value=True)
+        node.nn_queues = {}
+        node.hand_palm_queue = None
+        node.hand_decoder_queue = None
+        node.hand_roi_queue = None
+        node.hand_landmark_queue = None
+        node.hand_landmark_config_queue = None
+        requested = [
+            types.SimpleNamespace(
+                model=types.SimpleNamespace(model_id="hand_tracking")
+            )
+        ]
+
+        self.assertFalse(node._rebuild_models(requested))
+
+        self.assertFalse(node.camera_available)
+        self.assertEqual(node._stop_pipeline.call_count, 2)
+        node.get_logger().error.assert_called_once()
 
 
 class TestStereoModeDecision(unittest.TestCase):
@@ -615,6 +678,7 @@ class TestStereoModeDecision(unittest.TestCase):
         self.assertEqual(
             [call.args[0] for call in mock_sleep.call_args_list], [0.25, 0.5]
         )
+        self.assertEqual(node.get_logger().error.call_count, 3)
 
 
 if __name__ == "__main__":

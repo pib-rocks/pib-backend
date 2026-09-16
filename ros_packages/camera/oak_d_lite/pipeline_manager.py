@@ -213,6 +213,19 @@ class PipelineManager:
             if runtime is not None and runtime.active:
                 runtime.packet_count += 1
 
+    def mark_failed(self, model_id: str, message: str) -> bool:
+        """Make a stale running status reflect a missing physical pipeline."""
+        with self._lock:
+            runtime = self._runtime.get(model_id)
+            if runtime is None or not runtime.active:
+                return False
+            runtime.state = "failed"
+            runtime.message = message
+            runtime.active = False
+            runtime.fps = 0.0
+            runtime.packet_count = 0
+            return True
+
     def refresh_fps(self):
         with self._lock:
             now = self._clock()
