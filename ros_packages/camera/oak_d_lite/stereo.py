@@ -43,6 +43,13 @@ FACE_DETECT_HEIGHT = 180
 # cache; 1280x720 preserves useful hand detail while staying within that limit.
 HAND_NN_WIDTH = 1280
 HAND_NN_HEIGHT = 720
+# Device-side queues on the camera branches stay shallow and non-blocking.  The
+# host drains them from the 10 Hz timer, far below the camera frame rate, and a
+# blocking queue back-pressures the Camera node and stalls every other branch
+# sharing it - including the colour output.
+BRANCH_INPUT_QUEUE_DEPTH = 1
+BRANCH_OUTPUT_QUEUE_DEPTH = 4
+COLOR_OUTPUT_QUEUE_DEPTH = 4
 STEREO_MODES = {"auto", "on", "off"}
 DEFAULT_STEREO_TIMEOUT = 5.0
 PIPELINE_START_ATTEMPTS = 3
@@ -573,7 +580,9 @@ class CameraNode(Node):
         self.camRgb = self.pipeline.create(dai.node.Camera)
         self.camRgb.build(dai.CameraBoardSocket.CAM_A)
         self.isp_out = self.camRgb.requestIspOutput()
-        self.queue = self.isp_out.createOutputQueue()
+        self.queue = self.isp_out.createOutputQueue(
+            maxSize=COLOR_OUTPUT_QUEUE_DEPTH, blocking=False
+        )
         self.depth_queue = None
         self.nn_queues = {}
         self.hand_decoder_queue = None
@@ -601,12 +610,45 @@ class CameraNode(Node):
             neural_network = self.pipeline.create(dai.node.NeuralNetwork)
             neural_network.setBlobPath(model.blob_path)
             neural_network.setNumShavesPerInferenceThread(model.shaves)
-            nn_input = self.camRgb.requestOutput(
-                (model.input_width, model.input_height),
-                type=dai.ImgFrame.Type.BGR888p,
+            nn_input = self._request_camera_branch(
+                (model.input_width, model.input_height)
             )
+            self._relax_branch_input(neural_network.input)
             nn_input.link(neural_network.input)
-            self.nn_queues[model.model_id] = neural_network.out.createOutputQueue()
+            self.nn_queues[model.model_id] = neural_network.out.createOutputQueue(
+                maxSize=BRANCH_OUTPUT_QUEUE_DEPTH, blocking=False
+            )
+
+    def _request_camera_branch(self, size):
+        """Request a dedicated colour tap for a single branch consumer.
+
+        Sharing one camera output between consumers means a branch that stops
+        consuming back-pressures the Camera node and starves every other
+        consumer on that output, including the colour path.
+        """
+        output = self.camRgb.requestOutput(size, type=dai.ImgFrame.Type.BGR888p)
+        if output is None:
+            raise RuntimeError(
+                f"Camera cannot provide a {size[0]}x{size[1]} BGR888p branch output"
+            )
+        return output
+
+    def _relax_branch_input(self, node_input):
+        """Drop frames on a branch input instead of back-pressuring the camera."""
+        try:
+            node_input.setBlocking(False)
+        except Exception:
+            self._warn_hand_once("Branch input blocking mode is not configurable.")
+        for setter_name in ("setMaxSize", "setQueueSize"):
+            setter = getattr(node_input, setter_name, None)
+            if setter is None:
+                continue
+            try:
+                setter(BRANCH_INPUT_QUEUE_DEPTH)
+                return
+            except Exception:
+                continue
+        self._warn_hand_once("Branch input queue depth is not configurable.")
 
     def _build_hand_pipeline(self, composite):
         """Add palm resize/detect/decode and dynamic hand ROI landmarks."""
@@ -620,11 +662,6 @@ class CameraNode(Node):
         self.hand_landmark_input_size = landmark.input_width
         self.hand_source_size = (HAND_NN_WIDTH, HAND_NN_HEIGHT)
 
-        hand_input = self.camRgb.requestOutput(
-            self.hand_source_size,
-            type=dai.ImgFrame.Type.BGR888p,
-        )
-
         palm_manip = self.pipeline.create(dai.node.ImageManip)
         palm_manip.initialConfig.setOutputSize(
             palm.input_width,
@@ -632,20 +669,27 @@ class CameraNode(Node):
             dai.ImageManipConfig.ResizeMode.LETTERBOX,
         )
         palm_manip.initialConfig.setFrameType(dai.ImgFrame.Type.BGR888p)
-        hand_input.link(palm_manip.inputImage)
+        self._relax_branch_input(palm_manip.inputImage)
+        palm_tap = self._request_camera_branch(self.hand_source_size)
+        palm_tap.link(palm_manip.inputImage)
 
         palm_nn = self.pipeline.create(dai.node.NeuralNetwork)
         palm_nn.setBlobPath(palm.blob_path)
         palm_nn.setNumShavesPerInferenceThread(palm.shaves)
+        self._relax_branch_input(palm_nn.input)
         palm_manip.out.link(palm_nn.input)
-        self.hand_palm_queue = palm_nn.out.createOutputQueue()
+        self.hand_palm_queue = palm_nn.out.createOutputQueue(
+            maxSize=BRANCH_OUTPUT_QUEUE_DEPTH, blocking=False
+        )
 
         decoder_nn = self.pipeline.create(dai.node.NeuralNetwork)
         decoder_nn.setBlobPath(decoder.blob_path)
         decoder_nn.setNumShavesPerInferenceThread(decoder.shaves)
         palm_nn.out.link(decoder_nn.inputs["classificators"])
         palm_nn.out.link(decoder_nn.inputs["regressors"])
-        self.hand_decoder_queue = decoder_nn.out.createOutputQueue()
+        self.hand_decoder_queue = decoder_nn.out.createOutputQueue(
+            maxSize=BRANCH_OUTPUT_QUEUE_DEPTH, blocking=False
+        )
 
         landmark_manip = self.pipeline.create(dai.node.ImageManip)
         landmark_manip.initialConfig.setOutputSize(
@@ -654,17 +698,25 @@ class CameraNode(Node):
             dai.ImageManipConfig.ResizeMode.STRETCH,
         )
         landmark_manip.initialConfig.setFrameType(dai.ImgFrame.Type.BGR888p)
-        hand_input.link(landmark_manip.inputImage)
+        # This manip only consumes an image once the host has sent a crop
+        # config, so it must own its tap and discard images while idle.
+        self._relax_branch_input(landmark_manip.inputImage)
+        landmark_tap = self._request_camera_branch(self.hand_source_size)
+        landmark_tap.link(landmark_manip.inputImage)
         landmark_manip.inputConfig.setWaitForMessage(True)
         self.hand_landmark_config_queue = landmark_manip.inputConfig.createInputQueue(
             maxSize=16, blocking=False
         )
-        self.hand_roi_queue = landmark_manip.out.createOutputQueue()
+        self.hand_roi_queue = landmark_manip.out.createOutputQueue(
+            maxSize=BRANCH_OUTPUT_QUEUE_DEPTH, blocking=False
+        )
 
         landmark_nn = self.pipeline.create(dai.node.NeuralNetwork)
         landmark_nn.setBlobPath(landmark.blob_path)
         landmark_nn.setNumShavesPerInferenceThread(landmark.shaves)
         landmark_manip.out.link(landmark_nn.input)
+        # Stays blocking: _pending_hands expects one landmark result per crop
+        # config, and a dropped result would stall the pairing permanently.
         self.hand_landmark_queue = landmark_nn.out.createOutputQueue()
 
     def _stop_pipeline(self):

@@ -132,6 +132,9 @@ else:
 import numpy as np
 
 from ros_packages.camera.oak_d_lite.stereo import (
+    BRANCH_INPUT_QUEUE_DEPTH,
+    BRANCH_OUTPUT_QUEUE_DEPTH,
+    COLOR_OUTPUT_QUEUE_DEPTH,
     CameraNode,
     FACE_DETECT_WIDTH,
     FACE_DETECT_HEIGHT,
@@ -343,7 +346,29 @@ class TestStereoDepthInterfaces(unittest.TestCase):
 
 class TestHandPipelineInput(unittest.TestCase):
     @patch("ros_packages.camera.oak_d_lite.stereo.dai")
-    def test_hand_manips_share_bounded_camera_output(self, mock_dai):
+    def test_colour_tap_queue_is_bounded_and_non_blocking(self, mock_dai):
+        with patch.object(CameraNode, "__init__", lambda self: None):
+            node = CameraNode()
+        mock_dai.Pipeline.return_value = MagicMock()
+
+        node._build_pipeline(include_stereo=False)
+
+        node.isp_out.createOutputQueue.assert_called_once_with(
+            maxSize=COLOR_OUTPUT_QUEUE_DEPTH, blocking=False
+        )
+
+    @patch("ros_packages.camera.oak_d_lite.stereo.dai")
+    def test_rejected_camera_tap_fails_the_build(self, mock_dai):
+        with patch.object(CameraNode, "__init__", lambda self: None):
+            node = CameraNode()
+        node.camRgb = MagicMock()
+        node.camRgb.requestOutput.return_value = None
+
+        with self.assertRaises(RuntimeError):
+            node._request_camera_branch((HAND_NN_WIDTH, HAND_NN_HEIGHT))
+
+    @patch("ros_packages.camera.oak_d_lite.stereo.dai")
+    def test_hand_manips_get_separate_non_blocking_camera_taps(self, mock_dai):
         with patch.object(CameraNode, "__init__", lambda self: None):
             node = CameraNode()
 
@@ -370,23 +395,33 @@ class TestHandPipelineInput(unittest.TestCase):
         created = [MagicMock() for _ in range(5)]
         node.pipeline.create.side_effect = created
         node.camRgb = MagicMock()
-        hand_input = MagicMock()
-        node.camRgb.requestOutput.return_value = hand_input
+        palm_tap = MagicMock()
+        landmark_tap = MagicMock()
+        node.camRgb.requestOutput.side_effect = [palm_tap, landmark_tap]
 
         node._build_hand_pipeline(
             types.SimpleNamespace(artifact_ids=tuple(artifacts))
         )
 
-        node.camRgb.requestOutput.assert_called_once_with(
+        # The palm branch and the config-gated landmark branch must not share a
+        # tap: the idle landmark manip would otherwise back-pressure the camera.
+        expected_request = unittest.mock.call(
             (HAND_NN_WIDTH, HAND_NN_HEIGHT),
             type=mock_dai.ImgFrame.Type.BGR888p,
         )
-        hand_input.link.assert_has_calls(
-            [
-                unittest.mock.call(created[0].inputImage),
-                unittest.mock.call(created[3].inputImage),
-            ]
+        self.assertEqual(
+            node.camRgb.requestOutput.call_args_list,
+            [expected_request, expected_request],
         )
+        palm_tap.link.assert_called_once_with(created[0].inputImage)
+        landmark_tap.link.assert_called_once_with(created[3].inputImage)
+        for branch_input in (
+            created[0].inputImage,
+            created[1].input,
+            created[3].inputImage,
+        ):
+            branch_input.setBlocking.assert_called_once_with(False)
+            branch_input.setMaxSize.assert_called_once_with(BRANCH_INPUT_QUEUE_DEPTH)
         created[1].setNumShavesPerInferenceThread.assert_called_once_with(4)
         created[2].setNumShavesPerInferenceThread.assert_called_once_with(1)
         created[4].setNumShavesPerInferenceThread.assert_called_once_with(4)
@@ -397,8 +432,12 @@ class TestHandPipelineInput(unittest.TestCase):
             ]
         )
         created[3].inputConfig.setWaitForMessage.assert_called_once_with(True)
-        created[1].out.createOutputQueue.assert_called_once_with()
-        created[3].out.createOutputQueue.assert_called_once_with()
+        for branch_node in (created[1], created[2], created[3]):
+            branch_node.out.createOutputQueue.assert_called_once_with(
+                maxSize=BRANCH_OUTPUT_QUEUE_DEPTH, blocking=False
+            )
+        # Landmark results stay blocking so _pending_hands keeps its pairing.
+        created[4].out.createOutputQueue.assert_called_once_with()
         self.assertEqual(node.hand_source_size, (1280, 720))
 
 
