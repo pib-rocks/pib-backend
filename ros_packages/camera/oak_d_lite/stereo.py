@@ -507,6 +507,21 @@ class CameraNode(Node):
         )
 
     def publish_model_statuses(self):
+        statuses = self.pipeline_manager.statuses()
+        hand_status = statuses.get("hand_tracking")
+        if (
+            hand_status is not None
+            and hand_status["active"]
+            and not self._hand_chain_is_flowing()
+        ):
+            self.pipeline_manager.mark_failed(
+                "hand_tracking",
+                "Hand pipeline is not producing startup stage packets",
+            )
+            self.get_logger().error(
+                "hand_tracking was marked failed because its physical pipeline "
+                "is missing or has no startup packet flow."
+            )
         self.pipeline_manager.refresh_fps()
         self._log_hand_stage_counters()
         statuses = self.pipeline_manager.statuses()
@@ -620,18 +635,37 @@ class CameraNode(Node):
             )
 
     def _request_camera_branch(self, size):
-        """Request a dedicated colour tap for a single branch consumer.
-
-        Sharing one camera output between consumers means a branch that stops
-        consuming back-pressures the Camera node and starves every other
-        consumer on that output, including the colour path.
-        """
+        """Request a bounded-size colour stream for a model branch."""
         output = self.camRgb.requestOutput(size, type=dai.ImgFrame.Type.BGR888p)
         if output is None:
             raise RuntimeError(
                 f"Camera cannot provide a {size[0]}x{size[1]} BGR888p branch output"
             )
         return output
+
+    def _hand_chain_is_built(self):
+        requested = any(
+            active.model.model_id == "hand_tracking"
+            for active in getattr(self, "_pipeline_models", ())
+        )
+        if not requested:
+            return False
+        return all(
+            queue is not None
+            for queue in (
+                self.hand_palm_queue,
+                self.hand_decoder_queue,
+                self.hand_roi_queue,
+                self.hand_landmark_queue,
+                self.hand_landmark_config_queue,
+            )
+        )
+
+    def _hand_chain_is_flowing(self):
+        return self._hand_chain_is_built() and all(
+            self.hand_stage_counters[stage] > 0
+            for stage in ("colour_isp", "palm_detector_nn", "decoding_nn")
+        )
 
     def _relax_branch_input(self, node_input):
         """Drop frames on a branch input instead of back-pressuring the camera."""
@@ -670,8 +704,11 @@ class CameraNode(Node):
         )
         palm_manip.initialConfig.setFrameType(dai.ImgFrame.Type.BGR888p)
         self._relax_branch_input(palm_manip.inputImage)
-        palm_tap = self._request_camera_branch(self.hand_source_size)
-        palm_tap.link(palm_manip.inputImage)
+        # One downscaled camera stream feeds both non-blocking manip inputs.
+        # Requesting two identical Camera outputs exceeds the OAK-D Lite
+        # camera-output budget once the colour output is present.
+        hand_tap = self._request_camera_branch(self.hand_source_size)
+        hand_tap.link(palm_manip.inputImage)
 
         palm_nn = self.pipeline.create(dai.node.NeuralNetwork)
         palm_nn.setBlobPath(palm.blob_path)
@@ -699,10 +736,10 @@ class CameraNode(Node):
         )
         landmark_manip.initialConfig.setFrameType(dai.ImgFrame.Type.BGR888p)
         # This manip only consumes an image once the host has sent a crop
-        # config, so it must own its tap and discard images while idle.
+        # config. Its non-blocking input discards images while idle, so sharing
+        # the hand tap cannot back-pressure the palm or colour paths.
         self._relax_branch_input(landmark_manip.inputImage)
-        landmark_tap = self._request_camera_branch(self.hand_source_size)
-        landmark_tap.link(landmark_manip.inputImage)
+        hand_tap.link(landmark_manip.inputImage)
         landmark_manip.inputConfig.setWaitForMessage(True)
         self.hand_landmark_config_queue = landmark_manip.inputConfig.createInputQueue(
             maxSize=16, blocking=False
@@ -741,13 +778,17 @@ class CameraNode(Node):
             self._pending_hands.clear()
 
     def _start_pipeline(self, include_stereo):
-        """Build and start a fresh pipeline with bounded, silent retries."""
+        """Build and start a fresh pipeline with bounded retries."""
         for attempt in range(PIPELINE_START_ATTEMPTS):
             try:
                 self._build_pipeline(include_stereo)
                 self.pipeline.start()
                 return True
-            except Exception:
+            except Exception as exc:
+                self.get_logger().error(
+                    "Camera pipeline build/start attempt "
+                    f"{attempt + 1}/{PIPELINE_START_ATTEMPTS} failed: {exc}"
+                )
                 self._stop_pipeline()
                 if attempt + 1 < PIPELINE_START_ATTEMPTS:
                     time.sleep(PIPELINE_START_BACKOFF * (2**attempt))
@@ -782,18 +823,59 @@ class CameraNode(Node):
         self._pipeline_models = list(active_models)
         self._stop_pipeline()
         self.camera_available = self.init_pipeline()
+        if self.camera_available:
+            missing = [
+                active.model.model_id
+                for active in self._pipeline_models
+                if (
+                    active.model.model_id == "hand_tracking"
+                    and not self._hand_chain_is_built()
+                )
+                or (
+                    active.model.model_id != "hand_tracking"
+                    and active.model.model_id not in self.nn_queues
+                )
+            ]
+            if missing:
+                self.get_logger().error(
+                    "Camera pipeline started without requested model chain(s): "
+                    + ", ".join(missing)
+                )
+                self._stop_pipeline()
+                self.camera_available = False
         return self.camera_available
 
     def _verify_model_frames(self, timeout):
+        requested_ids = {
+            active.model.model_id
+            for active in getattr(self, "_pipeline_models", ())
+        }
+        if "hand_tracking" in requested_ids and not self._hand_chain_is_built():
+            self.get_logger().error(
+                "Cannot verify hand_tracking: the complete hand chain is absent"
+            )
+            return False
+        if any(
+            model_id != "hand_tracking" and model_id not in self.nn_queues
+            for model_id in requested_ids
+        ):
+            return False
+
         packet = self._wait_for_color_frame(timeout)
         if packet is None:
             return False
         self._pending_color_packet = packet
-        if self.hand_decoder_queue is not None:
+        if "hand_tracking" in requested_ids:
+            palm_packet = self._wait_for_queue_packet(self.hand_palm_queue, timeout)
+            if palm_packet is None:
+                return False
+            self._count_hand_stage("colour_isp")
+            self._count_hand_stage("palm_detector_nn")
             packet = self._wait_for_queue_packet(self.hand_decoder_queue, timeout)
             if packet is None:
                 return False
             self._pending_hand_decoder_packet = packet
+            self._count_hand_stage("decoding_nn")
         return True
 
     def _revert_to_color_only(self):

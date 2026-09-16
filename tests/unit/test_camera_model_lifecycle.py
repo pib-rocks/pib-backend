@@ -249,6 +249,23 @@ class TestPipelineManager(unittest.TestCase):
         self.assertFalse(status["active"])
         self.assertEqual(status["owners"], set())
 
+    def test_mark_failed_corrects_a_stale_running_status(self):
+        manager = self._manager()
+        self.assertTrue(manager.start("demo", 4, "ui")[0])
+
+        self.assertTrue(
+            manager.mark_failed("demo", "Physical model pipeline is not flowing")
+        )
+
+        status = manager.status("demo")
+        self.assertEqual(status["state"], "failed")
+        self.assertEqual(
+            status["message"], "Physical model pipeline is not flowing"
+        )
+        self.assertFalse(status["active"])
+        self.assertEqual(status["fps"], 0.0)
+        self.assertEqual(status["owners"], {"ui"})
+
     def test_rejects_shaves_that_do_not_match_the_compiled_blob(self):
         manager = self._manager()
 
