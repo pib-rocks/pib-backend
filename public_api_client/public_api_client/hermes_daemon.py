@@ -15,6 +15,7 @@ from __future__ import annotations
 import contextlib
 import glob
 import importlib
+import inspect
 import io
 import json
 import logging
@@ -235,15 +236,37 @@ def ensure_profile_home(
                     shutil.rmtree(backup)
                 os.replace(profile_dir, backup)
             try:
-                result = create_profile(
-                    name=profile_name,
-                    clone_from=None,
-                    clone_all=False,
-                    clone_config=True,
-                    no_alias=True,
-                    no_skills=False,
-                    description=f"pib personality {personality_id}",
-                    clone_channels=False,
+                # Pass only the keyword arguments the INSTALLED Hermes factory
+                # accepts: the container ships its own hermes_cli (dist-packages)
+                # whose create_profile has no `clone_channels`, and passing it
+                # made every provisioning attempt fail with a TypeError. A factory
+                # that forwards **kwargs (or a test double) gets everything.
+                factory_kwargs = {
+                    "name": profile_name,
+                    "clone_from": None,
+                    "clone_all": False,
+                    "clone_config": True,
+                    "no_alias": True,
+                    "no_skills": False,
+                    "description": f"pib personality {personality_id}",
+                    "clone_channels": False,
+                }
+                parameters = inspect.signature(create_profile).parameters
+                forwards_kwargs = any(
+                    parameter.kind is inspect.Parameter.VAR_KEYWORD
+                    for parameter in parameters.values()
+                )
+                if not forwards_kwargs:
+                    factory_kwargs = {
+                        key: value
+                        for key, value in factory_kwargs.items()
+                        if key in parameters
+                    }
+                result = create_profile(**factory_kwargs)
+                logging.info(
+                    "hermes profile factory created %s (kwargs: %s)",
+                    profile_name,
+                    ",".join(sorted(factory_kwargs)),
                 )
                 if os.path.abspath(str(result)) != os.path.abspath(profile_dir):
                     raise RuntimeError(
