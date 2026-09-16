@@ -1,7 +1,9 @@
+import logging
 from typing import Any, List
 from model.personality_model import Personality
 from app.app import db
 from pib_hermes_config import build_default_soul_text
+from public_api_client.hermes_agent_client import provision_profile
 from service import soul_service
 
 
@@ -54,17 +56,28 @@ def create_personality(personality_dto: Any) -> Personality:
     personality.description = soul_content
     db.session.add(personality)
     db.session.flush()
-    personality.description = soul_service.write_soul(
-        personality.personality_id,
-        soul_content,
-        personality_name=personality.name,
-    )
+    try:
+        provision_profile(
+            personality.personality_id,
+            personality_name=personality.name,
+            soul_text=custom or None,
+        )
+        personality.profile_provisioned = True
+    except Exception as exc:
+        personality.profile_provisioned = False
+        logging.error(
+            "personality %s was created but its Hermes profile was not provisioned: %s",
+            personality.personality_id,
+            exc,
+        )
     return personality
 
 
 def update_personality(personality_id: str, personality_dto: Any) -> Personality:
     personality = get_personality(personality_id)
+    name_changed = False
     if "name" in personality_dto:
+        name_changed = personality.name != personality_dto["name"]
         personality.name = personality_dto["name"]
     if "gender" in personality_dto and personality_dto["gender"]:
         personality.gender = personality_dto["gender"].title()
@@ -79,6 +92,21 @@ def update_personality(personality_id: str, personality_dto: Any) -> Personality
             personality.description,
             personality_name=personality.name,
         )
+    if name_changed:
+        try:
+            provision_profile(
+                personality.personality_id,
+                personality_name=personality.name,
+                soul_text=personality.description,
+            )
+            personality.profile_provisioned = True
+        except Exception as exc:
+            personality.profile_provisioned = False
+            logging.error(
+                "personality %s updated but its Hermes profile was not provisioned: %s",
+                personality.personality_id,
+                exc,
+            )
     if "assistant_model_id" in personality_dto:
         personality.assistant_model_id = personality_dto["assistant_model_id"]
     if "stt_engine" in personality_dto:

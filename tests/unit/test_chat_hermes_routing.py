@@ -498,6 +498,10 @@ def test_warm_daemon_falls_back_to_subprocess_when_run_agent_missing(
         ),
         patch("builtins.__import__", side_effect=_block_hermes),
         patch(
+            "public_api_client.hermes_agent_client.ensure_profile",
+            return_value="/tmp/profiles/pib_pers-1",
+        ),
+        patch(
             "public_api_client.hermes_agent_client.run_turn_subprocess",
             return_value="subprocess-via-daemon",
         ) as subprocess_runner,
@@ -848,6 +852,7 @@ def test_run_hermes_turn_needs_no_asyncio_event_loop(
     from a plain synchronous thread that has no asyncio loop at all.
     """
     monkeypatch.setenv("PIB_HERMES_PROFILES_DIR", str(tmp_path / "profiles"))
+    monkeypatch.setenv("PIB_HERMES_PROFILE_FACTORY", "filesystem")
     assert not _asyncio_loop_running()
 
     completed = subprocess.CompletedProcess(

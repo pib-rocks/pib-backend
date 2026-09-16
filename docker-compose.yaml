@@ -34,6 +34,7 @@ services:
       - PYTHON_CODE_DIR=/root/cerebra_programs
       - MARIMO_NOTEBOOKS_DIR=/home/pib/programs/notebooks
       - PIB_HERMES_PROFILES_DIR=/home/pib/.hermes/profiles
+      - PIB_HERMES_DAEMON_URL=http://ros-voice-assistant:8088
     volumes:
       - ./pib_api/flask/:/app
       - programs:/root/cerebra_programs
@@ -132,6 +133,7 @@ services:
       - PIB_HERMES_PROFILES_DIR=/home/pib/.hermes/profiles
       - HERMES_HOME=/home/pib/.hermes
       - PIB_HERMES_BIN=/home/pib/.local/bin/hermes
+      - PIB_HERMES_DAEMON_HOST=0.0.0.0
       # GEMINI_API_KEY / GOOGLE_API_KEY are deliberately NOT listed here: they
       # come from the gitignored ./password.env (env_file above). Compose
       # interpolates ${VAR} from the shell or the tracked project-root .env, not

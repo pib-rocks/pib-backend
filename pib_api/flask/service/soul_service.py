@@ -48,11 +48,9 @@ def write_soul(personality_id: str, text: str, personality_name: str = "pib") ->
     with open(path, "w", encoding="utf-8") as fh:
         fh.write(soul_content)
     try:
-        os.chmod(path, 0o664)
+        os.chmod(path, 0o644)
     except OSError:
         pass
-    align_profile_ownership(profile_dir)
-    # created belongs to root and the pib user cannot even list it.
     align_profile_ownership(profile_dir)
     return soul_content
 
