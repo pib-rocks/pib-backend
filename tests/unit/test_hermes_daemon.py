@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 import threading
@@ -1242,3 +1243,72 @@ def test_run_turn_in_process_returns_fallback_on_agent_error(tmp_path, monkeypat
         )
 
     assert reply == FALLBACK_REPLY
+
+
+def test_hermes_source_is_placed_in_front_of_sys_path(tmp_path, monkeypatch):
+    """Provisioning and turns must import the SAME Hermes.
+
+    Live, provisioning imported hermes_cli from the container's site-packages first;
+    the turn then failed to import run_agent and silently answered with the fallback
+    sentence, because the CLI subprocess is broken in that container.
+    """
+    agent_dir = tmp_path / "hermes-agent"
+    venv = agent_dir / "venv" / "lib" / "python3.12" / "site-packages"
+    venv.mkdir(parents=True)
+    monkeypatch.setattr(hd, "hermes_agent_dir", lambda: str(agent_dir))
+    monkeypatch.setattr(hd, "venv_site_packages", lambda _base: [str(venv)])
+    monkeypatch.setattr(hd, "_HERMES_SOURCE_PREPARED", False)
+    monkeypatch.setattr(hd.sys, "path", ["/somewhere/else"])
+
+    hd.ensure_hermes_source_on_path()
+    hd.ensure_hermes_source_on_path()  # idempotent
+
+    assert hd.sys.path[0] == str(agent_dir)
+    assert hd.sys.path.count(str(agent_dir)) == 1
+    assert hd.sys.path.count(str(venv)) == 1
+
+
+def test_provisioning_prepares_the_hermes_source_before_importing_the_factory(
+    tmp_path, monkeypatch
+):
+    """The factory import must not pick a foreign hermes_cli into sys.modules."""
+    prepared = MagicMock()
+    monkeypatch.setattr(hd, "ensure_hermes_source_on_path", prepared)
+    monkeypatch.setenv("PIB_HERMES_PROFILES_DIR", str(tmp_path))
+
+    def create_profile(**kwargs):
+        pdir = tmp_path / kwargs["name"]
+        pdir.mkdir(parents=True)
+        for dirname in hd.PROFILE_DIRS:
+            (pdir / dirname).mkdir()
+        (pdir / "config.yaml").write_text("{}\n", encoding="utf-8")
+        return pdir
+
+    profiles_module = types.ModuleType("hermes_cli.profiles")
+    profiles_module.create_profile = create_profile
+    profiles_module.profile_exists = lambda _name: False
+    package = types.ModuleType("hermes_cli")
+    package.__path__ = []
+
+    with patch.dict(
+        sys.modules, {"hermes_cli": package, "hermes_cli.profiles": profiles_module}
+    ):
+        result = hd.ensure_profile_home("p-mixed")
+
+    assert prepared.called
+    assert result["ok"] is True
+    assert result["created"] is True
+    assert os.path.isdir(os.path.join(result["profile_dir"], "memories"))
+
+
+def test_run_turn_in_process_prepares_the_hermes_source(monkeypatch):
+    prepared = MagicMock()
+    monkeypatch.setattr(hd, "ensure_hermes_source_on_path", prepared)
+    monkeypatch.setattr(hd, "_create_session_db", MagicMock(return_value=None))
+    monkeypatch.setattr(hd, "_discover_mcp_tools", MagicMock())
+    hd.clear_agent_cache()
+
+    with patch.dict(sys.modules, {"run_agent": _fake_agent_module([])}):
+        hd.run_turn_in_process("hi", "chat-mixed")
+
+    assert prepared.called
