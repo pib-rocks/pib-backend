@@ -5,13 +5,16 @@ to a warm process instead of cold-starting the Hermes CLI on every chat turn.
 
 Endpoints:
   GET  /health  → 200 {"status": "ok"}
-  POST /turn    → JSON {text, chat_id, personality_id?, toolsets?} → {"reply": "..."}
+  POST /turn    → JSON {text, chat_id, personality_id?, toolsets?, max_turns?}
+                  → {"reply": "..."}
+                  With stream=true, returns newline-delimited delta/final JSON.
 """
 
 from __future__ import annotations
 
 import contextlib
 import glob
+import importlib
 import io
 import json
 import logging
@@ -20,6 +23,7 @@ import re
 import socket
 import threading
 import time
+from collections import OrderedDict
 
 # Force IPv4 preference in socket.getaddrinfo to prevent 10s IPv6 timeouts on Pi networks
 _orig_getaddrinfo = socket.getaddrinfo
@@ -54,6 +58,7 @@ TurnRunner = Callable[..., str]
 
 # Model used for the in-process ``run_agent.main`` entry point.
 IN_PROCESS_MODEL = "gemini-3.5-flash"
+DEFAULT_AGENT_CACHE_SIZE = 32
 
 # Hermes install layout used to import the agent in-process.
 DEFAULT_HERMES_HOME = "/home/pib/.hermes"
@@ -75,6 +80,71 @@ _TRAILING_MARKERS = (
 # redirect_stdout swaps a process-global, so parallel /turn requests would read
 # each other's output. Serialize the captured runs.
 _stdout_capture_lock = threading.Lock()
+
+
+class _CachedAgent:
+    def __init__(self, agent, settings: tuple[Optional[str], int]):
+        self.agent = agent
+        self.settings = settings
+        self.lock = threading.Lock()
+
+
+_agent_cache: OrderedDict[str, _CachedAgent] = OrderedDict()
+_agent_cache_lock = threading.Lock()
+
+
+def _toolset_list(toolsets: Optional[str]) -> Optional[list[str]]:
+    if not toolsets:
+        return None
+    values = [value.strip() for value in toolsets.split(",") if value.strip()]
+    return values or None
+
+
+def _close_agent(agent) -> None:
+    close = getattr(agent, "close", None)
+    if callable(close):
+        try:
+            close()
+        except Exception:
+            logging.debug("could not close evicted Hermes agent", exc_info=True)
+
+
+def clear_agent_cache() -> None:
+    """Close and remove all process-local chat agents (primarily for shutdown/tests)."""
+    with _agent_cache_lock:
+        entries = list(_agent_cache.values())
+        _agent_cache.clear()
+    for entry in entries:
+        _close_agent(entry.agent)
+
+
+def _agent_for_chat(chat_id: str, toolsets: Optional[str], max_turns: int, agent_cls):
+    """Return the sole cached agent for a chat, evicting least-recently-used chats."""
+    settings = (toolsets, max_turns)
+    with _agent_cache_lock:
+        cached = _agent_cache.get(chat_id)
+        if cached is not None and cached.settings == settings:
+            _agent_cache.move_to_end(chat_id)
+            return cached
+        if cached is not None:
+            _agent_cache.pop(chat_id)
+            _close_agent(cached.agent)
+
+        agent = agent_cls(
+            model=IN_PROCESS_MODEL,
+            session_id=f"pib_chat_{chat_id}",
+            enabled_toolsets=None,
+            disabled_toolsets=_toolset_list(toolsets),
+            max_iterations=max_turns,
+            platform="cli",
+        )
+        cached = _CachedAgent(agent, settings)
+        _agent_cache[chat_id] = cached
+
+        while len(_agent_cache) > DEFAULT_AGENT_CACHE_SIZE:
+            _evicted_chat, evicted = _agent_cache.popitem(last=False)
+            _close_agent(evicted.agent)
+        return cached
 
 
 def extract_final_response(stdout_text: str) -> str:
@@ -182,18 +252,21 @@ def run_turn_in_process(
     chat_id: str,
     personality_id: Optional[str] = None,
     toolsets: Optional[str] = None,
+    max_turns: Optional[int] = None,
     timeout: Optional[int] = None,
+    stream_callback: Optional[Callable[[str], None]] = None,
 ) -> str:
-    """Execute one turn via the in-process Hermes Agent Python API.
+    """Execute one turn via a cached ``AIAgent`` dedicated to this chat.
 
-    Prefers ``hermes.run_agent.run_agent`` to avoid subprocess spawn / cold
-    import overhead, then ``run_agent.main``, whose answer is read back from
-    captured stdout because it prints instead of returning. Falls back to
-    ``run_turn_subprocess`` when neither is importable or yields text.
+    Hermes resolves HERMES_HOME at import time, so the cached in-process API
+    cannot safely switch to a personality-specific profile. Profiles are still
+    provisioned for the CLI fallback, but in-process turns use the daemon's
+    startup profile.
     """
     from public_api_client.hermes_agent_client import (
+        DEFAULT_DISABLED_TOOLSETS,
+        DEFAULT_MAX_TURNS,
         FALLBACK_REPLY,
-        ensure_profile,
         run_turn_subprocess,
     )
 
@@ -204,59 +277,67 @@ def run_turn_in_process(
         if path_entry not in sys.path and os.path.exists(path_entry):
             sys.path.insert(0, path_entry)
 
-    run_agent_fn = None
-    prints_to_stdout = False
-    try:
-        from hermes.run_agent import run_agent as run_agent_fn
-    except ImportError:
+    agent_module = None
+    for module_name in ("run_agent", "hermes.run_agent"):
         try:
-            from run_agent import main as run_agent_fn
-
-            prints_to_stdout = True
+            agent_module = importlib.import_module(module_name)
+            break
         except ImportError:
-            pass
+            continue
+    agent_cls = getattr(agent_module, "AIAgent", None)
+    run_agent_main = getattr(agent_module, "main", None)
+
+    effective_toolsets = DEFAULT_DISABLED_TOOLSETS if toolsets is None else toolsets
+    effective_max_turns = DEFAULT_MAX_TURNS if max_turns is None else max_turns
 
     def _subprocess_reply() -> str:
         kwargs = {
             "text": text,
             "chat_id": chat_id,
             "personality_id": personality_id,
-            "toolsets": toolsets,
+            "toolsets": effective_toolsets,
         }
         if timeout is not None:
             kwargs["timeout"] = timeout
         return run_turn_subprocess(**kwargs)
 
-    if run_agent_fn is None:
+    if agent_cls is None and run_agent_main is None:
         logging.info(
-            "hermes.run_agent unavailable; falling back to CLI subprocess (chat=%s)",
+            "Hermes Python API unavailable; falling back to CLI subprocess (chat=%s)",
             chat_id,
         )
         return _subprocess_reply()
 
-    profile_name: Optional[str] = None
-    if personality_id:
-        try:
-            ensure_profile(personality_id)
-        except Exception as exc:
-            logging.warning(
-                "ensure_profile failed for personality %s (chat=%s): %s",
-                personality_id,
-                chat_id,
-                exc,
-            )
-        from pib_hermes_config import profile_name_for
-
-        profile_name = profile_name_for(personality_id)
-
     try:
-        if prints_to_stdout:
+        if agent_cls is not None:
+            cached = _agent_for_chat(
+                chat_id, effective_toolsets, effective_max_turns, agent_cls
+            )
+            produced: list[str] = []
+
+            def capture_delta(delta: str) -> None:
+                if isinstance(delta, str) and delta:
+                    produced.append(delta)
+                    if stream_callback is not None:
+                        stream_callback(delta)
+
+            with cached.lock:
+                reply = _coerce_reply(
+                    cached.agent.chat(text, stream_callback=capture_delta)
+                )
+            if not reply:
+                reply = "".join(produced).strip()
+        else:
             captured = io.StringIO()
             with _stdout_capture_lock, contextlib.redirect_stdout(captured):
-                returned = run_agent_fn(query=text, model=IN_PROCESS_MODEL)
+                returned = run_agent_main(
+                    query=text,
+                    model=IN_PROCESS_MODEL,
+                    disabled_toolsets=effective_toolsets,
+                    max_turns=effective_max_turns,
+                )
             reply = extract_final_response(captured.getvalue())
             if not reply:
-                # Some builds do return the answer; use it before giving up.
                 reply = _coerce_reply(returned)
             if not reply:
                 logging.warning(
@@ -264,15 +345,6 @@ def run_turn_in_process(
                     chat_id,
                     len(captured.getvalue()),
                 )
-        else:
-            reply = _coerce_reply(
-                run_agent_fn(
-                    prompt=text,
-                    session_id=f"pib_chat_{chat_id}",
-                    profile=profile_name,
-                    timeout=timeout,
-                )
-            )
     except Exception as exc:
         logging.exception(
             "in-process hermes turn failed (chat=%s): %s",
@@ -300,7 +372,9 @@ def _default_turn_runner(
     chat_id: str,
     personality_id: Optional[str] = None,
     toolsets: Optional[str] = None,
+    max_turns: Optional[int] = None,
     timeout: Optional[int] = None,
+    stream_callback: Optional[Callable[[str], None]] = None,
 ) -> str:
     """Execute one turn in-process via Hermes Agent (subprocess fallback)."""
     return run_turn_in_process(
@@ -308,7 +382,9 @@ def _default_turn_runner(
         chat_id=chat_id,
         personality_id=personality_id,
         toolsets=toolsets,
+        max_turns=max_turns,
         timeout=timeout,
+        stream_callback=stream_callback,
     )
 
 
@@ -328,6 +404,15 @@ class HermesDaemonHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def _start_stream(self) -> None:
+        self.send_response(200)
+        self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
+        self.end_headers()
+
+    def _send_stream_chunk(self, payload: dict) -> None:
+        self.wfile.write((json.dumps(payload) + "\n").encode("utf-8"))
+        self.wfile.flush()
 
     def do_GET(self) -> None:  # noqa: N802 — http.server API
         if self.path.rstrip("/") == "/health":
@@ -363,15 +448,27 @@ class HermesDaemonHandler(BaseHTTPRequestHandler):
 
         personality_id = data.get("personality_id")
         toolsets = data.get("toolsets")
+        max_turns = data.get("max_turns")
         timeout = data.get("timeout")
+        stream = data.get("stream", False)
         if personality_id is not None and not isinstance(personality_id, str):
             self._send_json(400, {"error": "personality_id must be a string"})
             return
         if toolsets is not None and not isinstance(toolsets, str):
             self._send_json(400, {"error": "toolsets must be a string"})
             return
+        if max_turns is not None and (
+            not isinstance(max_turns, int)
+            or isinstance(max_turns, bool)
+            or max_turns < 1
+        ):
+            self._send_json(400, {"error": "max_turns must be a positive integer"})
+            return
         if timeout is not None and not isinstance(timeout, (int, float)):
             self._send_json(400, {"error": "timeout must be a number"})
+            return
+        if not isinstance(stream, bool):
+            self._send_json(400, {"error": "stream must be a boolean"})
             return
 
         runner = getattr(self.server, "turn_runner", None) or _default_turn_runner
@@ -381,31 +478,62 @@ class HermesDaemonHandler(BaseHTTPRequestHandler):
             chat_id,
             (turn_start - t0) * 1000.0,
         )
+        first_delta = False
+
+        def emit_delta(delta: str) -> None:
+            nonlocal first_delta
+            if not isinstance(delta, str) or not delta:
+                return
+            if not first_delta:
+                first_delta = True
+                logging.info(
+                    "[PERF_TRACE] DAEMON_FIRST_TOKEN chat=%s elapsed_ms=%.2f",
+                    chat_id,
+                    (time.monotonic() - t0) * 1000.0,
+                )
+            self._send_stream_chunk({"delta": delta})
+
+        if stream:
+            self._start_stream()
+
+        runner_kwargs = {
+            "text": text,
+            "chat_id": chat_id,
+            "personality_id": personality_id,
+            "toolsets": toolsets,
+            "timeout": int(timeout) if timeout is not None else None,
+        }
+        if max_turns is not None:
+            runner_kwargs["max_turns"] = max_turns
+        if stream:
+            runner_kwargs["stream_callback"] = emit_delta
+
         try:
-            reply = runner(
-                text=text,
-                chat_id=chat_id,
-                personality_id=personality_id,
-                toolsets=toolsets,
-                timeout=int(timeout) if timeout is not None else None,
-            )
+            reply = runner(**runner_kwargs)
         except Exception as exc:
             logging.exception("hermes-daemon /turn failed: %s", exc)
-            self._send_json(500, {"error": str(exc)})
+            if stream:
+                self._send_stream_chunk({"error": str(exc)})
+            else:
+                self._send_json(500, {"error": str(exc)})
             return
 
-        # Full reply is available at once from the runner; treat that as first token.
-        logging.info(
-            "[PERF_TRACE] DAEMON_FIRST_TOKEN chat=%s elapsed_ms=%.2f",
-            chat_id,
-            (time.monotonic() - t0) * 1000.0,
-        )
+        if not first_delta:
+            logging.info(
+                "[PERF_TRACE] DAEMON_FIRST_TOKEN chat=%s elapsed_ms=%.2f",
+                chat_id,
+                (time.monotonic() - t0) * 1000.0,
+            )
         logging.info(
             "[PERF_TRACE] DAEMON_DONE chat=%s elapsed_ms=%.2f",
             chat_id,
             (time.monotonic() - t0) * 1000.0,
         )
-        self._send_json(200, {"reply": reply if isinstance(reply, str) else str(reply)})
+        payload = {"reply": reply if isinstance(reply, str) else str(reply)}
+        if stream:
+            self._send_stream_chunk(payload)
+        else:
+            self._send_json(200, payload)
 
 
 def create_server(
@@ -438,6 +566,7 @@ def serve_forever(
         server.serve_forever()
     finally:
         server.server_close()
+        clear_agent_cache()
 
 
 def is_daemon_reachable(timeout: float = 0.5) -> bool:
@@ -510,6 +639,7 @@ def stop_daemon() -> None:
         pass
     if thread is not None and thread.is_alive():
         thread.join(timeout=2.0)
+    clear_agent_cache()
 
 
 def ensure_daemon_running(
