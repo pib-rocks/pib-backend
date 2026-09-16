@@ -1,22 +1,67 @@
 import logging
-from typing import Any, List
+import os
+from typing import Any, List, Optional
 from model.personality_model import Personality
 from app.app import db
 from pib_hermes_config import build_default_soul_text
 from service import soul_service
 
+#: Path of the daemon endpoint that owns the Hermes profile factory.
+DAEMON_PROFILE_PATH = "/profile"
+DEFAULT_DAEMON_URL = "http://ros-voice-assistant:8088"
 
-def _provision_profile(*args, **kwargs):
-    """Ask the Hermes daemon to create/repair a personality's Hermes profile.
 
-    Imported lazily on purpose: this module is loaded by the Flask API, whose
-    image does not need the client package for any other request, and a
-    module-level import would take the whole API down when it is missing
-    (same pattern as ``chat_service``).
+def _daemon_profile_url() -> str:
+    """URL of the daemon endpoint that provisions profiles.
+
+    ``PIB_HERMES_DAEMON_URL`` is set by docker-compose for this service.
     """
-    from public_api_client.hermes_agent_client import provision_profile
+    return os.environ.get("PIB_HERMES_DAEMON_URL") or DEFAULT_DAEMON_URL
 
-    return provision_profile(*args, **kwargs)
+
+def _provision_profile(
+    personality_id: str,
+    personality_name: Optional[str] = None,
+    soul_text: Optional[str] = None,
+    timeout: int = 60,
+) -> dict:
+    """Ask the Hermes daemon to create or repair a personality's Hermes profile.
+
+    Deliberately a plain HTTP call: the client package cannot be imported in this
+    image (`public_api_client.__init__` requires the tryb configuration at import
+    time) and only the daemon container can run the canonical Hermes profile
+    factory. A failure is raised so the caller can surface it loudly.
+    """
+    import requests
+
+    payload: dict = {"personality_id": personality_id}
+    if personality_name is not None:
+        payload["personality_name"] = personality_name
+    if soul_text is not None:
+        payload["soul_text"] = soul_text
+
+    url = _daemon_profile_url().rstrip("/") + DAEMON_PROFILE_PATH
+    try:
+        response = requests.post(url, json=payload, timeout=timeout)
+    except requests.exceptions.RequestException as exc:
+        raise RuntimeError(
+            f"Hermes profile daemon is unreachable at {url}: {exc}"
+        ) from exc
+
+    try:
+        result = response.json()
+    except ValueError as exc:
+        raise RuntimeError("Hermes profile daemon returned invalid JSON") from exc
+    if (
+        response.status_code >= 300
+        or not isinstance(result, dict)
+        or not result.get("ok")
+    ):
+        detail = result.get("error") if isinstance(result, dict) else None
+        raise RuntimeError(
+            f"Hermes profile provisioning failed ({response.status_code}): {detail}"
+        )
+    return result
 
 
 def _ensure_description_from_soul(personality: Personality) -> bool:

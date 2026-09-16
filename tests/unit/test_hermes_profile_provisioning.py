@@ -116,6 +116,67 @@ def test_ensure_profile_creates_profile_with_canonical_factory(
         assert fh.read() == build_default_soul_text("pib", "Du bist pib.")
 
 
+def test_ensure_profile_survives_a_factory_without_clone_channels(
+    tmp_path, monkeypatch
+):
+    """The container's hermes_cli.create_profile has no `clone_channels` argument.
+
+    Live, passing it failed every provisioning attempt with "create_profile() got
+    an unexpected keyword argument 'clone_channels'", so the daemon must pass only
+    what the INSTALLED signature accepts.
+    """
+    profiles_module = types.ModuleType("hermes_cli.profiles")
+    calls = []
+
+    def create_profile(
+        name,
+        clone_from=None,
+        clone_all=False,
+        clone_config=False,
+        no_alias=False,
+        no_skills=False,
+        description=None,
+    ):
+        calls.append(
+            {"name": name, "clone_config": clone_config, "description": description}
+        )
+        pdir = Path(os.environ["PIB_HERMES_PROFILES_DIR"]) / name
+        pdir.mkdir(parents=True)
+        for dirname in (
+            "memories",
+            "sessions",
+            "skills",
+            "skins",
+            "logs",
+            "plans",
+            "workspace",
+            "cron",
+            "home",
+        ):
+            (pdir / dirname).mkdir()
+        (pdir / "config.yaml").write_text("{}\n", encoding="utf-8")
+        return pdir
+
+    profiles_module.create_profile = create_profile
+    profiles_module.profile_exists = lambda _name: False
+    package = types.ModuleType("hermes_cli")
+    package.__path__ = []
+    monkeypatch.setitem(sys.modules, "hermes_cli", package)
+    monkeypatch.setitem(sys.modules, "hermes_cli.profiles", profiles_module)
+    monkeypatch.setenv("PIB_HERMES_PROFILES_DIR", str(tmp_path))
+
+    pdir = ensure_profile("p-container")
+
+    assert calls == [
+        {
+            "name": "pib_p-container",
+            "clone_config": True,
+            "description": "pib personality p-container",
+        }
+    ]
+    assert os.path.isdir(os.path.join(pdir, "memories"))
+
+
 def test_ensure_profile_is_idempotent_when_present(
     tmp_path, monkeypatch, canonical_profile_factory
 ):
