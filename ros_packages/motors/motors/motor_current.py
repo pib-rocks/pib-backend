@@ -31,16 +31,16 @@ class MotorCurrent(Node):
         connected_bricklets = set()
 
         for motor in motor_list:
-            for bp in motor.bricklet_pins:
-                if bp.is_connected() and bp.bricklet is not None:
-                    key = (id(bp.bricklet), bp.pin)
+            for actuator in motor.actuators:
+                if actuator.is_connected() and actuator.bricklet is not None:
+                    key = (id(actuator.bricklet), actuator.pin)
                     if key not in self.pin_to_motors:
                         self.pin_to_motors[key] = []
                     if motor.name not in self.pin_to_motors[key]:
                         self.pin_to_motors[key].append(motor.name)
 
-                    connected_bricklets.add(bp.bricklet)
-                    self._configure_servo_current(bp.bricklet, bp.pin)
+                    connected_bricklets.add(actuator.bricklet)
+                    self._configure_servo_current(actuator.bricklet, actuator.pin)
 
         for bricklet in connected_bricklets:
             bricklet.register_callback(

@@ -114,7 +114,7 @@ def test_motor_current_creates_one_second_publish_timer():
 def test_publish_motor_current_publishes_diagnostic_status():
     motor = types.SimpleNamespace(
         name="head_motor",
-        bricklet_pins=[],
+        actuators=[],
         get_current=MagicMock(return_value=500),
     )
     module = _load_motor_current([motor])
