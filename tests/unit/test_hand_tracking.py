@@ -9,6 +9,7 @@ import pytest
 from ros_packages.camera.oak_d_lite.hand_tracking import (
     PalmRegion,
     decode_palm_result,
+    fit_manip_crop,
     map_landmarks_to_frame,
 )
 
@@ -121,3 +122,35 @@ def test_landmarks_reject_wrong_shape():
     palm = PalmRegion(0.9, 0.5, 0.5, 0.2, 0.5, 0.5, 0.4, 0.0)
     with pytest.raises(ValueError, match="exactly 63"):
         map_landmarks_to_frame(np.zeros(62), palm, 100, 100)
+
+
+def test_manip_crop_edges_stay_inside_the_measured_source():
+    crop = fit_manip_crop(640, 480, 128, 128)
+
+    assert (crop.output_width, crop.output_height) == (128, 128)
+    assert (crop.center_x, crop.center_y) == (0.5, 0.5)
+    assert (crop.center_x - crop.width / 2.0) * 640 == pytest.approx(0.5)
+    assert (crop.center_x + crop.width / 2.0) * 640 == pytest.approx(639.5)
+    assert (crop.center_y - crop.height / 2.0) * 480 == pytest.approx(0.5)
+    assert (crop.center_y + crop.height / 2.0) * 480 == pytest.approx(479.5)
+
+
+def test_manip_crop_follows_a_changed_branch_size():
+    crop = fit_manip_crop(1280, 720, 224, 224)
+
+    assert crop.width == pytest.approx(1279.0 / 1280.0)
+    assert crop.height == pytest.approx(719.0 / 720.0)
+    assert (crop.output_width, crop.output_height) == (224, 224)
+
+
+def test_manip_crop_never_targets_more_pixels_than_the_source_has():
+    crop = fit_manip_crop(64, 48, 224, 224)
+
+    assert (crop.output_width, crop.output_height) == (63, 47)
+
+
+def test_manip_crop_rejects_degenerate_dimensions():
+    with pytest.raises(ValueError, match="source must have positive"):
+        fit_manip_crop(0, 480, 128, 128)
+    with pytest.raises(ValueError, match="output must have positive"):
+        fit_manip_crop(640, 480, 128, 0)

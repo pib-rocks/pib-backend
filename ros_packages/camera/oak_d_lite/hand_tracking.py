@@ -47,6 +47,54 @@ HAND_KEYPOINT_NAMES = (
 PALM_RESULT_COUNT = 10
 PALM_RESULT_WIDTH = 8
 LANDMARK_COUNT = 21
+# Sub-pixel margin that keeps a derived crop strictly inside its source frame.
+MANIP_CROP_INSET_PIXELS = 0.5
+
+
+@dataclass(frozen=True)
+class ManipCrop:
+    """Normalized crop plus target size for one ImageManip stage."""
+
+    center_x: float
+    center_y: float
+    width: float
+    height: float
+    output_width: int
+    output_height: int
+
+
+def fit_manip_crop(
+    source_width: int,
+    source_height: int,
+    output_width: int,
+    output_height: int,
+    inset: float = MANIP_CROP_INSET_PIXELS,
+) -> ManipCrop:
+    """Derive a valid ImageManip crop and target size from measured input dimensions.
+
+    ImageManip validates its crop against the frame it actually receives and
+    rejects the whole frame with ``Initial crop is outside the source image``
+    when the rect does not fit.  A rect assumed at build time is therefore
+    unusable as soon as the camera delivers other dimensions.  The crop here
+    covers the full source minus a sub-pixel inset, which fits any source, and
+    the target size never asks for more pixels than the source can fill.
+    """
+    if source_width <= 0 or source_height <= 0:
+        raise ValueError("manip source must have positive dimensions")
+    if output_width <= 0 or output_height <= 0:
+        raise ValueError("manip output must have positive dimensions")
+    inset_x = max(0.0, min(float(inset), source_width / 4.0))
+    inset_y = max(0.0, min(float(inset), source_height / 4.0))
+    crop_width = source_width - 2.0 * inset_x
+    crop_height = source_height - 2.0 * inset_y
+    return ManipCrop(
+        center_x=0.5,
+        center_y=0.5,
+        width=crop_width / source_width,
+        height=crop_height / source_height,
+        output_width=min(int(output_width), int(crop_width)),
+        output_height=min(int(output_height), int(crop_height)),
+    )
 
 
 @dataclass(frozen=True)
