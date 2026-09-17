@@ -33,7 +33,10 @@ from .model_registry import ModelRegistry
 from .pipeline_manager import PipelineManager
 from .hand_tracking import (
     HAND_KEYPOINT_NAMES,
+    LANDMARK_SCORE_LAYER,
     LANDMARK_SCORE_THRESHOLD,
+    LANDMARK_VALUE_COUNT,
+    LANDMARK_XYZ_LAYERS,
     MANIP_CROP_INSET_PIXELS,
     decode_palm_result,
     fit_manip_crop,
@@ -371,31 +374,34 @@ class CameraNode(Node):
         )
 
     def _log_landmark_fingerprint(
-        self, packet, score_tensor, landmarks_tensor, transformation
+        self,
+        packet,
+        score_tensor,
+        landmarks_tensor,
+        transformation,
+        layer_name=None,
+        layer_probe=(),
     ):
         if not self._hand_fingerprint_due("landmark"):
             return
+        available_layers = self._packet_layer_names(packet)
         layer_parts = [
-            f"Identity_1 shape={score_tensor.shape} "
+            f"{LANDMARK_SCORE_LAYER} shape={score_tensor.shape} "
             f"raw={self._hand_tensor_text(score_tensor)}"
         ]
-        try:
-            available_layers = set(packet.getAllLayerNames())
-        except Exception:
-            available_layers = set()
-        for name in ("Identity_2", "Identity_dense/BiasAdd/Add"):
-            if name not in available_layers:
-                layer_parts.append(f"{name} unavailable")
-                continue
+        if "Identity_2" not in available_layers:
+            layer_parts.append("Identity_2 unavailable")
+        else:
             try:
-                values = self._nn_layer(packet, name)
+                handedness = self._nn_layer(packet, "Identity_2")
                 layer_parts.append(
-                    f"{name} shape={values.shape} raw={self._hand_tensor_text(values)}"
+                    f"Identity_2 shape={handedness.shape} "
+                    f"raw={self._hand_tensor_text(handedness)}"
                 )
             except Exception:
-                layer_parts.append(f"{name} unavailable")
+                layer_parts.append("Identity_2 unavailable")
         layer_parts.append(
-            "Identity_3_dense/BiasAdd/Add "
+            f"{layer_name or 'no landmark layer'} "
             f"shape={landmarks_tensor.shape} "
             f"raw={self._hand_tensor_text(landmarks_tensor)}"
         )
@@ -406,7 +412,9 @@ class CameraNode(Node):
         self.get_logger().info(
             "HAND_FP LAND "
             + " / ".join(layer_parts)
-            + f"; input_size={self.hand_landmark_input_size} "
+            + f"; packet_layers={available_layers} "
+            f"landmark_layer_probe={list(layer_probe)} "
+            f"input_size={self.hand_landmark_input_size} "
             f"xy_space={xy_space} xy_raw={self._hand_tensor_text(xy)} "
             f"TRANSFORM_available={transformation is not None}"
         )
@@ -450,6 +458,47 @@ class CameraNode(Node):
     def _nn_layer(packet, name):
         return np.asarray(packet.getTensor(name), dtype=np.float32)
 
+    @staticmethod
+    def _packet_layer_names(packet):
+        getter = getattr(packet, "getAllLayerNames", None)
+        if getter is None:
+            return []
+        try:
+            return sorted(str(name) for name in getter())
+        except Exception:
+            return []
+
+    def _hand_landmark_tensor(self, packet):
+        """Return the first landmark head that actually carries 21 XYZ triples.
+
+        A tensor name that the blob does not expose yields either an exception
+        or an empty array, and an empty array maps to zero keypoints without
+        raising anything - the landmark result is then silently dropped.  Every
+        rejected candidate is reported so the chosen head is visible in the log.
+        """
+        probe = []
+        for name in LANDMARK_XYZ_LAYERS:
+            try:
+                values = self._nn_layer(packet, name)
+            except Exception as exc:
+                probe.append(f"{name}=absent({type(exc).__name__})")
+                continue
+            if values.size == LANDMARK_VALUE_COUNT:
+                probe.append(f"{name}=used(size={values.size})")
+                return name, values, probe
+            probe.append(f"{name}=rejected(size={values.size})")
+        return None, np.zeros(0, dtype=np.float32), probe
+
+    @staticmethod
+    def _packet_transformation(packet):
+        getter = getattr(packet, "getTransformation", None)
+        if getter is None:
+            return None
+        try:
+            return getter()
+        except Exception:
+            return None
+
     def _map_hand_landmarks(
         self,
         packet,
@@ -460,6 +509,8 @@ class CameraNode(Node):
         source_width,
         source_height,
         score_tensor=None,
+        layer_name=None,
+        layer_probe=(),
     ):
         """Map landmark-crop coordinates onto the published preview frame."""
         values = landmarks_in_crop_pixels(tensor, self.hand_landmark_input_size)
@@ -475,15 +526,16 @@ class CameraNode(Node):
                 source_height,
             )
 
-        transformation = None
-        getter = getattr(packet, "getTransformation", None)
-        if getter is not None:
-            try:
-                transformation = getter()
-            except Exception:
-                transformation = None
+        transformation = self._packet_transformation(packet)
         if score_tensor is not None:
-            self._log_landmark_fingerprint(packet, score_tensor, tensor, transformation)
+            self._log_landmark_fingerprint(
+                packet,
+                score_tensor,
+                tensor,
+                transformation,
+                layer_name,
+                layer_probe,
+            )
         if transformation is None:
             return via_palm_roi()
 
@@ -525,7 +577,7 @@ class CameraNode(Node):
         self.pipeline_manager.record_packet("hand_tracking")
 
     def _log_hand_assembly_fingerprint(self, batch):
-        if not self._hand_fingerprint_due("assembly"):
+        if not batch.get("log_details"):
             return
         reasons = batch.get("drop_reasons", [])
         reason_counts = {
@@ -534,8 +586,24 @@ class CameraNode(Node):
         self.get_logger().info(
             "HAND_FP ASSEMBLY "
             f"candidates={batch.get('candidates', 0)} "
+            f"landmark_results={batch.get('landmark_results', 0)} "
+            f"keypoints_built={batch.get('keypoints_built', 0)} "
+            f"landmark_layer={batch.get('landmark_layer')} "
             f"appended={len(batch['detections'])} "
             f"dropped={len(reasons)} reasons={reason_counts or {}}"
+        )
+
+    def _log_hand_keypoint_fingerprint(self, batch, detail):
+        """Report one landmark result and the exact reason it was or was not kept."""
+        if not batch.get("log_details"):
+            return
+        self.get_logger().info(
+            "HAND_FP KP "
+            f"candidates={batch.get('candidates', 0)} "
+            f"landmark_results={batch.get('landmark_results', 0)} "
+            f"keypoints_built={batch.get('keypoints_built', 0)} "
+            f"detections_pending={len(batch['detections'])} "
+            f"{detail}"
         )
 
     def _hand_detection_message(
@@ -575,6 +643,9 @@ class CameraNode(Node):
         batch = {
             "remaining": len(palms),
             "candidates": len(palms),
+            "landmark_results": 0,
+            "keypoints_built": 0,
+            "landmark_layer": None,
             "detections": [],
             "drop_reasons": [],
             "frame_width": frame_width,
@@ -604,6 +675,9 @@ class CameraNode(Node):
         batch = {
             "remaining": 1,
             "candidates": 0,
+            "landmark_results": 0,
+            "keypoints_built": 0,
+            "landmark_layer": None,
             "detections": [],
             "drop_reasons": ["no decoded palm candidates"],
             "frame_width": frame_width,
@@ -712,6 +786,80 @@ class CameraNode(Node):
         config.setReusePreviousImage(reuse_previous)
         return config
 
+    def _drop_landmark_result(self, batch, check, reason):
+        """Record and report the exact check that skipped one landmark append."""
+        batch.setdefault("drop_reasons", []).append(reason)
+        self._log_hand_keypoint_fingerprint(batch, f"skipped={check} reason={reason}")
+
+    def _consume_landmark_result(self, packet, palm, batch):
+        """Assemble one landmark result, naming the check that skips the append."""
+        batch["landmark_results"] = batch.get("landmark_results", 0) + 1
+        if palm is None:
+            self._log_hand_keypoint_fingerprint(
+                batch, "skipped=sentinel reason=crop carries no paired palm"
+            )
+            return
+
+        score_tensor = self._nn_layer(packet, LANDMARK_SCORE_LAYER)
+        score = landmark_score(score_tensor)
+        layer_name, landmarks_tensor, layer_probe = self._hand_landmark_tensor(packet)
+        batch["landmark_layer"] = layer_name
+
+        if score < LANDMARK_SCORE_THRESHOLD:
+            self._log_landmark_fingerprint(
+                packet,
+                score_tensor,
+                landmarks_tensor,
+                self._packet_transformation(packet),
+                layer_name,
+                layer_probe,
+            )
+            reason = f"low landmark score {score:.9g} < {LANDMARK_SCORE_THRESHOLD}"
+            self._drop_landmark_result(batch, "score", reason)
+            return
+
+        if layer_name is None:
+            reason = (
+                f"no landmark layer carries {LANDMARK_VALUE_COUNT} values; "
+                f"probe={list(layer_probe)}"
+            )
+            self._drop_landmark_result(batch, "layer", reason)
+            self._warn_hand_once(f"Hand landmark output unusable: {reason}")
+            return
+
+        landmarks = self._map_hand_landmarks(
+            packet,
+            landmarks_tensor,
+            palm,
+            batch["frame_width"],
+            batch["frame_height"],
+            batch["source_width"],
+            batch["source_height"],
+            score_tensor,
+            layer_name,
+            layer_probe,
+        )
+        batch["keypoints_built"] = batch.get("keypoints_built", 0) + len(landmarks)
+        if not landmarks:
+            self._drop_landmark_result(batch, "mapping", "missing mapped keypoints")
+            return
+
+        batch["detections"].append(
+            self._hand_detection_message(
+                palm,
+                landmarks,
+                batch["frame_width"],
+                batch["frame_height"],
+                batch["source_width"],
+                batch["source_height"],
+            )
+        )
+        self._log_hand_keypoint_fingerprint(
+            batch,
+            f"appended=1 score={score:.9g} layer={layer_name} "
+            f"keypoints={len(landmarks)}",
+        )
+
     def _process_hand_tracking(self):
         if self.hand_decoder_queue is None or self.current_frame is None:
             return
@@ -722,61 +870,13 @@ class CameraNode(Node):
                 break
             self._count_hand_stage("hand_landmark_nn")
             palm, batch = self._pending_hands.popleft()
+            if "log_details" not in batch:
+                batch["log_details"] = self._hand_fingerprint_due("assembly", 1.0)
             try:
-                if palm is not None:
-                    score_tensor = self._nn_layer(packet, "Identity_1")
-                    score = landmark_score(score_tensor)
-                    landmarks_tensor = self._nn_layer(
-                        packet, "Identity_3_dense/BiasAdd/Add"
-                    )
-                    if score >= LANDMARK_SCORE_THRESHOLD:
-                        landmarks = self._map_hand_landmarks(
-                            packet,
-                            landmarks_tensor,
-                            palm,
-                            batch["frame_width"],
-                            batch["frame_height"],
-                            batch["source_width"],
-                            batch["source_height"],
-                            score_tensor,
-                        )
-                        if landmarks:
-                            batch["detections"].append(
-                                self._hand_detection_message(
-                                    palm,
-                                    landmarks,
-                                    batch["frame_width"],
-                                    batch["frame_height"],
-                                    batch["source_width"],
-                                    batch["source_height"],
-                                )
-                            )
-                        else:
-                            batch.setdefault("drop_reasons", []).append(
-                                "missing mapped keypoints"
-                            )
-                    else:
-                        transformation = None
-                        getter = getattr(packet, "getTransformation", None)
-                        if getter is not None:
-                            try:
-                                transformation = getter()
-                            except Exception:
-                                transformation = None
-                        self._log_landmark_fingerprint(
-                            packet,
-                            score_tensor,
-                            landmarks_tensor,
-                            transformation,
-                        )
-                        batch.setdefault("drop_reasons", []).append(
-                            "low landmark score "
-                            f"{score:.9g} < {LANDMARK_SCORE_THRESHOLD}"
-                        )
+                self._consume_landmark_result(packet, palm, batch)
             except (RuntimeError, ValueError) as exc:
-                batch.setdefault("drop_reasons", []).append(
-                    f"invalid landmark output: {type(exc).__name__}: {exc}"
-                )
+                reason = f"invalid landmark output: {type(exc).__name__}: {exc}"
+                self._drop_landmark_result(batch, "exception", reason)
                 self._warn_hand_once(f"Invalid hand landmark output: {exc}")
             self._count_hand_stage("post_processing")
             batch["remaining"] -= 1

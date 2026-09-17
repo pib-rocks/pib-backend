@@ -9,13 +9,15 @@ flattened values.  The head consumes detector tensors ``classificators``
 (1x896x1 anchors) and ``regressors`` (1x896x18: bbox plus seven palm
 keypoints), and emits anchor-decoded normalized coordinates after NMS.
 
-The landmark network exposes normalized image landmarks in
-``Identity_3_dense/BiasAdd/Add`` as 21 XYZ triples, with confidence in
-``Identity_1``. The runtime node maps them back through the
-``NNData.getTransformation()`` attached by DepthAI, and falls back to
-the palm ROI when that transform is absent. Both ``(1, 1)`` scores and
-``(1, 63)`` landmark vectors are flattened before assembly into a
-``Detection``.
+The landmark network exposes its crop-space image landmarks in
+``Identity_dense/BiasAdd/Add`` as 21 XYZ triples, with confidence in
+``Identity_1``.  ``Identity_3_dense/BiasAdd/Add`` is the *metric world*
+landmark head of the same MediaPipe graph, and conversions of this model
+frequently omit it entirely, so it is only a fallback.  The runtime node maps
+the landmarks back through the ``NNData.getTransformation()`` attached by
+DepthAI, and falls back to the palm ROI when that transform is absent. Both
+``(1, 1)`` scores and ``(1, 63)`` landmark vectors are flattened before
+assembly into a ``Detection``.
 """
 
 from dataclasses import dataclass
@@ -51,6 +53,18 @@ PALM_RESULT_COUNT = 10
 PALM_RESULT_WIDTH = 8
 LANDMARK_COUNT = 21
 LANDMARK_SCORE_THRESHOLD = 0.5
+LANDMARK_VALUE_COUNT = LANDMARK_COUNT * 3
+LANDMARK_SCORE_LAYER = "Identity_1"
+# The crop-space landmark head comes first: MediaPipe's ``Identity`` output is
+# renamed ``Identity_dense/BiasAdd/Add`` by the OpenVINO conversion.  The
+# ``Identity_3`` variant is the metric world-landmark head, which is centred on
+# the hand instead of the crop and is missing from several published blobs, so
+# it is tried only after the image-space heads.
+LANDMARK_XYZ_LAYERS = (
+    "Identity_dense/BiasAdd/Add",
+    "Identity",
+    "Identity_3_dense/BiasAdd/Add",
+)
 # Crop-space XY in this blob is normalised to 0..1. Values above this are
 # treated as already being in landmark-input pixels (MediaPipe's 0..224).
 LANDMARK_NORMALIZED_PEAK = 1.5
@@ -239,7 +253,7 @@ def landmark_xyz(tensor: Sequence[float]) -> np.ndarray:
     values = np.asarray(tensor, dtype=np.float32)
     if values.size == 0:
         return np.zeros((0, 3), dtype=np.float32)
-    if values.size != LANDMARK_COUNT * 3:
+    if values.size != LANDMARK_VALUE_COUNT:
         raise ValueError("landmark result must contain exactly 63 values (21 x 3)")
     values = values.reshape(LANDMARK_COUNT, 3)
     if not np.all(np.isfinite(values)):
