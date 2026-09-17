@@ -504,6 +504,45 @@ class TestHandPipelineInput(unittest.TestCase):
         mock_dai.ImageManipConfig.assert_not_called()
 
     @patch("ros_packages.camera.oak_d_lite.stereo.dai")
+    def test_landmark_crop_is_fitted_inside_actual_branch_dimensions(self, mock_dai):
+        with patch.object(CameraNode, "__init__", lambda self: None):
+            node = CameraNode()
+        node.hand_landmark_input_size = 224
+
+        class _RotatedRect:
+            def __init__(self):
+                self.center = types.SimpleNamespace(x=0.0, y=0.0)
+                self.size = types.SimpleNamespace(width=0.0, height=0.0)
+                self.angle = 0.0
+
+        mock_dai.RotatedRect.side_effect = _RotatedRect
+        palm = MagicMock(rotation=np.pi / 6)
+        # This decoded ROI extends above and beyond the 640x480 hand branch.
+        palm.roi_for_frame.return_value = (0.5, 0.2, 0.8, 1.05)
+
+        node._landmark_crop_config(palm, 640, 480)
+
+        rotated = (
+            mock_dai.ImageManipConfig.return_value.addCropRotatedRect.call_args.args[0]
+        )
+        self.assertGreater(rotated.size.width, 0.0)
+        self.assertGreater(rotated.size.height, 0.0)
+        center_x = rotated.center.x * 640
+        center_y = rotated.center.y * 480
+        half_width = rotated.size.width * 640 / 2.0
+        half_height = rotated.size.height * 480 / 2.0
+        cos_rotation = np.cos(palm.rotation)
+        sin_rotation = np.sin(palm.rotation)
+        for x_offset in (-half_width, half_width):
+            for y_offset in (-half_height, half_height):
+                corner_x = center_x + x_offset * cos_rotation - y_offset * sin_rotation
+                corner_y = center_y + x_offset * sin_rotation + y_offset * cos_rotation
+                self.assertGreater(corner_x, 0.0)
+                self.assertLess(corner_x, 640.0)
+                self.assertGreater(corner_y, 0.0)
+                self.assertLess(corner_y, 480.0)
+
+    @patch("ros_packages.camera.oak_d_lite.stereo.dai")
     def test_hand_manips_share_one_non_blocking_camera_tap(self, mock_dai):
         with patch.object(CameraNode, "__init__", lambda self: None):
             node = CameraNode()
