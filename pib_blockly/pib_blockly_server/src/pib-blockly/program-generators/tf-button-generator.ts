@@ -88,7 +88,12 @@ export function tf_button_set_color(
 
     configureGenerator(generator);
 
-    return `blockly_client.set_button_color(${buttonId}, ${red}, ${green}, ${blue})\n`;
+    const functionName = generator.provideFunction_(
+        "tf_button_set_color",
+        TF_BUTTON_SET_COLOR_FUNCTION(generator),
+    );
+
+    return `${functionName}(${buttonId}, ${red}, ${green}, ${blue})\n`;
 }
 
 export function tf_button_set_color_from_var(
@@ -101,7 +106,12 @@ export function tf_button_set_color_from_var(
 
     configureGenerator(generator);
 
-    return `blockly_client.set_button_color(${buttonId}, int(${colorCode}[1:3], 16), int(${colorCode}[3:5], 16), int(${colorCode}[5:7], 16))\n`;
+    const functionName = generator.provideFunction_(
+        "tf_button_set_color",
+        TF_BUTTON_SET_COLOR_FUNCTION(generator),
+    );
+
+    return `${functionName}(${buttonId}, int(${colorCode}[1:3], 16), int(${colorCode}[3:5], 16), int(${colorCode}[5:7], 16))\n`;
 }
 
 export {pythonGenerator};
