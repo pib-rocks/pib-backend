@@ -512,6 +512,45 @@ class CameraNode(Node):
             raise ValueError("hand ROI contains non-finite geometry")
         if roi_width <= 0 or roi_height <= 0:
             raise ValueError("hand ROI must have positive dimensions")
+        if source_width <= 0 or source_height <= 0:
+            raise ValueError("hand ROI source must have positive dimensions")
+
+        # DepthAI rejects a rotated crop unless its complete bounding box is
+        # inside the source image; warp border replication happens only after
+        # that validation. Fit the decoded square in actual branch pixels,
+        # preserving its aspect and rotation, then normalize it again.
+        cos_rotation = abs(math.cos(rotation))
+        sin_rotation = abs(math.sin(rotation))
+        crop_width = roi_width * source_width
+        crop_height = roi_height * source_height
+        extent_x = (crop_width * cos_rotation + crop_height * sin_rotation) / 2.0
+        extent_y = (crop_width * sin_rotation + crop_height * cos_rotation) / 2.0
+        # Keep every corner at least half a pixel inside the frame. Maintaining
+        # the decoded center is more important than retaining the full ROI near
+        # an edge, so shrink around that center instead of moving off the hand.
+        # The unrotated full-frame sentinel is already a valid exact crop.
+        inset = 0.0 if palm is None else 0.5
+        center_x = min(
+            source_width - inset,
+            max(inset, roi_x * source_width),
+        )
+        center_y = min(
+            source_height - inset,
+            max(inset, roi_y * source_height),
+        )
+        available_x = max(inset, min(center_x, source_width - center_x) - inset)
+        available_y = max(inset, min(center_y, source_height - center_y) - inset)
+        scale = min(
+            1.0,
+            available_x / extent_x,
+            available_y / extent_y,
+        )
+        crop_width *= scale
+        crop_height *= scale
+        roi_x = center_x / source_width
+        roi_y = center_y / source_height
+        roi_width = crop_width / source_width
+        roi_height = crop_height / source_height
 
         rotated = dai.RotatedRect()
         rotated.center.x = roi_x
