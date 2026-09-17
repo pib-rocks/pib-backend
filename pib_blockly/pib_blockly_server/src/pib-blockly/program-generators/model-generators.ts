@@ -40,23 +40,16 @@ function ensureModelManager(generator: typeof pythonGenerator) {
         `node, f"blockly-{os.getpid()}")`;
 }
 
-export function start_model(
-    block: Block,
-    generator: typeof pythonGenerator,
-) {
+export function start_model(block: Block, generator: typeof pythonGenerator) {
     ensureModelManager(generator);
     const modelId =
         generator.valueToCode(block, "MODEL_ID", Order.NONE) ||
         '"hand_tracking"';
-    const shaves =
-        generator.valueToCode(block, "SHAVES", Order.NONE) || "0";
+    const shaves = generator.valueToCode(block, "SHAVES", Order.NONE) || "0";
     return `_blockly_model_manager.start(${modelId}, ${shaves})\n`;
 }
 
-export function stop_model(
-    block: Block,
-    generator: typeof pythonGenerator,
-) {
+export function stop_model(block: Block, generator: typeof pythonGenerator) {
     ensureModelManager(generator);
     const modelId =
         generator.valueToCode(block, "MODEL_ID", Order.NONE) ||
@@ -85,10 +78,8 @@ export function get_detection_field(
     const modelId =
         generator.valueToCode(block, "MODEL_ID", Order.NONE) ||
         '"hand_tracking"';
-    const index =
-        generator.valueToCode(block, "INDEX", Order.NONE) || "0";
-    const name =
-        generator.valueToCode(block, "NAME", Order.NONE) || '""';
+    const index = generator.valueToCode(block, "INDEX", Order.NONE) || "0";
+    const name = generator.valueToCode(block, "NAME", Order.NONE) || '""';
     const field = generator.quote_(String(block.getFieldValue("FIELD") || ""));
 
     return [

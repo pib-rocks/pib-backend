@@ -114,7 +114,9 @@ export function motor_current(
     const motorOption = <string>block.getFieldValue("MOTORNAME");
     const selectedMotorName: string = motorOptionToMotorName.get(motorOption);
     if (selectedMotorName === undefined) {
-        throw new Error(`'${motorOption}' is not a valid value for 'MOTORNAME'.`);
+        throw new Error(
+            `'${motorOption}' is not a valid value for 'MOTORNAME'.`,
+        );
     }
 
     Object.assign(generator.definitions_, {
@@ -139,9 +141,15 @@ export function set_hand_position_xyz(
         throw new Error(`unexpected input-mode: ${mode}.`);
     }
     const side = readSide(block);
-    const xInput = String(generator.valueToCode(block, "X", Order.ATOMIC) || "0");
-    const yInput = String(generator.valueToCode(block, "Y", Order.ATOMIC) || "0");
-    const zInput = String(generator.valueToCode(block, "Z", Order.ATOMIC) || "0");
+    const xInput = String(
+        generator.valueToCode(block, "X", Order.ATOMIC) || "0",
+    );
+    const yInput = String(
+        generator.valueToCode(block, "Y", Order.ATOMIC) || "0",
+    );
+    const zInput = String(
+        generator.valueToCode(block, "Z", Order.ATOMIC) || "0",
+    );
 
     Object.assign(generator.definitions_, {
         IMPORT_RCLPY,

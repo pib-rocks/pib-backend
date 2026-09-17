@@ -121,7 +121,9 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}():
             return cam.get_depth_frame()
 `;
 
-export const GET_CAMERA_DISTANCE_AT_PX_FUNCTION = (generator: CodeGenerator) => `
+export const GET_CAMERA_DISTANCE_AT_PX_FUNCTION = (
+    generator: CodeGenerator,
+) => `
 def ${generator.FUNCTION_NAME_PLACEHOLDER_}(x, y):
 
     rosbridge_host = os.getenv("ROSBRIDGE_HOST", "rosbridge-ws")

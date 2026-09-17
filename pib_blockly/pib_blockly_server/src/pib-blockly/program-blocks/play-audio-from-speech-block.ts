@@ -40,7 +40,8 @@ export const playAudioFromSpeech =
             previousStatement: null,
             nextStatement: null,
             colour: 260,
-            tooltip: "Speak text using local Supertonic-3 TTS with selected voice and language",
+            tooltip:
+                "Speak text using local Supertonic-3 TTS with selected voice and language",
             helpUrl: "",
         },
     ]);

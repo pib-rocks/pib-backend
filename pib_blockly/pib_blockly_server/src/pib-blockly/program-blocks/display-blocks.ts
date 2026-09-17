@@ -52,7 +52,8 @@ export const displayBlocks = Blockly.common.createBlockDefinitionsFromJsonArray(
             previousStatement: null,
             nextStatement: null,
             colour: 180,
-            tooltip: "Opens or closes Cerebra UI in fullscreen mode on pib's display as a toggle.",
+            tooltip:
+                "Opens or closes Cerebra UI in fullscreen mode on pib's display as a toggle.",
             helpUrl: "",
         },
     ],

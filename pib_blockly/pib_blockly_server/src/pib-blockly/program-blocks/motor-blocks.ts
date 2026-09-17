@@ -142,7 +142,8 @@ export const motor_blocks = Blockly.common.createBlockDefinitionsFromJsonArray([
         previousStatement: null,
         nextStatement: null,
         colour: 355,
-        tooltip: "Moves the selected hand to a target XYZ position using inverse kinematics. Left/right is from pib's own perspective: imagine standing in front of pib and looking at him (the same binding used across pib part numbering e.g. C35R/C35L).",
+        tooltip:
+            "Moves the selected hand to a target XYZ position using inverse kinematics. Left/right is from pib's own perspective: imagine standing in front of pib and looking at him (the same binding used across pib part numbering e.g. C35R/C35L).",
         helpUrl: "",
     },
     {

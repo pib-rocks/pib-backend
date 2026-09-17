@@ -1,4 +1,3 @@
-import * as Blockly from "blockly";
 import {Block} from "blockly/core/block";
 import {Order, pythonGenerator} from "blockly/python";
 import {

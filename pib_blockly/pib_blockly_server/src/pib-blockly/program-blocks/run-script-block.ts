@@ -127,7 +127,7 @@ if (
             undefined,
             ["run_script_mutator_item"],
         );
-    } catch (e) {
+    } catch {
         // already registered (e.g. on hot-module-reload) - safe to ignore
     }
 }
