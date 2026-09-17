@@ -50,9 +50,10 @@ if not os.path.exists(app.config.get("PYTHON_CODE_DIR")):
     os.makedirs(app.config.get("PYTHON_CODE_DIR"))
 
 # Imported at the bottom to prevent a circular import error
-from commands import reconcile_system_properties, seed_db
+from commands import reconcile_system_properties, seed_db, seed_hardware
 
 app.cli.add_command(seed_db)
+app.cli.add_command(seed_hardware)
 app.cli.add_command(reconcile_system_properties)
 
 

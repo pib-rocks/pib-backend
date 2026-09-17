@@ -33,6 +33,14 @@ def test_registry_rejects_wrong_type(app_ctx):
         set_property(HARDWARE_VARIANT_KEY, 5, "default")
 
 
+def test_registry_accepts_command_source_and_rejects_unknown_source(app_ctx):
+    stored = set_property(HARDWARE_VARIANT_KEY, "pib4edu", "command")
+    assert stored.source == "command"
+
+    with pytest.raises(ValueError, match="Unknown system property source"):
+        set_property(HARDWARE_VARIANT_KEY, "pib5edu", "operator")
+
+
 def test_get_variant_falls_back_and_warns(app_ctx, caplog):
     db.session.query(SystemProperty).filter_by(key=HARDWARE_VARIANT_KEY).delete()
     caplog.set_level(logging.WARNING)

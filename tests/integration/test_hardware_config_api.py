@@ -69,6 +69,53 @@ def test_import_endpoint_updates_database(client):
         assert Motor.query.filter_by(name="tilt_forward_motor").one().velocity == 4242
 
 
+def test_version_1_document_imports_successfully(client):
+    response = client.post(
+        "/api/system/hardware-config/import",
+        json={
+            "version": 1,
+            "bricklets": [
+                {
+                    "brickletNumber": 1,
+                    "uid": "V1A001",
+                    "type": "Servo Bricklet",
+                }
+            ],
+            "motors": [
+                {
+                    "name": "elbow_left",
+                    "velocity": 31337,
+                    "brickletPins": [{"brickletNumber": 1, "pin": 6, "invert": False}],
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()["version"] == 2
+    with client.application.app_context():
+        assert Controller.query.filter_by(number=1).one().address == "V1A001"
+        motor = Motor.query.filter_by(name="elbow_left").one()
+        assert (motor.controller.number, motor.channel, motor.velocity) == (
+            1,
+            6,
+            31337,
+        )
+
+
+def test_version_2_export_round_trips_through_import(client):
+    exported = client.get("/api/system/hardware-config/export").get_json()
+
+    response = client.post(
+        "/api/system/hardware-config/import",
+        data=json.dumps(exported),
+        content_type="application/json",
+    )
+
+    assert response.status_code == 200
+    assert response.get_json() == exported
+
+
 def test_import_endpoint_rejects_invalid_schema(client):
     response = client.post(
         "/api/system/hardware-config/import",
