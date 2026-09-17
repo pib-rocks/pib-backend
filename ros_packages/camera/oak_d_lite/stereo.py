@@ -33,7 +33,9 @@ from .model_registry import ModelRegistry
 from .pipeline_manager import PipelineManager
 from .hand_tracking import (
     HAND_KEYPOINT_NAMES,
+    MANIP_CROP_INSET_PIXELS,
     decode_palm_result,
+    fit_manip_crop,
 )
 
 # Downscaled resolution for Haar cascade face detection (maps back to full frame).
@@ -347,9 +349,11 @@ class CameraNode(Node):
         interval_raw = " ".join(
             f"{stage}={interval[stage]}" for stage in HAND_STAGE_NAMES
         )
+        source_width, source_height = getattr(self, "hand_source_size", (0, 0))
         self.get_logger().info(
             f"hand_tracking stage packets total: {raw}; "
-            f"interval: {interval_raw}; last_flowing={last_flowing}"
+            f"interval: {interval_raw}; last_flowing={last_flowing}; "
+            f"branch={source_width}x{source_height}"
         )
         self._hand_stage_last_logged = dict(self.hand_stage_counters)
 
@@ -515,6 +519,19 @@ class CameraNode(Node):
         if source_width <= 0 or source_height <= 0:
             raise ValueError("hand ROI source must have positive dimensions")
 
+        crop = fit_manip_crop(
+            source_width,
+            source_height,
+            self.hand_landmark_input_size,
+            self.hand_landmark_input_size,
+        )
+        if palm is None:
+            # The sentinel keeps the config-gated branch alive on frames without
+            # a palm. An exactly full-frame rect sits on the boundary the device
+            # validates, so it uses the same inset crop as the build-time config.
+            roi_x, roi_y = crop.center_x, crop.center_y
+            roi_width, roi_height = crop.width, crop.height
+
         # DepthAI rejects a rotated crop unless its complete bounding box is
         # inside the source image; warp border replication happens only after
         # that validation. Fit the decoded square in actual branch pixels,
@@ -528,8 +545,7 @@ class CameraNode(Node):
         # Keep every corner at least half a pixel inside the frame. Maintaining
         # the decoded center is more important than retaining the full ROI near
         # an edge, so shrink around that center instead of moving off the hand.
-        # The unrotated full-frame sentinel is already a valid exact crop.
-        inset = 0.0 if palm is None else 0.5
+        inset = MANIP_CROP_INSET_PIXELS
         center_x = min(
             source_width - inset,
             max(inset, roi_x * source_width),
@@ -560,13 +576,11 @@ class CameraNode(Node):
         rotated.angle = math.degrees(rotation)
 
         config = dai.ImageManipConfig()
-        config.setOutputSize(
-            self.hand_landmark_input_size,
-            self.hand_landmark_input_size,
-        )
+        config.setOutputSize(crop.output_width, crop.output_height)
         config.setFrameType(dai.ImgFrame.Type.BGR888p)
-        # The decoder uses normalized letterboxed-square coordinates. roi_for_frame
-        # converts those to normalized coordinates of the 640x480 hand tap.
+        # The decoder uses normalized letterboxed-square coordinates.
+        # roi_for_frame converts those to normalized coordinates of the hand
+        # tap as the branch actually delivers it.
         config.addCropRotatedRect(rotated, True)
         # Palm ROIs routinely cross an image edge. Explicit warp border handling
         # keeps those valid instead of making ImageManip skip the frame.
@@ -833,6 +847,96 @@ class CameraNode(Node):
             )
         return output
 
+    @staticmethod
+    def _size_pair(value):
+        """Read a (width, height) pair from a device size object, if it is one."""
+        if isinstance(value, (tuple, list)) and len(value) == 2:
+            width, height = value
+        else:
+            width = getattr(value, "width", None)
+            height = getattr(value, "height", None)
+        if isinstance(width, bool) or isinstance(height, bool):
+            return None
+        if not isinstance(width, (int, float)) or not isinstance(height, (int, float)):
+            return None
+        if width <= 0 or height <= 0:
+            return None
+        return (int(width), int(height))
+
+    def _branch_output_size(self, output, requested):
+        """Read the dimensions a camera branch really delivers.
+
+        The camera can hand back a stream whose size differs from the request,
+        and every ImageManip crop on that branch has to match the frames that
+        arrive rather than the ones that were asked for.
+        """
+        for getter_name in ("getSize", "getDimensions"):
+            getter = getattr(output, getter_name, None)
+            if getter is None:
+                continue
+            try:
+                size = self._size_pair(getter())
+            except Exception:
+                size = None
+            if size is not None:
+                return size
+        return (int(requested[0]), int(requested[1]))
+
+    def _note_hand_branch_size(self, packet):
+        """Track the hand branch size a device packet was actually produced from."""
+        getter = getattr(packet, "getTransformation", None)
+        if getter is None:
+            return
+        try:
+            transformation = getter()
+            source_getter = getattr(transformation, "getSourceSize", None)
+            size = None if source_getter is None else self._size_pair(source_getter())
+        except Exception:
+            return
+        if size is None or size == self.hand_source_size:
+            return
+        # Every crop is derived from this size, so a changed branch geometry has
+        # to reach the landmark configs before the next frame is cropped.
+        self._warn_hand_once(
+            "Hand branch delivers "
+            f"{size[0]}x{size[1]}, not {self.hand_source_size[0]}x"
+            f"{self.hand_source_size[1]}; deriving hand crops from the "
+            "delivered size."
+        )
+        self.hand_source_size = size
+
+    def _configure_hand_manip(
+        self,
+        manip,
+        output_width,
+        output_height,
+        source_width,
+        source_height,
+        resize_mode=None,
+    ):
+        """Configure one hand ImageManip from the branch's real dimensions."""
+        crop = fit_manip_crop(source_width, source_height, output_width, output_height)
+        manip.setMaxOutputFrameSize(crop.output_width * crop.output_height * 3)
+        if resize_mode is None:
+            manip.initialConfig.setOutputSize(crop.output_width, crop.output_height)
+        else:
+            manip.initialConfig.setOutputSize(
+                crop.output_width, crop.output_height, resize_mode
+            )
+        manip.initialConfig.setFrameType(dai.ImgFrame.Type.BGR888p)
+        # An ImageManip without an explicit initial crop validates the default
+        # rect it carries against each incoming frame, and rejects the frame
+        # whenever that rect does not fit - including while the landmark manip
+        # waits for its first per-frame config.
+        rotated = dai.RotatedRect()
+        rotated.center.x = crop.center_x
+        rotated.center.y = crop.center_y
+        rotated.size.width = crop.width
+        rotated.size.height = crop.height
+        rotated.angle = 0.0
+        manip.initialConfig.addCropRotatedRect(rotated, True)
+        return crop
+
     def _hand_chain_is_built(self):
         requested = any(
             active.model.model_id == "hand_tracking"
@@ -893,22 +997,28 @@ class CameraNode(Node):
         palm = artifacts["palm_detection_128x128"]
         decoder = artifacts["palm_detection_128x128_decoding"]
         landmark = artifacts["hand_landmark_224x224"]
-        self.hand_landmark_input_size = landmark.input_width
-        self.hand_source_size = (HAND_NN_WIDTH, HAND_NN_HEIGHT)
 
-        palm_manip = self.pipeline.create(dai.node.ImageManip)
-        palm_manip.setMaxOutputFrameSize(palm.input_width * palm.input_height * 3)
-        palm_manip.initialConfig.setOutputSize(
-            palm.input_width,
-            palm.input_height,
-            dai.ImageManipConfig.ResizeMode.LETTERBOX,
-        )
-        palm_manip.initialConfig.setFrameType(dai.ImgFrame.Type.BGR888p)
-        self._relax_branch_input(palm_manip.inputImage)
         # One downscaled camera stream feeds both non-blocking manip inputs.
         # Requesting two identical Camera outputs exceeds the OAK-D Lite
         # camera-output budget once the colour output is present.
-        hand_tap = self._request_camera_branch(self.hand_source_size)
+        hand_tap = self._request_camera_branch((HAND_NN_WIDTH, HAND_NN_HEIGHT))
+        # Both manips crop the frames this branch really carries, so the crops
+        # follow the delivered size instead of the requested one.
+        self.hand_source_size = self._branch_output_size(
+            hand_tap, (HAND_NN_WIDTH, HAND_NN_HEIGHT)
+        )
+        source_width, source_height = self.hand_source_size
+
+        palm_manip = self.pipeline.create(dai.node.ImageManip)
+        self._configure_hand_manip(
+            palm_manip,
+            palm.input_width,
+            palm.input_height,
+            source_width,
+            source_height,
+            resize_mode=dai.ImageManipConfig.ResizeMode.LETTERBOX,
+        )
+        self._relax_branch_input(palm_manip.inputImage)
         hand_tap.link(palm_manip.inputImage)
 
         palm_nn = self.pipeline.create(dai.node.NeuralNetwork)
@@ -930,14 +1040,16 @@ class CameraNode(Node):
         )
 
         landmark_manip = self.pipeline.create(dai.node.ImageManip)
-        landmark_manip.setMaxOutputFrameSize(
-            landmark.input_width * landmark.input_height * 3
-        )
-        landmark_manip.initialConfig.setOutputSize(
+        landmark_crop = self._configure_hand_manip(
+            landmark_manip,
             landmark.input_width,
             landmark.input_height,
+            source_width,
+            source_height,
         )
-        landmark_manip.initialConfig.setFrameType(dai.ImgFrame.Type.BGR888p)
+        # Landmark tensors are normalized against the size the crop really
+        # delivers, so the mapping back to the frame follows it too.
+        self.hand_landmark_input_size = landmark_crop.output_width
         # This manip only consumes an image once the host has sent a crop
         # config. Its non-blocking input discards images while idle, so sharing
         # the hand tap cannot back-pressure the palm or colour paths.
@@ -1287,8 +1399,11 @@ class CameraNode(Node):
             if queue is None:
                 continue
             for _ in range(32):
-                if queue.tryGet() is None:
+                packet = queue.tryGet()
+                if packet is None:
                     break
+                if stage == "palm_detector_nn":
+                    self._note_hand_branch_size(packet)
                 self._count_hand_stage(stage)
 
         self._process_hand_tracking()

@@ -543,6 +543,115 @@ class TestHandPipelineInput(unittest.TestCase):
                 self.assertLess(corner_y, 480.0)
 
     @patch("ros_packages.camera.oak_d_lite.stereo.dai")
+    def test_no_palm_sentinel_crop_stays_inside_the_source(self, mock_dai):
+        with patch.object(CameraNode, "__init__", lambda self: None):
+            node = CameraNode()
+        node.hand_landmark_input_size = 224
+
+        class _RotatedRect:
+            def __init__(self):
+                self.center = types.SimpleNamespace(x=0.0, y=0.0)
+                self.size = types.SimpleNamespace(width=0.0, height=0.0)
+                self.angle = 0.0
+
+        mock_dai.RotatedRect.side_effect = _RotatedRect
+
+        node._landmark_crop_config(None, 640, 480)
+
+        rotated = (
+            mock_dai.ImageManipConfig.return_value.addCropRotatedRect.call_args.args[0]
+        )
+        # An exactly full-frame rect sits on the boundary the device validates.
+        self.assertLess(rotated.size.width, 1.0)
+        self.assertLess(rotated.size.height, 1.0)
+        half_width = rotated.size.width * 640 / 2.0
+        half_height = rotated.size.height * 480 / 2.0
+        self.assertGreater(rotated.center.x * 640 - half_width, 0.0)
+        self.assertLess(rotated.center.x * 640 + half_width, 640.0)
+        self.assertGreater(rotated.center.y * 480 - half_height, 0.0)
+        self.assertLess(rotated.center.y * 480 + half_height, 480.0)
+
+    @patch("ros_packages.camera.oak_d_lite.stereo.dai")
+    def test_branch_size_change_is_adopted_for_later_crops(self, mock_dai):
+        with patch.object(CameraNode, "__init__", lambda self: None):
+            node = CameraNode()
+        node.hand_source_size = (640, 480)
+        node._hand_warnings = set()
+        node.get_logger = MagicMock()
+        transformation = MagicMock()
+        transformation.getSourceSize.return_value = (1280, 720)
+        packet = MagicMock()
+        packet.getTransformation.return_value = transformation
+
+        node._note_hand_branch_size(packet)
+
+        self.assertEqual(node.hand_source_size, (1280, 720))
+
+        # A device that reports no usable size must not move the crop geometry.
+        transformation.getSourceSize.return_value = None
+        node._note_hand_branch_size(packet)
+
+        self.assertEqual(node.hand_source_size, (1280, 720))
+
+    @patch("ros_packages.camera.oak_d_lite.stereo.dai")
+    def test_initial_crops_follow_the_delivered_branch_size(self, mock_dai):
+        with patch.object(CameraNode, "__init__", lambda self: None):
+            node = CameraNode()
+
+        class _RotatedRect:
+            def __init__(self):
+                self.center = types.SimpleNamespace(x=0.0, y=0.0)
+                self.size = types.SimpleNamespace(width=0.0, height=0.0)
+                self.angle = 0.0
+
+        mock_dai.RotatedRect.side_effect = _RotatedRect
+        artifacts = {
+            "palm_detection_128x128": types.SimpleNamespace(
+                input_width=128,
+                input_height=128,
+                blob_path="/palm.blob",
+                shaves=4,
+            ),
+            "palm_detection_128x128_decoding": types.SimpleNamespace(
+                blob_path="/decoder.blob", shaves=1
+            ),
+            "hand_landmark_224x224": types.SimpleNamespace(
+                input_width=224,
+                input_height=224,
+                blob_path="/landmark.blob",
+                shaves=4,
+            ),
+        }
+        node.model_registry = MagicMock()
+        node.model_registry.get.side_effect = artifacts.get
+        node.pipeline = MagicMock()
+        created = [MagicMock() for _ in range(5)]
+        node.pipeline.create.side_effect = created
+        node.camRgb = MagicMock()
+        hand_tap = MagicMock()
+        # The camera answers the 640x480 request with a larger stream.
+        hand_tap.getSize.return_value = (1280, 720)
+        node.camRgb.requestOutput.return_value = hand_tap
+
+        node._build_hand_pipeline(types.SimpleNamespace(artifact_ids=tuple(artifacts)))
+
+        self.assertEqual(node.hand_source_size, (1280, 720))
+        created[0].initialConfig.setOutputSize.assert_called_once_with(
+            128, 128, mock_dai.ImageManipConfig.ResizeMode.LETTERBOX
+        )
+        created[3].initialConfig.setOutputSize.assert_called_once_with(224, 224)
+        for manip in (created[0], created[3]):
+            rotated, normalized = manip.initialConfig.addCropRotatedRect.call_args.args
+            self.assertTrue(normalized)
+            self.assertEqual(rotated.angle, 0.0)
+            half_width = rotated.size.width * 1280 / 2.0
+            half_height = rotated.size.height * 720 / 2.0
+            self.assertGreater(rotated.center.x * 1280 - half_width, 0.0)
+            self.assertLess(rotated.center.x * 1280 + half_width, 1280.0)
+            self.assertGreater(rotated.center.y * 720 - half_height, 0.0)
+            self.assertLess(rotated.center.y * 720 + half_height, 720.0)
+
+    @patch("ros_packages.camera.oak_d_lite.stereo.dai")
     def test_hand_manips_share_one_non_blocking_camera_tap(self, mock_dai):
         with patch.object(CameraNode, "__init__", lambda self: None):
             node = CameraNode()
@@ -760,14 +869,18 @@ class TestHandStageCounters(unittest.TestCase):
             mock_dai.ImageManipConfig.return_value.addCropRotatedRect.call_args.args[0]
         )
         self.assertEqual(
-            (
-                rotated.center.x,
-                rotated.center.y,
-                rotated.size.width,
-                rotated.size.height,
-                rotated.angle,
-            ),
-            (0.5, 0.5, 1.0, 1.0, 0.0),
+            (rotated.center.x, rotated.center.y, rotated.angle), (0.5, 0.5, 0.0)
+        )
+        # The sentinel covers the whole 640x480 hand branch apart from the
+        # half-pixel inset that keeps it off the boundary the device rejects.
+        half_width = rotated.size.width * 640 / 2.0
+        half_height = rotated.size.height * 480 / 2.0
+        self.assertAlmostEqual(rotated.center.x * 640 - half_width, 0.5)
+        self.assertAlmostEqual(rotated.center.x * 640 + half_width, 639.5)
+        self.assertAlmostEqual(rotated.center.y * 480 - half_height, 0.5)
+        self.assertAlmostEqual(rotated.center.y * 480 + half_height, 479.5)
+        mock_dai.ImageManipConfig.return_value.setOutputSize.assert_called_once_with(
+            224, 224
         )
 
         node._process_hand_tracking()
