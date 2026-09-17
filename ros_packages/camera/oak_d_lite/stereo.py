@@ -36,14 +36,16 @@ from .hand_tracking import (
     MANIP_CROP_INSET_PIXELS,
     decode_palm_result,
     fit_manip_crop,
+    plan_manip_stages,
 )
 
 # Downscaled resolution for Haar cascade face detection (maps back to full frame).
 FACE_DETECT_WIDTH = 320
 FACE_DETECT_HEIGHT = 180
-# Keep ImageManip warp inputs below the full ISP resolution.  This exact size is
-# proven on the OAK-D Lite: larger inputs can overflow RVC2's warp cache and
-# make ImageManip skip every frame with WARP_SWCH_ERR_CACHE_TO_SMALL.
+# Keep ImageManip warp inputs below the full ISP resolution.  The landmark crop
+# is taken from this branch at full resolution, so it stays large enough to feed
+# the 224x224 model; the distance down to the 128x128 palm input is covered by
+# staged manipulations rather than by shrinking the branch.
 HAND_NN_WIDTH = 640
 HAND_NN_HEIGHT = 480
 # Device-side queues on the camera branches stay shallow and non-blocking.  The
@@ -527,8 +529,10 @@ class CameraNode(Node):
         )
         if palm is None:
             # The sentinel keeps the config-gated branch alive on frames without
-            # a palm. An exactly full-frame rect sits on the boundary the device
-            # validates, so it uses the same inset crop as the build-time config.
+            # a palm. Its result is discarded, so it reuses the build-time crop:
+            # centred, inside the source and within the warp budget, rather than
+            # a full-frame rect that sits on the boundary the device validates
+            # and asks the warp cache for the steepest downscale on the branch.
             roi_x, roi_y = crop.center_x, crop.center_y
             roi_width, roi_height = crop.width, crop.height
 
@@ -927,7 +931,10 @@ class CameraNode(Node):
         # An ImageManip without an explicit initial crop validates the default
         # rect it carries against each incoming frame, and rejects the frame
         # whenever that rect does not fit - including while the landmark manip
-        # waits for its first per-frame config.
+        # waits for its first per-frame config.  The rect is centred, inside the
+        # measured source and within the warp budget, and it is never rotated:
+        # only the per-frame landmark config carries an angle, because only the
+        # landmark model needs its crop aligned to the palm.
         rotated = dai.RotatedRect()
         rotated.center.x = crop.center_x
         rotated.center.y = crop.center_y
@@ -998,34 +1005,52 @@ class CameraNode(Node):
         decoder = artifacts["palm_detection_128x128_decoding"]
         landmark = artifacts["hand_landmark_224x224"]
 
-        # One downscaled camera stream feeds both non-blocking manip inputs.
-        # Requesting two identical Camera outputs exceeds the OAK-D Lite
-        # camera-output budget once the colour output is present.
+        # One downscaled camera stream feeds the palm chain and the landmark
+        # manip, both non-blocking. Requesting two identical Camera outputs
+        # exceeds the OAK-D Lite camera-output budget once the colour output is
+        # present.
         hand_tap = self._request_camera_branch((HAND_NN_WIDTH, HAND_NN_HEIGHT))
-        # Both manips crop the frames this branch really carries, so the crops
+        # Every manip crops the frames this branch really carries, so the crops
         # follow the delivered size instead of the requested one.
         self.hand_source_size = self._branch_output_size(
             hand_tap, (HAND_NN_WIDTH, HAND_NN_HEIGHT)
         )
         source_width, source_height = self.hand_source_size
 
-        palm_manip = self.pipeline.create(dai.node.ImageManip)
-        self._configure_hand_manip(
-            palm_manip,
-            palm.input_width,
-            palm.input_height,
-            source_width,
-            source_height,
-            resize_mode=dai.ImageManipConfig.ResizeMode.LETTERBOX,
+        # Reaching the palm input from the branch in one manipulation exceeds
+        # the warp cache and makes the device skip every frame. The staged
+        # halvings each stay inside the budget, and because they keep the source
+        # aspect ratio only the final stage letterboxes - which is the padding
+        # the decoder normalizes its output against.
+        palm_stages = plan_manip_stages(
+            source_width, source_height, palm.input_width, palm.input_height
         )
-        self._relax_branch_input(palm_manip.inputImage)
-        hand_tap.link(palm_manip.inputImage)
+        palm_source = (source_width, source_height)
+        palm_output = hand_tap
+        for index, (stage_width, stage_height) in enumerate(palm_stages):
+            palm_manip = self.pipeline.create(dai.node.ImageManip)
+            self._configure_hand_manip(
+                palm_manip,
+                stage_width,
+                stage_height,
+                palm_source[0],
+                palm_source[1],
+                resize_mode=(
+                    dai.ImageManipConfig.ResizeMode.LETTERBOX
+                    if index == len(palm_stages) - 1
+                    else None
+                ),
+            )
+            self._relax_branch_input(palm_manip.inputImage)
+            palm_output.link(palm_manip.inputImage)
+            palm_output = palm_manip.out
+            palm_source = (stage_width, stage_height)
 
         palm_nn = self.pipeline.create(dai.node.NeuralNetwork)
         palm_nn.setBlobPath(palm.blob_path)
         palm_nn.setNumShavesPerInferenceThread(palm.shaves)
         self._relax_branch_input(palm_nn.input)
-        palm_manip.out.link(palm_nn.input)
+        palm_output.link(palm_nn.input)
         self.hand_palm_queue = palm_nn.out.createOutputQueue(
             maxSize=BRANCH_OUTPUT_QUEUE_DEPTH, blocking=False
         )

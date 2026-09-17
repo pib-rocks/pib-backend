@@ -49,6 +49,15 @@ PALM_RESULT_WIDTH = 8
 LANDMARK_COUNT = 21
 # Sub-pixel margin that keeps a derived crop strictly inside its source frame.
 MANIP_CROP_INSET_PIXELS = 0.5
+# Largest downscale a single ImageManip may be asked for.  RVC2 resolves a
+# manipulation through its warp cache, and that cache has to hold every source
+# pixel one output block reads: the steeper the ratio, the more source lines per
+# block.  Beyond the budget the device reports ``WARP_SWCH_ERR_CACHE_TO_SMALL``
+# and skips the frame, and the accompanying ``Initial crop is outside the source
+# image`` is a symptom of the same rejection rather than a crop that truly hangs
+# over the edge.  Halving stays well inside the budget, so a manipulation that
+# needs more is split into successive halvings.
+MANIP_MAX_DOWNSCALE_PER_STAGE = 2.0
 
 
 @dataclass(frozen=True)
@@ -63,12 +72,28 @@ class ManipCrop:
     output_height: int
 
 
+def manip_downscale_factor(
+    source_width: float,
+    source_height: float,
+    output_width: int,
+    output_height: int,
+) -> float:
+    """Return the downscale ratio one manipulation would have to resolve."""
+    if output_width <= 0 or output_height <= 0:
+        raise ValueError("manip output must have positive dimensions")
+    return max(
+        float(source_width) / float(output_width),
+        float(source_height) / float(output_height),
+    )
+
+
 def fit_manip_crop(
     source_width: int,
     source_height: int,
     output_width: int,
     output_height: int,
     inset: float = MANIP_CROP_INSET_PIXELS,
+    max_downscale: float = MANIP_MAX_DOWNSCALE_PER_STAGE,
 ) -> ManipCrop:
     """Derive a valid ImageManip crop and target size from measured input dimensions.
 
@@ -76,25 +101,73 @@ def fit_manip_crop(
     rejects the whole frame with ``Initial crop is outside the source image``
     when the rect does not fit.  A rect assumed at build time is therefore
     unusable as soon as the camera delivers other dimensions.  The crop here
-    covers the full source minus a sub-pixel inset, which fits any source, and
-    the target size never asks for more pixels than the source can fill.
+    starts at the full source minus a sub-pixel inset and is narrowed to what
+    the warp cache can resolve in one manipulation, so the rect fits any source
+    and stays inside the budget.  The target size is always the network input
+    size: a frame trimmed to the source instead would not match the tensor the
+    model expects.
     """
     if source_width <= 0 or source_height <= 0:
         raise ValueError("manip source must have positive dimensions")
     if output_width <= 0 or output_height <= 0:
         raise ValueError("manip output must have positive dimensions")
+    if max_downscale <= 0:
+        raise ValueError("manip downscale budget must be positive")
     inset_x = max(0.0, min(float(inset), source_width / 4.0))
     inset_y = max(0.0, min(float(inset), source_height / 4.0))
-    crop_width = source_width - 2.0 * inset_x
-    crop_height = source_height - 2.0 * inset_y
+    crop_width = min(source_width - 2.0 * inset_x, max_downscale * output_width)
+    crop_height = min(source_height - 2.0 * inset_y, max_downscale * output_height)
     return ManipCrop(
         center_x=0.5,
         center_y=0.5,
         width=crop_width / source_width,
         height=crop_height / source_height,
-        output_width=min(int(output_width), int(crop_width)),
-        output_height=min(int(output_height), int(crop_height)),
+        output_width=int(output_width),
+        output_height=int(output_height),
     )
+
+
+def plan_manip_stages(
+    source_width: int,
+    source_height: int,
+    output_width: int,
+    output_height: int,
+    max_downscale: float = MANIP_MAX_DOWNSCALE_PER_STAGE,
+) -> List[Tuple[int, int]]:
+    """Split one manipulation into stages that each stay inside the warp cache.
+
+    Taking a 640x480 branch to the 128x128 palm input in one step asks the warp
+    engine for five source pixels per output pixel, which is what exhausts the
+    cache.  Each intermediate stage halves both dimensions, so the source aspect
+    ratio is preserved exactly and the letterbox padding the palm decoder
+    normalizes against is introduced only by the final stage.
+    """
+    if source_width <= 0 or source_height <= 0:
+        raise ValueError("manip source must have positive dimensions")
+    if output_width <= 0 or output_height <= 0:
+        raise ValueError("manip output must have positive dimensions")
+    if max_downscale <= 1.0:
+        raise ValueError("manip downscale budget must exceed 1.0")
+
+    stages: List[Tuple[int, int]] = []
+    width, height = int(source_width), int(source_height)
+    while (
+        manip_downscale_factor(width, height, output_width, output_height)
+        > max_downscale
+    ):
+        next_width, next_height = width // 2, height // 2
+        if next_width <= 0 or next_height <= 0:
+            break
+        # Halving past the target only adds a stage that upscales again.
+        next_factor = manip_downscale_factor(
+            next_width, next_height, output_width, output_height
+        )
+        if next_factor < 1.0:
+            break
+        width, height = next_width, next_height
+        stages.append((width, height))
+    stages.append((int(output_width), int(output_height)))
+    return stages
 
 
 @dataclass(frozen=True)

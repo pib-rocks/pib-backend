@@ -133,6 +133,11 @@ else:
 
 import numpy as np
 
+from ros_packages.camera.oak_d_lite.hand_tracking import (
+    MANIP_MAX_DOWNSCALE_PER_STAGE,
+    manip_downscale_factor,
+    plan_manip_stages,
+)
 from ros_packages.camera.oak_d_lite.stereo import (
     BRANCH_INPUT_QUEUE_DEPTH,
     BRANCH_OUTPUT_QUEUE_DEPTH,
@@ -144,6 +149,27 @@ from ros_packages.camera.oak_d_lite.stereo import (
     HAND_NN_HEIGHT,
     HAND_NN_WIDTH,
 )
+
+
+def _hand_artifacts():
+    """Registry entries for the three blobs the hand chain is built from."""
+    return {
+        "palm_detection_128x128": types.SimpleNamespace(
+            input_width=128,
+            input_height=128,
+            blob_path="/palm.blob",
+            shaves=4,
+        ),
+        "palm_detection_128x128_decoding": types.SimpleNamespace(
+            blob_path="/decoder.blob", shaves=1
+        ),
+        "hand_landmark_224x224": types.SimpleNamespace(
+            input_width=224,
+            input_height=224,
+            blob_path="/landmark.blob",
+            shaves=4,
+        ),
+    }
 
 
 class TestStereoCameraOptimization(unittest.TestCase):
@@ -605,27 +631,12 @@ class TestHandPipelineInput(unittest.TestCase):
                 self.angle = 0.0
 
         mock_dai.RotatedRect.side_effect = _RotatedRect
-        artifacts = {
-            "palm_detection_128x128": types.SimpleNamespace(
-                input_width=128,
-                input_height=128,
-                blob_path="/palm.blob",
-                shaves=4,
-            ),
-            "palm_detection_128x128_decoding": types.SimpleNamespace(
-                blob_path="/decoder.blob", shaves=1
-            ),
-            "hand_landmark_224x224": types.SimpleNamespace(
-                input_width=224,
-                input_height=224,
-                blob_path="/landmark.blob",
-                shaves=4,
-            ),
-        }
+        artifacts = _hand_artifacts()
         node.model_registry = MagicMock()
         node.model_registry.get.side_effect = artifacts.get
         node.pipeline = MagicMock()
-        created = [MagicMock() for _ in range(5)]
+        stages = plan_manip_stages(1280, 720, 128, 128)
+        created = [MagicMock() for _ in range(len(stages) + 4)]
         node.pipeline.create.side_effect = created
         node.camRgb = MagicMock()
         hand_tap = MagicMock()
@@ -636,53 +647,92 @@ class TestHandPipelineInput(unittest.TestCase):
         node._build_hand_pipeline(types.SimpleNamespace(artifact_ids=tuple(artifacts)))
 
         self.assertEqual(node.hand_source_size, (1280, 720))
-        created[0].initialConfig.setOutputSize.assert_called_once_with(
+        palm_manips = created[: len(stages)]
+        landmark_manip = created[len(stages) + 2]
+        # Only the stage that reaches the network input pads to a square.
+        for manip, stage in zip(palm_manips[:-1], stages[:-1]):
+            manip.initialConfig.setOutputSize.assert_called_once_with(*stage)
+        palm_manips[-1].initialConfig.setOutputSize.assert_called_once_with(
             128, 128, mock_dai.ImageManipConfig.ResizeMode.LETTERBOX
         )
-        created[3].initialConfig.setOutputSize.assert_called_once_with(224, 224)
-        for manip in (created[0], created[3]):
+        landmark_manip.initialConfig.setOutputSize.assert_called_once_with(224, 224)
+
+        sources = [(1280, 720)] + stages[:-1] + [(1280, 720)]
+        for manip, source in zip(palm_manips + [landmark_manip], sources):
             rotated, normalized = manip.initialConfig.addCropRotatedRect.call_args.args
             self.assertTrue(normalized)
+            # The build-time rect never rotates; only the landmark model needs
+            # its crop aligned to the palm, and that comes per frame.
             self.assertEqual(rotated.angle, 0.0)
-            half_width = rotated.size.width * 1280 / 2.0
-            half_height = rotated.size.height * 720 / 2.0
-            self.assertGreater(rotated.center.x * 1280 - half_width, 0.0)
-            self.assertLess(rotated.center.x * 1280 + half_width, 1280.0)
-            self.assertGreater(rotated.center.y * 720 - half_height, 0.0)
-            self.assertLess(rotated.center.y * 720 + half_height, 720.0)
+            half_width = rotated.size.width * source[0] / 2.0
+            half_height = rotated.size.height * source[1] / 2.0
+            self.assertGreater(rotated.center.x * source[0] - half_width, 0.0)
+            self.assertLess(rotated.center.x * source[0] + half_width, source[0])
+            self.assertGreater(rotated.center.y * source[1] - half_height, 0.0)
+            self.assertLess(rotated.center.y * source[1] + half_height, source[1])
+
+    @patch("ros_packages.camera.oak_d_lite.stereo.dai")
+    def test_no_hand_manip_exceeds_the_warp_cache_budget(self, mock_dai):
+        """Every stage resolves a ratio the RVC2 warp cache can still hold."""
+        with patch.object(CameraNode, "__init__", lambda self: None):
+            node = CameraNode()
+
+        class _RotatedRect:
+            def __init__(self):
+                self.center = types.SimpleNamespace(x=0.0, y=0.0)
+                self.size = types.SimpleNamespace(width=0.0, height=0.0)
+                self.angle = 0.0
+
+        mock_dai.RotatedRect.side_effect = _RotatedRect
+        artifacts = _hand_artifacts()
+        node.model_registry = MagicMock()
+        node.model_registry.get.side_effect = artifacts.get
+        node.pipeline = MagicMock()
+        stages = plan_manip_stages(HAND_NN_WIDTH, HAND_NN_HEIGHT, 128, 128)
+        created = [MagicMock() for _ in range(len(stages) + 4)]
+        node.pipeline.create.side_effect = created
+        node.camRgb = MagicMock()
+        node.camRgb.requestOutput.return_value = MagicMock()
+
+        node._build_hand_pipeline(types.SimpleNamespace(artifact_ids=tuple(artifacts)))
+
+        manips = created[: len(stages)] + [created[len(stages) + 2]]
+        sources = [(HAND_NN_WIDTH, HAND_NN_HEIGHT)] + stages[:-1]
+        sources.append((HAND_NN_WIDTH, HAND_NN_HEIGHT))
+        targets = stages + [(224, 224)]
+        for manip, source, target in zip(manips, sources, targets):
+            rotated = manip.initialConfig.addCropRotatedRect.call_args.args[0]
+            factor = manip_downscale_factor(
+                rotated.size.width * source[0],
+                rotated.size.height * source[1],
+                target[0],
+                target[1],
+            )
+            self.assertLessEqual(round(factor, 6), MANIP_MAX_DOWNSCALE_PER_STAGE)
 
     @patch("ros_packages.camera.oak_d_lite.stereo.dai")
     def test_hand_manips_share_one_non_blocking_camera_tap(self, mock_dai):
         with patch.object(CameraNode, "__init__", lambda self: None):
             node = CameraNode()
 
-        artifacts = {
-            "palm_detection_128x128": types.SimpleNamespace(
-                input_width=128,
-                input_height=128,
-                blob_path="/palm.blob",
-                shaves=4,
-            ),
-            "palm_detection_128x128_decoding": types.SimpleNamespace(
-                blob_path="/decoder.blob", shaves=1
-            ),
-            "hand_landmark_224x224": types.SimpleNamespace(
-                input_width=224,
-                input_height=224,
-                blob_path="/landmark.blob",
-                shaves=4,
-            ),
-        }
+        artifacts = _hand_artifacts()
         node.model_registry = MagicMock()
         node.model_registry.get.side_effect = artifacts.get
         node.pipeline = MagicMock()
-        created = [MagicMock() for _ in range(5)]
+        stages = plan_manip_stages(HAND_NN_WIDTH, HAND_NN_HEIGHT, 128, 128)
+        created = [MagicMock() for _ in range(len(stages) + 4)]
         node.pipeline.create.side_effect = created
         node.camRgb = MagicMock()
         hand_tap = MagicMock()
         node.camRgb.requestOutput.return_value = hand_tap
 
         node._build_hand_pipeline(types.SimpleNamespace(artifact_ids=tuple(artifacts)))
+
+        palm_manips = created[: len(stages)]
+        palm_nn = created[len(stages)]
+        decoder_nn = created[len(stages) + 1]
+        landmark_manip = created[len(stages) + 2]
+        landmark_nn = created[len(stages) + 3]
 
         # A single downscaled output stays within the camera-output budget. Both
         # consumers are non-blocking, so the config-gated landmark branch cannot
@@ -694,35 +744,40 @@ class TestHandPipelineInput(unittest.TestCase):
         self.assertEqual(node.camRgb.requestOutput.call_args_list, [expected_request])
         hand_tap.link.assert_has_calls(
             [
-                unittest.mock.call(created[0].inputImage),
-                unittest.mock.call(created[3].inputImage),
+                unittest.mock.call(palm_manips[0].inputImage),
+                unittest.mock.call(landmark_manip.inputImage),
             ]
         )
-        for branch_input in (
-            created[0].inputImage,
-            created[1].input,
-            created[3].inputImage,
-        ):
+        # The palm stages form one chain from the tap to the detector.
+        for upstream, downstream in zip(palm_manips, palm_manips[1:]):
+            upstream.out.link.assert_called_once_with(downstream.inputImage)
+        palm_manips[-1].out.link.assert_called_once_with(palm_nn.input)
+        branch_inputs = [manip.inputImage for manip in palm_manips]
+        branch_inputs += [palm_nn.input, landmark_manip.inputImage]
+        for branch_input in branch_inputs:
             branch_input.setBlocking.assert_called_once_with(False)
             branch_input.setMaxSize.assert_called_once_with(BRANCH_INPUT_QUEUE_DEPTH)
-        created[1].setNumShavesPerInferenceThread.assert_called_once_with(4)
-        created[2].setNumShavesPerInferenceThread.assert_called_once_with(1)
-        created[4].setNumShavesPerInferenceThread.assert_called_once_with(4)
-        created[0].setMaxOutputFrameSize.assert_called_once_with(128 * 128 * 3)
-        created[3].setMaxOutputFrameSize.assert_called_once_with(224 * 224 * 3)
-        created[1].out.link.assert_has_calls(
+        palm_nn.setNumShavesPerInferenceThread.assert_called_once_with(4)
+        decoder_nn.setNumShavesPerInferenceThread.assert_called_once_with(1)
+        landmark_nn.setNumShavesPerInferenceThread.assert_called_once_with(4)
+        for manip, (stage_width, stage_height) in zip(palm_manips, stages):
+            manip.setMaxOutputFrameSize.assert_called_once_with(
+                stage_width * stage_height * 3
+            )
+        landmark_manip.setMaxOutputFrameSize.assert_called_once_with(224 * 224 * 3)
+        palm_nn.out.link.assert_has_calls(
             [
-                unittest.mock.call(created[2].inputs["classificators"]),
-                unittest.mock.call(created[2].inputs["regressors"]),
+                unittest.mock.call(decoder_nn.inputs["classificators"]),
+                unittest.mock.call(decoder_nn.inputs["regressors"]),
             ]
         )
-        created[3].inputConfig.setWaitForMessage.assert_called_once_with(True)
-        for branch_node in (created[1], created[2], created[3]):
+        landmark_manip.inputConfig.setWaitForMessage.assert_called_once_with(True)
+        for branch_node in (palm_nn, decoder_nn, landmark_manip):
             branch_node.out.createOutputQueue.assert_called_once_with(
                 maxSize=BRANCH_OUTPUT_QUEUE_DEPTH, blocking=False
             )
         # Landmark results stay blocking so _pending_hands keeps its pairing.
-        created[4].out.createOutputQueue.assert_called_once_with()
+        landmark_nn.out.createOutputQueue.assert_called_once_with()
         self.assertEqual(node.hand_source_size, (640, 480))
 
     @patch("ros_packages.camera.oak_d_lite.stereo.dai")
@@ -871,14 +926,17 @@ class TestHandStageCounters(unittest.TestCase):
         self.assertEqual(
             (rotated.center.x, rotated.center.y, rotated.angle), (0.5, 0.5, 0.0)
         )
-        # The sentinel covers the whole 640x480 hand branch apart from the
-        # half-pixel inset that keeps it off the boundary the device rejects.
-        half_width = rotated.size.width * 640 / 2.0
-        half_height = rotated.size.height * 480 / 2.0
-        self.assertAlmostEqual(rotated.center.x * 640 - half_width, 0.5)
-        self.assertAlmostEqual(rotated.center.x * 640 + half_width, 639.5)
-        self.assertAlmostEqual(rotated.center.y * 480 - half_height, 0.5)
-        self.assertAlmostEqual(rotated.center.y * 480 + half_height, 479.5)
+        # The sentinel is centred on the 640x480 hand branch and no larger than
+        # the warp cache can take down to the 224x224 landmark input in one
+        # manipulation, so it stays inside the source on every edge.
+        crop_width = rotated.size.width * 640
+        crop_height = rotated.size.height * 480
+        self.assertAlmostEqual(crop_width, MANIP_MAX_DOWNSCALE_PER_STAGE * 224)
+        self.assertAlmostEqual(crop_height, MANIP_MAX_DOWNSCALE_PER_STAGE * 224)
+        self.assertAlmostEqual(rotated.center.x * 640 - crop_width / 2.0, 96.0)
+        self.assertAlmostEqual(rotated.center.x * 640 + crop_width / 2.0, 544.0)
+        self.assertAlmostEqual(rotated.center.y * 480 - crop_height / 2.0, 16.0)
+        self.assertAlmostEqual(rotated.center.y * 480 + crop_height / 2.0, 464.0)
         mock_dai.ImageManipConfig.return_value.setOutputSize.assert_called_once_with(
             224, 224
         )
