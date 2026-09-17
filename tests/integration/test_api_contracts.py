@@ -168,6 +168,21 @@ class TestCameraAndHostIp:
         assert body["resolution"] == "SD"
         assert body["qualityFactor"] == 80
 
+    def test_camera_settings_put_roundtrip(self, client):
+        payload = {
+            "qualityFactor": 50,
+            "refreshRate": 0.5,
+            "resX": 1280,
+            "resY": 720,
+            "resolution": "HD",
+        }
+        put_response = client.put("/camera-settings", json=payload)
+        assert put_response.status_code == 200
+        assert put_response.get_json() == payload
+        get_response = client.get("/camera-settings")
+        assert get_response.status_code == 200
+        assert get_response.get_json() == payload
+
     def test_host_ip_200(self, client):
         assert client.get("/host-ip").get_json()["host_ip"] == "192.168.1.100"
 

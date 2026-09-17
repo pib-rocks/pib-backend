@@ -226,6 +226,8 @@ Seeded non-deletable poses: `Startup/Resting`, `Calibration`.
 
 Seed: `resolution="SD"`, `refreshRate=0.1`, `qualityFactor=80`, `resX=640`, `resY=480`.
 
+Unknown JSON properties (including UI-only `isActive`) are ignored on PUT; they are not persisted and do not appear in GET. A request with the five documented fields is sufficient.
+
 ---
 
 ### `/voice-assistant/personality`
