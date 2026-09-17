@@ -49,7 +49,8 @@ class Actuator(Protocol):
 
 class ServoBrickletActuator:
 
-    kind: str = "tinkerforge_servo"
+    # matches controller.kind in the database (the family that drives motors)
+    kind: str = "tinkerforge_bricklet"
     CAPABILITIES: frozenset[Capability] = frozenset(
         {Capability.CURRENT, Capability.TARGET_POSITION}
     )
@@ -183,9 +184,13 @@ class ServoBrickletActuator:
             return 0
 
 
-# the actuator families this build knows how to talk to
+# the actuator kinds this build knows how to talk to.
+# The keys are the controller.kind values from the database. "tinkerforge_servo" is the name this
+# build used before the DTO vocabulary became authoritative and stays accepted as an alias, so the
+# servo bricklet keeps resolving for anyone who already passes it.
 KIND_TO_ACTUATOR_CLASS: dict[str, type[Actuator]] = {
     ServoBrickletActuator.kind: ServoBrickletActuator,
+    "tinkerforge_servo": ServoBrickletActuator,
 }
 
 
