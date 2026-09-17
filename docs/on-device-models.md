@@ -60,3 +60,83 @@ It skips when the robot API or rosbridge is unreachable, or when the local
 `websocket-client` test prerequisite is absent. Override the default live
 target with `PIB_MODEL_E2E_HOST`, `PIB_MODEL_E2E_API_URL`, and
 `PIB_MODEL_E2E_ROSBRIDGE_URL`.
+
+### Curated-registry measurement
+
+`tools/measure_on_device_models.py` performs a non-actuating, sequential run of
+the available registry. It refuses to start if the available-entry count is not
+14 or if `/list_models` reports an already-active entry. For every entry it:
+
+1. requests the exact SHAVE count returned by `/list_models`;
+2. records `/models_status` transitions, active state, and measured FPS;
+3. counts `/detections/<model_id>` messages for the measurement window;
+4. captures camera-container stage-counter and crash/reconnect evidence from
+   the entry's remote timestamp onward; and
+5. attempts to release the owner with `/stop_model` twice after a start or
+   observation error, and aborts before the next entry if release is not
+   confirmed.
+
+Run it from a workstation that has `websocket-client`, `ssh`, and `sshpass`:
+
+```bash
+PIB_ROBOT_SSH_PASSWORD=pib python3 tools/measure_on_device_models.py \
+  --host 192.168.1.92 \
+  --output PR-1738-model-measurements.json | tee PR-1738-model-measurements.log
+```
+
+Each `RESULT` line is compact JSON containing the raw per-entry values and log
+excerpts, including the remote Docker-log cutoff. The full formatted record is
+written to `--output`. A zero detection count is not itself a failure:
+standalone registry networks currently expose physical packet flow as nonzero
+status FPS, while only entries with a declared publish topic emit
+`DetectionArray`. A `confirmed` SHAVE basis means the pipeline produced packets
+while running with the exact compiled allocation declared by the registry; it
+does not claim to measure otherwise-idle hardware capacity. Likewise, the
+`hand_tracking stage packets total: ...` line is specific to that composite
+pipeline; its absence is retained as an empty list rather than interpreted as a
+passing signal.
+
+### Measured matrix (live run, 17 Sep 2026)
+
+Sequential, non-actuating run of all 14 available entries with the harness above
+(`--measure-seconds 8`), executed from a workstation against the robot; every entry was released with
+`/stop_model` before the next one started.
+
+| model_id | shaves | start | final | active | fps | msgs | warn | released | shave basis |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| palm_detection_128x128 | 4 | yes | running | yes | 84.6 | 0 | ok | yes | confirmed: requested=4, status=4, fps=84.593 |
+| palm_detection_128x128_decoding | 1 | yes | running | yes | 133.2 | 0 | ok | yes | confirmed: requested=1, status=1, fps=133.155 |
+| hand_landmark_224x224 | 4 | yes | running | yes | 86.8 | 0 | ok | yes | confirmed: requested=4, status=4, fps=86.84 |
+| face_detection_yunet_160x120 | 4 | yes | running | yes | 136.5 | 0 | ok | yes | confirmed: requested=4, status=4, fps=136.484 |
+| facemesh_192x192 | 4 | yes | running | yes | 167.2 | 0 | ok | yes | confirmed: requested=4, status=4, fps=167.25 |
+| facial_landmarks_68_160x160 | 4 | yes | running | yes | 142.5 | 0 | ok | yes | confirmed: requested=4, status=4, fps=142.483 |
+| face-recognition-arcface-112x112 | 4 | yes | running | yes | 57.6 | 0 | ok | yes | confirmed: requested=4, status=4, fps=57.598 |
+| emotion_recognition_lfw_64x64 | 4 | yes | running | yes | 168.9 | 0 | ok | yes | confirmed: requested=4, status=4, fps=168.944 |
+| gaze-estimation-adas-0002 | 4 | yes | running | yes | - | 0 | ok | yes | unconfirmed: requested=4, status=4, fps=0.0 |
+| head-pose-estimation-adas-0001 | 4 | yes | running | yes | 132.4 | 0 | ok | yes | confirmed: requested=4, status=4, fps=132.437 |
+| yolov6n_coco_640x640 | 4 | yes | running | yes | 11.0 | 0 | ok | yes | confirmed: requested=4, status=4, fps=11.013 |
+| qr_code_detection_384x384 | 4 | yes | running | yes | 76.0 | 0 | ok | yes | confirmed: requested=4, status=4, fps=75.969 |
+| person-reidentification-retail-0031_96x48 | 4 | yes | running | yes | 129.8 | 0 | ok | yes | confirmed: requested=4, status=4, fps=129.769 |
+| hand_tracking | 9 | yes | running | yes | 1.0 | 6 | ok | yes | confirmed: requested=9, status=9, fps=1.001 |
+
+Findings from the run:
+
+* **All 14 entries start, reach `running`/`active` and release cleanly.** No crash, no `X_LINK_ERROR` and
+  no reconnect warning occurred in any of the 14 runs - the camera stayed on the stereo pipeline
+  (`Stereo depth available - full colour + stereo pipeline active (mode=auto)`) throughout.
+* **Shave budgets confirmed for 13 of 14 entries**: the pipeline produced packets while running with
+  exactly the allocation declared in the registry (per-network 4 / 1 / 4; composite 9 = 4+1+4). The
+  `shave_basis` column records the basis: requested shaves, shaves the status reported, and the observed
+  FPS.
+* **`gaze-estimation-adas-0002` is UNCONFIRMED**: it starts and reports `active`, but the reported FPS is
+  **0.0** - no packet flow. This is the same "status says running while reality says nothing" pattern that
+  the hand chain exhibited before PR-1711/PR-1723; the model needs its own ticket and its declared budget
+  of 4 shaves must not be treated as validated. See the follow-up ticket linked from PR-1738.
+* `published_messages` is 0 for every standalone network by design - they have no `/detections/<id>`
+  publisher, so their packet flow appears as the reported FPS. Only the composite `hand_tracking` published
+  messages (6 `DetectionArray` messages in its window).
+* The FPS column is the **pipeline's own reported rate** (e.g. 84.6 for palm detection, 11.0 for
+  yolov6n_coco_640x640), not a benchmark of otherwise-idle hardware capacity.
+* One registry id differs in spelling from the curated list: the registry exposes
+  `person-reidentification-retail-0031_96x48` (the ticket draft said `..._96`) - read ids from
+  `/list_models`, never from prose.
