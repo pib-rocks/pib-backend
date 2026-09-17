@@ -10,8 +10,10 @@ flattened values.  The head consumes detector tensors ``classificators``
 keypoints), and emits anchor-decoded normalized coordinates after NMS.
 
 The landmark network exposes its crop-space image landmarks in
-``Identity_dense/BiasAdd/Add`` as 21 XYZ triples, with confidence in
-``Identity_1``.  ``Identity_3_dense/BiasAdd/Add`` is the *metric world*
+``Identity_dense/BiasAdd/Add`` as 21 XYZ triples, with a presence score in
+``Identity_1``.  This blob reports that score unactivated - a hand filling the
+crop measures around 0.018 - so it carries no usable detection threshold and is
+only ever reported.  ``Identity_3_dense/BiasAdd/Add`` is the *metric world*
 landmark head of the same MediaPipe graph, and conversions of this model
 frequently omit it entirely, so it is only a fallback.  The runtime node maps
 the landmarks back through the ``NNData.getTransformation()`` attached by
@@ -52,7 +54,6 @@ HAND_KEYPOINT_NAMES = (
 PALM_RESULT_COUNT = 10
 PALM_RESULT_WIDTH = 8
 LANDMARK_COUNT = 21
-LANDMARK_SCORE_THRESHOLD = 0.5
 LANDMARK_VALUE_COUNT = LANDMARK_COUNT * 3
 LANDMARK_SCORE_LAYER = "Identity_1"
 # The crop-space landmark head comes first: MediaPipe's ``Identity`` output is
@@ -238,7 +239,11 @@ def decode_palm_result(
 
 
 def landmark_score(tensor: Iterable[float]) -> float:
-    """Read the landmark presence score, including a batched ``(1, 1)`` tensor."""
+    """Read the reported landmark presence score, including a ``(1, 1)`` tensor.
+
+    The value is diagnostic only; see the module docstring for why it cannot be
+    compared against a threshold.
+    """
     values = np.asarray(tensor, dtype=np.float32).reshape(-1)
     if values.size != 1:
         raise ValueError("landmark confidence must contain one value")

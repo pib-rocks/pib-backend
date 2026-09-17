@@ -1115,6 +1115,101 @@ class TestHandStageCounters(unittest.TestCase):
         self.assertEqual(len(detections[0].keypoint_x), 21)
         self.assertEqual(len(detections[0].keypoint_y), 21)
 
+    @patch("ros_packages.camera.oak_d_lite.stereo.dai")
+    def test_unactivated_landmark_score_still_appends_detection(self, mock_dai):
+        node = self._make_node()
+        palm = PalmRegion(0.88, 0.5, 0.5, 0.2, 0.5, 0.5, 0.5, 0.0)
+        batch = {
+            "remaining": 1,
+            "candidates": 1,
+            "keypoints_built": 0,
+            "detections": [],
+            "drop_reasons": [],
+            "frame_width": 1280,
+            "frame_height": 720,
+            "source_width": 256,
+            "source_height": 256,
+            "log_details": True,
+        }
+        landmark_packet = MagicMock()
+        landmark_packet.getTensor.side_effect = lambda name: {
+            # Identity_1 as the blob reports it for a hand filling the crop.
+            "Identity_1": np.array([[0.01823425]], dtype=np.float32),
+            "Identity_dense/BiasAdd/Add": np.tile([0.5, 0.5, 0.0], (1, 21, 1)).reshape(
+                1, 63
+            ),
+        }[name]
+        landmark_packet.getTransformation.return_value = None
+        node.hand_decoder_queue = MagicMock()
+        node.hand_decoder_queue.tryGet.return_value = None
+        node.hand_landmark_queue = MagicMock()
+        node.hand_landmark_queue.tryGet.return_value = landmark_packet
+        node.hand_landmark_input_size = 224
+        node.current_frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+        node.hand_source_size = (256, 256)
+        node._pending_hand_decoder_packet = None
+        node._pending_hands = deque([(palm, batch)])
+        node._publish_hand_detections = MagicMock()
+
+        node._process_hand_tracking()
+
+        self.assertEqual(batch["drop_reasons"], [])
+        self.assertEqual(batch["keypoints_built"], 21)
+        detections = node._publish_hand_detections.call_args.args[2]
+        self.assertEqual(len(detections), 1)
+        self.assertEqual(len(detections[0].keypoint_x), 21)
+        logged = [call.args[0] for call in node.get_logger().info.call_args_list]
+        self.assertTrue(
+            any(
+                line.startswith("HAND_FP ASSEMBLY ")
+                and "appended=1" in line
+                and "keypoints_built=21" in line
+                for line in logged
+            )
+        )
+
+    @patch("ros_packages.camera.oak_d_lite.stereo.dai")
+    def test_unreadable_landmark_score_still_appends_detection(self, mock_dai):
+        node = self._make_node()
+        palm = PalmRegion(0.88, 0.5, 0.5, 0.2, 0.5, 0.5, 0.5, 0.0)
+        batch = {
+            "remaining": 1,
+            "candidates": 1,
+            "detections": [],
+            "drop_reasons": [],
+            "frame_width": 1280,
+            "frame_height": 720,
+            "source_width": 256,
+            "source_height": 256,
+        }
+
+        def tensor(name):
+            if name == "Identity_1":
+                raise RuntimeError("no such layer")
+            if name == "Identity_dense/BiasAdd/Add":
+                return np.tile([0.5, 0.5, 0.0], (1, 21, 1)).reshape(1, 63)
+            raise RuntimeError("no such layer")
+
+        landmark_packet = MagicMock()
+        landmark_packet.getTensor.side_effect = tensor
+        landmark_packet.getTransformation.return_value = None
+        node.hand_decoder_queue = MagicMock()
+        node.hand_decoder_queue.tryGet.return_value = None
+        node.hand_landmark_queue = MagicMock()
+        node.hand_landmark_queue.tryGet.return_value = landmark_packet
+        node.hand_landmark_input_size = 224
+        node.current_frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+        node.hand_source_size = (256, 256)
+        node._pending_hand_decoder_packet = None
+        node._pending_hands = deque([(palm, batch)])
+        node._publish_hand_detections = MagicMock()
+
+        node._process_hand_tracking()
+
+        self.assertEqual(batch["drop_reasons"], [])
+        detections = node._publish_hand_detections.call_args.args[2]
+        self.assertEqual(len(detections), 1)
+
     def test_counter_log_contains_all_raw_stages_and_last_flowing_stage(self):
         node = self._make_node()
         node._pipeline_models = [
