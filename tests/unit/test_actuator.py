@@ -263,21 +263,23 @@ def test_fake_actuator_satisfies_the_actuator_protocol():
     assert isinstance(FakeActuator(), actuator_module.Actuator)
 
 
-def test_create_actuator_builds_a_tinkerforge_servo():
+def test_create_actuator_builds_a_tinkerforge_bricklet():
     bricklet = FakeServoBricklet()
     actuator_module = _load_actuator_module({SERVO_UID: bricklet})
 
-    actuator = actuator_module.create_actuator("tinkerforge_servo", 3, SERVO_UID, False)
+    actuator = actuator_module.create_actuator(
+        "tinkerforge_bricklet", 3, SERVO_UID, False
+    )
 
     assert isinstance(actuator, actuator_module.ServoBrickletActuator)
     assert isinstance(actuator, actuator_module.Actuator)
-    assert actuator.kind == "tinkerforge_servo"
+    assert actuator.kind == "tinkerforge_bricklet"
     assert actuator.pin == 3
     assert actuator.bricklet is bricklet
 
 
 def _motor_dto(
-    kind: str = "tinkerforge_servo",
+    kind: str = "tinkerforge_bricklet",
     address: str = SERVO_UID,
     name: str = "elbow",
 ) -> dict[str, Any]:
@@ -318,8 +320,8 @@ def test_motor_dto_kind_decides_which_actuator_family_is_built():
     actuator = module.motors[0].actuators[0]
     assert isinstance(actuator, actuator_module.ServoBrickletActuator)
     # the kind is the one from the DTO, not one the factory call hardcoded
-    assert actuator.kind == "tinkerforge_servo"
-    create_actuator.assert_called_once_with("tinkerforge_servo", 8, SERVO_UID, True)
+    assert actuator.kind == "tinkerforge_bricklet"
+    create_actuator.assert_called_once_with("tinkerforge_bricklet", 8, SERVO_UID, True)
 
 
 def test_motor_with_a_kind_this_build_cannot_drive_is_left_without_an_actuator(caplog):
@@ -349,7 +351,7 @@ def test_motor_with_a_kind_this_build_cannot_drive_is_left_without_an_actuator(c
 
 @pytest.mark.parametrize(
     "controller_dto",
-    [None, {"kind": "tinkerforge_servo", "address": "", "number": 3}],
+    [None, {"kind": "tinkerforge_bricklet", "address": "", "number": 3}],
     ids=["no-controller", "empty-address"],
 )
 def test_motor_without_a_usable_controller_gets_no_actuator(controller_dto):
@@ -381,14 +383,14 @@ def test_create_actuator_rejects_an_unknown_kind():
         actuator_module.create_actuator("dynamixel_xl330", 3, SERVO_UID, False)
 
     assert "dynamixel_xl330" in str(raised.value)
-    assert "tinkerforge_servo" in str(raised.value)
+    assert "tinkerforge_bricklet" in str(raised.value)
 
 
-def test_capabilities_of_the_tinkerforge_servo():
+def test_capabilities_of_the_tinkerforge_bricklet():
     actuator_module = _load_actuator_module()
     capability = actuator_module.Capability
 
-    assert actuator_module.capabilities_for("tinkerforge_servo") == frozenset(
+    assert actuator_module.capabilities_for("tinkerforge_bricklet") == frozenset(
         {capability.CURRENT, capability.TARGET_POSITION}
     )
 
@@ -405,7 +407,9 @@ def test_capabilities_for_rejects_an_unknown_kind():
 def test_servo_actuator_maps_the_settings_onto_the_bricklet():
     bricklet = FakeServoBricklet()
     actuator_module = _load_actuator_module({SERVO_UID: bricklet})
-    actuator = actuator_module.create_actuator("tinkerforge_servo", 4, SERVO_UID, False)
+    actuator = actuator_module.create_actuator(
+        "tinkerforge_bricklet", 4, SERVO_UID, False
+    )
 
     assert actuator.apply_settings(SETTINGS_DTO) is True
 
@@ -421,8 +425,10 @@ def test_servo_actuator_negates_the_position_when_inverted():
     bricklet = FakeServoBricklet()
     actuator_module = _load_actuator_module({SERVO_UID: bricklet})
 
-    inverted = actuator_module.create_actuator("tinkerforge_servo", 4, SERVO_UID, True)
-    plain = actuator_module.create_actuator("tinkerforge_servo", 5, SERVO_UID, False)
+    inverted = actuator_module.create_actuator(
+        "tinkerforge_bricklet", 4, SERVO_UID, True
+    )
+    plain = actuator_module.create_actuator("tinkerforge_bricklet", 5, SERVO_UID, False)
 
     assert inverted.set_position(1000) is True
     assert plain.set_position(1000) is True
@@ -433,7 +439,9 @@ def test_servo_actuator_negates_the_position_when_inverted():
 def test_servo_actuator_reaches_its_target_within_the_position_tolerance():
     bricklet = FakeServoBricklet(current_position=1015)
     actuator_module = _load_actuator_module({SERVO_UID: bricklet})
-    actuator = actuator_module.create_actuator("tinkerforge_servo", 4, SERVO_UID, False)
+    actuator = actuator_module.create_actuator(
+        "tinkerforge_bricklet", 4, SERVO_UID, False
+    )
 
     assert actuator_module.ServoBrickletActuator.POSITION_TOLERANCE == 20
     # Never commanded to move, so there is no target it could be short of.
@@ -449,7 +457,9 @@ def test_servo_actuator_reaches_its_target_within_the_position_tolerance():
 def test_servo_actuator_without_a_bricklet_is_not_connected():
     actuator_module = _load_actuator_module({})
 
-    actuator = actuator_module.create_actuator("tinkerforge_servo", 4, "MISSING", False)
+    actuator = actuator_module.create_actuator(
+        "tinkerforge_bricklet", 4, "MISSING", False
+    )
 
     assert actuator.is_connected() is False
     assert actuator.get_current() == actuator_module.ServoBrickletActuator.NO_CURRENT
@@ -458,3 +468,13 @@ def test_servo_actuator_without_a_bricklet_is_not_connected():
     assert actuator.get_settings() == {}
     assert actuator.get_position() == 0
     assert actuator.get_current_position() == 0
+
+
+def test_the_legacy_servo_kind_name_still_resolves():
+    """the database calls the family tinkerforge_bricklet; the name this build used before stays valid"""
+    actuator_module = _load_actuator_module()
+    actuator = actuator_module.create_actuator("tinkerforge_servo", 3, SERVO_UID, False)
+    assert isinstance(actuator, actuator_module.ServoBrickletActuator)
+    assert actuator_module.capabilities_for(
+        "tinkerforge_servo"
+    ) == actuator_module.capabilities_for("tinkerforge_bricklet")
