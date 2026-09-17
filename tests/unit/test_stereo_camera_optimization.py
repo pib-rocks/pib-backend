@@ -481,7 +481,7 @@ class TestHandPipelineInput(unittest.TestCase):
             node._request_camera_branch((HAND_NN_WIDTH, HAND_NN_HEIGHT))
 
     @patch("ros_packages.camera.oak_d_lite.stereo.dai")
-    def test_landmark_crop_config_contains_rotated_letterboxed_roi(self, mock_dai):
+    def test_landmark_crop_config_contains_rotated_warped_roi(self, mock_dai):
         with patch.object(CameraNode, "__init__", lambda self: None):
             node = CameraNode()
         node.hand_landmark_input_size = 224

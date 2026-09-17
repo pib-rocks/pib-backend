@@ -60,20 +60,26 @@ def test_decoder_maps_top10_record_and_bbox_to_full_frame():
     assert len(palms) == 1
     assert palms[0].score == pytest.approx(0.9)
     assert palms[0].rotation == pytest.approx(0.0)
-    assert palms[0].bbox_pixels(1000, 500) == (400, 150, 600, 350)
+    assert palms[0].bbox_pixels(1000, 500) == (400, 200, 600, 300)
 
 
-def test_bbox_maps_from_letterboxed_nn_branch_to_preview_frame():
+def test_bbox_maps_from_warped_nn_branch_to_preview_frame():
     palm = PalmRegion(0.9, 0.5, 0.25, 0.0, 0.5, 0.25, 0.2, 0.0)
 
-    # The 1280x720 NN branch is letterboxed into a 1280x1280 square. A point
-    # at normalized y=0.25 therefore lies 1/18 down the unpadded source image.
+    # ImageManip warps the complete rectangular branch to the square network
+    # input, so each normalized decoder axis maps directly to the output axis.
     assert palm.bbox_pixels(
         frame_width=640,
         frame_height=480,
-        source_width=1280,
-        source_height=720,
-    ) == (320, 27, 320, 27)
+        source_width=2104,
+        source_height=1560,
+    ) == (320, 120, 320, 120)
+
+
+def test_palm_roi_uses_warped_branch_normalized_coordinates():
+    palm = PalmRegion(0.9, 0.5, 0.25, 0.2, 0.6, 0.3, 0.4, 0.0)
+
+    assert palm.roi_for_frame(2104, 1560) == (0.6, 0.3, 0.4, 0.4)
 
 
 def test_decoder_returns_empty_for_no_confident_hand():
@@ -112,7 +118,7 @@ def test_landmarks_apply_roi_rotation():
 
     points = map_landmarks_to_frame(tensor, palm, 1000, 500)
 
-    assert points[0] == pytest.approx((500.0, 450.0))
+    assert points[0] == pytest.approx((500.0, 350.0))
 
 
 def test_landmarks_empty_tensor_returns_empty():

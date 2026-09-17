@@ -150,15 +150,19 @@ class PalmRegion:
     def roi_for_frame(
         self, frame_width: int, frame_height: int
     ) -> Tuple[float, float, float, float]:
-        """Return center and size normalized to the unpadded source frame."""
-        frame_size = float(max(frame_width, frame_height))
-        pad_x = (frame_size - frame_width) / 2.0
-        pad_y = (frame_size - frame_height) / 2.0
+        """Return the decoded ROI normalized to the ImageManip source crop.
+
+        The palm ImageManip warps its full rectangular crop to the square
+        network input with ``setOutputSize``. It does not letterbox that crop,
+        so the decoder's normalized axes are already the source-frame axes.
+        """
+        if frame_width <= 0 or frame_height <= 0:
+            raise ValueError("palm ROI frame must have positive dimensions")
         return (
-            (self.roi_x * frame_size - pad_x) / frame_width,
-            (self.roi_y * frame_size - pad_y) / frame_height,
-            self.roi_size * frame_size / frame_width,
-            self.roi_size * frame_size / frame_height,
+            self.roi_x,
+            self.roi_y,
+            self.roi_size,
+            self.roi_size,
         )
 
 
@@ -170,16 +174,15 @@ def _square_to_frame(
     source_width: int = None,
     source_height: int = None,
 ) -> Tuple[float, float]:
-    source_width = source_width or frame_width
-    source_height = source_height or frame_height
-    frame_size = float(max(source_width, source_height))
-    pad_x = (frame_size - source_width) / 2.0
-    pad_y = (frame_size - source_height) / 2.0
-    normalized_x = (x * frame_size - pad_x) / source_width
-    normalized_y = (y * frame_size - pad_y) / source_height
+    # The palm input is a direct warp of the complete rectangular source crop,
+    # not a letterboxed square. Normalized decoder coordinates therefore map
+    # independently onto the declared output width and height. The source
+    # dimensions remain accepted because callers also use them for the
+    # landmark packet transformation path.
+    del source_width, source_height
     return (
-        min(float(frame_width), max(0.0, normalized_x * frame_width)),
-        min(float(frame_height), max(0.0, normalized_y * frame_height)),
+        min(float(frame_width), max(0.0, x * frame_width)),
+        min(float(frame_height), max(0.0, y * frame_height)),
     )
 
 
