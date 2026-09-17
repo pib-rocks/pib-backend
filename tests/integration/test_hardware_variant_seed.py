@@ -7,6 +7,8 @@ from app.app import db
 from commands import seed_db
 from model.controller_model import Controller
 from model.motor_model import Motor
+from model.system_property_model import SystemProperty
+from service.system_property_service import HARDWARE_VARIANT_KEY
 
 
 @pytest.mark.parametrize(
@@ -54,6 +56,11 @@ def test_seed_db_uses_selected_hardware_profile(
         assert variant in result.output
         assert Controller.query.count() == controller_count
         assert Motor.query.count() == 26
+        stored_variant = db.session.get(SystemProperty, HARDWARE_VARIANT_KEY)
+        assert (stored_variant.value, stored_variant.source) == (
+            variant,
+            "environment",
+        )
         for motor_name, expected_location in relocated_motors.items():
             motor = Motor.query.filter_by(name=motor_name).one()
             assert (motor.controller.number, motor.channel) == expected_location

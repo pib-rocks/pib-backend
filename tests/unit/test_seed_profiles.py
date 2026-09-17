@@ -9,6 +9,7 @@ from seed_profiles import (
     PROFILES,
     UnknownHardwareVariantError,
     get_profile,
+    resolve_variant_and_source,
     resolve_variant_from_environment,
 )
 
@@ -131,6 +132,7 @@ def test_variant_resolution_prefers_nonempty_environment(
     monkeypatch.setenv("PIB_HARDWARE_VARIANT", "  pib5edu ")
 
     assert resolve_variant_from_environment() == "pib5edu"
+    assert resolve_variant_and_source() == ("pib5edu", "environment")
 
 
 def test_variant_resolution_uses_file_for_empty_environment(
@@ -143,6 +145,7 @@ def test_variant_resolution_uses_file_for_empty_environment(
     monkeypatch.setenv("PIB_HARDWARE_VARIANT", " \t")
 
     assert resolve_variant_from_environment() == "pib4edu"
+    assert resolve_variant_and_source() == ("pib4edu", "file")
 
 
 def test_variant_resolution_defaults_without_environment_or_file(
@@ -155,6 +158,7 @@ def test_variant_resolution_defaults_without_environment_or_file(
     monkeypatch.delenv("PIB_HARDWARE_VARIANT", raising=False)
 
     assert resolve_variant_from_environment() == "pib5edu"
+    assert resolve_variant_and_source() == ("pib5edu", "default")
 
 
 def test_profile_literals_match_the_controller_model(app):

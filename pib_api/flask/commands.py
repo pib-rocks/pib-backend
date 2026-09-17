@@ -5,6 +5,8 @@ variant without an implemented profile therefore fails startup loudly instead of
 silently seeding hardware for a different robot.
 """
 
+import logging
+
 from sqlalchemy import inspect
 
 from app.app import db, app
@@ -21,8 +23,15 @@ from model.motor_position_model import MotorPosition
 from seed_profiles import (
     HardwareProfile,
     get_profile,
-    resolve_variant_from_environment,
+    resolve_variant_and_source,
 )
+from service.system_property_service import (
+    HARDWARE_VARIANT_KEY,
+    SOFTWARE_VERSION_KEY,
+    get_property,
+    set_property,
+)
+from service.version_service import read_app_version
 from default_pose_constants import (
     STARTUP_POSITIONS,
     CALIBRATION_POSITIONS,
@@ -31,13 +40,15 @@ from default_pose_constants import (
 )
 from model.button_program_model import ButtonProgram
 
+logger = logging.getLogger(__name__)
+
 
 @app.cli.command("seed_db")
 def seed_db() -> None:
     if not _is_empty_db():
         print("Seeding database failed - database already contains data.")
         return
-    variant = resolve_variant_from_environment()
+    variant, source = resolve_variant_and_source()
     profile = get_profile(variant)
     print(
         f"Seeding hardware variant {variant!r} using profile "
@@ -49,15 +60,45 @@ def seed_db() -> None:
     _create_chat_data_and_assistant()
     _create_default_poses(profile)
     _create_button_program_data(profile)
+    set_property(HARDWARE_VARIANT_KEY, variant, source)
     db.session.commit()
     print("Seeded the database with default data.")
+
+
+@app.cli.command("reconcile_system_properties")
+def reconcile_system_properties() -> None:
+    """Mirror runtime facts while preserving an explicitly sourced DB variant."""
+    set_property(SOFTWARE_VERSION_KEY, read_app_version(), "file")
+    resolved_variant, resolved_source = resolve_variant_and_source()
+    stored = get_property(HARDWARE_VARIANT_KEY)
+
+    if stored is None:
+        set_property(HARDWARE_VARIANT_KEY, resolved_variant, resolved_source)
+    elif stored.value != resolved_variant and stored.source == "default":
+        logger.info(
+            "Updating default hardware variant from %s to %s (source: %s)",
+            stored.value,
+            resolved_variant,
+            resolved_source,
+        )
+        set_property(HARDWARE_VARIANT_KEY, resolved_variant, resolved_source)
+    elif stored.value != resolved_variant:
+        logger.warning(
+            "Resolved hardware variant %s (source: %s) differs from stored "
+            "variant %s (source: %s); keeping the database value",
+            resolved_variant,
+            resolved_source,
+            stored.value,
+            stored.source,
+        )
+    db.session.commit()
 
 
 def _is_empty_db() -> bool:
     inspector = inspect(db.engine)
 
     for table in inspector.get_table_names():
-        if table == "alembic_version":
+        if table in ("alembic_version", "system_property"):
             continue
         table_class = db.Model.metadata.tables.get(table)
         if table_class is not None:
