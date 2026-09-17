@@ -3,7 +3,7 @@ from schema.motor_schema import (
     motor_schema,
     motors_schema,
     motor_settings_schema,
-    motor_bricklet_pins_schema,
+    motor_controller_schema,
 )
 from service import motor_service
 from flask import request, jsonify, Blueprint
@@ -25,9 +25,9 @@ def get_motor(name: str):
 
 @bp.route("/<string:name>", methods=["PUT"])
 def update_motor(name: str):
-    bricklet_pin_dtos = motor_schema.load(request.json)["bricklet_pins"]
-    motor_settings_dto = motor_schema.load(request.json)
-    motor_service.set_bricklet_pins(name, bricklet_pin_dtos)
+    payload = request.get_json() or {}
+    motor_settings_dto = motor_schema.load(payload)
+    motor_service.set_motor_controller(name, payload["controller"], payload["channel"])
     motor = motor_service.set_motor_settings(name, motor_settings_dto)
     return motor_schema.dump(motor)
 
@@ -45,14 +45,16 @@ def update_motor_settings(name: str):
     return motor_settings_schema.dump(motor)
 
 
-@bp.route("/<string:name>/bricklet-pins", methods=["GET"])
-def get_motor_bricklet_pins(name: str):
+@bp.route("/<string:name>/controller", methods=["GET"])
+def get_motor_controller(name: str):
     motor = motor_service.get_motor_by_name(name)
-    return motor_bricklet_pins_schema.dump(motor)
+    return motor_controller_schema.dump(motor)
 
 
-@bp.route("/<string:name>/bricklet-pins", methods=["PUT"])
-def update_motor_bricklet_pins(name: str):
-    bricklet_pin_dtos = motor_bricklet_pins_schema.load(request.json)["bricklet_pins"]
-    motor = motor_service.set_bricklet_pins(name, bricklet_pin_dtos)
-    return motor_bricklet_pins_schema.dump(motor)
+@bp.route("/<string:name>/controller", methods=["PUT"])
+def update_motor_controller(name: str):
+    payload = request.get_json() or {}
+    motor = motor_service.set_motor_controller(
+        name, payload["controller"], payload["channel"]
+    )
+    return motor_controller_schema.dump(motor)

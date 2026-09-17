@@ -1,195 +1,203 @@
-"""Unit tests for hardware config export/import (PR-1527)."""
-
-from __future__ import annotations
+"""Unit tests for hardware-config schema version 2 and version 1 imports."""
 
 import pytest
 
-from model.bricklet_model import Bricklet
+from app.app import db
+from model.controller_model import Controller
 from model.motor_model import Motor
 from service import hardware_config_service as hcs
 
 
 @pytest.fixture()
 def seeded(app_ctx):
-    """Ensure seed data is present; yield nothing."""
-    assert Bricklet.query.count() >= 7
+    assert Controller.query.count() == 7
     assert Motor.query.count() >= 1
-    yield
 
 
-def _set_uid(bricklet_number: int, uid: str | None) -> None:
-    bricklet = Bricklet.query.filter(Bricklet.bricklet_number == bricklet_number).one()
-    bricklet.uid = uid
-    from app.app import db
-
+def test_v2_roundtrip_preserves_controllers_mappings_and_limits(seeded):
+    controller = Controller.query.filter_by(number=3).one()
+    controller.address = "SRV003"
+    controller.device_type = "RGB LED Button Bricklet"
+    controller.supply_voltage = 12.0
+    elbow = Motor.query.filter_by(name="elbow_left").one()
+    elbow.current_limit = 1.25
+    elbow.torque_limit = 2.5
     db.session.flush()
 
+    exported = hcs.export_hardware_config("pib5edu")
+    restored = hcs.import_hardware_config(exported)
 
-def test_export_includes_bricklets_and_motors(seeded):
-    _set_uid(1, "SRV001")
-    _set_uid(4, "REL001")
-
-    document = hcs.export_hardware_config()
-
-    assert document["version"] == 1
-    assert isinstance(document["bricklets"], list)
-    assert isinstance(document["motors"], list)
-    assert len(document["bricklets"]) >= 7
-    assert len(document["motors"]) >= 1
-
-    by_number = {b["brickletNumber"]: b for b in document["bricklets"]}
-    assert by_number[1]["uid"] == "SRV001"
-    assert by_number[1]["type"] == "Servo Bricklet"
-    assert by_number[4]["uid"] == "REL001"
-    assert by_number[4]["type"] == "Solid State Relay Bricklet"
-
-    elbow = next(m for m in document["motors"] if m["name"] == "elbow_left")
-    assert "pulseWidthMin" in elbow
-    assert "rotationRangeMax" in elbow
-    assert isinstance(elbow["brickletPins"], list)
-    assert elbow["brickletPins"][0]["brickletNumber"] == 3
-    assert elbow["brickletPins"][0]["pin"] == 8
+    assert restored["version"] == 2
+    assert restored["variant"] == "pib5edu"
+    assert "bricklets" not in restored
+    by_number = {item["number"]: item for item in restored["controllers"]}
+    assert by_number[3] == {
+        "kind": "tinkerforge_bricklet",
+        "deviceType": "RGB LED Button Bricklet",
+        "address": "SRV003",
+        "number": 3,
+        "supplyVoltage": 12.0,
+    }
+    elbow_dto = next(
+        item for item in restored["motors"] if item["name"] == "elbow_left"
+    )
+    assert elbow_dto["controllerNumber"] == 3
+    assert elbow_dto["channel"] == 8
+    assert elbow_dto["currentLimit"] == 1.25
+    assert elbow_dto["torqueLimit"] == 2.5
 
 
-def test_import_updates_uids_and_motor_limits(seeded):
-    document = hcs.export_hardware_config()
-    for bricklet in document["bricklets"]:
-        if bricklet["brickletNumber"] == 1:
-            bricklet["uid"] = "NEW001"
-        if bricklet["brickletNumber"] == 2:
-            bricklet["uid"] = "NEW002"
-    for motor in document["motors"]:
-        if motor["name"] == "elbow_left":
-            motor["velocity"] = 12345
-            motor["rotationRangeMin"] = -1000
-            motor["rotationRangeMax"] = 1000
+def test_v1_import_updates_tinkerforge_addresses_and_motor_mapping(seeded):
+    document = {
+        "version": 1,
+        "bricklets": [
+            {
+                "brickletNumber": 1,
+                "uid": "OLD001",
+                "type": "Solid State Relay Bricklet",
+            },
+            {"brickletNumber": 3, "uid": "OLD003", "type": "Servo Bricklet"},
+        ],
+        "motors": [
+            {
+                "name": "elbow_left",
+                "velocity": 12345,
+                "invert": True,
+                "brickletPins": [{"brickletNumber": 1, "pin": 6, "invert": False}],
+            }
+        ],
+    }
 
     result = hcs.import_hardware_config(document)
 
-    assert Bricklet.query.filter_by(bricklet_number=1).one().uid == "NEW001"
-    assert Bricklet.query.filter_by(bricklet_number=2).one().uid == "NEW002"
+    assert result["version"] == 2
+    assert Controller.query.filter_by(number=1).one().address == "OLD001"
+    assert (
+        Controller.query.filter_by(number=1).one().device_type
+        == "Solid State Relay Bricklet"
+    )
     elbow = Motor.query.filter_by(name="elbow_left").one()
+    assert elbow.controller.number == 1
+    assert elbow.channel == 6
     assert elbow.velocity == 12345
-    assert elbow.rotation_range_min == -1000
-    assert elbow.rotation_range_max == 1000
-
-    by_number = {b["brickletNumber"]: b for b in result["bricklets"]}
-    assert by_number[1]["uid"] == "NEW001"
+    assert elbow.invert is True
 
 
-def test_import_swaps_uids_without_unique_conflict(seeded):
-    _set_uid(1, "AAA111")
-    _set_uid(2, "BBB222")
+def test_import_swaps_controller_addresses_without_unique_conflict(seeded):
+    first = Controller.query.filter_by(number=1).one()
+    second = Controller.query.filter_by(number=2).one()
+    first.address = "AAA111"
+    second.address = "BBB222"
+    db.session.flush()
     document = hcs.export_hardware_config()
-    for bricklet in document["bricklets"]:
-        if bricklet["brickletNumber"] == 1:
-            bricklet["uid"] = "BBB222"
-        if bricklet["brickletNumber"] == 2:
-            bricklet["uid"] = "AAA111"
+    document["controllers"][0]["address"] = "BBB222"
+    document["controllers"][1]["address"] = "AAA111"
 
     hcs.import_hardware_config(document)
 
-    assert Bricklet.query.filter_by(bricklet_number=1).one().uid == "BBB222"
-    assert Bricklet.query.filter_by(bricklet_number=2).one().uid == "AAA111"
+    assert first.address == "BBB222"
+    assert second.address == "AAA111"
 
 
-def test_import_rejects_invalid_uid(seeded):
+def test_import_accepts_all_registered_controller_kinds(seeded):
     document = hcs.export_hardware_config()
-    document["bricklets"][0]["uid"] = "BAD_UID!"
+    document["controllers"][0].update(
+        {
+            "kind": "feetech_st_serial",
+            "deviceType": None,
+            "address": "/dev/ttyUSB0",
+            "supplyVoltage": 12,
+        }
+    )
+    document["controllers"][1].update(
+        {
+            "kind": "robstride_can",
+            "deviceType": None,
+            "address": "can0",
+            "supplyVoltage": 48.0,
+        }
+    )
 
+    hcs.import_hardware_config(document)
+
+    assert Controller.query.filter_by(number=1).one().kind == "feetech_st_serial"
+    assert Controller.query.filter_by(number=2).one().kind == "robstride_can"
+
+
+def test_import_rejects_unknown_controller_kind(seeded):
+    document = hcs.export_hardware_config()
+    document["controllers"][0]["kind"] = "flux_capacitor"
+    with pytest.raises(ValueError, match="not supported"):
+        hcs.import_hardware_config(document)
+
+
+def test_import_rejects_duplicate_controller_addresses(seeded):
+    document = hcs.export_hardware_config()
+    document["controllers"][0]["address"] = "same"
+    document["controllers"][1]["address"] = "same"
+    with pytest.raises(ValueError, match="Duplicate controller address"):
+        hcs.import_hardware_config(document)
+
+
+def test_v1_import_rejects_invalid_uid(seeded):
+    document = {
+        "version": 1,
+        "bricklets": [
+            {"brickletNumber": 1, "uid": "BAD_UID!", "type": "Servo Bricklet"}
+        ],
+        "motors": [],
+    }
     with pytest.raises(ValueError, match="invalid format"):
-        hcs.import_hardware_config(document)
-
-
-def test_import_rejects_uid_too_long(seeded):
-    document = hcs.export_hardware_config()
-    document["bricklets"][0]["uid"] = "TOOLONG"
-
-    with pytest.raises(ValueError, match="invalid format"):
-        hcs.import_hardware_config(document)
-
-
-def test_import_rejects_duplicate_uids(seeded):
-    document = hcs.export_hardware_config()
-    document["bricklets"][0]["uid"] = "SAME01"
-    document["bricklets"][1]["uid"] = "SAME01"
-
-    with pytest.raises(ValueError, match="Duplicate Bricklet UID"):
-        hcs.import_hardware_config(document)
-
-
-def test_import_rejects_missing_bricklets_array(seeded):
-    with pytest.raises(ValueError, match="bricklets"):
-        hcs.import_hardware_config({"version": 1, "motors": []})
-
-
-def test_import_rejects_unsupported_version(seeded):
-    with pytest.raises(ValueError, match="Unsupported hardware config version"):
-        hcs.import_hardware_config({"version": 99, "bricklets": [], "motors": []})
-
-
-def test_import_rejects_unknown_bricklet_type(seeded):
-    document = hcs.export_hardware_config()
-    document["bricklets"][0]["type"] = "Flux Capacitor Bricklet"
-
-    with pytest.raises(ValueError, match="not a supported Bricklet type"):
         hcs.import_hardware_config(document)
 
 
 def test_import_rejects_unknown_motor(seeded):
     document = hcs.export_hardware_config()
-    document["motors"].append(
-        {
-            "name": "does_not_exist",
-            "velocity": 1,
-            "brickletPins": [],
-        }
-    )
-
+    document["motors"].append({"name": "missing", "controllerNumber": 1, "channel": 0})
     with pytest.raises(ValueError, match="Unknown motor"):
         hcs.import_hardware_config(document)
 
 
-def test_roundtrip_preserves_seeded_types(seeded):
-    original = hcs.export_hardware_config()
-    types_before = {b["brickletNumber"]: b["type"] for b in original["bricklets"]}
-
-    restored = hcs.import_hardware_config(original)
-    types_after = {b["brickletNumber"]: b["type"] for b in restored["bricklets"]}
-
-    assert types_before == types_after
-    assert set(types_before.values()) >= {
-        "Servo Bricklet",
-        "Solid State Relay Bricklet",
-        "RGB LED Button Bricklet",
-    }
-
-
-def test_import_clears_uid_when_empty_string(seeded):
-    _set_uid(1, "CLR001")
-    document = hcs.export_hardware_config()
-    for bricklet in document["bricklets"]:
-        if bricklet["brickletNumber"] == 1:
-            bricklet["uid"] = ""
-
-    hcs.import_hardware_config(document)
-    assert Bricklet.query.filter_by(bricklet_number=1).one().uid is None
-
-
-def test_validate_accepts_snake_case_aliases(seeded):
+def test_validate_accepts_v2_snake_case_aliases(seeded):
     document = {
-        "version": 1,
-        "bricklets": [
-            {"bricklet_number": 1, "uid": "SNK001", "type": "Servo Bricklet"}
+        "version": 2,
+        "controllers": [
+            {
+                "kind": "tinkerforge_bricklet",
+                "address": "SNK001",
+                "number": 1,
+                "supply_voltage": 7.5,
+            }
         ],
         "motors": [
             {
                 "name": "elbow_left",
                 "pulse_width_min": 800,
-                "bricklet_pins": [{"bricklet_number": 3, "pin": 8, "invert": False}],
+                "controller_number": 1,
+                "channel": 8,
             }
         ],
     }
     validated = hcs.validate_hardware_config(document)
-    assert validated["bricklets"][0]["bricklet_number"] == 1
+    assert validated["controllers"][0]["supply_voltage"] == 7.5
     assert validated["motors"][0]["settings"]["pulse_width_min"] == 800
+
+
+def test_controller_model_rejects_unregistered_kind(app_ctx):
+    with pytest.raises(ValueError, match="Unsupported controller kind"):
+        Controller(kind="unsupported", number=99)
+
+
+def test_controller_model_validates_device_type_by_kind(app_ctx):
+    with pytest.raises(ValueError, match="Unsupported Tinkerforge device type"):
+        Controller(
+            kind="tinkerforge_bricklet",
+            device_type="Mystery Bricklet",
+            number=98,
+        )
+    with pytest.raises(ValueError, match="must be None"):
+        Controller(
+            kind="robstride_can",
+            device_type="Servo Bricklet",
+            number=99,
+        )

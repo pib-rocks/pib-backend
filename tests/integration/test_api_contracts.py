@@ -95,7 +95,8 @@ class TestMotorEndpoints:
         motors = client.get("/motor").get_json()["motors"]
         assert motors
         assert "rotationRangeMin" in motors[0]
-        assert "brickletPins" in motors[0]
+        assert "controller" in motors[0]
+        assert "channel" in motors[0]
 
     @pytest.mark.parametrize(
         "motor_name,min_val,max_val",
@@ -141,6 +142,12 @@ class TestPoseEndpoints:
 
 
 class TestBrickletAndButtonPrograms:
+    def test_get_controllers(self, client):
+        controllers = client.get("/controller").get_json()["controllers"]
+        assert all(
+            controller["kind"] == "tinkerforge_bricklet" for controller in controllers
+        )
+
     def test_get_bricklets(self, client):
         bricklets = client.get("/bricklet").get_json()["bricklets"]
         assert any(b["type"] == "RGB LED Button Bricklet" for b in bricklets)

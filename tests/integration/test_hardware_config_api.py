@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from model.bricklet_model import Bricklet
+from model.controller_model import Controller
 from model.motor_model import Motor
 from service import hardware_config_service as hcs
 
@@ -22,8 +22,8 @@ def test_export_endpoint_returns_attachment(client):
     from app.app import db
 
     with client.application.app_context():
-        bricklet = Bricklet.query.filter_by(bricklet_number=1).one()
-        bricklet.uid = "EXP001"
+        controller = Controller.query.filter_by(number=1).one()
+        controller.address = "EXP001"
         db.session.commit()
 
     response = client.get("/api/system/hardware-config/export")
@@ -32,9 +32,9 @@ def test_export_endpoint_returns_attachment(client):
     assert "hardware-config.json" in response.headers.get("Content-Disposition", "")
 
     data = response.get_json()
-    assert data["version"] == 1
+    assert data["version"] == 2
     assert any(
-        b["brickletNumber"] == 1 and b["uid"] == "EXP001" for b in data["bricklets"]
+        c["number"] == 1 and c["address"] == "EXP001" for c in data["controllers"]
     )
     assert any(m["name"] == "elbow_left" for m in data["motors"])
 
@@ -42,15 +42,15 @@ def test_export_endpoint_returns_attachment(client):
 def test_export_available_on_system_prefix(client):
     response = client.get("/system/hardware-config/export")
     assert response.status_code == 200
-    assert "bricklets" in response.get_json()
+    assert "controllers" in response.get_json()
 
 
 def test_import_endpoint_updates_database(client):
     with client.application.app_context():
         document = hcs.export_hardware_config()
-    for bricklet in document["bricklets"]:
-        if bricklet["brickletNumber"] == 1:
-            bricklet["uid"] = "IMP999"
+    for controller in document["controllers"]:
+        if controller["number"] == 1:
+            controller["address"] = "IMP999"
     for motor in document["motors"]:
         if motor["name"] == "tilt_forward_motor":
             motor["velocity"] = 4242
@@ -62,10 +62,10 @@ def test_import_endpoint_updates_database(client):
     )
     assert response.status_code == 200
     body = response.get_json()
-    assert any(b["uid"] == "IMP999" for b in body["bricklets"])
+    assert any(c["address"] == "IMP999" for c in body["controllers"])
 
     with client.application.app_context():
-        assert Bricklet.query.filter_by(bricklet_number=1).one().uid == "IMP999"
+        assert Controller.query.filter_by(number=1).one().address == "IMP999"
         assert Motor.query.filter_by(name="tilt_forward_motor").one().velocity == 4242
 
 

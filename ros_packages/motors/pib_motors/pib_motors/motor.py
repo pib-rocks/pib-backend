@@ -15,6 +15,8 @@ class Motor:
         self.visible: bool = True
         self.actuators: list[Actuator] = actuators
         self.invert: bool = invert
+        for actuator in self.actuators:
+            actuator.invert = invert
         self.rotation_range_min: int = Motor.MIN_ROTATION
         self.rotation_range_max: int = Motor.MAX_ROTATION
 
@@ -30,6 +32,8 @@ class Motor:
         """apply provided settings to the motor"""
         self.visible = settings_dto["visible"]
         self.invert = settings_dto["invert"]
+        for actuator in self.actuators:
+            actuator.invert = self.invert
         self.rotation_range_min = settings_dto["rotationRangeMin"]
         self.rotation_range_max = settings_dto["rotationRangeMax"]
 
@@ -61,8 +65,6 @@ class Motor:
         """sets the position of all actuators associated with this motor"""
         if not self.actuators:
             return False
-        if self.invert:
-            position *= -1
         position = self._validate_position(position)
         return all(actuator.set_position(position) for actuator in self.actuators)
 
@@ -110,16 +112,19 @@ if not successful:
 # list of all available motor-objects
 motors: list[Motor] = []
 for motor_dto in response["motors"]:
-    actuators = [
-        create_actuator(
-            ServoBrickletActuator.kind,
-            bricklet_pin_dto["pin"],
-            bricklet_pin_dto["bricklet"],
-            bricklet_pin_dto["invert"],
-        )
-        for bricklet_pin_dto in motor_dto["brickletPins"]
-        if bricklet_pin_dto["bricklet"]
-    ]
+    controller_dto = motor_dto.get("controller")
+    actuators = (
+        [
+            create_actuator(
+                ServoBrickletActuator.kind,
+                motor_dto["channel"],
+                controller_dto["address"],
+                motor_dto["invert"],
+            )
+        ]
+        if controller_dto and controller_dto["address"]
+        else []
+    )
     motors.append(Motor(motor_dto["name"], actuators, motor_dto["invert"]))
 
 # maps the name of a (multi-)motor to its associated motor objects

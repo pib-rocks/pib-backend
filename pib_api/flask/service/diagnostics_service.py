@@ -4,7 +4,8 @@ import json
 import shutil
 import time
 from typing import Dict, Any, List, Optional, Tuple
-from service import bricklet_service
+from model.controller_model import TINKERFORGE_BRICKLET
+from service import controller_service
 
 
 def _read_proc_stat_cpu_times() -> Optional[Tuple[int, int]]:
@@ -221,24 +222,22 @@ def _get_tf_ipcon():
     return None
 
 
-def get_bricklets_telemetry() -> List[Dict[str, Any]]:
+def get_controllers_telemetry() -> List[Dict[str, Any]]:
     try:
-        bricklets = bricklet_service.get_all_bricklets()
+        controllers = controller_service.get_all_controllers()
     except Exception:
-        bricklets = []
+        controllers = []
 
     ipcon = _get_tf_ipcon()
 
     telemetry = []
-    for b in bricklets:
+    for controller in controllers:
         pins_data = []
-        bricklet_pins = getattr(b, "bricklet_pins", None)
-        if bricklet_pins:
-            for pin in bricklet_pins:
-                pin_num = getattr(pin, "pin", getattr(pin, "pin_number", 0))
+        if controller.motors:
+            for motor in controller.motors:
                 pins_data.append(
                     {
-                        "pin": pin_num,
+                        "pin": motor.channel,
                         "voltage": 0.0,
                         "current": 0.0,
                     }
@@ -253,12 +252,15 @@ def get_bricklets_telemetry() -> List[Dict[str, Any]]:
         relay_state = False
 
         # Query live Tinkerforge hardware if possible
-        if b.uid and ipcon:
+        legacy_type = _legacy_tinkerforge_type(
+            controller.number, controller.device_type
+        )
+        if controller.kind == TINKERFORGE_BRICKLET and controller.address and ipcon:
             try:
-                if b.type == "Servo Bricklet":
+                if legacy_type == "Servo Bricklet":
                     from tinkerforge.bricklet_servo_v2 import BrickletServoV2
 
-                    servo = BrickletServoV2(b.uid, ipcon)
+                    servo = BrickletServoV2(controller.address, ipcon)
                     live_voltage_mv = servo.get_input_voltage()
                     voltage = round(live_voltage_mv / 1000.0, 2)
                     current = float(servo.get_overall_current())
@@ -272,10 +274,10 @@ def get_bricklets_telemetry() -> List[Dict[str, Any]]:
                         except Exception:
                             pass
 
-                elif b.type == "RGB LED Button Bricklet":
+                elif legacy_type == "RGB LED Button Bricklet":
                     from tinkerforge.bricklet_rgb_led_button import BrickletRGBLEDButton
 
-                    btn = BrickletRGBLEDButton(b.uid, ipcon)
+                    btn = BrickletRGBLEDButton(controller.address, ipcon)
                     r, g, b_val = btn.get_color()
                     color = f"#{r:02x}{g:02x}{b_val:02x}".upper()
                     state_val = btn.get_button_state()
@@ -285,7 +287,7 @@ def get_bricklets_telemetry() -> List[Dict[str, Any]]:
                         else "Released"
                     )
 
-                elif b.type in (
+                elif legacy_type in (
                     "Solid State Relay Bricklet",
                     "Solid State Relay",
                     "Solid-State Relay",
@@ -294,16 +296,17 @@ def get_bricklets_telemetry() -> List[Dict[str, Any]]:
                         BrickletSolidStateRelayV2,
                     )
 
-                    ssr = BrickletSolidStateRelayV2(b.uid, ipcon)
+                    ssr = BrickletSolidStateRelayV2(controller.address, ipcon)
                     relay_state = ssr.get_state()
             except Exception:
                 status = "warning"
 
         telemetry.append(
             {
-                "brickletNumber": b.bricklet_number,
-                "uid": b.uid or "",
-                "type": b.type,
+                "brickletNumber": controller.number,
+                "uid": controller.address or "",
+                "type": legacy_type,
+                "kind": controller.kind,
                 "voltage": voltage,
                 "current": current,
                 "status": status,
@@ -316,6 +319,23 @@ def get_bricklets_telemetry() -> List[Dict[str, Any]]:
             }
         )
     return telemetry
+
+
+def get_bricklets_telemetry() -> List[Dict[str, Any]]:
+    """Transition alias for diagnostics API consumers."""
+    return get_controllers_telemetry()
+
+
+def _legacy_tinkerforge_type(number: int, device_type: Optional[str] = None) -> str:
+    if device_type is not None:
+        return device_type
+
+    # Legacy fallback for controller rows created before device_type was stored.
+    if number == 4:
+        return "Solid State Relay Bricklet"
+    if number in (5, 6, 7):
+        return "RGB LED Button Bricklet"
+    return "Servo Bricklet"
 
 
 def get_system_telemetry() -> Dict[str, Any]:
@@ -401,7 +421,12 @@ def get_system_telemetry() -> Dict[str, Any]:
 
 def get_summary() -> Dict[str, Any]:
     system = get_system_telemetry()
-    bricklets = get_bricklets_telemetry()
+    controllers = get_controllers_telemetry()
+    bricklets = [
+        controller
+        for controller in controllers
+        if controller["kind"] == TINKERFORGE_BRICKLET
+    ]
 
     cpu_temp = system["cpuTemperature"]
     if cpu_temp < 75.0:
@@ -431,15 +456,15 @@ def get_summary() -> Dict[str, Any]:
     unhealthy_containers = [c for c in containers if c.get("health") != "healthy"]
     containers_status = "ok" if not unhealthy_containers else "warning"
 
-    unhealthy_bricklets = [b for b in bricklets if b.get("status") != "ok"]
-    bricklets_status = "ok" if not unhealthy_bricklets else "warning"
+    unhealthy_controllers = [c for c in controllers if c.get("status") != "ok"]
+    controllers_status = "ok" if not unhealthy_controllers else "warning"
 
     statuses = [
         cpu_status,
         memory_status,
         disk_status,
         containers_status,
-        bricklets_status,
+        controllers_status,
     ]
     if "error" in statuses:
         overall_status = "error"
@@ -458,8 +483,21 @@ def get_summary() -> Dict[str, Any]:
         "diskSpace": system["diskSpace"],
         "diskStatus": disk_status,
         "containersStatus": containers_status,
-        "brickletsStatus": bricklets_status,
+        "brickletsStatus": controllers_status,
+        "controllersStatus": controllers_status,
         "healthyContainersCount": len(containers) - len(unhealthy_containers),
         "totalContainersCount": len(containers),
         "totalBrickletsCount": len(bricklets),
+        "totalControllersCount": len(controllers),
+        "controllerCounts": _count_controllers_by_kind(controllers),
     }
+
+
+def _count_controllers_by_kind(
+    controllers: List[Dict[str, Any]],
+) -> Dict[str, int]:
+    counts: Dict[str, int] = {}
+    for controller in controllers:
+        kind = controller["kind"]
+        counts[kind] = counts.get(kind, 0) + 1
+    return counts

@@ -1,4 +1,4 @@
-"""Export and import of Bricklet UIDs, pin mappings, and motor limits (PR-1527)."""
+"""Export and import of controllers, motor mappings, and motor limits."""
 
 from __future__ import annotations
 
@@ -6,22 +6,16 @@ import re
 from typing import Any, Dict, List, Set
 
 from app.app import db
-from model.bricklet_model import Bricklet
-from model.bricklet_pin_model import BrickletPin
+from model.controller_model import (
+    SUPPORTED_CONTROLLER_KINDS,
+    TINKERFORGE_DEVICE_TYPES,
+    TINKERFORGE_BRICKLET,
+    Controller,
+)
 from model.motor_model import Motor
 
-SCHEMA_VERSION = 1
-
-# Matches Cerebra's bricklet UID validator (alphanumeric, max 6).
+SCHEMA_VERSION = 2
 UID_PATTERN = re.compile(r"^[A-Za-z0-9]{1,6}$")
-
-VALID_BRICKLET_TYPES = frozenset(
-    {
-        "Solid State Relay Bricklet",
-        "Servo Bricklet",
-        "RGB LED Button Bricklet",
-    }
-)
 
 MOTOR_SETTING_KEYS = (
     "pulse_width_min",
@@ -35,70 +29,101 @@ MOTOR_SETTING_KEYS = (
     "turned_on",
     "visible",
     "invert",
+    "current_limit",
+    "torque_limit",
 )
 
 
-def export_hardware_config() -> Dict[str, Any]:
-    """Build a JSON-serializable snapshot of bricklets, pin mappings, and motor limits."""
-    bricklets = Bricklet.query.order_by(Bricklet.bricklet_number).all()
+def export_hardware_config(variant: str | None = None) -> Dict[str, Any]:
+    controllers = Controller.query.order_by(Controller.number).all()
     motors = Motor.query.order_by(Motor.name).all()
-
-    return {
+    result = {
         "version": SCHEMA_VERSION,
-        "bricklets": [_serialize_bricklet(b) for b in bricklets],
+        "controllers": [_serialize_controller(c) for c in controllers],
         "motors": [_serialize_motor(m) for m in motors],
     }
+    if variant is not None:
+        result["variant"] = variant
+    return result
 
 
 def import_hardware_config(payload: Any) -> Dict[str, Any]:
-    """Validate and apply a hardware-config document, then return the resulting export."""
     document = validate_hardware_config(payload)
     _apply_hardware_config(document)
     db.session.flush()
-    return export_hardware_config()
+    return export_hardware_config(document.get("variant"))
 
 
 def validate_hardware_config(payload: Any) -> Dict[str, Any]:
-    """Validate schema, UID formats, and duplicate assignments. Raises ValueError on failure."""
     if not isinstance(payload, dict):
         raise ValueError("Hardware config must be a JSON object")
 
-    version = payload.get("version", SCHEMA_VERSION)
-    if not isinstance(version, int) or version < 1 or version > SCHEMA_VERSION:
+    version = payload.get("version", 1)
+    if (
+        not isinstance(version, int)
+        or isinstance(version, bool)
+        or version not in (1, 2)
+    ):
         raise ValueError(f"Unsupported hardware config version: {version!r}")
 
-    if "bricklets" not in payload or not isinstance(payload["bricklets"], list):
-        raise ValueError("Hardware config requires a 'bricklets' array")
+    variant = payload.get("variant")
+    if variant is not None and (not isinstance(variant, str) or not variant.strip()):
+        raise ValueError("Hardware config variant must be a non-empty string")
+
     if "motors" not in payload or not isinstance(payload["motors"], list):
         raise ValueError("Hardware config requires a 'motors' array")
 
-    bricklets = [
-        _validate_bricklet_entry(entry, index)
+    if version == 1:
+        document = _validate_v1_document(payload)
+    else:
+        document = _validate_v2_document(payload)
+    if variant is not None:
+        document["variant"] = variant.strip()
+    return document
+
+
+def _validate_v1_document(payload: Dict[str, Any]) -> Dict[str, Any]:
+    if "bricklets" not in payload or not isinstance(payload["bricklets"], list):
+        raise ValueError("Hardware config version 1 requires a 'bricklets' array")
+    controllers = [
+        _validate_v1_bricklet(entry, index)
         for index, entry in enumerate(payload["bricklets"])
     ]
-    _assert_unique_uids(bricklets)
-    _assert_unique_bricklet_numbers(bricklets)
-
     motors = [
-        _validate_motor_entry(entry, index)
+        _validate_motor_entry(entry, index, version=1)
         for index, entry in enumerate(payload["motors"])
     ]
-    _assert_unique_motor_names(motors)
-    _assert_pin_bricklets_exist(motors, bricklets)
-
-    return {"version": version, "bricklets": bricklets, "motors": motors}
+    _validate_document_references(controllers, motors)
+    return {"version": 1, "controllers": controllers, "motors": motors}
 
 
-def _serialize_bricklet(bricklet: Bricklet) -> Dict[str, Any]:
+def _validate_v2_document(payload: Dict[str, Any]) -> Dict[str, Any]:
+    if "controllers" not in payload or not isinstance(payload["controllers"], list):
+        raise ValueError("Hardware config version 2 requires a 'controllers' array")
+    controllers = [
+        _validate_controller_entry(entry, index)
+        for index, entry in enumerate(payload["controllers"])
+    ]
+    motors = [
+        _validate_motor_entry(entry, index, version=2)
+        for index, entry in enumerate(payload["motors"])
+    ]
+    _validate_document_references(controllers, motors)
+    return {"version": 2, "controllers": controllers, "motors": motors}
+
+
+def _serialize_controller(controller: Controller) -> Dict[str, Any]:
     return {
-        "brickletNumber": bricklet.bricklet_number,
-        "uid": bricklet.uid or "",
-        "type": bricklet.type,
+        "kind": controller.kind,
+        "deviceType": controller.device_type,
+        "address": controller.address or "",
+        "number": controller.number,
+        "supplyVoltage": controller.supply_voltage,
     }
 
 
 def _serialize_motor(motor: Motor) -> Dict[str, Any]:
-    return {
+    result = {
         "name": motor.name,
         "pulseWidthMin": motor.pulse_width_min,
         "pulseWidthMax": motor.pulse_width_max,
@@ -111,234 +136,253 @@ def _serialize_motor(motor: Motor) -> Dict[str, Any]:
         "turnedOn": motor.turned_on,
         "visible": motor.visible,
         "invert": motor.invert,
-        "brickletPins": [
-            {
-                "brickletNumber": pin.bricklet.bricklet_number,
-                "pin": pin.pin,
-                "invert": pin.invert,
-            }
-            for pin in motor.bricklet_pins
-        ],
+        "controllerNumber": motor.controller.number if motor.controller else None,
+        "channel": motor.channel,
     }
+    if motor.current_limit is not None:
+        result["currentLimit"] = motor.current_limit
+    if motor.torque_limit is not None:
+        result["torqueLimit"] = motor.torque_limit
+    return result
 
 
-def _validate_bricklet_entry(entry: Any, index: int) -> Dict[str, Any]:
+def _validate_v1_bricklet(entry: Any, index: int) -> Dict[str, Any]:
     if not isinstance(entry, dict):
         raise ValueError(f"bricklets[{index}] must be an object")
-
-    bricklet_number = entry.get("brickletNumber", entry.get("bricklet_number"))
-    if not isinstance(bricklet_number, int) or isinstance(bricklet_number, bool):
-        raise ValueError(f"bricklets[{index}].brickletNumber must be an integer")
-
-    uid = entry.get("uid", "")
-    if uid is None:
-        uid = ""
-    if not isinstance(uid, str):
+    number = entry.get("brickletNumber", entry.get("bricklet_number"))
+    _require_integer(number, f"bricklets[{index}].brickletNumber")
+    address = entry.get("uid", "")
+    if address is None:
+        address = ""
+    if not isinstance(address, str):
         raise ValueError(f"bricklets[{index}].uid must be a string")
-    uid = uid.strip()
-    if uid and not UID_PATTERN.fullmatch(uid):
+    address = address.strip()
+    if address and not UID_PATTERN.fullmatch(address):
         raise ValueError(
-            f"bricklets[{index}].uid has invalid format '{uid}' "
+            f"bricklets[{index}].uid has invalid format '{address}' "
             "(expected alphanumeric, max 6 characters)"
         )
-
-    bricklet_type = entry.get("type")
-    if bricklet_type is not None:
-        if (
-            not isinstance(bricklet_type, str)
-            or bricklet_type not in VALID_BRICKLET_TYPES
-        ):
-            raise ValueError(
-                f"bricklets[{index}].type '{bricklet_type}' is not a supported Bricklet type"
-            )
-
+    device_type = entry.get("deviceType", entry.get("type"))
+    _validate_device_type(
+        device_type,
+        TINKERFORGE_BRICKLET,
+        f"bricklets[{index}].deviceType",
+    )
     return {
-        "bricklet_number": bricklet_number,
-        "uid": uid or None,
-        "type": bricklet_type,
+        "kind": TINKERFORGE_BRICKLET,
+        "device_type": device_type,
+        "address": address or None,
+        "number": number,
+        "supply_voltage": None,
+        "from_v1": True,
     }
 
 
-def _validate_motor_entry(entry: Any, index: int) -> Dict[str, Any]:
+def _validate_controller_entry(entry: Any, index: int) -> Dict[str, Any]:
+    if not isinstance(entry, dict):
+        raise ValueError(f"controllers[{index}] must be an object")
+    kind = entry.get("kind")
+    if kind not in SUPPORTED_CONTROLLER_KINDS:
+        raise ValueError(f"controllers[{index}].kind {kind!r} is not supported")
+    device_type = entry.get("deviceType")
+    _validate_device_type(device_type, kind, f"controllers[{index}].deviceType")
+    address = entry.get("address", "")
+    if address is None:
+        address = ""
+    if not isinstance(address, str):
+        raise ValueError(f"controllers[{index}].address must be a string")
+    number = entry.get("number")
+    _require_integer(number, f"controllers[{index}].number")
+    supply_voltage = entry.get("supplyVoltage", entry.get("supply_voltage"))
+    if supply_voltage is not None and (
+        not isinstance(supply_voltage, (int, float))
+        or isinstance(supply_voltage, bool)
+        or supply_voltage <= 0
+    ):
+        raise ValueError(
+            f"controllers[{index}].supplyVoltage must be a positive number or null"
+        )
+    return {
+        "kind": kind,
+        "device_type": device_type,
+        "address": address.strip() or None,
+        "number": number,
+        "supply_voltage": (
+            float(supply_voltage) if supply_voltage is not None else None
+        ),
+        "from_v1": False,
+    }
+
+
+def _validate_motor_entry(entry: Any, index: int, *, version: int) -> Dict[str, Any]:
     if not isinstance(entry, dict):
         raise ValueError(f"motors[{index}] must be an object")
-
     name = entry.get("name")
     if not isinstance(name, str) or not name.strip():
         raise ValueError(f"motors[{index}].name must be a non-empty string")
 
     settings: Dict[str, Any] = {}
-    camel_to_snake = {
+    aliases = {
         "pulseWidthMin": "pulse_width_min",
         "pulseWidthMax": "pulse_width_max",
         "rotationRangeMin": "rotation_range_min",
         "rotationRangeMax": "rotation_range_max",
         "turnedOn": "turned_on",
+        "currentLimit": "current_limit",
+        "torqueLimit": "torque_limit",
     }
-    for camel, snake in camel_to_snake.items():
+    for key in MOTOR_SETTING_KEYS:
+        camel = next((c for c, snake in aliases.items() if snake == key), key)
         if camel in entry:
-            settings[snake] = entry[camel]
-        elif snake in entry:
-            settings[snake] = entry[snake]
-
-    for key in (
-        "velocity",
-        "acceleration",
-        "deceleration",
-        "period",
-        "visible",
-        "invert",
-    ):
-        if key in entry:
+            settings[key] = entry[camel]
+        elif key in entry:
             settings[key] = entry[key]
+    _validate_motor_settings(settings, index)
 
+    if version == 1:
+        pins_raw = entry.get("brickletPins", entry.get("bricklet_pins", []))
+        if not isinstance(pins_raw, list):
+            raise ValueError(f"motors[{index}].brickletPins must be an array")
+        mappings = [
+            _validate_v1_pin(pin, index, pin_index)
+            for pin_index, pin in enumerate(pins_raw)
+        ]
+        mapping = mappings[0] if mappings else None
+    else:
+        number = entry.get("controllerNumber", entry.get("controller_number"))
+        channel = entry.get("channel")
+        if number is None and channel is None:
+            mapping = None
+        else:
+            _require_integer(number, f"motors[{index}].controllerNumber")
+            _require_integer(channel, f"motors[{index}].channel")
+            mapping = {"controller_number": number, "channel": channel}
+
+    return {"name": name.strip(), "settings": settings, "mapping": mapping}
+
+
+def _validate_motor_settings(settings: Dict[str, Any], index: int) -> None:
     for key, value in settings.items():
         if key in ("turned_on", "visible", "invert"):
             if not isinstance(value, bool):
                 raise ValueError(f"motors[{index}].{key} must be a boolean")
+        elif key in ("current_limit", "torque_limit"):
+            if value is not None and (
+                not isinstance(value, (int, float)) or isinstance(value, bool)
+            ):
+                raise ValueError(f"motors[{index}].{key} must be a number or null")
+            if value is not None:
+                settings[key] = float(value)
         elif not isinstance(value, int) or isinstance(value, bool):
             raise ValueError(f"motors[{index}].{key} must be an integer")
 
-    pins_raw = entry.get("brickletPins", entry.get("bricklet_pins", []))
-    if pins_raw is None:
-        pins_raw = []
-    if not isinstance(pins_raw, list):
-        raise ValueError(f"motors[{index}].brickletPins must be an array")
 
-    pins = [
-        _validate_pin_entry(pin, index, pin_index)
-        for pin_index, pin in enumerate(pins_raw)
-    ]
-    return {"name": name.strip(), "settings": settings, "bricklet_pins": pins}
-
-
-def _validate_pin_entry(entry: Any, motor_index: int, pin_index: int) -> Dict[str, Any]:
+def _validate_v1_pin(entry: Any, motor_index: int, pin_index: int) -> Dict[str, int]:
     if not isinstance(entry, dict):
         raise ValueError(
             f"motors[{motor_index}].brickletPins[{pin_index}] must be an object"
         )
-
-    bricklet_number = entry.get("brickletNumber", entry.get("bricklet_number"))
-    if not isinstance(bricklet_number, int) or isinstance(bricklet_number, bool):
-        raise ValueError(
-            f"motors[{motor_index}].brickletPins[{pin_index}].brickletNumber must be an integer"
-        )
-
-    pin = entry.get("pin")
-    if not isinstance(pin, int) or isinstance(pin, bool):
-        raise ValueError(
-            f"motors[{motor_index}].brickletPins[{pin_index}].pin must be an integer"
-        )
-
+    number = entry.get("brickletNumber", entry.get("bricklet_number"))
+    channel = entry.get("pin")
+    _require_integer(
+        number,
+        f"motors[{motor_index}].brickletPins[{pin_index}].brickletNumber",
+    )
+    _require_integer(channel, f"motors[{motor_index}].brickletPins[{pin_index}].pin")
     invert = entry.get("invert", False)
     if not isinstance(invert, bool):
         raise ValueError(
             f"motors[{motor_index}].brickletPins[{pin_index}].invert must be a boolean"
         )
-
-    return {"bricklet_number": bricklet_number, "pin": pin, "invert": invert}
-
-
-def _assert_unique_uids(bricklets: List[Dict[str, Any]]) -> None:
-    seen: Set[str] = set()
-    for entry in bricklets:
-        uid = entry["uid"]
-        if not uid:
-            continue
-        if uid in seen:
-            raise ValueError(f"Duplicate Bricklet UID assignment: '{uid}'")
-        seen.add(uid)
+    return {"controller_number": number, "channel": channel}
 
 
-def _assert_unique_bricklet_numbers(bricklets: List[Dict[str, Any]]) -> None:
-    seen: Set[int] = set()
-    for entry in bricklets:
-        number = entry["bricklet_number"]
-        if number in seen:
-            raise ValueError(f"Duplicate brickletNumber in import: {number}")
-        seen.add(number)
+def _require_integer(value: Any, field: str) -> None:
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise ValueError(f"{field} must be an integer")
 
 
-def _assert_unique_motor_names(motors: List[Dict[str, Any]]) -> None:
-    seen: Set[str] = set()
-    for entry in motors:
-        name = entry["name"]
-        if name in seen:
-            raise ValueError(f"Duplicate motor name in import: '{name}'")
-        seen.add(name)
+def _validate_device_type(value: Any, kind: str, field: str) -> None:
+    if value is not None and value not in TINKERFORGE_DEVICE_TYPES:
+        raise ValueError(f"{field} {value!r} is not a supported Bricklet type")
+    if kind != TINKERFORGE_BRICKLET and value is not None:
+        raise ValueError(f"{field} must be null for controller kind {kind!r}")
 
 
-def _assert_pin_bricklets_exist(
-    motors: List[Dict[str, Any]], bricklets: List[Dict[str, Any]]
+def _validate_document_references(
+    controllers: List[Dict[str, Any]], motors: List[Dict[str, Any]]
 ) -> None:
-    numbers_in_file = {b["bricklet_number"] for b in bricklets}
-    for motor in motors:
-        for pin in motor["bricklet_pins"]:
-            number = pin["bricklet_number"]
-            # Pin may reference a bricklet already in DB even if omitted from this file.
-            if number in numbers_in_file:
-                continue
-            existing = Bricklet.query.filter(Bricklet.bricklet_number == number).first()
-            if existing is None:
+    seen_numbers: Set[int] = set()
+    seen_addresses: Set[str] = set()
+    for controller in controllers:
+        number = controller["number"]
+        if number in seen_numbers:
+            raise ValueError(f"Duplicate controller number in import: {number}")
+        seen_numbers.add(number)
+        address = controller["address"]
+        if address:
+            if address in seen_addresses:
                 raise ValueError(
-                    f"Motor '{motor['name']}' references unknown brickletNumber {number}"
+                    f"Duplicate controller address assignment: '{address}'"
                 )
+            seen_addresses.add(address)
+
+    seen_names: Set[str] = set()
+    for motor in motors:
+        if motor["name"] in seen_names:
+            raise ValueError(f"Duplicate motor name in import: '{motor['name']}'")
+        seen_names.add(motor["name"])
+        mapping = motor["mapping"]
+        if mapping is None:
+            continue
+        number = mapping["controller_number"]
+        if number in seen_numbers:
+            continue
+        if Controller.query.filter(Controller.number == number).first() is None:
+            raise ValueError(
+                f"Motor '{motor['name']}' references unknown controller number {number}"
+            )
 
 
 def _apply_hardware_config(document: Dict[str, Any]) -> None:
-    # Clear UIDs first so swaps cannot hit the unique constraint mid-update.
-    target_numbers = [b["bricklet_number"] for b in document["bricklets"]]
+    target_numbers = [c["number"] for c in document["controllers"]]
     if target_numbers:
-        Bricklet.query.filter(Bricklet.bricklet_number.in_(target_numbers)).update(
-            {Bricklet.uid: None}, synchronize_session=False
+        Controller.query.filter(Controller.number.in_(target_numbers)).update(
+            {Controller.address: None}, synchronize_session=False
         )
         db.session.flush()
 
-    for entry in document["bricklets"]:
-        bricklet = Bricklet.query.filter(
-            Bricklet.bricklet_number == entry["bricklet_number"]
+    for entry in document["controllers"]:
+        controller = Controller.query.filter(
+            Controller.number == entry["number"]
         ).one_or_none()
-        if bricklet is None:
-            if entry["type"] is None:
-                raise ValueError(
-                    f"Cannot create brickletNumber {entry['bricklet_number']} without a type"
-                )
-            bricklet = Bricklet(
-                bricklet_number=entry["bricklet_number"],
-                type=entry["type"],
-                uid=entry["uid"],
+        if controller is None:
+            controller = Controller(
+                number=entry["number"],
+                kind=entry["kind"],
+                device_type=entry["device_type"],
+                address=entry["address"],
+                supply_voltage=entry["supply_voltage"],
             )
-            db.session.add(bricklet)
+            db.session.add(controller)
         else:
-            if entry["type"] is not None and bricklet.type != entry["type"]:
-                # Keep existing type for backward compatibility; reject incompatible changes.
-                raise ValueError(
-                    f"brickletNumber {entry['bricklet_number']} type mismatch: "
-                    f"file has '{entry['type']}', database has '{bricklet.type}'"
-                )
-            bricklet.uid = entry["uid"]
+            if not entry["from_v1"]:
+                if entry["kind"] != TINKERFORGE_BRICKLET:
+                    controller.device_type = None
+                controller.kind = entry["kind"]
+                controller.supply_voltage = entry["supply_voltage"]
+            controller.device_type = entry["device_type"]
+            controller.address = entry["address"]
     db.session.flush()
 
     for entry in document["motors"]:
         motor = Motor.query.filter(Motor.name == entry["name"]).one_or_none()
         if motor is None:
             raise ValueError(f"Unknown motor '{entry['name']}'")
-
         for key, value in entry["settings"].items():
             setattr(motor, key, value)
-
-        if "bricklet_pins" in entry:
-            motor.bricklet_pins.clear()
-            db.session.flush()
-            for pin_dto in entry["bricklet_pins"]:
-                bricklet = Bricklet.query.filter(
-                    Bricklet.bricklet_number == pin_dto["bricklet_number"]
-                ).one()
-                db.session.add(
-                    BrickletPin(
-                        motor=motor,
-                        bricklet=bricklet,
-                        pin=pin_dto["pin"],
-                        invert=pin_dto["invert"],
-                    )
-                )
+        if entry["mapping"] is not None:
+            motor.controller = Controller.query.filter(
+                Controller.number == entry["mapping"]["controller_number"]
+            ).one()
+            motor.channel = entry["mapping"]["channel"]
