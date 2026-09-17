@@ -111,6 +111,30 @@ def test_motor_current_creates_one_second_publish_timer():
     assert node.timer.callback == node.publish_motor_current
 
 
+def test_setup_callbacks_skips_actuators_without_a_bricklet():
+    class BrickletLessActuator:
+        """An actuator of a non-Tinkerforge family: it has no 'bricklet' attribute."""
+
+        def is_connected(self):
+            return True
+
+    bricklet = MagicMock()
+    servo_actuator = types.SimpleNamespace(
+        bricklet=bricklet, pin=3, is_connected=lambda: True
+    )
+    motor = types.SimpleNamespace(
+        name="shoulder_vertical_left",
+        actuators=[BrickletLessActuator(), servo_actuator],
+    )
+    module = _load_motor_current([motor])
+
+    node = module.MotorCurrent()  # registers the callbacks for all motors
+
+    # only the servo actuator is registered, the other family is silently skipped
+    assert node.pin_to_motors == {(id(bricklet), 3): ["shoulder_vertical_left"]}
+    bricklet.register_callback.assert_called_once()
+
+
 def test_publish_motor_current_publishes_diagnostic_status():
     motor = types.SimpleNamespace(
         name="head_motor",
