@@ -1,16 +1,15 @@
-from typing import Any
+"""Flask CLI commands.
+
+Docker Compose runs ``seed_db`` when the API container starts. A selected hardware
+variant without an implemented profile therefore fails startup loudly instead of
+silently seeding hardware for a different robot.
+"""
 
 from sqlalchemy import inspect
 
 from app.app import db, app
 from model.assistant_model import AssistantModel
-from model.controller_model import (
-    RGB_LED_BUTTON_BRICKLET,
-    SERVO_BRICKLET,
-    SOLID_STATE_RELAY_BRICKLET,
-    TINKERFORGE_BRICKLET,
-    Controller,
-)
+from model.controller_model import Controller
 from model.camera_settings_model import CameraSettings
 from model.chat_message_model import ChatMessage
 from model.chat_model import Chat
@@ -19,6 +18,11 @@ from model.personality_model import Personality
 from model.program_model import Program
 from model.pose_model import Pose
 from model.motor_position_model import MotorPosition
+from seed_profiles import (
+    HardwareProfile,
+    get_profile,
+    resolve_variant_from_environment,
+)
 from default_pose_constants import (
     STARTUP_POSITIONS,
     CALIBRATION_POSITIONS,
@@ -33,12 +37,18 @@ def seed_db() -> None:
     if not _is_empty_db():
         print("Seeding database failed - database already contains data.")
         return
-    _create_controller_data()
+    variant = resolve_variant_from_environment()
+    profile = get_profile(variant)
+    print(
+        f"Seeding hardware variant {variant!r} using profile "
+        f"{profile.description!r}."
+    )
+    _create_controller_data(profile)
     _create_camera_data()
     _create_program_data()
     _create_chat_data_and_assistant()
-    _create_default_poses()
-    _create_button_program_data()
+    _create_default_poses(profile)
+    _create_button_program_data(profile)
     db.session.commit()
     print("Seeded the database with default data.")
 
@@ -57,63 +67,29 @@ def _is_empty_db() -> bool:
     return True
 
 
-def _create_controller_data() -> None:
-    device_types = {
-        1: SERVO_BRICKLET,
-        2: SERVO_BRICKLET,
-        3: SERVO_BRICKLET,
-        4: SOLID_STATE_RELAY_BRICKLET,
-        5: RGB_LED_BUTTON_BRICKLET,
-        6: RGB_LED_BUTTON_BRICKLET,
-        7: RGB_LED_BUTTON_BRICKLET,
-    }
+def _create_controller_data(profile: HardwareProfile) -> None:
     controllers = [
         Controller(
-            id=number,
-            number=number,
-            kind=TINKERFORGE_BRICKLET,
-            device_type=device_types[number],
-            supply_voltage=7.5 if number in (1, 2, 3) else None,
+            id=controller.number,
+            number=controller.number,
+            kind=controller.kind,
+            device_type=controller.device_type,
+            supply_voltage=controller.supply_voltage,
+            address=controller.address,
         )
-        for number in range(1, 8)
+        for controller in profile.controllers
     ]
     db.session.add_all(controllers)
     db.session.flush()
 
-    data = _get_motor_list()
-    motor_settings = {
-        "pulse_width_min": 700,
-        "pulse_width_max": 2500,
-        "rotation_range_min": -9000,
-        "rotation_range_max": 9000,
-        "velocity": 16000,
-        "acceleration": 10000,
-        "deceleration": 5000,
-        "period": 19500,
-        "turned_on": True,
-        "visible": True,
-        "invert": False,
-    }
-
-    for item in data:
-        motor = Motor(name=item["name"], **motor_settings)
-        if motor.name == "tilt_forward_motor":
-            motor.rotation_range_min = -4500
-            motor.rotation_range_max = 4500
-        # modify all fingers
-        elif motor.name.endswith("stretch") or "thumb" in motor.name:
-            motor.pulse_width_min = 750
-            motor.velocity = 100000
-            motor.acceleration = 50000
-            motor.deceleration = 50000
-        # reduce upper arm rotation speed
-        elif motor.name in ["upper_arm_left_rotation", "upper_arm_right_rotation"]:
-            motor.velocity = 10000
+    for motor_name, (controller_number, channel) in profile.motor_mapping.items():
+        motor_settings = dict(profile.motor_parameter_defaults)
+        motor_settings.update(profile.motor_parameter_deviations.get(motor_name, {}))
+        motor = Motor(name=motor_name, **motor_settings)
 
         db.session.add(motor)
         db.session.flush()
 
-        controller_number, channel = item["controller"]
         motor.controller = next(
             controller
             for controller in controllers
@@ -123,13 +99,16 @@ def _create_controller_data() -> None:
         db.session.flush()
 
 
-def _create_button_program_data():
+def _create_button_program_data(profile: HardwareProfile) -> None:
     cerebra_prog = Program.query.filter_by(name="toggle_cerebra_fullscreen").first()
     prog_id = cerebra_prog.id if cerebra_prog else None
 
-    button_program1 = ButtonProgram(controller_id=5, program_id=None)
-    button_program2 = ButtonProgram(controller_id=6, program_id=None)
-    button_program3 = ButtonProgram(controller_id=7, program_id=prog_id)
+    first_controller, second_controller, third_controller = (
+        profile.rgb_button_controller_ids
+    )
+    button_program1 = ButtonProgram(controller_id=first_controller, program_id=None)
+    button_program2 = ButtonProgram(controller_id=second_controller, program_id=None)
+    button_program3 = ButtonProgram(controller_id=third_controller, program_id=prog_id)
     db.session.add_all([button_program1, button_program2, button_program3])
     db.session.flush()
 
@@ -235,69 +214,33 @@ def _create_chat_data_and_assistant() -> None:
     db.session.flush()
 
 
-def _create_default_poses() -> None:
+def _create_default_poses(profile: HardwareProfile) -> None:
     startup_pose = Pose(name=STARTUP_POSE_NAME, deletable=False)
     calibration_pose = Pose(name=CALIBRATION_POSE_NAME, deletable=False)
 
     db.session.add_all([startup_pose, calibration_pose])
     db.session.flush()
 
-    motors = _get_motor_list()
-
     startup_positions = [
         MotorPosition(
-            position=STARTUP_POSITIONS.get(motor["name"], 0),
-            motor_name=motor["name"],
+            position=STARTUP_POSITIONS.get(motor_name, 0),
+            motor_name=motor_name,
             pose_id=startup_pose.id,
         )
-        for motor in motors
+        for motor_name in profile.motor_mapping
     ]
 
     calibration_positions = [
         MotorPosition(
-            position=CALIBRATION_POSITIONS.get(motor["name"], 0),
-            motor_name=motor["name"],
+            position=CALIBRATION_POSITIONS.get(motor_name, 0),
+            motor_name=motor_name,
             pose_id=calibration_pose.id,
         )
-        for motor in motors
+        for motor_name in profile.motor_mapping
     ]
 
     db.session.add_all(startup_positions + calibration_positions)
     db.session.commit()
-
-
-def _get_motor_list() -> [dict[str, Any]]:
-    name: str = "name"
-    controller: str = "controller"
-
-    return [
-        {name: "turn_head_motor", controller: (2, 4)},
-        {name: "tilt_forward_motor", controller: (2, 5)},
-        {name: "upper_arm_left_rotation", controller: (3, 9)},
-        {name: "elbow_left", controller: (3, 8)},
-        {name: "lower_arm_left_rotation", controller: (3, 7)},
-        {name: "shoulder_vertical_left", controller: (2, 9)},
-        {name: "shoulder_horizontal_left", controller: (2, 8)},
-        {name: "upper_arm_right_rotation", controller: (1, 9)},
-        {name: "elbow_right", controller: (1, 8)},
-        {name: "lower_arm_right_rotation", controller: (1, 7)},
-        {name: "shoulder_vertical_right", controller: (2, 1)},
-        {name: "shoulder_horizontal_right", controller: (2, 0)},
-        {name: "thumb_right_opposition", controller: (1, 0)},
-        {name: "thumb_right_stretch", controller: (1, 1)},
-        {name: "index_right_stretch", controller: (1, 2)},
-        {name: "middle_right_stretch", controller: (1, 3)},
-        {name: "ring_right_stretch", controller: (1, 4)},
-        {name: "pinky_right_stretch", controller: (1, 5)},
-        {name: "thumb_left_opposition", controller: (3, 0)},
-        {name: "thumb_left_stretch", controller: (3, 1)},
-        {name: "index_left_stretch", controller: (3, 2)},
-        {name: "middle_left_stretch", controller: (3, 3)},
-        {name: "ring_left_stretch", controller: (3, 4)},
-        {name: "pinky_left_stretch", controller: (3, 5)},
-        {name: "wrist_left", controller: (3, 6)},
-        {name: "wrist_right", controller: (1, 6)},
-    ]
 
 
 def _get_example_program() -> str:

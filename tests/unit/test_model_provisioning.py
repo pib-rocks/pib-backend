@@ -17,6 +17,13 @@ def _fixture_repo(tmp_path, include_blob=True):
     setup_dir.mkdir(parents=True)
     models_dir.mkdir()
     shutil.copy2(SETUP_SCRIPT, setup_dir / "setup-pib.sh")
+    # setup-pib.sh sources the variant resolver, so the fixture repo needs it too
+    installation_scripts_dir = setup_dir / "installation_scripts"
+    installation_scripts_dir.mkdir()
+    shutil.copy2(
+        SETUP_SCRIPT.parent / "installation_scripts" / "resolve_hardware_variant.sh",
+        installation_scripts_dir / "resolve_hardware_variant.sh",
+    )
 
     content = b"fixture model blob\n"
     digest = hashlib.sha256(content).hexdigest()

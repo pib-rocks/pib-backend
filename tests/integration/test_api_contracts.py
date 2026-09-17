@@ -158,13 +158,13 @@ class TestBrickletAndButtonPrograms:
         ]
         response = client.put(
             "/button-programs",
-            json={"buttonProgramUpdates": [{"brickletNumber": 5, "programNumber": pn}]},
+            json={"buttonProgramUpdates": [{"brickletNumber": 6, "programNumber": pn}]},
         )
         assert response.status_code == 200
         client.put(
             "/button-programs",
             json={
-                "buttonProgramUpdates": [{"brickletNumber": 5, "programNumber": None}]
+                "buttonProgramUpdates": [{"brickletNumber": 6, "programNumber": None}]
             },
         )
 

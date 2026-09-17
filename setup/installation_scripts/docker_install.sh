@@ -93,7 +93,9 @@ function verify_vendored_blockly() {
 function start_container() {
     print INFO "Starting container"
     echo "TRYB_URL_PREFIX=https://platform.tryb.ai" > "$BACKEND_DIR"/password.env
-    sudo docker compose -f "$BACKEND_DIR/docker-compose.yaml" --profile all up -d --build || return 1
+    sudo PIB_HARDWARE_VARIANT="$PIB_HARDWARE_VARIANT" \
+      docker compose -f "$BACKEND_DIR/docker-compose.yaml" --profile all up -d --build \
+      || return 1
     print SUCCESS "Started pib-backend container"
     sudo docker compose -f "$FRONTEND_DIR/docker-compose.yaml" up -d || return 1
     print SUCCESS "Started cerebra container"

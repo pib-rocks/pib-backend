@@ -1,5 +1,8 @@
 #!/bin/bash
 
+SETUP_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SETUP_SCRIPT_DIR/installation_scripts/resolve_hardware_variant.sh"
+
 # Color definitions for logging
 export ERROR="\e[31m"
 export WARN="\e[33m"
@@ -69,6 +72,30 @@ function set_default_output_volume() {
   print INFO "Default output volume: ${volume}"
   if [[ "$volume" != *"Volume: 1.00"* ]]; then
     print WARN "default output volume verification did not report Volume: 1.00"
+  fi
+}
+
+function warn_on_hardware_generation_mismatch() {
+  local model_file="/proc/device-tree/model"
+  local model expected_generation
+
+  if [ ! -r "$model_file" ]; then
+    return 0
+  fi
+
+  model="$(tr -d '\0' < "$model_file")"
+  case "$PIB_HARDWARE_VARIANT" in
+    pib4*)
+      expected_generation="Raspberry Pi 4"
+      ;;
+    pib5*)
+      expected_generation="Raspberry Pi 5"
+      ;;
+  esac
+
+  if [[ "$model" == *"Raspberry Pi 4"* || "$model" == *"Raspberry Pi 5"* ]] &&
+    [[ "$model" != *"$expected_generation"* ]]; then
+    print WARN "Hardware variant ${PIB_HARDWARE_VARIANT} expects ${expected_generation}, but this device reports: ${model}"
   fi
 }
 
@@ -764,6 +791,13 @@ show_help()
 	echo -e "-l or --local for a local installation of the software over using a containerized setup using Docker"
 	echo -e "--models refresh the persistent OAK model store from models/ and exit"
 	echo -e "--verify-models check the model store against models/manifest.yaml and exit non-zero on mismatch"
+	echo -e "--pib4edu select the pib 4 educational hardware variant"
+	echo -e "--pib4advanced select the pib 4 advanced hardware variant"
+	echo -e "--pib5advanced select the pib 5 advanced hardware variant"
+	echo -e "--pib5museum select the pib 5 museum hardware variant"
+	echo -e "Use exactly one variant flag or none (then the default pib5edu applies)."
+	echo -e "A variant takes effect on a fresh install. To change it later, run:"
+	echo -e "    flask seed_hardware --variant <v> --force"
 
 	echo -e "$NEW_LINE""Examples:"
 	echo -e "    ./setup-pib -b=main -f=PR-566"
@@ -784,6 +818,7 @@ BRANCH_FRONTEND="main"
 INSTALL_METHOD="docker"
 MODELS_ONLY=false
 VERIFY_MODELS_ONLY=false
+HARDWARE_VARIANT_ARGUMENTS=()
 while [ $# -gt 0 ]; do
   case "$1" in
     -f=* | --frontend-branch=*)
@@ -801,6 +836,9 @@ while [ $# -gt 0 ]; do
     --verify-models)
       VERIFY_MODELS_ONLY=true
       ;;
+    --pib4edu | --pib4advanced | --pib5advanced | --pib5museum | --pib*)
+      HARDWARE_VARIANT_ARGUMENTS+=("$1")
+      ;;
     -h | --help)
       show_help
       ;;
@@ -811,6 +849,13 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
+
+if ! PIB_HARDWARE_VARIANT="$(
+  resolve_hardware_variant "${HARDWARE_VARIANT_ARGUMENTS[@]}"
+)"; then
+  exit 1
+fi
+export PIB_HARDWARE_VARIANT
 
 if [ "$MODELS_ONLY" = true ] && [ "$VERIFY_MODELS_ONLY" = true ]; then
   print ERROR "use either --models or --verify-models, not both"
@@ -831,6 +876,8 @@ fi
 LOG_FILE="$HOME/setup-pib.log"
 exec > >(tee -a "$LOG_FILE") 2>&1
 
+warn_on_hardware_generation_mismatch
+
 echo "Hello $USER! We start the setup by allowing you permanently to run commands with admin-privileges. This change is reverted at the end of the setup."
 if [[ "$(id)" == *"(sudo)"* ]]; then
 	echo "For this change please enter your password..."
@@ -840,6 +887,9 @@ else
 	su root bash -c "usermod -aG sudo $USER ; echo '$USER ALL=(ALL) NOPASSWD:ALL' | tee /etc/sudoers.d/$USER"
 fi
 
+printf '%s\n' "$PIB_HARDWARE_VARIANT" |
+  sudo tee /etc/pib_hardware_variant >/dev/null
+print INFO "Selected hardware variant: ${PIB_HARDWARE_VARIANT}"
 
 DISTRIBUTION=$(get_distribution) # e.g., 'ubuntu'
 export DISTRIBUTION
