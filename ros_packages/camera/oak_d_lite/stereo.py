@@ -33,9 +33,13 @@ from .model_registry import ModelRegistry
 from .pipeline_manager import PipelineManager
 from .hand_tracking import (
     HAND_KEYPOINT_NAMES,
+    LANDMARK_SCORE_THRESHOLD,
     MANIP_CROP_INSET_PIXELS,
     decode_palm_result,
     fit_manip_crop,
+    landmark_score,
+    landmarks_in_crop_pixels,
+    map_landmarks_to_frame,
 )
 
 # Downscaled resolution for Haar cascade face detection (maps back to full frame).
@@ -367,45 +371,58 @@ class CameraNode(Node):
         self,
         packet,
         tensor,
+        palm,
         frame_width,
         frame_height,
         source_width,
         source_height,
     ):
-        """Map normalized landmark-crop coordinates through DepthAI's warp."""
-        values = np.asarray(tensor, dtype=np.float32)
-        if values.size != len(HAND_KEYPOINT_NAMES) * 3:
-            raise ValueError("landmark result must contain exactly 63 values (21 x 3)")
-        values = values.reshape(len(HAND_KEYPOINT_NAMES), 3)
-        if not np.all(np.isfinite(values)):
-            raise ValueError("landmark result contains non-finite values")
+        """Map landmark-crop coordinates onto the published preview frame."""
+        values = landmarks_in_crop_pixels(tensor, self.hand_landmark_input_size)
 
-        transformation = packet.getTransformation()
+        def via_palm_roi():
+            return map_landmarks_to_frame(
+                values,
+                palm,
+                frame_width,
+                frame_height,
+                self.hand_landmark_input_size,
+                source_width,
+                source_height,
+            )
+
+        transformation = None
+        getter = getattr(packet, "getTransformation", None)
+        if getter is not None:
+            try:
+                transformation = getter()
+            except Exception:
+                transformation = None
         if transformation is None:
-            raise ValueError("landmark result has no image transformation")
+            return via_palm_roi()
 
-        scale_x = frame_width / float(source_width)
-        scale_y = frame_height / float(source_height)
-        points = []
-        for crop_x, crop_y, _ in values:
-            crop_point = dai.Point2f(
-                float(crop_x) * self.hand_landmark_input_size,
-                float(crop_y) * self.hand_landmark_input_size,
-            )
-            source_point = transformation.invTransformPoint(crop_point)
-            points.append(
-                (
-                    min(
-                        float(frame_width),
-                        max(0.0, float(source_point.x) * scale_x),
-                    ),
-                    min(
-                        float(frame_height),
-                        max(0.0, float(source_point.y) * scale_y),
-                    ),
+        try:
+            scale_x = frame_width / float(source_width)
+            scale_y = frame_height / float(source_height)
+            points = []
+            for crop_x, crop_y, _ in values:
+                crop_point = dai.Point2f(float(crop_x), float(crop_y))
+                source_point = transformation.invTransformPoint(crop_point)
+                points.append(
+                    (
+                        min(
+                            float(frame_width),
+                            max(0.0, float(source_point.x) * scale_x),
+                        ),
+                        min(
+                            float(frame_height),
+                            max(0.0, float(source_point.y) * scale_y),
+                        ),
+                    )
                 )
-            )
-        return points
+            return points
+        except Exception:
+            return via_palm_roi()
 
     def _publish_hand_detections(self, frame_width, frame_height, detections):
         message = DetectionArray()
@@ -432,7 +449,7 @@ class CameraNode(Node):
     ):
         detection = Detection()
         detection.label = "hand"
-        detection.score = palm.score
+        detection.score = float(palm.score)
         (
             detection.x_min,
             detection.y_min,
@@ -440,8 +457,8 @@ class CameraNode(Node):
             detection.y_max,
         ) = palm.bbox_pixels(frame_width, frame_height, source_width, source_height)
         detection.keypoint_names = list(HAND_KEYPOINT_NAMES)
-        detection.keypoint_x = [point[0] for point in landmarks]
-        detection.keypoint_y = [point[1] for point in landmarks]
+        detection.keypoint_x = [float(point[0]) for point in landmarks]
+        detection.keypoint_y = [float(point[1]) for point in landmarks]
         detection.keypoint_z = [0.0] * len(HAND_KEYPOINT_NAMES)
         detection.scalar_names = ["z_source"]
         detection.scalar_values = [0.0]
@@ -603,31 +620,31 @@ class CameraNode(Node):
             palm, batch = self._pending_hands.popleft()
             try:
                 if palm is not None:
-                    score = self._nn_layer(packet, "Identity_1")
+                    score = landmark_score(self._nn_layer(packet, "Identity_1"))
                     landmarks_tensor = self._nn_layer(
                         packet, "Identity_3_dense/BiasAdd/Add"
                     )
-                    if score.size != 1:
-                        raise ValueError("landmark confidence must contain one value")
-                    if score[0] >= 0.5:
+                    if score >= LANDMARK_SCORE_THRESHOLD:
                         landmarks = self._map_hand_landmarks(
                             packet,
                             landmarks_tensor,
+                            palm,
                             batch["frame_width"],
                             batch["frame_height"],
                             batch["source_width"],
                             batch["source_height"],
                         )
-                        batch["detections"].append(
-                            self._hand_detection_message(
-                                palm,
-                                landmarks,
-                                batch["frame_width"],
-                                batch["frame_height"],
-                                batch["source_width"],
-                                batch["source_height"],
+                        if landmarks:
+                            batch["detections"].append(
+                                self._hand_detection_message(
+                                    palm,
+                                    landmarks,
+                                    batch["frame_width"],
+                                    batch["frame_height"],
+                                    batch["source_width"],
+                                    batch["source_height"],
+                                )
                             )
-                        )
             except (RuntimeError, ValueError) as exc:
                 self._warn_hand_once(f"Invalid hand landmark output: {exc}")
             self._count_hand_stage("post_processing")

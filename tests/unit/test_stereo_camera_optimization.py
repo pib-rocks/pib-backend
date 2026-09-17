@@ -133,6 +133,7 @@ else:
 
 import numpy as np
 
+from ros_packages.camera.oak_d_lite.hand_tracking import PalmRegion
 from ros_packages.camera.oak_d_lite.stereo import (
     BRANCH_INPUT_QUEUE_DEPTH,
     BRANCH_OUTPUT_QUEUE_DEPTH,
@@ -768,7 +769,9 @@ class TestHandPipelineInput(unittest.TestCase):
         packet.getTransformation.return_value = transformation
         tensor = np.tile([0.5, 0.25, 0.0], (21, 1))
 
-        points = node._map_hand_landmarks(packet, tensor, 1280, 720, 640, 480)
+        points = node._map_hand_landmarks(
+            packet, tensor, MagicMock(), 1280, 720, 640, 480
+        )
 
         self.assertEqual(len(points), 21)
         self.assertEqual(points[0], (244.0, 114.0))
@@ -969,6 +972,47 @@ class TestHandStageCounters(unittest.TestCase):
         )
         landmark_packet.getTransformation.assert_called_once_with()
         node._publish_hand_detections.assert_called_once_with(1280, 720, ["detection"])
+
+    @patch("ros_packages.camera.oak_d_lite.stereo.dai")
+    def test_landmark_result_assembles_detection_from_batched_tensors(self, mock_dai):
+        node = self._make_node()
+        palm = PalmRegion(0.88, 0.5, 0.5, 0.2, 0.5, 0.5, 0.5, 0.0)
+        batch = {
+            "remaining": 1,
+            "detections": [],
+            "frame_width": 1280,
+            "frame_height": 720,
+            "source_width": 256,
+            "source_height": 256,
+        }
+        landmark_packet = MagicMock()
+        landmark_packet.getTensor.side_effect = lambda name: {
+            "Identity_1": np.array([[0.93]], dtype=np.float32),
+            "Identity_3_dense/BiasAdd/Add": np.tile(
+                [0.5, 0.5, 0.0], (1, 21, 1)
+            ).reshape(1, 63),
+        }[name]
+        landmark_packet.getTransformation.return_value = None
+        node.hand_decoder_queue = MagicMock()
+        node.hand_decoder_queue.tryGet.return_value = None
+        node.hand_landmark_queue = MagicMock()
+        node.hand_landmark_queue.tryGet.return_value = landmark_packet
+        node.hand_landmark_input_size = 224
+        node.current_frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+        node.hand_source_size = (256, 256)
+        node._pending_hand_decoder_packet = None
+        node._pending_hands = deque([(palm, batch)])
+        node._publish_hand_detections = MagicMock()
+
+        node._process_hand_tracking()
+
+        node._publish_hand_detections.assert_called_once()
+        detections = node._publish_hand_detections.call_args.args[2]
+        self.assertEqual(len(detections), 1)
+        self.assertEqual(detections[0].label, "hand")
+        self.assertAlmostEqual(detections[0].score, 0.88)
+        self.assertEqual(len(detections[0].keypoint_x), 21)
+        self.assertEqual(len(detections[0].keypoint_y), 21)
 
     def test_counter_log_contains_all_raw_stages_and_last_flowing_stage(self):
         node = self._make_node()
