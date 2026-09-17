@@ -34,7 +34,6 @@ from .pipeline_manager import PipelineManager
 from .hand_tracking import (
     HAND_KEYPOINT_NAMES,
     LANDMARK_SCORE_LAYER,
-    LANDMARK_SCORE_THRESHOLD,
     LANDMARK_VALUE_COUNT,
     LANDMARK_XYZ_LAYERS,
     MANIP_CROP_INSET_PIXELS,
@@ -468,6 +467,20 @@ class CameraNode(Node):
         except Exception:
             return []
 
+    def _hand_landmark_score(self, packet):
+        """Report the landmark presence score without letting it drop a result.
+
+        This blob emits ``Identity_1`` unactivated, so a hand that fills the
+        crop reads about 0.018 and every candidate fails any threshold placed on
+        it.  The score is therefore only logged, and a head that is missing or
+        malformed leaves the landmarks themselves to decide the outcome.
+        """
+        try:
+            tensor = self._nn_layer(packet, LANDMARK_SCORE_LAYER)
+            return tensor, landmark_score(tensor)
+        except Exception:
+            return np.zeros(0, dtype=np.float32), float("nan")
+
     def _hand_landmark_tensor(self, packet):
         """Return the first landmark head that actually carries 21 XYZ triples.
 
@@ -800,12 +813,11 @@ class CameraNode(Node):
             )
             return
 
-        score_tensor = self._nn_layer(packet, LANDMARK_SCORE_LAYER)
-        score = landmark_score(score_tensor)
+        score_tensor, score = self._hand_landmark_score(packet)
         layer_name, landmarks_tensor, layer_probe = self._hand_landmark_tensor(packet)
         batch["landmark_layer"] = layer_name
 
-        if score < LANDMARK_SCORE_THRESHOLD:
+        if layer_name is None:
             self._log_landmark_fingerprint(
                 packet,
                 score_tensor,
@@ -814,11 +826,6 @@ class CameraNode(Node):
                 layer_name,
                 layer_probe,
             )
-            reason = f"low landmark score {score:.9g} < {LANDMARK_SCORE_THRESHOLD}"
-            self._drop_landmark_result(batch, "score", reason)
-            return
-
-        if layer_name is None:
             reason = (
                 f"no landmark layer carries {LANDMARK_VALUE_COUNT} values; "
                 f"probe={list(layer_probe)}"
