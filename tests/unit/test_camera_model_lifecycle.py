@@ -181,6 +181,50 @@ class TestModelRegistry(unittest.TestCase):
             self.assertEqual(model.blob_path, str(store_path / "demo/demo.blob"))
             self.assertTrue(model.available)
 
+    def test_non_functional_model_stays_listed_with_reason(self):
+        logger = MagicMock()
+        with tempfile.TemporaryDirectory() as store:
+            store_path = Path(store)
+            (store_path / "demo").mkdir()
+            (store_path / "demo/demo.blob").write_bytes(b"blob")
+            manifest = _manifest()
+            manifest["models"][0].update(
+                {
+                    "functional": False,
+                    "unavailable_reason": "multi-input pipeline is not implemented",
+                }
+            )
+            (store_path / "manifest.yaml").write_text(
+                yaml.safe_dump(manifest), encoding="utf-8"
+            )
+
+            registry = ModelRegistry(store_path, logger=logger)
+            model = registry.get("demo")
+            manager = PipelineManager(
+                registry,
+                lambda models: True,
+                lambda timeout: True,
+                lambda: True,
+            )
+
+        self.assertEqual(len(registry), 1)
+        self.assertFalse(model.available)
+        self.assertEqual(
+            model.unavailable_reason, "multi-input pipeline is not implemented"
+        )
+        self.assertEqual(
+            manager.start("demo", 0, "ui"),
+            (
+                False,
+                "Model is unavailable: demo: multi-input pipeline is not implemented",
+            ),
+        )
+        self.assertEqual(
+            manager.status("demo")["message"],
+            "multi-input pipeline is not implemented",
+        )
+        logger.warning.assert_called_once()
+
     def test_missing_manifest_warns_once_and_returns_empty_registry(self):
         logger = MagicMock()
         with tempfile.TemporaryDirectory() as store:

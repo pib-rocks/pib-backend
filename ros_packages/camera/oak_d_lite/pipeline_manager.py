@@ -57,7 +57,10 @@ class PipelineManager:
         self._clock = clock
         self._lock = threading.RLock()
         self._runtime: Dict[str, ModelRuntime] = {
-            model.model_id: ModelRuntime(shaves=model.shaves)
+            model.model_id: ModelRuntime(
+                shaves=model.shaves,
+                message=model.unavailable_reason if not model.available else "",
+            )
             for model in registry.models()
         }
 
@@ -129,7 +132,10 @@ class PipelineManager:
             if model is None:
                 return False, f"Unknown model: {model_id}"
             if not model.available:
-                return False, f"Model artefact is unavailable: {model_id}"
+                detail = (
+                    f": {model.unavailable_reason}" if model.unavailable_reason else ""
+                )
+                return False, f"Model is unavailable: {model_id}{detail}"
             owner = owner.strip()
             if not owner:
                 return False, "owner must not be empty"

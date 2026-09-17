@@ -147,7 +147,9 @@ models:
   format: blob
   openvino_version: '2022.1'
   zoo_type: intel
-  notes: 'Not in the DepthAI zoo. Multi-input: left_eye_image and right_eye_image are each NCHW 1x3x60x60; head_pose_angles is 1x3 (yaw, pitch, roll). Compile via blobconverter.from_zoo(..., zoo_type=''intel''). Default ''-ip U8'' applies to image inputs.'
+  functional: false
+  unavailable_reason: S11 measured no packet flow (0 FPS, 0 messages); the model requires two eye images and a head-pose vector, which the generic single-input camera pipeline cannot supply
+  notes: 'Not in the DepthAI zoo. Multi-input: left_eye_image and right_eye_image are each NCHW 1x3x60x60; head_pose_angles is 1x3 (yaw, pitch, roll). Compile via blobconverter.from_zoo(..., zoo_type=''intel''). Default ''-ip U8'' applies to image inputs. The 4-SHAVE value records how this blob was compiled; runtime flow at that allocation is unconfirmed.'
 - model_id: head-pose-estimation-adas-0001
   task: head_pose_estimation
   source_upstream: openvinotoolkit/open_model_zoo
