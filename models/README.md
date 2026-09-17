@@ -1,8 +1,8 @@
 # Vendored OAK / RVC2 model blobs (PR-1693 S1)
 
 This directory is the on-device model registry: one folder per `model_id`, a
-`.blob` compiled for Myriad-X (OpenVINO compile_tool, 4 SHAVE), plus
-`manifest.yaml`.
+`.blob` compiled for Myriad-X with its manifest-declared per-network SHAVE
+count, plus `manifest.yaml`.
 
 ## Where the artefacts come from
 
@@ -117,3 +117,64 @@ python3 models/verify_models.py
 
 The script needs no third-party packages. It exits non-zero if a listed
 file is missing or the SHA-256 does not match.
+
+## Add and vend a model
+
+Models are immutable, repository-vendored runtime inputs. The robot does not
+download or compile a model. Add a new single-network model as follows:
+
+1. Confirm the upstream source and licence, then compile the IR for Myriad-X
+   with the network's chosen OpenVINO version and SHAVE count.
+2. Create `models/<model_id>/` and copy exactly one blob to
+   `models/<model_id>/<model_id>.blob`.
+3. Add the blob entry to `manifest.yaml`. Do not silently change an existing
+   network's `shaves`: the value is part of the compiled blob and a mismatched
+   `/start_model` request is rejected.
+4. Calculate the recorded values:
+
+   ```bash
+   sha256sum models/<model_id>/<model_id>.blob
+   stat --printf='%s\n' models/<model_id>/<model_id>.blob
+   ```
+
+5. Run `python3 models/verify_models.py`, provision the host store with
+   `./setup/setup-pib.sh --models`, and confirm it with
+   `./setup/setup-pib.sh --verify-models`.
+6. Restart `ros-camera`, call `/list_models`, and start the model with
+   `shaves=0` (registry default). Verify `/models_status` and the model's typed
+   detection topic before adding a consumer.
+
+Every blob entry requires:
+
+| Field | Meaning |
+| --- | --- |
+| `model_id` | Stable service/API identifier and directory name |
+| `task` | Machine-readable task category |
+| `source_upstream`, `source_url` | Provenance for the original model |
+| `licence` | Upstream licence, or `unknown - see source` |
+| `file` | Path below `models/`; normally `<model_id>/<model_id>.blob` |
+| `sha256`, `size_bytes` | Provisioning integrity values |
+| `shaves` | SHAVEs used when compiling this exact network |
+| `input_width`, `input_height` | Network input dimensions |
+| `format` | `blob` |
+| `openvino_version` | Version used by the compiler |
+| `zoo_type` | BlobConverter source (`depthai` or `intel`) when applicable |
+| `notes` | Input names/layout, colour/range, outputs, and exceptions |
+
+An executable composite model has no blob of its own. Give it `model_id`,
+`task`, `composite: true`, an ordered `artifacts` list containing blob entry
+IDs, and `publish_topic`. All artifacts must be present. Its displayed size and
+SHAVE budget are the sums of its networks; each artifact keeps its own measured
+`shaves` value. `hand_tracking` is the reference composite.
+
+The provisioned host layout mirrors the repository:
+
+```text
+${PIB_MODEL_STORE:-/home/pib/app/pib-models}/
+├── manifest.yaml
+└── <model_id>/
+    └── <model_id>.blob
+```
+
+Docker mounts that directory read-only at `/models`. Provision it before
+starting containers so Docker does not create a root-owned bind-mount source.

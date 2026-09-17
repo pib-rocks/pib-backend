@@ -1,6 +1,7 @@
 """Device-free tests for hand decoder and landmark coordinate handling."""
 
 import math
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -10,6 +11,41 @@ from ros_packages.camera.oak_d_lite.hand_tracking import (
     decode_palm_result,
     map_landmarks_to_frame,
 )
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _message_fields(name):
+    path = REPO_ROOT / "ros_packages/datatypes/msg" / name
+    return [
+        line.split("#", 1)[0].strip()
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.split("#", 1)[0].strip()
+    ]
+
+
+def test_detection_messages_preserve_pixel_and_depth_contract():
+    assert _message_fields("Detection.msg") == [
+        "string label",
+        "float32 score",
+        "int32 x_min",
+        "int32 y_min",
+        "int32 x_max",
+        "int32 y_max",
+        "string[] keypoint_names",
+        "float32[] keypoint_x",
+        "float32[] keypoint_y",
+        "float32[] keypoint_z",
+        "string[] scalar_names",
+        "float32[] scalar_values",
+    ]
+    assert _message_fields("DetectionArray.msg") == [
+        "std_msgs/Header header",
+        "string model_id",
+        "uint32 frame_width",
+        "uint32 frame_height",
+        "Detection[] detections",
+    ]
 
 
 def test_decoder_maps_top10_record_and_bbox_to_full_frame():
