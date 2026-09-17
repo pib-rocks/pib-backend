@@ -10,6 +10,8 @@ from ros_packages.camera.oak_d_lite.hand_tracking import (
     PalmRegion,
     decode_palm_result,
     fit_manip_crop,
+    landmark_score,
+    landmark_xyz,
     map_landmarks_to_frame,
 )
 
@@ -122,6 +124,26 @@ def test_landmarks_reject_wrong_shape():
     palm = PalmRegion(0.9, 0.5, 0.5, 0.2, 0.5, 0.5, 0.4, 0.0)
     with pytest.raises(ValueError, match="exactly 63"):
         map_landmarks_to_frame(np.zeros(62), palm, 100, 100)
+
+
+def test_landmark_score_reads_batched_singleton():
+    assert landmark_score(np.array([[0.91]], dtype=np.float32)) == pytest.approx(0.91)
+
+
+def test_landmark_xyz_reads_batched_vector():
+    xyz = landmark_xyz(np.arange(63, dtype=np.float32).reshape(1, 63))
+
+    assert xyz.shape == (21, 3)
+    assert xyz[0].tolist() == [0.0, 1.0, 2.0]
+
+
+def test_normalized_landmarks_map_the_same_as_crop_pixels():
+    palm = PalmRegion(0.9, 0.5, 0.5, 0.2, 0.5, 0.5, 0.5, 0.0)
+    pixels = np.tile([112.0, 112.0, 0.0], (21, 1))
+    normalized = np.tile([0.5, 0.5, 0.0], (21, 1))
+
+    pixel_points = map_landmarks_to_frame(pixels, palm, 2104, 1560)
+    assert map_landmarks_to_frame(normalized, palm, 2104, 1560) == pixel_points
 
 
 def test_manip_crop_edges_stay_inside_the_measured_source():

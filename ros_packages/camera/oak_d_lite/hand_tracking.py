@@ -12,7 +12,10 @@ keypoints), and emits anchor-decoded normalized coordinates after NMS.
 The landmark network exposes normalized image landmarks in
 ``Identity_3_dense/BiasAdd/Add`` as 21 XYZ triples, with confidence in
 ``Identity_1``. The runtime node maps them back through the
-``NNData.getTransformation()`` attached by DepthAI.
+``NNData.getTransformation()`` attached by DepthAI, and falls back to
+the palm ROI when that transform is absent. Both ``(1, 1)`` scores and
+``(1, 63)`` landmark vectors are flattened before assembly into a
+``Detection``.
 """
 
 from dataclasses import dataclass
@@ -47,6 +50,10 @@ HAND_KEYPOINT_NAMES = (
 PALM_RESULT_COUNT = 10
 PALM_RESULT_WIDTH = 8
 LANDMARK_COUNT = 21
+LANDMARK_SCORE_THRESHOLD = 0.5
+# Crop-space XY in this blob is normalised to 0..1. Values above this are
+# treated as already being in landmark-input pixels (MediaPipe's 0..224).
+LANDMARK_NORMALIZED_PEAK = 1.5
 # Sub-pixel margin that keeps a derived crop strictly inside its source frame.
 MANIP_CROP_INSET_PIXELS = 0.5
 
@@ -213,6 +220,44 @@ def decode_palm_result(
     return palms
 
 
+def landmark_score(tensor: Iterable[float]) -> float:
+    """Read the landmark presence score, including a batched ``(1, 1)`` tensor."""
+    values = np.asarray(tensor, dtype=np.float32).reshape(-1)
+    if values.size != 1:
+        raise ValueError("landmark confidence must contain one value")
+    score = float(values[0])
+    if not math.isfinite(score):
+        raise ValueError("landmark confidence is not finite")
+    return score
+
+
+def landmark_xyz(tensor: Sequence[float]) -> np.ndarray:
+    """Return 21 XYZ triples from a landmark tensor, including ``(1, 63)``."""
+    values = np.asarray(tensor, dtype=np.float32)
+    if values.size == 0:
+        return np.zeros((0, 3), dtype=np.float32)
+    if values.size != LANDMARK_COUNT * 3:
+        raise ValueError("landmark result must contain exactly 63 values (21 x 3)")
+    values = values.reshape(LANDMARK_COUNT, 3)
+    if not np.all(np.isfinite(values)):
+        raise ValueError("landmark result contains non-finite values")
+    return values
+
+
+def landmarks_in_crop_pixels(
+    tensor: Sequence[float], landmark_input_size: int = 224
+) -> np.ndarray:
+    """Return crop-space XYZ with XY in landmark-input pixels."""
+    values = landmark_xyz(tensor)
+    if values.size == 0:
+        return values
+    peak = float(np.max(np.abs(values[:, :2])))
+    if peak <= LANDMARK_NORMALIZED_PEAK:
+        values = np.array(values, copy=True)
+        values[:, :2] *= float(landmark_input_size)
+    return values
+
+
 def map_landmarks_to_frame(
     tensor: Sequence[float],
     palm: PalmRegion,
@@ -223,14 +268,9 @@ def map_landmarks_to_frame(
     source_height: int = None,
 ) -> List[Tuple[float, float]]:
     """Map 21 crop-space XYZ triples to full-frame pixel XY coordinates."""
-    values = np.asarray(tensor, dtype=np.float32)
+    values = landmarks_in_crop_pixels(tensor, landmark_input_size)
     if values.size == 0:
         return []
-    if values.size != LANDMARK_COUNT * 3:
-        raise ValueError("landmark result must contain exactly 63 values (21 x 3)")
-    values = values.reshape(LANDMARK_COUNT, 3)
-    if not np.all(np.isfinite(values)):
-        raise ValueError("landmark result contains non-finite values")
 
     normalized = values[:, :2] / float(landmark_input_size)
     cos_rotation = math.cos(palm.rotation)
