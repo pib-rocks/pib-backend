@@ -25,7 +25,7 @@ ALLOWED_HARDWARE_VARIANTS = (
     "pib5museum",
     "pib5edu",
 )
-PROPERTY_SOURCES = frozenset({"default", "file", "environment", "migration"})
+PROPERTY_SOURCES = frozenset({"default", "file", "environment", "migration", "command"})
 
 
 @dataclass(frozen=True)

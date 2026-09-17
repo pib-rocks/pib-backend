@@ -6,8 +6,13 @@ silently seeding hardware for a different robot.
 """
 
 import logging
+import sqlite3
+from datetime import datetime, timezone
+from pathlib import Path
 
+import click
 from sqlalchemy import inspect
+from sqlalchemy.engine import URL, make_url
 
 from app.app import db, app
 from model.assistant_model import AssistantModel
@@ -22,10 +27,12 @@ from model.pose_model import Pose
 from model.motor_position_model import MotorPosition
 from seed_profiles import (
     HardwareProfile,
+    UnknownHardwareVariantError,
     get_profile,
     resolve_variant_and_source,
 )
 from service.system_property_service import (
+    ALLOWED_HARDWARE_VARIANTS,
     HARDWARE_VARIANT_KEY,
     SOFTWARE_VERSION_KEY,
     get_property,
@@ -63,6 +70,272 @@ def seed_db() -> None:
     set_property(HARDWARE_VARIANT_KEY, variant, source)
     db.session.commit()
     print("Seeded the database with default data.")
+
+
+@app.cli.command("seed_hardware")
+@click.option(
+    "--variant",
+    required=True,
+    type=click.Choice(ALLOWED_HARDWARE_VARIANTS, case_sensitive=True),
+)
+@click.option("--force", is_flag=True)
+def seed_hardware(variant: str, force: bool) -> None:
+    """Deliberately replace the hardware layout on an existing machine."""
+    try:
+        profile = get_profile(variant)
+    except UnknownHardwareVariantError as error:
+        raise click.ClickException(str(error)) from error
+
+    if not force:
+        raise click.ClickException(
+            "Refusing to rebuild hardware without --force. No changes were made."
+        )
+
+    # refuse a database that cannot be backed up before asking the operator to confirm
+    _file_backed_sqlite_url()
+
+    try:
+        confirmation = input(
+            f"Type the hardware variant name {variant!r} exactly to continue: "
+        )
+    except EOFError:
+        confirmation = ""
+    if confirmation != variant:
+        raise click.ClickException("Confirmation did not match. No changes were made.")
+
+    backup_path = _backup_sqlite_database()
+    click.echo(f"Database backup: {backup_path}")
+
+    protected_before = _protected_counts()
+    try:
+        controller_stats = _upsert_controllers(profile)
+        motor_stats, warnings = _upsert_motors(profile)
+        _rebuild_button_programs(profile)
+        _delete_obsolete_controllers(profile, controller_stats)
+        set_property(HARDWARE_VARIANT_KEY, variant, "command")
+
+        protected_after = _protected_counts()
+        orphaned_motor_names = _orphaned_motor_position_names()
+        if orphaned_motor_names:
+            warnings.append(
+                "motor_position rows reference missing motors: "
+                + ", ".join(orphaned_motor_names)
+            )
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        raise
+
+    for warning in warnings:
+        click.echo(f"WARNING: {warning}")
+    click.echo(f"Hardware variant: {variant}")
+    click.echo(f"Profile: {profile.description}")
+    click.echo(
+        "Controllers: "
+        f"{controller_stats['created']} created, "
+        f"{controller_stats['updated']} updated, "
+        f"{controller_stats['deleted']} deleted"
+    )
+    click.echo(
+        "Motors: "
+        f"{motor_stats['created']} created, "
+        f"{motor_stats['updated']} updated, "
+        f"{motor_stats['deleted']} deleted"
+    )
+    click.echo(f"Backup: {backup_path}")
+    click.echo(
+        "Protected counts unchanged: "
+        + ", ".join(
+            f"{name}={'yes' if protected_before[name] == protected_after[name] else 'NO'}"
+            for name in protected_before
+        )
+    )
+
+
+def _file_backed_sqlite_url(database_url: URL | None = None) -> URL:
+    """Return the URL of the SQLite database this command will modify.
+
+    The path is taken from the engine that is actually in use instead of the configured URL: the two
+    can diverge and the backup has to copy the database that is really about to change.
+    """
+    url = make_url(str(db.engine.url)) if database_url is None else database_url
+    if url.get_backend_name() != "sqlite":
+        raise click.ClickException(
+            "seed_hardware requires a file-backed SQLite database; "
+            f"configured URL uses {url.get_backend_name()!r}."
+        )
+    if not url.database or url.database == ":memory:":
+        raise click.ClickException(
+            "seed_hardware requires a file-backed SQLite database; "
+            "in-memory SQLite cannot be backed up."
+        )
+    return url
+
+
+def _backup_sqlite_database(database_url: URL | None = None) -> Path:
+    database_url = _file_backed_sqlite_url(database_url)
+
+    database_path = Path(database_url.database).expanduser().resolve()
+    if not database_path.is_file():
+        raise click.ClickException(
+            f"SQLite database file does not exist: {database_path}"
+        )
+
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    backup_path = Path(f"{database_path}.bak-{timestamp}")
+    try:
+        with (
+            sqlite3.connect(database_path) as source,
+            sqlite3.connect(backup_path) as destination,
+        ):
+            source.backup(destination)
+    except (OSError, sqlite3.Error) as error:
+        backup_path.unlink(missing_ok=True)
+        raise click.ClickException(
+            f"Could not back up SQLite database: {error}"
+        ) from error
+    return backup_path
+
+
+def _protected_counts() -> dict[str, int]:
+    return {
+        "pose": Pose.query.count(),
+        "program": Program.query.count(),
+        "chat": Chat.query.count(),
+    }
+
+
+def _upsert_controllers(profile: HardwareProfile) -> dict[str, int]:
+    stats = {"created": 0, "updated": 0, "deleted": 0}
+    for entry in profile.controllers:
+        controller = Controller.query.filter_by(number=entry.number).one_or_none()
+        if controller is None:
+            controller = Controller(
+                number=entry.number,
+                kind=entry.kind,
+                device_type=entry.device_type,
+                supply_voltage=entry.supply_voltage,
+                address=entry.address,
+            )
+            db.session.add(controller)
+            stats["created"] += 1
+        else:
+            controller.kind = entry.kind
+            controller.device_type = entry.device_type
+            controller.supply_voltage = entry.supply_voltage
+            stats["updated"] += 1
+    db.session.flush()
+    return stats
+
+
+def _upsert_motors(
+    profile: HardwareProfile,
+) -> tuple[dict[str, int], list[str]]:
+    stats = {"created": 0, "updated": 0, "deleted": 0}
+    warnings: list[str] = []
+    controllers = {
+        controller.number: controller
+        for controller in Controller.query.filter(
+            Controller.number.in_(
+                {number for number, _channel in profile.motor_mapping.values()}
+            )
+        ).all()
+    }
+
+    for motor_name, (controller_number, channel) in profile.motor_mapping.items():
+        motor = Motor.query.filter_by(name=motor_name).one_or_none()
+        if motor is None:
+            settings = dict(profile.motor_parameter_defaults)
+            settings.update(profile.motor_parameter_deviations.get(motor_name, {}))
+            motor = Motor(name=motor_name, **settings)
+            db.session.add(motor)
+            stats["created"] += 1
+        else:
+            stats["updated"] += 1
+        motor.controller = controllers[controller_number]
+        motor.channel = channel
+
+    obsolete_motors = Motor.query.filter(
+        ~Motor.name.in_(tuple(profile.motor_mapping))
+    ).all()
+    obsolete_names = [motor.name for motor in obsolete_motors]
+    if obsolete_names:
+        referenced_names = [
+            name
+            for (name,) in db.session.query(MotorPosition.motor_name)
+            .filter(MotorPosition.motor_name.in_(obsolete_names))
+            .distinct()
+            .order_by(MotorPosition.motor_name)
+            .all()
+        ]
+        if referenced_names:
+            warnings.append(
+                "deleting motors still referenced by pose positions: "
+                + ", ".join(referenced_names)
+            )
+        for motor in obsolete_motors:
+            db.session.delete(motor)
+        stats["deleted"] = len(obsolete_motors)
+
+    db.session.flush()
+    return stats, warnings
+
+
+def _rebuild_button_programs(profile: HardwareProfile) -> None:
+    ButtonProgram.query.delete(synchronize_session=False)
+    db.session.flush()
+
+    program = Program.query.filter_by(name="toggle_cerebra_fullscreen").first()
+    program_id = program.id if program else None
+    controllers = {
+        controller.number: controller
+        for controller in Controller.query.filter(
+            Controller.number.in_(profile.rgb_button_controller_ids)
+        ).all()
+    }
+    first, second, third = profile.rgb_button_controller_ids
+    db.session.add_all(
+        [
+            ButtonProgram(controller_id=controllers[first].id, program_id=None),
+            ButtonProgram(controller_id=controllers[second].id, program_id=None),
+            ButtonProgram(controller_id=controllers[third].id, program_id=program_id),
+        ]
+    )
+    db.session.flush()
+
+
+def _delete_obsolete_controllers(
+    profile: HardwareProfile, stats: dict[str, int]
+) -> None:
+    profile_numbers = tuple(controller.number for controller in profile.controllers)
+    obsolete_controllers = Controller.query.filter(
+        ~Controller.number.in_(profile_numbers)
+    ).all()
+    for controller in obsolete_controllers:
+        motor_count = Motor.query.filter_by(controller_id=controller.id).count()
+        button_count = ButtonProgram.query.filter_by(
+            controller_id=controller.id
+        ).count()
+        if motor_count or button_count:
+            raise RuntimeError(
+                f"Cannot delete obsolete controller {controller.number}: "
+                "it is still referenced."
+            )
+        db.session.delete(controller)
+    stats["deleted"] = len(obsolete_controllers)
+    db.session.flush()
+
+
+def _orphaned_motor_position_names() -> list[str]:
+    return [
+        name
+        for (name,) in db.session.query(MotorPosition.motor_name)
+        .outerjoin(Motor, Motor.name == MotorPosition.motor_name)
+        .filter(Motor.id.is_(None))
+        .distinct()
+        .order_by(MotorPosition.motor_name)
+        .all()
+    ]
 
 
 @app.cli.command("reconcile_system_properties")
