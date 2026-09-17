@@ -7,6 +7,7 @@ import {
 
 type MockGenerator = typeof pythonGenerator & {
   definitions_: Record<string, string>;
+  provideFunction_: (name: string, code: string) => string;
   valueToCode: (
     block: Block,
     name: string,
@@ -18,6 +19,10 @@ function createMockGenerator(colorCode = "item"): MockGenerator {
   const definitions: Record<string, string> = {};
   const generator = Object.create(pythonGenerator) as MockGenerator;
   generator.definitions_ = definitions;
+  generator.provideFunction_ = (name: string, code: string) => {
+    definitions[`FN_${name}`] = code;
+    return name;
+  };
   generator.valueToCode = (_block, name, _order) => {
     if (name === "COLOR") return colorCode;
     return "";
@@ -38,10 +43,13 @@ describe("tf_button_set_color_from_var generator", () => {
     const code = tf_button_set_color_from_var(block, generator);
 
     expect(code).toBe(
-      "blockly_client.set_button_color(2, int(item[1:3], 16), int(item[3:5], 16), int(item[5:7], 16))\n",
+      "tf_button_set_color(2, int(item[1:3], 16), int(item[3:5], 16), int(item[5:7], 16))\n",
     );
     expect(Object.values(generator.definitions_).join("\n")).toContain(
       "blockly_client",
+    );
+    expect(Object.values(generator.definitions_).join("\n")).toContain(
+      "logging.info",
     );
   });
 });
@@ -59,6 +67,9 @@ describe("tf_button_set_color generator", () => {
 
     const code = tf_button_set_color(block, generator);
 
-    expect(code).toBe("blockly_client.set_button_color(1, 255, 0, 0)\n");
+    expect(code).toBe("tf_button_set_color(1, 255, 0, 0)\n");
+    expect(Object.values(generator.definitions_).join("\n")).toContain(
+      "logging.info",
+    );
   });
 });
