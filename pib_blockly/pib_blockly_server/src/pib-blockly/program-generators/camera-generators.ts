@@ -31,8 +31,12 @@ export function camera_get_distance_at_px(
     block: Block,
     generator: typeof pythonGenerator,
 ): [string, Order] {
-    const xInput = String(generator.valueToCode(block, "X", Order.ATOMIC) || "0");
-    const yInput = String(generator.valueToCode(block, "Y", Order.ATOMIC) || "0");
+    const xInput = String(
+        generator.valueToCode(block, "X", Order.ATOMIC) || "0",
+    );
+    const yInput = String(
+        generator.valueToCode(block, "Y", Order.ATOMIC) || "0",
+    );
 
     addCameraDefinitions(generator);
 
