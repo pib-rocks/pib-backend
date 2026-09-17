@@ -70,6 +70,7 @@ def app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("SQLALCHEMY_DATABASE_URI", f"sqlite:///{db_file}")
     monkeypatch.setenv("PYTHON_CODE_DIR", str(programs_dir))
     monkeypatch.setenv("HOST_IP_FILE", str(host_ip_file))
+    monkeypatch.setenv("PIB_HARDWARE_VARIANT", "pib5edu")
     # Keep SOUL materialization inside the test sandbox instead of the robot's
     # real, container-shared profiles directory.
     monkeypatch.setenv("PIB_HERMES_PROFILES_DIR", str(tmp_path / "hermes-profiles"))

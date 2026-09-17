@@ -35,8 +35,10 @@ services:
       - MARIMO_NOTEBOOKS_DIR=/home/pib/programs/notebooks
       - PIB_HERMES_PROFILES_DIR=/home/pib/.hermes/profiles
       - PIB_HERMES_DAEMON_URL=http://ros-voice-assistant:8088
+      - PIB_HARDWARE_VARIANT=${PIB_HARDWARE_VARIANT:-}
     volumes:
       - ./pib_api/flask/:/app
+      - /etc/pib_hardware_variant:/etc/pib_hardware_variant:ro
       - programs:/root/cerebra_programs
       - /home/pib/programs/notebooks:/home/pib/programs/notebooks
       # A personality's SOUL.md must land on the host, at the same path the

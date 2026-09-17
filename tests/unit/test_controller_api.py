@@ -72,10 +72,11 @@ def test_pib5edu_device_types_do_not_depend_on_controller_number(app):
 
 
 def test_motor_endpoint_uses_controller_and_channel(app):
+    # the default profile is pib5edu: elbow_left sits on the fourth servo bricklet
     with app.test_client() as client:
         motor = client.get("/motor/elbow_left").get_json()
-        assert motor["controller"]["number"] == 3
-        assert motor["channel"] == 8
+        assert motor["controller"]["number"] == 4
+        assert motor["channel"] == 2
         assert "brickletPins" not in motor
 
         motor["currentLimit"] = 1.5

@@ -10,7 +10,7 @@ from service import hardware_config_service as hcs
 
 @pytest.fixture()
 def seeded(app_ctx):
-    assert Controller.query.count() == 7
+    assert Controller.query.count() == 8
     assert Motor.query.count() >= 1
 
 
@@ -41,8 +41,8 @@ def test_v2_roundtrip_preserves_controllers_mappings_and_limits(seeded):
     elbow_dto = next(
         item for item in restored["motors"] if item["name"] == "elbow_left"
     )
-    assert elbow_dto["controllerNumber"] == 3
-    assert elbow_dto["channel"] == 8
+    assert elbow_dto["controllerNumber"] == 4
+    assert elbow_dto["channel"] == 2
     assert elbow_dto["currentLimit"] == 1.25
     assert elbow_dto["torqueLimit"] == 2.5
 
