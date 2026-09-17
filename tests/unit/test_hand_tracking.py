@@ -7,13 +7,10 @@ import numpy as np
 import pytest
 
 from ros_packages.camera.oak_d_lite.hand_tracking import (
-    MANIP_MAX_DOWNSCALE_PER_STAGE,
     PalmRegion,
     decode_palm_result,
     fit_manip_crop,
-    manip_downscale_factor,
     map_landmarks_to_frame,
-    plan_manip_stages,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -128,7 +125,6 @@ def test_landmarks_reject_wrong_shape():
 
 
 def test_manip_crop_edges_stay_inside_the_measured_source():
-    # A source the warp budget does not bind keeps the full inset crop.
     crop = fit_manip_crop(200, 150, 128, 128)
 
     assert (crop.output_width, crop.output_height) == (128, 128)
@@ -139,17 +135,13 @@ def test_manip_crop_edges_stay_inside_the_measured_source():
     assert (crop.center_y + crop.height / 2.0) * 150 == pytest.approx(149.5)
 
 
-def test_manip_crop_stays_within_the_warp_cache_budget():
+def test_manip_crop_preserves_the_full_measured_source():
     crop = fit_manip_crop(640, 480, 128, 128)
 
     crop_width = crop.width * 640
     crop_height = crop.height * 480
-    assert crop_width == pytest.approx(MANIP_MAX_DOWNSCALE_PER_STAGE * 128)
-    assert crop_height == pytest.approx(MANIP_MAX_DOWNSCALE_PER_STAGE * 128)
-    assert manip_downscale_factor(crop_width, crop_height, 128, 128) == pytest.approx(
-        MANIP_MAX_DOWNSCALE_PER_STAGE
-    )
-    # A budgeted crop is centred, so it is still strictly inside the source.
+    assert crop_width == pytest.approx(639.0)
+    assert crop_height == pytest.approx(479.0)
     assert crop.center_x - crop.width / 2.0 > 0.0
     assert crop.center_y + crop.height / 2.0 < 1.0
 
@@ -157,8 +149,8 @@ def test_manip_crop_stays_within_the_warp_cache_budget():
 def test_manip_crop_follows_a_changed_branch_size():
     crop = fit_manip_crop(1280, 720, 224, 224)
 
-    assert crop.width * 1280 == pytest.approx(MANIP_MAX_DOWNSCALE_PER_STAGE * 224)
-    assert crop.height * 720 == pytest.approx(MANIP_MAX_DOWNSCALE_PER_STAGE * 224)
+    assert crop.width * 1280 == pytest.approx(1279.0)
+    assert crop.height * 720 == pytest.approx(719.0)
     assert (crop.output_width, crop.output_height) == (224, 224)
 
 
@@ -177,38 +169,3 @@ def test_manip_crop_rejects_degenerate_dimensions():
         fit_manip_crop(0, 480, 128, 128)
     with pytest.raises(ValueError, match="output must have positive"):
         fit_manip_crop(640, 480, 128, 0)
-
-
-def test_manip_stages_split_a_steep_downscale():
-    stages = plan_manip_stages(640, 480, 128, 128)
-
-    assert stages == [(320, 240), (160, 120), (128, 128)]
-    source = (640, 480)
-    for stage in stages:
-        assert (
-            manip_downscale_factor(source[0], source[1], stage[0], stage[1])
-            <= MANIP_MAX_DOWNSCALE_PER_STAGE
-        )
-        source = stage
-
-
-def test_manip_stages_keep_the_source_aspect_until_the_final_stage():
-    stages = plan_manip_stages(1280, 720, 128, 128)
-
-    assert stages[-1] == (128, 128)
-    for stage_width, stage_height in stages[:-1]:
-        assert stage_width / stage_height == pytest.approx(1280 / 720)
-
-
-def test_manip_stages_stay_single_when_the_budget_allows():
-    assert plan_manip_stages(320, 240, 224, 224) == [(224, 224)]
-    assert plan_manip_stages(64, 48, 224, 224) == [(224, 224)]
-
-
-def test_manip_stages_reject_degenerate_arguments():
-    with pytest.raises(ValueError, match="source must have positive"):
-        plan_manip_stages(0, 480, 128, 128)
-    with pytest.raises(ValueError, match="output must have positive"):
-        plan_manip_stages(640, 480, 128, 0)
-    with pytest.raises(ValueError, match="budget must exceed"):
-        plan_manip_stages(640, 480, 128, 128, max_downscale=1.0)
