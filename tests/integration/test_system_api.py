@@ -1,3 +1,4 @@
+import logging
 from urllib.parse import urlsplit
 
 import pytest
@@ -93,15 +94,29 @@ def test_properties_shape_v1_mirror_and_registry_filter(app, client):
 )
 @pytest.mark.parametrize("method", ["PUT", "POST"])
 def test_system_fact_endpoints_are_read_only(client, path, method):
-    # There is no write endpoint. Werkzeug raises 405, but the global Exception handler of this
-    # app converts it into a 500 with a logged traceback (pre-existing behaviour, affects every
-    # route). What matters here is that the call never succeeds and never changes a stored fact.
     before = client.get("/system/properties").get_json()["properties"]
 
     response = client.open(path, method=method, json={})
 
-    assert response.status_code >= 400
+    assert response.status_code == 405
+    assert "GET" in response.headers["Allow"]
     assert client.get("/system/properties").get_json()["properties"] == before
+
+
+def test_long_standing_route_rejects_unsupported_method(client):
+    response = client.put("/motor")
+
+    assert response.status_code == 405
+    assert "GET" in response.headers["Allow"]
+
+
+def test_method_not_allowed_is_logged_without_traceback(client, caplog):
+    with caplog.at_level(logging.ERROR):
+        response = client.put("/system/properties", json={})
+
+    assert response.status_code == 405
+    assert "Traceback" not in caplog.text
+    assert len(caplog.records) == 1
 
 
 def test_diagnostics_contains_hardware_variant(client):
