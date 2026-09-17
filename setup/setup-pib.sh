@@ -11,11 +11,9 @@ export NEW_LINE="\n"
 # Github repositories
 export FRONTEND="https://github.com/pib-rocks/cerebra.git"
 export BACKEND="https://github.com/pib-rocks/pib-backend.git"
-export IMITATION="https://github.com/pib-rocks/imitation.git"
 export APP_DIR="$HOME/app"
 export BACKEND_DIR="$APP_DIR/pib-backend"
 export FRONTEND_DIR="$APP_DIR/cerebra"
-export IMITATION_DIR="$HOME/imitation"
 export SETUP_INSTALLATION_DIR="$BACKEND_DIR/setup/installation_scripts"
 
 # Function to support printing consistent log messages
@@ -278,35 +276,6 @@ function install_pib_python_packages() {
   pip install --break-system-packages -e "$BACKEND_DIR/pib_mcp_server" \
     || print WARN "failed to install pib_mcp_server"
   print SUCCESS "Installed pib Python packages system-wide"
-}
-
-
-# Clone the imitation project into the home directory and set up its virtual environment
-function install_imitation() {
-  if ! command_exists git; then
-    print ERROR "git not found"
-    return 1
-  fi
-
-  print INFO "Cloning imitation project to $IMITATION_DIR"
-  git clone "$IMITATION" "$IMITATION_DIR" || print WARN "imitation repository already exists"
-
-  # venv tooling is not guaranteed to be present on a fresh system
-  sudo apt-get install -y python3-venv python3-pip
-
-  # Create the venv with access to the system ROS packages (rclpy, datatypes,
-  # trajectory_msgs) which are provided by the ROS overlay, not pip.
-  python3 -m venv --system-site-packages "$IMITATION_DIR/.venv" \
-    || { print ERROR "failed to create imitation virtual environment"; return 1; }
-
-  "$IMITATION_DIR/.venv/bin/pip" install --upgrade pip
-  "$IMITATION_DIR/.venv/bin/pip" install -r "$IMITATION_DIR/requirements.txt" \
-    || { print ERROR "failed to install imitation requirements"; return 1; }
-
-  # The imitation script drives the OAK camera via depthai, which needs udev rules.
-  install_depthai_udev_rules || print WARN "failed to install depthai udev rules"
-
-  print SUCCESS "Installed imitation project and its virtual environment"
 }
 
 
@@ -898,7 +867,8 @@ install_pib_python_packages || print ERROR "failed to install pib Python package
 # Before docker-compose starts: hermes must exist on the host so the
 # ros-voice-assistant / flask-app bind mounts resolve to real paths.
 install_hermes_cli || print ERROR "failed to install Hermes CLI"
-install_imitation || print ERROR "failed to install imitation project"
+# The legacy ~/imitation host script is retired. ros_packages/imitation consumes
+# the camera owner's typed topic and must never run beside another OAK device owner.
 if is_supported_raspbian && [ "$DIST_VERSION" = "trixie" ]; then
   source "$SETUP_INSTALLATION_DIR/ros_jazzy_install.sh" || { print ERROR "failed to install ROS 2 Jazzy"; return 1; }
 fi
