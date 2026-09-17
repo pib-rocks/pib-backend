@@ -1,3 +1,4 @@
+import logging
 from typing import Any
 from pib_motors.actuator import Actuator, ServoBrickletActuator, create_actuator
 from pib_api_client import motor_client
@@ -113,18 +114,25 @@ if not successful:
 motors: list[Motor] = []
 for motor_dto in response["motors"]:
     controller_dto = motor_dto.get("controller")
-    actuators = (
-        [
-            create_actuator(
-                ServoBrickletActuator.kind,
-                motor_dto["channel"],
-                controller_dto["address"],
-                motor_dto["invert"],
+    actuators: list[Actuator] = []
+    if controller_dto and controller_dto["address"]:
+        kind = controller_dto["kind"]
+        try:
+            actuators.append(
+                create_actuator(
+                    kind,
+                    motor_dto["channel"],
+                    controller_dto["address"],
+                    motor_dto["invert"],
+                )
             )
-        ]
-        if controller_dto and controller_dto["address"]
-        else []
-    )
+        except ValueError as error:
+            # the database may carry an actuator family this build cannot drive yet:
+            # the motor stays without an actuator, the rest of the node keeps running
+            logging.error(
+                f"motor '{motor_dto['name']}' uses controller kind '{kind}', which is "
+                f"not supported in this build - motor stays without actuator: {error}"
+            )
     motors.append(Motor(motor_dto["name"], actuators, motor_dto["invert"]))
 
 # maps the name of a (multi-)motor to its associated motor objects

@@ -32,15 +32,19 @@ class MotorCurrent(Node):
 
         for motor in motor_list:
             for actuator in motor.actuators:
-                if actuator.is_connected() and actuator.bricklet is not None:
-                    key = (id(actuator.bricklet), actuator.pin)
+                # this monitoring is Tinkerforge-specific: actuators of other families
+                # carry no bricklet and are skipped here (a family-agnostic current
+                # monitoring is a later step)
+                bricklet = getattr(actuator, "bricklet", None)
+                if actuator.is_connected() and bricklet is not None:
+                    key = (id(bricklet), actuator.pin)
                     if key not in self.pin_to_motors:
                         self.pin_to_motors[key] = []
                     if motor.name not in self.pin_to_motors[key]:
                         self.pin_to_motors[key].append(motor.name)
 
-                    connected_bricklets.add(actuator.bricklet)
-                    self._configure_servo_current(actuator.bricklet, actuator.pin)
+                    connected_bricklets.add(bricklet)
+                    self._configure_servo_current(bricklet, actuator.pin)
 
         for bricklet in connected_bricklets:
             bricklet.register_callback(

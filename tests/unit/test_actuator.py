@@ -1,6 +1,7 @@
 """Unit tests for the actuator abstraction behind a motor (PR-1744)."""
 
 import importlib.util
+import logging
 import sys
 import types
 from pathlib import Path
@@ -275,29 +276,102 @@ def test_create_actuator_builds_a_tinkerforge_servo():
     assert actuator.bricklet is bricklet
 
 
+def _motor_dto(
+    kind: str = "tinkerforge_servo",
+    address: str = SERVO_UID,
+    name: str = "elbow",
+) -> dict[str, Any]:
+    """One motor as pib-api serves it since the generic controller (PR-1638)."""
+    return {
+        "name": name,
+        "invert": True,
+        "channel": 8,
+        "controller": {
+            "kind": kind,
+            "deviceType": "Servo Bricklet",
+            "address": address,
+            "number": 3,
+            "supplyVoltage": 7.5,
+        },
+    }
+
+
 def test_motor_dto_builds_actuator_from_controller_shape():
     bricklet = FakeServoBricklet()
     actuator_module = _load_actuator_module({SERVO_UID: bricklet})
-    module = _load_motor_module(
-        actuator_module,
-        [
-            {
-                "name": "elbow",
-                "invert": True,
-                "channel": 8,
-                "controller": {
-                    "kind": "tinkerforge_bricklet",
-                    "address": SERVO_UID,
-                    "number": 3,
-                    "supplyVoltage": 7.5,
-                },
-            }
-        ],
-    )
+    module = _load_motor_module(actuator_module, [_motor_dto()])
 
     assert module.motors[0].actuators[0].pin == 8
     assert module.motors[0].actuators[0].bricklet is bricklet
     assert module.motors[0].actuators[0].invert is True
+
+
+def test_motor_dto_kind_decides_which_actuator_family_is_built():
+    bricklet = FakeServoBricklet()
+    actuator_module = _load_actuator_module({SERVO_UID: bricklet})
+
+    with mock.patch.object(
+        actuator_module, "create_actuator", wraps=actuator_module.create_actuator
+    ) as create_actuator:
+        module = _load_motor_module(actuator_module, [_motor_dto()])
+
+    actuator = module.motors[0].actuators[0]
+    assert isinstance(actuator, actuator_module.ServoBrickletActuator)
+    # the kind is the one from the DTO, not one the factory call hardcoded
+    assert actuator.kind == "tinkerforge_servo"
+    create_actuator.assert_called_once_with("tinkerforge_servo", 8, SERVO_UID, True)
+
+
+def test_motor_with_a_kind_this_build_cannot_drive_is_left_without_an_actuator(caplog):
+    actuator_module = _load_actuator_module({SERVO_UID: FakeServoBricklet()})
+    dto = _motor_dto(
+        kind="feetech_st_serial", address="/dev/ttyUSB0", name="shoulder_vertical_left"
+    )
+
+    with (
+        mock.patch.object(
+            actuator_module, "create_actuator", wraps=actuator_module.create_actuator
+        ) as create_actuator,
+        caplog.at_level(logging.ERROR),
+    ):
+        module = _load_motor_module(actuator_module, [dto])
+
+    create_actuator.assert_called_once_with(
+        "feetech_st_serial", 8, "/dev/ttyUSB0", True
+    )
+    # the node keeps running, the motor simply commands nothing
+    assert module.motors[0].name == "shoulder_vertical_left"
+    assert module.motors[0].actuators == []
+    assert module.motors[0].set_position(1000) is False
+    assert "shoulder_vertical_left" in caplog.text
+    assert "feetech_st_serial" in caplog.text
+
+
+@pytest.mark.parametrize(
+    "controller_dto",
+    [None, {"kind": "tinkerforge_servo", "address": "", "number": 3}],
+    ids=["no-controller", "empty-address"],
+)
+def test_motor_without_a_usable_controller_gets_no_actuator(controller_dto):
+    actuator_module = _load_actuator_module({SERVO_UID: FakeServoBricklet()})
+
+    with mock.patch.object(
+        actuator_module, "create_actuator", wraps=actuator_module.create_actuator
+    ) as create_actuator:
+        module = _load_motor_module(
+            actuator_module,
+            [
+                {
+                    "name": "elbow",
+                    "invert": False,
+                    "channel": 8,
+                    "controller": controller_dto,
+                }
+            ],
+        )
+
+    assert module.motors[0].actuators == []
+    create_actuator.assert_not_called()
 
 
 def test_create_actuator_rejects_an_unknown_kind():
