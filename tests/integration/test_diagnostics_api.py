@@ -54,10 +54,11 @@ def test_servo_bricklet_live_telemetry_query():
     mock_pin.pin = 0
 
     mock_bricklet = MagicMock()
-    mock_bricklet.bricklet_number = 1
-    mock_bricklet.uid = "SERVO123"
-    mock_bricklet.type = "Servo Bricklet"
-    mock_bricklet.bricklet_pins = [mock_pin]
+    mock_bricklet.number = 1
+    mock_bricklet.address = "SERVO123"
+    mock_bricklet.kind = "tinkerforge_bricklet"
+    mock_bricklet.device_type = "Servo Bricklet"
+    mock_bricklet.motors = [MagicMock(channel=mock_pin.pin)]
 
     mock_ipcon_cls = MagicMock()
     mock_ipcon_inst = MagicMock()
@@ -72,7 +73,8 @@ def test_servo_bricklet_live_telemetry_query():
 
     with app.app_context():
         with patch(
-            "service.bricklet_service.get_all_bricklets", return_value=[mock_bricklet]
+            "service.controller_service.get_all_controllers",
+            return_value=[mock_bricklet],
         ):
             with patch.dict(
                 "sys.modules",
@@ -99,10 +101,11 @@ def test_rgb_led_button_live_telemetry_query():
     from service import diagnostics_service
 
     mock_bricklet = MagicMock()
-    mock_bricklet.bricklet_number = 2
-    mock_bricklet.uid = "BTN123"
-    mock_bricklet.type = "RGB LED Button Bricklet"
-    mock_bricklet.bricklet_pins = []
+    mock_bricklet.number = 5
+    mock_bricklet.address = "BTN123"
+    mock_bricklet.kind = "tinkerforge_bricklet"
+    mock_bricklet.device_type = "RGB LED Button Bricklet"
+    mock_bricklet.motors = []
 
     mock_ipcon_cls = MagicMock()
     mock_ipcon_inst = MagicMock()
@@ -118,7 +121,8 @@ def test_rgb_led_button_live_telemetry_query():
 
     with app.app_context():
         with patch(
-            "service.bricklet_service.get_all_bricklets", return_value=[mock_bricklet]
+            "service.controller_service.get_all_controllers",
+            return_value=[mock_bricklet],
         ):
             with patch.dict(
                 "sys.modules",
@@ -141,10 +145,11 @@ def test_solid_state_relay_live_telemetry_query():
     from service import diagnostics_service
 
     mock_bricklet = MagicMock()
-    mock_bricklet.bricklet_number = 3
-    mock_bricklet.uid = "SSR123"
-    mock_bricklet.type = "Solid State Relay Bricklet"
-    mock_bricklet.bricklet_pins = []
+    mock_bricklet.number = 4
+    mock_bricklet.address = "SSR123"
+    mock_bricklet.kind = "tinkerforge_bricklet"
+    mock_bricklet.device_type = "Solid State Relay Bricklet"
+    mock_bricklet.motors = []
 
     mock_ipcon_cls = MagicMock()
     mock_ipcon_inst = MagicMock()
@@ -157,7 +162,8 @@ def test_solid_state_relay_live_telemetry_query():
 
     with app.app_context():
         with patch(
-            "service.bricklet_service.get_all_bricklets", return_value=[mock_bricklet]
+            "service.controller_service.get_all_controllers",
+            return_value=[mock_bricklet],
         ):
             with patch.dict(
                 "sys.modules",

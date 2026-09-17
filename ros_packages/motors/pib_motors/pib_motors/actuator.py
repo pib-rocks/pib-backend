@@ -20,6 +20,8 @@ class Capability(Enum):
 class Actuator(Protocol):
     """the one axis of hardware that a motor commands"""
 
+    invert: bool
+
     def set_position(self, position: int) -> bool:
         """sets the position of the actuator and returns 'True' if this was successful"""
         ...

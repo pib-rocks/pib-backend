@@ -48,6 +48,7 @@ class FakeActuator:
     def __init__(
         self, current: int = 0, reached: bool = True, connected: bool = True
     ) -> None:
+        self.invert = False
         self.commanded_positions: list[int] = []
         self.applied_settings: list[dict[str, Any]] = []
         self._current = current
@@ -55,6 +56,8 @@ class FakeActuator:
         self._connected = connected
 
     def set_position(self, position: int) -> bool:
+        if self.invert:
+            position *= -1
         self.commanded_positions.append(position)
         return True
 
@@ -156,7 +159,7 @@ def _load_actuator_module(uid_to_servo_bricklet: dict | None = None):
     return module
 
 
-def _load_motor_module(actuator_module):
+def _load_motor_module(actuator_module, motors_dto=None):
     """Import motor.py against the given actuator module, with no motors configured."""
     spec = importlib.util.spec_from_file_location("motor_under_test", MOTOR_MODULE_PATH)
     module = importlib.util.module_from_spec(spec)
@@ -167,7 +170,9 @@ def _load_motor_module(actuator_module):
     with (
         mock.patch.dict(sys.modules, dependencies),
         mock.patch.object(
-            motor_client, "get_all_motors", return_value=(True, {"motors": []})
+            motor_client,
+            "get_all_motors",
+            return_value=(True, {"motors": motors_dto or []}),
         ),
     ):
         spec.loader.exec_module(module)
@@ -268,6 +273,31 @@ def test_create_actuator_builds_a_tinkerforge_servo():
     assert actuator.kind == "tinkerforge_servo"
     assert actuator.pin == 3
     assert actuator.bricklet is bricklet
+
+
+def test_motor_dto_builds_actuator_from_controller_shape():
+    bricklet = FakeServoBricklet()
+    actuator_module = _load_actuator_module({SERVO_UID: bricklet})
+    module = _load_motor_module(
+        actuator_module,
+        [
+            {
+                "name": "elbow",
+                "invert": True,
+                "channel": 8,
+                "controller": {
+                    "kind": "tinkerforge_bricklet",
+                    "address": SERVO_UID,
+                    "number": 3,
+                    "supplyVoltage": 7.5,
+                },
+            }
+        ],
+    )
+
+    assert module.motors[0].actuators[0].pin == 8
+    assert module.motors[0].actuators[0].bricklet is bricklet
+    assert module.motors[0].actuators[0].invert is True
 
 
 def test_create_actuator_rejects_an_unknown_kind():

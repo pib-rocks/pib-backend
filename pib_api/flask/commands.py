@@ -1,11 +1,16 @@
-from typing import Any, Tuple
+from typing import Any
 
 from sqlalchemy import inspect
 
 from app.app import db, app
 from model.assistant_model import AssistantModel
-from model.bricklet_model import Bricklet
-from model.bricklet_pin_model import BrickletPin
+from model.controller_model import (
+    RGB_LED_BUTTON_BRICKLET,
+    SERVO_BRICKLET,
+    SOLID_STATE_RELAY_BRICKLET,
+    TINKERFORGE_BRICKLET,
+    Controller,
+)
 from model.camera_settings_model import CameraSettings
 from model.chat_message_model import ChatMessage
 from model.chat_model import Chat
@@ -28,7 +33,7 @@ def seed_db() -> None:
     if not _is_empty_db():
         print("Seeding database failed - database already contains data.")
         return
-    _create_bricklet_data()
+    _create_controller_data()
     _create_camera_data()
     _create_program_data()
     _create_chat_data_and_assistant()
@@ -52,7 +57,29 @@ def _is_empty_db() -> bool:
     return True
 
 
-def _create_bricklet_data() -> None:
+def _create_controller_data() -> None:
+    device_types = {
+        1: SERVO_BRICKLET,
+        2: SERVO_BRICKLET,
+        3: SERVO_BRICKLET,
+        4: SOLID_STATE_RELAY_BRICKLET,
+        5: RGB_LED_BUTTON_BRICKLET,
+        6: RGB_LED_BUTTON_BRICKLET,
+        7: RGB_LED_BUTTON_BRICKLET,
+    }
+    controllers = [
+        Controller(
+            id=number,
+            number=number,
+            kind=TINKERFORGE_BRICKLET,
+            device_type=device_types[number],
+            supply_voltage=7.5 if number in (1, 2, 3) else None,
+        )
+        for number in range(1, 8)
+    ]
+    db.session.add_all(controllers)
+    db.session.flush()
+
     data = _get_motor_list()
     motor_settings = {
         "pulse_width_min": 700,
@@ -86,35 +113,23 @@ def _create_bricklet_data() -> None:
         db.session.add(motor)
         db.session.flush()
 
-        bricklet_pins: [Tuple[int, int]] = item["bricklet_pins"]
-        for bricklet_pin in bricklet_pins:
-            bricklet_id, pin = bricklet_pin
-
-            invert = False
-            db.session.add(
-                BrickletPin(
-                    motor_id=motor.id, bricklet_id=bricklet_id, pin=pin, invert=invert
-                )
-            )
+        controller_number, channel = item["controller"]
+        motor.controller = next(
+            controller
+            for controller in controllers
+            if controller.number == controller_number
+        )
+        motor.channel = channel
         db.session.flush()
-    b1 = Bricklet(bricklet_number=1, type="Servo Bricklet")
-    b2 = Bricklet(bricklet_number=2, type="Servo Bricklet")
-    b3 = Bricklet(bricklet_number=3, type="Servo Bricklet")
-    b4 = Bricklet(bricklet_number=4, type="Solid State Relay Bricklet")
-    b5 = Bricklet(bricklet_number=5, type="RGB LED Button Bricklet")
-    b6 = Bricklet(bricklet_number=6, type="RGB LED Button Bricklet")
-    b7 = Bricklet(bricklet_number=7, type="RGB LED Button Bricklet")
-    db.session.add_all([b1, b2, b3, b4, b5, b6, b7])
-    db.session.flush()
 
 
 def _create_button_program_data():
     cerebra_prog = Program.query.filter_by(name="toggle_cerebra_fullscreen").first()
     prog_id = cerebra_prog.id if cerebra_prog else None
 
-    button_program1 = ButtonProgram(bricklet_id=5, program_id=None)
-    button_program2 = ButtonProgram(bricklet_id=6, program_id=None)
-    button_program3 = ButtonProgram(bricklet_id=7, program_id=prog_id)
+    button_program1 = ButtonProgram(controller_id=5, program_id=None)
+    button_program2 = ButtonProgram(controller_id=6, program_id=None)
+    button_program3 = ButtonProgram(controller_id=7, program_id=prog_id)
     db.session.add_all([button_program1, button_program2, button_program3])
     db.session.flush()
 
@@ -253,35 +268,35 @@ def _create_default_poses() -> None:
 
 def _get_motor_list() -> [dict[str, Any]]:
     name: str = "name"
-    bricklet_pins: str = "bricklet_pins"
+    controller: str = "controller"
 
     return [
-        {name: "turn_head_motor", bricklet_pins: [(2, 4)]},
-        {name: "tilt_forward_motor", bricklet_pins: [(2, 5)]},
-        {name: "upper_arm_left_rotation", bricklet_pins: [(3, 9)]},
-        {name: "elbow_left", bricklet_pins: [(3, 8)]},
-        {name: "lower_arm_left_rotation", bricklet_pins: [(3, 7)]},
-        {name: "shoulder_vertical_left", bricklet_pins: [(2, 9)]},
-        {name: "shoulder_horizontal_left", bricklet_pins: [(2, 8)]},
-        {name: "upper_arm_right_rotation", bricklet_pins: [(1, 9)]},
-        {name: "elbow_right", bricklet_pins: [(1, 8)]},
-        {name: "lower_arm_right_rotation", bricklet_pins: [(1, 7)]},
-        {name: "shoulder_vertical_right", bricklet_pins: [(2, 1)]},
-        {name: "shoulder_horizontal_right", bricklet_pins: [(2, 0)]},
-        {name: "thumb_right_opposition", bricklet_pins: [(1, 0)]},
-        {name: "thumb_right_stretch", bricklet_pins: [(1, 1)]},
-        {name: "index_right_stretch", bricklet_pins: [(1, 2)]},
-        {name: "middle_right_stretch", bricklet_pins: [(1, 3)]},
-        {name: "ring_right_stretch", bricklet_pins: [(1, 4)]},
-        {name: "pinky_right_stretch", bricklet_pins: [(1, 5)]},
-        {name: "thumb_left_opposition", bricklet_pins: [(3, 0)]},
-        {name: "thumb_left_stretch", bricklet_pins: [(3, 1)]},
-        {name: "index_left_stretch", bricklet_pins: [(3, 2)]},
-        {name: "middle_left_stretch", bricklet_pins: [(3, 3)]},
-        {name: "ring_left_stretch", bricklet_pins: [(3, 4)]},
-        {name: "pinky_left_stretch", bricklet_pins: [(3, 5)]},
-        {name: "wrist_left", bricklet_pins: [(3, 6)]},
-        {name: "wrist_right", bricklet_pins: [(1, 6)]},
+        {name: "turn_head_motor", controller: (2, 4)},
+        {name: "tilt_forward_motor", controller: (2, 5)},
+        {name: "upper_arm_left_rotation", controller: (3, 9)},
+        {name: "elbow_left", controller: (3, 8)},
+        {name: "lower_arm_left_rotation", controller: (3, 7)},
+        {name: "shoulder_vertical_left", controller: (2, 9)},
+        {name: "shoulder_horizontal_left", controller: (2, 8)},
+        {name: "upper_arm_right_rotation", controller: (1, 9)},
+        {name: "elbow_right", controller: (1, 8)},
+        {name: "lower_arm_right_rotation", controller: (1, 7)},
+        {name: "shoulder_vertical_right", controller: (2, 1)},
+        {name: "shoulder_horizontal_right", controller: (2, 0)},
+        {name: "thumb_right_opposition", controller: (1, 0)},
+        {name: "thumb_right_stretch", controller: (1, 1)},
+        {name: "index_right_stretch", controller: (1, 2)},
+        {name: "middle_right_stretch", controller: (1, 3)},
+        {name: "ring_right_stretch", controller: (1, 4)},
+        {name: "pinky_right_stretch", controller: (1, 5)},
+        {name: "thumb_left_opposition", controller: (3, 0)},
+        {name: "thumb_left_stretch", controller: (3, 1)},
+        {name: "index_left_stretch", controller: (3, 2)},
+        {name: "middle_left_stretch", controller: (3, 3)},
+        {name: "ring_left_stretch", controller: (3, 4)},
+        {name: "pinky_left_stretch", controller: (3, 5)},
+        {name: "wrist_left", controller: (3, 6)},
+        {name: "wrist_right", controller: (1, 6)},
     ]
 
 
