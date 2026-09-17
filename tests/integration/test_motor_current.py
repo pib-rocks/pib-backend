@@ -128,11 +128,11 @@ def mock_motor_setup():
 
     motor1 = MagicMock()
     motor1.name = "head_motor"
-    motor1.bricklet_pins = [mock_pin0]
+    motor1.actuators = [mock_pin0]
 
     motor2 = MagicMock()
     motor2.name = "arm_motor"
-    motor2.bricklet_pins = [mock_pin1]
+    motor2.actuators = [mock_pin1]
 
     mock_motors = [motor1, motor2]
 
