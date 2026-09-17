@@ -940,7 +940,7 @@ class TestHandStageCounters(unittest.TestCase):
         landmark_packet = MagicMock()
         landmark_packet.getTensor.side_effect = lambda name: {
             "Identity_1": [0.9],
-            "Identity_3_dense/BiasAdd/Add": np.tile([0.5, 0.25, 0.0], (21, 1)),
+            "Identity_dense/BiasAdd/Add": np.tile([0.5, 0.25, 0.0], (21, 1)),
         }[name]
         transformation = MagicMock()
         transformation.invTransformPoint.return_value = types.SimpleNamespace(
@@ -967,11 +967,112 @@ class TestHandStageCounters(unittest.TestCase):
             landmark_packet.getTensor.call_args_list,
             [
                 unittest.mock.call("Identity_1"),
-                unittest.mock.call("Identity_3_dense/BiasAdd/Add"),
+                unittest.mock.call("Identity_dense/BiasAdd/Add"),
             ],
         )
         landmark_packet.getTransformation.assert_called_once_with()
         node._publish_hand_detections.assert_called_once_with(1280, 720, ["detection"])
+
+    @patch("ros_packages.camera.oak_d_lite.stereo.dai")
+    def test_landmark_layer_falls_back_when_image_head_is_missing(self, mock_dai):
+        node = self._make_node()
+        palm = MagicMock(score=0.9)
+        batch = {
+            "remaining": 1,
+            "candidates": 1,
+            "detections": [],
+            "drop_reasons": [],
+            "frame_width": 1280,
+            "frame_height": 720,
+            "source_width": 640,
+            "source_height": 480,
+        }
+        landmark_packet = MagicMock()
+        landmark_packet.getTensor.side_effect = lambda name: {
+            "Identity_1": [0.9],
+            "Identity_3_dense/BiasAdd/Add": np.tile([0.5, 0.25, 0.0], (21, 1)),
+        }[name]
+        transformation = MagicMock()
+        transformation.invTransformPoint.return_value = types.SimpleNamespace(
+            x=320.0, y=240.0
+        )
+        landmark_packet.getTransformation.return_value = transformation
+        mock_dai.Point2f.side_effect = lambda x, y: types.SimpleNamespace(x=x, y=y)
+        node.hand_decoder_queue = MagicMock()
+        node.hand_decoder_queue.tryGet.return_value = None
+        node.hand_landmark_queue = MagicMock()
+        node.hand_landmark_queue.tryGet.return_value = landmark_packet
+        node.hand_landmark_input_size = 224
+        node.current_frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+        node.hand_source_size = (640, 480)
+        node._pending_hand_decoder_packet = None
+        node._pending_hands = deque([(palm, batch)])
+        node._hand_detection_message = MagicMock(return_value="detection")
+        node._publish_hand_detections = MagicMock()
+
+        node._process_hand_tracking()
+
+        self.assertEqual(
+            [entry.args[0] for entry in landmark_packet.getTensor.call_args_list],
+            [
+                "Identity_1",
+                "Identity_dense/BiasAdd/Add",
+                "Identity",
+                "Identity_3_dense/BiasAdd/Add",
+            ],
+        )
+        self.assertEqual(batch["landmark_layer"], "Identity_3_dense/BiasAdd/Add")
+        self.assertEqual(batch["drop_reasons"], [])
+        node._publish_hand_detections.assert_called_once_with(1280, 720, ["detection"])
+
+    @patch("ros_packages.camera.oak_d_lite.stereo.dai")
+    def test_empty_landmark_head_is_reported_as_the_skipped_check(self, mock_dai):
+        node = self._make_node()
+        palm = MagicMock(score=0.9)
+        batch = {
+            "remaining": 1,
+            "candidates": 1,
+            "detections": [],
+            "drop_reasons": [],
+            "frame_width": 1280,
+            "frame_height": 720,
+            "source_width": 640,
+            "source_height": 480,
+            "log_details": True,
+        }
+        landmark_packet = MagicMock()
+        landmark_packet.getTensor.side_effect = lambda name: {
+            "Identity_1": [0.9],
+        }.get(name, np.zeros(0, dtype=np.float32))
+        landmark_packet.getTransformation.return_value = None
+        node.hand_decoder_queue = MagicMock()
+        node.hand_decoder_queue.tryGet.return_value = None
+        node.hand_landmark_queue = MagicMock()
+        node.hand_landmark_queue.tryGet.return_value = landmark_packet
+        node.hand_landmark_input_size = 224
+        node.current_frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+        node.hand_source_size = (640, 480)
+        node._pending_hand_decoder_packet = None
+        node._pending_hands = deque([(palm, batch)])
+        node._publish_hand_detections = MagicMock()
+        node._hand_warnings = set()
+
+        node._process_hand_tracking()
+
+        self.assertEqual(len(batch["drop_reasons"]), 1)
+        self.assertIn("no landmark layer carries 63 values", batch["drop_reasons"][0])
+        self.assertIn(
+            "Identity_dense/BiasAdd/Add=rejected(size=0)", batch["drop_reasons"][0]
+        )
+        logged = [call.args[0] for call in node.get_logger().info.call_args_list]
+        self.assertTrue(any(line.startswith("HAND_FP KP ") for line in logged))
+        self.assertTrue(
+            any(
+                line.startswith("HAND_FP ASSEMBLY ") and "appended=0" in line
+                for line in logged
+            )
+        )
+        node._publish_hand_detections.assert_called_once_with(1280, 720, [])
 
     @patch("ros_packages.camera.oak_d_lite.stereo.dai")
     def test_landmark_result_assembles_detection_from_batched_tensors(self, mock_dai):
@@ -988,9 +1089,9 @@ class TestHandStageCounters(unittest.TestCase):
         landmark_packet = MagicMock()
         landmark_packet.getTensor.side_effect = lambda name: {
             "Identity_1": np.array([[0.93]], dtype=np.float32),
-            "Identity_3_dense/BiasAdd/Add": np.tile(
-                [0.5, 0.5, 0.0], (1, 21, 1)
-            ).reshape(1, 63),
+            "Identity_dense/BiasAdd/Add": np.tile([0.5, 0.5, 0.0], (1, 21, 1)).reshape(
+                1, 63
+            ),
         }[name]
         landmark_packet.getTransformation.return_value = None
         node.hand_decoder_queue = MagicMock()
