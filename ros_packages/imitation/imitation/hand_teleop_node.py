@@ -19,7 +19,6 @@ from trajectory_msgs.msg import JointTrajectoryPoint
 from .landmark_mapping import PalmPose, map_to_robot_target, palm_pose_from_landmarks
 from .trajectory import TeleopController, TimedTrajectory
 
-
 MODEL_ID = "hand_tracking"
 DETECTION_TOPIC = "/detections/hand_tracking"
 HAND_POSE_TOPIC = "/imitation/hand_pose"
@@ -83,9 +82,7 @@ class HandTeleopNode(Node):
             ArmKinematics(arm),
             self.trajectory_client,
             enable_motion=self.enable_motion,
-            duration_sec=float(
-                self.get_parameter("trajectory_duration_sec").value
-            ),
+            duration_sec=float(self.get_parameter("trajectory_duration_sec").value),
             use_orientation=bool(self.get_parameter("use_orientation").value),
         )
 
@@ -160,9 +157,7 @@ class HandTeleopNode(Node):
                 detection.keypoint_z,
                 frame_width=int(message.frame_width),
                 frame_height=int(message.frame_height),
-                fallback_depth_mm=float(
-                    self.get_parameter("fallback_depth_mm").value
-                ),
+                fallback_depth_mm=float(self.get_parameter("fallback_depth_mm").value),
                 palm_width_mm=float(self.get_parameter("palm_width_mm").value),
             )
             target_pose = map_to_robot_target(
@@ -193,9 +188,8 @@ class HandTeleopNode(Node):
                     if future is not None:
                         future.add_done_callback(self._on_trajectory_complete)
             elapsed_ms = (time.perf_counter() - started) * 1000.0
-            stamp_ns = (
-                int(message.header.stamp.sec) * 1_000_000_000
-                + int(message.header.stamp.nanosec)
+            stamp_ns = int(message.header.stamp.sec) * 1_000_000_000 + int(
+                message.header.stamp.nanosec
             )
             latency_log = f"processing_latency_ms={elapsed_ms:.3f}"
             if stamp_ns > 0:

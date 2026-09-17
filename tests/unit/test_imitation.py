@@ -83,9 +83,7 @@ def test_parallel_array_and_name_validation():
         )
     names[0] = names[1]
     with pytest.raises(ValueError, match="each expected"):
-        palm_pose_from_landmarks(
-            names, xs, ys, zs, frame_width=200, frame_height=200
-        )
+        palm_pose_from_landmarks(names, xs, ys, zs, frame_width=200, frame_height=200)
 
 
 def test_camera_pose_maps_to_robot_axes_deterministically():
@@ -154,9 +152,7 @@ def test_ik_limits_timed_conversion_and_non_overlapping_requests():
     # First solution only establishes a baseline; it cannot invent current state.
     assert controller.prepare((1.0, 2.0, 3.0), (0.0, 0.0, 0.0, 1.0)) is None
     kinematics.solution = (11.0, -19.0)
-    trajectory = controller.prepare(
-        (2.0, 3.0, 4.0), (0.0, 0.0, 0.0, 1.0)
-    )
+    trajectory = controller.prepare((2.0, 3.0, 4.0), (0.0, 0.0, 0.0, 1.0))
     assert trajectory.joint_names == kinematics.motor_names
     assert trajectory.waypoints[0].positions == (1012.0, -2012.0)
     assert trajectory.waypoints[1].positions == (1100.0, -1900.0)

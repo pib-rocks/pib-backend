@@ -11,7 +11,6 @@ from dataclasses import dataclass
 import math
 from typing import Sequence
 
-
 HAND_LANDMARK_NAMES = (
     "wrist",
     "thumb_cmc",
@@ -220,9 +219,7 @@ def palm_pose_from_landmarks(
         sum(points[name].y for name in centre_names) / len(centre_names),
         sum(points[name].z for name in centre_names) / len(centre_names),
     )
-    x_axis = _normalise(
-        _subtract(points["index_finger_mcp"], points["pinky_mcp"]), "X"
-    )
+    x_axis = _normalise(_subtract(points["index_finger_mcp"], points["pinky_mcp"]), "X")
     palm_up = _subtract(points["middle_finger_mcp"], points["wrist"])
     z_axis = _normalise(_cross(x_axis, palm_up), "normal")
     y_axis = _normalise(_cross(z_axis, x_axis), "Y")
