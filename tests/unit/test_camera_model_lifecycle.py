@@ -16,6 +16,17 @@ from ros_packages.camera.oak_d_lite.model_registry import ModelRegistry
 from ros_packages.camera.oak_d_lite.pipeline_manager import PipelineManager
 
 
+def _interface_fields(relative_path):
+    """Return ROS interface fields, preserving request/response separation."""
+    fields = []
+    path = REPO_ROOT / "ros_packages/datatypes" / relative_path
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.split("#", 1)[0].strip()
+        if line:
+            fields.append(line)
+    return fields
+
+
 def _manifest(model_file="demo/demo.blob"):
     return {
         "models": [
@@ -66,6 +77,66 @@ def _composite_manifest():
 
 
 class TestModelRegistry(unittest.TestCase):
+    def test_model_service_interfaces_preserve_the_public_contract(self):
+        self.assertEqual(
+            _interface_fields("srv/ListModels.srv"),
+            ["---", "ModelInfo[] models"],
+        )
+        self.assertEqual(
+            _interface_fields("srv/StartModel.srv"),
+            [
+                "string model_id",
+                "int32 shaves",
+                "string owner",
+                "---",
+                "bool success",
+                "string message",
+            ],
+        )
+        self.assertEqual(
+            _interface_fields("srv/StopModel.srv"),
+            [
+                "string model_id",
+                "string owner",
+                "---",
+                "bool success",
+                "string message",
+            ],
+        )
+        self.assertEqual(
+            _interface_fields("srv/GetDetections.srv"),
+            ["string model_id", "---", "DetectionArray detections"],
+        )
+
+    def test_model_list_and_status_messages_preserve_the_public_contract(self):
+        self.assertEqual(
+            _interface_fields("msg/ModelInfo.msg"),
+            [
+                "string model_id",
+                "string task",
+                "string licence",
+                "int32 shaves",
+                "uint32 size_bytes",
+                "bool available",
+                "bool active",
+            ],
+        )
+        self.assertEqual(
+            _interface_fields("msg/ModelStatus.msg"),
+            [
+                "string model_id",
+                "bool active",
+                "float32 fps",
+                "int32 shaves",
+                "string state",
+                "string message",
+            ],
+        )
+        self.assertEqual(
+            _interface_fields("msg/ModelStatusArray.msg"),
+            ["std_msgs/Header header", "ModelStatus[] models"],
+        )
+
     def test_hand_tracking_manifest_has_empirical_shave_budgets(self):
         manifest = yaml.safe_load(
             (REPO_ROOT / "models/manifest.yaml").read_text(encoding="utf-8")
@@ -317,6 +388,27 @@ class TestPipelineManager(unittest.TestCase):
 
         self.assertFalse(success)
         self.assertIn("compiled for 4 shaves", message)
+        self.assertEqual(self.rebuild_calls, [])
+
+    def test_rejects_unknown_models_and_invalid_request_fields(self):
+        manager = self._manager()
+
+        self.assertEqual(
+            manager.start("missing", 0, "ui"),
+            (False, "Unknown model: missing"),
+        )
+        self.assertEqual(
+            manager.start("demo", -1, "ui"),
+            (False, "shaves must be zero or positive"),
+        )
+        self.assertEqual(
+            manager.start("demo", 0, "   "),
+            (False, "owner must not be empty"),
+        )
+        self.assertEqual(
+            manager.stop("demo", ""),
+            (False, "owner must not be empty"),
+        )
         self.assertEqual(self.rebuild_calls, [])
 
     def test_stop_failure_reverts_and_marks_remaining_models_failed(self):
