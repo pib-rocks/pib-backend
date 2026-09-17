@@ -86,12 +86,17 @@ def test_get_summary_includes_cpu_usage_percent():
             "service.diagnostics_service.get_bricklets_telemetry",
             return_value=[],
         ),
+        patch(
+            "service.diagnostics_service.get_variant",
+            return_value="pib5edu",
+        ),
     ):
         summary = diagnostics_service.get_summary()
 
     assert "cpuUsagePercent" in summary
     assert summary["cpuUsagePercent"] == 18.25
     assert summary["overallStatus"] == "ok"
+    assert summary["hardwareVariant"] == "pib5edu"
     assert summary["cpuTemperature"] == 50.0
 
 

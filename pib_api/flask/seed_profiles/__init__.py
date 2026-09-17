@@ -31,10 +31,10 @@ def get_profile(variant: str) -> HardwareProfile:
         ) from error
 
 
-def resolve_variant_from_environment() -> str:
+def resolve_variant_and_source() -> tuple[str, str]:
     environment_variant = os.environ.get("PIB_HARDWARE_VARIANT", "").strip()
     if environment_variant:
-        return environment_variant
+        return environment_variant, "environment"
 
     try:
         file_variant = HARDWARE_VARIANT_FILE.read_text(encoding="utf-8").strip()
@@ -44,7 +44,13 @@ def resolve_variant_from_environment() -> str:
         # only guard against FileNotFoundError here
         file_variant = ""
 
-    return file_variant or DEFAULT_HARDWARE_VARIANT
+    if file_variant:
+        return file_variant, "file"
+    return DEFAULT_HARDWARE_VARIANT, "default"
+
+
+def resolve_variant_from_environment() -> str:
+    return resolve_variant_and_source()[0]
 
 
 __all__ = [
@@ -53,5 +59,6 @@ __all__ = [
     "PROFILES",
     "UnknownHardwareVariantError",
     "get_profile",
+    "resolve_variant_and_source",
     "resolve_variant_from_environment",
 ]

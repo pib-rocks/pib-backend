@@ -6,6 +6,7 @@ import time
 from typing import Dict, Any, List, Optional, Tuple
 from model.controller_model import TINKERFORGE_BRICKLET
 from service import controller_service
+from service.system_property_service import get_variant
 
 
 def _read_proc_stat_cpu_times() -> Optional[Tuple[int, int]]:
@@ -475,6 +476,7 @@ def get_summary() -> Dict[str, Any]:
 
     return {
         "overallStatus": overall_status,
+        "hardwareVariant": get_variant(),
         "cpuTemperature": cpu_temp,
         "cpuStatus": cpu_status,
         "cpuUsagePercent": system["cpuUsagePercent"],
