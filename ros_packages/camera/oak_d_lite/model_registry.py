@@ -17,6 +17,7 @@ class ModelRecord:
     size_bytes: int
     blob_path: str
     available: bool
+    unavailable_reason: str
     input_width: int
     input_height: int
     composite: bool = False
@@ -76,6 +77,7 @@ class ModelRegistry:
 
             loaded = {}
             composite_entries = []
+            invalid_artifacts = []
             for entry in entries:
                 if isinstance(entry, dict) and entry.get("composite") is True:
                     composite_entries.append(entry)
@@ -95,6 +97,17 @@ class ModelRegistry:
                     raise ValueError("manifest contains an invalid model entry")
                 blob_path = self.store_path / relative_file
                 size_bytes = int(entry["size_bytes"])
+                functional = bool(entry.get("functional", True))
+                unavailable_reason = str(entry.get("unavailable_reason", "")).strip()
+                if not functional and not unavailable_reason:
+                    raise ValueError(
+                        f"non-functional model {model_id} has no unavailable_reason"
+                    )
+                artifact_valid = (
+                    blob_path.is_file() and blob_path.stat().st_size == size_bytes
+                )
+                if not artifact_valid:
+                    invalid_artifacts.append(model_id)
                 loaded[model_id] = ModelRecord(
                     model_id=model_id,
                     task=str(entry["task"]),
@@ -102,9 +115,8 @@ class ModelRegistry:
                     shaves=int(entry["shaves"]),
                     size_bytes=size_bytes,
                     blob_path=str(blob_path),
-                    available=(
-                        blob_path.is_file() and blob_path.stat().st_size == size_bytes
-                    ),
+                    available=functional and artifact_valid,
+                    unavailable_reason=unavailable_reason,
                     input_width=int(entry["input_width"]),
                     input_height=int(entry["input_height"]),
                 )
@@ -136,6 +148,7 @@ class ModelRegistry:
                         len(resolved) == len(artifact_ids)
                         and all(artifact.available for artifact in resolved)
                     ),
+                    unavailable_reason="",
                     input_width=0,
                     input_height=0,
                     composite=True,
@@ -146,13 +159,13 @@ class ModelRegistry:
                 model.model_id for model in loaded.values() if not model.available
             ]
             if unavailable:
-                message = "model store is partial; unavailable artefacts: " + ", ".join(
+                message = "model store has unavailable models: " + ", ".join(
                     unavailable
                 )
                 # Preserve S4's all-or-empty behavior for legacy manifests.  A
                 # composite manifest must remain queryable so callers can report
                 # that the chain is unavailable when one dependency is missing.
-                if not composite_entries:
+                if invalid_artifacts and not composite_entries:
                     raise ValueError(message)
                 self._warn_once(message)
             self._models = loaded

@@ -159,6 +159,8 @@ Every blob entry requires:
 | `format` | `blob` |
 | `openvino_version` | Version used by the compiler |
 | `zoo_type` | BlobConverter source (`depthai` or `intel`) when applicable |
+| `functional` | Optional `false` keeps a known non-functional blob listed but unavailable |
+| `unavailable_reason` | Required when `functional` is `false`; surfaced by model status and `/start_model` |
 | `notes` | Input names/layout, colour/range, outputs, and exceptions |
 
 An executable composite model has no blob of its own. Give it `model_id`,
