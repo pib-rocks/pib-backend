@@ -1289,8 +1289,9 @@ class CameraNode(Node):
         decoder_nn = self.pipeline.create(dai.node.NeuralNetwork)
         decoder_nn.setBlobPath(decoder.blob_path)
         decoder_nn.setNumShavesPerInferenceThread(decoder.shaves)
-        palm_nn.out.link(decoder_nn.inputs["classificators"])
-        palm_nn.out.link(decoder_nn.inputs["regressors"])
+        # Preserve the palm NNData packet so DepthAI can map its named output
+        # tensors to the decoder blob's named inputs.
+        palm_nn.out.link(decoder_nn.input)
         self.hand_decoder_queue = decoder_nn.out.createOutputQueue(
             maxSize=BRANCH_OUTPUT_QUEUE_DEPTH, blocking=False
         )
