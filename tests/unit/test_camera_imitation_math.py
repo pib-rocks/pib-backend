@@ -183,7 +183,9 @@ def test_missing_group_key_yields_none_instead_of_escaping():
         def __getitem__(self, key):
             if key in ("0", "1", "2"):
                 return f"message-{key}"
-            raise RuntimeError("map::at")
+            # Measured on the robot: the binding raised IndexError("map::at"),
+            # not RuntimeError. Any exception type must be tolerated.
+            raise IndexError("map::at")
 
     group = CppLikeGroup()
 

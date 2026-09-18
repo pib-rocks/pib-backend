@@ -108,13 +108,15 @@ def world_landmark_scalars(values):
 
 
 def _group_value(group, key):
-    # dai.MessageGroup raises the C++ RuntimeError "map::at" for a missing key,
-    # which is neither KeyError nor TypeError. Catching only those let the
-    # missing world-landmark head ("3" - the zoo archive declares only heads
-    # 0/1/2) escape as an exception that silently dropped every detection.
+    # dai.MessageGroup raises for a missing key, and the exception type is NOT
+    # stable: measured on the robot it surfaced as IndexError("map::at"), while
+    # RuntimeError was the documented guess. Both were wrong on their own and
+    # each miss discarded every packet whose landmark score had just passed the
+    # gate - the good ones. Catch broadly: an absent key means "not provided"
+    # here, never "throw away this detection".
     try:
         return group[key]
-    except (KeyError, TypeError, RuntimeError):
+    except Exception:
         return None
 
 
