@@ -15,6 +15,12 @@ read blob files directly.
 | `/detections/<model_id>` | Typed streamed `DetectionArray` |
 | `/models_status` | Approximately 1 Hz; `idle`, `starting`, `running`, or `failed`, plus FPS and active state |
 
+The reported FPS is each model's packet flow averaged over a sliding window of
+at least ten seconds, not the count since the previous publication. The
+composite `hand_tracking` chain emits well under one `DetectionArray` per
+second, so a one-second measurement reported 0.0 for most of its windows while
+the chain was running.
+
 Use a stable, non-empty owner per consumer and release every model at shutdown.
 Multiple owners share one loaded model. A model remains requested until its
 last owner releases it.

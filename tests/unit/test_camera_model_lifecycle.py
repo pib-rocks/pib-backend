@@ -13,7 +13,10 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
 from ros_packages.camera.oak_d_lite.model_registry import ModelRegistry
-from ros_packages.camera.oak_d_lite.pipeline_manager import PipelineManager
+from ros_packages.camera.oak_d_lite.pipeline_manager import (
+    FPS_WINDOW_SECONDS,
+    PipelineManager,
+)
 
 
 def _interface_fields(relative_path):
@@ -424,6 +427,45 @@ class TestPipelineManager(unittest.TestCase):
         self.assertEqual(status["message"], "Model is running")
         self.assertEqual(status["fps"], 4.0)
         self.assertEqual(status["owners"], {"ui"})
+
+    def test_flow_slower_than_one_packet_per_refresh_reports_real_fps(self):
+        """The composite hand chain runs below the 1 Hz status rate.
+
+        Measuring it between two publications reports zero for every second
+        that carries no packet, which is how a running chain ends up shown as
+        0.0 FPS.
+        """
+        now = [100.0]
+        manager = self._manager(clock=lambda: now[0])
+        self.assertTrue(manager.start("demo", 4, "ui")[0])
+
+        samples = []
+        for second in range(1, 41):
+            now[0] += 1.0
+            # Three packets every four seconds: 0.75 Hz, slower than the 1 Hz
+            # /models_status publication.
+            if second % 4:
+                manager.record_packet("demo")
+            manager.refresh_fps()
+            samples.append(manager.status("demo")["fps"])
+
+        # One-second ticks, so the window length is also its tick count.
+        settled_tick = int(FPS_WINDOW_SECONDS)
+        settled = samples[settled_tick:]
+        self.assertTrue(all(fps > 0 for fps in settled), samples)
+        self.assertAlmostEqual(samples[-1], 0.75, delta=0.1)
+
+    def test_active_model_without_packet_flow_still_reports_zero_fps(self):
+        now = [100.0]
+        manager = self._manager(clock=lambda: now[0])
+        self.assertTrue(manager.start("demo", 4, "ui")[0])
+
+        for _ in range(30):
+            now[0] += 1.0
+            manager.refresh_fps()
+
+        self.assertTrue(manager.status("demo")["active"])
+        self.assertEqual(manager.status("demo")["fps"], 0.0)
 
     def test_rejects_shaves_that_do_not_match_the_compiled_blob(self):
         manager = self._manager()

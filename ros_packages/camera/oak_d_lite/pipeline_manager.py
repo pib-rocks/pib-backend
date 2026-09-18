@@ -7,6 +7,13 @@ from typing import Callable, Dict, Iterable, Optional, Set, Tuple
 
 from .model_registry import ModelRecord, ModelRegistry
 
+# Packets are counted over a window this long instead of over the interval
+# between two status publications.  The composite hand chain delivers well
+# under one packet per second, so a one-second interval reports zero for most
+# of its windows even while the chain runs; averaging over several seconds
+# reports the rate the pipeline actually sustains.
+FPS_WINDOW_SECONDS = 10.0
+
 
 @dataclass(frozen=True)
 class ActiveModel:
@@ -24,6 +31,8 @@ class ModelRuntime:
     active: bool = False
     packet_count: int = 0
     fps_started_at: float = field(default_factory=time.monotonic)
+    previous_packet_count: int = 0
+    previous_window: float = 0.0
     startup_started_at: Optional[float] = None
 
 
@@ -43,6 +52,7 @@ class PipelineManager:
         backoff: float = 0.25,
         sleep: Callable[[float], None] = time.sleep,
         clock: Callable[[], float] = time.monotonic,
+        fps_window: float = FPS_WINDOW_SECONDS,
     ):
         self.registry = registry
         self._rebuild = rebuild
@@ -55,6 +65,7 @@ class PipelineManager:
         self._backoff = backoff
         self._sleep = sleep
         self._clock = clock
+        self._fps_window = max(0.0, fps_window)
         self._lock = threading.RLock()
         self._runtime: Dict[str, ModelRuntime] = {
             model.model_id: ModelRuntime(
@@ -80,6 +91,14 @@ class PipelineManager:
                 specs.append(ActiveModel(model=model, shaves=runtime.shaves))
         return specs
 
+    @staticmethod
+    def _restart_fps_window(runtime, now):
+        runtime.fps = 0.0
+        runtime.packet_count = 0
+        runtime.fps_started_at = now
+        runtime.previous_packet_count = 0
+        runtime.previous_window = 0.0
+
     def _set_requested_state(self, state, message, active):
         now = self._clock()
         for runtime in self._runtime.values():
@@ -89,13 +108,8 @@ class PipelineManager:
                 runtime.active = active
                 if not active:
                     runtime.fps = 0.0
-                if state == "starting":
-                    runtime.packet_count = 0
-                    runtime.fps_started_at = now
-                    runtime.startup_started_at = now
-                elif state == "running":
-                    runtime.packet_count = 0
-                    runtime.fps_started_at = now
+                if state in ("starting", "running"):
+                    self._restart_fps_window(runtime, now)
                     runtime.startup_started_at = now
 
     def _rebuild_and_verify(self):
@@ -245,8 +259,7 @@ class PipelineManager:
             runtime.state = "failed"
             runtime.message = message
             runtime.active = False
-            runtime.fps = 0.0
-            runtime.packet_count = 0
+            self._restart_fps_window(runtime, self._clock())
             return True
 
     def mark_running(self, model_id: str, message: str = "Model is running") -> bool:
@@ -258,23 +271,34 @@ class PipelineManager:
             runtime.state = "running"
             runtime.message = message
             runtime.active = True
-            runtime.fps = 0.0
-            runtime.packet_count = 0
-            runtime.fps_started_at = self._clock()
+            self._restart_fps_window(runtime, self._clock())
             runtime.startup_started_at = runtime.fps_started_at
             return True
 
     def refresh_fps(self):
+        """Average each model's packet flow over the measurement window."""
         with self._lock:
             now = self._clock()
             for runtime in self._runtime.values():
+                if not runtime.active:
+                    self._restart_fps_window(runtime, now)
+                    continue
                 elapsed = now - runtime.fps_started_at
-                if elapsed > 0:
-                    runtime.fps = (
-                        runtime.packet_count / elapsed if runtime.active else 0.0
-                    )
+                if elapsed <= 0:
+                    continue
+                if elapsed >= self._fps_window:
+                    runtime.previous_packet_count = runtime.packet_count
+                    runtime.previous_window = elapsed
                     runtime.packet_count = 0
                     runtime.fps_started_at = now
+                    elapsed = 0.0
+                # The completed window keeps the rate of a model that produces
+                # less than one packet per refresh visible while the current
+                # window is still filling.
+                packets = runtime.packet_count + runtime.previous_packet_count
+                measured = elapsed + runtime.previous_window
+                if measured > 0:
+                    runtime.fps = packets / measured
 
     def status(self, model_id: str):
         with self._lock:
