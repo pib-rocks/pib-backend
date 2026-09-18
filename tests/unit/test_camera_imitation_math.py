@@ -106,8 +106,9 @@ def test_script_embeds_tested_source_and_v3_api_boundaries():
 
     compile(script, "<imitation-script>", "exec")
     assert "def palm_regions(" in script
-    assert "packet.getTensor(name)" in script
-    assert 'packet.getTensor("result")' in script
+    assert "read_layer(packet, name)" in script
+    assert 'read_layer(packet, "result")' in script
+    assert "getLayerFp16" in script
     assert "ResizeMode.LETTERBOX" in script
     assert "config.setOutputSize(LM_SIZE, LM_SIZE)" in script
     assert "config.addCropRotatedRect(rotated, True)" in script

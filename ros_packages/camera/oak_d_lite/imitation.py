@@ -185,11 +185,21 @@ def flatten_values(value):
         values.extend(flatten_values(item))
     return values
 
+def read_layer(packet, name):
+    # The on-device Script runtime exposes lpb.NNData, which offers getLayerFp16
+    # and has no getTensor; the host-side depthai 3.x NNData is the other way
+    # round. Prefer the device API so the embedded copy of this module runs, and
+    # fall back to the host API so the same source stays unit-testable.
+    reader = getattr(packet, "getLayerFp16", None)
+    if reader is not None:
+        return reader(name)
+    return packet.getTensor(name)
+
 def flat_tensor(packet, name):
-    return flatten_values(packet.getTensor(name))
+    return flatten_values(read_layer(packet, name))
 
 def palm_tensor(packet):
-    tensor = packet.getTensor("result")
+    tensor = read_layer(packet, "result")
     if tensor is None:
         return []
     if len(tensor) == 8:
