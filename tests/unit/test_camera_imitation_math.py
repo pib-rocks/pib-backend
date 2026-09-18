@@ -200,3 +200,22 @@ def test_world_scalars_tolerate_a_missing_head():
 
     assert names == []
     assert values == []
+
+
+def test_imitation_branch_matches_the_published_frame_aspect_ratio():
+    """The neural branch must share the published frame's aspect ratio.
+
+    Keypoints come back normalised against the branch and are multiplied by the
+    published frame's width and height. If the two aspect ratios differ, the
+    error is zero in the centre and grows towards the edges: measured on the
+    robot with a square 768x768 branch, a centred hand was within 8 px of its
+    real position while a hand at the right edge was off by about 190 px in x
+    and visibly squashed in y. A 16:9 branch makes the mapping a pure per-axis
+    scale, so the error cannot occur.
+    """
+    from ros_packages.camera.oak_d_lite import stereo
+
+    width = stereo.IMITATION_SOURCE_WIDTH
+    height = stereo.IMITATION_SOURCE_HEIGHT
+
+    assert width * 9 == height * 16, (width, height)
