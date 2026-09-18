@@ -62,8 +62,15 @@ FACE_DETECT_HEIGHT = 180
 # ImageManip crops would change the pixels on which the models were trained.
 HAND_NN_WIDTH = 256
 HAND_NN_HEIGHT = 256
-IMITATION_SOURCE_WIDTH = 256
-IMITATION_SOURCE_HEIGHT = 144
+# The HandTrackerEdge reference runs its whole pipeline on an ISP-scaled
+# preview of about 1152x648 (internal_frame_height=640) and takes both the
+# letterboxed 128x128 palm input and the rotated 224x224 landmark crop from it.
+# A smaller source starves the landmark crop: it upscales a palm-sized region,
+# and the palm score then sits on the 0.5 gate instead of above it.
+# The aspect ratio must stay 16:9, because the square-normalised coordinates are
+# mapped back using the published frame's dimensions.
+IMITATION_SOURCE_WIDTH = 1152
+IMITATION_SOURCE_HEIGHT = 648
 # Device-side queues on the camera branches stay shallow and non-blocking.  The
 # host drains them from the 10 Hz timer, far below the camera frame rate, and a
 # blocking queue back-pressures the Camera node and stalls every other branch

@@ -177,3 +177,27 @@ def test_box_from_points_stays_inside_the_frame_and_non_degenerate():
 
 def test_box_from_points_handles_an_empty_point_list():
     assert imitation.box_from_points([], 1280, 720) == (0, 0, 1, 1)
+
+
+def test_imitation_source_keeps_the_published_frame_aspect_ratio():
+    """The square-normalised coordinates are mapped back with the published
+    frame's dimensions, so the branch feeding the nets must share its aspect
+    ratio. A non-16:9 source silently shifts every keypoint.
+    """
+    from ros_packages.camera.oak_d_lite import stereo
+
+    width = stereo.IMITATION_SOURCE_WIDTH
+    height = stereo.IMITATION_SOURCE_HEIGHT
+
+    assert width * 9 == height * 16, (width, height)
+
+
+def test_imitation_source_is_large_enough_for_the_landmark_crop():
+    """The landmark net wants 224x224 real pixels. A palm region is roughly a
+    fifth of the frame width, so anything below ~1120 px upscales mush.
+    """
+    from ros_packages.camera.oak_d_lite import stereo
+
+    palm_region_px = stereo.IMITATION_SOURCE_WIDTH / 5.0
+
+    assert palm_region_px >= 224, palm_region_px
