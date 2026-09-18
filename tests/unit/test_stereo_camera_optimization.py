@@ -740,12 +740,7 @@ class TestHandPipelineInput(unittest.TestCase):
         landmark_nn.setNumShavesPerInferenceThread.assert_called_once_with(4)
         palm_manip.setMaxOutputFrameSize.assert_called_once_with(128 * 128 * 3)
         landmark_manip.setMaxOutputFrameSize.assert_called_once_with(224 * 224 * 3)
-        palm_nn.out.link.assert_has_calls(
-            [
-                unittest.mock.call(decoder_nn.inputs["classificators"]),
-                unittest.mock.call(decoder_nn.inputs["regressors"]),
-            ]
-        )
+        palm_nn.out.link.assert_called_once_with(decoder_nn.input)
         landmark_manip.inputConfig.setWaitForMessage.assert_called_once_with(True)
         for branch_node in (palm_nn, decoder_nn, landmark_manip):
             branch_node.out.createOutputQueue.assert_called_once_with(
