@@ -28,8 +28,15 @@ from datatypes.srv import (
     StopModel,
 )
 from rclpy.node import Node
+from sensor_msgs.msg import Imu
 from std_msgs.msg import Float32MultiArray, Float64, Int32, Int32MultiArray, String
 
+from .imu import (
+    IMU_PUBLISH_RATE_HZ,
+    TenHertzThrottle,
+    assemble_imu_sample,
+    duration_to_nanoseconds,
+)
 from .model_registry import ModelRegistry
 from .pipeline_manager import PipelineManager
 from .imitation import (
@@ -87,6 +94,11 @@ IMITATION_SOURCE_HEIGHT = 648
 BRANCH_INPUT_QUEUE_DEPTH = 1
 BRANCH_OUTPUT_QUEUE_DEPTH = 4
 COLOR_OUTPUT_QUEUE_DEPTH = 4
+IMU_SENSOR_RATE_HZ = 100
+IMU_OUTPUT_QUEUE_DEPTH = 20
+IMU_DRAIN_LIMIT = 256
+IMU_POLL_PERIOD_SECONDS = 0.05
+IMU_STALE_AFTER_SECONDS = 1.0
 STEREO_MODES = {"auto", "on", "off"}
 DEFAULT_STEREO_TIMEOUT = 5.0
 DEFAULT_HAND_STARTUP_GRACE = 5.0
@@ -134,6 +146,13 @@ class ErrorPublisher(Node):
 
 
 class CameraNode(Node):
+    """Own and publish the OAK-D Lite camera and its on-board BMI270 IMU.
+
+    On pib the OAK-D Lite is mounted in the head, facing forward. The BMI270 is
+    soldered to that camera PCB, so ``oak_imu_frame`` is at the camera module,
+    not at the robot base or torso origin.
+    """
+
     _device_lifecycle_lock = threading.RLock()
     _device_owner = None
 
@@ -148,6 +167,7 @@ class CameraNode(Node):
         self.models_status_publisher_ = self.create_publisher(
             ModelStatusArray, "models_status", 10
         )
+        self.imu_publisher_ = self.create_publisher(Imu, "/imu", 10)
 
         cascade_paths = [
             "/usr/share/opencv4/haarcascades/haarcascade_frontalface_default.xml",
@@ -181,6 +201,12 @@ class CameraNode(Node):
         self.pipeline = None
         self.queue = None
         self.depth_queue = None
+        self.imu_queue = None
+        self.imu_available = False
+        self._imu_last_received_monotonic = None
+        self._imu_last_sequence = None
+        self._imu_last_device_stamp_ns = None
+        self._imu_throttle = TenHertzThrottle()
         self.nn_queues = {}
         self._pipeline_models = []
         self.depth_available = False
@@ -252,6 +278,7 @@ class CameraNode(Node):
         )
         self.timer_period = 0.1  # seconds
         self.timer = self.create_timer(self.timer_period, self.timer_callback)
+        self.imu_timer = self.create_timer(IMU_POLL_PERIOD_SECONDS, self._process_imu)
         self.models_status_timer = self.create_timer(1.0, self.publish_model_statuses)
 
     def _encode_frame(self, frame):
@@ -1186,7 +1213,71 @@ class CameraNode(Node):
             status.state = runtime["state"]
             status.message = runtime["message"]
             status_array.models.append(status)
+        imu_runtime = self._imu_status()
+        imu_status = ModelStatus()
+        imu_status.model_id = "imu"
+        imu_status.active = imu_runtime["state"] != "absent"
+        imu_status.fps = (
+            float(IMU_PUBLISH_RATE_HZ) if imu_runtime["state"] == "present" else 0.0
+        )
+        imu_status.shaves = 0
+        imu_status.state = imu_runtime["state"]
+        imu_status.message = imu_runtime["message"]
+        status_array.models.append(imu_status)
         self.models_status_publisher_.publish(status_array)
+
+    def _imu_status(self, now=None):
+        """Return the IMU extension carried by the existing models_status array."""
+
+        if (
+            not getattr(self, "imu_available", False)
+            or getattr(self, "imu_queue", None) is None
+        ):
+            return {"state": "absent", "message": "OAK device has no usable IMU"}
+        if getattr(self, "_imu_last_received_monotonic", None) is None:
+            return {
+                "state": "stale",
+                "message": "IMU configured but no report received",
+            }
+        now = time.monotonic() if now is None else now
+        age = now - self._imu_last_received_monotonic
+        if age > IMU_STALE_AFTER_SECONDS:
+            return {
+                "state": "stale",
+                "message": f"No IMU report received for {age:.1f} seconds",
+            }
+        return {"state": "present", "message": "BMI270 IMU reports are flowing"}
+
+    def _init_imu(self):
+        """Add the optional BMI270 stream without making camera startup depend on it."""
+
+        self.imu_queue = None
+        self.imu_available = False
+        try:
+            imu = self.pipeline.create(dai.node.IMU)
+            for sensor in (
+                dai.IMUSensor.ACCELEROMETER_RAW,
+                dai.IMUSensor.GYROSCOPE_RAW,
+                dai.IMUSensor.ROTATION_VECTOR,
+            ):
+                # 100 Hz is supported by BMI270 for these reports. The host
+                # deterministically drops excess samples to the 10 Hz ROS rate.
+                imu.enableIMUSensor(sensor, IMU_SENSOR_RATE_HZ)
+            imu.setBatchReportThreshold(1)
+            imu.setMaxBatchReports(IMU_OUTPUT_QUEUE_DEPTH)
+            self.imu_queue = imu.out.createOutputQueue(
+                maxSize=IMU_OUTPUT_QUEUE_DEPTH, blocking=False
+            )
+            self.imu_available = True
+            return True
+        except Exception as exc:
+            self.imu_queue = None
+            self.imu_available = False
+            self.get_logger().warning(
+                "BMI270 IMU unavailable; camera pipeline will continue without it: "
+                f"{type(exc).__name__}: {exc}"
+            )
+            return False
 
     def _init_stereo_depth(self):
         """Add StereoDepth outputs to the existing pipeline (no extra start)."""
@@ -1286,6 +1377,11 @@ class CameraNode(Node):
             maxSize=COLOR_OUTPUT_QUEUE_DEPTH, blocking=False
         )
         self.depth_queue = None
+        self.imu_queue = None
+        self.imu_available = False
+        self._imu_last_received_monotonic = None
+        self._imu_last_sequence = None
+        self._imu_last_device_stamp_ns = None
         self.nn_queues = {}
         self.hand_decoder_queue = None
         self.hand_palm_queue = None
@@ -1701,6 +1797,8 @@ class CameraNode(Node):
             self.pipeline = None
             self.queue = None
             self.depth_queue = None
+            self.imu_queue = None
+            self.imu_available = False
             self.nn_queues = {}
             self.hand_decoder_queue = None
             self.hand_palm_queue = None
@@ -1738,9 +1836,16 @@ class CameraNode(Node):
                     "has not been released."
                 )
                 return False
+            include_imu = True
             for attempt in range(PIPELINE_START_ATTEMPTS):
                 try:
                     self._build_pipeline(include_stereo)
+                    if include_imu:
+                        include_imu = self._init_imu()
+                        if not include_imu:
+                            # Discard a graph in which IMU construction failed
+                            # after creating a partial node.
+                            self._build_pipeline(include_stereo)
                     self.pipeline.start()
                     CameraNode._device_owner = weakref.ref(self)
                     return True
@@ -1750,6 +1855,10 @@ class CameraNode(Node):
                         f"{attempt + 1}/{PIPELINE_START_ATTEMPTS} failed: {exc}"
                     )
                     self._stop_pipeline()
+                    # Some OAK variants expose no IMU. If a graph containing
+                    # dai.node.IMU is rejected at start, retry the same camera
+                    # graph without it instead of taking down camera topics.
+                    include_imu = False
                     if attempt + 1 < PIPELINE_START_ATTEMPTS:
                         time.sleep(PIPELINE_START_BACKOFF * (2**attempt))
             return False
@@ -1964,6 +2073,77 @@ class CameraNode(Node):
         msg = String()
         msg.data = encoded
         self.depth_publisher_.publish(msg)
+
+    @staticmethod
+    def _imu_report_xyz(report):
+        return (report.x, report.y, report.z)
+
+    @staticmethod
+    def _imu_message(sample):
+        """Copy an already mapped sample into sensor_msgs/Imu."""
+
+        message = Imu()
+        message.header.frame_id = sample.frame_id
+        message.header.stamp.sec = sample.stamp_ns // 1_000_000_000
+        message.header.stamp.nanosec = sample.stamp_ns % 1_000_000_000
+        message.linear_acceleration.x = sample.linear_acceleration.x
+        message.linear_acceleration.y = sample.linear_acceleration.y
+        message.linear_acceleration.z = sample.linear_acceleration.z
+        message.angular_velocity.x = sample.angular_velocity.x
+        message.angular_velocity.y = sample.angular_velocity.y
+        message.angular_velocity.z = sample.angular_velocity.z
+        # ROTATION_VECTOR is fused on the BMI270/device, not on the ROS host.
+        message.orientation.x = sample.orientation.x
+        message.orientation.y = sample.orientation.y
+        message.orientation.z = sample.orientation.z
+        message.orientation.w = sample.orientation.w
+        message.orientation_covariance = list(sample.orientation_covariance)
+        message.angular_velocity_covariance = list(sample.angular_velocity_covariance)
+        message.linear_acceleration_covariance = list(
+            sample.linear_acceleration_covariance
+        )
+        return message
+
+    def _process_imu(self):
+        """Drain the non-blocking queue and publish no faster than 10 Hz."""
+
+        if self.imu_queue is None:
+            return
+        for _ in range(IMU_DRAIN_LIMIT):
+            batch = self.imu_queue.tryGet()
+            if batch is None:
+                break
+            for packet in batch.packets:
+                try:
+                    acceleration = packet.acceleroMeter
+                    angular_velocity = packet.gyroscope
+                    rotation = packet.rotationVector
+                    stamp_ns = duration_to_nanoseconds(rotation.getTimestampSystem())
+                    sequence = rotation.getSequenceNum()
+                    sample = assemble_imu_sample(
+                        sequence,
+                        stamp_ns,
+                        self._imu_report_xyz(acceleration),
+                        self._imu_report_xyz(angular_velocity),
+                        (rotation.i, rotation.j, rotation.k, rotation.real),
+                    )
+                    self._imu_last_received_monotonic = time.monotonic()
+                    # The device timestamp is intentionally retained only as a
+                    # future camera/IMU hardware-correlation source. ROS stamps
+                    # use getTimestampSystem() above so they share host time.
+                    self._imu_last_device_stamp_ns = duration_to_nanoseconds(
+                        rotation.getTimestampDevice()
+                    )
+                    if not self._imu_throttle.accept(sample.stamp_ns):
+                        continue
+                    # ROS 2 Header has no sequence field; retain DepthAI's source
+                    # sequence here for diagnostics and testable packet mapping.
+                    self._imu_last_sequence = sample.sequence
+                    self.imu_publisher_.publish(self._imu_message(sample))
+                except (AttributeError, TypeError, ValueError) as exc:
+                    self.get_logger().warning(
+                        f"Dropping invalid IMU report: {type(exc).__name__}: {exc}"
+                    )
 
     def timer_callback(self):
         if self.queue:
