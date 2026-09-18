@@ -266,9 +266,15 @@ def landmark_config(region, reuse):
     if crop is None:
         crop = getattr(config, "setCropRotatedRect", None)
     crop(rotated, True)
-    border_replicate = getattr(config, "setWarpBorderReplicatePixels", None)
-    if border_replicate is not None:
-        border_replicate()
+    # depthai 2.x replicated border pixels for a ROI that overhangs the image;
+    # v3 dropped setWarpBorderReplicatePixels entirely (the old getattr call was
+    # dead code, so overhanging crops were rejected with "Initial crop is
+    # outside the source image" and the landmark net scored 0.01 instead of
+    # 0.99). v3 fills the outside area with the background colour instead, which
+    # keeps the ROI scale - the thing the landmark net is sensitive to - intact.
+    background = getattr(config, "setBackgroundColor", None)
+    if background is not None:
+        background(0, 0, 0)
     config.setReusePreviousImage(reuse)
     return config
 

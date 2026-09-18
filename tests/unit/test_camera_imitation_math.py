@@ -146,6 +146,9 @@ def test_script_embeds_tested_source_and_v3_api_boundaries():
         assert "ResizeMode." in call, call
     assert "ResizeMode.STRETCH" in script
     assert "addCropRotatedRect" in script and "setCropRotatedRect" in script
+    # v3 has no border replication; an overhanging ROI must be filled, not dropped.
+    assert "setBackgroundColor" in script
+    assert "setWarpBorderReplicatePixels" not in script
     assert "output = Buffer(len(data))" in script
     assert 'node.io["host"].send(output)' in script
 
