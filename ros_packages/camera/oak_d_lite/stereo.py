@@ -67,18 +67,19 @@ HAND_NN_HEIGHT = 256
 IMITATION_DETECTOR_MODEL = "luxonis/mediapipe-palm-detection:192x192"
 IMITATION_LANDMARK_MODEL = "luxonis/mediapipe-hand-landmarker:224x224"
 IMITATION_FPS = 8
-# Step 1 deliberately matches the Luxonis reference exactly: a square 768x768
-# camera output, the size that example requests and that was verified working on
-# this device (hand with overlay, confirmed by the reporter in the example's own
-# visualizer). Keeping zero deviation from the proven wiring means a failure here
-# can only come from OUR embedding.
-# Consequence while this is square: the sensor is cropped, and the normalised
-# coordinates refer to that crop while /camera_topic still publishes 16:9, so the
-# Cerebra overlay is offset. That is expected in step 1.
-# Step 2 switches this to the full 16:9 field of view (1152x648, a branch this
-# device was measured to deliver) as the single changed variable.
-IMITATION_SOURCE_WIDTH = 768
-IMITATION_SOURCE_HEIGHT = 768
+# The neural branch carries the FULL 16:9 field of view at the size the
+# HandTrackerEdge reference uses (internal_frame_height=640 on a 16:9 sensor),
+# and this device was measured to deliver a 1152x648 branch alongside the colour
+# stream and stereo depth.
+#
+# The aspect ratio must match the published camera frame. Measured with the
+# square 768x768 branch of step 1: a centred hand landed within 8 px of its real
+# position, but a hand at the right edge was off by ~190 px in x and its extent
+# was squashed in y - the signature of mapping square-normalised coordinates
+# onto a 16:9 frame. With a 16:9 branch the mapping back is a pure per-axis
+# scale, so that error cannot occur by construction.
+IMITATION_SOURCE_WIDTH = 1152
+IMITATION_SOURCE_HEIGHT = 648
 # Device-side queues on the camera branches stay shallow and non-blocking.  The
 # host drains them from the 10 Hz timer, far below the camera frame rate, and a
 # blocking queue back-pressures the Camera node and stalls every other branch
