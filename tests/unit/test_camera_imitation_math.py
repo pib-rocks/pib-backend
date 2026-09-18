@@ -49,17 +49,23 @@ def _gathered(item, detection=None):
     )
 
 
-def test_crop_config_forces_zero_angle_adds_padding_and_uses_stretch():
+def test_crop_config_forces_square_letterbox_and_zero_angle():
+    """The crop must be square (using max of width/height) and letterboxed.
+
+    The palm detector's box is not square in the 16:9 branch. Making the crop
+    square and letterboxing to the landmark input preserves the hand's aspect
+    ratio, which the landmark net expects.
+    """
     fake_rect = _rect()
     config = MagicMock()
-    stretch = imitation.dai.ImageManipConfig.ResizeMode.STRETCH
+    letterbox = imitation.dai.ImageManipConfig.ResizeMode.LETTERBOX
     with (
         patch.object(imitation.dai, "RotatedRect", return_value=fake_rect),
         patch.object(
             imitation.dai, "ImageManipConfig", return_value=config
         ) as image_manip_config,
     ):
-        image_manip_config.ResizeMode.STRETCH = stretch
+        image_manip_config.ResizeMode.LETTERBOX = letterbox
         result = imitation.detection_crop_config(_detection(), 0.1, 224, 224)
 
     assert result is config
@@ -67,14 +73,12 @@ def test_crop_config_forces_zero_angle_adds_padding_and_uses_stretch():
     assert config.addCropRotatedRect.call_args.kwargs == {"normalizedCoords": True}
     assert padded.center.x == pytest.approx(0.5)
     assert padded.center.y == pytest.approx(0.4)
-    assert padded.size.width == pytest.approx(0.4)
+    # Square crop uses the larger dimension (0.3 + 2*0.1 = 0.5)
+    assert padded.size.width == pytest.approx(0.5)
     assert padded.size.height == pytest.approx(0.5)
-    # Must be 0 even though the detection carries 12 degrees: the parser's angle
-    # is pixel-space, a normalised RotatedRect rotates in a non-isotropic space,
-    # and feeding it back skewed the crop so badly that the landmark net scored
-    # 0.002 on a hand the palm detector found with 0.9.
+    # Angle must be 0 even though the detection carries 12 degrees
     assert padded.angle == pytest.approx(0.0)
-    config.setOutputSize.assert_called_once_with(224, 224, stretch)
+    config.setOutputSize.assert_called_once_with(224, 224, letterbox)
     config.setReusePreviousImage.assert_called_once_with(False)
 
 
