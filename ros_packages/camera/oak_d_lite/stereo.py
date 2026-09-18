@@ -2,6 +2,7 @@
 import base64
 from collections import deque
 import math
+import marshal
 import os
 import threading
 import time
@@ -31,6 +32,13 @@ from std_msgs.msg import Float32MultiArray, Float64, Int32, Int32MultiArray, Str
 
 from .model_registry import ModelRegistry
 from .pipeline_manager import PipelineManager
+from .imitation import (
+    LANDMARK_COUNT as IMITATION_LANDMARK_COUNT,
+    box_from_points,
+    build_imitation_script,
+    square_points_to_frame,
+    world_landmark_scalars,
+)
 from .hand_tracking import (
     HAND_KEYPOINT_NAMES,
     LANDMARK_SCORE_LAYER,
@@ -54,6 +62,8 @@ FACE_DETECT_HEIGHT = 180
 # ImageManip crops would change the pixels on which the models were trained.
 HAND_NN_WIDTH = 256
 HAND_NN_HEIGHT = 256
+IMITATION_SOURCE_WIDTH = 256
+IMITATION_SOURCE_HEIGHT = 144
 # Device-side queues on the camera branches stay shallow and non-blocking.  The
 # host drains them from the 10 Hz timer, far below the camera frame rate, and a
 # blocking queue back-pressures the Camera node and stalls every other branch
@@ -69,6 +79,17 @@ PIPELINE_START_BACKOFF = 0.25
 PIPELINE_STOP_TIMEOUT = 5.0
 PIPELINE_STOP_POLL_INTERVAL = 0.05
 HAND_STAGE_NAMES = (
+    "colour_isp",
+    "palm_detector_nn",
+    "decoding_nn",
+    "decoding_result",
+    "image_manip_config",
+    "image_manip_roi",
+    "hand_landmark_nn",
+    "post_processing",
+    "publish",
+)
+IMITATION_STAGE_NAMES = (
     "colour_isp",
     "palm_detector_nn",
     "decoding_nn",
@@ -169,8 +190,12 @@ class CameraNode(Node):
         self._pending_hand_decoder_packet = None
         self._pending_hands = deque()
         self._hand_warnings = set()
+        self.imitation_queue = None
+        self._pending_imitation_packet = None
+        self.imitation_source_size = (0, 0)
         self._pipeline_lock = threading.RLock()
         self._reset_hand_stage_counters()
+        self._reset_imitation_stage_counters()
 
         self.camera_available = self.init_pipeline()
         self.pipeline_manager = PipelineManager(
@@ -422,8 +447,15 @@ class CameraNode(Node):
         self.hand_stage_counters = {stage: 0 for stage in HAND_STAGE_NAMES}
         self._hand_stage_last_logged = dict(self.hand_stage_counters)
 
+    def _reset_imitation_stage_counters(self):
+        self.imitation_stage_counters = {stage: 0 for stage in IMITATION_STAGE_NAMES}
+        self._imitation_stage_last_logged = dict(self.imitation_stage_counters)
+
     def _count_hand_stage(self, stage, count=1):
         self.hand_stage_counters[stage] += count
+
+    def _count_imitation_stage(self, stage, count=1):
+        self.imitation_stage_counters[stage] += count
 
     def _log_hand_stage_counters(self):
         if not any(
@@ -452,6 +484,38 @@ class CameraNode(Node):
             f"branch={source_width}x{source_height}"
         )
         self._hand_stage_last_logged = dict(self.hand_stage_counters)
+
+    def _log_imitation_stage_counters(self):
+        if not any(
+            active.model.model_id == "imitation"
+            for active in getattr(self, "_pipeline_models", ())
+        ):
+            return
+        interval = {
+            stage: (
+                self.imitation_stage_counters[stage]
+                - self._imitation_stage_last_logged[stage]
+            )
+            for stage in IMITATION_STAGE_NAMES
+        }
+        last_flowing = "none"
+        for stage in IMITATION_STAGE_NAMES:
+            if interval[stage] > 0:
+                last_flowing = stage
+        raw = " ".join(
+            f"{stage}={self.imitation_stage_counters[stage]}"
+            for stage in IMITATION_STAGE_NAMES
+        )
+        interval_raw = " ".join(
+            f"{stage}={interval[stage]}" for stage in IMITATION_STAGE_NAMES
+        )
+        source_width, source_height = self.imitation_source_size
+        self.get_logger().info(
+            f"imitation stage packets total: {raw}; "
+            f"interval: {interval_raw}; last_flowing={last_flowing}; "
+            f"branch={source_width}x{source_height}"
+        )
+        self._imitation_stage_last_logged = dict(self.imitation_stage_counters)
 
     @staticmethod
     def _nn_layer(packet, name):
@@ -588,6 +652,101 @@ class CameraNode(Node):
             publisher.publish(message)
         self._count_hand_stage("publish")
         self.pipeline_manager.record_packet("hand_tracking")
+
+    def _imitation_detection(self, hand, frame_width, frame_height):
+        points = hand.get("landmarks", ())
+        if len(points) != IMITATION_LANDMARK_COUNT:
+            raise ValueError("imitation result must contain 21 landmarks")
+        landmarks = square_points_to_frame(points, frame_width, frame_height)
+        region = {
+            "box_x": float(hand["box_x"]),
+            "box_y": float(hand["box_y"]),
+            "box_size": float(hand["box_size"]),
+        }
+        # Decision (a): the published box encloses the 21 landmarks. The
+        # detector's own palm box covers the palm only and would leave the
+        # fingers outside the rectangle drawn in Cerebra.
+        bbox = box_from_points(landmarks, frame_width, frame_height)
+        world_names, world_values = world_landmark_scalars(hand.get("world", ()))
+
+        detection = Detection()
+        detection.label = "hand"
+        detection.score = float(hand["landmark_score"])
+        (
+            detection.x_min,
+            detection.y_min,
+            detection.x_max,
+            detection.y_max,
+        ) = bbox
+        detection.keypoint_names = list(HAND_KEYPOINT_NAMES)
+        detection.keypoint_x = [float(point[0]) for point in landmarks]
+        detection.keypoint_y = [float(point[1]) for point in landmarks]
+        detection.keypoint_z = [0.0] * len(HAND_KEYPOINT_NAMES)
+        detection.scalar_names = [
+            "handedness",
+            "palm_score",
+            "landmark_score",
+        ] + world_names
+        detection.scalar_values = [
+            float(hand["handedness"]),
+            float(hand["palm_score"]),
+            float(hand["landmark_score"]),
+        ] + world_values
+        return detection
+
+    def _publish_imitation_detections(self, frame_width, frame_height, detections):
+        message = DetectionArray()
+        message.header.stamp = self.get_clock().now().to_msg()
+        message.model_id = "imitation"
+        message.frame_width = frame_width
+        message.frame_height = frame_height
+        message.detections = detections
+        self.last_detections["imitation"] = message
+        publisher = self.detection_publishers.get("imitation")
+        if publisher is not None:
+            publisher.publish(message)
+        self.pipeline_manager.record_packet("imitation")
+
+    def _consume_imitation_packet(self, packet):
+        payload = marshal.loads(bytes(packet.getData()))
+        if not isinstance(payload, dict):
+            raise ValueError("imitation Script result must be a dictionary")
+        stages = payload.get("stages", {})
+        if isinstance(stages, dict):
+            for stage in IMITATION_STAGE_NAMES:
+                if stage == "colour_isp":
+                    continue
+                value = stages.get(stage)
+                if isinstance(value, int) and value >= 0:
+                    self.imitation_stage_counters[stage] = max(
+                        self.imitation_stage_counters[stage], value
+                    )
+        frame_height, frame_width = self.current_frame.shape[:2]
+        detections = []
+        for hand in payload.get("hands", ()):
+            try:
+                detections.append(
+                    self._imitation_detection(hand, frame_width, frame_height)
+                )
+            except (KeyError, TypeError, ValueError) as exc:
+                self._warn_hand_once(f"Invalid imitation Script result: {exc}")
+        self._publish_imitation_detections(frame_width, frame_height, detections)
+
+    def _process_imitation(self):
+        if self.imitation_queue is None or self.current_frame is None:
+            return
+        packet = self._pending_imitation_packet
+        self._pending_imitation_packet = None
+        for _ in range(32):
+            if packet is None:
+                packet = self.imitation_queue.tryGet()
+            if packet is None:
+                break
+            try:
+                self._consume_imitation_packet(packet)
+            except (EOFError, TypeError, ValueError) as exc:
+                self._warn_hand_once(f"Invalid imitation payload: {exc}")
+            packet = None
 
     def _log_hand_assembly_fingerprint(self, batch):
         if not batch.get("log_details"):
@@ -956,8 +1115,27 @@ class CameraNode(Node):
                     "hand_tracking was marked failed because its physical pipeline "
                     "is missing or has no startup packet flow."
                 )
+        imitation_status = statuses.get("imitation")
+        imitation_flowing = self._imitation_chain_is_flowing()
+        if imitation_status is not None and imitation_flowing:
+            if self.pipeline_manager.mark_running("imitation"):
+                self.get_logger().info(
+                    "imitation recovered after device Script packet flow resumed."
+                )
+        elif imitation_status is not None and imitation_status["active"]:
+            marked_failed = self.pipeline_manager.mark_failed(
+                "imitation",
+                "Imitation pipeline is not producing Script result packets",
+                startup_grace=self.hand_startup_grace,
+            )
+            if marked_failed:
+                self.get_logger().error(
+                    "imitation was marked failed because its physical pipeline "
+                    "is missing or has no startup packet flow."
+                )
         self.pipeline_manager.refresh_fps()
         self._log_hand_stage_counters()
+        self._log_imitation_stage_counters()
         statuses = self.pipeline_manager.statuses()
         status_array = ModelStatusArray()
         status_array.header.stamp = self.get_clock().now().to_msg()
@@ -1071,11 +1249,15 @@ class CameraNode(Node):
         self.hand_landmark_input_size = 0
         self.hand_source_size = (0, 0)
         self._pending_hand_decoder_packet = None
+        self.imitation_queue = None
+        self._pending_imitation_packet = None
+        self.imitation_source_size = (0, 0)
         if hasattr(self, "_pending_hands"):
             self._pending_hands.clear()
         else:
             self._pending_hands = deque()
         self._reset_hand_stage_counters()
+        self._reset_imitation_stage_counters()
 
         if include_stereo:
             self._init_stereo_depth()
@@ -1084,6 +1266,9 @@ class CameraNode(Node):
             model = active_model.model
             if model.model_id == "hand_tracking":
                 self._build_hand_pipeline(model)
+                continue
+            if model.model_id == "imitation":
+                self._build_imitation_pipeline(model)
                 continue
             neural_network = self.pipeline.create(dai.node.NeuralNetwork)
             neural_network.setBlobPath(model.blob_path)
@@ -1227,6 +1412,26 @@ class CameraNode(Node):
             )
         )
 
+    def _imitation_chain_is_built(self):
+        requested = any(
+            active.model.model_id == "imitation"
+            for active in getattr(self, "_pipeline_models", ())
+        )
+        if not requested:
+            return False
+        return getattr(self, "imitation_queue", None) is not None
+
+    def _imitation_chain_is_flowing(self):
+        return self._imitation_chain_is_built() and all(
+            self.imitation_stage_counters[stage] > 0
+            for stage in (
+                "palm_detector_nn",
+                "decoding_nn",
+                "decoding_result",
+                "publish",
+            )
+        )
+
     def _relax_branch_input(self, node_input):
         """Drop frames on a branch input instead of back-pressuring the camera."""
         try:
@@ -1328,6 +1533,77 @@ class CameraNode(Node):
         # config, and a dropped result would stall the pairing permanently.
         self.hand_landmark_queue = landmark_nn.out.createOutputQueue()
 
+    def _build_imitation_pipeline(self, composite):
+        """Add the reference on-device palm/landmark manager Script."""
+        artifacts = {
+            model_id: self.model_registry.get(model_id)
+            for model_id in composite.artifact_ids
+        }
+        palm = artifacts["palm_detection_sh4"]
+        decoder = artifacts["pd_postprocessing_top2_sh1"]
+        landmark = artifacts["hand_landmark_full_sh4"]
+
+        imitation_tap = self._request_camera_branch(
+            (IMITATION_SOURCE_WIDTH, IMITATION_SOURCE_HEIGHT)
+        )
+        self.imitation_source_size = self._branch_output_size(
+            imitation_tap, (IMITATION_SOURCE_WIDTH, IMITATION_SOURCE_HEIGHT)
+        )
+        source_width, source_height = self.imitation_source_size
+
+        palm_manip = self.pipeline.create(dai.node.ImageManip)
+        self._configure_hand_manip(
+            palm_manip,
+            palm.input_width,
+            palm.input_height,
+            source_width,
+            source_height,
+        )
+        palm_manip.inputConfig.setWaitForMessage(True)
+        self._relax_branch_input(palm_manip.inputImage)
+        imitation_tap.link(palm_manip.inputImage)
+
+        palm_nn = self.pipeline.create(dai.node.NeuralNetwork)
+        palm_nn.setBlobPath(palm.blob_path)
+        palm_nn.setNumShavesPerInferenceThread(palm.shaves)
+        self._relax_branch_input(palm_nn.input)
+        palm_manip.out.link(palm_nn.input)
+
+        decoder_nn = self.pipeline.create(dai.node.NeuralNetwork)
+        decoder_nn.setBlobPath(decoder.blob_path)
+        decoder_nn.setNumShavesPerInferenceThread(decoder.shaves)
+        palm_nn.out.link(decoder_nn.input)
+
+        landmark_manip = self.pipeline.create(dai.node.ImageManip)
+        self._configure_hand_manip(
+            landmark_manip,
+            landmark.input_width,
+            landmark.input_height,
+            source_width,
+            source_height,
+        )
+        landmark_manip.inputConfig.setWaitForMessage(True)
+        self._relax_branch_input(landmark_manip.inputImage)
+        imitation_tap.link(landmark_manip.inputImage)
+
+        landmark_nn = self.pipeline.create(dai.node.NeuralNetwork)
+        landmark_nn.setBlobPath(landmark.blob_path)
+        landmark_nn.setNumShavesPerInferenceThread(landmark.shaves)
+        landmark_manip.out.link(landmark_nn.input)
+
+        manager = self.pipeline.create(dai.node.Script)
+        manager.setScript(build_imitation_script(source_width, source_height))
+        processor = getattr(getattr(dai, "ProcessorType", None), "LEON_CSS", None)
+        if processor is not None:
+            manager.setProcessor(processor)
+        manager.outputs["pre_pd_manip_cfg"].link(palm_manip.inputConfig)
+        decoder_nn.out.link(manager.inputs["from_post_pd_nn"])
+        manager.outputs["pre_lm_manip_cfg"].link(landmark_manip.inputConfig)
+        landmark_nn.out.link(manager.inputs["from_lm_nn"])
+        self.imitation_queue = manager.outputs["host"].createOutputQueue(
+            maxSize=BRANCH_OUTPUT_QUEUE_DEPTH, blocking=False
+        )
+
     def _stop_pipeline(self):
         pipeline_lock = getattr(self, "_pipeline_lock", None)
         if pipeline_lock is None:
@@ -1375,6 +1651,9 @@ class CameraNode(Node):
             self.hand_landmark_input_size = 0
             self.hand_source_size = (0, 0)
             self._pending_hand_decoder_packet = None
+            self.imitation_queue = None
+            self._pending_imitation_packet = None
+            self.imitation_source_size = (0, 0)
             if hasattr(self, "_pending_hands"):
                 self._pending_hands.clear()
             return True
@@ -1454,7 +1733,11 @@ class CameraNode(Node):
                     and not self._hand_chain_is_built()
                 )
                 or (
-                    active.model.model_id != "hand_tracking"
+                    active.model.model_id == "imitation"
+                    and not self._imitation_chain_is_built()
+                )
+                or (
+                    active.model.model_id not in ("hand_tracking", "imitation")
                     and active.model.model_id not in self.nn_queues
                 )
             ]
@@ -1476,8 +1759,14 @@ class CameraNode(Node):
                 "Cannot verify hand_tracking: the complete hand chain is absent"
             )
             return False
+        if "imitation" in requested_ids and not self._imitation_chain_is_built():
+            self.get_logger().error(
+                "Cannot verify imitation: the Script output queue is absent"
+            )
+            return False
         if any(
-            model_id != "hand_tracking" and model_id not in self.nn_queues
+            model_id not in ("hand_tracking", "imitation")
+            and model_id not in self.nn_queues
             for model_id in requested_ids
         ):
             return False
@@ -1497,6 +1786,11 @@ class CameraNode(Node):
                 return False
             self._pending_hand_decoder_packet = packet
             self._count_hand_stage("decoding_nn")
+        if "imitation" in requested_ids:
+            packet = self._wait_for_queue_packet(self.imitation_queue, timeout)
+            if packet is None:
+                return False
+            self._pending_imitation_packet = packet
         return True
 
     def _revert_to_color_only(self):
@@ -1631,6 +1925,8 @@ class CameraNode(Node):
                 self.current_frame = frame
                 if self.hand_decoder_queue is not None:
                     self._count_hand_stage("colour_isp")
+                if self.imitation_queue is not None:
+                    self._count_imitation_stage("colour_isp")
                 self.publish_face_center(frame)
 
                 # Only JPEG/base64 encode when someone is subscribed to camera_topic.
@@ -1664,6 +1960,7 @@ class CameraNode(Node):
                 self._count_hand_stage(stage)
 
         self._process_hand_tracking()
+        self._process_imitation()
 
         if not self.depth_queue:
             return
