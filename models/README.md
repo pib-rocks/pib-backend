@@ -180,3 +180,46 @@ ${PIB_MODEL_STORE:-/home/pib/app/pib-models}/
 
 Docker mounts that directory read-only at `/models`. Provision it before
 starting containers so Docker does not create a root-owned bind-mount source.
+
+## The imitation model set (2026-09-18)
+
+`imitation` is a second, independent hand path. It exists because the DepthAI zoo decoding
+head cannot be used as vendored: its blob metadata, read on the device, is
+
+```
+palm_detection_128x128           OUT regressors FP16 [18,896,1]  classificators FP16 [1,896,1]
+palm_detection_128x128_decoding  IN  regressors U8F  [18,896,1]  classificators U8F  [1,896,1]
+```
+
+The decoding head was compiled with `-ip U8`, which is right for an image-input detector and
+wrong for a decoding head whose inputs are float tensors. Feeding FP16 into U8 inputs
+destroys them; the head then emits values quantised to 1/128 steps, a score column stuck at a
+constant 1.0 and coordinates above 1.0 that correlate with nothing in the frame.
+
+The upstream reference (`geaxgx/depthai_hand_tracker`, pib fork at `/home/pib/imitation` on
+the robot) avoids that by generating its own post-processing blob. Its three blobs are
+vendored here, all OpenVINO 2022.1, MIT licensed:
+
+| model_id | shaves | inputs | outputs |
+| --- | --- | --- | --- |
+| `palm_detection_sh4` | 4 | `input` U8F 128x128x3 | `regressors` FP16, `classificators` FP16 |
+| `pd_postprocessing_top2_sh1` | 1 | `regressors` FP16, `classificators` FP16 | `result` FP16 [8,2] |
+| `hand_landmark_full_sh4` | 4 | `input_1` U8F 224x224x3 | `Identity_1`, `Identity_2`, `Identity_dense/BiasAdd/Add`, `Identity_3_dense/BiasAdd/Add` |
+
+The composite `imitation` requests 4 + 1 + 4 = 9 shaves and publishes on
+`detections/imitation`.
+
+`result` carries the TOP 2 palms as eight square-normalised values each:
+`score, box_x, box_y, box_size, kp0_x, kp0_y, kp2_x, kp2_y`. The reference derives the
+landmark crop from them with `rotation = 0.5*pi - atan2(-(kp2_y-kp0_y), kp2_x-kp0_x)`,
+`center = box + 0.5*box_size*(sin(rotation), -cos(rotation))` and `size = 2.9 * box_size`,
+and it gates on `score >= 0.5` for the palm and `Identity_1 >= 0.5` for the landmarks.
+
+**Before trusting any vendored helper blob, read its input datatypes:**
+
+```python
+import depthai as dai
+b = dai.OpenVINO.Blob("/models/<id>/<id>.blob")
+for n, t in b.networkInputs.items():
+    print(n, t.dataType, list(t.dims))
+```
