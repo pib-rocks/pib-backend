@@ -2,13 +2,13 @@
 import base64
 from collections import deque
 import math
-import marshal
 import os
 import threading
 import time
 import weakref
 import cv2
 import depthai as dai
+from depthai_nodes.node import FrameCropper, GatherData, ParsingNeuralNetwork
 import numpy as np
 import rclpy
 from datatypes.msg import (
@@ -34,9 +34,11 @@ from .model_registry import ModelRegistry
 from .pipeline_manager import PipelineManager
 from .imitation import (
     LANDMARK_COUNT as IMITATION_LANDMARK_COUNT,
+    PALM_PADDING as IMITATION_PALM_PADDING,
+    ProcessDetections,
     box_from_points,
-    build_imitation_script,
-    square_points_to_frame,
+    gathered_hands,
+    gathered_result_trace_values,
     world_landmark_scalars,
 )
 from .hand_tracking import (
@@ -62,8 +64,21 @@ FACE_DETECT_HEIGHT = 180
 # ImageManip crops would change the pixels on which the models were trained.
 HAND_NN_WIDTH = 256
 HAND_NN_HEIGHT = 256
-IMITATION_SOURCE_WIDTH = 256
-IMITATION_SOURCE_HEIGHT = 144
+IMITATION_DETECTOR_MODEL = "luxonis/mediapipe-palm-detection:192x192"
+IMITATION_LANDMARK_MODEL = "luxonis/mediapipe-hand-landmarker:224x224"
+IMITATION_FPS = 8
+# Step 1 deliberately matches the Luxonis reference exactly: a square 768x768
+# camera output, the size that example requests and that was verified working on
+# this device (hand with overlay, confirmed by the reporter in the example's own
+# visualizer). Keeping zero deviation from the proven wiring means a failure here
+# can only come from OUR embedding.
+# Consequence while this is square: the sensor is cropped, and the normalised
+# coordinates refer to that crop while /camera_topic still publishes 16:9, so the
+# Cerebra overlay is offset. That is expected in step 1.
+# Step 2 switches this to the full 16:9 field of view (1152x648, a branch this
+# device was measured to deliver) as the single changed variable.
+IMITATION_SOURCE_WIDTH = 768
+IMITATION_SOURCE_HEIGHT = 768
 # Device-side queues on the camera branches stay shallow and non-blocking.  The
 # host drains them from the 10 Hz timer, far below the camera frame rate, and a
 # blocking queue back-pressures the Camera node and stalls every other branch
@@ -654,15 +669,9 @@ class CameraNode(Node):
         self.pipeline_manager.record_packet("hand_tracking")
 
     def _imitation_detection(self, hand, frame_width, frame_height):
-        points = hand.get("landmarks", ())
-        if len(points) != IMITATION_LANDMARK_COUNT:
+        landmarks = hand.get("landmarks", ())
+        if len(landmarks) != IMITATION_LANDMARK_COUNT:
             raise ValueError("imitation result must contain 21 landmarks")
-        landmarks = square_points_to_frame(points, frame_width, frame_height)
-        region = {
-            "box_x": float(hand["box_x"]),
-            "box_y": float(hand["box_y"]),
-            "box_size": float(hand["box_size"]),
-        }
         # Decision (a): the published box encloses the 21 landmarks. The
         # detector's own palm box covers the palm only and would leave the
         # fingers outside the rectangle drawn in Cerebra.
@@ -705,31 +714,44 @@ class CameraNode(Node):
         publisher = self.detection_publishers.get("imitation")
         if publisher is not None:
             publisher.publish(message)
+        self._count_imitation_stage("publish")
         self.pipeline_manager.record_packet("imitation")
 
     def _consume_imitation_packet(self, packet):
-        payload = marshal.loads(bytes(packet.getData()))
-        if not isinstance(payload, dict):
-            raise ValueError("imitation Script result must be a dictionary")
-        stages = payload.get("stages", {})
-        if isinstance(stages, dict):
-            for stage in IMITATION_STAGE_NAMES:
-                if stage == "colour_isp":
-                    continue
-                value = stages.get(stage)
-                if isinstance(value, int) and value >= 0:
-                    self.imitation_stage_counters[stage] = max(
-                        self.imitation_stage_counters[stage], value
-                    )
         frame_height, frame_width = self.current_frame.shape[:2]
+        palm_count = len(packet.reference_data.detections)
+        result_count = len(packet.items)
+        self._count_imitation_stage("palm_detector_nn")
+        self._count_imitation_stage("decoding_nn")
+        self._count_imitation_stage("decoding_result")
+        self._count_imitation_stage("image_manip_config", palm_count)
+        self._count_imitation_stage("image_manip_roi", result_count)
+        self._count_imitation_stage("hand_landmark_nn", result_count)
+        self._count_imitation_stage("post_processing", result_count)
+
+        # The trace runs BEFORE the conversion on purpose: when gathered_hands
+        # raises, the trace is the only evidence left, and a trace that sits
+        # after it disappears exactly when it is needed most.
+        for palm_score, landmark_score, crop in gathered_result_trace_values(packet):
+            score_text = (
+                f"{landmark_score:.9g}" if landmark_score is not None else "unavailable"
+            )
+            self.get_logger().info(
+                "IMIT_TRACE "
+                f"palm_score={palm_score:.9g} landmark_score={score_text} "
+                f"crop=({crop[0]:.9g},{crop[1]:.9g},"
+                f"{crop[2]:.9g},{crop[3]:.9g})"
+            )
+
+        hands = gathered_hands(packet, frame_width, frame_height)
         detections = []
-        for hand in payload.get("hands", ()):
+        for hand in hands:
             try:
                 detections.append(
                     self._imitation_detection(hand, frame_width, frame_height)
                 )
             except (KeyError, TypeError, ValueError) as exc:
-                self._warn_hand_once(f"Invalid imitation Script result: {exc}")
+                self._warn_hand_once(f"Invalid imitation gathered result: {exc}")
         self._publish_imitation_detections(frame_width, frame_height, detections)
 
     def _process_imitation(self):
@@ -744,8 +766,21 @@ class CameraNode(Node):
                 break
             try:
                 self._consume_imitation_packet(packet)
-            except (EOFError, TypeError, ValueError) as exc:
-                self._warn_hand_once(f"Invalid imitation payload: {exc}")
+            except (AttributeError, IndexError, TypeError, ValueError) as exc:
+                # NOT _warn_hand_once: that logs a single line for the whole
+                # process lifetime. A repeating failure then looks like "no hand
+                # detected" while 8 packets per second are silently discarded,
+                # which is exactly how this bug hid. Log the type and a running
+                # count, throttled so it cannot flood the log.
+                self._imitation_error_count = (
+                    getattr(self, "_imitation_error_count", 0) + 1
+                )
+                if self._imitation_error_count % 25 == 1:
+                    self.get_logger().error(
+                        "IMIT_DROP "
+                        f"count={self._imitation_error_count} "
+                        f"type={type(exc).__name__} message={exc}"
+                    )
             packet = None
 
     def _log_hand_assembly_fingerprint(self, batch):
@@ -1120,12 +1155,12 @@ class CameraNode(Node):
         if imitation_status is not None and imitation_flowing:
             if self.pipeline_manager.mark_running("imitation"):
                 self.get_logger().info(
-                    "imitation recovered after device Script packet flow resumed."
+                    "imitation recovered after gathered result packet flow resumed."
                 )
         elif imitation_status is not None and imitation_status["active"]:
             marked_failed = self.pipeline_manager.mark_failed(
                 "imitation",
-                "Imitation pipeline is not producing Script result packets",
+                "Imitation pipeline is not producing gathered result packets",
                 startup_grace=self.hand_startup_grace,
             )
             if marked_failed:
@@ -1234,7 +1269,17 @@ class CameraNode(Node):
         """Build one colour pipeline, optionally including the stereo path."""
         self.pipeline = dai.Pipeline()
         self.camRgb = self.pipeline.create(dai.node.Camera)
-        self.camRgb.build(dai.CameraBoardSocket.CAM_A)
+        imitation_active = any(
+            active.model.model_id == "imitation"
+            for active in getattr(self, "_pipeline_models", ())
+        )
+        if imitation_active:
+            self.camRgb.build(
+                dai.CameraBoardSocket.CAM_A,
+                sensorFps=IMITATION_FPS,
+            )
+        else:
+            self.camRgb.build(dai.CameraBoardSocket.CAM_A)
         self.isp_out = self.camRgb.requestIspOutput()
         self.queue = self.isp_out.createOutputQueue(
             maxSize=COLOR_OUTPUT_QUEUE_DEPTH, blocking=False
@@ -1534,75 +1579,88 @@ class CameraNode(Node):
         self.hand_landmark_queue = landmark_nn.out.createOutputQueue()
 
     def _build_imitation_pipeline(self, composite):
-        """Add the reference on-device palm/landmark manager Script."""
-        artifacts = {
-            model_id: self.model_registry.get(model_id)
-            for model_id in composite.artifact_ids
-        }
-        palm = artifacts["palm_detection_sh4"]
-        decoder = artifacts["pd_postprocessing_top2_sh1"]
-        landmark = artifacts["hand_landmark_full_sh4"]
+        """Add the official parsed palm, full-frame crop, and landmark graph."""
+        platform = "RVC2"
+        detection_description = dai.NNModelDescription(IMITATION_DETECTOR_MODEL)
+        detection_description.platform = platform
+        detection_archive = dai.NNArchive(dai.getModelFromZoo(detection_description))
+        landmark_description = dai.NNModelDescription(IMITATION_LANDMARK_MODEL)
+        landmark_description.platform = platform
+        landmark_archive = dai.NNArchive(dai.getModelFromZoo(landmark_description))
 
-        imitation_tap = self._request_camera_branch(
-            (IMITATION_SOURCE_WIDTH, IMITATION_SOURCE_HEIGHT)
+        detector_width = detection_archive.getInputWidth()
+        detector_height = detection_archive.getInputHeight()
+        landmark_width = landmark_archive.getInputWidth()
+        landmark_height = landmark_archive.getInputHeight()
+
+        detector_resize = self.pipeline.create(dai.node.ImageManip)
+        detector_resize.setMaxOutputFrameSize(detector_width * detector_height * 3)
+        detector_resize.initialConfig.setOutputSize(
+            detector_width,
+            detector_height,
+            mode=dai.ImageManipConfig.ResizeMode.STRETCH,
         )
-        self.imitation_source_size = self._branch_output_size(
-            imitation_tap, (IMITATION_SOURCE_WIDTH, IMITATION_SOURCE_HEIGHT)
+        detector_resize.initialConfig.setFrameType(dai.ImgFrame.Type.BGR888p)
+        # The full 16:9 field of view is intentionally stretched to square. This
+        # squeezes hands horizontally by about 1.78 and may reduce palm score,
+        # but avoids the field-of-view loss of a square camera crop.
+        #
+        # The neural branches must NOT tap requestIspOutput(): that is the raw,
+        # full-resolution ISP stream which also feeds the host queue publishing
+        # /camera_topic. Hanging two device consumers on it froze the whole
+        # pipeline (last_flowing=none) and took the camera image in Cerebra with
+        # it. The Luxonis reference asks the camera for its own sized, rate
+        # limited output instead - three consumers on THAT are fine, the running
+        # example has two device consumers plus a host node on one output.
+        imitation_source = self.camRgb.requestOutput(
+            (IMITATION_SOURCE_WIDTH, IMITATION_SOURCE_HEIGHT),
+            type=dai.ImgFrame.Type.BGR888p,
+            fps=IMITATION_FPS,
         )
-        source_width, source_height = self.imitation_source_size
-
-        palm_manip = self.pipeline.create(dai.node.ImageManip)
-        self._configure_hand_manip(
-            palm_manip,
-            palm.input_width,
-            palm.input_height,
-            source_width,
-            source_height,
+        if imitation_source is None:
+            raise RuntimeError(
+                "Camera cannot provide a "
+                f"{IMITATION_SOURCE_WIDTH}x{IMITATION_SOURCE_HEIGHT} "
+                "BGR888p branch for the imitation pipeline"
+            )
+        self.imitation_source_size = (
+            IMITATION_SOURCE_WIDTH,
+            IMITATION_SOURCE_HEIGHT,
         )
-        palm_manip.inputConfig.setWaitForMessage(True)
-        self._relax_branch_input(palm_manip.inputImage)
-        imitation_tap.link(palm_manip.inputImage)
+        imitation_source.link(detector_resize.inputImage)
 
-        palm_nn = self.pipeline.create(dai.node.NeuralNetwork)
-        palm_nn.setBlobPath(palm.blob_path)
-        palm_nn.setNumShavesPerInferenceThread(palm.shaves)
-        self._relax_branch_input(palm_nn.input)
-        palm_manip.out.link(palm_nn.input)
-
-        decoder_nn = self.pipeline.create(dai.node.NeuralNetwork)
-        decoder_nn.setBlobPath(decoder.blob_path)
-        decoder_nn.setNumShavesPerInferenceThread(decoder.shaves)
-        palm_nn.out.link(decoder_nn.input)
-
-        landmark_manip = self.pipeline.create(dai.node.ImageManip)
-        self._configure_hand_manip(
-            landmark_manip,
-            landmark.input_width,
-            landmark.input_height,
-            source_width,
-            source_height,
+        detection_nn = self.pipeline.create(ParsingNeuralNetwork).build(
+            detector_resize.out,
+            detection_archive,
         )
-        landmark_manip.inputConfig.setWaitForMessage(True)
-        self._relax_branch_input(landmark_manip.inputImage)
-        imitation_tap.link(landmark_manip.inputImage)
+        detections_processor = self.pipeline.create(ProcessDetections).build(
+            detections_input=detection_nn.out,
+            padding=IMITATION_PALM_PADDING,
+            target_size=(landmark_width, landmark_height),
+        )
 
-        landmark_nn = self.pipeline.create(dai.node.NeuralNetwork)
-        landmark_nn.setBlobPath(landmark.blob_path)
-        landmark_nn.setNumShavesPerInferenceThread(landmark.shaves)
-        landmark_manip.out.link(landmark_nn.input)
-
-        manager = self.pipeline.create(dai.node.Script)
-        manager.setScript(build_imitation_script(source_width, source_height))
-        processor = getattr(getattr(dai, "ProcessorType", None), "LEON_CSS", None)
-        if processor is not None:
-            manager.setProcessor(processor)
-        manager.outputs["pre_pd_manip_cfg"].link(palm_manip.inputConfig)
-        decoder_nn.out.link(manager.inputs["from_post_pd_nn"])
-        manager.outputs["pre_lm_manip_cfg"].link(landmark_manip.inputConfig)
-        landmark_nn.out.link(manager.inputs["from_lm_nn"])
-        self.imitation_queue = manager.outputs["host"].createOutputQueue(
+        cropper = (
+            self.pipeline.create(FrameCropper)
+            .fromManipConfigs(
+                inputManipConfigs=detections_processor.config_output,
+                maxOutputFrameSize=landmark_width * landmark_height * 3,
+                waitForConfig=True,
+            )
+            .build(imitation_source)
+        )
+        pose_nn = self.pipeline.create(ParsingNeuralNetwork).build(
+            cropper.out,
+            landmark_archive,
+        )
+        gather_data = self.pipeline.create(GatherData).build(
+            cameraFps=IMITATION_FPS,
+            inputData=pose_nn.outputs,
+            inputReference=detection_nn.out,
+        )
+        self.imitation_queue = gather_data.out.createOutputQueue(
             maxSize=BRANCH_OUTPUT_QUEUE_DEPTH, blocking=False
         )
+        self.imitation_source_size = (detector_width, detector_height)
 
     def _stop_pipeline(self):
         pipeline_lock = getattr(self, "_pipeline_lock", None)
@@ -1761,7 +1819,7 @@ class CameraNode(Node):
             return False
         if "imitation" in requested_ids and not self._imitation_chain_is_built():
             self.get_logger().error(
-                "Cannot verify imitation: the Script output queue is absent"
+                "Cannot verify imitation: the gathered output queue is absent"
             )
             return False
         if any(
