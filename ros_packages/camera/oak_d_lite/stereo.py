@@ -729,7 +729,9 @@ class CameraNode(Node):
         self._count_imitation_stage("hand_landmark_nn", result_count)
         self._count_imitation_stage("post_processing", result_count)
 
-        hands = gathered_hands(packet, frame_width, frame_height)
+        # The trace runs BEFORE the conversion on purpose: when gathered_hands
+        # raises, the trace is the only evidence left, and a trace that sits
+        # after it disappears exactly when it is needed most.
         for palm_score, landmark_score, crop in gathered_result_trace_values(packet):
             score_text = (
                 f"{landmark_score:.9g}" if landmark_score is not None else "unavailable"
@@ -741,6 +743,7 @@ class CameraNode(Node):
                 f"{crop[2]:.9g},{crop[3]:.9g})"
             )
 
+        hands = gathered_hands(packet, frame_width, frame_height)
         detections = []
         for hand in hands:
             try:
@@ -764,7 +767,20 @@ class CameraNode(Node):
             try:
                 self._consume_imitation_packet(packet)
             except (AttributeError, IndexError, TypeError, ValueError) as exc:
-                self._warn_hand_once(f"Invalid imitation gathered result: {exc}")
+                # NOT _warn_hand_once: that logs a single line for the whole
+                # process lifetime. A repeating failure then looks like "no hand
+                # detected" while 8 packets per second are silently discarded,
+                # which is exactly how this bug hid. Log the type and a running
+                # count, throttled so it cannot flood the log.
+                self._imitation_error_count = (
+                    getattr(self, "_imitation_error_count", 0) + 1
+                )
+                if self._imitation_error_count % 25 == 1:
+                    self.get_logger().error(
+                        "IMIT_DROP "
+                        f"count={self._imitation_error_count} "
+                        f"type={type(exc).__name__} message={exc}"
+                    )
             packet = None
 
     def _log_hand_assembly_fingerprint(self, batch):
