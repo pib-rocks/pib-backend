@@ -167,3 +167,34 @@ def test_world_scalar_order_is_stable():
     assert names[:4] == ["world_0_x", "world_0_y", "world_0_z", "world_1_x"]
     assert names[-1] == "world_20_z"
     assert imitation.world_landmark_scalars([]) == ([], [])
+
+
+def test_missing_group_key_yields_none_instead_of_escaping():
+    """dai.MessageGroup raises RuntimeError('map::at') for an unknown key.
+
+    The zoo hand-landmarker archive declares only heads 0/1/2 (keypoints, score,
+    handedness); there is no parsed world-landmark head. Catching only
+    KeyError/TypeError let that RuntimeError escape from the conversion, which
+    silently dropped EVERY detection once the landmark score started passing the
+    gate - the failure looked exactly like "no hand detected".
+    """
+
+    class CppLikeGroup:
+        def __getitem__(self, key):
+            if key in ("0", "1", "2"):
+                return f"message-{key}"
+            raise RuntimeError("map::at")
+
+    group = CppLikeGroup()
+
+    assert imitation._group_value(group, "0") == "message-0"
+    assert imitation._group_value(group, "2") == "message-2"
+    assert imitation._group_value(group, "3") is None
+
+
+def test_world_scalars_tolerate_a_missing_head():
+    """No world head means no world scalars, not a crash."""
+    names, values = imitation.world_landmark_scalars(imitation._world_values(None))
+
+    assert names == []
+    assert values == []

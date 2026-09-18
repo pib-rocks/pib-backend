@@ -108,9 +108,13 @@ def world_landmark_scalars(values):
 
 
 def _group_value(group, key):
+    # dai.MessageGroup raises the C++ RuntimeError "map::at" for a missing key,
+    # which is neither KeyError nor TypeError. Catching only those let the
+    # missing world-landmark head ("3" - the zoo archive declares only heads
+    # 0/1/2) escape as an exception that silently dropped every detection.
     try:
         return group[key]
-    except (KeyError, TypeError):
+    except (KeyError, TypeError, RuntimeError):
         return None
 
 
