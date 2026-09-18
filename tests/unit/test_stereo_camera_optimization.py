@@ -147,6 +147,8 @@ from ros_packages.camera.oak_d_lite.stereo import (
     IMITATION_DETECTOR_MODEL,
     IMITATION_FPS,
     IMITATION_LANDMARK_MODEL,
+    IMITATION_SOURCE_HEIGHT,
+    IMITATION_SOURCE_WIDTH,
     IMITATION_STAGE_NAMES,
 )
 
@@ -1348,6 +1350,12 @@ class TestImitationPipeline(unittest.TestCase):
         created = [MagicMock() for _ in range(6)]
         node.pipeline.create.side_effect = created
         node.isp_out = MagicMock()
+        # The neural branches must ask the camera for their own sized, rate
+        # limited output. Tapping isp_out (which feeds /camera_topic) froze the
+        # whole pipeline on the robot and blanked the camera view in Cerebra.
+        node.camRgb = MagicMock()
+        imitation_source = MagicMock()
+        node.camRgb.requestOutput.return_value = imitation_source
         detection_archive = MagicMock()
         detection_archive.getInputWidth.return_value = 192
         detection_archive.getInputHeight.return_value = 192
@@ -1380,7 +1388,13 @@ class TestImitationPipeline(unittest.TestCase):
             192,
             mode=mock_dai.ImageManipConfig.ResizeMode.STRETCH,
         )
-        node.isp_out.link.assert_called_once_with(detector_resize.inputImage)
+        node.isp_out.link.assert_not_called()
+        node.camRgb.requestOutput.assert_called_once_with(
+            (IMITATION_SOURCE_WIDTH, IMITATION_SOURCE_HEIGHT),
+            type=mock_dai.ImgFrame.Type.BGR888p,
+            fps=IMITATION_FPS,
+        )
+        imitation_source.link.assert_called_once_with(detector_resize.inputImage)
         detection_nn.build.assert_called_once_with(
             detector_resize.out,
             detection_archive,
@@ -1395,7 +1409,8 @@ class TestImitationPipeline(unittest.TestCase):
             maxOutputFrameSize=224 * 224 * 3,
             waitForConfig=True,
         )
-        cropper.build.assert_called_once_with(node.isp_out)
+        # Stage 2 crops from the same camera branch, not from the ISP stream.
+        cropper.build.assert_called_once_with(imitation_source)
         pose_nn.build.assert_called_once_with(cropper.out, landmark_archive)
         gather.build.assert_called_once_with(
             cameraFps=IMITATION_FPS,

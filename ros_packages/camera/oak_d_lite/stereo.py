@@ -67,6 +67,18 @@ HAND_NN_HEIGHT = 256
 IMITATION_DETECTOR_MODEL = "luxonis/mediapipe-palm-detection:192x192"
 IMITATION_LANDMARK_MODEL = "luxonis/mediapipe-hand-landmarker:224x224"
 IMITATION_FPS = 8
+# Step 1 deliberately matches the Luxonis reference exactly: a square 768x768
+# camera output, the size that example requests and that was verified working on
+# this device (hand with overlay, confirmed by the reporter in the example's own
+# visualizer). Keeping zero deviation from the proven wiring means a failure here
+# can only come from OUR embedding.
+# Consequence while this is square: the sensor is cropped, and the normalised
+# coordinates refer to that crop while /camera_topic still publishes 16:9, so the
+# Cerebra overlay is offset. That is expected in step 1.
+# Step 2 switches this to the full 16:9 field of view (1152x648, a branch this
+# device was measured to deliver) as the single changed variable.
+IMITATION_SOURCE_WIDTH = 768
+IMITATION_SOURCE_HEIGHT = 768
 # Device-side queues on the camera branches stay shallow and non-blocking.  The
 # host drains them from the 10 Hz timer, far below the camera frame rate, and a
 # blocking queue back-pressures the Camera node and stalls every other branch
@@ -1576,7 +1588,30 @@ class CameraNode(Node):
         # The full 16:9 field of view is intentionally stretched to square. This
         # squeezes hands horizontally by about 1.78 and may reduce palm score,
         # but avoids the field-of-view loss of a square camera crop.
-        self.isp_out.link(detector_resize.inputImage)
+        #
+        # The neural branches must NOT tap requestIspOutput(): that is the raw,
+        # full-resolution ISP stream which also feeds the host queue publishing
+        # /camera_topic. Hanging two device consumers on it froze the whole
+        # pipeline (last_flowing=none) and took the camera image in Cerebra with
+        # it. The Luxonis reference asks the camera for its own sized, rate
+        # limited output instead - three consumers on THAT are fine, the running
+        # example has two device consumers plus a host node on one output.
+        imitation_source = self.camRgb.requestOutput(
+            (IMITATION_SOURCE_WIDTH, IMITATION_SOURCE_HEIGHT),
+            type=dai.ImgFrame.Type.BGR888p,
+            fps=IMITATION_FPS,
+        )
+        if imitation_source is None:
+            raise RuntimeError(
+                "Camera cannot provide a "
+                f"{IMITATION_SOURCE_WIDTH}x{IMITATION_SOURCE_HEIGHT} "
+                "BGR888p branch for the imitation pipeline"
+            )
+        self.imitation_source_size = (
+            IMITATION_SOURCE_WIDTH,
+            IMITATION_SOURCE_HEIGHT,
+        )
+        imitation_source.link(detector_resize.inputImage)
 
         detection_nn = self.pipeline.create(ParsingNeuralNetwork).build(
             detector_resize.out,
@@ -1595,7 +1630,7 @@ class CameraNode(Node):
                 maxOutputFrameSize=landmark_width * landmark_height * 3,
                 waitForConfig=True,
             )
-            .build(self.isp_out)
+            .build(imitation_source)
         )
         pose_nn = self.pipeline.create(ParsingNeuralNetwork).build(
             cropper.out,
