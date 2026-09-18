@@ -287,6 +287,23 @@ def test_model_lifecycle_and_detection_contract_e2e(live_robot):
         assert isinstance(hand_status["fps"], (int, float))
         assert hand_status["active"] is True
 
+        # The composite chain produces well under one DetectionArray per status
+        # publication, so its rate is only visible once the measurement window
+        # has collected packets.
+        running_status = ros.wait_for_topic(
+            "/models_status",
+            MODEL_TIMEOUT,
+            lambda message: any(
+                status.get("model_id") == "hand_tracking"
+                and status.get("state") == "running"
+                and status.get("fps", 0) > 0
+                for status in message.get("models", [])
+            ),
+        )
+        assert (
+            running_status is not None
+        ), "hand_tracking reported no measured FPS while running"
+
         service_detection = ros.call_service(
             "/get_detections",
             "datatypes/srv/GetDetections",
