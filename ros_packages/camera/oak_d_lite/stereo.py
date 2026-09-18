@@ -32,10 +32,11 @@ from sensor_msgs.msg import Imu
 from std_msgs.msg import Float32MultiArray, Float64, Int32, Int32MultiArray, String
 
 from .imu import (
-    IMU_PUBLISH_RATE_HZ,
     TenHertzThrottle,
     assemble_imu_sample,
     duration_to_nanoseconds,
+    host_stamp_nanoseconds,
+    measured_rate_hz,
 )
 from .model_registry import ModelRegistry
 from .pipeline_manager import PipelineManager
@@ -97,6 +98,8 @@ COLOR_OUTPUT_QUEUE_DEPTH = 4
 IMU_SENSOR_RATE_HZ = 100
 IMU_OUTPUT_QUEUE_DEPTH = 20
 IMU_DRAIN_LIMIT = 256
+# Publications used to report a measured rate in models_status.
+IMU_RATE_WINDOW = 20
 IMU_POLL_PERIOD_SECONDS = 0.05
 IMU_STALE_AFTER_SECONDS = 1.0
 STEREO_MODES = {"auto", "on", "off"}
@@ -206,6 +209,7 @@ class CameraNode(Node):
         self._imu_last_received_monotonic = None
         self._imu_last_sequence = None
         self._imu_last_device_stamp_ns = None
+        self._imu_publish_times = deque(maxlen=IMU_RATE_WINDOW)
         self._imu_throttle = TenHertzThrottle()
         self.nn_queues = {}
         self._pipeline_models = []
@@ -1217,9 +1221,9 @@ class CameraNode(Node):
         imu_status = ModelStatus()
         imu_status.model_id = "imu"
         imu_status.active = imu_runtime["state"] != "absent"
-        imu_status.fps = (
-            float(IMU_PUBLISH_RATE_HZ) if imu_runtime["state"] == "present" else 0.0
-        )
+        # Report the rate actually observed rather than the configured rate: the
+        # rig measured 8.1 Hz while the configuration said 10 Hz.
+        imu_status.fps = imu_runtime["fps"]
         imu_status.shaves = 0
         imu_status.state = imu_runtime["state"]
         imu_status.message = imu_runtime["message"]
@@ -1233,11 +1237,16 @@ class CameraNode(Node):
             not getattr(self, "imu_available", False)
             or getattr(self, "imu_queue", None) is None
         ):
-            return {"state": "absent", "message": "OAK device has no usable IMU"}
+            return {
+                "state": "absent",
+                "message": "OAK device has no usable IMU",
+                "fps": 0.0,
+            }
         if getattr(self, "_imu_last_received_monotonic", None) is None:
             return {
                 "state": "stale",
                 "message": "IMU configured but no report received",
+                "fps": 0.0,
             }
         now = time.monotonic() if now is None else now
         age = now - self._imu_last_received_monotonic
@@ -1245,8 +1254,17 @@ class CameraNode(Node):
             return {
                 "state": "stale",
                 "message": f"No IMU report received for {age:.1f} seconds",
+                "fps": 0.0,
             }
-        return {"state": "present", "message": "BMI270 IMU reports are flowing"}
+        return {
+            "state": "present",
+            "message": "BMI270 IMU reports are flowing",
+            # Rounded for the status channel: the field is consumed by humans and
+            # by the UI, and fifteen digits are noise, not precision.
+            "fps": round(
+                measured_rate_hz(list(getattr(self, "_imu_publish_times", ()))), 2
+            ),
+        }
 
     def _init_imu(self):
         """Add the optional BMI270 stream without making camera startup depend on it."""
@@ -1255,10 +1273,14 @@ class CameraNode(Node):
         self.imu_available = False
         try:
             imu = self.pipeline.create(dai.node.IMU)
+            # Only the raw outputs are requested. The BMI270 on the OAK-D Lite
+            # rejects fused outputs outright ("IMU invalid settings!:
+            # ROTATION_VECTOR output is unsupported. BMI270 supports only
+            # ACCELEROMETER_RAW and/or GYROSCOPE_RAW outputs."), and that single
+            # rejected sensor setting takes the whole pipeline start down.
             for sensor in (
                 dai.IMUSensor.ACCELEROMETER_RAW,
                 dai.IMUSensor.GYROSCOPE_RAW,
-                dai.IMUSensor.ROTATION_VECTOR,
             ):
                 # 100 Hz is supported by BMI270 for these reports. The host
                 # deterministically drops excess samples to the 10 Hz ROS rate.
@@ -2092,11 +2114,13 @@ class CameraNode(Node):
         message.angular_velocity.x = sample.angular_velocity.x
         message.angular_velocity.y = sample.angular_velocity.y
         message.angular_velocity.z = sample.angular_velocity.z
-        # ROTATION_VECTOR is fused on the BMI270/device, not on the ROS host.
-        message.orientation.x = sample.orientation.x
-        message.orientation.y = sample.orientation.y
-        message.orientation.z = sample.orientation.z
-        message.orientation.w = sample.orientation.w
+        # The device cannot fuse orientation (see imu.py), so the quaternion
+        # stays at identity and orientation_covariance[0] == -1 marks it as
+        # unavailable, which is the sensor_msgs/Imu convention consumers check.
+        message.orientation.x = 0.0
+        message.orientation.y = 0.0
+        message.orientation.z = 0.0
+        message.orientation.w = 1.0
         message.orientation_covariance = list(sample.orientation_covariance)
         message.angular_velocity_covariance = list(sample.angular_velocity_covariance)
         message.linear_acceleration_covariance = list(
@@ -2117,29 +2141,36 @@ class CameraNode(Node):
                 try:
                     acceleration = packet.acceleroMeter
                     angular_velocity = packet.gyroscope
-                    rotation = packet.rotationVector
-                    stamp_ns = duration_to_nanoseconds(rotation.getTimestampSystem())
-                    sequence = rotation.getSequenceNum()
+                    # depthai 3.6.1 offers only getTimestamp() and
+                    # getTimestampDevice() on the reports; the clock domains are
+                    # documented in host_stamp_nanoseconds.
+                    stamp_ns = host_stamp_nanoseconds(
+                        acceleration.getTimestamp(), time.time()
+                    )
+                    sequence = acceleration.getSequenceNum()
                     sample = assemble_imu_sample(
                         sequence,
                         stamp_ns,
                         self._imu_report_xyz(acceleration),
                         self._imu_report_xyz(angular_velocity),
-                        (rotation.i, rotation.j, rotation.k, rotation.real),
                     )
                     self._imu_last_received_monotonic = time.monotonic()
-                    # The device timestamp is intentionally retained only as a
-                    # future camera/IMU hardware-correlation source. ROS stamps
-                    # use getTimestampSystem() above so they share host time.
-                    self._imu_last_device_stamp_ns = duration_to_nanoseconds(
-                        rotation.getTimestampDevice()
+                    # The device monotonic timestamp is retained for correlation
+                    # and used to select which reports to publish: it is spaced
+                    # uniformly by the sensor, while host receipt stamps are
+                    # quantised by the drain timer, and throttling on those was
+                    # measured to undershoot the intended 10 Hz (8.1 Hz).
+                    device_stamp_ns = duration_to_nanoseconds(
+                        acceleration.getTimestampDevice()
                     )
-                    if not self._imu_throttle.accept(sample.stamp_ns):
+                    self._imu_last_device_stamp_ns = device_stamp_ns
+                    if not self._imu_throttle.accept(device_stamp_ns):
                         continue
                     # ROS 2 Header has no sequence field; retain DepthAI's source
                     # sequence here for diagnostics and testable packet mapping.
                     self._imu_last_sequence = sample.sequence
                     self.imu_publisher_.publish(self._imu_message(sample))
+                    self._imu_publish_times.append(time.monotonic())
                 except (AttributeError, TypeError, ValueError) as exc:
                     self.get_logger().warning(
                         f"Dropping invalid IMU report: {type(exc).__name__}: {exc}"

@@ -7,7 +7,7 @@ import types
 import unittest
 import weakref
 from collections import deque
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 import base64
 
@@ -163,6 +163,8 @@ from ros_packages.camera.oak_d_lite.hand_tracking import PalmRegion
 from ros_packages.camera.oak_d_lite.imu import (
     TenHertzThrottle,
     assemble_imu_sample,
+    host_stamp_nanoseconds,
+    measured_rate_hz,
 )
 from ros_packages.camera.oak_d_lite.stereo import (
     BRANCH_INPUT_QUEUE_DEPTH,
@@ -1710,13 +1712,12 @@ class _ImuNodeType:
 
 
 class TestOakImu(unittest.TestCase):
-    def test_pure_sample_assembly_maps_frame_units_orientation_stamp_and_sequence(self):
+    def test_pure_sample_assembly_maps_frame_units_stamp_and_sequence(self):
         sample = assemble_imu_sample(
             sequence=42,
             stamp_ns=12_345_678_901,
             acceleration_xyz=(1.0, 2.0, 3.0),
             angular_velocity_xyz=(0.1, 0.2, 0.3),
-            rotation_xyzw=(0.0, 0.0, 0.0, 2.0),
         )
 
         self.assertEqual(sample.frame_id, "oak_imu_frame")
@@ -1740,16 +1741,6 @@ class TestOakImu(unittest.TestCase):
             ),
             (0.3, -0.1, -0.2),
         )
-        self.assertEqual(
-            (
-                sample.orientation.x,
-                sample.orientation.y,
-                sample.orientation.z,
-                sample.orientation.w,
-            ),
-            (0.0, 0.0, 0.0, 1.0),
-        )
-        self.assertTrue(sample.orientation_is_device_fused)
         for covariance in (
             sample.orientation_covariance,
             sample.angular_velocity_covariance,
@@ -1762,7 +1753,18 @@ class TestOakImu(unittest.TestCase):
         self.assertEqual(message.header.frame_id, "oak_imu_frame")
         self.assertEqual(message.header.stamp.sec, 12)
         self.assertEqual(message.header.stamp.nanosec, 345_678_901)
-        self.assertEqual(message.orientation.w, 1.0)
+        # The device refuses to fuse orientation, so consumers must see the
+        # documented "unavailable" marker rather than an invented quaternion.
+        self.assertEqual(message.orientation_covariance[0], -1.0)
+        self.assertEqual(
+            (
+                message.orientation.x,
+                message.orientation.y,
+                message.orientation.z,
+                message.orientation.w,
+            ),
+            (0.0, 0.0, 0.0, 1.0),
+        )
 
     def test_throttle_publishes_exactly_ten_of_one_hundred_samples_in_one_second(
         self,
@@ -1783,19 +1785,22 @@ class TestOakImu(unittest.TestCase):
         with patch.object(CameraNode, "__init__", lambda self: None):
             node = CameraNode()
         acceleration = types.SimpleNamespace(x=1.0, y=2.0, z=3.0)
-        gyroscope = types.SimpleNamespace(x=0.1, y=0.2, z=0.3)
-        rotation = types.SimpleNamespace(i=0.0, j=0.0, k=0.0, real=1.0)
-        rotation.getSequenceNum = MagicMock(return_value=17)
-        rotation.getTimestampSystem = MagicMock(
-            return_value=timedelta(seconds=25, microseconds=123456)
+        acceleration.getSequenceNum = MagicMock(return_value=17)
+        # Measured on depthai 3.6.1: getTimestamp() is a timedelta "related to
+        # dai::Clock::now()" and getTimestampDevice() is a device-monotonic
+        # timedelta; neither is host wall time. The node therefore stamps with
+        # the host wall clock it reads itself, which is what this epoch-valued
+        # datetime stands in for.
+        acceleration.getTimestamp = MagicMock(
+            return_value=datetime.fromtimestamp(25.123456, tz=timezone.utc)
         )
-        rotation.getTimestampDevice = MagicMock(
+        acceleration.getTimestampDevice = MagicMock(
             return_value=timedelta(seconds=7, microseconds=654321)
         )
+        gyroscope = types.SimpleNamespace(x=0.1, y=0.2, z=0.3)
         packet = types.SimpleNamespace(
             acceleroMeter=acceleration,
             gyroscope=gyroscope,
-            rotationVector=rotation,
         )
         node.imu_queue = MagicMock()
         node.imu_queue.tryGet.side_effect = [
@@ -1816,8 +1821,93 @@ class TestOakImu(unittest.TestCase):
         )
         self.assertEqual(node._imu_last_sequence, 17)
         self.assertEqual(node._imu_last_device_stamp_ns, 7_654_321_000)
-        rotation.getTimestampSystem.assert_called_once_with()
-        rotation.getTimestampDevice.assert_called_once_with()
+        acceleration.getTimestamp.assert_called_once_with()
+        acceleration.getTimestampDevice.assert_called_once_with()
+
+    def test_host_stamp_uses_receipt_time_when_the_report_has_no_host_epoch(self):
+        # depthai 3.6.1 exposes no getTimestampSystem() on the IMU reports. A
+        # device duration must never be reinterpreted as wall time, so the host
+        # time of receipt is used whenever the report carries no epoch stamp.
+        self.assertEqual(
+            host_stamp_nanoseconds(timedelta(seconds=7), 1_700_000_000.5),
+            1_700_000_000_500_000_000,
+        )
+        self.assertEqual(
+            host_stamp_nanoseconds(None, 1_700_000_000.5),
+            1_700_000_000_500_000_000,
+        )
+        self.assertEqual(
+            host_stamp_nanoseconds(
+                datetime.fromtimestamp(25.123456, tz=timezone.utc), 1_700_000_000.5
+            ),
+            25_123_456_000,
+        )
+
+    def test_throttle_follows_the_device_clock_not_the_quantised_host_stamp(self):
+        # Measured: the drain timer quantises host receipt stamps, so throttling
+        # on them skipped periods and published 8.1 Hz instead of 10 Hz. Two
+        # reports 100 ms apart on the device clock but only 50 ms apart in host
+        # receipt time must both be published.
+        with patch.object(CameraNode, "__init__", lambda self: None):
+            node = CameraNode()
+
+        def packet(device_seconds, host_seconds):
+            acceleration = types.SimpleNamespace(x=0.0, y=0.0, z=9.81)
+            acceleration.getSequenceNum = MagicMock(return_value=1)
+            acceleration.getTimestamp = MagicMock(
+                return_value=datetime.fromtimestamp(host_seconds, tz=timezone.utc)
+            )
+            acceleration.getTimestampDevice = MagicMock(
+                return_value=timedelta(seconds=device_seconds)
+            )
+            gyroscope = types.SimpleNamespace(x=0.0, y=0.0, z=0.0)
+            return types.SimpleNamespace(
+                acceleroMeter=acceleration, gyroscope=gyroscope
+            )
+
+        node.imu_queue = MagicMock()
+        node.imu_queue.tryGet.side_effect = [
+            types.SimpleNamespace(
+                packets=[packet(0.0, 25.00), packet(0.1, 25.05)],
+            ),
+            None,
+        ]
+        node.imu_publisher_ = MagicMock()
+        node._imu_throttle = TenHertzThrottle()
+        node._imu_last_received_monotonic = None
+        node.get_logger = MagicMock()
+
+        node._process_imu()
+
+        self.assertEqual(node.imu_publisher_.publish.call_count, 2)
+        self.assertEqual(node._imu_last_device_stamp_ns, 100_000_000)
+
+    def test_measured_rate_reports_the_observed_rate_not_the_configured_one(self):
+        # The rig measured 8.1 Hz while the configuration said 10 Hz, so the
+        # status must carry what was observed.
+        self.assertAlmostEqual(measured_rate_hz([0.0, 0.1, 0.2, 0.3]), 10.0, places=6)
+        self.assertAlmostEqual(
+            measured_rate_hz([0.0, 0.1, 0.3, 0.4, 0.6]), 4 / 0.6, places=6
+        )
+        for degenerate in ([], [5.0], [5.0, 5.0]):
+            self.assertEqual(measured_rate_hz(degenerate), 0.0)
+
+    def test_imu_status_carries_a_measured_rate_field(self):
+        with patch.object(CameraNode, "__init__", lambda self: None):
+            node = CameraNode()
+        node.imu_available = False
+        node.imu_queue = None
+        self.assertEqual(node._imu_status()["fps"], 0.0)
+
+        node.imu_available = True
+        node.imu_queue = MagicMock()
+        node._imu_last_received_monotonic = 10.0
+        node._imu_publish_times = deque([0.0, 0.1, 0.2])
+        status = node._imu_status(now=10.0)
+        self.assertEqual(status["state"], "present")
+        self.assertAlmostEqual(status["fps"], 10.0, places=6)
+        # The status field must not carry fifteen digits of float noise.
+        self.assertEqual(status["fps"], round(status["fps"], 2))
 
     def test_imu_status_distinguishes_stale_and_present(self):
         with patch.object(CameraNode, "__init__", lambda self: None):
@@ -1843,19 +1933,25 @@ class TestOakImu(unittest.TestCase):
         sensors = (
             "ACCELEROMETER_RAW",
             "GYROSCOPE_RAW",
-            "ROTATION_VECTOR",
         )
         (
             mock_dai.IMUSensor.ACCELEROMETER_RAW,
             mock_dai.IMUSensor.GYROSCOPE_RAW,
-            mock_dai.IMUSensor.ROTATION_VECTOR,
         ) = sensors
+        # Measured on the robot: the BMI270 answers a ROTATION_VECTOR request
+        # with "IMU invalid settings!" and that single rejected sensor takes the
+        # whole pipeline start down, so it must never be requested again.
+        mock_dai.IMUSensor.ROTATION_VECTOR = "ROTATION_VECTOR"
 
         self.assertTrue(node._init_imu())
 
         self.assertEqual(
             imu.enableIMUSensor.call_args_list,
             [unittest.mock.call(sensor, IMU_SENSOR_RATE_HZ) for sensor in sensors],
+        )
+        self.assertNotIn(
+            "ROTATION_VECTOR",
+            [call.args[0] for call in imu.enableIMUSensor.call_args_list],
         )
         imu.setBatchReportThreshold.assert_called_once_with(1)
         imu.setMaxBatchReports.assert_called_once_with(IMU_OUTPUT_QUEUE_DEPTH)
