@@ -41,6 +41,17 @@ RUN pip install --break-system-packages --no-cache-dir --ignore-installed \
         depthai==3.6.1 \
         "opencv-python-headless<5"
 
+# depthai-nodes supplies ParsingNeuralNetwork, FrameCropper, GatherData and the
+# MediaPipe palm parser used by the two-stage imitation pipeline.
+# 0.5.2 is the LAST release that accepts depthai 3.6.1 (0.6.0 requires >=3.8.0,
+# 0.6.1 requires >=3.9.0), and 3.6.1 must not move - see the note above.
+# --no-deps is deliberate: the package pins opencv-python-headless~=4.10.0,
+# which would downgrade the 4.14 build this image already uses for the camera
+# path. Verified in the container: imports fine against depthai 3.6.1,
+# opencv 4.14.0 and numpy 2.5.3.
+RUN pip install --break-system-packages --no-cache-dir --no-deps \
+        depthai-nodes==0.5.2
+
 # stereo.py needs cv2.data.haarcascades at runtime for face detection
 # (CameraNode raises RuntimeError and permanently falls back to an
 # error-only publisher if the cascade XML is missing). Neither the

@@ -1,179 +1,165 @@
-"""Device-free contract tests for the on-device imitation manager."""
+"""Device-free contracts for the official two-stage imitation helpers."""
 
-import math
 import os
-import re
 import sys
+import types
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 from ros_packages.camera.oak_d_lite import imitation
-from ros_packages.camera.oak_d_lite.imitation import (
-    build_imitation_script,
-    fit_landmark_region,
-    landmark_pixels_to_square,
-    landmark_score_passes,
-    normalize_radians,
-    palm_regions,
-    square_box_to_frame,
-    square_points_to_frame,
-    world_landmark_scalars,
-)
 
 
-def _record(score=0.9, size=0.2):
-    return [score, 0.5, 0.5, size, 0.4, 0.5, 0.6, 0.5]
+def _rect(cx=0.5, cy=0.4, width=0.2, height=0.3, angle=12.0):
+    return types.SimpleNamespace(
+        center=types.SimpleNamespace(x=cx, y=cy),
+        size=types.SimpleNamespace(width=width, height=height),
+        angle=angle,
+    )
 
 
-def test_palm_threshold_invalid_layout_and_empty_top_two():
-    assert palm_regions(_record(0.499) + _record(0.0)) == []
-    assert palm_regions(_record(0.5) + _record(0.0, 0.0))[0]["palm_score"] == 0.5
-    assert palm_regions([0.0] * 15) == []
-    assert palm_regions(_record(float("nan")) + _record(0.0)) == []
+def _detection(**kwargs):
+    rect = _rect(**kwargs)
+    return types.SimpleNamespace(
+        confidence=0.87,
+        getBoundingBox=lambda: rect,
+    )
 
 
-def test_reference_rotation_center_and_2_9_roi_scale_are_exact():
-    region = palm_regions(_record() + _record(0.0))[0]
-
-    assert normalize_radians(region["rotation"]) == pytest.approx(math.pi / 2)
-    assert region["center_x"] == pytest.approx(0.6)
-    assert region["center_y"] == pytest.approx(0.5)
-    assert region["size"] == pytest.approx(0.58)
-
-
-def test_landmark_threshold_bites_at_point_five():
-    assert landmark_score_passes(0.499) is False
-    assert landmark_score_passes(0.5) is True
-    assert landmark_score_passes(float("nan")) is False
+def _keypoints(x=0.25, y=0.75):
+    points = [
+        types.SimpleNamespace(
+            imageCoordinates=types.SimpleNamespace(x=x, y=y, z=index / 10.0)
+        )
+        for index in range(21)
+    ]
+    return types.SimpleNamespace(getKeypoints=lambda: points)
 
 
-def test_rotated_landmarks_map_from_crop_to_square():
-    region = {
-        "center_x": 0.5,
-        "center_y": 0.5,
-        "size": 0.4,
-        "rotation": math.pi / 2,
+def _prediction(value):
+    return types.SimpleNamespace(prediction=value)
+
+
+def _gathered(item, detection=None):
+    return types.SimpleNamespace(
+        reference_data=types.SimpleNamespace(detections=[detection or _detection()]),
+        items=[item],
+    )
+
+
+def test_crop_config_preserves_rotation_adds_padding_and_uses_stretch():
+    fake_rect = _rect()
+    config = MagicMock()
+    stretch = imitation.dai.ImageManipConfig.ResizeMode.STRETCH
+    with (
+        patch.object(imitation.dai, "RotatedRect", return_value=fake_rect),
+        patch.object(
+            imitation.dai, "ImageManipConfig", return_value=config
+        ) as image_manip_config,
+    ):
+        image_manip_config.ResizeMode.STRETCH = stretch
+        result = imitation.detection_crop_config(_detection(), 0.1, 224, 224)
+
+    assert result is config
+    padded = config.addCropRotatedRect.call_args.args[0]
+    assert config.addCropRotatedRect.call_args.kwargs == {"normalizedCoords": True}
+    assert padded.center.x == pytest.approx(0.5)
+    assert padded.center.y == pytest.approx(0.4)
+    assert padded.size.width == pytest.approx(0.4)
+    assert padded.size.height == pytest.approx(0.5)
+    assert padded.angle == pytest.approx(12.0)
+    config.setOutputSize.assert_called_once_with(224, 224, stretch)
+    config.setReusePreviousImage.assert_called_once_with(False)
+
+
+def test_stretch_mapping_is_exact_and_clipped_to_published_frame():
+    item = {
+        "0": _keypoints(x=0.25, y=0.75),
+        "1": _prediction(0.91),
+        "2": _prediction(0.73),
     }
-    values = [112.0, 0.0, 0.0] * 21
 
-    points = landmark_pixels_to_square(values, region)
+    hand = imitation.gathered_hands(_gathered(item), 1280, 720)[0]
 
-    assert len(points) == 21
-    assert points[0] == pytest.approx((0.7, 0.5))
+    # bbox is x=[.4,.6], y=[.25,.55], then padded by exactly .1 per side.
+    assert hand["landmarks"][0] == pytest.approx((0.4 * 1280, 0.525 * 720))
+    assert hand["palm_score"] == pytest.approx(0.87)
+    assert hand["landmark_score"] == pytest.approx(0.91)
+    assert hand["handedness"] == pytest.approx(0.73)
 
-
-def test_rotated_landmark_region_is_fitted_inside_source():
-    region = {
-        "center_x": 0.1,
-        "center_y": 0.3,
-        "size": 0.58,
-        "rotation": math.pi / 4,
-    }
-
-    fitted = fit_landmark_region(region, 256, 144)
-
-    assert fitted["size"] < region["size"]
-    assert fitted["rotation"] == region["rotation"]
+    clipped = imitation.gathered_hands(
+        _gathered(
+            {"0": _keypoints(x=2.0, y=-1.0), "1": _prediction(0.9)},
+            _detection(cx=0.95, cy=0.05),
+        ),
+        1280,
+        720,
+    )[0]
+    assert clipped["landmarks"][0] == (1280.0, 0.0)
 
 
-def test_landscape_square_padding_maps_back_to_frame_pixels():
-    points = square_points_to_frame([(0.5, 0.5), (0.25, 0.359375)], 1280, 720)
+def test_score_threshold_world_extraction_and_missing_world_head():
+    world = _keypoints(x=0.1, y=0.2)
+    accepted = imitation.gathered_hands(
+        _gathered(
+            {
+                "0": _keypoints(),
+                "1": _prediction(0.5),
+                "2": _prediction(0.25),
+                "3": world,
+            }
+        ),
+        1280,
+        720,
+    )
+    rejected = imitation.gathered_hands(
+        _gathered({"0": _keypoints(), "1": _prediction(0.499)}), 1280, 720
+    )
 
-    assert points == [(640.0, 360.0), (320.0, 180.0)]
+    assert len(accepted[0]["world"]) == 63
+    assert accepted[0]["world"][:3] == pytest.approx([0.1, 0.2, 0.0])
+    assert rejected == []
+    assert (
+        imitation.gathered_hands(
+            _gathered({"0": _keypoints(), "1": _prediction(0.9)}), 1280, 720
+        )[0]["world"]
+        == []
+    )
 
 
-def test_bbox_is_non_degenerate_and_clamped():
-    region = {"box_x": 0.0, "box_y": 0.21875, "box_size": 0.001}
+def test_empty_detections_and_trace_values():
+    empty = types.SimpleNamespace(
+        reference_data=types.SimpleNamespace(detections=[]), items=[]
+    )
+    assert imitation.gathered_hands(empty, 1280, 720) == []
+    assert imitation.gathered_result_trace_values(empty) == []
 
-    x_min, y_min, x_max, y_max = square_box_to_frame(region, 1280, 720)
+    trace = imitation.gathered_result_trace_values(_gathered({"1": _prediction(0.91)}))[
+        0
+    ]
+    assert trace[0:2] == pytest.approx((0.87, 0.91))
+    assert trace[2] == pytest.approx((0.3, 0.15, 0.4, 0.5))
 
-    assert (x_min, y_min) == (0, 0)
-    assert x_max > x_min
-    assert y_max > y_min
+
+def test_bbox_encloses_every_landmark_and_is_clamped():
+    points = [(471.7, 284.4), (585.8, 472.3), (594.8, 201.2), (731.8, 348.3)]
+    bbox = imitation.box_from_points(points, 1280, 720)
+    assert bbox == (471, 201, 732, 473)
+    assert all(bbox[0] <= x <= bbox[2] and bbox[1] <= y <= bbox[3] for x, y in points)
+    assert imitation.box_from_points([], 1280, 720) == (0, 0, 1, 1)
+    assert imitation.box_from_points([(-1, -2), (5000, 4000)], 1280, 720) == (
+        0,
+        0,
+        1280,
+        720,
+    )
 
 
-def test_world_layout_has_21_xyz_parallel_scalars():
-    names, values = world_landmark_scalars([float(index) for index in range(63)])
-
+def test_world_scalar_order_is_stable():
+    names, values = imitation.world_landmark_scalars(range(63))
     assert len(names) == len(values) == 63
     assert names[:4] == ["world_0_x", "world_0_y", "world_0_z", "world_1_x"]
     assert names[-1] == "world_20_z"
-    assert world_landmark_scalars([]) == ([], [])
-
-
-def test_script_embeds_tested_source_and_v3_api_boundaries():
-    script = build_imitation_script()
-
-    compile(script, "<imitation-script>", "exec")
-    assert "def palm_regions(" in script
-    assert "read_layer(packet, name)" in script
-    assert 'read_layer(packet, "result")' in script
-    assert "getLayerFp16" in script
-    assert "ResizeMode.LETTERBOX" in script
-    # Every setOutputSize call in the embedded script must pass a resize mode:
-    # the Script runtime has no two-argument overload and dies at runtime.
-    for call in re.findall(r"setOutputSize\(([^)]*)\)", script):
-        assert "ResizeMode." in call, call
-    assert "ResizeMode.STRETCH" in script
-    assert "addCropRotatedRect" in script and "setCropRotatedRect" in script
-    assert "output = Buffer(len(data))" in script
-    assert 'node.io["host"].send(output)' in script
-
-
-def test_box_from_points_encloses_every_landmark():
-    """Decision (a): the published box must contain all 21 keypoints."""
-    points = [
-        (471.7, 284.4),
-        (585.8, 472.3),
-        (594.8, 201.2),
-        (661.8, 221.0),
-        (731.8, 348.3),
-    ]
-    x_min, y_min, x_max, y_max = imitation.box_from_points(points, 1280, 720)
-
-    for x, y in points:
-        assert x_min <= x <= x_max, (x, x_min, x_max)
-        assert y_min <= y <= y_max, (y, y_min, y_max)
-    assert (x_min, y_min, x_max, y_max) == (471, 201, 732, 473)
-
-
-def test_box_from_points_beats_the_palm_box_on_real_measured_values():
-    """The palm box left the measured fingertips outside; this must not recur."""
-    # Live values measured on the robot, hand open in front of the camera.
-    region = {"box_x": 0.5754, "box_y": 0.2089, "box_size": 0.0977}
-    landmarks = [
-        (471.7, 284.4),
-        (585.8, 472.3),
-        (594.8, 201.2),
-        (661.8, 221.0),
-        (731.8, 348.3),
-    ]
-    palm = imitation.square_box_to_frame(region, 1280, 720)
-    derived = imitation.box_from_points(landmarks, 1280, 720)
-
-    outside_palm = [
-        point
-        for point in landmarks
-        if not (palm[0] <= point[0] <= palm[2] and palm[1] <= point[1] <= palm[3])
-    ]
-    assert outside_palm, "test data must reproduce the palm-box problem"
-    assert all(
-        derived[0] <= point[0] <= derived[2] and derived[1] <= point[1] <= derived[3]
-        for point in landmarks
-    )
-
-
-def test_box_from_points_stays_inside_the_frame_and_non_degenerate():
-    x_min, y_min, x_max, y_max = imitation.box_from_points(
-        [(-50.0, -20.0), (5000.0, 4000.0)], 1280, 720
-    )
-
-    assert (x_min, y_min) == (0, 0)
-    assert (x_max, y_max) == (1280, 720)
-    assert x_max > x_min and y_max > y_min
-
-
-def test_box_from_points_handles_an_empty_point_list():
-    assert imitation.box_from_points([], 1280, 720) == (0, 0, 1, 1)
+    assert imitation.world_landmark_scalars([]) == ([], [])

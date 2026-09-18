@@ -1,7 +1,6 @@
 """Unit tests for stereo camera CPU optimization (PR-1507)."""
 
 import os
-import marshal
 import sys
 import types
 import unittest
@@ -145,8 +144,9 @@ from ros_packages.camera.oak_d_lite.stereo import (
     HAND_STAGE_NAMES,
     HAND_NN_HEIGHT,
     HAND_NN_WIDTH,
-    IMITATION_SOURCE_HEIGHT,
-    IMITATION_SOURCE_WIDTH,
+    IMITATION_DETECTOR_MODEL,
+    IMITATION_FPS,
+    IMITATION_LANDMARK_MODEL,
     IMITATION_STAGE_NAMES,
 )
 
@@ -1342,47 +1342,91 @@ class TestImitationPipeline(unittest.TestCase):
         return node
 
     @patch("ros_packages.camera.oak_d_lite.stereo.dai")
-    def test_graph_keeps_decoder_and_landmarks_on_device(self, mock_dai):
+    def test_graph_matches_official_parsed_two_stage_wiring(self, mock_dai):
         node = self._make_node()
-        artifacts = _imitation_artifacts()
-        node.model_registry = MagicMock()
-        node.model_registry.get.side_effect = artifacts.get
         node.pipeline = MagicMock()
         created = [MagicMock() for _ in range(6)]
         node.pipeline.create.side_effect = created
-        node.camRgb = MagicMock()
-        camera_tap = MagicMock()
-        node.camRgb.requestOutput.return_value = camera_tap
+        node.isp_out = MagicMock()
+        detection_archive = MagicMock()
+        detection_archive.getInputWidth.return_value = 192
+        detection_archive.getInputHeight.return_value = 192
+        landmark_archive = MagicMock()
+        landmark_archive.getInputWidth.return_value = 224
+        landmark_archive.getInputHeight.return_value = 224
+        mock_dai.NNArchive.side_effect = [detection_archive, landmark_archive]
+        descriptions = [types.SimpleNamespace(platform=None) for _ in range(2)]
+        mock_dai.NNModelDescription.side_effect = descriptions
 
-        node._build_imitation_pipeline(
-            types.SimpleNamespace(artifact_ids=tuple(artifacts))
-        )
+        detector_resize, detection_nn, processor, cropper, pose_nn, gather = created
+        detection_nn.build.return_value = detection_nn
+        processor.build.return_value = processor
+        cropper.fromManipConfigs.return_value = cropper
+        cropper.build.return_value = cropper
+        pose_nn.build.return_value = pose_nn
+        gather.build.return_value = gather
 
-        palm_manip, palm_nn, decoder_nn, landmark_manip, landmark_nn, manager = created
-        node.camRgb.requestOutput.assert_called_once_with(
-            (IMITATION_SOURCE_WIDTH, IMITATION_SOURCE_HEIGHT),
-            type=mock_dai.ImgFrame.Type.BGR888p,
+        node._build_imitation_pipeline(types.SimpleNamespace())
+
+        self.assertEqual(
+            [call.args[0] for call in mock_dai.NNModelDescription.call_args_list],
+            [IMITATION_DETECTOR_MODEL, IMITATION_LANDMARK_MODEL],
         )
-        camera_tap.link.assert_has_calls(
-            [
-                unittest.mock.call(palm_manip.inputImage),
-                unittest.mock.call(landmark_manip.inputImage),
-            ]
+        self.assertEqual(
+            [description.platform for description in descriptions], ["RVC2"] * 2
         )
-        palm_nn.out.link.assert_called_once_with(decoder_nn.input)
-        decoder_nn.out.link.assert_called_once_with(manager.inputs["from_post_pd_nn"])
-        landmark_nn.out.link.assert_called_once_with(manager.inputs["from_lm_nn"])
-        manager.setScript.assert_called_once()
-        script = manager.setScript.call_args.args[0]
-        self.assertIn("ResizeMode.LETTERBOX", script)
-        self.assertIn("packet.getTensor(name)", script)
-        manager.outputs["host"].createOutputQueue.assert_called_once_with(
+        detector_resize.initialConfig.setOutputSize.assert_called_once_with(
+            192,
+            192,
+            mode=mock_dai.ImageManipConfig.ResizeMode.STRETCH,
+        )
+        node.isp_out.link.assert_called_once_with(detector_resize.inputImage)
+        detection_nn.build.assert_called_once_with(
+            detector_resize.out,
+            detection_archive,
+        )
+        processor.build.assert_called_once_with(
+            detections_input=detection_nn.out,
+            padding=0.1,
+            target_size=(224, 224),
+        )
+        cropper.fromManipConfigs.assert_called_once_with(
+            inputManipConfigs=processor.config_output,
+            maxOutputFrameSize=224 * 224 * 3,
+            waitForConfig=True,
+        )
+        cropper.build.assert_called_once_with(node.isp_out)
+        pose_nn.build.assert_called_once_with(cropper.out, landmark_archive)
+        gather.build.assert_called_once_with(
+            cameraFps=IMITATION_FPS,
+            inputData=pose_nn.outputs,
+            inputReference=detection_nn.out,
+        )
+        gather.out.createOutputQueue.assert_called_once_with(
             maxSize=BRANCH_OUTPUT_QUEUE_DEPTH, blocking=False
         )
-        for inference in (palm_nn, decoder_nn, landmark_nn):
-            inference.out.createOutputQueue.assert_not_called()
 
-    def test_lifecycle_verification_preserves_first_script_packet(self):
+    @patch("ros_packages.camera.oak_d_lite.stereo.dai")
+    def test_imitation_caps_camera_and_complete_graph_at_eight_fps(self, mock_dai):
+        node = self._make_node()
+        node._pipeline_models = [
+            types.SimpleNamespace(model=types.SimpleNamespace(model_id="imitation"))
+        ]
+        node._build_imitation_pipeline = MagicMock()
+        pipeline = MagicMock()
+        camera = MagicMock()
+        mock_dai.Pipeline.return_value = pipeline
+        pipeline.create.return_value = camera
+
+        node._build_pipeline(include_stereo=False)
+
+        camera.build.assert_called_once_with(
+            mock_dai.CameraBoardSocket.CAM_A,
+            sensorFps=IMITATION_FPS,
+        )
+        node._build_imitation_pipeline.assert_called_once()
+
+    def test_lifecycle_verification_preserves_first_gathered_packet(self):
         node = self._make_node()
         node._pipeline_models = [
             types.SimpleNamespace(model=types.SimpleNamespace(model_id="imitation"))
@@ -1402,29 +1446,18 @@ class TestImitationPipeline(unittest.TestCase):
         self.assertIs(node._pending_imitation_packet, result_packet)
         node._wait_for_queue_packet.assert_called_once_with(node.imitation_queue, 3.0)
 
-    def test_script_payload_publishes_21_points_world_layout_and_zero_depth(self):
+    def test_gathered_hand_publishes_21_points_world_layout_and_zero_depth(self):
         node = self._make_node()
-        node.current_frame = np.zeros((720, 1280, 3), dtype=np.uint8)
-        node._publish_imitation_detections = MagicMock()
         hand = {
             "palm_score": 0.87,
             "landmark_score": 0.91,
             "handedness": 0.75,
-            "box_x": 0.5,
-            "box_y": 0.5,
-            "box_size": 0.2,
-            "landmarks": [(0.5, 0.5)] * 21,
+            "landmarks": [(640.0, 360.0)] * 21,
             "world": [float(index) for index in range(63)],
         }
-        stages = {stage: 4 for stage in IMITATION_STAGE_NAMES if stage != "colour_isp"}
-        packet = MagicMock()
-        packet.getData.return_value = marshal.dumps({"hands": [hand], "stages": stages})
 
-        node._consume_imitation_packet(packet)
+        detection = node._imitation_detection(hand, 1280, 720)
 
-        detections = node._publish_imitation_detections.call_args.args[2]
-        self.assertEqual(len(detections), 1)
-        detection = detections[0]
         self.assertAlmostEqual(detection.score, 0.91)
         self.assertEqual(len(detection.keypoint_x), 21)
         self.assertEqual(list(detection.keypoint_z), [0.0] * 21)
@@ -1432,26 +1465,60 @@ class TestImitationPipeline(unittest.TestCase):
         self.assertGreater(detection.y_max, detection.y_min)
         self.assertEqual(len(detection.scalar_names), 66)
         self.assertEqual(detection.scalar_names[-1], "world_20_z")
-        self.assertEqual(node.imitation_stage_counters["publish"], 4)
 
-    def test_empty_script_frame_publishes_empty_detection_array(self):
+    def test_empty_gathered_frame_publishes_empty_detection_array(self):
         node = self._make_node()
         node.current_frame = np.zeros((720, 1280, 3), dtype=np.uint8)
         node._publish_imitation_detections = MagicMock()
-        packet = MagicMock()
-        packet.getData.return_value = marshal.dumps({"hands": [], "stages": {}})
+        packet = types.SimpleNamespace(
+            reference_data=types.SimpleNamespace(detections=[]), items=[]
+        )
 
         node._consume_imitation_packet(packet)
 
         node._publish_imitation_detections.assert_called_once_with(1280, 720, [])
+        self.assertEqual(node.imitation_stage_counters["palm_detector_nn"], 1)
+        self.assertEqual(node.imitation_stage_counters["decoding_result"], 1)
+        self.assertEqual(node.imitation_stage_counters["image_manip_config"], 0)
 
-    def test_flow_and_counter_log_use_script_stages(self):
+    @patch("ros_packages.camera.oak_d_lite.stereo.gathered_result_trace_values")
+    @patch("ros_packages.camera.oak_d_lite.stereo.gathered_hands")
+    def test_result_updates_counters_and_emits_trace(self, mock_hands, mock_traces):
+        node = self._make_node()
+        node.current_frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+        node._publish_imitation_detections = MagicMock()
+        packet = types.SimpleNamespace(
+            reference_data=types.SimpleNamespace(detections=[object()]),
+            items=[object()],
+        )
+        mock_hands.return_value = []
+        mock_traces.return_value = [(0.905, 0.997, (0.1, 0.2, 0.3, 0.4))]
+
+        node._consume_imitation_packet(packet)
+
+        for stage in (
+            "palm_detector_nn",
+            "decoding_nn",
+            "decoding_result",
+            "image_manip_config",
+            "image_manip_roi",
+            "hand_landmark_nn",
+            "post_processing",
+        ):
+            self.assertEqual(node.imitation_stage_counters[stage], 1)
+        self.assertIn(
+            "IMIT_TRACE palm_score=0.905 landmark_score=0.997 "
+            "crop=(0.1,0.2,0.3,0.4)",
+            node.get_logger().info.call_args.args[0],
+        )
+
+    def test_flow_and_counter_log_use_gathered_stages(self):
         node = self._make_node()
         node._pipeline_models = [
             types.SimpleNamespace(model=types.SimpleNamespace(model_id="imitation"))
         ]
         node.imitation_queue = MagicMock()
-        node.imitation_source_size = (256, 144)
+        node.imitation_source_size = (192, 192)
         for stage in ("palm_detector_nn", "decoding_nn", "decoding_result", "publish"):
             node._count_imitation_stage(stage)
 
