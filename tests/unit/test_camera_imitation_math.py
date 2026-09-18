@@ -49,7 +49,7 @@ def _gathered(item, detection=None):
     )
 
 
-def test_crop_config_preserves_rotation_adds_padding_and_uses_stretch():
+def test_crop_config_forces_zero_angle_adds_padding_and_uses_stretch():
     fake_rect = _rect()
     config = MagicMock()
     stretch = imitation.dai.ImageManipConfig.ResizeMode.STRETCH
@@ -69,7 +69,11 @@ def test_crop_config_preserves_rotation_adds_padding_and_uses_stretch():
     assert padded.center.y == pytest.approx(0.4)
     assert padded.size.width == pytest.approx(0.4)
     assert padded.size.height == pytest.approx(0.5)
-    assert padded.angle == pytest.approx(12.0)
+    # Must be 0 even though the detection carries 12 degrees: the parser's angle
+    # is pixel-space, a normalised RotatedRect rotates in a non-isotropic space,
+    # and feeding it back skewed the crop so badly that the landmark net scored
+    # 0.002 on a hand the palm detector found with 0.9.
+    assert padded.angle == pytest.approx(0.0)
     config.setOutputSize.assert_called_once_with(224, 224, stretch)
     config.setReusePreviousImage.assert_called_once_with(False)
 
