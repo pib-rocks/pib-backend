@@ -2,10 +2,12 @@
 
 import os
 import sys
+import threading
 import types
 import unittest
 import weakref
 from collections import deque
+from datetime import timedelta
 from unittest.mock import MagicMock, patch
 import base64
 
@@ -83,6 +85,30 @@ except ImportError:
     sys.modules["std_msgs.msg"] = std_msgs_msg
 
 try:
+    import sensor_msgs.msg  # noqa: F401
+except ImportError:
+    sensor_msgs = types.ModuleType("sensor_msgs")
+    sensor_msgs_msg = types.ModuleType("sensor_msgs.msg")
+
+    class _Imu:
+        def __init__(self):
+            vector = lambda: types.SimpleNamespace(x=0.0, y=0.0, z=0.0)
+            self.header = types.SimpleNamespace(
+                frame_id="", stamp=types.SimpleNamespace(sec=0, nanosec=0)
+            )
+            self.linear_acceleration = vector()
+            self.angular_velocity = vector()
+            self.orientation = types.SimpleNamespace(x=0.0, y=0.0, z=0.0, w=0.0)
+            self.orientation_covariance = [0.0] * 9
+            self.angular_velocity_covariance = [0.0] * 9
+            self.linear_acceleration_covariance = [0.0] * 9
+
+    sensor_msgs_msg.Imu = _Imu
+    sensor_msgs.msg = sensor_msgs_msg
+    sys.modules["sensor_msgs"] = sensor_msgs
+    sys.modules["sensor_msgs.msg"] = sensor_msgs_msg
+
+try:
     import datatypes.srv as _datatypes_srv
 except ImportError:
     _datatypes = types.ModuleType("datatypes")
@@ -134,6 +160,10 @@ else:
 import numpy as np
 
 from ros_packages.camera.oak_d_lite.hand_tracking import PalmRegion
+from ros_packages.camera.oak_d_lite.imu import (
+    TenHertzThrottle,
+    assemble_imu_sample,
+)
 from ros_packages.camera.oak_d_lite.stereo import (
     BRANCH_INPUT_QUEUE_DEPTH,
     BRANCH_OUTPUT_QUEUE_DEPTH,
@@ -150,6 +180,8 @@ from ros_packages.camera.oak_d_lite.stereo import (
     IMITATION_SOURCE_HEIGHT,
     IMITATION_SOURCE_WIDTH,
     IMITATION_STAGE_NAMES,
+    IMU_OUTPUT_QUEUE_DEPTH,
+    IMU_SENSOR_RATE_HZ,
 )
 
 
@@ -1669,6 +1701,225 @@ class TestStereoModeDecision(unittest.TestCase):
             self.assertFalse(second._start_pipeline(include_stereo=False))
             second._build_pipeline.assert_not_called()
             second.get_logger().error.assert_called_once()
+        finally:
+            CameraNode._device_owner = None
+
+
+class _ImuNodeType:
+    pass
+
+
+class TestOakImu(unittest.TestCase):
+    def test_pure_sample_assembly_maps_frame_units_orientation_stamp_and_sequence(self):
+        sample = assemble_imu_sample(
+            sequence=42,
+            stamp_ns=12_345_678_901,
+            acceleration_xyz=(1.0, 2.0, 3.0),
+            angular_velocity_xyz=(0.1, 0.2, 0.3),
+            rotation_xyzw=(0.0, 0.0, 0.0, 2.0),
+        )
+
+        self.assertEqual(sample.frame_id, "oak_imu_frame")
+        self.assertEqual(sample.sequence, 42)
+        self.assertEqual(sample.stamp_ns, 12_345_678_901)
+        # DepthAI already supplies m/s² and rad/s; only the optical -> REP-103
+        # axis mapping (right/down/forward -> forward/left/up) is applied.
+        self.assertEqual(
+            (
+                sample.linear_acceleration.x,
+                sample.linear_acceleration.y,
+                sample.linear_acceleration.z,
+            ),
+            (3.0, -1.0, -2.0),
+        )
+        self.assertEqual(
+            (
+                sample.angular_velocity.x,
+                sample.angular_velocity.y,
+                sample.angular_velocity.z,
+            ),
+            (0.3, -0.1, -0.2),
+        )
+        self.assertEqual(
+            (
+                sample.orientation.x,
+                sample.orientation.y,
+                sample.orientation.z,
+                sample.orientation.w,
+            ),
+            (0.0, 0.0, 0.0, 1.0),
+        )
+        self.assertTrue(sample.orientation_is_device_fused)
+        for covariance in (
+            sample.orientation_covariance,
+            sample.angular_velocity_covariance,
+            sample.linear_acceleration_covariance,
+        ):
+            self.assertEqual(covariance[0], -1.0)
+            self.assertEqual(covariance[1:], (0.0,) * 8)
+
+        message = CameraNode._imu_message(sample)
+        self.assertEqual(message.header.frame_id, "oak_imu_frame")
+        self.assertEqual(message.header.stamp.sec, 12)
+        self.assertEqual(message.header.stamp.nanosec, 345_678_901)
+        self.assertEqual(message.orientation.w, 1.0)
+
+    def test_throttle_publishes_exactly_ten_of_one_hundred_samples_in_one_second(
+        self,
+    ):
+        throttle = TenHertzThrottle()
+        accepted = [
+            stamp_ns
+            for stamp_ns in range(0, 1_000_000_000, 10_000_000)
+            if throttle.accept(stamp_ns)
+        ]
+
+        self.assertEqual(
+            accepted,
+            [index * 100_000_000 for index in range(10)],
+        )
+
+    def test_processing_uses_system_stamp_and_retains_device_correlation_stamp(self):
+        with patch.object(CameraNode, "__init__", lambda self: None):
+            node = CameraNode()
+        acceleration = types.SimpleNamespace(x=1.0, y=2.0, z=3.0)
+        gyroscope = types.SimpleNamespace(x=0.1, y=0.2, z=0.3)
+        rotation = types.SimpleNamespace(i=0.0, j=0.0, k=0.0, real=1.0)
+        rotation.getSequenceNum = MagicMock(return_value=17)
+        rotation.getTimestampSystem = MagicMock(
+            return_value=timedelta(seconds=25, microseconds=123456)
+        )
+        rotation.getTimestampDevice = MagicMock(
+            return_value=timedelta(seconds=7, microseconds=654321)
+        )
+        packet = types.SimpleNamespace(
+            acceleroMeter=acceleration,
+            gyroscope=gyroscope,
+            rotationVector=rotation,
+        )
+        node.imu_queue = MagicMock()
+        node.imu_queue.tryGet.side_effect = [
+            types.SimpleNamespace(packets=[packet]),
+            None,
+        ]
+        node.imu_publisher_ = MagicMock()
+        node._imu_throttle = TenHertzThrottle()
+        node._imu_last_received_monotonic = None
+        node.get_logger = MagicMock()
+
+        node._process_imu()
+
+        message = node.imu_publisher_.publish.call_args.args[0]
+        self.assertEqual(
+            (message.header.stamp.sec, message.header.stamp.nanosec),
+            (25, 123456000),
+        )
+        self.assertEqual(node._imu_last_sequence, 17)
+        self.assertEqual(node._imu_last_device_stamp_ns, 7_654_321_000)
+        rotation.getTimestampSystem.assert_called_once_with()
+        rotation.getTimestampDevice.assert_called_once_with()
+
+    def test_imu_status_distinguishes_stale_and_present(self):
+        with patch.object(CameraNode, "__init__", lambda self: None):
+            node = CameraNode()
+        node.imu_available = True
+        node.imu_queue = MagicMock()
+        node._imu_last_received_monotonic = None
+
+        self.assertEqual(node._imu_status(now=10.0)["state"], "stale")
+        node._imu_last_received_monotonic = 9.5
+        self.assertEqual(node._imu_status(now=10.0)["state"], "present")
+        self.assertEqual(node._imu_status(now=11.0)["state"], "stale")
+
+    @patch("ros_packages.camera.oak_d_lite.stereo.dai")
+    def test_imu_pipeline_uses_supported_reports_and_non_blocking_queue(self, mock_dai):
+        with patch.object(CameraNode, "__init__", lambda self: None):
+            node = CameraNode()
+        node.pipeline = MagicMock()
+        node.get_logger = MagicMock()
+        imu = MagicMock()
+        node.pipeline.create.return_value = imu
+        mock_dai.node.IMU = _ImuNodeType
+        sensors = (
+            "ACCELEROMETER_RAW",
+            "GYROSCOPE_RAW",
+            "ROTATION_VECTOR",
+        )
+        (
+            mock_dai.IMUSensor.ACCELEROMETER_RAW,
+            mock_dai.IMUSensor.GYROSCOPE_RAW,
+            mock_dai.IMUSensor.ROTATION_VECTOR,
+        ) = sensors
+
+        self.assertTrue(node._init_imu())
+
+        self.assertEqual(
+            imu.enableIMUSensor.call_args_list,
+            [unittest.mock.call(sensor, IMU_SENSOR_RATE_HZ) for sensor in sensors],
+        )
+        imu.setBatchReportThreshold.assert_called_once_with(1)
+        imu.setMaxBatchReports.assert_called_once_with(IMU_OUTPUT_QUEUE_DEPTH)
+        imu.out.createOutputQueue.assert_called_once_with(
+            maxSize=IMU_OUTPUT_QUEUE_DEPTH, blocking=False
+        )
+        self.assertTrue(node.imu_available)
+
+    @patch("ros_packages.camera.oak_d_lite.stereo.dai")
+    def test_missing_imu_raises_nothing_and_status_reports_absence(self, mock_dai):
+        with patch.object(CameraNode, "__init__", lambda self: None):
+            node = CameraNode()
+        node.pipeline = MagicMock()
+        node.pipeline.create.side_effect = RuntimeError("IMU not detected")
+        node.queue = MagicMock()
+        node.get_logger = MagicMock()
+        node.pipeline_manager = MagicMock()
+        node.pipeline_manager.statuses.return_value = {}
+        node.model_registry = MagicMock()
+        node.model_registry.models.return_value = []
+        node.models_status_publisher_ = MagicMock()
+        node.get_clock = MagicMock()
+        node._log_hand_stage_counters = MagicMock()
+        node._log_imitation_stage_counters = MagicMock()
+
+        self.assertFalse(node._init_imu())
+        node.publish_model_statuses()
+
+        status_array = node.models_status_publisher_.publish.call_args.args[0]
+        self.assertEqual(status_array.models[-1].model_id, "imu")
+        self.assertEqual(status_array.models[-1].state, "absent")
+        self.assertIsNone(node.imu_queue)
+        self.assertFalse(node.imu_available)
+        self.assertIsNotNone(node.queue)
+
+    def test_missing_imu_rebuilds_clean_graph_and_starts_camera(self):
+        with patch.object(CameraNode, "__init__", lambda self: None):
+            node = CameraNode()
+        node._pipeline_lock = threading.RLock()
+        node.get_logger = MagicMock()
+        first_pipeline = MagicMock()
+        camera_only_pipeline = MagicMock()
+        pipelines = iter((first_pipeline, camera_only_pipeline))
+
+        def build_camera(_include_stereo):
+            node.pipeline = next(pipelines)
+            node.queue = MagicMock()
+
+        def reject_imu():
+            node.imu_available = False
+            node.imu_queue = None
+            return False
+
+        node._build_pipeline = MagicMock(side_effect=build_camera)
+        node._init_imu = MagicMock(side_effect=reject_imu)
+        CameraNode._device_owner = None
+        try:
+            self.assertTrue(node._start_pipeline(include_stereo=False))
+            self.assertEqual(node._build_pipeline.call_count, 2)
+            node._init_imu.assert_called_once_with()
+            first_pipeline.start.assert_not_called()
+            camera_only_pipeline.start.assert_called_once_with()
+            self.assertIsNotNone(node.queue)
+            self.assertEqual(node._imu_status()["state"], "absent")
         finally:
             CameraNode._device_owner = None
 

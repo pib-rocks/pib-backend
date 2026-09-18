@@ -64,3 +64,6 @@ package-lock.json
 .test-venv/
 *.db-shm
 *.db-wal
+
+# Test artifacts: seed_hardware/seed_db create backups next to the shared test database
+pib_api/flask/pibdata.db.bak-*
