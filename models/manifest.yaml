@@ -210,3 +210,68 @@ models:
   openvino_version: '2022.1'
   zoo_type: depthai
   notes: OMZ person-reidentification-retail-0031 converted to 96x48 (IR input 'data' NCHW 3x96x48). Whole-body crop in, 256-d embedding out; match with cosine distance. DepthAI zoo still lists this name; compiled with zoo_type='depthai', '-ip U8'.
+- model_id: palm_detection_sh4
+  task: palm_detection
+  source_upstream: geaxgx/depthai_hand_tracker (pib-rocks fork, /home/pib/imitation on the robot)
+  source_url: https://github.com/geaxgx/depthai_hand_tracker
+  licence: MIT License; https://github.com/geaxgx/depthai_hand_tracker/blob/main/LICENSE.txt
+  file: palm_detection_sh4/palm_detection_sh4.blob
+  sha256: 4d45ecfddc68d8365fef3cb633d78b916612f25f7a48898f90f8a47d4b151aa5
+  size_bytes: 4663360
+  shaves: 4
+  input_width: 128
+  input_height: 128
+  format: blob
+  openvino_version: '2022.1'
+  zoo_type: custom
+  notes: MediaPipe palm detector as shipped precompiled by the HandTrackerEdge reference. Blob metadata
+    verified on the device - input 'input' is U8F [128,128,3,1], outputs are 'regressors' FP16 [18,896,1]
+    and 'classificators' FP16 [1,896,1]. Those outputs must go to pd_postprocessing_top2_sh1, which takes
+    FP16; the DepthAI zoo decoding head palm_detection_128x128_decoding is compiled '-ip U8' and destroys
+    them. Used by the imitation composite.
+- model_id: pd_postprocessing_top2_sh1
+  task: palm_detection
+  source_upstream: geaxgx/depthai_hand_tracker (pib-rocks fork, /home/pib/imitation on the robot)
+  source_url: https://github.com/geaxgx/depthai_hand_tracker
+  licence: MIT License; https://github.com/geaxgx/depthai_hand_tracker/blob/main/LICENSE.txt
+  file: pd_postprocessing_top2_sh1/pd_postprocessing_top2_sh1.blob
+  sha256: ef4c2db0bd6b4d3209abcc90fefc54e6d23b614c5165774ac1b706a7652c6516
+  size_bytes: 43904
+  shaves: 1
+  input_width: 128
+  input_height: 128
+  format: blob
+  openvino_version: '2022.1'
+  zoo_type: custom
+  notes: Decoding head only (not a detector), generated upstream from ONNX (custom_models
+    generate_postproc_onnx.py). Blob metadata verified on the device - inputs 'regressors' FP16
+    [18,896,1] and 'classificators' FP16 [1,896,1], output 'result' FP16 [8,2], i.e. the TOP 2 palms as
+    score, box_x, box_y, box_size, kp0_x, kp0_y, kp2_x, kp2_y in square-normalised coordinates. The
+    input_width/height above describe the detector it decodes for; this net has no image input.
+- model_id: hand_landmark_full_sh4
+  task: hand_landmarks
+  source_upstream: geaxgx/depthai_hand_tracker (pib-rocks fork, /home/pib/imitation on the robot)
+  source_url: https://github.com/geaxgx/depthai_hand_tracker
+  licence: MIT License; https://github.com/geaxgx/depthai_hand_tracker/blob/main/LICENSE.txt
+  file: hand_landmark_full_sh4/hand_landmark_full_sh4.blob
+  sha256: 4ae2162d077b5abba2b914a685911cb2cd54a34a06a5fc8f9a3dccee6fd2d3ae
+  size_bytes: 11938176
+  shaves: 4
+  input_width: 224
+  input_height: 224
+  format: blob
+  openvino_version: '2022.1'
+  zoo_type: custom
+  notes: MediaPipe hand landmark network ('full' variant, the reference default). Blob metadata verified
+    on the device - input 'input_1' is U8F [224,224,3,1]; outputs are 'Identity_1' (landmark score),
+    'Identity_2' (handedness), 'Identity_dense/BiasAdd/Add' (21 x 3 image-space landmarks, 63 values) and
+    'Identity_3_dense/BiasAdd/Add' (21 x 3 world landmarks, 63 values). The reference gates on the
+    landmark score with a threshold of 0.5.
+- model_id: imitation
+  task: hand_tracking
+  composite: true
+  artifacts:
+  - palm_detection_sh4
+  - pd_postprocessing_top2_sh1
+  - hand_landmark_full_sh4
+  publish_topic: detections/imitation
