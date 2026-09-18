@@ -81,21 +81,26 @@ def landmark_pixels_to_square(values, region):
 
 
 def fit_landmark_region(region, frame_width, frame_height, inset=0.5):
-    """Shrink a rotated square around its center until DepthAI can validate it."""
-    pad_h = (frame_width - frame_height) // 2
-    center_x = float(region["center_x"]) * frame_width
-    center_y = float(region["center_y"]) * frame_width - pad_h
-    size = float(region["size"]) * frame_width
-    rotation = float(region["rotation"])
-    extent = 0.5 * size * (abs(math.cos(rotation)) + abs(math.sin(rotation)))
-    available_x = min(center_x, frame_width - center_x) - inset
-    available_y = min(center_y, frame_height - center_y) - inset
-    if extent <= 0.0 or available_x <= 0.0 or available_y <= 0.0:
+    """Reject a degenerate region; never shrink a valid one.
+
+    The reference lets the rotated ROI extend past the image edge and relies on
+    the ImageManip replicating border pixels. Shrinking it instead keeps the
+    crop inside the frame but changes the hand's SCALE inside the 224x224
+    landmark input, and that net is scale sensitive: a hand near an edge then
+    fills the crop and scores below the 0.5 gate, so the detection disappears
+    exactly when the hand moves to the side. Measured on the robot: a centred
+    hand scored 0.997 while an off-centre one produced no detection at all.
+    """
+    size = float(region["size"])
+    if size <= 0.0 or frame_width <= 0 or frame_height <= 0:
         return None
-    scale = min(1.0, available_x / extent, available_y / extent)
-    fitted = dict(region)
-    fitted["size"] = float(region["size"]) * scale
-    return fitted
+    center_x = float(region["center_x"]) * frame_width
+    pad_h = (frame_width - frame_height) // 2
+    center_y = float(region["center_y"]) * frame_width - pad_h
+    # A centre outside the image cannot be recovered by border replication.
+    if not (0.0 <= center_x <= frame_width and 0.0 <= center_y <= frame_height):
+        return None
+    return dict(region)
 
 
 def square_to_frame(point, frame_width, frame_height):
@@ -306,6 +311,19 @@ while True:
         stages["image_manip_roi"] += 1
         stages["hand_landmark_nn"] += 1
         score_values = flat_tensor(landmark_packet, "Identity_1")
+        # One trace per emitted result: without the scores a missing detection
+        # is indistinguishable from a missing hand, which cost several
+        # build-and-measure rounds on this pipeline.
+        node.warn(
+            "IMIT_TRACE pd=%.3f lm=%.3f size=%.4f cx=%.4f cy=%.4f"
+            % (
+                region["palm_score"],
+                score_values[0] if len(score_values) == 1 else -1.0,
+                fitted_region["size"],
+                fitted_region["center_x"],
+                fitted_region["center_y"],
+            )
+        )
         if len(score_values) != 1 or not landmark_score_passes(score_values[0]):
             stages["post_processing"] += 1
             continue

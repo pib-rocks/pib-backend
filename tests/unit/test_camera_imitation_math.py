@@ -64,7 +64,15 @@ def test_rotated_landmarks_map_from_crop_to_square():
     assert points[0] == pytest.approx((0.7, 0.5))
 
 
-def test_rotated_landmark_region_is_fitted_inside_source():
+def test_landmark_region_near_an_edge_keeps_its_size():
+    """A hand near the edge must keep the ROI scale the landmark net expects.
+
+    Shrinking the ROI to force it inside the image changes how large the hand
+    appears in the 224x224 crop, and that net is scale sensitive: measured on
+    the robot, an off-centre hand then produced no detection at all while a
+    centred one scored 0.997. The reference lets the rect overhang and relies on
+    border replication, so a valid region must come back untouched.
+    """
     region = {
         "center_x": 0.1,
         "center_y": 0.3,
@@ -74,8 +82,28 @@ def test_rotated_landmark_region_is_fitted_inside_source():
 
     fitted = fit_landmark_region(region, 256, 144)
 
-    assert fitted["size"] < region["size"]
+    assert fitted["size"] == region["size"]
     assert fitted["rotation"] == region["rotation"]
+    assert fitted["center_x"] == region["center_x"]
+
+
+def test_landmark_region_is_rejected_when_its_centre_leaves_the_image():
+    """Border replication cannot recover a centre outside the frame."""
+    outside = {
+        "center_x": 1.4,
+        "center_y": 0.3,
+        "size": 0.2,
+        "rotation": 0.0,
+    }
+    degenerate = {
+        "center_x": 0.5,
+        "center_y": 0.3,
+        "size": 0.0,
+        "rotation": 0.0,
+    }
+
+    assert fit_landmark_region(outside, 256, 144) is None
+    assert fit_landmark_region(degenerate, 256, 144) is None
 
 
 def test_landscape_square_padding_maps_back_to_frame_pixels():
