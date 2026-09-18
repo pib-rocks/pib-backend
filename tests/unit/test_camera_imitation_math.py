@@ -2,6 +2,7 @@
 
 import math
 import os
+import re
 import sys
 
 import pytest
@@ -110,7 +111,11 @@ def test_script_embeds_tested_source_and_v3_api_boundaries():
     assert 'read_layer(packet, "result")' in script
     assert "getLayerFp16" in script
     assert "ResizeMode.LETTERBOX" in script
-    assert "config.setOutputSize(LM_SIZE, LM_SIZE)" in script
-    assert "config.addCropRotatedRect(rotated, True)" in script
+    # Every setOutputSize call in the embedded script must pass a resize mode:
+    # the Script runtime has no two-argument overload and dies at runtime.
+    for call in re.findall(r"setOutputSize\(([^)]*)\)", script):
+        assert "ResizeMode." in call, call
+    assert "ResizeMode.STRETCH" in script
+    assert "addCropRotatedRect" in script and "setCropRotatedRect" in script
     assert "output = Buffer(len(data))" in script
     assert 'node.io["host"].send(output)' in script

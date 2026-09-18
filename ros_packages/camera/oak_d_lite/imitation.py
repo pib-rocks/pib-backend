@@ -231,9 +231,18 @@ def landmark_config(region, reuse):
     rotated.size.height = region["size"] * SOURCE_WIDTH / float(SOURCE_HEIGHT)
     rotated.angle = math.degrees(region["rotation"])
     config = ImageManipConfig()
-    config.setOutputSize(LM_SIZE, LM_SIZE)
+    # The Script runtime requires the resize mode argument; the two-argument
+    # host overload does not exist there. The rotated ROI is already square, so
+    # STRETCH is the faithful equivalent of the reference's setResize call.
+    config.setOutputSize(LM_SIZE, LM_SIZE, ImageManipConfig.ResizeMode.STRETCH)
     config.setFrameType(ImgFrame.Type.BGR888p)
-    config.addCropRotatedRect(rotated, True)
+    # depthai 3.x named this addCropRotatedRect; the 2.x-era Script runtime on
+    # the device may still only offer setCropRotatedRect. Try both so one
+    # embedded source runs in either runtime.
+    crop = getattr(config, "addCropRotatedRect", None)
+    if crop is None:
+        crop = getattr(config, "setCropRotatedRect", None)
+    crop(rotated, True)
     border_replicate = getattr(config, "setWarpBorderReplicatePixels", None)
     if border_replicate is not None:
         border_replicate()
