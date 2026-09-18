@@ -51,27 +51,36 @@ class ProcessDetections(dai.node.HostNode):
 
 
 def detection_crop_config(detection, padding, target_width, target_height):
-    """Build the padded, axis-aligned STRETCH crop used for one palm."""
+    """Build a SQUARE, axis-aligned STRETCH crop for one palm.
+
+    The palm detector's box in normalized coordinates (relative to the 16:9 branch)
+    is not square. Cropping that rect and STRETCHing to a square landmark input
+    distorts the hand differently in each axis, which then shows up as a
+    mis-sized box in the published frame. The HandTrackerEdge reference avoids
+    this by cropping a SQUARE region in square-normalised space and resizing
+    with letterbox. We replicate that: make the crop square in the 16:9 branch
+    (using the larger of width/height), then letterbox to the landmark input.
+    """
     rect = detection.getBoundingBox()
+    # Make the crop square in the branch's coordinate system (normalised 0..1).
+    # Use the larger dimension so the hand fits; the extra margin is harmless
+    # because the landmark net sees the letterboxed square.
+    size = max(rect.size.width, rect.size.height) + 2.0 * padding
     padded = dai.RotatedRect()
     padded.center.x = rect.center.x
     padded.center.y = rect.center.y
-    padded.size.width = rect.size.width + 2.0 * padding
-    padded.size.height = rect.size.height + 2.0 * padding
-    # The reference sets this to 0 on purpose and so must we. The palm parser
-    # reports an angle derived from the detector's PIXEL geometry, but a
-    # RotatedRect in normalised coordinates is rotated in a non-isotropic space,
-    # so feeding that angle back skews the crop. Measured on the robot: with
-    # angle=rect.angle the palm scored 0.75-0.91 while the landmark net answered
-    # 0.002-0.09; the hand was found and the crop it got was unusable.
+    padded.size.width = size
+    padded.size.height = size
     padded.angle = 0.0
 
     config = dai.ImageManipConfig()
     config.addCropRotatedRect(padded, normalizedCoords=True)
+    # Letterbox preserves the hand's aspect ratio inside the square crop.
+    # The landmark net receives a square with the hand centred and padded.
     config.setOutputSize(
         target_width,
         target_height,
-        dai.ImageManipConfig.ResizeMode.STRETCH,
+        dai.ImageManipConfig.ResizeMode.LETTERBOX,
     )
     config.setReusePreviousImage(False)
     return config
