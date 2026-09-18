@@ -9,6 +9,7 @@ import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
+from ros_packages.camera.oak_d_lite import imitation
 from ros_packages.camera.oak_d_lite.imitation import (
     build_imitation_script,
     fit_landmark_region,
@@ -119,3 +120,60 @@ def test_script_embeds_tested_source_and_v3_api_boundaries():
     assert "addCropRotatedRect" in script and "setCropRotatedRect" in script
     assert "output = Buffer(len(data))" in script
     assert 'node.io["host"].send(output)' in script
+
+
+def test_box_from_points_encloses_every_landmark():
+    """Decision (a): the published box must contain all 21 keypoints."""
+    points = [
+        (471.7, 284.4),
+        (585.8, 472.3),
+        (594.8, 201.2),
+        (661.8, 221.0),
+        (731.8, 348.3),
+    ]
+    x_min, y_min, x_max, y_max = imitation.box_from_points(points, 1280, 720)
+
+    for x, y in points:
+        assert x_min <= x <= x_max, (x, x_min, x_max)
+        assert y_min <= y <= y_max, (y, y_min, y_max)
+    assert (x_min, y_min, x_max, y_max) == (471, 201, 732, 473)
+
+
+def test_box_from_points_beats_the_palm_box_on_real_measured_values():
+    """The palm box left the measured fingertips outside; this must not recur."""
+    # Live values measured on the robot, hand open in front of the camera.
+    region = {"box_x": 0.5754, "box_y": 0.2089, "box_size": 0.0977}
+    landmarks = [
+        (471.7, 284.4),
+        (585.8, 472.3),
+        (594.8, 201.2),
+        (661.8, 221.0),
+        (731.8, 348.3),
+    ]
+    palm = imitation.square_box_to_frame(region, 1280, 720)
+    derived = imitation.box_from_points(landmarks, 1280, 720)
+
+    outside_palm = [
+        point
+        for point in landmarks
+        if not (palm[0] <= point[0] <= palm[2] and palm[1] <= point[1] <= palm[3])
+    ]
+    assert outside_palm, "test data must reproduce the palm-box problem"
+    assert all(
+        derived[0] <= point[0] <= derived[2] and derived[1] <= point[1] <= derived[3]
+        for point in landmarks
+    )
+
+
+def test_box_from_points_stays_inside_the_frame_and_non_degenerate():
+    x_min, y_min, x_max, y_max = imitation.box_from_points(
+        [(-50.0, -20.0), (5000.0, 4000.0)], 1280, 720
+    )
+
+    assert (x_min, y_min) == (0, 0)
+    assert (x_max, y_max) == (1280, 720)
+    assert x_max > x_min and y_max > y_min
+
+
+def test_box_from_points_handles_an_empty_point_list():
+    assert imitation.box_from_points([], 1280, 720) == (0, 0, 1, 1)

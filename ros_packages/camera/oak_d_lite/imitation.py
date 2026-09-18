@@ -115,6 +115,24 @@ def square_points_to_frame(points, frame_width, frame_height):
     return [square_to_frame(point, frame_width, frame_height) for point in list(points)]
 
 
+def box_from_points(points, frame_width, frame_height):
+    """Enclose already mapped frame-pixel landmarks in a non-degenerate bbox.
+
+    The palm box the detector emits covers the palm only, so fingers stick out
+    of it; a viewer reads that as a bug. Deriving the box from the landmarks
+    cannot disagree with the points that are drawn next to it.
+    """
+    xs = [float(p[0]) for p in points]
+    ys = [float(p[1]) for p in points]
+    if not xs or not ys:
+        return 0, 0, 1, 1
+    x_min = max(0, min(frame_width - 1, int(math.floor(min(xs)))))
+    y_min = max(0, min(frame_height - 1, int(math.floor(min(ys)))))
+    x_max = max(x_min + 1, min(frame_width, int(math.ceil(max(xs)))))
+    y_max = max(y_min + 1, min(frame_height, int(math.ceil(max(ys)))))
+    return x_min, y_min, x_max, y_max
+
+
 def square_box_to_frame(region, frame_width, frame_height):
     """Map the detector square bbox to a non-degenerate frame-pixel bbox."""
     half = 0.5 * float(region["box_size"])

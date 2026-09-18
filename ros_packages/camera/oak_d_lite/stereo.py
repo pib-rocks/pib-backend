@@ -34,8 +34,8 @@ from .model_registry import ModelRegistry
 from .pipeline_manager import PipelineManager
 from .imitation import (
     LANDMARK_COUNT as IMITATION_LANDMARK_COUNT,
+    box_from_points,
     build_imitation_script,
-    square_box_to_frame,
     square_points_to_frame,
     world_landmark_scalars,
 )
@@ -663,7 +663,10 @@ class CameraNode(Node):
             "box_y": float(hand["box_y"]),
             "box_size": float(hand["box_size"]),
         }
-        bbox = square_box_to_frame(region, frame_width, frame_height)
+        # Decision (a): the published box encloses the 21 landmarks. The
+        # detector's own palm box covers the palm only and would leave the
+        # fingers outside the rectangle drawn in Cerebra.
+        bbox = box_from_points(landmarks, frame_width, frame_height)
         world_names, world_values = world_landmark_scalars(hand.get("world", ()))
 
         detection = Detection()
