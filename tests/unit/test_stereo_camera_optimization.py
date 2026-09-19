@@ -29,9 +29,35 @@ try:
 except ImportError:
     sys.modules["depthai"] = types.ModuleType("depthai")
 
-try:
-    import rclpy  # noqa: F401
-except ImportError:
+
+def _usable_rclpy_node():
+    """Return a usable ``rclpy.node.Node`` class, or ``None``.
+
+    Importing ``rclpy`` alone cannot decide whether the real client library is
+    available: an earlier test module in the same pytest session can leave a
+    stub ``rclpy`` in ``sys.modules``. The import then succeeds while the node
+    class lacks methods this suite exercises (``create_subscription`` and
+    friends), and the failure surfaces later as an ``AttributeError`` from the
+    code under test. So the probe checks the API this module depends on and
+    treats an incomplete module as absent, which builds the local fake below.
+    """
+    required = (
+        "create_publisher",
+        "create_subscription",
+        "create_service",
+        "create_timer",
+        "destroy_node",
+    )
+    try:
+        from rclpy.node import Node
+    except ImportError:
+        return None
+    if all(callable(getattr(Node, name, None)) for name in required):
+        return Node
+    return None
+
+
+if _usable_rclpy_node() is None:
     rclpy = types.ModuleType("rclpy")
     rclpy_node = types.ModuleType("rclpy.node")
 
