@@ -32,11 +32,14 @@ from sensor_msgs.msg import Imu
 from std_msgs.msg import Float32MultiArray, Float64, Int32, Int32MultiArray, String
 
 from .imu import (
-    TenHertzThrottle,
+    ClockOffsetEstimator,
+    IMU_PUBLISH_RATE_HZ,
+    PublishRateThrottle,
     assemble_imu_sample,
     duration_to_nanoseconds,
     host_stamp_nanoseconds,
     measured_rate_hz,
+    published_stamp_ns,
 )
 from .model_registry import ModelRegistry
 from .pipeline_manager import PipelineManager
@@ -95,13 +98,36 @@ IMITATION_SOURCE_HEIGHT = 648
 BRANCH_INPUT_QUEUE_DEPTH = 1
 BRANCH_OUTPUT_QUEUE_DEPTH = 4
 COLOR_OUTPUT_QUEUE_DEPTH = 4
-IMU_SENSOR_RATE_HZ = 100
+# Twice the 100 Hz publication rate: a report therefore exists within one sensor
+# period (5 ms) of every publication deadline, so a single dropped or late
+# report cannot make the throttle skip a whole 10 ms slot. The BMI270 offers up
+# to 500 Hz for the raw reports; that headroom is deliberately left unused
+# because each report costs USB bandwidth and one host-side Python iteration.
+IMU_SENSOR_RATE_HZ = 200
+# 20 reports at 200 Hz is 100 ms of device-side buffering, which absorbs ten
+# consecutive missed 10 ms poll ticks. A deeper queue would not buy accuracy -
+# the stamp comes from the device timestamp, not from the drain instant - it
+# would only let a longer stall be replayed as a burst.
 IMU_OUTPUT_QUEUE_DEPTH = 20
+# Bounds the drain loop so a flooded queue cannot hold the executor. It only has
+# to exceed IMU_OUTPUT_QUEUE_DEPTH for one tick to always empty a full queue;
+# 256 does so with a wide margin and is still a bounded number of iterations.
 IMU_DRAIN_LIMIT = 256
-# Publications used to report a measured rate in models_status.
-IMU_RATE_WINDOW = 20
-IMU_POLL_PERIOD_SECONDS = 0.05
-IMU_STALE_AFTER_SECONDS = 1.0
+# Publications used to report a measured rate in models_status. 100 samples is
+# one second at the new publication rate, which matches the 1 Hz status timer:
+# each status message reports the rate of the second it describes.
+IMU_RATE_WINDOW = 100
+# One poll per publication period. The device queue makes a slower poll harmless
+# for throughput, but the report would then wait in the queue, and polling
+# faster than the publication period only adds empty wake-ups.
+IMU_POLL_PERIOD_SECONDS = 1.0 / IMU_PUBLISH_RATE_HZ
+# Expressed as missed publications rather than as a bare second: at 100 Hz a
+# one-second silence is a hundred lost samples, far too late to call the stream
+# healthy. 50 periods (0.5 s) still tolerates one long colour-frame encode
+# stalling the single-threaded executor, which would otherwise make the status
+# flap to "stale" while the IMU itself is fine.
+IMU_STALE_MISSED_PUBLICATIONS = 50
+IMU_STALE_AFTER_SECONDS = IMU_STALE_MISSED_PUBLICATIONS / IMU_PUBLISH_RATE_HZ
 STEREO_MODES = {"auto", "on", "off"}
 DEFAULT_STEREO_TIMEOUT = 5.0
 DEFAULT_HAND_STARTUP_GRACE = 5.0
@@ -210,7 +236,8 @@ class CameraNode(Node):
         self._imu_last_sequence = None
         self._imu_last_device_stamp_ns = None
         self._imu_publish_times = deque(maxlen=IMU_RATE_WINDOW)
-        self._imu_throttle = TenHertzThrottle()
+        self._imu_throttle = PublishRateThrottle()
+        self._imu_clock_offset = ClockOffsetEstimator()
         self.nn_queues = {}
         self._pipeline_models = []
         self.depth_available = False
@@ -1222,7 +1249,9 @@ class CameraNode(Node):
         imu_status.model_id = "imu"
         imu_status.active = imu_runtime["state"] != "absent"
         # Report the rate actually observed rather than the configured rate: the
-        # rig measured 8.1 Hz while the configuration said 10 Hz.
+        # rig measured 8.1 Hz while the configuration said 10 Hz, and the gap
+        # between configuration and delivery is exactly what this field exists
+        # to expose at 100 Hz too.
         imu_status.fps = imu_runtime["fps"]
         imu_status.shaves = 0
         imu_status.state = imu_runtime["state"]
@@ -1282,8 +1311,9 @@ class CameraNode(Node):
                 dai.IMUSensor.ACCELEROMETER_RAW,
                 dai.IMUSensor.GYROSCOPE_RAW,
             ):
-                # 100 Hz is supported by BMI270 for these reports. The host
-                # deterministically drops excess samples to the 10 Hz ROS rate.
+                # 200 Hz is supported by BMI270 for these reports. The host
+                # deterministically drops every second sample to reach the
+                # 100 Hz ROS rate.
                 imu.enableIMUSensor(sensor, IMU_SENSOR_RATE_HZ)
             imu.setBatchReportThreshold(1)
             imu.setMaxBatchReports(IMU_OUTPUT_QUEUE_DEPTH)
@@ -1404,6 +1434,15 @@ class CameraNode(Node):
         self._imu_last_received_monotonic = None
         self._imu_last_sequence = None
         self._imu_last_device_stamp_ns = None
+        # A new pipeline is a new device session, so the device clock restarts
+        # near zero. Both the throttle deadline and the offset window describe
+        # the previous session: keeping the deadline would drop every report
+        # until the restarted device clock caught up, and keeping the offsets
+        # would stamp with an offset measured against a clock that no longer
+        # exists.
+        self._imu_throttle = PublishRateThrottle()
+        self._imu_clock_offset = ClockOffsetEstimator()
+        self._imu_publish_times = deque(maxlen=IMU_RATE_WINDOW)
         self.nn_queues = {}
         self.hand_decoder_queue = None
         self.hand_palm_queue = None
@@ -2129,7 +2168,7 @@ class CameraNode(Node):
         return message
 
     def _process_imu(self):
-        """Drain the non-blocking queue and publish no faster than 10 Hz."""
+        """Drain the non-blocking queue and publish at the configured rate."""
 
         if self.imu_queue is None:
             return
@@ -2144,28 +2183,38 @@ class CameraNode(Node):
                     # depthai 3.6.1 offers only getTimestamp() and
                     # getTimestampDevice() on the reports; the clock domains are
                     # documented in host_stamp_nanoseconds.
-                    stamp_ns = host_stamp_nanoseconds(
+                    host_receipt_ns = host_stamp_nanoseconds(
                         acceleration.getTimestamp(), time.time()
                     )
-                    sequence = acceleration.getSequenceNum()
-                    sample = assemble_imu_sample(
-                        sequence,
-                        stamp_ns,
-                        self._imu_report_xyz(acceleration),
-                        self._imu_report_xyz(angular_velocity),
-                    )
-                    self._imu_last_received_monotonic = time.monotonic()
-                    # The device monotonic timestamp is retained for correlation
-                    # and used to select which reports to publish: it is spaced
-                    # uniformly by the sensor, while host receipt stamps are
-                    # quantised by the drain timer, and throttling on those was
-                    # measured to undershoot the intended 10 Hz (8.1 Hz).
+                    # The device monotonic timestamp carries the measurement
+                    # instant: the sensor spaces it uniformly, while host receipt
+                    # stamps are quantised by the drain timer. It therefore
+                    # drives both the throttle - throttling on receipt stamps
+                    # measured 8.1 Hz where 10 Hz was configured - and, shifted
+                    # onto the host timeline, the published stamp. It is also
+                    # kept as the camera/IMU hardware correlation source.
                     device_stamp_ns = duration_to_nanoseconds(
                         acceleration.getTimestampDevice()
                     )
                     self._imu_last_device_stamp_ns = device_stamp_ns
+                    self._imu_last_received_monotonic = time.monotonic()
+                    # Every report feeds the offset window, including the ones
+                    # the throttle discards: they cost nothing and a wider sample
+                    # base can only lower the minimum towards the true offset.
+                    offset_ns = self._imu_clock_offset.observe(
+                        host_receipt_ns, device_stamp_ns
+                    )
                     if not self._imu_throttle.accept(device_stamp_ns):
                         continue
+                    stamp_ns = published_stamp_ns(
+                        device_stamp_ns, host_receipt_ns, offset_ns
+                    )
+                    sample = assemble_imu_sample(
+                        acceleration.getSequenceNum(),
+                        stamp_ns,
+                        self._imu_report_xyz(acceleration),
+                        self._imu_report_xyz(angular_velocity),
+                    )
                     # ROS 2 Header has no sequence field; retain DepthAI's source
                     # sequence here for diagnostics and testable packet mapping.
                     self._imu_last_sequence = sample.sequence
