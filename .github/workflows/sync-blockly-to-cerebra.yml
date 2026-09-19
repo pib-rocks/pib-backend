@@ -101,6 +101,18 @@ jobs:
                 "$SRC" "$DST"
           echo "Mirrored $SRC -> $DST"
 
+      - name: Normalize formatting with cerebra's prettier
+        working-directory: cerebra
+        run: |
+          # cerebra's `ng lint` runs eslint with the prettier plugin over the mirrored
+          # tree, while pib-backend only lints Python (black). Without this step any
+          # wrapping/quoting drift in the source lands in cerebra and turns "Cerebra Lint"
+          # red on develop. Run before the change detection so the committed content is
+          # exactly what cerebra's lint accepts.
+          npx --yes "prettier@$(node -p "require('./package.json').devDependencies.prettier")" \
+               --write "${DST_PATH}/**/*.ts"
+          echo "Normalized ${DST_PATH} with cerebra's prettier config."
+
       - name: Detect changes
         id: diff
         working-directory: cerebra
