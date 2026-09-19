@@ -31,6 +31,7 @@ export const RESERVED_WORDS = [
     "apply_joint_trajectory_client",
     "get_joint_position_client",
     "Camera",
+    "IMU",
     // face detector
     "fd",
     // pose

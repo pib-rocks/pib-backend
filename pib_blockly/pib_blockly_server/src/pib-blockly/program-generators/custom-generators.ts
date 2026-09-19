@@ -6,6 +6,7 @@ import * as face_detector_blocks from "./detectors-generators";
 import * as time_blocks from "./time-generators";
 import * as motor_blocks from "./motor-generators";
 import * as camera_blocks from "./camera-generators";
+import * as imu_blocks from "./imu-generators";
 import * as playAudioFromSpeech from "./play-audio-from-speech-generator";
 import * as moveToPose from "./pose-generator";
 import * as setSolidStateRelay from "./solid-state-relay-generator";
@@ -26,6 +27,7 @@ const generators: typeof pythonGenerator.forBlock = {
     ...time_blocks,
     ...motor_blocks,
     ...camera_blocks,
+    ...imu_blocks,
     ...playAudioFromSpeech,
     ...moveToPose,
     ...setSolidStateRelay,
