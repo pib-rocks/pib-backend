@@ -49,6 +49,7 @@ from .imitation import (
     gathered_result_trace_values,
     world_landmark_scalars,
 )
+from .imitation_archive import create_landmark_archive, create_palm_archive
 from .hand_tracking import (
     HAND_KEYPOINT_NAMES,
     LANDMARK_SCORE_LAYER,
@@ -72,8 +73,6 @@ FACE_DETECT_HEIGHT = 180
 # ImageManip crops would change the pixels on which the models were trained.
 HAND_NN_WIDTH = 256
 HAND_NN_HEIGHT = 256
-IMITATION_DETECTOR_MODEL = "luxonis/mediapipe-palm-detection:192x192"
-IMITATION_LANDMARK_MODEL = "luxonis/mediapipe-hand-landmarker:224x224"
 IMITATION_FPS = 8
 # The neural branch carries the FULL 16:9 field of view at the size the
 # HandTrackerEdge reference uses (internal_frame_height=640 on a 16:9 sensor),
@@ -1699,13 +1698,16 @@ class CameraNode(Node):
 
     def _build_imitation_pipeline(self, composite):
         """Add the official parsed palm, full-frame crop, and landmark graph."""
-        platform = "RVC2"
-        detection_description = dai.NNModelDescription(IMITATION_DETECTOR_MODEL)
-        detection_description.platform = platform
-        detection_archive = dai.NNArchive(dai.getModelFromZoo(detection_description))
-        landmark_description = dai.NNModelDescription(IMITATION_LANDMARK_MODEL)
-        landmark_description.platform = platform
-        landmark_archive = dai.NNArchive(dai.getModelFromZoo(landmark_description))
+        artifact_ids = set(composite.artifact_ids)
+        required_ids = {"palm_detection_sh4", "hand_landmark_full_sh4"}
+        if not required_ids.issubset(artifact_ids):
+            raise ValueError("imitation composite is missing its detector or landmark")
+        # The composite's decoder is for the legacy raw-NN path. The parsed
+        # archive graph decodes palms itself and must not allocate that blob.
+        palm = self.model_registry.get("palm_detection_sh4")
+        landmark = self.model_registry.get("hand_landmark_full_sh4")
+        detection_archive = create_palm_archive(palm.blob_path)
+        landmark_archive = create_landmark_archive(landmark.blob_path)
 
         detector_width = detection_archive.getInputWidth()
         detector_height = detection_archive.getInputHeight()
