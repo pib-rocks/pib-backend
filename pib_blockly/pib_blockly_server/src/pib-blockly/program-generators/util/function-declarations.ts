@@ -135,6 +135,92 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(x, y):
             return cam.get_distance_at_px(int(x), int(y))
 `;
 
+export const GET_IMU_ACCELERATION_FUNCTION = (generator: CodeGenerator) => `
+def ${generator.FUNCTION_NAME_PLACEHOLDER_}(axis):
+
+    rosbridge_host = os.getenv("ROSBRIDGE_HOST", "rosbridge-ws")
+    try:
+        with IMU(host=rosbridge_host, port=9090) as imu:
+            data = imu.latest()
+            if data is None:
+                return 0.0
+            acc = data.acceleration_m_s2
+            if axis == "total":
+                return math.sqrt(acc.x ** 2 + acc.y ** 2 + acc.z ** 2)
+            return getattr(acc, axis)
+    except Exception:
+        try:
+            with IMU(host="localhost", port=9090) as imu:
+                data = imu.latest()
+                if data is None:
+                    return 0.0
+                acc = data.acceleration_m_s2
+                if axis == "total":
+                    return math.sqrt(acc.x ** 2 + acc.y ** 2 + acc.z ** 2)
+                return getattr(acc, axis)
+        except Exception:
+            return 0.0
+`;
+
+export const GET_IMU_ANGULAR_VELOCITY_FUNCTION = (generator: CodeGenerator) => `
+def ${generator.FUNCTION_NAME_PLACEHOLDER_}(axis):
+
+    rosbridge_host = os.getenv("ROSBRIDGE_HOST", "rosbridge-ws")
+    try:
+        with IMU(host=rosbridge_host, port=9090) as imu:
+            data = imu.latest()
+            if data is None:
+                return 0.0
+            return getattr(data.angular_velocity_rad_s, axis)
+    except Exception:
+        try:
+            with IMU(host="localhost", port=9090) as imu:
+                data = imu.latest()
+                if data is None:
+                    return 0.0
+                return getattr(data.angular_velocity_rad_s, axis)
+        except Exception:
+            return 0.0
+`;
+
+export const GET_IMU_IS_DATA_AVAILABLE_FUNCTION = (
+    generator: CodeGenerator,
+) => `
+def ${generator.FUNCTION_NAME_PLACEHOLDER_}():
+
+    rosbridge_host = os.getenv("ROSBRIDGE_HOST", "rosbridge-ws")
+    try:
+        with IMU(host=rosbridge_host, port=9090) as imu:
+            return imu.latest() is not None
+    except Exception:
+        try:
+            with IMU(host="localhost", port=9090) as imu:
+                return imu.latest() is not None
+        except Exception:
+            return False
+`;
+
+export const GET_IMU_DATA_AGE_FUNCTION = (generator: CodeGenerator) => `
+def ${generator.FUNCTION_NAME_PLACEHOLDER_}():
+
+    rosbridge_host = os.getenv("ROSBRIDGE_HOST", "rosbridge-ws")
+    try:
+        with IMU(host=rosbridge_host, port=9090) as imu:
+            data = imu.latest()
+            if data is None:
+                return 0.0
+            return data.age_s
+    except Exception:
+        try:
+            with IMU(host="localhost", port=9090) as imu:
+                data = imu.latest()
+                if data is None:
+                    return 0.0
+                return data.age_s
+        except Exception:
+            return 0.0
+`;
+
 // pose
 
 export const APPLY_POSE_FUNCTION = (generator: CodeGenerator) => `
