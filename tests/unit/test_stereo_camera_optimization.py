@@ -161,10 +161,16 @@ import numpy as np
 
 from ros_packages.camera.oak_d_lite.hand_tracking import PalmRegion
 from ros_packages.camera.oak_d_lite.imu import (
-    TenHertzThrottle,
+    ClockOffsetEstimator,
+    IMU_CLOCK_OFFSET_WINDOW,
+    IMU_PUBLISH_PERIOD_NS,
+    IMU_PUBLISH_RATE_HZ,
+    PublishRateThrottle,
     assemble_imu_sample,
+    estimated_clock_offset_ns,
     host_stamp_nanoseconds,
     measured_rate_hz,
+    published_stamp_ns,
 )
 from ros_packages.camera.oak_d_lite.stereo import (
     BRANCH_INPUT_QUEUE_DEPTH,
@@ -182,8 +188,13 @@ from ros_packages.camera.oak_d_lite.stereo import (
     IMITATION_SOURCE_HEIGHT,
     IMITATION_SOURCE_WIDTH,
     IMITATION_STAGE_NAMES,
+    IMU_DRAIN_LIMIT,
     IMU_OUTPUT_QUEUE_DEPTH,
+    IMU_POLL_PERIOD_SECONDS,
+    IMU_RATE_WINDOW,
     IMU_SENSOR_RATE_HZ,
+    IMU_STALE_AFTER_SECONDS,
+    IMU_STALE_MISSED_PUBLICATIONS,
 )
 
 
@@ -1766,31 +1777,232 @@ class TestOakImu(unittest.TestCase):
             (0.0, 0.0, 0.0, 1.0),
         )
 
-    def test_throttle_publishes_exactly_ten_of_one_hundred_samples_in_one_second(
-        self,
-    ):
-        throttle = TenHertzThrottle()
+    def test_throttle_publishes_exactly_one_hundred_of_one_thousand_samples(self):
+        # One second of 1 ms device stamps has to leave exactly one sample per
+        # 10 ms publication period, on the period boundaries.
+        throttle = PublishRateThrottle()
         accepted = [
             stamp_ns
-            for stamp_ns in range(0, 1_000_000_000, 10_000_000)
+            for stamp_ns in range(0, 1_000_000_000, 1_000_000)
             if throttle.accept(stamp_ns)
         ]
 
+        self.assertEqual(IMU_PUBLISH_RATE_HZ, 100)
+        self.assertEqual(IMU_PUBLISH_PERIOD_NS, 10_000_000)
+        self.assertEqual(len(accepted), 100)
         self.assertEqual(
             accepted,
-            [index * 100_000_000 for index in range(10)],
+            [index * IMU_PUBLISH_PERIOD_NS for index in range(100)],
         )
 
-    def test_processing_uses_system_stamp_and_retains_device_correlation_stamp(self):
+    def test_throttle_passes_every_second_sample_of_the_sensor_stream(self):
+        # The sensor runs at twice the publication rate, so the throttle must
+        # publish every second report and drop the other half.
+        throttle = PublishRateThrottle()
+        sensor_period_ns = 1_000_000_000 // IMU_SENSOR_RATE_HZ
+        accepted = [
+            index for index in range(20) if throttle.accept(index * sensor_period_ns)
+        ]
+
+        self.assertEqual(accepted, list(range(0, 20, 2)))
+
+    def test_offset_estimate_takes_the_window_minimum_not_the_mean(self):
+        # Queueing, USB scheduling and the poll timer can only delay a report,
+        # so the smallest observation is the least contaminated one. A mean
+        # would sit at 1_250 here and push every stamp into the future.
+        samples = [1_000, 1_500, 1_500, 1_000]
+        self.assertEqual(estimated_clock_offset_ns(samples, window=4), 1_000)
+        self.assertNotEqual(
+            estimated_clock_offset_ns(samples, window=4),
+            sum(samples) / len(samples),
+        )
+
+    def test_offset_estimate_forgets_samples_that_left_the_window(self):
+        # A minimum never rises on its own; only the window can discard it, and
+        # that is what lets the estimate follow a drifting clock.
+        samples = [1_000, 5_000, 5_500, 6_000]
+        self.assertEqual(estimated_clock_offset_ns(samples, window=4), 1_000)
+        self.assertEqual(estimated_clock_offset_ns(samples, window=3), 5_000)
+        self.assertEqual(estimated_clock_offset_ns(samples, window=2), 5_500)
+
+    def test_offset_estimate_is_unavailable_for_degenerate_input(self):
+        # Fewer than two samples is not a window, so there is no estimate and
+        # the caller has to fall back to the receipt time.
+        self.assertIsNone(estimated_clock_offset_ns([]))
+        self.assertIsNone(estimated_clock_offset_ns([1_234]))
+        # Non-finite values are not offsets and must not become the minimum.
+        self.assertIsNone(estimated_clock_offset_ns([float("nan"), float("-inf")]))
+        self.assertEqual(
+            estimated_clock_offset_ns([2_000, float("-inf"), 3_000, None]), 2_000
+        )
+        # Identical samples are a perfectly valid estimate.
+        self.assertEqual(estimated_clock_offset_ns([7_000, 7_000]), 7_000)
+        # A negative offset is legitimate: the device clock counts from device
+        # boot and may be ahead of the host epoch.
+        self.assertEqual(estimated_clock_offset_ns([-5_000, -3_000]), -5_000)
+        with self.assertRaises(ValueError):
+            estimated_clock_offset_ns([1, 2, 3], window=1)
+
+    def test_offset_estimate_keeps_nanosecond_resolution_at_epoch_magnitude(self):
+        # Host epoch nanoseconds are around 1.7e18, where float64 quantises in
+        # steps of hundreds of nanoseconds, so the estimate must stay integral.
+        base = 1_700_000_000_000_000_000
+        estimate = estimated_clock_offset_ns([base + 3, base + 1, base + 2])
+        self.assertIsInstance(estimate, int)
+        self.assertEqual(estimate, base + 1)
+
+    def test_offset_estimator_tracks_the_minimum_over_its_own_window(self):
+        estimator = ClockOffsetEstimator(window=3)
+        # host receipt 1_000, device 0 -> offset 1_000, but one sample is not a
+        # window yet.
+        self.assertIsNone(estimator.observe(1_000, 0))
+        self.assertEqual(estimator.observe(2_200, 1_000), 1_000)
+        self.assertEqual(estimator.observe(3_400, 2_000), 1_000)
+        # The 1_000 sample has now left the three-entry window.
+        self.assertEqual(estimator.observe(4_500, 3_000), 1_200)
+        self.assertIsNone(ClockOffsetEstimator().observe(10, 0))
+        self.assertEqual(IMU_CLOCK_OFFSET_WINDOW, 200)
+
+    def test_uniform_device_stamps_produce_a_uniform_host_timeline(self):
+        # Device stamps are uniform, receipt times are not. The published stamps
+        # must inherit the device spacing, not the receipt jitter.
+        offset_ns = 1_700_000_000_000_000_000
+        device_stamps = [index * IMU_PUBLISH_PERIOD_NS for index in range(5)]
+        jitter = [0, 7_000_000, 1_000_000, 35_000_000, 2_000_000]
+        stamps = [
+            published_stamp_ns(device_ns, offset_ns + device_ns + late_ns, offset_ns)
+            for device_ns, late_ns in zip(device_stamps, jitter)
+        ]
+
+        self.assertEqual(
+            [second - first for first, second in zip(stamps, stamps[1:])],
+            [IMU_PUBLISH_PERIOD_NS] * 4,
+        )
+
+    def test_published_stamp_falls_back_to_receipt_time_without_an_offset(self):
+        # 7 s is a device duration since device boot. Publishing it as wall time
+        # would claim January 1970; the receipt time is late but real.
+        device_stamp_ns = 7_000_000_000
+        host_receipt_ns = 1_700_000_000_000_000_000
+        self.assertEqual(
+            published_stamp_ns(device_stamp_ns, host_receipt_ns, None),
+            host_receipt_ns,
+        )
+        # An offset of zero would publish exactly that device duration, so it is
+        # refused as well - as is any offset that does not land the stamp near
+        # the receipt time.
+        self.assertEqual(
+            published_stamp_ns(device_stamp_ns, host_receipt_ns, 0),
+            host_receipt_ns,
+        )
+        self.assertEqual(
+            published_stamp_ns(device_stamp_ns, host_receipt_ns, -device_stamp_ns),
+            host_receipt_ns,
+        )
+
+    def test_published_stamp_rejects_an_offset_from_a_restarted_device_clock(self):
+        # The device clock restarts at zero on a new device session. An offset
+        # measured against the previous session would place the measurement
+        # decades off, so the receipt time is published instead.
+        stale_offset_ns = 1_700_000_000_000_000_000
+        host_receipt_ns = 1_700_000_600_000_000_000
+        self.assertEqual(
+            published_stamp_ns(5_000_000, host_receipt_ns, stale_offset_ns),
+            host_receipt_ns,
+        )
+        # Inside the tolerance the device-derived stamp is used, which is the
+        # whole point of the estimate.
+        fresh_offset_ns = host_receipt_ns - 5_000_000 - 3_000_000
+        self.assertEqual(
+            published_stamp_ns(5_000_000, host_receipt_ns, fresh_offset_ns),
+            host_receipt_ns - 3_000_000,
+        )
+
+    def test_published_stamp_is_never_later_than_the_receipt_time(self):
+        # The offset is a minimum of (receipt - device), so device + offset
+        # cannot exceed the receipt time of the report that set that minimum.
+        estimator = ClockOffsetEstimator(window=8)
+        latencies = [4_000_000, 1_500_000, 9_000_000, 1_500_000, 2_500_000]
+        offset_ns = 1_700_000_000_000_000_000
+        for index, latency_ns in enumerate(latencies):
+            device_ns = index * IMU_PUBLISH_PERIOD_NS
+            host_receipt_ns = offset_ns + device_ns + latency_ns
+            estimate = estimator.observe(host_receipt_ns, device_ns)
+            self.assertLessEqual(
+                published_stamp_ns(device_ns, host_receipt_ns, estimate),
+                host_receipt_ns,
+            )
+
+    def test_processing_publishes_the_measurement_instant_on_the_host_timeline(self):
+        # Reports arrive with 5 ms of extra queueing on the middle one. The
+        # published stamps must still be exactly one publication period apart,
+        # because the offset estimate removes the receipt jitter.
+        with patch.object(CameraNode, "__init__", lambda self: None):
+            node = CameraNode()
+
+        def packet(device_seconds):
+            acceleration = types.SimpleNamespace(x=0.0, y=0.0, z=9.81)
+            acceleration.getSequenceNum = MagicMock(return_value=1)
+            # getTimestamp() is a timedelta on depthai 3.6.1, so the node falls
+            # back to the host clock it reads itself for the receipt time.
+            acceleration.getTimestamp = MagicMock(
+                return_value=timedelta(seconds=device_seconds)
+            )
+            acceleration.getTimestampDevice = MagicMock(
+                return_value=timedelta(seconds=device_seconds)
+            )
+            gyroscope = types.SimpleNamespace(x=0.0, y=0.0, z=0.0)
+            return types.SimpleNamespace(
+                acceleroMeter=acceleration, gyroscope=gyroscope
+            )
+
+        node.imu_queue = MagicMock()
+        node.imu_queue.tryGet.side_effect = [
+            types.SimpleNamespace(
+                packets=[packet(0.0), packet(0.01), packet(0.02)],
+            ),
+            None,
+        ]
+        node.imu_publisher_ = MagicMock()
+        node._imu_throttle = PublishRateThrottle()
+        node._imu_clock_offset = ClockOffsetEstimator()
+        node._imu_publish_times = deque(maxlen=8)
+        node._imu_last_received_monotonic = None
+        node.get_logger = MagicMock()
+
+        receipts = [1000.100, 1000.115, 1000.120]
+        with patch(
+            "ros_packages.camera.oak_d_lite.stereo.time.time",
+            side_effect=receipts,
+        ):
+            node._process_imu()
+
+        stamps = []
+        for call in node.imu_publisher_.publish.call_args_list:
+            stamp = call.args[0].header.stamp
+            stamps.append(stamp.sec * 1_000_000_000 + stamp.nanosec)
+
+        self.assertEqual(len(stamps), 3)
+        self.assertEqual(
+            [second - first for first, second in zip(stamps, stamps[1:])],
+            [IMU_PUBLISH_PERIOD_NS] * 2,
+        )
+        # The second report was received 15 ms after the first but measured
+        # 10 ms after it, and the stamp reports the measurement.
+        self.assertEqual(stamps[1], 1_000_110_000_000)
+        self.assertNotEqual(stamps[1], int(round(receipts[1] * 1_000_000_000)))
+        self.assertEqual(node._imu_last_device_stamp_ns, 20_000_000)
+
+    def test_processing_falls_back_to_receipt_time_before_an_offset_exists(self):
         with patch.object(CameraNode, "__init__", lambda self: None):
             node = CameraNode()
         acceleration = types.SimpleNamespace(x=1.0, y=2.0, z=3.0)
         acceleration.getSequenceNum = MagicMock(return_value=17)
         # Measured on depthai 3.6.1: getTimestamp() is a timedelta "related to
         # dai::Clock::now()" and getTimestampDevice() is a device-monotonic
-        # timedelta; neither is host wall time. The node therefore stamps with
-        # the host wall clock it reads itself, which is what this epoch-valued
-        # datetime stands in for.
+        # timedelta; neither is host wall time. The epoch-valued datetime stands
+        # in for the host clock the node reads itself when it determines the
+        # receipt time.
         acceleration.getTimestamp = MagicMock(
             return_value=datetime.fromtimestamp(25.123456, tz=timezone.utc)
         )
@@ -1808,12 +2020,16 @@ class TestOakImu(unittest.TestCase):
             None,
         ]
         node.imu_publisher_ = MagicMock()
-        node._imu_throttle = TenHertzThrottle()
+        node._imu_throttle = PublishRateThrottle()
+        node._imu_clock_offset = ClockOffsetEstimator()
+        node._imu_publish_times = deque(maxlen=8)
         node._imu_last_received_monotonic = None
         node.get_logger = MagicMock()
 
         node._process_imu()
 
+        # A single report is not a window, so no offset exists yet and the
+        # receipt time is published - never the 7.654 s device duration.
         message = node.imu_publisher_.publish.call_args.args[0]
         self.assertEqual(
             (message.header.stamp.sec, message.header.stamp.nanosec),
@@ -1821,6 +2037,8 @@ class TestOakImu(unittest.TestCase):
         )
         self.assertEqual(node._imu_last_sequence, 17)
         self.assertEqual(node._imu_last_device_stamp_ns, 7_654_321_000)
+        self.assertEqual(len(node._imu_publish_times), 1)
+        node.get_logger().warning.assert_not_called()
         acceleration.getTimestamp.assert_called_once_with()
         acceleration.getTimestampDevice.assert_called_once_with()
 
@@ -1846,8 +2064,8 @@ class TestOakImu(unittest.TestCase):
     def test_throttle_follows_the_device_clock_not_the_quantised_host_stamp(self):
         # Measured: the drain timer quantises host receipt stamps, so throttling
         # on them skipped periods and published 8.1 Hz instead of 10 Hz. Two
-        # reports 100 ms apart on the device clock but only 50 ms apart in host
-        # receipt time must both be published.
+        # reports one publication period apart on the device clock but only half
+        # a period apart in host receipt time must both be published.
         with patch.object(CameraNode, "__init__", lambda self: None):
             node = CameraNode()
 
@@ -1868,19 +2086,21 @@ class TestOakImu(unittest.TestCase):
         node.imu_queue = MagicMock()
         node.imu_queue.tryGet.side_effect = [
             types.SimpleNamespace(
-                packets=[packet(0.0, 25.00), packet(0.1, 25.05)],
+                packets=[packet(0.0, 25.000), packet(0.01, 25.005)],
             ),
             None,
         ]
         node.imu_publisher_ = MagicMock()
-        node._imu_throttle = TenHertzThrottle()
+        node._imu_throttle = PublishRateThrottle()
+        node._imu_clock_offset = ClockOffsetEstimator()
+        node._imu_publish_times = deque(maxlen=8)
         node._imu_last_received_monotonic = None
         node.get_logger = MagicMock()
 
         node._process_imu()
 
         self.assertEqual(node.imu_publisher_.publish.call_count, 2)
-        self.assertEqual(node._imu_last_device_stamp_ns, 100_000_000)
+        self.assertEqual(node._imu_last_device_stamp_ns, 10_000_000)
 
     def test_measured_rate_reports_the_observed_rate_not_the_configured_one(self):
         # The rig measured 8.1 Hz while the configuration said 10 Hz, so the
@@ -1889,6 +2109,9 @@ class TestOakImu(unittest.TestCase):
         self.assertAlmostEqual(
             measured_rate_hz([0.0, 0.1, 0.3, 0.4, 0.6]), 4 / 0.6, places=6
         )
+        # One second of publications at the new rate must read as 100 Hz.
+        publications = [index / IMU_PUBLISH_RATE_HZ for index in range(101)]
+        self.assertAlmostEqual(measured_rate_hz(publications), 100.0, places=6)
         for degenerate in ([], [5.0], [5.0, 5.0]):
             self.assertEqual(measured_rate_hz(degenerate), 0.0)
 
@@ -1902,10 +2125,14 @@ class TestOakImu(unittest.TestCase):
         node.imu_available = True
         node.imu_queue = MagicMock()
         node._imu_last_received_monotonic = 10.0
-        node._imu_publish_times = deque([0.0, 0.1, 0.2])
+        # The window the node really keeps, filled at the publication period.
+        node._imu_publish_times = deque(
+            (index * IMU_POLL_PERIOD_SECONDS for index in range(IMU_RATE_WINDOW)),
+            maxlen=IMU_RATE_WINDOW,
+        )
         status = node._imu_status(now=10.0)
         self.assertEqual(status["state"], "present")
-        self.assertAlmostEqual(status["fps"], 10.0, places=6)
+        self.assertAlmostEqual(status["fps"], 100.0, places=6)
         # The status field must not carry fifteen digits of float noise.
         self.assertEqual(status["fps"], round(status["fps"], 2))
 
@@ -1917,9 +2144,56 @@ class TestOakImu(unittest.TestCase):
         node._imu_last_received_monotonic = None
 
         self.assertEqual(node._imu_status(now=10.0)["state"], "stale")
-        node._imu_last_received_monotonic = 9.5
+        # The threshold is a documented multiple of the publication period, not
+        # a round second: at 100 Hz a one-second silence is a hundred lost
+        # samples.
+        self.assertEqual(IMU_STALE_MISSED_PUBLICATIONS, 50)
+        self.assertAlmostEqual(IMU_STALE_AFTER_SECONDS, 0.5, places=9)
+        node._imu_last_received_monotonic = 10.0 - IMU_STALE_AFTER_SECONDS / 2
         self.assertEqual(node._imu_status(now=10.0)["state"], "present")
-        self.assertEqual(node._imu_status(now=11.0)["state"], "stale")
+        node._imu_last_received_monotonic = 10.0 - IMU_STALE_AFTER_SECONDS * 2
+        self.assertEqual(node._imu_status(now=10.0)["state"], "stale")
+
+    def test_imu_rate_constants_describe_one_hundred_hertz_publication(self):
+        # The sensor has to run above the publication rate, the poll timer has
+        # to wake once per publication period, and the drain limit has to be
+        # able to empty a full device queue in a single tick.
+        self.assertEqual(IMU_PUBLISH_RATE_HZ, 100)
+        self.assertEqual(IMU_SENSOR_RATE_HZ, 200)
+        self.assertAlmostEqual(IMU_POLL_PERIOD_SECONDS, 0.01, places=9)
+        self.assertGreaterEqual(IMU_SENSOR_RATE_HZ, IMU_PUBLISH_RATE_HZ)
+        self.assertGreater(IMU_DRAIN_LIMIT, IMU_OUTPUT_QUEUE_DEPTH)
+        # The queue has to hold more than one poll period worth of reports so a
+        # late tick does not lose samples.
+        self.assertGreater(
+            IMU_OUTPUT_QUEUE_DEPTH, IMU_SENSOR_RATE_HZ * IMU_POLL_PERIOD_SECONDS
+        )
+
+    def test_rebuilding_the_pipeline_resets_the_imu_clock_state(self):
+        # A new pipeline is a new device session with a device clock that starts
+        # near zero. A retained throttle deadline would drop every report until
+        # the restarted clock caught up, and a retained offset window would
+        # stamp against a clock that no longer exists.
+        with patch.object(CameraNode, "__init__", lambda self: None):
+            node = CameraNode()
+        node.pipeline = None
+        node._pipeline_models = []
+        node._imu_throttle = PublishRateThrottle()
+        node._imu_throttle.accept(10 * 10**9)
+        node._imu_clock_offset = ClockOffsetEstimator()
+        node._imu_clock_offset.observe(1_700_000_000_000_000_000, 10 * 10**9)
+        node._imu_clock_offset.observe(1_700_000_000_000_000_000, 10 * 10**9)
+        node._imu_publish_times = deque([1.0, 2.0], maxlen=IMU_RATE_WINDOW)
+        stale_throttle = node._imu_throttle
+        self.assertIsNotNone(node._imu_clock_offset.offset_ns())
+
+        with patch("ros_packages.camera.oak_d_lite.stereo.dai"):
+            node._build_pipeline(include_stereo=False)
+
+        self.assertIsNot(node._imu_throttle, stale_throttle)
+        self.assertTrue(node._imu_throttle.accept(0))
+        self.assertIsNone(node._imu_clock_offset.offset_ns())
+        self.assertEqual(len(node._imu_publish_times), 0)
 
     @patch("ros_packages.camera.oak_d_lite.stereo.dai")
     def test_imu_pipeline_uses_supported_reports_and_non_blocking_queue(self, mock_dai):
