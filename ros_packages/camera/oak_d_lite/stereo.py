@@ -558,6 +558,21 @@ class CameraNode(Node):
         )
         self._hand_stage_last_logged = dict(self.hand_stage_counters)
 
+    @staticmethod
+    def _queue_state(queue):
+        """Return ``"<depth>/<max>"`` for a message queue, or ``"-"`` if absent.
+
+        A pipeline that stops delivering shows up as a queue that stays full or
+        stays empty, so the depth at the moment of the freeze separates "the
+        host did not drain" from "the device stopped producing".
+        """
+        if queue is None:
+            return "-"
+        try:
+            return f"{queue.getSize()}/{queue.getMaxSize()}"
+        except Exception:
+            return "?"
+
     def _log_imitation_stage_counters(self):
         if not any(
             active.model.model_id == "imitation"
@@ -583,11 +598,30 @@ class CameraNode(Node):
             f"{stage}={interval[stage]}" for stage in IMITATION_STAGE_NAMES
         )
         source_width, source_height = self.imitation_source_size
+        depths = (
+            f"colour_queue={self._queue_state(getattr(self, 'queue', None))} "
+            f"imitation_queue={self._queue_state(getattr(self, 'imitation_queue', None))} "
+            f"pending={1 if getattr(self, '_pending_imitation_packet', None) is not None else 0}"
+        )
         self.get_logger().info(
             f"imitation stage packets total: {raw}; "
             f"interval: {interval_raw}; last_flowing={last_flowing}; "
-            f"branch={source_width}x{source_height}"
+            f"branch={source_width}x{source_height}; {depths}"
         )
+
+        # Mark the moment the pipeline stops, not just the aftermath: without
+        # this the counters only ever show that something froze, and the state
+        # at that instant - which queue was full - is gone by the time anyone
+        # looks. Log once per stall, and re-arm as soon as stages move again.
+        if all(interval[stage] == 0 for stage in IMITATION_STAGE_NAMES):
+            if not getattr(self, "_imitation_stall_logged", False):
+                self._imitation_stall_logged = True
+                self.get_logger().warning(
+                    f"IMIT_STALL no imitation stage advanced in the last "
+                    f"interval; last_flowing={last_flowing}; {depths}"
+                )
+        else:
+            self._imitation_stall_logged = False
         self._imitation_stage_last_logged = dict(self.imitation_stage_counters)
 
     @staticmethod
@@ -1808,6 +1842,27 @@ class CameraNode(Node):
             )
             .build(imitation_source)
         )
+        # The crop runs in a device Script node whose ImageManip is built with
+        # ``inputConfig.setWaitForMessage(True)``: while no palm detection
+        # arrives there is no config, and the node keeps every frame it is
+        # handed. Those frames belong to the camera's shared frame pool, so a
+        # long stretch without a detection exhausts the pool and stops the WHOLE
+        # device - the palm branch, the preview and /camera_topic with it. That
+        # is the freeze named in PR-1778: measured 1208 frames at 8 Hz with zero
+        # detections, then every stage stood still. Dropping frames instead of
+        # blocking keeps the camera alive while nothing is detected, and a held
+        # frame could not have produced a crop anyway.
+        cropper_input = getattr(
+            getattr(cropper, "_cropper_image_manip", None), "inputImage", None
+        )
+        if cropper_input is None:
+            self.get_logger().warning(
+                "FrameCropper internals changed: cannot stop it from holding "
+                "frames while no detection arrives"
+            )
+        else:
+            cropper_input.setMaxSize(1)
+            cropper_input.setBlocking(False)
         pose_nn = self.pipeline.create(ParsingNeuralNetwork).build(
             cropper.out,
             landmark_archive,

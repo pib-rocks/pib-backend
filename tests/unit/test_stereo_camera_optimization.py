@@ -1628,6 +1628,60 @@ class TestImitationPipeline(unittest.TestCase):
         for stage in IMITATION_STAGE_NAMES:
             self.assertIn(f"{stage}={node.imitation_stage_counters[stage]}", message)
 
+    def test_counter_log_reports_queue_depths_and_pending_stash(self):
+        node = self._make_node()
+        node._pipeline_models = [
+            types.SimpleNamespace(model=types.SimpleNamespace(model_id="imitation"))
+        ]
+        colour_queue = MagicMock()
+        colour_queue.getSize.return_value = 3
+        colour_queue.getMaxSize.return_value = 8
+        node.queue = colour_queue
+        imitation_queue = MagicMock()
+        imitation_queue.getSize.return_value = 0
+        imitation_queue.getMaxSize.return_value = 4
+        node.imitation_queue = imitation_queue
+        node.imitation_source_size = (128, 128)
+        node._pending_imitation_packet = object()
+        node._count_imitation_stage("publish")
+
+        node._log_imitation_stage_counters()
+
+        message = node.get_logger().info.call_args.args[0]
+        self.assertIn("colour_queue=3/8", message)
+        self.assertIn("imitation_queue=0/4", message)
+        self.assertIn("pending=1", message)
+
+    def test_stall_is_marked_once_and_rearmed_when_stages_move_again(self):
+        node = self._make_node()
+        node._pipeline_models = [
+            types.SimpleNamespace(model=types.SimpleNamespace(model_id="imitation"))
+        ]
+        node.imitation_queue = MagicMock()
+        node.imitation_source_size = (128, 128)
+
+        node._log_imitation_stage_counters()
+        node._log_imitation_stage_counters()
+
+        self.assertEqual(node.get_logger().warning.call_count, 1)
+        self.assertIn(
+            "no imitation stage advanced",
+            node.get_logger().warning.call_args.args[0],
+        )
+
+        node._count_imitation_stage("publish")
+        node._log_imitation_stage_counters()
+        node._log_imitation_stage_counters()
+
+        self.assertEqual(node.get_logger().warning.call_count, 2)
+
+    def test_queue_state_reports_absent_and_depthless_queues(self):
+        class _WithoutDepth:
+            pass
+
+        self.assertEqual(CameraNode._queue_state(None), "-")
+        self.assertEqual(CameraNode._queue_state(_WithoutDepth()), "?")
+
 
 class TestStereoModeDecision(unittest.TestCase):
 
