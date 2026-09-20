@@ -74,7 +74,11 @@ function setup_docker_cleaner_service() {
     sudo cp "$BACKEND_DIR/setup/setup_files/docker_cleaner.service" /etc/systemd/system/
     sudo systemctl daemon-reload
     sudo systemctl enable docker_cleaner.service
-    sudo systemctl start docker_cleaner.service
+    local start_output
+    if ! start_output=$(sudo systemctl start docker_cleaner.service 2>&1); then
+        print ERROR "failed to start docker_cleaner.service: ${start_output}"
+        return 1
+    fi
     print SUCCESS "Docker container cleanup service installed and started"
 }
 
@@ -102,6 +106,10 @@ function start_container() {
 }
 
 install_docker_engine || print ERROR "failed to install docker engine"
+# The docker group only exists after the engine is installed, and
+# docker_cleaner.service runs as User=pib, so the membership has to be granted
+# before that unit is started.
+sudo usermod -aG docker pib || { print ERROR "failed to add user 'pib' to docker group"; return 1; }
 verify_vendored_blockly || print ERROR "failed to verify vendored pib-blockly sources"
 start_container || print ERROR "failed to start containers"
 setup_docker_cleaner_service || print ERROR "failed to setup docker cleaner service"

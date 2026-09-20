@@ -982,7 +982,6 @@ if [ "$INSTALL_METHOD" = "legacy" ]; then
 elif is_ubuntu_noble || is_supported_raspbian; then
   print INFO "Going to install Cerebra via Docker"
   source "$SETUP_INSTALLATION_DIR/docker_install.sh" || print ERROR "failed to install Cerebra via Docker"
-  sudo usermod -aG docker pib || { print ERROR "failed to add user 'pib' to docker group"; return 1; }
 fi
 cleanup
 
