@@ -3,17 +3,22 @@
 Decoder format evidence:
 https://github.com/geaxgx/depthai_hand_tracker/blob/main/custom_models/generate_postproc_onnx.py
 defines the output as ``[top_k, 8]`` and the runtime manager reads each record
-as ``score, box_x, box_y, box_size, kp0_x, kp0_y, kp2_x, kp2_y``.  The vendored
-blob metadata reports ``result: [8, 10]`` (DepthAI dimension order), hence 80
-flattened values.  The head consumes detector tensors ``classificators``
-(1x896x1 anchors) and ``regressors`` (1x896x18: bbox plus seven palm
-keypoints), and emits anchor-decoded normalized coordinates after NMS.
+as ``score, box_x, box_y, box_size, kp0_x, kp0_y, kp2_x, kp2_y``.  The chain
+runs the reference's on-device post-processing (``pd_postprocessing_top2_sh1``),
+so ``result`` carries 16 flattened values - two records, top-2, matching the
+reference's ``for i in range(2)``.  The blob consumes the detector's NNData
+(``classificators`` anchors, ``regressors`` bbox plus seven palm keypoints) and
+emits anchor-decoded normalized coordinates after NMS.
 
 The landmark network exposes its crop-space image landmarks in
 ``Identity_dense/BiasAdd/Add`` as 21 XYZ triples, with a presence score in
-``Identity_1``.  This blob reports that score unactivated - a hand filling the
-crop measures around 0.018 - so it carries no usable detection threshold and is
-only ever reported.  ``Identity_3_dense/BiasAdd/Add`` is the *metric world*
+``Identity_1``.  The third component is the model's hand-relative depth, which
+is why ``relative_landmark_z`` publishes it next to the pixels of x and y.
+The score is usable and gated on, exactly as the reference does: measured with a
+good crop it reads 0.998, while an unusable crop reads 0.003 to 0.018.  An
+earlier note here claimed the head arrives unactivated and could never be
+compared against a threshold; that came from another build's documentation.
+``Identity_3_dense/BiasAdd/Add`` is the *metric world*
 landmark head of the same MediaPipe graph, and conversions of this model
 frequently omit it entirely, so it is only a fallback.  The runtime node maps
 the landmarks back through the ``NNData.getTransformation()`` attached by
@@ -51,11 +56,21 @@ HAND_KEYPOINT_NAMES = (
     "pinky_dip",
     "pinky_tip",
 )
-PALM_RESULT_COUNT = 10
+# Two records: the post-processing blob is compiled for top-2, the same limit
+# the reference reads with ``for i in range(2)``.
+PALM_RESULT_COUNT = 2
 PALM_RESULT_WIDTH = 8
 LANDMARK_COUNT = 21
 LANDMARK_VALUE_COUNT = LANDMARK_COUNT * 3
 LANDMARK_SCORE_LAYER = "Identity_1"
+# The same blob reports the hand's handedness in ``Identity_2``.  The reference
+# turns it into the label ("right" if handedness > 0.5 else "left"); here it is
+# published as a scalar and the label stays "hand", which is what the model
+# store and the imitation chain already emit.
+LANDMARK_HANDEDNESS_LAYER = "Identity_2"
+# The reference gates every landmark result with ``if lm_score > 0.5`` before it
+# is used, so a crop that produced no hand is dropped instead of published.
+LANDMARK_SCORE_THRESHOLD = 0.5
 # The crop-space landmark head comes first: MediaPipe's ``Identity`` output is
 # renamed ``Identity_dense/BiasAdd/Add`` by the OpenVINO conversion.  The
 # ``Identity_3`` variant is the metric world-landmark head, which is centred on
@@ -202,13 +217,23 @@ def _square_to_frame(
 
 
 def decode_palm_result(
-    tensor: Iterable[float], score_threshold: float = 0.5
+    tensor: Iterable[float], score_threshold: float = 0.5, max_hands: int = 2
 ) -> List[PalmRegion]:
-    """Parse the top-10 decoder layer, rejecting any unexpected layout."""
+    """Parse the post-processing layer, rejecting any unexpected layout.
+
+    ``max_hands`` mirrors the reference, whose palm post-processing runs as an
+    on-device blob compiled for top-2: the decoder head returns ten candidates,
+    most of them background, and only the two best are worth a landmark crop.
+    Measured on the robot, the other eight are dropped by the score gate anyway,
+    so cropping them buys seven wasted landmark inferences per frame and holds
+    the published rate near 1 Hz instead of the detector's own rate.
+    """
     values = np.asarray(tensor, dtype=np.float32)
     if values.size != PALM_RESULT_COUNT * PALM_RESULT_WIDTH:
         raise ValueError(
-            "palm decoder result must contain exactly 80 values " "(10 detections x 8)"
+            f"palm decoder result must contain exactly "
+            f"{PALM_RESULT_COUNT * PALM_RESULT_WIDTH} values "
+            f"({PALM_RESULT_COUNT} detections x {PALM_RESULT_WIDTH})"
         )
     values = values.reshape(PALM_RESULT_COUNT, PALM_RESULT_WIDTH)
     palms = []
@@ -235,14 +260,17 @@ def decode_palm_result(
                 rotation=float(rotation),
             )
         )
+    palms.sort(key=lambda palm: palm.score, reverse=True)
+    if max_hands > 0:
+        palms = palms[:max_hands]
     return palms
 
 
 def landmark_score(tensor: Iterable[float]) -> float:
     """Read the reported landmark presence score, including a ``(1, 1)`` tensor.
 
-    The value is diagnostic only; see the module docstring for why it cannot be
-    compared against a threshold.
+    Callers compare this against ``LANDMARK_SCORE_THRESHOLD`` as the reference
+    does; an unusable crop scores an order of magnitude below it.
     """
     values = np.asarray(tensor, dtype=np.float32).reshape(-1)
     if values.size != 1:
@@ -264,6 +292,37 @@ def landmark_xyz(tensor: Sequence[float]) -> np.ndarray:
     if not np.all(np.isfinite(values)):
         raise ValueError("landmark result contains non-finite values")
     return values
+
+
+def relative_landmark_z(
+    tensor: Sequence[float], landmark_input_size: int = 224
+) -> List[float]:
+    """Return the 21 hand-relative z values, in the scale of x and y.
+
+    The reference (`pib-rocks/imitation`, ``template_manager_script_duo.py``)
+    keeps all three landmark components in one unitless scale by dividing the
+    crop-space values by the landmark input size::
+
+        rrn_lms[3*i+2] /= lm_input_size
+
+    Its finger angles are then computed from those three-component vectors, so
+    the relative depth really drives the result.  This function reproduces that
+    normalisation and, unlike ``landmarks_in_crop_pixels``, leaves the z alone
+    rather than turning it into pixels.
+
+    The z is signed and small.  Anything that clamps the landmark components
+    into 0..1 (``depthai_nodes``' ``KeypointParser`` does exactly that) destroys
+    it, which is why the hand-written chain is the path that can carry it.
+    """
+    values = landmark_xyz(tensor)
+    if values.size == 0:
+        return []
+    peak = float(np.max(np.abs(values[:, :2])))
+    if peak <= LANDMARK_NORMALIZED_PEAK:
+        scale = 1.0
+    else:
+        scale = 1.0 / float(landmark_input_size)
+    return [float(value) * scale for value in values[:, 2]]
 
 
 def landmarks_in_crop_pixels(

@@ -223,18 +223,22 @@ from ros_packages.camera.oak_d_lite.stereo import (
 
 
 def _hand_artifacts():
-    """Registry entries for the three blobs the hand chain is built from."""
+    """Registry entries for the three blobs the hand chain is built from.
+
+    The chain runs the reference's models now, so the ids are the ones the
+    imitation chain loads too - only the pipelines differ.
+    """
     return {
-        "palm_detection_128x128": types.SimpleNamespace(
+        "palm_detection_sh4": types.SimpleNamespace(
             input_width=128,
             input_height=128,
             blob_path="/palm.blob",
             shaves=4,
         ),
-        "palm_detection_128x128_decoding": types.SimpleNamespace(
+        "pd_postprocessing_top2_sh1": types.SimpleNamespace(
             blob_path="/decoder.blob", shaves=1
         ),
-        "hand_landmark_224x224": types.SimpleNamespace(
+        "hand_landmark_full_sh4": types.SimpleNamespace(
             input_width=224,
             input_height=224,
             blob_path="/landmark.blob",
@@ -964,7 +968,7 @@ class TestHandStageCounters(unittest.TestCase):
     ):
         node = self._make_node()
         decoder_packet = MagicMock()
-        decoder_packet.getTensor.return_value = [0.0] * 80
+        decoder_packet.getTensor.return_value = [0.0] * 16
         landmark_packet = MagicMock()
         node.hand_decoder_queue = MagicMock()
         node.hand_decoder_queue.tryGet.side_effect = [decoder_packet, None]
@@ -1061,6 +1065,8 @@ class TestHandStageCounters(unittest.TestCase):
             [
                 unittest.mock.call("Identity_1"),
                 unittest.mock.call("Identity_dense/BiasAdd/Add"),
+                # Handedness is read once, for the published scalars.
+                unittest.mock.call("Identity_2"),
             ],
         )
         landmark_packet.getTransformation.assert_called_once_with()
@@ -1112,6 +1118,7 @@ class TestHandStageCounters(unittest.TestCase):
                 "Identity_dense/BiasAdd/Add",
                 "Identity",
                 "Identity_3_dense/BiasAdd/Add",
+                "Identity_2",
             ],
         )
         self.assertEqual(batch["landmark_layer"], "Identity_3_dense/BiasAdd/Add")
@@ -1182,7 +1189,8 @@ class TestHandStageCounters(unittest.TestCase):
         landmark_packet = MagicMock()
         landmark_packet.getTensor.side_effect = lambda name: {
             "Identity_1": np.array([[0.93]], dtype=np.float32),
-            "Identity_dense/BiasAdd/Add": np.tile([0.5, 0.5, 0.0], (1, 21, 1)).reshape(
+            "Identity_2": np.array([[0.98]], dtype=np.float32),
+            "Identity_dense/BiasAdd/Add": np.tile([0.5, 0.5, 0.25], (1, 21, 1)).reshape(
                 1, 63
             ),
         }[name]
@@ -1204,12 +1212,29 @@ class TestHandStageCounters(unittest.TestCase):
         detections = node._publish_hand_detections.call_args.args[2]
         self.assertEqual(len(detections), 1)
         self.assertEqual(detections[0].label, "hand")
-        self.assertAlmostEqual(detections[0].score, 0.88)
+        # The confidence is the landmark presence score, as the reference gates
+        # on it; the palm score keeps its place as a named scalar.
+        self.assertAlmostEqual(detections[0].score, 0.93)
         self.assertEqual(len(detections[0].keypoint_x), 21)
         self.assertEqual(len(detections[0].keypoint_y), 21)
+        # The landmark head's third component ships as the hand-relative z, in
+        # the same unitless scale as x and y, and names its origin.
+        self.assertEqual(len(detections[0].keypoint_z), 21)
+        for value in detections[0].keypoint_z:
+            self.assertAlmostEqual(value, 0.25)
+        self.assertEqual(
+            list(detections[0].scalar_names),
+            ["handedness", "palm_score", "landmark_score", "z_source"],
+        )
+        self.assertAlmostEqual(detections[0].scalar_values[0], 0.98)
+        self.assertAlmostEqual(detections[0].scalar_values[1], 0.88)
+        self.assertAlmostEqual(detections[0].scalar_values[2], 0.93)
+        self.assertAlmostEqual(detections[0].scalar_values[3], 1.0)
 
     @patch("ros_packages.camera.oak_d_lite.stereo.dai")
-    def test_unactivated_landmark_score_still_appends_detection(self, mock_dai):
+    def test_landmark_score_below_the_reference_threshold_drops_the_detection(
+        self, mock_dai
+    ):
         node = self._make_node()
         palm = PalmRegion(0.88, 0.5, 0.5, 0.2, 0.5, 0.5, 0.5, 0.0)
         batch = {
@@ -1226,7 +1251,8 @@ class TestHandStageCounters(unittest.TestCase):
         }
         landmark_packet = MagicMock()
         landmark_packet.getTensor.side_effect = lambda name: {
-            # Identity_1 as the blob reports it for a hand filling the crop.
+            # A crop that produced no usable hand: an order of magnitude below
+            # the 0.5 the reference gates on, which is why it is dropped here.
             "Identity_1": np.array([[0.01823425]], dtype=np.float32),
             "Identity_dense/BiasAdd/Add": np.tile([0.5, 0.5, 0.0], (1, 21, 1)).reshape(
                 1, 63
@@ -1246,23 +1272,24 @@ class TestHandStageCounters(unittest.TestCase):
 
         node._process_hand_tracking()
 
-        self.assertEqual(batch["drop_reasons"], [])
-        self.assertEqual(batch["keypoints_built"], 21)
+        self.assertEqual(len(batch["drop_reasons"]), 1)
+        self.assertIn("below 0.5", batch["drop_reasons"][0])
+        self.assertEqual(batch["keypoints_built"], 0)
+        self.assertEqual(batch["detections"], [])
         detections = node._publish_hand_detections.call_args.args[2]
-        self.assertEqual(len(detections), 1)
-        self.assertEqual(len(detections[0].keypoint_x), 21)
+        self.assertEqual(len(detections), 0)
         logged = [call.args[0] for call in node.get_logger().info.call_args_list]
         self.assertTrue(
             any(
-                line.startswith("HAND_FP ASSEMBLY ")
-                and "appended=1" in line
-                and "keypoints_built=21" in line
+                line.startswith("HAND_FP KP ")
+                and "skipped=score" in line
+                and "below 0.5" in line
                 for line in logged
             )
         )
 
     @patch("ros_packages.camera.oak_d_lite.stereo.dai")
-    def test_unreadable_landmark_score_still_appends_detection(self, mock_dai):
+    def test_unreadable_landmark_score_drops_the_detection(self, mock_dai):
         node = self._make_node()
         palm = PalmRegion(0.88, 0.5, 0.5, 0.2, 0.5, 0.5, 0.5, 0.0)
         batch = {
@@ -1299,9 +1326,12 @@ class TestHandStageCounters(unittest.TestCase):
 
         node._process_hand_tracking()
 
-        self.assertEqual(batch["drop_reasons"], [])
+        # A missing score head cannot be told apart from a bad crop, so it is
+        # dropped instead of published with an invented confidence.
+        self.assertEqual(len(batch["drop_reasons"]), 1)
+        self.assertIn("below 0.5", batch["drop_reasons"][0])
         detections = node._publish_hand_detections.call_args.args[2]
-        self.assertEqual(len(detections), 1)
+        self.assertEqual(len(detections), 0)
 
     def test_counter_log_contains_all_raw_stages_and_last_flowing_stage(self):
         node = self._make_node()
@@ -1627,6 +1657,60 @@ class TestImitationPipeline(unittest.TestCase):
         message = node.get_logger().info.call_args.args[0]
         for stage in IMITATION_STAGE_NAMES:
             self.assertIn(f"{stage}={node.imitation_stage_counters[stage]}", message)
+
+    def test_counter_log_reports_queue_depths_and_pending_stash(self):
+        node = self._make_node()
+        node._pipeline_models = [
+            types.SimpleNamespace(model=types.SimpleNamespace(model_id="imitation"))
+        ]
+        colour_queue = MagicMock()
+        colour_queue.getSize.return_value = 3
+        colour_queue.getMaxSize.return_value = 8
+        node.queue = colour_queue
+        imitation_queue = MagicMock()
+        imitation_queue.getSize.return_value = 0
+        imitation_queue.getMaxSize.return_value = 4
+        node.imitation_queue = imitation_queue
+        node.imitation_source_size = (128, 128)
+        node._pending_imitation_packet = object()
+        node._count_imitation_stage("publish")
+
+        node._log_imitation_stage_counters()
+
+        message = node.get_logger().info.call_args.args[0]
+        self.assertIn("colour_queue=3/8", message)
+        self.assertIn("imitation_queue=0/4", message)
+        self.assertIn("pending=1", message)
+
+    def test_stall_is_marked_once_and_rearmed_when_stages_move_again(self):
+        node = self._make_node()
+        node._pipeline_models = [
+            types.SimpleNamespace(model=types.SimpleNamespace(model_id="imitation"))
+        ]
+        node.imitation_queue = MagicMock()
+        node.imitation_source_size = (128, 128)
+
+        node._log_imitation_stage_counters()
+        node._log_imitation_stage_counters()
+
+        self.assertEqual(node.get_logger().warning.call_count, 1)
+        self.assertIn(
+            "no imitation stage advanced",
+            node.get_logger().warning.call_args.args[0],
+        )
+
+        node._count_imitation_stage("publish")
+        node._log_imitation_stage_counters()
+        node._log_imitation_stage_counters()
+
+        self.assertEqual(node.get_logger().warning.call_count, 2)
+
+    def test_queue_state_reports_absent_and_depthless_queues(self):
+        class _WithoutDepth:
+            pass
+
+        self.assertEqual(CameraNode._queue_state(None), "-")
+        self.assertEqual(CameraNode._queue_state(_WithoutDepth()), "?")
 
 
 class TestStereoModeDecision(unittest.TestCase):

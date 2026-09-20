@@ -54,9 +54,13 @@ models:
   task: hand_tracking
   composite: true
   artifacts:
-  - palm_detection_128x128
-  - palm_detection_128x128_decoding
-  - hand_landmark_224x224
+  # The reference's own models (pib-rocks/imitation).  The chain's post-processing
+  # reads the ``result`` layer this pair produces, so the palm stage is the
+  # reference's stage; the zoo pair that was configured here delivered a different
+  # ``result`` format and left every crop on the whole frame.
+  - palm_detection_sh4
+  - pd_postprocessing_top2_sh1
+  - hand_landmark_full_sh4
   publish_topic: detections/hand_tracking
 - model_id: face_detection_yunet_160x120
   task: face_detection

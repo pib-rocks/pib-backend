@@ -55,7 +55,9 @@ from .imitation import (
 from .imitation_archive import create_landmark_archive, create_palm_archive
 from .hand_tracking import (
     HAND_KEYPOINT_NAMES,
+    LANDMARK_HANDEDNESS_LAYER,
     LANDMARK_SCORE_LAYER,
+    LANDMARK_SCORE_THRESHOLD,
     LANDMARK_VALUE_COUNT,
     LANDMARK_XYZ_LAYERS,
     MANIP_CROP_INSET_PIXELS,
@@ -64,6 +66,7 @@ from .hand_tracking import (
     landmark_score,
     landmarks_in_crop_pixels,
     map_landmarks_to_frame,
+    relative_landmark_z,
 )
 
 # Downscaled resolution for Haar cascade face detection (maps back to full frame).
@@ -558,6 +561,21 @@ class CameraNode(Node):
         )
         self._hand_stage_last_logged = dict(self.hand_stage_counters)
 
+    @staticmethod
+    def _queue_state(queue):
+        """Return ``"<depth>/<max>"`` for a message queue, or ``"-"`` if absent.
+
+        A pipeline that stops delivering shows up as a queue that stays full or
+        stays empty, so the depth at the moment of the freeze separates "the
+        host did not drain" from "the device stopped producing".
+        """
+        if queue is None:
+            return "-"
+        try:
+            return f"{queue.getSize()}/{queue.getMaxSize()}"
+        except Exception:
+            return "?"
+
     def _log_imitation_stage_counters(self):
         if not any(
             active.model.model_id == "imitation"
@@ -583,11 +601,30 @@ class CameraNode(Node):
             f"{stage}={interval[stage]}" for stage in IMITATION_STAGE_NAMES
         )
         source_width, source_height = self.imitation_source_size
+        depths = (
+            f"colour_queue={self._queue_state(getattr(self, 'queue', None))} "
+            f"imitation_queue={self._queue_state(getattr(self, 'imitation_queue', None))} "
+            f"pending={1 if getattr(self, '_pending_imitation_packet', None) is not None else 0}"
+        )
         self.get_logger().info(
             f"imitation stage packets total: {raw}; "
             f"interval: {interval_raw}; last_flowing={last_flowing}; "
-            f"branch={source_width}x{source_height}"
+            f"branch={source_width}x{source_height}; {depths}"
         )
+
+        # Mark the moment the pipeline stops, not just the aftermath: without
+        # this the counters only ever show that something froze, and the state
+        # at that instant - which queue was full - is gone by the time anyone
+        # looks. Log once per stall, and re-arm as soon as stages move again.
+        if all(interval[stage] == 0 for stage in IMITATION_STAGE_NAMES):
+            if not getattr(self, "_imitation_stall_logged", False):
+                self._imitation_stall_logged = True
+                self.get_logger().warning(
+                    f"IMIT_STALL no imitation stage advanced in the last "
+                    f"interval; last_flowing={last_flowing}; {depths}"
+                )
+        else:
+            self._imitation_stall_logged = False
         self._imitation_stage_last_logged = dict(self.imitation_stage_counters)
 
     @staticmethod
@@ -605,18 +642,29 @@ class CameraNode(Node):
             return []
 
     def _hand_landmark_score(self, packet):
-        """Report the landmark presence score without letting it drop a result.
+        """Read the landmark presence score that decides whether a hand is kept.
 
-        This blob emits ``Identity_1`` unactivated, so a hand that fills the
-        crop reads about 0.018 and every candidate fails any threshold placed on
-        it.  The score is therefore only logged, and a head that is missing or
-        malformed leaves the landmarks themselves to decide the outcome.
+        A good crop scores near 1.0 and an unusable one scores below 0.02, so
+        the same value the reference gates on is usable here.  A missing or
+        malformed head returns NaN, which the caller treats as a drop rather
+        than letting it pass silently.
         """
         try:
             tensor = self._nn_layer(packet, LANDMARK_SCORE_LAYER)
             return tensor, landmark_score(tensor)
         except Exception:
             return np.zeros(0, dtype=np.float32), float("nan")
+
+    def _hand_landmark_handedness(self, packet):
+        """Read the hand's handedness, or NaN when the head is absent."""
+        try:
+            tensor = self._nn_layer(packet, LANDMARK_HANDEDNESS_LAYER)
+            values = np.asarray(tensor, dtype=np.float32).reshape(-1)
+            if values.size != 1:
+                raise ValueError("handedness must contain one value")
+            return float(values[0])
+        except Exception:
+            return float("nan")
 
     def _hand_landmark_tensor(self, packet):
         """Return the first landmark head that actually carries 21 XYZ triples.
@@ -879,10 +927,23 @@ class CameraNode(Node):
         frame_height,
         source_width,
         source_height,
+        landmark_score_value=float("nan"),
+        handedness=float("nan"),
+        relative_z=(),
     ):
+        """Assemble one hand the way the reference reports it.
+
+        The reference carries three things this message has to hold: the
+        landmark presence score as the result's confidence, the handedness that
+        tells the two hands apart, and the landmark head's third component as a
+        hand-relative, unitless depth - all three components of a landmark share
+        one scale, as they do in ``rrn_lms``.  ``z_source`` names where the z
+        came from, because ``keypoint_z`` is otherwise reserved for depth in
+        millimetres.
+        """
         detection = Detection()
         detection.label = "hand"
-        detection.score = float(palm.score)
+        detection.score = float(landmark_score_value)
         (
             detection.x_min,
             detection.y_min,
@@ -892,9 +953,22 @@ class CameraNode(Node):
         detection.keypoint_names = list(HAND_KEYPOINT_NAMES)
         detection.keypoint_x = [float(point[0]) for point in landmarks]
         detection.keypoint_y = [float(point[1]) for point in landmarks]
-        detection.keypoint_z = [0.0] * len(HAND_KEYPOINT_NAMES)
-        detection.scalar_names = ["z_source"]
-        detection.scalar_values = [0.0]
+        z_values = [float(value) for value in relative_z]
+        if len(z_values) != len(HAND_KEYPOINT_NAMES):
+            z_values = [0.0] * len(HAND_KEYPOINT_NAMES)
+        detection.keypoint_z = z_values
+        detection.scalar_names = [
+            "handedness",
+            "palm_score",
+            "landmark_score",
+            "z_source",
+        ]
+        detection.scalar_values = [
+            float(handedness),
+            float(palm.score),
+            float(landmark_score_value),
+            1.0,
+        ]
         return detection
 
     def _queue_landmark_crops(
@@ -1066,6 +1140,13 @@ class CameraNode(Node):
             return
 
         score_tensor, score = self._hand_landmark_score(packet)
+        if not math.isfinite(score) or score < LANDMARK_SCORE_THRESHOLD:
+            self._drop_landmark_result(
+                batch,
+                "score",
+                f"landmark score {score:.6g} below {LANDMARK_SCORE_THRESHOLD}",
+            )
+            return
         layer_name, landmarks_tensor, layer_probe = self._hand_landmark_tensor(packet)
         batch["landmark_layer"] = layer_name
 
@@ -1111,6 +1192,9 @@ class CameraNode(Node):
                 batch["frame_height"],
                 batch["source_width"],
                 batch["source_height"],
+                score,
+                self._hand_landmark_handedness(packet),
+                relative_landmark_z(landmarks_tensor, self.hand_landmark_input_size),
             )
         )
         self._log_hand_keypoint_fingerprint(
@@ -1657,9 +1741,13 @@ class CameraNode(Node):
             model_id: self.model_registry.get(model_id)
             for model_id in composite.artifact_ids
         }
-        palm = artifacts["palm_detection_128x128"]
-        decoder = artifacts["palm_detection_128x128_decoding"]
-        landmark = artifacts["hand_landmark_224x224"]
+        # The reference's models (pib-rocks/imitation).  The post-processing and
+        # the host-side decoding below belong together: this blob emits the
+        # ``result`` records the decoder parses, and it caps them at top-2 on the
+        # device, which is also why the decoder expects exactly two records.
+        palm = artifacts["palm_detection_sh4"]
+        decoder = artifacts["pd_postprocessing_top2_sh1"]
+        landmark = artifacts["hand_landmark_full_sh4"]
 
         # One downscaled camera stream feeds the palm chain and the landmark
         # manip, both non-blocking. Requesting two identical Camera outputs
@@ -1808,6 +1896,27 @@ class CameraNode(Node):
             )
             .build(imitation_source)
         )
+        # The crop runs in a device Script node whose ImageManip is built with
+        # ``inputConfig.setWaitForMessage(True)``: while no palm detection
+        # arrives there is no config, and the node keeps every frame it is
+        # handed. Those frames belong to the camera's shared frame pool, so a
+        # long stretch without a detection exhausts the pool and stops the WHOLE
+        # device - the palm branch, the preview and /camera_topic with it. That
+        # is the freeze named in PR-1778: measured 1208 frames at 8 Hz with zero
+        # detections, then every stage stood still. Dropping frames instead of
+        # blocking keeps the camera alive while nothing is detected, and a held
+        # frame could not have produced a crop anyway.
+        cropper_input = getattr(
+            getattr(cropper, "_cropper_image_manip", None), "inputImage", None
+        )
+        if cropper_input is None:
+            self.get_logger().warning(
+                "FrameCropper internals changed: cannot stop it from holding "
+                "frames while no detection arrives"
+            )
+        else:
+            cropper_input.setMaxSize(1)
+            cropper_input.setBlocking(False)
         pose_nn = self.pipeline.create(ParsingNeuralNetwork).build(
             cropper.out,
             landmark_archive,
