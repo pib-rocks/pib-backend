@@ -208,9 +208,7 @@ from ros_packages.camera.oak_d_lite.stereo import (
     HAND_STAGE_NAMES,
     HAND_NN_HEIGHT,
     HAND_NN_WIDTH,
-    IMITATION_DETECTOR_MODEL,
     IMITATION_FPS,
-    IMITATION_LANDMARK_MODEL,
     IMITATION_SOURCE_HEIGHT,
     IMITATION_SOURCE_WIDTH,
     IMITATION_STAGE_NAMES,
@@ -1414,8 +1412,12 @@ class TestImitationPipeline(unittest.TestCase):
         node._reset_imitation_stage_counters()
         return node
 
+    @patch("ros_packages.camera.oak_d_lite.stereo.create_landmark_archive")
+    @patch("ros_packages.camera.oak_d_lite.stereo.create_palm_archive")
     @patch("ros_packages.camera.oak_d_lite.stereo.dai")
-    def test_graph_matches_official_parsed_two_stage_wiring(self, mock_dai):
+    def test_graph_uses_vendored_archives_and_keeps_parsed_wiring(
+        self, mock_dai, mock_palm_archive, mock_landmark_archive
+    ):
         node = self._make_node()
         node.pipeline = MagicMock()
         created = [MagicMock() for _ in range(6)]
@@ -1428,14 +1430,16 @@ class TestImitationPipeline(unittest.TestCase):
         imitation_source = MagicMock()
         node.camRgb.requestOutput.return_value = imitation_source
         detection_archive = MagicMock()
-        detection_archive.getInputWidth.return_value = 192
-        detection_archive.getInputHeight.return_value = 192
+        detection_archive.getInputWidth.return_value = 128
+        detection_archive.getInputHeight.return_value = 128
         landmark_archive = MagicMock()
         landmark_archive.getInputWidth.return_value = 224
         landmark_archive.getInputHeight.return_value = 224
-        mock_dai.NNArchive.side_effect = [detection_archive, landmark_archive]
-        descriptions = [types.SimpleNamespace(platform=None) for _ in range(2)]
-        mock_dai.NNModelDescription.side_effect = descriptions
+        mock_palm_archive.return_value = detection_archive
+        mock_landmark_archive.return_value = landmark_archive
+        artifacts = _imitation_artifacts()
+        node.model_registry = MagicMock()
+        node.model_registry.get.side_effect = artifacts.get
 
         detector_resize, detection_nn, processor, cropper, pose_nn, gather = created
         detection_nn.build.return_value = detection_nn
@@ -1445,18 +1449,27 @@ class TestImitationPipeline(unittest.TestCase):
         pose_nn.build.return_value = pose_nn
         gather.build.return_value = gather
 
-        node._build_imitation_pipeline(types.SimpleNamespace())
+        composite = types.SimpleNamespace(artifact_ids=tuple(artifacts))
+        node._build_imitation_pipeline(composite)
 
         self.assertEqual(
-            [call.args[0] for call in mock_dai.NNModelDescription.call_args_list],
-            [IMITATION_DETECTOR_MODEL, IMITATION_LANDMARK_MODEL],
+            node.model_registry.get.call_args_list,
+            [
+                unittest.mock.call("palm_detection_sh4"),
+                unittest.mock.call("hand_landmark_full_sh4"),
+            ],
         )
-        self.assertEqual(
-            [description.platform for description in descriptions], ["RVC2"] * 2
+        mock_palm_archive.assert_called_once_with(
+            artifacts["palm_detection_sh4"].blob_path
         )
+        mock_landmark_archive.assert_called_once_with(
+            artifacts["hand_landmark_full_sh4"].blob_path
+        )
+        mock_dai.getModelFromZoo.assert_not_called()
+        mock_dai.NNModelDescription.assert_not_called()
         detector_resize.initialConfig.setOutputSize.assert_called_once_with(
-            192,
-            192,
+            128,
+            128,
             mode=mock_dai.ImageManipConfig.ResizeMode.STRETCH,
         )
         node.isp_out.link.assert_not_called()

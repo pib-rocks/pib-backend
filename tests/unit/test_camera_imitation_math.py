@@ -108,7 +108,13 @@ def test_stretch_mapping_is_exact_and_clipped_to_published_frame():
     assert clipped["landmarks"][0] == (1280.0, 0.0)
 
 
-def test_score_threshold_world_extraction_and_missing_world_head():
+def test_unactivated_landmark_score_still_yields_a_detection():
+    """The landmark score cannot gate: this blob reports it unactivated.
+
+    Measured on the robot it sits around 0.018 with a hand filling the crop and
+    around 0.003 in an empty scene. A threshold above those values discarded
+    every detection although the palm parser had already accepted the hand.
+    """
     world = _keypoints(x=0.1, y=0.2)
     accepted = imitation.gathered_hands(
         _gathered(
@@ -122,13 +128,14 @@ def test_score_threshold_world_extraction_and_missing_world_head():
         1280,
         720,
     )
-    rejected = imitation.gathered_hands(
-        _gathered({"0": _keypoints(), "1": _prediction(0.499)}), 1280, 720
+    unactivated = imitation.gathered_hands(
+        _gathered({"0": _keypoints(), "1": _prediction(0.018)}), 1280, 720
     )
 
     assert len(accepted[0]["world"]) == 63
     assert accepted[0]["world"][:3] == pytest.approx([0.1, 0.2, 0.0])
-    assert rejected == []
+    assert unactivated[0]["landmark_score"] == pytest.approx(0.018)
+    assert len(unactivated[0]["landmarks"]) == 21
     assert (
         imitation.gathered_hands(
             _gathered({"0": _keypoints(), "1": _prediction(0.9)}), 1280, 720
