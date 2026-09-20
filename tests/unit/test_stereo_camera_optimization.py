@@ -205,6 +205,7 @@ from ros_packages.camera.oak_d_lite.stereo import (
     CameraNode,
     FACE_DETECT_WIDTH,
     FACE_DETECT_HEIGHT,
+    EMPTY_PALM_KEEPALIVE_INTERVAL,
     HAND_STAGE_NAMES,
     HAND_NN_HEIGHT,
     HAND_NN_WIDTH,
@@ -963,9 +964,7 @@ class TestHandStageCounters(unittest.TestCase):
             self.assertEqual(node._read_hand_startup_grace(), 7.5)
 
     @patch("ros_packages.camera.oak_d_lite.stereo.dai")
-    def test_decoder_empty_result_sends_config_and_discards_sentinel_landmarks(
-        self, mock_dai
-    ):
+    def test_keep_alive_config_discards_sentinel_landmarks(self, mock_dai):
         node = self._make_node()
         decoder_packet = MagicMock()
         decoder_packet.getTensor.return_value = [0.0] * 16
@@ -984,6 +983,11 @@ class TestHandStageCounters(unittest.TestCase):
         node._publish_hand_detections = MagicMock(
             side_effect=lambda *_: node._count_hand_stage("publish")
         )
+        # PR-1784: a palm-less frame spends a landmark round trip only for the
+        # keep-alive crop.  Prime the counter so this frame is the due one; the
+        # skipping behaviour itself is covered by
+        # test_palm_less_frames_do_not_spend_a_round_trip_on_every_frame.
+        node._empty_palm_frames = EMPTY_PALM_KEEPALIVE_INTERVAL - 1
 
         node._process_hand_tracking()
 
@@ -2415,6 +2419,73 @@ class TestOakImu(unittest.TestCase):
             self.assertEqual(node._imu_status()["state"], "absent")
         finally:
             CameraNode._device_owner = None
+
+    def _hand_loop_node(self):
+        """Node whose hand loop runs without rclpy, a device or a pipeline."""
+        with patch.object(CameraNode, "__init__", lambda self: None):
+            node = CameraNode()
+        node.get_logger = MagicMock()
+        node._hand_warnings = set()
+        node._log_palm_fingerprint = MagicMock()
+        node.hand_stage_counters = {stage: 0 for stage in HAND_STAGE_NAMES}
+        node.hand_stage_last_logged = dict(node.hand_stage_counters)
+        node._pending_hands = deque()
+        node.hand_decoder_queue = MagicMock()
+        node.hand_landmark_queue = MagicMock()
+        node.hand_landmark_queue.tryGet.return_value = None
+        node.hand_landmark_config_queue = MagicMock()
+        node.hand_landmark_input_size = 224
+        node.hand_source_size = (640, 480)
+        node.current_source_size = (640, 480)
+        node.current_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        node._empty_palm_frames = 0
+        return node
+
+    @staticmethod
+    def _palm_decoder_packet(values):
+        packet = MagicMock()
+        packet.getTensor.return_value = np.asarray(values, dtype=np.float32)
+        return packet
+
+    @patch("ros_packages.camera.oak_d_lite.stereo.dai")
+    def test_palm_less_frames_do_not_spend_a_round_trip_on_every_frame(self, mock_dai):
+        """PR-1784: a sentinel crop per frame throttled the whole chain."""
+        node = self._hand_loop_node()
+
+        for _ in range(EMPTY_PALM_KEEPALIVE_INTERVAL - 1):
+            node._pending_hand_decoder_packet = self._palm_decoder_packet(np.zeros(16))
+            node._process_hand_tracking()
+
+        self.assertEqual(node.hand_landmark_config_queue.send.call_count, 0)
+        self.assertEqual(
+            node.hand_stage_counters["empty_palm_skipped"],
+            EMPTY_PALM_KEEPALIVE_INTERVAL - 1,
+        )
+
+        # The keep-alive crop is due on the interval-th palm-less frame, so the
+        # config-gated branch keeps producing and the status stays flowing.
+        node._pending_hand_decoder_packet = self._palm_decoder_packet(np.zeros(16))
+        node._process_hand_tracking()
+
+        self.assertEqual(node.hand_landmark_config_queue.send.call_count, 1)
+        self.assertEqual(node.hand_stage_counters["image_manip_config"], 1)
+        self.assertEqual(len(node._pending_hands), 1)
+
+    @patch("ros_packages.camera.oak_d_lite.stereo.dai")
+    def test_decoded_palm_resets_the_palm_less_streak(self, mock_dai):
+        node = self._hand_loop_node()
+        node._empty_palm_frames = 4
+        result = np.zeros(16, dtype=np.float32)
+        # candidate A: score, box_x, box_y, box_size, kp0, kp2
+        result[0:8] = [0.9, 0.5, 0.5, 0.2, 0.52, 0.56, 0.5, 0.54]
+        node._pending_hand_decoder_packet = self._palm_decoder_packet(result)
+
+        node._process_hand_tracking()
+
+        self.assertEqual(node._empty_palm_frames, 0)
+        self.assertEqual(node.hand_landmark_config_queue.send.call_count, 1)
+        palm, _batch = node._pending_hands[0]
+        self.assertIsNotNone(palm)
 
 
 if __name__ == "__main__":

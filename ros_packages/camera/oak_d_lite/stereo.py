@@ -80,6 +80,14 @@ FACE_DETECT_HEIGHT = 180
 HAND_NN_WIDTH = 256
 HAND_NN_HEIGHT = 256
 IMITATION_FPS = 8
+# A frame without a palm used to send a sentinel crop through the landmark
+# branch, because that branch is config-gated and stays alive only while it
+# receives warp configs.  Every one of those crops cost a full landmark round
+# trip (~340 ms) and blocked the next palm decode, which held the chain at
+# about 1.7 Hz with a hand in view (measured, PR-1784).  One keep-alive crop
+# per this many palm-less frames keeps the branch alive at a fraction of the
+# round trips, so the rounds that remain go to real hands.
+EMPTY_PALM_KEEPALIVE_INTERVAL = 10
 # The neural branch carries the FULL 16:9 field of view at the size the
 # HandTrackerEdge reference uses (internal_frame_height=640 on a 16:9 sensor),
 # and this device was measured to deliver a 1152x648 branch alongside the colour
@@ -147,6 +155,7 @@ HAND_STAGE_NAMES = (
     "hand_landmark_nn",
     "post_processing",
     "publish",
+    "empty_palm_skipped",
 )
 IMITATION_STAGE_NAMES = (
     "colour_isp",
@@ -264,6 +273,7 @@ class CameraNode(Node):
         self.hand_source_size = (0, 0)
         self._pending_hand_decoder_packet = None
         self._pending_hands = deque()
+        self._empty_palm_frames = 0
         self._hand_warnings = set()
         self.imitation_queue = None
         self._pending_imitation_packet = None
@@ -1003,6 +1013,23 @@ class CameraNode(Node):
             self._count_hand_stage("image_manip_config")
             self._pending_hands.append((palm, batch))
 
+    def _should_queue_empty_landmark_frame(self) -> bool:
+        """Advance the palm-less counter and decide the keep-alive crop.
+
+        The landmark branch is config-gated: it produces a result only when it
+        receives a warp config.  A palm-less frame therefore used to send a
+        sentinel crop whose result was thrown away - one landmark round trip per
+        frame, and because the loop pairs strictly one decoder frame at a time,
+        that round trip blocked the next palm decode as well.
+
+        Keeping the branch alive with one crop every
+        ``EMPTY_PALM_KEEPALIVE_INTERVAL`` palm-less frames frees those round
+        trips for real hands.  Counting keeps the guaranteed keep-alive cadence
+        independent of the frame rate.
+        """
+        self._empty_palm_frames += 1
+        return self._empty_palm_frames % EMPTY_PALM_KEEPALIVE_INTERVAL == 0
+
     def _queue_empty_landmark_frame(
         self,
         frame_width,
@@ -1257,13 +1284,19 @@ class CameraNode(Node):
             palms = []
         self._count_hand_stage("decoding_result")
         if not palms:
-            self._queue_empty_landmark_frame(
-                frame_width,
-                frame_height,
-                source_width,
-                source_height,
-            )
+            if self._should_queue_empty_landmark_frame():
+                self._queue_empty_landmark_frame(
+                    frame_width,
+                    frame_height,
+                    source_width,
+                    source_height,
+                )
+            else:
+                self._count_hand_stage("empty_palm_skipped")
             return
+        # A decoded palm ends the palm-less streak: the next keep-alive crop is
+        # due again only after a fresh run of empty frames.
+        self._empty_palm_frames = 0
         self._queue_landmark_crops(
             palms,
             frame_width,
