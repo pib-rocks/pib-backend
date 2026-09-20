@@ -134,7 +134,7 @@ run_jest() {
     # install when it is missing. Jest is started via `node .../jest.js` so no executable bit
     # on node_modules/.bin is required.
     local jest_cmd='set -e
-if [ ! -f node_modules/jest/bin/jest.js ]; then npm install --silent --no-audit --no-fund; fi
+if ! node node_modules/jest/bin/jest.js --version >/dev/null 2>&1; then npm install --silent --no-audit --no-fund; fi
 node node_modules/jest/bin/jest.js --config jest.config.js'
     if command -v docker >/dev/null 2>&1; then
         docker run --rm \
