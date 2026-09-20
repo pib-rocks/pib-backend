@@ -1,6 +1,7 @@
 """Device-free tests for the camera model registry and pipeline manager."""
 
 from pathlib import Path
+import re
 import sys
 import tempfile
 import time
@@ -541,6 +542,114 @@ class TestPipelineManager(unittest.TestCase):
             self.assertEqual(len(rebuilds), 1)
             self.assertTrue(manager.stop("hand_tracking", "blockly")[0])
             self.assertEqual(rebuilds[-1], [])
+
+
+class TestSelectableModels(unittest.TestCase):
+    """The model list may offer fewer models than the registry keeps.
+
+    PR-1779: the hand chain is built from the palm detector, the palm decoder
+    and the hand landmark network, so those entries have to stay in the
+    registry.  They must not appear as selectable models of their own.
+    """
+
+    @staticmethod
+    def _store(manifest):
+        store = tempfile.TemporaryDirectory()
+        store_path = Path(store.name)
+        for entry in manifest["models"]:
+            if entry.get("composite"):
+                continue
+            blob = store_path / entry["file"]
+            blob.parent.mkdir(parents=True, exist_ok=True)
+            blob.write_bytes(b"x" * int(entry["size_bytes"]))
+        (store_path / "manifest.yaml").write_text(
+            yaml.safe_dump(manifest), encoding="utf-8"
+        )
+        return store, store_path
+
+    @staticmethod
+    def _function_source(source, name):
+        match = re.search(rf"^    def {name}\(.*?(?=^    def |\Z)", source, re.M | re.S)
+        assert match, f"{name} not found in stereo.py"
+        return match.group(0)
+
+    def test_selectable_defaults_to_true(self):
+        store, store_path = self._store(_manifest())
+        try:
+            registry = ModelRegistry(store_path)
+
+            self.assertTrue(registry.get("demo").selectable)
+            self.assertEqual(
+                [model.model_id for model in registry.selectable_models()], ["demo"]
+            )
+        finally:
+            store.cleanup()
+
+    def test_not_selectable_entry_is_hidden_but_stays_in_the_registry(self):
+        manifest = _manifest()
+        artifact = dict(manifest["models"][0])
+        artifact.update(
+            {
+                "model_id": "artifact",
+                "file": "artifact/artifact.blob",
+                "selectable": False,
+            }
+        )
+        manifest["models"].append(artifact)
+        store, store_path = self._store(manifest)
+        try:
+            registry = ModelRegistry(store_path)
+
+            self.assertEqual(len(list(registry.models())), 2)
+            self.assertIsNotNone(registry.get("artifact"))
+            self.assertTrue(registry.get("artifact").available)
+            self.assertEqual(
+                [model.model_id for model in registry.selectable_models()], ["demo"]
+            )
+        finally:
+            store.cleanup()
+
+    def test_composite_artifacts_are_hidden_while_the_composite_stays_selectable(self):
+        manifest = _composite_manifest()
+        for entry in manifest["models"]:
+            if not entry.get("composite"):
+                entry["selectable"] = False
+        store, store_path = self._store(manifest)
+        try:
+            registry = ModelRegistry(store_path)
+
+            self.assertEqual(len(list(registry.models())), 4)
+            self.assertEqual(
+                [model.model_id for model in registry.selectable_models()],
+                ["hand_tracking"],
+            )
+            # the chain still resolves its artifacts, budgets included
+            hand_tracking = registry.get("hand_tracking")
+            self.assertEqual(hand_tracking.shaves, 9)
+            self.assertEqual(
+                hand_tracking.artifact_ids, ("palm", "decoder", "landmark")
+            )
+        finally:
+            store.cleanup()
+
+    def test_model_list_and_status_report_only_selectable_models(self):
+        """Guard both consumer paths; they need rclpy and cannot run here."""
+        source = (REPO_ROOT / "ros_packages/camera/oak_d_lite/stereo.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn(
+            "selectable_models()", self._function_source(source, "list_models_callback")
+        )
+        status_index = source.index("status_array.models = []")
+        status_source = source[
+            source.rfind("\n    def ", 0, status_index) : source.find(
+                "\n    def ", status_index
+            )
+        ]
+        self.assertIn("selectable_models()", status_source)
+        # the chain itself still iterates every entry (publishers, composite build)
+        self.assertIn("self.model_registry.models()", source)
 
 
 if __name__ == "__main__":

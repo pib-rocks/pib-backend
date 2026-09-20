@@ -6,6 +6,7 @@ default_openvino_version: '2022.1'
 compile_params: -ip U8
 models:
 - model_id: palm_detection_128x128
+  selectable: false
   task: palm_detection
   source_upstream: luxonis/depthai-model-zoo (google/mediapipe)
   source_url: https://github.com/luxonis/depthai-model-zoo/raw/main/models/palm_detection_128x128/palm_detection_128x128.xml
@@ -21,6 +22,7 @@ models:
   zoo_type: depthai
   notes: palm detector - required together with palm_detection_128x128_decoding. DepthAI zoo IR input 'images' 3x128x128, BGR [0-255], CHW. Compiled with compile_params '-ip U8'. Upstream model.yml license name Apache-2.0 License.
 - model_id: palm_detection_128x128_decoding
+  selectable: false
   task: palm_detection
   source_upstream: luxonis/depthai-model-zoo
   source_url: https://github.com/luxonis/depthai-model-zoo/raw/main/models/palm_detection_128x128_decoding/palm_detection_128x128_decoding.xml
@@ -36,6 +38,7 @@ models:
   zoo_type: depthai
   notes: Decoding head only (not a detector). Requires palm_detection_128x128; returns the TOP 10 most confident results so decoding can run on the edge. DepthAI zoo IR expects BGR, [0-255], CHW. Compiled with compile_params '-ip U8'. Upstream model.yml licence is empty.
 - model_id: hand_landmark_224x224
+  selectable: false
   task: hand_landmarks
   source_upstream: luxonis/depthai-model-zoo
   source_url: https://github.com/luxonis/depthai-model-zoo/raw/main/models/hand_landmark_224x224/hand_landmark_224x224.xml
@@ -215,6 +218,7 @@ models:
   zoo_type: depthai
   notes: OMZ person-reidentification-retail-0031 converted to 96x48 (IR input 'data' NCHW 3x96x48). Whole-body crop in, 256-d embedding out; match with cosine distance. DepthAI zoo still lists this name; compiled with zoo_type='depthai', '-ip U8'.
 - model_id: palm_detection_sh4
+  selectable: false
   task: palm_detection
   source_upstream: geaxgx/depthai_hand_tracker (pib-rocks fork, /home/pib/imitation on the robot)
   source_url: https://github.com/geaxgx/depthai_hand_tracker
@@ -234,6 +238,7 @@ models:
     FP16; the DepthAI zoo decoding head palm_detection_128x128_decoding is compiled '-ip U8' and destroys
     them. Used by the imitation composite.
 - model_id: pd_postprocessing_top2_sh1
+  selectable: false
   task: palm_detection
   source_upstream: geaxgx/depthai_hand_tracker (pib-rocks fork, /home/pib/imitation on the robot)
   source_url: https://github.com/geaxgx/depthai_hand_tracker
@@ -253,6 +258,7 @@ models:
     score, box_x, box_y, box_size, kp0_x, kp0_y, kp2_x, kp2_y in square-normalised coordinates. The
     input_width/height above describe the detector it decodes for; this net has no image input.
 - model_id: hand_landmark_full_sh4
+  selectable: false
   task: hand_landmarks
   source_upstream: geaxgx/depthai_hand_tracker (pib-rocks fork, /home/pib/imitation on the robot)
   source_url: https://github.com/geaxgx/depthai_hand_tracker
@@ -272,6 +278,7 @@ models:
     'Identity_3_dense/BiasAdd/Add' (21 x 3 world landmarks, 63 values). The reference gates on the
     landmark score with a threshold of 0.5.
 - model_id: imitation
+  selectable: false
   task: hand_tracking
   composite: true
   artifacts:

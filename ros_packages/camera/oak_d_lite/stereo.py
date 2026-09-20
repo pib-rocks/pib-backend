@@ -381,7 +381,7 @@ class CameraNode(Node):
     def list_models_callback(self, request, response):
         statuses = self.pipeline_manager.statuses()
         response.models = []
-        for model in self.model_registry.models():
+        for model in self.model_registry.selectable_models():
             status = statuses[model.model_id]
             info = ModelInfo()
             info.model_id = model.model_id
@@ -1317,7 +1317,7 @@ class CameraNode(Node):
         status_array = ModelStatusArray()
         status_array.header.stamp = self.get_clock().now().to_msg()
         status_array.models = []
-        for model in self.model_registry.models():
+        for model in self.model_registry.selectable_models():
             runtime = statuses[model.model_id]
             status = ModelStatus()
             status.model_id = model.model_id
