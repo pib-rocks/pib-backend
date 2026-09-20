@@ -23,6 +23,7 @@ class ModelRecord:
     composite: bool = False
     artifact_ids: Tuple[str, ...] = ()
     publish_topic: str = ""
+    selectable: bool = True
 
 
 class ModelRegistry:
@@ -117,6 +118,7 @@ class ModelRegistry:
                     blob_path=str(blob_path),
                     available=functional and artifact_valid,
                     unavailable_reason=unavailable_reason,
+                    selectable=bool(entry.get("selectable", True)),
                     input_width=int(entry["input_width"]),
                     input_height=int(entry["input_height"]),
                 )
@@ -154,6 +156,7 @@ class ModelRegistry:
                     composite=True,
                     artifact_ids=artifact_ids,
                     publish_topic=str(entry["publish_topic"]),
+                    selectable=bool(entry.get("selectable", True)),
                 )
             unavailable = [
                 model.model_id for model in loaded.values() if not model.available
@@ -181,6 +184,16 @@ class ModelRegistry:
 
     def models(self) -> Iterable[ModelRecord]:
         return self._models.values()
+
+    def selectable_models(self) -> Iterable[ModelRecord]:
+        """Models a client may offer or start.
+
+        Composite artefacts (for example the palm detector and the hand
+        landmark network that ``hand_tracking`` is built from) stay in the
+        registry because the chain is built from them, but they are not
+        selectable entries of their own.
+        """
+        return [model for model in self._models.values() if model.selectable]
 
     def __len__(self):
         return len(self._models)
