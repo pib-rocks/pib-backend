@@ -53,7 +53,7 @@ def test_detection_messages_preserve_pixel_and_depth_contract():
 
 
 def test_decoder_maps_a_postprocessing_record_and_bbox_to_full_frame():
-    tensor = np.zeros((2, 8), dtype=np.float32)
+    tensor = np.zeros((10, 8), dtype=np.float32)
     tensor[0] = [0.9, 0.5, 0.5, 0.2, 0.5, 0.6, 0.5, 0.4]
 
     palms = decode_palm_result(tensor)
@@ -83,15 +83,14 @@ def test_palm_roi_uses_warped_branch_normalized_coordinates():
     assert palm.roi_for_frame(2104, 1560) == (0.6, 0.3, 0.4, 0.4)
 
 
-def test_decoder_caps_the_two_records_at_the_best_hand():
-    """Two records arrive; the cap decides how many become a landmark crop.
+def test_decoder_orders_the_ten_records_by_score_and_honours_the_cap():
+    """Ten records arrive; the cap decides how many become a landmark crop.
 
-    The post-processing blob is compiled for top-2, so the layer already carries
-    at most two hands and the cap is a safety net rather than the load lever it
-    was against the zoo decoder.  It must still prefer the better score and
-    never invent records.
+    The zoo decoding head returns its TOP 10 candidates, most of them
+    background.  Their order in the layer is the head's confidence order, the
+    decoder re-sorts by score anyway, and it must never invent records.
     """
-    tensor = np.zeros((2, 8), dtype=np.float32)
+    tensor = np.zeros((10, 8), dtype=np.float32)
     tensor[0] = [0.6, 0.5, 0.5, 0.2, 0.5, 0.6, 0.5, 0.4]
     tensor[1] = [0.95, 0.25, 0.25, 0.2, 0.25, 0.35, 0.25, 0.15]
 
@@ -106,12 +105,12 @@ def test_decoder_caps_the_two_records_at_the_best_hand():
 
 
 def test_decoder_returns_empty_for_no_confident_hand():
-    assert decode_palm_result(np.zeros(16, dtype=np.float32)) == []
+    assert decode_palm_result(np.zeros(80, dtype=np.float32)) == []
 
 
 def test_decoder_rejects_wrong_shape():
-    with pytest.raises(ValueError, match="exactly 16"):
-        decode_palm_result(np.zeros(15, dtype=np.float32))
+    with pytest.raises(ValueError, match="exactly 80"):
+        decode_palm_result(np.zeros(79, dtype=np.float32))
 
 
 def test_landmarks_rotate_scale_and_map_to_actual_full_frame():

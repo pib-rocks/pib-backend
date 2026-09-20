@@ -223,22 +223,22 @@ from ros_packages.camera.oak_d_lite.stereo import (
 
 
 def _hand_artifacts():
-    """Registry entries for the three blobs the hand chain is built from.
+    """Registry entries for the three zoo blobs the hand chain is built from.
 
-    The chain runs the reference's models now, so the ids are the ones the
-    imitation chain loads too - only the pipelines differ.
+    The hand chain runs the zoo set (palm detector, decoding head, landmark
+    network); the imitation chain has its own, separately vendored set.
     """
     return {
-        "palm_detection_sh4": types.SimpleNamespace(
+        "palm_detection_128x128": types.SimpleNamespace(
             input_width=128,
             input_height=128,
             blob_path="/palm.blob",
             shaves=4,
         ),
-        "pd_postprocessing_top2_sh1": types.SimpleNamespace(
+        "palm_detection_128x128_decoding": types.SimpleNamespace(
             blob_path="/decoder.blob", shaves=1
         ),
-        "hand_landmark_full_sh4": types.SimpleNamespace(
+        "hand_landmark_224x224": types.SimpleNamespace(
             input_width=224,
             input_height=224,
             blob_path="/landmark.blob",
@@ -968,7 +968,7 @@ class TestHandStageCounters(unittest.TestCase):
     ):
         node = self._make_node()
         decoder_packet = MagicMock()
-        decoder_packet.getTensor.return_value = [0.0] * 16
+        decoder_packet.getTensor.return_value = [0.0] * 80
         landmark_packet = MagicMock()
         node.hand_decoder_queue = MagicMock()
         node.hand_decoder_queue.tryGet.side_effect = [decoder_packet, None]

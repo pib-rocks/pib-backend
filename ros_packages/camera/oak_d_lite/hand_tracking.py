@@ -4,11 +4,18 @@ Decoder format evidence:
 https://github.com/geaxgx/depthai_hand_tracker/blob/main/custom_models/generate_postproc_onnx.py
 defines the output as ``[top_k, 8]`` and the runtime manager reads each record
 as ``score, box_x, box_y, box_size, kp0_x, kp0_y, kp2_x, kp2_y``.  The chain
-runs the reference's on-device post-processing (``pd_postprocessing_top2_sh1``),
-so ``result`` carries 16 flattened values - two records, top-2, matching the
-reference's ``for i in range(2)``.  The blob consumes the detector's NNData
-(``classificators`` anchors, ``regressors`` bbox plus seven palm keypoints) and
-emits anchor-decoded normalized coordinates after NMS.
+is fed by the zoo's own decoding head (``palm_detection_128x128_decoding``),
+which consumes the detector's NNData (``classificators`` anchors, ``regressors``
+bbox plus seven palm keypoints), runs NMS on the edge and returns the TOP 10
+most confident records.  The head's ``result`` layer is a Concat of 1 + 3 + 2 + 2
+fields, read straight from the zoo IR, so the eight fields per record are
+``score, box_x, box_y, box_size, kp0_x, kp0_y, kp2_x, kp2_y`` as above.
+
+The head only yields usable numbers when its input datatype matches the
+detector's: the zoo detector outputs FP16, so the head has to be compiled
+without ``-ip U8``.  A candidate compiled with the image-input default emits a
+score column stuck at a constant 1.0 and coordinates above 1.0 that correlate
+with nothing in the frame - that is what produced the phantom hands.
 
 The landmark network exposes its crop-space image landmarks in
 ``Identity_dense/BiasAdd/Add`` as 21 XYZ triples, with a presence score in
@@ -56,9 +63,10 @@ HAND_KEYPOINT_NAMES = (
     "pinky_dip",
     "pinky_tip",
 )
-# Two records: the post-processing blob is compiled for top-2, the same limit
-# the reference reads with ``for i in range(2)``.
-PALM_RESULT_COUNT = 2
+# Ten records: the zoo decoding head runs NMS on the edge and returns the TOP 10
+# most confident candidates.  The score gate below prunes the background ones
+# before they cost a landmark crop, so the count is the blob's layout, not a cap.
+PALM_RESULT_COUNT = 10
 PALM_RESULT_WIDTH = 8
 LANDMARK_COUNT = 21
 LANDMARK_VALUE_COUNT = LANDMARK_COUNT * 3
@@ -217,16 +225,14 @@ def _square_to_frame(
 
 
 def decode_palm_result(
-    tensor: Iterable[float], score_threshold: float = 0.5, max_hands: int = 2
+    tensor: Iterable[float], score_threshold: float = 0.5, max_hands: int = 10
 ) -> List[PalmRegion]:
     """Parse the post-processing layer, rejecting any unexpected layout.
 
-    ``max_hands`` mirrors the reference, whose palm post-processing runs as an
-    on-device blob compiled for top-2: the decoder head returns ten candidates,
-    most of them background, and only the two best are worth a landmark crop.
-    Measured on the robot, the other eight are dropped by the score gate anyway,
-    so cropping them buys seven wasted landmark inferences per frame and holds
-    the published rate near 1 Hz instead of the detector's own rate.
+    ``max_hands`` bounds the candidates the head is allowed to contribute; the
+    zoo head itself returns ten.  ``score_threshold`` does the real filtering:
+    only records that pass it are turned into a landmark crop, so a frame that
+    contains one hand costs one crop, not ten.
     """
     values = np.asarray(tensor, dtype=np.float32)
     if values.size != PALM_RESULT_COUNT * PALM_RESULT_WIDTH:

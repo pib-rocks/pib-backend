@@ -1745,9 +1745,12 @@ class CameraNode(Node):
         # the host-side decoding below belong together: this blob emits the
         # ``result`` records the decoder parses, and it caps them at top-2 on the
         # device, which is also why the decoder expects exactly two records.
-        palm = artifacts["palm_detection_sh4"]
-        decoder = artifacts["pd_postprocessing_top2_sh1"]
-        landmark = artifacts["hand_landmark_full_sh4"]
+        # The zoo's own three-blob set.  The decoding head is compiled without
+        # -ip U8 so its float tensors match the detector's FP16 outputs; with the
+        # image-input default it emitted a constant score and unusable geometry.
+        palm = artifacts["palm_detection_128x128"]
+        decoder = artifacts["palm_detection_128x128_decoding"]
+        landmark = artifacts["hand_landmark_224x224"]
 
         # One downscaled camera stream feeds the palm chain and the landmark
         # manip, both non-blocking. Requesting two identical Camera outputs
