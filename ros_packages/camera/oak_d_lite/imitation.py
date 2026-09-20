@@ -7,11 +7,7 @@ import depthai as dai
 
 LANDMARK_COUNT = 21
 PALM_PADDING = 0.1
-# The landmark head of this blob reports its presence score UNACTIVATED: a hand
-# filling the crop measures around 0.018 and an empty scene around 0.003. The
-# value therefore carries no usable detection threshold and is only reported.
-# Gating on it discarded every detection - the palm parser's confidence
-# threshold is the only gate that separates a hand from the rest of the scene.
+LANDMARK_SCORE_THRESHOLD = 0.5
 
 
 class ProcessDetections(dai.node.HostNode):
@@ -124,9 +120,9 @@ def _group_value(group, key):
     # dai.MessageGroup raises for a missing key, and the exception type is NOT
     # stable: measured on the robot it surfaced as IndexError("map::at"), while
     # RuntimeError was the documented guess. Both were wrong on their own and
-    # each miss discarded the very packet it was asked about - the good ones.
-    # Catch broadly: an absent key means "not provided" here, never "throw away
-    # this detection".
+    # each miss discarded every packet whose landmark score had just passed the
+    # gate - the good ones. Catch broadly: an absent key means "not provided"
+    # here, never "throw away this detection".
     try:
         return group[key]
     except Exception:
@@ -185,6 +181,7 @@ def gathered_hands(
     frame_width,
     frame_height,
     padding=PALM_PADDING,
+    score_threshold=LANDMARK_SCORE_THRESHOLD,
 ):
     """Convert parsed gathered results into the stable imitation hand contract."""
     if frame_width <= 0 or frame_height <= 0:
@@ -208,11 +205,11 @@ def gathered_hands(
         keypoints = _keypoint_xyz(_group_value(item, "0"))
         landmark_score = _prediction(_group_value(item, "1"))
         handedness = _prediction(_group_value(item, "2"))
-        # Only "the landmark head delivered nothing usable" drops a result. Its
-        # score is not a gate: this blob reports it unactivated (see the note at
-        # the top), so a threshold on it discards good detections. A missing
-        # score still drops, because the published Detection needs a number.
-        if len(keypoints) != LANDMARK_COUNT or landmark_score is None:
+        if (
+            len(keypoints) != LANDMARK_COUNT
+            or landmark_score is None
+            or landmark_score < score_threshold
+        ):
             continue
 
         points = []
