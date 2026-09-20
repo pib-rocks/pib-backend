@@ -26,6 +26,30 @@ Follow these steps to run it:
                
          bash setup-pib.sh -l
 
+### Installing a development branch
+
+To install Cerebra and pib-backend from a specific branch (for example `develop`), download
+`setup-pib.sh` from that same branch and pass both branches to the script:
+
+        wget https://raw.githubusercontent.com/pib-rocks/pib-backend/develop/setup/setup-pib.sh
+        bash setup-pib.sh -f=develop -b=develop
+
+      `-f` selects the Cerebra branch, `-b` the pib-backend branch. Both default to `main`.
+      The script fetches the helper scripts it needs from the branch you selected, so
+      downloading `setup-pib.sh` on its own is enough.
+
+### Hardware variants
+
+The script selects a hardware variant; without a flag the default `pib5edu` is used.
+
+        --pib4edu        pib 4 educational
+        --pib4advanced   pib 4 advanced
+        --pib5advanced   pib 5 advanced
+        --pib5museum     pib 5 museum
+
+A variant takes effect on a fresh install. To change it later, run
+`flask seed_hardware --variant <variant> --force`.
+
 The setup then adds Cerebra and it's dependencies, including ROS2, Tinkerforge,...
 Once the installation is complete, please restart the system to apply all the changes.
 
