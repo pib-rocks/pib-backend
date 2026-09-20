@@ -1,7 +1,49 @@
 #!/bin/bash
 
 SETUP_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SETUP_SCRIPT_DIR/installation_scripts/resolve_hardware_variant.sh"
+
+# `resolve_hardware_variant` lives in installation_scripts/ next to this script inside the
+# repository, but the documented install (README) downloads setup-pib.sh on its own, so the
+# helper is not guaranteed to be next to it. Load it lazily - once the branch is known - and
+# fall back to fetching it from the branch we are installing.
+load_hardware_variant_resolver() {
+  local candidates=(
+    "$SETUP_SCRIPT_DIR/installation_scripts/resolve_hardware_variant.sh"
+    "$SETUP_INSTALLATION_DIR/resolve_hardware_variant.sh"
+  )
+  local candidate
+  for candidate in "${candidates[@]}"; do
+    if [ -f "$candidate" ]; then
+      # shellcheck source=/dev/null
+      source "$candidate"
+      return 0
+    fi
+  done
+
+  local url="https://raw.githubusercontent.com/pib-rocks/pib-backend/${BRANCH_BACKEND}/setup/installation_scripts/resolve_hardware_variant.sh"
+  local download_dir
+  download_dir="$(mktemp -d)"
+  local target="$download_dir/resolve_hardware_variant.sh"
+
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "$url" -o "$target" 2>/dev/null
+  elif command -v wget >/dev/null 2>&1; then
+    wget -q "$url" -O "$target" 2>/dev/null
+  fi
+
+  if [ -s "$target" ]; then
+    # shellcheck source=/dev/null
+    source "$target"
+    rm -rf "$download_dir"
+    return 0
+  fi
+  rm -rf "$download_dir"
+
+  print ERROR "resolve_hardware_variant.sh is missing in: ${candidates[*]}"
+  print ERROR "and could not be downloaded from $url"
+  print INFO "Download the repository and run setup/setup-pib.sh from there: git clone --depth 1 --branch ${BRANCH_BACKEND} ${BACKEND}"
+  return 1
+}
 
 # Color definitions for logging
 export ERROR="\e[31m"
@@ -849,6 +891,10 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
+
+if ! load_hardware_variant_resolver; then
+  exit 1
+fi
 
 if ! PIB_HARDWARE_VARIANT="$(
   resolve_hardware_variant "${HARDWARE_VARIANT_ARGUMENTS[@]}"
