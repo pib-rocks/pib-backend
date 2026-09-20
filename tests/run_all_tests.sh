@@ -73,8 +73,15 @@ run_step() {
 
 ensure_venv() {
     section "Python virtualenv"
-    if [[ ! -d "${VENV_DIR}" ]]; then
-        echo "Creating ${VENV_DIR} ..."
+    # An existing directory is not a usable venv: an interrupted `python3 -m venv` leaves
+    # one behind without bin/, and sourcing bin/activate then aborts the whole run.
+    if [[ ! -x "${VENV_DIR}/bin/python" ]] || ! "${VENV_DIR}/bin/python" -c "" >/dev/null 2>&1; then
+        if [[ -e "${VENV_DIR}" ]]; then
+            echo "Rebuilding unusable ${VENV_DIR} ..."
+            rm -rf "${VENV_DIR}"
+        else
+            echo "Creating ${VENV_DIR} ..."
+        fi
         python3 -m venv "${VENV_DIR}"
     fi
     # shellcheck source=/dev/null

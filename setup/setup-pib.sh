@@ -533,29 +533,66 @@ EOF
   print SUCCESS "Installed tinkerforge"
 }
 
-function disable_power_notification() {
-	local file="/boot/firmware/config.txt"
-	
-	if [ -f "$file" ]; then
-    	echo "Disabling under-voltage warnings..."
-		  echo "avoid_warnings=2" | sudo tee -a "$file" > /dev/null
+# Append a config.txt directive only when that exact line is not already in the file, so a
+# second setup run does not duplicate it.
+function append_config_directive_once() {
+	local directive="$1"
+	local file="$2"
 
-    	echo "Preventing CPU throttling..."
-    	echo "force_turbo=1" | sudo tee -a "$file" > /dev/null
+	if grep -qxF "$directive" "$file"; then
+		echo "${directive} is already set in ${file}"
+		return 0
 	fi
 
-	echo "Installing and configuring watchdog service..."
-	sudo apt-get install -y watchdog
-	sudo systemctl enable watchdog
-	sudo systemctl start watchdog
+	# An unterminated last line would swallow the appended directive and defeat the check above.
+	if [ -s "$file" ] && [ -n "$(tail -c 1 "$file")" ]; then
+		printf '\n' | sudo tee -a "$file" > /dev/null
+	fi
 
-	echo "Modifying watchdog configuration..."
-	sudo sed -i 's/#reboot=1/reboot=0/' /etc/watchdog.conf
+	echo "$directive" | sudo tee -a "$file" > /dev/null
+}
 
-	echo "Disabling kernel panic reboots..."
-	echo "kernel.panic = 0" | sudo tee -a /etc/sysctl.conf
+# Watchdog policy: systemd is the only owner of the hardware watchdog.
+# Raspberry Pi OS boots with RuntimeWatchdogUSec=1min, /dev/watchdog0 active with a 60 s
+# hardware timeout and reboot=w on the kernel command line. PID 1 pings the device every
+# 30 s (RuntimeWatchdogUSec/2) from its own event loop, so the 60 s deadline is only reached
+# when PID 1 itself stops running - not by a `docker compose up -d --build` that runs 40+
+# minutes at high load. The `watchdog` daemon this function used to install added a second,
+# unconfigured owner (no checks, realtime priority 1) on the same device; a fresh install
+# that did so reset the board uncleanly during the build. The package is not installed
+# anymore either, because installing it on Debian enables and starts watchdog.service.
+function disable_watchdog_daemon() {
+	if ! command_exists systemctl; then
+		return 0
+	fi
 
-	sudo sysctl -p
+	if ! systemctl list-unit-files watchdog.service 2>/dev/null | grep -q '^watchdog\.service'; then
+		echo "Watchdog daemon is not installed; systemd keeps the hardware watchdog"
+		return 0
+	fi
+
+	echo "Disabling the watchdog daemon installed by an earlier setup run..."
+	sudo systemctl disable --now watchdog
+}
+
+function disable_power_notification() {
+	# PIB_BOOT_CONFIG lets the unit tests run this function against a scratch file.
+	local file="${PIB_BOOT_CONFIG:-/boot/firmware/config.txt}"
+
+	if [ -f "$file" ]; then
+		echo "Disabling under-voltage warnings..."
+		append_config_directive_once "avoid_warnings=2" "$file"
+
+		echo "Preventing CPU throttling..."
+		append_config_directive_once "force_turbo=1" "$file"
+	fi
+
+	# See disable_watchdog_daemon: systemd owns /dev/watchdog0, this installer adds no second owner.
+	disable_watchdog_daemon
+
+	# Dropped here: `sed -i 's/#reboot=1/reboot=0/' /etc/watchdog.conf` matched nothing in the
+	# shipped config and `kernel.panic = 0` disables reboot-on-panic, not a watchdog reset -
+	# both only logged a change that never happened.
 }
 
 # Install a NetworkManager dispatcher script that observes IP changes and writes the current host IP to a file
