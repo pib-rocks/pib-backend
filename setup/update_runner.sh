@@ -16,6 +16,11 @@ MIN_FREE_KIB="${PIB_UPDATE_MIN_FREE_KIB:-8388608}"
 VERIFY_ATTEMPTS="${PIB_UPDATE_VERIFY_ATTEMPTS:-30}"
 VERIFY_INTERVAL_SECONDS="${PIB_UPDATE_VERIFY_INTERVAL_SECONDS:-5}"
 HEALTHCHECK="$BACKEND_DIR/setup/update_healthcheck.py"
+WATCHDOG_DECIDER="$BACKEND_DIR/setup/update_watchdog.py"
+STATUS_READER="$BACKEND_DIR/setup/update_status_reader.py"
+WATCHDOG_HELPER="/usr/local/sbin/pib-update-watchdog"
+WATCHDOG_TARGET_FILE="$UPDATE_DIR/watchdog.target"
+WATCHDOG_BUILD_TIMEOUT_US="${PIB_UPDATE_WATCHDOG_BUILD_TIMEOUT_US:-1800000000}"
 PRUNE_BELOW_KIB="${PIB_UPDATE_PRUNE_BELOW_KIB:-15728640}"
 
 JOB_ID="unknown"
@@ -35,6 +40,11 @@ BACKEND_SERVICES_BEFORE=""
 CEREBRA_SERVICES_BEFORE=""
 REGRESSIONS=""
 UNHEALTHY_SERVICES=""
+ATTEMPT=1
+PREDECESSOR_INTERRUPTED="false"
+PREDECESSOR_STATE="unknown"
+WATCHDOG_ORIGINAL_US=""
+WATCHDOG_RESTORE_NEEDED="false"
 
 mkdir -p "$UPDATE_DIR"
 touch "$LOG_FILE"
@@ -49,7 +59,8 @@ write_status() {
     local message="$2"
     STATE="$state" MESSAGE="$message" JOB_ID="$JOB_ID" CHANNEL="$CHANNEL" \
         STARTED_AT="$STARTED_AT" STATUS_FILE="$STATUS_FILE" \
-        UNHEALTHY_SERVICES="${UNHEALTHY_SERVICES:-}" python3 - <<'PY'
+        UNHEALTHY_SERVICES="${UNHEALTHY_SERVICES:-}" ATTEMPT="$ATTEMPT" \
+        PREDECESSOR_INTERRUPTED="$PREDECESSOR_INTERRUPTED" python3 - <<'PY'
 import json
 import os
 import tempfile
@@ -63,6 +74,8 @@ document = {
     "message": os.environ["MESSAGE"],
     "startedAt": os.environ["STARTED_AT"],
     "updatedAt": datetime.now(timezone.utc).isoformat(),
+    "attempt": int(os.environ["ATTEMPT"]),
+    "predecessorInterrupted": os.environ["PREDECESSOR_INTERRUPTED"] == "true",
 }
 # Reported, never blocking (D12): services that were already down before the update.
 unhealthy = sorted(name for name in os.environ.get("UNHEALTHY_SERVICES", "").split() if name)
@@ -137,6 +150,77 @@ PY
         fail "request.json is invalid"
     fi
     eval "$parsed"
+}
+
+load_predecessor_status() {
+    local parsed
+    if ! parsed="$(python3 "$STATUS_READER" "$STATUS_FILE" "$JOB_ID" 2>&1)"; then
+        log "WARNING: could not inspect predecessor status; starting attempt 1: $parsed"
+        return 0
+    fi
+    eval "$parsed"
+    if [ "$PREDECESSOR_INTERRUPTED" = "true" ]; then
+        log "WARNING: interrupted predecessor detected in state $PREDECESSOR_STATE; continuing job $JOB_ID as attempt $ATTEMPT"
+    fi
+}
+
+restore_watchdog() {
+    [ "$WATCHDOG_RESTORE_NEEDED" = "true" ] || return 0
+    WATCHDOG_RESTORE_NEEDED="false"
+    if ! printf '%s\n' "$WATCHDOG_ORIGINAL_US" > "$WATCHDOG_TARGET_FILE"; then
+        log "WARNING: could not write watchdog restore target; the update result is unchanged"
+        return 0
+    fi
+    if sudo -n "$WATCHDOG_HELPER"; then
+        log "Restored systemd watchdog timeout to ${WATCHDOG_ORIGINAL_US}us"
+    else
+        log "WARNING: could not restore systemd watchdog timeout with $WATCHDOG_HELPER"
+    fi
+    rm -f "$WATCHDOG_TARGET_FILE" || true
+}
+
+extend_watchdog_for_build() {
+    local current_display original_us target_us
+    current_display="$(systemctl show --property=RuntimeWatchdogUSec --value 2>/dev/null || true)"
+    if [ -z "$current_display" ]; then
+        log "WARNING: could not read systemd watchdog timeout; continuing without build extension"
+        return 0
+    fi
+    if ! original_us="$(python3 "$WATCHDOG_DECIDER" parse "$current_display" 2>&1)"; then
+        log "WARNING: could not parse systemd watchdog timeout '$current_display': $original_us"
+        return 0
+    fi
+    if ! target_us="$(python3 "$WATCHDOG_DECIDER" target "$current_display" "$WATCHDOG_BUILD_TIMEOUT_US" 2>&1)"; then
+        log "WARNING: could not choose a systemd watchdog build timeout: $target_us"
+        return 0
+    fi
+    if [ "$original_us" = "0" ]; then
+        log "systemd watchdog is disabled; leaving it disabled during the build"
+        return 0
+    fi
+    if [ "$target_us" = "$original_us" ]; then
+        log "systemd watchdog timeout already protects the build (${original_us}us); leaving it unchanged"
+        return 0
+    fi
+    if [ ! -x "$WATCHDOG_HELPER" ]; then
+        log "WARNING: $WATCHDOG_HELPER is unavailable; continuing without watchdog extension"
+        return 0
+    fi
+    if ! printf '%s\n' "$target_us" > "$WATCHDOG_TARGET_FILE"; then
+        log "WARNING: could not write watchdog target; continuing without watchdog extension"
+        return 0
+    fi
+
+    # Arm restoration before sudo: if a signal arrives after busctl applies the
+    # target but before sudo returns, the EXIT trap still restores the original.
+    WATCHDOG_ORIGINAL_US="$original_us"
+    WATCHDOG_RESTORE_NEEDED="true"
+    trap restore_watchdog EXIT
+    if sudo -n "$WATCHDOG_HELPER"; then
+        log "Extended systemd watchdog timeout from ${original_us}us to ${target_us}us for the update build"
+    else
+        log "WARNING: sudo could not extend the systemd watchdog timeout; continuing the update"
+    fi
 }
 
 dirty_files() {
@@ -406,6 +490,7 @@ on_unexpected_error() {
 trap on_unexpected_error ERR
 
 load_request
+load_predecessor_status
 write_status "preflight" "Validating repositories, disk, watchdog ownership, and database backup"
 check_cancel
 check_update_dir
@@ -435,6 +520,7 @@ BACKEND_TARGET="$(git -C "$BACKEND_DIR" rev-parse HEAD)"
 CEREBRA_TARGET="$(git -C "$CEREBRA_DIR" rev-parse HEAD)"
 
 check_cancel
+extend_watchdog_for_build
 write_status "building" "Building and recreating backend and cerebra containers"
 if [ "$FREE_KIB" -lt "$PRUNE_BELOW_KIB" ]; then
     log "Disk space is below prune threshold; pruning Docker build cache"

@@ -82,6 +82,31 @@ function setup_docker_cleaner_service() {
     print SUCCESS "Docker container cleanup service installed and started"
 }
 
+function setup_update_watchdog_helper() {
+    print INFO "Setting up update watchdog helper"
+    sudo install -o root -g root -m 0755 \
+      "$BACKEND_DIR/setup/setup_files/pib-update-watchdog.sh" \
+      /usr/local/sbin/pib-update-watchdog || return 1
+
+    local sudoers_temp
+    sudoers_temp="$(mktemp)" || return 1
+    printf '%s\n' \
+      'pib ALL=(root) NOPASSWD: /usr/local/sbin/pib-update-watchdog' \
+      > "$sudoers_temp"
+    if ! sudo visudo -c -f "$sudoers_temp"; then
+        rm -f "$sudoers_temp"
+        print ERROR "invalid sudoers rule for update watchdog helper"
+        return 1
+    fi
+    if ! sudo install -o root -g root -m 0440 \
+      "$sudoers_temp" /etc/sudoers.d/pib-update-watchdog; then
+        rm -f "$sudoers_temp"
+        return 1
+    fi
+    rm -f "$sudoers_temp"
+    print SUCCESS "Update watchdog helper installed"
+}
+
 function setup_update_service() {
     print INFO "Setting up host-side update service"
     # setgid (2770) so files created by the root flask container inherit the pib
@@ -155,5 +180,6 @@ sudo usermod -aG docker pib || { print ERROR "failed to add user 'pib' to docker
 verify_vendored_blockly || print ERROR "failed to verify vendored pib-blockly sources"
 start_container || print ERROR "failed to start containers"
 setup_docker_cleaner_service || print ERROR "failed to setup docker cleaner service"
+setup_update_watchdog_helper || print ERROR "failed to setup update watchdog helper"
 setup_update_service || print ERROR "failed to setup host-side update service"
 sudo chmod 777 "$BACKEND_DIR/pib_api/flask/pibdata.db"
