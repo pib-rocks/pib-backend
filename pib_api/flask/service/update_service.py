@@ -16,8 +16,10 @@ from uuid import uuid4
 
 DEFAULT_UPDATE_DIR = "/app/.update"
 SERVICE_MARKER_NAME = "service.json"
+UPDATE_CHECK_MARKER_FIELD = "updateCheck"
 CONFIRMATION_TOKEN = "UPDATE"
 ALLOWED_CHANNELS = frozenset({"release", "develop"})
+UPDATE_REPOSITORIES = ("pib-backend", "cerebra")
 
 RUNNER_STATES = (
     "preflight",
@@ -112,6 +114,30 @@ def build_request(
     }
 
 
+def build_check_request(
+    *,
+    channel: Any = "release",
+    actor: Any,
+    requested_at: str | None = None,
+) -> dict[str, Any]:
+    """Build a validated side-effect-free availability check request."""
+    if channel not in ALLOWED_CHANNELS:
+        raise UpdateValidationError(
+            "channel must be one of: " + ", ".join(sorted(ALLOWED_CHANNELS))
+        )
+    if not isinstance(actor, str) or not actor.strip():
+        raise UpdateValidationError("actor must be a non-empty string")
+    requested_at = requested_at or datetime.now(timezone.utc).isoformat()
+    if not isinstance(requested_at, str) or not requested_at.strip():
+        raise UpdateValidationError("timestamp must be a non-empty string")
+    return {
+        "schemaVersion": 1,
+        "actor": actor.strip(),
+        "channel": channel,
+        "requestedAt": requested_at,
+    }
+
+
 def classify_state(
     status: Mapping[str, Any] | None, request_pending: bool = False
 ) -> str:
@@ -202,6 +228,13 @@ def has_service_marker(directory: Path | None = None) -> bool:
     return (directory / SERVICE_MARKER_NAME).is_file()
 
 
+def has_update_check_runner(directory: Path | None = None) -> bool:
+    """True when the installer marker advertises the separate check runner."""
+    directory = directory or update_directory()
+    marker = _read_json(directory / SERVICE_MARKER_NAME)
+    return bool(marker and marker.get(UPDATE_CHECK_MARKER_FIELD) is True)
+
+
 def get_status(directory: Path | None = None) -> dict[str, Any]:
     directory = directory or update_directory()
     if not directory.is_dir():
@@ -257,6 +290,60 @@ def enqueue_update(
     (directory / "status.json").unlink(missing_ok=True)
     atomic_write_json(directory / "request.json", request_document)
     return get_status(directory)
+
+
+def _require_update_check_runner(directory: Path) -> None:
+    status = get_status(directory)
+    if status["state"] in {"not_installed", "runner_missing"}:
+        raise UpdateNotInstalledError(status["error"], state=status["state"])
+    if not has_update_check_runner(directory):
+        raise UpdateNotInstalledError(
+            "The host update availability runner is not installed; run the update "
+            "setup step (setup/installation_scripts/docker_install.sh)",
+            state="runner_missing",
+        )
+
+
+def enqueue_check(
+    request_document: Mapping[str, Any], directory: Path | None = None
+) -> dict[str, Any]:
+    """Atomically queue a side-effect-free update availability check."""
+    directory = directory or update_directory()
+    _require_update_check_runner(directory)
+    status = get_status(directory)
+    if is_active(status, status.get("requestPending", False)):
+        raise UpdateConflictError(status)
+    atomic_write_json(directory / "check.json", request_document)
+    return dict(request_document)
+
+
+def _unknown_availability() -> dict[str, Any]:
+    return {
+        "schemaVersion": 1,
+        "checkedAt": None,
+        "repositories": {
+            repository: {
+                "installed": "unknown",
+                "target": "unknown",
+                "updateAvailable": "unknown",
+            }
+            for repository in UPDATE_REPOSITORIES
+        },
+    }
+
+
+def get_available(directory: Path | None = None) -> dict[str, Any]:
+    """Read the last check result, or return a normal unknown initial state."""
+    directory = directory or update_directory()
+    _require_update_check_runner(directory)
+    document = _read_json(directory / "available.json")
+    if document is None:
+        return _unknown_availability()
+    if document.get("state") == "failed":
+        response = _unknown_availability()
+        response["error"] = document.get("error", "Cannot read available.json")
+        return response
+    return document
 
 
 def request_cancel(directory: Path | None = None) -> dict[str, Any]:

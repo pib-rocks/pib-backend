@@ -119,6 +119,12 @@ function setup_update_service() {
     sudo install -o root -g root -m 0644 \
       "$BACKEND_DIR/setup/setup_files/pib-update.path" \
       /etc/systemd/system/pib-update.path
+    sudo install -o root -g root -m 0644 \
+      "$BACKEND_DIR/setup/setup_files/pib-update-check.service" \
+      /etc/systemd/system/pib-update-check.service
+    sudo install -o root -g root -m 0644 \
+      "$BACKEND_DIR/setup/setup_files/pib-update-check.path" \
+      /etc/systemd/system/pib-update-check.path
     # The runner's executable bit lives in git (mode 100755). Do NOT chmod it
     # here: the runner resets the checkout to the remote revision on every
     # update, so a locally granted bit would be a permanent dirty file that
@@ -131,9 +137,17 @@ function setup_update_service() {
         print ERROR "failed to enable pib-update.path: ${enable_output}"
         return 1
     fi
+    if ! enable_output=$(sudo systemctl enable pib-update-check.path 2>&1); then
+        print ERROR "failed to enable pib-update-check.path: ${enable_output}"
+        return 1
+    fi
     local start_output
     if ! start_output=$(sudo systemctl start pib-update.path 2>&1); then
         print ERROR "failed to start pib-update.path: ${start_output}"
+        return 1
+    fi
+    if ! start_output=$(sudo systemctl start pib-update-check.path 2>&1); then
+        print ERROR "failed to start pib-update-check.path: ${start_output}"
         return 1
     fi
     # Marker the backend checks: without it the API reports runner_missing and
@@ -141,7 +155,7 @@ function setup_update_service() {
     # a missing host directory on its own - a bare directory is not a runner.
     local marker
     marker="$(mktemp)"
-    printf '{"schemaVersion":1,"installedAt":"%s","runner":"%s"}\n' \
+    printf '{"schemaVersion":1,"installedAt":"%s","runner":"%s","updateCheck":true}\n' \
         "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
         "$BACKEND_DIR/setup/update_runner.sh" > "$marker"
     sudo install -o pib -g pib -m 0664 "$marker" /home/pib/app/.update/service.json
