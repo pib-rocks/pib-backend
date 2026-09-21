@@ -2219,6 +2219,10 @@ class CameraNode(Node):
         box_size = max(width, height)
         if box_size <= 0.0:
             raise ValueError("palm detection has an empty box")
+        try:
+            palm_score = float(first.score)
+        except (AttributeError, TypeError, ValueError):
+            palm_score = float("nan")
         if abs(rotation) < 1e-6:
             # The reference computes the rotation from the wrist and middle-finger
             # anchors; the parser may leave the rect axis aligned.
@@ -2237,7 +2241,7 @@ class CameraNode(Node):
         # letterboxed to the landmark input, so the region is a little larger.
         roi_size = box_size * (1.0 + 2.0 * float(IMITATION_PALM_PADDING))
         return PalmRegion(
-            score=0.0,
+            score=palm_score,
             box_x=center_x - 0.5 * box_size * math.cos(rotation),
             box_y=center_y - 0.5 * box_size * math.sin(rotation),
             box_size=box_size,
@@ -2278,15 +2282,14 @@ class CameraNode(Node):
             roi_size=box_size,
             rotation=0.0,
         )
-        handedness = 0.0
-        try:
-            handedness_values = self._nn_layer(
-                landmark_packet, LANDMARK_HANDEDNESS_LAYER
+        # Same reader the three-blob chain uses: it reshapes the head and returns
+        # NaN when the blob exposes no usable handedness, where reading values[0]
+        # by hand failed on the head's shape and silently published 0.0.
+        handedness = float(self._hand_landmark_handedness(landmark_packet))
+        if not math.isfinite(handedness):
+            self._warn_hand_once(
+                "hand_mp: landmark packet carries no usable handedness head"
             )
-            if handedness_values is not None and len(handedness_values):
-                handedness = float(handedness_values[0])
-        except Exception:
-            handedness = 0.0
         return self._hand_detection_message(
             enclosing,
             [(float(p[0]), float(p[1])) for p in mapped],
