@@ -2813,10 +2813,29 @@ class CameraNode(Node):
                 return False
             self._pending_imitation_packet = packet
         if "emotion_recognition_crop" in requested_ids:
-            packet = self._wait_for_queue_packet(self.face_crop_result_queue, timeout)
+            # The classifier can only answer once a face sits inside a crop, so waiting
+            # for its result would make the model unstartable in an empty room. The
+            # detector stage is what proves the chain is up; the classifier stage is
+            # proven by the first face that appears.
+            packet = self._wait_for_queue_packet(
+                self.face_crop_detection_queue, timeout
+            )
             if packet is None:
+                self.get_logger().error(
+                    "emotion_recognition_crop chain started but its detector "
+                    "produced nothing"
+                )
                 return False
-            self._pending_face_crop_packet = packet
+            # Consumed, not stashed: the pairing code expects a classifier result in
+            # _pending_face_crop_packet, and the detector stream runs at ~29 Hz.
+            if self.face_crop_result_queue is not None and (
+                self.face_crop_result_queue.tryGet() is None
+            ):
+                self.get_logger().warning(
+                    "Face-crop chain is running (detector answering) but no face is "
+                    "in view yet: the classifier stage is proven by the first "
+                    "detected face."
+                )
         if "hand_tracking_mp" in requested_ids:
             # The chain is only really running when the landmark stage answers;
             # waiting on the palm branch alone would accept a chain whose crops

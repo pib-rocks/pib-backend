@@ -2626,7 +2626,7 @@ class TestFaceCropPipeline(unittest.TestCase):
         node._publish_face_crop_detection.assert_called_once_with(result, face)
         self.assertEqual(node.face_crop_pairs, {})
 
-    def test_verification_preserves_first_classifier_packet(self):
+    def _crop_node(self):
         node = self._node()
         node._pipeline_models = [
             types.SimpleNamespace(
@@ -2635,19 +2635,43 @@ class TestFaceCropPipeline(unittest.TestCase):
         ]
         node.face_crop_detection_queue = MagicMock()
         node.face_crop_result_queue = MagicMock()
+        node.face_crop_result_queue.tryGet.return_value = None
         node.nn_queues = {}
-        colour = object()
-        result = object()
-        node._wait_for_color_frame = MagicMock(return_value=colour)
-        node._wait_for_queue_packet = MagicMock(return_value=result)
+        node._wait_for_color_frame = MagicMock(return_value=object())
+        node.get_logger = MagicMock()
+        return node
+
+    def test_verification_accepts_detector_stage_without_a_face(self):
+        """A chain with nobody in front of the camera must still start."""
+        node = self._crop_node()
+        detection = object()
+        node._wait_for_queue_packet = MagicMock(return_value=detection)
 
         self.assertTrue(node._verify_model_frames(3.0))
 
-        self.assertIs(node._pending_color_packet, colour)
-        self.assertIs(node._pending_face_crop_packet, result)
         node._wait_for_queue_packet.assert_called_once_with(
-            node.face_crop_result_queue, 3.0
+            node.face_crop_detection_queue, 3.0
         )
+        # A detector packet is consumed, never stashed as the pending classifier
+        # result: the pairing code would misread it.
+        self.assertIsNone(node._pending_face_crop_packet)
+        node.get_logger().warning.assert_called_once()
+        node.get_logger().error.assert_not_called()
+
+    def test_verification_uses_the_classifier_result_when_a_face_is_present(self):
+        node = self._crop_node()
+        node.face_crop_result_queue.tryGet.return_value = None
+        node._wait_for_queue_packet = MagicMock(return_value=object())
+
+        self.assertTrue(node._verify_model_frames(3.0))
+        node.get_logger().warning.assert_called_once()
+
+    def test_verification_fails_when_the_detector_stays_silent(self):
+        node = self._crop_node()
+        node._wait_for_queue_packet = MagicMock(return_value=None)
+
+        self.assertFalse(node._verify_model_frames(3.0))
+        node.get_logger().error.assert_called_once()
 
 
 if __name__ == "__main__":
