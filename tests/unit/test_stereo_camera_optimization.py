@@ -2560,6 +2560,8 @@ class TestFaceCropPipeline(unittest.TestCase):
             detections_input=parser.out,
             padding=0.1,
             target_size=(64, 64),
+            square_in_pixels=True,
+            source_size=(1152, 648),
         )
         cropper.fromManipConfigs.assert_called_once_with(
             inputManipConfigs=processor.config_output,
