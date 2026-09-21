@@ -67,6 +67,7 @@ models:
   publish_topic: detections/hand_tracking
 - model_id: face_detection_yunet_160x120
   task: face_detection
+  publish_topic: detections/face_detection_yunet_160x120
   source_upstream: luxonis/depthai-model-zoo (ShiqiYu/libfacedetection YuNet)
   source_url: https://github.com/luxonis/depthai-model-zoo/raw/main/models/face_detection_yunet_160x120/face_detection_yunet_160x120.xml
   licence: BSD License; https://github.com/ShiqiYu/libfacedetection/blob/master/LICENSE

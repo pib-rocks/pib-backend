@@ -170,8 +170,10 @@ class TestModelRegistry(unittest.TestCase):
             store_path = Path(store)
             (store_path / "demo").mkdir()
             (store_path / "demo/demo.blob").write_bytes(b"blob")
+            manifest = _manifest()
+            manifest["models"][0]["publish_topic"] = "detections/demo"
             (store_path / "manifest.yaml").write_text(
-                yaml.safe_dump(_manifest()), encoding="utf-8"
+                yaml.safe_dump(manifest), encoding="utf-8"
             )
 
             registry = ModelRegistry(store_path)
@@ -183,6 +185,7 @@ class TestModelRegistry(unittest.TestCase):
             self.assertEqual(model.shaves, 4)
             self.assertEqual(model.size_bytes, 4)
             self.assertEqual(model.blob_path, str(store_path / "demo/demo.blob"))
+            self.assertEqual(model.publish_topic, "detections/demo")
             self.assertTrue(model.available)
 
     def test_non_functional_model_stays_listed_with_reason(self):

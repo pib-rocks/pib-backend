@@ -121,6 +121,7 @@ class ModelRegistry:
                     selectable=bool(entry.get("selectable", True)),
                     input_width=int(entry["input_width"]),
                     input_height=int(entry["input_height"]),
+                    publish_topic=str(entry.get("publish_topic", "")),
                 )
 
             for entry in composite_entries:
