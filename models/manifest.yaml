@@ -126,6 +126,7 @@ models:
   publish_topic: detections/facemesh_crop
   selectable: true
 - model_id: facial_landmarks_68_160x160
+  selectable: false
   task: facial_landmarks
   source_upstream: luxonis/depthai-model-zoo (610265158/face_landmark, PINTO_model_zoo 043)
   source_url: https://github.com/luxonis/depthai-model-zoo/raw/main/models/facial_landmarks_68_160x160/facial_landmarks_68_160x160.xml
@@ -140,6 +141,14 @@ models:
   openvino_version: '2021.4'
   zoo_type: depthai
   notes: 68 facial landmarks, HRNetV2, IR input 'images' 3x160x160. OpenVINO 2022.1 compile_tool fails (duplicate friendly name VariadicSplit_949); artefact was compiled with version=2021.4. BGR [0-255], '-ip U8'.
+- model_id: facial_landmarks_68_crop
+  task: facial_landmarks
+  composite: true
+  artifacts:
+  - face_detection_yunet_160x120
+  - facial_landmarks_68_160x160
+  publish_topic: detections/facial_landmarks_68_crop
+  selectable: true
 - model_id: face-recognition-arcface-112x112
   task: face_recognition
   source_upstream: luxonis/depthai-model-zoo (deepinsight/insightface MobileFaceNet+ArcFace)

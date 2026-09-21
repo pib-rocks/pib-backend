@@ -8,12 +8,15 @@ import pytest
 
 from ros_packages.camera.oak_d_lite.face_crop import (
     EMOTION_LABELS,
+    FACIAL_LANDMARKS_68_COUNT,
+    FACIAL_LANDMARKS_68_OUTPUT_LAYER,
     FACEMESH_LANDMARK_COUNT,
     face_crop_classifier_id,
     packet_timestamp,
     emotion_probabilities,
     softmax,
     translate_emotion,
+    translate_facial_landmarks_68,
     translate_facemesh,
     translate_head_pose,
 )
@@ -213,6 +216,91 @@ def test_facemesh_keeps_already_normalized_z(monkeypatch):
     assert detection.keypoint_z[0] == pytest.approx(-0.5)
 
 
+def test_facial_landmarks_68_maps_named_pixel_xy_output(monkeypatch):
+    class Detection:
+        pass
+
+    datatypes = types.ModuleType("datatypes")
+    datatypes_msg = types.ModuleType("datatypes.msg")
+    datatypes_msg.Detection = Detection
+    datatypes.msg = datatypes_msg
+    monkeypatch.setitem(sys.modules, "datatypes", datatypes)
+    monkeypatch.setitem(sys.modules, "datatypes.msg", datatypes_msg)
+
+    values = np.tile([80.0, 80.0], (FACIAL_LANDMARKS_68_COUNT, 1))
+    values[0] = [0.0, 0.0]
+    values[-1] = [160.0, 160.0]
+
+    def tensor(name):
+        assert name == FACIAL_LANDMARKS_68_OUTPUT_LAYER
+        return values.reshape(-1)
+
+    detection = translate_facial_landmarks_68(
+        types.SimpleNamespace(getTensor=tensor),
+        _face(),
+        1280,
+        720,
+    )
+
+    assert detection.label == "Face"
+    assert detection.score == 1.0
+    assert (detection.x_min, detection.y_min) == (512, 144)
+    assert (detection.x_max, detection.y_max) == (768, 432)
+    assert len(detection.keypoint_names) == FACIAL_LANDMARKS_68_COUNT
+    assert detection.keypoint_names[:2] == ["landmark_0", "landmark_1"]
+    assert detection.keypoint_names[-1] == "landmark_67"
+    assert detection.keypoint_x[0] == pytest.approx(467.2)
+    assert detection.keypoint_y[0] == pytest.approx(115.2)
+    assert detection.keypoint_x[1] == pytest.approx(640.0)
+    assert detection.keypoint_y[1] == pytest.approx(288.0)
+    assert detection.keypoint_x[-1] == pytest.approx(812.8)
+    assert detection.keypoint_y[-1] == pytest.approx(460.8)
+    assert detection.keypoint_z == []
+    assert detection.scalar_names == []
+    assert detection.scalar_values == []
+
+
+def test_facial_landmarks_68_maps_normalized_xy_output(monkeypatch):
+    class Detection:
+        pass
+
+    datatypes = types.ModuleType("datatypes")
+    datatypes_msg = types.ModuleType("datatypes.msg")
+    datatypes_msg.Detection = Detection
+    datatypes.msg = datatypes_msg
+    monkeypatch.setitem(sys.modules, "datatypes", datatypes)
+    monkeypatch.setitem(sys.modules, "datatypes.msg", datatypes_msg)
+
+    values = np.tile([0.25, 0.75], (FACIAL_LANDMARKS_68_COUNT, 1))
+    packet = types.SimpleNamespace(
+        getTensor=lambda name: values.reshape(-1),
+    )
+
+    detection = translate_facial_landmarks_68(packet, _face(), 1280, 720)
+
+    assert detection.keypoint_x[0] == pytest.approx(553.6)
+    assert detection.keypoint_y[0] == pytest.approx(374.4)
+
+
+def test_facial_landmarks_68_requires_the_named_136_value_output(monkeypatch):
+    datatypes = types.ModuleType("datatypes")
+    datatypes_msg = types.ModuleType("datatypes.msg")
+    datatypes_msg.Detection = type("Detection", (), {})
+    datatypes.msg = datatypes_msg
+    monkeypatch.setitem(sys.modules, "datatypes", datatypes)
+    monkeypatch.setitem(sys.modules, "datatypes.msg", datatypes_msg)
+
+    missing = types.SimpleNamespace(
+        getTensor=lambda name: (_ for _ in ()).throw(KeyError(name))
+    )
+    with pytest.raises(ValueError, match="Split.0"):
+        translate_facial_landmarks_68(missing, _face(), 1280, 720)
+
+    wrong_size = types.SimpleNamespace(getTensor=lambda name: np.zeros(135))
+    with pytest.raises(ValueError, match="136"):
+        translate_facial_landmarks_68(wrong_size, _face(), 1280, 720)
+
+
 def test_face_crop_classifier_is_derived_and_unknown_models_fail_loudly():
     assert (
         face_crop_classifier_id(("face_detection_yunet_160x120", "facemesh_192x192"))
@@ -226,6 +314,15 @@ def test_face_crop_classifier_is_derived_and_unknown_models_fail_loudly():
             )
         )
         == "head-pose-estimation-adas-0001"
+    )
+    assert (
+        face_crop_classifier_id(
+            (
+                "face_detection_yunet_160x120",
+                "facial_landmarks_68_160x160",
+            )
+        )
+        == "facial_landmarks_68_160x160"
     )
     with pytest.raises(ValueError, match="unsupported"):
         face_crop_classifier_id(("face_detection_yunet_160x120", "future_model"))

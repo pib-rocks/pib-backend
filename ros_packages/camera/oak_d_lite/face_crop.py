@@ -9,6 +9,9 @@ EMOTION_OUTPUT_LAYER = "prob_emotion"
 FACEMESH_INPUT_SIZE = 192
 FACEMESH_LANDMARK_COUNT = 468
 FACEMESH_OUTPUT_LAYER = "conv2d_210"
+FACIAL_LANDMARKS_68_INPUT_SIZE = 160
+FACIAL_LANDMARKS_68_COUNT = 68
+FACIAL_LANDMARKS_68_OUTPUT_LAYER = "StatefulPartitionedCall/strided_slice_2/Split.0"
 FACE_DETECTOR_MODEL_ID = "face_detection_yunet_160x120"
 FACE_CROP_PADDING = 0.1
 HEAD_POSE_OUTPUTS = (
@@ -293,8 +296,85 @@ def translate_facemesh(
     return detection
 
 
+def translate_facial_landmarks_68(packet, face, frame_width, frame_height):
+    """Map the named 68-point XY output from crop space to the camera frame."""
+    from datatypes.msg import Detection
+
+    from .hand_tracking import PalmRegion, map_crop_points_to_frame
+
+    try:
+        values = packet.getTensor(FACIAL_LANDMARKS_68_OUTPUT_LAYER)
+    except (KeyError, RuntimeError) as error:
+        raise ValueError(
+            "facial-landmarks output is missing required layer "
+            f"{FACIAL_LANDMARKS_68_OUTPUT_LAYER}"
+        ) from error
+    values = np.asarray(values, dtype=np.float64)
+    expected_values = FACIAL_LANDMARKS_68_COUNT * 2
+    if values.size != expected_values:
+        raise ValueError(
+            f"facial-landmarks output has {values.size} values, expected "
+            f"{expected_values}"
+        )
+    values = values.reshape(FACIAL_LANDMARKS_68_COUNT, 2)
+    if not np.all(np.isfinite(values)):
+        raise ValueError("facial-landmarks output contains a non-finite value")
+
+    box = face.getBoundingBox()
+    frame_w = float(frame_width)
+    frame_h = float(frame_height)
+    side_px = max(float(box.size.width) * frame_w, float(box.size.height) * frame_h) * (
+        1.0 + 2.0 * FACE_CROP_PADDING
+    )
+    size_x = side_px / frame_w
+    size_y = side_px / frame_h
+    region = PalmRegion(
+        score=1.0,
+        box_x=0.0,
+        box_y=0.0,
+        box_size=size_x,
+        roi_x=float(box.center.x),
+        roi_y=float(box.center.y),
+        roi_size=size_x,
+        rotation=0.0,
+    )
+    xy_peak = float(np.max(np.abs(values)))
+    crop_values = np.array(values, copy=True)
+    if xy_peak <= 2.0:
+        crop_values *= float(FACIAL_LANDMARKS_68_INPUT_SIZE)
+    half = float(FACIAL_LANDMARKS_68_INPUT_SIZE) / 2.0
+    crop_values[:, 1] = half + (crop_values[:, 1] - half) * (size_y / size_x)
+    mapped = map_crop_points_to_frame(
+        crop_values,
+        region,
+        frame_width,
+        frame_height,
+        FACIAL_LANDMARKS_68_INPUT_SIZE,
+    )
+
+    detection = Detection()
+    detection.label = "Face"
+    detection.score = 1.0
+    (
+        detection.x_min,
+        detection.y_min,
+        detection.x_max,
+        detection.y_max,
+    ) = _face_box_pixels(face, frame_width, frame_height)
+    detection.keypoint_names = [
+        f"landmark_{index}" for index in range(FACIAL_LANDMARKS_68_COUNT)
+    ]
+    detection.keypoint_x = [float(point[0]) for point in mapped]
+    detection.keypoint_y = [float(point[1]) for point in mapped]
+    detection.keypoint_z = []
+    detection.scalar_names = []
+    detection.scalar_values = []
+    return detection
+
+
 FACE_CROP_TRANSLATORS = {
     "emotion_recognition_lfw_64x64": translate_emotion,
+    "facial_landmarks_68_160x160": translate_facial_landmarks_68,
     "facemesh_192x192": translate_facemesh,
     "head-pose-estimation-adas-0001": translate_head_pose,
 }
