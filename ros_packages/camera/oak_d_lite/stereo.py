@@ -61,6 +61,11 @@ from .face_crop import (
     packet_timestamp,
 )
 from .parsed_detections import translate_detections
+from .qr_detection import (
+    QR_MODEL_ID,
+    decode_qr_detections,
+    validate_qr_blob,
+)
 from .task_archives import create_archive, labels_for_model
 from .hand_tracking import (
     HAND_KEYPOINT_NAMES,
@@ -284,6 +289,8 @@ class CameraNode(Node):
         self.stereo_timeout = self._read_stereo_timeout()
         self.hand_startup_grace = self._read_hand_startup_grace()
         self._pending_color_packet = None
+        self._pending_nn_packets = {}
+        self.qr_detector = cv2.QRCodeDetector()
         self.model_registry = ModelRegistry(logger=self.get_logger())
         self.detection_publishers = {
             model.model_id: self.create_publisher(
@@ -933,6 +940,48 @@ class CameraNode(Node):
         message.detections = detections
         self.last_detections[model_id] = message
         publisher = self.detection_publishers.get(model_id)
+        if publisher is not None:
+            publisher.publish(message)
+
+    def _publish_qr_detections(self, packet):
+        if self.current_frame is None:
+            raise ValueError("QR detections cannot be decoded without a cached frame")
+        frame_height, frame_width = self.current_frame.shape[:2]
+        decoded = decode_qr_detections(
+            packet, self.current_frame, detector=self.qr_detector
+        )
+        detections = []
+        for result in decoded:
+            detection = Detection()
+            detection.label = result.text
+            detection.score = result.confidence
+            (
+                detection.x_min,
+                detection.y_min,
+                detection.x_max,
+                detection.y_max,
+            ) = result.box
+            detection.keypoint_names = [
+                "top_left",
+                "top_right",
+                "bottom_right",
+                "bottom_left",
+            ]
+            detection.keypoint_x = [point[0] for point in result.corners]
+            detection.keypoint_y = [point[1] for point in result.corners]
+            detection.keypoint_z = [0.0] * 4
+            detection.scalar_names = []
+            detection.scalar_values = []
+            detections.append(detection)
+
+        message = DetectionArray()
+        message.header.stamp = self.get_clock().now().to_msg()
+        message.model_id = QR_MODEL_ID
+        message.frame_width = frame_width
+        message.frame_height = frame_height
+        message.detections = detections
+        self.last_detections[QR_MODEL_ID] = message
+        publisher = self.detection_publishers.get(QR_MODEL_ID)
         if publisher is not None:
             publisher.publish(message)
 
@@ -1640,6 +1689,7 @@ class CameraNode(Node):
         self._imu_clock_offset = ClockOffsetEstimator()
         self._imu_publish_times = deque(maxlen=IMU_RATE_WINDOW)
         self.nn_queues = {}
+        self._pending_nn_packets = {}
         self.parsed_model_ids = set()
         self._parsed_error_counts = {}
         self.hand_decoder_queue = None
@@ -1693,19 +1743,28 @@ class CameraNode(Node):
                 continue
             self._build_single_network_pipeline(model)
 
-    def _request_camera_branch(self, size):
+    def _request_camera_branch(self, size, frame_type=None):
         """Request a bounded-size colour stream for a model branch."""
-        output = self.camRgb.requestOutput(size, type=dai.ImgFrame.Type.BGR888p)
+        if frame_type is None:
+            frame_type = dai.ImgFrame.Type.BGR888p
+        output = self.camRgb.requestOutput(size, type=frame_type)
         if output is None:
             raise RuntimeError(
-                f"Camera cannot provide a {size[0]}x{size[1]} BGR888p branch output"
+                f"Camera cannot provide a {size[0]}x{size[1]} "
+                f"{frame_type} branch output"
             )
         return output
 
     def _build_single_network_pipeline(self, model):
         """Build a parsed task when registered, preserving the plain fallback."""
         archive = create_archive(model.model_id, model.blob_path)
-        nn_input = self._request_camera_branch((model.input_width, model.input_height))
+        frame_type = dai.ImgFrame.Type.BGR888p
+        if model.model_id == QR_MODEL_ID:
+            validate_qr_blob(dai.OpenVINO.Blob(model.blob_path))
+            frame_type = dai.ImgFrame.Type.GRAY8
+        nn_input = self._request_camera_branch(
+            (model.input_width, model.input_height), frame_type=frame_type
+        )
         if archive is not None:
             neural_network = self.pipeline.create(ParsingNeuralNetwork).build(
                 nn_input, archive
@@ -2618,6 +2677,7 @@ class CameraNode(Node):
             self.imu_queue = None
             self.imu_available = False
             self.nn_queues = {}
+            self._pending_nn_packets = {}
             self.hand_decoder_queue = None
             self.hand_palm_queue = None
             self.hand_roi_queue = None
@@ -2801,6 +2861,14 @@ class CameraNode(Node):
             # two named ones failed verification before a single frame was read,
             # and the caller reported "no frames arrived".
             return False
+        if QR_MODEL_ID in requested_ids:
+            packet = self._wait_for_queue_packet(self.nn_queues[QR_MODEL_ID], timeout)
+            if packet is None:
+                self.get_logger().error(
+                    f"{QR_MODEL_ID} chain started but its detector produced nothing"
+                )
+                return False
+            self._pending_nn_packets[QR_MODEL_ID] = packet
 
         packet = self._wait_for_color_frame(timeout)
         if packet is None:
@@ -3115,11 +3183,20 @@ class CameraNode(Node):
                         self.publisher_.publish(msg)
 
         for model_id, nn_queue in self.nn_queues.items():
+            packet = self._pending_nn_packets.pop(model_id, None)
             for _ in range(32):
-                packet = nn_queue.tryGet()
+                if packet is None:
+                    packet = nn_queue.tryGet()
                 if packet is None:
                     break
-                if model_id in getattr(self, "parsed_model_ids", ()):
+                if model_id == QR_MODEL_ID:
+                    try:
+                        self._publish_qr_detections(packet)
+                    except (AttributeError, TypeError, ValueError) as exc:
+                        self.get_logger().error(
+                            f"QR_DROP type={type(exc).__name__} message={exc}"
+                        )
+                elif model_id in getattr(self, "parsed_model_ids", ()):
                     try:
                         self._publish_parsed_detections(model_id, packet)
                     except (AttributeError, TypeError, ValueError) as exc:
@@ -3131,6 +3208,7 @@ class CameraNode(Node):
                                 f"type={type(exc).__name__} message={exc}"
                             )
                 self.pipeline_manager.record_packet(model_id)
+                packet = None
 
         for stage, queue in (
             ("palm_detector_nn", self.hand_palm_queue),
