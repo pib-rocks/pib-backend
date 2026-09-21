@@ -358,7 +358,27 @@ def map_landmarks_to_frame(
     values = landmarks_in_crop_pixels(tensor, landmark_input_size)
     if values.size == 0:
         return []
+    return map_crop_points_to_frame(
+        values,
+        palm,
+        frame_width,
+        frame_height,
+        landmark_input_size,
+        source_width,
+        source_height,
+    )
 
+
+def map_crop_points_to_frame(
+    values: np.ndarray,
+    palm: PalmRegion,
+    frame_width: int,
+    frame_height: int,
+    landmark_input_size: int,
+    source_width: int = None,
+    source_height: int = None,
+) -> List[Tuple[float, float]]:
+    """Map crop-pixel XYZ points of any count through the shared ROI geometry."""
     normalized = values[:, :2] / float(landmark_input_size)
     cos_rotation = math.cos(palm.rotation)
     sin_rotation = math.sin(palm.rotation)
