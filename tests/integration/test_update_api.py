@@ -7,9 +7,19 @@ def _request(channel="release"):
     return {"channel": channel, "force": False, "confirmation": "UPDATE"}
 
 
-def test_start_status_conflict_log_and_cancel(client, tmp_path, monkeypatch):
+MARKER = '{"schemaVersion":1}'
+
+
+def _installed_update_dir(tmp_path):
+    """A directory as the installer leaves it: present plus its marker."""
     update_dir = tmp_path / "update"
     update_dir.mkdir()
+    (update_dir / "service.json").write_text(MARKER, encoding="utf-8")
+    return update_dir
+
+
+def test_start_status_conflict_log_and_cancel(client, tmp_path, monkeypatch):
+    update_dir = _installed_update_dir(tmp_path)
     (update_dir / "update.log").write_text("first\nsecond\n", encoding="utf-8")
     monkeypatch.setenv("PIB_UPDATE_DIR", str(update_dir))
 
@@ -70,9 +80,24 @@ def test_update_endpoints_report_not_installed(client, tmp_path, monkeypatch):
     assert start.get_json()["state"] == "not_installed"
 
 
-def test_revision_endpoint_preserves_unknown_values(client, tmp_path, monkeypatch):
+def test_update_endpoints_report_runner_missing(client, tmp_path, monkeypatch):
+    """Docker creates the bind-mount point itself, so a bare directory is not a runner."""
     update_dir = tmp_path / "update"
     update_dir.mkdir()
+    monkeypatch.setenv("PIB_UPDATE_DIR", str(update_dir))
+
+    status = client.get("/system/update/status")
+    start = client.post("/system/update", json=_request())
+
+    assert status.status_code == 503
+    assert status.get_json()["state"] == "runner_missing"
+    assert start.status_code == 503
+    assert start.get_json()["state"] == "runner_missing"
+    assert not (update_dir / "request.json").exists()
+
+
+def test_revision_endpoint_preserves_unknown_values(client, tmp_path, monkeypatch):
+    update_dir = _installed_update_dir(tmp_path)
     monkeypatch.setenv("PIB_UPDATE_DIR", str(update_dir))
 
     response = client.get("/system/revision")

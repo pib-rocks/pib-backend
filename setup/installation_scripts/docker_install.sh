@@ -94,7 +94,11 @@ function setup_update_service() {
     sudo install -o root -g root -m 0644 \
       "$BACKEND_DIR/setup/setup_files/pib-update.path" \
       /etc/systemd/system/pib-update.path
-    sudo chmod 0755 "$BACKEND_DIR/setup/update_runner.sh"
+    # The runner's executable bit lives in git (mode 100755). Do NOT chmod it
+    # here: the runner resets the checkout to the remote revision on every
+    # update, so a locally granted bit would be a permanent dirty file that
+    # blocks the next update - and after the reset ExecStart could not execute
+    # the runner at all.
     sudo systemctl daemon-reload
 
     local enable_output
@@ -107,6 +111,16 @@ function setup_update_service() {
         print ERROR "failed to start pib-update.path: ${start_output}"
         return 1
     fi
+    # Marker the backend checks: without it the API reports runner_missing and
+    # refuses to queue an update, because docker creates the bind-mount point for
+    # a missing host directory on its own - a bare directory is not a runner.
+    local marker
+    marker="$(mktemp)"
+    printf '{"schemaVersion":1,"installedAt":"%s","runner":"%s"}\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        "$BACKEND_DIR/setup/update_runner.sh" > "$marker"
+    sudo install -o pib -g pib -m 0664 "$marker" /home/pib/app/.update/service.json
+    rm -f "$marker"
     print SUCCESS "Host-side update service installed and watching for requests"
 }
 

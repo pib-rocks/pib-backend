@@ -171,7 +171,7 @@ def start_update():
     except update_service.UpdateValidationError as error:
         return jsonify({"error": str(error)}), 400
     except update_service.UpdateNotInstalledError as error:
-        return jsonify({"error": str(error), "state": "not_installed"}), 503
+        return jsonify({"error": str(error), "state": error.state}), 503
     except update_service.UpdateConflictError as error:
         return jsonify({"error": str(error), "status": error.status}), 409
 
@@ -192,7 +192,7 @@ def start_update():
 @bp.route("/update/status", methods=["GET"])
 def get_update_status():
     status = update_service.get_status()
-    code = 503 if status["state"] == "not_installed" else 200
+    code = 503 if status["state"] in {"not_installed", "runner_missing"} else 200
     return jsonify(status), code
 
 
@@ -213,7 +213,7 @@ def cancel_update():
     try:
         status = update_service.request_cancel()
     except update_service.UpdateNotInstalledError as error:
-        return jsonify({"error": str(error), "state": "not_installed"}), 503
+        return jsonify({"error": str(error), "state": error.state}), 503
     except update_service.UpdateConflictError as error:
         return jsonify({"error": str(error), "status": error.status}), 409
     return jsonify({"status": status}), 202

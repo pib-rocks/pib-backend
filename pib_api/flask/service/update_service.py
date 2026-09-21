@@ -15,6 +15,7 @@ from typing import Any, Mapping
 from uuid import uuid4
 
 DEFAULT_UPDATE_DIR = "/app/.update"
+SERVICE_MARKER_NAME = "service.json"
 CONFIRMATION_TOKEN = "UPDATE"
 ALLOWED_CHANNELS = frozenset({"release", "develop"})
 
@@ -38,7 +39,16 @@ class UpdateValidationError(ValueError):
 
 
 class UpdateNotInstalledError(RuntimeError):
-    """Raised when the host update service's shared directory is absent."""
+    """Raised when the host update service is absent or not fully installed.
+
+    ``state`` is ``not_installed`` when the shared directory is missing and
+    ``runner_missing`` when the directory exists (docker creates the bind-mount
+    point on its own) but the installer never placed its marker.
+    """
+
+    def __init__(self, message: str, state: str = "not_installed") -> None:
+        super().__init__(message)
+        self.state = state
 
 
 class UpdateConflictError(RuntimeError):
@@ -186,6 +196,12 @@ def _read_json(path: Path) -> dict[str, Any] | None:
     return document
 
 
+def has_service_marker(directory: Path | None = None) -> bool:
+    """True when the installer has placed its marker in the shared directory."""
+    directory = directory or update_directory()
+    return (directory / SERVICE_MARKER_NAME).is_file()
+
+
 def get_status(directory: Path | None = None) -> dict[str, Any]:
     directory = directory or update_directory()
     if not directory.is_dir():
@@ -193,6 +209,17 @@ def get_status(directory: Path | None = None) -> dict[str, Any]:
             "state": "not_installed",
             "classification": "not_installed",
             "error": f"Host update service is not installed at {directory}",
+        }
+    if not has_service_marker(directory):
+        return {
+            "state": "runner_missing",
+            "classification": "runner_missing",
+            "error": (
+                f"{directory} exists but no host runner is installed there "
+                f"(missing {SERVICE_MARKER_NAME}); run the update setup step "
+                "(setup/installation_scripts/docker_install.sh) so that the "
+                "systemd units and the runner are in place"
+            ),
         }
     status = _read_json(directory / "status.json")
     pending = (directory / "request.json").is_file()
@@ -221,11 +248,9 @@ def enqueue_update(
     request_document: Mapping[str, Any], directory: Path | None = None
 ) -> dict[str, Any]:
     directory = directory or update_directory()
-    if not directory.is_dir():
-        raise UpdateNotInstalledError(
-            f"Host update service is not installed at {directory}"
-        )
     status = get_status(directory)
+    if status["state"] in {"not_installed", "runner_missing"}:
+        raise UpdateNotInstalledError(status["error"], state=status["state"])
     if is_active(status, status.get("requestPending", False)):
         raise UpdateConflictError(status)
     (directory / "cancel.json").unlink(missing_ok=True)
@@ -236,11 +261,9 @@ def enqueue_update(
 
 def request_cancel(directory: Path | None = None) -> dict[str, Any]:
     directory = directory or update_directory()
-    if not directory.is_dir():
-        raise UpdateNotInstalledError(
-            f"Host update service is not installed at {directory}"
-        )
     status = get_status(directory)
+    if status["state"] in {"not_installed", "runner_missing"}:
+        raise UpdateNotInstalledError(status["error"], state=status["state"])
     if not is_active(status, status.get("requestPending", False)):
         raise UpdateConflictError(status)
     atomic_write_json(
