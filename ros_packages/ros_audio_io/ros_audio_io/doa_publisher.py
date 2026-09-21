@@ -19,7 +19,7 @@ from ros_audio_io.microphone_parameters import (
     PARAMETER_SPECS,
     PRESETS,
     TUNABLE_PARAMETERS,
-    readback_matches,
+    apply_tuning_values,
     validate_parameter,
 )
 from ros_audio_io.pixel_ring import PixelRing
@@ -129,31 +129,24 @@ class MicrophoneArrayNode(Node):
             }
         )
 
-        readbacks = {}
-        try:
-            for name, value in tuning_updates.items():
-                self.tuning.write(name, value)
-                actual = self.tuning.read(name)
-                readbacks[name] = actual
-                if not readback_matches(value, actual):
-                    self._schedule_parameter_sync({**readbacks, "preset": "Custom"})
-                    reason = f"{name} read-back {actual!r} != requested {value!r}"
-                    self.get_logger().error(reason)
-                    return SetParametersResult(successful=False, reason=reason)
+        readbacks, failure = apply_tuning_values(self.tuning, tuning_updates)
+        if failure is None:
+            try:
+                led_names = set(LED_DEFAULTS).intersection(updates)
+                if led_names:
+                    led_state = {
+                        name: self.get_parameter(name).value for name in LED_DEFAULTS
+                    }
+                    led_state.update({name: updates[name] for name in led_names})
+                    self._apply_led_state(led_state)
+            except Exception as exc:
+                failure = f"LED update failed: {exc}"
 
-            led_names = set(LED_DEFAULTS).intersection(updates)
-            if led_names:
-                led_state = {
-                    name: self.get_parameter(name).value for name in LED_DEFAULTS
-                }
-                led_state.update({name: updates[name] for name in led_names})
-                self._apply_led_state(led_state)
-        except Exception as exc:
+        if failure is not None:
             if readbacks:
                 self._schedule_parameter_sync({**readbacks, "preset": "Custom"})
-            return SetParametersResult(
-                successful=False, reason=f"Device write/read-back failed: {exc}"
-            )
+            self.get_logger().error(failure)
+            return SetParametersResult(successful=False, reason=failure)
 
         if preset is not None and preset != "Custom":
             self._schedule_parameter_sync(readbacks)

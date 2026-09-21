@@ -13,10 +13,48 @@ sys.path.insert(0, str(ROS_AUDIO_PACKAGE))
 
 from ros_audio_io.levels import calculate_levels  # noqa: E402
 from ros_audio_io.microphone_parameters import (  # noqa: E402
+    DEFAULT_READBACK_TOLERANCE,
     PRESETS,
+    TUNABLE_PARAMETERS,
+    apply_tuning_values,
     readback_matches,
+    readback_mismatch_reason,
+    readback_tolerance,
     validate_parameter,
 )
+
+# Read-backs measured on 192.168.1.172 with a ReSpeaker Mic Array v2.0.
+MEASURED_AGCTIME_READBACKS = {
+    0.5: 0.9685218567028642,
+    1.0: 0.9841422392055392,
+}
+
+
+class QuantizingDevice:
+    """Device double that answers writes the way the XVF3000 was measured to."""
+
+    def __init__(self):
+        self.written = {}
+
+    def write(self, name, value):
+        self.written[name] = value
+
+    def read(self, name):
+        value = self.written[name]
+        if name == "AGCTIME":
+            # A KeyError here means a preset asks for an AGCTIME whose
+            # read-back nobody has measured on the device.
+            return MEASURED_AGCTIME_READBACKS[value]
+        return value
+
+
+class BrokenDevice(QuantizingDevice):
+    """Device double whose second write fails, as a USB timeout would."""
+
+    def write(self, name, value):
+        if self.written:
+            raise OSError("usb timeout")
+        super().write(name, value)
 
 
 def test_levels_silence_floor():
@@ -86,5 +124,87 @@ def test_presets_contain_every_tuning_parameter():
 
 
 def test_float_readback_allows_xvf_fixed_point_rounding():
-    assert readback_matches(0.005, 0.00500001)
-    assert not readback_matches(0.005, 0.006)
+    assert readback_matches("AGCDESIREDLEVEL", 0.005, 0.00500001)
+    assert not readback_matches("AGCDESIREDLEVEL", 0.005, 0.006)
+
+
+def test_no_preset_requests_an_agctime_the_device_cannot_hold():
+    for name, values in PRESETS.items():
+        if name == "Custom":
+            continue
+        requested = values["AGCTIME"]
+        assert readback_matches(
+            "AGCTIME", requested, MEASURED_AGCTIME_READBACKS[requested]
+        ), f"{name} requests an AGCTIME the device does not reproduce"
+
+
+def test_agctime_tolerance_covers_the_measured_quantization():
+    assert readback_matches("AGCTIME", 1.0, MEASURED_AGCTIME_READBACKS[1.0])
+    assert not readback_matches("AGCTIME", 0.5, MEASURED_AGCTIME_READBACKS[0.5])
+
+
+def test_tolerance_table_is_relative_and_absolute():
+    assert readback_tolerance("AGCTIME") == (0.02, 1e-8)
+    assert readback_tolerance("AGCMAXGAIN") == DEFAULT_READBACK_TOLERANCE
+    assert readback_tolerance("unlisted") == DEFAULT_READBACK_TOLERANCE
+
+    # Relative branch: 6.3e-6 of 31.6 is far more than the absolute epsilon.
+    assert readback_matches("AGCMAXGAIN", 31.6, 31.6002)
+    assert not readback_matches("AGCMAXGAIN", 31.6, 31.61)
+
+    # Absolute branch: at the bottom of the range the relative tolerance is
+    # 1e-13, so only the absolute epsilon can carry a read-back.
+    assert readback_matches("AGCDESIREDLEVEL", 1e-08, 1.5e-08)
+    assert not readback_matches("AGCDESIREDLEVEL", 1e-08, 3e-08)
+
+
+def test_integer_readback_stays_exact():
+    assert readback_matches("HPFONOFF", 2, 2)
+    assert not readback_matches("HPFONOFF", 2, 1)
+
+
+def test_mismatch_reason_names_parameter_and_both_values():
+    reason = readback_mismatch_reason("AGCTIME", 0.5, MEASURED_AGCTIME_READBACKS[0.5])
+    assert "AGCTIME" in reason
+    assert "0.5" in reason
+    assert "0.9685218567028642" in reason
+    assert "0.02" in reason
+
+    assert readback_mismatch_reason("HPFONOFF", 2, 1) == (
+        "HPFONOFF read-back 1 != requested 2"
+    )
+
+
+@pytest.mark.parametrize("preset", [name for name in PRESETS if name != "Custom"])
+def test_preset_applies_against_a_quantizing_device(preset):
+    device = QuantizingDevice()
+
+    readbacks, failure = apply_tuning_values(device, PRESETS[preset])
+
+    assert failure is None
+    assert set(readbacks) == set(TUNABLE_PARAMETERS)
+    assert device.written["AGCTIME"] == 1.0
+    assert readbacks["AGCTIME"] == MEASURED_AGCTIME_READBACKS[1.0]
+    assert readbacks["HPFONOFF"] == PRESETS[preset]["HPFONOFF"]
+
+
+def test_apply_reports_a_value_outside_its_tolerance():
+    device = QuantizingDevice()
+
+    readbacks, failure = apply_tuning_values(device, {"AGCTIME": 0.5})
+
+    assert readbacks == {"AGCTIME": MEASURED_AGCTIME_READBACKS[0.5]}
+    assert failure == readback_mismatch_reason(
+        "AGCTIME", 0.5, MEASURED_AGCTIME_READBACKS[0.5]
+    )
+
+
+def test_apply_reports_a_failing_device_and_keeps_earlier_readbacks():
+    device = BrokenDevice()
+
+    readbacks, failure = apply_tuning_values(
+        device, {"HPFONOFF": 2, "AGCONOFF": 0, "ECHOONOFF": 1}
+    )
+
+    assert readbacks == {"HPFONOFF": 2}
+    assert failure == "Device write/read-back failed: usb timeout"
