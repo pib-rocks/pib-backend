@@ -72,6 +72,19 @@ models:
   - palm_detection_128x128_decoding
   - hand_landmark_224x224
   publish_topic: detections/hand_tracking
+- model_id: hand_tracking_mp
+  task: hand_tracking
+  composite: true
+  artifacts:
+  # The Luxonis hand-pose reference shape (oak-examples hand-pose): the palm
+  # detector is parsed on the host, so no decoding blob is needed at all, the crop
+  # runs through the device-side FrameCropper, and the landmarker is read as a
+  # plain network - depthai-nodes' KeypointParser would clip the hand-relative z
+  # into 0..1. Shave budget 4 + 4, one shave less than the three-blob set.
+  - palm_detection_128x128
+  - hand_landmark_224x224
+  publish_topic: detections/hand_tracking
+  selectable: true
 - model_id: face_detection_yunet_160x120
   task: face_detection
   source_upstream: luxonis/depthai-model-zoo (ShiqiYu/libfacedetection YuNet)

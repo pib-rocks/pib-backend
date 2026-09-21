@@ -67,6 +67,7 @@ from .hand_tracking import (
     landmarks_in_crop_pixels,
     map_landmarks_to_frame,
     relative_landmark_z,
+    PalmRegion,
 )
 
 # Downscaled resolution for Haar cascade face detection (maps back to full frame).
@@ -93,6 +94,18 @@ IMITATION_FPS = 8
 # scale, so that error cannot occur by construction.
 IMITATION_SOURCE_WIDTH = 1152
 IMITATION_SOURCE_HEIGHT = 648
+# The Luxonis hand-pose reference pipeline (PR-1791): palm detector, device-side
+# FrameCropper and hand landmarker, timestamp-matched. Same rate limit the example
+# uses on RVC2. The branch keeps the 16:9 field of view so the neural branch and
+# the published frame agree.
+HAND_MP_FPS = 8
+HAND_MP_SOURCE_WIDTH = 1152
+HAND_MP_SOURCE_HEIGHT = 648
+# How many palm detections are buffered while their landmark results arrive.
+HAND_MP_PAIR_WINDOW = 32
+# Unpaired entries older than this are dropped so the buffer cannot grow.
+MAX_HAND_MP_BUFFER = 64
+
 # Device-side queues on the camera branches stay shallow and non-blocking.  The
 # host drains them from the 10 Hz timer, far below the camera frame rate, and a
 # blocking queue back-pressures the Camera node and stalls every other branch
@@ -266,8 +279,12 @@ class CameraNode(Node):
         self._pending_hands = deque()
         self._hand_warnings = set()
         self.imitation_queue = None
+        self.hand_mp_pairs = {}
         self._pending_imitation_packet = None
         self.imitation_source_size = (0, 0)
+        self.hand_mp_detection_queue = None
+        self.hand_mp_landmark_queue = None
+        self.hand_mp_source_size = (0, 0)
         self._pipeline_lock = threading.RLock()
         self._reset_hand_stage_counters()
         self._reset_imitation_stage_counters()
@@ -822,6 +839,20 @@ class CameraNode(Node):
             publisher.publish(message)
         self._count_imitation_stage("publish")
         self.pipeline_manager.record_packet("imitation")
+
+    def _publish_hand_mp_detections(self, frame_width, frame_height, detections):
+        message = DetectionArray()
+        message.header.stamp = self.get_clock().now().to_msg()
+        message.model_id = "hand_tracking_mp"
+        message.frame_width = frame_width
+        message.frame_height = frame_height
+        message.detections = detections
+        self.last_detections["hand_tracking_mp"] = message
+        publisher = self.detection_publishers.get("hand_tracking_mp")
+        if publisher is not None:
+            publisher.publish(message)
+        self._count_hand_stage("publish")
+        self.pipeline_manager.record_packet("hand_tracking_mp")
 
     def _consume_imitation_packet(self, packet):
         frame_height, frame_width = self.current_frame.shape[:2]
@@ -1536,8 +1567,12 @@ class CameraNode(Node):
         self.hand_source_size = (0, 0)
         self._pending_hand_decoder_packet = None
         self.imitation_queue = None
+        self.hand_mp_pairs = {}
         self._pending_imitation_packet = None
         self.imitation_source_size = (0, 0)
+        self.hand_mp_detection_queue = None
+        self.hand_mp_landmark_queue = None
+        self.hand_mp_source_size = (0, 0)
         if hasattr(self, "_pending_hands"):
             self._pending_hands.clear()
         else:
@@ -1552,6 +1587,9 @@ class CameraNode(Node):
             model = active_model.model
             if model.model_id == "hand_tracking":
                 self._build_hand_pipeline(model)
+                continue
+            if model.model_id == "hand_tracking_mp":
+                self._build_hand_mp_pipeline(model)
                 continue
             if model.model_id == "imitation":
                 self._build_imitation_pipeline(model)
@@ -1697,6 +1735,15 @@ class CameraNode(Node):
                 "publish",
             )
         )
+
+    def _hand_mp_chain_is_built(self):
+        requested = any(
+            active.model.model_id == "hand_tracking_mp"
+            for active in getattr(self, "_pipeline_models", ())
+        )
+        if not requested:
+            return False
+        return getattr(self, "hand_mp_landmark_queue", None) is not None
 
     def _imitation_chain_is_built(self):
         requested = any(
@@ -1934,6 +1981,292 @@ class CameraNode(Node):
         )
         self.imitation_source_size = (detector_width, detector_height)
 
+    def _build_hand_mp_pipeline(self, composite):
+        """Add the Luxonis hand-pose reference pipeline (PR-1791).
+
+        Palm detector through a parsing network (the anchors are decoded host-side,
+        so no decoding blob is needed), a host node that turns every palm detection
+        into a timestamped crop config, the device-side FrameCropper, and the hand
+        landmarker. The landmark stage deliberately runs as a plain NeuralNetwork
+        rather than through the parsing network: depthai-nodes' KeypointParser clips
+        the landmark components into 0..1, and the third component is the
+        hand-relative depth this chain has to publish.
+        """
+        artifact_ids = set(composite.artifact_ids)
+        required = {"palm_detection_128x128", "hand_landmark_224x224"}
+        if not required.issubset(artifact_ids):
+            raise ValueError(
+                "hand_tracking_mp composite is missing its palm detector or landmarker"
+            )
+        palm = self.model_registry.get("palm_detection_128x128")
+        landmark = self.model_registry.get("hand_landmark_224x224")
+        detection_archive = create_palm_archive(palm.blob_path)
+
+        detector_width = detection_archive.getInputWidth()
+        detector_height = detection_archive.getInputHeight()
+        landmark_width = landmark.input_width
+        landmark_height = landmark.input_height
+
+        detector_resize = self.pipeline.create(dai.node.ImageManip)
+        detector_resize.setMaxOutputFrameSize(detector_width * detector_height * 3)
+        detector_resize.initialConfig.setOutputSize(
+            detector_width,
+            detector_height,
+            mode=dai.ImageManipConfig.ResizeMode.STRETCH,
+        )
+        detector_resize.initialConfig.setFrameType(dai.ImgFrame.Type.BGR888p)
+
+        # One rate-limited camera branch with the 16:9 field of view, exactly as in
+        # the example (there: 768x768, which crops the field of view instead).
+        hand_mp_source = self.camRgb.requestOutput(
+            (HAND_MP_SOURCE_WIDTH, HAND_MP_SOURCE_HEIGHT),
+            type=dai.ImgFrame.Type.BGR888p,
+            fps=HAND_MP_FPS,
+        )
+        if hand_mp_source is None:
+            raise RuntimeError(
+                "Camera cannot provide a "
+                f"{HAND_MP_SOURCE_WIDTH}x{HAND_MP_SOURCE_HEIGHT} BGR888p branch"
+            )
+        self.hand_mp_source_size = (HAND_MP_SOURCE_WIDTH, HAND_MP_SOURCE_HEIGHT)
+        hand_mp_source.link(detector_resize.inputImage)
+
+        detection_nn = self.pipeline.create(ParsingNeuralNetwork).build(
+            detector_resize.out, detection_archive
+        )
+        detections_processor = self.pipeline.create(ProcessDetections).build(
+            detections_input=detection_nn.out,
+            padding=IMITATION_PALM_PADDING,
+            target_size=(landmark_width, landmark_height),
+        )
+
+        cropper = (
+            self.pipeline.create(FrameCropper)
+            .fromManipConfigs(
+                inputManipConfigs=detections_processor.config_output,
+                maxOutputFrameSize=landmark_width * landmark_height * 3,
+                waitForConfig=True,
+            )
+            .build(hand_mp_source)
+        )
+        # Frames held by the cropper come out of the camera's shared frame pool;
+        # without this a long stretch without a detection stops the whole device
+        # (measured for the imitation chain: 1208 frames, then everything stood).
+        cropper_input = getattr(
+            getattr(cropper, "_cropper_image_manip", None), "inputImage", None
+        )
+        if cropper_input is None:
+            self.get_logger().warning(
+                "FrameCropper internals changed: cannot stop it from holding frames"
+            )
+        else:
+            cropper_input.setMaxSize(1)
+            cropper_input.setBlocking(False)
+
+        # Plain network: the raw NNData is what carries the unclipped z.
+        landmark_nn = self.pipeline.create(dai.node.NeuralNetwork)
+        landmark_nn.setBlobPath(landmark.blob_path)
+        landmark_nn.setNumShavesPerInferenceThread(landmark.shaves)
+        cropper.out.link(landmark_nn.input)
+        self.hand_landmark_input_size = landmark_width
+
+        # Two host-side streams: the parsed palm detections (for the box and the
+        # score) and the raw landmark results. They are paired by timestamp, which
+        # is what removes the one-frame-at-a-time round trip.
+        self.hand_mp_detection_queue = detection_nn.out.createOutputQueue(
+            maxSize=HAND_MP_PAIR_WINDOW, blocking=False
+        )
+        self.hand_mp_landmark_queue = landmark_nn.out.createOutputQueue(
+            maxSize=HAND_MP_PAIR_WINDOW, blocking=False
+        )
+
+    @staticmethod
+    def _hand_mp_stamp(packet):
+        """Normalise a packet timestamp to a (seconds, nanoseconds) key.
+
+        depthai hands out datetime.timedelta for device packets, the replay
+        helpers use an object with sec/nanosec; both spellings are read here
+        instead of assuming one of them.
+        """
+        stamp = packet.getTimestamp()
+        seconds = getattr(stamp, "sec", None)
+        if seconds is None:
+            seconds = getattr(stamp, "seconds", 0)
+        nanos = getattr(stamp, "nanosec", None)
+        if nanos is None:
+            nanos = getattr(stamp, "microseconds", 0) * 1000
+        return (int(seconds), int(nanos))
+
+    def _process_hand_mp(self):
+        """Drain both streams and publish the hands they agree on."""
+        if self.hand_mp_landmark_queue is None or self.current_frame is None:
+            return
+        for _ in range(HAND_MP_PAIR_WINDOW):
+            packet = self.hand_mp_detection_queue.tryGet()
+            if packet is None:
+                break
+            stamp = self._hand_mp_stamp(packet)
+            entry = self.hand_mp_pairs.pop(stamp, None)
+            if entry is not None:
+                entry["detection"] = packet
+            else:
+                self.hand_mp_pairs[stamp] = {"detection": packet, "landmark": None}
+        for _ in range(HAND_MP_PAIR_WINDOW):
+            packet = self.hand_mp_landmark_queue.tryGet()
+            if packet is None:
+                break
+            stamp = self._hand_mp_stamp(packet)
+            entry = self.hand_mp_pairs.pop(stamp, None)
+            if entry is None:
+                self.hand_mp_pairs[stamp] = {"detection": None, "landmark": packet}
+                continue
+            detection = entry.get("detection")
+            if detection is None:
+                self.hand_mp_pairs[stamp] = {"detection": None, "landmark": packet}
+                continue
+            try:
+                self._publish_hand_mp_pair(detection, packet)
+            except (KeyError, TypeError, ValueError) as exc:
+                self._warn_hand_once(f"Invalid hand_mp pair: {exc}")
+        # Keep the buffer bounded: drop the oldest unpaired entries.
+        while len(self.hand_mp_pairs) > MAX_HAND_MP_BUFFER:
+            oldest = min(self.hand_mp_pairs)
+            self.hand_mp_pairs.pop(oldest, None)
+
+    def _publish_hand_mp_pair(self, detection_packet, landmark_packet):
+        """Turn one matched (palm detection, landmark result) pair into detections."""
+        frame_height, frame_width = self.current_frame.shape[:2]
+        source_width, source_height = self.hand_mp_source_size
+        score_tensor, landmark_score_value = self._hand_landmark_score(landmark_packet)
+        layer_name, values, layer_probe = self._hand_landmark_tensor(landmark_packet)
+        detections = []
+        if (
+            layer_name is not None
+            and math.isfinite(landmark_score_value)
+            and landmark_score_value >= LANDMARK_SCORE_THRESHOLD
+        ):
+            crop_points = landmarks_in_crop_pixels(
+                values, self.hand_landmark_input_size
+            )
+            relative_z = relative_landmark_z(values, self.hand_landmark_input_size)
+            palm = self._hand_mp_palm(detection_packet, frame_width, frame_height)
+            mapped = self._map_hand_landmarks(
+                landmark_packet,
+                values,
+                palm,
+                frame_width,
+                frame_height,
+                source_width,
+                source_height,
+                score_tensor,
+                layer_name,
+                layer_probe,
+            )
+            if mapped:
+                detections.append(
+                    self._hand_mp_detection(
+                        palm,
+                        mapped,
+                        relative_z,
+                        landmark_score_value,
+                        landmark_packet,
+                        frame_width,
+                        frame_height,
+                        source_width,
+                        source_height,
+                    )
+                )
+        self._publish_hand_mp_detections(frame_width, frame_height, detections)
+
+    def _hand_mp_palm(self, detection_packet, frame_width, frame_height):
+        """Build the PalmRegion the mapping path needs from the parsed detection."""
+        detections = getattr(detection_packet, "detections", None) or []
+        if not detections:
+            raise ValueError("palm detection packet carries no detection")
+        first = detections[0]
+        x_min = float(getattr(first, "x_min", 0.0))
+        y_min = float(getattr(first, "y_min", 0.0))
+        x_max = float(getattr(first, "x_max", 0.0))
+        y_max = float(getattr(first, "y_max", 0.0))
+        box_size = max(x_max - x_min, y_max - y_min)
+        if box_size <= 0.0:
+            raise ValueError("palm detection has an empty box")
+        rotation = 0.0
+        keypoints = list(getattr(first, "keypoints", None) or [])
+        if len(keypoints) >= 3:
+            try:
+                kp0, kp2 = keypoints[0], keypoints[2]
+                delta_x = float(kp2.x) - float(kp0.x)
+                delta_y = float(kp2.y) - float(kp0.y)
+                rotation = 0.5 * math.pi - math.atan2(-delta_y, delta_x)
+                rotation -= (
+                    2 * math.pi * math.floor((rotation + math.pi) / (2 * math.pi))
+                )
+            except (AttributeError, TypeError):
+                rotation = 0.0
+        return PalmRegion(
+            score=float(getattr(first, "confidence", 0.0) or 0.0),
+            box_x=x_min,
+            box_y=y_min,
+            box_size=box_size,
+            roi_x=x_min + 0.5 * box_size * math.sin(rotation),
+            roi_y=y_min - 0.5 * box_size * math.cos(rotation),
+            roi_size=2.9 * box_size,
+            rotation=rotation,
+        )
+
+    def _hand_mp_detection(
+        self,
+        palm,
+        mapped,
+        relative_z,
+        landmark_score_value,
+        landmark_packet,
+        frame_width,
+        frame_height,
+        source_width,
+        source_height,
+    ):
+        """Publish one hand with the box enclosing its keypoints, as the example does."""
+        xs = [float(point[0]) for point in mapped]
+        ys = [float(point[1]) for point in mapped]
+        box_x = min(xs) / float(frame_width)
+        box_y = min(ys) / float(frame_height)
+        box_size = max(
+            (max(xs) - min(xs)) / float(frame_width),
+            (max(ys) - min(ys)) / float(frame_height),
+        )
+        enclosing = PalmRegion(
+            score=palm.score,
+            box_x=box_x,
+            box_y=box_y,
+            box_size=box_size,
+            roi_x=box_x,
+            roi_y=box_y,
+            roi_size=box_size,
+            rotation=0.0,
+        )
+        handedness = 0.0
+        try:
+            handedness_values = self._nn_layer(
+                landmark_packet, LANDMARK_HANDEDNESS_LAYER
+            )
+            if handedness_values is not None and len(handedness_values):
+                handedness = float(handedness_values[0])
+        except Exception:
+            handedness = 0.0
+        return self._hand_detection_message(
+            enclosing,
+            [(float(p[0]), float(p[1])) for p in mapped],
+            frame_width,
+            frame_height,
+            source_width,
+            source_height,
+            landmark_score_value=landmark_score_value,
+            handedness=handedness,
+            relative_z=relative_z,
+        )
+
     def _stop_pipeline(self):
         pipeline_lock = getattr(self, "_pipeline_lock", None)
         if pipeline_lock is None:
@@ -1984,8 +2317,12 @@ class CameraNode(Node):
             self.hand_source_size = (0, 0)
             self._pending_hand_decoder_packet = None
             self.imitation_queue = None
+            self.hand_mp_pairs = {}
             self._pending_imitation_packet = None
             self.imitation_source_size = (0, 0)
+            self.hand_mp_detection_queue = None
+            self.hand_mp_landmark_queue = None
+            self.hand_mp_source_size = (0, 0)
             if hasattr(self, "_pending_hands"):
                 self._pending_hands.clear()
             return True
@@ -2080,7 +2417,12 @@ class CameraNode(Node):
                     and not self._imitation_chain_is_built()
                 )
                 or (
-                    active.model.model_id not in ("hand_tracking", "imitation")
+                    active.model.model_id == "hand_tracking_mp"
+                    and not self._hand_mp_chain_is_built()
+                )
+                or (
+                    active.model.model_id
+                    not in ("hand_tracking", "imitation", "hand_tracking_mp")
                     and active.model.model_id not in self.nn_queues
                 )
             ]
@@ -2393,6 +2735,7 @@ class CameraNode(Node):
                 self._count_hand_stage(stage)
 
         self._process_hand_tracking()
+        self._process_hand_mp()
         self._process_imitation()
 
         if not self.depth_queue:

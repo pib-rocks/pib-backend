@@ -219,6 +219,7 @@ from ros_packages.camera.oak_d_lite.stereo import (
     IMU_SENSOR_RATE_HZ,
     IMU_STALE_AFTER_SECONDS,
     IMU_STALE_MISSED_PUBLICATIONS,
+    MAX_HAND_MP_BUFFER,
 )
 
 
@@ -2419,3 +2420,91 @@ class TestOakImu(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestHandMpChain(unittest.TestCase):
+    """The Luxonis hand-pose shape (PR-1791): one chain per model_id, parsed palms,
+    raw landmark network, timestamp pairing instead of a per-frame round trip."""
+
+    def _make_node(self):
+        with patch.object(CameraNode, "__init__", lambda self: None):
+            node = CameraNode()
+        node.hand_mp_landmark_queue = None
+        node.hand_mp_detection_queue = None
+        node.hand_mp_pairs = {}
+        node.hand_mp_source_size = (1152, 648)
+        node.hand_landmark_input_size = 224
+        node.current_frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+        node._hand_warnings = set()
+        node.hand_stage_counters = {}
+        node._reset_hand_stage_counters()
+        node._count_hand_stage = MagicMock()
+        node._warn_hand_once = MagicMock()
+        return node
+
+    def test_pairing_publishes_only_matched_timestamps(self):
+        node = self._make_node()
+        stamp = types.SimpleNamespace(sec=10, nanosec=20)
+        detection = MagicMock()
+        detection.getTimestamp.return_value = stamp
+        landmark = MagicMock()
+        landmark.getTimestamp.return_value = stamp
+
+        node.hand_mp_detection_queue = MagicMock()
+        node.hand_mp_detection_queue.tryGet.side_effect = [detection, None]
+        node.hand_mp_landmark_queue = MagicMock()
+        node.hand_mp_landmark_queue.tryGet.side_effect = [landmark, None]
+        published = []
+        node._publish_hand_mp_pair = lambda d, l: published.append((d, l))
+
+        node._process_hand_mp()
+
+        self.assertEqual(len(published), 1)
+        self.assertIs(published[0][0], detection)
+        self.assertIs(published[0][1], landmark)
+        self.assertEqual(node.hand_mp_pairs, {})
+
+    def test_pairing_keeps_unmatched_landmarks_for_later(self):
+        node = self._make_node()
+        stamp = types.SimpleNamespace(sec=1, nanosec=2)
+        landmark = MagicMock()
+        landmark.getTimestamp.return_value = stamp
+
+        node.hand_mp_detection_queue = MagicMock()
+        node.hand_mp_detection_queue.tryGet.return_value = None
+        node.hand_mp_landmark_queue = MagicMock()
+        node.hand_mp_landmark_queue.tryGet.side_effect = [landmark, None]
+        node._publish_hand_mp_pair = MagicMock()
+
+        node._process_hand_mp()
+
+        node._publish_hand_mp_pair.assert_not_called()
+        self.assertIn((1, 2), node.hand_mp_pairs)
+
+    def test_pairing_buffer_stays_bounded(self):
+        node = self._make_node()
+        packets = []
+        for index in range(MAX_HAND_MP_BUFFER + 5):
+            packet = MagicMock()
+            packet.getTimestamp.return_value = types.SimpleNamespace(
+                sec=index, nanosec=0
+            )
+            packets.append(packet)
+        node.hand_mp_detection_queue = MagicMock()
+        node.hand_mp_detection_queue.tryGet.side_effect = list(packets) + [None]
+        node.hand_mp_landmark_queue = MagicMock()
+        node.hand_mp_landmark_queue.tryGet.return_value = None
+        node._process_hand_mp()
+
+        self.assertLessEqual(len(node.hand_mp_pairs), MAX_HAND_MP_BUFFER)
+
+    def test_chain_is_built_only_with_the_landmark_queue(self):
+        node = self._make_node()
+        node._pipeline_models = [
+            types.SimpleNamespace(
+                model=types.SimpleNamespace(model_id="hand_tracking_mp")
+            )
+        ]
+        self.assertFalse(node._hand_mp_chain_is_built())
+        node.hand_mp_landmark_queue = MagicMock()
+        self.assertTrue(node._hand_mp_chain_is_built())
