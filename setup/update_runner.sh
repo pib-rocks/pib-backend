@@ -15,6 +15,15 @@ CANCEL_FILE="$UPDATE_DIR/cancel.json"
 MIN_FREE_KIB="${PIB_UPDATE_MIN_FREE_KIB:-8388608}"
 VERIFY_ATTEMPTS="${PIB_UPDATE_VERIFY_ATTEMPTS:-30}"
 VERIFY_INTERVAL_SECONDS="${PIB_UPDATE_VERIFY_INTERVAL_SECONDS:-5}"
+MAX_ATTEMPTS="${PIB_UPDATE_MAX_ATTEMPTS:-3}"
+RETRY_DELAY_SECONDS="${PIB_UPDATE_RETRY_DELAY_SECONDS:-300}"
+case "$MAX_ATTEMPTS" in
+    '' | *[!0-9]*) MAX_ATTEMPTS=3 ;;
+esac
+[ "$MAX_ATTEMPTS" -ge 1 ] || MAX_ATTEMPTS=3
+case "$RETRY_DELAY_SECONDS" in
+    '' | *[!0-9]*) RETRY_DELAY_SECONDS=300 ;;
+esac
 HEALTHCHECK="$BACKEND_DIR/setup/update_healthcheck.py"
 WATCHDOG_DECIDER="$BACKEND_DIR/setup/update_watchdog.py"
 STATUS_READER="$BACKEND_DIR/setup/update_status_reader.py"
@@ -60,6 +69,7 @@ write_status() {
     STATE="$state" MESSAGE="$message" JOB_ID="$JOB_ID" CHANNEL="$CHANNEL" \
         STARTED_AT="$STARTED_AT" STATUS_FILE="$STATUS_FILE" \
         UNHEALTHY_SERVICES="${UNHEALTHY_SERVICES:-}" ATTEMPT="$ATTEMPT" \
+        MAX_ATTEMPTS="$MAX_ATTEMPTS" \
         PREDECESSOR_INTERRUPTED="$PREDECESSOR_INTERRUPTED" python3 - <<'PY'
 import json
 import os
@@ -75,6 +85,7 @@ document = {
     "startedAt": os.environ["STARTED_AT"],
     "updatedAt": datetime.now(timezone.utc).isoformat(),
     "attempt": int(os.environ["ATTEMPT"]),
+    "maxAttempts": int(os.environ["MAX_ATTEMPTS"]),
     "predecessorInterrupted": os.environ["PREDECESSOR_INTERRUPTED"] == "true",
 }
 # Reported, never blocking (D12): services that were already down before the update.
@@ -161,6 +172,38 @@ load_predecessor_status() {
     eval "$parsed"
     if [ "$PREDECESSOR_INTERRUPTED" = "true" ]; then
         log "WARNING: interrupted predecessor detected in state $PREDECESSOR_STATE; continuing job $JOB_ID as attempt $ATTEMPT"
+    fi
+}
+
+enforce_retry_policy() {
+    local exceeded delay_remaining
+    if [ "$PREDECESSOR_INTERRUPTED" != "true" ]; then
+        return 0
+    fi
+    if ! exceeded="$(python3 "$STATUS_READER" exceeded_attempt_limit "$STATUS_FILE" "$JOB_ID" "$MAX_ATTEMPTS" 2>&1)"; then
+        log "WARNING: could not evaluate attempt limit; continuing: $exceeded"
+        exceeded="false"
+    fi
+    if [ "$exceeded" = "true" ]; then
+        write_status "failed" "Update retry limit of ${MAX_ATTEMPTS} attempts exceeded for job $JOB_ID; not starting another build. See $LOG_FILE"
+        rm -f "$REQUEST_FILE" "$CANCEL_FILE"
+        exit 1
+    fi
+    # The first attempt of a job never waits, even if leftover status looks interrupted.
+    [ "$ATTEMPT" -gt 1 ] || return 0
+    if ! delay_remaining="$(python3 "$STATUS_READER" retry_delay_remaining "$STATUS_FILE" "$RETRY_DELAY_SECONDS" 2>&1)"; then
+        log "WARNING: could not evaluate retry delay; continuing without wait: $delay_remaining"
+        return 0
+    fi
+    case "$delay_remaining" in
+        '' | *[!0-9]*)
+            log "WARNING: retry delay reader returned '$delay_remaining'; continuing without wait"
+            return 0
+            ;;
+    esac
+    if [ "$delay_remaining" -gt 0 ]; then
+        log "Waiting ${delay_remaining}s before attempt $ATTEMPT of $MAX_ATTEMPTS (PIB_UPDATE_RETRY_DELAY_SECONDS=$RETRY_DELAY_SECONDS)"
+        sleep "$delay_remaining"
     fi
 }
 
@@ -491,7 +534,8 @@ trap on_unexpected_error ERR
 
 load_request
 load_predecessor_status
-write_status "preflight" "Validating repositories, disk, watchdog ownership, and database backup"
+enforce_retry_policy
+write_status "preflight" "Validating repositories, disk, watchdog ownership, and database backup (attempt ${ATTEMPT} of ${MAX_ATTEMPTS})"
 check_cancel
 check_update_dir
 BACKEND_SERVICES_BEFORE="$(snapshot_running_services "$BACKEND_DIR/docker-compose.yaml" --profile all)"

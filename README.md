@@ -103,7 +103,14 @@ never opens `/dev/watchdog*`.
 
 If a surviving `status.json` contains a non-terminal state when the same request
 starts again (for example, after a reboot during `building`), the runner logs the
-interrupted predecessor. Every status document includes an `attempt` counter and
+interrupted predecessor and retries that job. The retry itself is intentional
+(reboot recovery); the defect was unbounded repetition. After
+`PIB_UPDATE_MAX_ATTEMPTS` (default 3) interrupted attempts the runner writes a
+terminal `failed` status that names the limit, removes `request.json` and
+`cancel.json`, and does not start another build. When an interrupted predecessor
+is newer than `PIB_UPDATE_RETRY_DELAY_SECONDS` (default 300), the runner waits
+the remaining seconds before continuing; the first attempt of a job never waits.
+Every status document includes an `attempt` counter, additive `maxAttempts`, and
 the additive `predecessorInterrupted` flag, while keeping schema version 1.
 
 The current software has no authoritative signal that distinguishes a running
