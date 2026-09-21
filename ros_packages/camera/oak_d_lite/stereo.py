@@ -53,6 +53,11 @@ from .imitation import (
     world_landmark_scalars,
 )
 from .imitation_archive import create_landmark_archive, create_palm_archive
+from .face_crop import (
+    FACE_CROP_PADDING,
+    packet_timestamp,
+    translate_emotion,
+)
 from .parsed_detections import translate_detections
 from .task_archives import create_archive, labels_for_model
 from .hand_tracking import (
@@ -95,6 +100,14 @@ IMITATION_FPS = 8
 # scale, so that error cannot occur by construction.
 IMITATION_SOURCE_WIDTH = 1152
 IMITATION_SOURCE_HEIGHT = 648
+FACE_CROP_SOURCE_WIDTH = 1152
+FACE_CROP_SOURCE_HEIGHT = 648
+FACE_CROP_PAIR_WINDOW = 32
+MAX_FACE_CROP_BUFFER = 64
+# Exact timestamp pairing needs more than a single held frame. Four delivered
+# full classifier throughput in the measured hand-chain reference while still
+# bounding use of the camera's shared frame pool.
+FACE_CROPPER_QUEUE = 4
 # Device-side queues on the camera branches stay shallow and non-blocking.  The
 # host drains them from the 10 Hz timer, far below the camera frame rate, and a
 # blocking queue back-pressures the Camera node and stalls every other branch
@@ -270,6 +283,11 @@ class CameraNode(Node):
         self.imitation_queue = None
         self._pending_imitation_packet = None
         self.imitation_source_size = (0, 0)
+        self.face_crop_detection_queue = None
+        self.face_crop_result_queue = None
+        self.face_crop_pairs = {}
+        self.face_crop_source_size = (0, 0)
+        self._pending_face_crop_packet = None
         self._pipeline_lock = threading.RLock()
         self._reset_hand_stage_counters()
         self._reset_imitation_stage_counters()
@@ -824,6 +842,31 @@ class CameraNode(Node):
             publisher.publish(message)
         self._count_imitation_stage("publish")
         self.pipeline_manager.record_packet("imitation")
+
+    def _publish_face_crop_detection(self, result_packet, face):
+        if self.current_frame is None:
+            frame_width = self.preview_width
+            frame_height = self.preview_height
+        else:
+            frame_height, frame_width = self.current_frame.shape[:2]
+        detection = translate_emotion(
+            result_packet,
+            face,
+            frame_width,
+            frame_height,
+        )
+
+        message = DetectionArray()
+        message.header.stamp = self.get_clock().now().to_msg()
+        message.model_id = "emotion_recognition_crop"
+        message.frame_width = frame_width
+        message.frame_height = frame_height
+        message.detections = [detection]
+        self.last_detections["emotion_recognition_crop"] = message
+        publisher = self.detection_publishers.get("emotion_recognition_crop")
+        if publisher is not None:
+            publisher.publish(message)
+        self.pipeline_manager.record_packet("emotion_recognition_crop")
 
     def _publish_parsed_detections(self, model_id, packet):
         if self.current_frame is None:
@@ -1566,6 +1609,11 @@ class CameraNode(Node):
         self.imitation_queue = None
         self._pending_imitation_packet = None
         self.imitation_source_size = (0, 0)
+        self.face_crop_detection_queue = None
+        self.face_crop_result_queue = None
+        self.face_crop_pairs = {}
+        self.face_crop_source_size = (0, 0)
+        self._pending_face_crop_packet = None
         if hasattr(self, "_pending_hands"):
             self._pending_hands.clear()
         else:
@@ -1583,6 +1631,9 @@ class CameraNode(Node):
                 continue
             if model.model_id == "imitation":
                 self._build_imitation_pipeline(model)
+                continue
+            if model.model_id == "emotion_recognition_crop":
+                self._build_face_crop_pipeline(model)
                 continue
             self._build_single_network_pipeline(model)
 
@@ -1743,6 +1794,21 @@ class CameraNode(Node):
         if not requested:
             return False
         return getattr(self, "imitation_queue", None) is not None
+
+    def _face_crop_chain_is_built(self):
+        requested = any(
+            active.model.model_id == "emotion_recognition_crop"
+            for active in getattr(self, "_pipeline_models", ())
+        )
+        if not requested:
+            return False
+        return all(
+            queue is not None
+            for queue in (
+                getattr(self, "face_crop_detection_queue", None),
+                getattr(self, "face_crop_result_queue", None),
+            )
+        )
 
     def _imitation_chain_is_flowing(self):
         return self._imitation_chain_is_built() and all(
@@ -1968,6 +2034,161 @@ class CameraNode(Node):
         )
         self.imitation_source_size = (detector_width, detector_height)
 
+    def _build_face_crop_pipeline(self, composite):
+        """Add parsed YuNet detection, timestamped crops, and raw emotion NN."""
+        artifact_ids = set(composite.artifact_ids)
+        required = {
+            "face_detection_yunet_160x120",
+            "emotion_recognition_lfw_64x64",
+        }
+        if not required.issubset(artifact_ids):
+            raise ValueError(
+                "emotion_recognition_crop composite is missing its detector "
+                "or classifier"
+            )
+        detector = self.model_registry.get("face_detection_yunet_160x120")
+        classifier = self.model_registry.get("emotion_recognition_lfw_64x64")
+        detection_archive = create_archive(detector.model_id, detector.blob_path)
+        if detection_archive is None:
+            raise ValueError("YuNet parser archive is unavailable")
+
+        detector_width = detection_archive.getInputWidth()
+        detector_height = detection_archive.getInputHeight()
+        classifier_width = classifier.input_width
+        classifier_height = classifier.input_height
+
+        detector_resize = self.pipeline.create(dai.node.ImageManip)
+        detector_resize.setMaxOutputFrameSize(detector_width * detector_height * 3)
+        detector_resize.initialConfig.setOutputSize(
+            detector_width,
+            detector_height,
+            mode=dai.ImageManipConfig.ResizeMode.STRETCH,
+        )
+        detector_resize.initialConfig.setFrameType(dai.ImgFrame.Type.BGR888p)
+
+        # Keep the full 16:9 field of view and the sensor's existing rate. A
+        # second fps request on this camera leaves the raw ISP colour queue empty.
+        face_source = self.camRgb.requestOutput(
+            (FACE_CROP_SOURCE_WIDTH, FACE_CROP_SOURCE_HEIGHT),
+            type=dai.ImgFrame.Type.BGR888p,
+        )
+        if face_source is None:
+            raise RuntimeError(
+                "Camera cannot provide a "
+                f"{FACE_CROP_SOURCE_WIDTH}x{FACE_CROP_SOURCE_HEIGHT} "
+                "BGR888p branch for face crops"
+            )
+        self.face_crop_source_size = (
+            FACE_CROP_SOURCE_WIDTH,
+            FACE_CROP_SOURCE_HEIGHT,
+        )
+        face_source.link(detector_resize.inputImage)
+
+        detection_nn = self.pipeline.create(ParsingNeuralNetwork).build(
+            detector_resize.out,
+            detection_archive,
+        )
+        detections_processor = self.pipeline.create(ProcessDetections).build(
+            detections_input=detection_nn.out,
+            padding=FACE_CROP_PADDING,
+            target_size=(classifier_width, classifier_height),
+        )
+        cropper = (
+            self.pipeline.create(FrameCropper)
+            .fromManipConfigs(
+                inputManipConfigs=detections_processor.config_output,
+                maxOutputFrameSize=classifier_width * classifier_height * 3,
+                waitForConfig=True,
+            )
+            .build(face_source)
+        )
+        cropper_input = getattr(
+            getattr(cropper, "_cropper_image_manip", None), "inputImage", None
+        )
+        if cropper_input is None:
+            self.get_logger().warning(
+                "FrameCropper internals changed: cannot bound face-crop frames"
+            )
+        else:
+            cropper_input.setMaxSize(FACE_CROPPER_QUEUE)
+            cropper_input.setBlocking(False)
+
+        classifier_nn = self.pipeline.create(dai.node.NeuralNetwork)
+        classifier_nn.setBlobPath(classifier.blob_path)
+        classifier_nn.setNumShavesPerInferenceThread(classifier.shaves)
+        cropper.out.link(classifier_nn.input)
+
+        self.face_crop_detection_queue = detection_nn.out.createOutputQueue(
+            maxSize=FACE_CROP_PAIR_WINDOW,
+            blocking=False,
+        )
+        self.face_crop_result_queue = classifier_nn.out.createOutputQueue(
+            maxSize=FACE_CROP_PAIR_WINDOW,
+            blocking=False,
+        )
+
+    def _publish_ready_face_crops(self, stamp):
+        entry = self.face_crop_pairs.get(stamp)
+        if entry is None or entry["faces"] is None:
+            return
+        while entry["faces"] and entry["results"]:
+            face = entry["faces"].popleft()
+            result = entry["results"].popleft()
+            try:
+                self._publish_face_crop_detection(result, face)
+            except (
+                AttributeError,
+                KeyError,
+                RuntimeError,
+                TypeError,
+                ValueError,
+            ) as exc:
+                self.get_logger().warning(f"Invalid face-crop result: {exc}")
+        if not entry["faces"] and not entry["results"]:
+            self.face_crop_pairs.pop(stamp, None)
+
+    def _process_face_crop(self):
+        """Pair parsed face boxes and raw classifier packets by timestamp."""
+        if (
+            self.face_crop_detection_queue is None
+            or self.face_crop_result_queue is None
+        ):
+            return
+        for _ in range(FACE_CROP_PAIR_WINDOW):
+            packet = self.face_crop_detection_queue.tryGet()
+            if packet is None:
+                break
+            faces = tuple(getattr(packet, "detections", ()) or ())
+            if not faces:
+                continue
+            stamp = packet_timestamp(packet)
+            entry = self.face_crop_pairs.setdefault(
+                stamp,
+                {"faces": None, "results": deque()},
+            )
+            if entry["faces"] is None:
+                entry["faces"] = deque(faces)
+            self._publish_ready_face_crops(stamp)
+
+        packet = self._pending_face_crop_packet
+        self._pending_face_crop_packet = None
+        for _ in range(FACE_CROP_PAIR_WINDOW):
+            if packet is None:
+                packet = self.face_crop_result_queue.tryGet()
+            if packet is None:
+                break
+            stamp = packet_timestamp(packet)
+            entry = self.face_crop_pairs.setdefault(
+                stamp,
+                {"faces": None, "results": deque()},
+            )
+            entry["results"].append(packet)
+            self._publish_ready_face_crops(stamp)
+            packet = None
+
+        while len(self.face_crop_pairs) > MAX_FACE_CROP_BUFFER:
+            self.face_crop_pairs.pop(min(self.face_crop_pairs), None)
+
     def _stop_pipeline(self):
         pipeline_lock = getattr(self, "_pipeline_lock", None)
         if pipeline_lock is None:
@@ -2020,6 +2241,11 @@ class CameraNode(Node):
             self.imitation_queue = None
             self._pending_imitation_packet = None
             self.imitation_source_size = (0, 0)
+            self.face_crop_detection_queue = None
+            self.face_crop_result_queue = None
+            self.face_crop_pairs = {}
+            self.face_crop_source_size = (0, 0)
+            self._pending_face_crop_packet = None
             if hasattr(self, "_pending_hands"):
                 self._pending_hands.clear()
             return True
@@ -2114,7 +2340,16 @@ class CameraNode(Node):
                     and not self._imitation_chain_is_built()
                 )
                 or (
-                    active.model.model_id not in ("hand_tracking", "imitation")
+                    active.model.model_id == "emotion_recognition_crop"
+                    and not self._face_crop_chain_is_built()
+                )
+                or (
+                    active.model.model_id
+                    not in (
+                        "hand_tracking",
+                        "imitation",
+                        "emotion_recognition_crop",
+                    )
                     and active.model.model_id not in self.nn_queues
                 )
             ]
@@ -2141,8 +2376,17 @@ class CameraNode(Node):
                 "Cannot verify imitation: the gathered output queue is absent"
             )
             return False
+        if (
+            "emotion_recognition_crop" in requested_ids
+            and not self._face_crop_chain_is_built()
+        ):
+            self.get_logger().error(
+                "Cannot verify emotion_recognition_crop: "
+                "the face-crop queues are absent"
+            )
+            return False
         if any(
-            model_id not in ("hand_tracking", "imitation")
+            model_id not in ("hand_tracking", "imitation", "emotion_recognition_crop")
             and model_id not in self.nn_queues
             for model_id in requested_ids
         ):
@@ -2168,6 +2412,11 @@ class CameraNode(Node):
             if packet is None:
                 return False
             self._pending_imitation_packet = packet
+        if "emotion_recognition_crop" in requested_ids:
+            packet = self._wait_for_queue_packet(self.face_crop_result_queue, timeout)
+            if packet is None:
+                return False
+            self._pending_face_crop_packet = packet
         return True
 
     def _revert_to_color_only(self):
@@ -2440,6 +2689,10 @@ class CameraNode(Node):
 
         self._process_hand_tracking()
         self._process_imitation()
+        try:
+            self._process_face_crop()
+        except Exception as exc:
+            self.get_logger().warning(f"Face-crop processing failed: {exc!r}")
 
         if not self.depth_queue:
             return

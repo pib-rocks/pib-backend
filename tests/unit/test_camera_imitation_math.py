@@ -88,6 +88,35 @@ def test_crop_config_forces_square_letterbox_and_zero_angle():
     config.setReusePreviousImage.assert_called_once_with(False)
 
 
+def test_process_detections_copies_timestamp_sequence_and_target_size():
+    packet = types.SimpleNamespace(
+        detections=[_detection()],
+        getTimestamp=lambda: "stamp",
+        getSequenceNum=lambda: 42,
+    )
+    config = MagicMock()
+    configs = MagicMock()
+    processor = types.SimpleNamespace(
+        padding=0.1,
+        _target_w=64,
+        _target_h=64,
+        config_output=MagicMock(),
+    )
+    with (
+        patch.object(imitation, "detection_crop_config", return_value=config) as crop,
+        patch.object(imitation.dai, "MessageGroup", return_value=configs),
+    ):
+        imitation.ProcessDetections.process(processor, packet)
+
+    crop.assert_called_once_with(packet.detections[0], 0.1, 64, 64)
+    config.setTimestamp.assert_called_once_with("stamp")
+    config.setSequenceNum.assert_called_once_with(42)
+    configs.__setitem__.assert_called_once_with("cfg_0", config)
+    configs.setTimestamp.assert_called_once_with("stamp")
+    configs.setSequenceNum.assert_called_once_with(42)
+    processor.config_output.send.assert_called_once_with(configs)
+
+
 def test_stretch_mapping_is_exact_and_clipped_to_published_frame():
     item = {
         "0": _keypoints(x=0.25, y=0.75),
