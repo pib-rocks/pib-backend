@@ -1754,7 +1754,7 @@ class TestStereoModeDecision(unittest.TestCase):
         node._start_pipeline.assert_called_once_with(include_stereo=False)
         self.assertFalse(node.depth_available)
         node.get_logger().warning.assert_called_once_with(
-            "Stereo depth disabled - using colour-only pipeline (depth disabled)"
+            "Stereo depth disabled - using colour-only pipeline (mode=off)"
         )
 
     def test_mode_auto_without_frames_falls_back_to_colour_only(self):
@@ -2508,3 +2508,33 @@ class TestHandMpChain(unittest.TestCase):
         self.assertFalse(node._hand_mp_chain_is_built())
         node.hand_mp_landmark_queue = MagicMock()
         self.assertTrue(node._hand_mp_chain_is_built())
+
+
+class TestStereoRequested(unittest.TestCase):
+    """Depth is only requested while no model runs (auto), on/off force it."""
+
+    def _node(self, mode, models):
+        node = object.__new__(CameraNode)
+        node.stereo_mode = mode
+        node._pipeline_models = models
+        return node
+
+    def test_auto_without_models_asks_for_depth(self):
+        self.assertTrue(self._node("auto", [])._stereo_requested())
+
+    def test_auto_with_a_model_skips_depth(self):
+        models = [
+            types.SimpleNamespace(
+                model=types.SimpleNamespace(model_id="hand_tracking_mp")
+            )
+        ]
+        self.assertFalse(self._node("auto", models)._stereo_requested())
+
+    def test_on_forces_depth_even_with_a_model(self):
+        models = [
+            types.SimpleNamespace(model=types.SimpleNamespace(model_id="imitation"))
+        ]
+        self.assertTrue(self._node("on", models)._stereo_requested())
+
+    def test_off_never_asks_for_depth(self):
+        self.assertFalse(self._node("off", [])._stereo_requested())

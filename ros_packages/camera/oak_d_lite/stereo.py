@@ -2549,19 +2549,39 @@ class CameraNode(Node):
             return False
         return self._verify_model_frames(self.stereo_timeout)
 
+    def _stereo_requested(self) -> bool:
+        """Whether this pipeline should include the stereo depth path.
+
+        ``on`` and ``off`` keep their meaning. ``auto`` now means "depth while
+        idle": with a model running, the model branch and the depth path share the
+        same camera/ISP budget, and none of the models needs the depth - the
+        published z is hand-relative and comes from the landmarker. Depth is back
+        as soon as the last model stops.
+        """
+        if self.stereo_mode == "off":
+            return False
+        if self.stereo_mode == "on":
+            return True
+        return not getattr(self, "_pipeline_models", [])
+
     def init_pipeline(self) -> bool:
         self.depth_available = False
         self.current_depth = None
         self._pending_color_packet = None
 
-        if self.stereo_mode == "off":
+        if not self._stereo_requested():
             if not self._start_pipeline(include_stereo=False):
                 self.get_logger().error(
                     "Camera not found: colour pipeline failed to start."
                 )
                 return False
+            reason = (
+                "mode=off"
+                if self.stereo_mode == "off"
+                else "a model is running (mode=auto)"
+            )
             self.get_logger().warning(
-                "Stereo depth disabled - using colour-only pipeline (depth disabled)"
+                f"Stereo depth disabled - using colour-only pipeline ({reason})"
             )
             return True
 
