@@ -18,7 +18,7 @@ import requests
 import pytest
 from playwright.sync_api import sync_playwright, Page, expect
 
-BASE_URL = os.getenv("PIB_ROBOT_URL", "http://192.168.1.28")
+BASE_URL = os.getenv("PIB_ROBOT_URL", "http://localhost")
 API_URL = os.getenv("PIB_API_URL", f"{BASE_URL}/api")
 VERSION_RE = re.compile(r"^v?\d+\.\d+\.\d+")
 
