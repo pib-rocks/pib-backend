@@ -12,7 +12,7 @@ from model.controller_model import (
     TINKERFORGE_BRICKLET,
 )
 from seed_profiles import PROFILES, resolve_variant_and_source
-from service import hardware_config_service
+from service import hardware_config_service, revision_service, update_service
 from service.system_property_service import (
     ALLOWED_HARDWARE_VARIANTS,
     HARDWARE_VARIANT_KEY,
@@ -148,3 +148,77 @@ def import_hardware_config():
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
     return jsonify(result), 200
+
+
+@bp.route("/update", methods=["POST"])
+def start_update():
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "Request body must be a JSON object"}), 400
+
+    running_signal = update_service.program_running_signal()
+    if running_signal is True:
+        return jsonify({"error": "An installed program is currently running"}), 409
+
+    try:
+        update_request = update_service.build_request(
+            channel=payload.get("channel", "release"),
+            force=payload.get("force", False),
+            confirmation=payload.get("confirmation"),
+            actor=request.remote_addr or "unknown",
+        )
+        status = update_service.enqueue_update(update_request)
+    except update_service.UpdateValidationError as error:
+        return jsonify({"error": str(error)}), 400
+    except update_service.UpdateNotInstalledError as error:
+        return jsonify({"error": str(error), "state": "not_installed"}), 503
+    except update_service.UpdateConflictError as error:
+        return jsonify({"error": str(error), "status": error.status}), 409
+
+    return (
+        jsonify(
+            {
+                "job": update_request,
+                "status": status,
+                "programRunningSignal": (
+                    "available" if running_signal is not None else "unavailable"
+                ),
+            }
+        ),
+        202,
+    )
+
+
+@bp.route("/update/status", methods=["GET"])
+def get_update_status():
+    status = update_service.get_status()
+    code = 503 if status["state"] == "not_installed" else 200
+    return jsonify(status), code
+
+
+@bp.route("/update/log", methods=["GET"])
+def get_update_log():
+    try:
+        offset = int(request.args.get("offset", "0"))
+        result = update_service.read_log(offset)
+    except (TypeError, ValueError, update_service.UpdateValidationError) as error:
+        return jsonify({"error": str(error)}), 400
+    except update_service.UpdateNotInstalledError as error:
+        return jsonify({"error": str(error), "state": "not_installed"}), 503
+    return jsonify(result), 200
+
+
+@bp.route("/update/cancel", methods=["POST"])
+def cancel_update():
+    try:
+        status = update_service.request_cancel()
+    except update_service.UpdateNotInstalledError as error:
+        return jsonify({"error": str(error), "state": "not_installed"}), 503
+    except update_service.UpdateConflictError as error:
+        return jsonify({"error": str(error), "status": error.status}), 409
+    return jsonify({"status": status}), 202
+
+
+@bp.route("/revision", methods=["GET"])
+def get_revision():
+    return jsonify(revision_service.installed_revisions()), 200

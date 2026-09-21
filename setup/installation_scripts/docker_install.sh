@@ -82,6 +82,34 @@ function setup_docker_cleaner_service() {
     print SUCCESS "Docker container cleanup service installed and started"
 }
 
+function setup_update_service() {
+    print INFO "Setting up host-side update service"
+    # setgid (2770) so files created by the root flask container inherit the pib
+    # group; together with 0660 in the backend's atomic write this is what lets
+    # the runner (User=pib) read request.json at all.
+    sudo install -d -o pib -g pib -m 2770 /home/pib/app/.update
+    sudo install -o root -g root -m 0644 \
+      "$BACKEND_DIR/setup/setup_files/pib-update.service" \
+      /etc/systemd/system/pib-update.service
+    sudo install -o root -g root -m 0644 \
+      "$BACKEND_DIR/setup/setup_files/pib-update.path" \
+      /etc/systemd/system/pib-update.path
+    sudo chmod 0755 "$BACKEND_DIR/setup/update_runner.sh"
+    sudo systemctl daemon-reload
+
+    local enable_output
+    if ! enable_output=$(sudo systemctl enable pib-update.path 2>&1); then
+        print ERROR "failed to enable pib-update.path: ${enable_output}"
+        return 1
+    fi
+    local start_output
+    if ! start_output=$(sudo systemctl start pib-update.path 2>&1); then
+        print ERROR "failed to start pib-update.path: ${start_output}"
+        return 1
+    fi
+    print SUCCESS "Host-side update service installed and watching for requests"
+}
+
 function verify_vendored_blockly() {
     print INFO "Verifying vendored pib-blockly sources"
 
@@ -113,4 +141,5 @@ sudo usermod -aG docker pib || { print ERROR "failed to add user 'pib' to docker
 verify_vendored_blockly || print ERROR "failed to verify vendored pib-blockly sources"
 start_container || print ERROR "failed to start containers"
 setup_docker_cleaner_service || print ERROR "failed to setup docker cleaner service"
+setup_update_service || print ERROR "failed to setup host-side update service"
 sudo chmod 777 "$BACKEND_DIR/pib_api/flask/pibdata.db"
