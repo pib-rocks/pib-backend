@@ -207,6 +207,16 @@ including camera, motors, programs and the voice assistant, profiles can be used
 docker compose --profile all up
 ```
 
+#### Microphone array ownership
+
+`ros-audio-io` is the single owner of the ReSpeaker USB microphone array. It
+publishes audio, RMS/peak levels, DOA, voice activity and speech detection as
+ROS 2 topics. Its tuning and LED ring ROS 2 parameters are the UI control
+surface through rosbridge. The Flask microphone-array endpoints are legacy
+compatibility endpoints: they never open USB, always report simulation with the
+reason `microphone array is owned by ros-audio-io`, and do not apply values to
+the device.
+
 `password.env` required to run the voice assistant:
 
 ```

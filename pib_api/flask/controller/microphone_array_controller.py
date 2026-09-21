@@ -1,3 +1,5 @@
+"""Legacy compatibility routes; live microphone I/O is owned by ros-audio-io."""
+
 from flask import Blueprint, jsonify, request
 from service import microphone_array_service
 
@@ -24,6 +26,8 @@ def get_tuning():
 
 @bp.route("/tuning", methods=["POST"])
 def update_tuning():
+    """Validate a legacy request without applying it to the USB device."""
+
     payload = request.get_json(silent=True)
     if payload is None:
         return jsonify({"error": "Request body must be valid JSON"}), 400
