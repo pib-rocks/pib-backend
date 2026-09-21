@@ -226,13 +226,17 @@ def device_pure_source():
 def build_hand_script(source_width=256, source_height=144, stage="full"):
     """Build the per-frame manager Script that runs on the OAK device.
 
-    ``stage='palm_only'`` drops the landmark half (no crop config, no wait for a
-    landmark result) and only reads the palm decoder.  It exists to bisect device
-    faults: if a pipeline survives that variant but dies with ``stage='full'``,
-    the landmark stage is what the device cannot take.
+    Two reduced variants exist for bisecting device faults:
+
+    * ``stage='palm_only'`` drops the landmark half (no crop config, no wait for a
+      landmark result) and only reads the palm decoder.
+    * ``stage='palm_static'`` additionally stops sending the per-frame palm config,
+      so the palm ImageManip keeps its build-time config exactly as in the chain
+      that runs without a Script node.  What remains is a Script that only reads
+      the decoder - the minimal difference to the working host-loop chain.
     """
-    if stage not in ("full", "palm_only"):
-        raise ValueError("stage must be 'full' or 'palm_only'")
+    if stage not in ("full", "palm_only", "palm_static"):
+        raise ValueError("stage must be 'full', 'palm_only' or 'palm_static'")
     loop = r"""
 import marshal
 
@@ -241,6 +245,7 @@ SOURCE_HEIGHT = ${SOURCE_HEIGHT}
 PD_SIZE = 128
 LM_SIZE = 224
 WITH_LANDMARKS = ${WITH_LANDMARKS}
+SEND_PALM_CONFIG = ${SEND_PALM_CONFIG}
 
 def flatten_values(value):
     if value is None:
@@ -316,8 +321,13 @@ stages = {
     "publish": 0,
 }
 
+# Declare the config output once: the host links it, and a Script output only
+# exists for the device footprint once it was used.
+node.io["pre_pd_manip_cfg"].send(palm_config())
+
 while True:
-    node.io["pre_pd_manip_cfg"].send(palm_config())
+    if SEND_PALM_CONFIG:
+        node.io["pre_pd_manip_cfg"].send(palm_config())
     palm_packet = node.io["from_post_pd_nn"].get()
     stages["palm_detector_nn"] += 1
     stages["decoding_nn"] += 1
@@ -392,4 +402,5 @@ while True:
         + loop.replace("${SOURCE_WIDTH}", str(int(source_width)))
         .replace("${SOURCE_HEIGHT}", str(int(source_height)))
         .replace("${WITH_LANDMARKS}", "True" if stage == "full" else "False")
+        .replace("${SEND_PALM_CONFIG}", "False" if stage == "palm_static" else "True")
     )
