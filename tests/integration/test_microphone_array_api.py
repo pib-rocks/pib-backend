@@ -21,6 +21,26 @@ def client():
     mas.get_service().reset_for_tests()
 
 
+def test_get_health(client):
+    response = client.get("/system/microphone-array/health")
+    assert response.status_code == 200
+    assert response.get_json() == {
+        "simulation": True,
+        "simulation_reason": "test reset",
+        "device_access": False,
+        "owner": "ros-audio-io",
+        "vendor_id": "0x2886",
+        "product_id": "0x0018",
+        "note": "Live values come from the ros-audio-io owner.",
+    }
+
+
+def test_get_health_v1_prefix(client):
+    response = client.get("/v1/system/microphone-array/health")
+    assert response.status_code == 200
+    assert response.get_json()["owner"] == "ros-audio-io"
+
+
 def test_get_telemetry(client):
     response = client.get("/system/microphone-array/telemetry")
     assert response.status_code == 200
@@ -30,6 +50,7 @@ def test_get_telemetry(client):
     assert data["speech_detected"] is False
     assert isinstance(data["audio_levels"], list)
     assert len(data["audio_levels"]) == 5
+    assert data["simulation_reason"] == "test reset"
 
 
 def test_get_telemetry_v1_prefix(client):
@@ -48,6 +69,7 @@ def test_get_tuning(client):
     assert "led_ring" in data
     assert "Standard" in data["presets"]
     assert "Raw" in data["presets"]
+    assert data["simulation_reason"] == "test reset"
 
 
 def test_post_tuning_preset(client):

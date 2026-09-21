@@ -308,6 +308,7 @@ class MicrophoneArrayService:
         self._tuning: Optional[ReSpeakerTuning] = None
         self._pixel_ring: Optional[PixelRing] = None
         self._simulation = True
+        self._simulation_reason: Optional[str] = None
         self._preset = "Standard"
         self._tuning_state: Dict[str, Any] = dict(_DEFAULT_TUNING)
         self._led_state: Dict[str, Any] = dict(_DEFAULT_LED)
@@ -330,6 +331,7 @@ class MicrophoneArrayService:
         self._tuning = ReSpeakerTuning(dev)
         self._pixel_ring = PixelRing(dev)
         self._simulation = False
+        self._simulation_reason = None
         logger.info(
             "Microphone array: connected to ReSpeaker (0x%04x:0x%04x)",
             VENDOR_ID,
@@ -343,6 +345,7 @@ class MicrophoneArrayService:
 
     def _enter_simulation(self, reason: str) -> None:
         self._simulation = True
+        self._simulation_reason = reason
         self._dev = None
         self._tuning = None
         self._pixel_ring = None
@@ -355,12 +358,25 @@ class MicrophoneArrayService:
     def list_presets(self) -> List[str]:
         return list(PRESETS.keys())
 
+    def health(self) -> Dict[str, Any]:
+        with self._lock:
+            return {
+                "simulation": self._simulation,
+                "simulation_reason": self._simulation_reason,
+                "device_access": False,
+                "owner": "ros-audio-io",
+                "vendor_id": f"0x{VENDOR_ID:04x}",
+                "product_id": f"0x{PRODUCT_ID:04x}",
+                "note": "Live values come from the ros-audio-io owner.",
+            }
+
     def get_telemetry(self) -> Dict[str, Any]:
         with self._lock:
             if self._simulation or self._tuning is None:
                 return {
                     **deepcopy(self._telemetry_state),
                     "simulation": True,
+                    "simulation_reason": self._simulation_reason,
                 }
             try:
                 doa = int(self._tuning.read("DOAANGLE"))
@@ -371,6 +387,7 @@ class MicrophoneArrayService:
                 return {
                     **deepcopy(self._telemetry_state),
                     "simulation": False,
+                    "simulation_reason": self._simulation_reason,
                     "error": str(exc),
                 }
             self._telemetry_state.update(
@@ -386,6 +403,7 @@ class MicrophoneArrayService:
                 "speech_detected": speech,
                 "audio_levels": list(self._telemetry_state["audio_levels"]),
                 "simulation": False,
+                "simulation_reason": self._simulation_reason,
             }
 
     def get_tuning(self) -> Dict[str, Any]:
@@ -404,6 +422,7 @@ class MicrophoneArrayService:
                 "parameters": parameters,
                 "led_ring": dict(self._led_state),
                 "simulation": self._simulation,
+                "simulation_reason": self._simulation_reason,
             }
 
     def update_tuning(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -520,6 +539,10 @@ def get_service() -> MicrophoneArrayService:
 
 def get_telemetry() -> Dict[str, Any]:
     return get_service().get_telemetry()
+
+
+def health() -> Dict[str, Any]:
+    return get_service().health()
 
 
 def get_tuning() -> Dict[str, Any]:

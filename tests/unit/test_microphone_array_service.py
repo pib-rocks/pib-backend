@@ -37,6 +37,7 @@ def test_default_tuning_is_standard_preset():
     tuning = mas.get_tuning()
     assert tuning["preset"] == "Standard"
     assert tuning["simulation"] is True
+    assert tuning["simulation_reason"] == "test reset"
     assert tuning["parameters"]["AGCONOFF"] == 1
     assert tuning["parameters"]["STATNOISEONOFF"] == 1
     assert tuning["parameters"]["ECHOONOFF"] == 1
@@ -127,6 +128,22 @@ def test_telemetry_simulation_shape():
     assert telemetry["speech_detected"] is False
     assert len(telemetry["audio_levels"]) == 5
     assert telemetry["simulation"] is True
+    assert telemetry["simulation_reason"] == "test reset"
+
+
+def test_health_reports_forced_simulation_reason_and_device_ownership():
+    with patch.dict(os.environ, {"MICROPHONE_ARRAY_SIMULATION": "1"}):
+        service = mas.MicrophoneArrayService()
+
+    assert service.health() == {
+        "simulation": True,
+        "simulation_reason": "forced or pyusb unavailable",
+        "device_access": False,
+        "owner": "ros-audio-io",
+        "vendor_id": "0x2886",
+        "product_id": "0x0018",
+        "note": "Live values come from the ros-audio-io owner.",
+    }
 
 
 def test_respeaker_tuning_write_and_read_int():
@@ -172,9 +189,15 @@ def test_hardware_path_uses_usb_when_device_present():
             mock_usb.util.CTRL_RECIPIENT_DEVICE = 0x00
             service = mas.MicrophoneArrayService()
             assert service.is_simulation is False
+            health = service.health()
+            assert health["simulation"] is False
+            assert health["simulation_reason"] is None
+            assert health["device_access"] is False
+            assert health["owner"] == "ros-audio-io"
             telemetry = service.get_telemetry()
             assert telemetry["doa_angle"] == 90
             assert telemetry["simulation"] is False
+            assert telemetry["simulation_reason"] is None
 
 
 def struct_pack_ii(a: int, b: int) -> bytes:
