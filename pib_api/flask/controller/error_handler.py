@@ -39,6 +39,11 @@ def handle_bad_request_error(error):
     return jsonify({"error": "Bad request."}), 400
 
 
+def handle_unprocessable_entity_error(error):
+    app.logger.error(error)
+    return jsonify({"error": error.description}), 422
+
+
 def handle_method_not_allowed_error(error):
     app.logger.error(error)
     response = jsonify({"error": "Method not allowed for this endpoint."})

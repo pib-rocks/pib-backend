@@ -2,6 +2,7 @@ from model.button_program_model import ButtonProgram
 from service.controller_service import get_controller
 from service.program_service import get_program
 from app.app import db
+from werkzeug.exceptions import UnprocessableEntity
 
 
 def get_all_button_programs() -> list[ButtonProgram]:
@@ -10,12 +11,19 @@ def get_all_button_programs() -> list[ButtonProgram]:
 
 def get_button_program_by_bricklet_number(bricklet_number: int) -> ButtonProgram:
     controller = get_controller(bricklet_number)
-    return ButtonProgram.query.filter_by(controller_id=controller.id).one()
+    button_program = ButtonProgram.query.filter_by(
+        controller_id=controller.id
+    ).one_or_none()
+    if button_program is None:
+        raise UnprocessableEntity(
+            "No button program exists for "
+            f"buttonProgramUpdates[].brickletNumber={bricklet_number}."
+        )
+    return button_program
 
 
 def update_button_programs(button_programs_dto: list[dict]) -> list[ButtonProgram]:
     for button_program_dto in button_programs_dto:
-        get_controller(button_program_dto.get("brickletNumber"))
         program = (
             get_program(button_program_dto.get("programNumber"))
             if button_program_dto.get("programNumber")
