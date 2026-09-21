@@ -11,6 +11,19 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 import base64
 
+import pytest
+
+# Installed by tests/requirements-camera.txt; skip instead of aborting collection on a
+# platform without the camera wheels. depthai_nodes is needed because the module under
+# test (ros_packages/camera/oak_d_lite/stereo.py) imports it at module level.
+pytest.importorskip(
+    "cv2", reason="opencv not installed (tests/requirements-camera.txt)"
+)
+pytest.importorskip(
+    "depthai_nodes",
+    reason="depthai-nodes not installed (tests/requirements-camera.txt)",
+)
+
 import cv2
 
 if not hasattr(cv2, "CascadeClassifier"):
