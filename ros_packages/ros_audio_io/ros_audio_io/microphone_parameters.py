@@ -32,13 +32,37 @@ PARAMETER_SPECS = {
     "NONSTATNOISEONOFF_SR": (int, 0, 1, 1),
 }
 
+# How far a float register may drift between the written and the read value.
+# name: (relative tolerance, absolute tolerance)
+#
+# The XVF3000 does not store every float verbatim, so an exact comparison
+# rejects values the device has accepted. Measured on 192.168.1.172 with a
+# ReSpeaker Mic Array v2.0 attached:
+#   AGCTIME 1.0 -> read-back 0.9841422392055392 (1.59 % below the request)
+#   AGCTIME 0.5 -> read-back 0.9685218567028642 (93.7 % off - see PRESETS)
+# 2 % covers the 1.59 % the device actually needs and still rejects the 0.5
+# case, which is a value the device does not hold rather than rounding noise.
+# AGCMAXGAIN and AGCDESIREDLEVEL are written before AGCTIME and passed the
+# strict check in that same session, so they keep the strict default; widen a
+# tolerance only with a measured read-back written down next to it.
+DEFAULT_READBACK_TOLERANCE = (1e-5, 1e-8)
+READBACK_TOLERANCES: Dict[str, tuple] = {
+    "AGCTIME": (0.02, 1e-8),
+}
+
 PRESETS: Dict[str, Dict[str, Any]] = {
     "Standard": {name: spec[3] for name, spec in PARAMETER_SPECS.items()},
     "Noisy Environment / ASR": {
         "AGCONOFF": 0,
         "AGCMAXGAIN": 31.6,
         "AGCDESIREDLEVEL": 0.005,
-        "AGCTIME": 0.5,
+        # Was 0.5 s. The device answers a 0.5 s write with 0.9685 (measured on
+        # 192.168.1.172), so the read-back check rejected the preset as a whole
+        # and nothing was applied. 1.0 s is a value the device does hold
+        # (read-back 0.9841), and this preset switches AGC off anyway, which
+        # makes the ramp time-constant inert here. The remaining parameters are
+        # unchanged.
+        "AGCTIME": 1.0,
         "STATNOISEONOFF": 1,
         "NONSTATNOISEONOFF": 1,
         "ECHOONOFF": 1,
@@ -148,9 +172,47 @@ def validate_parameter(name: str, value: Any) -> Any:
     raise ValueError(f"Unknown microphone parameter: {name}")
 
 
-def readback_matches(expected: Any, actual: Any) -> bool:
+def readback_tolerance(name: str) -> tuple:
+    """Return the (relative, absolute) read-back tolerance of one parameter."""
+
+    return READBACK_TOLERANCES.get(name, DEFAULT_READBACK_TOLERANCE)
+
+
+def readback_matches(name: str, expected: Any, actual: Any) -> bool:
     """Compare an XVF3000 register read-back with its requested value."""
 
     if isinstance(expected, float):
-        return math.isclose(expected, float(actual), rel_tol=1e-5, abs_tol=1e-8)
+        rel_tol, abs_tol = readback_tolerance(name)
+        return math.isclose(expected, float(actual), rel_tol=rel_tol, abs_tol=abs_tol)
     return expected == actual
+
+
+def readback_mismatch_reason(name: str, expected: Any, actual: Any) -> str:
+    """Describe a read-back the device did not reproduce within tolerance."""
+
+    reason = f"{name} read-back {actual!r} != requested {expected!r}"
+    if isinstance(expected, float):
+        rel_tol, abs_tol = readback_tolerance(name)
+        reason += f" (tolerance: relative {rel_tol:g}, absolute {abs_tol:g})"
+    return reason
+
+
+def apply_tuning_values(device, values: Dict[str, Any]):
+    """Write tuning values to the device and verify each read-back.
+
+    Returns the read-backs collected so far together with a failure reason,
+    which is None when every value came back inside its tolerance. The device
+    is anything offering ``write(name, value)`` and ``read(name)``.
+    """
+
+    readbacks: Dict[str, Any] = {}
+    for name, value in values.items():
+        try:
+            device.write(name, value)
+            actual = device.read(name)
+        except Exception as exc:
+            return readbacks, f"Device write/read-back failed: {exc}"
+        readbacks[name] = actual
+        if not readback_matches(name, value, actual):
+            return readbacks, readback_mismatch_reason(name, value, actual)
+    return readbacks, None
