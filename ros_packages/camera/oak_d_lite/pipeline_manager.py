@@ -3,6 +3,7 @@
 from dataclasses import dataclass, field
 import threading
 import time
+import traceback
 from typing import Callable, Dict, Iterable, Optional, Set, Tuple
 
 from .model_registry import ModelRecord, ModelRegistry
@@ -83,6 +84,11 @@ class PipelineManager:
         if self._logger is not None:
             self._logger.warning(message)
 
+    def _error(self, message):
+        """Report a pipeline rejection with its cause, not just its symptom."""
+        if self._logger is not None:
+            self._logger.error(message)
+
     def _active_specs(self):
         specs = []
         for model in self.registry.models():
@@ -118,7 +124,23 @@ class PipelineManager:
                 rebuilt = self._rebuild(self._active_specs())
                 flowing = rebuilt and self._verify_frames(self._frame_timeout)
             except Exception:
+                # Swallowing this made a rejected model chain indistinguishable
+                # from a slow one: the caller only saw "failed ... reverted to
+                # colour-only" with no reason. The traceback is the only account
+                # of why the pipeline was rejected.
+                self._error(
+                    "Pipeline rebuild raised: "
+                    + traceback.format_exc().strip().splitlines()[-1]
+                )
+                for line in traceback.format_exc(limit=6).strip().splitlines():
+                    self._error("  " + line)
                 flowing = False
+            else:
+                if not flowing:
+                    self._error(
+                        "Pipeline rebuilt but no frames arrived within "
+                        f"{self._frame_timeout}s; treating it as failed."
+                    )
             if flowing:
                 return True
             if attempt + 1 < self._attempts:

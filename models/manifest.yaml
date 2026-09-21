@@ -28,15 +28,21 @@ models:
   source_url: https://github.com/luxonis/depthai-model-zoo/raw/main/models/palm_detection_128x128_decoding/palm_detection_128x128_decoding.xml
   licence: unknown - see source
   file: palm_detection_128x128_decoding/palm_detection_128x128_decoding.blob
-  sha256: 5fdba175b44761ca338abade5304ff7e1e8321a0656ca5abe71eba2df543907d
-  size_bytes: 44282
+  sha256: a9a94bf24fe1df0ccd338623bcd49109ca28183a8679b4b3203529b8b5375f68
+  size_bytes: 44090
   shaves: 1
   input_width: 128
   input_height: 128
   format: blob
   openvino_version: '2022.1'
   zoo_type: depthai
-  notes: Decoding head only (not a detector). Requires palm_detection_128x128; returns the TOP 10 most confident results so decoding can run on the edge. DepthAI zoo IR expects BGR, [0-255], CHW. Compiled with compile_params '-ip U8'. Upstream model.yml licence is empty.
+  notes: 'Decoding head only (not a detector). Requires palm_detection_128x128;
+    returns the TOP 10 most confident results so decoding can run on the edge. Its
+    inputs are the detector''s float tensors (regressors 1x896x18, classificators
+    1x896x1), so it is compiled with compile_params ''-ip FP16'' - the ''-ip U8''
+    default belongs to image-input networks and destroys these tensors. Output
+    ''result'' is a Concat of 1+3+2+2 fields - score, box_x, box_y, box_size, kp0_x,
+    kp0_y, kp2_x, kp2_y. Upstream model.yml licence is empty.'
 - model_id: hand_landmark_224x224
   selectable: false
   task: hand_landmarks
@@ -57,14 +63,28 @@ models:
   task: hand_tracking
   composite: true
   artifacts:
-  # The reference's own models (pib-rocks/imitation).  The chain's post-processing
-  # reads the ``result`` layer this pair produces, so the palm stage is the
-  # reference's stage; the zoo pair that was configured here delivered a different
-  # ``result`` format and left every crop on the whole frame.
-  - palm_detection_sh4
-  - pd_postprocessing_top2_sh1
-  - hand_landmark_full_sh4
+  # The zoo's own three-blob set.  The decoding head consumes the detector's
+  # ``classificators``/``regressors`` tensors and returns the TOP 10 records; it
+  # is compiled without ``-ip U8`` so those float inputs keep the detector's
+  # FP16 precision.  With the image-input default the head emitted a constant
+  # score of 1.0 and geometry that correlated with nothing in the frame.
+  - palm_detection_128x128
+  - palm_detection_128x128_decoding
+  - hand_landmark_224x224
   publish_topic: detections/hand_tracking
+- model_id: hand_tracking_mp
+  task: hand_tracking
+  composite: true
+  artifacts:
+  # The Luxonis hand-pose reference shape (oak-examples hand-pose): the palm
+  # detector is parsed on the host, so no decoding blob is needed at all, the crop
+  # runs through the device-side FrameCropper, and the landmarker is read as a
+  # plain network - depthai-nodes' KeypointParser would clip the hand-relative z
+  # into 0..1. Shave budget 4 + 4, one shave less than the three-blob set.
+  - palm_detection_128x128
+  - hand_landmark_224x224
+  publish_topic: detections/hand_tracking
+  selectable: true
 - model_id: face_detection_yunet_160x120
   task: face_detection
   publish_topic: detections/face_detection_yunet_160x120
