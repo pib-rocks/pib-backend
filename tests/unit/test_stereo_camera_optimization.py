@@ -232,27 +232,28 @@ from ros_packages.camera.oak_d_lite.stereo import (
     IMU_SENSOR_RATE_HZ,
     IMU_STALE_AFTER_SECONDS,
     IMU_STALE_MISSED_PUBLICATIONS,
+    MAX_HAND_MP_BUFFER,
     ParsingNeuralNetwork,
 )
 
 
 def _hand_artifacts():
-    """Registry entries for the three blobs the hand chain is built from.
+    """Registry entries for the three zoo blobs the hand chain is built from.
 
-    The chain runs the reference's models now, so the ids are the ones the
-    imitation chain loads too - only the pipelines differ.
+    The hand chain runs the zoo set (palm detector, decoding head, landmark
+    network); the imitation chain has its own, separately vendored set.
     """
     return {
-        "palm_detection_sh4": types.SimpleNamespace(
+        "palm_detection_128x128": types.SimpleNamespace(
             input_width=128,
             input_height=128,
             blob_path="/palm.blob",
             shaves=4,
         ),
-        "pd_postprocessing_top2_sh1": types.SimpleNamespace(
+        "palm_detection_128x128_decoding": types.SimpleNamespace(
             blob_path="/decoder.blob", shaves=1
         ),
-        "hand_landmark_full_sh4": types.SimpleNamespace(
+        "hand_landmark_224x224": types.SimpleNamespace(
             input_width=224,
             input_height=224,
             blob_path="/landmark.blob",
@@ -1042,7 +1043,7 @@ class TestHandStageCounters(unittest.TestCase):
     ):
         node = self._make_node()
         decoder_packet = MagicMock()
-        decoder_packet.getTensor.return_value = [0.0] * 16
+        decoder_packet.getTensor.return_value = [0.0] * 80
         landmark_packet = MagicMock()
         node.hand_decoder_queue = MagicMock()
         node.hand_decoder_queue.tryGet.side_effect = [decoder_packet, None]
@@ -1827,7 +1828,7 @@ class TestStereoModeDecision(unittest.TestCase):
         node._start_pipeline.assert_called_once_with(include_stereo=False)
         self.assertFalse(node.depth_available)
         node.get_logger().warning.assert_called_once_with(
-            "Stereo depth disabled - using colour-only pipeline (depth disabled)"
+            "Stereo depth disabled - using colour-only pipeline (mode=off)"
         )
 
     def test_mode_auto_without_frames_falls_back_to_colour_only(self):
@@ -2493,3 +2494,121 @@ class TestOakImu(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestHandMpChain(unittest.TestCase):
+    """The Luxonis hand-pose shape (PR-1791): one chain per model_id, parsed palms,
+    raw landmark network, timestamp pairing instead of a per-frame round trip."""
+
+    def _make_node(self):
+        with patch.object(CameraNode, "__init__", lambda self: None):
+            node = CameraNode()
+        node.hand_mp_landmark_queue = None
+        node.hand_mp_detection_queue = None
+        node.hand_mp_pairs = {}
+        node.hand_mp_source_size = (1152, 648)
+        node.hand_landmark_input_size = 224
+        node.current_frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+        node._hand_warnings = set()
+        node.hand_stage_counters = {}
+        node._reset_hand_stage_counters()
+        node._count_hand_stage = MagicMock()
+        node._warn_hand_once = MagicMock()
+        return node
+
+    def test_pairing_publishes_only_matched_timestamps(self):
+        node = self._make_node()
+        stamp = types.SimpleNamespace(sec=10, nanosec=20)
+        detection = MagicMock()
+        detection.getTimestamp.return_value = stamp
+        landmark = MagicMock()
+        landmark.getTimestamp.return_value = stamp
+
+        node.hand_mp_detection_queue = MagicMock()
+        node.hand_mp_detection_queue.tryGet.side_effect = [detection, None]
+        node.hand_mp_landmark_queue = MagicMock()
+        node.hand_mp_landmark_queue.tryGet.side_effect = [landmark, None]
+        published = []
+        node._publish_hand_mp_pair = lambda d, l: published.append((d, l))
+
+        node._process_hand_mp()
+
+        self.assertEqual(len(published), 1)
+        self.assertIs(published[0][0], detection)
+        self.assertIs(published[0][1], landmark)
+        self.assertEqual(node.hand_mp_pairs, {})
+
+    def test_pairing_keeps_unmatched_landmarks_for_later(self):
+        node = self._make_node()
+        stamp = types.SimpleNamespace(sec=1, nanosec=2)
+        landmark = MagicMock()
+        landmark.getTimestamp.return_value = stamp
+
+        node.hand_mp_detection_queue = MagicMock()
+        node.hand_mp_detection_queue.tryGet.return_value = None
+        node.hand_mp_landmark_queue = MagicMock()
+        node.hand_mp_landmark_queue.tryGet.side_effect = [landmark, None]
+        node._publish_hand_mp_pair = MagicMock()
+
+        node._process_hand_mp()
+
+        node._publish_hand_mp_pair.assert_not_called()
+        self.assertIn((1, 2), node.hand_mp_pairs)
+
+    def test_pairing_buffer_stays_bounded(self):
+        node = self._make_node()
+        packets = []
+        for index in range(MAX_HAND_MP_BUFFER + 5):
+            packet = MagicMock()
+            packet.getTimestamp.return_value = types.SimpleNamespace(
+                sec=index, nanosec=0
+            )
+            packets.append(packet)
+        node.hand_mp_detection_queue = MagicMock()
+        node.hand_mp_detection_queue.tryGet.side_effect = list(packets) + [None]
+        node.hand_mp_landmark_queue = MagicMock()
+        node.hand_mp_landmark_queue.tryGet.return_value = None
+        node._process_hand_mp()
+
+        self.assertLessEqual(len(node.hand_mp_pairs), MAX_HAND_MP_BUFFER)
+
+    def test_chain_is_built_only_with_the_landmark_queue(self):
+        node = self._make_node()
+        node._pipeline_models = [
+            types.SimpleNamespace(
+                model=types.SimpleNamespace(model_id="hand_tracking_mp")
+            )
+        ]
+        self.assertFalse(node._hand_mp_chain_is_built())
+        node.hand_mp_landmark_queue = MagicMock()
+        self.assertTrue(node._hand_mp_chain_is_built())
+
+
+class TestStereoRequested(unittest.TestCase):
+    """Depth is only requested while no model runs (auto), on/off force it."""
+
+    def _node(self, mode, models):
+        node = object.__new__(CameraNode)
+        node.stereo_mode = mode
+        node._pipeline_models = models
+        return node
+
+    def test_auto_without_models_asks_for_depth(self):
+        self.assertTrue(self._node("auto", [])._stereo_requested())
+
+    def test_auto_with_a_model_skips_depth(self):
+        models = [
+            types.SimpleNamespace(
+                model=types.SimpleNamespace(model_id="hand_tracking_mp")
+            )
+        ]
+        self.assertFalse(self._node("auto", models)._stereo_requested())
+
+    def test_on_forces_depth_even_with_a_model(self):
+        models = [
+            types.SimpleNamespace(model=types.SimpleNamespace(model_id="imitation"))
+        ]
+        self.assertTrue(self._node("on", models)._stereo_requested())
+
+    def test_off_never_asks_for_depth(self):
+        self.assertFalse(self._node("off", [])._stereo_requested())
