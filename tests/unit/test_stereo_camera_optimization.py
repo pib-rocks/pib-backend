@@ -554,6 +554,101 @@ class TestSingleNetworkPipeline(unittest.TestCase):
             maxSize=BRANCH_OUTPUT_QUEUE_DEPTH, blocking=False
         )
 
+    @patch("ros_packages.camera.oak_d_lite.stereo.create_archive", return_value=None)
+    @patch("ros_packages.camera.oak_d_lite.stereo.dai")
+    def test_qr_model_uses_validated_gray8_single_network(self, mock_dai, _):
+        node = self._node()
+        model = types.SimpleNamespace(
+            model_id="qr_code_detection_384x384",
+            blob_path="/qr.blob",
+            input_width=384,
+            input_height=384,
+            shaves=4,
+        )
+        mock_dai.OpenVINO.Blob.return_value = types.SimpleNamespace(
+            networkInputs={"data": types.SimpleNamespace(dims=[384, 384, 1, 1])},
+            networkOutputs={
+                "detection_output": types.SimpleNamespace(dims=[7, 100, 1, 1])
+            },
+        )
+
+        node._build_single_network_pipeline(model)
+
+        node._request_camera_branch.assert_called_once_with(
+            (384, 384), frame_type=mock_dai.ImgFrame.Type.GRAY8
+        )
+        network = node.pipeline.create.return_value
+        network.setBlobPath.assert_called_once_with("/qr.blob")
+        network.setNumShavesPerInferenceThread.assert_called_once_with(4)
+
+
+class TestQrDetectionPublishing(unittest.TestCase):
+    def _node(self):
+        with patch.object(CameraNode, "__init__", lambda self: None):
+            node = CameraNode()
+        node.current_frame = np.zeros((100, 200, 3), dtype=np.uint8)
+        node.qr_detector = MagicMock()
+        node.last_detections = {}
+        node.detection_publishers = {"qr_code_detection_384x384": MagicMock()}
+        node.get_clock = MagicMock()
+        node.get_clock.return_value.now.return_value.to_msg.return_value = object()
+        return node
+
+    @patch("ros_packages.camera.oak_d_lite.stereo.decode_qr_detections")
+    def test_publishes_decoded_text_box_and_closed_polygon_points(self, decode):
+        node = self._node()
+        decode.return_value = [
+            types.SimpleNamespace(
+                text="pib",
+                confidence=0.9,
+                box=(20, 10, 80, 70),
+                corners=((20.0, 10.0), (80.0, 10.0), (80.0, 70.0), (20.0, 70.0)),
+            )
+        ]
+
+        node._publish_qr_detections(object())
+
+        message = node.last_detections["qr_code_detection_384x384"]
+        detection = message.detections[0]
+        self.assertEqual(detection.label, "pib")
+        self.assertEqual(
+            (detection.x_min, detection.y_min, detection.x_max, detection.y_max),
+            (20, 10, 80, 70),
+        )
+        self.assertEqual(
+            detection.keypoint_names,
+            ["top_left", "top_right", "bottom_right", "bottom_left"],
+        )
+        self.assertEqual(detection.keypoint_x, [20.0, 80.0, 80.0, 20.0])
+        self.assertEqual(detection.keypoint_y, [10.0, 10.0, 70.0, 70.0])
+        node.detection_publishers[
+            "qr_code_detection_384x384"
+        ].publish.assert_called_once_with(message)
+
+    def test_start_verification_waits_for_detector_packet_not_qr_result(self):
+        node = self._node()
+        node._pipeline_models = [
+            types.SimpleNamespace(
+                model=types.SimpleNamespace(model_id="qr_code_detection_384x384")
+            )
+        ]
+        detector_packet = object()
+        colour_packet = object()
+        node.nn_queues = {"qr_code_detection_384x384": MagicMock()}
+        node._pending_nn_packets = {}
+        node._wait_for_queue_packet = MagicMock(return_value=detector_packet)
+        node._wait_for_color_frame = MagicMock(return_value=colour_packet)
+        node._pending_color_packet = None
+        node.face_crop_model_id = None
+
+        self.assertTrue(node._verify_model_frames(3.0))
+
+        self.assertIs(
+            node._pending_nn_packets["qr_code_detection_384x384"],
+            detector_packet,
+        )
+        self.assertIs(node._pending_color_packet, colour_packet)
+
 
 class TestStereoDepthConfiguration(unittest.TestCase):
     """The mono/stereo setup must match the reference proven on depthai 3.6.1."""

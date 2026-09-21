@@ -249,6 +249,7 @@ models:
   notes: YOLOv6n COCO 80-class detector. IR input 'images' 3x640x640. BGR [0-255], compiled '-ip U8'. Decode with DepthAI YoloDetectionNetwork (YOLOv6).
 - model_id: qr_code_detection_384x384
   task: qr_code_detection
+  publish_topic: detections/qr_code_detection_384x384
   source_upstream: luxonis/depthai-model-zoo (opencv_contrib wechat_qrcode)
   source_url: https://github.com/luxonis/depthai-model-zoo/raw/main/models/qr_code_detection_384x384/qr_code_detection_384x384.xml
   licence: Apache License Version 2.0; https://github.com/opencv/opencv_contrib/blob/master/modules/wechat_qrcode/LICENSE
@@ -261,7 +262,7 @@ models:
   format: blob
   openvino_version: '2022.1'
   zoo_type: depthai
-  notes: WeChat QR detector. IR input 'input' 3x384x384. BGR [0-255], compiled '-ip U8'.
+  notes: WeChat QR detector. Blob input 'data' U8F [384,384,1,1], GRAY8 [0-255], compiled '-ip U8'. Output 'detection_output' FP16 [7,100,1,1] uses SSD DetectionOutput tuples.
 - model_id: person-reidentification-retail-0031_96x48
   task: person_reidentification
   source_upstream: openvinotoolkit/open_model_zoo (IR packaged in luxonis/depthai-model-zoo)
