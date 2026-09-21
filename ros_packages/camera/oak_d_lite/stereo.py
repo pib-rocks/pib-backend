@@ -2219,10 +2219,15 @@ class CameraNode(Node):
         box_size = max(width, height)
         if box_size <= 0.0:
             raise ValueError("palm detection has an empty box")
-        try:
-            palm_score = float(first.score)
-        except (AttributeError, TypeError, ValueError):
-            palm_score = float("nan")
+        # The parser fills the detection's confidence (dai's ImgDetection field);
+        # there is no "score" attribute, so reading it yielded NaN for every hand.
+        palm_score = float("nan")
+        for attribute in ("confidence", "score"):
+            try:
+                palm_score = float(getattr(first, attribute))
+                break
+            except (AttributeError, TypeError, ValueError):
+                continue
         if abs(rotation) < 1e-6:
             # The reference computes the rotation from the wrist and middle-finger
             # anchors; the parser may leave the rect axis aligned.
