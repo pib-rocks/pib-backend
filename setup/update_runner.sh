@@ -10,8 +10,15 @@ BACKEND_DIR="${PIB_BACKEND_DIR:-/home/pib/app/pib-backend}"
 CEREBRA_DIR="${PIB_CEREBRA_DIR:-/home/pib/app/cerebra}"
 REQUEST_FILE="$UPDATE_DIR/request.json"
 STATUS_FILE="$UPDATE_DIR/status.json"
-LOG_FILE="$UPDATE_DIR/update.log"
 CANCEL_FILE="$UPDATE_DIR/cancel.json"
+CHECK_FILE="$UPDATE_DIR/check.json"
+AVAILABLE_FILE="$UPDATE_DIR/available.json"
+CHECK_HELPER="$BACKEND_DIR/setup/update_check.py"
+if [ "${1:-}" = "--check" ]; then
+    LOG_FILE="$UPDATE_DIR/check.log"
+else
+    LOG_FILE="$UPDATE_DIR/update.log"
+fi
 MIN_FREE_KIB="${PIB_UPDATE_MIN_FREE_KIB:-8388608}"
 VERIFY_ATTEMPTS="${PIB_UPDATE_VERIFY_ATTEMPTS:-30}"
 VERIFY_INTERVAL_SECONDS="${PIB_UPDATE_VERIFY_INTERVAL_SECONDS:-5}"
@@ -62,6 +69,69 @@ exec >>"$LOG_FILE" 2>&1
 log() {
     printf '[%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"
 }
+
+read_remote_revision() {
+    local name="$1"
+    local directory="$2"
+    local output
+    REMOTE_TARGET="unknown"
+    REMOTE_ERROR=""
+    if ! output="$(git -C "$directory" ls-remote origin "$BRANCH" 2>&1)"; then
+        REMOTE_ERROR="$output"
+    else
+        REMOTE_TARGET="$(printf '%s\n' "$output" | awk 'NR == 1 {print $1}')"
+        if [ -z "$REMOTE_TARGET" ]; then
+            REMOTE_TARGET="unknown"
+            REMOTE_ERROR="Remote branch $BRANCH was not found"
+        fi
+    fi
+    if [ -n "$REMOTE_ERROR" ]; then
+        log "$name remote check failed: $(printf '%s' "$REMOTE_ERROR" | tr '\n' ' ')"
+    fi
+}
+
+run_check() {
+    trap 'rm -f "$CHECK_FILE"' EXIT
+    if [ ! -f "$CHECK_FILE" ]; then
+        log "No update availability request is queued"
+        return 0
+    fi
+
+    local parsed
+    if ! parsed="$(python3 "$CHECK_HELPER" validate-request "$CHECK_FILE" 2>&1)"; then
+        log "Invalid check.json: $parsed"
+        return 1
+    fi
+    eval "$parsed"
+
+    if [ -f "$REQUEST_FILE" ]; then
+        log "Refusing update availability check while an update job is active"
+        return 0
+    fi
+
+    local backend_installed cerebra_installed
+    backend_installed="$(git -C "$BACKEND_DIR" rev-parse HEAD 2>/dev/null || printf unknown)"
+    cerebra_installed="$(git -C "$CEREBRA_DIR" rev-parse HEAD 2>/dev/null || printf unknown)"
+
+    local backend_target backend_error cerebra_target cerebra_error
+    read_remote_revision "pib-backend" "$BACKEND_DIR"
+    backend_target="$REMOTE_TARGET"
+    backend_error="$REMOTE_ERROR"
+    read_remote_revision "cerebra" "$CEREBRA_DIR"
+    cerebra_target="$REMOTE_TARGET"
+    cerebra_error="$REMOTE_ERROR"
+
+    python3 "$CHECK_HELPER" write "$AVAILABLE_FILE" \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        "pib-backend" "$backend_installed" "$backend_target" "$backend_error" \
+        "cerebra" "$cerebra_installed" "$cerebra_target" "$cerebra_error"
+    log "Update availability check completed for channel $CHANNEL"
+}
+
+if [ "${1:-}" = "--check" ]; then
+    run_check
+    exit $?
+fi
 
 write_status() {
     local state="$1"

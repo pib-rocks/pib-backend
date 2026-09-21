@@ -71,6 +71,8 @@ The backend can request the same host update through these LAN API endpoints:
 - `GET /system/update/status`
 - `GET /system/update/log?offset=0` (the returned `nextOffset` is a byte offset)
 - `POST /system/update/cancel`
+- `POST /system/update/check` with JSON `{"channel":"release"}`
+- `GET /system/update/available`
 - `GET /system/revision`
 
 There is **no authentication in this backend**. The API is intended only for a
@@ -85,6 +87,13 @@ host-side because rebuilding the backend recreates `flask-app` itself. Status is
 stored in `status.json`, the append-only live log in `update.log`, and installed
 revision facts in `pib-backend.revision.json` and `cerebra.revision.json`.
 Missing revision fields are returned as `unknown`.
+
+Availability checks use a separate `pib-update-check.path` /
+`pib-update-check.service` pair and never fetch, change a checkout, build, or
+extend the watchdog. The result is stored in `available.json` and check activity
+in `check.log`. Devices installed before this pair was added must run the
+installer again to receive the units and updated runner marker; until then the
+availability endpoints report `runner_missing` so clients can degrade normally.
 
 Before changing either checkout, the runner refuses dirty repositories unless
 `force` was explicitly requested, checks free disk space, and creates and

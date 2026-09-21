@@ -196,6 +196,35 @@ def get_update_status():
     return jsonify(status), code
 
 
+@bp.route("/update/check", methods=["POST"])
+def check_update_available():
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "Request body must be a JSON object"}), 400
+    try:
+        check_request = update_service.build_check_request(
+            channel=payload.get("channel", "release"),
+            actor=request.remote_addr or "unknown",
+        )
+        update_service.enqueue_check(check_request)
+    except update_service.UpdateValidationError as error:
+        return jsonify({"error": str(error)}), 400
+    except update_service.UpdateNotInstalledError as error:
+        return jsonify({"error": str(error), "state": error.state}), 503
+    except update_service.UpdateConflictError as error:
+        return jsonify({"error": str(error), "status": error.status}), 409
+    return jsonify(check_request), 202
+
+
+@bp.route("/update/available", methods=["GET"])
+def get_update_available():
+    try:
+        available = update_service.get_available()
+    except update_service.UpdateNotInstalledError as error:
+        return jsonify({"error": str(error), "state": error.state}), 503
+    return jsonify(available), 200
+
+
 @bp.route("/update/log", methods=["GET"])
 def get_update_log():
     try:

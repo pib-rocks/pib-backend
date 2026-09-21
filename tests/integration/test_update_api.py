@@ -7,7 +7,7 @@ def _request(channel="release"):
     return {"channel": channel, "force": False, "confirmation": "UPDATE"}
 
 
-MARKER = '{"schemaVersion":1}'
+MARKER = '{"schemaVersion":1,"updateCheck":true}'
 
 
 def _installed_update_dir(tmp_path):
@@ -105,3 +105,86 @@ def test_revision_endpoint_preserves_unknown_values(client, tmp_path, monkeypatc
     assert response.status_code == 200
     assert response.get_json()["repositories"]["pib-backend"]["gitSha"] == "unknown"
     assert response.get_json()["repositories"]["cerebra"]["channel"] == "unknown"
+
+
+def test_update_check_and_initial_availability(client, tmp_path, monkeypatch):
+    update_dir = _installed_update_dir(tmp_path)
+    monkeypatch.setenv("PIB_UPDATE_DIR", str(update_dir))
+
+    initial = client.get("/system/update/available")
+    queued = client.post("/system/update/check", json={"channel": "develop"})
+
+    assert initial.status_code == 200
+    assert initial.get_json()["checkedAt"] is None
+    assert (
+        initial.get_json()["repositories"]["pib-backend"]["updateAvailable"]
+        == "unknown"
+    )
+    assert initial.get_json()["repositories"]["cerebra"]["target"] == "unknown"
+    assert queued.status_code == 202
+    assert queued.get_json()["channel"] == "develop"
+    assert queued.get_json()["actor"] == "127.0.0.1"
+    check_document = json.loads((update_dir / "check.json").read_text())
+    assert check_document == queued.get_json()
+
+
+def test_update_check_conflicts_with_active_update(client, tmp_path, monkeypatch):
+    update_dir = _installed_update_dir(tmp_path)
+    monkeypatch.setenv("PIB_UPDATE_DIR", str(update_dir))
+    assert client.post("/system/update", json=_request()).status_code == 202
+
+    response = client.post("/system/update/check", json={"channel": "release"})
+
+    assert response.status_code == 409
+    assert response.get_json()["status"]["classification"] == "queued"
+    assert not (update_dir / "check.json").exists()
+
+
+def test_update_availability_reads_runner_document(client, tmp_path, monkeypatch):
+    update_dir = _installed_update_dir(tmp_path)
+    monkeypatch.setenv("PIB_UPDATE_DIR", str(update_dir))
+    document = {
+        "schemaVersion": 1,
+        "checkedAt": "2026-09-21T12:00:00+00:00",
+        "repositories": {
+            "pib-backend": {
+                "installed": "a" * 40,
+                "target": "b" * 40,
+                "updateAvailable": True,
+            },
+            "cerebra": {
+                "installed": "c" * 40,
+                "target": "unknown",
+                "updateAvailable": "unknown",
+                "error": "offline",
+            },
+        },
+    }
+    (update_dir / "available.json").write_text(json.dumps(document), encoding="utf-8")
+
+    response = client.get("/system/update/available")
+
+    assert response.status_code == 200
+    assert response.get_json() == document
+
+
+def test_update_check_endpoints_report_unavailable_runner(
+    client, tmp_path, monkeypatch
+):
+    absent = tmp_path / "absent"
+    monkeypatch.setenv("PIB_UPDATE_DIR", str(absent))
+
+    assert client.post("/system/update/check", json={}).status_code == 503
+    assert client.get("/system/update/available").status_code == 503
+
+    legacy = tmp_path / "legacy"
+    legacy.mkdir()
+    (legacy / "service.json").write_text('{"schemaVersion":1}', encoding="utf-8")
+    monkeypatch.setenv("PIB_UPDATE_DIR", str(legacy))
+
+    queued = client.post("/system/update/check", json={})
+    available = client.get("/system/update/available")
+    assert queued.status_code == 503
+    assert queued.get_json()["state"] == "runner_missing"
+    assert available.status_code == 503
+    assert available.get_json()["state"] == "runner_missing"
