@@ -82,6 +82,48 @@ function setup_docker_cleaner_service() {
     print SUCCESS "Docker container cleanup service installed and started"
 }
 
+function setup_update_service() {
+    print INFO "Setting up host-side update service"
+    # setgid (2770) so files created by the root flask container inherit the pib
+    # group; together with 0660 in the backend's atomic write this is what lets
+    # the runner (User=pib) read request.json at all.
+    sudo install -d -o pib -g pib -m 2770 /home/pib/app/.update
+    sudo install -o root -g root -m 0644 \
+      "$BACKEND_DIR/setup/setup_files/pib-update.service" \
+      /etc/systemd/system/pib-update.service
+    sudo install -o root -g root -m 0644 \
+      "$BACKEND_DIR/setup/setup_files/pib-update.path" \
+      /etc/systemd/system/pib-update.path
+    # The runner's executable bit lives in git (mode 100755). Do NOT chmod it
+    # here: the runner resets the checkout to the remote revision on every
+    # update, so a locally granted bit would be a permanent dirty file that
+    # blocks the next update - and after the reset ExecStart could not execute
+    # the runner at all.
+    sudo systemctl daemon-reload
+
+    local enable_output
+    if ! enable_output=$(sudo systemctl enable pib-update.path 2>&1); then
+        print ERROR "failed to enable pib-update.path: ${enable_output}"
+        return 1
+    fi
+    local start_output
+    if ! start_output=$(sudo systemctl start pib-update.path 2>&1); then
+        print ERROR "failed to start pib-update.path: ${start_output}"
+        return 1
+    fi
+    # Marker the backend checks: without it the API reports runner_missing and
+    # refuses to queue an update, because docker creates the bind-mount point for
+    # a missing host directory on its own - a bare directory is not a runner.
+    local marker
+    marker="$(mktemp)"
+    printf '{"schemaVersion":1,"installedAt":"%s","runner":"%s"}\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        "$BACKEND_DIR/setup/update_runner.sh" > "$marker"
+    sudo install -o pib -g pib -m 0664 "$marker" /home/pib/app/.update/service.json
+    rm -f "$marker"
+    print SUCCESS "Host-side update service installed and watching for requests"
+}
+
 function verify_vendored_blockly() {
     print INFO "Verifying vendored pib-blockly sources"
 
@@ -113,4 +155,5 @@ sudo usermod -aG docker pib || { print ERROR "failed to add user 'pib' to docker
 verify_vendored_blockly || print ERROR "failed to verify vendored pib-blockly sources"
 start_container || print ERROR "failed to start containers"
 setup_docker_cleaner_service || print ERROR "failed to setup docker cleaner service"
+setup_update_service || print ERROR "failed to setup host-side update service"
 sudo chmod 777 "$BACKEND_DIR/pib_api/flask/pibdata.db"

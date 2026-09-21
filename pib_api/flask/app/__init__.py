@@ -98,3 +98,6 @@ app.register_blueprint(
     name="system_api_v1",
 )
 app.register_blueprint(version_controller.bp, url_prefix="/version", name="version")
+app.register_blueprint(
+    version_controller.bp, url_prefix="/api/version", name="version_api"
+)

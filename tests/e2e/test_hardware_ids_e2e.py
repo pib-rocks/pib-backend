@@ -5,8 +5,8 @@ import pytest
 import requests
 from playwright.sync_api import sync_playwright, expect
 
-ROBOT_URL = os.getenv("PIB_ROBOT_URL", "http://192.168.1.28")
-API_URL = os.getenv("PIB_API_URL", "http://192.168.1.28/api")
+ROBOT_URL = os.getenv("PIB_ROBOT_URL", "http://localhost")
+API_URL = os.getenv("PIB_API_URL", "http://localhost/api")
 
 # Timeouts are generous by default because the suite runs on the Pi itself, where
 # Angular bootstrap and Bricklet round-trips are slow under load. Override per host.
@@ -23,10 +23,58 @@ def _get_chromium_launch_kwargs():
     return {"headless": True}
 
 
-def _bricklet_uids():
+def _bricklet_entries():
     response = requests.get(f"{API_URL}/bricklet", timeout=REQUEST_TIMEOUT_S)
     response.raise_for_status()
-    return [entry.get("uid") for entry in response.json().get("bricklets", [])]
+    return response.json().get("bricklets", [])
+
+
+def _bricklet_uids():
+    return [entry.get("uid") for entry in _bricklet_entries()]
+
+
+def _bricklet_uids_by_number():
+    """Snapshot the robot's stored UIDs as {brickletNumber: uid}."""
+    return {
+        entry.get("brickletNumber"): entry.get("uid", "")
+        for entry in _bricklet_entries()
+    }
+
+
+def _restore_bricklet_uids(snapshot):
+    """Write the robot's own UIDs back and assert they are persisted again.
+
+    This test runs against a live robot whose motors container reads these rows on
+    start, so a leftover test UID keeps the machine broken long after the run ended.
+    """
+    try:
+        current = _bricklet_uids_by_number()
+    except (requests.RequestException, ValueError):
+        current = {}
+
+    failures = []
+    for number, uid in sorted(snapshot.items()):
+        if current.get(number) == uid:
+            continue
+        try:
+            response = requests.put(
+                f"{API_URL}/bricklet/{number}",
+                json={"uid": uid},
+                timeout=REQUEST_TIMEOUT_S,
+            )
+            response.raise_for_status()
+        except requests.RequestException as exc:
+            failures.append(f"bricklet {number} -> {uid!r}: {exc}")
+
+    for uid in sorted({uid for uid in snapshot.values() if uid}):
+        _wait_for_persisted_uid(uid)
+
+    restored = _bricklet_uids_by_number()
+    assert restored == snapshot, (
+        f"Robot Bricklet UIDs were not restored: expected {snapshot}, "
+        f"got {restored} (failed writes: {failures})"
+    )
+    assert not failures, f"Restoring the robot's Bricklet UIDs failed: {failures}"
 
 
 def _wait_for_persisted_uid(uid, timeout_s=BACKEND_SETTLE_TIMEOUT_S):
@@ -57,12 +105,15 @@ class TestHardwareIDsE2E:
         """
         Full E2E UI test verifying the Hardware-IDs lifecycle:
         1. Navigate to /system/hardware-ids with SmartConnect credentials in browser context.
-        2. Set initial Bricklet UIDs via UI input (e.g. TXT_Bricklet_UID_1="E2E001") and click Update.
+        2. Set initial Bricklet UIDs via UI input (e.g. TXT_Bricklet_UID_1="TESTab") and click Update.
         3. Click "Export IDs" button and capture the exported JSON payload.
-        4. Set different reference Bricklet UIDs (e.g. TXT_Bricklet_UID_1="DIFF99") and click Update.
+        4. Set different reference Bricklet UIDs (e.g. TXT_Bricklet_UID_1="DiFFab") and click Update.
         5. Click "Import IDs" button, upload the initial JSON backup via FileChooser.
         6. Wait for import preview, then click "Confirm import".
-        7. Verify that the UIDs displayed in the UI form inputs are restored to the initially set UIDs ("E2E001").
+        7. Verify that the UIDs displayed in the UI form inputs are restored to the initially set UIDs ("TESTab").
+
+        The robot's own UIDs are snapshotted before the first write and restored
+        afterwards, including when the test fails.
         """
         # 1. Ensure SmartConnect is active on backend
         try:
@@ -75,6 +126,10 @@ class TestHardwareIDsE2E:
             pass
 
         exported_file_path = os.path.expanduser("~/pib_e2e_hardware_import_test.json")
+
+        # Snapshot the robot's own UIDs before anything is written, so the finally
+        # block can put them back.
+        original_uids = _bricklet_uids_by_number()
 
         with sync_playwright() as p:
             browser = p.chromium.launch(**_get_chromium_launch_kwargs())
@@ -103,8 +158,10 @@ class TestHardwareIDsE2E:
                 expect(input_1).to_be_visible(timeout=UI_TIMEOUT_MS)
                 expect(input_1).to_be_enabled(timeout=UI_TIMEOUT_MS)
 
-                # Step 1: Set initial Bricklet UID
-                initial_uid = "E2E001"
+                # Step 1: Set initial Bricklet UID. Placeholders must be valid
+                # Tinkerforge UIDs: 1-6 characters from the Base58 alphabet, so no
+                # 0, O, I or l - PR-1796 rejects anything else on the write path.
+                initial_uid = "TESTab"
                 input_1.fill(initial_uid)
                 update_btn = page.locator("[data-test='BTN_Update_bricklet_UIDs']")
                 expect(update_btn).to_be_enabled(timeout=UI_TIMEOUT_MS)
@@ -130,8 +187,8 @@ class TestHardwareIDsE2E:
                 with open(exported_file_path, "w", encoding="utf-8") as f:
                     f.write(exported_content)
 
-                # Step 3: Set different reference UID ("DIFF99")
-                diff_uid = "DIFF99"
+                # Step 3: Set different reference UID ("DiFFab", also Base58-valid)
+                diff_uid = "DiFFab"
                 input_1.fill(diff_uid)
                 expect(update_btn).to_be_enabled(timeout=UI_TIMEOUT_MS)
                 update_btn.click()
@@ -191,10 +248,17 @@ class TestHardwareIDsE2E:
                 expect(input_1).to_have_value(initial_uid, timeout=UI_TIMEOUT_MS)
 
             finally:
-                if os.path.exists(exported_file_path):
-                    try:
-                        os.remove(exported_file_path)
-                    except Exception:
-                        pass
-                context.close()
-                browser.close()
+                try:
+                    if os.path.exists(exported_file_path):
+                        try:
+                            os.remove(exported_file_path)
+                        except Exception:
+                            pass
+                    context.close()
+                    browser.close()
+                finally:
+                    # Last, so a failing browser teardown cannot skip it: the test
+                    # UIDs must never survive the run on a live robot (PR-1797).
+                    _restore_bricklet_uids(original_uids)
+
+        assert not os.path.exists(exported_file_path)

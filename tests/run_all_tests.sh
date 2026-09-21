@@ -91,6 +91,7 @@ ensure_venv() {
     # (e.g. grpcio) from source, which is slow and fragile on arm64 / Raspberry Pi.
     pip install -q --prefer-binary -r "${SCRIPT_DIR}/integration/requirements.txt" \
         -r "${SCRIPT_DIR}/infrastructure/requirements.txt" \
+        -r "${SCRIPT_DIR}/requirements-camera.txt" \
         playwright \
         lark
     pip install -q -e "${REPO_ROOT}/pib_hermes_config" \
@@ -116,10 +117,30 @@ check_flask() {
 run_pytest_integration() {
     cd "${REPO_ROOT}"
     rm -rf /tmp/pytest-of-* /tmp/pytest-* 2>/dev/null || true
+    export PIB_ROBOT_URL="${PIB_ROBOT_URL:-http://localhost}"
+    export PIB_API_URL="${PIB_API_URL:-http://localhost/api}"
+    export PIB_E2E_BASE_URL="${PIB_E2E_BASE_URL:-http://localhost}"
+    local log
+    log="$(mktemp)"
+    # --continue-on-collection-errors: one unimportable module must never cancel the whole
+    # stage. The modules that could not be collected are listed again after the run.
     PYTHONPATH="${REPO_ROOT}/pib_api/flask:${REPO_ROOT}/pib_hermes_config:${REPO_ROOT}/pib_mcp_server:${REPO_ROOT}/public_api_client" \
         pytest "${SCRIPT_DIR}" -q \
         --ignore="${SCRIPT_DIR}/blockly_generator" \
-        -m "not docker"
+        --continue-on-collection-errors \
+        -m "not docker" 2>&1 | tee "${log}"
+    local status=${PIPESTATUS[0]}
+    local collect_errors
+    # A collection error is reported as "ERROR <file>.py[ - reason]"; per-test errors carry a
+    # "::" node id and captured log records have padding after ERROR, so both are excluded.
+    collect_errors="$(grep -E '^ERROR [^[:space:]]+\.py([[:space:]]|$)' "${log}" || true)"
+    if [[ -n "${collect_errors}" ]]; then
+        echo ""
+        echo -e "${YELLOW}Modules that failed to collect:${NC}"
+        echo "${collect_errors}"
+    fi
+    rm -f "${log}"
+    return "${status}"
 }
 
 run_pytest_docker() {

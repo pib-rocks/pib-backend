@@ -36,8 +36,10 @@ services:
       - PIB_HERMES_PROFILES_DIR=/home/pib/.hermes/profiles
       - PIB_HERMES_DAEMON_URL=http://ros-voice-assistant:8088
       - PIB_HARDWARE_VARIANT=${PIB_HARDWARE_VARIANT:-}
+      - PIB_UPDATE_DIR=/app/.update
     volumes:
       - ./pib_api/flask/:/app
+      - /home/pib/app/.update:/app/.update
       - /etc/pib_hardware_variant:/etc/pib_hardware_variant:ro
       - programs:/root/cerebra_programs
       - /home/pib/programs/notebooks:/home/pib/programs/notebooks

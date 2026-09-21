@@ -77,7 +77,7 @@ def test_version_1_document_imports_successfully(client):
             "bricklets": [
                 {
                     "brickletNumber": 1,
-                    "uid": "V1A001",
+                    "uid": "V1A111",
                     "type": "Servo Bricklet",
                 }
             ],
@@ -94,7 +94,7 @@ def test_version_1_document_imports_successfully(client):
     assert response.status_code == 200
     assert response.get_json()["version"] == 2
     with client.application.app_context():
-        assert Controller.query.filter_by(number=1).one().address == "V1A001"
+        assert Controller.query.filter_by(number=1).one().address == "V1A111"
         motor = Motor.query.filter_by(name="elbow_left").one()
         assert (motor.controller.number, motor.channel, motor.velocity) == (
             1,
@@ -147,8 +147,8 @@ def test_import_endpoint_rejects_duplicate_uids(client):
         json={
             "version": 1,
             "bricklets": [
-                {"brickletNumber": 1, "uid": "DUP001", "type": "Servo Bricklet"},
-                {"brickletNumber": 2, "uid": "DUP001", "type": "Servo Bricklet"},
+                {"brickletNumber": 1, "uid": "DUP111", "type": "Servo Bricklet"},
+                {"brickletNumber": 2, "uid": "DUP111", "type": "Servo Bricklet"},
             ],
             "motors": [],
         },

@@ -3,7 +3,7 @@
 from flask import Blueprint, jsonify, request
 
 from model.controller_model import TINKERFORGE_BRICKLET
-from service import controller_service
+from service import controller_service, hardware_config_service
 
 bp = Blueprint("bricklet_controller", __name__)
 
@@ -35,8 +35,10 @@ def get_bricklet(bricklet_number: str):
 @bp.route("/<string:bricklet_number>", methods=["PUT"])
 def update_bricklet(bricklet_number: str):
     uid = (request.get_json() or {}).get("uid")
-    if not isinstance(uid, str):
-        raise ValueError("Bricklet UID must be a string")
+    try:
+        uid = hardware_config_service.validate_uid(uid, "Bricklet UID")
+    except ValueError as error:
+        return {"error": str(error)}, 400
     controller = controller_service.set_controller_address(int(bricklet_number), uid)
     return {
         "brickletNumber": controller.number,

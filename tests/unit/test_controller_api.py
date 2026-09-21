@@ -1,5 +1,6 @@
 from app.app import db
 from model.controller_model import Controller
+from service import hardware_config_service as hcs
 
 
 def test_controller_endpoint_uses_generic_schema(app):
@@ -34,6 +35,23 @@ def test_bricklet_alias_keeps_legacy_response(app):
     assert response.status_code == 200
     first = response.get_json()["bricklets"][0]
     assert set(first) == {"brickletNumber", "uid", "type"}
+
+
+def test_bricklet_update_delegates_to_the_shared_uid_helper(app, monkeypatch):
+    calls = []
+    real_validate_uid = hcs.validate_uid
+
+    def spy(value, field="uid"):
+        calls.append((value, field))
+        return real_validate_uid(value, field)
+
+    monkeypatch.setattr(hcs, "validate_uid", spy)
+
+    with app.test_client() as client:
+        response = client.put("/bricklet/1", json={"uid": "SRV111"})
+
+    assert response.status_code == 200
+    assert calls == [("SRV111", "Bricklet UID")]
 
 
 def test_pib5edu_device_types_do_not_depend_on_controller_number(app):

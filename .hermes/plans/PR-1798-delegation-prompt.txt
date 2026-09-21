@@ -1,0 +1,58 @@
+You are implementing Jira story PR-1798 in the pib-backend repository.
+
+Working directory: /home/pib/opencode/pib-backend-PR-1798 (branch PR-1798, based on
+origin/develop 38d04061). Work only in this worktree and only on this branch.
+
+STEP 1 — read the ticket yourself, do not rely on this prompt for the requirements:
+
+    cd /home/pib/opencode/pib-backend-PR-1798
+    python3 - <<'PY'
+    import base64, os, re, requests
+    env = open(os.path.expanduser("~/.hermes/.env")).read()
+    def g(k):
+        m = re.search(rf"^{k}=(.*)$", env, re.M); return m.group(1).strip().strip('"') if m else None
+    s = g("ATLASSIAN_SITE"); s = s if s.startswith("http") else "https://" + s
+    a = base64.b64encode(f"{g('ATLASSIAN_EMAIL')}:{g('ATLASSIAN_TOKEN')}".encode()).decode()
+    h = {"Authorization": f"Basic {a}", "Accept": "application/json"}
+    d = requests.get(f"{s.rstrip('/')}/rest/api/3/issue/PR-1798", headers=h,
+                     params={"fields": "summary,description"}).json()
+    print(d["fields"]["summary"])
+    print(d["fields"]["description"])
+    PY
+
+STEP 2 — read the plan and mirror the patterns it names (do not invent alternatives):
+    .hermes/plans/PR-1798-plan.md
+
+The plan contains the verified file:line facts, the message contract, the archive
+pattern in imitation_archive.py to copy, and the Cerebra functions to generalise.
+Two things in it matter most:
+  * the publisher is created automatically from `publish_topic` in the manifest
+    (stereo.py:251-256), so a manifest entry plus a translated DetectionArray is
+    the whole backend wire-up;
+  * Cerebra's `connections()` applies the hand skeleton to every model today and
+    must become a per-task lookup, with the hand overlay staying pixel-identical.
+
+Scope discipline:
+  - Implement only story PR-1798 (the foundation plus the YuNet face detector).
+    The other overlay stories (PR-1799..PR-1808) are separate and will be built on
+    top of your work - do not do them now, but leave the registry shape so each can
+    be added by adding one entry.
+  - Do not modify other models' pipelines, their shave budgets, or the manifest
+    entries of models you are not touching.
+  - Do not touch stereo depth behaviour and do not change the camera rate.
+  - Stay on branch PR-1798: no merge, no push, no branch switching.
+
+Verification you must run and report verbatim (command + output):
+  1. python3 -m pytest tests/unit -q
+  2. python3 -m black --check --include '\.py$' .
+  3. in ~/opencode/cerebra: npx ng build   (or, if the worktree lacks node_modules,
+     symlink the main checkout's: ln -sfn ~/opencode/cerebra/node_modules node_modules)
+  4. in ~/opencode/cerebra: CHROME_BIN=/usr/bin/chromium-browser npx ng test --watch=false --browsers=ChromeHeadless
+
+Commit your work on branch PR-1798 with a message that names the ticket
+("feat: PR-1798 ..."). If the repository has no git identity configured, use:
+  git -c user.name="Hermes Agent" -c user.email="agent@nousresearch.com" commit ...
+
+Report at the end: the files you changed, the exact commands you ran with their
+results, and anything you could not do. Do not claim success without the command
+output.

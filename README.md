@@ -62,6 +62,73 @@ This script assumes that the setup script was executed successfully
 
 This script will update your docker containers (Front- and Backend)
 
+### Backend update service
+
+The backend can request the same host update through these LAN API endpoints:
+
+- `POST /system/update` with JSON
+  `{"channel":"release","force":false,"confirmation":"UPDATE"}`
+- `GET /system/update/status`
+- `GET /system/update/log?offset=0` (the returned `nextOffset` is a byte offset)
+- `POST /system/update/cancel`
+- `GET /system/revision`
+
+There is **no authentication in this backend**. The API is intended only for a
+trusted LAN, and the exact typed confirmation `UPDATE` is the guard against an
+accidental request; it is not an authorization mechanism. Do not expose these
+routes to the internet.
+
+Flask writes an atomic request to `/app/.update`, which is the bind-mounted host
+directory `/home/pib/app/.update`. `pib-update.path` starts the oneshot
+`pib-update.service`, and the runner executes on the host as `pib`. It must stay
+host-side because rebuilding the backend recreates `flask-app` itself. Status is
+stored in `status.json`, the append-only live log in `update.log`, and installed
+revision facts in `pib-backend.revision.json` and `cerebra.revision.json`.
+Missing revision fields are returned as `unknown`.
+
+Before changing either checkout, the runner refuses dirty repositories unless
+`force` was explicitly requested, checks free disk space, and creates and
+integrity-checks a WAL-safe SQLite backup using Python's SQLite backup API
+inside the existing Flask container. It also refuses if the `watchdog` package
+or its unit exists, or if a `/dev/watchdog*` device is held by a process other
+than systemd. systemd owning the hardware watchdog is the expected single-owner
+state (PR-1781) and is only logged, never a reason to abort. It never installs or
+starts a watchdog.
+
+The current software has no authoritative signal that distinguishes a running
+user program from an idle `ros-programs` container. The update API therefore
+reports `programRunningSignal: unavailable` and does not pretend container
+liveness is that signal. A future execution owner must provide the signal
+before updates can enforce that refusal.
+
+To disable API-triggered updates while leaving the rest of the backend running:
+
+```bash
+sudo systemctl disable --now pib-update.path
+```
+
+### Health gate: only regressions roll an update back (decision D12)
+
+After the rebuild the runner requires the API to answer, both checkouts to sit at the
+recorded target revision, and **no service that ran before the update to be missing
+afterwards**. It takes that snapshot in the preflight phase, before anything is fetched or
+built, and compares it once the stacks are up again (`setup/update_healthcheck.py`, unit
+tested in `tests/unit/test_update_healthcheck.py`).
+
+Services that were already not running before the update do not block it: they are named in
+the log and in the job status as `unhealthyServices`, because the strict rule deadlocked the
+robot - the damage blocked the very update that would have fixed it (an invalid Bricklet UID
+crash-looped `ros-motors`, and every update rolled back; PR-1796/PR-1797). A service that ran
+before and is gone now still fails the update and triggers the rollback. If nothing at all was
+running before the update, the strict rule applies for that run.
+
+An end-to-end runner check must be performed on a disposable Pi checkout: queue
+a develop request, observe the documented states in order, verify that the
+backup passes `PRAGMA integrity_check`, and induce a revision mismatch to
+confirm there is only one rollback build. This test is intentionally not run in
+the development test suite because it resets both host git checkouts and
+rebuilds every container.
+
 ## Webots
 
 Starting the webots simulation:
