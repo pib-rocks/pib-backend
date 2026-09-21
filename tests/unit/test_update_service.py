@@ -116,6 +116,55 @@ def test_missing_directory_reports_not_installed(tmp_path):
     assert status["classification"] == "not_installed"
 
 
+def test_directory_without_marker_reports_runner_missing(tmp_path):
+    """Docker creates the bind-mount point on its own - a bare directory is not a runner."""
+    directory = tmp_path / "update"
+    directory.mkdir()
+
+    status = update_service.get_status(directory)
+
+    assert status["state"] == "runner_missing"
+    assert status["classification"] == "runner_missing"
+    assert update_service.SERVICE_MARKER_NAME in status["error"]
+    assert update_service.has_service_marker(directory) is False
+
+
+def test_enqueue_refuses_while_the_runner_marker_is_missing(tmp_path):
+    directory = tmp_path / "update"
+    directory.mkdir()
+
+    with pytest.raises(update_service.UpdateNotInstalledError) as error:
+        update_service.enqueue_update(
+            {"jobId": "job-1", "channel": "develop", "confirmation": "UPDATE"},
+            directory,
+        )
+
+    assert error.value.state == "runner_missing"
+    assert not (directory / "request.json").exists()
+
+
+def test_enqueue_accepts_a_directory_with_the_installer_marker(tmp_path):
+    directory = tmp_path / "update"
+    directory.mkdir()
+    (directory / update_service.SERVICE_MARKER_NAME).write_text(
+        '{"schemaVersion":1}', encoding="utf-8"
+    )
+    document = update_service.build_request(
+        channel="develop",
+        force=False,
+        confirmation="UPDATE",
+        actor="127.0.0.1",
+        job_id="job-1",
+        requested_at="2026-09-21T00:00:00+00:00",
+    )
+
+    status = update_service.enqueue_update(document, directory)
+
+    assert status["classification"] == "queued"
+    assert (directory / "request.json").is_file()
+    assert update_service.get_status(directory)["state"] == "queued"
+
+
 def test_revision_parser_uses_unknown_instead_of_guesses():
     assert revision_service.parse_revision("cerebra", {"gitSha": " abc "}) == {
         "repository": "cerebra",
