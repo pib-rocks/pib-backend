@@ -232,6 +232,7 @@ from ros_packages.camera.oak_d_lite.stereo import (
     IMU_SENSOR_RATE_HZ,
     IMU_STALE_AFTER_SECONDS,
     IMU_STALE_MISSED_PUBLICATIONS,
+    ParsingNeuralNetwork,
 )
 
 
@@ -487,6 +488,66 @@ class _MonoCameraType:
 class _StereoDepthType:
     class PresetMode:
         DEFAULT = "DEFAULT"
+
+
+class TestSingleNetworkPipeline(unittest.TestCase):
+    def _node(self):
+        with patch.object(CameraNode, "__init__", lambda self: None):
+            node = CameraNode()
+        node.pipeline = MagicMock()
+        node.nn_queues = {}
+        node.parsed_model_ids = set()
+        node._request_camera_branch = MagicMock()
+        node._relax_branch_input = MagicMock()
+        return node
+
+    @patch("ros_packages.camera.oak_d_lite.stereo.create_archive", return_value=None)
+    @patch("ros_packages.camera.oak_d_lite.stereo.dai")
+    def test_model_without_archive_keeps_plain_neural_network(self, mock_dai, _):
+        node = self._node()
+        model = types.SimpleNamespace(
+            model_id="facemesh_192x192",
+            blob_path="/facemesh.blob",
+            input_width=192,
+            input_height=192,
+            shaves=4,
+        )
+        network = node.pipeline.create.return_value
+        branch = node._request_camera_branch.return_value
+
+        node._build_single_network_pipeline(model)
+
+        node.pipeline.create.assert_called_once_with(mock_dai.node.NeuralNetwork)
+        network.setBlobPath.assert_called_once_with("/facemesh.blob")
+        network.setNumShavesPerInferenceThread.assert_called_once_with(4)
+        node._relax_branch_input.assert_called_once_with(network.input)
+        branch.link.assert_called_once_with(network.input)
+        self.assertNotIn(model.model_id, node.parsed_model_ids)
+
+    @patch("ros_packages.camera.oak_d_lite.stereo.create_archive")
+    def test_registered_archive_builds_parsing_network(self, create_archive_mock):
+        node = self._node()
+        model = types.SimpleNamespace(
+            model_id="face_detection_yunet_160x120",
+            blob_path="/yunet.blob",
+            input_width=160,
+            input_height=120,
+            shaves=4,
+        )
+        archive = create_archive_mock.return_value
+        parser = node.pipeline.create.return_value
+        network = parser.build.return_value
+        branch = node._request_camera_branch.return_value
+
+        node._build_single_network_pipeline(model)
+
+        node.pipeline.create.assert_called_once_with(ParsingNeuralNetwork)
+        parser.build.assert_called_once_with(branch, archive)
+        node._relax_branch_input.assert_not_called()
+        self.assertIn(model.model_id, node.parsed_model_ids)
+        network.out.createOutputQueue.assert_called_once_with(
+            maxSize=BRANCH_OUTPUT_QUEUE_DEPTH, blocking=False
+        )
 
 
 class TestStereoDepthConfiguration(unittest.TestCase):

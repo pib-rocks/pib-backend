@@ -53,6 +53,8 @@ from .imitation import (
     world_landmark_scalars,
 )
 from .imitation_archive import create_landmark_archive, create_palm_archive
+from .parsed_detections import translate_detections
+from .task_archives import create_archive, labels_for_model
 from .hand_tracking import (
     HAND_KEYPOINT_NAMES,
     LANDMARK_HANDEDNESS_LAYER,
@@ -823,6 +825,30 @@ class CameraNode(Node):
         self._count_imitation_stage("publish")
         self.pipeline_manager.record_packet("imitation")
 
+    def _publish_parsed_detections(self, model_id, packet):
+        if self.current_frame is None:
+            frame_width = self.preview_width
+            frame_height = self.preview_height
+        else:
+            frame_height, frame_width = self.current_frame.shape[:2]
+        detections = translate_detections(
+            packet,
+            labels_for_model(model_id),
+            frame_width,
+            frame_height,
+        )
+
+        message = DetectionArray()
+        message.header.stamp = self.get_clock().now().to_msg()
+        message.model_id = model_id
+        message.frame_width = frame_width
+        message.frame_height = frame_height
+        message.detections = detections
+        self.last_detections[model_id] = message
+        publisher = self.detection_publishers.get(model_id)
+        if publisher is not None:
+            publisher.publish(message)
+
     def _consume_imitation_packet(self, packet):
         frame_height, frame_width = self.current_frame.shape[:2]
         palm_count = len(packet.reference_data.detections)
@@ -1527,6 +1553,8 @@ class CameraNode(Node):
         self._imu_clock_offset = ClockOffsetEstimator()
         self._imu_publish_times = deque(maxlen=IMU_RATE_WINDOW)
         self.nn_queues = {}
+        self.parsed_model_ids = set()
+        self._parsed_error_counts = {}
         self.hand_decoder_queue = None
         self.hand_palm_queue = None
         self.hand_roi_queue = None
@@ -1556,17 +1584,7 @@ class CameraNode(Node):
             if model.model_id == "imitation":
                 self._build_imitation_pipeline(model)
                 continue
-            neural_network = self.pipeline.create(dai.node.NeuralNetwork)
-            neural_network.setBlobPath(model.blob_path)
-            neural_network.setNumShavesPerInferenceThread(model.shaves)
-            nn_input = self._request_camera_branch(
-                (model.input_width, model.input_height)
-            )
-            self._relax_branch_input(neural_network.input)
-            nn_input.link(neural_network.input)
-            self.nn_queues[model.model_id] = neural_network.out.createOutputQueue(
-                maxSize=BRANCH_OUTPUT_QUEUE_DEPTH, blocking=False
-            )
+            self._build_single_network_pipeline(model)
 
     def _request_camera_branch(self, size):
         """Request a bounded-size colour stream for a model branch."""
@@ -1576,6 +1594,25 @@ class CameraNode(Node):
                 f"Camera cannot provide a {size[0]}x{size[1]} BGR888p branch output"
             )
         return output
+
+    def _build_single_network_pipeline(self, model):
+        """Build a parsed task when registered, preserving the plain fallback."""
+        archive = create_archive(model.model_id, model.blob_path)
+        nn_input = self._request_camera_branch((model.input_width, model.input_height))
+        if archive is not None:
+            neural_network = self.pipeline.create(ParsingNeuralNetwork).build(
+                nn_input, archive
+            )
+            self.parsed_model_ids.add(model.model_id)
+        else:
+            neural_network = self.pipeline.create(dai.node.NeuralNetwork)
+            neural_network.setBlobPath(model.blob_path)
+            neural_network.setNumShavesPerInferenceThread(model.shaves)
+            self._relax_branch_input(neural_network.input)
+            nn_input.link(neural_network.input)
+        self.nn_queues[model.model_id] = neural_network.out.createOutputQueue(
+            maxSize=BRANCH_OUTPUT_QUEUE_DEPTH, blocking=False
+        )
 
     @staticmethod
     def _size_pair(value):
@@ -2371,8 +2408,20 @@ class CameraNode(Node):
 
         for model_id, nn_queue in self.nn_queues.items():
             for _ in range(32):
-                if nn_queue.tryGet() is None:
+                packet = nn_queue.tryGet()
+                if packet is None:
                     break
+                if model_id in getattr(self, "parsed_model_ids", ()):
+                    try:
+                        self._publish_parsed_detections(model_id, packet)
+                    except (AttributeError, TypeError, ValueError) as exc:
+                        error_count = self._parsed_error_counts.get(model_id, 0) + 1
+                        self._parsed_error_counts[model_id] = error_count
+                        if error_count % 25 == 1:
+                            self.get_logger().error(
+                                f"PARSED_DROP model={model_id} count={error_count} "
+                                f"type={type(exc).__name__} message={exc}"
+                            )
                 self.pipeline_manager.record_packet(model_id)
 
         for stage, queue in (
