@@ -1,6 +1,7 @@
 #!/usr/bin/python3
 import base64
 from collections import deque
+import marshal
 import math
 import os
 import threading
@@ -42,6 +43,7 @@ from .imu import (
     published_stamp_ns,
 )
 from .model_registry import ModelRegistry
+from .hand_device import build_hand_script
 from .pipeline_manager import PipelineManager
 from .imitation import (
     LANDMARK_COUNT as IMITATION_LANDMARK_COUNT,
@@ -255,6 +257,7 @@ class CameraNode(Node):
             for model in self.model_registry.models()
             if model.publish_topic
         }
+        self.hand_script_queue = None
         self.hand_decoder_queue = None
         self.hand_palm_queue = None
         self.hand_roi_queue = None
@@ -1272,6 +1275,98 @@ class CameraNode(Node):
             source_height,
         )
 
+    def _process_hand_script(self):
+        """Consume the device manager Script's hands and publish them.
+
+        The Script runs decoding and the landmark crop on the OAK, so this is a
+        one-way stream: no crop config is computed here and nothing goes back.
+        """
+        if self.hand_script_queue is None or self.current_frame is None:
+            return
+        for _ in range(32):
+            packet = self.hand_script_queue.tryGet()
+            if packet is None:
+                break
+            try:
+                payload = marshal.loads(bytes(packet.getData()))
+            except (EOFError, TypeError, ValueError) as exc:
+                self._warn_hand_once(f"Invalid hand Script payload: {exc}")
+                continue
+            self._consume_hand_script_payload(payload)
+
+    def _consume_hand_script_payload(self, payload):
+        """Turn one Script frame into published detections and stage counters."""
+        if not isinstance(payload, dict):
+            self._warn_hand_once("Hand Script result must be a dictionary")
+            return
+        stages = payload.get("stages")
+        if isinstance(stages, dict):
+            for stage in HAND_STAGE_NAMES:
+                if stage == "colour_isp":
+                    continue
+                value = stages.get(stage)
+                if isinstance(value, int) and value >= 0:
+                    self.hand_stage_counters[stage] = max(
+                        self.hand_stage_counters[stage], value
+                    )
+        frame_height, frame_width = self.current_frame.shape[:2]
+        hands = payload.get("hands", ())
+        detections = []
+        for hand in hands:
+            try:
+                detections.append(
+                    self._hand_script_detection(hand, frame_width, frame_height)
+                )
+            except (KeyError, TypeError, ValueError) as exc:
+                self._warn_hand_once(f"Invalid hand Script entry: {exc}")
+        if detections or hands:
+            self._publish_hand_detections(frame_width, frame_height, detections)
+        self._count_hand_stage("publish")
+        self._count_hand_stage("post_processing", len(detections))
+
+    def _hand_script_detection(self, hand, frame_width, frame_height):
+        """Rebuild one published detection from the Script's per-hand payload.
+
+        The Script normalises the landmarks to the camera branch it cropped from,
+        which the branch maps line by line onto the published frame (the same
+        relation the transformation path uses), so a per-axis scale is enough.
+        """
+        palm = PalmRegion(
+            score=float(hand["palm_score"]),
+            box_x=float(hand["box_x"]),
+            box_y=float(hand["box_y"]),
+            box_size=float(hand["box_size"]),
+            roi_x=float(hand["center_x"]),
+            roi_y=float(hand["center_y"]),
+            roi_size=float(hand["size"]),
+            rotation=float(hand["rotation"]),
+        )
+        landmarks = []
+        relative_z = []
+        for point in hand["landmarks"]:
+            x, y, z = (float(value) for value in point)
+            landmarks.append(
+                (
+                    min(float(frame_width), max(0.0, x * float(frame_width))),
+                    min(float(frame_height), max(0.0, y * float(frame_height))),
+                )
+            )
+            relative_z.append(z)
+        source_width, source_height = self.hand_source_size
+        if not source_width or not source_height:
+            source_width, source_height = frame_width, frame_height
+        return self._hand_detection_message(
+            palm,
+            landmarks,
+            frame_width,
+            frame_height,
+            source_width,
+            source_height,
+            landmark_score_value=float(hand["landmark_score"]),
+            handedness=float(hand.get("handedness", 0.0)),
+            relative_z=relative_z,
+        )
+
     def publish_model_statuses(self):
         statuses = self.pipeline_manager.statuses()
         hand_status = statuses.get("hand_tracking")
@@ -1527,6 +1622,7 @@ class CameraNode(Node):
         self._imu_clock_offset = ClockOffsetEstimator()
         self._imu_publish_times = deque(maxlen=IMU_RATE_WINDOW)
         self.nn_queues = {}
+        self.hand_script_queue = None
         self.hand_decoder_queue = None
         self.hand_palm_queue = None
         self.hand_roi_queue = None
@@ -1774,15 +1870,14 @@ class CameraNode(Node):
         )
         self._relax_branch_input(palm_manip.inputImage)
         hand_tap.link(palm_manip.inputImage)
+        # The crop config comes from the device Script, not from the host.
+        palm_manip.inputConfig.setWaitForMessage(True)
 
         palm_nn = self.pipeline.create(dai.node.NeuralNetwork)
         palm_nn.setBlobPath(palm.blob_path)
         palm_nn.setNumShavesPerInferenceThread(palm.shaves)
         self._relax_branch_input(palm_nn.input)
         palm_manip.out.link(palm_nn.input)
-        self.hand_palm_queue = palm_nn.out.createOutputQueue(
-            maxSize=BRANCH_OUTPUT_QUEUE_DEPTH, blocking=False
-        )
 
         decoder_nn = self.pipeline.create(dai.node.NeuralNetwork)
         decoder_nn.setBlobPath(decoder.blob_path)
@@ -1790,9 +1885,23 @@ class CameraNode(Node):
         # Preserve the palm NNData packet so DepthAI can map its named output
         # tensors to the decoder blob's named inputs.
         palm_nn.out.link(decoder_nn.input)
-        self.hand_decoder_queue = decoder_nn.out.createOutputQueue(
-            maxSize=BRANCH_OUTPUT_QUEUE_DEPTH, blocking=False
-        )
+        # The manager Script owns decoding AND the landmark crop config on the
+        # device: it reads the head's ``result`` records, builds each crop as a
+        # rotated rect and pushes the config straight into the landmark ImageManip,
+        # so no per-frame work crosses the host.  The host receives the assembled
+        # hands plus the Script's own stage counters.
+        #
+        # A host-in-the-loop chain that reads the decoder queue, computes the ROI
+        # and sends an ImageManipConfig back runs at ~8 % of the camera rate; the
+        # same decoding blob does 133 fps standalone, so the limiter is queue
+        # backpressure, not compute.
+        manager = self.pipeline.create(dai.node.Script)
+        manager.setScript(build_hand_script(source_width, source_height))
+        processor = getattr(getattr(dai, "ProcessorType", None), "LEON_CSS", None)
+        if processor is not None:
+            manager.setProcessor(processor)
+        manager.outputs["pre_pd_manip_cfg"].link(palm_manip.inputConfig)
+        decoder_nn.out.link(manager.inputs["from_post_pd_nn"])
 
         landmark_manip = self.pipeline.create(dai.node.ImageManip)
         landmark_crop = self._configure_hand_manip(
@@ -1811,20 +1920,18 @@ class CameraNode(Node):
         self._relax_branch_input(landmark_manip.inputImage)
         hand_tap.link(landmark_manip.inputImage)
         landmark_manip.inputConfig.setWaitForMessage(True)
-        self.hand_landmark_config_queue = landmark_manip.inputConfig.createInputQueue(
-            maxSize=16, blocking=False
-        )
-        self.hand_roi_queue = landmark_manip.out.createOutputQueue(
-            maxSize=BRANCH_OUTPUT_QUEUE_DEPTH, blocking=False
-        )
+        manager.outputs["pre_lm_manip_cfg"].link(landmark_manip.inputConfig)
 
         landmark_nn = self.pipeline.create(dai.node.NeuralNetwork)
         landmark_nn.setBlobPath(landmark.blob_path)
         landmark_nn.setNumShavesPerInferenceThread(landmark.shaves)
         landmark_manip.out.link(landmark_nn.input)
-        # Stays blocking: _pending_hands expects one landmark result per crop
-        # config, and a dropped result would stall the pairing permanently.
-        self.hand_landmark_queue = landmark_nn.out.createOutputQueue()
+        # The Script consumes the landmark result itself: it needs the crop's
+        # result before handing the next crop to the manip.
+        landmark_nn.out.link(manager.inputs["from_lm_nn"])
+        self.hand_script_queue = manager.outputs["host"].createOutputQueue(
+            maxSize=BRANCH_OUTPUT_QUEUE_DEPTH, blocking=False
+        )
 
     def _build_imitation_pipeline(self, composite):
         """Add the official parsed palm, full-frame crop, and landmark graph."""
@@ -1975,6 +2082,7 @@ class CameraNode(Node):
             self.imu_queue = None
             self.imu_available = False
             self.nn_queues = {}
+            self.hand_script_queue = None
             self.hand_decoder_queue = None
             self.hand_palm_queue = None
             self.hand_roi_queue = None
@@ -2356,7 +2464,10 @@ class CameraNode(Node):
                     frame = cv2.resize(frame, (self.preview_width, self.preview_height))
 
                 self.current_frame = frame
-                if self.hand_decoder_queue is not None:
+                if (
+                    self.hand_script_queue is not None
+                    or self.hand_decoder_queue is not None
+                ):
                     self._count_hand_stage("colour_isp")
                 if self.imitation_queue is not None:
                     self._count_imitation_stage("colour_isp")
@@ -2392,7 +2503,7 @@ class CameraNode(Node):
                     self._note_hand_branch_size(packet)
                 self._count_hand_stage(stage)
 
-        self._process_hand_tracking()
+        self._process_hand_script()
         self._process_imitation()
 
         if not self.depth_queue:

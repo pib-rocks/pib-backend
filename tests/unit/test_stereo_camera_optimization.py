@@ -730,7 +730,7 @@ class TestHandPipelineInput(unittest.TestCase):
         node.model_registry = MagicMock()
         node.model_registry.get.side_effect = artifacts.get
         node.pipeline = MagicMock()
-        created = [MagicMock() for _ in range(5)]
+        created = [MagicMock() for _ in range(6)]
         node.pipeline.create.side_effect = created
         node.camRgb = MagicMock()
         hand_tap = MagicMock()
@@ -742,7 +742,7 @@ class TestHandPipelineInput(unittest.TestCase):
 
         self.assertEqual(node.hand_source_size, (1280, 720))
         palm_manip = created[0]
-        landmark_manip = created[3]
+        landmark_manip = created[4]
         palm_manip.initialConfig.setOutputSize.assert_called_once_with(128, 128)
         landmark_manip.initialConfig.setOutputSize.assert_called_once_with(224, 224)
 
@@ -775,7 +775,7 @@ class TestHandPipelineInput(unittest.TestCase):
         node.model_registry = MagicMock()
         node.model_registry.get.side_effect = artifacts.get
         node.pipeline = MagicMock()
-        created = [MagicMock() for _ in range(5)]
+        created = [MagicMock() for _ in range(6)]
         node.pipeline.create.side_effect = created
         node.camRgb = MagicMock()
         node.camRgb.requestOutput.return_value = MagicMock()
@@ -783,7 +783,7 @@ class TestHandPipelineInput(unittest.TestCase):
         node._build_hand_pipeline(types.SimpleNamespace(artifact_ids=tuple(artifacts)))
 
         self.assertEqual((HAND_NN_WIDTH, HAND_NN_HEIGHT), (256, 256))
-        palm_manip, landmark_manip = created[0], created[3]
+        palm_manip, landmark_manip = created[0], created[4]
         palm_manip.setMaxOutputFrameSize.assert_called_once_with(128 * 128 * 3)
         landmark_manip.setMaxOutputFrameSize.assert_called_once_with(224 * 224 * 3)
         rotated = palm_manip.initialConfig.addCropRotatedRect.call_args.args[0]
@@ -791,6 +791,58 @@ class TestHandPipelineInput(unittest.TestCase):
             rotated.size.width * HAND_NN_WIDTH,
             255.0,
         )
+
+    @patch("ros_packages.camera.oak_d_lite.stereo.dai")
+    def test_hand_crop_config_comes_from_the_device_script(self, mock_dai):
+        """The landmark crop must be driven by the Script, not by the host.
+
+        The manager Script reads the decoder's ``result`` and pushes the crop
+        config straight into the landmark ImageManip, so no per-frame work
+        crosses the host.  Device code is unreachable by pytest, so the generated
+        script TEXT is the gate: it must carry the call shapes the firmware
+        offers (``getLayerFp16``, ``addCropRotatedRect``, ``setOutputSize`` with a
+        ResizeMode) and both config outputs.
+        """
+        with patch.object(CameraNode, "__init__", lambda self: None):
+            node = CameraNode()
+
+        class _RotatedRect:
+            def __init__(self):
+                self.center = types.SimpleNamespace(x=0.0, y=0.0)
+                self.size = types.SimpleNamespace(width=0.0, height=0.0)
+                self.angle = 0.0
+
+        mock_dai.RotatedRect.side_effect = _RotatedRect
+        artifacts = _hand_artifacts()
+        node.model_registry = MagicMock()
+        node.model_registry.get.side_effect = artifacts.get
+        node.pipeline = MagicMock()
+        created = [MagicMock() for _ in range(6)]
+        node.pipeline.create.side_effect = created
+        node.camRgb = MagicMock()
+        node.camRgb.requestOutput.return_value = MagicMock()
+
+        node._build_hand_pipeline(types.SimpleNamespace(artifact_ids=tuple(artifacts)))
+
+        script_node = created[3]
+        script = script_node.setScript.call_args.args[0]
+        # Script runtime: getLayerFp16, never the host library's getTensor
+        self.assertIn("getLayerFp16", script)
+        self.assertIn('"result"', script)
+        self.assertNotIn(".getTensor(", script)
+        self.assertIn("addCropRotatedRect", script)
+        self.assertIn("ResizeMode.LETTERBOX", script)
+        self.assertIn("PALM_RECORD_COUNT = 10", script)
+        # both crop configs are produced on the device
+        self.assertTrue(script_node.outputs["pre_pd_manip_cfg"].link.called)
+        self.assertTrue(script_node.outputs["pre_lm_manip_cfg"].link.called)
+        linked = script_node.outputs["pre_lm_manip_cfg"].link.call_args.args[0]
+        self.assertTrue(
+            any(linked is mock.inputConfig for mock in created),
+            "the landmark crop config must be linked into a device ImageManip",
+        )
+        # and the host only reads the assembled hands
+        script_node.outputs["host"].createOutputQueue.assert_called_once()
 
     @patch("ros_packages.camera.oak_d_lite.stereo.dai")
     def test_hand_manips_share_one_non_blocking_camera_tap(self, mock_dai):
@@ -801,7 +853,7 @@ class TestHandPipelineInput(unittest.TestCase):
         node.model_registry = MagicMock()
         node.model_registry.get.side_effect = artifacts.get
         node.pipeline = MagicMock()
-        created = [MagicMock() for _ in range(5)]
+        created = [MagicMock() for _ in range(6)]
         node.pipeline.create.side_effect = created
         node.camRgb = MagicMock()
         hand_tap = MagicMock()
@@ -809,7 +861,14 @@ class TestHandPipelineInput(unittest.TestCase):
 
         node._build_hand_pipeline(types.SimpleNamespace(artifact_ids=tuple(artifacts)))
 
-        palm_manip, palm_nn, decoder_nn, landmark_manip, landmark_nn = created
+        (
+            palm_manip,
+            palm_nn,
+            decoder_nn,
+            script_node,
+            landmark_manip,
+            landmark_nn,
+        ) = created
 
         # A single downscaled output stays within the camera-output budget. Both
         # consumers are non-blocking, so the config-gated landmark branch cannot
@@ -840,13 +899,29 @@ class TestHandPipelineInput(unittest.TestCase):
         palm_manip.setMaxOutputFrameSize.assert_called_once_with(128 * 128 * 3)
         landmark_manip.setMaxOutputFrameSize.assert_called_once_with(224 * 224 * 3)
         palm_nn.out.link.assert_called_once_with(decoder_nn.input)
+        # Both ImageManips are config-gated and driven by the device Script.
+        palm_manip.inputConfig.setWaitForMessage.assert_called_once_with(True)
         landmark_manip.inputConfig.setWaitForMessage.assert_called_once_with(True)
-        for branch_node in (palm_nn, decoder_nn, landmark_manip):
-            branch_node.out.createOutputQueue.assert_called_once_with(
-                maxSize=BRANCH_OUTPUT_QUEUE_DEPTH, blocking=False
-            )
-        # Landmark results stay blocking so _pending_hands keeps its pairing.
-        landmark_nn.out.createOutputQueue.assert_called_once_with()
+        # MagicMock's __getitem__ returns one child per MagicMock, so both
+        # outputs share a mock: check the calls themselves.
+        linked = [
+            entry.args[0]
+            for entry in script_node.outputs["pre_pd_manip_cfg"].link.call_args_list
+        ]
+        self.assertIn(palm_manip.inputConfig, linked)
+        self.assertIn(landmark_manip.inputConfig, linked)
+        self.assertIn(
+            script_node.inputs["from_post_pd_nn"],
+            decoder_nn.out.link.call_args_list[0].args,
+        )
+        self.assertIn(
+            script_node.inputs["from_lm_nn"],
+            landmark_nn.out.link.call_args_list[0].args,
+        )
+        # The host only reads the assembled hands now - no crop config queue.
+        script_node.outputs["host"].createOutputQueue.assert_called_once_with(
+            maxSize=BRANCH_OUTPUT_QUEUE_DEPTH, blocking=False
+        )
         self.assertEqual(node.hand_source_size, (256, 256))
 
     @patch("ros_packages.camera.oak_d_lite.stereo.dai")
