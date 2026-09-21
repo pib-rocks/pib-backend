@@ -2507,6 +2507,8 @@ class TestFaceCropPipeline(unittest.TestCase):
         node.face_crop_detection_queue = None
         node.face_crop_result_queue = None
         node._pending_face_crop_packet = None
+        node.face_crop_model_id = None
+        node.face_crop_translator = None
         return node
 
     @patch("ros_packages.camera.oak_d_lite.stereo.create_archive")
@@ -2542,7 +2544,10 @@ class TestFaceCropPipeline(unittest.TestCase):
         node.model_registry.get.side_effect = artifacts.get
 
         node._build_face_crop_pipeline(
-            types.SimpleNamespace(artifact_ids=tuple(artifacts))
+            types.SimpleNamespace(
+                model_id="emotion_recognition_crop",
+                artifact_ids=tuple(artifacts),
+            )
         )
 
         node.camRgb.requestOutput.assert_called_once_with(
@@ -2575,6 +2580,38 @@ class TestFaceCropPipeline(unittest.TestCase):
             maxSize=FACE_CROP_PAIR_WINDOW,
             blocking=False,
         )
+        self.assertEqual(node.face_crop_model_id, "emotion_recognition_crop")
+        self.assertIsNotNone(node.face_crop_translator)
+
+    def test_publish_uses_composite_model_id_translator_and_publisher(self):
+        node = self._node()
+        node.current_frame = None
+        node.preview_width = 1280
+        node.preview_height = 720
+        node.face_crop_model_id = "facemesh_crop"
+        translated = object()
+        node.face_crop_translator = MagicMock(return_value=translated)
+        node.get_clock = MagicMock()
+        node.last_detections = {}
+        publisher = MagicMock()
+        node.detection_publishers = {"facemesh_crop": publisher}
+        node.pipeline_manager = MagicMock()
+        packet = object()
+        face = object()
+
+        node._publish_face_crop_detection(packet, face)
+
+        node.face_crop_translator.assert_called_once_with(
+            packet,
+            face,
+            1280,
+            720,
+        )
+        message = node.last_detections["facemesh_crop"]
+        self.assertEqual(message.model_id, "facemesh_crop")
+        self.assertEqual(message.detections, [translated])
+        publisher.publish.assert_called_once_with(message)
+        node.pipeline_manager.record_packet.assert_called_once_with("facemesh_crop")
 
     def test_pairing_publishes_each_face_with_same_timestamp(self):
         node = self._node()
@@ -2633,6 +2670,7 @@ class TestFaceCropPipeline(unittest.TestCase):
                 model=types.SimpleNamespace(model_id="emotion_recognition_crop")
             )
         ]
+        node.face_crop_model_id = "emotion_recognition_crop"
         node.face_crop_detection_queue = MagicMock()
         node.face_crop_result_queue = MagicMock()
         node.face_crop_result_queue.tryGet.return_value = None

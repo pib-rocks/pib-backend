@@ -54,9 +54,11 @@ from .imitation import (
 )
 from .imitation_archive import create_landmark_archive, create_palm_archive
 from .face_crop import (
+    FACE_CROP_TRANSLATORS,
     FACE_CROP_PADDING,
+    FACE_DETECTOR_MODEL_ID,
+    face_crop_classifier_id,
     packet_timestamp,
-    translate_emotion,
 )
 from .parsed_detections import translate_detections
 from .task_archives import create_archive, labels_for_model
@@ -309,6 +311,8 @@ class CameraNode(Node):
         self.face_crop_pairs = {}
         self.face_crop_source_size = (0, 0)
         self._pending_face_crop_packet = None
+        self.face_crop_model_id = None
+        self.face_crop_translator = None
         self.hand_mp_detection_queue = None
         self.hand_mp_landmark_queue = None
         self.hand_mp_source_size = (0, 0)
@@ -873,7 +877,9 @@ class CameraNode(Node):
             frame_height = self.preview_height
         else:
             frame_height, frame_width = self.current_frame.shape[:2]
-        detection = translate_emotion(
+        if self.face_crop_model_id is None or self.face_crop_translator is None:
+            raise RuntimeError("face-crop classifier metadata is unavailable")
+        detection = self.face_crop_translator(
             result_packet,
             face,
             frame_width,
@@ -882,15 +888,15 @@ class CameraNode(Node):
 
         message = DetectionArray()
         message.header.stamp = self.get_clock().now().to_msg()
-        message.model_id = "emotion_recognition_crop"
+        message.model_id = self.face_crop_model_id
         message.frame_width = frame_width
         message.frame_height = frame_height
         message.detections = [detection]
-        self.last_detections["emotion_recognition_crop"] = message
-        publisher = self.detection_publishers.get("emotion_recognition_crop")
+        self.last_detections[self.face_crop_model_id] = message
+        publisher = self.detection_publishers.get(self.face_crop_model_id)
         if publisher is not None:
             publisher.publish(message)
-        self.pipeline_manager.record_packet("emotion_recognition_crop")
+        self.pipeline_manager.record_packet(self.face_crop_model_id)
 
     def _publish_hand_mp_detections(self, frame_width, frame_height, detections):
         message = DetectionArray()
@@ -1653,6 +1659,8 @@ class CameraNode(Node):
         self.face_crop_pairs = {}
         self.face_crop_source_size = (0, 0)
         self._pending_face_crop_packet = None
+        self.face_crop_model_id = None
+        self.face_crop_translator = None
         self.hand_mp_detection_queue = None
         self.hand_mp_landmark_queue = None
         self.hand_mp_source_size = (0, 0)
@@ -1677,7 +1685,10 @@ class CameraNode(Node):
             if model.model_id == "imitation":
                 self._build_imitation_pipeline(model)
                 continue
-            if model.model_id == "emotion_recognition_crop":
+            if (
+                getattr(model, "composite", False)
+                and FACE_DETECTOR_MODEL_ID in model.artifact_ids
+            ):
                 self._build_face_crop_pipeline(model)
                 continue
             self._build_single_network_pipeline(model)
@@ -1850,8 +1861,9 @@ class CameraNode(Node):
         return getattr(self, "imitation_queue", None) is not None
 
     def _face_crop_chain_is_built(self):
+        face_crop_id = getattr(self, "face_crop_model_id", None)
         requested = any(
-            active.model.model_id == "emotion_recognition_crop"
+            active.model.model_id == face_crop_id
             for active in getattr(self, "_pipeline_models", ())
         )
         if not requested:
@@ -2092,19 +2104,14 @@ class CameraNode(Node):
         self.imitation_source_size = (detector_width, detector_height)
 
     def _build_face_crop_pipeline(self, composite):
-        """Add parsed YuNet detection, timestamped crops, and raw emotion NN."""
-        artifact_ids = set(composite.artifact_ids)
-        required = {
-            "face_detection_yunet_160x120",
-            "emotion_recognition_lfw_64x64",
-        }
-        if not required.issubset(artifact_ids):
-            raise ValueError(
-                "emotion_recognition_crop composite is missing its detector "
-                "or classifier"
-            )
-        detector = self.model_registry.get("face_detection_yunet_160x120")
-        classifier = self.model_registry.get("emotion_recognition_lfw_64x64")
+        """Add parsed YuNet detection, timestamped crops, and a raw classifier."""
+        classifier_id = face_crop_classifier_id(composite.artifact_ids)
+        if self.face_crop_model_id is not None:
+            raise ValueError("only one face-crop composite may run at a time")
+        self.face_crop_model_id = composite.model_id
+        self.face_crop_translator = FACE_CROP_TRANSLATORS[classifier_id]
+        detector = self.model_registry.get(FACE_DETECTOR_MODEL_ID)
+        classifier = self.model_registry.get(classifier_id)
         detection_archive = create_archive(detector.model_id, detector.blob_path)
         if detection_archive is None:
             raise ValueError("YuNet parser archive is unavailable")
@@ -2623,6 +2630,8 @@ class CameraNode(Node):
             self.face_crop_pairs = {}
             self.face_crop_source_size = (0, 0)
             self._pending_face_crop_packet = None
+            self.face_crop_model_id = None
+            self.face_crop_translator = None
             self.hand_mp_detection_queue = None
             self.hand_mp_landmark_queue = None
             self.hand_mp_source_size = (0, 0)
@@ -2708,6 +2717,12 @@ class CameraNode(Node):
         self._stop_pipeline()
         self.camera_available = self.init_pipeline()
         if self.camera_available:
+            special_ids = {
+                "hand_tracking",
+                "imitation",
+                "hand_tracking_mp",
+                getattr(self, "face_crop_model_id", None),
+            }
             missing = [
                 active.model.model_id
                 for active in self._pipeline_models
@@ -2720,7 +2735,7 @@ class CameraNode(Node):
                     and not self._imitation_chain_is_built()
                 )
                 or (
-                    active.model.model_id == "emotion_recognition_crop"
+                    active.model.model_id == getattr(self, "face_crop_model_id", None)
                     and not self._face_crop_chain_is_built()
                 )
                 or (
@@ -2728,13 +2743,7 @@ class CameraNode(Node):
                     and not self._hand_mp_chain_is_built()
                 )
                 or (
-                    active.model.model_id
-                    not in (
-                        "hand_tracking",
-                        "imitation",
-                        "emotion_recognition_crop",
-                        "hand_tracking_mp",
-                    )
+                    active.model.model_id not in special_ids
                     and active.model.model_id not in self.nn_queues
                 )
             ]
@@ -2751,6 +2760,13 @@ class CameraNode(Node):
         requested_ids = {
             active.model.model_id for active in getattr(self, "_pipeline_models", ())
         }
+        face_crop_id = getattr(self, "face_crop_model_id", None)
+        special_ids = {
+            "hand_tracking",
+            "imitation",
+            "hand_tracking_mp",
+            face_crop_id,
+        }
         if "hand_tracking" in requested_ids and not self._hand_chain_is_built():
             self.get_logger().error(
                 "Cannot verify hand_tracking: the complete hand chain is absent"
@@ -2761,13 +2777,9 @@ class CameraNode(Node):
                 "Cannot verify imitation: the gathered output queue is absent"
             )
             return False
-        if (
-            "emotion_recognition_crop" in requested_ids
-            and not self._face_crop_chain_is_built()
-        ):
+        if face_crop_id in requested_ids and not self._face_crop_chain_is_built():
             self.get_logger().error(
-                "Cannot verify emotion_recognition_crop: "
-                "the face-crop queues are absent"
+                f"Cannot verify {face_crop_id}: the face-crop queues are absent"
             )
             return False
         if "hand_tracking_mp" in requested_ids and not self._hand_mp_chain_is_built():
@@ -2776,14 +2788,7 @@ class CameraNode(Node):
             )
             return False
         if any(
-            model_id
-            not in (
-                "hand_tracking",
-                "imitation",
-                "emotion_recognition_crop",
-                "hand_tracking_mp",
-            )
-            and model_id not in self.nn_queues
+            model_id not in special_ids and model_id not in self.nn_queues
             for model_id in requested_ids
         ):
             # A composite chain has no nn_queues entry: it is verified through its
@@ -2812,7 +2817,7 @@ class CameraNode(Node):
             if packet is None:
                 return False
             self._pending_imitation_packet = packet
-        if "emotion_recognition_crop" in requested_ids:
+        if face_crop_id in requested_ids:
             # The classifier can only answer once a face sits inside a crop, so waiting
             # for its result would make the model unstartable in an empty room. The
             # detector stage is what proves the chain is up; the classifier stage is
@@ -2822,8 +2827,7 @@ class CameraNode(Node):
             )
             if packet is None:
                 self.get_logger().error(
-                    "emotion_recognition_crop chain started but its detector "
-                    "produced nothing"
+                    f"{face_crop_id} chain started but its detector produced nothing"
                 )
                 return False
             # Consumed, not stashed: the pairing code expects a classifier result in

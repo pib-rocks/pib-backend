@@ -102,6 +102,7 @@ models:
   zoo_type: depthai
   notes: YuNet face detector. IR input 'data' is NCHW 3x120x160. BGR [0-255], compiled '-ip U8'. Decode bounding boxes from the YuNet heads (see luxonis/depthai-experiments gen2-face-detection).
 - model_id: facemesh_192x192
+  selectable: false
   task: facial_landmarks
   source_upstream: luxonis/depthai-model-zoo (google/mediapipe Facemesh)
   source_url: https://github.com/luxonis/depthai-model-zoo/raw/main/models/facemesh_192x192/facemesh_192x192.xml
@@ -116,6 +117,14 @@ models:
   openvino_version: '2022.1'
   zoo_type: depthai
   notes: MediaPipe Facemesh, 468 landmarks. IR input 'images' 3x192x192. BGR [0-255], compiled '-ip U8'.
+- model_id: facemesh_crop
+  task: facial_landmarks
+  composite: true
+  artifacts:
+  - face_detection_yunet_160x120
+  - facemesh_192x192
+  publish_topic: detections/facemesh_crop
+  selectable: true
 - model_id: facial_landmarks_68_160x160
   task: facial_landmarks
   source_upstream: luxonis/depthai-model-zoo (610265158/face_landmark, PINTO_model_zoo 043)

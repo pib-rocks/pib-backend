@@ -8,10 +8,13 @@ import pytest
 
 from ros_packages.camera.oak_d_lite.face_crop import (
     EMOTION_LABELS,
+    FACEMESH_LANDMARK_COUNT,
+    face_crop_classifier_id,
     packet_timestamp,
     emotion_probabilities,
     softmax,
     translate_emotion,
+    translate_facemesh,
 )
 
 
@@ -82,6 +85,69 @@ def test_softmax_rejects_wrong_size_and_nonfinite_values():
         softmax([1.0, 2.0])
     with pytest.raises(ValueError, match="non-finite"):
         softmax([0.0, 1.0, 2.0, 3.0, float("nan")])
+
+
+def test_facemesh_maps_pixel_xyz_through_the_padded_face_crop(monkeypatch):
+    class Detection:
+        pass
+
+    datatypes = types.ModuleType("datatypes")
+    datatypes_msg = types.ModuleType("datatypes.msg")
+    datatypes_msg.Detection = Detection
+    datatypes.msg = datatypes_msg
+    monkeypatch.setitem(sys.modules, "datatypes", datatypes)
+    monkeypatch.setitem(sys.modules, "datatypes.msg", datatypes_msg)
+
+    values = np.tile([96.0, 96.0, 48.0], (FACEMESH_LANDMARK_COUNT, 1))
+    values[0] = [0.0, 0.0, -96.0]
+    values[-1] = [192.0, 192.0, 96.0]
+    packet = types.SimpleNamespace(getTensor=lambda name: values.reshape(-1))
+
+    detection = translate_facemesh(packet, _face(), 1280, 720)
+
+    assert detection.label == "Face"
+    assert detection.score == 1.0
+    assert (detection.x_min, detection.y_min) == (512, 144)
+    assert (detection.x_max, detection.y_max) == (768, 432)
+    assert len(detection.keypoint_names) == FACEMESH_LANDMARK_COUNT
+    assert detection.keypoint_names[:2] == ["landmark_0", "landmark_1"]
+    assert detection.keypoint_names[-1] == "landmark_467"
+    assert detection.keypoint_x[0] == pytest.approx(256.0)
+    assert detection.keypoint_y[0] == pytest.approx(72.0)
+    assert detection.keypoint_x[-1] == pytest.approx(1024.0)
+    assert detection.keypoint_y[-1] == pytest.approx(504.0)
+    assert detection.keypoint_z[0] == pytest.approx(-0.5)
+    assert detection.keypoint_z[-1] == pytest.approx(0.5)
+
+
+def test_facemesh_keeps_already_normalized_z(monkeypatch):
+    class Detection:
+        pass
+
+    datatypes = types.ModuleType("datatypes")
+    datatypes_msg = types.ModuleType("datatypes.msg")
+    datatypes_msg.Detection = Detection
+    datatypes.msg = datatypes_msg
+    monkeypatch.setitem(sys.modules, "datatypes", datatypes)
+    monkeypatch.setitem(sys.modules, "datatypes.msg", datatypes_msg)
+
+    values = np.tile([0.25, 0.75, -0.5], (FACEMESH_LANDMARK_COUNT, 1))
+    packet = types.SimpleNamespace(getTensor=lambda name: values.reshape(-1))
+
+    detection = translate_facemesh(packet, _face(), 1280, 720)
+
+    assert detection.keypoint_x[0] == pytest.approx(448.0)
+    assert detection.keypoint_y[0] == pytest.approx(396.0)
+    assert detection.keypoint_z[0] == pytest.approx(-0.5)
+
+
+def test_face_crop_classifier_is_derived_and_unknown_models_fail_loudly():
+    assert (
+        face_crop_classifier_id(("face_detection_yunet_160x120", "facemesh_192x192"))
+        == "facemesh_192x192"
+    )
+    with pytest.raises(ValueError, match="unsupported"):
+        face_crop_classifier_id(("face_detection_yunet_160x120", "future_model"))
 
 
 def test_packet_timestamp_accepts_depthai_and_ros_spellings():
