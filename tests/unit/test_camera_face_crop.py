@@ -161,12 +161,14 @@ def test_packet_timestamp_accepts_depthai_and_ros_spellings():
     assert packet_timestamp(depthai_packet) == (3, 4000)
     assert packet_timestamp(ros_packet) == (5, 6)
 
+
 def test_probability_output_is_not_softmaxed_again(monkeypatch):
     """The shipped blob ends in SoftMax, so its values must arrive unchanged.
 
     Measured on the robot before the fix: this distribution was published as
     (0.301, 0.176, 0.171, 0.168, 0.184), which reads as an unsure model.
     """
+
     class Detection:
         pass
 
@@ -182,9 +184,13 @@ def test_probability_output_is_not_softmaxed_again(monkeypatch):
 
     detection = translate_emotion(packet, _face(), 1280, 720)
 
-    assert np.allclose([float(v) for v in detection.scalar_values], published, atol=1e-6)
+    assert np.allclose(
+        [float(v) for v in detection.scalar_values], published, atol=1e-6
+    )
     doubled = softmax(published)
-    assert not np.allclose([float(v) for v in detection.scalar_values], doubled, atol=1e-3)
+    assert not np.allclose(
+        [float(v) for v in detection.scalar_values], doubled, atol=1e-3
+    )
     assert detection.label == "neutral"
     assert abs(float(detection.score) - 0.636) < 1e-6
 
