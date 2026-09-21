@@ -2025,10 +2025,16 @@ class CameraNode(Node):
 
         # One rate-limited camera branch with the 16:9 field of view, exactly as in
         # the example (there: 768x768, which crops the field of view instead).
+        # No explicit fps here. The camera already carries the raw ISP output that
+        # publishes /camera_topic, and asking one output for a different rate than
+        # that stream leaves the ISP with nothing to deliver: measured with the
+        # node's own pipeline, the colour queue stayed empty until the model chain
+        # was taken out, while the same branch at the sensor's rate works. The rate
+        # of the chain is set by the crop/landmark pairing, not by throttling the
+        # camera.
         hand_mp_source = self.camRgb.requestOutput(
             (HAND_MP_SOURCE_WIDTH, HAND_MP_SOURCE_HEIGHT),
             type=dai.ImgFrame.Type.BGR888p,
-            fps=HAND_MP_FPS,
         )
         if hand_mp_source is None:
             raise RuntimeError(
