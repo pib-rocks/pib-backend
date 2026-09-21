@@ -11,6 +11,11 @@ FACEMESH_LANDMARK_COUNT = 468
 FACEMESH_OUTPUT_LAYER = "conv2d_210"
 FACE_DETECTOR_MODEL_ID = "face_detection_yunet_160x120"
 FACE_CROP_PADDING = 0.1
+HEAD_POSE_OUTPUTS = (
+    ("yaw", "angle_y_fc"),
+    ("pitch", "angle_p_fc"),
+    ("roll", "angle_r_fc"),
+)
 
 
 def packet_timestamp(packet):
@@ -138,6 +143,48 @@ def translate_emotion(
     return detection
 
 
+def translate_head_pose(packet, face, frame_width, frame_height):
+    """Translate the named yaw, pitch, and roll heads for one face crop."""
+    from datatypes.msg import Detection
+
+    angles = []
+    for scalar_name, layer_name in HEAD_POSE_OUTPUTS:
+        try:
+            values = np.asarray(packet.getTensor(layer_name), dtype=np.float64).reshape(
+                -1
+            )
+        except (KeyError, RuntimeError) as error:
+            raise ValueError(
+                f"head-pose output is missing required layer {layer_name}"
+            ) from error
+        if values.size != 1:
+            raise ValueError(
+                f"head-pose layer {layer_name} has {values.size} values, expected 1"
+            )
+        if not np.isfinite(values[0]):
+            raise ValueError(
+                f"head-pose layer {layer_name} contains a non-finite value"
+            )
+        angles.append(float(values[0]))
+
+    detection = Detection()
+    detection.label = "Face"
+    detection.score = 1.0
+    (
+        detection.x_min,
+        detection.y_min,
+        detection.x_max,
+        detection.y_max,
+    ) = _face_box_pixels(face, frame_width, frame_height)
+    detection.keypoint_names = []
+    detection.keypoint_x = []
+    detection.keypoint_y = []
+    detection.keypoint_z = []
+    detection.scalar_names = [name for name, _ in HEAD_POSE_OUTPUTS]
+    detection.scalar_values = angles
+    return detection
+
+
 def facemesh_xyz(packet, preferred_layer=FACEMESH_OUTPUT_LAYER):
     """Read and validate the MediaPipe 468-point XYZ output."""
     try:
@@ -249,6 +296,7 @@ def translate_facemesh(
 FACE_CROP_TRANSLATORS = {
     "emotion_recognition_lfw_64x64": translate_emotion,
     "facemesh_192x192": translate_facemesh,
+    "head-pose-estimation-adas-0001": translate_head_pose,
 }
 
 
