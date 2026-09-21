@@ -9,6 +9,7 @@ import pytest
 from ros_packages.camera.oak_d_lite.face_crop import (
     EMOTION_LABELS,
     packet_timestamp,
+    emotion_probabilities,
     softmax,
     translate_emotion,
 )
@@ -93,3 +94,45 @@ def test_packet_timestamp_accepts_depthai_and_ros_spellings():
 
     assert packet_timestamp(depthai_packet) == (3, 4000)
     assert packet_timestamp(ros_packet) == (5, 6)
+
+def test_probability_output_is_not_softmaxed_again(monkeypatch):
+    """The shipped blob ends in SoftMax, so its values must arrive unchanged.
+
+    Measured on the robot before the fix: this distribution was published as
+    (0.301, 0.176, 0.171, 0.168, 0.184), which reads as an unsure model.
+    """
+    class Detection:
+        pass
+
+    datatypes = types.ModuleType("datatypes")
+    datatypes_msg = types.ModuleType("datatypes.msg")
+    datatypes_msg.Detection = Detection
+    datatypes.msg = datatypes_msg
+    monkeypatch.setitem(sys.modules, "datatypes", datatypes)
+    monkeypatch.setitem(sys.modules, "datatypes.msg", datatypes_msg)
+
+    published = np.array([0.636, 0.096, 0.066, 0.056, 0.146])
+    packet = types.SimpleNamespace(getTensor=lambda name: published.copy())
+
+    detection = translate_emotion(packet, _face(), 1280, 720)
+
+    assert np.allclose([float(v) for v in detection.scalar_values], published, atol=1e-6)
+    doubled = softmax(published)
+    assert not np.allclose([float(v) for v in detection.scalar_values], doubled, atol=1e-3)
+    assert detection.label == "neutral"
+    assert abs(float(detection.score) - 0.636) < 1e-6
+
+
+def test_logit_output_still_falls_back_to_softmax():
+    packet = types.SimpleNamespace(
+        getTensor=lambda name: np.array([0.0, 3.0, 1.0, -1.0, 0.5])
+    )
+    probabilities = emotion_probabilities(packet)
+    assert abs(float(np.sum(probabilities)) - 1.0) < 1e-9
+    assert int(np.argmax(probabilities)) == 1
+
+
+def test_emotion_probabilities_rejects_a_wrong_size():
+    packet = types.SimpleNamespace(getTensor=lambda name: np.array([0.5, 0.5]))
+    with pytest.raises(ValueError):
+        emotion_probabilities(packet)

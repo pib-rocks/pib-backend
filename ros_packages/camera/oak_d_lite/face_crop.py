@@ -62,6 +62,35 @@ def emotion_logits(packet, preferred_layer=EMOTION_OUTPUT_LAYER):
     )
 
 
+def emotion_probabilities(packet, preferred_layer=EMOTION_OUTPUT_LAYER):
+    """Return the classifier's probabilities without assuming they are logits.
+
+    The shipped blob ends in a SoftMax layer - the OpenVINO XML's last operations are
+    Convolution, Const, Convert, Add, SoftMax, Result - and names its output
+    ``prob_emotion``, so the values already are a distribution. Feeding them through
+    a second softmax compresses them towards uniform: measured on the robot, a
+    confident (0.636, 0.096, 0.066, 0.056, 0.146) was published as
+    (0.301, 0.176, 0.171, 0.168, 0.184), which reads as an unsure model.
+
+    Values that do not look like a distribution (negative, or not summing to about
+    one) are still passed through a softmax, so a blob exporting raw logits keeps
+    working.
+    """
+    values = np.asarray(
+        emotion_logits(packet, preferred_layer), dtype=np.float64
+    ).reshape(-1)
+    if values.size != len(EMOTION_LABELS):
+        raise ValueError(
+            f"emotion output has {values.size} values, expected {len(EMOTION_LABELS)}"
+        )
+    if not np.all(np.isfinite(values)):
+        raise ValueError("emotion output contains a non-finite value")
+    total = float(np.sum(values))
+    if np.all(values >= 0.0) and abs(total - 1.0) <= 0.05:
+        return values / total
+    return softmax(values)
+
+
 def translate_emotion(
     packet,
     face,
@@ -72,7 +101,7 @@ def translate_emotion(
     """Translate one raw emotion result and its parsed face box."""
     from datatypes.msg import Detection
 
-    probabilities = softmax(emotion_logits(packet, output_layer))
+    probabilities = emotion_probabilities(packet, output_layer)
     winner = int(np.argmax(probabilities))
     box = face.getBoundingBox()
     half_width = float(box.size.width) / 2.0
