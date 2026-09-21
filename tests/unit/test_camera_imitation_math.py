@@ -126,6 +126,40 @@ def test_process_detections_copies_timestamp_sequence_and_target_size():
     processor.config_output.send.assert_called_once_with(configs)
 
 
+@pytest.mark.parametrize(
+    ("side", "expected_x"),
+    (("left", 0.55), ("right", 0.45)),
+)
+def test_gaze_eye_crop_uses_upper_third_and_anatomical_side(side, expected_x):
+    fake_rect = _rect()
+    config = MagicMock()
+    stretch = imitation.dai.ImageManipConfig.ResizeMode.STRETCH
+    with (
+        patch.object(imitation.dai, "RotatedRect", return_value=fake_rect),
+        patch.object(
+            imitation.dai, "ImageManipConfig", return_value=config
+        ) as image_manip_config,
+    ):
+        image_manip_config.ResizeMode.STRETCH = stretch
+        result = imitation.gaze_eye_crop_config(
+            _detection(),
+            side,
+            60,
+            60,
+        )
+
+    assert result is config
+    crop = config.addCropRotatedRect.call_args.args[0]
+    assert config.addCropRotatedRect.call_args.kwargs == {"normalizedCoords": True}
+    assert crop.center.x == pytest.approx(expected_x)
+    assert crop.center.y == pytest.approx(0.3)
+    assert crop.size.width == pytest.approx(0.1)
+    assert crop.size.height == pytest.approx(0.1)
+    assert crop.angle == pytest.approx(0.0)
+    config.setOutputSize.assert_called_once_with(60, 60, stretch)
+    config.setReusePreviousImage.assert_called_once_with(False)
+
+
 def test_stretch_mapping_is_exact_and_clipped_to_published_frame():
     item = {
         "0": _keypoints(x=0.25, y=0.75),
