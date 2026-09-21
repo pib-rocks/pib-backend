@@ -862,6 +862,7 @@ class CameraNode(Node):
             publisher.publish(message)
         self._count_hand_stage("publish")
         self.pipeline_manager.record_packet("hand_tracking_mp")
+
     def _publish_parsed_detections(self, model_id, packet):
         if self.current_frame is None:
             frame_width = self.preview_width
