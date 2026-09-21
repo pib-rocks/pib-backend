@@ -2470,11 +2470,20 @@ class CameraNode(Node):
                 "Cannot verify imitation: the gathered output queue is absent"
             )
             return False
+        if "hand_tracking_mp" in requested_ids and not self._hand_mp_chain_is_built():
+            self.get_logger().error(
+                "Cannot verify hand_tracking_mp: the reference chain is absent"
+            )
+            return False
         if any(
-            model_id not in ("hand_tracking", "imitation")
+            model_id not in ("hand_tracking", "imitation", "hand_tracking_mp")
             and model_id not in self.nn_queues
             for model_id in requested_ids
         ):
+            # A composite chain has no nn_queues entry: it is verified through its
+            # own stage queues below. Without this, every composite other than the
+            # two named ones failed verification before a single frame was read,
+            # and the caller reported "no frames arrived".
             return False
 
         packet = self._wait_for_color_frame(timeout)
@@ -2497,6 +2506,17 @@ class CameraNode(Node):
             if packet is None:
                 return False
             self._pending_imitation_packet = packet
+        if "hand_tracking_mp" in requested_ids:
+            # The chain is only really running when the landmark stage answers;
+            # waiting on the palm branch alone would accept a chain whose crops
+            # never come back.
+            packet = self._wait_for_queue_packet(self.hand_mp_landmark_queue, timeout)
+            if packet is None:
+                self.get_logger().error(
+                    "hand_tracking_mp chain started but no landmark result arrived"
+                )
+                return False
+            self._count_hand_stage("publish")
         return True
 
     def _revert_to_color_only(self):
