@@ -116,6 +116,9 @@ check_flask() {
 run_pytest_integration() {
     cd "${REPO_ROOT}"
     rm -rf /tmp/pytest-of-* /tmp/pytest-* 2>/dev/null || true
+    export PIB_ROBOT_URL="${PIB_ROBOT_URL:-http://localhost}"
+    export PIB_API_URL="${PIB_API_URL:-http://localhost/api}"
+    export PIB_E2E_BASE_URL="${PIB_E2E_BASE_URL:-http://localhost}"
     PYTHONPATH="${REPO_ROOT}/pib_api/flask:${REPO_ROOT}/pib_hermes_config:${REPO_ROOT}/pib_mcp_server:${REPO_ROOT}/public_api_client" \
         pytest "${SCRIPT_DIR}" -q \
         --ignore="${SCRIPT_DIR}/blockly_generator" \

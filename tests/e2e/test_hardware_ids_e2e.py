@@ -5,8 +5,8 @@ import pytest
 import requests
 from playwright.sync_api import sync_playwright, expect
 
-ROBOT_URL = os.getenv("PIB_ROBOT_URL", "http://192.168.1.28")
-API_URL = os.getenv("PIB_API_URL", "http://192.168.1.28/api")
+ROBOT_URL = os.getenv("PIB_ROBOT_URL", "http://localhost")
+API_URL = os.getenv("PIB_API_URL", "http://localhost/api")
 
 # Timeouts are generous by default because the suite runs on the Pi itself, where
 # Angular bootstrap and Bricklet round-trips are slow under load. Override per host.

@@ -28,7 +28,7 @@ def _get_chromium_launch_kwargs() -> dict:
 from playwright.sync_api import Page, expect
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
-ROBOT_URL = os.environ.get("PIB_E2E_BASE_URL", "http://192.168.1.28").rstrip("/")
+ROBOT_URL = os.environ.get("PIB_E2E_BASE_URL", "http://localhost").rstrip("/")
 API_URL = f"{ROBOT_URL}/api"
 REQUEST_TIMEOUT = 15
 TURN_TIMEOUT = int(os.environ.get("PIB_HERMES_E2E_TURN_TIMEOUT", "300"))
