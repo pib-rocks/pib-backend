@@ -32,7 +32,10 @@ def _packet(rows, layer_name=QR_OUTPUT_NAME):
         values[: len(rows)] = rows
     return types.SimpleNamespace(
         getAllLayerNames=lambda: [layer_name],
-        getLayerFp16=lambda name: values.reshape(-1).tolist(),
+        # Mirrors the real depthai v3 API. The previous fixture invented
+        # getLayerFp16 (a v2 name that no longer exists), which is exactly
+        # why the live device dropped every packet while the test passed.
+        getTensor=lambda name: values,
     )
 
 
@@ -63,6 +66,8 @@ def test_filters_ssd_candidates_scales_box_and_decodes_with_four_corners():
         ]
     )
     detector = MagicMock()
+    # cv2 findet hier nichts, also greift der Rueckfall ueber das Box-Viereck.
+    detector.detectAndDecode.return_value = ("", None, None)
     detector.decode.return_value = ("https://pib.rocks", None)
 
     detections = decode_qr_detections(packet, frame, detector=detector)
@@ -78,10 +83,10 @@ def test_filters_ssd_candidates_scales_box_and_decodes_with_four_corners():
     assert detections[0].text == "https://pib.rocks"
     points = detector.decode.call_args.args[1]
     np.testing.assert_array_equal(points, np.asarray([detections[0].corners]))
-    detector.detectAndDecode.assert_not_called()
+    detector.detectAndDecode.assert_called_once()
 
 
-def test_falls_back_to_detect_and_decode_on_the_box_crop():
+def test_prefers_cv2_own_detection_on_the_whole_frame():
     frame = np.zeros((100, 200, 3), dtype=np.uint8)
     packet = _packet([[0, 1, 0.9, 0.1, 0.2, 0.8, 0.9]])
     detector = MagicMock()
@@ -91,4 +96,4 @@ def test_falls_back_to_detect_and_decode_on_the_box_crop():
     detections = decode_qr_detections(packet, frame, detector=detector)
 
     assert detections[0].text == "fallback"
-    assert detector.detectAndDecode.call_args.args[0].shape == (70, 140, 3)
+    assert detector.detectAndDecode.call_args.args[0].shape == (100, 200, 3)

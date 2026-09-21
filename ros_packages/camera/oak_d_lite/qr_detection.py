@@ -54,20 +54,26 @@ def _pixel(value, extent):
 
 
 def _decode_text(detector, frame, corners, box):
-    points = np.asarray([corners], dtype=np.float32)
+    """Resolve the payload, preferring OpenCV's own localisation.
+
+    Measured on the robot: the SSD head reports an axis-aligned box, but a QR
+    code that is rotated or seen at an angle is not axis-aligned, so the four
+    box corners are NOT the corners of the code and ``decode`` fails on them.
+    Letting OpenCV find the code itself in the frame succeeded on the same
+    images (verified against a real camera frame before this change), so that
+    is the primary path; the box quad stays as the fallback for the symmetric
+    case where the box really is the code.
+    """
     try:
-        text, _ = detector.decode(frame, points)
+        text, _, _ = detector.detectAndDecode(frame)
     except cv2.error:
         text = ""
     if text:
         return str(text)
 
-    x_min, y_min, x_max, y_max = box
-    crop = frame[y_min:y_max, x_min:x_max]
-    if crop.size == 0:
-        return ""
+    points = np.asarray([corners], dtype=np.float32)
     try:
-        text, _, _ = detector.detectAndDecode(crop)
+        text, _ = detector.decode(frame, points)
     except cv2.error:
         return ""
     return str(text or "")
@@ -86,7 +92,7 @@ def decode_qr_detections(
         raise ValueError(
             f"{QR_MODEL_ID} packet has no layer {QR_OUTPUT_NAME!r}; found {names}"
         )
-    values = np.asarray(packet.getLayerFp16(QR_OUTPUT_NAME), dtype=np.float32)
+    values = np.asarray(packet.getTensor(QR_OUTPUT_NAME), dtype=np.float32)
     if values.size != QR_OUTPUT_DIMS[0] * QR_OUTPUT_DIMS[1]:
         raise ValueError(
             f"{QR_MODEL_ID} output {QR_OUTPUT_NAME!r} must contain 700 values, "
