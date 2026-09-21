@@ -223,8 +223,16 @@ def device_pure_source():
     return source[start:end]
 
 
-def build_hand_script(source_width=256, source_height=144):
-    """Build the per-frame manager Script that runs on the OAK device."""
+def build_hand_script(source_width=256, source_height=144, stage="full"):
+    """Build the per-frame manager Script that runs on the OAK device.
+
+    ``stage='palm_only'`` drops the landmark half (no crop config, no wait for a
+    landmark result) and only reads the palm decoder.  It exists to bisect device
+    faults: if a pipeline survives that variant but dies with ``stage='full'``,
+    the landmark stage is what the device cannot take.
+    """
+    if stage not in ("full", "palm_only"):
+        raise ValueError("stage must be 'full' or 'palm_only'")
     loop = r"""
 import marshal
 
@@ -232,6 +240,7 @@ SOURCE_WIDTH = ${SOURCE_WIDTH}
 SOURCE_HEIGHT = ${SOURCE_HEIGHT}
 PD_SIZE = 128
 LM_SIZE = 224
+WITH_LANDMARKS = ${WITH_LANDMARKS}
 
 def flatten_values(value):
     if value is None:
@@ -323,53 +332,54 @@ while True:
             stages["post_processing"] += 1
             continue
         fitted_regions.append((region, fitted_region))
-    for index in range(len(fitted_regions)):
-        region, fitted_region = fitted_regions[index]
-        node.io["pre_lm_manip_cfg"].send(
-            landmark_config(fitted_region, index + 1 < len(fitted_regions))
-        )
-        stages["image_manip_config"] += 1
-        landmark_packet = node.io["from_lm_nn"].get()
-        stages["image_manip_roi"] += 1
-        stages["hand_landmark_nn"] += 1
-        score_values = flat_tensor(landmark_packet, "Identity_1")
-        if len(score_values) != 1 or not landmark_score_passes(score_values[0]):
+    if WITH_LANDMARKS:
+        for index in range(len(fitted_regions)):
+            region, fitted_region = fitted_regions[index]
+            node.io["pre_lm_manip_cfg"].send(
+                landmark_config(fitted_region, index + 1 < len(fitted_regions))
+            )
+            stages["image_manip_config"] += 1
+            landmark_packet = node.io["from_lm_nn"].get()
+            stages["image_manip_roi"] += 1
+            stages["hand_landmark_nn"] += 1
+            score_values = flat_tensor(landmark_packet, "Identity_1")
+            if len(score_values) != 1 or not landmark_score_passes(score_values[0]):
+                stages["post_processing"] += 1
+                continue
+            image_values = flat_tensor(
+                landmark_packet, "Identity_dense/BiasAdd/Add"
+            )
+            square_points = landmark_pixels_to_square(
+                image_values, fitted_region, SOURCE_WIDTH, SOURCE_HEIGHT
+            )
+            if len(square_points) != LANDMARK_COUNT:
+                stages["post_processing"] += 1
+                continue
+            handedness_values = flat_tensor(landmark_packet, "Identity_2")
+            world_values = flat_tensor(
+                landmark_packet, "Identity_3_dense/BiasAdd/Add"
+            )
+            hands.append(
+                {
+                    "palm_score": region["palm_score"],
+                    "landmark_score": float(score_values[0]),
+                    "handedness": (
+                        float(handedness_values[0]) if handedness_values else 0.0
+                    ),
+                    "box_x": region["box_x"],
+                    "box_y": region["box_y"],
+                    "box_size": region["box_size"],
+                    # The host rebuilds its PalmRegion from these, so the published
+                    # box stays the decoder's palm box.
+                    "center_x": region["center_x"],
+                    "center_y": region["center_y"],
+                    "size": region["size"],
+                    "rotation": region["rotation"],
+                    "landmarks": square_points,
+                    "world": world_values,
+                }
+            )
             stages["post_processing"] += 1
-            continue
-        image_values = flat_tensor(
-            landmark_packet, "Identity_dense/BiasAdd/Add"
-        )
-        square_points = landmark_pixels_to_square(
-            image_values, fitted_region, SOURCE_WIDTH, SOURCE_HEIGHT
-        )
-        if len(square_points) != LANDMARK_COUNT:
-            stages["post_processing"] += 1
-            continue
-        handedness_values = flat_tensor(landmark_packet, "Identity_2")
-        world_values = flat_tensor(
-            landmark_packet, "Identity_3_dense/BiasAdd/Add"
-        )
-        hands.append(
-            {
-                "palm_score": region["palm_score"],
-                "landmark_score": float(score_values[0]),
-                "handedness": (
-                    float(handedness_values[0]) if handedness_values else 0.0
-                ),
-                "box_x": region["box_x"],
-                "box_y": region["box_y"],
-                "box_size": region["box_size"],
-                # The host rebuilds its PalmRegion from these, so the published
-                # box stays the decoder's palm box.
-                "center_x": region["center_x"],
-                "center_y": region["center_y"],
-                "size": region["size"],
-                "rotation": region["rotation"],
-                "landmarks": square_points,
-                "world": world_values,
-            }
-        )
-        stages["post_processing"] += 1
     stages["publish"] += 1
     data = marshal.dumps({"hands": hands, "stages": stages})
     output = Buffer(len(data))
@@ -379,7 +389,7 @@ while True:
     return (
         device_pure_source()
         + "\n"
-        + loop.replace("${SOURCE_WIDTH}", str(int(source_width))).replace(
-            "${SOURCE_HEIGHT}", str(int(source_height))
-        )
+        + loop.replace("${SOURCE_WIDTH}", str(int(source_width)))
+        .replace("${SOURCE_HEIGHT}", str(int(source_height)))
+        .replace("${WITH_LANDMARKS}", "True" if stage == "full" else "False")
     )

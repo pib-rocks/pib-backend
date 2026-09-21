@@ -136,3 +136,18 @@ def test_landmark_mapping_rotates_in_pixels_not_in_normalized_space():
     # aspect (2104x1560) must survive in the result.
     assert x != y
     assert z == pytest.approx(-8.0 / 224.0)
+
+
+def test_palm_only_stage_switches_the_landmark_half_off():
+    """The bisect switch must actually gate the landmark stage.
+
+    The landmark block stays in the script text but is guarded, so a device fault
+    can be narrowed to "crop config + landmark wait" without a second copy of the
+    script.
+    """
+    palm_only = build_hand_script(2104, 1560, stage="palm_only")
+    assert "WITH_LANDMARKS = False" in palm_only
+    assert "WITH_LANDMARKS = True" in build_hand_script(2104, 1560)
+
+    with pytest.raises(ValueError):
+        build_hand_script(2104, 1560, stage="nonsense")
