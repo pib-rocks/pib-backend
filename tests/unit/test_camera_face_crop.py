@@ -15,6 +15,7 @@ from ros_packages.camera.oak_d_lite.face_crop import (
     softmax,
     translate_emotion,
     translate_facemesh,
+    translate_head_pose,
 )
 
 
@@ -78,6 +79,63 @@ def test_translation_uses_the_blobs_single_exported_output_name(monkeypatch):
     detection = translate_emotion(packet, _face(), 1280, 720)
 
     assert detection.label == "anger"
+
+
+def test_head_pose_translation_reads_named_angles_in_display_order(monkeypatch):
+    class Detection:
+        pass
+
+    datatypes = types.ModuleType("datatypes")
+    datatypes_msg = types.ModuleType("datatypes.msg")
+    datatypes_msg.Detection = Detection
+    datatypes.msg = datatypes_msg
+    monkeypatch.setitem(sys.modules, "datatypes", datatypes)
+    monkeypatch.setitem(sys.modules, "datatypes.msg", datatypes_msg)
+
+    outputs = {
+        "angle_p_fc": np.array([[12.5]]),
+        "angle_r_fc": np.array([[-8.0]]),
+        "angle_y_fc": np.array([[31.25]]),
+    }
+    detection = translate_head_pose(
+        types.SimpleNamespace(getTensor=outputs.__getitem__),
+        _face(),
+        1280,
+        720,
+    )
+
+    assert detection.label == "Face"
+    assert detection.score == 1.0
+    assert detection.scalar_names == ["yaw", "pitch", "roll"]
+    assert detection.scalar_values == pytest.approx([31.25, 12.5, -8.0])
+    assert (detection.x_min, detection.y_min) == (512, 144)
+    assert (detection.x_max, detection.y_max) == (768, 432)
+    assert detection.keypoint_names == []
+    assert detection.keypoint_x == []
+    assert detection.keypoint_y == []
+    assert detection.keypoint_z == []
+
+
+def test_head_pose_translation_fails_loudly_when_a_named_head_is_missing(monkeypatch):
+    datatypes = types.ModuleType("datatypes")
+    datatypes_msg = types.ModuleType("datatypes.msg")
+    datatypes_msg.Detection = type("Detection", (), {})
+    datatypes.msg = datatypes_msg
+    monkeypatch.setitem(sys.modules, "datatypes", datatypes)
+    monkeypatch.setitem(sys.modules, "datatypes.msg", datatypes_msg)
+
+    outputs = {
+        "angle_y_fc": np.array([[1.0]]),
+        "angle_p_fc": np.array([[2.0]]),
+    }
+
+    with pytest.raises(ValueError, match="angle_r_fc"):
+        translate_head_pose(
+            types.SimpleNamespace(getTensor=outputs.__getitem__),
+            _face(),
+            1280,
+            720,
+        )
 
 
 def test_softmax_rejects_wrong_size_and_nonfinite_values():
@@ -159,6 +217,15 @@ def test_face_crop_classifier_is_derived_and_unknown_models_fail_loudly():
     assert (
         face_crop_classifier_id(("face_detection_yunet_160x120", "facemesh_192x192"))
         == "facemesh_192x192"
+    )
+    assert (
+        face_crop_classifier_id(
+            (
+                "face_detection_yunet_160x120",
+                "head-pose-estimation-adas-0001",
+            )
+        )
+        == "head-pose-estimation-adas-0001"
     )
     with pytest.raises(ValueError, match="unsupported"):
         face_crop_classifier_id(("face_detection_yunet_160x120", "future_model"))
