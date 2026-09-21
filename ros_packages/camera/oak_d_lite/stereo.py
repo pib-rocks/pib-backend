@@ -2200,39 +2200,50 @@ class CameraNode(Node):
         self._publish_hand_mp_detections(frame_width, frame_height, detections)
 
     def _hand_mp_palm(self, detection_packet, frame_width, frame_height):
-        """Build the PalmRegion the mapping path needs from the parsed detection."""
+        """Build the PalmRegion the mapping path needs from the parsed detection.
+
+        The palm parser hands out dai-style detections whose geometry lives in a
+        RotatedRect (``getBoundingBox()``), not in x_min/y_min/x_max/y_max: reading
+        those attributes silently yielded zeros and an "empty box" for every hand.
+        """
         detections = getattr(detection_packet, "detections", None) or []
         if not detections:
             raise ValueError("palm detection packet carries no detection")
         first = detections[0]
-        x_min = float(getattr(first, "x_min", 0.0))
-        y_min = float(getattr(first, "y_min", 0.0))
-        x_max = float(getattr(first, "x_max", 0.0))
-        y_max = float(getattr(first, "y_max", 0.0))
-        box_size = max(x_max - x_min, y_max - y_min)
+        rect = first.getBoundingBox()
+        center_x = float(rect.center.x)
+        center_y = float(rect.center.y)
+        width = float(rect.size.width)
+        height = float(rect.size.height)
+        rotation = float(getattr(rect, "angle", 0.0) or 0.0)
+        box_size = max(width, height)
         if box_size <= 0.0:
             raise ValueError("palm detection has an empty box")
-        rotation = 0.0
-        keypoints = list(getattr(first, "keypoints", None) or [])
-        if len(keypoints) >= 3:
-            try:
-                kp0, kp2 = keypoints[0], keypoints[2]
-                delta_x = float(kp2.x) - float(kp0.x)
-                delta_y = float(kp2.y) - float(kp0.y)
-                rotation = 0.5 * math.pi - math.atan2(-delta_y, delta_x)
-                rotation -= (
-                    2 * math.pi * math.floor((rotation + math.pi) / (2 * math.pi))
-                )
-            except (AttributeError, TypeError):
-                rotation = 0.0
+        if abs(rotation) < 1e-6:
+            # The reference computes the rotation from the wrist and middle-finger
+            # anchors; the parser may leave the rect axis aligned.
+            keypoints = list(getattr(first, "keypoints", None) or [])
+            if len(keypoints) >= 3:
+                try:
+                    delta_x = float(keypoints[2].x) - float(keypoints[0].x)
+                    delta_y = float(keypoints[2].y) - float(keypoints[0].y)
+                    rotation = 0.5 * math.pi - math.atan2(-delta_y, delta_x)
+                    rotation -= (
+                        2 * math.pi * math.floor((rotation + math.pi) / (2 * math.pi))
+                    )
+                except (AttributeError, TypeError):
+                    rotation = 0.0
+        # The crop the device makes is the square box plus padding and is
+        # letterboxed to the landmark input, so the region is a little larger.
+        roi_size = box_size * (1.0 + 2.0 * float(IMITATION_PALM_PADDING))
         return PalmRegion(
-            score=float(getattr(first, "confidence", 0.0) or 0.0),
-            box_x=x_min,
-            box_y=y_min,
+            score=0.0,
+            box_x=center_x - 0.5 * box_size * math.cos(rotation),
+            box_y=center_y - 0.5 * box_size * math.sin(rotation),
             box_size=box_size,
-            roi_x=x_min + 0.5 * box_size * math.sin(rotation),
-            roi_y=y_min - 0.5 * box_size * math.cos(rotation),
-            roi_size=2.9 * box_size,
+            roi_x=center_x,
+            roi_y=center_y,
+            roi_size=roi_size,
             rotation=rotation,
         )
 
