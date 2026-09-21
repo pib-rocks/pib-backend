@@ -4,6 +4,12 @@ from service import microphone_array_service
 bp = Blueprint("microphone_array_controller", __name__)
 
 
+@bp.route("/health", methods=["GET"])
+def get_health():
+    health = microphone_array_service.health()
+    return jsonify(health), 200
+
+
 @bp.route("/telemetry", methods=["GET"])
 def get_telemetry():
     telemetry = microphone_array_service.get_telemetry()
