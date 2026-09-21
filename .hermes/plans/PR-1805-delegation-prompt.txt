@@ -1,0 +1,51 @@
+You are implementing Jira story PR-1805 (overlay for yolov6n_coco_640x640) in pib-backend.
+
+Working directory: /home/pib/opencode/pib-backend-PR-1805 (branch PR-1805, based on
+origin/develop 83f5e29b, which already contains merged PR-1798).
+
+STEP 1 — read the ticket yourself:
+
+    cd /home/pib/opencode/pib-backend-PR-1805
+    python3 - <<'PY'
+    import base64, os, re, requests
+    env = open(os.path.expanduser("~/.hermes/.env")).read()
+    def g(k):
+        m = re.search(rf"^{k}=(.*)$", env, re.M); return m.group(1).strip().strip('"') if m else None
+    s = g("ATLASSIAN_SITE"); s = s if s.startswith("http") else "https://" + s
+    a = base64.b64encode(f"{g('ATLASSIAN_EMAIL')}:{g('ATLASSIAN_TOKEN')}".encode()).decode()
+    h = {"Authorization": f"Basic {a}", "Accept": "application/json"}
+    d = requests.get(f"{s.rstrip('/')}/rest/api/3/issue/PR-1805", headers=h,
+                     params={"fields": "summary,description"}).json()
+    print(d["fields"]["summary"]); print(d["fields"]["description"])
+    PY
+
+STEP 2 — read the plan and follow it exactly:
+    .hermes/plans/PR-1805-plan.md
+
+It names the existing pattern to copy (the YuNet entry in
+ros_packages/camera/oak_d_lite/task_archives.py), the blob's real tensor names and
+shapes, and the parser class available in the installed depthai_nodes. Two things in
+it are binding:
+  * read the tensor names/shapes from the blob with dai.OpenVINO.Blob - the previous
+    story failed because a name was assumed;
+  * the COCO class list must come from a named source and be in the model's order.
+
+Cerebra needs no change for this story - do not touch the cerebra repository.
+
+Scope discipline:
+  - Only this model. Do not modify the YuNet entry, other models' pipelines, their
+    shave budgets, or the camera/stereo behaviour.
+  - Stay on branch PR-1805: no merge, no push, no branch switching.
+
+Verification you must run and report verbatim (command + output):
+  1. python3 -m pytest tests/unit -q
+  2. python3 -m black --check --include '\.py$' .
+  3. python3 -c "import depthai as dai; from ros_packages.camera.oak_d_lite.task_archives import create_archive; a = create_archive('yolov6n_coco_640x640', 'models/yolov6n_coco_640x640/yolov6n_coco_640x640.blob'); print(a, a.getInputWidth(), a.getInputHeight())"
+     (run it with the repo root on sys.path if that import needs it)
+
+Commit on branch PR-1805 with a message naming the ticket ("feat: PR-1805 ..."), using
+  git -c user.name="Hermes Agent" -c user.email="agent@nousresearch.com" commit ...
+if the repo has no git identity.
+
+Report: files changed, the exact commands with their output, and anything you could not
+do. Do not claim success without command output.

@@ -1,7 +1,10 @@
 import sys
 import types
 
-from ros_packages.camera.oak_d_lite.parsed_detections import translate_detection
+from ros_packages.camera.oak_d_lite.parsed_detections import (
+    translate_detection,
+    translate_detections,
+)
 
 
 def _point(x, y, z=0.0, name=""):
@@ -56,3 +59,63 @@ def test_translates_label_score_box_keypoints_and_scalars_to_ros_contract(monkey
     assert detection.keypoint_z == [0.0, 0.0]
     assert detection.scalar_names == ["yaw_deg"]
     assert detection.scalar_values == [12.5]
+
+
+def test_translates_two_coco_classes_to_pixel_boxes_without_keypoints(monkeypatch):
+    datatypes = types.ModuleType("datatypes")
+    datatypes_msg = types.ModuleType("datatypes.msg")
+
+    class Detection:
+        pass
+
+    datatypes_msg.Detection = Detection
+    datatypes.msg = datatypes_msg
+    monkeypatch.setitem(sys.modules, "datatypes", datatypes)
+    monkeypatch.setitem(sys.modules, "datatypes.msg", datatypes_msg)
+
+    person = types.SimpleNamespace(
+        label=0,
+        labelName="",
+        confidence=0.91,
+        getBoundingBox=lambda: types.SimpleNamespace(
+            center=types.SimpleNamespace(x=0.25, y=0.25),
+            size=types.SimpleNamespace(width=0.5, height=0.5),
+        ),
+        scalar_names=(),
+        scalar_values=(),
+    )
+    bicycle = types.SimpleNamespace(
+        label=1,
+        labelName="",
+        confidence=0.42,
+        getBoundingBox=lambda: types.SimpleNamespace(
+            center=types.SimpleNamespace(x=0.75, y=0.75),
+            size=types.SimpleNamespace(width=0.5, height=0.5),
+        ),
+        scalar_names=(),
+        scalar_values=(),
+    )
+
+    detections = translate_detections(
+        types.SimpleNamespace(detections=[person, bicycle]),
+        ("person", "bicycle"),
+        640,
+        640,
+    )
+
+    assert [item.label for item in detections] == ["person", "bicycle"]
+    assert [item.score for item in detections] == [0.91, 0.42]
+    assert (
+        detections[0].x_min,
+        detections[0].y_min,
+        detections[0].x_max,
+        detections[0].y_max,
+    ) == (0, 0, 320, 320)
+    assert (
+        detections[1].x_min,
+        detections[1].y_min,
+        detections[1].x_max,
+        detections[1].y_max,
+    ) == (320, 320, 640, 640)
+    assert detections[0].keypoint_names == []
+    assert detections[1].keypoint_names == []

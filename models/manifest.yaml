@@ -175,6 +175,7 @@ models:
   notes: Not in the DepthAI zoo. IR input 'data' 1x3x60x60. Outputs yaw/pitch/roll. Compile via blobconverter.from_zoo(..., zoo_type='intel'), '-ip U8'.
 - model_id: yolov6n_coco_640x640
   task: object_detection
+  publish_topic: detections/yolov6n_coco_640x640
   source_upstream: luxonis/depthai-model-zoo (meituan/YOLOv6)
   source_url: https://github.com/luxonis/depthai-model-zoo/raw/main/models/yolov6n_coco_640x640/yolov6n_coco_640x640.xml
   licence: GNU GPL-3; https://github.com/meituan/YOLOv6/blob/main/LICENSE
