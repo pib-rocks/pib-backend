@@ -2112,7 +2112,15 @@ class CameraNode(Node):
 
     def _process_hand_mp(self):
         """Drain both streams and publish the hands they agree on."""
-        if self.hand_mp_landmark_queue is None or self.current_frame is None:
+        # Both queues and the frame are required. Checking only one of them left
+        # this called every loop iteration with a None queue whenever the chain
+        # was not the active one, and an AttributeError there kills the whole
+        # publish path without a traceback.
+        if (
+            self.hand_mp_landmark_queue is None
+            or self.hand_mp_detection_queue is None
+            or self.current_frame is None
+        ):
             return
         for _ in range(HAND_MP_PAIR_WINDOW):
             packet = self.hand_mp_detection_queue.tryGet()
@@ -2748,7 +2756,10 @@ class CameraNode(Node):
                 self._count_hand_stage(stage)
 
         self._process_hand_tracking()
-        self._process_hand_mp()
+        try:
+            self._process_hand_mp()
+        except Exception as exc:  # pragma: no cover - defensive, verified by E2E
+            self._warn_hand_once(f"hand_mp processing failed: {exc!r}")
         self._process_imitation()
 
         if not self.depth_queue:
