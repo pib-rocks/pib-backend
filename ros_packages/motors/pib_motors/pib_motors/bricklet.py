@@ -4,6 +4,7 @@ import time
 from typing import Any
 
 from pib_api_client import bricklet_client
+from pib_motors.bricklet_mapping import select_bricklet_uids
 from pib_motors.config import cfg
 from tinkerforge.brick_hat import BrickHAT
 from tinkerforge.bricklet_servo_v2 import BrickletServoV2
@@ -74,26 +75,58 @@ for dto in bricklet_dtos["bricklets"]:
     elif dto["type"] == "RGB LED Button Bricklet" and dto["uid"]:
         rgb_led_bricklet_uids.append(dto["uid"])
 
+
+def build_bricklets(
+    bricklet_class, uids: list[Any], device_type: str
+) -> dict[str, Any]:
+    """Map every usable uid to its bricklet object, skipping the rest.
+
+    One misconfigured uid must cost exactly that bricklet - it must never take
+    the whole node down, because the motor, relay and button nodes all import
+    this module.
+    """
+    selection = select_bricklet_uids(uids)
+    for skipped in selection.skipped:
+        logging.error(
+            f"skipping {device_type} '{skipped.uid}': {skipped.reason} - "
+            "this device stays unavailable until its UID is corrected"
+        )
+
+    bricklets: dict[str, Any] = {}
+    for uid in selection.valid:
+        try:
+            bricklets[uid] = bricklet_class(uid, ipcon)
+        except Error as error:
+            logging.error(
+                f"skipping {device_type} '{uid}': rejected by tinkerforge "
+                f"({error}) - this device stays unavailable"
+            )
+    return bricklets
+
+
 # maps the uid (e.g. 'XYZ') to the associated servo bricklet object
-uid_to_servo_bricklet: dict[str, BrickletServoV2] = {
-    uid: BrickletServoV2(uid, ipcon) for uid in servo_bricklet_uids if uid
-}
+uid_to_servo_bricklet: dict[str, BrickletServoV2] = build_bricklets(
+    BrickletServoV2, servo_bricklet_uids, "Servo Bricklet"
+)
 
 # maps the uid (e.g. 'XYZ') to the associated solid state relay bricklet object
-if solid_state_relay_bricklet_uid:
-    solid_state_relay_bricklet: BrickletSolidStateRelayV2 = BrickletSolidStateRelayV2(
-        solid_state_relay_bricklet_uid, ipcon
-    )
+_solid_state_relay_bricklets = build_bricklets(
+    BrickletSolidStateRelayV2,
+    [solid_state_relay_bricklet_uid],
+    "Solid State Relay Bricklet",
+)
+solid_state_relay_bricklet: BrickletSolidStateRelayV2 | None = next(
+    iter(_solid_state_relay_bricklets.values()), None
+)
+if solid_state_relay_bricklet is not None:
     solid_state_relay_bricklet.set_response_expected(
         BrickletSolidStateRelayV2.FUNCTION_SET_STATE, True
     )
-else:
-    solid_state_relay_bricklet = None
 
 # maps the uid (e.g. 'XYZ') to the associated rgb led button bricklet object
-uid_to_rgb_led_bricklet: dict[str, BrickletRGBLEDButton] = {
-    uid: BrickletRGBLEDButton(uid, ipcon) for uid in rgb_led_bricklet_uids if uid
-}
+uid_to_rgb_led_bricklet: dict[str, BrickletRGBLEDButton] = build_bricklets(
+    BrickletRGBLEDButton, rgb_led_bricklet_uids, "RGB LED Button Bricklet"
+)
 
 
 def set_ssr_state(state: bool) -> None:

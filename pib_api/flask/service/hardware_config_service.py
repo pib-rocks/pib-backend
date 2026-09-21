@@ -15,7 +15,14 @@ from model.controller_model import (
 from model.motor_model import Motor
 
 SCHEMA_VERSION = 2
-UID_PATTERN = re.compile(r"^[A-Za-z0-9]{1,6}$")
+
+# Tinkerforge UIDs are Base58, so '0', 'O', 'I' and 'l' are not UID characters.
+UID_PATTERN = re.compile(r"^[1-9A-HJ-NP-Za-km-z]{1,6}$")
+UID_FORBIDDEN_CHARACTERS = "0OIl"
+UID_RULE_DESCRIPTION = (
+    "expected Base58, max 6 characters; "
+    "'0', 'O', 'I' and 'l' are not valid UID characters"
+)
 
 MOTOR_SETTING_KEYS = (
     "pulse_width_min",
@@ -32,6 +39,26 @@ MOTOR_SETTING_KEYS = (
     "current_limit",
     "torque_limit",
 )
+
+
+def validate_uid(value: Any, field: str = "uid") -> str:
+    """Return the stripped Bricklet UID, or raise ValueError describing why not.
+
+    This is the single UID rule for the whole backend: the import validator and
+    the write path both go through it, so the two layers cannot drift apart.
+    The empty string means "not configured" and stays allowed - the motors node
+    skips such a controller.
+    """
+    if not isinstance(value, str):
+        raise ValueError(f"{field} must be a string")
+    address = value.strip()
+    if not address:
+        return ""
+    if not UID_PATTERN.fullmatch(address):
+        raise ValueError(
+            f"{field} has invalid format '{address}' ({UID_RULE_DESCRIPTION})"
+        )
+    return address
 
 
 def export_hardware_config(variant: str | None = None) -> Dict[str, Any]:
@@ -154,14 +181,7 @@ def _validate_v1_bricklet(entry: Any, index: int) -> Dict[str, Any]:
     address = entry.get("uid", "")
     if address is None:
         address = ""
-    if not isinstance(address, str):
-        raise ValueError(f"bricklets[{index}].uid must be a string")
-    address = address.strip()
-    if address and not UID_PATTERN.fullmatch(address):
-        raise ValueError(
-            f"bricklets[{index}].uid has invalid format '{address}' "
-            "(expected alphanumeric, max 6 characters)"
-        )
+    address = validate_uid(address, f"bricklets[{index}].uid")
     device_type = entry.get("deviceType", entry.get("type"))
     _validate_device_type(
         device_type,
