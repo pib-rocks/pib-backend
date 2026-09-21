@@ -53,10 +53,10 @@ def test_v1_import_updates_tinkerforge_addresses_and_motor_mapping(seeded):
         "bricklets": [
             {
                 "brickletNumber": 1,
-                "uid": "OLD001",
+                "uid": "REL111",
                 "type": "Solid State Relay Bricklet",
             },
-            {"brickletNumber": 3, "uid": "OLD003", "type": "Servo Bricklet"},
+            {"brickletNumber": 3, "uid": "SRV333", "type": "Servo Bricklet"},
         ],
         "motors": [
             {
@@ -71,7 +71,7 @@ def test_v1_import_updates_tinkerforge_addresses_and_motor_mapping(seeded):
     result = hcs.import_hardware_config(document)
 
     assert result["version"] == 2
-    assert Controller.query.filter_by(number=1).one().address == "OLD001"
+    assert Controller.query.filter_by(number=1).one().address == "REL111"
     assert (
         Controller.query.filter_by(number=1).one().device_type
         == "Solid State Relay Bricklet"
@@ -149,6 +149,73 @@ def test_v1_import_rejects_invalid_uid(seeded):
     }
     with pytest.raises(ValueError, match="invalid format"):
         hcs.import_hardware_config(document)
+
+
+@pytest.mark.parametrize(
+    "uid",
+    ["A", "SRV123", "Servo1", "abcdef", "zzzzzz", "9"],
+)
+def test_validate_uid_accepts_base58_uids(uid):
+    assert hcs.validate_uid(uid) == uid
+
+
+@pytest.mark.parametrize("uid", ["", "   "])
+def test_validate_uid_accepts_the_empty_string_as_not_configured(uid):
+    assert hcs.validate_uid(uid) == ""
+
+
+@pytest.mark.parametrize(
+    "uid",
+    [
+        "E2E001",  # '0' - the UID that crash-looped the motor node
+        "SERVO1",  # 'O'
+        "ABCI12",  # 'I'
+        "abcl12",  # 'l'
+        "SERVO12",  # more than six characters
+        "BAD_UID!",  # not alphanumeric at all
+        "AB CD",  # inner whitespace
+    ],
+)
+def test_validate_uid_rejects_non_base58_uids(uid):
+    with pytest.raises(ValueError, match="invalid format"):
+        hcs.validate_uid(uid)
+
+
+def test_validate_uid_names_the_value_and_the_forbidden_characters():
+    with pytest.raises(ValueError) as raised:
+        hcs.validate_uid("E2E001", "Bricklet UID")
+
+    message = str(raised.value)
+    assert "Bricklet UID has invalid format 'E2E001'" in message
+    for character in hcs.UID_FORBIDDEN_CHARACTERS:
+        assert f"'{character}'" in message
+
+
+def test_validate_uid_rejects_non_string_values():
+    with pytest.raises(ValueError, match="must be a string"):
+        hcs.validate_uid(1234)
+
+
+def test_v1_import_validator_delegates_to_the_shared_uid_helper(seeded, monkeypatch):
+    calls = []
+    real_validate_uid = hcs.validate_uid
+
+    def spy(value, field="uid"):
+        calls.append(field)
+        return real_validate_uid(value, field)
+
+    monkeypatch.setattr(hcs, "validate_uid", spy)
+    hcs.validate_hardware_config(
+        {
+            "version": 1,
+            "bricklets": [
+                {"brickletNumber": 1, "uid": "SRV111", "type": "Servo Bricklet"}
+            ],
+            "motors": [],
+        }
+    )
+
+    assert calls == ["bricklets[0].uid"]
 
 
 def test_import_rejects_unknown_motor(seeded):
