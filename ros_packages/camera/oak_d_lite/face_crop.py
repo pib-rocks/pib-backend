@@ -181,25 +181,39 @@ def translate_facemesh(
 
     from .hand_tracking import PalmRegion, map_crop_points_to_frame
 
-    values = facemesh_xyz(packet, output_layer)
+    values = np.asarray(facemesh_xyz(packet, output_layer), dtype=np.float64)
     box = face.getBoundingBox()
-    crop_size = (
-        max(float(box.size.width), float(box.size.height)) + 2.0 * FACE_CROP_PADDING
+    # The device now crops a PIXEL square with a fractional padding (see
+    # detection_crop_config), so the crop is a rectangle in normalised units. The
+    # mapping path carries a single roi_size, interpreted in x-normalised units, so
+    # the y component is pre-scaled by the rectangle's own aspect. Without this the
+    # published mesh came out about 2.4x too wide (measured against the face box).
+    frame_w = float(frame_width)
+    frame_h = float(frame_height)
+    side_px = max(float(box.size.width) * frame_w, float(box.size.height) * frame_h) * (
+        1.0 + 2.0 * FACE_CROP_PADDING
     )
+    size_x = side_px / frame_w
+    size_y = side_px / frame_h
     region = PalmRegion(
         score=1.0,
         box_x=0.0,
         box_y=0.0,
-        box_size=max(float(box.size.width), float(box.size.height)),
+        box_size=size_x,
         roi_x=float(box.center.x),
         roi_y=float(box.center.y),
-        roi_size=crop_size,
+        roi_size=size_x,
         rotation=0.0,
     )
     xy_peak = float(np.max(np.abs(values[:, :2])))
     crop_values = np.array(values, copy=True)
     if xy_peak <= 2.0:
         crop_values[:, :2] *= float(FACEMESH_INPUT_SIZE)
+    # y is normalised against the crop's height while roi_size carries its width, so
+    # the y component is re-scaled AROUND THE CROP CENTRE. Scaling it around zero
+    # instead shifted every landmark vertically (caught by the geometry test).
+    half = float(FACEMESH_INPUT_SIZE) / 2.0
+    crop_values[:, 1] = half + (crop_values[:, 1] - half) * (size_y / size_x)
     mapped = map_crop_points_to_frame(
         crop_values,
         region,

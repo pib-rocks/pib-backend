@@ -101,6 +101,8 @@ def test_process_detections_copies_timestamp_sequence_and_target_size():
         _target_w=64,
         _target_h=64,
         config_output=MagicMock(),
+        _square_in_pixels=False,
+        _source_size=None,
     )
     with (
         patch.object(imitation, "detection_crop_config", return_value=config) as crop,
@@ -108,7 +110,14 @@ def test_process_detections_copies_timestamp_sequence_and_target_size():
     ):
         imitation.ProcessDetections.process(processor, packet)
 
-    crop.assert_called_once_with(packet.detections[0], 0.1, 64, 64)
+    crop.assert_called_once_with(
+        packet.detections[0],
+        0.1,
+        64,
+        64,
+        square_in_pixels=False,
+        source_size=None,
+    )
     config.setTimestamp.assert_called_once_with("stamp")
     config.setSequenceNum.assert_called_once_with(42)
     configs.__setitem__.assert_called_once_with("cfg_0", config)

@@ -20,15 +20,21 @@ class ProcessDetections(dai.node.HostNode):
         self.padding = PALM_PADDING
         self._target_w = None
         self._target_h = None
+        self._square_in_pixels = False
+        self._source_size = None
 
     def build(
         self,
         detections_input: dai.Node.Output,
         padding: float,
         target_size: Tuple[int, int],
+        square_in_pixels: bool = False,
+        source_size=None,
     ) -> "ProcessDetections":
         self.padding = float(padding)
         self._target_w, self._target_h = target_size
+        self._square_in_pixels = bool(square_in_pixels)
+        self._source_size = source_size
         self.link_args(detections_input)
         return self
 
@@ -40,6 +46,8 @@ class ProcessDetections(dai.node.HostNode):
                 self.padding,
                 self._target_w,
                 self._target_h,
+                square_in_pixels=self._square_in_pixels,
+                source_size=self._source_size,
             )
             config.setTimestamp(img_detections.getTimestamp())
             config.setSequenceNum(img_detections.getSequenceNum())
@@ -50,7 +58,31 @@ class ProcessDetections(dai.node.HostNode):
         self.config_output.send(configs)
 
 
-def detection_crop_config(detection, padding, target_width, target_height):
+def pixel_square_crop_size(rect, padding, source_size):
+    """Return the (width, height) of a pixel-square crop in normalised units.
+
+    The network inputs are square and the models are trained on tight square crops,
+    so the region must be square in PIXELS. On a 16:9 source that is a rectangle in
+    normalised units - which is exactly what the additive-in-normalised-units variant
+    gets wrong: there the padding term is 128 px on a 1280-wide frame, larger than
+    the face itself.
+    """
+    source_width, source_height = float(source_size[0]), float(source_size[1])
+    side_px = max(
+        float(rect.size.width) * source_width,
+        float(rect.size.height) * source_height,
+    ) * (1.0 + 2.0 * padding)
+    return side_px / source_width, side_px / source_height
+
+
+def detection_crop_config(
+    detection,
+    padding,
+    target_width,
+    target_height,
+    square_in_pixels: bool = False,
+    source_size=None,
+):
     """Build a SQUARE, axis-aligned STRETCH crop for one palm.
 
     The palm detector's box in normalized coordinates (relative to the 16:9 branch)
@@ -62,16 +94,45 @@ def detection_crop_config(detection, padding, target_width, target_height):
     (using the larger of width/height), then letterbox to the landmark input.
     """
     rect = detection.getBoundingBox()
+    padded = dai.RotatedRect()
+    padded.center.x = rect.center.x
+    padded.center.y = rect.center.y
+    padded.angle = 0.0
+
+    if square_in_pixels and source_size:
+        # Square in PIXEL space at a FRACTIONAL padding, stretched onto the square
+        # network input.
+        #
+        # The additive-in-normalised-units variant below makes the padding term as
+        # large as the face itself: for a 149x159 px face on a 1280x720 frame,
+        # +2*0.1 normalised is 128 px horizontally, so the crop came out 539x303 px
+        # and the face was a 53x57 px island in the 192x192 input (measured). A
+        # facemesh trained the MediaPipe way expects the face to FILL a tight square
+        # crop; given 28 percent it returns landmarks sized to its prior and the
+        # published mesh came out 2.4x too wide.
+        #
+        # A pixel square stretched onto a square input is an identity, so the face
+        # keeps its aspect and fills the frame, and the mapping arithmetic (which
+        # assumes a direct rect warp) becomes correct as it stands.
+        size_x, size_y = pixel_square_crop_size(rect, padding, source_size)
+        padded.size.width = size_x
+        padded.size.height = size_y
+        config = dai.ImageManipConfig()
+        config.addCropRotatedRect(padded, normalizedCoords=True)
+        config.setOutputSize(
+            target_width,
+            target_height,
+            dai.ImageManipConfig.ResizeMode.STRETCH,
+        )
+        config.setReusePreviousImage(False)
+        return config
+
     # Make the crop square in the branch's coordinate system (normalised 0..1).
     # Use the larger dimension so the hand fits; the extra margin is harmless
     # because the landmark net sees the letterboxed square.
     size = max(rect.size.width, rect.size.height) + 2.0 * padding
-    padded = dai.RotatedRect()
-    padded.center.x = rect.center.x
-    padded.center.y = rect.center.y
     padded.size.width = size
     padded.size.height = size
-    padded.angle = 0.0
 
     config = dai.ImageManipConfig()
     config.addCropRotatedRect(padded, normalizedCoords=True)

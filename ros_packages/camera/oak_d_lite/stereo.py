@@ -2156,6 +2156,11 @@ class CameraNode(Node):
             detections_input=detection_nn.out,
             padding=FACE_CROP_PADDING,
             target_size=(classifier_width, classifier_height),
+            # Square in pixels with a fractional padding, so the face fills the crop
+            # the way the classifier expects. The hand chains keep the normalised
+            # variant deliberately: switching them is a separate, measured change.
+            square_in_pixels=True,
+            source_size=self.face_crop_source_size,
         )
         cropper = (
             self.pipeline.create(FrameCropper)
