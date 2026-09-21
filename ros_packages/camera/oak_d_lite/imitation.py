@@ -58,6 +58,78 @@ class ProcessDetections(dai.node.HostNode):
         self.config_output.send(configs)
 
 
+class ProcessGazeEyes(dai.node.HostNode):
+    """Create left/right geometric eye crops for every detected face."""
+
+    def __init__(self):
+        super().__init__()
+        self.detections_input = self.createInput()
+        self.left_config_output = self.createOutput()
+        self.right_config_output = self.createOutput()
+        self._target_w = None
+        self._target_h = None
+
+    def build(
+        self,
+        detections_input: dai.Node.Output,
+        target_size: Tuple[int, int],
+    ) -> "ProcessGazeEyes":
+        self._target_w, self._target_h = target_size
+        self.link_args(detections_input)
+        return self
+
+    def process(self, img_detections: dai.Buffer) -> None:
+        left_configs = dai.MessageGroup()
+        right_configs = dai.MessageGroup()
+        for index, detection in enumerate(img_detections.detections):
+            left = gaze_eye_crop_config(
+                detection, "left", self._target_w, self._target_h
+            )
+            right = gaze_eye_crop_config(
+                detection, "right", self._target_w, self._target_h
+            )
+            for config in (left, right):
+                config.setTimestamp(img_detections.getTimestamp())
+                config.setSequenceNum(img_detections.getSequenceNum())
+            left_configs[f"cfg_{index}"] = left
+            right_configs[f"cfg_{index}"] = right
+
+        for configs, output in (
+            (left_configs, self.left_config_output),
+            (right_configs, self.right_config_output),
+        ):
+            configs.setTimestamp(img_detections.getTimestamp())
+            configs.setSequenceNum(img_detections.getSequenceNum())
+            output.send(configs)
+
+
+def gaze_eye_crop_config(detection, side, target_width, target_height):
+    """Crop one anatomical eye from the upper third of a face."""
+    if side not in ("left", "right"):
+        raise ValueError(f"unsupported eye side {side}")
+    face = detection.getBoundingBox()
+    crop = dai.RotatedRect()
+    # The camera image is not mirrored: the person's left eye is on the
+    # viewer's right, and vice versa.
+    crop.center.x = face.center.x + (0.25 if side == "left" else -0.25) * float(
+        face.size.width
+    )
+    crop.center.y = face.center.y - float(face.size.height) / 3.0
+    crop.size.width = float(face.size.width) / 2.0
+    crop.size.height = float(face.size.height) / 3.0
+    crop.angle = 0.0
+
+    config = dai.ImageManipConfig()
+    config.addCropRotatedRect(crop, normalizedCoords=True)
+    config.setOutputSize(
+        target_width,
+        target_height,
+        dai.ImageManipConfig.ResizeMode.STRETCH,
+    )
+    config.setReusePreviousImage(False)
+    return config
+
+
 def pixel_square_crop_size(rect, padding, source_size):
     """Return the (width, height) of a pixel-square crop in normalised units.
 

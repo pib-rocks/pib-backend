@@ -12,12 +12,15 @@ from ros_packages.camera.oak_d_lite.face_crop import (
     FACIAL_LANDMARKS_68_OUTPUT_LAYER,
     FACEMESH_LANDMARK_COUNT,
     face_crop_classifier_id,
+    gaze_vector,
     packet_timestamp,
     emotion_probabilities,
     softmax,
     translate_emotion,
     translate_facial_landmarks_68,
     translate_facemesh,
+    translate_gaze,
+    translate_gaze_results,
     translate_head_pose,
 )
 
@@ -139,6 +142,74 @@ def test_head_pose_translation_fails_loudly_when_a_named_head_is_missing(monkeyp
             1280,
             720,
         )
+
+
+def test_gaze_translation_publishes_direction_angles_and_face_box(monkeypatch):
+    class Detection:
+        pass
+
+    datatypes = types.ModuleType("datatypes")
+    datatypes_msg = types.ModuleType("datatypes.msg")
+    datatypes_msg.Detection = Detection
+    datatypes.msg = datatypes_msg
+    monkeypatch.setitem(sys.modules, "datatypes", datatypes)
+    monkeypatch.setitem(sys.modules, "datatypes.msg", datatypes_msg)
+
+    def tensor(name):
+        assert name == "gaze_vector"
+        return np.array([[1.0, 0.0, -1.0]])
+
+    detection = translate_gaze(
+        types.SimpleNamespace(getTensor=tensor),
+        _face(),
+        1280,
+        720,
+    )
+
+    assert detection.label == "Gaze direction: (0.707, 0.000, -0.707)"
+    assert detection.score == 1.0
+    assert (detection.x_min, detection.y_min) == (512, 144)
+    assert (detection.x_max, detection.y_max) == (768, 432)
+    assert detection.scalar_names == ["gaze_yaw", "gaze_pitch"]
+    assert detection.scalar_values == pytest.approx([45.0, 0.0])
+    assert detection.keypoint_names == []
+    assert detection.keypoint_x == []
+    assert detection.keypoint_y == []
+    assert detection.keypoint_z == []
+
+
+def test_gaze_translation_skips_unmatched_face_or_result_indices(monkeypatch):
+    class Detection:
+        pass
+
+    datatypes = types.ModuleType("datatypes")
+    datatypes_msg = types.ModuleType("datatypes.msg")
+    datatypes_msg.Detection = Detection
+    datatypes.msg = datatypes_msg
+    monkeypatch.setitem(sys.modules, "datatypes", datatypes)
+    monkeypatch.setitem(sys.modules, "datatypes.msg", datatypes_msg)
+
+    packet = types.SimpleNamespace(getTensor=lambda name: np.array([0.0, 0.0, -1.0]))
+    assert len(translate_gaze_results([packet], [_face(), _face()], 1280, 720)) == 1
+    assert len(translate_gaze_results([packet, packet], [_face()], 1280, 720)) == 1
+
+
+def test_gaze_vector_rejects_missing_malformed_and_nonfinite_outputs():
+    missing = types.SimpleNamespace(
+        getTensor=lambda name: (_ for _ in ()).throw(KeyError(name))
+    )
+    with pytest.raises(ValueError, match="gaze_vector"):
+        gaze_vector(missing)
+    with pytest.raises(ValueError, match="expected 3"):
+        gaze_vector(types.SimpleNamespace(getTensor=lambda name: np.zeros(2)))
+    with pytest.raises(ValueError, match="non-finite"):
+        gaze_vector(
+            types.SimpleNamespace(
+                getTensor=lambda name: np.array([0.0, float("nan"), -1.0])
+            )
+        )
+    with pytest.raises(ValueError, match="no direction"):
+        gaze_vector(types.SimpleNamespace(getTensor=lambda name: np.zeros(3)))
 
 
 def test_softmax_rejects_wrong_size_and_nonfinite_values():

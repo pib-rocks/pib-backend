@@ -13,12 +13,16 @@ FACIAL_LANDMARKS_68_INPUT_SIZE = 160
 FACIAL_LANDMARKS_68_COUNT = 68
 FACIAL_LANDMARKS_68_OUTPUT_LAYER = "StatefulPartitionedCall/strided_slice_2/Split.0"
 FACE_DETECTOR_MODEL_ID = "face_detection_yunet_160x120"
+GAZE_MODEL_ID = "gaze-estimation-adas-0002"
+HEAD_POSE_MODEL_ID = "head-pose-estimation-adas-0001"
 FACE_CROP_PADDING = 0.1
 HEAD_POSE_OUTPUTS = (
     ("yaw", "angle_y_fc"),
     ("pitch", "angle_p_fc"),
     ("roll", "angle_r_fc"),
 )
+GAZE_OUTPUT_LAYER = "gaze_vector"
+GAZE_SCALAR_NAMES = ("gaze_yaw", "gaze_pitch")
 
 
 def packet_timestamp(packet):
@@ -186,6 +190,61 @@ def translate_head_pose(packet, face, frame_width, frame_height):
     detection.scalar_names = [name for name, _ in HEAD_POSE_OUTPUTS]
     detection.scalar_values = angles
     return detection
+
+
+def gaze_vector(packet, preferred_layer=GAZE_OUTPUT_LAYER):
+    """Read and validate the gaze model's three-dimensional direction vector."""
+    try:
+        values = packet.getTensor(preferred_layer)
+    except (KeyError, RuntimeError) as error:
+        raise ValueError(
+            f"gaze output is missing required layer {preferred_layer}"
+        ) from error
+    values = np.asarray(values, dtype=np.float64).reshape(-1)
+    if values.size != 3:
+        raise ValueError(f"gaze output has {values.size} values, expected 3")
+    if not np.all(np.isfinite(values)):
+        raise ValueError("gaze output contains a non-finite value")
+    norm = float(np.linalg.norm(values))
+    if not math.isfinite(norm) or norm <= 0.0:
+        raise ValueError("gaze output has no direction")
+    return values / norm
+
+
+def translate_gaze(packet, face, frame_width, frame_height):
+    """Translate one gaze vector and its face into a camera detection."""
+    from datatypes.msg import Detection
+
+    direction = gaze_vector(packet)
+    x, y, z = (float(value) for value in direction)
+    yaw = math.degrees(math.atan2(x, -z))
+    pitch = math.degrees(math.asin(max(-1.0, min(1.0, y))))
+
+    detection = Detection()
+    detection.label = f"Gaze direction: ({x:.3f}, {y:.3f}, {z:.3f})"
+    detection.score = 1.0
+    (
+        detection.x_min,
+        detection.y_min,
+        detection.x_max,
+        detection.y_max,
+    ) = _face_box_pixels(face, frame_width, frame_height)
+    detection.keypoint_names = []
+    detection.keypoint_x = []
+    detection.keypoint_y = []
+    detection.keypoint_z = []
+    detection.scalar_names = list(GAZE_SCALAR_NAMES)
+    detection.scalar_values = [yaw, pitch]
+    return detection
+
+
+def translate_gaze_results(packets, faces, frame_width, frame_height):
+    """Translate only gaze results that have a corresponding detected face."""
+    return [
+        translate_gaze(packet, faces[index], frame_width, frame_height)
+        for index, packet in enumerate(packets)
+        if index < len(faces)
+    ]
 
 
 def facemesh_xyz(packet, preferred_layer=FACEMESH_OUTPUT_LAYER):
@@ -378,6 +437,15 @@ FACE_CROP_TRANSLATORS = {
     "facemesh_192x192": translate_facemesh,
     "head-pose-estimation-adas-0001": translate_head_pose,
 }
+
+
+def is_gaze_composite(artifact_ids):
+    """Return whether the artifact set is the complete three-network gaze chain."""
+    return set(artifact_ids) == {
+        FACE_DETECTOR_MODEL_ID,
+        HEAD_POSE_MODEL_ID,
+        GAZE_MODEL_ID,
+    }
 
 
 def face_crop_classifier_id(artifact_ids):

@@ -47,6 +47,7 @@ from .imitation import (
     LANDMARK_COUNT as IMITATION_LANDMARK_COUNT,
     PALM_PADDING as IMITATION_PALM_PADDING,
     ProcessDetections,
+    ProcessGazeEyes,
     box_from_points,
     gathered_hands,
     gathered_result_trace_values,
@@ -57,8 +58,12 @@ from .face_crop import (
     FACE_CROP_TRANSLATORS,
     FACE_CROP_PADDING,
     FACE_DETECTOR_MODEL_ID,
+    GAZE_MODEL_ID,
+    HEAD_POSE_MODEL_ID,
     face_crop_classifier_id,
+    is_gaze_composite,
     packet_timestamp,
+    translate_gaze,
 )
 from .parsed_detections import translate_detections
 from .qr_detection import (
@@ -1739,7 +1744,10 @@ class CameraNode(Node):
                 getattr(model, "composite", False)
                 and FACE_DETECTOR_MODEL_ID in model.artifact_ids
             ):
-                self._build_face_crop_pipeline(model)
+                if is_gaze_composite(model.artifact_ids):
+                    self._build_gaze_pipeline(model)
+                else:
+                    self._build_face_crop_pipeline(model)
                 continue
             self._build_single_network_pipeline(model)
 
@@ -2255,6 +2263,140 @@ class CameraNode(Node):
             blocking=False,
         )
 
+    def _build_gaze_pipeline(self, composite):
+        """Add YuNet, geometric eye crops, head pose, and named-input gaze."""
+        if not is_gaze_composite(composite.artifact_ids):
+            raise ValueError("gaze composite is missing a required artifact")
+        if self.face_crop_model_id is not None:
+            raise ValueError("only one face-crop composite may run at a time")
+        self.face_crop_model_id = composite.model_id
+        self.face_crop_translator = translate_gaze
+
+        detector = self.model_registry.get(FACE_DETECTOR_MODEL_ID)
+        head_pose = self.model_registry.get(HEAD_POSE_MODEL_ID)
+        gaze = self.model_registry.get(GAZE_MODEL_ID)
+        detection_archive = create_archive(detector.model_id, detector.blob_path)
+        if detection_archive is None:
+            raise ValueError("YuNet parser archive is unavailable")
+
+        detector_width = detection_archive.getInputWidth()
+        detector_height = detection_archive.getInputHeight()
+        detector_resize = self.pipeline.create(dai.node.ImageManip)
+        detector_resize.setMaxOutputFrameSize(detector_width * detector_height * 3)
+        detector_resize.initialConfig.setOutputSize(
+            detector_width,
+            detector_height,
+            mode=dai.ImageManipConfig.ResizeMode.STRETCH,
+        )
+        detector_resize.initialConfig.setFrameType(dai.ImgFrame.Type.BGR888p)
+        self._relax_branch_input(detector_resize.inputImage)
+
+        # The camera must already be built before requesting this branch. It feeds
+        # YuNet and all three croppers, so every consumer is bounded and
+        # non-blocking to keep one slow path from back-pressuring the camera.
+        face_source = self.camRgb.requestOutput(
+            (FACE_CROP_SOURCE_WIDTH, FACE_CROP_SOURCE_HEIGHT),
+            type=dai.ImgFrame.Type.BGR888p,
+        )
+        if face_source is None:
+            raise RuntimeError(
+                "Camera cannot provide a "
+                f"{FACE_CROP_SOURCE_WIDTH}x{FACE_CROP_SOURCE_HEIGHT} "
+                "BGR888p branch for gaze estimation"
+            )
+        self.face_crop_source_size = (
+            FACE_CROP_SOURCE_WIDTH,
+            FACE_CROP_SOURCE_HEIGHT,
+        )
+        face_source.link(detector_resize.inputImage)
+
+        detection_nn = self.pipeline.create(ParsingNeuralNetwork).build(
+            detector_resize.out,
+            detection_archive,
+        )
+        face_processor = self.pipeline.create(ProcessDetections).build(
+            detections_input=detection_nn.out,
+            padding=FACE_CROP_PADDING,
+            target_size=(head_pose.input_width, head_pose.input_height),
+            square_in_pixels=True,
+            source_size=self.face_crop_source_size,
+        )
+        eye_processor = self.pipeline.create(ProcessGazeEyes).build(
+            detections_input=detection_nn.out,
+            target_size=(gaze.input_width, gaze.input_height),
+        )
+        self._relax_branch_input(face_processor.detections_input)
+        self._relax_branch_input(eye_processor.detections_input)
+
+        def build_cropper(config_output, width, height):
+            cropper = (
+                self.pipeline.create(FrameCropper)
+                .fromManipConfigs(
+                    inputManipConfigs=config_output,
+                    maxOutputFrameSize=width * height * 3,
+                    waitForConfig=True,
+                )
+                .build(face_source)
+            )
+            cropper_input = getattr(
+                getattr(cropper, "_cropper_image_manip", None),
+                "inputImage",
+                None,
+            )
+            if cropper_input is None:
+                self.get_logger().warning(
+                    "FrameCropper internals changed: cannot bound gaze-crop frames"
+                )
+            else:
+                self._relax_branch_input(cropper_input)
+            return cropper
+
+        face_cropper = build_cropper(
+            face_processor.config_output,
+            head_pose.input_width,
+            head_pose.input_height,
+        )
+        left_eye_cropper = build_cropper(
+            eye_processor.left_config_output,
+            gaze.input_width,
+            gaze.input_height,
+        )
+        right_eye_cropper = build_cropper(
+            eye_processor.right_config_output,
+            gaze.input_width,
+            gaze.input_height,
+        )
+
+        head_pose_nn = self.pipeline.create(dai.node.NeuralNetwork)
+        head_pose_nn.setBlobPath(head_pose.blob_path)
+        head_pose_nn.setNumShavesPerInferenceThread(head_pose.shaves)
+        self._relax_branch_input(head_pose_nn.input)
+        face_cropper.out.link(head_pose_nn.input)
+
+        gaze_nn = self.pipeline.create(dai.node.NeuralNetwork)
+        gaze_nn.setBlobPath(gaze.blob_path)
+        gaze_nn.setNumShavesPerInferenceThread(gaze.shaves)
+        left_input = gaze_nn.inputs["left_eye_image"]
+        right_input = gaze_nn.inputs["right_eye_image"]
+        head_pose_input = gaze_nn.inputs["head_pose_angles"]
+        for node_input in (left_input, right_input, head_pose_input):
+            self._relax_branch_input(node_input)
+        left_eye_cropper.out.link(left_input)
+        right_eye_cropper.out.link(right_input)
+        # DepthAI 3.6.1 maps the head-pose NNData output tensors directly to the
+        # gaze blob's named vector input; no host decoder or Script node belongs
+        # between these networks.
+        head_pose_nn.out.link(head_pose_input)
+
+        self.face_crop_detection_queue = detection_nn.out.createOutputQueue(
+            maxSize=FACE_CROP_PAIR_WINDOW,
+            blocking=False,
+        )
+        self.face_crop_result_queue = gaze_nn.out.createOutputQueue(
+            maxSize=FACE_CROP_PAIR_WINDOW,
+            blocking=False,
+        )
+
     def _build_hand_mp_pipeline(self, composite):
         """Add the Luxonis hand-pose reference pipeline (PR-1791).
 
@@ -2364,6 +2506,10 @@ class CameraNode(Node):
         entry = self.face_crop_pairs.get(stamp)
         if entry is None or entry["faces"] is None:
             return
+        # Stop at the shorter side. In particular, YuNet may report more faces
+        # than the three-input gaze graph manages to complete for this frame;
+        # unmatched indices are retained for a late packet and eventually
+        # evicted with the bounded timestamp buffer instead of being indexed.
         while entry["faces"] and entry["results"]:
             face = entry["faces"].popleft()
             result = entry["results"].popleft()
