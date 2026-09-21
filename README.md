@@ -92,8 +92,19 @@ integrity-checks a WAL-safe SQLite backup using Python's SQLite backup API
 inside the existing Flask container. It also refuses if the `watchdog` package
 or its unit exists, or if a `/dev/watchdog*` device is held by a process other
 than systemd. systemd owning the hardware watchdog is the expected single-owner
-state (PR-1781) and is only logged, never a reason to abort. It never installs or
-starts a watchdog.
+state (PR-1781) and is only logged, never a reason to abort. Before a build, the
+runner asks the installed, argument-free root helper to extend systemd's existing
+runtime watchdog timeout to at most 30 minutes. It never enables a disabled
+watchdog or shortens a longer timeout, and an EXIT trap restores the original
+value after success, failure, rollback, or termination. If the helper or
+non-interactive sudo is unavailable, the runner warns and continues. This changes
+only systemd's manager property; it never installs or starts another watchdog and
+never opens `/dev/watchdog*`.
+
+If a surviving `status.json` contains a non-terminal state when the same request
+starts again (for example, after a reboot during `building`), the runner logs the
+interrupted predecessor. Every status document includes an `attempt` counter and
+the additive `predecessorInterrupted` flag, while keeping schema version 1.
 
 The current software has no authoritative signal that distinguishes a running
 user program from an idle `ros-programs` container. The update API therefore
