@@ -1767,6 +1767,10 @@ class CameraNode(Node):
         )
         if not requested:
             return False
+        # The device Script path owns the chain end to end; the legacy host-queue
+        # shape is only what a chain without the Script node would look like.
+        if getattr(self, "hand_script_queue", None) is not None:
+            return True
         return all(
             queue is not None
             for queue in (

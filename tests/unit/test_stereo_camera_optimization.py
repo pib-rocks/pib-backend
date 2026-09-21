@@ -793,6 +793,35 @@ class TestHandPipelineInput(unittest.TestCase):
         )
 
     @patch("ros_packages.camera.oak_d_lite.stereo.dai")
+    def test_hand_chain_counts_as_built_with_the_device_script(self, mock_dai):
+        """The Script's host output is the built marker, not the legacy queues.
+
+        Without this the pipeline manager rejects a perfectly built chain and the
+        camera silently reverts to colour-only.
+        """
+        with patch.object(CameraNode, "__init__", lambda self: None):
+            node = CameraNode()
+        node._pipeline_models = [
+            types.SimpleNamespace(
+                model=types.SimpleNamespace(model_id="hand_tracking"),
+            )
+        ]
+        for attr in (
+            "hand_script_queue",
+            "hand_palm_queue",
+            "hand_decoder_queue",
+            "hand_roi_queue",
+            "hand_landmark_queue",
+            "hand_landmark_config_queue",
+        ):
+            setattr(node, attr, None)
+
+        self.assertFalse(node._hand_chain_is_built())
+
+        node.hand_script_queue = MagicMock()
+        self.assertTrue(node._hand_chain_is_built())
+
+    @patch("ros_packages.camera.oak_d_lite.stereo.dai")
     def test_hand_crop_config_comes_from_the_device_script(self, mock_dai):
         """The landmark crop must be driven by the Script, not by the host.
 
@@ -832,6 +861,17 @@ class TestHandPipelineInput(unittest.TestCase):
         self.assertNotIn(".getTensor(", script)
         self.assertIn("addCropRotatedRect", script)
         self.assertIn("ResizeMode.LETTERBOX", script)
+        self.assertIn("ResizeMode.STRETCH", script)
+        # Every device-API setOutputSize needs its mode: the two-argument form
+        # raises TypeError on the device and kills the Script.
+        calls = [
+            line.strip()
+            for line in script.split("\n")
+            if "setOutputSize(" in line and not line.strip().startswith("#")
+        ]
+        self.assertEqual(len(calls), 2)
+        for call in calls:
+            self.assertIn("ResizeMode.", call)
         self.assertIn("PALM_RECORD_COUNT = 10", script)
         # both crop configs are produced on the device
         self.assertTrue(script_node.outputs["pre_pd_manip_cfg"].link.called)

@@ -77,50 +77,84 @@ def landmark_score_passes(score, threshold=LANDMARK_SCORE_THRESHOLD):
     return math.isfinite(float(score)) and float(score) >= threshold
 
 
-def landmark_pixels_to_square(values, region):
-    """Map 21 landmark-crop XYZ triples into square-normalized XY points."""
+def landmark_pixels_to_square(values, region, source_width, source_height):
+    """Map the landmark net's crop pixels back to branch-normalized XYZ.
+
+    The crop is a square in normalized coordinates over a rectangular branch, so
+    the offset has to be rotated in PIXELS and only then normalized per axis -
+    doing it in normalized coordinates skews the result by the branch aspect.
+    The third component stays the hand-relative depth, scaled like x and y.
+    """
     if len(values) != LANDMARK_COUNT * 3:
         return []
-    rotation = region["rotation"]
+    if source_width <= 0 or source_height <= 0:
+        return []
+    rotation = float(region["rotation"])
     cosine = math.cos(rotation)
     sine = math.sin(rotation)
+    offset_x = float(region["size"]) * source_width
+    offset_y = float(region["size"]) * source_height
     points = []
     for index in range(LANDMARK_COUNT):
-        x = float(values[index * 3]) / LANDMARK_INPUT_SIZE
-        y = float(values[index * 3 + 1]) / LANDMARK_INPUT_SIZE
-        # The third component is the hand-relative depth, on the same scale as x
-        # and y.  It must survive the mapping: it is what the published
-        # ``keypoint_z`` carries, and it is signed.
+        u = float(values[index * 3]) / LANDMARK_INPUT_SIZE - 0.5
+        v = float(values[index * 3 + 1]) / LANDMARK_INPUT_SIZE - 0.5
         z = float(values[index * 3 + 2]) / LANDMARK_INPUT_SIZE
-        if not math.isfinite(x) or not math.isfinite(y) or not math.isfinite(z):
+        if not math.isfinite(u) or not math.isfinite(v) or not math.isfinite(z):
             return []
+        # Rotate the crop-space offset back into branch pixels.
+        dx = offset_x * (u * cosine + v * sine)
+        dy = offset_y * (v * cosine - u * sine)
         points.append(
             (
-                region["center_x"]
-                + region["size"] * ((x - 0.5) * cosine + (0.5 - y) * sine),
-                region["center_y"]
-                + region["size"] * ((y - 0.5) * cosine + (x - 0.5) * sine),
+                float(region["center_x"]) + dx / source_width,
+                float(region["center_y"]) + dy / source_height,
                 z,
             )
         )
     return points
 
 
-def fit_landmark_region(region, frame_width, frame_height, inset=0.5):
-    """Shrink a rotated square around its center until DepthAI can validate it."""
-    pad_h = (frame_width - frame_height) // 2
-    center_x = float(region["center_x"]) * frame_width
-    center_y = float(region["center_y"]) * frame_width - pad_h
-    size = float(region["size"]) * frame_width
-    rotation = float(region["rotation"])
-    extent = 0.5 * size * (abs(math.cos(rotation)) + abs(math.sin(rotation)))
-    available_x = min(center_x, frame_width - center_x) - inset
-    available_y = min(center_y, frame_height - center_y) - inset
-    if extent <= 0.0 or available_x <= 0.0 or available_y <= 0.0:
+def fit_landmark_region(region, source_width, source_height, inset=0.5):
+    """Shrink the square ROI until ImageManip can validate it.
+
+    Mirrors the host chain's ``_landmark_crop_config``: the fit happens in BRANCH
+    PIXELS, per axis, with the rotation folded in.  The palm ImageManip warps the
+    branch's full rectangle onto the square network input without letterboxing,
+    so the decoder's normalized axes are the branch axes - treating them as a
+    letterboxed square would place the rect off the image, and an invalid crop
+    makes the manip drop the frame, which leaves the Script waiting forever and
+    trips the device watchdog.
+    """
+    if source_width <= 0 or source_height <= 0:
         return None
-    scale = min(1.0, available_x / extent, available_y / extent)
+    inset = max(0.0, min(float(inset), source_width / 4.0, source_height / 4.0))
+    size = float(region["size"])
+    rotation = float(region["rotation"])
+    width_px = size * source_width
+    height_px = size * source_height
+    if width_px <= 0.0 or height_px <= 0.0:
+        return None
+    extent_x = 0.5 * (
+        width_px * abs(math.cos(rotation)) + height_px * abs(math.sin(rotation))
+    )
+    extent_y = 0.5 * (
+        width_px * abs(math.sin(rotation)) + height_px * abs(math.cos(rotation))
+    )
+    center_x = min(
+        source_width - inset, max(inset, float(region["center_x"]) * source_width)
+    )
+    center_y = min(
+        source_height - inset, max(inset, float(region["center_y"]) * source_height)
+    )
+    available_x = max(inset, min(center_x, source_width - center_x) - inset)
+    available_y = max(inset, min(center_y, source_height - center_y) - inset)
+    if extent_x <= 0.0 or extent_y <= 0.0 or available_x <= 0.0 or available_y <= 0.0:
+        return None
+    scale = min(1.0, available_x / extent_x, available_y / extent_y)
     fitted = dict(region)
-    fitted["size"] = float(region["size"]) * scale
+    fitted["center_x"] = center_x / source_width
+    fitted["center_y"] = center_y / source_height
+    fitted["size"] = size * scale
     return fitted
 
 
@@ -234,22 +268,25 @@ def palm_tensor(packet):
 
 def palm_config():
     config = ImageManipConfig()
-    config.setOutputSize(PD_SIZE, PD_SIZE, ImageManipConfig.ResizeMode.LETTERBOX)
+    # STRETCH matches the host mapping: the palm input is the branch warped to a
+    # square, so each normalised axis maps straight onto the published frame.
+    config.setOutputSize(PD_SIZE, PD_SIZE, ImageManipConfig.ResizeMode.STRETCH)
     config.setFrameType(ImgFrame.Type.BGR888p)
     return config
 
 def landmark_config(region, reuse):
-    pad_h = (SOURCE_WIDTH - SOURCE_HEIGHT) // 2
     rotated = RotatedRect()
     rotated.center.x = region["center_x"]
-    rotated.center.y = (
-        region["center_y"] * SOURCE_WIDTH - pad_h
-    ) / float(SOURCE_HEIGHT)
+    rotated.center.y = region["center_y"]
+    # Square ROI, but the branch axes scale differently - keep it square in
+    # normalized coordinates the way the host path does.
     rotated.size.width = region["size"]
-    rotated.size.height = region["size"] * SOURCE_WIDTH / float(SOURCE_HEIGHT)
+    rotated.size.height = region["size"]
     rotated.angle = math.degrees(region["rotation"])
     config = ImageManipConfig()
-    config.setOutputSize(LM_SIZE, LM_SIZE)
+    # The device binding only accepts setOutputSize(w, h, ResizeMode).  The crop is
+    # square and so is the output, so LETTERBOX adds no padding.
+    config.setOutputSize(LM_SIZE, LM_SIZE, ImageManipConfig.ResizeMode.LETTERBOX)
     config.setFrameType(ImgFrame.Type.BGR888p)
     config.addCropRotatedRect(rotated, True)
     border_replicate = getattr(config, "setWarpBorderReplicatePixels", None)
@@ -257,6 +294,7 @@ def landmark_config(region, reuse):
         border_replicate()
     config.setReusePreviousImage(reuse)
     return config
+
 
 stages = {
     "palm_detector_nn": 0,
@@ -280,9 +318,7 @@ while True:
     hands = []
     fitted_regions = []
     for region in regions:
-        fitted_region = fit_landmark_region(
-            region, SOURCE_WIDTH, SOURCE_HEIGHT
-        )
+        fitted_region = fit_landmark_region(region, SOURCE_WIDTH, SOURCE_HEIGHT)
         if fitted_region is None:
             stages["post_processing"] += 1
             continue
@@ -303,7 +339,9 @@ while True:
         image_values = flat_tensor(
             landmark_packet, "Identity_dense/BiasAdd/Add"
         )
-        square_points = landmark_pixels_to_square(image_values, fitted_region)
+        square_points = landmark_pixels_to_square(
+            image_values, fitted_region, SOURCE_WIDTH, SOURCE_HEIGHT
+        )
         if len(square_points) != LANDMARK_COUNT:
             stages["post_processing"] += 1
             continue
