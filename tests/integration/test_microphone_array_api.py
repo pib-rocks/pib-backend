@@ -2,11 +2,7 @@
 
 from __future__ import annotations
 
-import os
-
 import pytest
-
-os.environ.setdefault("MICROPHONE_ARRAY_SIMULATION", "1")
 
 from app.app import app  # noqa: E402
 from service import microphone_array_service as mas  # noqa: E402
@@ -24,15 +20,13 @@ def client():
 def test_get_health(client):
     response = client.get("/system/microphone-array/health")
     assert response.status_code == 200
-    assert response.get_json() == {
-        "simulation": True,
-        "simulation_reason": "test reset",
-        "device_access": False,
-        "owner": "ros-audio-io",
-        "vendor_id": "0x2886",
-        "product_id": "0x0018",
-        "note": "Live values come from the ros-audio-io owner.",
-    }
+    data = response.get_json()
+    assert data["simulation"] is True
+    assert data["simulation_reason"] == mas.SIMULATION_REASON
+    assert data["device_access"] is False
+    assert data["owner"] == "ros-audio-io"
+    assert data["led_owner"] == "ros-audio-io"
+    assert data["led_control"] == "ROS 2 parameters via rosbridge"
 
 
 def test_get_health_v1_prefix(client):
@@ -45,12 +39,12 @@ def test_get_telemetry(client):
     response = client.get("/system/microphone-array/telemetry")
     assert response.status_code == 200
     data = response.get_json()
-    assert data["doa_angle"] == 180
-    assert data["voice_activity"] is False
-    assert data["speech_detected"] is False
-    assert isinstance(data["audio_levels"], list)
-    assert len(data["audio_levels"]) == 5
-    assert data["simulation_reason"] == "test reset"
+    assert data["doa_angle"] is None
+    assert data["voice_activity"] is None
+    assert data["speech_detected"] is None
+    assert data["audio_levels"] == []
+    assert data["legacy"] is True
+    assert data["simulation_reason"] == mas.SIMULATION_REASON
 
 
 def test_get_telemetry_v1_prefix(client):
@@ -69,7 +63,9 @@ def test_get_tuning(client):
     assert "led_ring" in data
     assert "Standard" in data["presets"]
     assert "Raw" in data["presets"]
-    assert data["simulation_reason"] == "test reset"
+    assert data["legacy"] is True
+    assert data["applied_to_device"] is False
+    assert data["simulation_reason"] == mas.SIMULATION_REASON
 
 
 def test_post_tuning_preset(client):

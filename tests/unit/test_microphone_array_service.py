@@ -1,16 +1,10 @@
-"""Unit tests for microphone array service (PR-1519)."""
+"""Unit tests for the retired backend microphone-array owner."""
 
 from __future__ import annotations
 
-import os
-from unittest.mock import MagicMock, patch
-
 import pytest
 
-# Force simulation before the service module constructs its singleton.
-os.environ["MICROPHONE_ARRAY_SIMULATION"] = "1"
-
-from service import microphone_array_service as mas  # noqa: E402
+from service import microphone_array_service as mas
 
 
 @pytest.fixture(autouse=True)
@@ -33,42 +27,33 @@ def test_list_presets_includes_required_names():
         assert name in presets
 
 
-def test_default_tuning_is_standard_preset():
+def test_legacy_tuning_is_explicitly_simulated():
     tuning = mas.get_tuning()
     assert tuning["preset"] == "Standard"
     assert tuning["simulation"] is True
-    assert tuning["simulation_reason"] == "test reset"
-    assert tuning["parameters"]["AGCONOFF"] == 1
-    assert tuning["parameters"]["STATNOISEONOFF"] == 1
-    assert tuning["parameters"]["ECHOONOFF"] == 1
-    assert tuning["led_ring"]["mode"] == "off"
+    assert tuning["legacy"] is True
+    assert tuning["applied_to_device"] is False
+    assert tuning["simulation_reason"] == mas.SIMULATION_REASON
+    assert tuning["control_surface"] == "ROS 2 parameters via rosbridge"
 
 
-def test_apply_noisy_asr_preset():
-    tuning = mas.update_tuning({"preset": "Noisy Environment / ASR"})
+def test_legacy_updates_only_simulated_cache():
+    tuning = mas.update_tuning(
+        {
+            "preset": "Noisy Environment / ASR",
+            "led_ring": {"mode": "listen", "brightness": 24},
+        }
+    )
     assert tuning["preset"] == "Noisy Environment / ASR"
     assert tuning["parameters"]["AGCONOFF"] == 0
-    assert tuning["parameters"]["HPFONOFF"] == 2
-    assert tuning["parameters"]["STATNOISEONOFF_SR"] == 1
+    assert tuning["led_ring"]["mode"] == "listen"
+    assert tuning["led_ring"]["brightness"] == 24
+    assert tuning["applied_to_device"] is False
 
 
 def test_apply_raw_preset_and_alias():
-    tuning = mas.update_tuning({"preset": "Raw"})
-    assert tuning["preset"] == "Raw"
-    assert tuning["parameters"]["AGCONOFF"] == 0
-    assert tuning["parameters"]["STATNOISEONOFF"] == 0
-    assert tuning["parameters"]["ECHOONOFF"] == 0
-    assert tuning["parameters"]["HPFONOFF"] == 0
-
-    aliased = mas.update_tuning({"preset": "Raw Pass-Through"})
-    assert aliased["preset"] == "Raw"
-
-
-def test_loud_speaker_playback_preset_enables_echo():
-    tuning = mas.update_tuning({"preset": "Loud Speaker Playback"})
-    assert tuning["preset"] == "Loud Speaker Playback"
-    assert tuning["parameters"]["ECHOONOFF"] == 1
-    assert tuning["parameters"]["AGCONOFF"] == 1
+    assert mas.update_tuning({"preset": "Raw"})["parameters"]["ECHOONOFF"] == 0
+    assert mas.update_tuning({"preset": "Raw Pass-Through"})["preset"] == "Raw"
 
 
 def test_custom_parameter_update_sets_custom_preset():
@@ -98,109 +83,30 @@ def test_unknown_preset_raises():
         mas.update_tuning({"preset": "Does Not Exist"})
 
 
-def test_led_ring_update_persists_in_simulation():
-    tuning = mas.update_tuning(
-        {
-            "led_ring": {
-                "mode": "listen",
-                "brightness": 24,
-                "color": "#112233",
-                "vad_led": True,
-            }
-        }
-    )
-    led = tuning["led_ring"]
-    assert led["mode"] == "listen"
-    assert led["brightness"] == 24
-    assert led["color"] == "#112233"
-    assert led["vad_led"] == 1
-
-
-def test_invalid_led_mode_raises():
+def test_invalid_led_values_raise():
     with pytest.raises(ValueError, match="Unknown LED mode"):
         mas.update_tuning({"led_ring": {"mode": "disco"}})
+    with pytest.raises(ValueError, match="brightness"):
+        mas.update_tuning({"led_ring": {"brightness": 32}})
+    with pytest.raises(ValueError, match="RRGGBB"):
+        mas.update_tuning({"led_ring": {"color": "#xyz"}})
 
 
-def test_telemetry_simulation_shape():
+def test_telemetry_contains_no_fabricated_measurements():
     telemetry = mas.get_telemetry()
-    assert telemetry["doa_angle"] == 180
-    assert telemetry["voice_activity"] is False
-    assert telemetry["speech_detected"] is False
-    assert len(telemetry["audio_levels"]) == 5
+    assert telemetry["doa_angle"] is None
+    assert telemetry["voice_activity"] is None
+    assert telemetry["speech_detected"] is None
+    assert telemetry["audio_levels"] == []
     assert telemetry["simulation"] is True
-    assert telemetry["simulation_reason"] == "test reset"
+    assert telemetry["simulation_reason"] == mas.SIMULATION_REASON
 
 
-def test_health_reports_forced_simulation_reason_and_device_ownership():
-    with patch.dict(os.environ, {"MICROPHONE_ARRAY_SIMULATION": "1"}):
-        service = mas.MicrophoneArrayService()
-
-    assert service.health() == {
-        "simulation": True,
-        "simulation_reason": "forced or pyusb unavailable",
-        "device_access": False,
-        "owner": "ros-audio-io",
-        "vendor_id": "0x2886",
-        "product_id": "0x0018",
-        "note": "Live values come from the ros-audio-io owner.",
-    }
-
-
-def test_respeaker_tuning_write_and_read_int():
-    mock_dev = MagicMock()
-    mock_dev.ctrl_transfer.return_value = MagicMock(
-        tobytes=MagicMock(return_value=struct_pack_ii(1, 0))
-    )
-    mock_usb = MagicMock()
-    mock_usb.util.CTRL_OUT = 0x40
-    mock_usb.util.CTRL_IN = 0xC0
-    mock_usb.util.CTRL_TYPE_VENDOR = 0x40
-    mock_usb.util.CTRL_RECIPIENT_DEVICE = 0x00
-    with patch.object(mas, "usb", mock_usb):
-        driver = mas.ReSpeakerTuning(mock_dev)
-        driver.write("AGCONOFF", 1)
-        assert mock_dev.ctrl_transfer.called
-        value = driver.read("AGCONOFF")
-        assert value == 1
-
-
-def test_respeaker_tuning_rejects_read_only_write():
-    driver = mas.ReSpeakerTuning(MagicMock())
-    with pytest.raises(ValueError, match="read-only"):
-        driver.write("DOAANGLE", 10)
-
-
-def test_hardware_path_uses_usb_when_device_present():
-    mock_dev = MagicMock()
-    # DOAANGLE / VOICEACTIVITY / SPEECHDETECTED style int responses.
-    mock_dev.ctrl_transfer.return_value = MagicMock(
-        tobytes=MagicMock(return_value=struct_pack_ii(90, 0))
-    )
-
-    with patch.dict(os.environ, {"MICROPHONE_ARRAY_SIMULATION": "0"}):
-        with (
-            patch.object(mas, "_USB_AVAILABLE", True),
-            patch.object(mas, "usb") as mock_usb,
-        ):
-            mock_usb.core.find.return_value = mock_dev
-            mock_usb.util.CTRL_OUT = 0x40
-            mock_usb.util.CTRL_IN = 0xC0
-            mock_usb.util.CTRL_TYPE_VENDOR = 0x40
-            mock_usb.util.CTRL_RECIPIENT_DEVICE = 0x00
-            service = mas.MicrophoneArrayService()
-            assert service.is_simulation is False
-            health = service.health()
-            assert health["simulation"] is False
-            assert health["simulation_reason"] is None
-            assert health["device_access"] is False
-            assert health["owner"] == "ros-audio-io"
-            telemetry = service.get_telemetry()
-            assert telemetry["doa_angle"] == 90
-            assert telemetry["simulation"] is False
-            assert telemetry["simulation_reason"] is None
-
-
-def struct_pack_ii(a: int, b: int) -> bytes:
-    import struct
-
-    return struct.pack(b"ii", a, b)
+def test_health_reports_ros_owner_and_led_control():
+    health = mas.health()
+    assert health["simulation"] is True
+    assert health["simulation_reason"] == mas.SIMULATION_REASON
+    assert health["device_access"] is False
+    assert health["owner"] == "ros-audio-io"
+    assert health["led_owner"] == "ros-audio-io"
+    assert health["led_control"] == "ROS 2 parameters via rosbridge"

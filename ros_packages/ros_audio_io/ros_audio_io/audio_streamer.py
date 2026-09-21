@@ -3,12 +3,14 @@
 
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import Int16MultiArray
+from std_msgs.msg import Float32MultiArray, Int16MultiArray
 from datatypes.srv import GetMicConfiguration
 import pyaudio
 import numpy as np
 import os
 import traceback
+
+from ros_audio_io.levels import calculate_levels
 
 
 class AudioStreamer(Node):
@@ -46,6 +48,9 @@ class AudioStreamer(Node):
 
         # --- ROS pub/service ---
         self.pub = self.create_publisher(Int16MultiArray, "audio_stream", 10)
+        self.levels_pub = self.create_publisher(
+            Float32MultiArray, "/microphone_levels", 10
+        )
         self.srv = self.create_service(
             GetMicConfiguration, "get_mic_configuration", self.get_mic_configuration
         )
@@ -231,6 +236,13 @@ class AudioStreamer(Node):
             msg = Int16MultiArray()
             msg.data = buf.tolist()
             self.pub.publish(msg)
+
+            # Float32MultiArray layout: [normalized RMS, normalized peak].
+            # The published PCM is mono; raw microphone channels are not exposed.
+            rms, peak = calculate_levels(buf)
+            levels_msg = Float32MultiArray()
+            levels_msg.data = [rms, peak]
+            self.levels_pub.publish(levels_msg)
 
         except Exception as e:
             self.get_logger().error(f"Audio read/publish error: {e}")
