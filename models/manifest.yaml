@@ -147,6 +147,7 @@ models:
   zoo_type: depthai
   notes: Face embedding network. IR input 'data' 3x112x112. BGR [0-255], compiled '-ip U8'. Match embeddings with cosine similarity.
 - model_id: emotion_recognition_lfw_64x64
+  selectable: false
   task: emotion_recognition
   source_upstream: luxonis/depthai-model-zoo
   source_url: https://github.com/luxonis/depthai-model-zoo/raw/main/models/emotion_recognition_lfw_64x64/emotion_recognition_lfw_64x64.xml
@@ -161,6 +162,16 @@ models:
   openvino_version: '2022.1'
   zoo_type: depthai
   notes: Emotion classifier, 64x64 crop. BGR [0-255], compiled '-ip U8'. Upstream model.yml licence is empty.
+- model_id: emotion_recognition_crop
+  task: emotion_recognition
+  composite: true
+  artifacts:
+  - face_detection_yunet_160x120
+  - emotion_recognition_lfw_64x64
+  publish_topic: detections/emotion_recognition_crop
+  # This is the selectable end-to-end emotion model id. YuNet remains selectable
+  # as a standalone detector; the crop-only classifier artifact does not.
+  selectable: true
 - model_id: gaze-estimation-adas-0002
   task: gaze_estimation
   source_upstream: openvinotoolkit/open_model_zoo

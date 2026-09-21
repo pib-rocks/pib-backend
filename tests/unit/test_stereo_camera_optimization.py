@@ -218,6 +218,10 @@ from ros_packages.camera.oak_d_lite.stereo import (
     CameraNode,
     FACE_DETECT_WIDTH,
     FACE_DETECT_HEIGHT,
+    FACE_CROP_PAIR_WINDOW,
+    FACE_CROP_SOURCE_HEIGHT,
+    FACE_CROP_SOURCE_WIDTH,
+    FACE_CROPPER_QUEUE,
     HAND_STAGE_NAMES,
     HAND_NN_HEIGHT,
     HAND_NN_WIDTH,
@@ -2490,6 +2494,184 @@ class TestOakImu(unittest.TestCase):
             self.assertEqual(node._imu_status()["state"], "absent")
         finally:
             CameraNode._device_owner = None
+
+
+class TestFaceCropPipeline(unittest.TestCase):
+    def _node(self):
+        with patch.object(CameraNode, "__init__", lambda self: None):
+            node = CameraNode()
+        node.pipeline = MagicMock()
+        node.camRgb = MagicMock()
+        node.get_logger = MagicMock()
+        node.face_crop_pairs = {}
+        node.face_crop_detection_queue = None
+        node.face_crop_result_queue = None
+        node._pending_face_crop_packet = None
+        return node
+
+    @patch("ros_packages.camera.oak_d_lite.stereo.create_archive")
+    @patch("ros_packages.camera.oak_d_lite.stereo.dai")
+    def test_graph_uses_parsed_yunet_four_frame_crop_and_plain_classifier(
+        self, mock_dai, create_archive_mock
+    ):
+        node = self._node()
+        created = [MagicMock() for _ in range(5)]
+        node.pipeline.create.side_effect = created
+        resize, parser, processor, cropper, classifier_nn = created
+        parser.build.return_value = parser
+        processor.build.return_value = processor
+        cropper.fromManipConfigs.return_value = cropper
+        cropper.build.return_value = cropper
+        source = node.camRgb.requestOutput.return_value
+        archive = create_archive_mock.return_value
+        archive.getInputWidth.return_value = 160
+        archive.getInputHeight.return_value = 120
+        artifacts = {
+            "face_detection_yunet_160x120": types.SimpleNamespace(
+                model_id="face_detection_yunet_160x120",
+                blob_path="/yunet.blob",
+            ),
+            "emotion_recognition_lfw_64x64": types.SimpleNamespace(
+                blob_path="/emotion.blob",
+                input_width=64,
+                input_height=64,
+                shaves=4,
+            ),
+        }
+        node.model_registry = MagicMock()
+        node.model_registry.get.side_effect = artifacts.get
+
+        node._build_face_crop_pipeline(
+            types.SimpleNamespace(artifact_ids=tuple(artifacts))
+        )
+
+        node.camRgb.requestOutput.assert_called_once_with(
+            (FACE_CROP_SOURCE_WIDTH, FACE_CROP_SOURCE_HEIGHT),
+            type=mock_dai.ImgFrame.Type.BGR888p,
+        )
+        source.link.assert_called_once_with(resize.inputImage)
+        parser.build.assert_called_once_with(resize.out, archive)
+        processor.build.assert_called_once_with(
+            detections_input=parser.out,
+            padding=0.1,
+            target_size=(64, 64),
+        )
+        cropper.fromManipConfigs.assert_called_once_with(
+            inputManipConfigs=processor.config_output,
+            maxOutputFrameSize=64 * 64 * 3,
+            waitForConfig=True,
+        )
+        cropper.build.assert_called_once_with(source)
+        cropper._cropper_image_manip.inputImage.setMaxSize.assert_called_once_with(
+            FACE_CROPPER_QUEUE
+        )
+        classifier_nn.setBlobPath.assert_called_once_with("/emotion.blob")
+        cropper.out.link.assert_called_once_with(classifier_nn.input)
+        parser.out.createOutputQueue.assert_called_once_with(
+            maxSize=FACE_CROP_PAIR_WINDOW,
+            blocking=False,
+        )
+        classifier_nn.out.createOutputQueue.assert_called_once_with(
+            maxSize=FACE_CROP_PAIR_WINDOW,
+            blocking=False,
+        )
+
+    def test_pairing_publishes_each_face_with_same_timestamp(self):
+        node = self._node()
+        stamp = types.SimpleNamespace(sec=10, nanosec=20)
+        faces = [object(), object()]
+        detection_packet = MagicMock(detections=faces)
+        detection_packet.getTimestamp.return_value = stamp
+        results = [MagicMock(), MagicMock()]
+        for result in results:
+            result.getTimestamp.return_value = stamp
+        node.face_crop_detection_queue = MagicMock()
+        node.face_crop_detection_queue.tryGet.side_effect = [detection_packet, None]
+        node.face_crop_result_queue = MagicMock()
+        node.face_crop_result_queue.tryGet.side_effect = results + [None]
+        published = []
+        node._publish_face_crop_detection = lambda result, face: published.append(
+            (result, face)
+        )
+
+        node._process_face_crop()
+
+        self.assertEqual(published, list(zip(results, faces)))
+        self.assertEqual(node.face_crop_pairs, {})
+
+    def test_pairing_keeps_results_that_arrive_before_nonempty_detections(self):
+        node = self._node()
+        stamp = types.SimpleNamespace(sec=3, nanosec=4)
+        result = MagicMock()
+        result.getTimestamp.return_value = stamp
+        node.face_crop_detection_queue = MagicMock()
+        node.face_crop_detection_queue.tryGet.return_value = None
+        node.face_crop_result_queue = MagicMock()
+        node.face_crop_result_queue.tryGet.side_effect = [result, None]
+        node._publish_face_crop_detection = MagicMock()
+
+        node._process_face_crop()
+
+        self.assertIn((3, 4), node.face_crop_pairs)
+        face = object()
+        detection_packet = MagicMock(detections=[face])
+        detection_packet.getTimestamp.return_value = stamp
+        node.face_crop_detection_queue.tryGet.side_effect = [detection_packet, None]
+        # Clear the exhausted side_effect from the first phase: on a Mock it takes
+        # priority over return_value and would raise StopIteration once drained.
+        node.face_crop_result_queue.tryGet.side_effect = None
+        node.face_crop_result_queue.tryGet.return_value = None
+        node._process_face_crop()
+
+        node._publish_face_crop_detection.assert_called_once_with(result, face)
+        self.assertEqual(node.face_crop_pairs, {})
+
+    def _crop_node(self):
+        node = self._node()
+        node._pipeline_models = [
+            types.SimpleNamespace(
+                model=types.SimpleNamespace(model_id="emotion_recognition_crop")
+            )
+        ]
+        node.face_crop_detection_queue = MagicMock()
+        node.face_crop_result_queue = MagicMock()
+        node.face_crop_result_queue.tryGet.return_value = None
+        node.nn_queues = {}
+        node._wait_for_color_frame = MagicMock(return_value=object())
+        node.get_logger = MagicMock()
+        return node
+
+    def test_verification_accepts_detector_stage_without_a_face(self):
+        """A chain with nobody in front of the camera must still start."""
+        node = self._crop_node()
+        detection = object()
+        node._wait_for_queue_packet = MagicMock(return_value=detection)
+
+        self.assertTrue(node._verify_model_frames(3.0))
+
+        node._wait_for_queue_packet.assert_called_once_with(
+            node.face_crop_detection_queue, 3.0
+        )
+        # A detector packet is consumed, never stashed as the pending classifier
+        # result: the pairing code would misread it.
+        self.assertIsNone(node._pending_face_crop_packet)
+        node.get_logger().warning.assert_called_once()
+        node.get_logger().error.assert_not_called()
+
+    def test_verification_uses_the_classifier_result_when_a_face_is_present(self):
+        node = self._crop_node()
+        node.face_crop_result_queue.tryGet.return_value = None
+        node._wait_for_queue_packet = MagicMock(return_value=object())
+
+        self.assertTrue(node._verify_model_frames(3.0))
+        node.get_logger().warning.assert_called_once()
+
+    def test_verification_fails_when_the_detector_stays_silent(self):
+        node = self._crop_node()
+        node._wait_for_queue_packet = MagicMock(return_value=None)
+
+        self.assertFalse(node._verify_model_frames(3.0))
+        node.get_logger().error.assert_called_once()
 
 
 if __name__ == "__main__":
