@@ -105,6 +105,13 @@ HAND_MP_SOURCE_HEIGHT = 648
 HAND_MP_PAIR_WINDOW = 32
 # Unpaired entries older than this are dropped so the buffer cannot grow.
 MAX_HAND_MP_BUFFER = 64
+# How many camera frames the FrameCropper may hold while it waits for a crop
+# config. One frame is not enough: crops are paired to frames by exact timestamp,
+# so a single-slot input has usually dropped the frame a config refers to
+# (measured: 7.85 palm detections/s in, 1.00 landmark results/s out). The bound
+# still exists so a stretch with no detection cannot exhaust the camera's shared
+# frame pool - that is the freeze named in PR-1778.
+HAND_MP_CROPPER_QUEUE = 4
 
 # Device-side queues on the camera branches stay shallow and non-blocking.  The
 # host drains them from the 10 Hz timer, far below the camera frame rate, and a
@@ -2060,7 +2067,7 @@ class CameraNode(Node):
                 "FrameCropper internals changed: cannot stop it from holding frames"
             )
         else:
-            cropper_input.setMaxSize(1)
+            cropper_input.setMaxSize(HAND_MP_CROPPER_QUEUE)
             cropper_input.setBlocking(False)
 
         # Plain network: the raw NNData is what carries the unclipped z.
