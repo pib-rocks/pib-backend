@@ -13,6 +13,9 @@ STATUS_FILE="$UPDATE_DIR/status.json"
 LOG_FILE="$UPDATE_DIR/update.log"
 CANCEL_FILE="$UPDATE_DIR/cancel.json"
 MIN_FREE_KIB="${PIB_UPDATE_MIN_FREE_KIB:-8388608}"
+VERIFY_ATTEMPTS="${PIB_UPDATE_VERIFY_ATTEMPTS:-30}"
+VERIFY_INTERVAL_SECONDS="${PIB_UPDATE_VERIFY_INTERVAL_SECONDS:-5}"
+HEALTHCHECK="$BACKEND_DIR/setup/update_healthcheck.py"
 PRUNE_BELOW_KIB="${PIB_UPDATE_PRUNE_BELOW_KIB:-15728640}"
 
 JOB_ID="unknown"
@@ -25,6 +28,13 @@ BACKEND_BEFORE="unknown"
 CEREBRA_BEFORE="unknown"
 BACKEND_TARGET="unknown"
 CEREBRA_TARGET="unknown"
+# D12 (PR-1794): only a service that RAN BEFORE the update and is gone afterwards
+# fails the gate; pre-existing damage is reported instead of blocking, because the
+# strict rule blocked the update that would have fixed the damage.
+BACKEND_SERVICES_BEFORE=""
+CEREBRA_SERVICES_BEFORE=""
+REGRESSIONS=""
+UNHEALTHY_SERVICES=""
 
 mkdir -p "$UPDATE_DIR"
 touch "$LOG_FILE"
@@ -38,7 +48,8 @@ write_status() {
     local state="$1"
     local message="$2"
     STATE="$state" MESSAGE="$message" JOB_ID="$JOB_ID" CHANNEL="$CHANNEL" \
-        STARTED_AT="$STARTED_AT" STATUS_FILE="$STATUS_FILE" python3 - <<'PY'
+        STARTED_AT="$STARTED_AT" STATUS_FILE="$STATUS_FILE" \
+        UNHEALTHY_SERVICES="${UNHEALTHY_SERVICES:-}" python3 - <<'PY'
 import json
 import os
 import tempfile
@@ -53,6 +64,10 @@ document = {
     "startedAt": os.environ["STARTED_AT"],
     "updatedAt": datetime.now(timezone.utc).isoformat(),
 }
+# Reported, never blocking (D12): services that were already down before the update.
+unhealthy = sorted(name for name in os.environ.get("UNHEALTHY_SERVICES", "").split() if name)
+if unhealthy:
+    document["unhealthyServices"] = unhealthy
 path = os.environ["STATUS_FILE"]
 descriptor, temporary = tempfile.mkstemp(prefix=".status.json.", dir=os.path.dirname(path))
 try:
@@ -243,24 +258,94 @@ verify_migration() {
     }
 }
 
-all_services_running() {
+snapshot_running_services() {
     local compose_file="$1"
     shift
-    local expected running
-    expected="$(docker compose -f "$compose_file" "$@" ps --services | sort)"
-    running="$(docker compose -f "$compose_file" "$@" ps --services --status running | sort)"
-    [ -n "$expected" ] && [ "$expected" = "$running" ]
+    docker compose -f "$compose_file" "$@" ps --services --status running 2>/dev/null | sort || true
+}
+
+services_defined() {
+    local compose_file="$1"
+    shift
+    docker compose -f "$compose_file" "$@" ps --services 2>/dev/null | sort || true
+}
+
+# Compares one stack against the snapshot taken before the update. Sets REGRESSIONS and
+# UNHEALTHY_SERVICES and returns non-zero when the update lost a service.
+evaluate_stack_health() {
+    local compose_file="$1"
+    local before="$2"
+    shift 2
+    local expected after output health_exit=0
+    expected="$(services_defined "$compose_file" "$@")"
+    after="$(snapshot_running_services "$compose_file" "$@")"
+    if ! output="$(HEALTH_EXPECTED="$expected" HEALTH_BEFORE="$before" HEALTH_AFTER="$after" \
+        python3 "$HEALTHCHECK" 2>&1)"; then
+        health_exit=1
+    fi
+    log "Health check for $compose_file: $(printf '%s' "$output" | tr '\n' ' ')"
+    REGRESSIONS="$REGRESSIONS $(printf '%s\n' "$output" | sed -n 's/^REGRESSIONS=//p' | tr ',' ' ')"
+    UNHEALTHY_SERVICES="$UNHEALTHY_SERVICES $(printf '%s\n' "$output" | sed -n 's/^UNHEALTHY=//p' | tr ',' ' ')"
+    return "$health_exit"
+}
+
+# A freshly recreated stack needs time: the API answered 5.2s after a restart on
+# the pib5edu, and containers can be created/restarting for a moment. Without a
+# bounded wait the gate failed on a healthy robot and rolled back every update.
+wait_for_api() {
+    local attempt
+    for attempt in $(seq 1 "$VERIFY_ATTEMPTS"); do
+        if curl --fail --silent --max-time 5 http://127.0.0.1:5000/api/version >/dev/null; then
+            log "The API answered on http://127.0.0.1:5000/api/version (attempt $attempt/$VERIFY_ATTEMPTS)"
+            return 0
+        fi
+        [ $((attempt % 5)) -eq 0 ] && log "Waiting for the API (attempt $attempt/$VERIFY_ATTEMPTS)"
+        sleep "$VERIFY_INTERVAL_SECONDS"
+    done
+    return 1
+}
+
+# Waits (bounded) until no service that ran before the update is missing any more.
+wait_for_stacks() {
+    local attempt
+    for attempt in $(seq 1 "$VERIFY_ATTEMPTS"); do
+        REGRESSIONS=""
+        UNHEALTHY_SERVICES=""
+        if evaluate_stack_health "$BACKEND_DIR/docker-compose.yaml" "$BACKEND_SERVICES_BEFORE" --profile all \
+            && evaluate_stack_health "$CEREBRA_DIR/docker-compose.yaml" "$CEREBRA_SERVICES_BEFORE"; then
+            return 0
+        fi
+        [ $((attempt % 5)) -eq 0 ] && log "Waiting for containers to return (attempt $attempt/$VERIFY_ATTEMPTS): $(printf '%s' "$REGRESSIONS" | tr -s ' ')"
+        sleep "$VERIFY_INTERVAL_SECONDS"
+    done
+    return 1
 }
 
 verify_result() {
-    curl --fail --silent --max-time 10 http://127.0.0.1:5000/api/version >/dev/null \
-        || return 1
-    all_services_running "$BACKEND_DIR/docker-compose.yaml" --profile all \
-        || return 1
-    all_services_running "$CEREBRA_DIR/docker-compose.yaml" || return 1
-    [ "$(git -C "$BACKEND_DIR" rev-parse HEAD)" = "$BACKEND_TARGET" ] \
-        || return 1
-    [ "$(git -C "$CEREBRA_DIR" rev-parse HEAD)" = "$CEREBRA_TARGET" ]
+    local backend_head cerebra_head
+    if ! wait_for_api; then
+        log "Verification failed: the API did not answer on http://127.0.0.1:5000/api/version"
+        return 1
+    fi
+    if ! wait_for_stacks; then
+        log "Verification failed: services that ran before the update are not running: $(printf '%s' "$REGRESSIONS" | tr -s ' ')"
+        return 1
+    fi
+    if [ -n "$(printf '%s' "$UNHEALTHY_SERVICES" | tr -d ' ')" ]; then
+        log "Tolerated pre-existing unhealthy services (decision D12): $(printf '%s' "$UNHEALTHY_SERVICES" | tr -s ' ')"
+    fi
+    backend_head="$(git -C "$BACKEND_DIR" rev-parse HEAD)"
+    if [ "$backend_head" != "$BACKEND_TARGET" ]; then
+        log "Verification failed: pib-backend is at $backend_head, expected $BACKEND_TARGET"
+        return 1
+    fi
+    cerebra_head="$(git -C "$CEREBRA_DIR" rev-parse HEAD)"
+    if [ "$cerebra_head" != "$CEREBRA_TARGET" ]; then
+        log "Verification failed: cerebra is at $cerebra_head, expected $CEREBRA_TARGET"
+        return 1
+    fi
+    log "Verification passed: API answers, every container runs, revisions match"
+    return 0
 }
 
 write_revision() {
@@ -324,6 +409,9 @@ load_request
 write_status "preflight" "Validating repositories, disk, watchdog ownership, and database backup"
 check_cancel
 check_update_dir
+BACKEND_SERVICES_BEFORE="$(snapshot_running_services "$BACKEND_DIR/docker-compose.yaml" --profile all)"
+CEREBRA_SERVICES_BEFORE="$(snapshot_running_services "$CEREBRA_DIR/docker-compose.yaml")"
+log "Services running before the update: pib-backend=[$(printf '%s' "$BACKEND_SERVICES_BEFORE" | tr '\n' ' ')] cerebra=[$(printf '%s' "$CEREBRA_SERVICES_BEFORE" | tr '\n' ' ')]"
 validate_repository "pib-backend" "$BACKEND_DIR"
 validate_repository "cerebra" "$CEREBRA_DIR"
 check_watchdog_conflict

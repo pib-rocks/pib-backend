@@ -107,6 +107,21 @@ To disable API-triggered updates while leaving the rest of the backend running:
 sudo systemctl disable --now pib-update.path
 ```
 
+### Health gate: only regressions roll an update back (decision D12)
+
+After the rebuild the runner requires the API to answer, both checkouts to sit at the
+recorded target revision, and **no service that ran before the update to be missing
+afterwards**. It takes that snapshot in the preflight phase, before anything is fetched or
+built, and compares it once the stacks are up again (`setup/update_healthcheck.py`, unit
+tested in `tests/unit/test_update_healthcheck.py`).
+
+Services that were already not running before the update do not block it: they are named in
+the log and in the job status as `unhealthyServices`, because the strict rule deadlocked the
+robot - the damage blocked the very update that would have fixed it (an invalid Bricklet UID
+crash-looped `ros-motors`, and every update rolled back; PR-1796/PR-1797). A service that ran
+before and is gone now still fails the update and triggers the rollback. If nothing at all was
+running before the update, the strict rule applies for that run.
+
 An end-to-end runner check must be performed on a disposable Pi checkout: queue
 a develop request, observe the documented states in order, verify that the
 backup passes `PRAGMA integrity_check`, and induce a revision mismatch to
