@@ -14,6 +14,11 @@ from std_msgs.msg import Bool, Int32
 import usb.core
 import usb.util
 
+from ros_audio_io.device_retry import (
+    DeviceNotFoundError,
+    describe_open_failure,
+    next_retry_delay,
+)
 from ros_audio_io.microphone_parameters import (
     LED_DEFAULTS,
     PARAMETER_SPECS,
@@ -38,37 +43,58 @@ class MicrophoneArrayNode(Node):
         self._syncing_parameters = False
         self._pending_parameter_sync = {}
         self._sync_timer = None
+        self.retry_timer = None
+        self.open_attempts = 0
+        self.dev = None
+        self.tuning = None
+        self.pixel_ring = None
 
-        device_error = None
-        try:
-            self.dev = usb.core.find(idVendor=0x2886, idProduct=0x0018)
-        except Exception as exc:
-            self.dev = None
-            device_error = str(exc)
-
-        if self.dev is None:
-            # There is deliberately no timer and no fabricated fallback state.
-            detail = f": {device_error}" if device_error else ""
-            self.get_logger().warning(
-                "ReSpeaker Mic Array v2.0 unavailable; publishing no device state"
-                f"{detail}"
-            )
-            self.tuning = None
-            self.pixel_ring = None
-        else:
-            self.tuning = Tuning(self.dev)
-            self.pixel_ring = PixelRing(self.dev)
+        self._attempt_device_open()
 
         self._declare_control_parameters()
         self.add_on_set_parameters_callback(self._on_parameters_changed)
 
-        if self.dev is not None:
-            publish_hz = self._publish_rate()
-            self.get_logger().info(
-                f"Publishing DOA, voice activity and speech detection at "
-                f"{publish_hz:g} Hz"
+    def _attempt_device_open(self):
+        self.open_attempts += 1
+        device = None
+        try:
+            device = usb.core.find(idVendor=0x2886, idProduct=0x0018)
+            if device is None:
+                raise DeviceNotFoundError("ReSpeaker Mic Array v2.0 was not found")
+            tuning = Tuning(device)
+            pixel_ring = PixelRing(device)
+        except Exception as exc:
+            if device is not None:
+                try:
+                    usb.util.dispose_resources(device)
+                except Exception:
+                    pass
+            delay = next_retry_delay(self.open_attempts)
+            reason = describe_open_failure(exc)
+            self.get_logger().warning(
+                f"Microphone array open failed: reason={reason}; detail={exc}; "
+                f"attempt={self.open_attempts}; next attempt in {delay:g}s; "
+                "publishing no device state"
             )
-            self.timer = self.create_timer(1.0 / publish_hz, self.publish_state)
+            self.retry_timer = self.create_timer(delay, self.retry_open_device)
+            return
+
+        self.dev = device
+        self.tuning = tuning
+        self.pixel_ring = pixel_ring
+        publish_hz = self._publish_rate()
+        self.get_logger().info(
+            f"Publishing DOA, voice activity and speech detection at {publish_hz:g} Hz"
+        )
+        self.timer = self.create_timer(1.0 / publish_hz, self.publish_state)
+
+    def retry_open_device(self):
+        retry_timer = self.retry_timer
+        self.retry_timer = None
+        if retry_timer is not None:
+            retry_timer.cancel()
+            self.destroy_timer(retry_timer)
+        self._attempt_device_open()
 
     def _publish_rate(self):
         try:
