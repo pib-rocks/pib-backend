@@ -239,7 +239,14 @@ models:
   - head-pose-estimation-adas-0001
   - gaze-estimation-adas-0002
   publish_topic: detections/gaze_estimation_crop
-  selectable: true
+  selectable: false
+  functional: false
+  unavailable_reason: 'Live measurement on the device: the chain starts but crashes the OAK (depthai
+    crash dump, zero messages), which fails the acceptance criterion that the camera and other models
+    stay unaffected. A standalone probe running only head-pose plus gaze with a fixed crop delivered
+    492 packets in 25 s, so the failure comes from what D1 added on top: a second YuNet instance, two
+    eye manipulators and the host config node. Parked until the chain is reduced. Details in the
+    PR-1803 comment about the crash.'
 - model_id: yolov6n_coco_640x640
   task: object_detection
   publish_topic: detections/yolov6n_coco_640x640
