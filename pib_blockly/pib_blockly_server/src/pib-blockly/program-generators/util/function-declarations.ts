@@ -286,7 +286,14 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(model_id) -> None:
         models.stop_model(str(model_id))
 `;
 
-export const GET_FACE_DETECTIONS_FUNCTION = (generator: CodeGenerator) => `
+function latestDetectionsFunction(
+    generator: CodeGenerator,
+    topic: string,
+    emptyWarning: string,
+    extraFields = "",
+    extraHelpers = "",
+) {
+    return `
 def ${generator.FUNCTION_NAME_PLACEHOLDER_}(timeout_sec=10.0):
     received = {}
 
@@ -295,7 +302,7 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(timeout_sec=10.0):
 
     subscription = node.create_subscription(
         DetectionArray,
-        "/detections/face_detection_yunet_160x120",
+        "${topic}",
         _on_detection,
         10,
     )
@@ -308,9 +315,9 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(timeout_sec=10.0):
 
     message = received.get("message")
     if message is None:
-        logging.warning("no face detections received")
+        logging.warning("${emptyWarning}")
         return []
-
+${extraHelpers}
     return [
         [
             detection.label,
@@ -318,11 +325,60 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(timeout_sec=10.0):
             detection.x_min,
             detection.y_min,
             detection.x_max,
-            detection.y_max,
+            detection.y_max,${extraFields}
         ]
         for detection in message.detections
     ]
 `;
+}
+
+export const GET_FACE_DETECTIONS_FUNCTION = (generator: CodeGenerator) =>
+    latestDetectionsFunction(
+        generator,
+        "/detections/face_detection_yunet_160x120",
+        "no face detections received",
+    );
+
+export const GET_OBJECT_DETECTIONS_FUNCTION = (generator: CodeGenerator) =>
+    latestDetectionsFunction(
+        generator,
+        "/detections/yolov6n_coco_640x640",
+        "no object detections received",
+    );
+
+export const GET_QR_DETECTIONS_FUNCTION = (generator: CodeGenerator) =>
+    latestDetectionsFunction(
+        generator,
+        "/detections/qr_code_detection_384x384",
+        "no qr detections received",
+    );
+
+export const GET_EMOTION_DETECTIONS_FUNCTION = (generator: CodeGenerator) =>
+    latestDetectionsFunction(
+        generator,
+        "/detections/emotion_recognition_crop",
+        "no emotion detections received",
+    );
+
+export const GET_HEAD_POSE_DETECTIONS_FUNCTION = (generator: CodeGenerator) =>
+    latestDetectionsFunction(
+        generator,
+        "/detections/head_pose_estimation_crop",
+        "no head pose detections received",
+        `
+            _scalar(detection, "yaw_deg", "yaw"),
+            _scalar(detection, "pitch_deg", "pitch"),
+            _scalar(detection, "roll_deg", "roll"),`,
+        `
+    def _scalar(detection, *names):
+        for name in names:
+            if name in detection.scalar_names:
+                index = detection.scalar_names.index(name)
+                if index < len(detection.scalar_values):
+                    return detection.scalar_values[index]
+        return 0.0
+`,
+    );
 
 export const GET_DETECTION_FIELD_FUNCTION = (generator: CodeGenerator) => `
 def ${generator.FUNCTION_NAME_PLACEHOLDER_}(
