@@ -24,6 +24,12 @@ def get_tuning():
     return jsonify(tuning), 200
 
 
+@bp.route("/desired-state", methods=["GET"])
+def get_desired_state():
+    desired_state = microphone_array_service.get_desired_state()
+    return jsonify(desired_state), 200
+
+
 @bp.route("/tuning", methods=["POST"])
 def update_tuning():
     """Validate a legacy request without applying it to the USB device."""

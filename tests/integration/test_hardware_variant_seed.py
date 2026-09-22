@@ -1,5 +1,7 @@
 """Fresh-database seed coverage for the implemented hardware variants."""
 
+import json
+
 import pytest
 from click.testing import CliRunner
 
@@ -8,7 +10,11 @@ from commands import seed_db
 from model.controller_model import Controller
 from model.motor_model import Motor
 from model.system_property_model import SystemProperty
-from service.system_property_service import HARDWARE_VARIANT_KEY
+from seed_profiles import get_profile
+from service.system_property_service import (
+    HARDWARE_VARIANT_KEY,
+    MICROPHONE_DESIRED_STATE_KEY,
+)
 
 
 @pytest.mark.parametrize(
@@ -61,6 +67,12 @@ def test_seed_db_uses_selected_hardware_profile(
             variant,
             "environment",
         )
+        desired_state = db.session.get(SystemProperty, MICROPHONE_DESIRED_STATE_KEY)
+        desired_document = json.loads(desired_state.value)
+        assert desired_document["parameters"] == dict(
+            get_profile(variant).microphone_tuning
+        )
+        assert desired_document["revision"] == 1
         for motor_name, expected_location in relocated_motors.items():
             motor = Motor.query.filter_by(name=motor_name).one()
             assert (motor.controller.number, motor.channel) == expected_location

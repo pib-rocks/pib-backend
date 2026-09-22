@@ -2,17 +2,26 @@
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
 import pytest
 
+from app.app import db
+from model.system_property_model import SystemProperty
+from seed_profiles.edu_microphone_tuning import MICROPHONE_TUNING
 from service import microphone_array_service as mas
+from service.system_property_service import MICROPHONE_DESIRED_STATE_KEY
+
+ROS_AUDIO_PACKAGE = Path(__file__).parents[2] / "ros_packages" / "ros_audio_io"
+sys.path.insert(0, str(ROS_AUDIO_PACKAGE))
+
+from ros_audio_io.microphone_parameters import PRESETS as OWNER_PRESETS  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
-def _reset_service():
-    service = mas.get_service()
-    service.reset_for_tests()
+def _database_context(app_ctx):
     yield
-    service.reset_for_tests()
 
 
 def test_list_presets_includes_required_names():
@@ -49,6 +58,47 @@ def test_legacy_updates_only_simulated_cache():
     assert tuning["led_ring"]["mode"] == "listen"
     assert tuning["led_ring"]["brightness"] == 24
     assert tuning["applied_to_device"] is False
+
+
+def test_profile_default_matches_device_owner_standard_preset():
+    assert dict(MICROPHONE_TUNING) == OWNER_PRESETS["Standard"]
+
+
+def test_missing_desired_state_is_created_from_profile_default():
+    db.session.query(SystemProperty).filter_by(
+        key=MICROPHONE_DESIRED_STATE_KEY
+    ).delete()
+    db.session.commit()
+
+    desired_state = mas.MicrophoneArrayService().get_desired_state()
+
+    assert desired_state["parameters"] == MICROPHONE_TUNING
+    assert desired_state["preset"] == "Standard"
+    assert desired_state["revision"] == 1
+    assert desired_state["updatedAt"]
+
+
+def test_tuning_and_led_survive_a_fresh_service_instance():
+    first_service = mas.MicrophoneArrayService()
+    first_service.update_tuning(
+        {
+            "parameters": {"HPFONOFF": 3},
+            "led_ring": {"mode": "spin", "brightness": 20, "color": "#12abef"},
+        }
+    )
+    db.session.commit()
+
+    desired_state = mas.MicrophoneArrayService().get_desired_state()
+
+    assert desired_state["parameters"]["HPFONOFF"] == 3
+    assert desired_state["led_ring"] == {
+        "mode": "spin",
+        "brightness": 20,
+        "color": "#12ABEF",
+        "vad_led": 0,
+    }
+    assert desired_state["preset"] == "Custom"
+    assert desired_state["revision"] == 2
 
 
 def test_apply_raw_preset_and_alias():

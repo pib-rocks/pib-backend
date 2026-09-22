@@ -10,7 +10,21 @@ from __future__ import annotations
 
 import threading
 from copy import deepcopy
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
+
+from seed_profiles import HardwareProfile, get_profile
+from seed_profiles.edu_microphone_tuning import (
+    MICROPHONE_LED_RING,
+    MICROPHONE_TUNING,
+)
+from service.system_property_service import (
+    MICROPHONE_DESIRED_STATE_KEY,
+    get_property_value,
+    get_variant,
+    set_property,
+    set_property_if_missing,
+)
 
 VENDOR_ID = 0x2886
 PRODUCT_ID = 0x0018
@@ -32,18 +46,7 @@ PARAMETERS = {
 }
 TUNABLE_PARAMS = tuple(PARAMETERS)
 
-_DEFAULT_TUNING: Dict[str, Any] = {
-    "AGCONOFF": 1,
-    "AGCMAXGAIN": 31.6,
-    "AGCDESIREDLEVEL": 0.005,
-    "AGCTIME": 1.0,
-    "STATNOISEONOFF": 1,
-    "NONSTATNOISEONOFF": 1,
-    "ECHOONOFF": 1,
-    "HPFONOFF": 1,
-    "STATNOISEONOFF_SR": 1,
-    "NONSTATNOISEONOFF_SR": 1,
-}
+_DEFAULT_TUNING: Dict[str, Any] = dict(MICROPHONE_TUNING)
 
 PRESETS: Dict[str, Dict[str, Any]] = {
     "Standard": dict(_DEFAULT_TUNING),
@@ -80,12 +83,9 @@ PRESET_ALIASES = {
 }
 
 LED_MODES = ("off", "listen", "speak", "think", "spin", "trace", "mono")
-_DEFAULT_LED: Dict[str, Any] = {
-    "mode": "off",
-    "brightness": 16,
-    "color": "#000000",
-    "vad_led": 0,
-}
+_DEFAULT_LED: Dict[str, Any] = dict(MICROPHONE_LED_RING)
+
+_desired_state_lock = threading.RLock()
 
 
 def _legacy_facts() -> Dict[str, Any]:
@@ -134,12 +134,38 @@ def _validate_param(name: str, value: Any) -> Any:
     return coerced
 
 
+def _timestamp() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def build_default_desired_state(profile: HardwareProfile) -> Dict[str, Any]:
+    return {
+        "parameters": dict(profile.microphone_tuning),
+        "led_ring": deepcopy(_DEFAULT_LED),
+        "preset": "Standard",
+        "updatedAt": _timestamp(),
+        "revision": 1,
+    }
+
+
+def seed_desired_state(profile: HardwareProfile | None = None) -> Dict[str, Any]:
+    """Create the profile default if absent and return the stored document."""
+
+    with _desired_state_lock:
+        selected_profile = profile or get_profile(get_variant())
+        set_property_if_missing(
+            MICROPHONE_DESIRED_STATE_KEY,
+            build_default_desired_state(selected_profile),
+            "default",
+        )
+        return deepcopy(get_property_value(MICROPHONE_DESIRED_STATE_KEY))
+
+
 class MicrophoneArrayService:
-    """Compatibility-only state; this class has no hardware code path."""
+    """Database-backed desired state; this class has no hardware code path."""
 
     def __init__(self) -> None:
-        self._lock = threading.RLock()
-        self.reset_for_tests()
+        self._lock = _desired_state_lock
 
     @property
     def is_simulation(self) -> bool:
@@ -175,38 +201,50 @@ class MicrophoneArrayService:
 
     def get_tuning(self) -> Dict[str, Any]:
         with self._lock:
+            desired_state = self.get_desired_state()
             return {
-                "preset": self._preset,
+                "preset": desired_state["preset"],
                 "presets": self.list_presets(),
-                "parameters": dict(self._tuning_state),
-                "led_ring": dict(self._led_state),
+                "parameters": dict(desired_state["parameters"]),
+                "led_ring": dict(desired_state["led_ring"]),
                 **_legacy_facts(),
             }
 
+    def get_desired_state(self) -> Dict[str, Any]:
+        with self._lock:
+            desired_state = get_property_value(MICROPHONE_DESIRED_STATE_KEY)
+            if desired_state is None:
+                desired_state = seed_desired_state()
+            return deepcopy(desired_state)
+
     def update_tuning(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """Validate legacy input and update only the explicitly simulated cache."""
+        """Validate legacy input and persist the desired device-owner state."""
 
         if not isinstance(payload, dict):
             raise ValueError("Request body must be a JSON object")
 
         with self._lock:
+            desired_state = self.get_desired_state()
+            tuning_state = desired_state["parameters"]
+            led_state = desired_state["led_ring"]
+
             if payload.get("preset") is not None:
                 preset_name = _normalize_preset_name(str(payload["preset"]))
                 if preset_name != "Custom":
-                    self._tuning_state.update(PRESETS[preset_name])
-                self._preset = preset_name
+                    tuning_state.update(PRESETS[preset_name])
+                desired_state["preset"] = preset_name
 
             if payload.get("parameters") is not None:
                 parameters = payload["parameters"]
                 if not isinstance(parameters, dict):
                     raise ValueError("'parameters' must be an object")
-                self._tuning_state.update(
+                tuning_state.update(
                     {
                         str(name): _validate_param(str(name), value)
                         for name, value in parameters.items()
                     }
                 )
-                self._preset = "Custom"
+                desired_state["preset"] = "Custom"
 
             if payload.get("led_ring") is not None:
                 led = payload["led_ring"]
@@ -218,24 +256,24 @@ class MicrophoneArrayService:
                         raise ValueError(
                             f"Unknown LED mode '{mode}'; expected one of {LED_MODES}"
                         )
-                    self._led_state["mode"] = mode
+                    led_state["mode"] = mode
                 if led.get("brightness") is not None:
                     brightness = int(led["brightness"])
                     if brightness < 0 or brightness > 31:
                         raise ValueError("LED brightness must be in [0, 31]")
-                    self._led_state["brightness"] = brightness
+                    led_state["brightness"] = brightness
                 if led.get("color") is not None:
-                    self._led_state["color"] = _parse_hex_color(str(led["color"]))
+                    led_state["color"] = _parse_hex_color(str(led["color"]))
                 if led.get("vad_led") is not None:
-                    self._led_state["vad_led"] = int(bool(led["vad_led"]))
+                    led_state["vad_led"] = int(bool(led["vad_led"]))
 
+            desired_state["revision"] += 1
+            desired_state["updatedAt"] = _timestamp()
+            set_property(MICROPHONE_DESIRED_STATE_KEY, desired_state, source="command")
             return self.get_tuning()
 
     def reset_for_tests(self) -> None:
-        with self._lock:
-            self._preset = "Standard"
-            self._tuning_state = deepcopy(_DEFAULT_TUNING)
-            self._led_state = deepcopy(_DEFAULT_LED)
+        """Retained for callers from before desired state moved to the database."""
 
 
 _service: Optional[MicrophoneArrayService] = None
@@ -260,6 +298,10 @@ def health() -> Dict[str, Any]:
 
 def get_tuning() -> Dict[str, Any]:
     return get_service().get_tuning()
+
+
+def get_desired_state() -> Dict[str, Any]:
+    return get_service().get_desired_state()
 
 
 def update_tuning(payload: Dict[str, Any]) -> Dict[str, Any]:
