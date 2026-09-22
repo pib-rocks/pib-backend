@@ -8,6 +8,7 @@ import math
 import sys
 import types
 from pathlib import Path
+from urllib import error
 
 import pytest
 
@@ -20,6 +21,17 @@ from ros_audio_io.device_retry import (  # noqa: E402
     describe_open_failure,
     device_status_payload,
     next_retry_delay,
+)
+from ros_audio_io.desired_state import (  # noqa: E402
+    DEFAULT_FLASK_API_BASE_URL,
+    DESIRED_STATE_PATH,
+    DesiredStateValidationError,
+    build_desired_state_url,
+    describe_desired_state_failure,
+    desired_state_failure,
+    fetch_desired_state,
+    should_apply_revision,
+    validate_desired_state,
 )
 from ros_audio_io.microphone_parameters import (  # noqa: E402
     AGCTIME_BLOCK_RATE_HZ,
@@ -45,6 +57,21 @@ MEASURED_AGCTIME_READBACKS = {
 }
 # Both measured read-backs sit this far above exp(-1 / (62.5 * seconds)).
 MEASURED_COEFFICIENT_RESIDUAL = 1.5e-05
+
+
+def desired_state_document(revision=1):
+    return {
+        "parameters": dict(PRESETS["Standard"]),
+        "led_ring": {
+            "mode": "off",
+            "brightness": 16,
+            "color": "#000000",
+            "vad_led": 0,
+        },
+        "preset": "Standard",
+        "updatedAt": "2026-09-22T07:50:00+00:00",
+        "revision": revision,
+    }
 
 
 class CoefficientDevice:
@@ -107,6 +134,85 @@ def test_retry_delay_is_monotonic_and_bounded():
 )
 def test_open_failure_wording(error, reason):
     assert describe_open_failure(error) == reason
+
+
+def test_desired_state_url_uses_house_default_and_environment_override():
+    assert build_desired_state_url({}) == (
+        DEFAULT_FLASK_API_BASE_URL + DESIRED_STATE_PATH
+    )
+    assert build_desired_state_url(
+        {"FLASK_API_BASE_URL": "http://backend.example/v1/"}
+    ) == ("http://backend.example/v1" + DESIRED_STATE_PATH)
+
+
+def test_fetch_parses_and_validates_desired_state():
+    document = desired_state_document()
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def read(self):
+            return json.dumps(document).encode()
+
+    calls = []
+
+    def opener(url, timeout):
+        calls.append((url, timeout))
+        return Response()
+
+    desired = fetch_desired_state("http://backend/desired", opener=opener)
+
+    assert calls == [("http://backend/desired", 3.0)]
+    assert desired["parameters"] == document["parameters"]
+    assert desired["led_ring"]["vad_led"] is False
+    assert desired["revision"] == 1
+
+
+@pytest.mark.parametrize(
+    ("mutate", "reason"),
+    [
+        (
+            lambda document: document["parameters"].update({"UNKNOWN": 1}),
+            "unknown parameter: UNKNOWN",
+        ),
+        (
+            lambda document: document["parameters"].update({"AGCONOFF": "1"}),
+            "AGCONOFF must be an integer",
+        ),
+        (
+            lambda document: document.pop("led_ring"),
+            "missing field: led_ring",
+        ),
+    ],
+)
+def test_invalid_desired_state_is_rejected_before_any_apply(mutate, reason):
+    document = desired_state_document()
+    mutate(document)
+    device = CoefficientDevice()
+
+    with pytest.raises(DesiredStateValidationError, match=reason):
+        validated = validate_desired_state(document)
+        apply_tuning_values(device, validated["parameters"])
+
+    assert device.written == {}
+
+
+def test_revision_decision_applies_only_a_new_revision():
+    assert should_apply_revision(None, 4)
+    assert not should_apply_revision(4, 4)
+    assert should_apply_revision(4, 5)
+
+
+def test_backend_unreachable_has_named_reason_and_bounded_backoff():
+    failure = error.URLError("connection refused")
+
+    assert describe_desired_state_failure(failure) == "backend unreachable"
+    assert desired_state_failure(failure, 1) == ("backend unreachable", 1.0)
+    assert desired_state_failure(failure, 100) == ("backend unreachable", 30.0)
 
 
 def test_unavailable_status_has_no_invented_device_facts():
@@ -292,11 +398,15 @@ def test_doa_publisher_retries_until_array_is_available(monkeypatch):
             pass
 
     class FakeLogger:
+        def __init__(self):
+            self.infos = []
+            self.warnings = []
+
         def info(self, message):
-            pass
+            self.infos.append(message)
 
         def warning(self, message):
-            pass
+            self.warnings.append(message)
 
         def error(self, message):
             pass
@@ -304,6 +414,7 @@ def test_doa_publisher_retries_until_array_is_available(monkeypatch):
     class FakeNode:
         def __init__(self, name):
             self.timers = []
+            self.logger = FakeLogger()
 
         def create_publisher(self, message_type, topic, depth):
             return types.SimpleNamespace(publish=lambda message: None)
@@ -323,7 +434,7 @@ def test_doa_publisher_retries_until_array_is_available(monkeypatch):
             pass
 
         def get_logger(self):
-            return FakeLogger()
+            return self.logger
 
     device_state = {"available": False}
     device = object()
@@ -347,10 +458,16 @@ def test_doa_publisher_retries_until_array_is_available(monkeypatch):
     std_msgs_msg = types.ModuleType("std_msgs.msg")
     std_msgs_msg.Bool = object
     std_msgs_msg.Int32 = object
+    tuning = CoefficientDevice()
+    led_calls = []
     tuning_module = types.ModuleType("ros_audio_io.tuning")
-    tuning_module.Tuning = lambda found: types.SimpleNamespace()
+    tuning_module.Tuning = lambda found: tuning
     pixel_ring_module = types.ModuleType("ros_audio_io.pixel_ring")
-    pixel_ring_module.PixelRing = lambda found: types.SimpleNamespace()
+    pixel_ring_module.PixelRing = lambda found: types.SimpleNamespace(
+        set_brightness=lambda value: led_calls.append(("brightness", value)),
+        set_vad_led=lambda value: led_calls.append(("vad_led", value)),
+        off=lambda: led_calls.append(("mode", "off")),
+    )
 
     for name, module in {
         "usb": usb,
@@ -370,6 +487,11 @@ def test_doa_publisher_retries_until_array_is_available(monkeypatch):
     monkeypatch.delitem(sys.modules, "ros_audio_io.doa_publisher", raising=False)
 
     doa_publisher = importlib.import_module("ros_audio_io.doa_publisher")
+    monkeypatch.setattr(
+        doa_publisher,
+        "fetch_desired_state",
+        lambda url: validate_desired_state(desired_state_document(revision=7)),
+    )
     node = doa_publisher.MicrophoneArrayNode()
 
     assert node.dev is None
@@ -383,6 +505,31 @@ def test_doa_publisher_retries_until_array_is_available(monkeypatch):
     assert node.pixel_ring is not None
     assert node.retry_timer is None
     assert node.timer.delay == pytest.approx(0.1)
+    assert node.applied_desired_state_revision == 7
+    assert set(tuning.written) == set(TUNABLE_PARAMETERS)
+    assert led_calls == [
+        ("brightness", 16),
+        ("vad_led", False),
+        ("mode", "off"),
+    ]
+    assert any(
+        "Applied microphone desired state: revision=7" in message
+        for message in node.logger.infos
+    )
+
+    writes_after_recovery = dict(tuning.written)
+    node._periodic_reconcile()
+    assert tuning.written == writes_after_recovery
+    assert (
+        len(
+            [
+                message
+                for message in node.logger.infos
+                if "Applied microphone desired state" in message
+            ]
+        )
+        == 1
+    )
     sys.modules.pop("ros_audio_io.doa_publisher", None)
 
 
