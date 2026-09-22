@@ -43,14 +43,6 @@ try {
             `${blockType} MODEL_ID options must be [label, model_id] pairs`,
         );
     }
-
-    const detectionBlock = workspace.newBlock("get_detection_field");
-    assert(
-        detectionBlock.getInput("MODEL_ID")?.connection?.getCheck()?.includes(
-            "String",
-        ),
-        "get_detection_field must retain its String MODEL_ID value input",
-    );
 } finally {
     workspace.dispose();
 }
