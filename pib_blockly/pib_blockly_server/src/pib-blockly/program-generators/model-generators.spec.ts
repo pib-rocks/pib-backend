@@ -1,6 +1,6 @@
 import {Block} from "blockly/core/block";
 import {Order, pythonGenerator} from "blockly/python";
-import {get_detection_field, start_model, stop_model} from "./model-generators";
+import {start_model, stop_model} from "./model-generators";
 
 type MockGenerator = typeof pythonGenerator & {
     definitions_: Record<string, string>;
@@ -74,39 +74,5 @@ describe("model generators", () => {
             "def stop_model_with_sdk(model_id) -> None:",
         );
         expect(declarations).toContain("models.stop_model(str(model_id))");
-    });
-
-    it("generates detection access from its value sockets", () => {
-        const generator = createGenerator({
-            MODEL_ID: "'face'",
-            INDEX: "2",
-            NAME: "'nose'",
-        });
-
-        const [code, order] = get_detection_field(
-            blockWithFields({FIELD: "keypoint_z"}),
-            generator,
-        );
-
-        expect(code).toBe(
-            "get_detection_field('face', 2, 'keypoint_z', 'nose')",
-        );
-        expect(order).toBe(Order.FUNCTION_CALL);
-        const declarations = definitions(generator);
-        expect(declarations).toContain(
-            "from datatypes.msg import DetectionArray",
-        );
-        expect(declarations).toContain('f"/detections/{model_id}"');
-        expect(declarations).toContain(
-            'if field in ("keypoint_x", "keypoint_y", "keypoint_z"):',
-        );
-    });
-
-    it("uses detection defaults when sockets and field are empty", () => {
-        const generator = createGenerator();
-
-        const [code] = get_detection_field(blockWithFields({}), generator);
-
-        expect(code).toBe('get_detection_field("hand_tracking", 0, \'\', "")');
     });
 });

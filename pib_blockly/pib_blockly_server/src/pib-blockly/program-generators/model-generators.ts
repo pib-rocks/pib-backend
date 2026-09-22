@@ -17,7 +17,6 @@ import {
     GET_QR_DETECTIONS_FUNCTION,
     GET_EMOTION_DETECTIONS_FUNCTION,
     GET_HEAD_POSE_DETECTIONS_FUNCTION,
-    GET_DETECTION_FIELD_FUNCTION,
     START_MODEL_FUNCTION,
     STOP_MODEL_FUNCTION,
 } from "./util/function-declarations";
@@ -54,37 +53,6 @@ export function stop_model(block: Block, generator: typeof pythonGenerator) {
         STOP_MODEL_FUNCTION(generator),
     );
     return `${functionName}(${modelIdFromDropdown(block, generator)})\n`;
-}
-
-export function get_detection_field(
-    block: Block,
-    generator: typeof pythonGenerator,
-): [string, Order] {
-    Object.assign(generator.definitions_, {
-        IMPORT_RCLPY,
-        IMPORT_TIME,
-        IMPORT_LOGGING,
-        IMPORT_SYS,
-        IMPORT_DETECTION_ARRAY,
-        CONFIGURE_LOGGING,
-        INIT_ROS,
-    });
-
-    const functionName = generator.provideFunction_(
-        "get_detection_field",
-        GET_DETECTION_FIELD_FUNCTION(generator),
-    );
-    const modelId =
-        generator.valueToCode(block, "MODEL_ID", Order.NONE) ||
-        '"hand_tracking"';
-    const index = generator.valueToCode(block, "INDEX", Order.NONE) || "0";
-    const name = generator.valueToCode(block, "NAME", Order.NONE) || '""';
-    const field = generator.quote_(String(block.getFieldValue("FIELD") || ""));
-
-    return [
-        `${functionName}(${modelId}, ${index}, ${field}, ${name})`,
-        Order.FUNCTION_CALL,
-    ];
 }
 
 function latestDetectionsReporter(
