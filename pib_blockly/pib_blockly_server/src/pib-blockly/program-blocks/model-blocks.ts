@@ -158,6 +158,42 @@ const detectionBlocks = Blockly.common.createBlockDefinitionsFromJsonArray([
         helpUrl: "",
     },
     {
+        type: "get_object_detections",
+        message0: "latest object detections",
+        output: "Array",
+        colour: 200,
+        tooltip:
+            "Returns the latest object detections as a list. Each object is [label, score, x_min, y_min, x_max, y_max] (indices 0 through 5).",
+        helpUrl: "",
+    },
+    {
+        type: "get_qr_detections",
+        message0: "latest QR detections",
+        output: "Array",
+        colour: 200,
+        tooltip:
+            "Returns the latest QR detections as a list. Each code is [label, score, x_min, y_min, x_max, y_max] (indices 0 through 5).",
+        helpUrl: "",
+    },
+    {
+        type: "get_emotion_detections",
+        message0: "latest emotion detections",
+        output: "Array",
+        colour: 200,
+        tooltip:
+            "Returns the latest emotion detections as a list. Each face is [label, score, x_min, y_min, x_max, y_max] (indices 0 through 5).",
+        helpUrl: "",
+    },
+    {
+        type: "get_head_pose_detections",
+        message0: "latest head pose detections",
+        output: "Array",
+        colour: 200,
+        tooltip:
+            "Returns the latest head pose detections as a list. Each face is [label, score, x_min, y_min, x_max, y_max, yaw_deg, pitch_deg, roll_deg] (indices 0 through 8).",
+        helpUrl: "",
+    },
+    {
         type: "get_detection_field",
         message0: "detection from model %1 item %2 field %3 name %4",
         args0: [

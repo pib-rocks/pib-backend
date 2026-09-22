@@ -13,6 +13,10 @@ import {
 } from "./util/definitions";
 import {
     GET_FACE_DETECTIONS_FUNCTION,
+    GET_OBJECT_DETECTIONS_FUNCTION,
+    GET_QR_DETECTIONS_FUNCTION,
+    GET_EMOTION_DETECTIONS_FUNCTION,
+    GET_HEAD_POSE_DETECTIONS_FUNCTION,
     GET_DETECTION_FIELD_FUNCTION,
     START_MODEL_FUNCTION,
     STOP_MODEL_FUNCTION,
@@ -83,26 +87,56 @@ export function get_detection_field(
     ];
 }
 
-export function get_face_detections(
-    _block: Block,
-    generator: typeof pythonGenerator,
-): [string, Order] {
-    Object.assign(generator.definitions_, {
-        IMPORT_RCLPY,
-        IMPORT_TIME,
-        IMPORT_LOGGING,
-        IMPORT_SYS,
-        IMPORT_DETECTION_ARRAY,
-        CONFIGURE_LOGGING,
-        INIT_ROS,
-    });
+function latestDetectionsReporter(
+    functionName: string,
+    declaration: (generator: typeof pythonGenerator) => string,
+) {
+    return (
+        _block: Block,
+        generator: typeof pythonGenerator,
+    ): [string, Order] => {
+        Object.assign(generator.definitions_, {
+            IMPORT_RCLPY,
+            IMPORT_TIME,
+            IMPORT_LOGGING,
+            IMPORT_SYS,
+            IMPORT_DETECTION_ARRAY,
+            CONFIGURE_LOGGING,
+            INIT_ROS,
+        });
 
-    const functionName = generator.provideFunction_(
-        "get_face_detections",
-        GET_FACE_DETECTIONS_FUNCTION(generator),
-    );
+        const provided = generator.provideFunction_(
+            functionName,
+            declaration(generator),
+        );
 
-    return [`${functionName}()`, Order.FUNCTION_CALL];
+        return [`${provided}()`, Order.FUNCTION_CALL];
+    };
 }
+
+export const get_face_detections = latestDetectionsReporter(
+    "get_face_detections",
+    GET_FACE_DETECTIONS_FUNCTION,
+);
+
+export const get_object_detections = latestDetectionsReporter(
+    "get_object_detections",
+    GET_OBJECT_DETECTIONS_FUNCTION,
+);
+
+export const get_qr_detections = latestDetectionsReporter(
+    "get_qr_detections",
+    GET_QR_DETECTIONS_FUNCTION,
+);
+
+export const get_emotion_detections = latestDetectionsReporter(
+    "get_emotion_detections",
+    GET_EMOTION_DETECTIONS_FUNCTION,
+);
+
+export const get_head_pose_detections = latestDetectionsReporter(
+    "get_head_pose_detections",
+    GET_HEAD_POSE_DETECTIONS_FUNCTION,
+);
 
 export {pythonGenerator};
