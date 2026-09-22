@@ -149,6 +149,15 @@ const lifecycleBlocks = {
 
 const detectionBlocks = Blockly.common.createBlockDefinitionsFromJsonArray([
     {
+        type: "get_face_detections",
+        message0: "latest face detections",
+        output: "Array",
+        colour: 200,
+        tooltip:
+            "Returns the latest face detections as a list. Each face is [label, score, x_min, y_min, x_max, y_max] (indices 0 through 5).",
+        helpUrl: "",
+    },
+    {
         type: "get_detection_field",
         message0: "detection from model %1 item %2 field %3 name %4",
         args0: [

@@ -2,7 +2,7 @@ import {pythonGenerator} from "blockly/python";
 
 import * as tfButton from "./tf-button-generator";
 import * as playWav from "./play-wav-generator";
-import * as face_detector_blocks from "./detectors-generators";
+import * as visionGenerators from "./detectors-generators";
 import * as time_blocks from "./time-generators";
 import * as motor_blocks from "./motor-generators";
 import * as camera_blocks from "./camera-generators";
@@ -23,7 +23,7 @@ export * from "blockly/python";
 pythonGenerator.addReservedWords(RESERVED_WORDS);
 
 const generators: typeof pythonGenerator.forBlock = {
-    ...face_detector_blocks,
+    ...visionGenerators,
     ...time_blocks,
     ...motor_blocks,
     ...camera_blocks,

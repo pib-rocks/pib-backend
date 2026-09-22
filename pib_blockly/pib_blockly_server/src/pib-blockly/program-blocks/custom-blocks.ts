@@ -3,7 +3,7 @@ import * as Blockly from "blockly";
 import {tfButton} from "./tf-button-block";
 import {playWav} from "./play-wav-block";
 import {time_blocks} from "./time-blocks";
-import {face_detector_blocks} from "./detectors-blocks";
+import {visionBlocks} from "./detectors-blocks";
 import {motor_blocks} from "./motor-blocks";
 import {camera_blocks} from "./camera-blocks";
 import {imu_blocks} from "./imu-blocks";
@@ -20,7 +20,7 @@ import {modelBlocks} from "./model-blocks";
 export function customBlockDefinition() {
     Blockly.common.defineBlocks(displayBlocks);
     Blockly.common.defineBlocks(time_blocks);
-    Blockly.common.defineBlocks(face_detector_blocks);
+    Blockly.common.defineBlocks(visionBlocks);
     Blockly.common.defineBlocks(motor_blocks);
     Blockly.common.defineBlocks(camera_blocks);
     Blockly.common.defineBlocks(imu_blocks);
@@ -35,6 +35,4 @@ export function customBlockDefinition() {
     Blockly.common.defineBlocks(setVolume);
     Blockly.common.defineBlocks(getSoundDirection);
     Blockly.common.defineBlocks(modelBlocks);
-
-    face_detector_blocks["face_detector_running"].editable_ = false;
 }
