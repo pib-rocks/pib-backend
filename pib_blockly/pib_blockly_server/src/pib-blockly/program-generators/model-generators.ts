@@ -2,59 +2,53 @@ import {Block} from "blockly/core/block";
 import {Order, pythonGenerator} from "blockly/python";
 import {
     CONFIGURE_LOGGING,
-    IMPORT_ATEXIT,
     IMPORT_DETECTION_ARRAY,
     IMPORT_LOGGING,
-    IMPORT_MODEL_SERVICES,
     IMPORT_OS,
+    IMPORT_PIB_SDK_MODELS,
     IMPORT_RCLPY,
-    IMPORT_SIGNAL,
     IMPORT_SYS,
     IMPORT_TIME,
     INIT_ROS,
 } from "./util/definitions";
 import {
     GET_DETECTION_FIELD_FUNCTION,
-    MODEL_MANAGER_CLASS,
+    START_MODEL_FUNCTION,
+    STOP_MODEL_FUNCTION,
 } from "./util/function-declarations";
 
-function ensureModelManager(generator: typeof pythonGenerator) {
-    Object.assign(generator.definitions_, {
-        IMPORT_RCLPY,
-        IMPORT_OS,
-        IMPORT_LOGGING,
-        IMPORT_ATEXIT,
-        IMPORT_SIGNAL,
-        IMPORT_SYS,
-        IMPORT_MODEL_SERVICES,
-        CONFIGURE_LOGGING,
-        INIT_ROS,
-    });
-
-    const className = generator.provideFunction_(
-        "BlocklyModelManager",
-        MODEL_MANAGER_CLASS(generator),
+function modelIdFromDropdown(
+    block: Block,
+    generator: typeof pythonGenerator,
+): string {
+    return generator.quote_(
+        String(block.getFieldValue("MODEL_ID") || "hand_tracking"),
     );
-    generator.definitions_["INIT_BLOCKLY_MODEL_MANAGER"] =
-        `_blockly_model_manager = ${className}(` +
-        `node, f"blockly-{os.getpid()}")`;
+}
+
+function ensureModelsSdk(generator: typeof pythonGenerator) {
+    Object.assign(generator.definitions_, {
+        IMPORT_OS,
+        IMPORT_PIB_SDK_MODELS,
+    });
 }
 
 export function start_model(block: Block, generator: typeof pythonGenerator) {
-    ensureModelManager(generator);
-    const modelId =
-        generator.valueToCode(block, "MODEL_ID", Order.NONE) ||
-        '"hand_tracking"';
-    const shaves = generator.valueToCode(block, "SHAVES", Order.NONE) || "0";
-    return `_blockly_model_manager.start(${modelId}, ${shaves})\n`;
+    ensureModelsSdk(generator);
+    const functionName = generator.provideFunction_(
+        "start_model_with_sdk",
+        START_MODEL_FUNCTION(generator),
+    );
+    return `${functionName}(${modelIdFromDropdown(block, generator)})\n`;
 }
 
 export function stop_model(block: Block, generator: typeof pythonGenerator) {
-    ensureModelManager(generator);
-    const modelId =
-        generator.valueToCode(block, "MODEL_ID", Order.NONE) ||
-        '"hand_tracking"';
-    return `_blockly_model_manager.stop(${modelId})\n`;
+    ensureModelsSdk(generator);
+    const functionName = generator.provideFunction_(
+        "stop_model_with_sdk",
+        STOP_MODEL_FUNCTION(generator),
+    );
+    return `${functionName}(${modelIdFromDropdown(block, generator)})\n`;
 }
 
 export function get_detection_field(

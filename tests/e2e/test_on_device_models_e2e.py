@@ -180,7 +180,7 @@ def _blockly_pose_workspace(pose_name: str, marker: str) -> str:
     stop = {
         "block": {
             "type": "stop_model",
-            "inputs": {"MODEL_ID": _text("hand_tracking")},
+            "fields": {"MODEL_ID": "hand_tracking"},
         }
     }
     print_marker = {
@@ -224,10 +224,7 @@ def _blockly_pose_workspace(pose_name: str, marker: str) -> str:
     }
     start = {
         "type": "start_model",
-        "inputs": {
-            "MODEL_ID": _text("hand_tracking"),
-            "SHAVES": _number(0),
-        },
+        "fields": {"MODEL_ID": "hand_tracking"},
         "next": wait_for_hand,
     }
     return json.dumps(

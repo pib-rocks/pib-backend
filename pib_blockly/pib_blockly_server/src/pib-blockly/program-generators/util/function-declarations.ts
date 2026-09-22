@@ -272,65 +272,18 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(sequence) -> None:
 
 // model inference
 
-export const MODEL_MANAGER_CLASS = (generator: CodeGenerator) => `
-class ${generator.FUNCTION_NAME_PLACEHOLDER_}:
+export const START_MODEL_FUNCTION = (generator: CodeGenerator) => `
+def ${generator.FUNCTION_NAME_PLACEHOLDER_}(model_id) -> None:
+    rosbridge_host = os.getenv("ROSBRIDGE_HOST", "rosbridge-ws")
+    with Models(host=rosbridge_host, port=9090) as models:
+        models.start_model(str(model_id))
+`;
 
-    def __init__(self, node, owner: str) -> None:
-        self.node = node
-        self.owner = owner
-        self.owned_models = set()
-        self.start_client = node.create_client(StartModel, "/start_model")
-        self.stop_client = node.create_client(StopModel, "/stop_model")
-        atexit.register(self.release_all)
-        signal.signal(signal.SIGTERM, self._on_signal)
-
-    def _on_signal(self, signum, _frame) -> None:
-        self.release_all()
-        raise SystemExit(128 + signum)
-
-    def _call(self, client, request, service_name: str):
-        if not client.wait_for_service(timeout_sec=10.0):
-            raise RuntimeError(f"{service_name} service is not available")
-
-        future = client.call_async(request)
-        rclpy.spin_until_future_complete(self.node, future, timeout_sec=30.0)
-        if not future.done() or future.result() is None:
-            raise RuntimeError(f"{service_name} service call timed out")
-
-        return future.result()
-
-    def start(self, model_id, shaves=0) -> None:
-        model_id = str(model_id)
-        request = StartModel.Request()
-        request.model_id = model_id
-        request.shaves = int(shaves)
-        request.owner = self.owner
-        response = self._call(self.start_client, request, "/start_model")
-        if not response.success:
-            raise RuntimeError(response.message)
-
-        self.owned_models.add(model_id)
-
-    def stop(self, model_id) -> None:
-        model_id = str(model_id)
-        request = StopModel.Request()
-        request.model_id = model_id
-        request.owner = self.owner
-        response = self._call(self.stop_client, request, "/stop_model")
-        if not response.success:
-            raise RuntimeError(response.message)
-
-        self.owned_models.discard(model_id)
-
-    def release_all(self) -> None:
-        for model_id in tuple(self.owned_models):
-            try:
-                self.stop(model_id)
-            except Exception as error:
-                logging.error(
-                    f"failed to release model '{model_id}' for owner "
-                    f"'{self.owner}': {error}"
-                )
+export const STOP_MODEL_FUNCTION = (generator: CodeGenerator) => `
+def ${generator.FUNCTION_NAME_PLACEHOLDER_}(model_id) -> None:
+    rosbridge_host = os.getenv("ROSBRIDGE_HOST", "rosbridge-ws")
+    with Models(host=rosbridge_host, port=9090) as models:
+        models.stop_model(str(model_id))
 `;
 
 export const GET_DETECTION_FIELD_FUNCTION = (generator: CodeGenerator) => `
