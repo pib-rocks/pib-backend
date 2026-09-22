@@ -12,6 +12,7 @@ import {
     INIT_ROS,
 } from "./util/definitions";
 import {
+    GET_FACE_DETECTIONS_FUNCTION,
     GET_DETECTION_FIELD_FUNCTION,
     START_MODEL_FUNCTION,
     STOP_MODEL_FUNCTION,
@@ -80,6 +81,28 @@ export function get_detection_field(
         `${functionName}(${modelId}, ${index}, ${field}, ${name})`,
         Order.FUNCTION_CALL,
     ];
+}
+
+export function get_face_detections(
+    _block: Block,
+    generator: typeof pythonGenerator,
+): [string, Order] {
+    Object.assign(generator.definitions_, {
+        IMPORT_RCLPY,
+        IMPORT_TIME,
+        IMPORT_LOGGING,
+        IMPORT_SYS,
+        IMPORT_DETECTION_ARRAY,
+        CONFIGURE_LOGGING,
+        INIT_ROS,
+    });
+
+    const functionName = generator.provideFunction_(
+        "get_face_detections",
+        GET_FACE_DETECTIONS_FUNCTION(generator),
+    );
+
+    return [`${functionName}()`, Order.FUNCTION_CALL];
 }
 
 export {pythonGenerator};

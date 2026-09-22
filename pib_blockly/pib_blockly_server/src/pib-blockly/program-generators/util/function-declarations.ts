@@ -286,6 +286,44 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(model_id) -> None:
         models.stop_model(str(model_id))
 `;
 
+export const GET_FACE_DETECTIONS_FUNCTION = (generator: CodeGenerator) => `
+def ${generator.FUNCTION_NAME_PLACEHOLDER_}(timeout_sec=10.0):
+    received = {}
+
+    def _on_detection(message):
+        received["message"] = message
+
+    subscription = node.create_subscription(
+        DetectionArray,
+        "/detections/face_detection_yunet_160x120",
+        _on_detection,
+        10,
+    )
+    deadline = time.monotonic() + timeout_sec
+    try:
+        while "message" not in received and time.monotonic() < deadline:
+            rclpy.spin_once(node, timeout_sec=0.1)
+    finally:
+        node.destroy_subscription(subscription)
+
+    message = received.get("message")
+    if message is None:
+        logging.warning("no face detections received")
+        return []
+
+    return [
+        [
+            detection.label,
+            detection.score,
+            detection.x_min,
+            detection.y_min,
+            detection.x_max,
+            detection.y_max,
+        ]
+        for detection in message.detections
+    ]
+`;
+
 export const GET_DETECTION_FIELD_FUNCTION = (generator: CodeGenerator) => `
 def ${generator.FUNCTION_NAME_PLACEHOLDER_}(
     model_id, detection_index, field, name="", timeout_sec=10.0
@@ -466,52 +504,6 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(script: str, host: str, user: str, p
         logging.error(f"Cannot connect to {effective_host} via ssh: {e}")
     finally:
         client.close()
-`;
-
-// face-detector
-
-export const FACE_DETECTOR_CLASS = (generator: CodeGenerator) => `
-import os
-import rclpy
-from std_msgs.msg import Float32MultiArray
-
-class ${generator.FUNCTION_NAME_PLACEHOLDER_}():
-
-    def __init__(self):
-        self.x_center = 0.0
-        self.y_center = 0.0
-        self.node = None
-        self.subscription = None
-
-        if not rclpy.ok():
-            rclpy.init(args=None)
-
-        self.node = rclpy.create_node(f"blockly_face_detector_{os.getpid()}")
-        self.subscription = self.node.create_subscription(
-            Float32MultiArray,
-            "/face_center",
-            self.face_center_callback,
-            10
-        )
-
-    def face_center_callback(self, msg):
-        if len(msg.data) >= 2:
-            self.x_center = float(msg.data[0])
-            self.y_center = float(msg.data[1])
-        else:
-            self.x_center = 0.0
-            self.y_center = 0.0
-
-    def updateDetector(self):
-        if self.node is not None:
-            rclpy.spin_once(self.node, timeout_sec=0.02)
-
-        return (self.x_center, self.y_center)
-
-    def close(self):
-        if self.node is not None:
-            self.node.destroy_node()
-            self.node = None
 `;
 
 // vision
