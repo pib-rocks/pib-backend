@@ -20,6 +20,7 @@ from ros_audio_io.microphone_parameters import (
     PRESETS,
     TUNABLE_PARAMETERS,
     apply_tuning_values,
+    parameter_from_readback,
     validate_parameter,
 )
 from ros_audio_io.pixel_ring import PixelRing
@@ -90,7 +91,7 @@ class MicrophoneArrayNode(Node):
             value = PARAMETER_SPECS[name][3]
             if self.tuning is not None:
                 try:
-                    value = self.tuning.read(name)
+                    value = parameter_from_readback(name, self.tuning.read(name))
                 except Exception as exc:
                     self.get_logger().warning(
                         f"Could not read initial {name}; using declared default: {exc}"

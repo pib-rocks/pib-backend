@@ -21,24 +21,34 @@ leaves the tolerance of its parameter, the whole parameter set is rejected, the
 node logs the parameter with the requested and the actual value, and the ROS
 parameters are re-synchronised with what the device really holds.
 
-### Read-back tolerances
+### `AGCTIME` is read back as a coefficient, not as seconds
 
-The XVF3000 does not return every float exactly as it was written, so
-`microphone_parameters.py` keeps a documented per-parameter tolerance
-(`READBACK_TOLERANCES`, relative plus absolute) next to `PARAMETER_SPECS`.
+`AGCTIME` is written in seconds, but the register holds the one-pole
+coefficient of that ramp at the processing block rate of the device:
+
+```
+coefficient = exp(-1 / (62.5 Hz * seconds))      62.5 Hz = 16000 / 256
+```
+
 Measured on 192.168.1.172 with a ReSpeaker attached:
 
-| write | read-back | deviation |
-| --- | --- | --- |
-| `AGCTIME 1.0` | `0.9841422392055392` | 1.59 % |
-| `AGCTIME 0.5` | `0.9685218567028642` | 93.7 % |
+| write | model coefficient | read-back | residual | read-back in seconds |
+| --- | --- | --- | --- | --- |
+| `AGCTIME 1.0` | `0.9841273201` | `0.9841422392055392` | `1.49e-05` | 1.00095 s |
+| `AGCTIME 0.5` | `0.9685065821` | `0.9685218567028642` | `1.53e-05` | 0.50025 s |
 
-`AGCTIME` therefore gets a 2 % relative tolerance, everything else keeps the
-strict default of `1e-5` relative / `1e-8` absolute. The 0.5 s case is not
-rounding: the device does not hold that value, so the
-"Noisy Environment / ASR" preset asks for 1.0 s instead (AGC is off in that
-preset, which makes the ramp time-constant inert there). Add a tolerance only
-with a measured read-back next to it.
+Both values follow the model, so neither is a value the device refused.
+`microphone_parameters.py` converts every read-back into the unit of its
+parameter (`parameter_from_readback`) before it is compared or reported, so
+comparison, the ROS parameters and the UI all speak seconds.
+
+Converting the 1.5e-05 residual into seconds amplifies it to at most 9.6e-04 s
+at the top of the range, which is what the absolute epsilon
+`AGCTIME_READBACK_EPSILON_SECONDS` (2e-03 s) covers. Apart from that epsilon
+every parameter keeps the strict default tolerance of `1e-5` relative /
+`1e-8` absolute, and a write the device cannot store is still rejected with the
+parameter name, the requested seconds and the value the device reported. Widen
+a tolerance only with a measured read-back next to it.
 
 ## Trap: `ros2 param set <node> led_mode off` fails
 

@@ -32,22 +32,44 @@ PARAMETER_SPECS = {
     "NONSTATNOISEONOFF_SR": (int, 0, 1, 1),
 }
 
+# AGCTIME is a ramp time-constant in seconds, but the register does not hold
+# seconds: it holds the one-pole coefficient of that ramp at the processing
+# block rate of the device,
+#
+#     coefficient = exp(-1 / (block rate * seconds))
+#
+# with a block rate of 16000 Hz / 256 samples = 62.5 Hz. Measured on
+# 192.168.1.172 with a ReSpeaker Mic Array v2.0 attached:
+#
+#     write    model coefficient    read-back             residual
+#     1.0 s    0.9841273201         0.9841422392055392    1.49e-05
+#     0.5 s    0.9685065821         0.9685218567028642    1.53e-05
+#
+# Both read-backs follow the model to about 1.5e-05, so the register carries
+# the requested quantity in a different unit - it is not a value the device
+# refused. Read-backs are therefore converted back into seconds before they are
+# compared or reported, and the parameter keeps its strict tolerance.
+AGCTIME_BLOCK_RATE_HZ = 16000.0 / 256.0
+
+# The 1.5e-05 coefficient residual grows when it is converted into seconds,
+# because the conversion is steep near coefficient 1: at the top of the AGCTIME
+# range it becomes 9.6e-04 s (1.0 s reads back as 1.00095 s), at the bottom
+# 1.1e-05 s. This epsilon covers the whole range with margin while staying an
+# order of magnitude below the 2e-02 s that a 2 % tolerance would have allowed
+# at 1.0 s, so a write the device cannot store is still rejected.
+AGCTIME_READBACK_EPSILON_SECONDS = 2e-3
+
 # How far a float register may drift between the written and the read value.
 # name: (relative tolerance, absolute tolerance)
 #
-# The XVF3000 does not store every float verbatim, so an exact comparison
-# rejects values the device has accepted. Measured on 192.168.1.172 with a
-# ReSpeaker Mic Array v2.0 attached:
-#   AGCTIME 1.0 -> read-back 0.9841422392055392 (1.59 % below the request)
-#   AGCTIME 0.5 -> read-back 0.9685218567028642 (93.7 % off - see PRESETS)
-# 2 % covers the 1.59 % the device actually needs and still rejects the 0.5
-# case, which is a value the device does not hold rather than rounding noise.
-# AGCMAXGAIN and AGCDESIREDLEVEL are written before AGCTIME and passed the
-# strict check in that same session, so they keep the strict default; widen a
-# tolerance only with a measured read-back written down next to it.
+# Everything is compared in the unit of the parameter, so the strict default
+# holds for every register. AGCTIME keeps that strict relative tolerance and
+# only widens the absolute epsilon, by the conversion residual documented
+# above; widen a tolerance only with a measured read-back written down next
+# to it.
 DEFAULT_READBACK_TOLERANCE = (1e-5, 1e-8)
 READBACK_TOLERANCES: Dict[str, tuple] = {
-    "AGCTIME": (0.02, 1e-8),
+    "AGCTIME": (DEFAULT_READBACK_TOLERANCE[0], AGCTIME_READBACK_EPSILON_SECONDS),
 }
 
 PRESETS: Dict[str, Dict[str, Any]] = {
@@ -56,13 +78,11 @@ PRESETS: Dict[str, Dict[str, Any]] = {
         "AGCONOFF": 0,
         "AGCMAXGAIN": 31.6,
         "AGCDESIREDLEVEL": 0.005,
-        # Was 0.5 s. The device answers a 0.5 s write with 0.9685 (measured on
-        # 192.168.1.172), so the read-back check rejected the preset as a whole
-        # and nothing was applied. 1.0 s is a value the device does hold
-        # (read-back 0.9841), and this preset switches AGC off anyway, which
-        # makes the ramp time-constant inert here. The remaining parameters are
-        # unchanged.
-        "AGCTIME": 1.0,
+        # The intended fast ramp of this preset. It was raised to 1.0 s while
+        # the 0.9685 read-back of a 0.5 s write was read as seconds and taken
+        # for a rejection; converted to seconds that read-back is 0.50025 s, so
+        # the device does hold the value and the preset is faithful again.
+        "AGCTIME": 0.5,
         "STATNOISEONOFF": 1,
         "NONSTATNOISEONOFF": 1,
         "ECHOONOFF": 1,
@@ -172,6 +192,38 @@ def validate_parameter(name: str, value: Any) -> Any:
     raise ValueError(f"Unknown microphone parameter: {name}")
 
 
+def agctime_coefficient(seconds: float) -> float:
+    """Convert an AGCTIME ramp time-constant into the register coefficient."""
+
+    seconds = float(seconds)
+    if math.isnan(seconds) or seconds <= 0.0:
+        raise ValueError(f"AGCTIME must be a positive number of seconds; got {seconds}")
+    return math.exp(-1.0 / (AGCTIME_BLOCK_RATE_HZ * seconds))
+
+
+def agctime_seconds(coefficient: float) -> float:
+    """Convert an AGCTIME register coefficient back into seconds."""
+
+    coefficient = float(coefficient)
+    if not 0.0 < coefficient < 1.0:
+        raise ValueError(
+            f"AGCTIME coefficient must be in range (0, 1); got {coefficient}"
+        )
+    return -1.0 / (AGCTIME_BLOCK_RATE_HZ * math.log(coefficient))
+
+
+def parameter_from_readback(name: str, raw: Any) -> Any:
+    """Convert one raw register read-back into the unit of its parameter.
+
+    AGCTIME is the only register the device keeps in another unit; every other
+    parameter is a plain number and is returned unchanged.
+    """
+
+    if name == "AGCTIME":
+        return agctime_seconds(raw)
+    return raw
+
+
 def readback_tolerance(name: str) -> tuple:
     """Return the (relative, absolute) read-back tolerance of one parameter."""
 
@@ -179,7 +231,7 @@ def readback_tolerance(name: str) -> tuple:
 
 
 def readback_matches(name: str, expected: Any, actual: Any) -> bool:
-    """Compare an XVF3000 register read-back with its requested value."""
+    """Compare a read-back, in the unit of the parameter, with its request."""
 
     if isinstance(expected, float):
         rel_tol, abs_tol = readback_tolerance(name)
@@ -187,32 +239,55 @@ def readback_matches(name: str, expected: Any, actual: Any) -> bool:
     return expected == actual
 
 
-def readback_mismatch_reason(name: str, expected: Any, actual: Any) -> str:
+def readback_mismatch_reason(
+    name: str, expected: Any, actual: Any, raw: Any = None
+) -> str:
     """Describe a read-back the device did not reproduce within tolerance."""
 
     reason = f"{name} read-back {actual!r} != requested {expected!r}"
+    details = []
+    if raw is not None and raw != actual:
+        details.append(f"device register {raw!r}")
     if isinstance(expected, float):
         rel_tol, abs_tol = readback_tolerance(name)
-        reason += f" (tolerance: relative {rel_tol:g}, absolute {abs_tol:g})"
+        details.append(f"tolerance: relative {rel_tol:g}, absolute {abs_tol:g}")
+    if details:
+        reason += " (" + "; ".join(details) + ")"
     return reason
+
+
+def readback_unconvertible_reason(name: str, expected: Any, raw: Any, exc: Any) -> str:
+    """Describe a read-back that is not a value of this parameter at all."""
+
+    return (
+        f"{name} read-back {raw!r} is not a value the device can hold for "
+        f"requested {expected!r}: {exc}"
+    )
 
 
 def apply_tuning_values(device, values: Dict[str, Any]):
     """Write tuning values to the device and verify each read-back.
 
-    Returns the read-backs collected so far together with a failure reason,
-    which is None when every value came back inside its tolerance. The device
-    is anything offering ``write(name, value)`` and ``read(name)``.
+    Returns the read-backs collected so far, in the unit of each parameter,
+    together with a failure reason, which is None when every value came back
+    inside its tolerance. The device is anything offering ``write(name,
+    value)`` and ``read(name)``.
     """
 
     readbacks: Dict[str, Any] = {}
     for name, value in values.items():
         try:
             device.write(name, value)
-            actual = device.read(name)
+            raw = device.read(name)
         except Exception as exc:
             return readbacks, f"Device write/read-back failed: {exc}"
+        try:
+            actual = parameter_from_readback(name, raw)
+        except ValueError as exc:
+            # Nothing is recorded for a register whose content the documented
+            # conversion cannot express, so no such value is reflected back.
+            return readbacks, readback_unconvertible_reason(name, value, raw, exc)
         readbacks[name] = actual
         if not readback_matches(name, value, actual):
-            return readbacks, readback_mismatch_reason(name, value, actual)
+            return readbacks, readback_mismatch_reason(name, value, actual, raw)
     return readbacks, None
