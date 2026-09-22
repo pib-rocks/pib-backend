@@ -215,7 +215,27 @@ ROS 2 topics. Its tuning and LED ring ROS 2 parameters are the UI control
 surface through rosbridge. The Flask microphone-array endpoints are legacy
 compatibility endpoints: they never open USB, always report simulation with the
 reason `microphone array is owned by ros-audio-io`, and do not apply values to
-the device.
+the device. The desired tuning and LED state is persisted in the database.
+The device owner reads it with `GET /v1/system/microphone-array/desired-state`
+(also available without the `/v1` prefix):
+
+```json
+{
+  "parameters": {"AGCONOFF": 1, "AGCMAXGAIN": 31.6},
+  "led_ring": {
+    "mode": "off",
+    "brightness": 16,
+    "color": "#000000",
+    "vad_led": 0
+  },
+  "preset": "Standard",
+  "updatedAt": "2026-09-22T07:50:00+00:00",
+  "revision": 1
+}
+```
+
+`revision` increases and `updatedAt` changes whenever the legacy tuning update
+endpoint accepts a desired-state update.
 
 `password.env` required to run the voice assistant:
 

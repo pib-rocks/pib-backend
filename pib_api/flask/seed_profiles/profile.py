@@ -22,3 +22,4 @@ class HardwareProfile:
     rgb_button_controller_ids: tuple[int, int, int]
     motor_parameter_defaults: Mapping[str, Any]
     motor_parameter_deviations: Mapping[str, Mapping[str, Any]]
+    microphone_tuning: Mapping[str, Any]

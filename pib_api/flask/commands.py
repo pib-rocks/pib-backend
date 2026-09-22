@@ -46,6 +46,7 @@ from default_pose_constants import (
     CALIBRATION_POSE_NAME,
 )
 from model.button_program_model import ButtonProgram
+from service.microphone_array_service import seed_desired_state
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +69,7 @@ def seed_db() -> None:
     _create_default_poses(profile)
     _create_button_program_data(profile)
     set_property(HARDWARE_VARIANT_KEY, variant, source)
+    seed_desired_state(profile)
     db.session.commit()
     print("Seeded the database with default data.")
 

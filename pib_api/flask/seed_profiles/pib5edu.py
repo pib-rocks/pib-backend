@@ -1,5 +1,6 @@
 """Seed profile for pib 5 educational robots."""
 
+from seed_profiles.edu_microphone_tuning import MICROPHONE_TUNING
 from seed_profiles.edu_motor_parameters import (
     MOTOR_PARAMETER_DEFAULTS,
     MOTOR_PARAMETER_DEVIATIONS,
@@ -38,4 +39,5 @@ PROFILE = HardwareProfile(
     rgb_button_controller_ids=(6, 7, 8),
     motor_parameter_defaults=MOTOR_PARAMETER_DEFAULTS,
     motor_parameter_deviations=MOTOR_PARAMETER_DEVIATIONS,
+    microphone_tuning=MICROPHONE_TUNING,
 )
