@@ -16,7 +16,9 @@ let cachedModelOptions = FALLBACK_MODEL_OPTIONS;
 let requestInFlight = false;
 let lastRequestAt = 0;
 
-function rosbridgeUrl(): string | null {
+export function rosbridgeUrl(
+    location?: Pick<Location, "protocol" | "hostname">,
+): string | null {
     if (typeof window === "undefined" || typeof window.WebSocket === "undefined") {
         return null;
     }
@@ -28,8 +30,9 @@ function rosbridgeUrl(): string | null {
         return configured;
     }
 
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    return `${protocol}//${window.location.hostname}:9090`;
+    const currentLocation = location ?? window.location;
+    const protocol = currentLocation.protocol === "https:" ? "wss:" : "ws:";
+    return `${protocol}//${currentLocation.hostname}:9090`;
 }
 
 export function refreshModelOptions(): void {
