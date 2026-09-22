@@ -37,6 +37,15 @@ function emptyBlock(): Block {
   return {} as Block;
 }
 
+function modelFieldBlock(modelId: string): Block {
+  return {
+    getFieldValue: (field: string) => {
+      if (field === "MODEL_ID") return modelId;
+      throw new Error(`unexpected field ${field}`);
+    },
+  } as unknown as Block;
+}
+
 function fieldBlock(fieldValue: string): Block {
   return {
     getFieldValue: (field: string) => {
@@ -51,53 +60,33 @@ function joinedDefs(generator: MockGenerator): string {
 }
 
 describe("start_model generator", () => {
-  it("starts the default hand_tracking model with registry shaves", () => {
+  it("starts the selected model through the SDK", () => {
     const generator = createMockGenerator();
-    const code = start_model(emptyBlock(), generator);
+    const code = start_model(modelFieldBlock("hand_tracking"), generator);
 
-    expect(code).toBe(
-      '_blockly_model_manager.start("hand_tracking", 0)\n',
-    );
+    expect(code).toBe("start_model_with_sdk('hand_tracking')\n");
     const defs = joinedDefs(generator);
+    expect(defs).toContain("from pib_sdk import Models");
     expect(defs).toContain(
-      "from datatypes.srv import StartModel, StopModel",
+      "with Models(host=rosbridge_host, port=9090) as models:",
     );
-    expect(defs).toContain('node.create_client(StartModel, "/start_model")');
-    expect(defs).toContain("atexit.register(self.release_all)");
-    expect(defs).toContain("request.owner = self.owner");
-    expect(defs).toContain(
-      `_blockly_model_manager = BlocklyModelManager(node, f"blockly-{os.getpid()}")`,
-    );
-  });
-
-  it("passes a connected model id and shave count through to start", () => {
-    const generator = createMockGenerator({
-      MODEL_ID: "selected_model",
-      SHAVES: "6",
-    });
-    expect(start_model(emptyBlock(), generator)).toBe(
-      "_blockly_model_manager.start(selected_model, 6)\n",
-    );
+    expect(defs).toContain("models.start_model(str(model_id))");
+    expect(defs).not.toContain("StartModel");
+    expect(defs).not.toContain("rclpy");
   });
 });
 
 describe("stop_model generator", () => {
-  it("stops the default hand_tracking model", () => {
+  it("stops the selected model through the SDK", () => {
     const generator = createMockGenerator();
-    const code = stop_model(emptyBlock(), generator);
+    const code = stop_model(modelFieldBlock("face_detection"), generator);
 
-    expect(code).toBe('_blockly_model_manager.stop("hand_tracking")\n');
+    expect(code).toBe("stop_model_with_sdk('face_detection')\n");
     const defs = joinedDefs(generator);
-    expect(defs).toContain('node.create_client(StopModel, "/stop_model")');
-    expect(defs).toContain("self.owned_models.discard(model_id)");
-    expect(defs).toContain("for model_id in tuple(self.owned_models):");
-  });
-
-  it("stops a connected model id variable instead of the default", () => {
-    const generator = createMockGenerator({ MODEL_ID: "model_to_release" });
-    expect(stop_model(emptyBlock(), generator)).toBe(
-      "_blockly_model_manager.stop(model_to_release)\n",
-    );
+    expect(defs).toContain("from pib_sdk import Models");
+    expect(defs).toContain("models.stop_model(str(model_id))");
+    expect(defs).not.toContain("StopModel");
+    expect(defs).not.toContain("rclpy");
   });
 });
 

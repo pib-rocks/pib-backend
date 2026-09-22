@@ -27,6 +27,7 @@ export const IMPORT_PIB_SDK_BACKEND =
 export const IMPORT_PIB_SDK_CAMERA =
     "from pib_sdk.features.camera import Camera";
 export const IMPORT_PIB_SDK_IMU = "from pib_sdk.features.imu import IMU";
+export const IMPORT_PIB_SDK_MODELS = "from pib_sdk import Models";
 export const IMPORT_MATH = "import math";
 export const IMPORT_URLPARSE = "from urllib.parse import urlparse";
 export const IMPORT_PLAY_AUDIO_FROM_SPREECH =
@@ -47,8 +48,6 @@ export const IMPORT_VISION_PROMPT = "from datatypes.srv import VisionPrompt";
 export const IMPORT_SOLID_STATE_RELAY_STATE =
     "from datatypes.msg import SolidStateRelayState";
 export const IMPORT_INT32 = "from std_msgs.msg import Int32";
-export const IMPORT_MODEL_SERVICES =
-    "from datatypes.srv import StartModel, StopModel";
 export const IMPORT_DETECTION_ARRAY =
     "from datatypes.msg import DetectionArray";
 
