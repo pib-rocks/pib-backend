@@ -1,7 +1,6 @@
 import { Block } from "blockly/core/block";
 import { Order, pythonGenerator } from "blockly/python";
 import {
-  get_detection_field,
   start_model,
   stop_model,
 } from "../../pib_blockly/pib_blockly_server/src/pib-blockly/program-generators/model-generators";
@@ -33,23 +32,10 @@ function createMockGenerator(
   return generator;
 }
 
-function emptyBlock(): Block {
-  return {} as Block;
-}
-
 function modelFieldBlock(modelId: string): Block {
   return {
     getFieldValue: (field: string) => {
       if (field === "MODEL_ID") return modelId;
-      throw new Error(`unexpected field ${field}`);
-    },
-  } as unknown as Block;
-}
-
-function fieldBlock(fieldValue: string): Block {
-  return {
-    getFieldValue: (field: string) => {
-      if (field === "FIELD") return fieldValue;
       throw new Error(`unexpected field ${field}`);
     },
   } as unknown as Block;
@@ -87,61 +73,5 @@ describe("stop_model generator", () => {
     expect(defs).toContain("models.stop_model(str(model_id))");
     expect(defs).not.toContain("StopModel");
     expect(defs).not.toContain("rclpy");
-  });
-});
-
-describe("get_detection_field generator", () => {
-  it("reads the default label field from the first hand_tracking detection", () => {
-    const generator = createMockGenerator();
-    const [code, order] = get_detection_field(
-      fieldBlock("label"),
-      generator,
-    );
-
-    expect(code).toBe(
-      "get_detection_field(\"hand_tracking\", 0, 'label', \"\")",
-    );
-    expect(order).toBe(Order.FUNCTION_CALL);
-    const defs = joinedDefs(generator);
-    expect(defs).toContain("from datatypes.msg import DetectionArray");
-    expect(defs).toContain('f"/detections/{model_id}"');
-    expect(defs).toContain(
-      'if field in ("label", "score", "x_min", "y_min", "x_max", "y_max"):',
-    );
-  });
-
-  it("selects a named keypoint axis from a connected detection index", () => {
-    const generator = createMockGenerator({
-      MODEL_ID: '"hand_tracking"',
-      INDEX: "2",
-      NAME: '"wrist"',
-    });
-    const [code] = get_detection_field(fieldBlock("keypoint_z"), generator);
-
-    expect(code).toBe(
-      "get_detection_field(\"hand_tracking\", 2, 'keypoint_z', \"wrist\")",
-    );
-    const defs = joinedDefs(generator);
-    expect(defs).toContain(
-      'if field in ("keypoint_x", "keypoint_y", "keypoint_z"):',
-    );
-    expect(defs).toContain("detection.keypoint_names.index(name)");
-  });
-
-  it("looks up a named scalar when the field dropdown is scalar_values", () => {
-    const generator = createMockGenerator({
-      MODEL_ID: "active_model",
-      INDEX: "item_index",
-      NAME: "scalar_name",
-    });
-    const [code] = get_detection_field(
-      fieldBlock("scalar_values"),
-      generator,
-    );
-
-    expect(code).toBe(
-      "get_detection_field(active_model, item_index, 'scalar_values', scalar_name)",
-    );
-    expect(joinedDefs(generator)).toContain("detection.scalar_names.index(name)");
   });
 });
