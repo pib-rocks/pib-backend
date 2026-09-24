@@ -1,6 +1,7 @@
 import {Block} from "blockly/core/block";
 import {Order, pythonGenerator} from "blockly/python";
 import {start_model, stop_model} from "./model-generators";
+import {STOP_ALL_MODELS_VALUE} from "../program-blocks/model-blocks";
 
 type MockGenerator = typeof pythonGenerator & {
     definitions_: Record<string, string>;
@@ -74,5 +75,22 @@ describe("model generators", () => {
             "def stop_model_with_sdk(model_id) -> None:",
         );
         expect(declarations).toContain("models.stop_model(str(model_id))");
+    });
+
+    it("generates SDK stop-all code without a model id", () => {
+        const generator = createGenerator();
+
+        expect(
+            stop_model(
+                blockWithFields({MODEL_ID: STOP_ALL_MODELS_VALUE}),
+                generator,
+            ),
+        ).toBe("stop_all_models_with_sdk()\n");
+
+        const declarations = definitions(generator);
+        expect(declarations).toContain("from pib_sdk import Models");
+        expect(declarations).toContain("def stop_all_models_with_sdk() -> None:");
+        expect(declarations).toContain("models.stop_all_models()");
+        expect(declarations).not.toContain("models.stop_model(");
     });
 });
