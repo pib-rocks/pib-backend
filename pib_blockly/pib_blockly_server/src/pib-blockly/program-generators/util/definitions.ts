@@ -3,18 +3,38 @@
 export const IMPORT_RCLPY = "import rclpy";
 export const IMPORT_NUMPY = "import numpy as np";
 export const IMPORT_CV2 = "import cv2";
-export const IMPORT_DEPTHAI = "import depthai as dai";
-export const IMPORT_BLOBCONVERTER = "import blobconverter";
 export const IMPORT_SYS = "import sys";
 export const IMPORT_OS = "import os";
+export const IMPORT_DATETIME = "import datetime";
 export const IMPORT_TIME = "import time";
 export const IMPORT_LOGGING = "import logging";
+export const IMPORT_ATEXIT = "import atexit";
+export const IMPORT_SIGNAL = "import signal";
 export const IMPORT_PARAMIKO = "import paramiko";
 export const IMPORT_PIB_SDK = "import pib_sdk";
+export const IMPORT_PIB_SDK_IK =
+    "from pib_sdk import ik, Write, right_arm, left_arm";
+export const IMPORT_PIB_SDK_POSES =
+    "from pib_sdk.features.poses import save_current_pose, list_poses, get_pose";
+export const IMPORT_PIB_SDK_PLAY_POSE_SEQUENCE_TIMED =
+    "from pib_sdk.features.poses import play_pose_sequence_timed";
+export const IMPORT_PIB_SDK_POSE_CONTROL =
+    "from pib_sdk.control import All, _expand_motor_specs";
+export const IMPORT_PIB_SDK_TELEMETRY =
+    "from pib_sdk.telemetry import Telemetry";
+export const IMPORT_PIB_SDK_BACKEND =
+    "from pib_sdk.backend import BackendClient";
+export const IMPORT_PIB_SDK_CAMERA =
+    "from pib_sdk.features.camera import Camera";
+export const IMPORT_PIB_SDK_IMU = "from pib_sdk.features.imu import IMU";
+export const IMPORT_PIB_SDK_MODELS = "from pib_sdk import Models";
+export const IMPORT_MATH = "import math";
+export const IMPORT_URLPARSE = "from urllib.parse import urlparse";
 export const IMPORT_PLAY_AUDIO_FROM_SPREECH =
     "from datatypes.srv import PlayAudioFromSpeech";
 export const IMPORT_PLAY_AUDIO_FROM_FILE =
     "from datatypes.srv import PlayAudioFromFile";
+export const IMPORT_SET_VOLUME = "from datatypes.srv import SetVolume";
 export const IMPORT_APPLY_JOINT_TRAJECTORY =
     "from datatypes.srv import ApplyJointTrajectory";
 export const IMPORT_GET_JOINT_POSITION =
@@ -27,12 +47,26 @@ export const IMPORT_SET_SOLID_STATE_RELAY =
 export const IMPORT_VISION_PROMPT = "from datatypes.srv import VisionPrompt";
 export const IMPORT_SOLID_STATE_RELAY_STATE =
     "from datatypes.msg import SolidStateRelayState";
+export const IMPORT_INT32 = "from std_msgs.msg import Int32";
+export const IMPORT_DETECTION_ARRAY =
+    "from datatypes.msg import DetectionArray";
 
 // ros
 
 export const INIT_ROS = `
 rclpy.init()
 node = rclpy.create_node("blockly_node")
+`;
+
+export const INIT_PIB_SDK_POSE_BACKEND = `
+rosbridge_host = os.getenv("ROSBRIDGE_HOST", "rosbridge-ws")
+backend_url = urlparse(
+    os.getenv("FLASK_API_BASE_URL", "http://flask-app:5000")
+)
+pose_backend = BackendClient(
+    host=backend_url.hostname or "flask-app",
+    port=backend_url.port or 5000,
+)
 `;
 
 // logging
@@ -73,6 +107,17 @@ play_audio_from_file_client = node.create_client(
 
 logging.info(f"waiting for 'play_audio_from_file' service to become available...")
 play_audio_from_file_client.wait_for_service()
+logging.info(f"service now available")
+`;
+
+export const INIT_SET_VOLUME_CLIENT = `
+set_volume_client = node.create_client(
+    SetVolume,
+    'set_volume'
+)
+
+logging.info(f"waiting for 'set_volume' service to become available...")
+set_volume_client.wait_for_service()
 logging.info(f"service now available")
 `;
 

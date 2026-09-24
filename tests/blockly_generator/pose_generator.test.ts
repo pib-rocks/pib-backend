@@ -1,10 +1,26 @@
+import * as Blockly from "blockly";
 import { Block } from "blockly/core/block";
-import { pythonGenerator } from "blockly/python";
-import { moveToPoseGenerator } from "../../pib_blockly/pib_blockly_server/src/pib-blockly/program-generators/pose-generator";
+import { Order, pythonGenerator } from "blockly/python";
+import {
+  get_all_poses,
+  get_pose_joints,
+  has_pose,
+  moveToPoseGenerator,
+  play_pose_sequence,
+  pose_count,
+  save_current_pose,
+  save_detection_as_pose,
+} from "../../pib_blockly/pib_blockly_server/src/pib-blockly/program-generators/pose-generator";
+import { poseBlocks } from "../../pib_blockly/pib_blockly_server/src/pib-blockly/program-blocks/pose-block";
 
 type MockGenerator = typeof pythonGenerator & {
   definitions_: Record<string, string>;
   provideFunction_: (name: string, code: string) => string;
+  valueToCode: (
+    block: Block,
+    name: string,
+    order: Order,
+  ) => string;
 };
 
 function createMockGenerator(): MockGenerator {
@@ -36,5 +52,253 @@ describe("moveToPoseGenerator", () => {
     expect(defs).toContain("from pib_api_client import pose_client");
     expect(defs).toContain("pib_sdk.Write");
     expect(defs).toContain("import pib_sdk");
+  });
+});
+
+function blockWithName(name: string): Block {
+  return {
+    getFieldValue: (field: string) => {
+      if (field === "NAME") return name;
+      throw new Error(`unexpected field ${field}`);
+    },
+  } as unknown as Block;
+}
+
+function generatorWithNameValue(nameCode?: string): MockGenerator {
+  const generator = createMockGenerator();
+  generator.valueToCode = (block, name, order) => {
+    expect(name).toBe("NAME");
+    expect(order).toBe(Order.NONE);
+    return nameCode ?? "";
+  };
+  return generator;
+}
+
+describe("pose SDK generators", () => {
+  it("saves every motor through All and explicitly includes the head", () => {
+    const generator = generatorWithNameValue("'rest \"pose\"'");
+    const code = save_current_pose({} as Block, generator);
+
+    expect(code).toBe(
+      "save_current_pose_with_all_motors('rest \"pose\"')\n",
+    );
+    const defs = Object.values(generator.definitions_).join("\n");
+    expect(defs).toContain(
+      "from pib_sdk.features.poses import save_current_pose, list_poses, get_pose",
+    );
+    expect(defs).toContain(
+      "from pib_sdk.control import All, _expand_motor_specs",
+    );
+    expect(defs).toContain("motor_names = _expand_motor_specs([All])");
+    expect(defs).toContain('"turn_head_motor" in motor_names');
+    expect(defs).toContain('"tilt_forward_motor" in motor_names');
+    expect(defs).toContain(
+      "save_current_pose(telemetry, pose_backend, name, motor_names)",
+    );
+  });
+
+  it("generates the all-poses list expression", () => {
+    const generator = createMockGenerator();
+    expect(get_all_poses({} as Block, generator)).toEqual([
+      "list_poses(pose_backend)",
+      Order.FUNCTION_CALL,
+    ]);
+  });
+
+  it("generates the named pose joints map expression", () => {
+    const generator = createMockGenerator();
+    expect(get_pose_joints(blockWithName("wave"), generator)).toEqual([
+      "get_pose(pose_backend, name='wave').motor_angles_deg",
+      Order.MEMBER,
+    ]);
+  });
+
+  it("generates a boolean pose existence expression", () => {
+    const generator = createMockGenerator();
+    expect(has_pose(blockWithName("wave"), generator)).toEqual([
+      "any(pose.name == 'wave' for pose in list_poses(pose_backend))",
+      Order.FUNCTION_CALL,
+    ]);
+  });
+
+  it("generates the pose count expression", () => {
+    const generator = createMockGenerator();
+    expect(pose_count({} as Block, generator)).toEqual([
+      "len(list_poses(pose_backend))",
+      Order.FUNCTION_CALL,
+    ]);
+  });
+
+  it("initializes the SDK backend from the configured Flask API URL", () => {
+    const generator = createMockGenerator();
+    get_all_poses({} as Block, generator);
+    const defs = Object.values(generator.definitions_).join("\n");
+
+    expect(defs).toContain("from pib_sdk.backend import BackendClient");
+    expect(defs).toContain(
+      'os.getenv("FLASK_API_BASE_URL", "http://flask-app:5000")',
+    );
+    expect(defs).toContain("pose_backend = BackendClient(");
+  });
+});
+
+describe("play_pose_sequence generator", () => {
+  function createSequenceGenerator(sequenceCode?: string): MockGenerator {
+    const generator = createMockGenerator();
+    generator.valueToCode = (block, name, order) => {
+      expect(name).toBe("SEQUENCE");
+      expect(order).toBe(Order.NONE);
+      return sequenceCode ?? "";
+    };
+    return generator;
+  }
+
+  it("emits a timed helper call with the coerced sequence literal", () => {
+    const sequenceLiteral = "[['wave', 1.5], ['rest', 2]]";
+    const generator = createSequenceGenerator(sequenceLiteral);
+    const code = play_pose_sequence({} as Block, generator);
+
+    expect(code).toBe(`play_pose_sequence(${sequenceLiteral})\n`);
+    const defs = Object.values(generator.definitions_).join("\n");
+    expect(defs).toContain(
+      "from pib_sdk.features.poses import play_pose_sequence_timed",
+    );
+    expect(defs).toContain(
+      "steps = [(str(item[0]), float(item[1])) for item in (sequence or [])]",
+    );
+    expect(defs).toContain(
+      "play_pose_sequence_timed(writer, pose_backend, steps)",
+    );
+    expect(defs).toContain('os.getenv("ROSBRIDGE_HOST", "rosbridge-ws")');
+    expect(defs).toContain("pib_sdk.Write");
+    expect(defs).toContain("pose_backend = BackendClient(");
+    expect(defs).not.toContain("play_pose_sequence(writer");
+  });
+
+  it("defaults a missing sequence input to an empty list", () => {
+    const generator = createSequenceGenerator("");
+    expect(play_pose_sequence({} as Block, generator)).toBe(
+      "play_pose_sequence([])\n",
+    );
+  });
+});
+
+describe("save_current_pose generator", () => {
+  it("emits the helper call with a connected string literal", () => {
+    const generator = generatorWithNameValue('"wave"');
+    expect(save_current_pose({} as Block, generator)).toBe(
+      'save_current_pose_with_all_motors("wave")\n',
+    );
+  });
+
+  it("passes a connected variable through instead of a hardcoded name", () => {
+    const generator = generatorWithNameValue("pose_name");
+    expect(save_current_pose({} as Block, generator)).toBe(
+      "save_current_pose_with_all_motors(pose_name)\n",
+    );
+  });
+
+  it("falls back to a default name when the input is unconnected", () => {
+    const generator = generatorWithNameValue("");
+    expect(save_current_pose({} as Block, generator)).toBe(
+      'save_current_pose_with_all_motors("pose name")\n',
+    );
+  });
+});
+
+describe("save_detection_as_pose generator", () => {
+  it("reuses the current-pose helper with a connected string literal", () => {
+    const generator = generatorWithNameValue('"detected_grip"');
+    const code = save_detection_as_pose({} as Block, generator);
+
+    expect(code).toBe(
+      'save_current_pose_with_all_motors("detected_grip")\n',
+    );
+    const defs = Object.values(generator.definitions_).join("\n");
+    expect(defs).toContain(
+      "from pib_sdk.features.poses import save_current_pose, list_poses, get_pose",
+    );
+    expect(defs).toContain(
+      "save_current_pose(telemetry, pose_backend, name, motor_names)",
+    );
+  });
+
+  it("passes a connected name variable through instead of a hardcoded pose name", () => {
+    const generator = generatorWithNameValue("pose_from_detection");
+    expect(save_detection_as_pose({} as Block, generator)).toBe(
+      "save_current_pose_with_all_motors(pose_from_detection)\n",
+    );
+  });
+
+  it("falls back to the default pose name when the input is unconnected", () => {
+    const generator = generatorWithNameValue("");
+    expect(save_detection_as_pose({} as Block, generator)).toBe(
+      'save_current_pose_with_all_motors("pose name")\n',
+    );
+  });
+});
+
+describe("save current pose block", () => {
+  beforeAll(() => Blockly.common.defineBlocks(poseBlocks));
+
+  it("has a string value input for the name and no arm or range dropdown", () => {
+    const workspace = new Blockly.Workspace();
+    Blockly.Events.disable();
+    try {
+      const block = workspace.newBlock("save_current_pose");
+      const nameInput = block.getInput("NAME");
+
+      expect(nameInput).not.toBeNull();
+      expect(nameInput?.type).toBe(Blockly.inputs.inputTypes.VALUE);
+      expect(nameInput?.connection?.getCheck()).toEqual(["String"]);
+      expect(block.getField("NAME")).toBeNull();
+      expect(block.previousConnection).not.toBeNull();
+      expect(block.nextConnection).not.toBeNull();
+      expect(block.getField("SIDE")).toBeNull();
+      expect(block.getField("RANGE")).toBeNull();
+      expect(
+        block.inputList.flatMap((input) => input.fieldRow).some(
+          (field) => field instanceof Blockly.FieldDropdown,
+        ),
+      ).toBe(false);
+    } finally {
+      workspace.dispose();
+      Blockly.Events.enable();
+    }
+  });
+
+  it("defines save_detection_as_pose as a statement with a string NAME input", () => {
+    const workspace = new Blockly.Workspace();
+    Blockly.Events.disable();
+    try {
+      const block = workspace.newBlock("save_detection_as_pose");
+      const nameInput = block.getInput("NAME");
+
+      expect(nameInput).not.toBeNull();
+      expect(nameInput?.type).toBe(Blockly.inputs.inputTypes.VALUE);
+      expect(nameInput?.connection?.getCheck()).toEqual(["String"]);
+      expect(block.previousConnection).not.toBeNull();
+      expect(block.nextConnection).not.toBeNull();
+      expect(block.outputConnection).toBeNull();
+    } finally {
+      workspace.dispose();
+      Blockly.Events.enable();
+    }
+  });
+
+  it("defines play_pose_sequence as a statement with a SEQUENCE value input", () => {
+    const workspace = new Blockly.Workspace();
+    Blockly.Events.disable();
+    try {
+      const block = workspace.newBlock("play_pose_sequence");
+
+      expect(block.getInput("SEQUENCE")).not.toBeNull();
+      expect(block.previousConnection).not.toBeNull();
+      expect(block.nextConnection).not.toBeNull();
+      expect(block.outputConnection).toBeNull();
+    } finally {
+      workspace.dispose();
+      Blockly.Events.enable();
+    }
   });
 });

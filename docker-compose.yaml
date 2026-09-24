@@ -22,8 +22,8 @@ services:
         # Release tag from the git checkout, injected into /etc/pib_version.
         # Override at build time:
         #   docker compose build --build-arg APP_VERSION="$(git tag --points-at HEAD^2)" flask-app
-        APP_VERSION: ""
-    command: "bash -c 'flask --app run db upgrade && flask --app run seed_db && flask --app run run --host 0.0.0.0'"
+        APP_VERSION: ${APP_VERSION:-v0.6.2}
+    command: "bash -c 'flask --app run db upgrade && flask --app run seed_db && flask --app run reconcile_system_properties && flask --app run run --host 0.0.0.0'"
     networks:
       - pib-network
     ports:
@@ -34,8 +34,13 @@ services:
       - PYTHON_CODE_DIR=/root/cerebra_programs
       - MARIMO_NOTEBOOKS_DIR=/home/pib/programs/notebooks
       - PIB_HERMES_PROFILES_DIR=/home/pib/.hermes/profiles
+      - PIB_HERMES_DAEMON_URL=http://ros-voice-assistant:8088
+      - PIB_HARDWARE_VARIANT=${PIB_HARDWARE_VARIANT:-}
+      - PIB_UPDATE_DIR=/app/.update
     volumes:
       - ./pib_api/flask/:/app
+      - /home/pib/app/.update:/app/.update
+      - /etc/pib_hardware_variant:/etc/pib_hardware_variant:ro
       - programs:/root/cerebra_programs
       - /home/pib/programs/notebooks:/home/pib/programs/notebooks
       # A personality's SOUL.md must land on the host, at the same path the
@@ -71,10 +76,13 @@ services:
       - camera
     volumes:
       - /dev/:/dev/
+      - ${PIB_MODEL_STORE:-/home/pib/app/pib-models}:/models:ro
     devices:
       - /dev/bus/usb:/dev/bus/usb
     networks:
       - pib-network
+    environment:
+      - PIB_CAMERA_STEREO=auto
     restart: always
     depends_on:
       - rosbridge-ws
@@ -129,10 +137,13 @@ services:
       - PIB_HERMES_PROFILES_DIR=/home/pib/.hermes/profiles
       - HERMES_HOME=/home/pib/.hermes
       - PIB_HERMES_BIN=/home/pib/.local/bin/hermes
-      # API keys come from the gitignored ./password.env (env_file above), NOT
-      # from defaults in this file. No hardcoded key / fallback default is kept.
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
-      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - PIB_HERMES_DAEMON_HOST=0.0.0.0
+      # GEMINI_API_KEY / GOOGLE_API_KEY are deliberately NOT listed here: they
+      # come from the gitignored ./password.env (env_file above). Compose
+      # interpolates ${VAR} from the shell or the tracked project-root .env, not
+      # from env_file, so an `- GEMINI_API_KEY=${GEMINI_API_KEY}` entry resolves
+      # to an empty string when the variable is unset and then overrides the
+      # real value from password.env. No hardcoded key / fallback default here.
     volumes:
       - /media/dyan/project/projects/voice/:/data/voice
       - /dev/snd:/dev/snd
@@ -224,7 +235,6 @@ services:
       - PIB_DISPLAY_TEXT_MAX_CHARS=40
       - PIB_DISPLAY_TEXT_CACHE_MAX=50
       - PIB_DISPLAY_POLL_MS=5
-      - PIB_DISPLAY_IDLE_SECONDS=0
       - XDG_RUNTIME_DIR=/run/user/1000
       - WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-wayland-0}
       - GDK_BACKEND=wayland

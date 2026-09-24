@@ -3,6 +3,7 @@ import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
+from queue import Empty, Queue
 from threading import Lock
 from typing import Optional
 
@@ -652,6 +653,8 @@ class ChatNode(Node):
                 text=text,
                 chat_id=chat_id,
                 personality_id=personality_id,
+                toolsets=hermes_agent_client.DEFAULT_DISABLED_TOOLSETS,
+                enabled_toolsets=hermes_agent_client.DEFAULT_ENABLED_TOOLSETS,
                 timeout=timeout,
             )
 
@@ -668,9 +671,8 @@ class ChatNode(Node):
                 return hermes_agent_client.FALLBACK_REPLY
 
             if goal_handle is not None and goal_handle.is_cancel_requested:
-                # The worker is left to finish on its own; it only touches the
-                # hermes CLI, and the pool outlives this goal, so nothing here
-                # breaks when the subprocess returns later.
+                # The worker is left to finish on its own; the shared pool
+                # outlives this goal.
                 self.get_logger().info(
                     f"hermes turn abandoned, goal cancelled (chat={chat_id})"
                 )
@@ -682,6 +684,84 @@ class ChatNode(Node):
                     f"(chat={chat_id}); answering with the fallback reply"
                 )
                 return hermes_agent_client.FALLBACK_REPLY
+
+    def _stream_hermes_turn(
+        self,
+        text: str,
+        chat_id: str,
+        personality_id: Optional[str],
+        description: str,
+        goal_handle=None,
+    ):
+        """Yield daemon deltas, retrying through the non-streaming path on error."""
+        timeout = self._hermes_timeout()
+        events: Queue = Queue()
+
+        def _consume_stream() -> None:
+            try:
+                if personality_id:
+                    pdir = hermes_agent_client.profile_dir_for(personality_id)
+                    cfg_file = os.path.join(pdir, "config.yaml")
+                    if (
+                        not os.path.exists(cfg_file)
+                        or not hermes_agent_client.is_warm_daemon_active()
+                    ):
+                        hermes_agent_client.ensure_profile(
+                            personality_id, soul_text=description
+                        )
+                for delta in hermes_agent_client.stream_turn(
+                    text=text,
+                    chat_id=chat_id,
+                    personality_id=personality_id,
+                    toolsets=hermes_agent_client.DEFAULT_DISABLED_TOOLSETS,
+                    enabled_toolsets=hermes_agent_client.DEFAULT_ENABLED_TOOLSETS,
+                    timeout=timeout,
+                ):
+                    events.put(("delta", delta))
+                events.put(("done", None))
+            except Exception as exc:
+                events.put(("error", exc))
+
+        self._hermes_executor.submit(_consume_stream)
+        deadline = time.monotonic() + timeout + HERMES_WAIT_GRACE_SECONDS
+        emitted = ""
+
+        while True:
+            if goal_handle is not None and goal_handle.is_cancel_requested:
+                return
+            if time.monotonic() > deadline:
+                event = ("error", TimeoutError("Hermes stream exceeded its deadline"))
+            else:
+                try:
+                    event = events.get(timeout=HERMES_CANCEL_POLL_SECONDS)
+                except Empty:
+                    continue
+
+            kind, value = event
+            if kind == "delta":
+                emitted += value
+                yield value
+                continue
+            if kind == "done":
+                return
+
+            self.get_logger().warning(
+                f"hermes streaming failed (chat={chat_id}): {value}; "
+                "retrying without streaming"
+            )
+            reply = self._run_hermes_turn(
+                text=text,
+                chat_id=chat_id,
+                personality_id=personality_id,
+                description=description,
+                timeout=timeout,
+                goal_handle=goal_handle,
+            )
+            if emitted and reply.startswith(emitted):
+                reply = reply[len(emitted) :]
+            if reply:
+                yield reply
+            return
 
     async def chat(self, goal_handle: ServerGoalHandle):
         """
@@ -733,17 +813,16 @@ class ChatNode(Node):
 
         try:
             if is_hermes:
-                reply_text = self._run_hermes_turn(
+                if goal_handle.is_cancel_requested:
+                    goal_handle.canceled()
+                    return Chat.Result()
+                tokens = self._stream_hermes_turn(
                     text=content,
                     chat_id=chat_id,
                     personality_id=getattr(personality, "personality_id", None),
                     description=description,
                     goal_handle=goal_handle,
                 )
-                if goal_handle.is_cancel_requested:
-                    goal_handle.canceled()
-                    return Chat.Result()
-                tokens = [reply_text]
             else:
                 # Pull recent message history for context
                 with self.voice_assistant_client_lock:

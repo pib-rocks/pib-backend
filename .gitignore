@@ -57,6 +57,7 @@ output.wav
 
 # pib-blockly-server
 pib_blockly/pib_blockly_server/dist/**
+pib_blockly/pib_blockly_server/dist-test/**
 pib_blockly/pib_blockly_server/node_modules/**
 package-lock.json
 /Pipfile
@@ -64,3 +65,11 @@ package-lock.json
 .test-venv/
 *.db-shm
 *.db-wal
+
+# Test artifacts: seed_hardware/seed_db create backups next to the shared test database
+pib_api/flask/pibdata.db.bak-*
+
+# vendored test tree must be complete, so compiled package output is tracked there
+!tests/blockly_generator/node_modules/**/build/
+!tests/blockly_generator/node_modules/**/dist/
+!tests/blockly_generator/node_modules/**/lib/

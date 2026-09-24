@@ -5,7 +5,8 @@
   "main": "app.js",
   "private": true,
   "scripts": {
-    "build": "webpack --mode production"
+    "build": "webpack --mode production",
+    "test": "webpack --config webpack.test.config.js && node dist-test/model-blocks.test.js"
   },
   "author": "",
   "devDependencies": {

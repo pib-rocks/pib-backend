@@ -24,13 +24,11 @@ RUN pip install --break-system-packages --no-cache-dir --ignore-installed \
         /tmp/pib_blockly_client \
         /tmp/pib_api_client \
         /tmp/pib_motors \
-        pib-sdk \
+        pib-sdk==0.5.3 \
         requests==2.32.3 \
         paramiko==3.5.1 \
         tinkerforge \
-        opencv-python-headless \
-        "depthai<3" \
-        blobconverter
+        opencv-python-headless
 
 RUN cd ros2_ws && \
     source /opt/ros/jazzy/setup.bash && \

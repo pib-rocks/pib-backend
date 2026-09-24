@@ -4,6 +4,7 @@ from controller import (
     bricklet_controller,
     camera_controller,
     chat_controller,
+    controller_controller,
     diagnostics_controller,
     motor_controller,
     personality_controller,
@@ -32,6 +33,9 @@ app.register_blueprint(
     camera_controller.bp, url_prefix="/camera-settings", name="camera"
 )
 app.register_blueprint(bricklet_controller.bp, url_prefix="/bricklet", name="bricklet")
+app.register_blueprint(
+    controller_controller.bp, url_prefix="/controller", name="controller"
+)
 app.register_blueprint(
     assistant_model_controller.bp, url_prefix="/assistant-model", name="assistant_model"
 )
@@ -94,3 +98,6 @@ app.register_blueprint(
     name="system_api_v1",
 )
 app.register_blueprint(version_controller.bp, url_prefix="/version", name="version")
+app.register_blueprint(
+    version_controller.bp, url_prefix="/api/version", name="version_api"
+)

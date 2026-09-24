@@ -6,6 +6,8 @@ import {
     IMPORT_LOGGING,
     IMPORT_OS,
     IMPORT_PIB_SDK,
+    IMPORT_PIB_SDK_IK,
+    IMPORT_PIB_SDK_TELEMETRY,
     IMPORT_RCLPY,
     IMPORT_SYS,
     INIT_GET_JOINT_POSITION_CLIENT,
@@ -14,7 +16,12 @@ import {
 import {
     APPLY_JOINT_TRAJECTORY_FUNCTION,
     GET_JOINT_POSITION_FUNCTION,
+    GET_MOTOR_CURRENT_MA_FUNCTION,
+    SET_HAND_POSITION_XYZ_FUNCTION,
 } from "./util/function-declarations";
+
+const IMPORT_PIB_SDK_GET_HAND_POSITION_XYZ =
+    "from pib_sdk import get_hand_position_xyz";
 
 const motorOptionToMotorName = new Map()
     .set("THUMB_LEFT_OPPOSITION", "thumb_left_opposition")
@@ -98,6 +105,103 @@ export function move_motor(block: Block, generator: typeof pythonGenerator) {
         throw new Error(`unexpected input-mode: ${modeInput}.`);
     }
     return `${functionName}("${selectedMotorName}", ${positionString})\n`;
+}
+
+export function motor_current(
+    block: Block,
+    generator: typeof pythonGenerator,
+): [string, Order] {
+    const motorOption = <string>block.getFieldValue("MOTORNAME");
+    const selectedMotorName: string = motorOptionToMotorName.get(motorOption);
+    if (selectedMotorName === undefined) {
+        throw new Error(
+            `'${motorOption}' is not a valid value for 'MOTORNAME'.`,
+        );
+    }
+
+    Object.assign(generator.definitions_, {
+        IMPORT_OS,
+        IMPORT_PIB_SDK_TELEMETRY,
+    });
+
+    const functionName = generator.provideFunction_(
+        "get_motor_current_ma",
+        GET_MOTOR_CURRENT_MA_FUNCTION(generator),
+    );
+
+    return [`${functionName}("${selectedMotorName}")`, Order.FUNCTION_CALL];
+}
+
+export function set_hand_position_xyz(
+    block: Block,
+    generator: typeof pythonGenerator,
+) {
+    const mode = <string>block.getFieldValue("MODE");
+    if (mode !== "ABSOLUTE" && mode !== "RELATIVE") {
+        throw new Error(`unexpected input-mode: ${mode}.`);
+    }
+    const side = readSide(block);
+    const xInput = String(
+        generator.valueToCode(block, "X", Order.ATOMIC) || "0",
+    );
+    const yInput = String(
+        generator.valueToCode(block, "Y", Order.ATOMIC) || "0",
+    );
+    const zInput = String(
+        generator.valueToCode(block, "Z", Order.ATOMIC) || "0",
+    );
+
+    Object.assign(generator.definitions_, {
+        IMPORT_RCLPY,
+        IMPORT_SYS,
+        IMPORT_OS,
+        IMPORT_LOGGING,
+        IMPORT_PIB_SDK_IK,
+        IMPORT_PIB_SDK_GET_HAND_POSITION_XYZ,
+        CONFIGURE_LOGGING,
+        INIT_ROS,
+    });
+
+    const functionName = generator.provideFunction_(
+        "set_hand_position_xyz",
+        SET_HAND_POSITION_XYZ_FUNCTION(generator),
+    );
+
+    return `${functionName}("${side}", "${mode}", ${xInput}, ${yInput}, ${zInput})\n`;
+}
+
+function readSide(block: Block): string {
+    const side = <string>block.getFieldValue("SIDE");
+    if (side !== "left" && side !== "right") {
+        throw new Error(`'${side}' is not a valid value for 'SIDE'.`);
+    }
+    return side;
+}
+
+function getHandPositionComponent(
+    block: Block,
+    generator: typeof pythonGenerator,
+    index: number,
+): [string, Order] {
+    const side = readSide(block);
+
+    Object.assign(generator.definitions_, {
+        IMPORT_PIB_SDK_GET_HAND_POSITION_XYZ,
+    });
+
+    return [`get_hand_position_xyz("${side}")[${index}]`, Order.MEMBER];
+}
+
+export function get_hand_x(block: Block, generator: typeof pythonGenerator) {
+    return getHandPositionComponent(block, generator, 0);
+}
+
+export function get_hand_y(block: Block, generator: typeof pythonGenerator) {
+    return getHandPositionComponent(block, generator, 1);
+}
+
+export function get_hand_z(block: Block, generator: typeof pythonGenerator) {
+    return getHandPositionComponent(block, generator, 2);
 }
 
 export {pythonGenerator};

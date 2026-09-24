@@ -1,0 +1,4 @@
+# Latest DetectionArray for model_id (same schema as the streamed topic).
+string model_id
+---
+DetectionArray detections

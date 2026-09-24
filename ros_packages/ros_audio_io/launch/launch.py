@@ -20,6 +20,16 @@ def generate_launch_description():
         )
     )
 
+    # Control the default output sink volume
+    ld.add_action(
+        Node(
+            package="ros_audio_io",
+            executable="volume_service",
+            name="volume_service",
+            output="screen",
+        )
+    )
+
     # Only do DOA if user asked for the Respeaker
     if mic == "respeaker":
         ld.add_action(

@@ -1,0 +1,3 @@
+# Empty request: list models known to the registry / model store.
+---
+ModelInfo[] models

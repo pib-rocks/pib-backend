@@ -1,4 +1,5 @@
 import pytest
+from unittest.mock import MagicMock
 from pib_hermes_config import build_default_soul_text
 from service import personality_service, soul_service
 
@@ -20,6 +21,16 @@ EXPECTED_MCP_TOOLS = (
 @pytest.fixture()
 def client(app):
     return app.test_client()
+
+
+@pytest.fixture(autouse=True)
+def provision_profiles_in_sandbox(monkeypatch):
+    def provision(personality_id, personality_name=None, soul_text=None, **_kwargs):
+        text = build_default_soul_text(personality_name or "pib", soul_text)
+        soul_service.write_soul(personality_id, text, personality_name or "pib")
+        return {"ok": True}
+
+    monkeypatch.setattr(personality_service, "_provision_profile", provision)
 
 
 def test_update_description_writes_soul_file(
@@ -125,3 +136,59 @@ def test_api_create_and_get_return_full_soul_description(
     get_resp = client.get(f"/voice-assistant/personality/{created['personalityId']}")
     assert get_resp.status_code == 200
     assert get_resp.get_json()["description"] == expected
+
+
+def test_api_creation_provisions_profile_immediately(client, app_ctx, monkeypatch):
+    from model.assistant_model import AssistantModel
+
+    provision = MagicMock(return_value={"ok": True})
+    monkeypatch.setattr(personality_service, "_provision_profile", provision)
+    model = AssistantModel.query.first()
+    response = client.post(
+        "/voice-assistant/personality",
+        json={
+            "name": "CreationBot",
+            "gender": "Female",
+            "pauseThreshold": 0.8,
+            "messageHistory": 5,
+            "assistantModelId": model.id,
+            "description": "Custom.",
+        },
+    )
+
+    assert response.status_code == 201
+    body = response.get_json()
+    assert body["profileProvisioned"] is True
+    provision.assert_called_once_with(
+        body["personalityId"],
+        personality_name="CreationBot",
+        soul_text="Custom.",
+    )
+
+
+def test_api_creation_keeps_row_and_reports_profile_failure(
+    client, app_ctx, monkeypatch
+):
+    from model.assistant_model import AssistantModel
+
+    monkeypatch.setattr(
+        personality_service,
+        "_provision_profile",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("factory down")),
+    )
+    model = AssistantModel.query.first()
+    response = client.post(
+        "/voice-assistant/personality",
+        json={
+            "name": "Unprovisioned",
+            "gender": "Female",
+            "pauseThreshold": 0.8,
+            "messageHistory": 5,
+            "assistantModelId": model.id,
+            "description": "",
+        },
+    )
+
+    assert response.status_code == 201
+    assert response.get_json()["profileProvisioned"] is False
+    assert personality_service.get_personality(response.get_json()["personalityId"])

@@ -36,6 +36,16 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(filepath: str) -> None:
     logging.info("finished playing audio file.")
 `;
 
+export const SET_VOLUME_FUNCTION = (generator: CodeGenerator) => `
+def ${generator.FUNCTION_NAME_PLACEHOLDER_}(percent: int) -> None:
+
+    request = SetVolume.Request()
+    request.percent = int(percent)
+
+    future = set_volume_client.call_async(request)
+    rclpy.spin_until_future_complete(node, future)
+`;
+
 // motor
 
 export const GET_JOINT_POSITION_FUNCTION = (generator: CodeGenerator) => `
@@ -55,6 +65,27 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(motor_name: str) -> int:
         return 0
 `;
 
+export const SET_HAND_POSITION_XYZ_FUNCTION = (generator: CodeGenerator) => `
+def ${generator.FUNCTION_NAME_PLACEHOLDER_}(side: str, mode: str, x, y, z) -> None:
+
+    if mode == "RELATIVE":
+        current = get_hand_position_xyz(side)
+        target = [current[0] + x, current[1] + y, current[2] + z]
+    else:
+        target = [x, y, z]
+
+    logging.info(f"setting {side} hand position to xyz={target}.")
+    q_deg = ik(side, xyz=target)
+    arm = left_arm if side == "left" else right_arm
+    rosbridge_host = os.getenv("ROSBRIDGE_HOST", "rosbridge-ws")
+    try:
+        with Write(host=rosbridge_host, port=9090) as pib:
+            pib.move(arm, *q_deg)
+    except Exception:
+        with Write(host="localhost", port=9090) as pib:
+            pib.move(arm, *q_deg)
+`;
+
 export const APPLY_JOINT_TRAJECTORY_FUNCTION = (generator: CodeGenerator) => `
 def ${generator.FUNCTION_NAME_PLACEHOLDER_}(motor_name: str, position: int) -> None:
 
@@ -64,6 +95,130 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(motor_name: str, position: int) -> N
         pib_sdk.Write(host=rosbridge_host, port=9090).move(motor_name, position)
     except Exception:
         pib_sdk.Write(host="localhost", port=9090).move(motor_name, position)
+`;
+
+export const GET_MOTOR_CURRENT_MA_FUNCTION = (generator: CodeGenerator) => `
+def ${generator.FUNCTION_NAME_PLACEHOLDER_}(motor_name: str) -> int:
+
+    rosbridge_host = os.getenv("ROSBRIDGE_HOST", "rosbridge-ws")
+    try:
+        with Telemetry(host=rosbridge_host, port=9090) as telemetry:
+            return telemetry.get_current_ma(motor_name)
+    except Exception:
+        with Telemetry(host="localhost", port=9090) as telemetry:
+            return telemetry.get_current_ma(motor_name)
+`;
+
+export const GET_CAMERA_DEPTH_FRAME_FUNCTION = (generator: CodeGenerator) => `
+def ${generator.FUNCTION_NAME_PLACEHOLDER_}():
+
+    rosbridge_host = os.getenv("ROSBRIDGE_HOST", "rosbridge-ws")
+    try:
+        with Camera(host=rosbridge_host, port=9090) as cam:
+            return cam.get_depth_frame()
+    except Exception:
+        with Camera(host="localhost", port=9090) as cam:
+            return cam.get_depth_frame()
+`;
+
+export const GET_CAMERA_DISTANCE_AT_PX_FUNCTION = (
+    generator: CodeGenerator,
+) => `
+def ${generator.FUNCTION_NAME_PLACEHOLDER_}(x, y):
+
+    rosbridge_host = os.getenv("ROSBRIDGE_HOST", "rosbridge-ws")
+    try:
+        with Camera(host=rosbridge_host, port=9090) as cam:
+            return cam.get_distance_at_px(int(x), int(y))
+    except Exception:
+        with Camera(host="localhost", port=9090) as cam:
+            return cam.get_distance_at_px(int(x), int(y))
+`;
+
+export const GET_IMU_ACCELERATION_FUNCTION = (generator: CodeGenerator) => `
+def ${generator.FUNCTION_NAME_PLACEHOLDER_}(axis):
+
+    rosbridge_host = os.getenv("ROSBRIDGE_HOST", "rosbridge-ws")
+    try:
+        with IMU(host=rosbridge_host, port=9090) as imu:
+            data = imu.latest()
+            if data is None:
+                return 0.0
+            acc = data.acceleration_m_s2
+            if axis == "total":
+                return math.sqrt(acc.x ** 2 + acc.y ** 2 + acc.z ** 2)
+            return getattr(acc, axis)
+    except Exception:
+        try:
+            with IMU(host="localhost", port=9090) as imu:
+                data = imu.latest()
+                if data is None:
+                    return 0.0
+                acc = data.acceleration_m_s2
+                if axis == "total":
+                    return math.sqrt(acc.x ** 2 + acc.y ** 2 + acc.z ** 2)
+                return getattr(acc, axis)
+        except Exception:
+            return 0.0
+`;
+
+export const GET_IMU_ANGULAR_VELOCITY_FUNCTION = (generator: CodeGenerator) => `
+def ${generator.FUNCTION_NAME_PLACEHOLDER_}(axis):
+
+    rosbridge_host = os.getenv("ROSBRIDGE_HOST", "rosbridge-ws")
+    try:
+        with IMU(host=rosbridge_host, port=9090) as imu:
+            data = imu.latest()
+            if data is None:
+                return 0.0
+            return getattr(data.angular_velocity_rad_s, axis)
+    except Exception:
+        try:
+            with IMU(host="localhost", port=9090) as imu:
+                data = imu.latest()
+                if data is None:
+                    return 0.0
+                return getattr(data.angular_velocity_rad_s, axis)
+        except Exception:
+            return 0.0
+`;
+
+export const GET_IMU_IS_DATA_AVAILABLE_FUNCTION = (
+    generator: CodeGenerator,
+) => `
+def ${generator.FUNCTION_NAME_PLACEHOLDER_}():
+
+    rosbridge_host = os.getenv("ROSBRIDGE_HOST", "rosbridge-ws")
+    try:
+        with IMU(host=rosbridge_host, port=9090) as imu:
+            return imu.latest() is not None
+    except Exception:
+        try:
+            with IMU(host="localhost", port=9090) as imu:
+                return imu.latest() is not None
+        except Exception:
+            return False
+`;
+
+export const GET_IMU_DATA_AGE_FUNCTION = (generator: CodeGenerator) => `
+def ${generator.FUNCTION_NAME_PLACEHOLDER_}():
+
+    rosbridge_host = os.getenv("ROSBRIDGE_HOST", "rosbridge-ws")
+    try:
+        with IMU(host=rosbridge_host, port=9090) as imu:
+            data = imu.latest()
+            if data is None:
+                return 0.0
+            return data.age_s
+    except Exception:
+        try:
+            with IMU(host="localhost", port=9090) as imu:
+                data = imu.latest()
+                if data is None:
+                    return 0.0
+                return data.age_s
+        except Exception:
+            return 0.0
 `;
 
 // pose
@@ -90,6 +245,140 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(poseId: str) -> None:
         except Exception:
             pib_sdk.Write(host="localhost", port=9090).move(motor_name, position)
 `;
+
+export const SAVE_CURRENT_POSE_FUNCTION = (generator: CodeGenerator) => `
+def ${generator.FUNCTION_NAME_PLACEHOLDER_}(name: str) -> None:
+
+    motor_names = _expand_motor_specs([All])
+    assert "turn_head_motor" in motor_names
+    assert "tilt_forward_motor" in motor_names
+
+    with Telemetry(host=rosbridge_host, port=9090) as telemetry:
+        save_current_pose(telemetry, pose_backend, name, motor_names)
+`;
+
+export const PLAY_POSE_SEQUENCE_TIMED_FUNCTION = (generator: CodeGenerator) => `
+def ${generator.FUNCTION_NAME_PLACEHOLDER_}(sequence) -> None:
+
+    steps = [(str(item[0]), float(item[1])) for item in (sequence or [])]
+    rosbridge_host = os.getenv("ROSBRIDGE_HOST", "rosbridge-ws")
+    try:
+        with pib_sdk.Write(host=rosbridge_host, port=9090) as writer:
+            play_pose_sequence_timed(writer, pose_backend, steps)
+    except Exception:
+        with pib_sdk.Write(host="localhost", port=9090) as writer:
+            play_pose_sequence_timed(writer, pose_backend, steps)
+`;
+
+// model inference
+
+export const START_MODEL_FUNCTION = (generator: CodeGenerator) => `
+def ${generator.FUNCTION_NAME_PLACEHOLDER_}(model_id) -> None:
+    rosbridge_host = os.getenv("ROSBRIDGE_HOST", "rosbridge-ws")
+    with Models(host=rosbridge_host, port=9090) as models:
+        models.start_model(str(model_id))
+`;
+
+export const STOP_MODEL_FUNCTION = (generator: CodeGenerator) => `
+def ${generator.FUNCTION_NAME_PLACEHOLDER_}(model_id) -> None:
+    rosbridge_host = os.getenv("ROSBRIDGE_HOST", "rosbridge-ws")
+    with Models(host=rosbridge_host, port=9090) as models:
+        models.stop_model(str(model_id))
+`;
+
+function latestDetectionsFunction(
+    generator: CodeGenerator,
+    topic: string,
+    emptyWarning: string,
+    extraFields = "",
+    extraHelpers = "",
+) {
+    return `
+def ${generator.FUNCTION_NAME_PLACEHOLDER_}(timeout_sec=10.0):
+    received = {}
+
+    def _on_detection(message):
+        received["message"] = message
+
+    subscription = node.create_subscription(
+        DetectionArray,
+        "${topic}",
+        _on_detection,
+        10,
+    )
+    deadline = time.monotonic() + timeout_sec
+    try:
+        while "message" not in received and time.monotonic() < deadline:
+            rclpy.spin_once(node, timeout_sec=0.1)
+    finally:
+        node.destroy_subscription(subscription)
+
+    message = received.get("message")
+    if message is None:
+        logging.warning("${emptyWarning}")
+        return []
+${extraHelpers}
+    return [
+        [
+            detection.label,
+            detection.score,
+            detection.x_min,
+            detection.y_min,
+            detection.x_max,
+            detection.y_max,${extraFields}
+        ]
+        for detection in message.detections
+    ]
+`;
+}
+
+export const GET_FACE_DETECTIONS_FUNCTION = (generator: CodeGenerator) =>
+    latestDetectionsFunction(
+        generator,
+        "/detections/face_detection_yunet_160x120",
+        "no face detections received",
+    );
+
+export const GET_OBJECT_DETECTIONS_FUNCTION = (generator: CodeGenerator) =>
+    latestDetectionsFunction(
+        generator,
+        "/detections/yolov6n_coco_640x640",
+        "no object detections received",
+    );
+
+export const GET_QR_DETECTIONS_FUNCTION = (generator: CodeGenerator) =>
+    latestDetectionsFunction(
+        generator,
+        "/detections/qr_code_detection_384x384",
+        "no qr detections received",
+    );
+
+export const GET_EMOTION_DETECTIONS_FUNCTION = (generator: CodeGenerator) =>
+    latestDetectionsFunction(
+        generator,
+        "/detections/emotion_recognition_crop",
+        "no emotion detections received",
+    );
+
+export const GET_HEAD_POSE_DETECTIONS_FUNCTION = (generator: CodeGenerator) =>
+    latestDetectionsFunction(
+        generator,
+        "/detections/head_pose_estimation_crop",
+        "no head pose detections received",
+        `
+            _scalar(detection, "yaw_deg", "yaw"),
+            _scalar(detection, "pitch_deg", "pitch"),
+            _scalar(detection, "roll_deg", "roll"),`,
+        `
+    def _scalar(detection, *names):
+        for name in names:
+            if name in detection.scalar_names:
+                index = detection.scalar_names.index(name)
+                if index < len(detection.scalar_values):
+                    return detection.scalar_values[index]
+        return 0.0
+`,
+    );
 
 // set-solid-state-relay
 
@@ -137,6 +426,35 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}() -> bool:
     return received["turned_on"]
 `;
 
+// get-sound-direction (DOA)
+
+export const GET_SOUND_DIRECTION_FUNCTION = (generator: CodeGenerator) => `
+
+def ${generator.FUNCTION_NAME_PLACEHOLDER_}() -> int:
+
+    received = {}
+    timeout_sec = 5.0
+
+    def _on_doa_angle(msg):
+        received["data"] = msg.data
+
+    subscription = node.create_subscription(
+        Int32, "/doa_angle", _on_doa_angle, 10
+    )
+
+    logging.info("waiting for sound direction...")
+    deadline = time.time() + timeout_sec
+    while "data" not in received and time.time() < deadline:
+        rclpy.spin_once(node, timeout_sec=0.1)
+    node.destroy_subscription(subscription)
+
+    if "data" not in received:
+        logging.warning("no sound direction received within 5.0 s; returning 0.")
+        return 0
+
+    return int(received["data"])
+`;
+
 // run-script
 
 export const RUN_SCRIPT_FUNCTION = (generator: CodeGenerator) => `
@@ -180,52 +498,6 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(script: str, host: str, user: str, p
         logging.error(f"Cannot connect to {effective_host} via ssh: {e}")
     finally:
         client.close()
-`;
-
-// face-detector
-
-export const FACE_DETECTOR_CLASS = (generator: CodeGenerator) => `
-import os
-import rclpy
-from std_msgs.msg import Float32MultiArray
-
-class ${generator.FUNCTION_NAME_PLACEHOLDER_}():
-
-    def __init__(self):
-        self.x_center = 0.0
-        self.y_center = 0.0
-        self.node = None
-        self.subscription = None
-
-        if not rclpy.ok():
-            rclpy.init(args=None)
-
-        self.node = rclpy.create_node(f"blockly_face_detector_{os.getpid()}")
-        self.subscription = self.node.create_subscription(
-            Float32MultiArray,
-            "/face_center",
-            self.face_center_callback,
-            10
-        )
-
-    def face_center_callback(self, msg):
-        if len(msg.data) >= 2:
-            self.x_center = float(msg.data[0])
-            self.y_center = float(msg.data[1])
-        else:
-            self.x_center = 0.0
-            self.y_center = 0.0
-
-    def updateDetector(self):
-        if self.node is not None:
-            rclpy.spin_once(self.node, timeout_sec=0.02)
-
-        return (self.x_center, self.y_center)
-
-    def close(self):
-        if self.node is not None:
-            self.node.destroy_node()
-            self.node = None
 `;
 
 // vision
@@ -373,4 +645,30 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(button_id: int, red: int, green: int
 
     # Consolidated API: publish sticky color until overwritten.
     blockly_client.set_button_color(button_id, red, green, blue)
+`;
+
+export const PROGRAM_LOG_PATH_FUNCTION = (generator: CodeGenerator) => `
+def ${generator.FUNCTION_NAME_PLACEHOLDER_}() -> str:
+    program_number = os.path.splitext(os.path.basename(__file__))[0]
+    log_dir = os.path.join(os.getenv("PROGRAM_DIR", "/home/pib/cerebra_programs"), "program-logs")
+    os.makedirs(log_dir, exist_ok=True)
+    return os.path.join(log_dir, f"{program_number}.log")
+`;
+
+export const PROGRAM_LOG_FUNCTION = (
+    generator: CodeGenerator,
+    pathFunctionName: string,
+) => `
+def ${generator.FUNCTION_NAME_PLACEHOLDER_}(level, text) -> None:
+    with open(${pathFunctionName}(), "a", encoding="utf-8") as log_file:
+        log_file.write(f"[{datetime.datetime.now()}] {level} {text}\\n")
+`;
+
+export const PROGRAM_RESET_LOG_FUNCTION = (
+    generator: CodeGenerator,
+    pathFunctionName: string,
+) => `
+def ${generator.FUNCTION_NAME_PLACEHOLDER_}() -> None:
+    with open(${pathFunctionName}(), "w", encoding="utf-8") as log_file:
+        log_file.write("")
 `;

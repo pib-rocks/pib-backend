@@ -2,34 +2,50 @@
 
 from __future__ import annotations
 
-import os
-
 import pytest
+from click.testing import CliRunner
 
-os.environ.setdefault("MICROPHONE_ARRAY_SIMULATION", "1")
-
-from app.app import app  # noqa: E402
+from app.app import app, db  # noqa: E402
+from commands import seed_db  # noqa: E402
+from seed_profiles import get_profile  # noqa: E402
 from service import microphone_array_service as mas  # noqa: E402
 
 
 @pytest.fixture
-def client():
-    mas.get_service().reset_for_tests()
+def client(app):
     app.config["TESTING"] = True
     with app.test_client() as test_client:
         yield test_client
-    mas.get_service().reset_for_tests()
+
+
+def test_get_health(client):
+    response = client.get("/system/microphone-array/health")
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["simulation"] is True
+    assert data["simulation_reason"] == mas.SIMULATION_REASON
+    assert data["device_access"] is False
+    assert data["owner"] == "ros-audio-io"
+    assert data["led_owner"] == "ros-audio-io"
+    assert data["led_control"] == "ROS 2 parameters via rosbridge"
+
+
+def test_get_health_v1_prefix(client):
+    response = client.get("/v1/system/microphone-array/health")
+    assert response.status_code == 200
+    assert response.get_json()["owner"] == "ros-audio-io"
 
 
 def test_get_telemetry(client):
     response = client.get("/system/microphone-array/telemetry")
     assert response.status_code == 200
     data = response.get_json()
-    assert data["doa_angle"] == 180
-    assert data["voice_activity"] is False
-    assert data["speech_detected"] is False
-    assert isinstance(data["audio_levels"], list)
-    assert len(data["audio_levels"]) == 5
+    assert data["doa_angle"] is None
+    assert data["voice_activity"] is None
+    assert data["speech_detected"] is None
+    assert data["audio_levels"] == []
+    assert data["legacy"] is True
+    assert data["simulation_reason"] == mas.SIMULATION_REASON
 
 
 def test_get_telemetry_v1_prefix(client):
@@ -48,6 +64,21 @@ def test_get_tuning(client):
     assert "led_ring" in data
     assert "Standard" in data["presets"]
     assert "Raw" in data["presets"]
+    assert data["legacy"] is True
+    assert data["applied_to_device"] is False
+    assert data["simulation_reason"] == mas.SIMULATION_REASON
+
+
+def test_get_desired_state_for_device_owner(client):
+    response = client.get("/v1/system/microphone-array/desired-state")
+
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["preset"] == "Standard"
+    assert "AGCONOFF" in data["parameters"]
+    assert data["led_ring"]["mode"] == "off"
+    assert data["revision"] == 1
+    assert data["updatedAt"]
 
 
 def test_post_tuning_preset(client):
@@ -86,6 +117,32 @@ def test_post_tuning_led_ring(client):
     led = response.get_json()["led_ring"]
     assert led["mode"] == "spin"
     assert led["brightness"] == 20
+
+    desired = client.get("/system/microphone-array/desired-state").get_json()
+    assert desired["led_ring"]["mode"] == "spin"
+    assert desired["led_ring"]["brightness"] == 20
+    assert desired["revision"] == 2
+
+
+def test_changed_state_survives_seed_path_and_fresh_service(client):
+    response = client.post(
+        "/system/microphone-array/tuning",
+        json={"parameters": {"ECHOONOFF": 0}},
+    )
+    changed = response.get_json()
+
+    with app.app_context():
+        result = CliRunner().invoke(seed_db, [])
+        assert result.exit_code == 0, result.output
+        assert "already contains data" in result.output
+        mas.seed_desired_state(get_profile("pib5edu"))
+        db.session.expire_all()
+
+        persisted = mas.MicrophoneArrayService().get_desired_state()
+
+    assert persisted["parameters"]["ECHOONOFF"] == 0
+    assert persisted["revision"] == 2
+    assert changed["parameters"]["ECHOONOFF"] == 0
 
 
 def test_post_tuning_invalid_json(client):

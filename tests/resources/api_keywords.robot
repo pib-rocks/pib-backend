@@ -48,6 +48,12 @@ Get Motor Rotation Range
     ${body}=    Set Variable    ${response.json()}
     RETURN    ${body}[rotationRangeMin]    ${body}[rotationRangeMax]
 
+Get Button Program Bricklet Number
+    ${response}=    GET    ${FLASK_BASE_URL}/button-programs    expected_status=200
+    ${body}=    Set Variable    ${response.json()}
+    ${button_program}=    Get From List    ${body}[buttonPrograms]    0
+    RETURN    ${button_program}[brickletNumber]
+
 Put Button Program Mapping
     [Arguments]    ${bricklet_number}    ${program_number}=${None}
     ${updates}=    Create List

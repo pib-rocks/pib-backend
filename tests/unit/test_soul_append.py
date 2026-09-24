@@ -56,4 +56,5 @@ def test_soul_append_rejects_oversized_lesson(
         personality_service.get_personality(personality.personality_id).description
         == original
     )
-    assert soul_service.read_soul(personality.personality_id) == original
+    # A failed creation-time daemon call must not leave a SOUL-only profile.
+    assert soul_service.read_soul(personality.personality_id) == ""

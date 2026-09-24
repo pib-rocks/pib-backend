@@ -73,8 +73,15 @@ run_step() {
 
 ensure_venv() {
     section "Python virtualenv"
-    if [[ ! -d "${VENV_DIR}" ]]; then
-        echo "Creating ${VENV_DIR} ..."
+    # An existing directory is not a usable venv: an interrupted `python3 -m venv` leaves
+    # one behind without bin/, and sourcing bin/activate then aborts the whole run.
+    if [[ ! -x "${VENV_DIR}/bin/python" ]] || ! "${VENV_DIR}/bin/python" -c "" >/dev/null 2>&1; then
+        if [[ -e "${VENV_DIR}" ]]; then
+            echo "Rebuilding unusable ${VENV_DIR} ..."
+            rm -rf "${VENV_DIR}"
+        else
+            echo "Creating ${VENV_DIR} ..."
+        fi
         python3 -m venv "${VENV_DIR}"
     fi
     # shellcheck source=/dev/null
@@ -84,6 +91,7 @@ ensure_venv() {
     # (e.g. grpcio) from source, which is slow and fragile on arm64 / Raspberry Pi.
     pip install -q --prefer-binary -r "${SCRIPT_DIR}/integration/requirements.txt" \
         -r "${SCRIPT_DIR}/infrastructure/requirements.txt" \
+        -r "${SCRIPT_DIR}/requirements-camera.txt" \
         playwright \
         lark
     pip install -q -e "${REPO_ROOT}/pib_hermes_config" \
@@ -109,10 +117,30 @@ check_flask() {
 run_pytest_integration() {
     cd "${REPO_ROOT}"
     rm -rf /tmp/pytest-of-* /tmp/pytest-* 2>/dev/null || true
+    export PIB_ROBOT_URL="${PIB_ROBOT_URL:-http://localhost}"
+    export PIB_API_URL="${PIB_API_URL:-http://localhost/api}"
+    export PIB_E2E_BASE_URL="${PIB_E2E_BASE_URL:-http://localhost}"
+    local log
+    log="$(mktemp)"
+    # --continue-on-collection-errors: one unimportable module must never cancel the whole
+    # stage. The modules that could not be collected are listed again after the run.
     PYTHONPATH="${REPO_ROOT}/pib_api/flask:${REPO_ROOT}/pib_hermes_config:${REPO_ROOT}/pib_mcp_server:${REPO_ROOT}/public_api_client" \
         pytest "${SCRIPT_DIR}" -q \
         --ignore="${SCRIPT_DIR}/blockly_generator" \
-        -m "not docker"
+        --continue-on-collection-errors \
+        -m "not docker" 2>&1 | tee "${log}"
+    local status=${PIPESTATUS[0]}
+    local collect_errors
+    # A collection error is reported as "ERROR <file>.py[ - reason]"; per-test errors carry a
+    # "::" node id and captured log records have padding after ERROR, so both are excluded.
+    collect_errors="$(grep -E '^ERROR [^[:space:]]+\.py([[:space:]]|$)' "${log}" || true)"
+    if [[ -n "${collect_errors}" ]]; then
+        echo ""
+        echo -e "${YELLOW}Modules that failed to collect:${NC}"
+        echo "${collect_errors}"
+    fi
+    rm -f "${log}"
+    return "${status}"
 }
 
 run_pytest_docker() {
@@ -123,20 +151,28 @@ run_pytest_docker() {
 
 run_jest() {
     cd "${SCRIPT_DIR}/blockly_generator"
-    chmod +x node_modules/.bin/* 2>/dev/null || true
+    # tests/blockly_generator/node_modules is vendored in the repo, so use it as-is and only
+    # install when it is missing. Jest is started via `node .../jest.js` so no executable bit
+    # on node_modules/.bin is required.
+    local jest_cmd='set -e
+if ! node node_modules/jest/bin/jest.js --version >/dev/null 2>&1; then npm install --silent --no-audit --no-fund; fi
+node node_modules/jest/bin/jest.js --config jest.config.js'
     if command -v docker >/dev/null 2>&1; then
         docker run --rm \
             -v "${REPO_ROOT}:/work" \
             -w "/work/tests/blockly_generator" \
+            --user "$(id -u):$(id -g)" \
+            -e HOME=/tmp \
+            -e npm_config_cache=/tmp/.npm \
             node:18-bookworm \
-            bash -lc 'rm -rf node_modules package-lock.json && npm install --silent && chmod +x node_modules/.bin/* 2>/dev/null || true && npx jest --config jest.config.js'
+            bash -lc "${jest_cmd}"
         return $?
     fi
-    if command -v npm >/dev/null 2>&1; then
-        rm -rf node_modules package-lock.json && npm install --silent && chmod +x node_modules/.bin/* 2>/dev/null || true && npx jest --config jest.config.js
+    if command -v node >/dev/null 2>&1; then
+        bash -c "${jest_cmd}"
         return $?
     fi
-    echo "Neither docker nor npm found — cannot run Jest" >&2
+    echo "Neither docker nor node found — cannot run Jest" >&2
     return 1
 }
 

@@ -9,6 +9,27 @@ from unittest.mock import MagicMock, patch, call
 
 import pytest
 
+# Stub modules this file installs. They are dropped again after its tests so a
+# later test module in the same pytest session never inherits an incomplete
+# stand-in: a stub ``rclpy`` whose ``Node`` lacks methods such as
+# ``create_subscription`` makes other modules believe the real client library is
+# present, and they then skip building their own fake.
+_STUB_MODULE_NAMES = (
+    "rclpy",
+    "rclpy.node",
+    "diagnostic_msgs",
+    "diagnostic_msgs.msg",
+    "tinkerforge",
+    "tinkerforge.brick_hat",
+    "tinkerforge.bricklet_servo_v2",
+    "tinkerforge.bricklet_solid_state_relay_v2",
+    "tinkerforge.bricklet_rgb_led_button",
+    "tinkerforge.ip_connection",
+)
+_ABSENT_BEFORE_STUBS = frozenset(
+    name for name in _STUB_MODULE_NAMES if name not in sys.modules
+)
+
 # Ensure rclpy and diagnostic_msgs are mocked if not installed in host environment
 if "rclpy" not in sys.modules:
     mock_rclpy = types.ModuleType("rclpy")
@@ -23,11 +44,26 @@ if "rclpy" not in sys.modules:
         def get_logger(self):
             return self._logger
 
+        def get_name(self):
+            return self.name
+
         def create_publisher(self, msg_type, topic, qos):
             return self.motor_current_publisher
 
+        def create_subscription(self, msg_type, topic, callback, qos):
+            return MagicMock()
+
+        def create_client(self, srv_type, srv_name):
+            return MagicMock()
+
+        def create_service(self, srv_type, srv_name, callback):
+            return MagicMock()
+
         def create_timer(self, period, callback):
             return MagicMock(period=period, callback=callback)
+
+        def destroy_node(self):
+            pass
 
     mock_node_mod.Node = FakeNode
     mock_rclpy.node = mock_node_mod
@@ -95,6 +131,15 @@ for name, mod in [
 ]:
     sys.modules[name] = mod
 
+
+@pytest.fixture(scope="module", autouse=True)
+def _drop_stubbed_modules():
+    """Remove the stand-in modules again once this module's tests are done."""
+    yield
+    for name in _ABSENT_BEFORE_STUBS:
+        sys.modules.pop(name, None)
+
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 for p in (
     str(REPO_ROOT / "ros_packages" / "motors"),
@@ -128,11 +173,11 @@ def mock_motor_setup():
 
     motor1 = MagicMock()
     motor1.name = "head_motor"
-    motor1.bricklet_pins = [mock_pin0]
+    motor1.actuators = [mock_pin0]
 
     motor2 = MagicMock()
     motor2.name = "arm_motor"
-    motor2.bricklet_pins = [mock_pin1]
+    motor2.actuators = [mock_pin1]
 
     mock_motors = [motor1, motor2]
 

@@ -1,26 +1,25 @@
 from flask import Blueprint, jsonify
 
+from service.revision_service import installed_revisions
+from service.version_service import read_app_version
+
 bp = Blueprint("version_controller", __name__)
-
-
-VERSION_FILES = (
-    "/etc/pib_version",
-    "/app/version.py",
-)  # /etc survives the /app volume mount
-
-
-def _read_app_version():
-    for path in VERSION_FILES:
-        try:
-            with open(path, encoding="utf-8") as vf:
-                value = vf.read().strip().strip('"').strip("'")
-            if value:
-                return value
-        except Exception:
-            continue
-    return "unknown"
 
 
 @bp.route("", methods=["GET"])
 def get_version():
-    return jsonify({"version": _read_app_version()}), 200
+    """Image version plus the checked-out revisions of the repositories.
+
+    The revision values come from the host update runner; anything it has not
+    recorded yet is reported as ``unknown`` instead of being guessed.
+    """
+    revisions = installed_revisions()
+    return (
+        jsonify(
+            {
+                "version": read_app_version(),
+                "repositories": revisions["repositories"],
+            }
+        ),
+        200,
+    )

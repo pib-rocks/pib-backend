@@ -1,6 +1,5 @@
 from model.motor_model import Motor
-from model.bricklet_model import Bricklet
-from model.bricklet_pin_model import BrickletPin
+from model.controller_model import Controller
 from typing import Any, List
 from app.app import db
 
@@ -26,20 +25,26 @@ def set_motor_settings(motor_name: str, motor_settings_dto: Any):
     motor.turned_on = motor_settings_dto["turned_on"]
     motor.visible = motor_settings_dto["visible"]
     motor.invert = motor_settings_dto["invert"]
+    if "current_limit" in motor_settings_dto:
+        motor.current_limit = motor_settings_dto["current_limit"]
+    if "torque_limit" in motor_settings_dto:
+        motor.torque_limit = motor_settings_dto["torque_limit"]
     db.session.flush()
     return motor
 
 
-def set_bricklet_pins(motor_name, bricklet_pin_dtos):
+def set_motor_controller(motor_name: str, controller_dto: Any, channel: int):
     motor = get_motor_by_name(motor_name)
-    motor.bricklet_pins.clear()
-    for dto in bricklet_pin_dtos:
-        bricklet_uid = dto["bricklet"]["uid"]
-        bricklet = Bricklet.query.filter(Bricklet.uid == bricklet_uid).one()
-        bricklet_pin = BrickletPin(pin=dto["pin"])
-        bricklet_pin.bricklet = bricklet
-        bricklet_pin.motor = motor
-        bricklet_pin.invert = dto["invert"]
-        db.session.add(bricklet_pin)
+    number = controller_dto.get("number")
+    address = controller_dto.get("address")
+    query = Controller.query
+    if number is not None:
+        controller = query.filter(Controller.number == number).one()
+    elif address is not None:
+        controller = query.filter(Controller.address == address).one()
+    else:
+        raise ValueError("Controller requires a number or address")
+    motor.controller = controller
+    motor.channel = channel
     db.session.flush()
     return motor

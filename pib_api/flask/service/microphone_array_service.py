@@ -1,98 +1,64 @@
-"""Seeed ReSpeaker 4-Mic Array (USB XMOS XVF3000) driver & tuning service.
+"""Legacy microphone-array REST responses.
 
-Falls back to an in-memory simulation when the USB device is absent or when
-``MICROPHONE_ARRAY_SIMULATION`` is set.
+The Flask backend intentionally never imports pyusb, probes USB, or opens the
+ReSpeaker. ``ros-audio-io`` is the single device owner. Live telemetry and all
+tuning/LED control are ROS topics and ROS 2 parameters consumed through
+rosbridge; these functions remain only for compatibility with older clients.
 """
 
 from __future__ import annotations
 
-import logging
-import os
-import struct
 import threading
 from copy import deepcopy
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-logger = logging.getLogger(__name__)
+from seed_profiles import HardwareProfile, get_profile
+from seed_profiles.edu_microphone_tuning import (
+    MICROPHONE_LED_RING,
+    MICROPHONE_TUNING,
+)
+from service.system_property_service import (
+    MICROPHONE_DESIRED_STATE_KEY,
+    get_property_value,
+    get_variant,
+    set_property,
+    set_property_if_missing,
+)
 
 VENDOR_ID = 0x2886
 PRODUCT_ID = 0x0018
+SIMULATION_REASON = "microphone array is owned by ros-audio-io"
+CONTROL_SURFACE = "ROS 2 parameters via rosbridge"
 
-# name: (id, offset, type, max, min, r/w, info…)
-PARAMETERS: Dict[str, tuple] = {
-    "HPFONOFF": (18, 27, "int", 3, 0, "rw", "High-pass Filter on microphone signals."),
-    "AGCONOFF": (19, 0, "int", 1, 0, "rw", "Automatic Gain Control."),
-    "AGCMAXGAIN": (19, 1, "float", 1000, 1, "rw", "Maximum AGC gain factor."),
-    "AGCDESIREDLEVEL": (19, 2, "float", 0.99, 1e-08, "rw", "Target power level."),
-    "AGCTIME": (19, 4, "float", 1, 0.1, "rw", "AGC ramp time-constant in seconds."),
-    "STATNOISEONOFF": (19, 8, "int", 1, 0, "rw", "Stationary noise suppression."),
-    "NONSTATNOISEONOFF": (
-        19,
-        11,
-        "int",
-        1,
-        0,
-        "rw",
-        "Non-stationary noise suppression.",
-    ),
-    "ECHOONOFF": (19, 14, "int", 1, 0, "rw", "Echo suppression."),
-    "SPEECHDETECTED": (19, 22, "int", 1, 0, "ro", "Speech detection status."),
-    "VOICEACTIVITY": (19, 32, "int", 1, 0, "ro", "VAD voice activity status."),
-    "STATNOISEONOFF_SR": (19, 33, "int", 1, 0, "rw", "Stationary NS for ASR."),
-    "NONSTATNOISEONOFF_SR": (19, 34, "int", 1, 0, "rw", "Non-stationary NS for ASR."),
-    "DOAANGLE": (21, 0, "int", 359, 0, "ro", "DOA angle."),
+# name: (type, maximum, minimum)
+PARAMETERS = {
+    "HPFONOFF": ("int", 3, 0),
+    "AGCONOFF": ("int", 1, 0),
+    "AGCMAXGAIN": ("float", 1000, 1),
+    "AGCDESIREDLEVEL": ("float", 0.99, 1e-08),
+    "AGCTIME": ("float", 1, 0.1),
+    "STATNOISEONOFF": ("int", 1, 0),
+    "NONSTATNOISEONOFF": ("int", 1, 0),
+    "ECHOONOFF": ("int", 1, 0),
+    "STATNOISEONOFF_SR": ("int", 1, 0),
+    "NONSTATNOISEONOFF_SR": ("int", 1, 0),
 }
+TUNABLE_PARAMS = tuple(PARAMETERS)
 
-TUNABLE_PARAMS = (
-    "AGCONOFF",
-    "AGCMAXGAIN",
-    "AGCDESIREDLEVEL",
-    "AGCTIME",
-    "STATNOISEONOFF",
-    "NONSTATNOISEONOFF",
-    "ECHOONOFF",
-    "HPFONOFF",
-    "STATNOISEONOFF_SR",
-    "NONSTATNOISEONOFF_SR",
-)
-
-# Factory-style defaults for the Standard preset.
-_DEFAULT_TUNING: Dict[str, Any] = {
-    "AGCONOFF": 1,
-    "AGCMAXGAIN": 31.6,
-    "AGCDESIREDLEVEL": 0.005,
-    "AGCTIME": 1.0,
-    "STATNOISEONOFF": 1,
-    "NONSTATNOISEONOFF": 1,
-    "ECHOONOFF": 1,
-    "HPFONOFF": 1,
-    "STATNOISEONOFF_SR": 1,
-    "NONSTATNOISEONOFF_SR": 1,
-}
+_DEFAULT_TUNING: Dict[str, Any] = dict(MICROPHONE_TUNING)
 
 PRESETS: Dict[str, Dict[str, Any]] = {
     "Standard": dict(_DEFAULT_TUNING),
     "Noisy Environment / ASR": {
+        **_DEFAULT_TUNING,
         "AGCONOFF": 0,
-        "AGCMAXGAIN": 31.6,
-        "AGCDESIREDLEVEL": 0.005,
         "AGCTIME": 0.5,
-        "STATNOISEONOFF": 1,
-        "NONSTATNOISEONOFF": 1,
-        "ECHOONOFF": 1,
         "HPFONOFF": 2,
-        "STATNOISEONOFF_SR": 1,
-        "NONSTATNOISEONOFF_SR": 1,
     },
     "Loud Speaker Playback": {
-        "AGCONOFF": 1,
+        **_DEFAULT_TUNING,
         "AGCMAXGAIN": 15.8,
-        "AGCDESIREDLEVEL": 0.005,
-        "AGCTIME": 1.0,
-        "STATNOISEONOFF": 1,
-        "NONSTATNOISEONOFF": 1,
-        "ECHOONOFF": 1,
-        "HPFONOFF": 1,
         "STATNOISEONOFF_SR": 0,
         "NONSTATNOISEONOFF_SR": 0,
     },
@@ -110,8 +76,6 @@ PRESETS: Dict[str, Dict[str, Any]] = {
     },
     "Custom": dict(_DEFAULT_TUNING),
 }
-
-# Accept the plan's longer alias for the Raw preset.
 PRESET_ALIASES = {
     "Raw Pass-Through": "Raw",
     "raw": "Raw",
@@ -119,391 +83,197 @@ PRESET_ALIASES = {
 }
 
 LED_MODES = ("off", "listen", "speak", "think", "spin", "trace", "mono")
+_DEFAULT_LED: Dict[str, Any] = dict(MICROPHONE_LED_RING)
 
-_DEFAULT_LED: Dict[str, Any] = {
-    "mode": "off",
-    "brightness": 16,
-    "color": "#000000",
-    "vad_led": 0,
-}
-
-_DEFAULT_TELEMETRY: Dict[str, Any] = {
-    "doa_angle": 180,
-    "voice_activity": False,
-    "speech_detected": False,
-    "audio_levels": [0.05, 0.02, 0.02, 0.03, 0.02],
-}
+_desired_state_lock = threading.RLock()
 
 
-try:
-    import usb.core  # type: ignore
-    import usb.util  # type: ignore
-
-    _USB_AVAILABLE = True
-except ImportError:  # pragma: no cover - exercised when pyusb is absent
-    usb = None  # type: ignore
-    _USB_AVAILABLE = False
-
-
-class ReSpeakerTuning:
-    """Low-level USB vendor-control driver for XMOS DSP parameters."""
-
-    TIMEOUT = 100000
-
-    def __init__(self, dev: Any):
-        self.dev = dev
-
-    def write(self, name: str, value: Any) -> None:
-        data = PARAMETERS[name]
-        if data[5] == "ro":
-            raise ValueError(f"{name} is read-only")
-        param_id = data[0]
-        if data[2] == "int":
-            payload = struct.pack(b"iii", data[1], int(value), 1)
-        else:
-            payload = struct.pack(b"ifi", data[1], float(value), 0)
-        self.dev.ctrl_transfer(
-            usb.util.CTRL_OUT
-            | usb.util.CTRL_TYPE_VENDOR
-            | usb.util.CTRL_RECIPIENT_DEVICE,
-            0,
-            0,
-            param_id,
-            payload,
-            self.TIMEOUT,
-        )
-
-    def read(self, name: str) -> Any:
-        data = PARAMETERS[name]
-        param_id = data[0]
-        cmd = 0x80 | data[1]
-        if data[2] == "int":
-            cmd |= 0x40
-        response = self.dev.ctrl_transfer(
-            usb.util.CTRL_IN
-            | usb.util.CTRL_TYPE_VENDOR
-            | usb.util.CTRL_RECIPIENT_DEVICE,
-            0,
-            cmd,
-            param_id,
-            8,
-            self.TIMEOUT,
-        )
-        unpacked = struct.unpack(b"ii", response.tobytes())
-        if data[2] == "int":
-            return unpacked[0]
-        return unpacked[0] * (2.0 ** unpacked[1])
-
-
-class PixelRing:
-    """USB pixel-ring LED controller for ReSpeaker Mic Array v2.0."""
-
-    TIMEOUT = 8000
-
-    def __init__(self, dev: Any):
-        self.dev = dev
-
-    def write(self, cmd: int, data: Optional[List[int]] = None) -> None:
-        if data is None:
-            data = [0]
-        self.dev.ctrl_transfer(
-            usb.util.CTRL_OUT
-            | usb.util.CTRL_TYPE_VENDOR
-            | usb.util.CTRL_RECIPIENT_DEVICE,
-            0,
-            cmd,
-            0x1C,
-            data,
-            self.TIMEOUT,
-        )
-
-    def off(self) -> None:
-        self.write(1, [0, 0, 0, 0])
-
-    def mono(self, color: int) -> None:
-        self.write(
-            1,
-            [(color >> 16) & 0xFF, (color >> 8) & 0xFF, color & 0xFF, 0],
-        )
-
-    def listen(self) -> None:
-        self.write(2)
-
-    def speak(self) -> None:
-        self.write(3)
-
-    def think(self) -> None:
-        self.write(4)
-
-    def spin(self) -> None:
-        self.write(5)
-
-    def trace(self) -> None:
-        self.write(0)
-
-    def set_brightness(self, brightness: int) -> None:
-        self.write(0x20, [int(brightness) & 0xFF])
-
-    def set_vad_led(self, state: int) -> None:
-        self.write(0x22, [int(state) & 0xFF])
-
-
-def _force_simulation() -> bool:
-    return os.getenv("MICROPHONE_ARRAY_SIMULATION", "").lower() in (
-        "1",
-        "true",
-        "yes",
-        "on",
-    )
+def _legacy_facts() -> Dict[str, Any]:
+    return {
+        "legacy": True,
+        "simulation": True,
+        "simulation_reason": SIMULATION_REASON,
+        "control_surface": CONTROL_SURFACE,
+        "applied_to_device": False,
+    }
 
 
 def _normalize_preset_name(name: str) -> str:
     if name in PRESETS:
         return name
-    alias = PRESET_ALIASES.get(name) or PRESET_ALIASES.get(name.strip())
+    stripped = name.strip()
+    alias = PRESET_ALIASES.get(stripped) or PRESET_ALIASES.get(stripped.lower())
     if alias:
         return alias
-    # Case-insensitive match against known presets.
-    lowered = name.strip().lower()
     for preset in PRESETS:
-        if preset.lower() == lowered:
+        if preset.lower() == stripped.lower():
             return preset
-    alias = PRESET_ALIASES.get(lowered)
-    if alias:
-        return alias
     raise ValueError(f"Unknown preset: {name}")
 
 
-def _parse_hex_color(color: str) -> int:
-    value = color.strip().lstrip("#")
-    if len(value) != 6:
+def _parse_hex_color(color: str) -> str:
+    normalized = color.strip().upper()
+    if not normalized.startswith("#"):
+        normalized = f"#{normalized}"
+    if len(normalized) != 7 or any(
+        character not in "0123456789ABCDEF" for character in normalized[1:]
+    ):
         raise ValueError(f"Invalid color '{color}'; expected #RRGGBB")
-    return int(value, 16)
+    return normalized
 
 
 def _validate_param(name: str, value: Any) -> Any:
+    if name in ("DOAANGLE", "VOICEACTIVITY", "SPEECHDETECTED"):
+        raise ValueError(f"{name} is read-only")
     if name not in PARAMETERS:
         raise ValueError(f"Unknown parameter: {name}")
-    meta = PARAMETERS[name]
-    if meta[5] == "ro":
-        raise ValueError(f"{name} is read-only")
-    if name not in TUNABLE_PARAMS:
-        raise ValueError(f"Parameter {name} is not exposed for tuning")
-    if meta[2] == "int":
-        coerced = int(value)
-    else:
-        coerced = float(value)
-    minimum, maximum = meta[4], meta[3]
+    value_type, maximum, minimum = PARAMETERS[name]
+    coerced = int(value) if value_type == "int" else float(value)
     if coerced < minimum or coerced > maximum:
         raise ValueError(f"{name} out of range [{minimum}, {maximum}]; got {coerced}")
     return coerced
 
 
+def _timestamp() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def build_default_desired_state(profile: HardwareProfile) -> Dict[str, Any]:
+    return {
+        "parameters": dict(profile.microphone_tuning),
+        "led_ring": deepcopy(_DEFAULT_LED),
+        "preset": "Standard",
+        "updatedAt": _timestamp(),
+        "revision": 1,
+    }
+
+
+def seed_desired_state(profile: HardwareProfile | None = None) -> Dict[str, Any]:
+    """Create the profile default if absent and return the stored document."""
+
+    with _desired_state_lock:
+        selected_profile = profile or get_profile(get_variant())
+        set_property_if_missing(
+            MICROPHONE_DESIRED_STATE_KEY,
+            build_default_desired_state(selected_profile),
+            "default",
+        )
+        return deepcopy(get_property_value(MICROPHONE_DESIRED_STATE_KEY))
+
+
 class MicrophoneArrayService:
-    """Hardware / simulation façade for ReSpeaker telemetry and DSP tuning."""
+    """Database-backed desired state; this class has no hardware code path."""
 
     def __init__(self) -> None:
-        self._lock = threading.RLock()
-        self._dev: Any = None
-        self._tuning: Optional[ReSpeakerTuning] = None
-        self._pixel_ring: Optional[PixelRing] = None
-        self._simulation = True
-        self._preset = "Standard"
-        self._tuning_state: Dict[str, Any] = dict(_DEFAULT_TUNING)
-        self._led_state: Dict[str, Any] = dict(_DEFAULT_LED)
-        self._telemetry_state: Dict[str, Any] = deepcopy(_DEFAULT_TELEMETRY)
-        self._connect()
-
-    def _connect(self) -> None:
-        if _force_simulation() or not _USB_AVAILABLE:
-            self._enter_simulation("forced or pyusb unavailable")
-            return
-        try:
-            dev = usb.core.find(idVendor=VENDOR_ID, idProduct=PRODUCT_ID)
-        except Exception as exc:  # pragma: no cover - host USB stack errors
-            self._enter_simulation(f"usb find failed: {exc}")
-            return
-        if dev is None:
-            self._enter_simulation("ReSpeaker USB device not found")
-            return
-        self._dev = dev
-        self._tuning = ReSpeakerTuning(dev)
-        self._pixel_ring = PixelRing(dev)
-        self._simulation = False
-        logger.info(
-            "Microphone array: connected to ReSpeaker (0x%04x:0x%04x)",
-            VENDOR_ID,
-            PRODUCT_ID,
-        )
-        try:
-            self._apply_tuning_dict(self._tuning_state)
-            self._apply_led_state(self._led_state)
-        except Exception as exc:  # pragma: no cover
-            logger.warning("Failed to sync initial tuning to hardware: %s", exc)
-
-    def _enter_simulation(self, reason: str) -> None:
-        self._simulation = True
-        self._dev = None
-        self._tuning = None
-        self._pixel_ring = None
-        logger.info("Microphone array: simulation mode (%s)", reason)
+        self._lock = _desired_state_lock
 
     @property
     def is_simulation(self) -> bool:
-        return self._simulation
+        return True
 
     def list_presets(self) -> List[str]:
-        return list(PRESETS.keys())
+        return list(PRESETS)
+
+    def health(self) -> Dict[str, Any]:
+        with self._lock:
+            return {
+                **_legacy_facts(),
+                "device_access": False,
+                "owner": "ros-audio-io",
+                "led_owner": "ros-audio-io",
+                "led_control": CONTROL_SURFACE,
+                "vendor_id": f"0x{VENDOR_ID:04x}",
+                "product_id": f"0x{PRODUCT_ID:04x}",
+                "note": "Live values come from ROS topics published by ros-audio-io.",
+            }
 
     def get_telemetry(self) -> Dict[str, Any]:
+        """Return no fabricated measurements from the retired backend owner."""
+
         with self._lock:
-            if self._simulation or self._tuning is None:
-                return {
-                    **deepcopy(self._telemetry_state),
-                    "simulation": True,
-                }
-            try:
-                doa = int(self._tuning.read("DOAANGLE"))
-                vad = bool(self._tuning.read("VOICEACTIVITY"))
-                speech = bool(self._tuning.read("SPEECHDETECTED"))
-            except Exception as exc:
-                logger.warning("Hardware telemetry read failed, using cache: %s", exc)
-                return {
-                    **deepcopy(self._telemetry_state),
-                    "simulation": False,
-                    "error": str(exc),
-                }
-            self._telemetry_state.update(
-                {
-                    "doa_angle": doa,
-                    "voice_activity": vad,
-                    "speech_detected": speech,
-                }
-            )
             return {
-                "doa_angle": doa,
-                "voice_activity": vad,
-                "speech_detected": speech,
-                "audio_levels": list(self._telemetry_state["audio_levels"]),
-                "simulation": False,
+                "doa_angle": None,
+                "voice_activity": None,
+                "speech_detected": None,
+                "audio_levels": [],
+                **_legacy_facts(),
             }
 
     def get_tuning(self) -> Dict[str, Any]:
         with self._lock:
-            parameters = dict(self._tuning_state)
-            if not self._simulation and self._tuning is not None:
-                for name in TUNABLE_PARAMS:
-                    try:
-                        parameters[name] = self._tuning.read(name)
-                    except Exception as exc:
-                        logger.debug("Could not read %s from hardware: %s", name, exc)
-                self._tuning_state = parameters
+            desired_state = self.get_desired_state()
             return {
-                "preset": self._preset,
+                "preset": desired_state["preset"],
                 "presets": self.list_presets(),
-                "parameters": parameters,
-                "led_ring": dict(self._led_state),
-                "simulation": self._simulation,
+                "parameters": dict(desired_state["parameters"]),
+                "led_ring": dict(desired_state["led_ring"]),
+                **_legacy_facts(),
             }
 
+    def get_desired_state(self) -> Dict[str, Any]:
+        with self._lock:
+            desired_state = get_property_value(MICROPHONE_DESIRED_STATE_KEY)
+            if desired_state is None:
+                desired_state = seed_desired_state()
+            return deepcopy(desired_state)
+
     def update_tuning(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate legacy input and persist the desired device-owner state."""
+
         if not isinstance(payload, dict):
             raise ValueError("Request body must be a JSON object")
 
         with self._lock:
-            if "preset" in payload and payload["preset"] is not None:
+            desired_state = self.get_desired_state()
+            tuning_state = desired_state["parameters"]
+            led_state = desired_state["led_ring"]
+
+            if payload.get("preset") is not None:
                 preset_name = _normalize_preset_name(str(payload["preset"]))
-                if preset_name == "Custom":
-                    # Selecting Custom keeps current parameters; just label them.
-                    self._preset = "Custom"
-                else:
-                    self._apply_tuning_dict(PRESETS[preset_name])
-                    self._preset = preset_name
+                if preset_name != "Custom":
+                    tuning_state.update(PRESETS[preset_name])
+                desired_state["preset"] = preset_name
 
-            if "parameters" in payload and payload["parameters"] is not None:
-                params = payload["parameters"]
-                if not isinstance(params, dict):
+            if payload.get("parameters") is not None:
+                parameters = payload["parameters"]
+                if not isinstance(parameters, dict):
                     raise ValueError("'parameters' must be an object")
-                updates: Dict[str, Any] = {}
-                for name, value in params.items():
-                    updates[name] = _validate_param(str(name), value)
-                self._apply_tuning_dict(updates)
-                self._preset = "Custom"
+                tuning_state.update(
+                    {
+                        str(name): _validate_param(str(name), value)
+                        for name, value in parameters.items()
+                    }
+                )
+                desired_state["preset"] = "Custom"
 
-            if "led_ring" in payload and payload["led_ring"] is not None:
+            if payload.get("led_ring") is not None:
                 led = payload["led_ring"]
                 if not isinstance(led, dict):
                     raise ValueError("'led_ring' must be an object")
-                next_led = dict(self._led_state)
-                if "mode" in led and led["mode"] is not None:
+                if led.get("mode") is not None:
                     mode = str(led["mode"]).lower()
                     if mode not in LED_MODES:
                         raise ValueError(
                             f"Unknown LED mode '{mode}'; expected one of {LED_MODES}"
                         )
-                    next_led["mode"] = mode
-                if "brightness" in led and led["brightness"] is not None:
+                    led_state["mode"] = mode
+                if led.get("brightness") is not None:
                     brightness = int(led["brightness"])
                     if brightness < 0 or brightness > 31:
                         raise ValueError("LED brightness must be in [0, 31]")
-                    next_led["brightness"] = brightness
-                if "color" in led and led["color"] is not None:
-                    color = str(led["color"])
-                    _parse_hex_color(color)  # validate
-                    if not color.startswith("#"):
-                        color = f"#{color}"
-                    next_led["color"] = color.upper()
-                if "vad_led" in led and led["vad_led"] is not None:
-                    next_led["vad_led"] = 1 if bool(led["vad_led"]) else 0
-                self._apply_led_state(next_led)
+                    led_state["brightness"] = brightness
+                if led.get("color") is not None:
+                    led_state["color"] = _parse_hex_color(str(led["color"]))
+                if led.get("vad_led") is not None:
+                    led_state["vad_led"] = int(bool(led["vad_led"]))
 
+            desired_state["revision"] += 1
+            desired_state["updatedAt"] = _timestamp()
+            set_property(MICROPHONE_DESIRED_STATE_KEY, desired_state, source="command")
             return self.get_tuning()
 
-    def _apply_tuning_dict(self, updates: Dict[str, Any]) -> None:
-        for name, value in updates.items():
-            coerced = _validate_param(name, value) if name in TUNABLE_PARAMS else value
-            if name not in TUNABLE_PARAMS:
-                continue
-            self._tuning_state[name] = coerced
-            if not self._simulation and self._tuning is not None:
-                self._tuning.write(name, coerced)
-
-    def _apply_led_state(self, led: Dict[str, Any]) -> None:
-        self._led_state = {
-            "mode": led.get("mode", "off"),
-            "brightness": int(led.get("brightness", 16)),
-            "color": led.get("color", "#000000"),
-            "vad_led": int(led.get("vad_led", 0)),
-        }
-        if self._simulation or self._pixel_ring is None:
-            return
-        ring = self._pixel_ring
-        ring.set_brightness(self._led_state["brightness"])
-        ring.set_vad_led(self._led_state["vad_led"])
-        mode = self._led_state["mode"]
-        if mode == "off":
-            ring.off()
-        elif mode == "listen":
-            ring.listen()
-        elif mode == "speak":
-            ring.speak()
-        elif mode == "think":
-            ring.think()
-        elif mode == "spin":
-            ring.spin()
-        elif mode == "trace":
-            ring.trace()
-        elif mode == "mono":
-            ring.mono(_parse_hex_color(self._led_state["color"]))
-
     def reset_for_tests(self) -> None:
-        """Reset in-memory state; used by unit tests."""
-        with self._lock:
-            self._preset = "Standard"
-            self._tuning_state = dict(_DEFAULT_TUNING)
-            self._led_state = dict(_DEFAULT_LED)
-            self._telemetry_state = deepcopy(_DEFAULT_TELEMETRY)
-            self._enter_simulation("test reset")
+        """Retained for callers from before desired state moved to the database."""
 
 
 _service: Optional[MicrophoneArrayService] = None
@@ -522,8 +292,16 @@ def get_telemetry() -> Dict[str, Any]:
     return get_service().get_telemetry()
 
 
+def health() -> Dict[str, Any]:
+    return get_service().health()
+
+
 def get_tuning() -> Dict[str, Any]:
     return get_service().get_tuning()
+
+
+def get_desired_state() -> Dict[str, Any]:
+    return get_service().get_desired_state()
 
 
 def update_tuning(payload: Dict[str, Any]) -> Dict[str, Any]:

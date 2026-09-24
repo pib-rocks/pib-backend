@@ -1,3 +1,6 @@
+# Environment freeze snapshot — NOT the image install list.
+# The ros-camera image installs packages from camera/Dockerfile
+# (`pip install depthai==3.6.1 "opencv-python-headless<5"`), not this file.
 action-msgs==1.2.1
 actionlib-msgs==4.2.3
 ament-cmake-test==1.3.6
@@ -15,7 +18,6 @@ ament-xmllint==0.12.9
 argcomplete==1.8.1
 attrs==21.2.0
 blinker==1.4
-blobconverter==1.4.3
 builtin-interfaces==1.2.1
 camera-calibration==3.0.0
 catkin-pkg-modules==1.0.0
@@ -48,7 +50,7 @@ composition-interfaces==1.2.1
 cryptography==3.4.8
 cv-bridge==3.2.1
 dbus-python==1.2.18
-depthai==3.8.0
+depthai==3.6.1
 diagnostic-msgs==4.2.3
 diagnostic-updater==3.1.2
 distlib==0.3.4

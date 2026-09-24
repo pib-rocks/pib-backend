@@ -1,10 +1,7 @@
 import {Block} from "blockly/core/block";
 import {pythonGenerator} from "blockly/python";
 import {IMPORT_LOGGING, IMPORT_VISION_PROMPT} from "./util/definitions";
-import {
-    FACE_DETECTOR_CLASS,
-    VISION_HELPER_CLASS,
-} from "./util/function-declarations";
+import {VISION_HELPER_CLASS} from "./util/function-declarations";
 
 function ensureVisionHelper(generator: typeof pythonGenerator): string {
     Object.assign(generator.definitions_, {
@@ -20,40 +17,6 @@ function ensureVisionHelper(generator: typeof pythonGenerator): string {
 
 function pyString(value: string): string {
     return JSON.stringify(value ?? "");
-}
-
-export function face_detector_start_stop(
-    block: Block,
-    generator: typeof pythonGenerator,
-) {
-    const dropDownSetting = block.getFieldValue("SETTING");
-
-    Object.assign(generator.definitions_, {
-        IMPORT_LOGGING,
-    });
-
-    const className = generator.provideFunction_(
-        "FaceDetector",
-        FACE_DETECTOR_CLASS(generator),
-    );
-
-    return dropDownSetting === "START"
-        ? `fd = ${className}()\nlogging.info("Starting face detector")\n`
-        : `fd.close()\nlogging.info("Closing face detector")\n`;
-}
-
-export function face_detector_running(
-    block: Block,
-    generator: typeof pythonGenerator,
-) {
-    const centerX = generator.getVariableName(
-        block.getFieldValue("HORIZ_CENTER"),
-    );
-    const centerY = generator.getVariableName(
-        block.getFieldValue("VERT_CENTER"),
-    );
-
-    return `${centerX}, ${centerY} = fd.updateDetector()\n`;
 }
 
 export function vision_object_detected(

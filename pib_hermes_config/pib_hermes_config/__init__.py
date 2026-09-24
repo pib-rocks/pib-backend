@@ -21,6 +21,8 @@ PROFILE_PREFIX = "pib_"
 SOUL_FILENAME = "SOUL.md"
 DEFAULT_SOUL = "Du bist pib, ein humanoider Roboter."
 PROFILE_DIR_MODE = 0o700
+SOUL_FILE_MODE = 0o644
+ENV_FILE_MODE = 0o600
 
 # Permanent Hermes LLM pin. Kept in sync with hermes_agent_client and setup-pib.sh.
 DEFAULT_HERMES_MODEL = "gemini-3.5-flash"
@@ -74,27 +76,31 @@ def align_profile_ownership(profile_dir: str) -> None:
     paths = [profile_dir]
     for root, dirnames, filenames in os.walk(profile_dir):
         paths += [os.path.join(root, name) for name in dirnames + filenames]
+    can_chown = True
     for path in paths:
+        if can_chown:
+            try:
+                os.chown(path, intended.st_uid, intended.st_gid)
+            except OSError as exc:
+                can_chown = False
+                logging.debug(
+                    "could not chown %s to %s:%s: %s",
+                    path,
+                    intended.st_uid,
+                    intended.st_gid,
+                    exc,
+                )
         try:
-            os.chown(path, intended.st_uid, intended.st_gid)
             if os.path.isdir(path):
-                os.chmod(path, 0o777)
+                os.chmod(path, PROFILE_DIR_MODE)
             elif os.path.basename(path) == ".env":
-                os.chmod(path, 0o666)
-            elif os.path.isfile(path):
-                os.chmod(path, 0o666)
+                os.chmod(path, ENV_FILE_MODE)
+            elif os.path.basename(path) == SOUL_FILENAME:
+                os.chmod(path, SOUL_FILE_MODE)
         except OSError as exc:
-            # Typically: not running as root. Every remaining path would fail the
-            # same way, so stop rather than repeat the same log line.
-            logging.debug(
-                "could not chown %s to %s:%s: %s",
-                path,
-                intended.st_uid,
-                intended.st_gid,
-                exc,
-            )
-            break
-    else:
+            logging.debug("could not set permissions on %s: %s", path, exc)
+
+    if can_chown:
         logging.debug(
             "hermes profile %s now owned by %s:%s",
             profile_dir,

@@ -1,0 +1,7 @@
+# Raw little-endian uint16 depth in millimeters (encoding "16UC1").
+# 0 is invalid / unknown. depth_base64 is numpy-compatible: frombuffer(..., uint16).reshape((height, width))
+---
+int32 width
+int32 height
+string encoding
+string depth_base64

@@ -1,11 +1,22 @@
-from typing import Any, Tuple
+"""Flask CLI commands.
 
+Docker Compose runs ``seed_db`` when the API container starts. A selected hardware
+variant without an implemented profile therefore fails startup loudly instead of
+silently seeding hardware for a different robot.
+"""
+
+import logging
+import sqlite3
+from datetime import datetime, timezone
+from pathlib import Path
+
+import click
 from sqlalchemy import inspect
+from sqlalchemy.engine import URL, make_url
 
 from app.app import db, app
 from model.assistant_model import AssistantModel
-from model.bricklet_model import Bricklet
-from model.bricklet_pin_model import BrickletPin
+from model.controller_model import Controller
 from model.camera_settings_model import CameraSettings
 from model.chat_message_model import ChatMessage
 from model.chat_model import Chat
@@ -14,6 +25,20 @@ from model.personality_model import Personality
 from model.program_model import Program
 from model.pose_model import Pose
 from model.motor_position_model import MotorPosition
+from seed_profiles import (
+    HardwareProfile,
+    UnknownHardwareVariantError,
+    get_profile,
+    resolve_variant_and_source,
+)
+from service.system_property_service import (
+    ALLOWED_HARDWARE_VARIANTS,
+    HARDWARE_VARIANT_KEY,
+    SOFTWARE_VERSION_KEY,
+    get_property,
+    set_property,
+)
+from service.version_service import read_app_version
 from default_pose_constants import (
     STARTUP_POSITIONS,
     CALIBRATION_POSITIONS,
@@ -21,6 +46,9 @@ from default_pose_constants import (
     CALIBRATION_POSE_NAME,
 )
 from model.button_program_model import ButtonProgram
+from service.microphone_array_service import seed_desired_state
+
+logger = logging.getLogger(__name__)
 
 
 @app.cli.command("seed_db")
@@ -28,21 +56,324 @@ def seed_db() -> None:
     if not _is_empty_db():
         print("Seeding database failed - database already contains data.")
         return
-    _create_bricklet_data()
+    variant, source = resolve_variant_and_source()
+    profile = get_profile(variant)
+    print(
+        f"Seeding hardware variant {variant!r} using profile "
+        f"{profile.description!r}."
+    )
+    _create_controller_data(profile)
     _create_camera_data()
     _create_program_data()
     _create_chat_data_and_assistant()
-    _create_default_poses()
-    _create_button_program_data()
+    _create_default_poses(profile)
+    _create_button_program_data(profile)
+    set_property(HARDWARE_VARIANT_KEY, variant, source)
+    seed_desired_state(profile)
     db.session.commit()
     print("Seeded the database with default data.")
+
+
+@app.cli.command("seed_hardware")
+@click.option(
+    "--variant",
+    required=True,
+    type=click.Choice(ALLOWED_HARDWARE_VARIANTS, case_sensitive=True),
+)
+@click.option("--force", is_flag=True)
+def seed_hardware(variant: str, force: bool) -> None:
+    """Deliberately replace the hardware layout on an existing machine."""
+    try:
+        profile = get_profile(variant)
+    except UnknownHardwareVariantError as error:
+        raise click.ClickException(str(error)) from error
+
+    if not force:
+        raise click.ClickException(
+            "Refusing to rebuild hardware without --force. No changes were made."
+        )
+
+    # refuse a database that cannot be backed up before asking the operator to confirm
+    _file_backed_sqlite_url()
+
+    try:
+        confirmation = input(
+            f"Type the hardware variant name {variant!r} exactly to continue: "
+        )
+    except EOFError:
+        confirmation = ""
+    if confirmation != variant:
+        raise click.ClickException("Confirmation did not match. No changes were made.")
+
+    backup_path = _backup_sqlite_database()
+    click.echo(f"Database backup: {backup_path}")
+
+    protected_before = _protected_counts()
+    try:
+        controller_stats = _upsert_controllers(profile)
+        motor_stats, warnings = _upsert_motors(profile)
+        _rebuild_button_programs(profile)
+        _delete_obsolete_controllers(profile, controller_stats)
+        set_property(HARDWARE_VARIANT_KEY, variant, "command")
+
+        protected_after = _protected_counts()
+        orphaned_motor_names = _orphaned_motor_position_names()
+        if orphaned_motor_names:
+            warnings.append(
+                "motor_position rows reference missing motors: "
+                + ", ".join(orphaned_motor_names)
+            )
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        raise
+
+    for warning in warnings:
+        click.echo(f"WARNING: {warning}")
+    click.echo(f"Hardware variant: {variant}")
+    click.echo(f"Profile: {profile.description}")
+    click.echo(
+        "Controllers: "
+        f"{controller_stats['created']} created, "
+        f"{controller_stats['updated']} updated, "
+        f"{controller_stats['deleted']} deleted"
+    )
+    click.echo(
+        "Motors: "
+        f"{motor_stats['created']} created, "
+        f"{motor_stats['updated']} updated, "
+        f"{motor_stats['deleted']} deleted"
+    )
+    click.echo(f"Backup: {backup_path}")
+    click.echo(
+        "Protected counts unchanged: "
+        + ", ".join(
+            f"{name}={'yes' if protected_before[name] == protected_after[name] else 'NO'}"
+            for name in protected_before
+        )
+    )
+
+
+def _file_backed_sqlite_url(database_url: URL | None = None) -> URL:
+    """Return the URL of the SQLite database this command will modify.
+
+    The path is taken from the engine that is actually in use instead of the configured URL: the two
+    can diverge and the backup has to copy the database that is really about to change.
+    """
+    url = make_url(str(db.engine.url)) if database_url is None else database_url
+    if url.get_backend_name() != "sqlite":
+        raise click.ClickException(
+            "seed_hardware requires a file-backed SQLite database; "
+            f"configured URL uses {url.get_backend_name()!r}."
+        )
+    if not url.database or url.database == ":memory:":
+        raise click.ClickException(
+            "seed_hardware requires a file-backed SQLite database; "
+            "in-memory SQLite cannot be backed up."
+        )
+    return url
+
+
+def _backup_sqlite_database(database_url: URL | None = None) -> Path:
+    database_url = _file_backed_sqlite_url(database_url)
+
+    database_path = Path(database_url.database).expanduser().resolve()
+    if not database_path.is_file():
+        raise click.ClickException(
+            f"SQLite database file does not exist: {database_path}"
+        )
+
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    backup_path = Path(f"{database_path}.bak-{timestamp}")
+    try:
+        with (
+            sqlite3.connect(database_path) as source,
+            sqlite3.connect(backup_path) as destination,
+        ):
+            source.backup(destination)
+    except (OSError, sqlite3.Error) as error:
+        backup_path.unlink(missing_ok=True)
+        raise click.ClickException(
+            f"Could not back up SQLite database: {error}"
+        ) from error
+    return backup_path
+
+
+def _protected_counts() -> dict[str, int]:
+    return {
+        "pose": Pose.query.count(),
+        "program": Program.query.count(),
+        "chat": Chat.query.count(),
+    }
+
+
+def _upsert_controllers(profile: HardwareProfile) -> dict[str, int]:
+    stats = {"created": 0, "updated": 0, "deleted": 0}
+    for entry in profile.controllers:
+        controller = Controller.query.filter_by(number=entry.number).one_or_none()
+        if controller is None:
+            controller = Controller(
+                number=entry.number,
+                kind=entry.kind,
+                device_type=entry.device_type,
+                supply_voltage=entry.supply_voltage,
+                address=entry.address,
+            )
+            db.session.add(controller)
+            stats["created"] += 1
+        else:
+            controller.kind = entry.kind
+            controller.device_type = entry.device_type
+            controller.supply_voltage = entry.supply_voltage
+            stats["updated"] += 1
+    db.session.flush()
+    return stats
+
+
+def _upsert_motors(
+    profile: HardwareProfile,
+) -> tuple[dict[str, int], list[str]]:
+    stats = {"created": 0, "updated": 0, "deleted": 0}
+    warnings: list[str] = []
+    controllers = {
+        controller.number: controller
+        for controller in Controller.query.filter(
+            Controller.number.in_(
+                {number for number, _channel in profile.motor_mapping.values()}
+            )
+        ).all()
+    }
+
+    for motor_name, (controller_number, channel) in profile.motor_mapping.items():
+        motor = Motor.query.filter_by(name=motor_name).one_or_none()
+        if motor is None:
+            settings = dict(profile.motor_parameter_defaults)
+            settings.update(profile.motor_parameter_deviations.get(motor_name, {}))
+            motor = Motor(name=motor_name, **settings)
+            db.session.add(motor)
+            stats["created"] += 1
+        else:
+            stats["updated"] += 1
+        motor.controller = controllers[controller_number]
+        motor.channel = channel
+
+    obsolete_motors = Motor.query.filter(
+        ~Motor.name.in_(tuple(profile.motor_mapping))
+    ).all()
+    obsolete_names = [motor.name for motor in obsolete_motors]
+    if obsolete_names:
+        referenced_names = [
+            name
+            for (name,) in db.session.query(MotorPosition.motor_name)
+            .filter(MotorPosition.motor_name.in_(obsolete_names))
+            .distinct()
+            .order_by(MotorPosition.motor_name)
+            .all()
+        ]
+        if referenced_names:
+            warnings.append(
+                "deleting motors still referenced by pose positions: "
+                + ", ".join(referenced_names)
+            )
+        for motor in obsolete_motors:
+            db.session.delete(motor)
+        stats["deleted"] = len(obsolete_motors)
+
+    db.session.flush()
+    return stats, warnings
+
+
+def _rebuild_button_programs(profile: HardwareProfile) -> None:
+    ButtonProgram.query.delete(synchronize_session=False)
+    db.session.flush()
+
+    program = Program.query.filter_by(name="toggle_cerebra_fullscreen").first()
+    program_id = program.id if program else None
+    controllers = {
+        controller.number: controller
+        for controller in Controller.query.filter(
+            Controller.number.in_(profile.rgb_button_controller_ids)
+        ).all()
+    }
+    first, second, third = profile.rgb_button_controller_ids
+    db.session.add_all(
+        [
+            ButtonProgram(controller_id=controllers[first].id, program_id=None),
+            ButtonProgram(controller_id=controllers[second].id, program_id=None),
+            ButtonProgram(controller_id=controllers[third].id, program_id=program_id),
+        ]
+    )
+    db.session.flush()
+
+
+def _delete_obsolete_controllers(
+    profile: HardwareProfile, stats: dict[str, int]
+) -> None:
+    profile_numbers = tuple(controller.number for controller in profile.controllers)
+    obsolete_controllers = Controller.query.filter(
+        ~Controller.number.in_(profile_numbers)
+    ).all()
+    for controller in obsolete_controllers:
+        motor_count = Motor.query.filter_by(controller_id=controller.id).count()
+        button_count = ButtonProgram.query.filter_by(
+            controller_id=controller.id
+        ).count()
+        if motor_count or button_count:
+            raise RuntimeError(
+                f"Cannot delete obsolete controller {controller.number}: "
+                "it is still referenced."
+            )
+        db.session.delete(controller)
+    stats["deleted"] = len(obsolete_controllers)
+    db.session.flush()
+
+
+def _orphaned_motor_position_names() -> list[str]:
+    return [
+        name
+        for (name,) in db.session.query(MotorPosition.motor_name)
+        .outerjoin(Motor, Motor.name == MotorPosition.motor_name)
+        .filter(Motor.id.is_(None))
+        .distinct()
+        .order_by(MotorPosition.motor_name)
+        .all()
+    ]
+
+
+@app.cli.command("reconcile_system_properties")
+def reconcile_system_properties() -> None:
+    """Mirror runtime facts while preserving an explicitly sourced DB variant."""
+    set_property(SOFTWARE_VERSION_KEY, read_app_version(), "file")
+    resolved_variant, resolved_source = resolve_variant_and_source()
+    stored = get_property(HARDWARE_VARIANT_KEY)
+
+    if stored is None:
+        set_property(HARDWARE_VARIANT_KEY, resolved_variant, resolved_source)
+    elif stored.value != resolved_variant and stored.source == "default":
+        logger.info(
+            "Updating default hardware variant from %s to %s (source: %s)",
+            stored.value,
+            resolved_variant,
+            resolved_source,
+        )
+        set_property(HARDWARE_VARIANT_KEY, resolved_variant, resolved_source)
+    elif stored.value != resolved_variant:
+        logger.warning(
+            "Resolved hardware variant %s (source: %s) differs from stored "
+            "variant %s (source: %s); keeping the database value",
+            resolved_variant,
+            resolved_source,
+            stored.value,
+            stored.source,
+        )
+    db.session.commit()
 
 
 def _is_empty_db() -> bool:
     inspector = inspect(db.engine)
 
     for table in inspector.get_table_names():
-        if table == "alembic_version":
+        if table in ("alembic_version", "system_property"):
             continue
         table_class = db.Model.metadata.tables.get(table)
         if table_class is not None:
@@ -52,69 +383,48 @@ def _is_empty_db() -> bool:
     return True
 
 
-def _create_bricklet_data() -> None:
-    data = _get_motor_list()
-    motor_settings = {
-        "pulse_width_min": 700,
-        "pulse_width_max": 2500,
-        "rotation_range_min": -9000,
-        "rotation_range_max": 9000,
-        "velocity": 16000,
-        "acceleration": 10000,
-        "deceleration": 5000,
-        "period": 19500,
-        "turned_on": True,
-        "visible": True,
-        "invert": False,
-    }
+def _create_controller_data(profile: HardwareProfile) -> None:
+    controllers = [
+        Controller(
+            id=controller.number,
+            number=controller.number,
+            kind=controller.kind,
+            device_type=controller.device_type,
+            supply_voltage=controller.supply_voltage,
+            address=controller.address,
+        )
+        for controller in profile.controllers
+    ]
+    db.session.add_all(controllers)
+    db.session.flush()
 
-    for item in data:
-        motor = Motor(name=item["name"], **motor_settings)
-        if motor.name == "tilt_forward_motor":
-            motor.rotation_range_min = -4500
-            motor.rotation_range_max = 4500
-        # modify all fingers
-        elif motor.name.endswith("stretch") or "thumb" in motor.name:
-            motor.pulse_width_min = 750
-            motor.velocity = 100000
-            motor.acceleration = 50000
-            motor.deceleration = 50000
-        # reduce upper arm rotation speed
-        elif motor.name in ["upper_arm_left_rotation", "upper_arm_right_rotation"]:
-            motor.velocity = 10000
+    for motor_name, (controller_number, channel) in profile.motor_mapping.items():
+        motor_settings = dict(profile.motor_parameter_defaults)
+        motor_settings.update(profile.motor_parameter_deviations.get(motor_name, {}))
+        motor = Motor(name=motor_name, **motor_settings)
 
         db.session.add(motor)
         db.session.flush()
 
-        bricklet_pins: [Tuple[int, int]] = item["bricklet_pins"]
-        for bricklet_pin in bricklet_pins:
-            bricklet_id, pin = bricklet_pin
-
-            invert = False
-            db.session.add(
-                BrickletPin(
-                    motor_id=motor.id, bricklet_id=bricklet_id, pin=pin, invert=invert
-                )
-            )
+        motor.controller = next(
+            controller
+            for controller in controllers
+            if controller.number == controller_number
+        )
+        motor.channel = channel
         db.session.flush()
-    b1 = Bricklet(bricklet_number=1, type="Servo Bricklet")
-    b2 = Bricklet(bricklet_number=2, type="Servo Bricklet")
-    b3 = Bricklet(bricklet_number=3, type="Servo Bricklet")
-    b4 = Bricklet(bricklet_number=4, type="Solid State Relay Bricklet")
-    b5 = Bricklet(bricklet_number=5, type="RGB LED Button Bricklet")
-    b6 = Bricklet(bricklet_number=6, type="RGB LED Button Bricklet")
-    b7 = Bricklet(bricklet_number=7, type="RGB LED Button Bricklet")
-    db.session.add_all([b1, b2, b3, b4, b5, b6, b7])
-    db.session.flush()
 
 
-def _create_button_program_data():
+def _create_button_program_data(profile: HardwareProfile) -> None:
     cerebra_prog = Program.query.filter_by(name="toggle_cerebra_fullscreen").first()
     prog_id = cerebra_prog.id if cerebra_prog else None
 
-    button_program1 = ButtonProgram(bricklet_id=5, program_id=None)
-    button_program2 = ButtonProgram(bricklet_id=6, program_id=None)
-    button_program3 = ButtonProgram(bricklet_id=7, program_id=prog_id)
+    first_controller, second_controller, third_controller = (
+        profile.rgb_button_controller_ids
+    )
+    button_program1 = ButtonProgram(controller_id=first_controller, program_id=None)
+    button_program2 = ButtonProgram(controller_id=second_controller, program_id=None)
+    button_program3 = ButtonProgram(controller_id=third_controller, program_id=prog_id)
     db.session.add_all([button_program1, button_program2, button_program3])
     db.session.flush()
 
@@ -220,69 +530,33 @@ def _create_chat_data_and_assistant() -> None:
     db.session.flush()
 
 
-def _create_default_poses() -> None:
+def _create_default_poses(profile: HardwareProfile) -> None:
     startup_pose = Pose(name=STARTUP_POSE_NAME, deletable=False)
     calibration_pose = Pose(name=CALIBRATION_POSE_NAME, deletable=False)
 
     db.session.add_all([startup_pose, calibration_pose])
     db.session.flush()
 
-    motors = _get_motor_list()
-
     startup_positions = [
         MotorPosition(
-            position=STARTUP_POSITIONS.get(motor["name"], 0),
-            motor_name=motor["name"],
+            position=STARTUP_POSITIONS.get(motor_name, 0),
+            motor_name=motor_name,
             pose_id=startup_pose.id,
         )
-        for motor in motors
+        for motor_name in profile.motor_mapping
     ]
 
     calibration_positions = [
         MotorPosition(
-            position=CALIBRATION_POSITIONS.get(motor["name"], 0),
-            motor_name=motor["name"],
+            position=CALIBRATION_POSITIONS.get(motor_name, 0),
+            motor_name=motor_name,
             pose_id=calibration_pose.id,
         )
-        for motor in motors
+        for motor_name in profile.motor_mapping
     ]
 
     db.session.add_all(startup_positions + calibration_positions)
     db.session.commit()
-
-
-def _get_motor_list() -> [dict[str, Any]]:
-    name: str = "name"
-    bricklet_pins: str = "bricklet_pins"
-
-    return [
-        {name: "turn_head_motor", bricklet_pins: [(2, 4)]},
-        {name: "tilt_forward_motor", bricklet_pins: [(2, 5)]},
-        {name: "upper_arm_left_rotation", bricklet_pins: [(3, 9)]},
-        {name: "elbow_left", bricklet_pins: [(3, 8)]},
-        {name: "lower_arm_left_rotation", bricklet_pins: [(3, 7)]},
-        {name: "shoulder_vertical_left", bricklet_pins: [(2, 9)]},
-        {name: "shoulder_horizontal_left", bricklet_pins: [(2, 8)]},
-        {name: "upper_arm_right_rotation", bricklet_pins: [(1, 9)]},
-        {name: "elbow_right", bricklet_pins: [(1, 8)]},
-        {name: "lower_arm_right_rotation", bricklet_pins: [(1, 7)]},
-        {name: "shoulder_vertical_right", bricklet_pins: [(2, 1)]},
-        {name: "shoulder_horizontal_right", bricklet_pins: [(2, 0)]},
-        {name: "thumb_right_opposition", bricklet_pins: [(1, 0)]},
-        {name: "thumb_right_stretch", bricklet_pins: [(1, 1)]},
-        {name: "index_right_stretch", bricklet_pins: [(1, 2)]},
-        {name: "middle_right_stretch", bricklet_pins: [(1, 3)]},
-        {name: "ring_right_stretch", bricklet_pins: [(1, 4)]},
-        {name: "pinky_right_stretch", bricklet_pins: [(1, 5)]},
-        {name: "thumb_left_opposition", bricklet_pins: [(3, 0)]},
-        {name: "thumb_left_stretch", bricklet_pins: [(3, 1)]},
-        {name: "index_left_stretch", bricklet_pins: [(3, 2)]},
-        {name: "middle_left_stretch", bricklet_pins: [(3, 3)]},
-        {name: "ring_left_stretch", bricklet_pins: [(3, 4)]},
-        {name: "pinky_left_stretch", bricklet_pins: [(3, 5)]},
-        {name: "wrist_left", bricklet_pins: [(3, 6)]},
-        {name: "wrist_right", bricklet_pins: [(1, 6)]},
-    ]
 
 
 def _get_example_program() -> str:

@@ -1,55 +1,353 @@
-import sys
-import rclpy
-from rclpy.node import Node
-from std_msgs.msg import Int32
-import usb.core
-import usb.util
-import time
+"""Own XVF3000 telemetry, tuning and LEDs in ros-audio-io.
+
+The parameters declared by this node are the microphone array control surface
+for the UI through rosbridge. No Flask process should open the USB device.
+"""
+
 import os
 
+import rclpy
+from rcl_interfaces.msg import SetParametersResult
+from rclpy.node import Node
+from rclpy.parameter import Parameter
+from std_msgs.msg import Bool, Int32
+import usb.core
+import usb.util
+
+from ros_audio_io.device_retry import (
+    DeviceNotFoundError,
+    describe_open_failure,
+    next_retry_delay,
+)
+from ros_audio_io.desired_state import (
+    DesiredStateApplyError,
+    build_desired_state_url,
+    desired_state_failure,
+    fetch_desired_state,
+    should_apply_revision,
+)
+from ros_audio_io.microphone_parameters import (
+    LED_DEFAULTS,
+    PARAMETER_SPECS,
+    PRESETS,
+    TUNABLE_PARAMETERS,
+    apply_tuning_values,
+    parameter_from_readback,
+    validate_parameter,
+)
+from ros_audio_io.pixel_ring import PixelRing
 from ros_audio_io.tuning import Tuning
 
+DESIRED_STATE_RECONCILE_SECONDS = 60.0
 
-class DOAPublisher(Node):
+
+class MicrophoneArrayNode(Node):
+    """Publish XVF3000 state at 10 Hz and provide its ROS parameter controls."""
+
     def __init__(self):
-        super().__init__("doa_publisher")
-        self.publisher_ = self.create_publisher(Int32, "doa_angle", 10)
+        super().__init__("microphone_array")
+        self.doa_publisher = self.create_publisher(Int32, "/doa_angle", 10)
+        self.voice_publisher = self.create_publisher(Bool, "/voice_activity", 10)
+        self.speech_publisher = self.create_publisher(Bool, "/speech_detected", 10)
+        self._read_warning_active = False
+        self._syncing_parameters = False
+        self._pending_parameter_sync = {}
+        self._sync_timer = None
+        self.retry_timer = None
+        self.open_attempts = 0
+        self.desired_state_retry_timer = None
+        self.desired_state_timer = None
+        self.desired_state_attempts = 0
+        self.applied_desired_state_revision = None
+        self._last_desired_state = None
+        self._parameters_declared = False
+        self.dev = None
+        self.tuning = None
+        self.pixel_ring = None
 
-        # Find the ReSpeaker device
-        self.dev = usb.core.find(idVendor=0x2886, idProduct=0x0018)
+        self._attempt_device_open()
 
-        if self.dev is None:
-            self.get_logger().error(
-                "ReSpeaker Mic Array v2.0 not found! Make sure it's connected."
+        self._declare_control_parameters()
+        self._parameters_declared = True
+        self.add_on_set_parameters_callback(self._on_parameters_changed)
+
+    def _attempt_device_open(self):
+        self.open_attempts += 1
+        device = None
+        try:
+            device = usb.core.find(idVendor=0x2886, idProduct=0x0018)
+            if device is None:
+                raise DeviceNotFoundError("ReSpeaker Mic Array v2.0 was not found")
+            tuning = Tuning(device)
+            pixel_ring = PixelRing(device)
+        except Exception as exc:
+            if device is not None:
+                try:
+                    usb.util.dispose_resources(device)
+                except Exception:
+                    pass
+            delay = next_retry_delay(self.open_attempts)
+            reason = describe_open_failure(exc)
+            self.get_logger().warning(
+                f"Microphone array open failed: reason={reason}; detail={exc}; "
+                f"attempt={self.open_attempts}; next attempt in {delay:g}s; "
+                "publishing no device state"
             )
-        else:
-            self.Mic_tuning = Tuning(self.dev)
+            self.retry_timer = self.create_timer(delay, self.retry_open_device)
+            return
+
+        self.dev = device
+        self.tuning = tuning
+        self.pixel_ring = pixel_ring
+        # A newly opened or recovered device must be configured even when the
+        # persisted revision is unchanged.
+        self.applied_desired_state_revision = None
+        self._reconcile_desired_state()
+        if self.desired_state_timer is None:
+            self.desired_state_timer = self.create_timer(
+                DESIRED_STATE_RECONCILE_SECONDS, self._periodic_reconcile
+            )
+        publish_hz = self._publish_rate()
+        self.get_logger().info(
+            f"Publishing DOA, voice activity and speech detection at {publish_hz:g} Hz"
+        )
+        self.timer = self.create_timer(1.0 / publish_hz, self.publish_state)
+
+    def retry_open_device(self):
+        retry_timer = self.retry_timer
+        self.retry_timer = None
+        if retry_timer is not None:
+            retry_timer.cancel()
+            self.destroy_timer(retry_timer)
+        self._attempt_device_open()
+
+    def _publish_rate(self):
+        try:
+            publish_hz = float(os.getenv("MIC_ARRAY_PUBLISH_HZ", "10"))
+            if publish_hz <= 0:
+                raise ValueError
+            return publish_hz
+        except ValueError:
+            self.get_logger().warning(
+                "Invalid MIC_ARRAY_PUBLISH_HZ; publishing device state at 10 Hz"
+            )
+            return 10.0
+
+    def _declare_control_parameters(self):
+        """Declare values, using register reads when the device is available."""
+
+        desired = self._last_desired_state
+        preset = desired["preset"] if desired is not None else "Custom"
+        self.declare_parameter("preset", preset)
+        for name in TUNABLE_PARAMETERS:
+            value = PARAMETER_SPECS[name][3]
+            if self.tuning is not None:
+                try:
+                    value = parameter_from_readback(name, self.tuning.read(name))
+                except Exception as exc:
+                    self.get_logger().warning(
+                        f"Could not read initial {name}; using declared default: {exc}"
+                    )
+            self.declare_parameter(name, value)
+        for name, value in LED_DEFAULTS.items():
+            if desired is not None:
+                value = desired["led_ring"][name]
+            self.declare_parameter(name, value)
+
+    def _periodic_reconcile(self):
+        if self.desired_state_retry_timer is None:
+            self._reconcile_desired_state()
+
+    def _reconcile_desired_state(self):
+        if self.tuning is None or self.pixel_ring is None:
+            return
+
+        try:
+            desired = fetch_desired_state(build_desired_state_url())
+            if should_apply_revision(
+                self.applied_desired_state_revision, desired["revision"]
+            ):
+                self._apply_desired_state(desired)
+        except Exception as exc:
+            self.desired_state_attempts += 1
+            reason, delay = desired_state_failure(exc, self.desired_state_attempts)
+            self.get_logger().warning(
+                f"Microphone desired state failed: reason={reason}; detail={exc}; "
+                f"attempt={self.desired_state_attempts}; next attempt in {delay:g}s; "
+                "microphone remains available"
+            )
+            self._schedule_desired_state_retry(delay)
+            return
+
+        self.desired_state_attempts = 0
+        self._cancel_desired_state_retry()
+
+    def _apply_desired_state(self, desired):
+        readbacks, failure = apply_tuning_values(self.tuning, desired["parameters"])
+        if failure is not None:
+            raise DesiredStateApplyError(failure)
+
+        try:
+            self._apply_led_state(desired["led_ring"])
+        except Exception as exc:
+            raise DesiredStateApplyError(f"LED update failed: {exc}") from exc
+
+        self.applied_desired_state_revision = desired["revision"]
+        self._last_desired_state = desired
+        if self._parameters_declared:
+            self._schedule_parameter_sync(
+                {
+                    **readbacks,
+                    **desired["led_ring"],
+                    "preset": desired["preset"],
+                }
+            )
+        self.get_logger().info(
+            f"Applied microphone desired state: revision={desired['revision']}; "
+            f"preset={desired['preset']}; parameters={readbacks}; "
+            f"led_ring={desired['led_ring']}"
+        )
+
+    def _schedule_desired_state_retry(self, delay):
+        if self.desired_state_retry_timer is None:
+            self.desired_state_retry_timer = self.create_timer(
+                delay, self._retry_desired_state
+            )
+
+    def _cancel_desired_state_retry(self):
+        retry_timer = self.desired_state_retry_timer
+        self.desired_state_retry_timer = None
+        if retry_timer is not None:
+            retry_timer.cancel()
+            self.destroy_timer(retry_timer)
+
+    def _retry_desired_state(self):
+        self._cancel_desired_state_retry()
+        self._reconcile_desired_state()
+
+    def _on_parameters_changed(self, parameters):
+        if self._syncing_parameters:
+            return SetParametersResult(successful=True)
+
+        try:
+            updates = {
+                parameter.name: validate_parameter(parameter.name, parameter.value)
+                for parameter in parameters
+            }
+        except ValueError as exc:
+            return SetParametersResult(successful=False, reason=str(exc))
+
+        if self.tuning is None or self.pixel_ring is None:
+            return SetParametersResult(
+                successful=False,
+                reason="ReSpeaker device is unavailable; no value was applied",
+            )
+
+        tuning_updates = {}
+        preset = updates.get("preset")
+        if preset is not None and preset != "Custom":
+            tuning_updates.update(PRESETS[preset])
+        tuning_updates.update(
+            {
+                name: value
+                for name, value in updates.items()
+                if name in TUNABLE_PARAMETERS
+            }
+        )
+
+        readbacks, failure = apply_tuning_values(self.tuning, tuning_updates)
+        if failure is None:
             try:
-                interval = float(os.getenv("DOA_PUBLISH_INTERVAL", "2.0"))
-            except ValueError:
-                self.get_logger().warn(
-                    "Invalid DOA_PUBLISH_INTERVAL, defaulting to 2.0s"
+                led_names = set(LED_DEFAULTS).intersection(updates)
+                if led_names:
+                    led_state = {
+                        name: self.get_parameter(name).value for name in LED_DEFAULTS
+                    }
+                    led_state.update({name: updates[name] for name in led_names})
+                    self._apply_led_state(led_state)
+            except Exception as exc:
+                failure = f"LED update failed: {exc}"
+
+        if failure is not None:
+            if readbacks:
+                self._schedule_parameter_sync({**readbacks, "preset": "Custom"})
+            self.get_logger().error(failure)
+            return SetParametersResult(successful=False, reason=failure)
+
+        if preset is not None and preset != "Custom":
+            self._schedule_parameter_sync(readbacks)
+        elif tuning_updates:
+            self._schedule_parameter_sync({"preset": "Custom"})
+        return SetParametersResult(successful=True)
+
+    def _apply_led_state(self, state):
+        """Apply LED state; the firmware acknowledges writes but cannot read back."""
+
+        self.pixel_ring.set_brightness(state["led_brightness"])
+        self.pixel_ring.set_vad_led(state["vad_led"])
+        mode = state["led_mode"]
+        if mode == "mono":
+            self.pixel_ring.mono(int(state["led_color"][1:], 16))
+        else:
+            getattr(self.pixel_ring, mode)()
+
+    def _schedule_parameter_sync(self, values):
+        """Reflect device read-backs without recursively writing the device."""
+
+        if not values:
+            return
+        self._pending_parameter_sync.update(values)
+        if self._sync_timer is None:
+            self._sync_timer = self.create_timer(0.01, self._sync_parameters)
+
+    def _sync_parameters(self):
+        self._sync_timer.cancel()
+        self.destroy_timer(self._sync_timer)
+        self._sync_timer = None
+        values = self._pending_parameter_sync
+        self._pending_parameter_sync = {}
+        self._syncing_parameters = True
+        try:
+            results = self.set_parameters(
+                [Parameter(name=name, value=value) for name, value in values.items()]
+            )
+            if any(not result.successful for result in results):
+                self.get_logger().error("Could not reflect device parameter read-back")
+        finally:
+            self._syncing_parameters = False
+
+    def publish_state(self):
+        try:
+            direction = int(self.tuning.read("DOAANGLE"))
+            voice_activity = bool(self.tuning.read("VOICEACTIVITY"))
+            speech_detected = bool(self.tuning.read("SPEECHDETECTED"))
+        except Exception as exc:
+            if not self._read_warning_active:
+                self.get_logger().warning(
+                    f"XVF3000 state read failed; publishing nothing: {exc}"
                 )
-                interval = 2.0
+                self._read_warning_active = True
+            return
 
-            self.get_logger().info(f"DOA publishing every {interval:.3f}s")
-            self.timer = self.create_timer(interval, self.publish_doa)
+        self._read_warning_active = False
+        self.doa_publisher.publish(Int32(data=direction))
+        self.voice_publisher.publish(Bool(data=voice_activity))
+        self.speech_publisher.publish(Bool(data=speech_detected))
 
-    def publish_doa(self):
+    def destroy_node(self):
         if self.dev is not None:
-            direction = self.Mic_tuning.direction
-            msg = Int32()
-            msg.data = direction
-            self.publisher_.publish(msg)
-            self.get_logger().info(f"Published DOA angle: {direction}")
+            usb.util.dispose_resources(self.dev)
+        super().destroy_node()
 
 
 def main(args=None):
     rclpy.init(args=args)
-    node = DOAPublisher()
-    rclpy.spin(node)
-    node.destroy_node()
-    rclpy.shutdown()
+    node = MicrophoneArrayNode()
+    try:
+        rclpy.spin(node)
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
 
 
 if __name__ == "__main__":

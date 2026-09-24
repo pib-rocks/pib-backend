@@ -7,7 +7,7 @@ from schema.sql_auto_with_camel_case_schema import SQLAutoWithCamelCaseSchema
 class ButtonProgramLoadSchema(SQLAutoWithCamelCaseSchema):
     class Meta:
         model = ButtonProgram
-        exclude = ("id", "bricklet_id", "program_id")
+        exclude = ("id", "controller_id", "program_id")
 
     brickletNumber = fields.Integer(required=True)
     programNumber = fields.String(allow_none=True)
@@ -19,10 +19,10 @@ button_programs_load_schema = ButtonProgramLoadSchema(many=True)
 class ButtonProgramDumpSchema(SQLAutoWithCamelCaseSchema):
     class Meta:
         model = ButtonProgram
-        exclude = ("id", "bricklet_id", "program_id")
+        exclude = ("id", "controller_id", "program_id")
 
-    brickletNumber = fields.Integer(attribute="bricklet.bricklet_number")
-    brickletUid = fields.String(attribute="bricklet.uid")
+    brickletNumber = fields.Integer(attribute="controller.number")
+    brickletUid = fields.String(attribute="controller.address")
     programNumber = fields.Method("get_program_number", allow_none=True)
 
     def get_program_number(self, obj):
