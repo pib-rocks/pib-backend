@@ -4,6 +4,7 @@ import {
     modelBlocks,
     refreshModelOptions,
     rosbridgeUrl,
+    STOP_ALL_MODELS_VALUE,
 } from "./model-blocks";
 
 interface RosbridgeRequest {
@@ -147,6 +148,14 @@ describe("model blocks", () => {
                 false,
             ),
         ).toEqual([["hand_tracking", "hand_tracking"]]);
+        expect(
+            (stop.getField("MODEL_ID") as Blockly.FieldDropdown).getOptions(
+                false,
+            ),
+        ).toEqual([
+            ["All", STOP_ALL_MODELS_VALUE],
+            ["hand_tracking", "hand_tracking"],
+        ]);
         start.setFieldValue("saved_custom_model", "MODEL_ID");
         expect(start.getFieldValue("MODEL_ID")).toBe("saved_custom_model");
 

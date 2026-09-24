@@ -11,6 +11,7 @@ import {
     IMPORT_TIME,
     INIT_ROS,
 } from "./util/definitions";
+import {STOP_ALL_MODELS_VALUE} from "../program-blocks/model-blocks";
 import {
     GET_FACE_DETECTIONS_FUNCTION,
     GET_OBJECT_DETECTIONS_FUNCTION,
@@ -18,6 +19,7 @@ import {
     GET_EMOTION_DETECTIONS_FUNCTION,
     GET_HEAD_POSE_DETECTIONS_FUNCTION,
     START_MODEL_FUNCTION,
+    STOP_ALL_MODELS_FUNCTION,
     STOP_MODEL_FUNCTION,
 } from "./util/function-declarations";
 
@@ -48,11 +50,19 @@ export function start_model(block: Block, generator: typeof pythonGenerator) {
 
 export function stop_model(block: Block, generator: typeof pythonGenerator) {
     ensureModelsSdk(generator);
+    const modelId = String(block.getFieldValue("MODEL_ID") || "hand_tracking");
+    if (modelId === STOP_ALL_MODELS_VALUE) {
+        const functionName = generator.provideFunction_(
+            "stop_all_models_with_sdk",
+            STOP_ALL_MODELS_FUNCTION(generator),
+        );
+        return `${functionName}()\n`;
+    }
     const functionName = generator.provideFunction_(
         "stop_model_with_sdk",
         STOP_MODEL_FUNCTION(generator),
     );
-    return `${functionName}(${modelIdFromDropdown(block, generator)})\n`;
+    return `${functionName}(${generator.quote_(modelId)})\n`;
 }
 
 function latestDetectionsReporter(

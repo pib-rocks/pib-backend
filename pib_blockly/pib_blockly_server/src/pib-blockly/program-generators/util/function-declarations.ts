@@ -286,6 +286,13 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(model_id) -> None:
         models.stop_model(str(model_id))
 `;
 
+export const STOP_ALL_MODELS_FUNCTION = (generator: CodeGenerator) => `
+def ${generator.FUNCTION_NAME_PLACEHOLDER_}() -> None:
+    rosbridge_host = os.getenv("ROSBRIDGE_HOST", "rosbridge-ws")
+    with Models(host=rosbridge_host, port=9090) as models:
+        models.stop_all_models()
+`;
+
 function latestDetectionsFunction(
     generator: CodeGenerator,
     topic: string,

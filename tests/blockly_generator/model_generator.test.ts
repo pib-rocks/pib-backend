@@ -4,6 +4,11 @@ import {
   start_model,
   stop_model,
 } from "../../pib_blockly/pib_blockly_server/src/pib-blockly/program-generators/model-generators";
+import {
+  getModelDropdownOptions,
+  getStopModelDropdownOptions,
+  STOP_ALL_MODELS_VALUE,
+} from "../../pib_blockly/pib_blockly_server/src/pib-blockly/program-blocks/model-blocks";
 
 type MockGenerator = typeof pythonGenerator & {
   definitions_: Record<string, string>;
@@ -73,5 +78,35 @@ describe("stop_model generator", () => {
     expect(defs).toContain("models.stop_model(str(model_id))");
     expect(defs).not.toContain("StopModel");
     expect(defs).not.toContain("rclpy");
+  });
+
+  it("stops every model this program owns when All is selected", () => {
+    const generator = createMockGenerator();
+    const code = stop_model(modelFieldBlock(STOP_ALL_MODELS_VALUE), generator);
+
+    expect(code).toBe("stop_all_models_with_sdk()\n");
+    expect(code).not.toMatch(/stop_model\(/);
+    expect(code).not.toMatch(/'[^']+'/);
+    expect(code).not.toMatch(/"[^"]+"/);
+
+    const defs = joinedDefs(generator);
+    expect(defs).toContain("from pib_sdk import Models");
+    expect(defs).toContain("models.stop_all_models()");
+    expect(defs).not.toMatch(/stop_all_models\([^)]+\)/);
+    expect(defs).not.toContain("models.stop_model(");
+  });
+});
+
+describe("stop_model dropdown", () => {
+  it("always offers All with a sentinel that cannot collide with a model id", () => {
+    const stopOptions = getStopModelDropdownOptions();
+    const startOptions = getModelDropdownOptions();
+
+    expect(stopOptions[0]).toEqual(["All", STOP_ALL_MODELS_VALUE]);
+    expect(STOP_ALL_MODELS_VALUE.startsWith("__")).toBe(true);
+    expect(stopOptions.filter(([label]) => label === "All")).toHaveLength(1);
+    expect(startOptions.some(([, value]) => value === STOP_ALL_MODELS_VALUE)).toBe(
+      false,
+    );
   });
 });
