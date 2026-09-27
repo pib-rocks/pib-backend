@@ -11,6 +11,8 @@ BACKEND_DIR="${PIB_BACKEND_DIR:-/home/pib/app/pib-backend}"
 REQUEST_FILE="$UPDATE_DIR/display-web.json"
 STATUS_FILE="$UPDATE_DIR/display-web-status.json"
 PID_FILE="$UPDATE_DIR/display-web.pid"
+# URL the running browser was started with. Lives and dies with the pidfile.
+URL_FILE="$UPDATE_DIR/display-web.url"
 LOG_FILE="$UPDATE_DIR/display-web.log"
 HELPER="$BACKEND_DIR/ros_packages/display/display/display_web_request.py"
 CHROMIUM_BIN="${PIB_DISPLAY_WEB_CHROMIUM:-chromium}"
@@ -72,6 +74,44 @@ except BaseException:
 PY
     STATUS_WRITTEN=true
     log "$state: $message"
+}
+
+write_url_file() {
+    # Same atomic write as the status file: a reader never sees a torn URL.
+    URL_FILE="$URL_FILE" LOADED_URL="$1" python3 - <<'PY'
+import os
+import tempfile
+
+path = os.environ["URL_FILE"]
+descriptor, temporary = tempfile.mkstemp(
+    prefix=".display-web.url.", dir=os.path.dirname(path)
+)
+try:
+    with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+        output.write(os.environ["LOADED_URL"])
+        output.write("\n")
+        output.flush()
+        os.fsync(output.fileno())
+    os.replace(temporary, path)
+except BaseException:
+    try:
+        os.unlink(temporary)
+    except FileNotFoundError:
+        pass
+    raise
+PY
+}
+
+loaded_url() {
+    # Prints the URL the running browser was started with, or nothing.
+    if [ ! -f "$URL_FILE" ]; then
+        return 0
+    fi
+    head -n 1 "$URL_FILE" 2>/dev/null || true
+}
+
+clear_browser_state() {
+    rm -f "$PID_FILE" "$URL_FILE"
 }
 
 fail() {
@@ -205,18 +245,34 @@ os.execvp(sys.argv[1], sys.argv[1:])' \
         attempt=$((attempt + 1))
         sleep 0.05
     done
+    # URL first, then the pid: a pidfile that exists always has its URL.
+    write_url_file "$url"
     printf '%s\n' "$pid" >"$PID_FILE"
-    log "Chromium started pid=$pid"
+    log "Chromium started pid=$pid url=$url"
 }
 
 perform_open() {
-    local existing=""
+    local existing="" loaded=""
     if existing=$(browser_pid_if_running); then
-        log "Browser already running pid=$existing; not starting another"
-        write_status "done" "Display web browser is already running"
+        loaded=$(loaded_url)
+        if [ -n "$loaded" ] && [ "$loaded" = "$URL" ]; then
+            log "Browser already running pid=$existing on $URL; not starting another"
+            write_status "done" "Display web browser is already running"
+            exit 0
+        fi
+        # A different URL, or a pidfile without a stored URL, whose page is
+        # unknown. Chromium in kiosk mode has no remote control here, so the
+        # page is replaced by restarting the browser on the new URL.
+        log "Browser running pid=$existing on '${loaded}'; replacing with $URL"
+        if ! terminate_browser "$existing"; then
+            fail "Could not terminate display web browser ${existing}"
+        fi
+        clear_browser_state
+        start_browser "$URL"
+        write_status "done" "Display web browser restarted on a new URL"
         exit 0
     fi
-    rm -f "$PID_FILE"
+    clear_browser_state
     start_browser "$URL"
     write_status "done" "Display web browser started"
     exit 0
@@ -225,14 +281,14 @@ perform_open() {
 perform_hide() {
     local existing=""
     if ! existing=$(browser_pid_if_running); then
-        rm -f "$PID_FILE"
+        clear_browser_state
         write_status "done" "No display web browser is running"
         exit 0
     fi
     if ! terminate_browser "$existing"; then
         fail "Could not terminate display web browser ${existing}"
     fi
-    rm -f "$PID_FILE"
+    clear_browser_state
     write_status "done" "Display web browser terminated"
     exit 0
 }

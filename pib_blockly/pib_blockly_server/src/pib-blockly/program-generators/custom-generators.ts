@@ -59,5 +59,8 @@ pythonGenerator.forBlock["set_face_expression"] =
 pythonGenerator.forBlock["show_face_text"] =
     generators["showFaceTextGenerator"];
 
-pythonGenerator.forBlock["toggle_cerebra_fullscreen"] =
-    generators["toggleCerebraFullscreenGenerator"];
+pythonGenerator.forBlock["open_cerebra_fullscreen"] =
+    generators["openCerebraFullscreenGenerator"];
+
+pythonGenerator.forBlock["close_cerebra_fullscreen"] =
+    generators["closeCerebraFullscreenGenerator"];
