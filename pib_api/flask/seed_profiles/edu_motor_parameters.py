@@ -41,3 +41,20 @@ MOTOR_PARAMETER_DEVIATIONS = {
     "ring_left_stretch": FINGER_MOTOR_PARAMETERS,
     "pinky_left_stretch": FINGER_MOTOR_PARAMETERS,
 }
+
+# Six finger motors are inverted on pib5edu. This is a separate dict: writing
+# invert into FINGER_MOTOR_PARAMETERS would also flip the six fingers that stay
+# non-inverted, because those twelve motors share that one object.
+INVERTED_FINGER_MOTOR_PARAMETERS = {**FINGER_MOTOR_PARAMETERS, "invert": True}
+
+PIB5EDU_MOTOR_PARAMETER_DEVIATIONS = {
+    **MOTOR_PARAMETER_DEVIATIONS,
+    "elbow_left": {"invert": True},
+    "shoulder_vertical_left": {"invert": True},
+    "index_right_stretch": INVERTED_FINGER_MOTOR_PARAMETERS,
+    "ring_right_stretch": INVERTED_FINGER_MOTOR_PARAMETERS,
+    "pinky_right_stretch": INVERTED_FINGER_MOTOR_PARAMETERS,
+    "index_left_stretch": INVERTED_FINGER_MOTOR_PARAMETERS,
+    "ring_left_stretch": INVERTED_FINGER_MOTOR_PARAMETERS,
+    "pinky_left_stretch": INVERTED_FINGER_MOTOR_PARAMETERS,
+}
