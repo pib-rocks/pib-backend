@@ -87,6 +87,31 @@ pid_count() {
     wc -l <"$STUB_PIDS" | tr -d '[:space:]'
 }
 
+live_count() {
+    # Stub browsers that are still alive right now, not merely ever started.
+    local pid alive=0
+    while read -r pid; do
+        [ -n "$pid" ] || continue
+        if kill -0 "$pid" 2>/dev/null; then
+            alive=$((alive + 1))
+        fi
+    done <"$STUB_PIDS"
+    printf '%s\n' "$alive"
+}
+
+last_stub_url() {
+    # The URL is the final argument of the most recent stub invocation.
+    tail -n 1 "$STUB_ARGS" | awk '{print $NF}'
+}
+
+stored_url() {
+    if [ -f "$UPDATE/display-web.url" ]; then
+        head -n 1 "$UPDATE/display-web.url"
+    else
+        echo "absent"
+    fi
+}
+
 run_runner() {
     PIB_UPDATE_DIR="$UPDATE" \
         PIB_BACKEND_DIR="$ROOT" \
@@ -101,8 +126,10 @@ run_runner() {
 UPDATE="$WORK/update"
 mkdir -p "$UPDATE"
 STUB_FAIL=0
+URL_A="http://localhost"
+URL_B="http://localhost:8080/program"
 
-write_request open "http://localhost"
+write_request open "$URL_A"
 run_runner
 first=$(pid_count)
 if [ "$first" != "1" ]; then
@@ -130,9 +157,19 @@ if ! kill -0 "$browser_pid" 2>/dev/null; then
     echo "browser exited after a successful open" >&2
     exit 1
 fi
+if [ "$(last_stub_url)" != "$URL_A" ]; then
+    echo "stub received $(last_stub_url), expected $URL_A" >&2
+    exit 1
+fi
+if [ "$(stored_url)" != "$URL_A" ]; then
+    echo "stored URL after first open was $(stored_url)" >&2
+    exit 1
+fi
 echo "FIRST_OPEN_BROWSERS=$first"
+echo "FIRST_OPEN_STUB_URL=$(last_stub_url)"
+echo "FIRST_OPEN_STORED_URL=$(stored_url)"
 
-write_request open "http://localhost"
+write_request open "$URL_A"
 run_runner
 second_total=$(pid_count)
 second=$((second_total - first))
@@ -144,11 +181,65 @@ if [ -e "$UPDATE/display-web.json" ]; then
     echo "request file left after the idempotent open" >&2
     exit 1
 fi
+if ! kill -0 "$browser_pid" 2>/dev/null; then
+    echo "same-URL open restarted the browser" >&2
+    exit 1
+fi
+if [ "$(stored_url)" != "$URL_A" ]; then
+    echo "stored URL after same-URL open was $(stored_url)" >&2
+    exit 1
+fi
 echo "SECOND_OPEN_BROWSERS=$second"
+echo "SECOND_OPEN_LIVE_BROWSERS=$(live_count)"
+echo "SECOND_OPEN_STORED_URL=$(stored_url)"
+
+write_request open "$URL_B"
+run_runner
+third_total=$(pid_count)
+third=$((third_total - second_total))
+if [ "$third" != "1" ]; then
+    echo "open with a new URL started $third browsers, expected 1" >&2
+    exit 1
+fi
+if kill -0 "$browser_pid" 2>/dev/null; then
+    echo "first browser still running after open with a new URL" >&2
+    exit 1
+fi
+third_live=$(live_count)
+if [ "$third_live" != "1" ]; then
+    echo "expected exactly one live browser after URL change, saw $third_live" >&2
+    exit 1
+fi
+if [ "$(last_stub_url)" != "$URL_B" ]; then
+    echo "stub received $(last_stub_url), expected $URL_B" >&2
+    exit 1
+fi
+if [ "$(stored_url)" != "$URL_B" ]; then
+    echo "stored URL after URL change was $(stored_url)" >&2
+    exit 1
+fi
+if [ "$(status_state)" != "done" ]; then
+    echo "URL change status was $(status_state)" >&2
+    exit 1
+fi
+if [ -e "$UPDATE/display-web.json" ]; then
+    echo "request file left after open with a new URL" >&2
+    exit 1
+fi
+replacement_pid=$(tail -n 1 "$STUB_PIDS")
+if [ "$replacement_pid" = "$browser_pid" ]; then
+    echo "URL change did not start a new browser process" >&2
+    exit 1
+fi
+echo "THIRD_OPEN_NEW_BROWSERS=$third"
+echo "THIRD_OPEN_LIVE_BROWSERS=$third_live"
+echo "THIRD_OPEN_STUB_URL=$(last_stub_url)"
+echo "THIRD_OPEN_STORED_URL=$(stored_url)"
+echo "THIRD_OPEN_FIRST_BROWSER_ALIVE=no"
 
 write_request hide
 run_runner
-if kill -0 "$browser_pid" 2>/dev/null; then
+if kill -0 "$replacement_pid" 2>/dev/null; then
     echo "browser still running after hide" >&2
     exit 1
 fi
@@ -156,12 +247,18 @@ if [ -e "$UPDATE/display-web.pid" ]; then
     echo "pidfile left after hide" >&2
     exit 1
 fi
+if [ -e "$UPDATE/display-web.url" ]; then
+    echo "URL file left after hide" >&2
+    exit 1
+fi
 if [ -e "$UPDATE/display-web.json" ]; then
     echo "request file left after hide" >&2
     exit 1
 fi
 echo "HIDE_TERMINATED=yes"
+echo "HIDE_LIVE_BROWSERS=$(live_count)"
 echo "PIDFILE_AFTER_HIDE=absent"
+echo "URLFILE_AFTER_HIDE=$(stored_url)"
 
 FAIL_UPDATE="$WORK/fail-update"
 mkdir -p "$FAIL_UPDATE"

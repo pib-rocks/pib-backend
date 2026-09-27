@@ -50,10 +50,16 @@ from service.microphone_array_service import seed_desired_state
 
 logger = logging.getLogger(__name__)
 
+# program_number of the Cerebra toggle program that earlier seeds created and
+# bound to the third LED button. Its only block type no longer exists, so a
+# program built from it can never compile again.
+LEGACY_CEREBRA_TOGGLE_PROGRAM_NUMBER = "c3r3br4-f-u-l-l-s-c-r-e-e-n-001"
+
 
 @app.cli.command("seed_db")
 def seed_db() -> None:
     if not _is_empty_db():
+        _unbind_legacy_cerebra_toggle_program()
         print("Seeding database failed - database already contains data.")
         return
     variant, source = resolve_variant_and_source()
@@ -283,12 +289,33 @@ def _upsert_motors(
     return stats, warnings
 
 
+def _unbind_legacy_cerebra_toggle_program() -> None:
+    """Clear button mappings that point at the removed Cerebra toggle program.
+
+    Runs on every start of an already seeded database. The program row itself
+    is left alone; only the button binding is cleared so a press no longer
+    fails to compile. The button has to be assigned again by the user.
+    """
+    program = Program.query.filter_by(
+        program_number=LEGACY_CEREBRA_TOGGLE_PROGRAM_NUMBER
+    ).first()
+    if program is None:
+        return
+    unbound = ButtonProgram.query.filter_by(program_id=program.id).update(
+        {ButtonProgram.program_id: None}, synchronize_session=False
+    )
+    if unbound:
+        db.session.commit()
+        print(
+            f"Unbound {unbound} button(s) from the removed Cerebra toggle program "
+            f"{program.name!r}."
+        )
+
+
 def _rebuild_button_programs(profile: HardwareProfile) -> None:
     ButtonProgram.query.delete(synchronize_session=False)
     db.session.flush()
 
-    program = Program.query.filter_by(name="toggle_cerebra_fullscreen").first()
-    program_id = program.id if program else None
     controllers = {
         controller.number: controller
         for controller in Controller.query.filter(
@@ -300,7 +327,7 @@ def _rebuild_button_programs(profile: HardwareProfile) -> None:
         [
             ButtonProgram(controller_id=controllers[first].id, program_id=None),
             ButtonProgram(controller_id=controllers[second].id, program_id=None),
-            ButtonProgram(controller_id=controllers[third].id, program_id=program_id),
+            ButtonProgram(controller_id=controllers[third].id, program_id=None),
         ]
     )
     db.session.flush()
@@ -416,15 +443,12 @@ def _create_controller_data(profile: HardwareProfile) -> None:
 
 
 def _create_button_program_data(profile: HardwareProfile) -> None:
-    cerebra_prog = Program.query.filter_by(name="toggle_cerebra_fullscreen").first()
-    prog_id = cerebra_prog.id if cerebra_prog else None
-
     first_controller, second_controller, third_controller = (
         profile.rgb_button_controller_ids
     )
     button_program1 = ButtonProgram(controller_id=first_controller, program_id=None)
     button_program2 = ButtonProgram(controller_id=second_controller, program_id=None)
-    button_program3 = ButtonProgram(controller_id=third_controller, program_id=prog_id)
+    button_program3 = ButtonProgram(controller_id=third_controller, program_id=None)
     db.session.add_all([button_program1, button_program2, button_program3])
     db.session.flush()
 
@@ -443,12 +467,7 @@ def _create_program_data() -> None:
         code_visual=_get_example_program(),
         program_number="e1d46e2a-935e-4e2b-b2f9-0856af4257c5",
     )
-    cerebra_program = Program(
-        name="toggle_cerebra_fullscreen",
-        code_visual='<xml xmlns="https://developers.google.com/blockly/xml"><block type="toggle_cerebra_fullscreen" id="cerebra_toggle" x="10" y="10"></block></xml>',
-        program_number="c3r3br4-f-u-l-l-s-c-r-e-e-n-001",
-    )
-    db.session.add_all([program, cerebra_program])
+    db.session.add(program)
     db.session.flush()
 
 
