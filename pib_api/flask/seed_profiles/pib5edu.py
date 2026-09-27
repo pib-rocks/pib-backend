@@ -3,7 +3,7 @@
 from seed_profiles.edu_microphone_tuning import MICROPHONE_TUNING
 from seed_profiles.edu_motor_parameters import (
     MOTOR_PARAMETER_DEFAULTS,
-    MOTOR_PARAMETER_DEVIATIONS,
+    PIB5EDU_MOTOR_PARAMETER_DEVIATIONS,
 )
 from seed_profiles.pib4edu import (
     MOTOR_MAPPING as PIB4EDU_MOTOR_MAPPING,
@@ -38,6 +38,6 @@ PROFILE = HardwareProfile(
     motor_mapping=MOTOR_MAPPING,
     rgb_button_controller_ids=(6, 7, 8),
     motor_parameter_defaults=MOTOR_PARAMETER_DEFAULTS,
-    motor_parameter_deviations=MOTOR_PARAMETER_DEVIATIONS,
+    motor_parameter_deviations=PIB5EDU_MOTOR_PARAMETER_DEVIATIONS,
     microphone_tuning=MICROPHONE_TUNING,
 )
