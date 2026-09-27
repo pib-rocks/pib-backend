@@ -248,7 +248,10 @@ class DisplayApp(Gtk.Application):
             return
         if effect == "web_hide":
             self.web_surface_open = False
-            self._hide_window()
+            # Order matters: _ensure_visible refuses to act while the web surface counts
+            # as open. Closing only takes the HTML component away; the display window is
+            # shown again behind it instead of staying hidden.
+            self._ensure_visible()
             log_info("web surface closed")
             return
         if self.window is None or self.picture is None:
