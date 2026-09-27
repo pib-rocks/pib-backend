@@ -163,6 +163,33 @@ function setup_update_service() {
     print SUCCESS "Host-side update service installed and watching for requests"
 }
 
+function setup_display_web_service() {
+    print INFO "Setting up host-side display web service"
+    # Separate from pib-update.service: that unit is exclusive and holds
+    # docker-level power. The directory already exists and is drwxrws--- pib:pib.
+    # Do not change its mode or ownership. The runner is executable in git;
+    # do not change that mode here either, or the next update sees a dirty tree.
+    sudo install -o root -g root -m 0644 \
+      "$BACKEND_DIR/setup/setup_files/pib-display-web.service" \
+      /etc/systemd/system/pib-display-web.service
+    sudo install -o root -g root -m 0644 \
+      "$BACKEND_DIR/setup/setup_files/pib-display-web.path" \
+      /etc/systemd/system/pib-display-web.path
+    sudo systemctl daemon-reload
+
+    local enable_output
+    if ! enable_output=$(sudo systemctl enable pib-display-web.path 2>&1); then
+        print ERROR "failed to enable pib-display-web.path: ${enable_output}"
+        return 1
+    fi
+    local start_output
+    if ! start_output=$(sudo systemctl start pib-display-web.path 2>&1); then
+        print ERROR "failed to start pib-display-web.path: ${start_output}"
+        return 1
+    fi
+    print SUCCESS "Host-side display web service installed and watching for requests"
+}
+
 function verify_vendored_blockly() {
     print INFO "Verifying vendored pib-blockly sources"
 
@@ -196,4 +223,5 @@ start_container || print ERROR "failed to start containers"
 setup_docker_cleaner_service || print ERROR "failed to setup docker cleaner service"
 setup_update_watchdog_helper || print ERROR "failed to setup update watchdog helper"
 setup_update_service || print ERROR "failed to setup host-side update service"
+setup_display_web_service || print ERROR "failed to setup host-side display web service"
 sudo chmod 777 "$BACKEND_DIR/pib_api/flask/pibdata.db"

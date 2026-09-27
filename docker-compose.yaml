@@ -226,6 +226,7 @@ services:
       - ./ros_packages/display/expression_faces:/app/pib-expression-faces:ro
       - ${XDG_RUNTIME_DIR:-/run/user/1000}:/run/user/1000
       - /dev/dri:/dev/dri
+      - /home/pib/app/.update:/app/.update
     environment:
       - STATIC_IMAGE_DIR=/app/ros2_ws/display/static_images
       - PIB_EXPRESSION_DIR=/app/pib-expression-faces
@@ -235,6 +236,7 @@ services:
       - PIB_DISPLAY_TEXT_MAX_CHARS=40
       - PIB_DISPLAY_TEXT_CACHE_MAX=50
       - PIB_DISPLAY_POLL_MS=5
+      - PIB_UPDATE_DIR=/app/.update
       - XDG_RUNTIME_DIR=/run/user/1000
       - WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-wayland-0}
       - GDK_BACKEND=wayland
