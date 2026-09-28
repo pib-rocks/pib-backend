@@ -248,10 +248,12 @@ class DisplayApp(Gtk.Application):
             return
         if effect == "web_hide":
             self.web_surface_open = False
-            # Order matters: _ensure_visible refuses to act while the web surface counts
-            # as open. Closing only takes the HTML component away; the display window is
-            # shown again behind it instead of staying hidden.
-            self._ensure_visible()
+            # Closing takes the HTML component away and puts the window back into its
+            # idle state, which is hidden, so the desktop is on the screen again.
+            # Presenting the window here instead shows an empty white rectangle: nothing
+            # draws a face until an expression arrives, and no node publishes one while
+            # the robot is idle.
+            self._hide_window()
             log_info("web surface closed")
             return
         if self.window is None or self.picture is None:
