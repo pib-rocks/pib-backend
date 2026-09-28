@@ -3,7 +3,11 @@
 from flask import Blueprint, jsonify, request
 
 from model.controller_model import TINKERFORGE_BRICKLET
-from service import controller_service, hardware_config_service
+from service import (
+    bricklet_discovery_service,
+    controller_service,
+    hardware_config_service,
+)
 
 bp = Blueprint("bricklet_controller", __name__)
 
@@ -24,6 +28,20 @@ def get_all_bricklets():
             ]
         }
     )
+
+
+@bp.route("/connected", methods=["GET"])
+def get_connected_bricklets():
+    """Bricklets physically attached right now, from a Tinkerforge enumeration.
+
+    Registered as a static path so it is not captured by the bricklet-number
+    converter below. An unreachable daemon is 503; an empty attachment is 200.
+    """
+    try:
+        bricklets = bricklet_discovery_service.get_connected_bricklets()
+    except bricklet_discovery_service.BrickdUnreachableError as error:
+        return jsonify({"error": str(error)}), 503
+    return jsonify({"bricklets": bricklets})
 
 
 @bp.route("/<string:bricklet_number>", methods=["GET"])
