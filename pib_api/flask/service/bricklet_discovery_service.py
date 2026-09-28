@@ -97,6 +97,18 @@ def _on_disconnected(_reason: Any) -> None:
         _list_current = False
 
 
+def _is_carrier(parent_uid: str) -> bool:
+    """A device the enumeration reports without a parent board.
+
+    Tinkerforge reports ``connected_uid`` as ``"0"`` (and occasionally as an
+    empty string) for a Brick that sits on nothing - the HAT Brick on this robot.
+    Such a device has no port; the position it reports is its place in the stack,
+    not a socket. Measured on the robot: the HAT Brick 2iLa answers with
+    connected_uid "0" and position "i".
+    """
+    return parent_uid in ("", "0")
+
+
 def _on_enumerate(
     uid: Any,
     connected_uid: Any,
@@ -119,11 +131,15 @@ def _on_enumerate(
     ):
         return
 
+    parent_uid = _normalize_uid(connected_uid)
     device = {
         "name": get_device_display_name(device_identifier),
         "uid": normalized_uid,
-        "port": _normalize_port(position),
-        "parentUid": _normalize_uid(connected_uid),
+        # A carrier has no port, and an empty port means "no port" throughout
+        # this contract, so it is decided here once rather than left for every
+        # client to work out from parentUid.
+        "port": "" if _is_carrier(parent_uid) else _normalize_port(position),
+        "parentUid": parent_uid,
         "deviceIdentifier": int(device_identifier),
         "_generation": _generation,
     }

@@ -12,11 +12,13 @@ from tinkerforge.ip_connection import IPConnection
 from service import bricklet_discovery_service
 
 # The enumeration measured on the robot. Delivered out of order on purpose.
-# Position is the character the library passes through: a letter, or NUL when
-# the device has no port (the HAT Brick).
+# Position is the character the library passes through; the HAT Brick reports the
+# letter of its place in the stack ("i") and is recognised as the carrier by its
+# missing parent, not by an empty position - measured on the robot, and the
+# reason the fixture below used to disagree with the hardware.
 _MEASURED_DEVICES = (
     ("2jtj", "2iLa", "h", 2157),
-    ("2iLa", "0", "\x00", 111),
+    ("2iLa", "0", "i", 111),
     ("2dye", "2iLa", "a", 282),
     ("255m", "2iLa", "f", 282),
     ("27FV", "2iLa", "d", 296),
@@ -116,6 +118,43 @@ def test_measured_devices_keep_name_uid_port_and_order(monkeypatch):
         assert device["port"] == port
         assert device["parentUid"] == parent_uid
         assert device["deviceIdentifier"] == identifier
+
+
+def test_carrier_without_a_parent_board_reports_no_port(monkeypatch):
+    """The measured shape of the HAT Brick: no parent, but a position letter.
+
+    Before this, the position was reported as a port and the client named a board
+    that does not exist ("Port I on board 0").
+    """
+    connection = _StubConnection((("2iLa", "0", "i", 111),))
+    _use_connection(monkeypatch, connection)
+
+    bricklets = bricklet_discovery_service.get_connected_bricklets()
+
+    assert len(bricklets) == 1
+    assert bricklets[0]["parentUid"] == "0"
+    assert bricklets[0]["port"] == ""
+    assert bricklets[0]["name"] == "HAT Brick"
+
+
+def test_carrier_with_an_empty_parent_uid_also_reports_no_port(monkeypatch):
+    connection = _StubConnection((("2iLa", "", "i", 111),))
+    _use_connection(monkeypatch, connection)
+
+    bricklets = bricklet_discovery_service.get_connected_bricklets()
+
+    assert bricklets[0]["port"] == ""
+
+
+def test_a_bricklet_keeps_the_port_of_its_parent_board(monkeypatch):
+    """The rule must not swallow real ports: a parent board means a socket."""
+    connection = _StubConnection((("2dye", "2iLa", "a", 282),))
+    _use_connection(monkeypatch, connection)
+
+    bricklets = bricklet_discovery_service.get_connected_bricklets()
+
+    assert bricklets[0]["port"] == "a"
+    assert bricklets[0]["parentUid"] == "2iLa"
 
 
 def test_device_without_a_port_keeps_the_port_key(monkeypatch):
