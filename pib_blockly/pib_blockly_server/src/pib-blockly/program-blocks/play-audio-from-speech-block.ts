@@ -4,13 +4,8 @@ export const playAudioFromSpeech =
     Blockly.common.createBlockDefinitionsFromJsonArray([
         {
             type: "play_audio_from_speech",
-            message0: "say %1 in %2 with voice %3",
+            message0: "say in %1 with voice %2: %3",
             args0: [
-                {
-                    type: "input_value",
-                    name: "TEXT_INPUT",
-                    check: "String",
-                },
                 {
                     type: "field_dropdown",
                     name: "LANGUAGE",
@@ -35,6 +30,11 @@ export const playAudioFromSpeech =
                         ["Male 4 (M4)", '"M4"'],
                         ["Male 5 (M5)", '"M5"'],
                     ],
+                },
+                {
+                    type: "input_value",
+                    name: "TEXT_INPUT",
+                    check: "String",
                 },
             ],
             previousStatement: null,
