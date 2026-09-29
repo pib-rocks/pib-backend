@@ -4,6 +4,15 @@ name: Sync Blockly to cerebra
 # On any push that touches the blockly source, mirror the tree into cerebra via an
 # auto-generated pull request. See Jira PR-1477 and the KB page
 # "Blockly Code: Single-Source Architecture & Sync".
+#
+# Exactly one sync pull request per change, deliberately. A blockly change used to produce two:
+# the push to the feature branch opened one - that is the preview branch a developer checks
+# cerebra out against before merging, and it stays - and the merge to develop then opened a
+# second one carrying the identical content, which needed its own merge click. On a push to
+# develop the mirrored tree is now compared against every open sync branch first; if one of
+# them already carries exactly this content, no second pull request is opened and that existing
+# one is merged instead. The develop mirror is still brought up to date whenever it holds
+# content no open sync branch covers, for example a direct push to develop.
 
 on:
   push:
@@ -17,7 +26,7 @@ permissions:
   contents: read
 
 concurrency:
-  # one run per source branch; newer pushes cancel in-flight runs for that branch
+  # one run at a time per ref; newer pushes cancel in-flight runs
   group: sync-blockly-${{ github.ref }}
   cancel-in-progress: true
 
@@ -126,8 +135,38 @@ jobs:
             echo "No differences - cerebra already in sync. No PR will be created."
           fi
 
+      - name: Check whether an open sync pull request already carries this content
+        id: covered
+        if: steps.diff.outputs.changed == 'true' && github.ref == 'refs/heads/develop'
+        working-directory: cerebra
+        env:
+          GH_TOKEN: ${{ secrets.CEREBRA_SYNC_TOKEN }}
+        run: |
+          # A merge into develop mirrors content a feature branch has already pushed, and that
+          # branch has its own open pull request. A second one for the same content only adds a
+          # merge click and ends in an empty merge, so stop here when such a pull request exists.
+          SELF="sync/blockly-from-${GITHUB_REF_NAME//\//-}"
+          # Stage the mirror first so added and deleted files count in the comparison.
+          git add -A -- "${DST_PATH}"
+          COVERED=""
+          for BR in $(gh pr list --repo "${{ env.CEREBRA_REPO }}" --state open \
+                        --json headRefName --jq '.[].headRefName' | grep '^sync/blockly-from-' || true); do
+            [ "$BR" = "$SELF" ] && continue
+            git fetch -q origin "$BR"
+            if git diff --cached --quiet FETCH_HEAD -- "${DST_PATH}"; then
+              COVERED="$BR"
+              break
+            fi
+          done
+          if [ -n "$COVERED" ]; then
+            echo "covered=true" >> "$GITHUB_OUTPUT"
+            echo "Open sync pull request on $COVERED already carries this content - no second pull request."
+          else
+            echo "covered=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Commit & push sync branch
-        if: steps.diff.outputs.changed == 'true'
+        if: steps.diff.outputs.changed == 'true' && steps.covered.outputs.covered != 'true'
         working-directory: cerebra
         run: |
           SYNC_BRANCH="${{ steps.names.outputs.sync_branch }}"
@@ -137,7 +176,7 @@ jobs:
           git push --force-with-lease origin "$SYNC_BRANCH"
 
       - name: Open or update pull request
-        if: steps.diff.outputs.changed == 'true'
+        if: steps.diff.outputs.changed == 'true' && steps.covered.outputs.covered != 'true'
         working-directory: cerebra
         env:
           GH_TOKEN: ${{ secrets.CEREBRA_SYNC_TOKEN }}
