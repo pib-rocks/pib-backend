@@ -12,6 +12,13 @@ let cachedModelOptions = FALLBACK_MODEL_OPTIONS;
 let requestInFlight = false;
 let lastRequestAt = 0;
 
+/** Puts the module back to its initial state. For unit tests only. */
+export function resetModelOptionsForTests(): void {
+    cachedModelOptions = FALLBACK_MODEL_OPTIONS;
+    requestInFlight = false;
+    lastRequestAt = 0;
+}
+
 export function rosbridgeUrl(
     location?: Pick<Location, "protocol" | "hostname">,
 ): string | null {

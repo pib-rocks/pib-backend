@@ -3,6 +3,7 @@ import {
     getModelDropdownOptions,
     modelBlocks,
     refreshModelOptions,
+    resetModelOptionsForTests,
     rosbridgeUrl,
     STOP_ALL_MODELS_VALUE,
 } from "./model-blocks";
@@ -78,6 +79,7 @@ describe("model blocks", () => {
     });
 
     beforeEach(() => {
+        resetModelOptionsForTests();
         originalWebSocket = window.WebSocket;
         FakeWebSocket.instances = [];
         window.WebSocket = FakeWebSocket as unknown as typeof WebSocket;
@@ -201,6 +203,21 @@ describe("model blocks", () => {
         expect(FakeWebSocket.instances.length).toBe(1);
 
         jasmine.clock().tick(5_000);
+        refreshModelOptions();
+        expect(FakeWebSocket.instances.length).toBe(2);
+        FakeWebSocket.instances[1].close();
+    });
+
+    it("sends a request, deduplicates the next call, and sends again after the test reset", () => {
+        expect(getModelDropdownOptions()).toEqual([
+            ["hand_tracking", "hand_tracking"],
+        ]);
+        expect(FakeWebSocket.instances.length).toBe(1);
+
+        refreshModelOptions();
+        expect(FakeWebSocket.instances.length).toBe(1);
+
+        resetModelOptionsForTests();
         refreshModelOptions();
         expect(FakeWebSocket.instances.length).toBe(2);
     });
