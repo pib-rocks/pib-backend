@@ -25,5 +25,7 @@ class Personality(db.Model):
         "Chat", backref="personality", lazy=True, cascade="all,delete"
     )
     assistant_model_id = db.Column(
-        db.Integer, db.ForeignKey("assistant_model.id"), nullable=False
+        db.Integer, db.ForeignKey("assistant_model.id"), nullable=True
     )
+    # 'default' or the decimal id of a provider row. 'default' is a pointer.
+    provider_ref = db.Column(db.String(255), nullable=False)

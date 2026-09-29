@@ -1,10 +1,11 @@
 import json
-from typing import Any, Tuple, List
+from typing import Any, Optional, Tuple, List
 from urllib.request import Request
 
 from pib_api_client import send_request, URL_PREFIX
 
 ASSISTANT_MODEL_URL = URL_PREFIX + "/assistant-model/%s"
+PROVIDER_DEFAULT_URL = URL_PREFIX + "/provider/default"
 PERSONALITY_URL = URL_PREFIX + "/voice-assistant/personality/%s"
 CHAT_URL = URL_PREFIX + "/voice-assistant/chat/%s"
 CHAT_MESSAGES_URL = URL_PREFIX + "/voice-assistant/chat/%s/messages"
@@ -28,12 +29,17 @@ class Personality:
         self.message_history = personality_dto["messageHistory"]
         self.description = personality_dto.get("description")
         self.stt_engine = personality_dto.get("sttEngine", "local_whisper")
-        self.assistant_model = self._get_assistant_model(
-            personality_dto["assistantModelId"]
-        )
+        self.provider_ref = personality_dto.get("providerRef")
+        self.assistant_model = self._resolve_assistant_model(personality_dto)
 
-    def _get_assistant_model(self, assistant_model_id: int) -> AssistantModel:
-        successful, model = get_assistant_model(assistant_model_id)
+    def _resolve_assistant_model(
+        self, personality_dto: dict[str, Any]
+    ) -> AssistantModel:
+        kind, model_id = model_endpoint_for(personality_dto)
+        if kind == "default":
+            successful, model = get_default_provider()
+        else:
+            successful, model = get_assistant_model(model_id)
         if not successful:
             raise Exception("Could not find the assistant model")
         return model
@@ -56,10 +62,38 @@ class ChatMessage:
         self.content = chat_message_dto["content"]
 
 
+def model_endpoint_for(
+    personality_dto: dict[str, Any],
+) -> Tuple[str, Optional[int]]:
+    """Decide which registry read resolves this personality.
+
+    A stored providerRef of 'default' stays a pointer: the caller asks for the
+    current default instead of an id copied onto the personality. An explicit
+    reference is that provider's id.
+    """
+    provider_ref = personality_dto.get("providerRef")
+    model_id = personality_dto.get("assistantModelId")
+    if provider_ref == "default" or (provider_ref in (None, "") and model_id is None):
+        return "default", None
+    if provider_ref not in (None, "") and str(provider_ref).isdigit():
+        return "id", int(provider_ref)
+    return "id", int(model_id)
+
+
 def get_assistant_model(assistant_model_id: int) -> Tuple[bool, AssistantModel]:
     request = Request(ASSISTANT_MODEL_URL % assistant_model_id, method="GET")
     successful, assistant_model_dto = send_request(request)
-    return successful, AssistantModel(assistant_model_dto)
+    if not successful or not isinstance(assistant_model_dto, dict):
+        return False, None
+    return True, AssistantModel(assistant_model_dto)
+
+
+def get_default_provider() -> Tuple[bool, AssistantModel]:
+    request = Request(PROVIDER_DEFAULT_URL, method="GET")
+    successful, provider_dto = send_request(request)
+    if not successful or not isinstance(provider_dto, dict):
+        return False, None
+    return True, AssistantModel(provider_dto)
 
 
 def get_personality(personality_id: str) -> Tuple[bool, Personality]:

@@ -14,6 +14,8 @@ class PersonalitySchemaSQLAutoWith(SQLAutoWithCamelCaseSchema):
         dump_default="local_whisper",
         load_default="local_whisper",
     )
+    assistant_model_id = fields.Integer(required=False, allow_none=True)
+    provider_ref = fields.String(required=False, allow_none=True)
     soul_path = fields.Method("get_soul_path", dump_only=True)
     profile_provisioned = fields.Boolean(dump_only=True)
 

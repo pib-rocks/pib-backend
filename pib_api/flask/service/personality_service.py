@@ -1,9 +1,14 @@
 import logging
 import os
 from typing import Any, List, Optional
+
+from marshmallow import ValidationError
+
 from model.personality_model import Personality
+from model.provider_model import Provider
 from app.app import db
 from pib_hermes_config import build_default_soul_text
+from provider_registry import DEFAULT_PROVIDER_REF
 from service import soul_service
 
 #: Path of the daemon endpoint that owns the Hermes profile factory.
@@ -95,15 +100,47 @@ def get_personality(personality_id: str) -> Personality:
     return personality
 
 
+def _store_provider_ref(personality: Personality, ref: str) -> None:
+    """Persist a provider pointer. 'default' is not resolved into an id."""
+    if ref == DEFAULT_PROVIDER_REF:
+        personality.provider_ref = DEFAULT_PROVIDER_REF
+        personality.assistant_model_id = None
+        return
+    try:
+        provider_id = int(ref)
+    except (TypeError, ValueError) as exc:
+        raise ValidationError({"providerRef": ["Unknown provider reference."]}) from exc
+    if provider_id < 1 or Provider.query.filter_by(id=provider_id).first() is None:
+        raise ValidationError({"providerRef": ["Unknown provider reference."]})
+    personality.provider_ref = str(provider_id)
+    personality.assistant_model_id = provider_id
+
+
+def _apply_provider_choice(
+    personality: Personality, personality_dto: Any, *, creating: bool
+) -> None:
+    provider_ref = personality_dto.get("provider_ref")
+    model_id = personality_dto.get("assistant_model_id")
+    if provider_ref:
+        ref = str(provider_ref)
+    elif model_id is not None:
+        ref = str(model_id)
+    elif creating:
+        ref = DEFAULT_PROVIDER_REF
+    else:
+        return
+    _store_provider_ref(personality, ref)
+
+
 def create_personality(personality_dto: Any) -> Personality:
     personality = Personality(
         name=personality_dto["name"],
         gender=personality_dto["gender"],
         pause_threshold=personality_dto["pause_threshold"],
         message_history=personality_dto["message_history"],
-        assistant_model_id=personality_dto["assistant_model_id"],
         stt_engine=personality_dto.get("stt_engine", "local_whisper"),
     )
+    _apply_provider_choice(personality, personality_dto, creating=True)
     custom = ""
     if "description" in personality_dto and personality_dto["description"]:
         custom = str(personality_dto["description"]).strip()
@@ -164,8 +201,7 @@ def update_personality(personality_id: str, personality_dto: Any) -> Personality
                 personality.personality_id,
                 exc,
             )
-    if "assistant_model_id" in personality_dto:
-        personality.assistant_model_id = personality_dto["assistant_model_id"]
+    _apply_provider_choice(personality, personality_dto, creating=False)
     if "stt_engine" in personality_dto:
         personality.stt_engine = personality_dto["stt_engine"]
     db.session.flush()
