@@ -38,6 +38,9 @@ WATCHDOG_HELPER="/usr/local/sbin/pib-update-watchdog"
 WATCHDOG_TARGET_FILE="$UPDATE_DIR/watchdog.target"
 WATCHDOG_BUILD_TIMEOUT_US="${PIB_UPDATE_WATCHDOG_BUILD_TIMEOUT_US:-1800000000}"
 PRUNE_BELOW_KIB="${PIB_UPDATE_PRUNE_BELOW_KIB:-15728640}"
+# Develop checkouts are not tagged. Passing this marker as APP_VERSION keeps the
+# image off the compose-file fallback, which would otherwise report an old release.
+DEVELOP_VERSION_MARKER="develop"
 
 JOB_ID="unknown"
 CHANNEL="unknown"
@@ -418,6 +421,49 @@ finally:
 PY
 }
 
+# Prints the APP_VERSION for the backend checkout.
+# A release merge is --no-ff, so the tag published on develop is on HEAD^2
+# (docs/RELEASE.md). A fast-forward has no second parent and carries the tag
+# on HEAD. A develop checkout with neither uses DEVELOP_VERSION_MARKER.
+resolve_app_version() {
+    local directory="$1"
+    local on_second_parent="" on_head="" tag=""
+    on_second_parent="$(git -C "$directory" tag --points-at 'HEAD^2' 2>/dev/null || true)"
+    on_head="$(git -C "$directory" tag --points-at HEAD 2>/dev/null || true)"
+    tag="${on_second_parent%%$'\n'*}"
+    if [ -z "$tag" ]; then
+        tag="${on_head%%$'\n'*}"
+    fi
+    if [ -n "$tag" ]; then
+        printf '%s\n' "$tag"
+        return 0
+    fi
+    if [ "$CHANNEL" = "develop" ]; then
+        printf '%s\n' "$DEVELOP_VERSION_MARKER"
+        return 0
+    fi
+    return 1
+}
+
+# Documented injection is `docker compose build --build-arg APP_VERSION=<version>
+# flask-app` (docs/RELEASE.md). -f is required because this runner does not cd
+# into the checkout. APP_VERSION is also exported: the following
+# `up -d --build` rebuilds from compose interpolation
+# (`${APP_VERSION:-...}`) and would otherwise overwrite that image with the
+# fallback. Callers leave APP_VERSION unset only for an untagged rollback.
+build_backend_stack() {
+    if [ -n "${APP_VERSION:-}" ]; then
+        export APP_VERSION
+        log "Building flask-app with --build-arg APP_VERSION=${APP_VERSION}"
+        docker compose -f "$BACKEND_DIR/docker-compose.yaml" \
+            build --build-arg "APP_VERSION=${APP_VERSION}" flask-app || return 1
+    else
+        log "WARNING: APP_VERSION is unset; backend rebuild will use the compose-file fallback"
+    fi
+    docker compose -f "$BACKEND_DIR/docker-compose.yaml" --profile all \
+        up -d --build --force-recreate || return 1
+}
+
 fetch_repository() {
     local directory="$1"
     local branch="$2"
@@ -545,6 +591,7 @@ verify_result() {
     return 0
 }
 
+# Atomic replace, same pattern as write_status: temp file in UPDATE_DIR, fsync, rename.
 write_revision() {
     local repository="$1"
     local sha="$2"
@@ -563,12 +610,19 @@ document = {
 }
 path = os.path.join(os.environ["UPDATE_DIR"], os.environ["REPOSITORY"] + ".revision.json")
 descriptor, temporary = tempfile.mkstemp(prefix=".revision.", dir=os.path.dirname(path))
-with os.fdopen(descriptor, "w", encoding="utf-8") as output:
-    json.dump(document, output, sort_keys=True)
-    output.write("\n")
-    output.flush()
-    os.fsync(output.fileno())
-os.replace(temporary, path)
+try:
+    with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+        json.dump(document, output, sort_keys=True)
+        output.write("\n")
+        output.flush()
+        os.fsync(output.fileno())
+    os.replace(temporary, path)
+except BaseException:
+    try:
+        os.unlink(temporary)
+    except FileNotFoundError:
+        pass
+    raise
 PY
 }
 
@@ -577,8 +631,14 @@ rollback_once() {
     git -C "$BACKEND_DIR" reset --hard "$BACKEND_BEFORE"
     git -C "$CEREBRA_DIR" reset --hard "$CEREBRA_BEFORE"
     git -C "$CEREBRA_DIR" submodule update --init --recursive
-    docker compose -f "$BACKEND_DIR/docker-compose.yaml" --profile all \
-        up -d --build --force-recreate
+    if APP_VERSION="$(resolve_app_version "$BACKEND_DIR")"; then
+        export APP_VERSION
+        log "Rollback rebuild uses APP_VERSION=$APP_VERSION"
+    else
+        log "WARNING: rolled-back checkout has no release tag; backend rebuild will use the compose-file fallback"
+        unset APP_VERSION
+    fi
+    build_backend_stack
     docker compose -f "$CEREBRA_DIR/docker-compose.yaml" \
         up -d --build --force-recreate
     BACKEND_TARGET="$BACKEND_BEFORE"
@@ -632,16 +692,19 @@ fetch_repository "$CEREBRA_DIR" "$BRANCH" || fail "Failed to fetch cerebra"
 git -C "$CEREBRA_DIR" submodule update --init --recursive || fail "Failed to update cerebra submodules"
 BACKEND_TARGET="$(git -C "$BACKEND_DIR" rev-parse HEAD)"
 CEREBRA_TARGET="$(git -C "$CEREBRA_DIR" rev-parse HEAD)"
+if ! APP_VERSION="$(resolve_app_version "$BACKEND_DIR")"; then
+    fail "Release checkout has no git tag on HEAD^2 or HEAD; refusing to build with the compose-file APP_VERSION fallback"
+fi
+log "Resolved APP_VERSION=${APP_VERSION} for pib-backend at ${BACKEND_TARGET}"
 
 check_cancel
 extend_watchdog_for_build
-write_status "building" "Building and recreating backend and cerebra containers"
+write_status "building" "Building and recreating backend and cerebra containers (APP_VERSION=${APP_VERSION})"
 if [ "$FREE_KIB" -lt "$PRUNE_BELOW_KIB" ]; then
     log "Disk space is below prune threshold; pruning Docker build cache"
     docker builder prune -af
 fi
-docker compose -f "$BACKEND_DIR/docker-compose.yaml" --profile all \
-    up -d --build --force-recreate || fail "Backend container build failed"
+build_backend_stack || fail "Backend container build failed"
 docker compose -f "$CEREBRA_DIR/docker-compose.yaml" \
     up -d --build --force-recreate || fail "Cerebra container build failed"
 

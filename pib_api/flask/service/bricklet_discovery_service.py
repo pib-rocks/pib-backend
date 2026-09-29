@@ -31,19 +31,43 @@ class BrickdUnreachableError(Exception):
     """brickd could not be reached. This is not an empty device list."""
 
 
+class BrickletLibraryMissingError(Exception):
+    """The optional tinkerforge package is not installed."""
+
+
+def _import_ip_connection():
+    """Return IPConnection, or raise when the optional library is absent.
+
+    A missing package must not be reported as an unreachable daemon.
+    """
+    try:
+        from tinkerforge.ip_connection import IPConnection
+    except ImportError as error:
+        raise BrickletLibraryMissingError(
+            "The optional tinkerforge package is not installed"
+        ) from error
+    return IPConnection
+
+
 def get_connected_bricklets() -> List[Dict[str, Any]]:
     """Return the devices brickd reports, ordered by port.
 
     An empty list means the daemon answered and nothing is attached.
     BrickdUnreachableError means the daemon could not be reached.
+    BrickletLibraryMissingError means the optional tinkerforge package is not installed.
     """
     ipcon = _get_tf_ipcon()
     if ipcon is None:
+        # _get_tf_ipcon() returns None both when tinkerforge cannot be imported
+        # and when brickd cannot be reached. The import distinguishes them.
+        _import_ip_connection()
         raise BrickdUnreachableError("Tinkerforge daemon is unreachable")
 
     with _enumerate_lock:
         try:
             _ensure_callback(ipcon)
+        except BrickletLibraryMissingError:
+            raise
         except Exception as error:
             raise BrickdUnreachableError("Tinkerforge daemon is unreachable") from error
         if _is_list_current():
@@ -78,15 +102,15 @@ def _ensure_callback(ipcon: Any) -> None:
     if _callback_connection is ipcon:
         return
 
-    from tinkerforge.ip_connection import IPConnection
+    ip_connection = _import_ip_connection()
 
     with _devices_lock:
         _devices.clear()
     with _state_lock:
         _list_current = False
         _callback_connection = ipcon
-    ipcon.register_callback(IPConnection.CALLBACK_ENUMERATE, _on_enumerate)
-    ipcon.register_callback(IPConnection.CALLBACK_DISCONNECTED, _on_disconnected)
+    ipcon.register_callback(ip_connection.CALLBACK_ENUMERATE, _on_enumerate)
+    ipcon.register_callback(ip_connection.CALLBACK_DISCONNECTED, _on_disconnected)
 
 
 def _on_disconnected(_reason: Any) -> None:

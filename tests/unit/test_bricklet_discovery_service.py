@@ -3,8 +3,12 @@
 The connection is a stub. Nothing here talks to brickd or to a robot.
 """
 
+import importlib
+import sys
 import time
+from contextlib import contextmanager
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 from tinkerforge.ip_connection import IPConnection
@@ -53,10 +57,14 @@ _EXPECTED_BY_UID = {
 class _StubConnection:
     """Stands in for IPConnection. enumerate() delivers the scripted devices."""
 
-    def __init__(
-        self, devices, enumeration_type=IPConnection.ENUMERATION_TYPE_CONNECTED
-    ):
+    def __init__(self, devices, enumeration_type=None):
         self._devices = devices
+        # Looked up at call time. A default argument would be bound when this
+        # module is imported, which can be while a sibling test's stand-in
+        # still occupies sys.modules. The service imports IPConnection later,
+        # the callback ids then disagree, and enumerate() delivers nothing.
+        if enumeration_type is None:
+            enumeration_type = IPConnection.ENUMERATION_TYPE_CONNECTED
         self._enumeration_type = enumeration_type
         self.callbacks = {}
         self.enumerate_calls = 0
@@ -85,14 +93,58 @@ class _StubConnection:
         callback(IPConnection.DISCONNECT_REASON_ERROR)
 
 
+def _ip_connection_stand_in_installed() -> bool:
+    """True when sys.modules holds a fake tinkerforge.ip_connection.
+
+    tests/integration/test_motor_current.py assigns that stand-in at import
+    time and only removes it after its own tests. Pytest imports this module
+    during collection, so the IPConnection name above can be the stand-in's
+    MagicMock while get_connected_bricklets() later imports the real class.
+    """
+    module = sys.modules.get("tinkerforge.ip_connection")
+    if module is None:
+        return False
+    if isinstance(getattr(module, "IPConnection", None), Mock):
+        return True
+    return not hasattr(module, "get_device_display_name")
+
+
+def _take_tinkerforge_stand_in() -> dict | None:
+    if not _ip_connection_stand_in_installed():
+        return None
+    stolen = {}
+    for name in list(sys.modules):
+        if name == "tinkerforge" or name.startswith("tinkerforge."):
+            stolen[name] = sys.modules.pop(name)
+    return stolen
+
+
+def _restore_tinkerforge_stand_in(stolen: dict) -> None:
+    for name in list(sys.modules):
+        if name == "tinkerforge" or name.startswith("tinkerforge."):
+            sys.modules.pop(name, None)
+    sys.modules.update(stolen)
+
+
 @pytest.fixture(autouse=True)
 def _isolated_discovery_state(monkeypatch):
     bricklet_discovery_service._reset_state()
     # The production deadline waits out the measured settle. The stub delivers
     # devices inside enumerate(), so the suite does not sleep that long.
     monkeypatch.setattr(bricklet_discovery_service, "ENUMERATE_DEADLINE_SECONDS", 0.0)
-    yield
-    bricklet_discovery_service._reset_state()
+    # Share the library the service imports inside _on_enumerate. Restoring the
+    # stand-in afterwards keeps a sibling module that installed it working.
+    stolen = _take_tinkerforge_stand_in()
+    try:
+        ip_connection = importlib.import_module("tinkerforge.ip_connection")
+        monkeypatch.setattr(
+            sys.modules[__name__], "IPConnection", ip_connection.IPConnection
+        )
+        yield
+    finally:
+        bricklet_discovery_service._reset_state()
+        if stolen is not None:
+            _restore_tinkerforge_stand_in(stolen)
 
 
 def _use_connection(monkeypatch, connection):
@@ -176,6 +228,73 @@ def test_unreachable_daemon_raises_instead_of_returning_an_empty_list(monkeypatc
         bricklet_discovery_service.get_connected_bricklets()
 
     assert "unreachable" in str(raised.value).lower()
+
+
+@contextmanager
+def _tinkerforge_hidden(monkeypatch):
+    """Make `import tinkerforge` fail until the block exits.
+
+    The suite imports the package at module level, so blocking builtins.__import__
+    is not enough: the module is already cached in sys.modules.
+    """
+    import builtins
+    import sys
+
+    hidden = {
+        name: module
+        for name, module in list(sys.modules.items())
+        if name == "tinkerforge" or name.startswith("tinkerforge.")
+    }
+    for name in hidden:
+        sys.modules.pop(name, None)
+    real_import = builtins.__import__
+
+    def _blocked(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "tinkerforge" or name.startswith("tinkerforge."):
+            raise ImportError("No module named 'tinkerforge'")
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", _blocked)
+    try:
+        yield
+    finally:
+        sys.modules.update(hidden)
+
+
+def test_missing_library_is_not_reported_as_an_unreachable_daemon(monkeypatch):
+    """None from the connection helper is a missing library when the import fails."""
+    _use_connection(monkeypatch, None)
+
+    with _tinkerforge_hidden(monkeypatch):
+        with pytest.raises(
+            bricklet_discovery_service.BrickletLibraryMissingError
+        ) as raised:
+            bricklet_discovery_service.get_connected_bricklets()
+
+        assert not isinstance(
+            raised.value, bricklet_discovery_service.BrickdUnreachableError
+        )
+        assert "tinkerforge" in str(raised.value).lower()
+        assert "unreachable" not in str(raised.value).lower()
+
+
+def test_callback_setup_reports_a_missing_library_instead_of_an_unreachable_daemon(
+    monkeypatch,
+):
+    """ImportError inside _ensure_callback must not become BrickdUnreachableError."""
+    _use_connection(monkeypatch, _StubConnection(()))
+
+    with _tinkerforge_hidden(monkeypatch):
+        with pytest.raises(
+            bricklet_discovery_service.BrickletLibraryMissingError
+        ) as raised:
+            bricklet_discovery_service.get_connected_bricklets()
+
+        assert not isinstance(
+            raised.value, bricklet_discovery_service.BrickdUnreachableError
+        )
+        assert "tinkerforge" in str(raised.value).lower()
+        assert "unreachable" not in str(raised.value).lower()
 
 
 def test_reachable_daemon_with_nothing_attached_returns_an_empty_list(monkeypatch):
