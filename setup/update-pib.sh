@@ -41,6 +41,19 @@ function print() {
     echo -e "${!color}[$(date -u)][[ ${text} ]]${RESET_TEXT_COLOR}"
 }
 
+# Prints the release tag of the current checkout. docs/RELEASE.md: the tag published on
+# develop rides on the second parent of the `develop -> main` merge, or on HEAD after a
+# fast-forward. Fails (non-zero) when the checkout carries no tag.
+function release_tag_here() {
+    local tag
+    tag="$(git tag --points-at 'HEAD^2' 2>/dev/null | head -n 1)"
+    if [ -z "$tag" ]; then
+        tag="$(git tag --points-at HEAD 2>/dev/null | head -n 1)"
+    fi
+    [ -n "$tag" ] || return 1
+    printf '%s\n' "$tag"
+}
+
 # Ensure that the update-pib command is installed as a symlink
 function ensure_symlink_self() {
     local update_bin="/usr/local/bin/update-pib"
@@ -106,7 +119,19 @@ function update_backend() {
         git pull --ff-only origin main || { print ERROR "backend git pull error"; exit 1; }
         # Ensure that the IP dispatcher script is set up so the IP display works correctly
         ensure_host_ip
-        sudo docker compose --profile all up --force-recreate --build -d || { print ERROR "docker compose backend build error"; exit 1; }
+        # Inject the release tag into the flask-app image, exactly as docs/RELEASE.md and
+        # setup/update_runner.sh do. The export is required too: the following `up --build`
+        # interpolates ${APP_VERSION:-v0.6.2} and would otherwise rebuild the image with that
+        # fallback, so the compose call needs `sudo -E` to keep the value.
+        if APP_VERSION="$(release_tag_here)"; then
+            export APP_VERSION
+            print INFO "flask-app APP_VERSION=$APP_VERSION"
+            sudo -E docker compose --profile all build --build-arg "APP_VERSION=$APP_VERSION" flask-app || { print ERROR "docker compose backend build error"; exit 1; }
+        else
+            unset APP_VERSION
+            print WARN "no release tag on the checkout; flask-app keeps the compose-file APP_VERSION fallback"
+        fi
+        sudo -E docker compose --profile all up --force-recreate --build -d || { print ERROR "docker compose backend build error"; exit 1; }
     else
         print ERROR "Directory $BACKEND_DIR does not exist"
         exit 1 
@@ -119,7 +144,17 @@ function update_frontend() {
         cd "$FRONTEND_DIR" || { print ERROR "Cannot get to $FRONTEND_DIR"; exit 1; }
         git pull --recurse-submodules || { print ERROR "frontend git pull error"; exit 1; }
         git submodule update --init --recursive || { print ERROR "frontend submodule update error"; exit 1; }
-        sudo docker compose up --force-recreate --build -d || { print ERROR "docker compose frontend build error"; exit 1; }
+        # Same tag injection as the backend: cerebra's Dockerfile writes APP_VERSION into the
+        # footer, and `up --build` would otherwise re-interpolate the compose-file fallback.
+        if APP_VERSION="$(release_tag_here)"; then
+            export APP_VERSION
+            print INFO "cerebra APP_VERSION=$APP_VERSION"
+            sudo -E docker compose build --build-arg "APP_VERSION=$APP_VERSION" angular-app || { print ERROR "docker compose frontend build error"; exit 1; }
+        else
+            unset APP_VERSION
+            print WARN "no release tag on the checkout; cerebra keeps the compose-file APP_VERSION fallback"
+        fi
+        sudo -E docker compose up --force-recreate --build -d || { print ERROR "docker compose frontend build error"; exit 1; }
     else
         print ERROR "Directory $FRONTEND_DIR does not exist"
         exit 1 

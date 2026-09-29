@@ -88,6 +88,12 @@ stored in `status.json`, the append-only live log in `update.log`, and installed
 revision facts in `pib-backend.revision.json` and `cerebra.revision.json`.
 Missing revision fields are returned as `unknown`.
 
+A release update injects the fetched backend tag into the flask-app image with
+`docker compose build --build-arg APP_VERSION=<tag> flask-app` before recreating
+the stack. The tag comes from `HEAD^2` (the release merge's second parent) or,
+on a fast-forward, from `HEAD`. A develop update has no tag and passes
+`APP_VERSION=develop` instead of the compose-file fallback. See `docs/RELEASE.md`.
+
 Availability checks use a separate `pib-update-check.path` /
 `pib-update-check.service` pair and never fetch, change a checkout, build, or
 extend the watchdog. The result is stored in `available.json` and check activity
