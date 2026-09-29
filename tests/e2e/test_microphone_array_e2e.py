@@ -108,9 +108,9 @@ class TestMicrophoneArrayE2E:
             if abs(value - expected_gain) < 0.2:
                 break
             page.wait_for_timeout(250)
-        assert abs(value - expected_gain) < 0.2, (
-            f"AGC Max Gain is {value} after applying '{target_preset}', expected {expected_gain}"
-        )
+        assert (
+            abs(value - expected_gain) < 0.2
+        ), f"AGC Max Gain is {value} after applying '{target_preset}', expected {expected_gain}"
 
         if previous_preset and previous_preset != target_preset:
             preset_input.fill(previous_preset)
