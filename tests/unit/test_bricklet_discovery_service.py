@@ -4,6 +4,7 @@ The connection is a stub. Nothing here talks to brickd or to a robot.
 """
 
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -176,6 +177,73 @@ def test_unreachable_daemon_raises_instead_of_returning_an_empty_list(monkeypatc
         bricklet_discovery_service.get_connected_bricklets()
 
     assert "unreachable" in str(raised.value).lower()
+
+
+@contextmanager
+def _tinkerforge_hidden(monkeypatch):
+    """Make `import tinkerforge` fail until the block exits.
+
+    The suite imports the package at module level, so blocking builtins.__import__
+    is not enough: the module is already cached in sys.modules.
+    """
+    import builtins
+    import sys
+
+    hidden = {
+        name: module
+        for name, module in list(sys.modules.items())
+        if name == "tinkerforge" or name.startswith("tinkerforge.")
+    }
+    for name in hidden:
+        sys.modules.pop(name, None)
+    real_import = builtins.__import__
+
+    def _blocked(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "tinkerforge" or name.startswith("tinkerforge."):
+            raise ImportError("No module named 'tinkerforge'")
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", _blocked)
+    try:
+        yield
+    finally:
+        sys.modules.update(hidden)
+
+
+def test_missing_library_is_not_reported_as_an_unreachable_daemon(monkeypatch):
+    """None from the connection helper is a missing library when the import fails."""
+    _use_connection(monkeypatch, None)
+
+    with _tinkerforge_hidden(monkeypatch):
+        with pytest.raises(
+            bricklet_discovery_service.BrickletLibraryMissingError
+        ) as raised:
+            bricklet_discovery_service.get_connected_bricklets()
+
+        assert not isinstance(
+            raised.value, bricklet_discovery_service.BrickdUnreachableError
+        )
+        assert "tinkerforge" in str(raised.value).lower()
+        assert "unreachable" not in str(raised.value).lower()
+
+
+def test_callback_setup_reports_a_missing_library_instead_of_an_unreachable_daemon(
+    monkeypatch,
+):
+    """ImportError inside _ensure_callback must not become BrickdUnreachableError."""
+    _use_connection(monkeypatch, _StubConnection(()))
+
+    with _tinkerforge_hidden(monkeypatch):
+        with pytest.raises(
+            bricklet_discovery_service.BrickletLibraryMissingError
+        ) as raised:
+            bricklet_discovery_service.get_connected_bricklets()
+
+        assert not isinstance(
+            raised.value, bricklet_discovery_service.BrickdUnreachableError
+        )
+        assert "tinkerforge" in str(raised.value).lower()
+        assert "unreachable" not in str(raised.value).lower()
 
 
 def test_reachable_daemon_with_nothing_attached_returns_an_empty_list(monkeypatch):

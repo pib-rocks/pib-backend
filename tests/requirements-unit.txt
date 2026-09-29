@@ -1,0 +1,4 @@
+# Unit-test dependencies that no other test requirements file carries.
+# tinkerforge is imported by service/bricklet_discovery_service.py; without it the
+# Bricklet enumeration tests fail with a misleading "daemon unreachable" error.
+tinkerforge==2.1.32

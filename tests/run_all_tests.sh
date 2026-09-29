@@ -92,6 +92,7 @@ ensure_venv() {
     pip install -q --prefer-binary -r "${SCRIPT_DIR}/integration/requirements.txt" \
         -r "${SCRIPT_DIR}/infrastructure/requirements.txt" \
         -r "${SCRIPT_DIR}/requirements-camera.txt" \
+        -r "${SCRIPT_DIR}/requirements-unit.txt" \
         playwright \
         lark
     pip install -q -e "${REPO_ROOT}/pib_hermes_config" \
@@ -124,7 +125,7 @@ run_pytest_integration() {
     log="$(mktemp)"
     # --continue-on-collection-errors: one unimportable module must never cancel the whole
     # stage. The modules that could not be collected are listed again after the run.
-    PYTHONPATH="${REPO_ROOT}/pib_api/flask:${REPO_ROOT}/pib_hermes_config:${REPO_ROOT}/pib_mcp_server:${REPO_ROOT}/public_api_client" \
+    PYTHONPATH="${REPO_ROOT}:${REPO_ROOT}/pib_api/flask:${REPO_ROOT}/pib_hermes_config:${REPO_ROOT}/pib_mcp_server:${REPO_ROOT}/public_api_client" \
         pytest "${SCRIPT_DIR}" -q \
         --ignore="${SCRIPT_DIR}/blockly_generator" \
         --continue-on-collection-errors \
