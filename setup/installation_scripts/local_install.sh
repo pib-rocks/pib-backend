@@ -149,16 +149,12 @@ function install_flask_api() {
 function install_ros_packages() {
   print INFO "Installing ros_packages"
 
-  # Camera Dependencies
+  # Camera Dependencies (legacy INSTALL_METHOD=legacy only).
+  # Match ros-camera: depthai 3.6.1. Do not install depthai 2.x.
+  # depthai-python examples and depthai_hand_tracker were 2.x-only and are unused
+  # by oak_d_lite/stereo.py; they are not cloned here.
   sudo curl --silent --location https://docs.luxonis.com/install_dependencies.sh | sudo bash
-  python3 -m pip install depthai
-  git clone --recurse-submodules https://github.com/luxonis/depthai-python.git
-  cd depthai-python/examples || { print ERROR "depthai-python/examples not found"; return 1; }
-  python3 install_requirements.py
-  # Hand tracker
-  git clone https://github.com/geaxgx/depthai_hand_tracker.git
-  cd depthai_hand_tracker || { print ERROR "depthai_hand_tracker not found"; return 1; }
-  pip install -r requirements.txt
+  python3 -m pip install 'depthai==3.6.1'
   cd "$HOME" || { print ERROR "${HOME} not found"; return 1; }
 
   # SLAM dependencies (optional)
@@ -188,8 +184,6 @@ function install_ros_packages() {
   python3 -m venv "$USER_PROGRAM_ENV_DIR"
   source "$USER_PROGRAM_ENV_DIR/bin/activate"
   python3 -m pip install numpy==1.26.3
-  python3 -m pip install depthai==2.24.0.0
-  python3 -m pip install blobconverter==1.4.2
   python3 -m pip install paramiko==3.5.1
   python3 -m pip install pib-sdk
   python3 -m pip install "$PIB_API_SETUP_DIR/client"

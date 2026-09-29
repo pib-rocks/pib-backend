@@ -1,0 +1,17 @@
+[Unit]
+Description=pib host-side software update
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+ConditionPathExists=/home/pib/app/.update/request.json
+
+[Service]
+Type=oneshot
+User=pib
+Group=pib
+WorkingDirectory=/home/pib/app/pib-backend
+Environment=PIB_UPDATE_DIR=/home/pib/app/.update
+ExecStart=/home/pib/app/pib-backend/setup/update_runner.sh
+UMask=0007
+StandardOutput=journal
+StandardError=journal

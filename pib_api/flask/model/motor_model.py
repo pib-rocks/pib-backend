@@ -17,6 +17,9 @@ class Motor(db.Model):
     turned_on = db.Column(db.Boolean, nullable=False)
     visible = db.Column(db.Boolean, nullable=False)
     invert = db.Column(db.Boolean, nullable=False)
-    bricklet_pins = db.relationship(
-        "BrickletPin", backref="motor", lazy=True, cascade="all, delete-orphan"
-    )
+    controller_id = db.Column(db.Integer, db.ForeignKey("controller.id"), nullable=True)
+    channel = db.Column(db.Integer, nullable=True)
+    current_limit = db.Column(db.Float, nullable=True)
+    torque_limit = db.Column(db.Float, nullable=True)
+
+    controller = db.relationship("Controller", back_populates="motors", lazy="joined")

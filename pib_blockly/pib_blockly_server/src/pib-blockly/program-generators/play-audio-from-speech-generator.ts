@@ -17,7 +17,8 @@ export function playAudioFromSpeechGenerator(
     generator: typeof pythonGenerator,
 ) {
     // extract block-input
-    const textInput = generator.valueToCode(block, "TEXT_INPUT", Order.ATOMIC) || '""';
+    const textInput =
+        generator.valueToCode(block, "TEXT_INPUT", Order.ATOMIC) || '""';
     const language = <string>(block.getFieldValue("LANGUAGE") || '"auto"');
     const voiceName = <string>(block.getFieldValue("VOICENAME") || '"F1"');
 

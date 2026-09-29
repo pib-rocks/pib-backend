@@ -28,9 +28,7 @@ RUN pip install --break-system-packages --no-cache-dir --ignore-installed \
         requests==2.32.3 \
         paramiko==3.5.1 \
         tinkerforge \
-        opencv-python-headless \
-        "depthai<3" \
-        blobconverter
+        opencv-python-headless
 
 RUN cd ros2_ws && \
     source /opt/ros/jazzy/setup.bash && \

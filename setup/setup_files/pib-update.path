@@ -1,0 +1,10 @@
+[Unit]
+Description=Watch for pib software update requests
+After=local-fs.target
+
+[Path]
+PathExists=/home/pib/app/.update/request.json
+Unit=pib-update.service
+
+[Install]
+WantedBy=multi-user.target

@@ -1,6 +1,7 @@
 from marshmallow import ValidationError
 from sqlalchemy import event
 from sqlalchemy.exc import NoResultFound, IntegrityError
+from werkzeug.exceptions import MethodNotAllowed, UnprocessableEntity
 
 from app.app import app, db
 from controller import error_handler
@@ -11,6 +12,12 @@ app.register_error_handler(400, error_handler.handle_bad_request_error)
 app.register_error_handler(404, error_handler.handle_not_found_error)
 app.register_error_handler(500, error_handler.handle_internal_server_error)
 app.register_error_handler(501, error_handler.handle_not_implemented_error)
+app.register_error_handler(
+    UnprocessableEntity, error_handler.handle_unprocessable_entity_error
+)
+app.register_error_handler(
+    MethodNotAllowed, error_handler.handle_method_not_allowed_error
+)
 app.register_error_handler(Exception, error_handler.handle_unknown_error)
 app.register_error_handler(IntegrityError, error_handler.handle_bad_request_error)
 

@@ -1,0 +1,7 @@
+# Pixel coordinates in the cached depth frame (row y, column x).
+# When depth-to-RGB alignment is available these match the color image.
+int32 x
+int32 y
+---
+# Distance in millimeters. 0.0 means invalid, missing cache, or out of bounds.
+float32 distance_mm

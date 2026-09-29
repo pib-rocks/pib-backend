@@ -33,12 +33,24 @@ RUN apt-get update && apt-get install --no-install-recommends -y \
 # opencv-python-headless pinned to 4.x: the latest 5.x release removed
 # cv2.CascadeClassifier from the core module (stereo.py's face detection
 # needs it), causing "module 'cv2' has no attribute 'CascadeClassifier'".
-# depthai upgraded to 3.8.0: migrated from v2 Pipeline API to v3 Node API.
-# The ISP output path continues to work correctly (preview path was black on 2.25).
-# See Jira PR-1484 for migration details.
+# depthai pinned to 3.6.1 (v3 Node API, same as PR-1484). 3.8.0 and 3.10.0
+# yield 0 mono frames on OAK-D Lite and crash the device (PlgSrcMipi);
+# 3.6.1 delivers stereo depth at ~29 FPS with real millimetres.
+# See Jira PR-1720.
 RUN pip install --break-system-packages --no-cache-dir --ignore-installed \
-        depthai==3.8.0 \
+        depthai==3.6.1 \
         "opencv-python-headless<5"
+
+# depthai-nodes supplies ParsingNeuralNetwork, FrameCropper, GatherData and the
+# MediaPipe palm parser used by the two-stage imitation pipeline.
+# 0.5.2 is the LAST release that accepts depthai 3.6.1 (0.6.0 requires >=3.8.0,
+# 0.6.1 requires >=3.9.0), and 3.6.1 must not move - see the note above.
+# --no-deps is deliberate: the package pins opencv-python-headless~=4.10.0,
+# which would downgrade the 4.14 build this image already uses for the camera
+# path. Verified in the container: imports fine against depthai 3.6.1,
+# opencv 4.14.0 and numpy 2.5.3.
+RUN pip install --break-system-packages --no-cache-dir --no-deps \
+        depthai-nodes==0.5.2
 
 # stereo.py needs cv2.data.haarcascades at runtime for face detection
 # (CameraNode raises RuntimeError and permanently falls back to an

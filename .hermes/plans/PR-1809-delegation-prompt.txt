@@ -1,0 +1,48 @@
+You are implementing Jira story PR-1809 (face crop chain) in pib-backend.
+
+Working directory: /home/pib/opencode/pib-backend-PR-1809 (branch PR-1809, based on
+origin/develop f603167f, which already contains PR-1798 and PR-1805).
+
+STEP 1 — read the ticket yourself:
+
+    cd /home/pib/opencode/pib-backend-PR-1809
+    python3 - <<'PY'
+    import base64, os, re, requests
+    env = open(os.path.expanduser("~/.hermes/.env")).read()
+    def g(k):
+        m = re.search(rf"^{k}=(.*)$", env, re.M); return m.group(1).strip().strip('"') if m else None
+    s = g("ATLASSIAN_SITE"); s = s if s.startswith("http") else "https://" + s
+    a = base64.b64encode(f"{g('ATLASSIAN_EMAIL')}:{g('ATLASSIAN_TOKEN')}".encode()).decode()
+    h = {"Authorization": f"Basic {a}", "Accept": "application/json"}
+    d = requests.get(f"{s.rstrip('/')}/rest/api/3/issue/PR-1809", headers=h,
+                     params={"fields": "summary,description"}).json()
+    print(d["fields"]["summary"]); print(d["fields"]["description"])
+    PY
+
+STEP 2 — read the plan and follow it:
+    .hermes/plans/PR-1809-plan.md
+
+It names the reference implementation (the hand chain), the exact existing functions to
+copy, and six traps that are already paid for on this device — the verification gate in
+_verify_model_frames, the crop-input bound of 4, no dai.node.Script, no separate fps on a
+camera branch, the RotatedRect of parsed detections, and the stereo rule. Treat those as
+binding; they were each measured, not assumed.
+
+Scope discipline:
+  - One composite chain for emotion_recognition_lfw_64x64 fed by the YuNet face detector.
+    Do not add the other five crop models - they are separate stories that reuse your code.
+  - Do not touch the hand chains, other models, existing shave budgets, the camera rate or
+    the stereo behaviour.
+  - Do not access the robot: the reviewer does the deploy and the live measurement. Your
+    verification is the local suite plus black.
+  - Stay on branch PR-1809: no merge, no push, no branch switching.
+
+Verification you must run and report verbatim (command + output):
+  1. python3 -m pytest tests/unit -q
+  2. python3 -m black --check --include '\.py$' .
+
+Commit on branch PR-1809 with a message naming the ticket ("feat: PR-1809 ..."), using
+  git -c user.name="Hermes Agent" -c user.email="agent@nousresearch.com" commit ...
+if the repo has no git identity.
+
+Report: files changed, the exact commands with output, and anything you could not do.

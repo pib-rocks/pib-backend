@@ -7,6 +7,7 @@ from pib_motors.bricklet import ipcon, connected_enumerate, solid_state_relay_br
 from pib_motors.motor import name_to_motors, motors
 from rclpy.node import Node
 from pib_motors.startup_pose_executor import StartupPoseExecutor
+from pib_motors.trajectory_executor import TrajectoryExecutor, is_software_trajectory
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 
@@ -109,6 +110,7 @@ class MotorControl(Node):
         )
 
         self.startup_pose_executor = StartupPoseExecutor(self, motors=motors)
+        self.trajectory_executor = TrajectoryExecutor(self, name_to_motors)
 
         if solid_state_relay_bricklet is None:
             self.get_logger().info(
@@ -179,6 +181,15 @@ class MotorControl(Node):
         jt = request.joint_trajectory
         response.successful = True
         try:
+            if is_software_trajectory(jt):
+                response.successful = self.trajectory_executor.execute(jt)
+                if response.successful:
+                    for motor_name in jt.joint_names:
+                        for motor in name_to_motors[motor_name]:
+                            self.joint_trajectory_publisher.publish(
+                                as_joint_trajectory(motor.name, motor.get_position())
+                            )
+                return response
             for motor_name, position in as_motor_positions(jt):
                 for motor in name_to_motors[motor_name]:
                     self.get_logger().info(

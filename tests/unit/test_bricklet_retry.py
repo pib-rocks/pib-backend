@@ -27,9 +27,9 @@ from pib_api_client import bricklet_client  # noqa: E402
 
 BRICKLET_DTOS = {
     "bricklets": [
-        {"type": "Servo Bricklet", "uid": "SERVO1"},
+        {"type": "Servo Bricklet", "uid": "Servo1"},
         {"type": "Solid State Relay Bricklet", "uid": "RELAY1"},
-        {"type": "RGB LED Button Bricklet", "uid": "BUTTON1"},
+        {"type": "RGB LED Button Bricklet", "uid": "Button"},
     ]
 }
 
@@ -139,8 +139,8 @@ class TestBrickletLoadRetry(unittest.TestCase):
 
         module = _import_bricklet_module(get_all_bricklets, mock.Mock())
 
-        self.assertEqual(list(module.uid_to_servo_bricklet), ["SERVO1"])
-        self.assertEqual(list(module.uid_to_rgb_led_bricklet), ["BUTTON1"])
+        self.assertEqual(list(module.uid_to_servo_bricklet), ["Servo1"])
+        self.assertEqual(list(module.uid_to_rgb_led_bricklet), ["Button"])
         self.assertEqual(module.solid_state_relay_bricklet.uid, "RELAY1")
 
     def test_retries_when_the_request_raises_connection_refused(self):

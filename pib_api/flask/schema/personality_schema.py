@@ -15,6 +15,7 @@ class PersonalitySchemaSQLAutoWith(SQLAutoWithCamelCaseSchema):
         load_default="local_whisper",
     )
     soul_path = fields.Method("get_soul_path", dump_only=True)
+    profile_provisioned = fields.Boolean(dump_only=True)
 
     def get_soul_path(self, obj: Personality) -> str:
         return soul_service.soul_path_for(obj.personality_id)

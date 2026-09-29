@@ -1,5 +1,6 @@
 """Unit tests for diagnostics service CPU usage in summary (PR-1521)."""
 
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from service import diagnostics_service
@@ -85,10 +86,67 @@ def test_get_summary_includes_cpu_usage_percent():
             "service.diagnostics_service.get_bricklets_telemetry",
             return_value=[],
         ),
+        patch(
+            "service.diagnostics_service.get_variant",
+            return_value="pib5edu",
+        ),
     ):
         summary = diagnostics_service.get_summary()
 
     assert "cpuUsagePercent" in summary
     assert summary["cpuUsagePercent"] == 18.25
     assert summary["overallStatus"] == "ok"
+    assert summary["hardwareVariant"] == "pib5edu"
     assert summary["cpuTemperature"] == 50.0
+
+
+def test_controller_counts_are_grouped_by_kind():
+    controllers = [
+        {"kind": "tinkerforge_bricklet"},
+        {"kind": "tinkerforge_bricklet"},
+        {"kind": "robstride_can"},
+    ]
+
+    assert diagnostics_service._count_controllers_by_kind(controllers) == {
+        "tinkerforge_bricklet": 2,
+        "robstride_can": 1,
+    }
+
+
+def test_pib5edu_telemetry_uses_persisted_device_types():
+    expected_types = {
+        1: "Servo Bricklet",
+        2: "Servo Bricklet",
+        3: "Servo Bricklet",
+        4: "Servo Bricklet",
+        5: "Solid State Relay Bricklet",
+        6: "RGB LED Button Bricklet",
+        7: "RGB LED Button Bricklet",
+        8: "RGB LED Button Bricklet",
+    }
+    controllers = [
+        SimpleNamespace(
+            number=number,
+            device_type=device_type,
+            kind="tinkerforge_bricklet",
+            address=None,
+            motors=[],
+        )
+        for number, device_type in expected_types.items()
+    ]
+
+    with (
+        patch(
+            "service.diagnostics_service.controller_service.get_all_controllers",
+            return_value=controllers,
+        ),
+        patch(
+            "service.diagnostics_service._get_tf_ipcon",
+            return_value=None,
+        ),
+    ):
+        telemetry = diagnostics_service.get_controllers_telemetry()
+
+    assert {item["brickletNumber"]: item["type"] for item in telemetry} == (
+        expected_types
+    )

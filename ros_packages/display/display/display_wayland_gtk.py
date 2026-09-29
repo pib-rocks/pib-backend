@@ -20,6 +20,18 @@ from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPo
 from std_msgs.msg import String
 
 from datatypes.msg import DisplayImage, ImageFormat, ImageId
+from display.display_web_request import (
+    DEFAULT_ACK_SECONDS,
+    SURFACE_READY,
+    SURFACE_WEB,
+    SURFACE_WEB_FAILED,
+    acknowledge_web_status,
+    command_effect,
+    read_status,
+    update_directory,
+    write_hide_request,
+    write_open_request,
+)
 
 import gi
 
@@ -64,7 +76,7 @@ class RawImage:
 
 @dataclass(frozen=True)
 class DisplayCommand:
-    kind: str  # "expression" | "text" | "raw" | "hide"
+    kind: str  # "expression" | "text" | "raw" | "hide" | "web_open" | "web_hide"
     value: object = None
 
 
@@ -163,6 +175,7 @@ class DisplayApp(Gtk.Application):
         self.window: Gtk.ApplicationWindow | None = None
         self.picture: Gtk.Picture | None = None
         self.text_renderer = TextRenderer(DISPLAY_WIDTH, DISPLAY_HEIGHT)
+        self.web_surface_open = False
 
     def do_activate(self) -> None:  # type: ignore[override]
         if self.window is None:
@@ -184,26 +197,28 @@ class DisplayApp(Gtk.Application):
             click.connect("pressed", self._on_click)
             self.window.add_controller(click)
 
-            if DISPLAY_ON_DEMAND:
+            if DISPLAY_ON_DEMAND or self.web_surface_open:
                 self.window.hide()
             else:
                 self.window.present()
 
             GLib.timeout_add(10, self._poll_commands)
 
-        if not DISPLAY_ON_DEMAND:
+        if not DISPLAY_ON_DEMAND and not self.web_surface_open:
             self.window.present()
 
     def _ensure_visible(self) -> None:
-        if self.window is None:
+        if self.web_surface_open or self.window is None:
             return
         if not self.window.is_visible():
             self.window.present()
 
+    def _hide_window(self) -> None:
+        if self.window is not None:
+            self.window.hide()
+
     def _hide(self) -> None:
-        if self.window is None:
-            return
-        self.window.hide()
+        self._hide_window()
         log_info("display dismissed by user")
 
     def _on_key(self, _controller, keyval, _keycode, _state) -> bool:
@@ -225,11 +240,32 @@ class DisplayApp(Gtk.Application):
         return True
 
     def _handle_command(self, cmd: DisplayCommand) -> None:
+        effect = command_effect(self.web_surface_open, cmd.kind)
+        if effect == "web_open":
+            self.web_surface_open = True
+            self._hide_window()
+            log_info("web surface open; face and text suppressed")
+            return
+        if effect == "web_hide":
+            self.web_surface_open = False
+            # Closing takes the HTML component away and puts the window back into its
+            # idle state, which is hidden, so the desktop is on the screen again.
+            # Presenting the window here instead shows an empty white rectangle: nothing
+            # draws a face until an expression arrives, and no node publishes one while
+            # the robot is idle.
+            self._hide_window()
+            log_info("web surface closed")
+            return
         if self.window is None or self.picture is None:
             return
 
-        if cmd.kind == "hide":
+        if effect == "hide":
             self._hide()
+            return
+        if effect == "suppress":
+            log_info(f"suppressed {cmd.kind} while the web surface is open")
+            return
+        if effect != "draw":
             return
 
         if cmd.kind == "text":
@@ -314,6 +350,17 @@ class DisplayNode(Node):
         self.ready_pub = self.create_publisher(
             String, "/pib/display_ready", display_qos
         )
+        self.create_subscription(String, "/pib/display_web", self.on_display_web, 10)
+        self.create_subscription(
+            String, "/pib/display_web_hide", self.on_display_web_hide, 10
+        )
+        self.pending_web: dict | None = None
+        self.pending_web_deadline = 0.0
+        self.pending_web_failure_reported = False
+        self.web_ack_seconds = float(
+            os.getenv("PIB_DISPLAY_WEB_ACK_SECONDS", str(DEFAULT_ACK_SECONDS))
+        )
+        self.create_timer(0.5, self.poll_web_status)
 
         msg = String()
         msg.data = "ready"
@@ -332,6 +379,72 @@ class DisplayNode(Node):
 
     def on_hide(self, msg: String) -> None:
         self.command_queue.put(DisplayCommand("hide"))
+
+    def publish_surface(self, state: str) -> None:
+        msg = String()
+        msg.data = state
+        self.ready_pub.publish(msg)
+        self.get_logger().info(f"published /pib/display_ready: {state}")
+
+    def note_pending_web(self, document: dict) -> None:
+        self.pending_web = document
+        self.pending_web_deadline = time.monotonic() + self.web_ack_seconds
+        self.pending_web_failure_reported = False
+
+    def on_display_web(self, msg: String) -> None:
+        self.get_logger().info("display web requested")
+        try:
+            document = write_open_request(update_directory(), msg.data)
+        except ValueError as exc:
+            # The surface did not change. Report the rejection, then put the
+            # latched ready value back so existing subscribers still see it.
+            self.get_logger().error(f"display web request rejected: {exc}")
+            self.publish_surface(SURFACE_WEB_FAILED)
+            self.publish_surface(SURFACE_READY)
+            return
+        except OSError as exc:
+            self.get_logger().error(f"display web request rejected: {exc}")
+            self.publish_surface(SURFACE_WEB_FAILED)
+            return
+        self.note_pending_web(document)
+        self.command_queue.put(DisplayCommand("web_open"))
+        self.publish_surface(SURFACE_WEB)
+
+    def on_display_web_hide(self, msg: String) -> None:
+        self.get_logger().info("display web hide requested")
+        try:
+            document = write_hide_request(update_directory())
+        except (ValueError, OSError) as exc:
+            self.get_logger().error(f"display web hide request rejected: {exc}")
+            self.publish_surface(SURFACE_WEB_FAILED)
+            return
+        self.note_pending_web(document)
+
+    def poll_web_status(self) -> None:
+        pending = self.pending_web
+        if pending is None:
+            return
+        acknowledgement = acknowledge_web_status(
+            pending["action"],
+            pending["requestedAt"],
+            read_status(update_directory()),
+            time.monotonic() >= self.pending_web_deadline,
+            self.pending_web_failure_reported,
+        )
+        if acknowledgement.suppression == "hold":
+            self.command_queue.put(DisplayCommand("web_open"))
+        elif acknowledgement.suppression == "release":
+            self.command_queue.put(DisplayCommand("web_hide"))
+        if acknowledgement.surface is not None:
+            self.publish_surface(acknowledgement.surface)
+        if (
+            acknowledgement.surface == SURFACE_WEB_FAILED
+            and not acknowledgement.clear_pending
+        ):
+            self.pending_web_failure_reported = True
+        if acknowledgement.clear_pending:
+            self.pending_web = None
+            self.pending_web_failure_reported = False
 
     def on_display_image(self, msg: DisplayImage) -> None:
         raw = self.raw_from_display_image(msg)

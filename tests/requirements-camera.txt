@@ -1,0 +1,13 @@
+# Camera libraries needed to collect tests/unit/test_camera_imitation_math.py,
+# tests/unit/test_imitation_archives.py and tests/unit/test_stereo_camera_optimization.py:
+# these modules import the camera package at module level, so without the wheels
+# pytest aborts the whole run with collection errors.
+#
+# The versions match the camera container (ros_packages/camera/Dockerfile,
+# ros_packages/camera/requirements.txt) so the test env cannot drift from the runtime.
+# depthai-nodes 0.5.2 is the last release that accepts depthai 3.6.1 (0.6.0 needs >=3.8.0,
+# 0.6.1 needs >=3.9.0) and it exports FrameCropper, which
+# ros_packages/camera/oak_d_lite/stereo.py imports at module level.
+depthai==3.6.1
+depthai-nodes==0.5.2
+opencv-python-headless~=4.10.0

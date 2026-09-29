@@ -20,6 +20,7 @@ from public_api_client.hermes_agent_client import (
 
 def _absent_binary(tmp_path, monkeypatch):
     monkeypatch.setenv("PIB_HERMES_BIN", str(tmp_path / "not-installed" / "hermes"))
+    monkeypatch.setenv("PIB_HERMES_PROFILE_FACTORY", "filesystem")
 
 
 def _load_profile_config(pdir):

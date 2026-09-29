@@ -1,0 +1,365 @@
+registry: pib-backend camera NN model blobs
+produced: '2026-09-15'
+producer: blobconverter 1.4.3 via https://blobconverter.luxonis.com
+default_shaves: 4
+default_openvino_version: '2022.1'
+compile_params: -ip U8
+models:
+- model_id: palm_detection_128x128
+  selectable: false
+  task: palm_detection
+  source_upstream: luxonis/depthai-model-zoo (google/mediapipe)
+  source_url: https://github.com/luxonis/depthai-model-zoo/raw/main/models/palm_detection_128x128/palm_detection_128x128.xml
+  licence: Apache-2.0 License; https://github.com/google/mediapipe/blob/master/LICENSE
+  file: palm_detection_128x128/palm_detection_128x128.blob
+  sha256: 5889eab0cfc4687d2115e097028e7501d9a908b2539bd0d4d7cfbe5af396638a
+  size_bytes: 4663901
+  shaves: 4
+  input_width: 128
+  input_height: 128
+  format: blob
+  openvino_version: '2022.1'
+  zoo_type: depthai
+  notes: palm detector - required together with palm_detection_128x128_decoding. DepthAI zoo IR input 'images' 3x128x128, BGR [0-255], CHW. Compiled with compile_params '-ip U8'. Upstream model.yml license name Apache-2.0 License.
+- model_id: palm_detection_128x128_decoding
+  selectable: false
+  task: palm_detection
+  source_upstream: luxonis/depthai-model-zoo
+  source_url: https://github.com/luxonis/depthai-model-zoo/raw/main/models/palm_detection_128x128_decoding/palm_detection_128x128_decoding.xml
+  licence: unknown - see source
+  file: palm_detection_128x128_decoding/palm_detection_128x128_decoding.blob
+  sha256: a9a94bf24fe1df0ccd338623bcd49109ca28183a8679b4b3203529b8b5375f68
+  size_bytes: 44090
+  shaves: 1
+  input_width: 128
+  input_height: 128
+  format: blob
+  openvino_version: '2022.1'
+  zoo_type: depthai
+  notes: 'Decoding head only (not a detector). Requires palm_detection_128x128;
+    returns the TOP 10 most confident results so decoding can run on the edge. Its
+    inputs are the detector''s float tensors (regressors 1x896x18, classificators
+    1x896x1), so it is compiled with compile_params ''-ip FP16'' - the ''-ip U8''
+    default belongs to image-input networks and destroys these tensors. Output
+    ''result'' is a Concat of 1+3+2+2 fields - score, box_x, box_y, box_size, kp0_x,
+    kp0_y, kp2_x, kp2_y. Upstream model.yml licence is empty.'
+- model_id: hand_landmark_224x224
+  selectable: false
+  task: hand_landmarks
+  source_upstream: luxonis/depthai-model-zoo
+  source_url: https://github.com/luxonis/depthai-model-zoo/raw/main/models/hand_landmark_224x224/hand_landmark_224x224.xml
+  licence: unknown - see source
+  file: hand_landmark_224x224/hand_landmark_224x224.blob
+  sha256: 14a7621f0658af9668172f04861381d84f32762264a6b5d2a1532e00fcd0aa30
+  size_bytes: 5862748
+  shaves: 4
+  input_width: 224
+  input_height: 224
+  format: blob
+  openvino_version: '2022.1'
+  zoo_type: depthai
+  notes: Hand landmark network (weights on RobotHub CDN). DepthAI zoo IR expects BGR, [0-255], CHW. Compiled with '-ip U8'. Upstream model.yml licence is empty.
+- model_id: hand_tracking
+  task: hand_tracking
+  composite: true
+  artifacts:
+  # The zoo's own three-blob set.  The decoding head consumes the detector's
+  # ``classificators``/``regressors`` tensors and returns the TOP 10 records; it
+  # is compiled without ``-ip U8`` so those float inputs keep the detector's
+  # FP16 precision.  With the image-input default the head emitted a constant
+  # score of 1.0 and geometry that correlated with nothing in the frame.
+  - palm_detection_128x128
+  - palm_detection_128x128_decoding
+  - hand_landmark_224x224
+  publish_topic: detections/hand_tracking
+- model_id: hand_tracking_mp
+  task: hand_tracking
+  composite: true
+  artifacts:
+  # The Luxonis hand-pose reference shape (oak-examples hand-pose): the palm
+  # detector is parsed on the host, so no decoding blob is needed at all, the crop
+  # runs through the device-side FrameCropper, and the landmarker is read as a
+  # plain network - depthai-nodes' KeypointParser would clip the hand-relative z
+  # into 0..1. Shave budget 4 + 4, one shave less than the three-blob set.
+  - palm_detection_128x128
+  - hand_landmark_224x224
+  publish_topic: detections/hand_tracking
+  selectable: true
+- model_id: face_detection_yunet_160x120
+  task: face_detection
+  publish_topic: detections/face_detection_yunet_160x120
+  source_upstream: luxonis/depthai-model-zoo (ShiqiYu/libfacedetection YuNet)
+  source_url: https://github.com/luxonis/depthai-model-zoo/raw/main/models/face_detection_yunet_160x120/face_detection_yunet_160x120.xml
+  licence: BSD License; https://github.com/ShiqiYu/libfacedetection/blob/master/LICENSE
+  file: face_detection_yunet_160x120/face_detection_yunet_160x120.blob
+  sha256: c7a18305ea6f16285b7e32f36e510befe68a4245a9c71f563fa31ea59526af35
+  size_bytes: 854772
+  shaves: 4
+  input_width: 160
+  input_height: 120
+  format: blob
+  openvino_version: '2022.1'
+  zoo_type: depthai
+  notes: YuNet face detector. IR input 'data' is NCHW 3x120x160. BGR [0-255], compiled '-ip U8'. Decode bounding boxes from the YuNet heads (see luxonis/depthai-experiments gen2-face-detection).
+- model_id: facemesh_192x192
+  selectable: false
+  task: facial_landmarks
+  source_upstream: luxonis/depthai-model-zoo (google/mediapipe Facemesh)
+  source_url: https://github.com/luxonis/depthai-model-zoo/raw/main/models/facemesh_192x192/facemesh_192x192.xml
+  licence: Apache License Version 2.0; https://github.com/google/mediapipe/blob/master/LICENSE
+  file: facemesh_192x192/facemesh_192x192.blob
+  sha256: 3d39d0175cb7da7b153d0c0fad1a07a631f258885f7acbd44a4d430a179e0a7c
+  size_bytes: 2065585
+  shaves: 4
+  input_width: 192
+  input_height: 192
+  format: blob
+  openvino_version: '2022.1'
+  zoo_type: depthai
+  notes: MediaPipe Facemesh, 468 landmarks. IR input 'images' 3x192x192. BGR [0-255], compiled '-ip U8'.
+- model_id: facemesh_crop
+  task: facial_landmarks
+  composite: true
+  artifacts:
+  - face_detection_yunet_160x120
+  - facemesh_192x192
+  publish_topic: detections/facemesh_crop
+  selectable: true
+- model_id: facial_landmarks_68_160x160
+  selectable: false
+  task: facial_landmarks
+  source_upstream: luxonis/depthai-model-zoo (610265158/face_landmark, PINTO_model_zoo 043)
+  source_url: https://github.com/luxonis/depthai-model-zoo/raw/main/models/facial_landmarks_68_160x160/facial_landmarks_68_160x160.xml
+  licence: Apache-2.0 License; https://github.com/610265158/face_landmark/blob/master/LICENSE
+  file: facial_landmarks_68_160x160/facial_landmarks_68_160x160.blob
+  sha256: 12841bad937fe9d20a4e170a39d69d505852f798bae4bbc94ec817503b0b83d3
+  size_bytes: 2451776
+  shaves: 4
+  input_width: 160
+  input_height: 160
+  format: blob
+  openvino_version: '2021.4'
+  zoo_type: depthai
+  notes: 68 facial landmarks, HRNetV2, IR input 'images' 3x160x160. OpenVINO 2022.1 compile_tool fails (duplicate friendly name VariadicSplit_949); artefact was compiled with version=2021.4. BGR [0-255], '-ip U8'.
+- model_id: facial_landmarks_68_crop
+  task: facial_landmarks
+  composite: true
+  artifacts:
+  - face_detection_yunet_160x120
+  - facial_landmarks_68_160x160
+  publish_topic: detections/facial_landmarks_68_crop
+  selectable: true
+- model_id: face-recognition-arcface-112x112
+  task: face_recognition
+  source_upstream: luxonis/depthai-model-zoo (deepinsight/insightface MobileFaceNet+ArcFace)
+  source_url: https://github.com/luxonis/depthai-model-zoo/raw/main/models/face-recognition-arcface-112x112/face-recognition-arcface-112x112.xml
+  licence: MIT License; https://github.com/deepinsight/insightface/blob/master/LICENSE
+  file: face-recognition-arcface-112x112/face-recognition-arcface-112x112.blob
+  sha256: ab871710a2dfe48b6d2f6608ec0ef20cadefb186083a118c0e4d8167f5e03c24
+  size_bytes: 4780436
+  shaves: 4
+  input_width: 112
+  input_height: 112
+  format: blob
+  openvino_version: '2022.1'
+  zoo_type: depthai
+  notes: Face embedding network. IR input 'data' 3x112x112. BGR [0-255], compiled '-ip U8'. Match embeddings with cosine similarity.
+- model_id: emotion_recognition_lfw_64x64
+  selectable: false
+  task: emotion_recognition
+  source_upstream: luxonis/depthai-model-zoo
+  source_url: https://github.com/luxonis/depthai-model-zoo/raw/main/models/emotion_recognition_lfw_64x64/emotion_recognition_lfw_64x64.xml
+  licence: unknown - see source
+  file: emotion_recognition_lfw_64x64/emotion_recognition_lfw_64x64.blob
+  sha256: 5dbb9143ea3968df71eed193c8e471320aa25c8efbefd976ebfc96b77f42c6a4
+  size_bytes: 4994824
+  shaves: 4
+  input_width: 64
+  input_height: 64
+  format: blob
+  openvino_version: '2022.1'
+  zoo_type: depthai
+  notes: Emotion classifier, 64x64 crop. BGR [0-255], compiled '-ip U8'. Upstream model.yml licence is empty.
+- model_id: emotion_recognition_crop
+  task: emotion_recognition
+  composite: true
+  artifacts:
+  - face_detection_yunet_160x120
+  - emotion_recognition_lfw_64x64
+  publish_topic: detections/emotion_recognition_crop
+  # This is the selectable end-to-end emotion model id. YuNet remains selectable
+  # as a standalone detector; the crop-only classifier artifact does not.
+  selectable: true
+- model_id: gaze-estimation-adas-0002
+  selectable: false
+  task: gaze_estimation
+  source_upstream: openvinotoolkit/open_model_zoo
+  source_url: https://storage.openvinotoolkit.org/repositories/open_model_zoo/2023.0/models_bin/1/gaze-estimation-adas-0002/FP16/gaze-estimation-adas-0002.xml
+  licence: Apache License 2.0; https://github.com/openvinotoolkit/open_model_zoo/blob/master/LICENSE
+  file: gaze-estimation-adas-0002/gaze-estimation-adas-0002.blob
+  sha256: 3bd3e0c9f5a0f1c9bbde02904773adc61ab7e08a0cb800d3f33e15ec54245e6e
+  size_bytes: 3784687
+  shaves: 4
+  input_width: 60
+  input_height: 60
+  format: blob
+  openvino_version: '2022.1'
+  zoo_type: intel
+  functional: true
+  notes: 'Not in the DepthAI zoo. Multi-input: left_eye_image and right_eye_image are each NCHW 1x3x60x60; head_pose_angles is 1x3 (yaw, pitch, roll). Compile via blobconverter.from_zoo(..., zoo_type=''intel''). Default ''-ip U8'' applies to image inputs. S11 measured no packet flow (0 FPS, 0 messages) when the generic single-image pipeline supplied only one of the three required inputs. D1 supplies geometric eye crops and links the head-pose network output directly to the named head_pose_angles input. The geometric upper-third eye split is temporary; gaze accuracy depends on replacing it with landmark-derived crops. The D1 target is YuNet 2 + head-pose 4 + gaze 4 SHAVEs; the shared YuNet artifact still records 4 and is intentionally unchanged, so verify and record the total on the device.'
+- model_id: head-pose-estimation-adas-0001
+  selectable: false
+  task: head_pose_estimation
+  source_upstream: openvinotoolkit/open_model_zoo
+  source_url: https://storage.openvinotoolkit.org/repositories/open_model_zoo/2023.0/models_bin/1/head-pose-estimation-adas-0001/FP16/head-pose-estimation-adas-0001.xml
+  licence: Apache License 2.0; https://github.com/openvinotoolkit/open_model_zoo/blob/master/LICENSE
+  file: head-pose-estimation-adas-0001/head-pose-estimation-adas-0001.blob
+  sha256: 1c0a0f9052db19ed041c39c8fb46f4f4b33bf582ff6b0a113b659577afff47d9
+  size_bytes: 3838500
+  shaves: 4
+  input_width: 60
+  input_height: 60
+  format: blob
+  openvino_version: '2022.1'
+  zoo_type: intel
+  notes: Not in the DepthAI zoo. IR input 'data' 1x3x60x60. Outputs yaw/pitch/roll. Compile via blobconverter.from_zoo(..., zoo_type='intel'), '-ip U8'.
+- model_id: head_pose_estimation_crop
+  task: head_pose_estimation
+  composite: true
+  artifacts:
+  - face_detection_yunet_160x120
+  - head-pose-estimation-adas-0001
+  publish_topic: detections/head_pose_estimation_crop
+  selectable: true
+- model_id: gaze_estimation_crop
+  task: gaze_estimation
+  composite: true
+  artifacts:
+  - face_detection_yunet_160x120
+  - head-pose-estimation-adas-0001
+  - gaze-estimation-adas-0002
+  publish_topic: detections/gaze_estimation_crop
+  selectable: false
+  functional: false
+  unavailable_reason: 'Live measurement on the device: the chain starts but crashes the OAK (depthai
+    crash dump, zero messages), which fails the acceptance criterion that the camera and other models
+    stay unaffected. A standalone probe running only head-pose plus gaze with a fixed crop delivered
+    492 packets in 25 s, so the failure comes from what D1 added on top: a second YuNet instance, two
+    eye manipulators and the host config node. Parked until the chain is reduced. Details in the
+    PR-1803 comment about the crash.'
+- model_id: yolov6n_coco_640x640
+  task: object_detection
+  publish_topic: detections/yolov6n_coco_640x640
+  source_upstream: luxonis/depthai-model-zoo (meituan/YOLOv6)
+  source_url: https://github.com/luxonis/depthai-model-zoo/raw/main/models/yolov6n_coco_640x640/yolov6n_coco_640x640.xml
+  licence: GNU GPL-3; https://github.com/meituan/YOLOv6/blob/main/LICENSE
+  file: yolov6n_coco_640x640/yolov6n_coco_640x640.blob
+  sha256: f315ae0931ba902ff6aed8be97be28183a3560721ecc6cd099114aaf87281f9c
+  size_bytes: 8726122
+  shaves: 4
+  input_width: 640
+  input_height: 640
+  format: blob
+  openvino_version: '2022.1'
+  zoo_type: depthai
+  notes: YOLOv6n COCO 80-class detector. IR input 'images' 3x640x640. BGR [0-255], compiled '-ip U8'. Decode with DepthAI YoloDetectionNetwork (YOLOv6).
+- model_id: qr_code_detection_384x384
+  task: qr_code_detection
+  publish_topic: detections/qr_code_detection_384x384
+  source_upstream: luxonis/depthai-model-zoo (opencv_contrib wechat_qrcode)
+  source_url: https://github.com/luxonis/depthai-model-zoo/raw/main/models/qr_code_detection_384x384/qr_code_detection_384x384.xml
+  licence: Apache License Version 2.0; https://github.com/opencv/opencv_contrib/blob/master/modules/wechat_qrcode/LICENSE
+  file: qr_code_detection_384x384/qr_code_detection_384x384.blob
+  sha256: e8314378c0cbdf1d761897367d032e59e6c12b16a08375037011bfc7395360ba
+  size_bytes: 733652
+  shaves: 4
+  input_width: 384
+  input_height: 384
+  format: blob
+  openvino_version: '2022.1'
+  zoo_type: depthai
+  notes: WeChat QR detector. Blob input 'data' U8F [384,384,1,1], GRAY8 [0-255], compiled '-ip U8'. Output 'detection_output' FP16 [7,100,1,1] uses SSD DetectionOutput tuples.
+- model_id: person-reidentification-retail-0031_96x48
+  task: person_reidentification
+  source_upstream: openvinotoolkit/open_model_zoo (IR packaged in luxonis/depthai-model-zoo)
+  source_url: https://github.com/luxonis/depthai-model-zoo/raw/main/models/person-reidentification-retail-0031_96x48/person-reidentification-retail-0031_96x48.xml
+  licence: Apache License 2.0; https://github.com/openvinotoolkit/open_model_zoo/blob/master/LICENSE
+  file: person-reidentification-retail-0031_96x48/person-reidentification-retail-0031_96x48.blob
+  sha256: 4cb206ec29449d4f192a2ddecb54cd2f8e04c9ccaa4b98eb26da3326449e3e08
+  size_bytes: 793705
+  shaves: 4
+  input_width: 48
+  input_height: 96
+  format: blob
+  openvino_version: '2022.1'
+  zoo_type: depthai
+  notes: OMZ person-reidentification-retail-0031 converted to 96x48 (IR input 'data' NCHW 3x96x48). Whole-body crop in, 256-d embedding out; match with cosine distance. DepthAI zoo still lists this name; compiled with zoo_type='depthai', '-ip U8'.
+- model_id: palm_detection_sh4
+  selectable: false
+  task: palm_detection
+  source_upstream: geaxgx/depthai_hand_tracker (pib-rocks fork, /home/pib/imitation on the robot)
+  source_url: https://github.com/geaxgx/depthai_hand_tracker
+  licence: MIT License; https://github.com/geaxgx/depthai_hand_tracker/blob/main/LICENSE.txt
+  file: palm_detection_sh4/palm_detection_sh4.blob
+  sha256: 4d45ecfddc68d8365fef3cb633d78b916612f25f7a48898f90f8a47d4b151aa5
+  size_bytes: 4663360
+  shaves: 4
+  input_width: 128
+  input_height: 128
+  format: blob
+  openvino_version: '2022.1'
+  zoo_type: custom
+  notes: MediaPipe palm detector as shipped precompiled by the HandTrackerEdge reference. Blob metadata
+    verified on the device - input 'input' is U8F [128,128,3,1], outputs are 'regressors' FP16 [18,896,1]
+    and 'classificators' FP16 [1,896,1]. Those outputs must go to pd_postprocessing_top2_sh1, which takes
+    FP16; the DepthAI zoo decoding head palm_detection_128x128_decoding is compiled '-ip U8' and destroys
+    them. Used by the imitation composite.
+- model_id: pd_postprocessing_top2_sh1
+  selectable: false
+  task: palm_detection
+  source_upstream: geaxgx/depthai_hand_tracker (pib-rocks fork, /home/pib/imitation on the robot)
+  source_url: https://github.com/geaxgx/depthai_hand_tracker
+  licence: MIT License; https://github.com/geaxgx/depthai_hand_tracker/blob/main/LICENSE.txt
+  file: pd_postprocessing_top2_sh1/pd_postprocessing_top2_sh1.blob
+  sha256: ef4c2db0bd6b4d3209abcc90fefc54e6d23b614c5165774ac1b706a7652c6516
+  size_bytes: 43904
+  shaves: 1
+  input_width: 128
+  input_height: 128
+  format: blob
+  openvino_version: '2022.1'
+  zoo_type: custom
+  notes: Decoding head only (not a detector), generated upstream from ONNX (custom_models
+    generate_postproc_onnx.py). Blob metadata verified on the device - inputs 'regressors' FP16
+    [18,896,1] and 'classificators' FP16 [1,896,1], output 'result' FP16 [8,2], i.e. the TOP 2 palms as
+    score, box_x, box_y, box_size, kp0_x, kp0_y, kp2_x, kp2_y in square-normalised coordinates. The
+    input_width/height above describe the detector it decodes for; this net has no image input.
+- model_id: hand_landmark_full_sh4
+  selectable: false
+  task: hand_landmarks
+  source_upstream: geaxgx/depthai_hand_tracker (pib-rocks fork, /home/pib/imitation on the robot)
+  source_url: https://github.com/geaxgx/depthai_hand_tracker
+  licence: MIT License; https://github.com/geaxgx/depthai_hand_tracker/blob/main/LICENSE.txt
+  file: hand_landmark_full_sh4/hand_landmark_full_sh4.blob
+  sha256: 4ae2162d077b5abba2b914a685911cb2cd54a34a06a5fc8f9a3dccee6fd2d3ae
+  size_bytes: 11938176
+  shaves: 4
+  input_width: 224
+  input_height: 224
+  format: blob
+  openvino_version: '2022.1'
+  zoo_type: custom
+  notes: MediaPipe hand landmark network ('full' variant, the reference default). Blob metadata verified
+    on the device - input 'input_1' is U8F [224,224,3,1]; outputs are 'Identity_1' (landmark score),
+    'Identity_2' (handedness), 'Identity_dense/BiasAdd/Add' (21 x 3 image-space landmarks, 63 values) and
+    'Identity_3_dense/BiasAdd/Add' (21 x 3 world landmarks, 63 values). The reference gates on the
+    landmark score with a threshold of 0.5.
+- model_id: imitation
+  selectable: false
+  task: hand_tracking
+  composite: true
+  artifacts:
+  - palm_detection_sh4
+  - pd_postprocessing_top2_sh1
+  - hand_landmark_full_sh4
+  publish_topic: detections/imitation

@@ -1,0 +1,403 @@
+"""Post-processing for the three-blob hand tracking pipeline.
+
+Decoder format evidence:
+https://github.com/geaxgx/depthai_hand_tracker/blob/main/custom_models/generate_postproc_onnx.py
+defines the output as ``[top_k, 8]`` and the runtime manager reads each record
+as ``score, box_x, box_y, box_size, kp0_x, kp0_y, kp2_x, kp2_y``.  The chain
+is fed by the zoo's own decoding head (``palm_detection_128x128_decoding``),
+which consumes the detector's NNData (``classificators`` anchors, ``regressors``
+bbox plus seven palm keypoints), runs NMS on the edge and returns the TOP 10
+most confident records.  The head's ``result`` layer is a Concat of 1 + 3 + 2 + 2
+fields, read straight from the zoo IR, so the eight fields per record are
+``score, box_x, box_y, box_size, kp0_x, kp0_y, kp2_x, kp2_y`` as above.
+
+The head only yields usable numbers when its input datatype matches the
+detector's: the zoo detector outputs FP16, so the head has to be compiled
+without ``-ip U8``.  A candidate compiled with the image-input default emits a
+score column stuck at a constant 1.0 and coordinates above 1.0 that correlate
+with nothing in the frame - that is what produced the phantom hands.
+
+The landmark network exposes its crop-space image landmarks in
+``Identity_dense/BiasAdd/Add`` as 21 XYZ triples, with a presence score in
+``Identity_1``.  The third component is the model's hand-relative depth, which
+is why ``relative_landmark_z`` publishes it next to the pixels of x and y.
+The score is usable and gated on, exactly as the reference does: measured with a
+good crop it reads 0.998, while an unusable crop reads 0.003 to 0.018.  An
+earlier note here claimed the head arrives unactivated and could never be
+compared against a threshold; that came from another build's documentation.
+``Identity_3_dense/BiasAdd/Add`` is the *metric world*
+landmark head of the same MediaPipe graph, and conversions of this model
+frequently omit it entirely, so it is only a fallback.  The runtime node maps
+the landmarks back through the ``NNData.getTransformation()`` attached by
+DepthAI, and falls back to the palm ROI when that transform is absent. Both
+``(1, 1)`` scores and ``(1, 63)`` landmark vectors are flattened before
+assembly into a ``Detection``.
+"""
+
+from dataclasses import dataclass
+import math
+from typing import Iterable, List, Sequence, Tuple
+
+import numpy as np
+
+HAND_KEYPOINT_NAMES = (
+    "wrist",
+    "thumb_cmc",
+    "thumb_mcp",
+    "thumb_ip",
+    "thumb_tip",
+    "index_finger_mcp",
+    "index_finger_pip",
+    "index_finger_dip",
+    "index_finger_tip",
+    "middle_finger_mcp",
+    "middle_finger_pip",
+    "middle_finger_dip",
+    "middle_finger_tip",
+    "ring_finger_mcp",
+    "ring_finger_pip",
+    "ring_finger_dip",
+    "ring_finger_tip",
+    "pinky_mcp",
+    "pinky_pip",
+    "pinky_dip",
+    "pinky_tip",
+)
+# Ten records: the zoo decoding head runs NMS on the edge and returns the TOP 10
+# most confident candidates.  The score gate below prunes the background ones
+# before they cost a landmark crop, so the count is the blob's layout, not a cap.
+PALM_RESULT_COUNT = 10
+PALM_RESULT_WIDTH = 8
+LANDMARK_COUNT = 21
+LANDMARK_VALUE_COUNT = LANDMARK_COUNT * 3
+LANDMARK_SCORE_LAYER = "Identity_1"
+# The same blob reports the hand's handedness in ``Identity_2``.  The reference
+# turns it into the label ("right" if handedness > 0.5 else "left"); here it is
+# published as a scalar and the label stays "hand", which is what the model
+# store and the imitation chain already emit.
+LANDMARK_HANDEDNESS_LAYER = "Identity_2"
+# The reference gates every landmark result with ``if lm_score > 0.5`` before it
+# is used, so a crop that produced no hand is dropped instead of published.
+LANDMARK_SCORE_THRESHOLD = 0.5
+# The crop-space landmark head comes first: MediaPipe's ``Identity`` output is
+# renamed ``Identity_dense/BiasAdd/Add`` by the OpenVINO conversion.  The
+# ``Identity_3`` variant is the metric world-landmark head, which is centred on
+# the hand instead of the crop and is missing from several published blobs, so
+# it is tried only after the image-space heads.
+LANDMARK_XYZ_LAYERS = (
+    "Identity_dense/BiasAdd/Add",
+    "Identity",
+    "Identity_3_dense/BiasAdd/Add",
+)
+# Crop-space XY in this blob is normalised to 0..1. Values above this are
+# treated as already being in landmark-input pixels (MediaPipe's 0..224).
+LANDMARK_NORMALIZED_PEAK = 1.5
+# Sub-pixel margin that keeps a derived crop strictly inside its source frame.
+MANIP_CROP_INSET_PIXELS = 0.5
+
+
+@dataclass(frozen=True)
+class ManipCrop:
+    """Normalized full-source crop plus its network target size."""
+
+    center_x: float
+    center_y: float
+    width: float
+    height: float
+    output_width: int
+    output_height: int
+
+
+def fit_manip_crop(
+    source_width: int,
+    source_height: int,
+    output_width: int,
+    output_height: int,
+    inset: float = MANIP_CROP_INSET_PIXELS,
+) -> ManipCrop:
+    """Derive a valid ImageManip crop and target size from measured input dimensions.
+
+    ImageManip validates its crop against the frame it actually receives and
+    rejects the whole frame with ``Initial crop is outside the source image``
+    when the rect does not fit.  A rect assumed at build time is therefore
+    unusable as soon as the camera delivers other dimensions.  The crop here
+    uses the full measured source minus a sub-pixel inset. Warp-cache limits are
+    enforced by bounding the camera branch itself, not by narrowing this crop or
+    chaining manipulations. The target size is always the network input size.
+    """
+    if source_width <= 0 or source_height <= 0:
+        raise ValueError("manip source must have positive dimensions")
+    if output_width <= 0 or output_height <= 0:
+        raise ValueError("manip output must have positive dimensions")
+    inset_x = max(0.0, min(float(inset), source_width / 4.0))
+    inset_y = max(0.0, min(float(inset), source_height / 4.0))
+    crop_width = source_width - 2.0 * inset_x
+    crop_height = source_height - 2.0 * inset_y
+    return ManipCrop(
+        center_x=0.5,
+        center_y=0.5,
+        width=crop_width / source_width,
+        height=crop_height / source_height,
+        output_width=int(output_width),
+        output_height=int(output_height),
+    )
+
+
+@dataclass(frozen=True)
+class PalmRegion:
+    score: float
+    box_x: float
+    box_y: float
+    box_size: float
+    roi_x: float
+    roi_y: float
+    roi_size: float
+    rotation: float
+
+    def bbox_pixels(
+        self,
+        frame_width: int,
+        frame_height: int,
+        source_width: int = None,
+        source_height: int = None,
+    ) -> Tuple[int, ...]:
+        half = self.box_size / 2.0
+        x_min, y_min = _square_to_frame(
+            self.box_x - half,
+            self.box_y - half,
+            frame_width,
+            frame_height,
+            source_width,
+            source_height,
+        )
+        x_max, y_max = _square_to_frame(
+            self.box_x + half,
+            self.box_y + half,
+            frame_width,
+            frame_height,
+            source_width,
+            source_height,
+        )
+        return (
+            int(round(x_min)),
+            int(round(y_min)),
+            int(round(x_max)),
+            int(round(y_max)),
+        )
+
+    def roi_for_frame(
+        self, frame_width: int, frame_height: int
+    ) -> Tuple[float, float, float, float]:
+        """Return the decoded ROI normalized to the ImageManip source crop.
+
+        The palm ImageManip warps its full rectangular crop to the square
+        network input with ``setOutputSize``. It does not letterbox that crop,
+        so the decoder's normalized axes are already the source-frame axes.
+        """
+        if frame_width <= 0 or frame_height <= 0:
+            raise ValueError("palm ROI frame must have positive dimensions")
+        return (
+            self.roi_x,
+            self.roi_y,
+            self.roi_size,
+            self.roi_size,
+        )
+
+
+def _square_to_frame(
+    x: float,
+    y: float,
+    frame_width: int,
+    frame_height: int,
+    source_width: int = None,
+    source_height: int = None,
+) -> Tuple[float, float]:
+    # The palm input is a direct warp of the complete rectangular source crop,
+    # not a letterboxed square. Normalized decoder coordinates therefore map
+    # independently onto the declared output width and height. The source
+    # dimensions remain accepted because callers also use them for the
+    # landmark packet transformation path.
+    del source_width, source_height
+    return (
+        min(float(frame_width), max(0.0, x * frame_width)),
+        min(float(frame_height), max(0.0, y * frame_height)),
+    )
+
+
+def decode_palm_result(
+    tensor: Iterable[float], score_threshold: float = 0.5, max_hands: int = 10
+) -> List[PalmRegion]:
+    """Parse the post-processing layer, rejecting any unexpected layout.
+
+    ``max_hands`` bounds the candidates the head is allowed to contribute; the
+    zoo head itself returns ten.  ``score_threshold`` does the real filtering:
+    only records that pass it are turned into a landmark crop, so a frame that
+    contains one hand costs one crop, not ten.
+    """
+    values = np.asarray(tensor, dtype=np.float32)
+    if values.size != PALM_RESULT_COUNT * PALM_RESULT_WIDTH:
+        raise ValueError(
+            f"palm decoder result must contain exactly "
+            f"{PALM_RESULT_COUNT * PALM_RESULT_WIDTH} values "
+            f"({PALM_RESULT_COUNT} detections x {PALM_RESULT_WIDTH})"
+        )
+    values = values.reshape(PALM_RESULT_COUNT, PALM_RESULT_WIDTH)
+    palms = []
+    for score, box_x, box_y, box_size, kp0_x, kp0_y, kp2_x, kp2_y in values:
+        if not np.all(
+            np.isfinite((score, box_x, box_y, box_size, kp0_x, kp0_y, kp2_x, kp2_y))
+        ):
+            continue
+        if score < score_threshold or box_size <= 0:
+            continue
+        delta_x = kp2_x - kp0_x
+        delta_y = kp2_y - kp0_y
+        rotation = 0.5 * math.pi - math.atan2(-delta_y, delta_x)
+        rotation -= 2 * math.pi * math.floor((rotation + math.pi) / (2 * math.pi))
+        palms.append(
+            PalmRegion(
+                score=float(score),
+                box_x=float(box_x),
+                box_y=float(box_y),
+                box_size=float(box_size),
+                roi_x=float(box_x + 0.5 * box_size * math.sin(rotation)),
+                roi_y=float(box_y - 0.5 * box_size * math.cos(rotation)),
+                roi_size=float(2.9 * box_size),
+                rotation=float(rotation),
+            )
+        )
+    palms.sort(key=lambda palm: palm.score, reverse=True)
+    if max_hands > 0:
+        palms = palms[:max_hands]
+    return palms
+
+
+def landmark_score(tensor: Iterable[float]) -> float:
+    """Read the reported landmark presence score, including a ``(1, 1)`` tensor.
+
+    Callers compare this against ``LANDMARK_SCORE_THRESHOLD`` as the reference
+    does; an unusable crop scores an order of magnitude below it.
+    """
+    values = np.asarray(tensor, dtype=np.float32).reshape(-1)
+    if values.size != 1:
+        raise ValueError("landmark confidence must contain one value")
+    score = float(values[0])
+    if not math.isfinite(score):
+        raise ValueError("landmark confidence is not finite")
+    return score
+
+
+def landmark_xyz(tensor: Sequence[float]) -> np.ndarray:
+    """Return 21 XYZ triples from a landmark tensor, including ``(1, 63)``."""
+    values = np.asarray(tensor, dtype=np.float32)
+    if values.size == 0:
+        return np.zeros((0, 3), dtype=np.float32)
+    if values.size != LANDMARK_VALUE_COUNT:
+        raise ValueError("landmark result must contain exactly 63 values (21 x 3)")
+    values = values.reshape(LANDMARK_COUNT, 3)
+    if not np.all(np.isfinite(values)):
+        raise ValueError("landmark result contains non-finite values")
+    return values
+
+
+def relative_landmark_z(
+    tensor: Sequence[float], landmark_input_size: int = 224
+) -> List[float]:
+    """Return the 21 hand-relative z values, in the scale of x and y.
+
+    The reference (`pib-rocks/imitation`, ``template_manager_script_duo.py``)
+    keeps all three landmark components in one unitless scale by dividing the
+    crop-space values by the landmark input size::
+
+        rrn_lms[3*i+2] /= lm_input_size
+
+    Its finger angles are then computed from those three-component vectors, so
+    the relative depth really drives the result.  This function reproduces that
+    normalisation and, unlike ``landmarks_in_crop_pixels``, leaves the z alone
+    rather than turning it into pixels.
+
+    The z is signed and small.  Anything that clamps the landmark components
+    into 0..1 (``depthai_nodes``' ``KeypointParser`` does exactly that) destroys
+    it, which is why the hand-written chain is the path that can carry it.
+    """
+    values = landmark_xyz(tensor)
+    if values.size == 0:
+        return []
+    peak = float(np.max(np.abs(values[:, :2])))
+    if peak <= LANDMARK_NORMALIZED_PEAK:
+        scale = 1.0
+    else:
+        scale = 1.0 / float(landmark_input_size)
+    return [float(value) * scale for value in values[:, 2]]
+
+
+def landmarks_in_crop_pixels(
+    tensor: Sequence[float], landmark_input_size: int = 224
+) -> np.ndarray:
+    """Return crop-space XYZ with XY in landmark-input pixels."""
+    values = landmark_xyz(tensor)
+    if values.size == 0:
+        return values
+    peak = float(np.max(np.abs(values[:, :2])))
+    if peak <= LANDMARK_NORMALIZED_PEAK:
+        values = np.array(values, copy=True)
+        values[:, :2] *= float(landmark_input_size)
+    return values
+
+
+def map_landmarks_to_frame(
+    tensor: Sequence[float],
+    palm: PalmRegion,
+    frame_width: int,
+    frame_height: int,
+    landmark_input_size: int = 224,
+    source_width: int = None,
+    source_height: int = None,
+) -> List[Tuple[float, float]]:
+    """Map 21 crop-space XYZ triples to full-frame pixel XY coordinates."""
+    values = landmarks_in_crop_pixels(tensor, landmark_input_size)
+    if values.size == 0:
+        return []
+    return map_crop_points_to_frame(
+        values,
+        palm,
+        frame_width,
+        frame_height,
+        landmark_input_size,
+        source_width,
+        source_height,
+    )
+
+
+def map_crop_points_to_frame(
+    values: np.ndarray,
+    palm: PalmRegion,
+    frame_width: int,
+    frame_height: int,
+    landmark_input_size: int,
+    source_width: int = None,
+    source_height: int = None,
+) -> List[Tuple[float, float]]:
+    """Map crop-pixel XYZ points of any count through the shared ROI geometry."""
+    normalized = values[:, :2] / float(landmark_input_size)
+    cos_rotation = math.cos(palm.rotation)
+    sin_rotation = math.sin(palm.rotation)
+    points = []
+    for crop_x, crop_y in normalized:
+        image_x = palm.roi_x + palm.roi_size * (
+            (crop_x - 0.5) * cos_rotation + (0.5 - crop_y) * sin_rotation
+        )
+        image_y = palm.roi_y + palm.roi_size * (
+            (crop_y - 0.5) * cos_rotation + (crop_x - 0.5) * sin_rotation
+        )
+        points.append(
+            _square_to_frame(
+                image_x,
+                image_y,
+                frame_width,
+                frame_height,
+                source_width,
+                source_height,
+            )
+        )
+    return points

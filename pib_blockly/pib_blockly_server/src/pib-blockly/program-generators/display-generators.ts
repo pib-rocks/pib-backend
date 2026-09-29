@@ -17,6 +17,8 @@ except NameError:
     _pib_display_node = rclpy.create_node("blockly_display_node")
     _pib_expression_pub = _pib_display_node.create_publisher(String, "/pib/expression", 10)
     _pib_display_text_pub = _pib_display_node.create_publisher(String, "/pib/display_text", 10)
+    _pib_display_web_pub = _pib_display_node.create_publisher(String, "/pib/display_web", 10)
+    _pib_display_web_hide_pub = _pib_display_node.create_publisher(String, "/pib/display_web_hide", 10)
     _pib_display_ready = False
 
     def _pib_on_display_ready(msg):
@@ -89,9 +91,21 @@ _pib_publish_string(_pib_display_text_pub, ${safeText}[:40], "text")
 `;
 }
 
-export function toggleCerebraFullscreenGenerator(block: Block) {
+export function openCerebraFullscreenGenerator(block: Block) {
+    // The display node forwards the URL to the host-side browser runner.
+    // JSON.stringify yields a valid Python string literal for any field text.
+    const rawUrl = (block.getFieldValue("URL") || "").trim();
+    const safeUrl = JSON.stringify(rawUrl || "http://localhost");
+
     return `${pibDisplayRuntime()}
-_pib_publish_string(_pib_display_text_pub, "TOGGLE_CEREBRA_FULLSCREEN", "toggle_cerebra_fullscreen")
+_pib_publish_string(_pib_display_web_pub, ${safeUrl}, "display web page")
+`;
+}
+
+export function closeCerebraFullscreenGenerator(_block: Block) {
+    // The payload is ignored by the display node; only the topic matters.
+    return `${pibDisplayRuntime()}
+_pib_publish_string(_pib_display_web_hide_pub, "hide", "display web hide")
 `;
 }
 

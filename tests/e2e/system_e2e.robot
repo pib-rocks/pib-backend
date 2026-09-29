@@ -40,10 +40,11 @@ E2E-BDD-SYS-004 Startup Pose Available For Motor Boot Sequence
     Should Be Equal    ${pose}[deletable]    ${False}
 
 E2E-BDD-SYS-005 Button Program Mapping Round Trip
-    [Documentation]    Given program created When mapped to bricklet 5 Then PUT /button-programs succeeds.
+    [Documentation]    Given program created When mapped to a button bricklet reported by the API Then PUT succeeds.
+    ${bricklet_number}=    Get Button Program Bricklet Number
     ${program_number}    ${name}=    Create Unique Program    e2e_button_map
-    Put Button Program Mapping    5    ${program_number}
-    Put Button Program Mapping    5    ${None}
+    Put Button Program Mapping    ${bricklet_number}    ${program_number}
+    Put Button Program Mapping    ${bricklet_number}    ${None}
     [Teardown]    Run Keyword And Ignore Error    Delete Program    ${program_number}
 
 E2E-BDD-SYS-006 Rosbridge WebSocket Port Accepts Connection

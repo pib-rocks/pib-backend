@@ -3,7 +3,8 @@ FROM python:3.10-slim
 WORKDIR /app
 
 ARG APP_VERSION
-RUN printf '%s\n' "$APP_VERSION" > /etc/pib_version
+# Compose/build-arg supplies the release tag; empty ARG (plain docker build) falls back to dev.
+RUN printf '%s\n' "${APP_VERSION:-dev}" > /etc/pib_version
 
 COPY ./pib_api/flask/requirements.txt /app
 

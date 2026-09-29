@@ -1,8 +1,9 @@
+import os
 import re
 import pytest
 from playwright.sync_api import sync_playwright, Page, expect
 
-BASE_URL = "http://192.168.1.28"
+BASE_URL = os.getenv("PIB_ROBOT_URL", "http://localhost")
 
 
 @pytest.fixture(scope="function")

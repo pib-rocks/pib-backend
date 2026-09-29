@@ -11,13 +11,14 @@ Python directory, because the CLI is a wrapper that execs a venv interpreter
 symlinked into it — probe_binary() is what catches a deployment that forgot it.
 """
 
+import copy
+import json
 import logging
 import os
 import re
-import shutil
 import subprocess
 import time
-from typing import Optional
+from typing import Iterator, Optional
 
 import yaml
 from pib_hermes_config import (
@@ -36,12 +37,27 @@ DEFAULT_HERMES_HOME = "/home/pib/.hermes"
 SESSION_PREFIX = "pib_chat_"
 HERMES_API_NAME = "hermes-agent"
 DEFAULT_TIMEOUT_SECONDS = int(os.environ.get("PIB_HERMES_TIMEOUT", "120"))
+# Voice turns use a narrow allowlist, with the existing blacklist retained as a
+# second isolation layer. Operators may tune both values without a rebuild.
+DEFAULT_ENABLED_TOOLSETS = os.environ.get(
+    "PIB_HERMES_ENABLED_TOOLSETS", "mcp-pib,vision"
+)
+DEFAULT_DISABLED_TOOLSETS = os.environ.get(
+    "PIB_HERMES_DISABLED_TOOLSETS",
+    "terminal,code_execution,file,memory,session_search",
+)
+DEFAULT_MAX_TURNS = int(os.environ.get("PIB_HERMES_MAX_TURNS", "4"))
 
 CONFIG_FILENAME = "config.yaml"
 ENV_FILENAME = ".env"
 ENV_FILE_MODE = 0o600
 
-# Default MCP entry for pib robot tools. Kept in sync with setup/setup-pib.sh.
+# Default MCP entry for pib robot tools, including the env the server needs:
+# Hermes spawns it as a subprocess without forwarding this process' environment,
+# so without `env` pib_mcp_server resolves the REST base URL to its own
+# http://localhost:5000 default and every robot tool call fails in the container.
+# The single definition of that entry — setup/setup-pib.sh seeds the same one and
+# tests/unit/test_setup_hermes_model_pin.py fails if the two ever drift.
 PIB_MCP_SERVER = {
     "command": "python3",
     "args": ["-m", "pib_mcp_server"],
@@ -161,62 +177,35 @@ def build_command(
     return cmd
 
 
-def _create_profile_with_cli(personality_id: str, timeout: int) -> bool:
-    """Optional enhancement: let the CLI create the profile. True when it did.
+def _merge_missing_mcp_env(entry: dict) -> bool:
+    """Fill the env keys PIB_MCP_SERVER needs into an existing entry. Returns changed.
 
-    Not a precondition for a working profile: whichever container calls
-    ensure_profile() may not have the CLI mounted at all (the Flask API does
-    not), and this used to fail silently there and leave behind a profile with a
-    SOUL.md but no credentials.
+    Migration path for the profiles that were seeded before the entry carried an
+    `env` block. Only MISSING keys are added: an operator's own `command`, `args`
+    and any env value they set themselves stay exactly as they wrote them.
     """
-    name = profile_name_for(personality_id)
-    if not hermes_binary_available():
-        logging.info(
-            "hermes CLI %s is not available here; provisioning profile %s with "
-            "filesystem operations only",
-            hermes_bin(),
-            name,
-        )
-        return False
-    try:
-        result = subprocess.run(
-            [
-                hermes_bin(),
-                "profile",
-                "create",
-                name,
-                "--clone",
-                "--no-alias",
-                "--description",
-                f"pib personality {personality_id}",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            check=False,
-        )
-    except Exception as exc:
-        logging.warning("hermes profile create %s could not be run: %s", name, exc)
-        return False
-    if result.returncode != 0:
-        logging.warning(
-            "hermes profile create %s exited %s: %s",
-            name,
-            result.returncode,
-            (result.stderr or "")[:500],
-        )
-        return False
-    logging.info("created hermes profile %s with the CLI (--clone)", name)
-    return True
+    env = entry.get("env")
+    changed = False
+    if not isinstance(env, dict):
+        env = {}
+        entry["env"] = env
+        changed = True
+    for key, value in PIB_MCP_SERVER["env"].items():
+        if key not in env:
+            env[key] = value
+            changed = True
+    return changed
 
 
 def _ensure_mcp_servers_pib(pdir: str) -> None:
-    """Pin Hermes model/provider/speed defaults and merge mcp_servers.pib if missing.
+    """Pin Hermes model/provider/speed defaults and repair mcp_servers.pib.
 
     Always sets model/provider and high-speed defaults (reasoning_effort, max_tokens,
     temperature) to the permanent Gemini Flash values. Runs even when config.yaml
     already exists, so profiles created before auto-seeding still get pib_mcp_server
-    (and the pinned model/speed settings) on the next ensure_profile call.
+    (and the pinned model/speed settings) on the next ensure_profile call. An
+    mcp_servers.pib entry that is already there keeps its command/args and only
+    gets the env keys it is missing.
     """
     target = os.path.join(pdir, CONFIG_FILENAME)
     cfg = {}
@@ -259,8 +248,11 @@ def _ensure_mcp_servers_pib(pdir: str) -> None:
         servers = {}
         cfg["mcp_servers"] = servers
         changed = True
-    if "pib" not in servers:
-        servers["pib"] = dict(PIB_MCP_SERVER)
+    entry = servers.get("pib")
+    if not isinstance(entry, dict):
+        servers["pib"] = copy.deepcopy(PIB_MCP_SERVER)
+        changed = True
+    elif _merge_missing_mcp_env(entry):
         changed = True
 
     if not changed:
@@ -278,113 +270,22 @@ def _ensure_mcp_servers_pib(pdir: str) -> None:
     )
 
 
-def _inherit_base_config(pdir: str) -> None:
-    """Materialize the provider config a profile needs, from HERMES_HOME or environment.
-
-    `hermes -p <profile>` resolves its LLM provider from the profile, so a
-    profile holding only a SOUL.md fails every turn with "No LLM provider
-    configured". Copies rather than symlinks, so that a later `hermes profile
-    delete` cannot damage the base install. Also ensures API keys in .env
-    are populated from environment variables if missing.
-    """
-    base = hermes_home()
-    for name, mode in ((CONFIG_FILENAME, None), (ENV_FILENAME, ENV_FILE_MODE)):
-        target = os.path.join(pdir, name)
-        if not os.path.exists(target):
-            source = os.path.join(base, name)
-            if os.path.isfile(source):
-                try:
-                    shutil.copyfile(source, target)
-                    if mode is not None:
-                        os.chmod(target, mode)
-                    logging.info(
-                        "copied %s from %s into hermes profile %s", name, base, pdir
-                    )
-                except OSError as exc:
-                    logging.warning("could not copy %s into %s: %s", name, pdir, exc)
-
-    # Always ensure config.yaml in profile has valid provider/model/speed defaults
-    cfg_target = os.path.join(pdir, CONFIG_FILENAME)
-    if not os.path.exists(cfg_target):
-        default_cfg = {
-            "provider": DEFAULT_HERMES_PROVIDER,
-            "model": DEFAULT_HERMES_MODEL,
-            "reasoning_effort": DEFAULT_REASONING_EFFORT,
-            "max_tokens": DEFAULT_MAX_TOKENS,
-            "temperature": DEFAULT_TEMPERATURE,
-            "mcp_servers": {"pib": dict(PIB_MCP_SERVER)},
-        }
-        try:
-            with open(cfg_target, "w", encoding="utf-8") as fh:
-                yaml.safe_dump(default_cfg, fh, default_flow_style=False)
-            logging.info("seeded default config.yaml in profile at %s", cfg_target)
-        except OSError as exc:
-            logging.warning("could not seed config.yaml in profile %s: %s", pdir, exc)
-
-    # Always ensure .env in profile carries GEMINI_API_KEY / GOOGLE_API_KEY if present in env
-    env_target = os.path.join(pdir, ENV_FILENAME)
-    existing_env = ""
-    if os.path.exists(env_target):
-        try:
-            with open(env_target, "r", encoding="utf-8") as fh:
-                existing_env = fh.read()
-        except OSError:
-            pass
-
-    gemini_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
-    if gemini_key and (
-        "GEMINI_API_KEY" not in existing_env or "GOOGLE_API_KEY" not in existing_env
-    ):
-        try:
-            with open(env_target, "a", encoding="utf-8") as fh:
-                if "GEMINI_API_KEY" not in existing_env:
-                    fh.write(f"\nGEMINI_API_KEY={gemini_key}\n")
-                if "GOOGLE_API_KEY" not in existing_env:
-                    fh.write(f"\nGOOGLE_API_KEY={gemini_key}\n")
-            os.chmod(env_target, ENV_FILE_MODE)
-            logging.info(
-                "ensured GEMINI_API_KEY/GOOGLE_API_KEY in profile .env at %s",
-                env_target,
-            )
-        except OSError as exc:
-            logging.warning("could not update profile .env at %s: %s", env_target, exc)
-
-    _ensure_mcp_servers_pib(pdir)
-
-
 def ensure_profile(
     personality_id: str,
     soul_text: str = "",
     timeout: int = 60,
     personality_name: Optional[str] = None,
 ) -> str:
-    """Create the personality's Hermes profile if needed and write its SOUL.md.
+    """Loud local repair path, executed only where Hermes is importable."""
+    del timeout
+    from public_api_client.hermes_daemon import ensure_profile_home
 
-    Provisioning is done with filesystem operations alone, because the CLI is not
-    installed in every container that calls this. config.yaml and .env are copied
-    in from the base install (HERMES_HOME) so that `hermes -p <profile>` finds a
-    provider; the base install must therefore hold working credentials.
-
-    The SOUL.md is always seeded from ``build_default_soul_text`` so every profile
-    knows its robot identity and the available pib MCP tools. ``soul_text`` is
-    treated as an optional custom description appended after the identity line.
-
-    Returns the profile directory.
-    """
-    pdir = profile_dir_for(personality_id)
-    if not os.path.isdir(pdir):
-        _create_profile_with_cli(personality_id, timeout)
-    os.makedirs(pdir, exist_ok=True)
-    text = build_default_soul_text(
-        personality_name or "pib",
-        custom_description=soul_text or None,
+    result = ensure_profile_home(
+        personality_id,
+        personality_name=personality_name,
+        soul_text=soul_text,
     )
-    with open(soul_path_for(personality_id), "w", encoding="utf-8") as fh:
-        fh.write(text)
-    # Also repairs a profile that an earlier deployment left without credentials.
-    _inherit_base_config(pdir)
-    align_profile_ownership(pdir)
-    return pdir
+    return result["profile_dir"]
 
 
 def delete_profile(personality_id: str, timeout: int = 60) -> bool:
@@ -435,6 +336,54 @@ def daemon_turn_url() -> str:
     return DEFAULT_DAEMON_TURN_URL
 
 
+def daemon_profile_url() -> str:
+    """POST target for canonical profile provisioning."""
+    return daemon_turn_url().removesuffix("/turn") + "/profile"
+
+
+def provision_profile(
+    personality_id: str,
+    personality_name: Optional[str] = None,
+    soul_text: Optional[str] = None,
+    timeout: int = 60,
+) -> dict:
+    """Ask the Hermes daemon to create or repair a complete profile."""
+    try:
+        import requests
+    except ImportError as exc:
+        raise RuntimeError(
+            "requests is required for Hermes profile provisioning"
+        ) from exc
+
+    payload = {"personality_id": personality_id}
+    if personality_name is not None:
+        payload["personality_name"] = personality_name
+    if soul_text is not None:
+        payload["soul_text"] = soul_text
+
+    session = _get_daemon_session()
+    post = session.post if session is not None else requests.post
+    try:
+        response = post(daemon_profile_url(), json=payload, timeout=timeout)
+    except requests.exceptions.RequestException as exc:
+        raise RuntimeError(f"Hermes profile daemon is unreachable: {exc}") from exc
+
+    try:
+        result = response.json()
+    except ValueError as exc:
+        raise RuntimeError("Hermes profile daemon returned invalid JSON") from exc
+    if (
+        response.status_code >= 300
+        or not isinstance(result, dict)
+        or not result.get("ok")
+    ):
+        error = result.get("error") if isinstance(result, dict) else None
+        raise RuntimeError(
+            error or f"Hermes profile daemon returned {response.status_code}"
+        )
+    return result
+
+
 def _get_daemon_session():
     """Lazy singleton ``requests.Session`` for pooled daemon HTTP calls."""
     global _daemon_http_session, _daemon_http_session_lock
@@ -473,8 +422,10 @@ def _try_daemon_turn(
     text: str,
     chat_id: str,
     personality_id: Optional[str] = None,
-    toolsets: Optional[str] = None,
+    toolsets: Optional[str] = DEFAULT_DISABLED_TOOLSETS,
+    max_turns: int = DEFAULT_MAX_TURNS,
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
+    enabled_toolsets: Optional[str] = DEFAULT_ENABLED_TOOLSETS,
 ) -> Optional[str]:
     """POST /turn to the warm daemon. None means unreachable or non-200."""
     try:
@@ -482,11 +433,18 @@ def _try_daemon_turn(
     except ImportError:
         return None
 
-    payload = {"text": text, "chat_id": chat_id, "timeout": timeout}
+    payload = {
+        "text": text,
+        "chat_id": chat_id,
+        "timeout": timeout,
+        "max_turns": max_turns,
+    }
     if personality_id is not None:
         payload["personality_id"] = personality_id
     if toolsets is not None:
         payload["toolsets"] = toolsets
+    if enabled_toolsets is not None:
+        payload["enabled_toolsets"] = enabled_toolsets
 
     http_start = time.monotonic()
     logging.info(
@@ -547,12 +505,94 @@ def _try_daemon_turn(
     return reply.strip() or FALLBACK_REPLY
 
 
+def stream_turn(
+    text: str,
+    chat_id: str,
+    personality_id: Optional[str] = None,
+    toolsets: Optional[str] = DEFAULT_DISABLED_TOOLSETS,
+    max_turns: int = DEFAULT_MAX_TURNS,
+    timeout: int = DEFAULT_TIMEOUT_SECONDS,
+    enabled_toolsets: Optional[str] = DEFAULT_ENABLED_TOOLSETS,
+) -> Iterator[str]:
+    """Yield daemon text deltas.
+
+    Streaming is deliberately daemon-only. A transport or protocol failure
+    raises so the voice node can retry through the established non-streaming
+    path, including its subprocess fallback.
+    """
+    try:
+        import requests
+    except ImportError as exc:
+        raise RuntimeError("requests is required for Hermes streaming") from exc
+
+    payload = {
+        "text": text,
+        "chat_id": chat_id,
+        "timeout": timeout,
+        "max_turns": max_turns,
+        "stream": True,
+    }
+    if personality_id is not None:
+        payload["personality_id"] = personality_id
+    if toolsets is not None:
+        payload["toolsets"] = toolsets
+    if enabled_toolsets is not None:
+        payload["enabled_toolsets"] = enabled_toolsets
+
+    session = _get_daemon_session()
+    post = session.post if session is not None else requests.post
+    try:
+        response = post(
+            daemon_turn_url(),
+            json=payload,
+            timeout=timeout,
+            stream=True,
+        )
+        response.raise_for_status()
+        saw_final = False
+        assembled = ""
+        for raw_line in response.iter_lines(decode_unicode=True):
+            if not raw_line:
+                continue
+            data = json.loads(raw_line)
+            if not isinstance(data, dict):
+                raise ValueError("Hermes stream chunk must be a JSON object")
+            if "error" in data:
+                raise RuntimeError(str(data["error"]))
+            delta = data.get("delta")
+            if delta is not None:
+                if not isinstance(delta, str):
+                    raise ValueError("Hermes stream delta must be a string")
+                if delta:
+                    assembled += delta
+                    yield delta
+            if "reply" in data:
+                final_reply = data["reply"]
+                if not isinstance(final_reply, str):
+                    raise ValueError("Hermes final stream reply must be a string")
+                if final_reply.startswith(assembled):
+                    remainder = final_reply[len(assembled) :]
+                    if remainder:
+                        yield remainder
+                elif final_reply != assembled:
+                    yield final_reply
+                saw_final = True
+        if not saw_final:
+            raise RuntimeError("Hermes stream ended without a final reply")
+    except requests.exceptions.RequestException as exc:
+        raise RuntimeError(f"Hermes streaming request failed: {exc}") from exc
+    finally:
+        if "response" in locals():
+            response.close()
+
+
 def run_turn_subprocess(
     text: str,
     chat_id: str,
     personality_id: Optional[str] = None,
-    toolsets: Optional[str] = None,
+    toolsets: Optional[str] = DEFAULT_DISABLED_TOOLSETS,
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
+    enabled_toolsets: Optional[str] = DEFAULT_ENABLED_TOOLSETS,
 ) -> str:
     """Run one turn via a oneshot Hermes CLI subprocess. Always returns text."""
     if not hermes_binary_available():
@@ -565,7 +605,13 @@ def run_turn_subprocess(
         )
         return FALLBACK_REPLY
 
-    cmd = build_command(text, chat_id, personality_id, toolsets)
+    # Hermes CLI -t is an enabled-toolset selector, not a blacklist. Prefer the
+    # voice allowlist; explicit legacy non-voice selections retain their existing
+    # CLI plumbing.
+    cli_toolsets = enabled_toolsets
+    if cli_toolsets is None and toolsets != DEFAULT_DISABLED_TOOLSETS:
+        cli_toolsets = toolsets
+    cmd = build_command(text, chat_id, personality_id, cli_toolsets)
     try:
         result = subprocess.run(
             cmd, capture_output=True, text=True, timeout=timeout, check=False
@@ -594,8 +640,10 @@ def run_turn(
     text: str,
     chat_id: str,
     personality_id: Optional[str] = None,
-    toolsets: Optional[str] = None,
+    toolsets: Optional[str] = DEFAULT_DISABLED_TOOLSETS,
+    max_turns: int = DEFAULT_MAX_TURNS,
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
+    enabled_toolsets: Optional[str] = DEFAULT_ENABLED_TOOLSETS,
 ) -> str:
     """Run one conversational turn. Always returns speakable text.
 
@@ -616,7 +664,9 @@ def run_turn(
         chat_id,
         personality_id,
         toolsets,
+        max_turns,
         timeout=timeout,
+        enabled_toolsets=enabled_toolsets,
     )
     if daemon_reply is not None:
         logging.info(
@@ -648,6 +698,7 @@ def run_turn(
         personality_id,
         toolsets,
         timeout=timeout,
+        enabled_toolsets=enabled_toolsets,
     )
     logging.info(
         "[PERF_TRACE] HERMES_CLIENT_DONE chat=%s via=subprocess elapsed_ms=%.2f",
