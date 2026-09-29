@@ -68,9 +68,14 @@ class TestMicrophoneArrayE2E:
 
     def test_02_preset_selection_and_dsp_sliders(self, page: Page):
         """
-        Navigates to Microphone Array tab and tests preset selection:
-        1. Selects 'Noisy Environment / ASR' preset from DSP Preset combobox.
-        2. Verifies AGC Max Gain slider updates to 50 dB.
+        Navigates to the Microphone Array tab and applies a DSP preset:
+        1. Sets 'Noisy Environment / ASR' in the DSP Preset field. In the current UI that field is
+           a text input (data-test SEL_Microphone_Array_Preset), not a <select>; Angular reacts to
+           the change event.
+        2. Verifies the AGC Max Gain slider follows the preset: the preset defines AGCMAXGAIN 31.6
+           on a linear 1..1000 slider.
+        The preset that was active before is restored at the end, so the run leaves the robot on the
+        tuning it found.
         """
         page.locator("#system-nav").click()
         mic_tab = page.locator(
@@ -81,23 +86,37 @@ class TestMicrophoneArrayE2E:
             re.compile(r".*/system/microphone-array$"), timeout=10000
         )
 
-        # Select 'Noisy Environment / ASR' preset
-        preset_select = page.locator(
-            "select#preset-select, select[data-test='DDN_Mic_Preset'], app-microphone-array select"
-        ).first
-        expect(preset_select).to_be_visible(timeout=10000)
-        preset_select.select_option(label="Noisy Environment / ASR")
+        # The field shows the live tuning, so it stays disabled until that has arrived.
+        preset_input = page.locator("input[data-test='SEL_Microphone_Array_Preset']")
+        expect(preset_input).to_be_visible(timeout=15000)
+        expect(preset_input).to_be_enabled(timeout=15000)
+        previous_preset = preset_input.input_value()
 
-        # Trigger change event for Angular binding if needed
-        preset_select.evaluate(
-            "el => { el.dispatchEvent(new Event('change', { bubbles: true })); }"
+        target_preset = "Noisy Environment / ASR"
+        preset_input.fill(target_preset)
+        preset_input.evaluate(
+            "el => el.dispatchEvent(new Event('change', { bubbles: true }))"
         )
 
-        # Verify AGC Max Gain slider updates to 30 dB
-        agc_slider = page.locator(
-            "input#agc-max-gain, input[data-test='SLD_AGC_Max_Gain']"
-        ).first
-        expect(agc_slider).to_have_value("30", timeout=5000)
+        # The preset sets AGCMAXGAIN = 31.6; the slider below is linear (min 1, max 1000, step 0.1).
+        agc_slider = page.locator("input[data-test='SLD_AGC_Max_Gain']")
+        expect(agc_slider).to_be_visible(timeout=10000)
+        expected_gain = 31.6
+        value = float("nan")
+        for _ in range(40):
+            value = float(agc_slider.input_value() or "nan")
+            if abs(value - expected_gain) < 0.2:
+                break
+            page.wait_for_timeout(250)
+        assert abs(value - expected_gain) < 0.2, (
+            f"AGC Max Gain is {value} after applying '{target_preset}', expected {expected_gain}"
+        )
+
+        if previous_preset and previous_preset != target_preset:
+            preset_input.fill(previous_preset)
+            preset_input.evaluate(
+                "el => el.dispatchEvent(new Event('change', { bubbles: true }))"
+            )
 
     def test_03_led_ring_controls_and_custom_tuning(self, page: Page):
         """
