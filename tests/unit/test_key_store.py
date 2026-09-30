@@ -1,4 +1,4 @@
-"""Encrypted key store: one password, wrong password, deletion, no cleartext."""
+"""Key store: one password while encryption is on, cleartext when it is off."""
 
 import json
 import logging
@@ -24,6 +24,8 @@ from service import key_store_service, personality_service
 from service.key_store_service import (
     PASSWORD_CONFIRMATION_MESSAGE,
     PASSWORD_TOO_SHORT_MESSAGE,
+    UNREADABLE_MESSAGE,
+    UNWRITABLE_MESSAGE,
     WRONG_PASSWORD_MESSAGE,
     KeyStoreError,
 )
@@ -365,3 +367,332 @@ def test_status_reports_encryption_on_before_any_key(app):
         "credentialRefs": [],
         "mode": "degraded",
     }
+
+
+def _settings_file(key_store_path):
+    return key_store_path.parent / "key_store_settings.json"
+
+
+def test_settings_path_follows_the_store_unless_overridden(key_store_path, monkeypatch):
+    settings_path = getattr(key_store_service, "settings_path", None)
+    assert settings_path is not None
+    assert settings_path() == str(_settings_file(key_store_path))
+    override = key_store_path.parent / "custom-settings.json"
+    monkeypatch.setenv("PIB_KEY_STORE_SETTINGS_PATH", str(override))
+    assert key_store_service.settings_path() == str(override)
+
+
+def test_cold_start_stores_a_first_key_with_encryption_on_and_off(
+    app, app_ctx, key_store_path
+):
+    """No store and no settings file. On needs a password. Off does not.
+
+    A missing settings file means encryption stays on.
+    """
+    settings = _settings_file(key_store_path)
+    assert not key_store_path.exists()
+    assert not settings.exists()
+    vision = Provider.query.filter_by(visual_name="GPT-4o [Vision]").one()
+    hermes = Provider.query.filter_by(api_name="hermes-agent").one()
+    client = app.test_client()
+
+    stored = client.put(
+        f"/system/key-store/{vision.id}",
+        json={"password": PASSWORD, "secret": SECRET},
+    )
+    assert stored.status_code == 200
+    assert key_store_service.unlock(PASSWORD)[f"provider-{vision.id}"] == SECRET
+    status = client.get("/system/key-store").get_json()
+    assert status["encryptKeyStorage"] is True
+    assert not settings.exists()
+    assert SECRET.encode() not in key_store_path.read_bytes()
+
+    missing_password = client.put(
+        f"/system/key-store/{hermes.id}",
+        json={"secret": OTHER_SECRET},
+    )
+    assert missing_password.status_code == 400
+
+    key_store_path.unlink()
+    key_store_service.lock()
+    assert not key_store_path.exists()
+    assert not settings.exists()
+
+    switched = client.post("/system/key-store/encryption", json={"enabled": False})
+    assert switched.status_code == 200
+    assert switched.get_json()["encryptKeyStorage"] is False
+    assert switched.get_json()["mode"] == "unlocked"
+    assert not key_store_path.exists()
+
+    clear = client.put(
+        f"/system/key-store/{hermes.id}",
+        json={"secret": OTHER_SECRET},
+    )
+    assert clear.status_code == 200
+    document = json.loads(key_store_path.read_text(encoding="utf-8"))
+    assert document["cleartext"] is True
+    assert "ciphertext" not in document
+    assert "salt" not in document
+    assert document["secrets"][f"provider-{hermes.id}"] == OTHER_SECRET
+    assert stat.S_IMODE(key_store_path.stat().st_mode) == 0o600
+    key_store_service.lock()
+    assert key_store_service.operating_mode() == "unlocked"
+    assert (
+        key_store_service.unlocked_credentials()[f"provider-{hermes.id}"]
+        == OTHER_SECRET
+    )
+    opened = client.post("/system/key-store/unlock", json={})
+    assert opened.status_code == 200
+    assert opened.get_json()["mode"] == "unlocked"
+    assert OTHER_SECRET not in opened.get_data(as_text=True)
+
+    removed = client.delete(f"/system/key-store/{hermes.id}", json={})
+    assert removed.status_code == 204
+    db.session.refresh(hermes)
+    assert hermes.credential_ref is None
+
+
+def test_switching_encryption_off_and_on_keeps_the_keys(app, app_ctx, key_store_path):
+    vision = Provider.query.filter_by(visual_name="GPT-4o [Vision]").one()
+    hermes = Provider.query.filter_by(api_name="hermes-agent").one()
+    client = app.test_client()
+    assert (
+        client.put(
+            f"/system/key-store/{vision.id}",
+            json={"password": PASSWORD, "secret": SECRET},
+        ).status_code
+        == 200
+    )
+    assert (
+        client.put(
+            f"/system/key-store/{hermes.id}",
+            json={"password": PASSWORD, "secret": OTHER_SECRET},
+        ).status_code
+        == 200
+    )
+
+    turned_off = client.post(
+        "/system/key-store/encryption",
+        json={"enabled": False, "password": PASSWORD},
+    )
+    assert turned_off.status_code == 200
+    assert turned_off.get_json()["encryptKeyStorage"] is False
+    assert turned_off.get_json()["mode"] == "unlocked"
+    assert SECRET not in turned_off.get_data(as_text=True)
+    document = json.loads(key_store_path.read_text(encoding="utf-8"))
+    assert document["cleartext"] is True
+    assert document["secrets"] == {
+        f"provider-{vision.id}": SECRET,
+        f"provider-{hermes.id}": OTHER_SECRET,
+    }
+    assert "ciphertext" not in document
+    settings = json.loads(_settings_file(key_store_path).read_text(encoding="utf-8"))
+    assert settings == {"encrypt_key_storage": False}
+    key_store_service.lock()
+    assert key_store_service.unlocked_credentials() == {
+        f"provider-{vision.id}": SECRET,
+        f"provider-{hermes.id}": OTHER_SECRET,
+    }
+    # Mode unlocked is what the start-up prompt reads, so the prompt stays down.
+    assert client.get("/system/key-store").get_json()["mode"] == "unlocked"
+
+    clear_bytes = key_store_path.read_bytes()
+    refused = client.post(
+        "/system/key-store/password",
+        json={
+            "oldPassword": "",
+            "newPassword": NEW_PASSWORD,
+            "confirmPassword": NEW_PASSWORD,
+        },
+    )
+    assert refused.status_code == 400
+    assert refused.get_json()["error"] == key_store_service.ENCRYPTION_OFF_MESSAGE
+    assert key_store_path.read_bytes() == clear_bytes
+
+    turned_on = client.post(
+        "/system/key-store/encryption",
+        json={"enabled": True, "password": NEW_PASSWORD},
+    )
+    assert turned_on.status_code == 200
+    assert turned_on.get_json()["encryptKeyStorage"] is True
+    envelope = json.loads(key_store_path.read_text(encoding="utf-8"))
+    assert envelope["encrypt_key_storage"] is True
+    assert envelope.get("cleartext") is not True
+    assert "salt" in envelope
+    assert "ciphertext" in envelope
+    raw = key_store_path.read_text(encoding="utf-8")
+    assert SECRET not in raw
+    assert OTHER_SECRET not in raw
+    assert NEW_PASSWORD not in raw
+    settings = json.loads(_settings_file(key_store_path).read_text(encoding="utf-8"))
+    assert settings == {"encrypt_key_storage": True}
+    key_store_service.lock()
+    assert key_store_service.operating_mode() == "degraded"
+    opened = key_store_service.unlock(NEW_PASSWORD)
+    assert opened[f"provider-{vision.id}"] == SECRET
+    assert opened[f"provider-{hermes.id}"] == OTHER_SECRET
+    with pytest.raises(KeyStoreError) as caught:
+        key_store_service.unlock(PASSWORD)
+    assert caught.value.status_code == 401
+
+
+def test_wrong_password_refuses_turning_encryption_off(app, app_ctx, key_store_path):
+    vision = Provider.query.filter_by(visual_name="GPT-4o [Vision]").one()
+    client = app.test_client()
+    stored = client.put(
+        f"/system/key-store/{vision.id}",
+        json={"password": PASSWORD, "secret": SECRET},
+    )
+    assert stored.status_code == 200
+    before = key_store_path.read_bytes()
+    settings = _settings_file(key_store_path)
+    assert not settings.exists()
+
+    refused = client.post(
+        "/system/key-store/encryption",
+        json={"enabled": False, "password": OTHER_PASSWORD},
+    )
+    assert refused.status_code == 401
+    assert refused.get_json()["error"] == WRONG_PASSWORD_MESSAGE
+    assert refused.get_json()["credentials"] == []
+    assert SECRET not in refused.get_data(as_text=True)
+    assert PASSWORD not in refused.get_data(as_text=True)
+    assert key_store_path.read_bytes() == before
+    assert not settings.exists()
+    assert SECRET.encode() not in key_store_path.read_bytes()
+    assert json.loads(before)["encrypt_key_storage"] is True
+
+
+def test_short_password_refuses_turning_encryption_on(app, app_ctx, key_store_path):
+    vision = Provider.query.filter_by(visual_name="GPT-4o [Vision]").one()
+    client = app.test_client()
+    switched = client.post("/system/key-store/encryption", json={"enabled": False})
+    assert switched.status_code == 200
+    stored = client.put(
+        f"/system/key-store/{vision.id}",
+        json={"secret": SECRET},
+    )
+    assert stored.status_code == 200
+    before_store = key_store_path.read_bytes()
+    before_settings = _settings_file(key_store_path).read_bytes()
+
+    refused = client.post(
+        "/system/key-store/encryption",
+        json={"enabled": True, "password": "short"},
+    )
+    assert refused.status_code == 400
+    assert refused.get_json()["error"] == PASSWORD_TOO_SHORT_MESSAGE
+    assert key_store_path.read_bytes() == before_store
+    assert _settings_file(key_store_path).read_bytes() == before_settings
+    assert json.loads(before_settings)["encrypt_key_storage"] is False
+    assert json.loads(key_store_path.read_text(encoding="utf-8"))["cleartext"] is True
+    key_store_service.lock()
+    assert key_store_service.unlocked_credentials()[f"provider-{vision.id}"] == SECRET
+
+
+def test_failed_rewrite_does_not_persist_the_encryption_setting(
+    app, app_ctx, key_store_path, monkeypatch
+):
+    vision = Provider.query.filter_by(visual_name="GPT-4o [Vision]").one()
+    client = app.test_client()
+    stored = client.put(
+        f"/system/key-store/{vision.id}",
+        json={"password": PASSWORD, "secret": SECRET},
+    )
+    assert stored.status_code == 200
+    before = key_store_path.read_bytes()
+    settings = _settings_file(key_store_path)
+    assert not settings.exists()
+    real_replace = key_store_service.os.replace
+
+    def fail_store_replace(src, dst):
+        if os.path.abspath(dst) == os.path.abspath(str(key_store_path)):
+            raise OSError("store replace failed")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(key_store_service.os, "replace", fail_store_replace)
+    refused = client.post(
+        "/system/key-store/encryption",
+        json={"enabled": False, "password": PASSWORD},
+    )
+    assert refused.status_code == 500
+    assert refused.get_json()["error"] == UNWRITABLE_MESSAGE
+    assert not settings.exists()
+    assert key_store_path.read_bytes() == before
+    assert client.get("/system/key-store").get_json()["encryptKeyStorage"] is True
+
+
+def test_status_reports_the_encryption_setting(app, key_store_path):
+    client = app.test_client()
+    settings = _settings_file(key_store_path)
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    settings.write_text("{", encoding="utf-8")
+    unreadable = client.get("/system/key-store").get_json()
+    assert unreadable["encryptKeyStorage"] is True
+    assert unreadable["mode"] == "degraded"
+
+    settings.write_text('{"encrypt_key_storage": false}', encoding="utf-8")
+    body = client.get("/system/key-store").get_json()
+    assert body["encryptKeyStorage"] is False
+    assert body["mode"] == "unlocked"
+    assert body["credentialRefs"] == []
+    assert set(body) == {"encryptKeyStorage", "credentialRefs", "mode"}
+    assert SECRET not in client.get("/system/key-store").get_data(as_text=True)
+
+
+def test_cleartext_keys_need_no_unlock(app_ctx, key_store_path):
+    vision = Provider.query.filter_by(visual_name="GPT-4o [Vision]").one()
+    ref = f"provider-{vision.id}"
+    key_store_path.parent.mkdir(parents=True, exist_ok=True)
+    key_store_path.write_text(
+        json.dumps(
+            {"cleartext": True, "secrets": {ref: SECRET}, "version": 1},
+            separators=(",", ":"),
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    _settings_file(key_store_path).write_text(
+        '{"encrypt_key_storage": false}', encoding="utf-8"
+    )
+    key_store_service.lock()
+    assert key_store_service.operating_mode() == "unlocked"
+    assert key_store_service.unlocked_credentials()[ref] == SECRET
+    assert key_store_service.unlock("")[ref] == SECRET
+
+
+def test_cleartext_file_is_not_read_as_an_envelope(app_ctx, key_store_path):
+    """A cleartext mark blocks envelope reading, even if salt is also present."""
+    vision = Provider.query.filter_by(visual_name="GPT-4o [Vision]").one()
+    key_store_service.put_secret(vision.id, PASSWORD, SECRET)
+    envelope = json.loads(key_store_path.read_text(encoding="utf-8"))
+    envelope["cleartext"] = True
+    key_store_path.write_text(
+        json.dumps(envelope, separators=(",", ":"), sort_keys=True),
+        encoding="utf-8",
+    )
+    key_store_service.lock()
+    with pytest.raises(KeyStoreError) as caught:
+        key_store_service.unlock(PASSWORD)
+    assert caught.value.status_code == 422
+    assert str(caught.value) == UNREADABLE_MESSAGE
+    loaded = json.loads(key_store_path.read_text(encoding="utf-8"))
+    assert loaded["cleartext"] is True
+    assert SECRET.encode() not in key_store_path.read_bytes()
+
+
+def test_envelope_is_not_read_as_cleartext(app_ctx, key_store_path):
+    vision = Provider.query.filter_by(visual_name="GPT-4o [Vision]").one()
+    key_store_service.put_secret(vision.id, PASSWORD, SECRET)
+    _settings_file(key_store_path).parent.mkdir(parents=True, exist_ok=True)
+    _settings_file(key_store_path).write_text(
+        '{"encrypt_key_storage": false}', encoding="utf-8"
+    )
+    before = key_store_path.read_bytes()
+    key_store_service.lock()
+    with pytest.raises(KeyStoreError) as caught:
+        key_store_service.unlock(PASSWORD)
+    assert caught.value.status_code == 422
+    assert str(caught.value) == UNREADABLE_MESSAGE
+    assert key_store_path.read_bytes() == before
+    assert SECRET.encode() not in key_store_path.read_bytes()

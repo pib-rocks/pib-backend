@@ -206,6 +206,16 @@ def test_display_path_unlocks_the_store(app, app_ctx, tmp_path, monkeypatch):
     assert stat.S_IMODE(hide_path.stat().st_mode) == 0o644
 
 
+def test_encryption_off_skips_the_startup_password_prompt(app, key_store_path):
+    """The prompt opens only for degraded mode. Encryption off is unlocked."""
+    settings = key_store_path.parent / "key_store_settings.json"
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    settings.write_text('{"encrypt_key_storage": false}', encoding="utf-8")
+    mode = app.test_client().get("/system/key-store").get_json()["mode"]
+    assert mode == "unlocked"
+    assert prompt_decision(mode) == "skip"
+
+
 def test_display_opens_the_prompt_only_while_degraded(monkeypatch):
     assert prompt_decision("degraded") == "open"
     assert prompt_decision("unlocked") == "skip"

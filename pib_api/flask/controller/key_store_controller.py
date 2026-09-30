@@ -1,7 +1,8 @@
-"""HTTP surface for the encrypted provider key store.
+"""HTTP surface for the provider key store.
 
 Responses name a wrong password and carry no secret material. The decrypted
-keys stay in the key-store process.
+keys stay in the key-store process. Encryption off stores cleartext and
+does not ask for a password.
 """
 
 from flask import Blueprint, jsonify, request
@@ -45,6 +46,16 @@ def _bad_request():
     )
 
 
+def _password_for_store(body: dict) -> str | None:
+    """Password from the body. Encryption off allows it to be omitted."""
+    password = _text(body, "password")
+    if password is not None:
+        return password
+    if key_store_service.encryption_enabled():
+        return None
+    return ""
+
+
 def _opened(opened: dict):
     mode = key_store_service.operating_mode()
     if mode == key_store_service.MODE_UNLOCKED:
@@ -75,7 +86,7 @@ def unlock_key_store():
     body = _payload()
     if body is None:
         return _bad_request()
-    password = _text(body, "password")
+    password = _password_for_store(body)
     if password is None:
         return _bad_request()
     try:
@@ -132,14 +143,37 @@ def change_key_store_password():
     return jsonify({"successful": True})
 
 
+@bp.route("/encryption", methods=["POST"])
+def set_key_store_encryption():
+    """Switch encryption on or off. ``password`` is the one that direction needs."""
+    body = _payload()
+    if body is None:
+        return _bad_request()
+    enabled = body.get("enabled")
+    if not isinstance(enabled, bool):
+        return _bad_request()
+    password = _text(body, "password") or ""
+    try:
+        key_store_service.set_encryption(enabled, password)
+    except key_store_service.KeyStoreError as error:
+        return _failure(error)
+    return jsonify(
+        {
+            "successful": True,
+            "encryptKeyStorage": key_store_service.encryption_enabled(),
+            "mode": key_store_service.operating_mode(),
+        }
+    )
+
+
 @bp.route("/<int:provider_id>", methods=["PUT"])
 def put_provider_secret(provider_id: int):
     body = _payload()
     if body is None:
         return _bad_request()
-    password = _text(body, "password")
     secret = _text(body, "secret")
-    if password is None or secret is None:
+    password = _password_for_store(body)
+    if secret is None or password is None:
         return _bad_request()
     try:
         ref = key_store_service.put_secret(provider_id, password, secret)
@@ -153,7 +187,7 @@ def delete_provider_secret(provider_id: int):
     body = _payload()
     if body is None:
         return _bad_request()
-    password = _text(body, "password")
+    password = _password_for_store(body)
     if password is None:
         return _bad_request()
     try:
