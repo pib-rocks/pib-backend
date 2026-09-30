@@ -66,6 +66,11 @@ def sandboxed_hermes_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Pa
     # Host Gemini keys must not leak into profile-provisioning assertions.
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    # A host key-store settings file must not flip encryption off under the tests.
+    monkeypatch.setenv(
+        "PIB_KEY_STORE_PATH", str(tmp_path / "secrets" / "provider_key_store.json")
+    )
+    monkeypatch.delenv("PIB_KEY_STORE_SETTINGS_PATH", raising=False)
     return home
 
 
