@@ -29,6 +29,9 @@ from pib_hermes_config.visible_state import (
 logger = logging.getLogger(__name__)
 
 PINNED_PROVIDER = "gemini"
+# UNVERIFIED PLACEHOLDER: the account key does not exist until the speech tab (M1)
+# lands, so this identifier was never read from the provider's model list. Replace it
+# with the value the account returns and update PINNED_CHECKED_ON.
 PINNED_MODEL = "gemini-3.5-flash"
 PINNED_CHECKED_ON = "2026-09-30"
 PINNED_ENDPOINT = (
