@@ -16,9 +16,13 @@ from datatypes.srv import PlayAudioFromFile, PlayAudioFromSpeech, ClearPlaybackQ
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
-from std_msgs.msg import String
+from std_msgs.msg import Bool, String
 
 from pib_hermes_config.turn_taking import clauses_to_synthesize
+from pib_hermes_config.visible_state import (
+    VOICE_USING_FALLBACK_TOPIC,
+    engine_is_fallback,
+)
 from pib_hermes_config.voice_backends import resolve_tts_route
 from public_api_client import public_voice_client
 from . import util
@@ -152,6 +156,10 @@ class AudioPlayerNode(Node):
         )
 
         self.tts_engine = SupertoneTTSEngine()
+        self._published_fallback = None
+        self.voice_using_fallback_publisher = self.create_publisher(
+            Bool, VOICE_USING_FALLBACK_TOPIC, 10
+        )
 
         self.get_logger().info("Now running AUDIO PLAYER")
 
@@ -281,6 +289,9 @@ class AudioPlayerNode(Node):
                 voice=request.gender or "F1",
                 emotion="expressive",
             )
+            self._publish_engine_fallback(
+                getattr(self.tts_engine, "active_backend", "")
+            )
             buf = io.BytesIO(wav_bytes)
             with wave.open(buf, "rb") as wf:
                 raw_pcm = wf.readframes(wf.getnframes())
@@ -297,6 +308,15 @@ class AudioPlayerNode(Node):
                 text, request.gender, request.language, self.token
             )
         return self.adjust_data_granularity(data, BYTES_PER_CHUNK)
+
+    def _publish_engine_fallback(self, active_backend: object) -> None:
+        fallback = engine_is_fallback(active_backend)
+        if fallback == self._published_fallback:
+            return
+        self._published_fallback = fallback
+        message = Bool()
+        message.data = fallback
+        self.voice_using_fallback_publisher.publish(message)
 
     def clear_playback_queue(
         self, _: PlayAudioFromFile.Request, response: PlayAudioFromFile.Response

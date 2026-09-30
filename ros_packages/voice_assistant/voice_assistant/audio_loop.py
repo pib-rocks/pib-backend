@@ -294,6 +294,8 @@ class GeminiAudioLoop:
         self._interruption_reported = False
         self._offer_tools = True
         self._action_announcer: Optional[Any] = None
+        self._speaking_listener: Optional[Any] = None
+        self._speaking = False
         self._send_lock: Optional[asyncio.Lock] = None
         self._playback_slice_bytes = playback_slice_bytes(
             RECEIVE_SAMPLE_RATE, 2, CHANNELS
@@ -302,6 +304,23 @@ class GeminiAudioLoop:
     def set_action_announcer(self, announcer) -> None:
         """Speak a robot action on the existing speech player before it runs."""
         self._action_announcer = announcer
+
+    def set_speaking_listener(self, listener) -> None:
+        """Called with True while live playback has audio, then False."""
+        self._speaking_listener = listener
+
+    def _notify_speaking(self, speaking: bool) -> None:
+        speaking = bool(speaking)
+        if speaking == self._speaking:
+            return
+        self._speaking = speaking
+        listener = self._speaking_listener
+        if listener is None:
+            return
+        try:
+            listener(speaking)
+        except Exception:
+            logger.exception("speaking listener failed")
 
     @property
     def is_listening(self) -> bool:
@@ -871,6 +890,7 @@ class GeminiAudioLoop:
             except Exception:
                 logger.exception("Could not restart playback")
         self._exclude_until = playback_exclusion_deadline(time.monotonic())
+        self._notify_speaking(False)
 
     async def _on_interrupted(self) -> None:
         """Stop playback now, exclude the tail, and tell the model the turn was cut."""
@@ -888,7 +908,33 @@ class GeminiAudioLoop:
             logger.exception("Could not report the interruption to the model")
 
     def _run_one_tool(self, name: str, arguments: dict) -> dict:
-        """Announce a robot action, pause the uplink, then run it."""
+        """Announce a robot action, pause the uplink, then run it.
+
+        A gesture during the answer is only the MCP call. Playback is not
+        stopped for it, and nothing is announced in its place.
+        """
+        from pib_hermes_config.visible_state import (
+            ANSWER_GESTURE_TOOLS,
+            issue_answer_gesture,
+        )
+        from voice_assistant.direct_tool_loop import execute_mcp_tool
+
+        if name in ANSWER_GESTURE_TOOLS:
+            try:
+                result = issue_answer_gesture(name, arguments, execute_mcp_tool)
+            except Exception:
+                logger.exception("Answer gesture %s failed", name)
+                result = {
+                    "ok": False,
+                    "error": {"code": "action_failed", "message": f"{name} failed"},
+                }
+            return {
+                "offered": True,
+                "executed": True,
+                "announcement": None,
+                "result": result,
+                "reason": "gesture",
+            }
 
         def speak(text: str) -> None:
             announcer = self._action_announcer
@@ -917,8 +963,6 @@ class GeminiAudioLoop:
                 self._exclude_until = playback_exclusion_deadline(time.monotonic())
 
         def execute(tool_name: str, args: dict):
-            from voice_assistant.direct_tool_loop import execute_mcp_tool
-
             return execute_mcp_tool(tool_name, args)
 
         class _Pause:
@@ -1011,6 +1055,7 @@ class GeminiAudioLoop:
                     )
                     continue
 
+                self._notify_speaking(True)
                 # Play in short slices so an interruption stops on the next one.
                 cut = False
                 for chunk in iter_playback_slices(pcm, self._playback_slice_bytes):

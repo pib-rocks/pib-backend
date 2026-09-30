@@ -21,6 +21,11 @@ import os
 from typing import Any, Callable, Iterator, Mapping, Optional, Sequence
 from urllib.request import Request, urlopen
 
+from pib_hermes_config.visible_state import (
+    ANSWER_GESTURE_TOOLS,
+    issue_answer_gesture,
+)
+
 logger = logging.getLogger(__name__)
 
 PINNED_PROVIDER = "gemini"
@@ -187,7 +192,10 @@ def run_direct_turn(
             if not isinstance(arguments, dict):
                 arguments = {}
             logger.info("direct tool call name=%s", name)
-            output = runner(name, arguments)
+            if name in ANSWER_GESTURE_TOOLS:
+                output = issue_answer_gesture(name, arguments, runner)
+            else:
+                output = runner(name, arguments)
             messages.append(
                 {
                     "role": "tool",

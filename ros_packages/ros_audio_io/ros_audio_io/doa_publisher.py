@@ -64,7 +64,20 @@ class MicrophoneArrayNode(Node):
         self.dev = None
         self.tuning = None
         self.pixel_ring = None
+        self._configured_led = None
+        self._conversation_led_mode = None
+        self._shown_led_mode = None
+        self._voice_turned_on = False
+        self._voice_chat_id = ""
+        self._personality_id = ""
+        self._personality_name = ""
+        self._speaking = False
+        self._using_fallback = False
+        self._listening_by_chat = {}
+        self._operating_mode = None
 
+        self._subscribe_visible_state()
+        self.create_timer(2.0, self._refresh_operating_mode)
         self._attempt_device_open()
 
         self._declare_control_parameters()
@@ -280,9 +293,106 @@ class MicrophoneArrayNode(Node):
             self._schedule_parameter_sync({"preset": "Custom"})
         return SetParametersResult(successful=True)
 
-    def _apply_led_state(self, state):
-        """Apply LED state; the firmware acknowledges writes but cannot read back."""
+    def _subscribe_visible_state(self):
+        """The ring shows the same holder the face does. Types live in datatypes."""
+        try:
+            from datatypes.msg import ChatIsListening, VoiceAssistantState
+        except ImportError:
+            self.get_logger().warning(
+                "voice_assistant_state is unavailable; the LED ring keeps its stored pattern"
+            )
+            return
+        self.create_subscription(
+            VoiceAssistantState,
+            "voice_assistant_state",
+            self._on_voice_assistant_state,
+            10,
+        )
+        self.create_subscription(
+            ChatIsListening,
+            "chat_is_listening",
+            self._on_chat_is_listening,
+            10,
+        )
 
+    def _refresh_operating_mode(self):
+        from pib_hermes_config.visible_state import cached_key_store_mode
+
+        mode = cached_key_store_mode()
+        if mode == self._operating_mode:
+            return
+        self._operating_mode = mode
+        self._apply_conversation_led()
+
+    def _on_voice_assistant_state(self, msg):
+        self._voice_turned_on = bool(getattr(msg, "turned_on", False))
+        self._voice_chat_id = getattr(msg, "chat_id", "") or ""
+        self._personality_id = getattr(msg, "personality_id", "") or ""
+        self._personality_name = getattr(msg, "personality_name", "") or ""
+        self._speaking = bool(getattr(msg, "speaking", False))
+        self._using_fallback = bool(getattr(msg, "using_fallback", False))
+        self._apply_conversation_led()
+
+    def _on_chat_is_listening(self, msg):
+        chat_id = getattr(msg, "chat_id", "") or ""
+        if not chat_id:
+            return
+        self._listening_by_chat[chat_id] = bool(getattr(msg, "listening", False))
+        self._apply_conversation_led()
+
+    def _apply_conversation_led(self):
+        """Drive listen, think or speak from the holder. Idle restores the stored ring."""
+        from pib_hermes_config.visible_state import resolve_visible_state
+
+        listening = self._listening_by_chat.get(self._voice_chat_id, False)
+        state = resolve_visible_state(
+            turned_on=self._voice_turned_on,
+            chat_id=self._voice_chat_id,
+            personality_id=self._personality_id,
+            personality_name=self._personality_name,
+            listening=listening,
+            listening_chat_id=self._voice_chat_id if listening else "",
+            speaking=self._speaking,
+            using_fallback=self._using_fallback,
+            operating_mode=self._operating_mode,
+        )
+        if state.led_mode == self._shown_led_mode and state.led_mode is not None:
+            self._conversation_led_mode = state.led_mode
+            return
+        self._conversation_led_mode = state.led_mode
+        self._shown_led_mode = state.led_mode
+        if self.pixel_ring is None:
+            return
+        if state.led_mode:
+            self._write_led_mode(state.led_mode, self._configured_led)
+            self.get_logger().info(
+                f"Voice holder {state.holder_personality_id or 'none'} "
+                f"phase={state.phase} led={state.led_mode}"
+            )
+            return
+        if self._configured_led is not None:
+            self._write_configured_led(self._configured_led)
+
+    def _apply_led_state(self, state):
+        """Apply LED state; the firmware acknowledges writes but cannot read back.
+
+        A conversation phase keeps the ring on the holder's pattern. The stored
+        pattern is remembered and restored when the channel is idle.
+        """
+        self._configured_led = dict(state)
+        if self._conversation_led_mode:
+            self._write_led_mode(self._conversation_led_mode, state)
+            return
+        self._write_configured_led(state)
+
+    def _write_led_mode(self, mode, configured):
+        brightness = 16
+        if configured is not None and "led_brightness" in configured:
+            brightness = configured["led_brightness"]
+        self.pixel_ring.set_brightness(int(brightness))
+        getattr(self.pixel_ring, mode)()
+
+    def _write_configured_led(self, state):
         self.pixel_ring.set_brightness(state["led_brightness"])
         self.pixel_ring.set_vad_led(state["vad_led"])
         mode = state["led_mode"]

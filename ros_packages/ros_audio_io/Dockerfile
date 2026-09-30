@@ -28,6 +28,9 @@ RUN pip install --break-system-packages --no-cache-dir --ignore-installed pyaudi
 COPY ./pib_api/client ./client
 RUN pip install --break-system-packages --no-cache-dir ./client
 
+COPY ./pib_hermes_config /tmp/pib_hermes_config
+RUN pip install --break-system-packages --no-cache-dir /tmp/pib_hermes_config
+
 COPY ./ros_packages/datatypes ros2_ws/datatypes
 COPY ./ros_packages/ros_audio_io ros2_ws/ros_audio_io
 

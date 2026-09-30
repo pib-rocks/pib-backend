@@ -17,6 +17,10 @@ from rclpy.node import Node
 from std_msgs.msg import Bool, String, Int16MultiArray
 
 from pib_hermes_config.live_interaction import turn_based_is_speech
+from pib_hermes_config.visible_state import (
+    VOICE_USING_FALLBACK_TOPIC,
+    engine_is_fallback,
+)
 from pib_hermes_config.voice_backends import resolve_stt_route
 from public_api_client import public_voice_client
 from voice_assistant.stt_transcription import FasterWhisperSTTEngine
@@ -59,6 +63,10 @@ class AudioRecorderNode(Node):
 
         self.token: Optional[str] = None
         self.stt_engine = FasterWhisperSTTEngine()
+        self._published_fallback = None
+        self.voice_using_fallback_publisher = self.create_publisher(
+            Bool, VOICE_USING_FALLBACK_TOPIC, 10
+        )
 
         self.goal_queue: deque[ServerGoalHandle] = deque()
         self.goal_queue_lock = Lock()
@@ -321,6 +329,9 @@ class AudioRecorderNode(Node):
         try:
             if route == "local":
                 text, _ = self.stt_engine.transcribe(wav_data)
+                self._publish_engine_fallback(
+                    getattr(self.stt_engine, "active_backend", "")
+                )
             elif route == "tryb":
                 text = public_voice_client.speech_to_text(wav_data, self.token)
             else:
@@ -337,6 +348,15 @@ class AudioRecorderNode(Node):
 
         goal_handle.succeed()
         return self.create_result(text)
+
+    def _publish_engine_fallback(self, active_backend: object) -> None:
+        fallback = engine_is_fallback(active_backend)
+        if fallback == self._published_fallback:
+            return
+        self._published_fallback = fallback
+        message = Bool()
+        message.data = fallback
+        self.voice_using_fallback_publisher.publish(message)
 
 
 def main(args=None):

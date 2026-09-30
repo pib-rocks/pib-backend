@@ -28,6 +28,12 @@ from pib_hermes_config.turn_taking import (
     first_token_budget_ms,
     pause_threshold_now,
 )
+from pib_hermes_config.visible_state import (
+    VOICE_USING_FALLBACK_TOPIC,
+    answer_uses_fallback,
+)
+from public_api_client.hermes_agent_client import FALLBACK_REPLY
+from std_msgs.msg import Bool
 from rclpy.action import ActionClient
 from rclpy.action.client import ClientGoalHandle
 from rclpy.client import Client
@@ -63,6 +69,11 @@ class VoiceAssistantNode(Node):
         self.state.chat_id = ""
         self.state.live_session = False
         self.state.personality_id = ""
+        self.state.speaking = False
+        self.state.using_fallback = False
+        self.state.personality_name = ""
+        self._answer_is_fallback = False
+        self._engine_fallback = False
         # indicates if the voice_assistant is currently turning off
         self.turning_off = False
         # the personality associated with the active chat
@@ -127,6 +138,12 @@ class VoiceAssistantNode(Node):
         self.chat_is_listening_publisher: Publisher = self.create_publisher(
             ChatIsListening, "chat_is_listening", 10
         )
+        self.create_subscription(
+            Bool,
+            VOICE_USING_FALLBACK_TOPIC,
+            self._on_engine_fallback,
+            10,
+        )
 
         # clients -----------------------------------------------------------------------
 
@@ -159,6 +176,8 @@ class VoiceAssistantNode(Node):
         self.run_program_client.wait_for_server()
 
         self.gemini_loop.set_action_announcer(self._announce_live_action)
+        self.gemini_loop.set_speaking_listener(self._on_live_speaking)
+        self.create_timer(1.0, self._republish_visible_state)
 
         from voice_assistant.attention import GREETING_CHECK_SECONDS, bind_attention
 
@@ -312,6 +331,8 @@ class VoiceAssistantNode(Node):
         request.tts_engine = (
             getattr(self.personality, "tts_engine", None) or "supertone"
         )
+        if speech and str(speech).strip():
+            self._note_spoken_answer(str(speech))
         future: Future = self.play_audio_from_speech_client.call_async(request)
         if request.join:
             future.add_done_callback(lambda _: on_stopped_playing())
@@ -513,6 +534,9 @@ class VoiceAssistantNode(Node):
             self.if_cycle_not_changed(self.on_transcribed_text_received),
         )
 
+        self._answer_is_fallback = False
+        self.state.speaking = False
+        self.state.using_fallback = self._engine_fallback
         self.set_is_listening(self.state.chat_id, True)
 
     def _on_stop_signal_played(self) -> None:
@@ -645,6 +669,41 @@ class VoiceAssistantNode(Node):
         chat_is_listening.chat_id = chat_id
 
         self.chat_is_listening_publisher.publish(chat_is_listening)
+        self._publish_voice_state()
+
+    def _note_spoken_answer(self, speech: str) -> None:
+        """Speaking starts. A fallback sentence is shown as fallback."""
+        self._answer_is_fallback = answer_uses_fallback(speech, FALLBACK_REPLY)
+        self.state.speaking = True
+        self.state.using_fallback = self._answer_is_fallback or self._engine_fallback
+        self._publish_voice_state()
+
+    def _on_live_speaking(self, speaking: bool) -> None:
+        """Live playback. The session stays open, so listening is not cleared."""
+        self.state.speaking = bool(speaking)
+        if not speaking:
+            self._answer_is_fallback = False
+        self.state.using_fallback = self._answer_is_fallback or self._engine_fallback
+        self._publish_voice_state()
+
+    def _on_engine_fallback(self, msg: Bool) -> None:
+        """STT or TTS left its primary engine. The face reads this from voice state."""
+        self._engine_fallback = bool(msg.data)
+        self.state.using_fallback = self._engine_fallback or self._answer_is_fallback
+        self._publish_voice_state()
+
+    def _republish_visible_state(self) -> None:
+        """Repeat the current holder so a display that joined late still sees it."""
+        chat_id = self.state.chat_id
+        if chat_id:
+            listening = self.chat_id_to_is_listening.get(chat_id, False) or (
+                self.gemini_loop.is_listening and chat_id == self.state.chat_id
+            )
+            message = ChatIsListening()
+            message.listening = bool(listening)
+            message.chat_id = chat_id
+            self.chat_is_listening_publisher.publish(message)
+        self._publish_voice_state()
 
     def get_is_listening(self, chat_id: str) -> bool:
         """find out, if a chat is currently listening for user input"""
@@ -661,8 +720,13 @@ class VoiceAssistantNode(Node):
         self.state.live_session = bool(self.gemini_loop.is_listening)
         if self.state.turned_on and self.personality is not None:
             self.state.personality_id = self.personality.personality_id or ""
+            self.state.personality_name = getattr(self.personality, "name", "") or ""
         else:
             self.state.personality_id = ""
+            self.state.personality_name = ""
+            self.state.speaking = False
+            self._answer_is_fallback = False
+            self.state.using_fallback = self._engine_fallback
 
     def _publish_voice_state(self) -> None:
         self._sync_voice_state()
@@ -803,7 +867,8 @@ class VoiceAssistantNode(Node):
 
             self.state.turned_on = True
             self.state.chat_id = effective_chat_id
-            self._publish_voice_state()
+            self.state.speaking = False
+            self.set_is_listening(effective_chat_id, True)
             return True
 
         # Legacy activation (unchanged)
