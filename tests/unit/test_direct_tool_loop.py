@@ -15,6 +15,7 @@ VOICE_ASSISTANT_PKG = REPO_ROOT / "ros_packages" / "voice_assistant"
 if str(VOICE_ASSISTANT_PKG) not in sys.path:
     sys.path.insert(0, str(VOICE_ASSISTANT_PKG))
 
+from voice_assistant import direct_tool_loop  # noqa: E402
 from voice_assistant.direct_tool_loop import (  # noqa: E402
     IMAGE_TOOL,
     PINNED_CHECKED_ON,
@@ -215,7 +216,7 @@ def test_gemini_request_uses_the_pinned_url_and_omits_tools_when_absent(monkeypa
         captured["body"] = json.loads(request.data.decode())
         return Response()
 
-    monkeypatch.setattr("voice_assistant.direct_tool_loop.urlopen", fake_urlopen)
+    monkeypatch.setattr(direct_tool_loop, "urlopen", fake_urlopen)
     monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
 

@@ -10,6 +10,7 @@ if str(VOICE_ASSISTANT_PKG) not in sys.path:
     sys.path.insert(0, str(VOICE_ASSISTANT_PKG))
 
 from pib_hermes_config.memory import CONSOLIDATION_CHECK_SECONDS  # noqa: E402
+from voice_assistant import direct_tool_loop as direct_tool_loop_module  # noqa: E402
 from voice_assistant.memory_consolidation import (  # noqa: E402
     schedule_memory_consolidation,
     summarise_old_entries,

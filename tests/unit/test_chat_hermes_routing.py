@@ -190,11 +190,22 @@ def _install_ros_stubs():
 def chat_module():
     _install_ros_stubs()
     # Force re-import if a previous failed import left a partial module.
-    sys.modules.pop("voice_assistant.chat", None)
-    sys.modules.pop("voice_assistant", None)
+    # The entries are put back afterwards: dropping "voice_assistant" from
+    # sys.modules also detaches the submodule attributes from the package object
+    # that the rest of the session holds, so every later test patching
+    # "voice_assistant.<module>" by dotted path would see a package without that
+    # attribute and fail with AttributeError.
+    stolen = {
+        name: sys.modules.pop(name)
+        for name in ("voice_assistant.chat", "voice_assistant")
+        if name in sys.modules
+    }
     from voice_assistant import chat as chat_mod
 
-    return chat_mod
+    yield chat_mod
+
+    for name, module in stolen.items():
+        sys.modules[name] = module
 
 
 @pytest.fixture
