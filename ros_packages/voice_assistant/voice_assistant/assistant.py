@@ -25,6 +25,7 @@ from rclpy.service import Service
 from rclpy.task import Future
 from voice_assistant import START_SIGNAL_FILE, STOP_SIGNAL_FILE
 from voice_assistant.audio_loop import GeminiAudioLoop
+from voice_assistant.degraded_chat import allows_cloud_chat, fetch_operating_mode
 
 MAX_SILENT_SECONDS_BEFORE = 8.0
 
@@ -323,10 +324,15 @@ class VoiceAssistantNode(Node):
 
     # callback cycle --------------------------------------------------------------------
 
+    def _cloud_session_allowed(self) -> bool:
+        """Live and other cloud sessions need the unlocked key store."""
+        return allows_cloud_chat(fetch_operating_mode())
+
     def on_start_signal_played(self) -> None:
         if (
             self.personality
             and "gemini" in self.personality.assistant_model.api_name.lower()
+            and self._cloud_session_allowed()
         ):
             return
 
@@ -347,6 +353,7 @@ class VoiceAssistantNode(Node):
         if (
             self.personality
             and "gemini" in self.personality.assistant_model.api_name.lower()
+            and self._cloud_session_allowed()
         ):
             return
 
@@ -566,8 +573,9 @@ class VoiceAssistantNode(Node):
         api_name = self.personality.assistant_model.api_name.lower()
         self.get_logger().debug(f"update_state: resolved api_name={api_name}")
 
-        # GEMINI path: short-circuit legacy logic
-        if "gemini" in api_name:
+        # GEMINI path: short-circuit legacy logic. While the key store is
+        # locked this falls through to the local recorder instead.
+        if "gemini" in api_name and self._cloud_session_allowed():
             if not self.gemini_loop.is_listening:
                 self.gemini_loop.start(chat_id=chat_id)
                 self.play_audio_from_file(START_SIGNAL_FILE)

@@ -29,6 +29,11 @@ from rclpy.service import Service
 from std_msgs.msg import String
 
 from public_api_client import hermes_agent_client, public_voice_client
+from voice_assistant.degraded_chat import (
+    MODE_UNLOCKED,
+    fetch_operating_mode,
+    refusal_sentence,
+)
 
 # In future, this code will be prepended to the description in a chat-request
 # if it is specified that code should be generated. The text will contain
@@ -133,6 +138,10 @@ class ChatNode(Node):
         self._ensure_hermes_daemon()
 
         self.get_logger().info("Now running CHAT")
+
+    def _key_store_mode(self) -> str:
+        """Operating mode of the key store. Unreadable means degraded."""
+        return fetch_operating_mode()
 
     def destroy_node(self):
         # Abandoned hermes workers must not keep the process alive on shutdown.
@@ -810,6 +819,25 @@ class ChatNode(Node):
         is_hermes = hermes_agent_client.uses_hermes_backend(
             personality.assistant_model.api_name
         )
+
+        if self._key_store_mode() != MODE_UNLOCKED:
+            # Smart and Direct both stop here. The sentence is the personality
+            # speaking: the assistant plays it with this personality's gender
+            # and language on local Supertone. The goal succeeds.
+            if goal_handle.is_cancel_requested:
+                goal_handle.canceled()
+                return Chat.Result()
+            channel = "smart" if is_hermes else "direct"
+            sentence = refusal_sentence(channel)
+            self.create_chat_message(chat_id, sentence, False, False, True)
+            goal_handle.succeed()
+            result = Chat.Result()
+            result.text = sentence
+            result.text_type = Chat.Goal.TEXT_TYPE_SENTENCE
+            self.get_logger().info(
+                f"chat refused in degraded mode channel={channel} chat={chat_id}"
+            )
+            return result
 
         try:
             if is_hermes:

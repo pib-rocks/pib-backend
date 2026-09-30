@@ -35,6 +35,11 @@ NO_KEY_STORE_MESSAGE = "No encrypted key store exists yet."
 UNREADABLE_MESSAGE = "Key store could not be read."
 UNWRITABLE_MESSAGE = "Key store could not be written."
 
+# Named operating mode from D6. Locked, including after the prompt is
+# cancelled, is degraded. Unlocked is the only other mode.
+MODE_DEGRADED = "degraded"
+MODE_UNLOCKED = "unlocked"
+
 # Decrypted credential_ref -> secret. None means this process is locked.
 _unlocked: Optional[dict[str, str]] = None
 
@@ -51,6 +56,24 @@ def lock() -> None:
     """Drop decrypted keys. The password is not kept."""
     global _unlocked
     _unlocked = None
+
+
+def operating_mode() -> str:
+    """``degraded`` until a password has opened the store in this process."""
+    if _unlocked is None:
+        return MODE_DEGRADED
+    return MODE_UNLOCKED
+
+
+def cancel_prompt() -> str:
+    """The operator dismissed the password prompt.
+
+    This is not a failed unlock. The store stays as it is: locked means the
+    named degraded mode, and a store that is already open stays open.
+    """
+    mode = operating_mode()
+    logger.info("Password prompt cancelled; operating mode is %s", mode)
+    return mode
 
 
 def unlocked_credentials() -> dict[str, str]:

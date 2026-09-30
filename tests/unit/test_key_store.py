@@ -41,6 +41,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 def key_store_path(tmp_path, monkeypatch):
     path = tmp_path / "secrets" / "provider_key_store.json"
     monkeypatch.setenv("PIB_KEY_STORE_PATH", str(path))
+    monkeypatch.delenv("PIB_UPDATE_DIR", raising=False)
     key_store_service.lock()
     yield path
     key_store_service.lock()
@@ -310,4 +311,8 @@ def test_short_password_does_not_create_a_store(app, app_ctx, key_store_path):
 
 def test_status_reports_encryption_on_before_any_key(app):
     body = app.test_client().get("/system/key-store").get_json()
-    assert body == {"encryptKeyStorage": True, "credentialRefs": []}
+    assert body == {
+        "encryptKeyStorage": True,
+        "credentialRefs": [],
+        "mode": "degraded",
+    }

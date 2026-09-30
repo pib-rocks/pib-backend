@@ -22,6 +22,7 @@ from display.display_web_request import (  # noqa: E402
     SURFACE_WEB_FAILED,
     acknowledge_web_status,
     command_effect,
+    later_hide_releases,
     read_status,
     validate_document,
     write_hide_request,
@@ -173,6 +174,36 @@ def test_host_status_drives_the_ready_channel():
 
 def test_status_reader_ignores_a_missing_file(tmp_path: Path):
     assert read_status(tmp_path) is None
+
+
+def test_a_later_hide_releases_the_password_page():
+    opened_at = "2026-09-30T00:00:00Z"
+    assert later_hide_releases(opened_at, None) is False
+    assert (
+        later_hide_releases(
+            opened_at,
+            {
+                "state": "done",
+                "action": "hide",
+                "requestedAt": "2026-09-30T00:00:01Z",
+            },
+        )
+        is True
+    )
+    assert (
+        later_hide_releases(
+            opened_at,
+            {"state": "done", "action": "open", "requestedAt": "2026-09-30T00:00:02Z"},
+        )
+        is False
+    )
+    assert (
+        later_hide_releases(
+            opened_at,
+            {"state": "done", "action": "hide", "requestedAt": opened_at},
+        )
+        is False
+    )
 
 
 def test_units_are_a_separate_pair_and_the_compose_file_mounts_the_directory():

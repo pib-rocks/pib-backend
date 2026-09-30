@@ -210,6 +210,7 @@ def chat_node(chat_module):
     node.voice_assistant_client_lock.__exit__ = MagicMock(return_value=False)
     node.token = "tok"
     node.history_length = 10
+    node._key_store_mode = lambda: "unlocked"
     node.get_camera_image_client = MagicMock()
     node._hermes_executor = ThreadPoolExecutor(
         max_workers=2, thread_name_prefix="test-hermes-turn"
@@ -1214,3 +1215,82 @@ def test_chat_legacy_path_still_uses_public_api(chat_module, chat_node):
     stream.assert_called_once()
     assert result.text == "Hi."
     goal_handle.succeed.assert_called_once()
+
+
+def _degraded_goal(chat_module, chat_id: str):
+    goal_handle = MagicMock()
+    goal_handle.is_cancel_requested = False
+    goal_handle.request = chat_module.Chat.Goal()
+    goal_handle.request.chat_id = chat_id
+    goal_handle.request.text = "Hello"
+    goal_handle.request.generate_code = False
+    return goal_handle
+
+
+def test_degraded_smart_chat_names_the_missing_password(chat_module, chat_node):
+    from voice_assistant.degraded_chat import refusal_sentence
+
+    personality = MagicMock()
+    personality.message_history = 5
+    personality.description = "Du bist pib."
+    personality.personality_id = "pers-1"
+    personality.gender = "Female"
+    personality.language = "German"
+    personality.assistant_model.api_name = "hermes-agent"
+    chat_node._key_store_mode = lambda: "degraded"
+    goal_handle = _degraded_goal(chat_module, "chat-locked")
+
+    with (
+        patch.object(
+            chat_module.voice_assistant_client,
+            "get_personality_from_chat",
+            return_value=(True, personality),
+        ),
+        patch.object(chat_module.hermes_agent_client, "stream_turn") as stream_turn,
+        patch.object(chat_module.public_voice_client, "chat_completion") as completion,
+    ):
+        result = drive_like_rclpy(chat_node.chat(goal_handle))
+
+    stream_turn.assert_not_called()
+    completion.assert_not_called()
+    goal_handle.abort.assert_not_called()
+    goal_handle.succeed.assert_called_once()
+    assert result.text == refusal_sentence("smart")
+    assert result.text_type == TEXT_TYPE_SENTENCE
+    assert "operator password" in result.text
+    chat_node.create_chat_message.assert_any_call(
+        "chat-locked", result.text, False, False, True
+    )
+
+
+def test_degraded_direct_chat_names_the_missing_password(chat_module, chat_node):
+    from voice_assistant.degraded_chat import refusal_sentence
+
+    personality = MagicMock()
+    personality.message_history = 5
+    personality.description = "Du bist pib."
+    personality.personality_id = "pers-1"
+    personality.gender = "Male"
+    personality.language = "German"
+    personality.assistant_model.api_name = "gpt-4o"
+    chat_node._key_store_mode = lambda: "degraded"
+    goal_handle = _degraded_goal(chat_module, "chat-direct")
+
+    with (
+        patch.object(
+            chat_module.voice_assistant_client,
+            "get_personality_from_chat",
+            return_value=(True, personality),
+        ),
+        patch.object(chat_module.hermes_agent_client, "stream_turn") as stream_turn,
+        patch.object(chat_module.public_voice_client, "chat_completion") as completion,
+    ):
+        result = drive_like_rclpy(chat_node.chat(goal_handle))
+
+    stream_turn.assert_not_called()
+    completion.assert_not_called()
+    goal_handle.abort.assert_not_called()
+    goal_handle.succeed.assert_called_once()
+    assert result.text == refusal_sentence("direct")
+    assert "Direct" in result.text
+    assert "operator password" in result.text

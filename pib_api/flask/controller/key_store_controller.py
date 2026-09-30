@@ -6,7 +6,7 @@ keys stay in the key-store process.
 
 from flask import Blueprint, jsonify, request
 
-from service import key_store_service
+from service import display_prompt, key_store_service
 
 bp = Blueprint("key_store_controller", __name__)
 
@@ -45,6 +45,19 @@ def _bad_request():
     )
 
 
+def _opened(opened: dict):
+    mode = key_store_service.operating_mode()
+    if mode == key_store_service.MODE_UNLOCKED:
+        display_prompt.dismiss_surface()
+    return jsonify(
+        {
+            "successful": True,
+            "mode": mode,
+            "credentials": [{"credentialRef": ref} for ref in sorted(opened)],
+        }
+    )
+
+
 @bp.route("", methods=["GET"])
 def get_key_store():
     state = key_store_service.status()
@@ -52,6 +65,7 @@ def get_key_store():
         {
             "encryptKeyStorage": state["encrypt_key_storage"],
             "credentialRefs": state["credential_refs"],
+            "mode": key_store_service.operating_mode(),
         }
     )
 
@@ -68,12 +82,34 @@ def unlock_key_store():
         opened = key_store_service.unlock(password)
     except key_store_service.KeyStoreError as error:
         return _failure(error)
-    return jsonify(
-        {
-            "successful": True,
-            "credentials": [{"credentialRef": ref} for ref in sorted(opened)],
-        }
-    )
+    return _opened(opened)
+
+
+@bp.route("/cancel", methods=["POST"])
+def cancel_key_store_prompt():
+    """Dismiss the password prompt. Success, and the robot stays degraded."""
+    mode = key_store_service.cancel_prompt()
+    if mode == key_store_service.MODE_DEGRADED:
+        display_prompt.dismiss_surface()
+    return jsonify({"successful": True, "mode": mode, "credentials": []})
+
+
+@bp.route("/display", methods=["GET"])
+def display_password_prompt():
+    """Password page the robot's own screen can open without Cerebra."""
+    return display_prompt.PROMPT_PAGE, 200, {"Content-Type": "text/html; charset=utf-8"}
+
+
+@bp.route("/display/unlock", methods=["POST"])
+def display_unlock_key_store():
+    """Same store as Cerebra's unlock, called from the on-device page."""
+    return unlock_key_store()
+
+
+@bp.route("/display/cancel", methods=["POST"])
+def display_cancel_key_store_prompt():
+    """Cancel from the on-device page. Leaves degraded mode, not an error."""
+    return cancel_key_store_prompt()
 
 
 @bp.route("/password", methods=["POST"])

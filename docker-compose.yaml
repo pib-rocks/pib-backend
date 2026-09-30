@@ -244,6 +244,8 @@ services:
       - PIB_DISPLAY_TEXT_CACHE_MAX=50
       - PIB_DISPLAY_POLL_MS=5
       - PIB_UPDATE_DIR=/app/.update
+      - FLASK_API_BASE_URL=http://flask-app:5000
+      - PIB_KEY_STORE_PROMPT_URL=http://127.0.0.1:5000/system/key-store/display
       - XDG_RUNTIME_DIR=/run/user/1000
       - WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-wayland-0}
       - GDK_BACKEND=wayland
