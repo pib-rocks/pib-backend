@@ -148,8 +148,22 @@ class ChatNode(Node):
         self._preflight_hermes_binary()
         self._ensure_hermes_daemon()
         schedule_memory_consolidation(self)
+        from voice_assistant.attention import bind_attention
+
+        # Head turn and per-person preface. Sensors are optional: a missing
+        # camera message must not stop the node from answering.
+        self._attention = bind_attention(self)
 
         self.get_logger().info("Now running CHAT")
+
+    def _attention_plan(self):
+        """The plan for this answer. Missing sensors leave the turn unchanged."""
+        from pib_hermes_config.attention import AttentionPlan
+
+        attention = getattr(self, "_attention", None)
+        if attention is None:
+            return AttentionPlan()
+        return attention.before_answer()
 
     def _key_store_mode(self) -> str:
         """Operating mode of the key store. Unreadable means degraded."""
@@ -863,6 +877,10 @@ class ChatNode(Node):
         # assistant chunks start creating and updating their own message.
         self.create_chat_message(chat_id, content, True, False, True)
 
+        # Turn toward the detected speaker before any answer, including the
+        # degraded-mode sentence. The stored user line stays the words they said.
+        plan = self._attention_plan()
+
         # Get personality (also sets how much history to include)
         with self.voice_assistant_client_lock:
             successful, personality = voice_assistant_client.get_personality_from_chat(
@@ -920,7 +938,7 @@ class ChatNode(Node):
                     goal_handle.canceled()
                     return Chat.Result()
                 tokens = self._stream_hermes_turn(
-                    text=content,
+                    text=plan.for_hermes(content),
                     chat_id=chat_id,
                     personality_id=getattr(personality, "personality_id", None),
                     description=description,
@@ -951,6 +969,7 @@ class ChatNode(Node):
                 system_prompt = direct_system_prompt(personality.description)
                 if generate_code:
                     system_prompt = CODE_DESCRIPTION_PREFIX + system_prompt
+                system_prompt = plan.for_direct(system_prompt)
                 tool_calling = direct_tool_loop.tool_calling_enabled(personality)
                 allow_image = direct_tool_loop.image_tool_allowed(
                     personality, tool_calling

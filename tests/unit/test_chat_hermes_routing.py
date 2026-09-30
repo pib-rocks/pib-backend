@@ -728,6 +728,120 @@ def test_stream_chunks_to_goal_emits_perf_trace_on_first_chunk(chat_module, chat
     assert any("[PERF_TRACE] FIRST_CHUNK_EMITTED" in msg for msg in info_messages)
 
 
+def test_chat_turns_toward_the_speaker_before_the_model_and_keeps_the_user_line(
+    chat_module, chat_node
+):
+    """The head command runs before the model sees the turn. The stored line does not."""
+    from pib_hermes_config.attention import AttentionPlan
+
+    Chat = chat_module.Chat
+    order = []
+    preface = "You are speaking with Ada. Address them by that name."
+    plan = AttentionPlan(preface=preface)
+
+    class _Attention:
+        def before_answer(self):
+            order.append("head")
+            return plan
+
+    chat_node._attention = _Attention()
+
+    personality = MagicMock()
+    personality.message_history = 5
+    personality.description = "Du bist pib."
+    personality.personality_id = "pers-1"
+    personality.assistant_model.api_name = "hermes-agent"
+    personality.assistant_model.has_image_support = True
+
+    goal_handle = MagicMock()
+    goal_handle.is_cancel_requested = False
+    goal_handle.request = Chat.Goal()
+    goal_handle.request.chat_id = "chat-9"
+    goal_handle.request.text = "Hi"
+    goal_handle.request.generate_code = False
+
+    def _stream(**kwargs):
+        order.append("model")
+        assert kwargs["text"] == preface + "\n\nHi"
+        return ["Antwort."]
+
+    with (
+        patch.object(
+            chat_module.voice_assistant_client,
+            "get_personality_from_chat",
+            return_value=(True, personality),
+        ),
+        patch.object(chat_node, "_stream_hermes_turn", side_effect=_stream),
+        patch.object(
+            chat_node,
+            "_stream_chunks_to_goal",
+            return_value=(None, None, "Antwort."),
+        ),
+    ):
+        drive_like_rclpy(chat_node.chat(goal_handle))
+
+    assert order == ["head", "model"]
+    chat_node.create_chat_message.assert_any_call("chat-9", "Hi", True, False, True)
+
+
+def test_direct_turn_puts_the_person_on_the_system_prompt(
+    chat_module, chat_node, monkeypatch
+):
+    from pib_hermes_config.attention import AttentionPlan
+
+    Chat = chat_module.Chat
+    monkeypatch.setenv("PIB_SMART_CHATS", "0")
+    preface = "You are speaking with Ada. Address them by that name."
+    chat_node._attention = MagicMock()
+    chat_node._attention.before_answer.return_value = AttentionPlan(preface=preface)
+
+    personality = MagicMock()
+    personality.message_history = 5
+    personality.description = "Ein Soul, eine Identitaet."
+    personality.personality_id = "pers-1"
+    personality.assistant_model.api_name = "hermes-agent"
+    personality.assistant_model.has_image_support = False
+    personality.tool_calling = True
+    personality.channel = "smart"
+    personality.effective_channel = "smart"
+
+    goal_handle = MagicMock()
+    goal_handle.is_cancel_requested = False
+    goal_handle.request = Chat.Goal()
+    goal_handle.request.chat_id = "chat-forced"
+    goal_handle.request.text = "Hi"
+    goal_handle.request.generate_code = False
+
+    with (
+        patch.object(
+            chat_module.voice_assistant_client,
+            "get_personality_from_chat",
+            return_value=(True, personality),
+        ),
+        patch.object(
+            chat_module.voice_assistant_client,
+            "get_chat_history",
+            return_value=(True, []),
+        ),
+        patch.object(
+            chat_module.direct_tool_loop,
+            "run_direct_turn",
+            return_value=iter(["Direkt."]),
+        ) as run_direct_turn,
+        patch.object(
+            chat_node,
+            "_stream_chunks_to_goal",
+            return_value=(None, None, "Direkt."),
+        ),
+    ):
+        drive_like_rclpy(chat_node.chat(goal_handle))
+
+    assert run_direct_turn.call_args.kwargs["user_text"] == "Hi"
+    assert run_direct_turn.call_args.kwargs["system_prompt"] == (
+        "Ein Soul, eine Identitaet.\n\n" + preface
+    )
+
+
 def test_chat_routes_hermes_without_replaying_history(chat_module, chat_node):
     import os
 

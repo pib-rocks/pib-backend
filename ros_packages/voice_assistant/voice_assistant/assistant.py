@@ -1,4 +1,5 @@
 import threading
+import time
 from collections import deque
 from typing import Any, Callable, Optional
 
@@ -159,6 +160,19 @@ class VoiceAssistantNode(Node):
 
         self.gemini_loop.set_action_announcer(self._announce_live_action)
 
+        from voice_assistant.attention import GREETING_CHECK_SECONDS, bind_attention
+
+        # Speech starting turns the head before a live answer. The timer greets
+        # a recognised person who is looking, once per cooldown.
+        self._attention = bind_attention(
+            self,
+            command_on_speech=True,
+            speech_allowed=lambda: bool(self.state.turned_on),
+        )
+        self._presence_timer = self.create_timer(
+            GREETING_CHECK_SECONDS, self._consider_presence_greeting
+        )
+
         self.get_logger().info("Now running VA")
 
     # client accessors ------------------------------------------------------------------
@@ -245,6 +259,29 @@ class VoiceAssistantNode(Node):
         future: Future = self.play_audio_from_file_client.call_async(request)
         if request.join:
             future.add_done_callback(lambda _: on_stopped_playing())
+
+    def _consider_presence_greeting(self) -> None:
+        """Greet a person who is looking, unless a turn is already underway."""
+        if not self.state.turned_on or self.personality is None:
+            return
+        if self.gemini_loop.is_listening:
+            return
+        if (
+            self.waiting_for_transcribed_text
+            or self._turn_has_playback
+            or self.is_executing_program
+        ):
+            return
+        line = self._attention.take_opening_greeting(
+            language=getattr(self.personality, "language", None)
+        )
+        if not line:
+            return
+        self.play_audio_from_speech(
+            line,
+            self.personality.gender,
+            self.personality.language,
+        )
 
     def _announce_live_action(self, text: str) -> None:
         """Speak a robot action on the turn-based player before it runs.
