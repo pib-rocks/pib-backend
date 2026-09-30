@@ -28,6 +28,9 @@ from service.system_property_service import (
 )
 
 bp = Blueprint("system_controller", __name__)
+# Cerebra calls /api/voice-assistant/channel. Nginx strips /api, so Flask
+# serves that document here. It is the same fact as /system/chat-channels.
+voice_channel_bp = Blueprint("voice_assistant_channel", __name__)
 
 # This describes the API's observable/configurable surface. The motor node's
 # actuator registry remains authoritative for actually driving each kind.
@@ -64,9 +67,12 @@ CONTROLLER_CAPABILITIES = {
 }
 
 
-@bp.route("/chat-channels", methods=["GET"])
-def get_chat_channels():
-    """Channels the UI may offer. Smart is omitted when the installer disabled it."""
+def chat_channels_document() -> dict:
+    """Channels the UI may offer. Smart is omitted when the installer disabled it.
+
+    The stored personality channel is not part of this document and is not
+    rewritten. Clearing the installer marker puts Smart back on the list.
+    """
     enabled = smart_chats_enabled()
     if enabled:
         channels = [CHANNEL_SMART, CHANNEL_DIRECT]
@@ -74,13 +80,23 @@ def get_chat_channels():
     else:
         channels = [CHANNEL_DIRECT]
         default = CHANNEL_DIRECT
-    return jsonify(
-        {
-            "smartChatsEnabled": enabled,
-            "channels": channels,
-            "defaultChannel": default,
-        }
-    )
+    return {
+        "smartChatsEnabled": enabled,
+        "channels": channels,
+        "defaultChannel": default,
+    }
+
+
+@bp.route("/chat-channels", methods=["GET"])
+def get_chat_channels():
+    """Channels the UI may offer. Smart is omitted when the installer disabled it."""
+    return jsonify(chat_channels_document())
+
+
+@voice_channel_bp.route("/channel", methods=["GET"])
+def get_voice_assistant_channel():
+    """Installer flag for the personality dialog. Same document as /system/chat-channels."""
+    return jsonify(chat_channels_document())
 
 
 @bp.route("/hardware-variant", methods=["GET"])

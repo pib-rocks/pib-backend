@@ -25,6 +25,11 @@ app.register_blueprint(program_controller.bp, url_prefix="/program", name="progr
 app.register_blueprint(
     chat_controller.bp, url_prefix="/voice-assistant/chat", name="chat"
 )
+app.register_blueprint(
+    system_controller.voice_channel_bp,
+    url_prefix="/voice-assistant",
+    name="voice_assistant_channel",
+)
 app.register_blueprint(motor_controller.bp, url_prefix="/motor", name="motor")
 app.register_blueprint(
     personality_controller.bp,

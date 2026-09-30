@@ -180,6 +180,78 @@ def test_disabled_installer_offers_only_direct(client, app_ctx, monkeypatch):
     assert offered["defaultChannel"] == CHANNEL_DIRECT
 
 
+def test_ui_channel_path_follows_the_installer_flag(client, monkeypatch):
+    """Cerebra reads /api/voice-assistant/channel. Nginx strips /api."""
+    offered = client.get("/voice-assistant/channel")
+    assert offered.status_code == 200
+    assert offered.get_json() == client.get("/system/chat-channels").get_json()
+    assert offered.get_json()["smartChatsEnabled"] is True
+
+    monkeypatch.setenv("PIB_SMART_CHATS", "0")
+    disabled = client.get("/voice-assistant/channel")
+    assert disabled.status_code == 200
+    body = disabled.get_json()
+    assert body == client.get("/system/chat-channels").get_json()
+    assert body["smartChatsEnabled"] is False
+    assert body["channels"] == [CHANNEL_DIRECT]
+    assert CHANNEL_SMART not in body["channels"]
+
+
+def test_existing_smart_personality_is_shown_as_direct_and_restores(
+    client, app_ctx, monkeypatch, tmp_path
+):
+    """The flag does not hide, delete, or rewrite a personality that stored Smart."""
+    from model.assistant_model import AssistantModel
+
+    monkeypatch.setenv("PIB_HERMES_PROFILES_DIR", str(tmp_path))
+    model = AssistantModel.query.first()
+    created = client.post(
+        "/voice-assistant/personality",
+        json={
+            "name": "ExistingSmart",
+            "gender": "Female",
+            "pauseThreshold": 0.8,
+            "messageHistory": 5,
+            "assistantModelId": model.id,
+            "channel": CHANNEL_SMART,
+            "description": "Ein Soul, eine Identitaet.",
+        },
+    )
+    assert created.status_code == 201
+    created_body = created.get_json()
+    personality_id = created_body["personalityId"]
+    identity = created_body["description"]
+    soul = Path(profile_dir_for(personality_id)) / "SOUL.md"
+    memory = Path(profile_dir_for(personality_id)) / "memories" / "MEMORY.md"
+    memory.parent.mkdir(parents=True)
+    memory.write_text("remember this\n", encoding="utf-8")
+    soul_bytes = soul.read_bytes()
+    memory_bytes = memory.read_bytes()
+
+    monkeypatch.setenv("PIB_SMART_CHATS", "0")
+    listed = client.get("/voice-assistant/personality").get_json()
+    shown = [
+        item
+        for item in listed["voiceAssistantPersonalities"]
+        if item["personalityId"] == personality_id
+    ]
+    assert len(shown) == 1
+    assert shown[0]["channel"] == CHANNEL_SMART
+    assert shown[0]["effectiveChannel"] == CHANNEL_DIRECT
+    assert shown[0]["description"] == identity
+    assert shown[0]["smartChatsEnabled"] is False
+    assert soul.read_bytes() == soul_bytes
+    assert memory.read_bytes() == memory_bytes
+
+    monkeypatch.setenv("PIB_SMART_CHATS", "1")
+    restored = client.get(f"/voice-assistant/personality/{personality_id}").get_json()
+    assert restored["channel"] == CHANNEL_SMART
+    assert restored["effectiveChannel"] == CHANNEL_SMART
+    assert restored["description"] == identity
+    assert soul.read_bytes() == soul_bytes
+    assert memory.read_bytes() == memory_bytes
+
+
 def test_disabled_flag_does_not_rewrite_a_stored_smart_channel(
     client, app_ctx, monkeypatch
 ):
