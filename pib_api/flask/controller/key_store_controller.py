@@ -117,10 +117,13 @@ def change_key_store_password():
     body = _payload()
     if body is None:
         return _bad_request()
-    old_password = _text(body, "oldPassword")
+    old_password = _text(body, "oldPassword") or ""
     new_password = _text(body, "newPassword")
     confirm_password = _text(body, "confirmPassword")
-    if old_password is None or new_password is None or confirm_password is None:
+    # An empty old password is the "save the first one" case that the Speech tab sends
+    # from its Save password button: with no store yet there is nothing to decrypt, and
+    # the service still rejects a wrong old password once a store exists.
+    if new_password is None or confirm_password is None:
         return _bad_request()
     try:
         key_store_service.change_password(old_password, new_password, confirm_password)

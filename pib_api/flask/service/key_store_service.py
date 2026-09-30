@@ -31,7 +31,6 @@ PASSWORD_CONFIRMATION_MESSAGE = (
     "Enter the new password twice. The two entries do not match."
 )
 PASSWORD_TOO_SHORT_MESSAGE = "Password must be at least 8 characters."
-NO_KEY_STORE_MESSAGE = "No encrypted key store exists yet."
 UNREADABLE_MESSAGE = "Key store could not be read."
 UNWRITABLE_MESSAGE = "Key store could not be written."
 
@@ -165,12 +164,15 @@ def unlock(password: str) -> dict[str, str]:
 def change_password(
     old_password: str, new_password: str, confirm_password: str
 ) -> None:
-    """Re-encrypt the whole store. The new password must be given twice."""
+    """Re-encrypt the whole store. The first call creates it.
+
+    A fresh robot has no store file, and the store only comes into being by setting a
+    password, so demanding the file here made the first password impossible to set.
+    Without a store there is nothing to decrypt and the old password is not required.
+    """
     if new_password != confirm_password:
         raise KeyStoreError(PASSWORD_CONFIRMATION_MESSAGE, 400)
-    if not _store_exists():
-        raise KeyStoreError(NO_KEY_STORE_MESSAGE, 404)
-    mapping = _decrypt_map(old_password)
+    mapping = _decrypt_map(old_password) if _store_exists() else {}
     _write_encrypted(mapping, new_password)
     _remember(mapping)
 

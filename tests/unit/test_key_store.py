@@ -117,6 +117,55 @@ def test_wrong_password_returns_no_keys_and_does_not_crash(app, app_ctx):
     assert key_store_service.unlocked_credentials() == {f"provider-{vision.id}": SECRET}
 
 
+def test_change_password_creates_the_store_on_a_fresh_robot(
+    app, app_ctx, key_store_path
+):
+    """The store comes into being by setting a password, so the first one must work.
+
+    Regression: the service demanded an existing store file before writing one, which
+    made the very first operator password impossible to set - System > Speech answered
+    "No encrypted key store exists yet." on a fresh robot.
+    """
+    assert not key_store_path.exists()
+    client = app.test_client()
+
+    created = client.post(
+        "/system/key-store/password",
+        json={"oldPassword": "", "newPassword": PASSWORD, "confirmPassword": PASSWORD},
+    )
+
+    assert created.status_code == 200
+    assert created.get_json()["successful"] is True
+    assert key_store_path.is_file()
+    assert key_store_service.operating_mode() == key_store_service.MODE_UNLOCKED
+
+    # Once the store exists, the old password is required again.
+    refused = client.post(
+        "/system/key-store/password",
+        json={
+            "oldPassword": OTHER_PASSWORD,
+            "newPassword": NEW_PASSWORD,
+            "confirmPassword": NEW_PASSWORD,
+        },
+    )
+    assert refused.status_code == 401
+    assert refused.get_json()["error"] == WRONG_PASSWORD_MESSAGE
+
+
+def test_first_password_must_still_be_long_enough(app, app_ctx, key_store_path):
+    """Creating the store does not get to skip the length rule, and writes nothing."""
+    client = app.test_client()
+
+    response = client.post(
+        "/system/key-store/password",
+        json={"oldPassword": "", "newPassword": "short", "confirmPassword": "short"},
+    )
+
+    assert response.status_code == 400
+    assert response.get_json()["error"] == PASSWORD_TOO_SHORT_MESSAGE
+    assert not key_store_path.exists()
+
+
 def test_change_password_requires_the_new_one_twice(app, app_ctx, key_store_path):
     vision = Provider.query.filter_by(visual_name="GPT-4o [Vision]").one()
     client = app.test_client()
