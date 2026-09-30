@@ -96,6 +96,20 @@ def test_upgrade_copies_assistant_model_ids_onto_the_provider_registry(tmp_path)
     assert providers[11][7] is None
     assert personality == (12, "12")
 
+    with sqlite3.connect(database) as connection:
+        gemini = connection.execute("""
+            SELECT live_model, live_model_checked_on FROM provider WHERE id = 13
+            """).fetchone()
+        openai = connection.execute("""
+            SELECT live_model, live_model_checked_on FROM provider WHERE id = 11
+            """).fetchone()
+        voice = connection.execute("""
+            SELECT voice_mode, live_idle_timeout FROM personality WHERE id = 21
+            """).fetchone()
+    assert gemini == ("gemini-3.1-flash-live-preview", "2026-09-30")
+    assert openai == (None, None)
+    assert voice == ("live", 60)
+
     from sqlalchemy import Column, Integer, JSON, create_engine
     from sqlalchemy.orm import DeclarativeBase, Session
 

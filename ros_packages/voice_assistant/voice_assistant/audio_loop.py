@@ -19,6 +19,11 @@ from rclpy.node import Node
 from rclpy.executors import SingleThreadedExecutor
 from std_msgs.msg import Int16MultiArray
 from pib_api_client import voice_assistant_client
+from pib_hermes_config.live_session import (
+    context_window_compression,
+    gemini_live_connect_model,
+    idle_expired,
+)
 
 import pyaudio
 from google import genai
@@ -50,7 +55,8 @@ SEND_SAMPLE_RATE = 16000  # recorder publishes 16 kHz mono
 RECEIVE_SAMPLE_RATE = 24000  # model replies at 24 kHz
 CHUNK_SIZE = 1024
 
-MODEL = "gemini-2.5-flash-native-audio-preview-09-2025"
+# The live model id is a field of the provider row. This loop opens whatever
+# pinned Gemini model the caller passes in.
 CONFIG = {
     "response_modalities": ["AUDIO"],  # request synthesized speech back
     "input_audio_transcription": {},  # get user (input) transcript stream
@@ -63,10 +69,8 @@ ROS_AUDIO_TOPIC = os.getenv("ROS_AUDIO_TOPIC", "audio_stream")
 # Live API limits:
 # - Without compression, audio-only sessions are limited to ~15 minutes.
 # - A single WebSocket connection is limited to ~10 minutes (GoAway warning before termination).
-# Enable BOTH:
-#   * context window compression -> removes the session duration cap
-#   * session resumption + reconnect -> survives the connection cap
-ENABLE_CONTEXT_COMPRESSION = os.getenv("ENABLE_CONTEXT_COMPRESSION", "1") == "1"
+# Context window compression stays on: it is what removes the duration cap.
+# Session resumption + reconnect survives the connection cap.
 ENABLE_SESSION_RESUMPTION = os.getenv("ENABLE_SESSION_RESUMPTION", "1") == "1"
 
 # Reasonable defaults for native-audio 128k context models (tune if needed)
@@ -79,6 +83,12 @@ LIVE_RECONNECT_BACKOFF_S = float(os.getenv("LIVE_RECONNECT_BACKOFF_S", "0.5"))
 
 class ReconnectRequested(RuntimeError):
     """Raised by tasks to request a clean Live session reconnect."""
+
+    pass
+
+
+class LiveIdleTimeout(RuntimeError):
+    """The personality's idle timeout elapsed with nobody speaking."""
 
     pass
 
@@ -258,6 +268,10 @@ class GeminiAudioLoop:
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         # Live API session resumption handle (updated from SessionResumptionUpdate)
         self._session_handle: Optional[str] = None
+        # Pinned model and idle timeout for the session start() was asked to open.
+        self._model: Optional[str] = None
+        self._idle_timeout_s: Optional[float] = None
+        self._last_activity: float = 0.0
 
     @property
     def is_listening(self) -> bool:
@@ -265,16 +279,23 @@ class GeminiAudioLoop:
 
     # ---------- lifecycle ----------
 
-    def start(self, chat_id) -> None:
+    def start(self, chat_id, model: Optional[str] = None, idle_timeout_s=None) -> None:
         """
         Start the Gemini audio loop in a background thread.
         If already running, this is a no-op (defensive).
+        ``model`` is the provider row's pinned live model. The retired preview
+        id is not accepted.
         """
         if self._is_listening:
             logger.info("GeminiAudioLoop is already running.")
             return
+        if gemini_live_connect_model(model) is None:
+            logger.error("Refusing live session without a pinned Gemini model.")
+            return
 
         self._chat_id = chat_id
+        self._model = str(model).strip()
+        self._idle_timeout_s = None if idle_timeout_s is None else float(idle_timeout_s)
         self._stop_event.clear()
 
         # Start chat worker first so it can consume requests
@@ -625,6 +646,8 @@ class GeminiAudioLoop:
         input_transcription = getattr(sc, "input_transcription", None)
         if input_transcription and getattr(input_transcription, "text", None):
             text_piece = input_transcription.text.strip()
+            if text_piece:
+                self._note_activity()
             logger.debug(f"User: {text_piece}")
             if self._current_role != "user":
                 self._start_new_stream("user")
@@ -647,6 +670,8 @@ class GeminiAudioLoop:
         txt = getattr(output_transcription, "text", None)
         if txt:
             text_piece = txt.strip()
+            if text_piece:
+                self._note_activity()
             logger.debug(
                 f"Gemini (buffered in _extract_assistant_text) as single object: {text_piece}"
             )
@@ -720,7 +745,9 @@ class GeminiAudioLoop:
                             )
 
                     if data := getattr(resp, "data", None):
-                        # PCM audio from Gemini (24k mono)
+                        # PCM audio from Gemini (24k mono). Speech resets the
+                        # idle clock. Uplink silence does not: the mic stays open.
+                        self._note_activity()
                         try:
                             # Put a pair: (pcm_bytes, assistant_text_piece or None)
                             queued_text = assistant_text_piece
@@ -810,13 +837,39 @@ class GeminiAudioLoop:
         except Exception:
             logger.exception("play_audio error")
 
+    def _note_activity(self) -> None:
+        """Speech happened. Silence on the uplink does not count."""
+        self._last_activity = time.monotonic()
+
+    async def _watch_idle(self) -> None:
+        """End the session when the personality's idle timeout elapses."""
+        timeout = self._idle_timeout_s
+        if not timeout or timeout <= 0:
+            while not self._stop_event.is_set():
+                await asyncio.sleep(0.5)
+            return
+        while not self._stop_event.is_set():
+            await asyncio.sleep(0.5)
+            if idle_expired(self._last_activity, time.monotonic(), float(timeout)):
+                logger.info(
+                    "Live session idle for %ss; stopping so it does not keep billing.",
+                    timeout,
+                )
+                raise LiveIdleTimeout()
+
     async def run(self):
         """
         Main async entry:
         - Maintains a Gemini live session, reconnecting automatically on GoAway / disconnect.
-        - Enables context window compression + session resumption (optional via env vars).
+        - Keeps context window compression on, and session resumption when enabled.
+        - Stops on the personality idle timeout instead of reconnecting.
         - Starts ROS bridge + tasks (send/receive/play).
         """
+        live_model = gemini_live_connect_model(self._model)
+        if live_model is None:
+            logger.error("Refusing live session without a pinned Gemini model.")
+            return
+
         client = genai.Client(api_key=self.api_key)
 
         # Read chat personality/description from PIB to seed the model (once)
@@ -840,12 +893,9 @@ class GeminiAudioLoop:
 
         async def _connect_config():
             connection_config = dict(base_config)
-
-            if ENABLE_CONTEXT_COMPRESSION:
-                connection_config["context_window_compression"] = {
-                    "trigger_tokens": CWC_TRIGGER_TOKENS,
-                    "sliding_window": {"target_tokens": CWC_TARGET_TOKENS},
-                }
+            connection_config["context_window_compression"] = (
+                context_window_compression(CWC_TRIGGER_TOKENS, CWC_TARGET_TOKENS)
+            )
 
             if ENABLE_SESSION_RESUMPTION:
                 # Gemini Developer API supports sessi:contentReference[oaicite:3]{index=3}dle,
@@ -863,9 +913,10 @@ class GeminiAudioLoop:
                 gemini_config = await _connect_config()
 
                 async with client.aio.live.connect(
-                    model=MODEL, config=gemini_config
+                    model=live_model, config=gemini_config
                 ) as session:
                     self.session = session
+                    self._note_activity()
                     self.audio_in_queue = asyncio.Queue[tuple[bytes, Optional[str]]]()
                     self.out_queue = asyncio.Queue(maxsize=5)
                     self._log_lock = asyncio.Lock()
@@ -888,6 +939,7 @@ class GeminiAudioLoop:
                         asyncio.create_task(self.send_realtime()),
                         asyncio.create_task(self.receive_audio()),
                         asyncio.create_task(self.play_audio()),
+                        asyncio.create_task(self._watch_idle()),
                     ]
 
                     # Wait until one task errors (or requests reconnect)
@@ -902,6 +954,10 @@ class GeminiAudioLoop:
                     # No exception, session ended normally -> stop loop
                     logger.info("Live session ended normally; stopping.")
                     break
+
+            except LiveIdleTimeout:
+                self._stop_event.set()
+                break
 
             except ReconnectRequested as e:
                 if self._stop_event.is_set():

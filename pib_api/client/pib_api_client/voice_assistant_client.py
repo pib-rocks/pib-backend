@@ -38,6 +38,14 @@ class Personality:
         # Absent means on. Only an explicit false disables tools and images.
         raw_tools = personality_dto.get("toolCalling", True)
         self.tool_calling = True if raw_tools is None else bool(raw_tools)
+        self.voice_mode = personality_dto.get("voiceMode") or "live"
+        self.live_model = personality_dto.get("liveModel")
+        self.voice_start_mode = personality_dto.get("voiceStartMode") or "turn_based"
+        raw_idle = personality_dto.get("liveIdleTimeout", 60)
+        try:
+            self.live_idle_timeout = int(raw_idle)
+        except (TypeError, ValueError):
+            self.live_idle_timeout = 60
         reported = personality_dto.get("effectiveChannel")
         self.effective_channel = (
             reported if reported in ("smart", "direct") else self.channel

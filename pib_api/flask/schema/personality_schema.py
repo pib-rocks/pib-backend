@@ -8,6 +8,11 @@ from pib_hermes_config.channel import (
     effective_channel,
     smart_chats_enabled,
 )
+from pib_hermes_config.live_session import (
+    VOICE_MODE_LIVE,
+    VOICE_MODE_TURN_BASED,
+    voice_start_mode,
+)
 from pib_hermes_config.voice_backends import live_voice_note, local_voice_applies
 from provider_registry import has_capability
 from schema.sql_auto_with_camel_case_schema import SQLAutoWithCamelCaseSchema
@@ -41,6 +46,13 @@ class PersonalitySchemaSQLAutoWith(SQLAutoWithCamelCaseSchema):
     smart_chats_enabled = fields.Method("get_smart_chats_enabled", dump_only=True)
     soul_path = fields.Method("get_soul_path", dump_only=True)
     profile_provisioned = fields.Boolean(dump_only=True)
+    voice_mode = fields.String(
+        required=False,
+        validate=validate.OneOf([VOICE_MODE_LIVE, VOICE_MODE_TURN_BASED]),
+    )
+    live_idle_timeout = fields.Integer(required=False, validate=validate.Range(min=1))
+    live_model = fields.Method("get_live_model", dump_only=True)
+    voice_start_mode = fields.Method("get_voice_start_mode", dump_only=True)
 
     def get_soul_path(self, obj: Personality) -> str:
         return soul_service.soul_path_for(obj.personality_id)
@@ -51,15 +63,31 @@ class PersonalitySchemaSQLAutoWith(SQLAutoWithCamelCaseSchema):
     def get_smart_chats_enabled(self, _obj: Personality) -> bool:
         return smart_chats_enabled()
 
-    def _provider_is_live(self, obj: Personality) -> bool:
+    def _resolved_provider(self, obj: Personality):
         ref = getattr(obj, "provider_ref", None)
         if not ref:
-            return False
+            return None
         try:
-            provider = provider_service.resolve_provider(str(ref))
+            return provider_service.resolve_provider(str(ref))
         except Exception:
-            return False
-        return has_capability(provider.capabilities, "live")
+            return None
+
+    def get_live_model(self, obj: Personality) -> str | None:
+        provider = self._resolved_provider(obj)
+        if provider is None:
+            return None
+        return provider.live_model
+
+    def get_voice_start_mode(self, obj: Personality) -> str:
+        """What the one voice button will start: live or turn-based."""
+        provider = self._resolved_provider(obj)
+        capable = bool(provider) and has_capability(provider.capabilities, "live")
+        model = provider.live_model if provider is not None else None
+        mode = getattr(obj, "voice_mode", None) or VOICE_MODE_LIVE
+        return voice_start_mode(mode, capable, model)
+
+    def _provider_is_live(self, obj: Personality) -> bool:
+        return self.get_voice_start_mode(obj) == VOICE_MODE_LIVE
 
     def get_local_voice_applies(self, obj: Personality) -> bool:
         return local_voice_applies(self._provider_is_live(obj))

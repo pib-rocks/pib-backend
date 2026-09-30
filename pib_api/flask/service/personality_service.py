@@ -14,6 +14,12 @@ from pib_hermes_config.channel import (
     CHANNELS,
     smart_chats_enabled,
 )
+from pib_hermes_config.live_session import (
+    DEFAULT_LIVE_IDLE_TIMEOUT_SECONDS,
+    VOICE_MODE_LIVE,
+    normalize_idle_timeout,
+    normalize_voice_mode,
+)
 from pib_hermes_config.voice_backends import (
     LOCAL_STT_ID,
     LOCAL_TTS_ID,
@@ -203,6 +209,32 @@ def _apply_voice_backends(
             raise ValidationError({"ttsEngine": [str(exc)]}) from exc
 
 
+def _apply_live_chat_settings(
+    personality: Personality, personality_dto: Any, *, creating: bool
+) -> None:
+    """Voice mode and the idle timeout that stops an unused live session."""
+    if creating or "voice_mode" in personality_dto:
+        raw = (
+            personality_dto.get("voice_mode")
+            if "voice_mode" in personality_dto
+            else VOICE_MODE_LIVE
+        )
+        try:
+            personality.voice_mode = normalize_voice_mode(raw)
+        except ValueError as exc:
+            raise ValidationError({"voiceMode": [str(exc)]}) from exc
+    if creating or "live_idle_timeout" in personality_dto:
+        raw = (
+            personality_dto.get("live_idle_timeout")
+            if "live_idle_timeout" in personality_dto
+            else DEFAULT_LIVE_IDLE_TIMEOUT_SECONDS
+        )
+        try:
+            personality.live_idle_timeout = normalize_idle_timeout(raw)
+        except ValueError as exc:
+            raise ValidationError({"liveIdleTimeout": [str(exc)]}) from exc
+
+
 def _tool_calling_value(personality_dto: Any, default: bool) -> bool:
     if "tool_calling" not in personality_dto:
         return default
@@ -218,7 +250,10 @@ def create_personality(personality_dto: Any) -> Personality:
         stt_engine=LOCAL_STT_ID,
         tts_engine=LOCAL_TTS_ID,
         tool_calling=_tool_calling_value(personality_dto, True),
+        voice_mode=VOICE_MODE_LIVE,
+        live_idle_timeout=DEFAULT_LIVE_IDLE_TIMEOUT_SECONDS,
     )
+    _apply_live_chat_settings(personality, personality_dto, creating=True)
     _apply_voice_backends(personality, personality_dto, creating=True)
     _apply_provider_choice(personality, personality_dto, creating=True)
     _apply_channel(personality, personality_dto, creating=True)
@@ -286,6 +321,7 @@ def update_personality(personality_id: str, personality_dto: Any) -> Personality
     _apply_channel(personality, personality_dto, creating=False)
     if "tool_calling" in personality_dto:
         personality.tool_calling = bool(personality_dto["tool_calling"])
+    _apply_live_chat_settings(personality, personality_dto, creating=False)
     _apply_voice_backends(personality, personality_dto, creating=False)
     db.session.flush()
     return personality

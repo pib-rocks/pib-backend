@@ -126,6 +126,7 @@ def put_secret(provider_id: int, password: str, secret: str) -> str:
     provider.credential_ref = ref
     db.session.flush()
     _remember(mapping)
+    _pin_live_models()
     return ref
 
 
@@ -157,6 +158,7 @@ def unlock(password: str) -> dict[str, str]:
         return {}
     mapping = _decrypt_map(password)
     _remember(mapping)
+    _pin_live_models()
     return dict(mapping)
 
 
@@ -171,6 +173,19 @@ def change_password(
     mapping = _decrypt_map(old_password)
     _write_encrypted(mapping, new_password)
     _remember(mapping)
+
+
+def _pin_live_models() -> None:
+    """Best-effort. A model-list failure must not lock the keys back up."""
+    try:
+        from service import live_model_service
+
+        live_model_service.pin_unlocked_providers()
+    except Exception:
+        logger.warning(
+            "Could not pin live models from the account model list.",
+            exc_info=True,
+        )
 
 
 def _provider_or_raise(provider_id: int) -> Provider:

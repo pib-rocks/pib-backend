@@ -17,7 +17,8 @@ DEFAULT_PROVIDER_REF = "default"
 #: Smart is the default channel. hermes-agent is that channel's existing row.
 DEFAULT_PROVIDER_API_NAME = "hermes-agent"
 
-#: The voice node already opens a live session for this assistant model only.
+#: Chat model whose registry row carries the live capability. The session
+#: itself uses that row's live_model, not this chat id.
 LIVE_API_NAME = "gemini-3.5-flash"
 
 CAPABILITY_KEYS = ("tools", "images", "live", "stt", "tts")
@@ -29,7 +30,7 @@ def capabilities_for(api_name: str, has_image_support: bool) -> dict[str, bool]:
     images follows the row's existing has_image_support value. The two gpt-4o
     rows already differ on that column. tools is on because the
     OpenAI-compatible cloud endpoint supports tool calling. live is on only
-    for the model the voice node already treats as live. stt and tts stay off:
+    for the chat model whose row holds the pinned live model. stt and tts stay off:
     these rows are chat models, and the local speech engines are not rows.
     """
     return {

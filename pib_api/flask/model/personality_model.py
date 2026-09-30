@@ -1,6 +1,10 @@
 from app.app import db
 from model.util import generate_uuid
 from pib_hermes_config.channel import CHANNEL_SMART
+from pib_hermes_config.live_session import (
+    DEFAULT_LIVE_IDLE_TIMEOUT_SECONDS,
+    VOICE_MODE_LIVE,
+)
 
 
 class Personality(db.Model):
@@ -53,4 +57,20 @@ class Personality(db.Model):
         nullable=False,
         default=True,
         server_default="1",
+    )
+    # live or turn_based. The provider's live flag and pinned model decide
+    # whether live is actually what the voice button starts.
+    voice_mode = db.Column(
+        db.String(255),
+        nullable=False,
+        default=VOICE_MODE_LIVE,
+        server_default=VOICE_MODE_LIVE,
+    )
+    # Seconds of silence after which a live session stops, so it does not
+    # keep billing. Applied only to live chats.
+    live_idle_timeout = db.Column(
+        db.Integer,
+        nullable=False,
+        default=DEFAULT_LIVE_IDLE_TIMEOUT_SECONDS,
+        server_default=str(DEFAULT_LIVE_IDLE_TIMEOUT_SECONDS),
     )

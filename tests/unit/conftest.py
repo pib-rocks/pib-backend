@@ -42,6 +42,14 @@ from service import personality_service  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
+def skip_account_live_model_pin(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Unlock must not call a provider model list. Pin tests call the function."""
+    import service.live_model_service as live_model_service
+
+    monkeypatch.setattr(live_model_service, "pin_unlocked_providers", lambda: None)
+
+
+@pytest.fixture(autouse=True)
 def sandboxed_hermes_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Point every Hermes path at the sandbox before a test can forget to.
 

@@ -24,3 +24,7 @@ class Provider(db.Model):
     capabilities = db.Column(db.JSON, nullable=False)
     credential_ref = db.Column(db.String(255), nullable=True)
     is_default = db.Column(db.Boolean, nullable=False, default=False)
+    # Pinned against the account model list. Null until that list has been read
+    # and the candidate was present. The live capability flag gates its use.
+    live_model = db.Column(db.String(255), nullable=True)
+    live_model_checked_on = db.Column(db.Date(), nullable=True)

@@ -1,2 +1,4 @@
 bool turned_on
 string chat_id
+bool live_session
+string personality_id

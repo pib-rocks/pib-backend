@@ -15,6 +15,11 @@ from datatypes.srv import (
 )
 from pib_api_client import voice_assistant_client
 from pib_api_client.voice_assistant_client import Personality
+from pib_hermes_config.live_session import (
+    VOICE_MODE_LIVE,
+    channel_turn_on_allowed,
+    live_session_ends_on_handover,
+)
 from rclpy.action import ActionClient
 from rclpy.action.client import ClientGoalHandle
 from rclpy.client import Client
@@ -48,6 +53,8 @@ class VoiceAssistantNode(Node):
         self.state.turned_on = False
         # id of the active chat (may be an arbitrary value, if the va is turned off)
         self.state.chat_id = ""
+        self.state.live_session = False
+        self.state.personality_id = ""
         # indicates if the voice_assistant is currently turning off
         self.turning_off = False
         # the personality associated with the active chat
@@ -264,6 +271,7 @@ class VoiceAssistantNode(Node):
         response: GetVoiceAssistantState.Response,
     ) -> GetVoiceAssistantState.Response:
         """callback function for 'get_voice_assistant_state' service"""
+        self._sync_voice_state()
         response.voice_assistant_state = self.state
         return response
 
@@ -282,8 +290,11 @@ class VoiceAssistantNode(Node):
         self, request: GetChatIsListening.Request, response: GetChatIsListening.Response
     ) -> GetChatIsListening.Response:
         """callback function for 'get_chat_is_listening' service"""
+        live_for_this_chat = (
+            self.gemini_loop.is_listening and request.chat_id == self.state.chat_id
+        )
         response.listening = (
-            self.get_is_listening(request.chat_id) or self.gemini_loop.is_listening
+            self.get_is_listening(request.chat_id) or live_for_this_chat
         )
         return response
 
@@ -335,11 +346,7 @@ class VoiceAssistantNode(Node):
         return allows_cloud_chat(fetch_operating_mode())
 
     def on_start_signal_played(self) -> None:
-        if (
-            self.personality
-            and "gemini" in self.personality.assistant_model.api_name.lower()
-            and self._cloud_session_allowed()
-        ):
+        if self.gemini_loop.is_listening:
             return
 
         self.record_audio(
@@ -356,11 +363,7 @@ class VoiceAssistantNode(Node):
         self.get_logger().debug("_on_stop_signal_played")
 
     def on_stopped_recording(self) -> None:
-        if (
-            self.personality
-            and "gemini" in self.personality.assistant_model.api_name.lower()
-            and self._cloud_session_allowed()
-        ):
+        if self.gemini_loop.is_listening:
             return
 
         if not self.get_is_listening(self.state.chat_id):
@@ -489,6 +492,18 @@ class VoiceAssistantNode(Node):
         if stop_chat is not None:
             stop_chat()
 
+    def _sync_voice_state(self) -> None:
+        """Fields both Cerebra windows read. The holder is backend state."""
+        self.state.live_session = bool(self.gemini_loop.is_listening)
+        if self.state.turned_on and self.personality is not None:
+            self.state.personality_id = self.personality.personality_id or ""
+        else:
+            self.state.personality_id = ""
+
+    def _publish_voice_state(self) -> None:
+        self._sync_voice_state()
+        self.voice_assistant_state_publisher.publish(self.state)
+
     def update_state(self, turned_on: bool, chat_id: str = "") -> bool:
         """Attempts to update the internal state, and returns whether this was successful."""
         import traceback
@@ -506,19 +521,16 @@ class VoiceAssistantNode(Node):
 
         # ---------- TURNING OFF ----------
         if not turned_on:
-            # If we know we're currently on Gemini, stop it without fetching anything
-            if (
-                self.personality
-                and "gemini" in self.personality.assistant_model.api_name.lower()
-            ):
-                if self.gemini_loop.is_listening:
-                    self.gemini_loop.stop()
+            # Releasing the channel ends a live session. A turn-based session
+            # still uses the legacy cleanup below.
+            if self.gemini_loop.is_listening:
+                self.gemini_loop.stop()
                 self.play_audio_from_file(STOP_SIGNAL_FILE)
 
                 self.state.turned_on = False
                 # keep the current chat id if none was provided
                 self.state.chat_id = effective_chat_id
-                self.voice_assistant_state_publisher.publish(self.state)
+                self._publish_voice_state()
                 return True
 
             # Legacy deactivation (unchanged)
@@ -529,7 +541,7 @@ class VoiceAssistantNode(Node):
                     # already off → no-op
                     self.state.turned_on = False
                     self.state.chat_id = effective_chat_id
-                    self.voice_assistant_state_publisher.publish(self.state)
+                    self._publish_voice_state()
                     return True
 
                 self.cycle += 1
@@ -553,7 +565,7 @@ class VoiceAssistantNode(Node):
 
                 self.state.turned_on = False
                 self.state.chat_id = effective_chat_id
-                self.voice_assistant_state_publisher.publish(self.state)
+                self._publish_voice_state()
                 return True
 
             except Exception as e:
@@ -575,22 +587,58 @@ class VoiceAssistantNode(Node):
         if not is_success or pers is None:
             self.get_logger().error(f"no personality with chat id {effective_chat_id}")
             return False
-        self.personality = pers
-        api_name = self.personality.assistant_model.api_name.lower()
-        self.get_logger().debug(f"update_state: resolved api_name={api_name}")
 
-        # GEMINI path: short-circuit legacy logic. While the key store is
-        # locked this falls through to the local recorder instead.
-        if "gemini" in api_name and self._cloud_session_allowed():
+        holder_id = (
+            self.personality.personality_id if self.personality is not None else None
+        )
+        if not channel_turn_on_allowed(
+            self.state.turned_on, holder_id, pers.personality_id
+        ):
+            self.get_logger().info(
+                "voice channel is held by personality %s; refusing %s",
+                holder_id,
+                pers.personality_id,
+            )
+            return False
+
+        # Moving the voice to another chat ends the open live session first.
+        if live_session_ends_on_handover(
+            self.state.turned_on,
+            self.state.chat_id,
+            effective_chat_id,
+            self.gemini_loop.is_listening,
+        ):
+            self.gemini_loop.stop()
+
+        self.personality = pers
+        start_live = (
+            getattr(pers, "voice_start_mode", None) == VOICE_MODE_LIVE
+            and bool(getattr(pers, "live_model", None))
+            and self._cloud_session_allowed()
+        )
+        self.get_logger().debug(
+            "update_state: voice_start_mode=%s live_model=%s",
+            getattr(pers, "voice_start_mode", None),
+            getattr(pers, "live_model", None),
+        )
+
+        # Live path: the provider row's pinned model, gated by the live flag
+        # (already folded into voice_start_mode). A locked key store falls
+        # through to the local recorder instead.
+        if start_live:
             if not self.gemini_loop.is_listening:
-                self.gemini_loop.start(chat_id=chat_id)
+                self.gemini_loop.start(
+                    chat_id=effective_chat_id,
+                    model=pers.live_model,
+                    idle_timeout_s=getattr(pers, "live_idle_timeout", None),
+                )
                 self.play_audio_from_file(START_SIGNAL_FILE)
             else:
-                self.get_logger().debug("Gemini already running; no-op")
+                self.get_logger().debug("Live session already running; no-op")
 
             self.state.turned_on = True
             self.state.chat_id = effective_chat_id
-            self.voice_assistant_state_publisher.publish(self.state)
+            self._publish_voice_state()
             return True
 
         # Legacy activation (unchanged)
@@ -621,7 +669,7 @@ class VoiceAssistantNode(Node):
             )
             return False
 
-        self.voice_assistant_state_publisher.publish(self.state)
+        self._publish_voice_state()
         return True
 
 

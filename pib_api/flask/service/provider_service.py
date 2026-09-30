@@ -1,7 +1,12 @@
+from datetime import date
 from typing import List, Optional
 
 from model.assistant_model import AssistantModel
 from model.provider_model import Provider
+from pib_hermes_config.live_session import (
+    GEMINI_LIVE_MODEL,
+    GEMINI_LIVE_MODEL_CHECKED_ON,
+)
 from pib_hermes_config.voice_backends import (
     LIVE_VOICE_NOTE,
     LOCAL_STT_ENGINE,
@@ -10,6 +15,7 @@ from pib_hermes_config.voice_backends import (
     LOCAL_TTS_ID,
 )
 from provider_registry import (
+    LIVE_API_NAME,
     capabilities_for,
     has_capability,
     has_images_capability,
@@ -18,7 +24,16 @@ from provider_registry import (
 
 
 def build_provider(model: AssistantModel) -> Provider:
-    """One registry row for an assistant model, using that model's id."""
+    """One registry row for an assistant model, using that model's id.
+
+    The Gemini row carries the live model pinned on 2026-09-30. Other rows
+    stay unpinned until their own account list is read.
+    """
+    live_model = None
+    checked_on = None
+    if model.api_name == LIVE_API_NAME:
+        live_model = GEMINI_LIVE_MODEL
+        checked_on = date.fromisoformat(GEMINI_LIVE_MODEL_CHECKED_ON)
     return Provider(
         id=model.id,
         api_name=model.api_name,
@@ -28,6 +43,8 @@ def build_provider(model: AssistantModel) -> Provider:
         capabilities=capabilities_for(model.api_name, bool(model.has_image_support)),
         credential_ref=None,
         is_default=is_registry_default(model.api_name),
+        live_model=live_model,
+        live_model_checked_on=checked_on,
     )
 
 
