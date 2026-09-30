@@ -1,6 +1,7 @@
 from app.app import app
 from controller import (
     assistant_model_controller,
+    key_store_controller,
     provider_controller,
     bricklet_controller,
     camera_controller,
@@ -41,6 +42,9 @@ app.register_blueprint(
     assistant_model_controller.bp, url_prefix="/assistant-model", name="assistant_model"
 )
 app.register_blueprint(provider_controller.bp, url_prefix="/provider", name="provider")
+app.register_blueprint(
+    key_store_controller.bp, url_prefix="/system/key-store", name="key_store"
+)
 app.register_blueprint(pose_controller.bp, url_prefix="/pose", name="pose")
 app.register_blueprint(ip_controller.bp, url_prefix="/host-ip", name="host-ip")
 app.register_blueprint(

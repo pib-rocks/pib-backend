@@ -40,8 +40,12 @@ services:
       - PIB_HERMES_DAEMON_URL=http://ros-voice-assistant:8088
       - PIB_HARDWARE_VARIANT=${PIB_HARDWARE_VARIANT:-}
       - PIB_UPDATE_DIR=/app/.update
+      - PIB_KEY_STORE_PATH=/home/pib/app/secrets/provider_key_store.json
     volumes:
       - ./pib_api/flask/:/app
+      # Ciphertext for provider keys. Not the flask source tree, and not the
+      # Hermes profiles directory (SOUL.md / MEMORY.md live there).
+      - /home/pib/app/secrets:/home/pib/app/secrets
       - /home/pib/app/.update:/app/.update
       - /etc/pib_hardware_variant:/etc/pib_hardware_variant:ro
       - programs:/root/cerebra_programs
