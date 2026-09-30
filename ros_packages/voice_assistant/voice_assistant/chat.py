@@ -28,6 +28,7 @@ from rclpy.publisher import Publisher
 from rclpy.service import Service
 from std_msgs.msg import String
 
+from pib_hermes_config.turn_taking import unpublished_clauses
 from pib_hermes_config.channel import (
     CHANNEL_DIRECT,
     CHANNEL_SMART,
@@ -503,6 +504,10 @@ class ChatNode(Node):
         prev_text_type = None
         bool_update_chat_message: bool = False  # controls create vs update
         first_chunk_emitted = False
+        # Full answer as received, kept so a clause can be spoken before the
+        # sentence that contains it has finished.
+        raw_answer = ""
+        published_speech: list[str] = []
 
         for token in tokens:
             # TTFT fast-path: emit the first generated token immediately, before
@@ -515,9 +520,12 @@ class ChatNode(Node):
                     feedback.text_type = Chat.Goal.TEXT_TYPE_SENTENCE
                     goal_handle.publish_feedback(feedback)
                     first_chunk_emitted = True
+                    published_speech.append(immediate)
+                    elapsed_ms = (time.monotonic() - t0) * 1000.0
+                    self._remember_first_token_latency(chat_id, elapsed_ms)
                     self.get_logger().info(
                         f"[PERF_TRACE] FIRST_CHUNK_EMITTED chat={chat_id} "
-                        f"elapsed_ms={(time.monotonic() - t0) * 1000.0:.2f}"
+                        f"elapsed_ms={elapsed_ms:.2f}"
                     )
 
             # Publish previous completed chunk as feedback (Action protocol)
@@ -526,11 +534,15 @@ class ChatNode(Node):
                 feedback.text = prev_text
                 feedback.text_type = prev_text_type
                 goal_handle.publish_feedback(feedback)
+                if prev_text_type == Chat.Goal.TEXT_TYPE_SENTENCE:
+                    published_speech.append(prev_text)
                 prev_text = None
                 prev_text_type = None
 
             # Accumulate token (strip leading spaces if first)
-            curr_text = curr_text + (token if len(curr_text) > 0 else token.lstrip())
+            piece = token if len(curr_text) > 0 else token.lstrip()
+            curr_text = curr_text + piece
+            raw_answer = raw_answer + piece
 
             # Strip off complete chunks (code/sentences)
             while True:
@@ -588,6 +600,8 @@ class ChatNode(Node):
 
                 break
 
+            self._publish_ready_clauses(goal_handle, raw_answer, published_speech)
+
         # A reply can end without a sentence terminator. That tail is part of
         # the answer, so it is persisted here instead of being dropped.
         leftover = curr_text.strip()
@@ -601,10 +615,13 @@ class ChatNode(Node):
             )
             if not first_chunk_emitted:
                 first_chunk_emitted = True
+                elapsed_ms = (time.monotonic() - t0) * 1000.0
+                self._remember_first_token_latency(chat_id, elapsed_ms)
                 self.get_logger().info(
                     f"[PERF_TRACE] FIRST_CHUNK_EMITTED chat={chat_id} "
-                    f"elapsed_ms={(time.monotonic() - t0) * 1000.0:.2f}"
+                    f"elapsed_ms={elapsed_ms:.2f}"
                 )
+            self._publish_ready_clauses(goal_handle, raw_answer, published_speech)
             if prev_text is not None:
                 # Hand the completed chunk over as feedback the way the next
                 # token would have, so the tail can travel in Chat.Result.
@@ -616,6 +633,28 @@ class ChatNode(Node):
                 prev_text_type = None
 
         return prev_text, prev_text_type, curr_text
+
+    def _remember_first_token_latency(self, chat_id: str, elapsed_ms: float) -> None:
+        """Persist the measurement. A down API must not fail the turn."""
+        try:
+            voice_assistant_client.record_first_token_latency(chat_id, elapsed_ms)
+        except Exception as exc:
+            self.get_logger().warning(
+                "first-token latency was not stored for chat %s: %s",
+                chat_id,
+                exc,
+            )
+
+    def _publish_ready_clauses(
+        self, goal_handle, raw_answer: str, published_speech: list[str]
+    ) -> None:
+        """Publish each newly completed clause so speech can start on it."""
+        for clause in unpublished_clauses(raw_answer, published_speech):
+            feedback = Chat.Feedback()
+            feedback.text = clause
+            feedback.text_type = Chat.Goal.TEXT_TYPE_SENTENCE
+            goal_handle.publish_feedback(feedback)
+            published_speech.append(clause)
 
     def _hermes_timeout(self) -> int:
         """Timeout for one hermes turn, read live so ops can tune it via env."""

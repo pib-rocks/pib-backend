@@ -1,6 +1,6 @@
 import json
 from typing import Any, Optional, Tuple, List
-from urllib.request import Request
+from urllib.request import Request, urlopen
 
 from pib_api_client import send_request, URL_PREFIX
 
@@ -26,6 +26,12 @@ class Personality:
         self.gender = personality_dto["gender"]
         self.language = "German"  # TODO: language should be stored as part of a personality -> personality_dto["language"]
         self.pause_threshold = personality_dto["pauseThreshold"]
+        raw_filler = personality_dto.get("thinkingFiller")
+        if isinstance(raw_filler, str):
+            raw_filler = raw_filler.strip()
+            self.thinking_filler = raw_filler or None
+        else:
+            self.thinking_filler = None
         self.message_history = personality_dto["messageHistory"]
         self.description = personality_dto.get("description")
         self.stt_engine = personality_dto.get("sttEngine", "local_whisper")
@@ -125,6 +131,23 @@ def get_personality(personality_id: str) -> Tuple[bool, Personality]:
         successful = False
         personality = None
     return successful, personality
+
+
+def record_first_token_latency(chat_id: str, latency_ms: float) -> bool:
+    """Store one measurement. A missing API must not stall the turn."""
+    data = json.dumps({"latencyMs": latency_ms}).encode("utf-8")
+    request = Request(
+        CHAT_URL % chat_id + "/first-token-latency",
+        method="PUT",
+        headers={"Content-Type": "application/json"},
+        data=data,
+    )
+    try:
+        with urlopen(request, timeout=0.25) as response:
+            response.read()
+        return True
+    except Exception:
+        return False
 
 
 def get_chat(chat_id: str) -> Tuple[bool, Chat]:

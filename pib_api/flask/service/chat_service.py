@@ -50,6 +50,14 @@ def update_chat(chat_id: str, chat_dto: Any) -> Chat:
     return chat
 
 
+def record_first_token_latency(chat_id: str, latency_ms: float) -> Chat:
+    """Store the latest first-token measurement for this chat."""
+    chat = get_chat(chat_id)
+    chat.first_token_latency_ms = float(latency_ms)
+    db.session.flush()
+    return chat
+
+
 def delete_chat(chat_id: str) -> None:
     db.session.delete(get_chat(chat_id))
     db.session.flush()

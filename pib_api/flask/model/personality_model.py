@@ -19,6 +19,9 @@ class Personality(db.Model):
     gender = db.Column(db.String(255), nullable=False)
     description = db.Column(db.String(38000), nullable=True)
     pause_threshold = db.Column(db.Float, nullable=False)
+    # Spoken only when the first token is later than the budget. Empty means
+    # silence. The assistant never substitutes a phrase of its own.
+    thinking_filler = db.Column(db.String(255), nullable=True)
     message_history = db.Column(db.Integer, nullable=False)
     stt_engine = db.Column(
         db.String(255),

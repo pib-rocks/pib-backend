@@ -172,6 +172,7 @@ def _install_ros_stubs():
         vac.get_chat_history = MagicMock()
         vac.create_chat_message = MagicMock()
         vac.update_chat_message = MagicMock()
+        vac.record_first_token_latency = MagicMock(return_value=False)
 
     if "public_api_client.public_voice_client" not in sys.modules:
         pvc = ensure("public_api_client.public_voice_client")
@@ -210,6 +211,7 @@ def chat_node(chat_module):
     node.voice_assistant_client_lock.__exit__ = MagicMock(return_value=False)
     node.token = "tok"
     node.history_length = 10
+    node._remember_first_token_latency = MagicMock()
     node._key_store_mode = lambda: "unlocked"
     node.get_camera_image_client = MagicMock()
     node._hermes_executor = ThreadPoolExecutor(
@@ -672,6 +674,46 @@ def test_stream_chunks_to_goal_extracts_pib_program(chat_module, chat_node):
     assert prev == "xml-here"
     assert ptype == TEXT_TYPE_CODE_VISUAL
     assert curr == ""
+
+
+def test_stream_chunks_publishes_a_clause_before_the_sentence_ends(
+    chat_module, chat_node
+):
+    """Speech can start on the first clause while later tokens are still arriving."""
+    goal_handle = MagicMock()
+    goal_handle.is_cancel_requested = False
+
+    chat_node._stream_chunks_to_goal(
+        goal_handle, "chat-1", ["Sure", ", I can", " help you."]
+    )
+
+    feedback_texts = [
+        call[0][0].text for call in goal_handle.publish_feedback.call_args_list
+    ]
+    assert feedback_texts[0] == "Sure"
+    assert "Sure," in feedback_texts
+    assert "I can help you." in feedback_texts
+    assert feedback_texts.index("Sure,") < feedback_texts.index("I can help you.")
+    chat_node._remember_first_token_latency.assert_called()
+    chat_id, elapsed_ms = chat_node._remember_first_token_latency.call_args[0]
+    assert chat_id == "chat-1"
+    assert elapsed_ms >= 0
+
+
+def test_remember_first_token_latency_stores_the_measurement(chat_module, chat_node):
+    chat_node._remember_first_token_latency = (
+        chat_module.ChatNode._remember_first_token_latency.__get__(
+            chat_node, chat_module.ChatNode
+        )
+    )
+    with patch.object(
+        chat_module.voice_assistant_client,
+        "record_first_token_latency",
+        return_value=True,
+        create=True,
+    ) as record:
+        chat_node._remember_first_token_latency("chat-1", 812.5)
+    record.assert_called_once_with("chat-1", 812.5)
 
 
 def test_stream_chunks_to_goal_emits_perf_trace_on_first_chunk(chat_module, chat_node):

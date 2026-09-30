@@ -21,6 +21,12 @@ from pib_hermes_config.live_session import (
     channel_turn_on_allowed,
     live_session_ends_on_handover,
 )
+from pib_hermes_config.turn_taking import (
+    StreamingSpeech,
+    authored_filler,
+    first_token_budget_ms,
+    pause_threshold_now,
+)
 from rclpy.action import ActionClient
 from rclpy.action.client import ClientGoalHandle
 from rclpy.client import Client
@@ -76,6 +82,12 @@ class VoiceAssistantNode(Node):
         self.stop_program_execution: Callable[[], None] = lambda: None
         # indicates if a program is currently executing
         self.is_executing_program = False
+        # Clauses already handed to the synthesizer for the current answer.
+        self._streaming_speech = StreamingSpeech()
+        self._filler_timer: Optional[threading.Timer] = None
+        self._filler_lock = threading.Lock()
+        self._first_token_seen = False
+        self._turn_has_playback = False
 
         # services ----------------------------------------------------------------------
 
@@ -267,6 +279,95 @@ class VoiceAssistantNode(Node):
         if request.join:
             future.add_done_callback(lambda _: on_stopped_playing())
 
+    def _refresh_personality_turn_taking(self) -> None:
+        """Read pause threshold and filler again so an edit applies while running."""
+        personality = self.personality
+        if personality is None:
+            return
+        personality_id = getattr(personality, "personality_id", None)
+        if not personality_id:
+            return
+        try:
+            ok, fresh = voice_assistant_client.get_personality(personality_id)
+        except Exception as exc:
+            self.get_logger().warning("personality refresh failed: %s", exc)
+            return
+        if not ok or fresh is None:
+            return
+        personality.pause_threshold = pause_threshold_now(
+            personality.pause_threshold,
+            getattr(fresh, "pause_threshold", None),
+        )
+        personality.thinking_filler = getattr(fresh, "thinking_filler", None)
+
+    def _start_spoken_turn(self) -> None:
+        """Arm clause playback and, when the personality wrote one, a filler."""
+        self._cancel_filler_timer()
+        self._streaming_speech = StreamingSpeech()
+        self._turn_has_playback = False
+        with self._filler_lock:
+            self._first_token_seen = False
+        self._refresh_personality_turn_taking()
+        self._arm_filler()
+
+    def _arm_filler(self) -> None:
+        personality = self.personality
+        if personality is None:
+            return
+        filler = getattr(personality, "thinking_filler", None)
+        if not isinstance(filler, str) or not filler.strip():
+            return
+        budget_ms = first_token_budget_ms()
+
+        def _fire() -> None:
+            with self._filler_lock:
+                phrase = authored_filler(
+                    filler,
+                    elapsed_ms=float(budget_ms),
+                    budget_ms=budget_ms,
+                    first_token_seen=self._first_token_seen,
+                )
+                if phrase is None:
+                    return
+            if self.personality is None:
+                return
+            self._turn_has_playback = True
+            self.play_audio_from_speech(
+                phrase,
+                personality.gender,
+                personality.language,
+            )
+
+        timer = threading.Timer(budget_ms / 1000.0, _fire)
+        timer.daemon = True
+        self._filler_timer = timer
+        timer.start()
+
+    def _note_first_token(self) -> None:
+        with self._filler_lock:
+            self._first_token_seen = True
+        self._cancel_filler_timer()
+
+    def _cancel_filler_timer(self) -> None:
+        timer = self._filler_timer
+        self._filler_timer = None
+        if timer is not None:
+            timer.cancel()
+
+    def _finish_spoken_turn(self) -> None:
+        """Restart listening after audio that was queued earlier in the turn."""
+        if self.personality is None:
+            return
+        if self._turn_has_playback:
+            self.play_audio_from_speech(
+                "",
+                self.personality.gender,
+                self.personality.language,
+                self.if_cycle_not_changed(self.on_final_sentence_played),
+            )
+            return
+        self.on_final_sentence_played()
+
     def run_program(
         self, code_visual: str, on_stopped_executing_program: Callable[[None], None]
     ):
@@ -333,6 +434,7 @@ class VoiceAssistantNode(Node):
             self.play_audio_from_file(STOP_SIGNAL_FILE)
             self.stop_recording()
             self.set_is_listening(request.chat_id, False)
+            self._start_spoken_turn()
             self.chat(
                 request.content,
                 self.state.chat_id,
@@ -366,6 +468,7 @@ class VoiceAssistantNode(Node):
         if self.gemini_loop.is_listening:
             return
 
+        self._refresh_personality_turn_taking()
         self.record_audio(
             MAX_SILENT_SECONDS_BEFORE,
             self.personality.pause_threshold,
@@ -396,6 +499,7 @@ class VoiceAssistantNode(Node):
         if not self.waiting_for_transcribed_text:
             return
         self.waiting_for_transcribed_text = False
+        self._start_spoken_turn()
         self.chat(
             transcribed_text,
             self.state.chat_id,
@@ -408,21 +512,27 @@ class VoiceAssistantNode(Node):
         if self.gemini_loop.is_listening:
             return
 
+        self._note_first_token()
         if not sentence:
             self.update_state(False)
             return
+        clauses = self._streaming_speech.take(sentence, is_final)
         self.final_chat_response_received = is_final
-        on_stopped_playing = (
-            self.if_cycle_not_changed(self.on_final_sentence_played)
-            if is_final and not self.is_executing_program
-            else None
-        )
-        self.play_audio_from_speech(
-            sentence,
-            self.personality.gender,
-            self.personality.language,
-            on_stopped_playing,
-        )
+        if not clauses:
+            if is_final and not self.is_executing_program:
+                self._finish_spoken_turn()
+            return
+        gender = self.personality.gender
+        language = self.personality.language
+        for index, clause in enumerate(clauses):
+            last = is_final and index == len(clauses) - 1
+            on_stopped_playing = (
+                self.if_cycle_not_changed(self.on_final_sentence_played)
+                if last and not self.is_executing_program
+                else None
+            )
+            self._turn_has_playback = True
+            self.play_audio_from_speech(clause, gender, language, on_stopped_playing)
 
     def on_code_visual_received(self, code_visual: str, is_final: bool) -> None:
         self.final_chat_response_received = is_final
@@ -564,6 +674,7 @@ class VoiceAssistantNode(Node):
                 self.cycle += 1
                 self.turning_off = True
                 self.waiting_for_transcribed_text = False
+                self._cancel_filler_timer()
                 self.stop_recording()
                 self.stop_chat(effective_chat_id)
                 self.stop_program_execution()

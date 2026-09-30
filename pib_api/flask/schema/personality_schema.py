@@ -51,6 +51,11 @@ class PersonalitySchemaSQLAutoWith(SQLAutoWithCamelCaseSchema):
         validate=validate.OneOf([VOICE_MODE_LIVE, VOICE_MODE_TURN_BASED]),
     )
     live_idle_timeout = fields.Integer(required=False, validate=validate.Range(min=1))
+    thinking_filler = fields.String(
+        required=False,
+        allow_none=True,
+        validate=validate.Length(max=255),
+    )
     live_model = fields.Method("get_live_model", dump_only=True)
     voice_start_mode = fields.Method("get_voice_start_mode", dump_only=True)
 

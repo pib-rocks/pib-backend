@@ -21,6 +21,7 @@ from pib_hermes_config.live_session import (
     normalize_idle_timeout,
     normalize_voice_mode,
 )
+from pib_hermes_config.turn_taking import normalize_thinking_filler
 from pib_hermes_config.voice_backends import (
     LOCAL_STT_ID,
     LOCAL_TTS_ID,
@@ -246,6 +247,14 @@ def _reject_actuation_request(personality_dto: Any) -> None:
         )
 
 
+def _apply_thinking_filler(personality: Personality, personality_dto: Any) -> None:
+    if "thinking_filler" not in personality_dto:
+        return
+    personality.thinking_filler = normalize_thinking_filler(
+        personality_dto.get("thinking_filler")
+    )
+
+
 def _tool_calling_value(personality_dto: Any, default: bool) -> bool:
     if "tool_calling" not in personality_dto:
         return default
@@ -267,6 +276,7 @@ def create_personality(personality_dto: Any) -> Personality:
     )
     _apply_live_chat_settings(personality, personality_dto, creating=True)
     _apply_voice_backends(personality, personality_dto, creating=True)
+    _apply_thinking_filler(personality, personality_dto)
     _apply_provider_choice(personality, personality_dto, creating=True)
     _apply_channel(personality, personality_dto, creating=True)
     custom = ""
@@ -336,6 +346,7 @@ def update_personality(personality_id: str, personality_dto: Any) -> Personality
         personality.tool_calling = bool(personality_dto["tool_calling"])
     _apply_live_chat_settings(personality, personality_dto, creating=False)
     _apply_voice_backends(personality, personality_dto, creating=False)
+    _apply_thinking_filler(personality, personality_dto)
     db.session.flush()
     return personality
 
