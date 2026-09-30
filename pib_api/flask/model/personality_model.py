@@ -39,3 +39,11 @@ class Personality(db.Model):
         default=CHANNEL_SMART,
         server_default=CHANNEL_SMART,
     )
+    # On by default. Off removes every tool, including capture_image, so a
+    # camera frame cannot be attached to the turn.
+    tool_calling = db.Column(
+        db.Boolean,
+        nullable=False,
+        default=True,
+        server_default="1",
+    )

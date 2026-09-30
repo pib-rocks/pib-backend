@@ -35,6 +35,7 @@ from pib_hermes_config.channel import (
     turn_channel,
 )
 from public_api_client import hermes_agent_client, public_voice_client
+from voice_assistant import direct_tool_loop
 from voice_assistant.degraded_chat import (
     MODE_UNLOCKED,
     fetch_operating_mode,
@@ -886,40 +887,52 @@ class ChatNode(Node):
                     for message in chat_messages
                 ]
 
-                # get the current image from the camera if available
-                image_base64 = None
-                if personality.assistant_model.has_image_support:
-                    if not self.get_camera_image_client.service_is_ready():
-                        self.get_logger().warn(
-                            "get_camera_image service is not ready, proceeding without image."
-                        )
-                        image_base64 = None
-                    else:
-                        request = GetCameraImage.Request()
-                        try:
-                            future = self.get_camera_image_client.call_async(request)
-                            response = await future
-                            image_base64 = response.image_base64
-                        except Exception as e:
-                            self.get_logger().error(f"Camera service call failed: {e}")
-                            image_base64 = None
-
                 # Direct: the SOUL text is the system prompt. MEMORY.md is not
                 # read; that file belongs to the Hermes profile on Smart turns.
-                # Tool execution (request, MCP call, continue) is a later step;
-                # this call is the completion the backend already sends.
+                # A camera frame is never attached here. It arrives only when
+                # the model calls capture_image, and that tool is absent while
+                # tool calling is off.
                 system_prompt = direct_system_prompt(personality.description)
                 if generate_code:
                     system_prompt = CODE_DESCRIPTION_PREFIX + system_prompt
-                with self.public_voice_client_lock:
-                    tokens = public_voice_client.chat_completion(
-                        text=content,
-                        description=system_prompt,
-                        message_history=message_history,
-                        image_base64=image_base64,
-                        model=personality.assistant_model.api_name,
-                        public_api_token=self.token,
+                tool_calling = direct_tool_loop.tool_calling_enabled(personality)
+                allow_image = direct_tool_loop.image_tool_allowed(
+                    personality, tool_calling
+                )
+                api_name = personality.assistant_model.api_name
+                if tool_calling:
+                    if not direct_tool_loop.supports_tool_endpoint(api_name):
+                        raise direct_tool_loop.DirectToolLoopError(
+                            "Direct tool calling has no non-beta endpoint for "
+                            f"model {api_name!r}. The pinned model is "
+                            f"{direct_tool_loop.PINNED_MODEL} "
+                            f"({direct_tool_loop.PINNED_PROVIDER}), checked "
+                            f"{direct_tool_loop.PINNED_CHECKED_ON}."
+                        )
+                    self.get_logger().info(
+                        f"direct tool loop model={direct_tool_loop.PINNED_MODEL} "
+                        f"provider={direct_tool_loop.PINNED_PROVIDER} chat={chat_id}"
                     )
+                    tokens = direct_tool_loop.run_direct_turn(
+                        system_prompt=system_prompt,
+                        user_text=content,
+                        history=[
+                            (message.content, message.is_user)
+                            for message in message_history
+                        ],
+                        tool_calling=True,
+                        allow_image=allow_image,
+                    )
+                else:
+                    with self.public_voice_client_lock:
+                        tokens = public_voice_client.chat_completion(
+                            text=content,
+                            description=system_prompt,
+                            message_history=message_history,
+                            image_base64=None,
+                            model=api_name,
+                            public_api_token=self.token,
+                        )
 
             prev_text, prev_text_type, curr_text = self._stream_chunks_to_goal(
                 goal_handle, chat_id, tokens, t0=t0

@@ -31,6 +31,9 @@ class Personality:
         self.stt_engine = personality_dto.get("sttEngine", "local_whisper")
         self.provider_ref = personality_dto.get("providerRef")
         self.channel = personality_dto.get("channel") or "smart"
+        # Absent means on. Only an explicit false disables tools and images.
+        raw_tools = personality_dto.get("toolCalling", True)
+        self.tool_calling = True if raw_tools is None else bool(raw_tools)
         reported = personality_dto.get("effectiveChannel")
         self.effective_channel = (
             reported if reported in ("smart", "direct") else self.channel

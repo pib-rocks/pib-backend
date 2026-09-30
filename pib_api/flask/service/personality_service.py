@@ -161,6 +161,12 @@ def _apply_provider_choice(
     _store_provider_ref(personality, ref)
 
 
+def _tool_calling_value(personality_dto: Any, default: bool) -> bool:
+    if "tool_calling" not in personality_dto:
+        return default
+    return bool(personality_dto["tool_calling"])
+
+
 def create_personality(personality_dto: Any) -> Personality:
     personality = Personality(
         name=personality_dto["name"],
@@ -168,6 +174,7 @@ def create_personality(personality_dto: Any) -> Personality:
         pause_threshold=personality_dto["pause_threshold"],
         message_history=personality_dto["message_history"],
         stt_engine=personality_dto.get("stt_engine", "local_whisper"),
+        tool_calling=_tool_calling_value(personality_dto, True),
     )
     _apply_provider_choice(personality, personality_dto, creating=True)
     _apply_channel(personality, personality_dto, creating=True)
@@ -233,6 +240,8 @@ def update_personality(personality_id: str, personality_dto: Any) -> Personality
             )
     _apply_provider_choice(personality, personality_dto, creating=False)
     _apply_channel(personality, personality_dto, creating=False)
+    if "tool_calling" in personality_dto:
+        personality.tool_calling = bool(personality_dto["tool_calling"])
     if "stt_engine" in personality_dto:
         personality.stt_engine = personality_dto["stt_engine"]
     db.session.flush()

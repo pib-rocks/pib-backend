@@ -1164,7 +1164,9 @@ def test_chat_module_does_not_reintroduce_asyncio_loop_lookup():
     assert "asyncio" not in referenced
 
 
-def test_chat_legacy_path_still_uses_public_api(chat_module, chat_node):
+def test_direct_without_tool_calling_uses_public_api_and_attaches_no_image(
+    chat_module, chat_node
+):
     import asyncio
 
     Chat = chat_module.Chat
@@ -1173,7 +1175,9 @@ def test_chat_legacy_path_still_uses_public_api(chat_module, chat_node):
     personality.message_history = 5
     personality.personality_id = "pers-2"
     personality.assistant_model.api_name = "gpt-4o"
-    personality.assistant_model.has_image_support = False
+    personality.assistant_model.has_image_support = True
+    personality.assistant_model.capabilities = {"images": True}
+    personality.tool_calling = False
     personality.channel = "direct"
     personality.effective_channel = "direct"
     personality.description = "Du bist der eine Soul."
@@ -1202,6 +1206,9 @@ def test_chat_legacy_path_still_uses_public_api(chat_module, chat_node):
             return_value=iter(["Hi."]),
         ) as chat_completion,
         patch.object(
+            chat_module.direct_tool_loop, "run_direct_turn"
+        ) as run_direct_turn,
+        patch.object(
             chat_node,
             "_stream_chunks_to_goal",
             return_value=("Hi.", TEXT_TYPE_SENTENCE, ""),
@@ -1212,8 +1219,11 @@ def test_chat_legacy_path_still_uses_public_api(chat_module, chat_node):
         result = asyncio.run(chat_node.chat(goal_handle))
 
     get_history.assert_called_once()
+    run_direct_turn.assert_not_called()
     chat_completion.assert_called_once()
     assert chat_completion.call_args.kwargs["description"] == "Du bist der eine Soul."
+    assert chat_completion.call_args.kwargs["image_base64"] is None
+    chat_node.get_camera_image_client.call_async.assert_not_called()
     run_turn.assert_not_called()
     stream.assert_called_once()
     chat_node.create_chat_message.assert_any_call("chat-2", "Hallo", True, False, True)
@@ -1364,6 +1374,7 @@ def test_disabled_hermes_channel_routes_a_smart_personality_direct(
     personality.personality_id = "pers-1"
     personality.assistant_model.api_name = "hermes-agent"
     personality.assistant_model.has_image_support = False
+    personality.tool_calling = True
     personality.channel = "smart"
     personality.effective_channel = "smart"
 
@@ -1386,10 +1397,11 @@ def test_disabled_hermes_channel_routes_a_smart_personality_direct(
             return_value=(True, []),
         ),
         patch.object(
-            chat_module.public_voice_client,
-            "chat_completion",
+            chat_module.direct_tool_loop,
+            "run_direct_turn",
             return_value=iter(["Direkt."]),
-        ) as completion,
+        ) as run_direct_turn,
+        patch.object(chat_module.public_voice_client, "chat_completion") as completion,
         patch.object(chat_module.hermes_agent_client, "run_turn") as run_turn,
         patch.object(chat_module.hermes_agent_client, "stream_turn") as stream_turn,
         patch.object(
@@ -1402,10 +1414,123 @@ def test_disabled_hermes_channel_routes_a_smart_personality_direct(
 
     run_turn.assert_not_called()
     stream_turn.assert_not_called()
-    completion.assert_called_once()
-    assert completion.call_args.kwargs["description"] == "Ein Soul, eine Identitaet."
+    completion.assert_not_called()
+    chat_node.get_camera_image_client.call_async.assert_not_called()
+    run_direct_turn.assert_called_once()
+    assert (
+        run_direct_turn.call_args.kwargs["system_prompt"]
+        == "Ein Soul, eine Identitaet."
+    )
+    assert run_direct_turn.call_args.kwargs["tool_calling"] is True
+    assert run_direct_turn.call_args.kwargs["allow_image"] is False
     stream.assert_called_once()
     chat_node.create_chat_message.assert_any_call(
         "chat-forced", "Hi", True, False, True
     )
     assert result.text == "Direkt."
+
+
+def test_direct_tool_calling_offers_the_image_tool_and_does_not_attach_a_frame(
+    chat_module, chat_node
+):
+    """The image path is capture_image. The turn itself carries no frame."""
+    Chat = chat_module.Chat
+
+    personality = MagicMock()
+    personality.message_history = 5
+    personality.description = "Du bist pib."
+    personality.personality_id = "pers-1"
+    personality.assistant_model.api_name = "gemini-3.5-flash"
+    personality.assistant_model.has_image_support = True
+    personality.assistant_model.capabilities = {"images": True, "tools": True}
+    personality.tool_calling = True
+    personality.channel = "direct"
+    personality.effective_channel = "direct"
+
+    goal_handle = MagicMock()
+    goal_handle.is_cancel_requested = False
+    goal_handle.request = Chat.Goal()
+    goal_handle.request.chat_id = "chat-look"
+    goal_handle.request.text = "Was siehst du?"
+    goal_handle.request.generate_code = False
+
+    with (
+        patch.object(
+            chat_module.voice_assistant_client,
+            "get_personality_from_chat",
+            return_value=(True, personality),
+        ),
+        patch.object(
+            chat_module.voice_assistant_client,
+            "get_chat_history",
+            return_value=(True, []),
+        ),
+        patch.object(
+            chat_module.direct_tool_loop,
+            "run_direct_turn",
+            return_value=iter(["Ein Stuhl."]),
+        ) as run_direct_turn,
+        patch.object(chat_module.public_voice_client, "chat_completion") as completion,
+        patch.object(
+            chat_node,
+            "_stream_chunks_to_goal",
+            return_value=(None, None, "Ein Stuhl."),
+        ),
+    ):
+        result = drive_like_rclpy(chat_node.chat(goal_handle))
+
+    completion.assert_not_called()
+    chat_node.get_camera_image_client.call_async.assert_not_called()
+    run_direct_turn.assert_called_once()
+    assert run_direct_turn.call_args.kwargs["tool_calling"] is True
+    assert run_direct_turn.call_args.kwargs["allow_image"] is True
+    assert result.text == "Ein Stuhl."
+
+
+def test_direct_tool_calling_aborts_when_the_model_has_no_stable_endpoint(
+    chat_module, chat_node
+):
+    """gpt-4o stays in the registry. This account has no non-beta tool endpoint for it."""
+    Chat = chat_module.Chat
+
+    personality = MagicMock()
+    personality.message_history = 5
+    personality.description = "Du bist pib."
+    personality.personality_id = "pers-1"
+    personality.assistant_model.api_name = "gpt-4o"
+    personality.assistant_model.has_image_support = True
+    personality.tool_calling = True
+    personality.channel = "direct"
+    personality.effective_channel = "direct"
+
+    goal_handle = MagicMock()
+    goal_handle.is_cancel_requested = False
+    goal_handle.request = Chat.Goal()
+    goal_handle.request.chat_id = "chat-gpt"
+    goal_handle.request.text = "Hi"
+    goal_handle.request.generate_code = False
+
+    with (
+        patch.object(
+            chat_module.voice_assistant_client,
+            "get_personality_from_chat",
+            return_value=(True, personality),
+        ),
+        patch.object(
+            chat_module.voice_assistant_client,
+            "get_chat_history",
+            return_value=(True, []),
+        ),
+        patch.object(
+            chat_module.direct_tool_loop, "run_direct_turn"
+        ) as run_direct_turn,
+        patch.object(chat_module.public_voice_client, "chat_completion") as completion,
+    ):
+        result = drive_like_rclpy(chat_node.chat(goal_handle))
+
+    run_direct_turn.assert_not_called()
+    completion.assert_not_called()
+    chat_node.get_camera_image_client.call_async.assert_not_called()
+    goal_handle.abort.assert_called_once()
+    goal_handle.succeed.assert_not_called()
+    assert result.text == ""
