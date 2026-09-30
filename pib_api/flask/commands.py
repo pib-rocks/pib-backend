@@ -16,6 +16,7 @@ from sqlalchemy.engine import URL, make_url
 
 from app.app import db, app
 from model.assistant_model import AssistantModel
+from provider_registry import CATALOGUE, STATUS_ACTIVE
 from service.provider_service import build_provider
 from model.controller_model import Controller
 from model.camera_settings_model import CameraSettings
@@ -472,6 +473,29 @@ def _create_program_data() -> None:
     db.session.flush()
 
 
+def _active_catalogue_models(already: set[str]) -> list[AssistantModel]:
+    """Active catalogue models the legacy rows do not already cover.
+
+    Unconfirmed lines have no row until an identifier is confirmed. Retired
+    lines stay on the historical visual names created below.
+    """
+    added: list[AssistantModel] = []
+    for entry in CATALOGUE:
+        if entry.status != STATUS_ACTIVE or not entry.api_name:
+            continue
+        if entry.api_name in already:
+            continue
+        added.append(
+            AssistantModel(
+                visual_name=entry.visual_name,
+                api_name=entry.api_name,
+                has_image_support=entry.images,
+            )
+        )
+        already.add(entry.api_name)
+    return added
+
+
 def _create_chat_data_and_assistant() -> None:
     gpt4o1 = AssistantModel(
         visual_name="GPT-4o [Vision]", api_name="gpt-4o", has_image_support=True
@@ -498,6 +522,7 @@ def _create_chat_data_and_assistant() -> None:
         has_image_support=True,
     )
     models = [gpt4o2, gpt4o1, gpt3, claude, gemini_text, hermes_agent]
+    models.extend(_active_catalogue_models({model.api_name for model in models}))
     db.session.add_all(models)
     db.session.flush()
     db.session.add_all(build_provider(model) for model in models)

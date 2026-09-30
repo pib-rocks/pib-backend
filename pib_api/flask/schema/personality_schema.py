@@ -20,7 +20,7 @@ from pib_hermes_config.memory import (
     read_memory,
 )
 from pib_hermes_config.voice_backends import live_voice_note, local_voice_applies
-from provider_registry import has_capability
+from provider_registry import has_capability, is_retired
 from schema.sql_auto_with_camel_case_schema import SQLAutoWithCamelCaseSchema
 from service import provider_service, soul_service
 
@@ -75,6 +75,7 @@ class PersonalitySchemaSQLAutoWith(SQLAutoWithCamelCaseSchema):
     )
     live_model = fields.Method("get_live_model", dump_only=True)
     voice_start_mode = fields.Method("get_voice_start_mode", dump_only=True)
+    needs_new_model = fields.Method("get_needs_new_model", dump_only=True)
 
     def get_soul_path(self, obj: Personality) -> str:
         return soul_service.soul_path_for(obj.personality_id)
@@ -106,6 +107,13 @@ class PersonalitySchemaSQLAutoWith(SQLAutoWithCamelCaseSchema):
             return provider_service.resolve_provider(str(ref))
         except Exception:
             return None
+
+    def get_needs_new_model(self, obj: Personality) -> bool:
+        """True when the selected model is retired and settings must replace it."""
+        provider = self._resolved_provider(obj)
+        if provider is None:
+            return False
+        return is_retired(provider.api_name)
 
     def get_live_model(self, obj: Personality) -> str | None:
         provider = self._resolved_provider(obj)

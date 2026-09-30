@@ -2,10 +2,13 @@ import logging
 import time
 from typing import Any, List
 
+from werkzeug.exceptions import UnprocessableEntity
+
 from app.app import db
 from model.chat_message_model import ChatMessage
 from model.chat_model import Chat
-from service import personality_service
+from provider_registry import is_retired, retired_model_chat_message
+from service import personality_service, provider_service
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +40,9 @@ def get_message_history(chat_id: str, length: int) -> ChatMessage:
 
 def create_chat(chat_dto: Any) -> Chat:
     personality = personality_service.get_personality(chat_dto["personality_id"])
+    provider = provider_service.resolve_provider(personality.provider_ref)
+    if is_retired(provider.api_name):
+        raise UnprocessableEntity(retired_model_chat_message(provider.visual_name))
     chat = Chat(topic=chat_dto["topic"], personality=personality)
     db.session.add(chat)
     db.session.flush()

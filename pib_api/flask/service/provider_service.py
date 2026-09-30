@@ -15,23 +15,23 @@ from pib_hermes_config.voice_backends import (
     LOCAL_TTS_ID,
 )
 from provider_registry import (
-    LIVE_API_NAME,
     capabilities_for,
     has_capability,
     has_images_capability,
     is_registry_default,
+    pins_gemini_live_model,
 )
 
 
 def build_provider(model: AssistantModel) -> Provider:
     """One registry row for an assistant model, using that model's id.
 
-    The Gemini row carries the live model pinned on 2026-09-30. Other rows
-    stay unpinned until their own account list is read.
+    A Gemini chat id the catalogue marks live carries the live model pinned
+    on 2026-09-30. Other rows stay unpinned until their own account list is read.
     """
     live_model = None
     checked_on = None
-    if model.api_name == LIVE_API_NAME:
+    if pins_gemini_live_model(model.api_name):
         live_model = GEMINI_LIVE_MODEL
         checked_on = date.fromisoformat(GEMINI_LIVE_MODEL_CHECKED_ON)
     return Provider(
