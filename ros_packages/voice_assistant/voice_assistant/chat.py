@@ -42,6 +42,7 @@ from voice_assistant.degraded_chat import (
     fetch_operating_mode,
     refusal_sentence,
 )
+from voice_assistant.memory_consolidation import schedule_memory_consolidation
 
 # In future, this code will be prepended to the description in a chat-request
 # if it is specified that code should be generated. The text will contain
@@ -146,12 +147,28 @@ class ChatNode(Node):
 
         self._preflight_hermes_binary()
         self._ensure_hermes_daemon()
+        schedule_memory_consolidation(self)
 
         self.get_logger().info("Now running CHAT")
 
     def _key_store_mode(self) -> str:
         """Operating mode of the key store. Unreadable means degraded."""
         return fetch_operating_mode()
+
+    def consolidate_memories(self) -> None:
+        """Fold old MEMORY.md entries. Recent entries stay verbatim."""
+        from voice_assistant.memory_consolidation import run_periodic_consolidation
+
+        try:
+            results = run_periodic_consolidation()
+        except Exception as exc:
+            self.get_logger().error("memory consolidation failed: %s", exc)
+            return
+        consolidated = sum(1 for status in results.values() if status == "consolidated")
+        if consolidated:
+            self.get_logger().info(
+                "consolidated memory for %s profile(s)", consolidated
+            )
 
     def destroy_node(self):
         # Abandoned hermes workers must not keep the process alive on shutdown.

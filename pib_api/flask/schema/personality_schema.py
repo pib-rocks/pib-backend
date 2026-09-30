@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from marshmallow import fields, validate
+from marshmallow import ValidationError, fields, validate
 from model.personality_model import Personality
 from pib_hermes_config.channel import (
     CHANNEL_DIRECT,
@@ -12,6 +12,12 @@ from pib_hermes_config.live_session import (
     VOICE_MODE_LIVE,
     VOICE_MODE_TURN_BASED,
     voice_start_mode,
+)
+from pib_hermes_config.memory import (
+    CHARACTER_LABEL,
+    EXPERIENCE_LABEL,
+    memory_size,
+    read_memory,
 )
 from pib_hermes_config.voice_backends import live_voice_note, local_voice_applies
 from provider_registry import has_capability
@@ -45,6 +51,17 @@ class PersonalitySchemaSQLAutoWith(SQLAutoWithCamelCaseSchema):
     effective_channel = fields.Method("get_effective_channel", dump_only=True)
     smart_chats_enabled = fields.Method("get_smart_chats_enabled", dump_only=True)
     soul_path = fields.Method("get_soul_path", dump_only=True)
+    # Character is description / SOUL.md. Experience is MEMORY.md. The two
+    # labels stay distinct so an edit of a fact is not an edit of character.
+    character_label = fields.Constant(CHARACTER_LABEL)
+    experience_label = fields.Constant(EXPERIENCE_LABEL)
+    memory_size = fields.Method("get_memory_size", dump_only=True)
+    memory = fields.Method(
+        serialize="get_memory_text",
+        deserialize="load_memory_text",
+        required=False,
+        allow_none=True,
+    )
     profile_provisioned = fields.Boolean(dump_only=True)
     voice_mode = fields.String(
         required=False,
@@ -61,6 +78,19 @@ class PersonalitySchemaSQLAutoWith(SQLAutoWithCamelCaseSchema):
 
     def get_soul_path(self, obj: Personality) -> str:
         return soul_service.soul_path_for(obj.personality_id)
+
+    def get_memory_size(self, obj: Personality) -> int:
+        return memory_size(obj.personality_id)
+
+    def get_memory_text(self, obj: Personality) -> str:
+        return read_memory(obj.personality_id)
+
+    def load_memory_text(self, value):
+        if value is None:
+            return ""
+        if not isinstance(value, str):
+            raise ValidationError("Memory must be text.")
+        return value
 
     def get_effective_channel(self, obj: Personality) -> str:
         return effective_channel(obj.channel)

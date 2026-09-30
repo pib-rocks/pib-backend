@@ -21,6 +21,7 @@ from pib_hermes_config.live_session import (
     normalize_idle_timeout,
     normalize_voice_mode,
 )
+from pib_hermes_config.memory import write_memory
 from pib_hermes_config.turn_taking import normalize_thinking_filler
 from pib_hermes_config.voice_backends import (
     LOCAL_STT_ID,
@@ -247,6 +248,18 @@ def _reject_actuation_request(personality_dto: Any) -> None:
         )
 
 
+def _apply_memory(personality: Personality, personality_dto: Any) -> None:
+    """Store experience. Does not touch the character text or SOUL.md."""
+    if "memory" not in personality_dto:
+        return
+    text = personality_dto.get("memory")
+    if text is None:
+        text = ""
+    if not isinstance(text, str):
+        raise ValidationError({"memory": ["Memory must be text."]})
+    write_memory(personality.personality_id, text)
+
+
 def _apply_thinking_filler(personality: Personality, personality_dto: Any) -> None:
     if "thinking_filler" not in personality_dto:
         return
@@ -302,6 +315,7 @@ def create_personality(personality_dto: Any) -> Personality:
             personality.personality_id,
             exc,
         )
+    _apply_memory(personality, personality_dto)
     return personality
 
 
@@ -347,6 +361,7 @@ def update_personality(personality_id: str, personality_dto: Any) -> Personality
     _apply_live_chat_settings(personality, personality_dto, creating=False)
     _apply_voice_backends(personality, personality_dto, creating=False)
     _apply_thinking_filler(personality, personality_dto)
+    _apply_memory(personality, personality_dto)
     db.session.flush()
     return personality
 
