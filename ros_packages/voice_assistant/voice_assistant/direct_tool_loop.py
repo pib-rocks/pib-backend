@@ -5,12 +5,10 @@ model returns a final answer. The per-personality switch turns that off: the
 request then carries no tools and no image. A camera frame is only available
 as the result of the capture_image tool.
 
-Provider and model were read from this account on 2026-09-30.
-``GET https://generativelanguage.googleapis.com/v1/models`` lists
-``gemini-3.5-flash``. The stable method on that host is
-``/v1/models/gemini-3.5-flash:generateContent``, and a probe of it returned a
-function call. ``/v1/openai/chat/completions`` returned 404. The
-OpenAI-compatible shim under ``/v1beta`` is not used.
+Pinned, checked on 2026-09-30: ``gemini-3.8-flash``, the catalogue's Gemini
+chat model. It is pinned because that is the supported model this loop
+calls, and the id it replaced is not in the catalogue. The endpoint is
+``/v1/models/<model>:generateContent``. The beta surface is not used.
 """
 
 from __future__ import annotations
@@ -29,17 +27,16 @@ from pib_hermes_config.visible_state import (
 logger = logging.getLogger(__name__)
 
 PINNED_PROVIDER = "gemini"
-# UNVERIFIED PLACEHOLDER: the account key does not exist until the speech tab (M1)
-# lands, so this identifier was never read from the provider's model list. Replace it
-# with the value the account returns and update PINNED_CHECKED_ON.
-PINNED_MODEL = "gemini-3.5-flash"
+# Pinned, checked on 2026-09-30: the catalogue's Gemini chat model.
+# The id this replaced is not in the catalogue, so this loop does not send it.
+PINNED_MODEL = "gemini-3.8-flash"
 PINNED_CHECKED_ON = "2026-09-30"
 PINNED_ENDPOINT = (
     "https://generativelanguage.googleapis.com/v1/models/"
-    "gemini-3.5-flash:generateContent"
+    f"{PINNED_MODEL}:generateContent"
 )
-# The Hermes row is not itself a generateContent model. Its chat pin is the
-# same model the Hermes profile already writes.
+# The Hermes row is not itself a generateContent model. A Direct turn on
+# that row still calls the pinned catalogue model above.
 GEMINI_API_NAMES = frozenset({PINNED_MODEL, "hermes-agent"})
 IMAGE_TOOL = "capture_image"
 MAX_TOOL_ROUNDS = 8

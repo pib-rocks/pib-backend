@@ -47,13 +47,13 @@ def test_mcp_declarations_include_the_image_tool():
 
 def test_pinned_endpoint_is_the_stable_generate_content_method():
     assert PINNED_PROVIDER == "gemini"
-    assert PINNED_MODEL == "gemini-3.5-flash"
+    assert PINNED_MODEL == "gemini-3.8-flash"
     assert PINNED_CHECKED_ON == "2026-09-30"
     assert PINNED_ENDPOINT.endswith(f"/v1/models/{PINNED_MODEL}:generateContent")
     assert "beta" not in PINNED_ENDPOINT
-    assert supports_tool_endpoint("gemini-3.5-flash") is True
+    assert supports_tool_endpoint("gemini-3.8-flash") is True
     assert supports_tool_endpoint("hermes-agent") is True
-    assert supports_tool_endpoint("gpt-4o") is False
+    assert supports_tool_endpoint("gpt-6") is False
     with pytest.raises(DirectToolLoopError, match="beta"):
         assert_stable_url(
             "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
@@ -304,7 +304,7 @@ def test_personality_client_reads_the_tool_switch(monkeypatch):
     from pib_api_client.voice_assistant_client import Personality
 
     model = MagicMock()
-    model.api_name = "gemini-3.5-flash"
+    model.api_name = "gemini-3.8-flash"
     monkeypatch.setattr(
         "pib_api_client.voice_assistant_client.get_default_provider",
         lambda: (True, model),

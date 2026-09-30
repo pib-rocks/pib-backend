@@ -39,6 +39,12 @@ RUN pip install --break-system-packages --no-cache-dir ./pib_hermes_config/
 COPY ./public_api_client ./public_api_client
 RUN pip install --break-system-packages --no-cache-dir ./public_api_client/
 
+# Chat resolves the cloud model from the catalogue. This image does not
+# install Flask; the module itself imports nothing else.
+COPY ./pib_api/flask/provider_registry.py /tmp/provider_registry.py
+RUN cp /tmp/provider_registry.py \
+    "$(python3 -c 'import sysconfig; print(sysconfig.get_path("purelib"))')/provider_registry.py"
+
 COPY ./pib_mcp_server ./pib_mcp_server
 RUN pip install --break-system-packages --no-cache-dir ./pib_mcp_server/
 

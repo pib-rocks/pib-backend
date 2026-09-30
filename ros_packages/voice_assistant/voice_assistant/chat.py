@@ -35,6 +35,7 @@ from pib_hermes_config.channel import (
     direct_system_prompt,
     turn_channel,
 )
+from provider_registry import DEFAULT_PROVIDER_API_NAME
 from public_api_client import hermes_agent_client, public_voice_client
 from voice_assistant import direct_tool_loop
 from voice_assistant.degraded_chat import (
@@ -485,7 +486,9 @@ class ChatNode(Node):
                     ),
                     message_history=[],
                     image_base64=image_base64,
-                    model="gpt-4o",
+                    # Catalogue default. The public API's id is not confirmed
+                    # in this repository.
+                    model=DEFAULT_PROVIDER_API_NAME,  # TODO(confirm id)
                     public_api_token=self.token,
                 )
 

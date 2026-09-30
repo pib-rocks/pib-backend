@@ -261,8 +261,8 @@ def test_uses_hermes_backend_routing_decision():
     from public_api_client.hermes_agent_client import uses_hermes_backend
 
     assert uses_hermes_backend("hermes-agent") is True
-    assert uses_hermes_backend("gpt-4o") is False
-    assert uses_hermes_backend("gemini-3.5-flash") is False
+    assert uses_hermes_backend("gpt-6") is False
+    assert uses_hermes_backend("gemini-3.8-flash") is False
     assert uses_hermes_backend(None) is False
 
 
@@ -1341,7 +1341,7 @@ def test_direct_without_tool_calling_uses_public_api_and_attaches_no_image(
     personality = MagicMock()
     personality.message_history = 5
     personality.personality_id = "pers-2"
-    personality.assistant_model.api_name = "gpt-4o"
+    personality.assistant_model.api_name = "gpt-6"
     personality.assistant_model.has_image_support = True
     personality.assistant_model.capabilities = {"images": True}
     personality.tool_calling = False
@@ -1455,7 +1455,7 @@ def test_degraded_direct_chat_names_the_missing_password(chat_module, chat_node)
     personality.personality_id = "pers-1"
     personality.gender = "Male"
     personality.language = "German"
-    personality.assistant_model.api_name = "gpt-4o"
+    personality.assistant_model.api_name = "gpt-6"
     personality.channel = "direct"
     personality.effective_channel = "direct"
     chat_node._key_store_mode = lambda: "degraded"
@@ -1489,7 +1489,7 @@ def test_smart_channel_uses_hermes_even_when_the_model_is_not(chat_module, chat_
     personality.message_history = 5
     personality.description = "Du bist pib."
     personality.personality_id = "pers-1"
-    personality.assistant_model.api_name = "gpt-4o"
+    personality.assistant_model.api_name = "gpt-6"
     personality.assistant_model.has_image_support = False
     personality.channel = "smart"
     personality.effective_channel = "smart"
@@ -1607,7 +1607,7 @@ def test_direct_tool_calling_offers_the_image_tool_and_does_not_attach_a_frame(
     personality.message_history = 5
     personality.description = "Du bist pib."
     personality.personality_id = "pers-1"
-    personality.assistant_model.api_name = "gemini-3.5-flash"
+    personality.assistant_model.api_name = "gemini-3.8-flash"
     personality.assistant_model.has_image_support = True
     personality.assistant_model.capabilities = {"images": True, "tools": True}
     personality.tool_calling = True

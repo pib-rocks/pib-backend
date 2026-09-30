@@ -292,7 +292,7 @@ def test_personality_client_reads_channel_apart_from_the_model(monkeypatch):
     from pib_api_client.voice_assistant_client import Personality
 
     model = MagicMock()
-    model.api_name = "gpt-4o"
+    model.api_name = "gpt-6"
     monkeypatch.setattr(
         "pib_api_client.voice_assistant_client.get_default_provider",
         lambda: (True, model),
@@ -312,4 +312,4 @@ def test_personality_client_reads_channel_apart_from_the_model(monkeypatch):
     assert personality.channel == "direct"
     assert personality.effective_channel == "direct"
     assert personality.description == "soul text"
-    assert personality.assistant_model.api_name == "gpt-4o"
+    assert personality.assistant_model.api_name == "gpt-6"
