@@ -206,6 +206,7 @@ function start_container() {
     print INFO "Starting container"
     echo "TRYB_URL_PREFIX=https://platform.tryb.ai" > "$BACKEND_DIR"/password.env
     sudo PIB_HARDWARE_VARIANT="$PIB_HARDWARE_VARIANT" \
+      PIB_SMART_CHATS="${PIB_SMART_CHATS:-1}" \
       docker compose -f "$BACKEND_DIR/docker-compose.yaml" --profile all up -d --build \
       || return 1
     print SUCCESS "Started pib-backend container"

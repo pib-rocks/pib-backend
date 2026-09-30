@@ -8,6 +8,12 @@ from model.personality_model import Personality
 from model.provider_model import Provider
 from app.app import db
 from pib_hermes_config import build_default_soul_text
+from pib_hermes_config.channel import (
+    CHANNEL_DIRECT,
+    CHANNEL_SMART,
+    CHANNELS,
+    smart_chats_enabled,
+)
 from provider_registry import DEFAULT_PROVIDER_REF
 from service import soul_service
 
@@ -116,6 +122,29 @@ def _store_provider_ref(personality: Personality, ref: str) -> None:
     personality.assistant_model_id = provider_id
 
 
+def _apply_channel(
+    personality: Personality, personality_dto: Any, *, creating: bool
+) -> None:
+    """Store the channel. Does not touch the identity text or MEMORY.md.
+
+    With Hermes disabled, Smart cannot be stored. A create that omits the
+    channel then stores Direct, which is the only path.
+    """
+    if "channel" in personality_dto and personality_dto["channel"]:
+        requested = str(personality_dto["channel"])
+    elif creating:
+        requested = CHANNEL_DIRECT if not smart_chats_enabled() else CHANNEL_SMART
+    else:
+        return
+    if requested not in CHANNELS:
+        raise ValidationError({"channel": ["Channel must be smart or direct."]})
+    if requested == CHANNEL_SMART and not smart_chats_enabled():
+        raise ValidationError(
+            {"channel": ["Smart chats are not available on this robot."]}
+        )
+    personality.channel = requested
+
+
 def _apply_provider_choice(
     personality: Personality, personality_dto: Any, *, creating: bool
 ) -> None:
@@ -141,6 +170,7 @@ def create_personality(personality_dto: Any) -> Personality:
         stt_engine=personality_dto.get("stt_engine", "local_whisper"),
     )
     _apply_provider_choice(personality, personality_dto, creating=True)
+    _apply_channel(personality, personality_dto, creating=True)
     custom = ""
     if "description" in personality_dto and personality_dto["description"]:
         custom = str(personality_dto["description"]).strip()
@@ -202,6 +232,7 @@ def update_personality(personality_id: str, personality_dto: Any) -> Personality
                 exc,
             )
     _apply_provider_choice(personality, personality_dto, creating=False)
+    _apply_channel(personality, personality_dto, creating=False)
     if "stt_engine" in personality_dto:
         personality.stt_engine = personality_dto["stt_engine"]
     db.session.flush()

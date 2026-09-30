@@ -1,5 +1,6 @@
 from app.app import db
 from model.util import generate_uuid
+from pib_hermes_config.channel import CHANNEL_SMART
 
 
 class Personality(db.Model):
@@ -29,3 +30,12 @@ class Personality(db.Model):
     )
     # 'default' or the decimal id of a provider row. 'default' is a pointer.
     provider_ref = db.Column(db.String(255), nullable=False)
+    # Independent of the provider. Smart is the Hermes agent; Direct is the
+    # backend's own completion. The installer flag can force Direct at runtime
+    # without rewriting this column.
+    channel = db.Column(
+        db.String(255),
+        nullable=False,
+        default=CHANNEL_SMART,
+        server_default=CHANNEL_SMART,
+    )

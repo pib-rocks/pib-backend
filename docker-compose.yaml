@@ -41,6 +41,8 @@ services:
       - PIB_HARDWARE_VARIANT=${PIB_HARDWARE_VARIANT:-}
       - PIB_UPDATE_DIR=/app/.update
       - PIB_KEY_STORE_PATH=/home/pib/app/secrets/provider_key_store.json
+      # Empty means read /etc/pib_smart_chats. 0 disables the Hermes channel.
+      - PIB_SMART_CHATS=${PIB_SMART_CHATS:-}
     volumes:
       - ./pib_api/flask/:/app
       # Ciphertext for provider keys. Not the flask source tree, and not the
@@ -48,6 +50,7 @@ services:
       - /home/pib/app/secrets:/home/pib/app/secrets
       - /home/pib/app/.update:/app/.update
       - /etc/pib_hardware_variant:/etc/pib_hardware_variant:ro
+      - /etc/pib_smart_chats:/etc/pib_smart_chats:ro
       - programs:/root/cerebra_programs
       - /home/pib/programs/notebooks:/home/pib/programs/notebooks
       # A personality's SOUL.md must land on the host, at the same path the
@@ -145,6 +148,8 @@ services:
       - HERMES_HOME=/home/pib/.hermes
       - PIB_HERMES_BIN=/home/pib/.local/bin/hermes
       - PIB_HERMES_DAEMON_HOST=0.0.0.0
+      # Empty means read /etc/pib_smart_chats. 0 disables the Hermes channel.
+      - PIB_SMART_CHATS=${PIB_SMART_CHATS:-}
       # GEMINI_API_KEY / GOOGLE_API_KEY are deliberately NOT listed here: they
       # come from the gitignored ./password.env (env_file above). Compose
       # interpolates ${VAR} from the shell or the tracked project-root .env, not
@@ -156,6 +161,7 @@ services:
       - /dev/snd:/dev/snd
       - /dev/dsp:/dev/dsp
       - /etc/machine-id:/etc/machine-id
+      - /etc/pib_smart_chats:/etc/pib_smart_chats:ro
       - /home/pib/.hermes:/home/pib/.hermes
       - /home/pib/.local/bin/hermes:/home/pib/.local/bin/hermes:ro
       # REQUIRED, do not remove: the hermes wrapper execs the venv interpreter

@@ -918,6 +918,7 @@ show_help()
 	echo -e "-l or --local for a local installation of the software over using a containerized setup using Docker"
 	echo -e "--models refresh the persistent OAK model store from models/ and exit"
 	echo -e "--verify-models check the model store against models/manifest.yaml and exit non-zero on mismatch"
+	echo -e "--no-smart-chats install without the Hermes channel; Direct is the only chat path"
 	echo -e "--pib4edu select the pib 4 educational hardware variant"
 	echo -e "--pib4advanced select the pib 4 advanced hardware variant"
 	echo -e "--pib5advanced select the pib 5 advanced hardware variant"
@@ -945,6 +946,7 @@ BRANCH_FRONTEND="main"
 INSTALL_METHOD="docker"
 MODELS_ONLY=false
 VERIFY_MODELS_ONLY=false
+SMART_CHATS_ENABLED=1
 HARDWARE_VARIANT_ARGUMENTS=()
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -962,6 +964,9 @@ while [ $# -gt 0 ]; do
       ;;
     --verify-models)
       VERIFY_MODELS_ONLY=true
+      ;;
+    --no-smart-chats)
+      SMART_CHATS_ENABLED=0
       ;;
     --pib4edu | --pib4advanced | --pib5advanced | --pib5museum | --pib*)
       HARDWARE_VARIANT_ARGUMENTS+=("$1")
@@ -1021,6 +1026,25 @@ fi
 printf '%s\n' "$PIB_HARDWARE_VARIANT" |
   sudo tee /etc/pib_hardware_variant >/dev/null
 print INFO "Selected hardware variant: ${PIB_HARDWARE_VARIANT}"
+
+# Durable record of --no-smart-chats. Personality rows are not rewritten:
+# clearing the marker restores Smart for personalities that stored it.
+if [ -f "$SETUP_SCRIPT_DIR/installation_scripts/smart_chats.sh" ]; then
+  # shellcheck source=/dev/null
+  source "$SETUP_SCRIPT_DIR/installation_scripts/smart_chats.sh"
+  SMART_CHATS_MARKER="$(smart_chats_marker "$SMART_CHATS_ENABLED")"
+elif [ "$SMART_CHATS_ENABLED" = "0" ]; then
+  SMART_CHATS_MARKER="disabled"
+else
+  SMART_CHATS_MARKER="enabled"
+fi
+printf '%s\n' "$SMART_CHATS_MARKER" | sudo tee /etc/pib_smart_chats >/dev/null
+if [ "$SMART_CHATS_ENABLED" = "0" ]; then
+  export PIB_SMART_CHATS=0
+else
+  export PIB_SMART_CHATS=1
+fi
+print INFO "Hermes channel: ${SMART_CHATS_MARKER}"
 
 DISTRIBUTION=$(get_distribution) # e.g., 'ubuntu'
 export DISTRIBUTION

@@ -1171,10 +1171,12 @@ def test_chat_legacy_path_still_uses_public_api(chat_module, chat_node):
 
     personality = MagicMock()
     personality.message_history = 5
-    personality.description = "legacy"
     personality.personality_id = "pers-2"
     personality.assistant_model.api_name = "gpt-4o"
     personality.assistant_model.has_image_support = False
+    personality.channel = "direct"
+    personality.effective_channel = "direct"
+    personality.description = "Du bist der eine Soul."
 
     goal_handle = MagicMock()
     goal_handle.is_cancel_requested = False
@@ -1211,8 +1213,10 @@ def test_chat_legacy_path_still_uses_public_api(chat_module, chat_node):
 
     get_history.assert_called_once()
     chat_completion.assert_called_once()
+    assert chat_completion.call_args.kwargs["description"] == "Du bist der eine Soul."
     run_turn.assert_not_called()
     stream.assert_called_once()
+    chat_node.create_chat_message.assert_any_call("chat-2", "Hallo", True, False, True)
     assert result.text == "Hi."
     goal_handle.succeed.assert_called_once()
 
@@ -1237,6 +1241,8 @@ def test_degraded_smart_chat_names_the_missing_password(chat_module, chat_node):
     personality.gender = "Female"
     personality.language = "German"
     personality.assistant_model.api_name = "hermes-agent"
+    personality.channel = "smart"
+    personality.effective_channel = "smart"
     chat_node._key_store_mode = lambda: "degraded"
     goal_handle = _degraded_goal(chat_module, "chat-locked")
 
@@ -1273,6 +1279,8 @@ def test_degraded_direct_chat_names_the_missing_password(chat_module, chat_node)
     personality.gender = "Male"
     personality.language = "German"
     personality.assistant_model.api_name = "gpt-4o"
+    personality.channel = "direct"
+    personality.effective_channel = "direct"
     chat_node._key_store_mode = lambda: "degraded"
     goal_handle = _degraded_goal(chat_module, "chat-direct")
 
@@ -1294,3 +1302,110 @@ def test_degraded_direct_chat_names_the_missing_password(chat_module, chat_node)
     assert result.text == refusal_sentence("direct")
     assert "Direct" in result.text
     assert "operator password" in result.text
+
+
+def test_smart_channel_uses_hermes_even_when_the_model_is_not(chat_module, chat_node):
+    """The channel is not the provider. A Smart personality still uses Hermes."""
+    Chat = chat_module.Chat
+
+    personality = MagicMock()
+    personality.message_history = 5
+    personality.description = "Du bist pib."
+    personality.personality_id = "pers-1"
+    personality.assistant_model.api_name = "gpt-4o"
+    personality.assistant_model.has_image_support = False
+    personality.channel = "smart"
+    personality.effective_channel = "smart"
+
+    goal_handle = MagicMock()
+    goal_handle.is_cancel_requested = False
+    goal_handle.request = Chat.Goal()
+    goal_handle.request.chat_id = "chat-smart"
+    goal_handle.request.text = "Hi"
+    goal_handle.request.generate_code = False
+
+    with (
+        patch.object(
+            chat_module.voice_assistant_client,
+            "get_personality_from_chat",
+            return_value=(True, personality),
+        ),
+        patch.object(chat_module.voice_assistant_client, "get_chat_history") as history,
+        patch.object(chat_module.public_voice_client, "chat_completion") as completion,
+        patch.object(
+            chat_node, "_stream_hermes_turn", return_value=["Vom Agent."]
+        ) as hermes_stream,
+        patch.object(
+            chat_node,
+            "_stream_chunks_to_goal",
+            return_value=(None, None, "Vom Agent."),
+        ) as stream,
+    ):
+        result = drive_like_rclpy(chat_node.chat(goal_handle))
+
+    history.assert_not_called()
+    completion.assert_not_called()
+    hermes_stream.assert_called_once()
+    stream.assert_called_once()
+    chat_node.create_chat_message.assert_any_call("chat-smart", "Hi", True, False, True)
+    assert result.text == "Vom Agent."
+
+
+def test_disabled_hermes_channel_routes_a_smart_personality_direct(
+    chat_module, chat_node, monkeypatch
+):
+    """The installer flag forces Direct and does not open the Hermes profile."""
+    Chat = chat_module.Chat
+    monkeypatch.setenv("PIB_SMART_CHATS", "0")
+
+    personality = MagicMock()
+    personality.message_history = 5
+    personality.description = "Ein Soul, eine Identitaet."
+    personality.personality_id = "pers-1"
+    personality.assistant_model.api_name = "hermes-agent"
+    personality.assistant_model.has_image_support = False
+    personality.channel = "smart"
+    personality.effective_channel = "smart"
+
+    goal_handle = MagicMock()
+    goal_handle.is_cancel_requested = False
+    goal_handle.request = Chat.Goal()
+    goal_handle.request.chat_id = "chat-forced"
+    goal_handle.request.text = "Hi"
+    goal_handle.request.generate_code = False
+
+    with (
+        patch.object(
+            chat_module.voice_assistant_client,
+            "get_personality_from_chat",
+            return_value=(True, personality),
+        ),
+        patch.object(
+            chat_module.voice_assistant_client,
+            "get_chat_history",
+            return_value=(True, []),
+        ),
+        patch.object(
+            chat_module.public_voice_client,
+            "chat_completion",
+            return_value=iter(["Direkt."]),
+        ) as completion,
+        patch.object(chat_module.hermes_agent_client, "run_turn") as run_turn,
+        patch.object(chat_module.hermes_agent_client, "stream_turn") as stream_turn,
+        patch.object(
+            chat_node,
+            "_stream_chunks_to_goal",
+            return_value=(None, None, "Direkt."),
+        ) as stream,
+    ):
+        result = drive_like_rclpy(chat_node.chat(goal_handle))
+
+    run_turn.assert_not_called()
+    stream_turn.assert_not_called()
+    completion.assert_called_once()
+    assert completion.call_args.kwargs["description"] == "Ein Soul, eine Identitaet."
+    stream.assert_called_once()
+    chat_node.create_chat_message.assert_any_call(
+        "chat-forced", "Hi", True, False, True
+    )
+    assert result.text == "Direkt."

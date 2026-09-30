@@ -28,6 +28,12 @@ from rclpy.publisher import Publisher
 from rclpy.service import Service
 from std_msgs.msg import String
 
+from pib_hermes_config.channel import (
+    CHANNEL_DIRECT,
+    CHANNEL_SMART,
+    direct_system_prompt,
+    turn_channel,
+)
 from public_api_client import hermes_agent_client, public_voice_client
 from voice_assistant.degraded_chat import (
     MODE_UNLOCKED,
@@ -58,7 +64,9 @@ class ChatNode(Node):
     Central chat node.
 
     Responsibilities:
-    - Exposes a ROS 2 Action "chat" for request/response (token streaming) via public_api.
+    - Exposes a ROS 2 Action "chat" for request/response (token streaming).
+      Smart and Direct both use this action, the chat_messages topic and the
+      same chat store; streaming republishes one message_id.
     - Publishes datatypes/ChatMessage on "chat_messages" so UIs/loggers can subscribe.
     - Talks to PIB API (voice_assistant_client) to persist chat messages.
     - (NEW) Exposes a ROS 2 Service "create_or_update_chat_message" so external nodes
@@ -816,9 +824,20 @@ class ChatNode(Node):
         if generate_code:
             description = CODE_DESCRIPTION_PREFIX + description
 
-        is_hermes = hermes_agent_client.uses_hermes_backend(
-            personality.assistant_model.api_name
-        )
+        # Channel is a personality setting, not the provider's api name.
+        channel = turn_channel(personality)
+        is_smart = channel == CHANNEL_SMART
+        stored_channel = getattr(personality, "channel", None)
+        if (
+            channel == CHANNEL_DIRECT
+            and isinstance(stored_channel, str)
+            and stored_channel == CHANNEL_SMART
+        ):
+            self.get_logger().info(
+                f"smart chats disabled; routing chat={chat_id} as direct"
+            )
+        else:
+            self.get_logger().info(f"chat channel={channel} chat={chat_id}")
 
         if self._key_store_mode() != MODE_UNLOCKED:
             # Smart and Direct both stop here. The sentence is the personality
@@ -827,7 +846,6 @@ class ChatNode(Node):
             if goal_handle.is_cancel_requested:
                 goal_handle.canceled()
                 return Chat.Result()
-            channel = "smart" if is_hermes else "direct"
             sentence = refusal_sentence(channel)
             self.create_chat_message(chat_id, sentence, False, False, True)
             goal_handle.succeed()
@@ -840,7 +858,7 @@ class ChatNode(Node):
             return result
 
         try:
-            if is_hermes:
+            if is_smart:
                 if goal_handle.is_cancel_requested:
                     goal_handle.canceled()
                     return Chat.Result()
@@ -886,11 +904,17 @@ class ChatNode(Node):
                             self.get_logger().error(f"Camera service call failed: {e}")
                             image_base64 = None
 
-                # Stream tokens from public API (yields text tokens)
+                # Direct: the SOUL text is the system prompt. MEMORY.md is not
+                # read; that file belongs to the Hermes profile on Smart turns.
+                # Tool execution (request, MCP call, continue) is a later step;
+                # this call is the completion the backend already sends.
+                system_prompt = direct_system_prompt(personality.description)
+                if generate_code:
+                    system_prompt = CODE_DESCRIPTION_PREFIX + system_prompt
                 with self.public_voice_client_lock:
                     tokens = public_voice_client.chat_completion(
                         text=content,
-                        description=description,
+                        description=system_prompt,
                         message_history=message_history,
                         image_base64=image_base64,
                         model=personality.assistant_model.api_name,
@@ -904,7 +928,7 @@ class ChatNode(Node):
                 return Chat.Result()
 
         except Exception as e:
-            backend = "hermes-agent" if is_hermes else "public-api"
+            backend = "hermes-agent" if is_smart else "direct"
             self.get_logger().error(f"failed to send request to {backend}: {e}")
             goal_handle.abort()
             return Chat.Result()

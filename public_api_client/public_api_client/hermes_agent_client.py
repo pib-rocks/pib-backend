@@ -145,7 +145,11 @@ def probe_binary(timeout: int = PROBE_TIMEOUT_SECONDS) -> tuple[bool, str]:
 
 
 def uses_hermes_backend(api_name: Optional[str]) -> bool:
-    """True when the personality's assistant model should route to Hermes Agent."""
+    """True when this model name is the historical hermes-agent row.
+
+    Chat routing does not use this. A turn follows the personality's channel
+    setting (smart or direct), which is independent of the provider.
+    """
     return api_name == HERMES_API_NAME
 
 

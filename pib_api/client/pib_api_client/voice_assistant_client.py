@@ -30,6 +30,11 @@ class Personality:
         self.description = personality_dto.get("description")
         self.stt_engine = personality_dto.get("sttEngine", "local_whisper")
         self.provider_ref = personality_dto.get("providerRef")
+        self.channel = personality_dto.get("channel") or "smart"
+        reported = personality_dto.get("effectiveChannel")
+        self.effective_channel = (
+            reported if reported in ("smart", "direct") else self.channel
+        )
         self.assistant_model = self._resolve_assistant_model(personality_dto)
 
     def _resolve_assistant_model(

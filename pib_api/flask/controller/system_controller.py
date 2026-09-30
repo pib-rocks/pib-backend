@@ -12,6 +12,11 @@ from model.controller_model import (
     TINKERFORGE_BRICKLET,
 )
 from seed_profiles import PROFILES, resolve_variant_and_source
+from pib_hermes_config.channel import (
+    CHANNEL_DIRECT,
+    CHANNEL_SMART,
+    smart_chats_enabled,
+)
 from service import hardware_config_service, revision_service, update_service
 from service.system_property_service import (
     ALLOWED_HARDWARE_VARIANTS,
@@ -57,6 +62,25 @@ CONTROLLER_CAPABILITIES = {
         "meaningfulSettings": COMMON_SETTINGS + ["current_limit", "torque_limit"],
     },
 }
+
+
+@bp.route("/chat-channels", methods=["GET"])
+def get_chat_channels():
+    """Channels the UI may offer. Smart is omitted when the installer disabled it."""
+    enabled = smart_chats_enabled()
+    if enabled:
+        channels = [CHANNEL_SMART, CHANNEL_DIRECT]
+        default = CHANNEL_SMART
+    else:
+        channels = [CHANNEL_DIRECT]
+        default = CHANNEL_DIRECT
+    return jsonify(
+        {
+            "smartChatsEnabled": enabled,
+            "channels": channels,
+            "defaultChannel": default,
+        }
+    )
 
 
 @bp.route("/hardware-variant", methods=["GET"])

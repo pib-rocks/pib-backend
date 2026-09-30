@@ -53,6 +53,8 @@ def sandboxed_hermes_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Pa
     home.mkdir()
     monkeypatch.setenv("HERMES_HOME", str(home))
     monkeypatch.setenv("PIB_HERMES_PROFILES_DIR", str(home / "profiles"))
+    # A host marker file must not flip channel tests. 1 keeps Smart available.
+    monkeypatch.setenv("PIB_SMART_CHATS", "1")
     # Host Gemini keys must not leak into profile-provisioning assertions.
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
@@ -71,6 +73,8 @@ def app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("PYTHON_CODE_DIR", str(programs_dir))
     monkeypatch.setenv("HOST_IP_FILE", str(host_ip_file))
     monkeypatch.setenv("PIB_HARDWARE_VARIANT", "pib5edu")
+    # A host marker file must not flip channel tests. 1 keeps Smart available.
+    monkeypatch.setenv("PIB_SMART_CHATS", "1")
     # Keep SOUL materialization inside the test sandbox instead of the robot's
     # real, container-shared profiles directory.
     monkeypatch.setenv("PIB_HERMES_PROFILES_DIR", str(tmp_path / "hermes-profiles"))
