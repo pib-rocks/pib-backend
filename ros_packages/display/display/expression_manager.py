@@ -7,7 +7,7 @@ from pathlib import Path
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy, HistoryPolicy
-from std_msgs.msg import String
+from std_msgs.msg import Bool, String
 from datatypes.msg import DisplayImage
 from PIL import Image, ImageDraw, ImageFont
 import io
@@ -36,6 +36,8 @@ class PibExpressionManager(Node):
         self.auto_return_seconds = float(os.environ.get("PIB_EXPRESSION_TIMEOUT", "15"))
         self.last_expression_time = time.monotonic()
         self.default_is_active = True
+        # Hardware VAD drives the face. The live uplink does not use this topic.
+        self._hardware_vad_active = False
         self.create_timer(0.1, self.on_timer)
 
         self.subscription = self.create_subscription(
@@ -51,6 +53,7 @@ class PibExpressionManager(Node):
             self.on_display_text,
             10,
         )
+        self.create_subscription(Bool, "/voice_activity", self.on_voice_activity, 10)
 
         self.get_logger().info("PIB expression manager started")
         self.get_logger().info(f"Expression directory: {self.expression_dir}")
@@ -127,7 +130,7 @@ class PibExpressionManager(Node):
         if self.auto_return_seconds <= 0:
             return
 
-        if self.default_is_active:
+        if self.default_is_active or self._hardware_vad_active:
             return
 
         elapsed = time.monotonic() - self.last_expression_time
@@ -224,6 +227,20 @@ class PibExpressionManager(Node):
         buffer = io.BytesIO()
         image.save(buffer, format="PNG")
         return buffer.getvalue()
+
+    def on_voice_activity(self, msg: Bool) -> None:
+        """Show listening while the array hears speech, then return to the eyes."""
+        active = bool(msg.data)
+        if active == self._hardware_vad_active:
+            return
+        self._hardware_vad_active = active
+        if active:
+            text = String()
+            text.data = "listening"
+            self.on_display_text(text)
+            return
+        self.show_default_animation()
+        self.default_is_active = True
 
     def on_display_text(self, msg: String):
         t0 = time.monotonic()

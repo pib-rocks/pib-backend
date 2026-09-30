@@ -331,6 +331,8 @@ class MicrophoneArrayNode(Node):
 
         self._read_warning_active = False
         self.doa_publisher.publish(Int32(data=direction))
+        # Hardware VAD. The ring's vad_led mode, the face, and the turn-based
+        # recorder follow this. The live uplink does not.
         self.voice_publisher.publish(Bool(data=voice_activity))
         self.speech_publisher.publish(Bool(data=speech_detected))
 

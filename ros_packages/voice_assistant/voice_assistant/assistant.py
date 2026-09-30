@@ -1,3 +1,4 @@
+import threading
 from collections import deque
 from typing import Any, Callable, Optional
 
@@ -144,6 +145,8 @@ class VoiceAssistantNode(Node):
         )
         self.run_program_client.wait_for_server()
 
+        self.gemini_loop.set_action_announcer(self._announce_live_action)
+
         self.get_logger().info("Now running VA")
 
     # client accessors ------------------------------------------------------------------
@@ -230,6 +233,20 @@ class VoiceAssistantNode(Node):
         future: Future = self.play_audio_from_file_client.call_async(request)
         if request.join:
             future.add_done_callback(lambda _: on_stopped_playing())
+
+    def _announce_live_action(self, text: str) -> None:
+        """Speak a robot action on the turn-based player before it runs.
+
+        The call waits until playback finishes so the action cannot start first.
+        """
+        done = threading.Event()
+        gender = getattr(self.personality, "gender", None) or "Female"
+        language = getattr(self.personality, "language", None) or "German"
+        self.play_audio_from_speech(text, gender, language, done.set)
+        if not done.wait(timeout=30.0):
+            self.get_logger().warning(
+                "Live action announcement did not finish within 30s: %s", text
+            )
 
     def play_audio_from_speech(
         self,

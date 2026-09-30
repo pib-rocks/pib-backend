@@ -19,6 +19,18 @@ from rclpy.node import Node
 from rclpy.executors import SingleThreadedExecutor
 from std_msgs.msg import Int16MultiArray
 from pib_api_client import voice_assistant_client
+from pib_hermes_config.live_interaction import (
+    admit_live_uplink,
+    gemini_function_declarations,
+    interruption_detected,
+    iter_function_calls,
+    live_turn_detection_config,
+    on_interruption,
+    perform_robot_action,
+    playback_exclusion_deadline,
+    playback_slice_bytes,
+    iter_playback_slices,
+)
 from pib_hermes_config.live_session import (
     context_window_compression,
     gemini_live_connect_model,
@@ -272,6 +284,24 @@ class GeminiAudioLoop:
         self._model: Optional[str] = None
         self._idle_timeout_s: Optional[float] = None
         self._last_activity: float = 0.0
+        # Hardware VAD does not gate this uplink. The tail after playback does,
+        # and so does a pause while a robot action runs.
+        self._exclude_until: float = 0.0
+        self._session_paused: bool = False
+        self._playback_cancel = threading.Event()
+        self._hold_speaker = threading.Event()
+        self._speaker_ready = threading.Event()
+        self._interruption_reported = False
+        self._offer_tools = True
+        self._action_announcer: Optional[Any] = None
+        self._send_lock: Optional[asyncio.Lock] = None
+        self._playback_slice_bytes = playback_slice_bytes(
+            RECEIVE_SAMPLE_RATE, 2, CHANNELS
+        )
+
+    def set_action_announcer(self, announcer) -> None:
+        """Speak a robot action on the existing speech player before it runs."""
+        self._action_announcer = announcer
 
     @property
     def is_listening(self) -> bool:
@@ -613,15 +643,26 @@ class GeminiAudioLoop:
             raise
 
     async def send_realtime(self):
-        """Feeds PCM chunks from out_queue into the Gemini live session."""
+        """Feeds PCM chunks from out_queue into the Gemini live session.
+
+        The array's voice-activity signal is not consulted. Chunks are dropped
+        only for the playback tail and while a robot action has the session paused.
+        """
         try:
             while not self._stop_event.is_set():
                 msg = await self.out_queue.get()
+                if not admit_live_uplink(
+                    now=time.monotonic(),
+                    exclude_until=self._exclude_until,
+                    session_paused=self._session_paused,
+                ):
+                    continue
                 # If desired, uncomment to log input audio:
                 # data = msg.get("data", b"")
                 # if data:
                 #     await self._log_input_bytes(data)
-                await self.session.send_realtime_input(audio=msg)
+                async with self._send_lock:
+                    await self.session.send_realtime_input(audio=msg)
         except asyncio.CancelledError:
             logger.debug("send_realtime: cancelled")
             raise
@@ -703,6 +744,7 @@ class GeminiAudioLoop:
             try:
                 turn = self.session.receive()
                 assistant_text_piece: Optional[str] = None
+                turn_sent_audio = False
                 async for resp in turn:
                     # ----- Session management signals -----
                     # Session resumption checkpoints (store handle for reconnect)
@@ -743,6 +785,21 @@ class GeminiAudioLoop:
                             logger.debug(
                                 f"Buffered for upcoming audio: {assistant_text_piece}"
                             )
+                        if interruption_detected(sc):
+                            await self._on_interrupted()
+                        if getattr(sc, "generation_complete", None) or getattr(
+                            sc, "turn_complete", None
+                        ):
+                            try:
+                                self.audio_in_queue.put_nowait((b"", None))
+                            except asyncio.QueueFull:
+                                pass
+                            if getattr(sc, "turn_complete", None):
+                                self._interruption_reported = False
+
+                    tool_call = getattr(resp, "tool_call", None)
+                    if tool_call is not None:
+                        await self._handle_tool_call(tool_call)
 
                     if data := getattr(resp, "data", None):
                         # PCM audio from Gemini (24k mono). Speech resets the
@@ -754,6 +811,7 @@ class GeminiAudioLoop:
                             logger.debug(f"Queueing audio with text: {queued_text}")
 
                             self.audio_in_queue.put_nowait((data, assistant_text_piece))
+                            turn_sent_audio = True
                             if assistant_text_piece is not None:
                                 assistant_text_piece = None
                             # If desired, uncomment to log output audio:
@@ -782,9 +840,147 @@ class GeminiAudioLoop:
                 )
                 raise ReconnectRequested("receive_audio failed") from e
 
-            # Clear any leftover audio between turns
+            # Clear any leftover audio between turns. Whatever was just playing
+            # leaves a short tail in the microphone, so the uplink skips that.
             while not self.audio_in_queue.empty():
                 self.audio_in_queue.get_nowait()
+            if turn_sent_audio:
+                self._exclude_until = max(
+                    self._exclude_until,
+                    playback_exclusion_deadline(time.monotonic()),
+                )
+
+    async def _finish_playback(self, *, cancelled: bool) -> None:
+        """A playback end. An interruption drops the queue and the device buffer.
+
+        A robot-action announcement holds the speaker until its own playback
+        has finished, then this stream starts again.
+        """
+        if cancelled:
+            self._playback_cancel.clear()
+            self._drain_queue(self.audio_in_queue)
+            try:
+                await asyncio.to_thread(self.playback_stream.stop_stream)
+            except Exception:
+                logger.exception("Could not stop playback")
+            self._speaker_ready.set()
+            while self._hold_speaker.is_set() and not self._stop_event.is_set():
+                await asyncio.sleep(0.05)
+            try:
+                await asyncio.to_thread(self.playback_stream.start_stream)
+            except Exception:
+                logger.exception("Could not restart playback")
+        self._exclude_until = playback_exclusion_deadline(time.monotonic())
+
+    async def _on_interrupted(self) -> None:
+        """Stop playback now, exclude the tail, and tell the model the turn was cut."""
+        decision = on_interruption(time.monotonic())
+        self._exclude_until = decision["exclude_until"]
+        self._playback_cancel.set()
+        self._drain_queue(self.audio_in_queue)
+        if self._interruption_reported or self.session is None:
+            return
+        self._interruption_reported = True
+        try:
+            async with self._send_lock:
+                await self.session.send_realtime_input(text=decision["report"])
+        except Exception:
+            logger.exception("Could not report the interruption to the model")
+
+    def _run_one_tool(self, name: str, arguments: dict) -> dict:
+        """Announce a robot action, pause the uplink, then run it."""
+
+        def speak(text: str) -> None:
+            announcer = self._action_announcer
+            self._speaker_ready.clear()
+            self._hold_speaker.set()
+            self._playback_cancel.set()
+            loop = self._loop
+            playback_queue = getattr(self, "audio_in_queue", None)
+            if loop is not None and playback_queue is not None:
+
+                def _wake() -> None:
+                    try:
+                        playback_queue.put_nowait((b"", None))
+                    except Exception:
+                        pass
+
+                loop.call_soon_threadsafe(_wake)
+                self._speaker_ready.wait(timeout=1.0)
+            try:
+                if announcer is not None:
+                    announcer(text)
+                else:
+                    logger.info("Live action announcement: %s", text)
+            finally:
+                self._hold_speaker.clear()
+                self._exclude_until = playback_exclusion_deadline(time.monotonic())
+
+        def execute(tool_name: str, args: dict):
+            from voice_assistant.direct_tool_loop import execute_mcp_tool
+
+            return execute_mcp_tool(tool_name, args)
+
+        class _Pause:
+            def begin(self) -> None:
+                self_loop._session_paused = True
+
+            def end(self) -> None:
+                self_loop._session_paused = False
+
+        self_loop = self
+        return perform_robot_action(
+            name, arguments, speak=speak, execute=execute, pause=_Pause()
+        )
+
+    def _live_tool_declarations(self) -> list:
+        from voice_assistant.direct_tool_loop import mcp_tool_declarations
+
+        return gemini_function_declarations(mcp_tool_declarations())
+
+    async def _handle_tool_call(self, tool_call) -> None:
+        calls = iter_function_calls(tool_call)
+        responses = []
+        for call in calls:
+            try:
+                outcome = await asyncio.to_thread(
+                    self._run_one_tool, call["name"], call["arguments"]
+                )
+            except Exception:
+                logger.exception("Live robot action %s failed", call["name"])
+                self._session_paused = False
+                outcome = {
+                    "offered": True,
+                    "result": {
+                        "ok": False,
+                        "error": {
+                            "code": "action_failed",
+                            "message": f"{call['name']} failed",
+                        },
+                    },
+                }
+            if not outcome.get("offered", True):
+                body = {
+                    "ok": False,
+                    "error": {
+                        "code": "not_offered_in_live_turn",
+                        "message": (
+                            f"{call['name']} is not offered inside a live turn"
+                        ),
+                    },
+                }
+            else:
+                body = outcome.get("result")
+                if not isinstance(body, dict):
+                    body = {"result": body}
+            responses.append({"id": call["id"], "name": call["name"], "response": body})
+        if not responses or self.session is None:
+            return
+        try:
+            async with self._send_lock:
+                await self.session.send_tool_response(function_responses=responses)
+        except Exception:
+            logger.exception("Could not return the tool result to the live session")
 
     async def play_audio(self):
         """PyAudio playback consumer for PCM @24k mono + synchronized Gemini text."""
@@ -809,9 +1005,23 @@ class GeminiAudioLoop:
                 item = await self.audio_in_queue.get()
                 # Expecting a pair: (pcm_bytes, assistant_text_piece or None)
                 pcm, assistant_text_piece = item
+                if not pcm or self._playback_cancel.is_set():
+                    await self._finish_playback(
+                        cancelled=self._playback_cancel.is_set()
+                    )
+                    continue
 
-                # Play the audio
-                await asyncio.to_thread(self.playback_stream.write, pcm)
+                # Play in short slices so an interruption stops on the next one.
+                cut = False
+                for chunk in iter_playback_slices(pcm, self._playback_slice_bytes):
+                    if self._playback_cancel.is_set():
+                        cut = True
+                        break
+                    await asyncio.to_thread(self.playback_stream.write, chunk)
+                if cut or self._playback_cancel.is_set():
+                    await self._finish_playback(cancelled=True)
+                    continue
+
                 # If there is Gemini text attached to this PCM chunk, send it now.
                 logger.debug(f"writing {assistant_text_piece} as gemini in UI")
 
@@ -874,22 +1084,26 @@ class GeminiAudioLoop:
 
         # Read chat personality/description from PIB to seed the model (once)
         description = "You are pib, a humanoid robot."
+        personality = None
         try:
             successful, personality = voice_assistant_client.get_personality_from_chat(
                 self._chat_id
             )
             if not successful:
                 logger.error(f"no personality found for id {self._chat_id}")
-            else:
-                if getattr(personality, "description", None):
-                    description = personality.description
+                personality = None
+            elif getattr(personality, "description", None):
+                description = personality.description
         except Exception:
             logger.exception(
                 "Failed to fetch personality; using default system instruction."
             )
+            personality = None
 
         base_config = dict(CONFIG)
+        base_config.update(live_turn_detection_config())
         base_config["system_instruction"] = description
+        self._offer_tools = bool(getattr(personality, "tool_calling", True))
 
         async def _connect_config():
             connection_config = dict(base_config)
@@ -905,18 +1119,36 @@ class GeminiAudioLoop:
 
             return connection_config
 
+        self._send_lock = asyncio.Lock()
+
         # Outer loop: reconnect as needed until stopped
         while not self._stop_event.is_set():
             ros_started = False
             tasks = []
             try:
                 gemini_config = await _connect_config()
+                if self._offer_tools:
+                    try:
+                        declarations = await asyncio.to_thread(
+                            self._live_tool_declarations
+                        )
+                        if declarations:
+                            gemini_config["tools"] = [
+                                {"function_declarations": declarations}
+                            ]
+                    except Exception:
+                        logger.exception("Live session will not offer robot tools")
 
                 async with client.aio.live.connect(
                     model=live_model, config=gemini_config
                 ) as session:
                     self.session = session
                     self._note_activity()
+                    self._exclude_until = 0.0
+                    self._session_paused = False
+                    self._playback_cancel.clear()
+                    self._hold_speaker.clear()
+                    self._interruption_reported = False
                     self.audio_in_queue = asyncio.Queue[tuple[bytes, Optional[str]]]()
                     self.out_queue = asyncio.Queue(maxsize=5)
                     self._log_lock = asyncio.Lock()

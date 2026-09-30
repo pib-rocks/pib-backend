@@ -14,8 +14,9 @@ from rclpy.action import CancelResponse, GoalResponse
 from rclpy.action.server import ServerGoalHandle
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
-from std_msgs.msg import String, Int16MultiArray
+from std_msgs.msg import Bool, String, Int16MultiArray
 
+from pib_hermes_config.live_interaction import turn_based_is_speech
 from pib_hermes_config.voice_backends import resolve_stt_route
 from public_api_client import public_voice_client
 from voice_assistant.stt_transcription import FasterWhisperSTTEngine
@@ -85,6 +86,9 @@ class AudioRecorderNode(Node):
         self.ros_audio_stream_subscription = self.create_subscription(
             Int16MultiArray, "audio_stream", self.audio_stream_callback, 10
         )
+        # None until the array publishes. After that, its VAD owns end-of-turn.
+        self._hardware_vad: Optional[bool] = None
+        self.create_subscription(Bool, "/voice_activity", self._on_voice_activity, 10)
 
         self.get_logger().info("Now running AUDIO RECORDER")
 
@@ -180,12 +184,25 @@ class AudioRecorderNode(Node):
                         self.audio_chunk_event.clear()
                     return chunk
 
-    def is_silent(self, data_chunk: bytes) -> bool:
-        """
-        Check whether a chunk of frames is below the minimum volume threshold.
-        """
+    def _on_voice_activity(self, msg: Bool) -> None:
+        """The array's hardware VAD. The live uplink does not use this topic."""
+        self._hardware_vad = bool(msg.data)
+
+    def _amplitude_is_silent(self, data_chunk: bytes) -> bool:
         as_ints = np.frombuffer(data_chunk, dtype=np.int16)
         return np.abs(as_ints).mean() < SILENCE_VOLUME_THRESHOLD
+
+    def is_silent(self, data_chunk: bytes) -> bool:
+        """
+        Silence for the turn-based recorder.
+
+        Once /voice_activity has arrived, that signal decides. Loud audio
+        without voice activity is not speech. Amplitude is only the fallback
+        before the first sample.
+        """
+        return not turn_based_is_speech(
+            self._hardware_vad, self._amplitude_is_silent(data_chunk)
+        )
 
     def create_result(self, text: str) -> RecordAudio.Result:
         """

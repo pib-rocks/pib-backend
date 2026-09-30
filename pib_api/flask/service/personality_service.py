@@ -14,6 +14,7 @@ from pib_hermes_config.channel import (
     CHANNELS,
     smart_chats_enabled,
 )
+from pib_hermes_config.live_interaction import personality_requests_actuation
 from pib_hermes_config.live_session import (
     DEFAULT_LIVE_IDLE_TIMEOUT_SECONDS,
     VOICE_MODE_LIVE,
@@ -235,6 +236,16 @@ def _apply_live_chat_settings(
             raise ValidationError({"liveIdleTimeout": [str(exc)]}) from exc
 
 
+def _reject_actuation_request(personality_dto: Any) -> None:
+    """The actuation gate is PIB_MCP_ENABLE_ACTUATION, not a personality field."""
+    if isinstance(personality_dto, dict) and personality_requests_actuation(
+        personality_dto
+    ):
+        raise ValidationError(
+            {"actuation": ["The actuation gate is an installation setting."]}
+        )
+
+
 def _tool_calling_value(personality_dto: Any, default: bool) -> bool:
     if "tool_calling" not in personality_dto:
         return default
@@ -242,6 +253,7 @@ def _tool_calling_value(personality_dto: Any, default: bool) -> bool:
 
 
 def create_personality(personality_dto: Any) -> Personality:
+    _reject_actuation_request(personality_dto)
     personality = Personality(
         name=personality_dto["name"],
         gender=personality_dto["gender"],
@@ -284,6 +296,7 @@ def create_personality(personality_dto: Any) -> Personality:
 
 
 def update_personality(personality_id: str, personality_dto: Any) -> Personality:
+    _reject_actuation_request(personality_dto)
     personality = get_personality(personality_id)
     name_changed = False
     if "name" in personality_dto:
