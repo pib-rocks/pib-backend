@@ -2,10 +2,10 @@
 
 This list is the one place those models are maintained. It is updated as
 Cerebra evolves, and that is the whole point of it: models are added here
-and models are retired here. A retired entry stays, so a personality that
-still points at it can be reported. It is not deleted and it is not rewritten
-onto a different model. The settings screen is where that personality gets
-a current model.
+and models are removed here. A removed model keeps no entry and no row. A
+personality that still points at a removed row is reported as needing a new
+model, and starting a chat on it is refused. It is never rewritten onto a
+different model. The settings screen is where it gets a current one.
 
 Each entry is one line so the list stays easy to edit. Where an identifier
 is not confirmed, the line carries ``# TODO(confirm id)`` and no invented id.
@@ -21,23 +21,31 @@ from typing import Any, Mapping, NamedTuple
 DEFAULT_PROVIDER_REF = "default"
 
 STATUS_ACTIVE = "active"
-STATUS_RETIRED = "retired"
 STATUS_UNCONFIRMED = "unconfirmed"
 
 CAPABILITY_KEYS = ("tools", "images", "live", "stt", "tts")
 
-#: Shown when a chat is started on a personality whose model is retired.
-RETIRED_MODEL_CHAT_MESSAGE = (
-    "This personality's model ({name}) has been retired. "
+#: Shown when a chat is started on a personality whose model row is gone.
+#: The row carries the name, so there is none to show.
+MISSING_MODEL_CHAT_MESSAGE = (
+    "This personality's model is no longer available. "
     "Choose a current model in settings before starting a chat."
 )
+
+#: The Smart channel's provider. Smart is the Hermes agent. The default
+#: provider is a separate choice, pib.Cloud.
+SMART_CHANNEL_API_NAME = "hermes-agent"
+
+#: pib.Cloud's own model identifier cannot be verified from this repository.
+#: This value is provisional and has not been confirmed against the service.
+PIB_CLOUD_API_NAME = "pib-cloud"  # TODO(confirm id)
 
 
 class CatalogueEntry(NamedTuple):
     """One model line in the catalogue.
 
     ``api_name`` is None until the operator confirms an identifier.
-    ``is_default`` is the Smart channel's provider, hermes-agent.
+    ``is_default`` marks the default route, pib.Cloud.
     """
 
     provider: str
@@ -67,18 +75,11 @@ class CatalogueEntry(NamedTuple):
 _CATALOGUE_ROWS = (
     ("Google", "gemini-3.8-flash", "Gemini 3.8 Flash", True, True, True, False, False, STATUS_ACTIVE, False),
     ("OpenAI", "gpt-6", "GPT-6", True, True, False, False, False, STATUS_ACTIVE, False),
-    ("OpenAI", "gpt-realtime", "GPT Realtime", False, False, True, False, False, STATUS_UNCONFIRMED, False),  # TODO(confirm id)
     ("Anthropic", "claude-sonnet-5-5", "Claude Sonnet 5.5", True, True, False, False, False, STATUS_ACTIVE, False),
-    ("hermes", "hermes-agent", "Hermes Agent (selbstlernend)", True, True, False, False, False, STATUS_ACTIVE, True),
+    ("pib.Cloud", PIB_CLOUD_API_NAME, "pib.Cloud", True, True, False, False, False, STATUS_ACTIVE, True),  # TODO(confirm id)
+    ("hermes", SMART_CHANNEL_API_NAME, "Hermes Agent (selbstlernend)", True, True, False, False, False, STATUS_ACTIVE, False),
+    ("OpenAI", "gpt-realtime", "GPT Realtime", False, False, True, False, False, STATUS_UNCONFIRMED, False),  # TODO(confirm id)
     ("Mistral", None, "Mistral", False, False, False, False, False, STATUS_UNCONFIRMED, False),  # TODO(confirm id)
-    ("pib.Cloud", None, "pib.Cloud", False, False, False, False, False, STATUS_UNCONFIRMED, False),  # TODO(confirm id)
-    # Retired. The seeded rows keep their historical visual names.
-    ("OpenAI", "gpt-4o", "GPT-4o", True, True, False, False, False, STATUS_RETIRED, False),
-    ("Anthropic", "anthropic.claude-3-sonnet-20240229-v1:0", "Claude 3 Sonnet", True, True, False, False, False, STATUS_RETIRED, False),
-    # Previous chat id. The supported live chat model is gemini-3.8-flash.
-    # The live flag stays so the pin this seeded row already carries can still be read.
-    ("Google", "gemini-3.5-flash", "Gemini 3.5 Flash", True, False, True, False, False, STATUS_RETIRED, False),
-    ("OpenAI", "gpt-3.5-turbo", "GPT-3.5 [Text]", True, False, False, False, False, STATUS_RETIRED, False),
 )
 # fmt: on
 
@@ -88,10 +89,22 @@ CATALOGUE: tuple[CatalogueEntry, ...] = tuple(
 
 _BY_API_NAME = {entry.api_name: entry for entry in CATALOGUE if entry.api_name}
 
-#: Smart is the default channel. The catalogue names that channel's provider.
+#: The default route. Every personality that stores 'default' resolves to it.
 DEFAULT_PROVIDER_API_NAME = next(
     entry.api_name for entry in CATALOGUE if entry.is_default and entry.api_name
 )
+
+
+def active_entries() -> tuple[CatalogueEntry, ...]:
+    """The lines that get a row. Unconfirmed lines have none until confirmed."""
+    return tuple(
+        entry for entry in CATALOGUE if entry.status == STATUS_ACTIVE and entry.api_name
+    )
+
+
+def active_api_names() -> frozenset[str]:
+    """Chat ids a row may carry. A row with any other id is removed."""
+    return frozenset(entry.api_name for entry in active_entries() if entry.api_name)
 
 
 def catalogue_entry(api_name: str) -> CatalogueEntry | None:
@@ -105,20 +118,6 @@ def model_status(api_name: str) -> str:
     if entry is None:
         return "unlisted"
     return entry.status
-
-
-def is_retired(api_name: str) -> bool:
-    """True when this chat id is a retired catalogue entry."""
-    return model_status(api_name) == STATUS_RETIRED
-
-
-def retired_model_chat_message(visual_name: str) -> str:
-    """The refusal returned when a chat is started on a retired model."""
-    if isinstance(visual_name, str) and visual_name.strip():
-        name = visual_name.strip()
-    else:
-        name = "the selected model"
-    return RETIRED_MODEL_CHAT_MESSAGE.format(name=name)
 
 
 def pins_gemini_live_model(api_name: str) -> bool:
@@ -142,10 +141,9 @@ def capabilities_for(api_name: str, has_image_support: bool) -> dict[str, bool]:
     """Flags stored on one registry row.
 
     tools, live, stt and tts come from the catalogue. images follows the row's
-    own has_image_support value: the two gpt-4o rows share an api name and
-    already differ on that column. A chat id that is not in the catalogue
-    keeps tools on and live, stt and tts off. stt and tts stay off for these
-    rows: they are chat models, and the local speech engines are not rows.
+    own has_image_support value. A chat id that is not in the catalogue keeps
+    tools on and live, stt and tts off. stt and tts stay off for these rows:
+    they are chat models, and the local speech engines are not rows.
     """
     entry = catalogue_entry(api_name)
     if entry is None:

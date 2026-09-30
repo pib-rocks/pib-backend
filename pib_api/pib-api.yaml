@@ -1676,20 +1676,18 @@ components:
             - 2
         apiName:
           type: string
-          default: gpt-3.5-turbo
           examples: 
-            - gpt-4.0
-            - Llava
+            - gemini-3.8-flash
+            - gpt-6
         hasImageSupport:
           type: boolean
           examples:
-            - false
+            - true
         visualName:
           type: string
-          default: GPT-3.5
           examples:
-            - GPT-4.0
-            - LLAVA
+            - Gemini 3.8 Flash
+            - GPT-6
       required:
         - id
         - apiName

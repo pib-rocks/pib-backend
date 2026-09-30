@@ -15,6 +15,7 @@ from pib_hermes_config.voice_backends import (
     LOCAL_TTS_ID,
 )
 from provider_registry import (
+    DEFAULT_PROVIDER_REF,
     capabilities_for,
     has_capability,
     has_images_capability,
@@ -110,8 +111,22 @@ def resolve_provider(provider_ref: str) -> Provider:
     'default' is looked up from is_default. Any other reference is that row's
     id. Changing the default does not rewrite personalities that store it.
     """
-    from provider_registry import DEFAULT_PROVIDER_REF
-
     if provider_ref == DEFAULT_PROVIDER_REF:
         return get_default_provider()
     return Provider.query.filter_by(id=int(provider_ref)).one()
+
+
+def find_provider(provider_ref: object) -> Optional[Provider]:
+    """The row a stored reference points at, or None when that row is gone.
+
+    A removed model has no row and no status to read. The personality's
+    reference is simply dangling, and that is what is detected here. It also
+    covers a row that was deleted by hand.
+    """
+    if provider_ref == DEFAULT_PROVIDER_REF:
+        return Provider.query.filter_by(is_default=True).first()
+    try:
+        provider_id = int(str(provider_ref))
+    except (TypeError, ValueError):
+        return None
+    return Provider.query.filter_by(id=provider_id).first()

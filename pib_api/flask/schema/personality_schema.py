@@ -20,7 +20,7 @@ from pib_hermes_config.memory import (
     read_memory,
 )
 from pib_hermes_config.voice_backends import live_voice_note, local_voice_applies
-from provider_registry import has_capability, is_retired
+from provider_registry import has_capability
 from schema.sql_auto_with_camel_case_schema import SQLAutoWithCamelCaseSchema
 from service import provider_service, soul_service
 
@@ -103,17 +103,17 @@ class PersonalitySchemaSQLAutoWith(SQLAutoWithCamelCaseSchema):
         ref = getattr(obj, "provider_ref", None)
         if not ref:
             return None
-        try:
-            return provider_service.resolve_provider(str(ref))
-        except Exception:
-            return None
+        return provider_service.find_provider(str(ref))
 
     def get_needs_new_model(self, obj: Personality) -> bool:
-        """True when the selected model is retired and settings must replace it."""
-        provider = self._resolved_provider(obj)
-        if provider is None:
+        """True when the referenced model row is gone and settings must replace it.
+
+        There is no status to read: a removed model has no row at all.
+        """
+        ref = getattr(obj, "provider_ref", None)
+        if not ref:
             return False
-        return is_retired(provider.api_name)
+        return self._resolved_provider(obj) is None
 
     def get_live_model(self, obj: Personality) -> str | None:
         provider = self._resolved_provider(obj)

@@ -1657,14 +1657,14 @@ def test_direct_tool_calling_offers_the_image_tool_and_does_not_attach_a_frame(
 def test_direct_tool_calling_aborts_when_the_model_has_no_stable_endpoint(
     chat_module, chat_node
 ):
-    """gpt-4o stays in the registry. This account has no non-beta tool endpoint for it."""
+    """An OpenAI model has no non-beta tool endpoint on this account."""
     Chat = chat_module.Chat
 
     personality = MagicMock()
     personality.message_history = 5
     personality.description = "Du bist pib."
     personality.personality_id = "pers-1"
-    personality.assistant_model.api_name = "gpt-4o"
+    personality.assistant_model.api_name = "gpt-6"
     personality.assistant_model.has_image_support = True
     personality.tool_calling = True
     personality.channel = "direct"

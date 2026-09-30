@@ -12,7 +12,7 @@ class ProviderSchema(SQLAutoWithCamelCaseSchema):
     status = fields.Method("get_status", dump_only=True)
 
     def get_status(self, obj: Provider) -> str:
-        """Catalogue status, so a retired row can be shown as gone."""
+        """Catalogue status of this row's chat id."""
         return model_status(obj.api_name)
 
 

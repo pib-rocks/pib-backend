@@ -74,7 +74,7 @@ def test_token_service_uses_the_shared_primitive():
 
 
 def test_round_trip_uses_one_password_for_every_key(app_ctx, key_store_path):
-    vision = Provider.query.filter_by(visual_name="GPT-4o [Vision]").one()
+    vision = Provider.query.filter_by(api_name="gpt-6").one()
     hermes = Provider.query.filter_by(api_name="hermes-agent").one()
 
     ref = key_store_service.put_secret(vision.id, PASSWORD, SECRET)
@@ -102,7 +102,7 @@ def test_round_trip_uses_one_password_for_every_key(app_ctx, key_store_path):
 
 
 def test_wrong_password_returns_no_keys_and_does_not_crash(app, app_ctx):
-    vision = Provider.query.filter_by(visual_name="GPT-4o [Vision]").one()
+    vision = Provider.query.filter_by(api_name="gpt-6").one()
     key_store_service.put_secret(vision.id, PASSWORD, SECRET)
     db.session.commit()
 
@@ -169,7 +169,7 @@ def test_first_password_must_still_be_long_enough(app, app_ctx, key_store_path):
 
 
 def test_change_password_requires_the_new_one_twice(app, app_ctx, key_store_path):
-    vision = Provider.query.filter_by(visual_name="GPT-4o [Vision]").one()
+    vision = Provider.query.filter_by(api_name="gpt-6").one()
     client = app.test_client()
     stored = client.put(
         f"/system/key-store/{vision.id}",
@@ -231,7 +231,7 @@ def test_deleting_a_key_leaves_the_personality_reference(
         "_provision_profile",
         MagicMock(return_value={"ok": True}),
     )
-    vision = Provider.query.filter_by(visual_name="GPT-4o [Vision]").one()
+    vision = Provider.query.filter_by(api_name="gpt-6").one()
     hermes = Provider.query.filter_by(api_name="hermes-agent").one()
     personality = personality_service.create_personality(
         {
@@ -278,7 +278,7 @@ def test_credentials_stay_out_of_soul_memory_logs_and_the_database(
         MagicMock(return_value={"ok": True}),
     )
     caplog.set_level(logging.DEBUG)
-    vision = Provider.query.filter_by(visual_name="GPT-4o [Vision]").one()
+    vision = Provider.query.filter_by(api_name="gpt-6").one()
     personality = personality_service.create_personality(
         {
             "name": "Cleartext",
@@ -347,7 +347,7 @@ def test_credentials_stay_out_of_soul_memory_logs_and_the_database(
 
 
 def test_short_password_does_not_create_a_store(app, app_ctx, key_store_path):
-    vision = Provider.query.filter_by(visual_name="GPT-4o [Vision]").one()
+    vision = Provider.query.filter_by(api_name="gpt-6").one()
     response = app.test_client().put(
         f"/system/key-store/{vision.id}",
         json={"password": "short", "secret": SECRET},
@@ -392,7 +392,7 @@ def test_cold_start_stores_a_first_key_with_encryption_on_and_off(
     settings = _settings_file(key_store_path)
     assert not key_store_path.exists()
     assert not settings.exists()
-    vision = Provider.query.filter_by(visual_name="GPT-4o [Vision]").one()
+    vision = Provider.query.filter_by(api_name="gpt-6").one()
     hermes = Provider.query.filter_by(api_name="hermes-agent").one()
     client = app.test_client()
 
@@ -453,7 +453,7 @@ def test_cold_start_stores_a_first_key_with_encryption_on_and_off(
 
 
 def test_switching_encryption_off_and_on_keeps_the_keys(app, app_ctx, key_store_path):
-    vision = Provider.query.filter_by(visual_name="GPT-4o [Vision]").one()
+    vision = Provider.query.filter_by(api_name="gpt-6").one()
     hermes = Provider.query.filter_by(api_name="hermes-agent").one()
     client = app.test_client()
     assert (
@@ -537,7 +537,7 @@ def test_switching_encryption_off_and_on_keeps_the_keys(app, app_ctx, key_store_
 
 
 def test_wrong_password_refuses_turning_encryption_off(app, app_ctx, key_store_path):
-    vision = Provider.query.filter_by(visual_name="GPT-4o [Vision]").one()
+    vision = Provider.query.filter_by(api_name="gpt-6").one()
     client = app.test_client()
     stored = client.put(
         f"/system/key-store/{vision.id}",
@@ -564,7 +564,7 @@ def test_wrong_password_refuses_turning_encryption_off(app, app_ctx, key_store_p
 
 
 def test_short_password_refuses_turning_encryption_on(app, app_ctx, key_store_path):
-    vision = Provider.query.filter_by(visual_name="GPT-4o [Vision]").one()
+    vision = Provider.query.filter_by(api_name="gpt-6").one()
     client = app.test_client()
     switched = client.post("/system/key-store/encryption", json={"enabled": False})
     assert switched.status_code == 200
@@ -593,7 +593,7 @@ def test_short_password_refuses_turning_encryption_on(app, app_ctx, key_store_pa
 def test_failed_rewrite_does_not_persist_the_encryption_setting(
     app, app_ctx, key_store_path, monkeypatch
 ):
-    vision = Provider.query.filter_by(visual_name="GPT-4o [Vision]").one()
+    vision = Provider.query.filter_by(api_name="gpt-6").one()
     client = app.test_client()
     stored = client.put(
         f"/system/key-store/{vision.id}",
@@ -641,7 +641,7 @@ def test_status_reports_the_encryption_setting(app, key_store_path):
 
 
 def test_cleartext_keys_need_no_unlock(app_ctx, key_store_path):
-    vision = Provider.query.filter_by(visual_name="GPT-4o [Vision]").one()
+    vision = Provider.query.filter_by(api_name="gpt-6").one()
     ref = f"provider-{vision.id}"
     key_store_path.parent.mkdir(parents=True, exist_ok=True)
     key_store_path.write_text(
@@ -663,7 +663,7 @@ def test_cleartext_keys_need_no_unlock(app_ctx, key_store_path):
 
 def test_cleartext_file_is_not_read_as_an_envelope(app_ctx, key_store_path):
     """A cleartext mark blocks envelope reading, even if salt is also present."""
-    vision = Provider.query.filter_by(visual_name="GPT-4o [Vision]").one()
+    vision = Provider.query.filter_by(api_name="gpt-6").one()
     key_store_service.put_secret(vision.id, PASSWORD, SECRET)
     envelope = json.loads(key_store_path.read_text(encoding="utf-8"))
     envelope["cleartext"] = True
@@ -682,7 +682,7 @@ def test_cleartext_file_is_not_read_as_an_envelope(app_ctx, key_store_path):
 
 
 def test_envelope_is_not_read_as_cleartext(app_ctx, key_store_path):
-    vision = Provider.query.filter_by(visual_name="GPT-4o [Vision]").one()
+    vision = Provider.query.filter_by(api_name="gpt-6").one()
     key_store_service.put_secret(vision.id, PASSWORD, SECRET)
     _settings_file(key_store_path).parent.mkdir(parents=True, exist_ok=True)
     _settings_file(key_store_path).write_text(

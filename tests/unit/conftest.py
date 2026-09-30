@@ -152,8 +152,7 @@ def app_ctx(app) -> Generator:
 @pytest.fixture()
 def make_personality(app_ctx):
     def _make(**kwargs):
-        # The default provider is the one the catalogue maintains. The first
-        # assistant row can be retired, and a chat on that personality is refused.
+        # The default provider is the one the catalogue maintains, pib.Cloud.
         dto = {
             "name": kwargs.get("name", "Test"),
             "gender": kwargs.get("gender", "Female"),
