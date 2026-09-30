@@ -14,7 +14,13 @@ from pib_hermes_config.channel import (
     CHANNELS,
     smart_chats_enabled,
 )
-from provider_registry import DEFAULT_PROVIDER_REF
+from pib_hermes_config.voice_backends import (
+    LOCAL_STT_ID,
+    LOCAL_TTS_ID,
+    normalize_stt_choice,
+    normalize_tts_choice,
+)
+from provider_registry import DEFAULT_PROVIDER_REF, has_capability
 from service import soul_service
 
 #: Path of the daemon endpoint that owns the Hermes profile factory.
@@ -161,6 +167,42 @@ def _apply_provider_choice(
     _store_provider_ref(personality, ref)
 
 
+def _provider_has(capability: str):
+    def check(provider_id: int) -> bool:
+        row = Provider.query.filter_by(id=provider_id).first()
+        if row is None:
+            return False
+        return has_capability(row.capabilities, capability)
+
+    return check
+
+
+def _apply_voice_backends(
+    personality: Personality, personality_dto: Any, *, creating: bool
+) -> None:
+    """Local faster-whisper and Supertone, or a provider with that capability."""
+    if creating or "stt_engine" in personality_dto:
+        raw = (
+            personality_dto.get("stt_engine")
+            if "stt_engine" in personality_dto
+            else LOCAL_STT_ID
+        )
+        try:
+            personality.stt_engine = normalize_stt_choice(raw, _provider_has("stt"))
+        except ValueError as exc:
+            raise ValidationError({"sttEngine": [str(exc)]}) from exc
+    if creating or "tts_engine" in personality_dto:
+        raw = (
+            personality_dto.get("tts_engine")
+            if "tts_engine" in personality_dto
+            else LOCAL_TTS_ID
+        )
+        try:
+            personality.tts_engine = normalize_tts_choice(raw, _provider_has("tts"))
+        except ValueError as exc:
+            raise ValidationError({"ttsEngine": [str(exc)]}) from exc
+
+
 def _tool_calling_value(personality_dto: Any, default: bool) -> bool:
     if "tool_calling" not in personality_dto:
         return default
@@ -173,9 +215,11 @@ def create_personality(personality_dto: Any) -> Personality:
         gender=personality_dto["gender"],
         pause_threshold=personality_dto["pause_threshold"],
         message_history=personality_dto["message_history"],
-        stt_engine=personality_dto.get("stt_engine", "local_whisper"),
+        stt_engine=LOCAL_STT_ID,
+        tts_engine=LOCAL_TTS_ID,
         tool_calling=_tool_calling_value(personality_dto, True),
     )
+    _apply_voice_backends(personality, personality_dto, creating=True)
     _apply_provider_choice(personality, personality_dto, creating=True)
     _apply_channel(personality, personality_dto, creating=True)
     custom = ""
@@ -242,8 +286,7 @@ def update_personality(personality_id: str, personality_dto: Any) -> Personality
     _apply_channel(personality, personality_dto, creating=False)
     if "tool_calling" in personality_dto:
         personality.tool_calling = bool(personality_dto["tool_calling"])
-    if "stt_engine" in personality_dto:
-        personality.stt_engine = personality_dto["stt_engine"]
+    _apply_voice_backends(personality, personality_dto, creating=False)
     db.session.flush()
     return personality
 

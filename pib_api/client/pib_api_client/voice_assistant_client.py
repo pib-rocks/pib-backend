@@ -29,6 +29,10 @@ class Personality:
         self.message_history = personality_dto["messageHistory"]
         self.description = personality_dto.get("description")
         self.stt_engine = personality_dto.get("sttEngine", "local_whisper")
+        self.tts_engine = personality_dto.get("ttsEngine", "supertone")
+        applies = personality_dto.get("localVoiceApplies", True)
+        self.local_voice_applies = True if applies is None else bool(applies)
+        self.live_voice_note = personality_dto.get("liveVoiceNote")
         self.provider_ref = personality_dto.get("providerRef")
         self.channel = personality_dto.get("channel") or "smart"
         # Absent means on. Only an explicit false disables tools and images.

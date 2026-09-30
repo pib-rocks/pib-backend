@@ -16,6 +16,7 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from std_msgs.msg import String, Int16MultiArray
 
+from pib_hermes_config.voice_backends import resolve_stt_route
 from public_api_client import public_voice_client
 from voice_assistant.stt_transcription import FasterWhisperSTTEngine
 from . import util
@@ -295,13 +296,23 @@ class AudioRecorderNode(Node):
             goal_handle.abort()
             return self.create_result("")
 
-        # Perform STT transcription using local faster-whisper or tryb API based on configuration
-        stt_mode = os.getenv("STT_ENGINE", "local_whisper")
+        # Local faster-whisper needs no token. A provider id is not sent to
+        # the legacy cloud client: that client is only the old tryb_api path.
+        requested = getattr(request, "stt_engine", "") or ""
+        stt_mode = requested or os.getenv("STT_ENGINE", "local_whisper")
+        route = resolve_stt_route(stt_mode)
         try:
-            if stt_mode == "tryb_api":
+            if route == "local":
+                text, _ = self.stt_engine.transcribe(wav_data)
+            elif route == "tryb":
                 text = public_voice_client.speech_to_text(wav_data, self.token)
             else:
-                text, _ = self.stt_engine.transcribe(wav_data)
+                self.get_logger().error(
+                    "stt backend %s is not the local engine and has no speech client",
+                    stt_mode,
+                )
+                goal_handle.abort()
+                return self.create_result("")
         except Exception as e:
             self.get_logger().error(f"failed speech_to_text: {e}")
             goal_handle.abort()

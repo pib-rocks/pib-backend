@@ -16,6 +16,16 @@ def list_providers():
     return {"providers": providers_schema.dump(provider_service.selectable_providers())}
 
 
+@bp.route("/voice-backends", methods=["GET"])
+def list_voice_backends():
+    """Speech engines a personality may choose.
+
+    Local faster-whisper and Supertone are always present. A provider row
+    is present only when its stt or tts capability is set.
+    """
+    return provider_service.speech_backends()
+
+
 @bp.route("/default", methods=["GET"])
 def get_default_provider():
     return provider_schema.dump(provider_service.get_default_provider())

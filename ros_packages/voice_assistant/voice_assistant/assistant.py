@@ -161,6 +161,9 @@ class VoiceAssistantNode(Node):
         goal = RecordAudio.Goal()
         goal.max_silent_seconds_before = max_silent_seconds_before
         goal.max_silent_seconds_after = max_silent_seconds_after
+        goal.stt_engine = (
+            getattr(self.personality, "stt_engine", None) or "local_whisper"
+        )
         feedback_callback = (
             None if on_stopped_recording is None else lambda _: on_stopped_recording()
         )
@@ -233,6 +236,9 @@ class VoiceAssistantNode(Node):
         request.gender = gender
         request.language = language
         request.join = on_stopped_playing is not None
+        request.tts_engine = (
+            getattr(self.personality, "tts_engine", None) or "supertone"
+        )
         future: Future = self.play_audio_from_speech_client.call_async(request)
         if request.join:
             future.add_done_callback(lambda _: on_stopped_playing())

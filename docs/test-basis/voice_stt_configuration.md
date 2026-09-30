@@ -9,9 +9,9 @@ This document specifies the functional and non-functional requirements in BDD (G
 
 ### Functional Requirements
 1. **Local Faster-Whisper Default**: Personalities must default to `stt_engine="local_whisper"` upon creation if no STT engine preference is specified.
-2. **Database Persistence**: The personality entity in DB and Flask API must persist `stt_engine` as either `"local_whisper"` or `"tryb_api"`.
-3. **API Endpoint Support**: The Flask API (`GET`, `POST`, `PUT` on `/voice-assistant/personality`) must serialize `stt_engine` as `sttEngine` in camelCase and validate input values.
-4. **Dynamic Routing**: `audio_recorder.py` must dynamically query the `stt_engine` setting from DB/API and route audio transcription to either local `FasterWhisperSTTEngine` or remote `public_voice_client.speech_to_text`.
+2. **Database Persistence**: The personality stores `stt_engine` as `local_whisper` (faster-whisper) or the id of a provider whose `stt` capability is set, and `tts_engine` as `supertone` or the id of a provider whose `tts` capability is set. ElevenLabs is not a value.
+3. **API Endpoint Support**: The Flask API (`GET`, `POST`, `PUT` on `/voice-assistant/personality`) serializes the fields as `sttEngine` and `ttsEngine`. `GET /provider/voice-backends` lists the local engines plus capable providers.
+4. **Dynamic Routing**: `audio_recorder.py` uses the personality's `stt_engine` (the record goal) and transcribes with local faster-whisper. The legacy `tryb_api` value still calls the existing public voice client. Any other id is not sent to that client.
 
 ### Non-Functional Requirements
 1. **Backward Compatibility**: Existing database records without explicit `stt_engine` values must default to `"local_whisper"`.

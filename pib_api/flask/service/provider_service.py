@@ -2,8 +2,16 @@ from typing import List, Optional
 
 from model.assistant_model import AssistantModel
 from model.provider_model import Provider
+from pib_hermes_config.voice_backends import (
+    LIVE_VOICE_NOTE,
+    LOCAL_STT_ENGINE,
+    LOCAL_STT_ID,
+    LOCAL_TTS_ENGINE,
+    LOCAL_TTS_ID,
+)
 from provider_registry import (
     capabilities_for,
+    has_capability,
     has_images_capability,
     is_registry_default,
 )
@@ -29,6 +37,48 @@ def get_provider_by_id(provider_id: int) -> Optional[Provider]:
 
 def get_default_provider() -> Provider:
     return Provider.query.filter_by(is_default=True).one()
+
+
+def _local_speech_option(option_id: str, engine: str, label: str) -> dict:
+    return {
+        "id": option_id,
+        "kind": "local",
+        "engine": engine,
+        "label": label,
+    }
+
+
+def _provider_speech_option(row: Provider) -> dict:
+    return {
+        "id": str(row.id),
+        "kind": "provider",
+        "engine": row.api_name,
+        "label": row.visual_name,
+    }
+
+
+def speech_backends() -> dict:
+    """Local engines plus provider rows that carry stt or tts.
+
+    The image filter does not apply here. A row is offered for speech only
+    when its own capability flag is set. ElevenLabs is not a row.
+    """
+    speech_to_text = [
+        _local_speech_option(LOCAL_STT_ID, LOCAL_STT_ENGINE, "Local faster-whisper")
+    ]
+    text_to_speech = [
+        _local_speech_option(LOCAL_TTS_ID, LOCAL_TTS_ENGINE, "Local Supertone")
+    ]
+    for row in Provider.query.order_by(Provider.id).all():
+        if has_capability(row.capabilities, "stt"):
+            speech_to_text.append(_provider_speech_option(row))
+        if has_capability(row.capabilities, "tts"):
+            text_to_speech.append(_provider_speech_option(row))
+    return {
+        "speechToText": speech_to_text,
+        "textToSpeech": text_to_speech,
+        "liveVoiceNote": LIVE_VOICE_NOTE,
+    }
 
 
 def selectable_providers() -> List[Provider]:

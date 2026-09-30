@@ -22,6 +22,13 @@ class Personality(db.Model):
         default="local_whisper",
         server_default="local_whisper",
     )
+    # Local Supertone, or the id of a provider row with the tts capability.
+    tts_engine = db.Column(
+        db.String(255),
+        nullable=False,
+        default="supertone",
+        server_default="supertone",
+    )
     chats = db.relationship(
         "Chat", backref="personality", lazy=True, cascade="all,delete"
     )

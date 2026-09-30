@@ -47,8 +47,13 @@ def is_registry_default(api_name: str) -> bool:
 
 def has_images_capability(capabilities: Any) -> bool:
     """True when this row may be offered for selection."""
+    return has_capability(capabilities, "images")
+
+
+def has_capability(capabilities: Any, key: str) -> bool:
+    """True when this row carries the named capability flag."""
     parsed = _as_mapping(capabilities)
-    return bool(parsed.get("images"))
+    return bool(parsed.get(key))
 
 
 def _as_mapping(capabilities: Any) -> Mapping[str, Any]:

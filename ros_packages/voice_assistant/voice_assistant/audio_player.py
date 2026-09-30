@@ -18,6 +18,7 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from std_msgs.msg import String
 
+from pib_hermes_config.voice_backends import resolve_tts_route
 from public_api_client import public_voice_client
 from . import util
 from .tts_synthesis import SupertoneTTSEngine
@@ -232,6 +233,14 @@ class AudioPlayerNode(Node):
     ) -> PlayAudioFromSpeech.Response:
 
         order = self.counter_next()
+
+        route = resolve_tts_route(getattr(request, "tts_engine", "") or "")
+        if route != "local":
+            self.get_logger().error(
+                "tts backend %s is not the local Supertone engine and has no speech client",
+                request.tts_engine,
+            )
+            return response
 
         try:
             # Use local Supertone supertonic-3 expressive TTS engine

@@ -37,14 +37,17 @@ def generate_dummy_wav_bytes(
 class TestSTTEngineInitialization:
     """Test engine initialization and model configuration."""
 
-    def test_default_model_size_resolution(self):
+    def test_default_model_size_resolution(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.delenv("WHISPER_MODEL_SIZE", raising=False)
         engine = FasterWhisperSTTEngine(model_path="/non_existent_path")
-        assert engine.model_size == "base"
+        assert engine.model_size == "small"
+        assert engine.compute_type == "int8"
 
     def test_custom_env_var_model_size(self, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.setenv("WHISPER_MODEL_SIZE", "base")
+        monkeypatch.setenv("WHISPER_MODEL_SIZE", "medium")
         engine = FasterWhisperSTTEngine(model_path="/non_existent_path")
-        assert engine.model_size == "base"
+        assert engine.model_size == "medium"
+        assert engine.model_size != DEFAULT_WHISPER_MODEL_SIZE
 
     def test_fallback_when_model_load_fails(self, monkeypatch: pytest.MonkeyPatch):
         # Force Exception during WhisperModel initialization to test fallback path

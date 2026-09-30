@@ -893,6 +893,43 @@ function provision_curated_models() {
   return 0
 }
 
+# Voice weights are not in models/manifest.yaml. Copy a vendored
+# faster-whisper tree into /data/voice/models/whisper/ when the files are
+# already on disk. A missing tree is not downloaded and does not fail install.
+function provision_whisper_model() {
+  local script_root dest result
+  script_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+  dest="${WHISPER_MODEL_PATH:-/data/voice/models/whisper}"
+  if ! command_exists python3; then
+    print WARN "whisper model: python3 is missing; not downloading"
+    return 0
+  fi
+  if ! result="$(
+    PYTHONPATH="${script_root}/ros_packages/voice_assistant${PYTHONPATH:+:$PYTHONPATH}" \
+      WHISPER_MODEL_PATH="$dest" \
+      python3 -c 'import os, sys; from pathlib import Path; from voice_assistant.whisper_provision import provision_from_repo; print(provision_from_repo(Path(sys.argv[1]), Path(os.environ["WHISPER_MODEL_PATH"])))' \
+      "$script_root"
+  )"; then
+    print WARN "whisper model: provisioning failed; not downloading"
+    return 0
+  fi
+  case "$result" in
+    placed)
+      print INFO "whisper model: placed into ${dest}"
+      ;;
+    already_current)
+      print INFO "whisper model: already current in ${dest}"
+      ;;
+    missing)
+      print WARN "whisper model: weights are not vendored under voice/whisper; the engine will not download them into ${dest}"
+      ;;
+    *)
+      print WARN "whisper model: unexpected result ${result}"
+      ;;
+  esac
+  return 0
+}
+
 # clean setup files if local install + remove user from sudoers file again
 function cleanup() {
   if [ "$INSTALL_METHOD" = "legacy" ]; then
@@ -1000,7 +1037,9 @@ fi
 
 if [ "$MODELS_ONLY" = true ]; then
   provision_curated_models provision
-  exit $?
+  models_status=$?
+  provision_whisper_model
+  exit "$models_status"
 fi
 
 if [ "$VERIFY_MODELS_ONLY" = true ]; then
@@ -1068,6 +1107,7 @@ provision_curated_models provision || {
   print ERROR "Model provisioning must succeed before containers are started"
   exit 1
 }
+provision_whisper_model
 install_pib_python_packages || print ERROR "failed to install pib Python packages"
 # Before docker-compose starts: hermes must exist on the host so the
 # ros-voice-assistant / flask-app bind mounts resolve to real paths.
