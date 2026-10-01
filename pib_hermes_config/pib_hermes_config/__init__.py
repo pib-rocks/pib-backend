@@ -25,7 +25,7 @@ SOUL_FILE_MODE = 0o644
 ENV_FILE_MODE = 0o600
 
 # Permanent Hermes LLM pin. Kept in sync with hermes_agent_client and setup-pib.sh.
-DEFAULT_HERMES_MODEL = "gemini-3.5-flash"
+DEFAULT_HERMES_MODEL = "gemini-3.8-flash"
 DEFAULT_HERMES_LITE_MODEL = "gemini-3.5-flash-lite"
 DEFAULT_HERMES_PROVIDER = "gemini"
 DEFAULT_REASONING_EFFORT = "low"

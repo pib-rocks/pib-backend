@@ -62,7 +62,7 @@ _server_lock = threading.Lock()
 TurnRunner = Callable[..., str]
 
 # Model used for the in-process ``run_agent.main`` entry point.
-IN_PROCESS_MODEL = "gemini-3.5-flash"
+IN_PROCESS_MODEL = "gemini-3.8-flash"
 DEFAULT_AGENT_CACHE_SIZE = 32
 DEFAULT_PROFILE_FACTORY_MODE = "require"
 PROFILE_FACTORY_ENV = "PIB_HERMES_PROFILE_FACTORY"

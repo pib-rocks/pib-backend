@@ -35,7 +35,7 @@ def _assert_speed_defaults(cfg):
 
 
 def test_speed_constants_in_hermes_agent_client():
-    assert DEFAULT_HERMES_MODEL == "gemini-3.5-flash"
+    assert DEFAULT_HERMES_MODEL == "gemini-3.8-flash"
     assert DEFAULT_HERMES_LITE_MODEL == "gemini-3.5-flash-lite"
     assert DEFAULT_HERMES_PROVIDER == "gemini"
     assert DEFAULT_REASONING_EFFORT == "low"
@@ -44,7 +44,7 @@ def test_speed_constants_in_hermes_agent_client():
 
 
 def test_speed_constants_in_pib_hermes_config():
-    assert hermes_cfg.DEFAULT_HERMES_MODEL == "gemini-3.5-flash"
+    assert hermes_cfg.DEFAULT_HERMES_MODEL == "gemini-3.8-flash"
     assert hermes_cfg.DEFAULT_HERMES_LITE_MODEL == "gemini-3.5-flash-lite"
     assert hermes_cfg.DEFAULT_HERMES_PROVIDER == "gemini"
     assert hermes_cfg.DEFAULT_REASONING_EFFORT == "low"
@@ -100,7 +100,7 @@ def test_ensure_profile_overwrites_non_speed_reasoning_settings(
 ):
     """Testfall 1/2: reasoning_effort and max_tokens are permanently pinned low/1024."""
     (sandboxed_hermes_home / "config.yaml").write_text(
-        "model: gemini-3.5-flash\n", encoding="utf-8"
+        "model: gemini-3.8-flash\n", encoding="utf-8"
     )
     _absent_binary(tmp_path, monkeypatch)
     pdir = profile_dir_for("speed-pin")
@@ -108,7 +108,7 @@ def test_ensure_profile_overwrites_non_speed_reasoning_settings(
     with open(os.path.join(pdir, "config.yaml"), "w", encoding="utf-8") as fh:
         yaml.safe_dump(
             {
-                "model": "gemini-3.5-flash",
+                "model": "gemini-3.8-flash",
                 "provider": "gemini",
                 "reasoning_effort": "high",
                 "max_tokens": 8192,

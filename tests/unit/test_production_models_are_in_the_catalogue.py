@@ -28,15 +28,15 @@ HISTORICAL_MIGRATIONS = (
 # hermes_agent_client and setup-pib.sh, and is exempt for that reason.
 LOCAL_DAEMON_LABELS = {
     "public_api_client/public_api_client/hermes_daemon.py": frozenset(
-        {"gemini-3.5-flash"}
+        {"gemini-3.8-flash"}
     ),
     "public_api_client/public_api_client/hermes_agent_client.py": frozenset(
-        {"gemini-3.5-flash", "gemini-3.5-flash-lite"}
+        {"gemini-3.8-flash", "gemini-3.5-flash-lite"}
     ),
     "pib_hermes_config/pib_hermes_config/__init__.py": frozenset(
-        {"gemini-3.5-flash", "gemini-3.5-flash-lite"}
+        {"gemini-3.8-flash", "gemini-3.5-flash-lite"}
     ),
-    "setup/setup-pib.sh": frozenset({"gemini-3.5-flash"}),
+    "setup/setup-pib.sh": frozenset({"gemini-3.8-flash"}),
 }
 
 # Live-session transport ids. They are not chat rows in the catalogue. The
@@ -44,7 +44,7 @@ LOCAL_DAEMON_LABELS = {
 LIVE_TRANSPORT_IDS = {
     "pib_hermes_config/pib_hermes_config/live_session.py": frozenset(
         {
-            "gemini-3.1-flash-live-preview",
+            "gemini-3.8-live",
             "gemini-2.5-flash-native-audio-preview-09-2025",
         }
     ),
@@ -71,7 +71,7 @@ _OLD_CHAT_IDS = (
     "gpt-4o",
     "gpt-4-turbo",
     "gpt-3.5-turbo",
-    "gemini-3.5-flash",
+    "gemini-3.8-flash",
     "gemini-3.5-flash-lite",
     "anthropic.claude-3-sonnet-20240229-v1:0",
 )

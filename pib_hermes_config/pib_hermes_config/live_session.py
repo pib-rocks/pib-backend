@@ -12,13 +12,13 @@ from __future__ import annotations
 RETIRED_LIVE_MODEL = "gemini-2.5-flash-native-audio-preview-09-2025"
 
 #: Confirmed on this account's Gemini ``/v1beta/models`` list on the date below
-#: (``models/gemini-3.1-flash-live-preview``). Preview ids change, so a later
+#: (``models/gemini-3.8-live``). Preview ids change, so a later
 #: unlock re-reads the account list and rewrites the row.
-GEMINI_LIVE_MODEL = "gemini-3.1-flash-live-preview"
-GEMINI_LIVE_MODEL_CHECKED_ON = "2026-09-30"
+GEMINI_LIVE_MODEL = "gemini-3.8-live"
+GEMINI_LIVE_MODEL_CHECKED_ON = "2026-10-01"
 
 #: OpenAI realtime model. It is stored only after ``/v1/models`` on that
-#: account lists it. No OpenAI key was available to check on 2026-09-30.
+#: account lists it. No OpenAI key was available to check on 2026-10-01.
 OPENAI_LIVE_MODEL = "gpt-realtime"
 
 VOICE_MODE_LIVE = "live"

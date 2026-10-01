@@ -74,7 +74,7 @@ PIB_MCP_SERVER = {
 
 # Permanent Hermes LLM pin. Kept in sync with setup/setup-pib.sh
 # and pib_hermes_config.DEFAULT_HERMES_MODEL.
-DEFAULT_HERMES_MODEL = "gemini-3.5-flash"
+DEFAULT_HERMES_MODEL = "gemini-3.8-flash"
 DEFAULT_HERMES_LITE_MODEL = "gemini-3.5-flash-lite"
 DEFAULT_HERMES_PROVIDER = "gemini"
 # High-speed defaults for Gemini Flash / Flash-Lite (PR-1524).
