@@ -71,7 +71,7 @@ _OLD_CHAT_IDS = (
     "gpt-4o",
     "gpt-4-turbo",
     "gpt-3.5-turbo",
-    "gemini-3.8-flash",
+    "gemini-3.5-flash",
     "gemini-3.5-flash-lite",
     "anthropic.claude-3-sonnet-20240229-v1:0",
 )
