@@ -467,7 +467,13 @@ build_backend_stack() {
 fetch_repository() {
     local directory="$1"
     local branch="$2"
-    git -C "$directory" fetch --prune origin "$branch"
+    # --tags fetches every tag and never deletes a local one. --prune-tags
+    # mirrors the remote, so it drops withdrawn tags and can also drop a tag
+    # that points outside the fetched branch. Version resolution reads the tags
+    # on HEAD^2 and HEAD; a stale tag on an unrelated commit cannot change that
+    # result, while a pruned tag the resolution needs would refuse a valid
+    # release. --tags cannot drop a tag the version resolution needs.
+    git -C "$directory" fetch --prune --tags --force origin "$branch"
     if [ "$FORCE" = "true" ]; then
         git -C "$directory" reset --hard
         git -C "$directory" clean -fd
@@ -693,7 +699,7 @@ git -C "$CEREBRA_DIR" submodule update --init --recursive || fail "Failed to upd
 BACKEND_TARGET="$(git -C "$BACKEND_DIR" rev-parse HEAD)"
 CEREBRA_TARGET="$(git -C "$CEREBRA_DIR" rev-parse HEAD)"
 if ! APP_VERSION="$(resolve_app_version "$BACKEND_DIR")"; then
-    fail "Release checkout has no git tag on HEAD^2 or HEAD; refusing to build with the compose-file APP_VERSION fallback"
+    fail "Release checkout has no git tag on ${BACKEND_TARGET} (HEAD^2 or HEAD) after fetching branch ${BRANCH} with tags; refusing to build with the compose-file APP_VERSION fallback"
 fi
 log "Resolved APP_VERSION=${APP_VERSION} for pib-backend at ${BACKEND_TARGET}"
 
