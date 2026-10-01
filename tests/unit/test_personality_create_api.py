@@ -2,10 +2,18 @@
 
 Cerebra's Add dialog sends the name and whatever the Advanced dialog set.
 Every other value comes from the defaults and can be changed afterwards.
+A catalogue provider is named by its row id, or by the sentinel "default".
+The catalogue api_name is not a provider reference.
 """
 
+from pathlib import Path
+
 import pytest
+from marshmallow import ValidationError
+from model.provider_model import Provider
 from service import personality_service
+
+API_YAML = Path(__file__).resolve().parents[2] / "pib_api" / "pib-api.yaml"
 
 PERSONALITY_URL = "/voice-assistant/personality"
 
@@ -69,6 +77,50 @@ def test_name_only_create_persists_and_is_readable_and_updateable(client, app_ct
     assert again["messageHistory"] == 12
 
 
+def test_create_pointing_at_a_catalogue_provider_on_the_direct_channel(client, app_ctx):
+    gemini = Provider.query.filter_by(api_name="gemini-3.8-flash").one()
+    response = client.post(
+        PERSONALITY_URL,
+        json={
+            "name": "Gemini Test",
+            "gender": "Female",
+            "providerRef": str(gemini.id),
+            "channel": "direct",
+            "pauseThreshold": 0.5,
+            "messageHistory": 10,
+        },
+    )
+
+    assert response.status_code == 201
+    created = response.get_json()
+    assert created["name"] == "Gemini Test"
+    assert created["providerRef"] == str(gemini.id)
+    assert created["assistantModelId"] == gemini.id
+    assert created["channel"] == "direct"
+    assert created["pauseThreshold"] == 0.5
+    assert created["messageHistory"] == 10
+    personality_id = created["personalityId"]
+
+    read = client.get(f"{PERSONALITY_URL}/{personality_id}")
+    assert read.status_code == 200
+    assert read.get_json()["providerRef"] == str(gemini.id)
+    assert read.get_json()["channel"] == "direct"
+
+    updated = client.put(
+        f"{PERSONALITY_URL}/{personality_id}",
+        json={"pauseThreshold": 1.2},
+    )
+    assert updated.status_code == 200
+    assert updated.get_json()["providerRef"] == str(gemini.id)
+    assert updated.get_json()["channel"] == "direct"
+    assert updated.get_json()["pauseThreshold"] == 1.2
+
+    again = client.get(f"{PERSONALITY_URL}/{personality_id}").get_json()
+    assert again["providerRef"] == str(gemini.id)
+    assert again["channel"] == "direct"
+    assert again["pauseThreshold"] == 1.2
+
+
 def test_create_with_the_formerly_required_fields_still_honours_them(client, app_ctx):
     response = client.post(
         PERSONALITY_URL,
@@ -118,6 +170,9 @@ COMPLETE = {"gender": "Female", "pauseThreshold": 0.8, "messageHistory": 5}
         {"name": "Zu lang", "pauseThreshold": 3.5},
         {"name": "Zu kurz", "pauseThreshold": 0.0},
         {"name": "Negativ", "messageHistory": -1},
+        {"name": "ApiName", "providerRef": "gemini-3.8-flash"},
+        {"name": "MissingRow", "providerRef": "99999"},
+        {"name": "Snake", "provider_ref": "1", "pause_threshold": 0.5},
         {"name": None},
     ],
     ids=[
@@ -126,6 +181,9 @@ COMPLETE = {"gender": "Female", "pauseThreshold": 0.8, "messageHistory": 5}
         "threshold-high",
         "threshold-low",
         "history",
+        "api-name",
+        "unknown-id",
+        "snake-case",
         "no-name",
     ],
 )
@@ -138,6 +196,33 @@ def test_an_invalid_create_is_still_rejected(client, app_ctx, bad):
     assert response.status_code == 400
     listed = client.get(PERSONALITY_URL).get_json()["voiceAssistantPersonalities"]
     assert all(p["name"] != payload.get("name") for p in listed)
+
+
+def test_an_api_name_is_not_a_provider_reference(app_ctx):
+    with pytest.raises(ValidationError) as caught:
+        personality_service.create_personality(
+            {"name": "ApiName", "provider_ref": "gemini-3.8-flash"}
+        )
+
+    assert caught.value.messages["providerRef"] == [
+        "Provider reference must be 'default' or the id of a provider row."
+    ]
+    listed = personality_service.get_all_personalities()
+    assert all(personality.name != "ApiName" for personality in listed)
+
+
+def test_the_create_description_states_the_provider_reference_forms():
+    text = API_YAML.read_text(encoding="utf-8")
+    post = text.split("  /voice-assistant/personality:", 1)[1].split("    get:", 1)[0]
+    assert "PostVoiceAssistantPersonality" in post
+    body = text.split("PostVoiceAssistantPersonality:", 1)[1].split(
+        "VoiceAssistantPersonalities:", 1
+    )[0]
+    assert "providerRef:" in body
+    assert 'sentinel "default"' in body
+    assert "decimal id of a provider row" in body
+    assert "gemini-3.8-flash, is not a reference" in body
+    assert "enum: [smart, direct]" in body
 
 
 def test_an_update_still_validates_what_it_is_given(client, app_ctx):

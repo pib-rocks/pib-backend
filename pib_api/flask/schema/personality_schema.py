@@ -63,6 +63,8 @@ class PersonalitySchemaSQLAutoWith(SQLAutoWithCamelCaseSchema):
     local_voice_applies = fields.Method("get_local_voice_applies", dump_only=True)
     live_voice_note = fields.Method("get_live_voice_note", dump_only=True)
     assistant_model_id = fields.Integer(required=False, allow_none=True)
+    # 'default', or the decimal id of a provider row, as text. The catalogue
+    # api_name is not a reference and is rejected with an unknown provider.
     provider_ref = fields.String(required=False, allow_none=True)
     channel = fields.String(
         required=False,

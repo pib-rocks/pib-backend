@@ -126,6 +126,11 @@ def get_personality(personality_id: str) -> Personality:
     return personality
 
 
+# 'default', or the decimal id of a provider row. The catalogue api_name
+# is not a reference: gemini-3.8-flash names a catalogue line, not a row.
+PROVIDER_REF_ERROR = "Provider reference must be 'default' or the id of a provider row."
+
+
 def _store_provider_ref(personality: Personality, ref: str) -> None:
     """Persist a provider pointer. 'default' is not resolved into an id."""
     if ref == DEFAULT_PROVIDER_REF:
@@ -135,9 +140,9 @@ def _store_provider_ref(personality: Personality, ref: str) -> None:
     try:
         provider_id = int(ref)
     except (TypeError, ValueError) as exc:
-        raise ValidationError({"providerRef": ["Unknown provider reference."]}) from exc
+        raise ValidationError({"providerRef": [PROVIDER_REF_ERROR]}) from exc
     if provider_id < 1 or Provider.query.filter_by(id=provider_id).first() is None:
-        raise ValidationError({"providerRef": ["Unknown provider reference."]})
+        raise ValidationError({"providerRef": [PROVIDER_REF_ERROR]})
     personality.provider_ref = str(provider_id)
     personality.assistant_model_id = provider_id
 
