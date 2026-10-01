@@ -4,7 +4,12 @@ from typing import Any, List, Optional
 
 from marshmallow import ValidationError
 
-from model.personality_model import Personality
+from model.personality_model import (
+    DEFAULT_GENDER,
+    DEFAULT_MESSAGE_HISTORY,
+    DEFAULT_PAUSE_THRESHOLD,
+    Personality,
+)
 from model.provider_model import Provider
 from app.app import db
 from pib_hermes_config import build_default_soul_text
@@ -276,11 +281,12 @@ def _tool_calling_value(personality_dto: Any, default: bool) -> bool:
 
 def create_personality(personality_dto: Any) -> Personality:
     _reject_actuation_request(personality_dto)
+    # Only the name is required. The rest is defaulted here and edited later.
     personality = Personality(
         name=personality_dto["name"],
-        gender=personality_dto["gender"],
-        pause_threshold=personality_dto["pause_threshold"],
-        message_history=personality_dto["message_history"],
+        gender=personality_dto.get("gender") or DEFAULT_GENDER,
+        pause_threshold=personality_dto.get("pause_threshold", DEFAULT_PAUSE_THRESHOLD),
+        message_history=personality_dto.get("message_history", DEFAULT_MESSAGE_HISTORY),
         stt_engine=LOCAL_STT_ID,
         tts_engine=LOCAL_TTS_ID,
         tool_calling=_tool_calling_value(personality_dto, True),

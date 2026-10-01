@@ -1145,26 +1145,29 @@ components:
         gender:
           type: string
           enum: [Male, Female]
+          default: Female
           examples: 
             - Female
             - Male
         pauseThreshold:
           type: number
+          minimum: 0.1
+          maximum: 3
+          default: 0.8
           examples: 
             - 0.8
             - 1.0
         messageHistory:
           type: number
+          minimum: 0
+          default: 5
           examples:
             - 5
             - 15
+      # A new personality needs a name only. Every other value comes from
+      # the defaults and can be changed afterwards.
       required:
-        - personalityId
         - name
-        - description
-        - gender
-        - pauseThreshold
-        - messageHistory
     VoiceAssistantPersonalities:
       properties:
         voiceAssistantPersonalities:

@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 from marshmallow import ValidationError, fields, validate
-from model.personality_model import Personality
+from model.personality_model import (
+    DEFAULT_GENDER,
+    DEFAULT_MESSAGE_HISTORY,
+    DEFAULT_PAUSE_THRESHOLD,
+    Personality,
+)
 from pib_hermes_config.channel import (
     CHANNEL_DIRECT,
     CHANNEL_SMART,
@@ -30,6 +35,21 @@ class PersonalitySchemaSQLAutoWith(SQLAutoWithCamelCaseSchema):
         model = Personality
         include_fk = True
 
+    # A create needs the name only. The generated schema would make every
+    # non-nullable column required, so the three without a server default
+    # are declared here with the model's defaults. The ranges are the ones
+    # Cerebra's dialog enforces, so the API rejects what the dialog rejects.
+    gender = fields.String(required=False, load_default=DEFAULT_GENDER)
+    pause_threshold = fields.Float(
+        required=False,
+        load_default=DEFAULT_PAUSE_THRESHOLD,
+        validate=validate.Range(min=0.1, max=3.0),
+    )
+    message_history = fields.Integer(
+        required=False,
+        load_default=DEFAULT_MESSAGE_HISTORY,
+        validate=validate.Range(min=0),
+    )
     stt_engine = fields.String(
         required=False,
         dump_default="local_whisper",

@@ -6,6 +6,14 @@ from pib_hermes_config.live_session import (
     VOICE_MODE_LIVE,
 )
 
+# A new personality needs a name only. Everything else starts from these
+# values and is changed afterwards in the Advanced dialog.
+DEFAULT_GENDER = "Female"
+#: Seconds of silence that end the user's turn.
+DEFAULT_PAUSE_THRESHOLD = 0.8
+#: Number of earlier messages sent along with a turn.
+DEFAULT_MESSAGE_HISTORY = 5
+
 
 class Personality(db.Model):
 
@@ -16,13 +24,17 @@ class Personality(db.Model):
     personality_id = db.Column(
         db.String(255), nullable=False, default=generate_uuid, unique=True
     )
-    gender = db.Column(db.String(255), nullable=False)
+    gender = db.Column(db.String(255), nullable=False, default=DEFAULT_GENDER)
     description = db.Column(db.String(38000), nullable=True)
-    pause_threshold = db.Column(db.Float, nullable=False)
+    pause_threshold = db.Column(
+        db.Float, nullable=False, default=DEFAULT_PAUSE_THRESHOLD
+    )
     # Spoken only when the first token is later than the budget. Empty means
     # silence. The assistant never substitutes a phrase of its own.
     thinking_filler = db.Column(db.String(255), nullable=True)
-    message_history = db.Column(db.Integer, nullable=False)
+    message_history = db.Column(
+        db.Integer, nullable=False, default=DEFAULT_MESSAGE_HISTORY
+    )
     stt_engine = db.Column(
         db.String(255),
         nullable=False,
