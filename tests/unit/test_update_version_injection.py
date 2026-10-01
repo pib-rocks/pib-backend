@@ -347,8 +347,7 @@ def test_release_without_a_tag_refuses_the_compose_fallback(tmp_path: Path) -> N
     assert status["state"] == "failed"
     assert (
         f"no git tag on {BACKEND_SHA} (HEAD^2 or HEAD) "
-        "after fetching branch main with tags"
-        in status["message"]
+        "after fetching branch main with tags" in status["message"]
     )
     assert "compose-file APP_VERSION fallback" in status["message"]
     assert _build_lines(docker_log) == []
