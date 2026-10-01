@@ -1469,11 +1469,15 @@ def test_degraded_direct_chat_names_the_missing_password(chat_module, chat_node)
         ),
         patch.object(chat_module.hermes_agent_client, "stream_turn") as stream_turn,
         patch.object(chat_module.public_voice_client, "chat_completion") as completion,
+        patch.object(
+            chat_module.direct_tool_loop, "run_direct_turn"
+        ) as run_direct_turn,
     ):
         result = drive_like_rclpy(chat_node.chat(goal_handle))
 
     stream_turn.assert_not_called()
     completion.assert_not_called()
+    run_direct_turn.assert_not_called()
     goal_handle.abort.assert_not_called()
     goal_handle.succeed.assert_called_once()
     assert result.text == refusal_sentence("direct")
@@ -1701,3 +1705,97 @@ def test_direct_tool_calling_aborts_when_the_model_has_no_stable_endpoint(
     goal_handle.abort.assert_called_once()
     goal_handle.succeed.assert_not_called()
     assert result.text == ""
+
+
+def test_direct_turn_logs_the_store_key_source_and_does_not_print_the_secret(
+    chat_module, chat_node, monkeypatch
+):
+    """The chat node reports which source supplied the Gemini key."""
+    import json
+
+    from voice_assistant.direct_tool_loop import PINNED_PROVIDER
+
+    store_secret = "store-provider-key"
+    env_secret = "env-provider-key"
+    monkeypatch.setenv("GOOGLE_API_KEY", env_secret)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    Chat = chat_module.Chat
+
+    personality = MagicMock()
+    personality.message_history = 5
+    personality.description = "Du bist pib."
+    personality.personality_id = "pers-1"
+    personality.assistant_model.api_name = "gemini-3.8-flash"
+    personality.assistant_model.has_image_support = False
+    personality.tool_calling = True
+    personality.channel = "direct"
+    personality.effective_channel = "direct"
+
+    goal_handle = MagicMock()
+    goal_handle.is_cancel_requested = False
+    goal_handle.request = Chat.Goal()
+    goal_handle.request.chat_id = "chat-key"
+    goal_handle.request.text = "ping"
+    goal_handle.request.generate_code = False
+
+    captured = {}
+
+    class Response:
+        def read(self):
+            return json.dumps(
+                {"candidates": [{"content": {"parts": [{"text": "pong"}]}}]}
+            ).encode()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    def fake_urlopen(request, timeout=None):
+        captured["header"] = request.get_header("X-goog-api-key")
+        return Response()
+
+    def fetch(provider):
+        assert provider == PINNED_PROVIDER
+        return {"mode": "unlocked", "secret": store_secret}
+
+    if hasattr(chat_module.direct_tool_loop, "_fetch_store_key"):
+        monkeypatch.setattr(chat_module.direct_tool_loop, "_fetch_store_key", fetch)
+    monkeypatch.setattr(chat_module.direct_tool_loop, "urlopen", fake_urlopen)
+    monkeypatch.setattr(
+        chat_module.direct_tool_loop, "mcp_tool_declarations", lambda: []
+    )
+
+    with (
+        patch.object(
+            chat_module.voice_assistant_client,
+            "get_personality_from_chat",
+            return_value=(True, personality),
+        ),
+        patch.object(
+            chat_module.voice_assistant_client,
+            "get_chat_history",
+            return_value=(True, []),
+        ),
+        patch.object(
+            chat_node,
+            "_stream_chunks_to_goal",
+            side_effect=lambda goal_handle, chat_id, tokens, t0=0: (
+                None,
+                None,
+                "".join(tokens),
+            ),
+        ),
+    ):
+        result = drive_like_rclpy(chat_node.chat(goal_handle))
+
+    logged = " ".join(
+        str(call) for call in chat_node.get_logger.return_value.info.call_args_list
+    )
+    assert captured["header"] == store_secret
+    assert "source=key-store" in logged
+    assert "provider=gemini" in logged
+    assert store_secret not in logged
+    assert env_secret not in logged
+    assert result.text == "pong"

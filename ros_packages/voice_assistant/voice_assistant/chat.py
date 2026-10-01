@@ -991,6 +991,16 @@ class ChatNode(Node):
                         f"direct tool loop model={direct_tool_loop.PINNED_MODEL} "
                         f"provider={direct_tool_loop.PINNED_PROVIDER} chat={chat_id}"
                     )
+
+                    def report_key_source(source: str) -> None:
+                        # source is key-store or environment. The key itself
+                        # is not passed here, so it cannot land in the log.
+                        self.get_logger().info(
+                            f"direct provider key source={source} "
+                            f"provider={direct_tool_loop.PINNED_PROVIDER} "
+                            f"chat={chat_id}"
+                        )
+
                     tokens = direct_tool_loop.run_direct_turn(
                         system_prompt=system_prompt,
                         user_text=content,
@@ -1000,6 +1010,7 @@ class ChatNode(Node):
                         ],
                         tool_calling=True,
                         allow_image=allow_image,
+                        report_key_source=report_key_source,
                     )
                 else:
                     with self.public_voice_client_lock:

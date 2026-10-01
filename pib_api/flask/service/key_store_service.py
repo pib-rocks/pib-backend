@@ -109,6 +109,28 @@ def unlocked_credentials() -> dict[str, str]:
     return dict(_unlocked)
 
 
+def unlocked_secret_for_api_name(api_name: str) -> Optional[str]:
+    """The unlocked secret for this catalogue id, or None.
+
+    Locked, unknown, and a row with no secret are all None. Another
+    provider's secret is not returned. The value is not logged.
+    """
+    if operating_mode() != MODE_UNLOCKED:
+        return None
+    if not isinstance(api_name, str) or api_name.strip() == "":
+        return None
+    secrets = unlocked_credentials()
+    rows = Provider.query.filter_by(api_name=api_name).all()
+    for provider in rows:
+        ref = provider.credential_ref
+        if not ref:
+            continue
+        secret = secrets.get(ref)
+        if isinstance(secret, str) and secret.strip():
+            return secret
+    return None
+
+
 def store_path() -> str:
     return os.environ.get("PIB_KEY_STORE_PATH") or DEFAULT_KEY_STORE_PATH
 

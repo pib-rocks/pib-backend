@@ -109,9 +109,85 @@ def tools_for_turn(
     return offered
 
 
-def gemini_api_key() -> str:
-    """Same names the voice container already receives from password.env."""
+KEY_SOURCE_STORE = "key-store"
+KEY_SOURCE_ENVIRONMENT = "environment"
+
+
+def missing_key_message(provider: str) -> str:
+    """Names the provider. The message never carries a secret."""
+    return f"No keys are available for provider {provider}."
+
+
+def environment_key(provider: str) -> str:
+    """Development fallback. Only this provider's own variables.
+
+    A locked store may use these. An unlocked store does not, and another
+    provider's variable is never read.
+    """
+    if provider != PINNED_PROVIDER:
+        return ""
     return os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY") or ""
+
+
+def gemini_api_key() -> str:
+    """Environment names the voice container already receives from password.env.
+
+    Memory consolidation still uses this. A Direct turn uses
+    ``resolve_provider_key``, which prefers the key store.
+    """
+    return environment_key(PINNED_PROVIDER)
+
+
+def _log_key_source(source: str, provider: str) -> None:
+    logger.info("direct provider key source=%s provider=%s", source, provider)
+
+
+def _fetch_store_key(provider: str) -> dict[str, Any]:
+    """The unlocked secret for this provider, or the mode with no secret.
+
+    A provider this loop does not call yields no secret, so another
+    provider's key cannot be selected by mistake.
+    """
+    if provider != PINNED_PROVIDER:
+        return {"mode": "unlocked", "secret": None}
+    try:
+        from pib_api_client.key_store_client import read_provider_key
+    except Exception:
+        return {"mode": "unavailable", "secret": None}
+    return read_provider_key(PINNED_MODEL)
+
+
+def resolve_provider_key(
+    provider: str,
+    fetch: Optional[Callable[[str], Mapping[str, Any]]] = None,
+) -> tuple[str, str]:
+    """Key for this provider, and ``key-store`` or ``environment``.
+
+    An unlocked store is the only source: a missing key fails, and the
+    environment is not consulted. A locked or unreachable store uses this
+    provider's environment variable. The secret is not logged.
+    """
+    if not isinstance(provider, str) or provider.strip() == "":
+        raise DirectToolLoopError("No keys are available for provider.")
+    reader = fetch or _fetch_store_key
+    try:
+        state = reader(provider)
+    except Exception:
+        state = {"mode": "unavailable", "secret": None}
+    if not isinstance(state, dict):
+        state = {"mode": "unavailable", "secret": None}
+    mode = state.get("mode")
+    if mode == "unlocked":
+        secret = state.get("secret")
+        if isinstance(secret, str) and secret.strip():
+            _log_key_source(KEY_SOURCE_STORE, provider)
+            return secret, KEY_SOURCE_STORE
+        raise DirectToolLoopError(missing_key_message(provider))
+    env_key = environment_key(provider)
+    if env_key:
+        _log_key_source(KEY_SOURCE_ENVIRONMENT, provider)
+        return env_key, KEY_SOURCE_ENVIRONMENT
+    raise DirectToolLoopError(missing_key_message(provider))
 
 
 def _history_without_current_user(
@@ -135,6 +211,8 @@ def run_direct_turn(
     complete: Optional[Complete] = None,
     execute_tool: Optional[ExecuteTool] = None,
     max_rounds: int = MAX_TOOL_ROUNDS,
+    api_key: Optional[str] = None,
+    report_key_source: Optional[Callable[[str], None]] = None,
 ) -> Iterator[str]:
     """Yield the model's final answer. Tool results are not spoken.
 
@@ -153,7 +231,17 @@ def run_direct_turn(
         allow_image=allow_image,
     )
     tools = offered or None
-    caller = complete or gemini_complete
+    if complete is not None:
+        caller = complete
+    else:
+        if api_key is None:
+            api_key, source = resolve_provider_key(PINNED_PROVIDER)
+            if report_key_source is not None:
+                report_key_source(source)
+
+        def caller(messages, tools, _key=api_key):
+            return gemini_complete(messages, tools, api_key=_key)
+
     runner = execute_tool or execute_mcp_tool
 
     messages: list[dict[str, Any]] = [
@@ -222,7 +310,7 @@ def build_gemini_request(
     """Stable generateContent request. The key travels in a header, not the URL."""
     url = assert_stable_url(PINNED_ENDPOINT)
     if not api_key:
-        raise DirectToolLoopError("GOOGLE_API_KEY is not set")
+        raise DirectToolLoopError(missing_key_message(PINNED_PROVIDER))
     headers = {
         "Content-Type": "application/json",
         "x-goog-api-key": api_key,
@@ -350,8 +438,10 @@ def parse_gemini_response(payload: Mapping[str, Any]) -> dict[str, Any]:
 def gemini_complete(
     messages: Sequence[Mapping[str, Any]],
     tools: Optional[Sequence[Mapping[str, Any]]],
+    api_key: Optional[str] = None,
 ) -> dict[str, Any]:
-    url, headers, body = build_gemini_request(messages, tools, gemini_api_key())
+    key = gemini_api_key() if api_key is None else api_key
+    url, headers, body = build_gemini_request(messages, tools, key)
     payload = _post_json(url, headers, body)
     return parse_gemini_response(payload)
 

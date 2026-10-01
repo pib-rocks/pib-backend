@@ -101,6 +101,46 @@ def test_round_trip_uses_one_password_for_every_key(app_ctx, key_store_path):
     assert stat.S_IMODE(key_store_path.stat().st_mode) == 0o600
 
 
+def test_credential_route_returns_one_unlocked_key_and_never_logs_it(
+    app, app_ctx, caplog
+):
+    """The voice node reads one provider. A locked store and the status route do not."""
+    caplog.set_level(logging.INFO)
+    gemini = Provider.query.filter_by(api_name="gemini-3.8-flash").one()
+    other = Provider.query.filter_by(api_name="gpt-6").one()
+    key_store_service.put_secret(gemini.id, PASSWORD, SECRET)
+    key_store_service.put_secret(other.id, PASSWORD, OTHER_SECRET)
+    db.session.commit()
+    client = app.test_client()
+
+    opened = client.get("/system/key-store/credential/gemini-3.8-flash")
+    assert opened.status_code == 200
+    body = opened.get_json()
+    assert body["mode"] == "unlocked"
+    assert body["available"] is True
+    assert body["secret"] == SECRET
+    assert OTHER_SECRET not in opened.get_data(as_text=True)
+
+    status = client.get("/system/key-store")
+    assert SECRET not in status.get_data(as_text=True)
+    assert OTHER_SECRET not in status.get_data(as_text=True)
+
+    untouched = client.get("/system/key-store/credential/claude-sonnet-5-5")
+    assert untouched.status_code == 200
+    assert untouched.get_json()["available"] is False
+    assert "secret" not in untouched.get_json()
+    assert SECRET.encode() not in untouched.get_data()
+    assert OTHER_SECRET.encode() not in untouched.get_data()
+
+    key_store_service.lock()
+    locked = client.get("/system/key-store/credential/gemini-3.8-flash")
+    assert locked.status_code == 200
+    assert locked.get_json() == {"mode": "degraded", "available": False}
+    assert SECRET not in locked.get_data(as_text=True)
+    assert SECRET not in caplog.text
+    assert OTHER_SECRET not in caplog.text
+
+
 def test_wrong_password_returns_no_keys_and_does_not_crash(app, app_ctx):
     vision = Provider.query.filter_by(api_name="gpt-6").one()
     key_store_service.put_secret(vision.id, PASSWORD, SECRET)
