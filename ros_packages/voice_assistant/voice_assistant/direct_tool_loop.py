@@ -35,9 +35,8 @@ PINNED_ENDPOINT = (
     "https://generativelanguage.googleapis.com/v1/models/"
     f"{PINNED_MODEL}:generateContent"
 )
-# The Hermes row is not itself a generateContent model. A Direct turn on
-# that row still calls the pinned catalogue model above.
-GEMINI_API_NAMES = frozenset({PINNED_MODEL, "hermes-agent"})
+# The allowlist is the pinned catalogue model. Hermes is a channel, not a row.
+GEMINI_API_NAMES = frozenset({PINNED_MODEL})
 IMAGE_TOOL = "capture_image"
 MAX_TOOL_ROUNDS = 8
 

@@ -1,12 +1,10 @@
-"""Verify seed_db includes the hermes-agent and Gemini 3.8 Flash assistant models."""
+"""Verify seed_db includes Gemini 3.8 Flash and omits the removed hermes row."""
 
 
-def test_seed_includes_hermes_agent_assistant_model(app_ctx):
+def test_seed_does_not_include_hermes_agent(app_ctx):
     from model.assistant_model import AssistantModel
 
-    hermes = AssistantModel.query.filter_by(api_name="hermes-agent").one()
-    assert hermes.visual_name == "Hermes Agent (selbstlernend)"
-    assert hermes.has_image_support is True
+    assert AssistantModel.query.filter_by(api_name="hermes-agent").count() == 0
 
 
 def test_seed_includes_gemini_3_8_flash_assistant_model(app_ctx):

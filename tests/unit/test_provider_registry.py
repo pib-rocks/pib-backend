@@ -37,8 +37,8 @@ def test_selection_offers_only_rows_with_images_capability(app):
 
         gpt6 = Provider.query.filter_by(api_name="gpt-6").one()
         gemini = Provider.query.filter_by(api_name="gemini-3.8-flash").one()
-        hermes = Provider.query.filter_by(api_name="hermes-agent").one()
-        gpt6_id, gemini_id, hermes_id = gpt6.id, gemini.id, hermes.id
+        claude = Provider.query.filter_by(api_name="claude-sonnet-5-5").one()
+        gpt6_id, gemini_id, claude_id = gpt6.id, gemini.id, claude.id
         all_ids = {row.id for row in Provider.query.all()}
         # Every seeded row carries images. Clear one flag so the filter shows.
         gemini.capabilities = {**gemini.capabilities, "images": False}
@@ -61,21 +61,21 @@ def test_selection_offers_only_rows_with_images_capability(app):
     assert offered == assistant_offered
     assert offered == all_ids - {gemini_id}
     assert gpt6_id in offered
-    assert hermes_id in offered
+    assert claude_id in offered
     assert gemini_id not in offered
 
     # The flag decides, not the name.
     with app.app_context():
         gemini = Provider.query.filter_by(id=gemini_id).one()
         gemini.capabilities = {**gemini.capabilities, "images": True}
-        hermes = Provider.query.filter_by(id=hermes_id).one()
-        hermes.capabilities = {**hermes.capabilities, "images": False}
+        claude = Provider.query.filter_by(id=claude_id).one()
+        claude.capabilities = {**claude.capabilities, "images": False}
         db.session.commit()
 
     offered = {row["id"] for row in client.get("/provider").get_json()["providers"]}
     assert gemini_id in offered
-    assert hermes_id not in offered
-    by_id = client.get(f"/provider/{hermes_id}")
+    assert claude_id not in offered
+    by_id = client.get(f"/provider/{claude_id}")
     assert by_id.status_code == 200
     assert by_id.get_json()["capabilities"]["images"] is False
 

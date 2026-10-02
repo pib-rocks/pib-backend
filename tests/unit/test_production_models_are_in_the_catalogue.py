@@ -175,3 +175,17 @@ def test_removal_migration_drops_every_row_outside_the_catalogue():
     assert "DELETE FROM provider WHERE api_name NOT IN" in source
     assert "DELETE FROM assistant_model WHERE api_name NOT IN" in source
     assert not active_api_names() & set(_OLD_CHAT_IDS)
+    later = (
+        REPO_ROOT
+        / "pib_api"
+        / "flask"
+        / "migrations"
+        / "versions"
+        / "a8c3e1d74f20_remove_rows_that_left_the_catalogue.py"
+    )
+    later_source = later.read_text(encoding="utf-8")
+    assert "active_api_names()" in later_source
+    assert "DELETE FROM provider WHERE api_name NOT IN" in later_source
+    assert "DELETE FROM assistant_model WHERE api_name NOT IN" in later_source
+    assert 'down_revision = "d9f2a6c41e88"' in later_source
+    assert "hermes-agent" not in active_api_names()

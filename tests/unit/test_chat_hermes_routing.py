@@ -810,7 +810,7 @@ def test_direct_turn_puts_the_person_on_the_system_prompt(
     personality.message_history = 5
     personality.description = "Ein Soul, eine Identitaet."
     personality.personality_id = "pers-1"
-    personality.assistant_model.api_name = "hermes-agent"
+    personality.assistant_model.api_name = "gemini-3.8-flash"
     personality.assistant_model.has_image_support = False
     personality.tool_calling = True
     personality.channel = "smart"
@@ -1543,7 +1543,7 @@ def test_disabled_hermes_channel_routes_a_smart_personality_direct(
     personality.message_history = 5
     personality.description = "Ein Soul, eine Identitaet."
     personality.personality_id = "pers-1"
-    personality.assistant_model.api_name = "hermes-agent"
+    personality.assistant_model.api_name = "gemini-3.8-flash"
     personality.assistant_model.has_image_support = False
     personality.tool_calling = True
     personality.channel = "smart"

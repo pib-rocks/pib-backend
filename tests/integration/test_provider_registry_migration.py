@@ -62,10 +62,15 @@ def test_upgrade_copies_assistant_model_ids_onto_the_provider_registry(tmp_path)
                 id, name, personality_id, gender, description, pause_threshold,
                 message_history, assistant_model_id, stt_engine
             )
-            VALUES (
-                21, 'Existing', 'person-existing', 'Female', 'kept', 0.8,
-                5, 12, 'local_whisper'
-            )
+            VALUES
+                (
+                    21, 'Existing', 'person-existing', 'Female', 'kept', 0.8,
+                    5, 12, 'local_whisper'
+                ),
+                (
+                    22, 'OnHermes', 'person-hermes', 'Male', 'kept', 0.8,
+                    5, 14, 'local_whisper'
+                )
             """)
         connection.commit()
 
@@ -83,9 +88,14 @@ def test_upgrade_copies_assistant_model_ids_onto_the_provider_registry(tmp_path)
             SELECT assistant_model_id, provider_ref
             FROM personality WHERE id = 21
             """).fetchone()
+        on_hermes = connection.execute("""
+            SELECT assistant_model_id, provider_ref
+            FROM personality WHERE id = 22
+            """).fetchone()
     assert set(copied) == {11, 12, 13, 14}
     assert copied[12][1:] == ("gpt-4o", "GPT-4o [Text]", 0)
     assert personality == (12, "12")
+    assert on_hermes == (14, "14")
 
     # At head, only the catalogue's models are left. Nothing old survives.
     _upgrade(database, "head")
@@ -108,6 +118,10 @@ def test_upgrade_copies_assistant_model_ids_onto_the_provider_registry(tmp_path)
             SELECT assistant_model_id, provider_ref
             FROM personality WHERE id = 21
             """).fetchone()
+        on_hermes = connection.execute("""
+            SELECT assistant_model_id, provider_ref
+            FROM personality WHERE id = 22
+            """).fetchone()
         voice = connection.execute("""
             SELECT voice_mode, live_idle_timeout FROM personality WHERE id = 21
             """).fetchone()
@@ -117,7 +131,6 @@ def test_upgrade_copies_assistant_model_ids_onto_the_provider_registry(tmp_path)
         "gpt-6",
         "claude-sonnet-5-5",
         "pib-cloud",
-        "hermes-agent",
     }
     assert set(providers) == supported
     assert set(assistant_models) == supported
@@ -126,21 +139,23 @@ def test_upgrade_copies_assistant_model_ids_onto_the_provider_registry(tmp_path)
         assert providers[api_name][2] == assistant_models[api_name][2]
         assert providers[api_name][6] is None
         assert providers[api_name][7] is None
-    # The surviving legacy row keeps its id; the added rows get new ones.
-    assert providers["hermes-agent"][0] == 14
-    assert {providers[name][0] for name in supported} & {11, 12, 13} == set()
+    assert "hermes-agent" not in providers
+    assert "hermes-agent" not in assistant_models
+    assert {providers[name][0] for name in supported} & {11, 12, 13, 14} == set()
     assert [name for name, row in providers.items() if row[5] == 1] == ["pib-cloud"]
     assert providers["pib-cloud"][2] == "pib.Cloud"
     assert json.loads(providers["pib-cloud"][4])["images"] is True
     assert json.loads(providers["gemini-3.8-flash"][4])["live"] is True
     assert providers["gemini-3.8-flash"][8:] == (
-        "gemini-3.1-flash-live-preview",
-        "2026-09-30",
+        "gemini-3.8-live",
+        "2026-10-01",
     )
     assert providers["gpt-6"][8:] == (None, None)
     # The personality is not moved onto another model. Its reference stays and
     # now points at nothing, which is what reports it as needing a new model.
     assert personality == (None, "12")
+    # The personality that pointed at hermes-agent keeps that reference.
+    assert on_hermes == (None, "14")
     assert voice == ("live", 60)
 
     from sqlalchemy import Column, Integer, JSON, create_engine

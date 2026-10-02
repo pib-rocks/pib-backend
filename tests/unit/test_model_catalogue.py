@@ -16,7 +16,6 @@ from provider_registry import (
     DEFAULT_PROVIDER_API_NAME,
     MISSING_MODEL_CHAT_MESSAGE,
     PIB_CLOUD_API_NAME,
-    SMART_CHANNEL_API_NAME,
     STATUS_ACTIVE,
     STATUS_UNCONFIRMED,
     active_api_names,
@@ -33,8 +32,9 @@ SUPPORTED_API_NAMES = (
     "gpt-6",
     "claude-sonnet-5-5",
     PIB_CLOUD_API_NAME,
-    SMART_CHANNEL_API_NAME,
 )
+
+REMOVED_API_NAME = "hermes-agent"
 
 #: Rows the robot carries today. None of them may survive.
 OLD_ROWS = (
@@ -109,11 +109,9 @@ def test_catalogue_keeps_only_the_supported_models_in_order():
     assert defaults[0].status == STATUS_ACTIVE
     assert defaults[0].api_name == DEFAULT_PROVIDER_API_NAME == PIB_CLOUD_API_NAME
     assert defaults[0].images is True
-    smart = next(
-        entry for entry in CATALOGUE if entry.api_name == SMART_CHANNEL_API_NAME
-    )
-    assert smart.status == STATUS_ACTIVE
-    assert smart.is_default is False
+    assert REMOVED_API_NAME not in active_api_names()
+    assert REMOVED_API_NAME not in listed
+    assert all(entry.provider != "hermes" for entry in CATALOGUE)
 
 
 def test_no_old_model_is_offered_or_stored(app):
@@ -154,8 +152,8 @@ def test_seeding_an_existing_database_removes_the_old_rows(app, monkeypatch):
         )
         db.session.commit()
         personality_id = on_old.personality_id
-        hermes = Provider.query.filter_by(api_name=SMART_CHANNEL_API_NAME).one()
-        hermes.credential_ref = "provider-hermes"
+        kept = Provider.query.filter_by(api_name="claude-sonnet-5-5").one()
+        kept.credential_ref = "provider-claude"
         db.session.commit()
         assert {row.api_name for row in Provider.query.all()} & OLD_API_NAMES
 
@@ -173,8 +171,8 @@ def test_seeding_an_existing_database_removes_the_old_rows(app, monkeypatch):
         assert Provider.query.filter(Provider.id.in_(old_ids)).count() == 0
         assert provider_service.get_default_provider().api_name == PIB_CLOUD_API_NAME
         # Rows that stay are untouched.
-        hermes = Provider.query.filter_by(api_name=SMART_CHANNEL_API_NAME).one()
-        assert hermes.credential_ref == "provider-hermes"
+        kept = Provider.query.filter_by(api_name="claude-sonnet-5-5").one()
+        assert kept.credential_ref == "provider-claude"
         # The personality is not moved. It keeps pointing at the gone row.
         reloaded = Personality.query.filter_by(personality_id=personality_id).one()
         assert reloaded.provider_ref == str(pointed_at)
@@ -188,11 +186,11 @@ def test_seeding_an_existing_database_removes_the_old_rows(app, monkeypatch):
 
 def test_seeding_an_existing_database_moves_the_default_to_pib_cloud(app):
     with app.app_context():
-        hermes = Provider.query.filter_by(api_name=SMART_CHANNEL_API_NAME).one()
+        other = Provider.query.filter_by(api_name="gpt-6").one()
         pib_cloud = Provider.query.filter_by(api_name=PIB_CLOUD_API_NAME).one()
         pib_cloud.is_default = False
         db.session.flush()
-        hermes.is_default = True
+        other.is_default = True
         db.session.commit()
 
         result = CliRunner().invoke(seed_db, [])
@@ -201,6 +199,76 @@ def test_seeding_an_existing_database_moves_the_default_to_pib_cloud(app):
 
         assert provider_service.get_default_provider().api_name == PIB_CLOUD_API_NAME
         assert Provider.query.filter_by(is_default=True).count() == 1
+
+
+def test_seeding_removes_hermes_agent_and_refuses_its_chat(app, monkeypatch):
+    """A personality on the removed row keeps its reference and cannot chat."""
+    _stub_provisioning(monkeypatch)
+    client = app.test_client()
+    with app.app_context():
+        existing = AssistantModel.query.filter_by(
+            api_name=REMOVED_API_NAME
+        ).one_or_none()
+        if existing is None:
+            model = AssistantModel(
+                api_name=REMOVED_API_NAME,
+                visual_name="Hermes Agent (selbstlernend)",
+                has_image_support=True,
+            )
+            db.session.add(model)
+            db.session.flush()
+            db.session.add(
+                Provider(
+                    id=model.id,
+                    api_name=REMOVED_API_NAME,
+                    visual_name=model.visual_name,
+                    has_image_support=True,
+                    capabilities=capabilities_for(REMOVED_API_NAME, True),
+                    is_default=False,
+                )
+            )
+            db.session.commit()
+            removed_id = model.id
+        else:
+            removed_id = existing.id
+        on_removed = personality_service.create_personality(
+            {
+                "name": "OnHermes",
+                "gender": "Male",
+                "pause_threshold": 0.8,
+                "message_history": 5,
+                "assistant_model_id": removed_id,
+            }
+        )
+        db.session.commit()
+        personality_id = on_removed.personality_id
+        assert on_removed.provider_ref == str(removed_id)
+        assert Provider.query.filter_by(api_name=REMOVED_API_NAME).count() == 1
+
+        result = CliRunner().invoke(seed_db, [])
+        assert result.exception is None, result.output
+        assert REMOVED_API_NAME in result.output
+        db.session.remove()
+
+        assert Provider.query.filter_by(api_name=REMOVED_API_NAME).count() == 0
+        assert AssistantModel.query.filter_by(api_name=REMOVED_API_NAME).count() == 0
+        assert {row.api_name for row in Provider.query.all()} == set(
+            SUPPORTED_API_NAMES
+        )
+        reloaded = Personality.query.filter_by(personality_id=personality_id).one()
+        assert reloaded.provider_ref == str(removed_id)
+        assert reloaded.assistant_model_id is None
+        assert provider_service.get_default_provider().api_name == PIB_CLOUD_API_NAME
+
+    body = client.get(f"/voice-assistant/personality/{personality_id}").get_json()
+    assert body["needsNewModel"] is True
+    assert body["providerRef"] == str(removed_id)
+    refused = client.post(
+        "/voice-assistant/chat",
+        json={"topic": "removed", "personalityId": personality_id},
+    )
+    assert refused.status_code == 422
+    assert refused.get_json()["error"] == MISSING_MODEL_CHAT_MESSAGE
 
 
 def test_a_personality_on_a_removed_row_needs_a_new_model_and_cannot_chat(

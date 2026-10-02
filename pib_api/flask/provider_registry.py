@@ -32,10 +32,6 @@ MISSING_MODEL_CHAT_MESSAGE = (
     "Choose a current model in settings before starting a chat."
 )
 
-#: The Smart channel's provider. Smart is the Hermes agent. The default
-#: provider is a separate choice, pib.Cloud.
-SMART_CHANNEL_API_NAME = "hermes-agent"
-
 #: pib.Cloud's own model identifier cannot be verified from this repository.
 #: This value is provisional and has not been confirmed against the service.
 PIB_CLOUD_API_NAME = "pib-cloud"  # TODO(confirm id)
@@ -77,7 +73,6 @@ _CATALOGUE_ROWS = (
     ("OpenAI", "gpt-6", "GPT-6", True, True, False, False, False, STATUS_ACTIVE, False),
     ("Anthropic", "claude-sonnet-5-5", "Claude Sonnet 5.5", True, True, False, False, False, STATUS_ACTIVE, False),
     ("pib.Cloud", PIB_CLOUD_API_NAME, "pib.Cloud", True, True, False, False, False, STATUS_ACTIVE, True),  # TODO(confirm id)
-    ("hermes", SMART_CHANNEL_API_NAME, "Hermes Agent (selbstlernend)", True, True, False, False, False, STATUS_ACTIVE, False),
     ("OpenAI", "gpt-realtime", "GPT Realtime", False, False, True, False, False, STATUS_UNCONFIRMED, False),  # TODO(confirm id)
     ("Mistral", None, "Mistral", False, False, False, False, False, STATUS_UNCONFIRMED, False),  # TODO(confirm id)
 )

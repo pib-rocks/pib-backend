@@ -75,20 +75,20 @@ def test_token_service_uses_the_shared_primitive():
 
 def test_round_trip_uses_one_password_for_every_key(app_ctx, key_store_path):
     vision = Provider.query.filter_by(api_name="gpt-6").one()
-    hermes = Provider.query.filter_by(api_name="hermes-agent").one()
+    second = Provider.query.filter_by(api_name="claude-sonnet-5-5").one()
 
     ref = key_store_service.put_secret(vision.id, PASSWORD, SECRET)
     assert ref == f"provider-{vision.id}"
     with pytest.raises(KeyStoreError) as caught:
-        key_store_service.put_secret(hermes.id, OTHER_PASSWORD, OTHER_SECRET)
+        key_store_service.put_secret(second.id, OTHER_PASSWORD, OTHER_SECRET)
     assert caught.value.status_code == 401
     assert str(caught.value) == WRONG_PASSWORD_MESSAGE
 
-    key_store_service.put_secret(hermes.id, PASSWORD, OTHER_SECRET)
+    key_store_service.put_secret(second.id, PASSWORD, OTHER_SECRET)
     opened = key_store_service.unlock(PASSWORD)
     assert opened == {
         f"provider-{vision.id}": SECRET,
-        f"provider-{hermes.id}": OTHER_SECRET,
+        f"provider-{second.id}": OTHER_SECRET,
     }
 
     envelope = json.loads(key_store_path.read_text(encoding="utf-8"))
@@ -272,7 +272,7 @@ def test_deleting_a_key_leaves_the_personality_reference(
         MagicMock(return_value={"ok": True}),
     )
     vision = Provider.query.filter_by(api_name="gpt-6").one()
-    hermes = Provider.query.filter_by(api_name="hermes-agent").one()
+    second = Provider.query.filter_by(api_name="claude-sonnet-5-5").one()
     personality = personality_service.create_personality(
         {
             "name": "OrphanRef",
@@ -284,7 +284,7 @@ def test_deleting_a_key_leaves_the_personality_reference(
     )
     original_ref = personality.provider_ref
     key_store_service.put_secret(vision.id, PASSWORD, SECRET)
-    key_store_service.put_secret(hermes.id, PASSWORD, OTHER_SECRET)
+    key_store_service.put_secret(second.id, PASSWORD, OTHER_SECRET)
 
     key_store_service.delete_secret(vision.id, PASSWORD)
 
@@ -299,14 +299,14 @@ def test_deleting_a_key_leaves_the_personality_reference(
     assert vision.credential_ref is None
     opened = key_store_service.unlock(PASSWORD)
     assert SECRET not in opened.values()
-    assert opened[f"provider-{hermes.id}"] == OTHER_SECRET
+    assert opened[f"provider-{second.id}"] == OTHER_SECRET
     assert SECRET.encode() not in key_store_path.read_bytes()
 
     with pytest.raises(KeyStoreError) as caught:
-        key_store_service.delete_secret(hermes.id, OTHER_PASSWORD)
+        key_store_service.delete_secret(second.id, OTHER_PASSWORD)
     assert caught.value.status_code == 401
-    db.session.refresh(hermes)
-    assert hermes.credential_ref == f"provider-{hermes.id}"
+    db.session.refresh(second)
+    assert second.credential_ref == f"provider-{second.id}"
 
 
 def test_credentials_stay_out_of_soul_memory_logs_and_the_database(
@@ -433,7 +433,7 @@ def test_cold_start_stores_a_first_key_with_encryption_on_and_off(
     assert not key_store_path.exists()
     assert not settings.exists()
     vision = Provider.query.filter_by(api_name="gpt-6").one()
-    hermes = Provider.query.filter_by(api_name="hermes-agent").one()
+    second = Provider.query.filter_by(api_name="claude-sonnet-5-5").one()
     client = app.test_client()
 
     stored = client.put(
@@ -448,7 +448,7 @@ def test_cold_start_stores_a_first_key_with_encryption_on_and_off(
     assert SECRET.encode() not in key_store_path.read_bytes()
 
     missing_password = client.put(
-        f"/system/key-store/{hermes.id}",
+        f"/system/key-store/{second.id}",
         json={"secret": OTHER_SECRET},
     )
     assert missing_password.status_code == 400
@@ -465,7 +465,7 @@ def test_cold_start_stores_a_first_key_with_encryption_on_and_off(
     assert not key_store_path.exists()
 
     clear = client.put(
-        f"/system/key-store/{hermes.id}",
+        f"/system/key-store/{second.id}",
         json={"secret": OTHER_SECRET},
     )
     assert clear.status_code == 200
@@ -473,12 +473,12 @@ def test_cold_start_stores_a_first_key_with_encryption_on_and_off(
     assert document["cleartext"] is True
     assert "ciphertext" not in document
     assert "salt" not in document
-    assert document["secrets"][f"provider-{hermes.id}"] == OTHER_SECRET
+    assert document["secrets"][f"provider-{second.id}"] == OTHER_SECRET
     assert stat.S_IMODE(key_store_path.stat().st_mode) == 0o600
     key_store_service.lock()
     assert key_store_service.operating_mode() == "unlocked"
     assert (
-        key_store_service.unlocked_credentials()[f"provider-{hermes.id}"]
+        key_store_service.unlocked_credentials()[f"provider-{second.id}"]
         == OTHER_SECRET
     )
     opened = client.post("/system/key-store/unlock", json={})
@@ -486,15 +486,15 @@ def test_cold_start_stores_a_first_key_with_encryption_on_and_off(
     assert opened.get_json()["mode"] == "unlocked"
     assert OTHER_SECRET not in opened.get_data(as_text=True)
 
-    removed = client.delete(f"/system/key-store/{hermes.id}", json={})
+    removed = client.delete(f"/system/key-store/{second.id}", json={})
     assert removed.status_code == 204
-    db.session.refresh(hermes)
-    assert hermes.credential_ref is None
+    db.session.refresh(second)
+    assert second.credential_ref is None
 
 
 def test_switching_encryption_off_and_on_keeps_the_keys(app, app_ctx, key_store_path):
     vision = Provider.query.filter_by(api_name="gpt-6").one()
-    hermes = Provider.query.filter_by(api_name="hermes-agent").one()
+    second = Provider.query.filter_by(api_name="claude-sonnet-5-5").one()
     client = app.test_client()
     assert (
         client.put(
@@ -505,7 +505,7 @@ def test_switching_encryption_off_and_on_keeps_the_keys(app, app_ctx, key_store_
     )
     assert (
         client.put(
-            f"/system/key-store/{hermes.id}",
+            f"/system/key-store/{second.id}",
             json={"password": PASSWORD, "secret": OTHER_SECRET},
         ).status_code
         == 200
@@ -523,7 +523,7 @@ def test_switching_encryption_off_and_on_keeps_the_keys(app, app_ctx, key_store_
     assert document["cleartext"] is True
     assert document["secrets"] == {
         f"provider-{vision.id}": SECRET,
-        f"provider-{hermes.id}": OTHER_SECRET,
+        f"provider-{second.id}": OTHER_SECRET,
     }
     assert "ciphertext" not in document
     settings = json.loads(_settings_file(key_store_path).read_text(encoding="utf-8"))
@@ -531,7 +531,7 @@ def test_switching_encryption_off_and_on_keeps_the_keys(app, app_ctx, key_store_
     key_store_service.lock()
     assert key_store_service.unlocked_credentials() == {
         f"provider-{vision.id}": SECRET,
-        f"provider-{hermes.id}": OTHER_SECRET,
+        f"provider-{second.id}": OTHER_SECRET,
     }
     # Mode unlocked is what the start-up prompt reads, so the prompt stays down.
     assert client.get("/system/key-store").get_json()["mode"] == "unlocked"
@@ -570,7 +570,7 @@ def test_switching_encryption_off_and_on_keeps_the_keys(app, app_ctx, key_store_
     assert key_store_service.operating_mode() == "degraded"
     opened = key_store_service.unlock(NEW_PASSWORD)
     assert opened[f"provider-{vision.id}"] == SECRET
-    assert opened[f"provider-{hermes.id}"] == OTHER_SECRET
+    assert opened[f"provider-{second.id}"] == OTHER_SECRET
     with pytest.raises(KeyStoreError) as caught:
         key_store_service.unlock(PASSWORD)
     assert caught.value.status_code == 401

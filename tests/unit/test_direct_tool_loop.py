@@ -54,7 +54,7 @@ def test_pinned_endpoint_is_the_stable_generate_content_method():
     assert PINNED_ENDPOINT.endswith(f"/v1/models/{PINNED_MODEL}:generateContent")
     assert "beta" not in PINNED_ENDPOINT
     assert supports_tool_endpoint("gemini-3.8-flash") is True
-    assert supports_tool_endpoint("hermes-agent") is True
+    assert supports_tool_endpoint("hermes-agent") is False
     assert supports_tool_endpoint("gpt-6") is False
     with pytest.raises(DirectToolLoopError, match="beta"):
         assert_stable_url(
