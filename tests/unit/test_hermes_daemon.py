@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import sys
@@ -899,6 +900,7 @@ def test_run_turn_in_process_falls_back_to_subprocess_when_import_fails():
         toolsets="pib",
         enabled_toolsets="mcp-pib,vision",
         timeout=45,
+        provider_key="fixture-hermes-key",
     )
 
 
@@ -1191,6 +1193,7 @@ def test_run_turn_in_process_falls_back_when_stdout_has_no_final_response(monkey
         toolsets="terminal,code_execution,file,memory,session_search",
         enabled_toolsets="mcp-pib,vision",
         timeout=45,
+        provider_key="fixture-hermes-key",
     )
 
 
@@ -1312,3 +1315,144 @@ def test_run_turn_in_process_prepares_the_hermes_source(monkeypatch):
         hd.run_turn_in_process("hi", "chat-mixed")
 
     assert prepared.called
+
+
+STORE_SECRET = "store-hermes-key"
+ENV_SECRET = "env-hermes-key"
+OTHER_SECRET = "other-hermes-key"
+
+
+def _visible(caplog, capsys) -> str:
+    captured = capsys.readouterr()
+    return caplog.text + captured.out + captured.err
+
+
+def _install_real_provider_key(monkeypatch, fetch) -> None:
+    """Use the production store read. The suite stand-in is replaced."""
+    voice = Path(__file__).resolve().parents[2] / "ros_packages" / "voice_assistant"
+    if str(voice) not in sys.path:
+        sys.path.insert(0, str(voice))
+    from public_api_client import hermes_agent_client as client
+    from voice_assistant import direct_tool_loop
+
+    if not hasattr(direct_tool_loop, "resolve_hermes_provider_key"):
+        pytest.fail("resolve_hermes_provider_key is missing")
+    monkeypatch.setattr(direct_tool_loop, "_fetch_store_key", fetch)
+
+    def real() -> str:
+        key, _source = direct_tool_loop.resolve_hermes_provider_key(
+            client.DEFAULT_HERMES_PROVIDER
+        )
+        return key
+
+    monkeypatch.setattr(client, "provider_key_for_turn", real)
+
+
+def test_unlocked_store_supplies_the_hermes_key(monkeypatch, caplog, capsys, tmp_path):
+    """The agent is built with the store key. The profile does not receive a copy."""
+    monkeypatch.setenv("GOOGLE_API_KEY", ENV_SECRET)
+    monkeypatch.setenv("OPENAI_API_KEY", OTHER_SECRET)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    caplog.set_level(logging.INFO)
+    profile = Path(os.environ["PIB_HERMES_PROFILES_DIR"]) / "pib_pers-key"
+    profile.mkdir(parents=True)
+    (profile / ".env").write_text("# kept\n", encoding="utf-8")
+    (profile / "config.yaml").write_text(
+        "model: gemini-3.8-flash\nprovider: gemini\n", encoding="utf-8"
+    )
+    before = {
+        path.name: path.read_bytes() for path in profile.iterdir() if path.is_file()
+    }
+
+    def fetch(provider):
+        assert provider == "gemini"
+        return {"mode": "unlocked", "secret": STORE_SECRET}
+
+    _install_real_provider_key(monkeypatch, fetch)
+    created = []
+    hd.clear_agent_cache()
+
+    with (
+        patch.dict(sys.modules, {"run_agent": _fake_agent_module(created)}),
+        patch(
+            "public_api_client.hermes_agent_client.ensure_profile",
+            return_value=str(profile),
+        ),
+        patch(
+            "public_api_client.hermes_agent_client.run_turn_subprocess"
+        ) as subprocess_runner,
+    ):
+        reply = hd.run_turn_in_process(
+            text="Hallo",
+            chat_id="chat-key",
+            personality_id="pers-key",
+        )
+
+    assert reply == "OK."
+    assert created[0].kwargs["api_key"] == STORE_SECRET
+    assert created[0].kwargs["provider"] == "gemini"
+    assert created[0].kwargs["api_key"] != ENV_SECRET
+    assert os.environ.get("GOOGLE_API_KEY") == ENV_SECRET
+    assert "GEMINI_API_KEY" not in os.environ
+    assert "hermes provider key source=key-store" in caplog.text
+    assert "provider=gemini" in caplog.text
+    after = {
+        path.name: path.read_bytes() for path in profile.iterdir() if path.is_file()
+    }
+    assert after == before
+    visible = _visible(caplog, capsys)
+    profile_text = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in profile.rglob("*")
+        if path.is_file()
+    )
+    assert STORE_SECRET not in visible
+    assert STORE_SECRET not in profile_text
+    assert ENV_SECRET not in visible
+    assert OTHER_SECRET not in visible
+    subprocess_runner.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "state",
+    [
+        {"mode": "degraded", "secret": STORE_SECRET},
+        {"mode": "unavailable", "secret": STORE_SECRET},
+        {"mode": "unlocked", "secret": None},
+    ],
+)
+def test_hermes_turn_fails_when_the_store_cannot_supply_the_key(
+    monkeypatch, caplog, capsys, state
+):
+    """No environment key and no other provider. The message names gemini only."""
+    monkeypatch.setenv("GOOGLE_API_KEY", ENV_SECRET)
+    monkeypatch.setenv("OPENAI_API_KEY", OTHER_SECRET)
+    caplog.set_level(logging.INFO)
+
+    def fetch(provider):
+        assert provider == "gemini"
+        return state
+
+    _install_real_provider_key(monkeypatch, fetch)
+    created = []
+    hd.clear_agent_cache()
+
+    with (
+        patch.dict(sys.modules, {"run_agent": _fake_agent_module(created)}),
+        patch(
+            "public_api_client.hermes_agent_client.run_turn_subprocess"
+        ) as subprocess_runner,
+        pytest.raises(Exception) as caught,
+    ):
+        hd.run_turn_in_process(text="Hallo", chat_id="chat-locked")
+
+    message = str(caught.value)
+    assert message == "No keys are available for provider gemini."
+    assert type(caught.value).__name__ == "DirectToolLoopError"
+    assert created == []
+    subprocess_runner.assert_not_called()
+    assert os.environ.get("GOOGLE_API_KEY") == ENV_SECRET
+    visible = _visible(caplog, capsys) + message
+    assert STORE_SECRET not in visible
+    assert ENV_SECRET not in visible
+    assert OTHER_SECRET not in visible

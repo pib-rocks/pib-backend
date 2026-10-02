@@ -138,8 +138,8 @@ def gemini_api_key() -> str:
     return environment_key(PINNED_PROVIDER)
 
 
-def _log_key_source(source: str, provider: str) -> None:
-    logger.info("direct provider key source=%s provider=%s", source, provider)
+def _log_key_source(source: str, provider: str, channel: str = "direct") -> None:
+    logger.info("%s provider key source=%s provider=%s", channel, source, provider)
 
 
 def _fetch_store_key(provider: str) -> dict[str, Any]:
@@ -160,12 +160,17 @@ def _fetch_store_key(provider: str) -> dict[str, Any]:
 def resolve_provider_key(
     provider: str,
     fetch: Optional[Callable[[str], Mapping[str, Any]]] = None,
+    *,
+    allow_environment: bool = True,
+    log_channel: str = "direct",
 ) -> tuple[str, str]:
     """Key for this provider, and ``key-store`` or ``environment``.
 
     An unlocked store is the only source: a missing key fails, and the
     environment is not consulted. A locked or unreachable store uses this
-    provider's environment variable. The secret is not logged.
+    provider's environment variable when ``allow_environment`` is true.
+    Hermes passes false, so a locked store fails instead of changing
+    provider. The secret is not logged.
     """
     if not isinstance(provider, str) or provider.strip() == "":
         raise DirectToolLoopError("No keys are available for provider.")
@@ -180,14 +185,33 @@ def resolve_provider_key(
     if mode == "unlocked":
         secret = state.get("secret")
         if isinstance(secret, str) and secret.strip():
-            _log_key_source(KEY_SOURCE_STORE, provider)
+            _log_key_source(KEY_SOURCE_STORE, provider, log_channel)
             return secret, KEY_SOURCE_STORE
+        raise DirectToolLoopError(missing_key_message(provider))
+    if not allow_environment:
         raise DirectToolLoopError(missing_key_message(provider))
     env_key = environment_key(provider)
     if env_key:
-        _log_key_source(KEY_SOURCE_ENVIRONMENT, provider)
+        _log_key_source(KEY_SOURCE_ENVIRONMENT, provider, log_channel)
         return env_key, KEY_SOURCE_ENVIRONMENT
     raise DirectToolLoopError(missing_key_message(provider))
+
+
+def resolve_hermes_provider_key(
+    provider: str = PINNED_PROVIDER,
+    fetch: Optional[Callable[[str], Mapping[str, Any]]] = None,
+) -> tuple[str, str]:
+    """Key for a Hermes turn. The store is the only source.
+
+    The Direct helper above is the read. This caller refuses the environment
+    fallback, so a locked store cannot select another provider's variable.
+    """
+    return resolve_provider_key(
+        provider,
+        fetch,
+        allow_environment=False,
+        log_channel="hermes",
+    )
 
 
 def _history_without_current_user(

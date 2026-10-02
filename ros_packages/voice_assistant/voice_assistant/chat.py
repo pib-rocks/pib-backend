@@ -757,6 +757,10 @@ class ChatNode(Node):
                 return future.result(timeout=HERMES_CANCEL_POLL_SECONDS)
             except FutureTimeoutError:
                 pass
+            except direct_tool_loop.DirectToolLoopError:
+                # The store could not supply the provider key. The goal aborts
+                # with that message; the fallback sentence would hide it.
+                raise
             except Exception as exc:
                 self.get_logger().error(f"hermes agent turn failed: {exc}")
                 return hermes_agent_client.FALLBACK_REPLY
@@ -835,6 +839,8 @@ class ChatNode(Node):
                 continue
             if kind == "done":
                 return
+            if isinstance(value, direct_tool_loop.DirectToolLoopError):
+                raise value
 
             self.get_logger().warning(
                 f"hermes streaming failed (chat={chat_id}): {value}; "

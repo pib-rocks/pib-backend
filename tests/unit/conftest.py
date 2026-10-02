@@ -167,3 +167,21 @@ def make_personality(app_ctx):
         return personality
 
     return _make
+
+
+@pytest.fixture(autouse=True)
+def hermes_turn_has_a_provider_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Existing Hermes tests do not open the key store.
+
+    A turn now asks the store before it starts. This stand-in keeps those
+    tests on their previous path. Tests of the store itself replace it.
+    """
+    from public_api_client import hermes_agent_client
+
+    if not hasattr(hermes_agent_client, "provider_key_for_turn"):
+        return
+    monkeypatch.setattr(
+        hermes_agent_client,
+        "provider_key_for_turn",
+        lambda: "fixture-hermes-key",
+    )

@@ -157,7 +157,8 @@ services:
       # to an empty string when the variable is unset and then overrides the
       # real value from password.env. No hardcoded key / fallback default here.
       # An unlocked key store wins over those variables. The Direct tool loop
-      # reads that provider's secret from flask at runtime.
+      # and the Hermes turn both read that provider's secret from flask at
+      # runtime. Hermes does not copy it into the profile.
     volumes:
       - /media/dyan/project/projects/voice/:/data/voice
       - /dev/snd:/dev/snd

@@ -1707,6 +1707,84 @@ def test_direct_tool_calling_aborts_when_the_model_has_no_stable_endpoint(
     assert result.text == ""
 
 
+def test_smart_turn_fails_when_the_store_cannot_supply_the_provider_key(
+    chat_module, chat_node, monkeypatch, capsys
+):
+    """A Smart turn aborts. It does not speak the fallback or call the cloud token."""
+    store_secret = "store-hermes-key"
+    env_secret = "env-hermes-key"
+    other_secret = "other-hermes-key"
+    monkeypatch.setenv("GOOGLE_API_KEY", env_secret)
+    monkeypatch.setenv("OPENAI_API_KEY", other_secret)
+    Chat = chat_module.Chat
+
+    voice = Path(__file__).resolve().parents[2] / "ros_packages" / "voice_assistant"
+    if str(voice) not in sys.path:
+        sys.path.insert(0, str(voice))
+    from voice_assistant import direct_tool_loop
+
+    if not hasattr(direct_tool_loop, "resolve_hermes_provider_key"):
+        pytest.fail("resolve_hermes_provider_key is missing")
+
+    def fetch(provider):
+        assert provider == "gemini"
+        return {"mode": "unavailable", "secret": store_secret}
+
+    monkeypatch.setattr(direct_tool_loop, "_fetch_store_key", fetch)
+
+    def real() -> str:
+        key, _source = direct_tool_loop.resolve_hermes_provider_key("gemini")
+        return key
+
+    monkeypatch.setattr(chat_module.hermes_agent_client, "provider_key_for_turn", real)
+
+    personality = MagicMock()
+    personality.message_history = 5
+    personality.description = "Du bist pib."
+    personality.personality_id = "pers-1"
+    personality.assistant_model.api_name = "gemini-3.8-flash"
+    personality.channel = "smart"
+    personality.effective_channel = "smart"
+
+    goal_handle = MagicMock()
+    goal_handle.is_cancel_requested = False
+    goal_handle.request = Chat.Goal()
+    goal_handle.request.chat_id = "chat-smart-key"
+    goal_handle.request.text = "Hi"
+    goal_handle.request.generate_code = False
+
+    with (
+        patch.object(
+            chat_module.voice_assistant_client,
+            "get_personality_from_chat",
+            return_value=(True, personality),
+        ),
+        patch.object(chat_module.public_voice_client, "chat_completion") as completion,
+        patch(
+            "public_api_client.hermes_agent_client.run_turn_subprocess"
+        ) as subprocess_runner,
+    ):
+        result = drive_like_rclpy(chat_node.chat(goal_handle))
+
+    completion.assert_not_called()
+    subprocess_runner.assert_not_called()
+    goal_handle.abort.assert_called_once()
+    goal_handle.succeed.assert_not_called()
+    assert result.text == ""
+    logged = " ".join(
+        str(call)
+        for call in chat_node.get_logger.return_value.error.call_args_list
+        + chat_node.get_logger.return_value.info.call_args_list
+        + chat_node.get_logger.return_value.warning.call_args_list
+    )
+    captured = capsys.readouterr()
+    visible = logged + captured.out + captured.err
+    assert "No keys are available for provider gemini." in logged
+    assert store_secret not in visible
+    assert env_secret not in visible
+    assert other_secret not in visible
+
+
 def test_direct_turn_logs_the_store_key_source_and_does_not_print_the_secret(
     chat_module, chat_node, monkeypatch
 ):

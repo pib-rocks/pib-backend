@@ -107,10 +107,48 @@ _stdout_capture_lock = threading.Lock()
 
 
 class _CachedAgent:
-    def __init__(self, agent, settings: tuple[Optional[str], Optional[str], int]):
+    def __init__(
+        self,
+        agent,
+        settings: tuple[Optional[str], Optional[str], int],
+        key_token: str,
+    ):
         self.agent = agent
         self.settings = settings
+        # The store key this agent was built with. Compared, never logged.
+        # A later turn whose store key differs builds a new agent.
+        self.key_token = key_token
         self.lock = threading.Lock()
+
+
+_GEMINI_KEY_NAMES = ("GOOGLE_API_KEY", "GEMINI_API_KEY")
+
+
+@contextlib.contextmanager
+def _gemini_key_in_environment(key: str):
+    """Expose the store key while Hermes builds its client, then restore.
+
+    Hermes reads these names from the process environment at construction
+    and keeps the value on the client. Restoring the previous environment
+    means a Direct turn does not observe this assignment. The secret is
+    not logged.
+    """
+    previous = {name: os.environ.get(name) for name in _GEMINI_KEY_NAMES}
+    try:
+        for name in _GEMINI_KEY_NAMES:
+            os.environ[name] = key
+        yield
+    finally:
+        for name, value in previous.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
+
+def _missing_provider_key(exc: BaseException) -> bool:
+    """The store refused a key. The type's name avoids importing the voice package here."""
+    return type(exc).__name__ == "DirectToolLoopError"
 
 
 _agent_cache: OrderedDict[tuple[str, str], _CachedAgent] = OrderedDict()
@@ -524,13 +562,20 @@ def _agent_for_chat(
     toolsets: Optional[str],
     max_turns: int,
     agent_cls,
+    provider_key: str,
 ):
     """Return the sole cached agent for a chat, evicting least-recently-used chats."""
+    from public_api_client.hermes_agent_client import DEFAULT_HERMES_PROVIDER
+
     settings = (enabled_toolsets, toolsets, max_turns)
     key = (_current_home_key(), chat_id)
     with _agent_cache_lock:
         cached = _agent_cache.get(key)
-        if cached is not None and cached.settings == settings:
+        if (
+            cached is not None
+            and cached.settings == settings
+            and cached.key_token == provider_key
+        ):
             _agent_cache.move_to_end(key)
             return cached
         if cached is not None:
@@ -538,16 +583,23 @@ def _agent_for_chat(
             _close_agent(cached.agent)
 
         construction_started = time.monotonic()
-        agent = agent_cls(
-            model=IN_PROCESS_MODEL,
-            session_db=_shared_session_db(),
-            session_id=session_id_for_chat(chat_id),
-            enabled_toolsets=_toolset_list(enabled_toolsets),
-            disabled_toolsets=_toolset_list(toolsets),
-            max_iterations=max_turns,
-            platform="cli",
-            skip_memory=True,
-        )
+        # provider is pinned so Hermes does not auto-select another one.
+        # The key is in the environment only for this constructor: that is
+        # when Hermes copies it onto the client. api_key is the same value,
+        # for a constructor that accepts it directly.
+        with _gemini_key_in_environment(provider_key):
+            agent = agent_cls(
+                model=IN_PROCESS_MODEL,
+                provider=DEFAULT_HERMES_PROVIDER,
+                api_key=provider_key,
+                session_db=_shared_session_db(),
+                session_id=session_id_for_chat(chat_id),
+                enabled_toolsets=_toolset_list(enabled_toolsets),
+                disabled_toolsets=_toolset_list(toolsets),
+                max_iterations=max_turns,
+                platform="cli",
+                skip_memory=True,
+            )
         logging.info(
             "[PERF_TRACE] HERMES_AGENT_CONSTRUCTED chat=%s "
             "elapsed_ms=%.2f mcp_tools=%d",
@@ -555,7 +607,7 @@ def _agent_for_chat(
             (time.monotonic() - construction_started) * 1000.0,
             _registered_mcp_tool_count(),
         )
-        cached = _CachedAgent(agent, settings)
+        cached = _CachedAgent(agent, settings, provider_key)
         _agent_cache[key] = cached
 
         while len(_agent_cache) > DEFAULT_AGENT_CACHE_SIZE:
@@ -699,6 +751,7 @@ def _run_turn_in_home(
     timeout: Optional[int] = None,
     stream_callback: Optional[Callable[[str], None]] = None,
     enabled_toolsets: Optional[str] = None,
+    provider_key: str = "",
 ) -> str:
     """Execute one turn after its Hermes home scope has been installed.
 
@@ -744,6 +797,8 @@ def _run_turn_in_home(
         }
         if timeout is not None:
             kwargs["timeout"] = timeout
+        if provider_key:
+            kwargs["provider_key"] = provider_key
         return run_turn_subprocess(**kwargs)
 
     if agent_cls is None and run_agent_main is None:
@@ -762,6 +817,7 @@ def _run_turn_in_home(
                 effective_toolsets,
                 effective_max_turns,
                 agent_cls,
+                provider_key,
             )
             produced: list[str] = []
 
@@ -790,7 +846,12 @@ def _run_turn_in_home(
                 reply = "".join(produced).strip()
         else:
             captured = io.StringIO()
-            with _stdout_capture_lock, contextlib.redirect_stdout(captured):
+            key_scope = (
+                _gemini_key_in_environment(provider_key)
+                if provider_key
+                else contextlib.nullcontext()
+            )
+            with _stdout_capture_lock, contextlib.redirect_stdout(captured), key_scope:
                 returned = run_agent_main(
                     query=text,
                     model=IN_PROCESS_MODEL,
@@ -840,6 +901,17 @@ def run_turn_in_process(
     enabled_toolsets: Optional[str] = None,
 ) -> str:
     """Execute a turn inside the personality's context-local Hermes home."""
+    from public_api_client.hermes_agent_client import provider_key_for_turn
+
+    try:
+        provider_key = provider_key_for_turn()
+    except Exception as exc:
+        if not _missing_provider_key(exc):
+            raise
+        # Drop agents built with a key the store will no longer give out.
+        clear_agent_cache()
+        raise
+
     scope = contextlib.nullcontext()
     profile_dir = None
     if personality_id:
@@ -868,6 +940,7 @@ def run_turn_in_process(
             timeout=timeout,
             stream_callback=stream_callback,
             enabled_toolsets=enabled_toolsets,
+            provider_key=provider_key,
         )
 
 
