@@ -74,7 +74,7 @@ PIB_MCP_SERVER = {
 
 # Permanent Hermes LLM pin. Kept in sync with setup/setup-pib.sh
 # and pib_hermes_config.DEFAULT_HERMES_MODEL.
-DEFAULT_HERMES_MODEL = "gemini-3.5-flash"
+DEFAULT_HERMES_MODEL = "gemini-3.8-flash"
 DEFAULT_HERMES_LITE_MODEL = "gemini-3.5-flash-lite"
 DEFAULT_HERMES_PROVIDER = "gemini"
 # High-speed defaults for Gemini Flash / Flash-Lite (PR-1524).
@@ -406,6 +406,48 @@ def _get_daemon_session():
         return _daemon_http_session
 
 
+def provider_key_for_turn() -> str:
+    """The configured provider's key, from the same store the Direct turn uses.
+
+    A locked or empty store raises. The environment is not a fallback, and
+    the value is not logged.
+    """
+    from voice_assistant.direct_tool_loop import resolve_hermes_provider_key
+
+    key, _source = resolve_hermes_provider_key(DEFAULT_HERMES_PROVIDER)
+    return key
+
+
+def _provider_key_was_refused(payload: object) -> bool:
+    """True when a daemon error is the store's missing-key message.
+
+    That message names the provider and carries no secret. A transport
+    failure is a different case and may still use the subprocess path.
+    """
+    try:
+        from voice_assistant.direct_tool_loop import missing_key_message
+    except ImportError:
+        return False
+    if not isinstance(payload, dict):
+        return False
+    return payload.get("error") == missing_key_message(DEFAULT_HERMES_PROVIDER)
+
+
+def _child_environment(provider_key: Optional[str]) -> Optional[dict]:
+    """Environment for one Hermes subprocess.
+
+    None leaves the child with this process's environment. A key is placed
+    only in the child, under the names Hermes reads for Gemini, and is not
+    written to the profile.
+    """
+    if not provider_key:
+        return None
+    env = os.environ.copy()
+    env["GOOGLE_API_KEY"] = provider_key
+    env["GEMINI_API_KEY"] = provider_key
+    return env
+
+
 def is_warm_daemon_active(timeout: float = 0.15) -> bool:
     """True when the warm Hermes daemon answers GET /health quickly.
 
@@ -482,6 +524,17 @@ def _try_daemon_turn(
     )
 
     if response.status_code != 200:
+        try:
+            payload = response.json()
+        except ValueError:
+            payload = None
+        if _provider_key_was_refused(payload):
+            from voice_assistant.direct_tool_loop import (
+                DirectToolLoopError,
+                missing_key_message,
+            )
+
+            raise DirectToolLoopError(missing_key_message(DEFAULT_HERMES_PROVIDER))
         logging.warning(
             "hermes daemon returned %s (chat=%s); falling back to subprocess",
             response.status_code,
@@ -524,6 +577,7 @@ def stream_turn(
     raises so the voice node can retry through the established non-streaming
     path, including its subprocess fallback.
     """
+    provider_key_for_turn()
     try:
         import requests
     except ImportError as exc:
@@ -562,7 +616,12 @@ def stream_turn(
             if not isinstance(data, dict):
                 raise ValueError("Hermes stream chunk must be a JSON object")
             if "error" in data:
-                raise RuntimeError(str(data["error"]))
+                message = str(data["error"])
+                if _provider_key_was_refused(data):
+                    from voice_assistant.direct_tool_loop import DirectToolLoopError
+
+                    raise DirectToolLoopError(message)
+                raise RuntimeError(message)
             delta = data.get("delta")
             if delta is not None:
                 if not isinstance(delta, str):
@@ -597,6 +656,7 @@ def run_turn_subprocess(
     toolsets: Optional[str] = DEFAULT_DISABLED_TOOLSETS,
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
     enabled_toolsets: Optional[str] = DEFAULT_ENABLED_TOOLSETS,
+    provider_key: Optional[str] = None,
 ) -> str:
     """Run one turn via a oneshot Hermes CLI subprocess. Always returns text."""
     if not hermes_binary_available():
@@ -618,7 +678,12 @@ def run_turn_subprocess(
     cmd = build_command(text, chat_id, personality_id, cli_toolsets)
     try:
         result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=timeout, check=False
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+            env=_child_environment(provider_key),
         )
     except subprocess.TimeoutExpired:
         logging.warning("hermes turn timed out after %ss (chat=%s)", timeout, chat_id)
@@ -649,18 +714,18 @@ def run_turn(
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
     enabled_toolsets: Optional[str] = DEFAULT_ENABLED_TOOLSETS,
 ) -> str:
-    """Run one conversational turn. Always returns speakable text.
+    """Run one conversational turn. Returns speakable text.
 
-    Prefers the warm localhost daemon (POST /turn) without requiring a local
-    Hermes binary check first. If the daemon is unreachable or fails, falls
-    back to a oneshot ``subprocess.run`` of the Hermes CLI (which does check
-    the binary).
+    A missing provider key raises instead of selecting another provider.
+    The warm daemon is preferred. When it is unreachable, the oneshot
+    subprocess receives the store key in its own environment.
     """
     t0 = time.monotonic()
     logging.info(
         "[PERF_TRACE] HERMES_CLIENT_START chat=%s elapsed_ms=0.00",
         chat_id,
     )
+    provider_key = provider_key_for_turn()
 
     # Try the warm daemon first — no filesystem binary/profile checks on this path.
     daemon_reply = _try_daemon_turn(
@@ -703,6 +768,7 @@ def run_turn(
         toolsets,
         timeout=timeout,
         enabled_toolsets=enabled_toolsets,
+        provider_key=provider_key,
     )
     logging.info(
         "[PERF_TRACE] HERMES_CLIENT_DONE chat=%s via=subprocess elapsed_ms=%.2f",

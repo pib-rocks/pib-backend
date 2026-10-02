@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 from marshmallow import ValidationError, fields, validate
-from model.personality_model import Personality
+from model.personality_model import (
+    DEFAULT_GENDER,
+    DEFAULT_MESSAGE_HISTORY,
+    DEFAULT_PAUSE_THRESHOLD,
+    Personality,
+)
 from pib_hermes_config.channel import (
     CHANNEL_DIRECT,
     CHANNEL_SMART,
@@ -30,6 +35,21 @@ class PersonalitySchemaSQLAutoWith(SQLAutoWithCamelCaseSchema):
         model = Personality
         include_fk = True
 
+    # A create needs the name only. The generated schema would make every
+    # non-nullable column required, so the three without a server default
+    # are declared here with the model's defaults. The ranges are the ones
+    # Cerebra's dialog enforces, so the API rejects what the dialog rejects.
+    gender = fields.String(required=False, load_default=DEFAULT_GENDER)
+    pause_threshold = fields.Float(
+        required=False,
+        load_default=DEFAULT_PAUSE_THRESHOLD,
+        validate=validate.Range(min=0.1, max=3.0),
+    )
+    message_history = fields.Integer(
+        required=False,
+        load_default=DEFAULT_MESSAGE_HISTORY,
+        validate=validate.Range(min=0),
+    )
     stt_engine = fields.String(
         required=False,
         dump_default="local_whisper",
@@ -43,6 +63,8 @@ class PersonalitySchemaSQLAutoWith(SQLAutoWithCamelCaseSchema):
     local_voice_applies = fields.Method("get_local_voice_applies", dump_only=True)
     live_voice_note = fields.Method("get_live_voice_note", dump_only=True)
     assistant_model_id = fields.Integer(required=False, allow_none=True)
+    # 'default', or the decimal id of a provider row, as text. The catalogue
+    # api_name is not a reference and is rejected with an unknown provider.
     provider_ref = fields.String(required=False, allow_none=True)
     channel = fields.String(
         required=False,
@@ -75,6 +97,7 @@ class PersonalitySchemaSQLAutoWith(SQLAutoWithCamelCaseSchema):
     )
     live_model = fields.Method("get_live_model", dump_only=True)
     voice_start_mode = fields.Method("get_voice_start_mode", dump_only=True)
+    needs_new_model = fields.Method("get_needs_new_model", dump_only=True)
 
     def get_soul_path(self, obj: Personality) -> str:
         return soul_service.soul_path_for(obj.personality_id)
@@ -102,10 +125,17 @@ class PersonalitySchemaSQLAutoWith(SQLAutoWithCamelCaseSchema):
         ref = getattr(obj, "provider_ref", None)
         if not ref:
             return None
-        try:
-            return provider_service.resolve_provider(str(ref))
-        except Exception:
-            return None
+        return provider_service.find_provider(str(ref))
+
+    def get_needs_new_model(self, obj: Personality) -> bool:
+        """True when the referenced model row is gone and settings must replace it.
+
+        There is no status to read: a removed model has no row at all.
+        """
+        ref = getattr(obj, "provider_ref", None)
+        if not ref:
+            return False
+        return self._resolved_provider(obj) is None
 
     def get_live_model(self, obj: Personality) -> str | None:
         provider = self._resolved_provider(obj)

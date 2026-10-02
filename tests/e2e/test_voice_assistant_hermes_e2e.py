@@ -341,23 +341,8 @@ def test_voice_assistant_hermes_persists_reply_and_recalls_prior_fact():
     try:
         _activate_smart_connect("12345678", "12345678")
     except requests.RequestException:
-        # Reachability is reported as a skip by the assistant-model probe below.
+        # Reachability is reported as a skip by the personality probe below.
         pass
-    try:
-        models = _get_json("/assistant-model").get("assistantModels", [])
-    except (requests.RequestException, ValueError) as exc:
-        pytest.skip(
-            f"live Hermes E2E prerequisite absent: robot API is unreachable ({exc})"
-        )
-
-    hermes_model = next(
-        (model for model in models if model.get("apiName") == "hermes-agent"), None
-    )
-    if hermes_model is None:
-        pytest.skip(
-            "live Hermes E2E prerequisite absent: no hermes-agent assistant model exists"
-        )
-
     try:
         personalities = _get_json("/voice-assistant/personality").get(
             "voiceAssistantPersonalities", []
@@ -381,14 +366,14 @@ def test_voice_assistant_hermes_persists_reply_and_recalls_prior_fact():
         )
 
     personality_id = personality["personalityId"]
-    original_model_id = personality["assistantModelId"]
+    original_channel = personality.get("channel", "smart")
     chat_id = None
     token = f"PIB-COLOR-{uuid.uuid4().hex[:8].upper()}"
 
     try:
         update = requests.put(
             f"{API_URL}/voice-assistant/personality/{personality_id}",
-            json={"assistantModelId": hermes_model["id"]},
+            json={"channel": "smart"},
             timeout=REQUEST_TIMEOUT,
         )
         update.raise_for_status()
@@ -434,7 +419,7 @@ def test_voice_assistant_hermes_persists_reply_and_recalls_prior_fact():
         try:
             requests.put(
                 f"{API_URL}/voice-assistant/personality/{personality_id}",
-                json={"assistantModelId": original_model_id},
+                json={"channel": original_channel},
                 timeout=REQUEST_TIMEOUT,
             )
         except requests.RequestException:
@@ -566,7 +551,7 @@ def test_create_personality_via_browser_ui_generates_soul_md():
 def test_chat_send_button_activation_with_smartconnect():
     """
     E2E UI test verifying SmartConnect token/password setup ('12345678'),
-    Hermes Agent persona chat creation, deep-chat's >2-character submit-button
+    Smart personality chat creation, deep-chat's >2-character submit-button
     state, and that submitting through #submit-icon renders the typed message.
     """
     from playwright.sync_api import sync_playwright
@@ -590,20 +575,7 @@ def test_chat_send_button_activation_with_smartconnect():
             # 2. Open Voice Assistant
             _open_voice_assistant(page)
 
-            # 3. Create a persona with Hermes Agent backend
-            res_models = requests.get(
-                f"{API_URL}/assistant-model", timeout=REQUEST_TIMEOUT
-            ).json()
-            models = (
-                res_models.get("assistantModels", [])
-                if isinstance(res_models, dict)
-                else res_models
-            )
-            hermes_model = [
-                m for m in models if "hermes" in m.get("apiName", "").lower()
-            ][0]
-            hermes_model_id = hermes_model["id"]
-
+            # 3. Create a Smart personality. The channel is the Hermes agent.
             # Names are unique per run: a leftover persona/chat from an aborted run
             # would otherwise be matched first by the sidebar locators below.
             persona_name = f"SendButtonTester_{uuid.uuid4().hex[:6]}"
@@ -615,7 +587,7 @@ def test_chat_send_button_activation_with_smartconnect():
                     "name": persona_name,
                     "gender": "Female",
                     "pauseThreshold": 0.8,
-                    "assistantModelId": hermes_model_id,
+                    "channel": "smart",
                     "messageHistory": 5,
                 },
                 timeout=REQUEST_TIMEOUT,
@@ -714,7 +686,7 @@ def test_voice_assistant_latency_and_smartconnect_e2e():
     """
     E2E UI Test according to user specification:
     1. Activates SmartConnect with Token '1234567890' and Password '1234567890'.
-    2. Creates a new personality with configured Hermes Agent (unique name).
+    2. Creates a new Smart personality (unique name).
     3. Types 'Wie geht es dir?' in deep-chat UI and measures response latency
        from Submit click until the assistant's real reply appears in the UI.
     """
@@ -734,26 +706,14 @@ def test_voice_assistant_latency_and_smartconnect_e2e():
     created_chat_id = None
     created_p_id = None
 
-    # Get Hermes Agent assistant model ID
-    res_models = requests.get(
-        f"{API_URL}/assistant-model", timeout=REQUEST_TIMEOUT
-    ).json()
-    models = (
-        res_models.get("assistantModels", [])
-        if isinstance(res_models, dict)
-        else res_models
-    )
-    hermes_model = [m for m in models if "hermes" in m.get("apiName", "").lower()][0]
-    hermes_model_id = hermes_model["id"]
-
-    # 2. Create new personality with configured Hermes Agent
+    # 2. Create a Smart personality. The channel is the Hermes agent.
     persona_res = requests.post(
         f"{API_URL}/voice-assistant/personality",
         json={
             "name": unique_persona_name,
             "gender": "Female",
             "pauseThreshold": 0.8,
-            "assistantModelId": hermes_model_id,
+            "channel": "smart",
             "messageHistory": 5,
         },
         timeout=REQUEST_TIMEOUT,

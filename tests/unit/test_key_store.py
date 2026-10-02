@@ -74,21 +74,21 @@ def test_token_service_uses_the_shared_primitive():
 
 
 def test_round_trip_uses_one_password_for_every_key(app_ctx, key_store_path):
-    vision = Provider.query.filter_by(visual_name="GPT-4o [Vision]").one()
-    hermes = Provider.query.filter_by(api_name="hermes-agent").one()
+    vision = Provider.query.filter_by(api_name="gpt-6").one()
+    second = Provider.query.filter_by(api_name="claude-sonnet-5-5").one()
 
     ref = key_store_service.put_secret(vision.id, PASSWORD, SECRET)
     assert ref == f"provider-{vision.id}"
     with pytest.raises(KeyStoreError) as caught:
-        key_store_service.put_secret(hermes.id, OTHER_PASSWORD, OTHER_SECRET)
+        key_store_service.put_secret(second.id, OTHER_PASSWORD, OTHER_SECRET)
     assert caught.value.status_code == 401
     assert str(caught.value) == WRONG_PASSWORD_MESSAGE
 
-    key_store_service.put_secret(hermes.id, PASSWORD, OTHER_SECRET)
+    key_store_service.put_secret(second.id, PASSWORD, OTHER_SECRET)
     opened = key_store_service.unlock(PASSWORD)
     assert opened == {
         f"provider-{vision.id}": SECRET,
-        f"provider-{hermes.id}": OTHER_SECRET,
+        f"provider-{second.id}": OTHER_SECRET,
     }
 
     envelope = json.loads(key_store_path.read_text(encoding="utf-8"))
@@ -101,8 +101,48 @@ def test_round_trip_uses_one_password_for_every_key(app_ctx, key_store_path):
     assert stat.S_IMODE(key_store_path.stat().st_mode) == 0o600
 
 
+def test_credential_route_returns_one_unlocked_key_and_never_logs_it(
+    app, app_ctx, caplog
+):
+    """The voice node reads one provider. A locked store and the status route do not."""
+    caplog.set_level(logging.INFO)
+    gemini = Provider.query.filter_by(api_name="gemini-3.8-flash").one()
+    other = Provider.query.filter_by(api_name="gpt-6").one()
+    key_store_service.put_secret(gemini.id, PASSWORD, SECRET)
+    key_store_service.put_secret(other.id, PASSWORD, OTHER_SECRET)
+    db.session.commit()
+    client = app.test_client()
+
+    opened = client.get("/system/key-store/credential/gemini-3.8-flash")
+    assert opened.status_code == 200
+    body = opened.get_json()
+    assert body["mode"] == "unlocked"
+    assert body["available"] is True
+    assert body["secret"] == SECRET
+    assert OTHER_SECRET not in opened.get_data(as_text=True)
+
+    status = client.get("/system/key-store")
+    assert SECRET not in status.get_data(as_text=True)
+    assert OTHER_SECRET not in status.get_data(as_text=True)
+
+    untouched = client.get("/system/key-store/credential/claude-sonnet-5-5")
+    assert untouched.status_code == 200
+    assert untouched.get_json()["available"] is False
+    assert "secret" not in untouched.get_json()
+    assert SECRET.encode() not in untouched.get_data()
+    assert OTHER_SECRET.encode() not in untouched.get_data()
+
+    key_store_service.lock()
+    locked = client.get("/system/key-store/credential/gemini-3.8-flash")
+    assert locked.status_code == 200
+    assert locked.get_json() == {"mode": "degraded", "available": False}
+    assert SECRET not in locked.get_data(as_text=True)
+    assert SECRET not in caplog.text
+    assert OTHER_SECRET not in caplog.text
+
+
 def test_wrong_password_returns_no_keys_and_does_not_crash(app, app_ctx):
-    vision = Provider.query.filter_by(visual_name="GPT-4o [Vision]").one()
+    vision = Provider.query.filter_by(api_name="gpt-6").one()
     key_store_service.put_secret(vision.id, PASSWORD, SECRET)
     db.session.commit()
 
@@ -169,7 +209,7 @@ def test_first_password_must_still_be_long_enough(app, app_ctx, key_store_path):
 
 
 def test_change_password_requires_the_new_one_twice(app, app_ctx, key_store_path):
-    vision = Provider.query.filter_by(visual_name="GPT-4o [Vision]").one()
+    vision = Provider.query.filter_by(api_name="gpt-6").one()
     client = app.test_client()
     stored = client.put(
         f"/system/key-store/{vision.id}",
@@ -231,8 +271,8 @@ def test_deleting_a_key_leaves_the_personality_reference(
         "_provision_profile",
         MagicMock(return_value={"ok": True}),
     )
-    vision = Provider.query.filter_by(visual_name="GPT-4o [Vision]").one()
-    hermes = Provider.query.filter_by(api_name="hermes-agent").one()
+    vision = Provider.query.filter_by(api_name="gpt-6").one()
+    second = Provider.query.filter_by(api_name="claude-sonnet-5-5").one()
     personality = personality_service.create_personality(
         {
             "name": "OrphanRef",
@@ -244,7 +284,7 @@ def test_deleting_a_key_leaves_the_personality_reference(
     )
     original_ref = personality.provider_ref
     key_store_service.put_secret(vision.id, PASSWORD, SECRET)
-    key_store_service.put_secret(hermes.id, PASSWORD, OTHER_SECRET)
+    key_store_service.put_secret(second.id, PASSWORD, OTHER_SECRET)
 
     key_store_service.delete_secret(vision.id, PASSWORD)
 
@@ -259,14 +299,14 @@ def test_deleting_a_key_leaves_the_personality_reference(
     assert vision.credential_ref is None
     opened = key_store_service.unlock(PASSWORD)
     assert SECRET not in opened.values()
-    assert opened[f"provider-{hermes.id}"] == OTHER_SECRET
+    assert opened[f"provider-{second.id}"] == OTHER_SECRET
     assert SECRET.encode() not in key_store_path.read_bytes()
 
     with pytest.raises(KeyStoreError) as caught:
-        key_store_service.delete_secret(hermes.id, OTHER_PASSWORD)
+        key_store_service.delete_secret(second.id, OTHER_PASSWORD)
     assert caught.value.status_code == 401
-    db.session.refresh(hermes)
-    assert hermes.credential_ref == f"provider-{hermes.id}"
+    db.session.refresh(second)
+    assert second.credential_ref == f"provider-{second.id}"
 
 
 def test_credentials_stay_out_of_soul_memory_logs_and_the_database(
@@ -278,7 +318,7 @@ def test_credentials_stay_out_of_soul_memory_logs_and_the_database(
         MagicMock(return_value={"ok": True}),
     )
     caplog.set_level(logging.DEBUG)
-    vision = Provider.query.filter_by(visual_name="GPT-4o [Vision]").one()
+    vision = Provider.query.filter_by(api_name="gpt-6").one()
     personality = personality_service.create_personality(
         {
             "name": "Cleartext",
@@ -347,7 +387,7 @@ def test_credentials_stay_out_of_soul_memory_logs_and_the_database(
 
 
 def test_short_password_does_not_create_a_store(app, app_ctx, key_store_path):
-    vision = Provider.query.filter_by(visual_name="GPT-4o [Vision]").one()
+    vision = Provider.query.filter_by(api_name="gpt-6").one()
     response = app.test_client().put(
         f"/system/key-store/{vision.id}",
         json={"password": "short", "secret": SECRET},
@@ -392,8 +432,8 @@ def test_cold_start_stores_a_first_key_with_encryption_on_and_off(
     settings = _settings_file(key_store_path)
     assert not key_store_path.exists()
     assert not settings.exists()
-    vision = Provider.query.filter_by(visual_name="GPT-4o [Vision]").one()
-    hermes = Provider.query.filter_by(api_name="hermes-agent").one()
+    vision = Provider.query.filter_by(api_name="gpt-6").one()
+    second = Provider.query.filter_by(api_name="claude-sonnet-5-5").one()
     client = app.test_client()
 
     stored = client.put(
@@ -408,7 +448,7 @@ def test_cold_start_stores_a_first_key_with_encryption_on_and_off(
     assert SECRET.encode() not in key_store_path.read_bytes()
 
     missing_password = client.put(
-        f"/system/key-store/{hermes.id}",
+        f"/system/key-store/{second.id}",
         json={"secret": OTHER_SECRET},
     )
     assert missing_password.status_code == 400
@@ -425,7 +465,7 @@ def test_cold_start_stores_a_first_key_with_encryption_on_and_off(
     assert not key_store_path.exists()
 
     clear = client.put(
-        f"/system/key-store/{hermes.id}",
+        f"/system/key-store/{second.id}",
         json={"secret": OTHER_SECRET},
     )
     assert clear.status_code == 200
@@ -433,12 +473,12 @@ def test_cold_start_stores_a_first_key_with_encryption_on_and_off(
     assert document["cleartext"] is True
     assert "ciphertext" not in document
     assert "salt" not in document
-    assert document["secrets"][f"provider-{hermes.id}"] == OTHER_SECRET
+    assert document["secrets"][f"provider-{second.id}"] == OTHER_SECRET
     assert stat.S_IMODE(key_store_path.stat().st_mode) == 0o600
     key_store_service.lock()
     assert key_store_service.operating_mode() == "unlocked"
     assert (
-        key_store_service.unlocked_credentials()[f"provider-{hermes.id}"]
+        key_store_service.unlocked_credentials()[f"provider-{second.id}"]
         == OTHER_SECRET
     )
     opened = client.post("/system/key-store/unlock", json={})
@@ -446,15 +486,15 @@ def test_cold_start_stores_a_first_key_with_encryption_on_and_off(
     assert opened.get_json()["mode"] == "unlocked"
     assert OTHER_SECRET not in opened.get_data(as_text=True)
 
-    removed = client.delete(f"/system/key-store/{hermes.id}", json={})
+    removed = client.delete(f"/system/key-store/{second.id}", json={})
     assert removed.status_code == 204
-    db.session.refresh(hermes)
-    assert hermes.credential_ref is None
+    db.session.refresh(second)
+    assert second.credential_ref is None
 
 
 def test_switching_encryption_off_and_on_keeps_the_keys(app, app_ctx, key_store_path):
-    vision = Provider.query.filter_by(visual_name="GPT-4o [Vision]").one()
-    hermes = Provider.query.filter_by(api_name="hermes-agent").one()
+    vision = Provider.query.filter_by(api_name="gpt-6").one()
+    second = Provider.query.filter_by(api_name="claude-sonnet-5-5").one()
     client = app.test_client()
     assert (
         client.put(
@@ -465,7 +505,7 @@ def test_switching_encryption_off_and_on_keeps_the_keys(app, app_ctx, key_store_
     )
     assert (
         client.put(
-            f"/system/key-store/{hermes.id}",
+            f"/system/key-store/{second.id}",
             json={"password": PASSWORD, "secret": OTHER_SECRET},
         ).status_code
         == 200
@@ -483,7 +523,7 @@ def test_switching_encryption_off_and_on_keeps_the_keys(app, app_ctx, key_store_
     assert document["cleartext"] is True
     assert document["secrets"] == {
         f"provider-{vision.id}": SECRET,
-        f"provider-{hermes.id}": OTHER_SECRET,
+        f"provider-{second.id}": OTHER_SECRET,
     }
     assert "ciphertext" not in document
     settings = json.loads(_settings_file(key_store_path).read_text(encoding="utf-8"))
@@ -491,7 +531,7 @@ def test_switching_encryption_off_and_on_keeps_the_keys(app, app_ctx, key_store_
     key_store_service.lock()
     assert key_store_service.unlocked_credentials() == {
         f"provider-{vision.id}": SECRET,
-        f"provider-{hermes.id}": OTHER_SECRET,
+        f"provider-{second.id}": OTHER_SECRET,
     }
     # Mode unlocked is what the start-up prompt reads, so the prompt stays down.
     assert client.get("/system/key-store").get_json()["mode"] == "unlocked"
@@ -530,14 +570,14 @@ def test_switching_encryption_off_and_on_keeps_the_keys(app, app_ctx, key_store_
     assert key_store_service.operating_mode() == "degraded"
     opened = key_store_service.unlock(NEW_PASSWORD)
     assert opened[f"provider-{vision.id}"] == SECRET
-    assert opened[f"provider-{hermes.id}"] == OTHER_SECRET
+    assert opened[f"provider-{second.id}"] == OTHER_SECRET
     with pytest.raises(KeyStoreError) as caught:
         key_store_service.unlock(PASSWORD)
     assert caught.value.status_code == 401
 
 
 def test_wrong_password_refuses_turning_encryption_off(app, app_ctx, key_store_path):
-    vision = Provider.query.filter_by(visual_name="GPT-4o [Vision]").one()
+    vision = Provider.query.filter_by(api_name="gpt-6").one()
     client = app.test_client()
     stored = client.put(
         f"/system/key-store/{vision.id}",
@@ -564,7 +604,7 @@ def test_wrong_password_refuses_turning_encryption_off(app, app_ctx, key_store_p
 
 
 def test_short_password_refuses_turning_encryption_on(app, app_ctx, key_store_path):
-    vision = Provider.query.filter_by(visual_name="GPT-4o [Vision]").one()
+    vision = Provider.query.filter_by(api_name="gpt-6").one()
     client = app.test_client()
     switched = client.post("/system/key-store/encryption", json={"enabled": False})
     assert switched.status_code == 200
@@ -593,7 +633,7 @@ def test_short_password_refuses_turning_encryption_on(app, app_ctx, key_store_pa
 def test_failed_rewrite_does_not_persist_the_encryption_setting(
     app, app_ctx, key_store_path, monkeypatch
 ):
-    vision = Provider.query.filter_by(visual_name="GPT-4o [Vision]").one()
+    vision = Provider.query.filter_by(api_name="gpt-6").one()
     client = app.test_client()
     stored = client.put(
         f"/system/key-store/{vision.id}",
@@ -641,7 +681,7 @@ def test_status_reports_the_encryption_setting(app, key_store_path):
 
 
 def test_cleartext_keys_need_no_unlock(app_ctx, key_store_path):
-    vision = Provider.query.filter_by(visual_name="GPT-4o [Vision]").one()
+    vision = Provider.query.filter_by(api_name="gpt-6").one()
     ref = f"provider-{vision.id}"
     key_store_path.parent.mkdir(parents=True, exist_ok=True)
     key_store_path.write_text(
@@ -663,7 +703,7 @@ def test_cleartext_keys_need_no_unlock(app_ctx, key_store_path):
 
 def test_cleartext_file_is_not_read_as_an_envelope(app_ctx, key_store_path):
     """A cleartext mark blocks envelope reading, even if salt is also present."""
-    vision = Provider.query.filter_by(visual_name="GPT-4o [Vision]").one()
+    vision = Provider.query.filter_by(api_name="gpt-6").one()
     key_store_service.put_secret(vision.id, PASSWORD, SECRET)
     envelope = json.loads(key_store_path.read_text(encoding="utf-8"))
     envelope["cleartext"] = True
@@ -682,7 +722,7 @@ def test_cleartext_file_is_not_read_as_an_envelope(app_ctx, key_store_path):
 
 
 def test_envelope_is_not_read_as_cleartext(app_ctx, key_store_path):
-    vision = Provider.query.filter_by(visual_name="GPT-4o [Vision]").one()
+    vision = Provider.query.filter_by(api_name="gpt-6").one()
     key_store_service.put_secret(vision.id, PASSWORD, SECRET)
     _settings_file(key_store_path).parent.mkdir(parents=True, exist_ok=True)
     _settings_file(key_store_path).write_text(

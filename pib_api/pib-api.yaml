@@ -38,7 +38,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/VoiceAssistantPersonality'
+              $ref: '#/components/schemas/PostVoiceAssistantPersonality'
         required: true
       responses:
         '201':
@@ -1113,6 +1113,24 @@ components:
           examples:
             - 5
             - 15
+        providerRef:
+          type: string
+          description: >-
+            'default', which follows the current default provider, or the
+            decimal id of a provider row. The catalogue api_name is not a
+            reference.
+          examples:
+            - default
+            - "1"
+        channel:
+          type: string
+          enum: [smart, direct]
+          description: >-
+            smart uses the Hermes agent. direct uses this backend's own
+            completion.
+          examples:
+            - smart
+            - direct
         assistantModelId:
           type: string
           examples:
@@ -1145,26 +1163,51 @@ components:
         gender:
           type: string
           enum: [Male, Female]
+          default: Female
           examples: 
             - Female
             - Male
         pauseThreshold:
           type: number
+          minimum: 0.1
+          maximum: 3
+          default: 0.8
           examples: 
             - 0.8
             - 1.0
         messageHistory:
           type: number
+          minimum: 0
+          default: 5
           examples:
             - 5
             - 15
+        providerRef:
+          type: string
+          description: >-
+            Which catalogue provider this personality uses. Either the
+            sentinel "default", which follows the current default provider,
+            or the decimal id of a provider row (the same id GET /provider
+            returns), sent as text. The catalogue api_name, for example
+            gemini-3.8-flash, is not a reference and is rejected. An id
+            that matches no row is rejected as well.
+          examples:
+            - default
+            - "1"
+        channel:
+          type: string
+          enum: [smart, direct]
+          default: smart
+          description: >-
+            smart uses the Hermes agent. direct uses this backend's own
+            completion. Any other value is rejected.
+          examples:
+            - smart
+            - direct
+      # A new personality needs a name only. Every other value comes from
+      # the defaults and can be changed afterwards.
       required:
-        - personalityId
         - name
-        - description
-        - gender
-        - pauseThreshold
-        - messageHistory
     VoiceAssistantPersonalities:
       properties:
         voiceAssistantPersonalities:
@@ -1676,20 +1719,18 @@ components:
             - 2
         apiName:
           type: string
-          default: gpt-3.5-turbo
           examples: 
-            - gpt-4.0
-            - Llava
+            - gemini-3.8-flash
+            - gpt-6
         hasImageSupport:
           type: boolean
           examples:
-            - false
+            - true
         visualName:
           type: string
-          default: GPT-3.5
           examples:
-            - GPT-4.0
-            - LLAVA
+            - Gemini 3.8 Flash
+            - GPT-6
       required:
         - id
         - apiName

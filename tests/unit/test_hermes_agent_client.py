@@ -39,7 +39,7 @@ def test_session_name_strips_unsafe_chars():
 
 def test_uses_hermes_backend_for_hermes_api_name():
     assert uses_hermes_backend("hermes-agent") is True
-    assert uses_hermes_backend("gpt-4o") is False
+    assert uses_hermes_backend("gpt-6") is False
 
 
 def test_profile_name_is_derived_from_personality():

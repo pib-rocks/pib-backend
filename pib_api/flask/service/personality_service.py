@@ -4,7 +4,12 @@ from typing import Any, List, Optional
 
 from marshmallow import ValidationError
 
-from model.personality_model import Personality
+from model.personality_model import (
+    DEFAULT_GENDER,
+    DEFAULT_MESSAGE_HISTORY,
+    DEFAULT_PAUSE_THRESHOLD,
+    Personality,
+)
 from model.provider_model import Provider
 from app.app import db
 from pib_hermes_config import build_default_soul_text
@@ -121,6 +126,11 @@ def get_personality(personality_id: str) -> Personality:
     return personality
 
 
+# 'default', or the decimal id of a provider row. The catalogue api_name
+# is not a reference: gemini-3.8-flash names a catalogue line, not a row.
+PROVIDER_REF_ERROR = "Provider reference must be 'default' or the id of a provider row."
+
+
 def _store_provider_ref(personality: Personality, ref: str) -> None:
     """Persist a provider pointer. 'default' is not resolved into an id."""
     if ref == DEFAULT_PROVIDER_REF:
@@ -130,9 +140,9 @@ def _store_provider_ref(personality: Personality, ref: str) -> None:
     try:
         provider_id = int(ref)
     except (TypeError, ValueError) as exc:
-        raise ValidationError({"providerRef": ["Unknown provider reference."]}) from exc
+        raise ValidationError({"providerRef": [PROVIDER_REF_ERROR]}) from exc
     if provider_id < 1 or Provider.query.filter_by(id=provider_id).first() is None:
-        raise ValidationError({"providerRef": ["Unknown provider reference."]})
+        raise ValidationError({"providerRef": [PROVIDER_REF_ERROR]})
     personality.provider_ref = str(provider_id)
     personality.assistant_model_id = provider_id
 
@@ -276,11 +286,12 @@ def _tool_calling_value(personality_dto: Any, default: bool) -> bool:
 
 def create_personality(personality_dto: Any) -> Personality:
     _reject_actuation_request(personality_dto)
+    # Only the name is required. The rest is defaulted here and edited later.
     personality = Personality(
         name=personality_dto["name"],
-        gender=personality_dto["gender"],
-        pause_threshold=personality_dto["pause_threshold"],
-        message_history=personality_dto["message_history"],
+        gender=personality_dto.get("gender") or DEFAULT_GENDER,
+        pause_threshold=personality_dto.get("pause_threshold", DEFAULT_PAUSE_THRESHOLD),
+        message_history=personality_dto.get("message_history", DEFAULT_MESSAGE_HISTORY),
         stt_engine=LOCAL_STT_ID,
         tts_engine=LOCAL_TTS_ID,
         tool_calling=_tool_calling_value(personality_dto, True),

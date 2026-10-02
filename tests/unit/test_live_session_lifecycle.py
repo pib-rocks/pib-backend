@@ -74,13 +74,13 @@ def test_voice_start_mode_is_gated_by_the_live_flag_and_the_pinned_model():
 
 
 def test_gemini_row_is_pinned_and_openai_is_not(app_ctx):
-    gemini = Provider.query.filter_by(api_name="gemini-3.5-flash").one()
+    gemini = Provider.query.filter_by(api_name="gemini-3.8-flash").one()
     assert gemini.capabilities["live"] is True
     assert gemini.live_model == GEMINI_LIVE_MODEL
     assert gemini.live_model_checked_on == date.fromisoformat(
         GEMINI_LIVE_MODEL_CHECKED_ON
     )
-    openai = Provider.query.filter_by(visual_name="GPT-4o [Vision]").one()
+    openai = Provider.query.filter_by(api_name="gpt-6").one()
     assert openai.live_model is None
     assert openai.live_model_checked_on is None
     assert openai.capabilities["live"] is False
@@ -88,7 +88,7 @@ def test_gemini_row_is_pinned_and_openai_is_not(app_ctx):
 
 def test_provider_api_reports_the_pin_and_the_check_date(app):
     with app.app_context():
-        gemini_id = Provider.query.filter_by(api_name="gemini-3.5-flash").one().id
+        gemini_id = Provider.query.filter_by(api_name="gemini-3.8-flash").one().id
     body = app.test_client().get(f"/provider/{gemini_id}").get_json()
     assert body["liveModel"] == GEMINI_LIVE_MODEL
     assert body["liveModelCheckedOn"] == GEMINI_LIVE_MODEL_CHECKED_ON
@@ -102,7 +102,7 @@ def test_personality_live_settings_choose_the_mode_the_button_starts(app, monkey
         MagicMock(return_value={"ok": True}),
     )
     with app.app_context():
-        gemini_id = Provider.query.filter_by(api_name="gemini-3.5-flash").one().id
+        gemini_id = Provider.query.filter_by(api_name="gemini-3.8-flash").one().id
     client = app.test_client()
     created = client.post(
         "/voice-assistant/personality",
@@ -146,8 +146,8 @@ def test_personality_live_settings_choose_the_mode_the_button_starts(app, monkey
 def test_pin_rewrites_the_row_from_the_account_model_list(app_ctx):
     from app.app import db
 
-    gemini = Provider.query.filter_by(api_name="gemini-3.5-flash").one()
-    openai = Provider.query.filter_by(visual_name="GPT-4o [Text]").one()
+    gemini = Provider.query.filter_by(api_name="gemini-3.8-flash").one()
+    openai = Provider.query.filter_by(api_name="gpt-6").one()
     gemini.credential_ref = "provider-gemini"
     gemini.live_model = None
     gemini.capabilities = {**gemini.capabilities, "live": False}
@@ -158,9 +158,9 @@ def test_pin_rewrites_the_row_from_the_account_model_list(app_ctx):
         if "gemini" in api_name:
             assert api_key == "gemini-secret"
             assert endpoint_base is None
-            return [GEMINI_LIVE_MODEL, "gemini-3.5-flash"]
+            return [GEMINI_LIVE_MODEL, "gemini-3.8-flash"]
         assert api_key == "openai-secret"
-        return ["gpt-4o", OPENAI_LIVE_MODEL]
+        return ["gpt-6", OPENAI_LIVE_MODEL]
 
     live_model_service.pin_providers(
         Provider.query.all(),
@@ -173,8 +173,8 @@ def test_pin_rewrites_the_row_from_the_account_model_list(app_ctx):
     )
     db.session.commit()
 
-    gemini = Provider.query.filter_by(api_name="gemini-3.5-flash").one()
-    openai = Provider.query.filter_by(visual_name="GPT-4o [Text]").one()
+    gemini = Provider.query.filter_by(api_name="gemini-3.8-flash").one()
+    openai = Provider.query.filter_by(api_name="gpt-6").one()
     assert gemini.live_model == GEMINI_LIVE_MODEL
     assert gemini.live_model_checked_on == date(2026, 9, 30)
     assert gemini.capabilities["live"] is True
@@ -186,18 +186,18 @@ def test_pin_rewrites_the_row_from_the_account_model_list(app_ctx):
 def test_a_list_without_the_candidate_clears_the_gemini_pin(app_ctx):
     from app.app import db
 
-    gemini = Provider.query.filter_by(api_name="gemini-3.5-flash").one()
+    gemini = Provider.query.filter_by(api_name="gemini-3.8-flash").one()
     gemini.credential_ref = "provider-gemini"
     db.session.commit()
 
     live_model_service.pin_providers(
         [gemini],
         {"provider-gemini": "gemini-secret"},
-        fetch=lambda api_name, endpoint_base, api_key: ["gemini-3.5-flash"],
+        fetch=lambda api_name, endpoint_base, api_key: ["gemini-3.8-flash"],
         checked_on=date(2026, 9, 30),
     )
     db.session.commit()
-    gemini = Provider.query.filter_by(api_name="gemini-3.5-flash").one()
+    gemini = Provider.query.filter_by(api_name="gemini-3.8-flash").one()
     assert gemini.live_model is None
     assert gemini.capabilities["live"] is False
     assert gemini.live_model_checked_on == date(2026, 9, 30)
@@ -245,7 +245,7 @@ def test_model_list_urls_and_payloads_do_not_put_the_key_in_the_query():
 
     pages = [
         {
-            "models": [{"name": "models/gemini-3.5-flash"}],
+            "models": [{"name": "models/gemini-3.8-flash"}],
             "nextPageToken": "page-2",
         },
         {"models": [{"name": "models/" + GEMINI_LIVE_MODEL}]},
@@ -261,7 +261,7 @@ def test_model_list_urls_and_payloads_do_not_put_the_key_in_the_query():
         return _Body(pages.pop(0))
 
     found = live_model_service.fetch_model_ids(
-        "gemini-3.5-flash", None, "secret", opener=opener
+        "gemini-3.8-flash", None, "secret", opener=opener
     )
-    assert found == ["gemini-3.5-flash", GEMINI_LIVE_MODEL]
+    assert found == ["gemini-3.8-flash", GEMINI_LIVE_MODEL]
     assert pages == []

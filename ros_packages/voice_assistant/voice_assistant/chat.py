@@ -35,6 +35,7 @@ from pib_hermes_config.channel import (
     direct_system_prompt,
     turn_channel,
 )
+from provider_registry import DEFAULT_PROVIDER_API_NAME
 from public_api_client import hermes_agent_client, public_voice_client
 from voice_assistant import direct_tool_loop
 from voice_assistant.degraded_chat import (
@@ -221,8 +222,8 @@ class ChatNode(Node):
         """Report at startup whether the configured Hermes CLI actually runs.
 
         Without this, a robot whose hermes install is missing or not mounted looks
-        healthy while every hermes-agent personality quietly answers with the
-        fallback sentence. Legacy personalities are unaffected, so this only logs.
+        healthy while every Smart personality quietly answers with the
+        fallback sentence. This only logs.
 
         This runs the CLI instead of merely stat-ing it. A file check passed on a
         live robot whose CLI died with exit 127 on every turn, because the wrapper
@@ -246,7 +247,7 @@ class ChatNode(Node):
 
         self.get_logger().error(
             f"hermes agent preflight failed for '{path}': {detail}. "
-            "Personalities using the 'hermes-agent' model will fall back to a "
+            "Smart personalities will fall back to a "
             "canned reply. Check that the hermes CLI is installed for the pib "
             "user, that PIB_HERMES_BIN points at it, and that ~/.hermes, the "
             "wrapper and the uv-managed Python directory are all bind-mounted "
@@ -485,7 +486,9 @@ class ChatNode(Node):
                     ),
                     message_history=[],
                     image_base64=image_base64,
-                    model="gpt-4o",
+                    # Catalogue default. The public API's id is not confirmed
+                    # in this repository.
+                    model=DEFAULT_PROVIDER_API_NAME,  # TODO(confirm id)
                     public_api_token=self.token,
                 )
 
@@ -754,6 +757,10 @@ class ChatNode(Node):
                 return future.result(timeout=HERMES_CANCEL_POLL_SECONDS)
             except FutureTimeoutError:
                 pass
+            except direct_tool_loop.DirectToolLoopError:
+                # The store could not supply the provider key. The goal aborts
+                # with that message; the fallback sentence would hide it.
+                raise
             except Exception as exc:
                 self.get_logger().error(f"hermes agent turn failed: {exc}")
                 return hermes_agent_client.FALLBACK_REPLY
@@ -832,6 +839,8 @@ class ChatNode(Node):
                 continue
             if kind == "done":
                 return
+            if isinstance(value, direct_tool_loop.DirectToolLoopError):
+                raise value
 
             self.get_logger().warning(
                 f"hermes streaming failed (chat={chat_id}): {value}; "
@@ -988,6 +997,16 @@ class ChatNode(Node):
                         f"direct tool loop model={direct_tool_loop.PINNED_MODEL} "
                         f"provider={direct_tool_loop.PINNED_PROVIDER} chat={chat_id}"
                     )
+
+                    def report_key_source(source: str) -> None:
+                        # source is key-store or environment. The key itself
+                        # is not passed here, so it cannot land in the log.
+                        self.get_logger().info(
+                            f"direct provider key source={source} "
+                            f"provider={direct_tool_loop.PINNED_PROVIDER} "
+                            f"chat={chat_id}"
+                        )
+
                     tokens = direct_tool_loop.run_direct_turn(
                         system_prompt=system_prompt,
                         user_text=content,
@@ -997,6 +1016,7 @@ class ChatNode(Node):
                         ],
                         tool_calling=True,
                         allow_image=allow_image,
+                        report_key_source=report_key_source,
                     )
                 else:
                     with self.public_voice_client_lock:
@@ -1016,7 +1036,7 @@ class ChatNode(Node):
                 return Chat.Result()
 
         except Exception as e:
-            backend = "hermes-agent" if is_smart else "direct"
+            backend = "smart" if is_smart else "direct"
             self.get_logger().error(f"failed to send request to {backend}: {e}")
             goal_handle.abort()
             return Chat.Result()

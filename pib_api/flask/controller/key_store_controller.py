@@ -1,8 +1,9 @@
 """HTTP surface for the provider key store.
 
-Responses name a wrong password and carry no secret material. The decrypted
-keys stay in the key-store process. Encryption off stores cleartext and
-does not ask for a password.
+Password and status responses name a wrong password and carry no secret
+material. The credential route is the one exception: the voice node reads
+one unlocked provider key through it. That value is not logged. Encryption
+off stores cleartext and does not ask for a password.
 """
 
 from flask import Blueprint, jsonify, request
@@ -79,6 +80,16 @@ def get_key_store():
             "mode": key_store_service.operating_mode(),
         }
     )
+
+
+@bp.route("/credential/<api_name>", methods=["GET"])
+def get_provider_credential(api_name: str):
+    """One provider key for the voice node. Locked means no secret."""
+    mode = key_store_service.operating_mode()
+    secret = key_store_service.unlocked_secret_for_api_name(api_name)
+    if secret is None:
+        return jsonify({"mode": mode, "available": False})
+    return jsonify({"mode": mode, "available": True, "secret": secret})
 
 
 @bp.route("/unlock", methods=["POST"])

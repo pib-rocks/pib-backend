@@ -36,7 +36,6 @@ from app.app import app as flask_app  # noqa: E402
 from app.app import db  # noqa: E402
 from click.testing import CliRunner  # noqa: E402
 from commands import seed_db  # noqa: E402
-from model.assistant_model import AssistantModel  # noqa: E402
 from model.personality_model import Personality  # noqa: E402
 from service import personality_service  # noqa: E402
 
@@ -153,17 +152,36 @@ def app_ctx(app) -> Generator:
 @pytest.fixture()
 def make_personality(app_ctx):
     def _make(**kwargs):
-        model = AssistantModel.query.first()
+        # The default provider is the one the catalogue maintains, pib.Cloud.
         dto = {
             "name": kwargs.get("name", "Test"),
             "gender": kwargs.get("gender", "Female"),
             "pause_threshold": kwargs.get("pause_threshold", 0.8),
             "message_history": kwargs.get("message_history", 5),
-            "assistant_model_id": kwargs.get("assistant_model_id", model.id),
             "description": kwargs.get("description", ""),
         }
+        if "assistant_model_id" in kwargs:
+            dto["assistant_model_id"] = kwargs["assistant_model_id"]
         personality = personality_service.create_personality(dto)
         db.session.commit()
         return personality
 
     return _make
+
+
+@pytest.fixture(autouse=True)
+def hermes_turn_has_a_provider_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Existing Hermes tests do not open the key store.
+
+    A turn now asks the store before it starts. This stand-in keeps those
+    tests on their previous path. Tests of the store itself replace it.
+    """
+    from public_api_client import hermes_agent_client
+
+    if not hasattr(hermes_agent_client, "provider_key_for_turn"):
+        return
+    monkeypatch.setattr(
+        hermes_agent_client,
+        "provider_key_for_turn",
+        lambda: "fixture-hermes-key",
+    )
