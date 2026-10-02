@@ -29,6 +29,9 @@ WORKDIR /app
 # PEP 668: Jazzy (Ubuntu 24.04, Python 3.12) requires --break-system-packages
 RUN pip install --break-system-packages --no-cache-dir requests==2.32.3 pillow
 
+COPY ./pib_hermes_config /tmp/pib_hermes_config
+RUN pip install --break-system-packages --no-cache-dir /tmp/pib_hermes_config
+
 COPY ./ros_packages/datatypes ros2_ws/datatypes
 COPY ./ros_packages/display ros2_ws/display
 

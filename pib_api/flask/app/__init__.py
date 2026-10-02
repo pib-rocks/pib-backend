@@ -1,6 +1,8 @@
 from app.app import app
 from controller import (
     assistant_model_controller,
+    key_store_controller,
+    provider_controller,
     bricklet_controller,
     camera_controller,
     chat_controller,
@@ -23,6 +25,11 @@ app.register_blueprint(program_controller.bp, url_prefix="/program", name="progr
 app.register_blueprint(
     chat_controller.bp, url_prefix="/voice-assistant/chat", name="chat"
 )
+app.register_blueprint(
+    system_controller.voice_channel_bp,
+    url_prefix="/voice-assistant",
+    name="voice_assistant_channel",
+)
 app.register_blueprint(motor_controller.bp, url_prefix="/motor", name="motor")
 app.register_blueprint(
     personality_controller.bp,
@@ -38,6 +45,10 @@ app.register_blueprint(
 )
 app.register_blueprint(
     assistant_model_controller.bp, url_prefix="/assistant-model", name="assistant_model"
+)
+app.register_blueprint(provider_controller.bp, url_prefix="/provider", name="provider")
+app.register_blueprint(
+    key_store_controller.bp, url_prefix="/system/key-store", name="key_store"
 )
 app.register_blueprint(pose_controller.bp, url_prefix="/pose", name="pose")
 app.register_blueprint(ip_controller.bp, url_prefix="/host-ip", name="host-ip")

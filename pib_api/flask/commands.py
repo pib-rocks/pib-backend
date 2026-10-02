@@ -16,6 +16,7 @@ from sqlalchemy.engine import URL, make_url
 
 from app.app import db, app
 from model.assistant_model import AssistantModel
+from service.provider_service import build_provider
 from model.controller_model import Controller
 from model.camera_settings_model import CameraSettings
 from model.chat_message_model import ChatMessage
@@ -496,7 +497,10 @@ def _create_chat_data_and_assistant() -> None:
         api_name="hermes-agent",
         has_image_support=True,
     )
-    db.session.add_all([gpt4o2, gpt4o1, gpt3, claude, gemini_text, hermes_agent])
+    models = [gpt4o2, gpt4o1, gpt3, claude, gemini_text, hermes_agent]
+    db.session.add_all(models)
+    db.session.flush()
+    db.session.add_all(build_provider(model) for model in models)
     db.session.flush()
 
     p_eva = Personality(
@@ -506,6 +510,7 @@ def _create_chat_data_and_assistant() -> None:
         pause_threshold=0.8,
         message_history=5,
         assistant_model_id=claude.id,
+        provider_ref=str(claude.id),
         stt_engine="local_whisper",
     )
     p_thomas = Personality(
@@ -515,6 +520,7 @@ def _create_chat_data_and_assistant() -> None:
         pause_threshold=1.0,
         message_history=15,
         assistant_model_id=gpt4o1.id,
+        provider_ref=str(gpt4o1.id),
         stt_engine="local_whisper",
     )
     db.session.add_all([p_eva, p_thomas])

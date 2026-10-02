@@ -1,15 +1,13 @@
 import os
-import secrets
-from base64 import urlsafe_b64encode
-from hashlib import scrypt
 from typing import Optional
 
 import rclpy
-from cryptography.fernet import Fernet
 from datatypes.srv import EncryptToken, DecryptToken, GetTokenExists
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
 from std_msgs.msg import String, Empty
+
+from pib_hermes_config import token_crypto
 
 from . import SECRETS_DIR, SALT_PATH, TOKEN_PATH
 
@@ -95,14 +93,6 @@ class TokenServiceNode(Node):
     def _check_if_previous_token_stored(self) -> bool:
         return os.path.isfile(TOKEN_PATH)
 
-    def _generate_salt(self, size: int = 16) -> bytes:
-        return secrets.token_bytes(size)
-
-    def _generate_key(self, salt: bytes, password: str) -> bytes:
-        encoded_password: bytes = str.encode(password)
-        key = scrypt(encoded_password, salt=salt, n=2**14, r=8, p=1, dklen=32)
-        return urlsafe_b64encode(key)
-
     def _store_secret(self, secret: bytes, filename: str) -> None:
         if not os.path.exists(SECRETS_DIR):
             os.makedirs(SECRETS_DIR)
@@ -116,27 +106,16 @@ class TokenServiceNode(Node):
         return data
 
     def encrypt_token(self, token: str, password: str) -> bool:
-        if len(password) < 8:
+        encrypted = token_crypto.encrypt_token(token, password)
+        if encrypted is None:
+            if len(password) >= token_crypto.MIN_PASSWORD_LENGTH:
+                self.get_logger().error("Could not encrypt token")
             return False
 
-        try:
-            encoded_token: bytes = str.encode(token)
-            salt: bytes = self._generate_salt()
-            key: bytes = self._generate_key(salt, password)
-        except Exception as e:
-            self.get_logger().error(f"Could not generate salt/key: {e}")
-            return False
-
-        try:
-            f = Fernet(key)
-            encrypted_token: bytes = f.encrypt(encoded_token)
-        except Exception as e:
-            self.get_logger().error(f"Could not encrypt token: {e}")
-            return False
-
+        salt, ciphertext = encrypted
         try:
             self._store_secret(secret=salt, filename=SALT_PATH)
-            self._store_secret(secret=encrypted_token, filename=TOKEN_PATH)
+            self._store_secret(secret=ciphertext, filename=TOKEN_PATH)
         except Exception as e:
             self.get_logger().error(f"Could not store secrets: {e}")
             return False
@@ -146,11 +125,7 @@ class TokenServiceNode(Node):
     def decrypt_token(self, password: str) -> str:
         salt: bytes = self._load_secret(SALT_PATH)
         encrypted_token: bytes = self._load_secret(TOKEN_PATH)
-        key: bytes = self._generate_key(salt, password)
-
-        f = Fernet(key)
-        decrypted_token: bytes = f.decrypt(encrypted_token)
-        return decrypted_token.decode("utf-8")
+        return token_crypto.decrypt_token(password, salt, encrypted_token)
 
 
 def main():

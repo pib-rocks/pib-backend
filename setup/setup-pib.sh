@@ -893,6 +893,43 @@ function provision_curated_models() {
   return 0
 }
 
+# Voice weights are not in models/manifest.yaml. Copy a vendored
+# faster-whisper tree into /data/voice/models/whisper/ when the files are
+# already on disk. A missing tree is not downloaded and does not fail install.
+function provision_whisper_model() {
+  local script_root dest result
+  script_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+  dest="${WHISPER_MODEL_PATH:-/data/voice/models/whisper}"
+  if ! command_exists python3; then
+    print WARN "whisper model: python3 is missing; not downloading"
+    return 0
+  fi
+  if ! result="$(
+    PYTHONPATH="${script_root}/ros_packages/voice_assistant${PYTHONPATH:+:$PYTHONPATH}" \
+      WHISPER_MODEL_PATH="$dest" \
+      python3 -c 'import os, sys; from pathlib import Path; from voice_assistant.whisper_provision import provision_from_repo; print(provision_from_repo(Path(sys.argv[1]), Path(os.environ["WHISPER_MODEL_PATH"])))' \
+      "$script_root"
+  )"; then
+    print WARN "whisper model: provisioning failed; not downloading"
+    return 0
+  fi
+  case "$result" in
+    placed)
+      print INFO "whisper model: placed into ${dest}"
+      ;;
+    already_current)
+      print INFO "whisper model: already current in ${dest}"
+      ;;
+    missing)
+      print WARN "whisper model: weights are not vendored under voice/whisper; the engine will not download them into ${dest}"
+      ;;
+    *)
+      print WARN "whisper model: unexpected result ${result}"
+      ;;
+  esac
+  return 0
+}
+
 # clean setup files if local install + remove user from sudoers file again
 function cleanup() {
   if [ "$INSTALL_METHOD" = "legacy" ]; then
@@ -918,6 +955,7 @@ show_help()
 	echo -e "-l or --local for a local installation of the software over using a containerized setup using Docker"
 	echo -e "--models refresh the persistent OAK model store from models/ and exit"
 	echo -e "--verify-models check the model store against models/manifest.yaml and exit non-zero on mismatch"
+	echo -e "--no-smart-chats install without the Hermes channel; Direct is the only chat path"
 	echo -e "--pib4edu select the pib 4 educational hardware variant"
 	echo -e "--pib4advanced select the pib 4 advanced hardware variant"
 	echo -e "--pib5advanced select the pib 5 advanced hardware variant"
@@ -945,6 +983,7 @@ BRANCH_FRONTEND="main"
 INSTALL_METHOD="docker"
 MODELS_ONLY=false
 VERIFY_MODELS_ONLY=false
+SMART_CHATS_ENABLED=1
 HARDWARE_VARIANT_ARGUMENTS=()
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -962,6 +1001,9 @@ while [ $# -gt 0 ]; do
       ;;
     --verify-models)
       VERIFY_MODELS_ONLY=true
+      ;;
+    --no-smart-chats)
+      SMART_CHATS_ENABLED=0
       ;;
     --pib4edu | --pib4advanced | --pib5advanced | --pib5museum | --pib*)
       HARDWARE_VARIANT_ARGUMENTS+=("$1")
@@ -995,7 +1037,9 @@ fi
 
 if [ "$MODELS_ONLY" = true ]; then
   provision_curated_models provision
-  exit $?
+  models_status=$?
+  provision_whisper_model
+  exit "$models_status"
 fi
 
 if [ "$VERIFY_MODELS_ONLY" = true ]; then
@@ -1022,6 +1066,25 @@ printf '%s\n' "$PIB_HARDWARE_VARIANT" |
   sudo tee /etc/pib_hardware_variant >/dev/null
 print INFO "Selected hardware variant: ${PIB_HARDWARE_VARIANT}"
 
+# Durable record of --no-smart-chats. Personality rows are not rewritten:
+# clearing the marker restores Smart for personalities that stored it.
+if [ -f "$SETUP_SCRIPT_DIR/installation_scripts/smart_chats.sh" ]; then
+  # shellcheck source=/dev/null
+  source "$SETUP_SCRIPT_DIR/installation_scripts/smart_chats.sh"
+  SMART_CHATS_MARKER="$(smart_chats_marker "$SMART_CHATS_ENABLED")"
+elif [ "$SMART_CHATS_ENABLED" = "0" ]; then
+  SMART_CHATS_MARKER="disabled"
+else
+  SMART_CHATS_MARKER="enabled"
+fi
+printf '%s\n' "$SMART_CHATS_MARKER" | sudo tee /etc/pib_smart_chats >/dev/null
+if [ "$SMART_CHATS_ENABLED" = "0" ]; then
+  export PIB_SMART_CHATS=0
+else
+  export PIB_SMART_CHATS=1
+fi
+print INFO "Hermes channel: ${SMART_CHATS_MARKER}"
+
 DISTRIBUTION=$(get_distribution) # e.g., 'ubuntu'
 export DISTRIBUTION
 DIST_VERSION=$(get_dist_version "$DISTRIBUTION")  # e.g., 'noble'
@@ -1044,6 +1107,7 @@ provision_curated_models provision || {
   print ERROR "Model provisioning must succeed before containers are started"
   exit 1
 }
+provision_whisper_model
 install_pib_python_packages || print ERROR "failed to install pib Python packages"
 # Before docker-compose starts: hermes must exist on the host so the
 # ros-voice-assistant / flask-app bind mounts resolve to real paths.

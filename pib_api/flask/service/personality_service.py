@@ -1,9 +1,35 @@
 import logging
 import os
 from typing import Any, List, Optional
+
+from marshmallow import ValidationError
+
 from model.personality_model import Personality
+from model.provider_model import Provider
 from app.app import db
 from pib_hermes_config import build_default_soul_text
+from pib_hermes_config.channel import (
+    CHANNEL_DIRECT,
+    CHANNEL_SMART,
+    CHANNELS,
+    smart_chats_enabled,
+)
+from pib_hermes_config.live_interaction import personality_requests_actuation
+from pib_hermes_config.live_session import (
+    DEFAULT_LIVE_IDLE_TIMEOUT_SECONDS,
+    VOICE_MODE_LIVE,
+    normalize_idle_timeout,
+    normalize_voice_mode,
+)
+from pib_hermes_config.memory import write_memory
+from pib_hermes_config.turn_taking import normalize_thinking_filler
+from pib_hermes_config.voice_backends import (
+    LOCAL_STT_ID,
+    LOCAL_TTS_ID,
+    normalize_stt_choice,
+    normalize_tts_choice,
+)
+from provider_registry import DEFAULT_PROVIDER_REF, has_capability
 from service import soul_service
 
 #: Path of the daemon endpoint that owns the Hermes profile factory.
@@ -95,15 +121,177 @@ def get_personality(personality_id: str) -> Personality:
     return personality
 
 
+def _store_provider_ref(personality: Personality, ref: str) -> None:
+    """Persist a provider pointer. 'default' is not resolved into an id."""
+    if ref == DEFAULT_PROVIDER_REF:
+        personality.provider_ref = DEFAULT_PROVIDER_REF
+        personality.assistant_model_id = None
+        return
+    try:
+        provider_id = int(ref)
+    except (TypeError, ValueError) as exc:
+        raise ValidationError({"providerRef": ["Unknown provider reference."]}) from exc
+    if provider_id < 1 or Provider.query.filter_by(id=provider_id).first() is None:
+        raise ValidationError({"providerRef": ["Unknown provider reference."]})
+    personality.provider_ref = str(provider_id)
+    personality.assistant_model_id = provider_id
+
+
+def _apply_channel(
+    personality: Personality, personality_dto: Any, *, creating: bool
+) -> None:
+    """Store the channel. Does not touch the identity text or MEMORY.md.
+
+    With Hermes disabled, Smart cannot be stored. A create that omits the
+    channel then stores Direct, which is the only path.
+    """
+    if "channel" in personality_dto and personality_dto["channel"]:
+        requested = str(personality_dto["channel"])
+    elif creating:
+        requested = CHANNEL_DIRECT if not smart_chats_enabled() else CHANNEL_SMART
+    else:
+        return
+    if requested not in CHANNELS:
+        raise ValidationError({"channel": ["Channel must be smart or direct."]})
+    if requested == CHANNEL_SMART and not smart_chats_enabled():
+        raise ValidationError(
+            {"channel": ["Smart chats are not available on this robot."]}
+        )
+    personality.channel = requested
+
+
+def _apply_provider_choice(
+    personality: Personality, personality_dto: Any, *, creating: bool
+) -> None:
+    provider_ref = personality_dto.get("provider_ref")
+    model_id = personality_dto.get("assistant_model_id")
+    if provider_ref:
+        ref = str(provider_ref)
+    elif model_id is not None:
+        ref = str(model_id)
+    elif creating:
+        ref = DEFAULT_PROVIDER_REF
+    else:
+        return
+    _store_provider_ref(personality, ref)
+
+
+def _provider_has(capability: str):
+    def check(provider_id: int) -> bool:
+        row = Provider.query.filter_by(id=provider_id).first()
+        if row is None:
+            return False
+        return has_capability(row.capabilities, capability)
+
+    return check
+
+
+def _apply_voice_backends(
+    personality: Personality, personality_dto: Any, *, creating: bool
+) -> None:
+    """Local faster-whisper and Supertone, or a provider with that capability."""
+    if creating or "stt_engine" in personality_dto:
+        raw = (
+            personality_dto.get("stt_engine")
+            if "stt_engine" in personality_dto
+            else LOCAL_STT_ID
+        )
+        try:
+            personality.stt_engine = normalize_stt_choice(raw, _provider_has("stt"))
+        except ValueError as exc:
+            raise ValidationError({"sttEngine": [str(exc)]}) from exc
+    if creating or "tts_engine" in personality_dto:
+        raw = (
+            personality_dto.get("tts_engine")
+            if "tts_engine" in personality_dto
+            else LOCAL_TTS_ID
+        )
+        try:
+            personality.tts_engine = normalize_tts_choice(raw, _provider_has("tts"))
+        except ValueError as exc:
+            raise ValidationError({"ttsEngine": [str(exc)]}) from exc
+
+
+def _apply_live_chat_settings(
+    personality: Personality, personality_dto: Any, *, creating: bool
+) -> None:
+    """Voice mode and the idle timeout that stops an unused live session."""
+    if creating or "voice_mode" in personality_dto:
+        raw = (
+            personality_dto.get("voice_mode")
+            if "voice_mode" in personality_dto
+            else VOICE_MODE_LIVE
+        )
+        try:
+            personality.voice_mode = normalize_voice_mode(raw)
+        except ValueError as exc:
+            raise ValidationError({"voiceMode": [str(exc)]}) from exc
+    if creating or "live_idle_timeout" in personality_dto:
+        raw = (
+            personality_dto.get("live_idle_timeout")
+            if "live_idle_timeout" in personality_dto
+            else DEFAULT_LIVE_IDLE_TIMEOUT_SECONDS
+        )
+        try:
+            personality.live_idle_timeout = normalize_idle_timeout(raw)
+        except ValueError as exc:
+            raise ValidationError({"liveIdleTimeout": [str(exc)]}) from exc
+
+
+def _reject_actuation_request(personality_dto: Any) -> None:
+    """The actuation gate is PIB_MCP_ENABLE_ACTUATION, not a personality field."""
+    if isinstance(personality_dto, dict) and personality_requests_actuation(
+        personality_dto
+    ):
+        raise ValidationError(
+            {"actuation": ["The actuation gate is an installation setting."]}
+        )
+
+
+def _apply_memory(personality: Personality, personality_dto: Any) -> None:
+    """Store experience. Does not touch the character text or SOUL.md."""
+    if "memory" not in personality_dto:
+        return
+    text = personality_dto.get("memory")
+    if text is None:
+        text = ""
+    if not isinstance(text, str):
+        raise ValidationError({"memory": ["Memory must be text."]})
+    write_memory(personality.personality_id, text)
+
+
+def _apply_thinking_filler(personality: Personality, personality_dto: Any) -> None:
+    if "thinking_filler" not in personality_dto:
+        return
+    personality.thinking_filler = normalize_thinking_filler(
+        personality_dto.get("thinking_filler")
+    )
+
+
+def _tool_calling_value(personality_dto: Any, default: bool) -> bool:
+    if "tool_calling" not in personality_dto:
+        return default
+    return bool(personality_dto["tool_calling"])
+
+
 def create_personality(personality_dto: Any) -> Personality:
+    _reject_actuation_request(personality_dto)
     personality = Personality(
         name=personality_dto["name"],
         gender=personality_dto["gender"],
         pause_threshold=personality_dto["pause_threshold"],
         message_history=personality_dto["message_history"],
-        assistant_model_id=personality_dto["assistant_model_id"],
-        stt_engine=personality_dto.get("stt_engine", "local_whisper"),
+        stt_engine=LOCAL_STT_ID,
+        tts_engine=LOCAL_TTS_ID,
+        tool_calling=_tool_calling_value(personality_dto, True),
+        voice_mode=VOICE_MODE_LIVE,
+        live_idle_timeout=DEFAULT_LIVE_IDLE_TIMEOUT_SECONDS,
     )
+    _apply_live_chat_settings(personality, personality_dto, creating=True)
+    _apply_voice_backends(personality, personality_dto, creating=True)
+    _apply_thinking_filler(personality, personality_dto)
+    _apply_provider_choice(personality, personality_dto, creating=True)
+    _apply_channel(personality, personality_dto, creating=True)
     custom = ""
     if "description" in personality_dto and personality_dto["description"]:
         custom = str(personality_dto["description"]).strip()
@@ -127,10 +315,12 @@ def create_personality(personality_dto: Any) -> Personality:
             personality.personality_id,
             exc,
         )
+    _apply_memory(personality, personality_dto)
     return personality
 
 
 def update_personality(personality_id: str, personality_dto: Any) -> Personality:
+    _reject_actuation_request(personality_dto)
     personality = get_personality(personality_id)
     name_changed = False
     if "name" in personality_dto:
@@ -164,10 +354,14 @@ def update_personality(personality_id: str, personality_dto: Any) -> Personality
                 personality.personality_id,
                 exc,
             )
-    if "assistant_model_id" in personality_dto:
-        personality.assistant_model_id = personality_dto["assistant_model_id"]
-    if "stt_engine" in personality_dto:
-        personality.stt_engine = personality_dto["stt_engine"]
+    _apply_provider_choice(personality, personality_dto, creating=False)
+    _apply_channel(personality, personality_dto, creating=False)
+    if "tool_calling" in personality_dto:
+        personality.tool_calling = bool(personality_dto["tool_calling"])
+    _apply_live_chat_settings(personality, personality_dto, creating=False)
+    _apply_voice_backends(personality, personality_dto, creating=False)
+    _apply_thinking_filler(personality, personality_dto)
+    _apply_memory(personality, personality_dto)
     db.session.flush()
     return personality
 

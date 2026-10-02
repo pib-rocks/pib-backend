@@ -26,7 +26,7 @@ COPY ./ros_packages/voice_assistant/requirements.txt .
 RUN pip install --break-system-packages --no-cache-dir --ignore-installed requests pyaudio google-genai supertonic faster-whisper onnxruntime scipy soundfile hermes-agent
 
 ENV SUPERTONE_MODEL_PATH=/data/voice/models/supertone/
-ENV WHISPER_MODEL_SIZE=base
+ENV WHISPER_MODEL_SIZE=small
 ENV WHISPER_MODEL_PATH=/data/voice/models/whisper/
 
 COPY ./pib_api/client ./client

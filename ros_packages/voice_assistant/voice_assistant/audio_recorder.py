@@ -14,8 +14,14 @@ from rclpy.action import CancelResponse, GoalResponse
 from rclpy.action.server import ServerGoalHandle
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
-from std_msgs.msg import String, Int16MultiArray
+from std_msgs.msg import Bool, String, Int16MultiArray
 
+from pib_hermes_config.live_interaction import turn_based_is_speech
+from pib_hermes_config.visible_state import (
+    VOICE_USING_FALLBACK_TOPIC,
+    engine_is_fallback,
+)
+from pib_hermes_config.voice_backends import resolve_stt_route
 from public_api_client import public_voice_client
 from voice_assistant.stt_transcription import FasterWhisperSTTEngine
 from . import util
@@ -57,6 +63,10 @@ class AudioRecorderNode(Node):
 
         self.token: Optional[str] = None
         self.stt_engine = FasterWhisperSTTEngine()
+        self._published_fallback = None
+        self.voice_using_fallback_publisher = self.create_publisher(
+            Bool, VOICE_USING_FALLBACK_TOPIC, 10
+        )
 
         self.goal_queue: deque[ServerGoalHandle] = deque()
         self.goal_queue_lock = Lock()
@@ -84,6 +94,9 @@ class AudioRecorderNode(Node):
         self.ros_audio_stream_subscription = self.create_subscription(
             Int16MultiArray, "audio_stream", self.audio_stream_callback, 10
         )
+        # None until the array publishes. After that, its VAD owns end-of-turn.
+        self._hardware_vad: Optional[bool] = None
+        self.create_subscription(Bool, "/voice_activity", self._on_voice_activity, 10)
 
         self.get_logger().info("Now running AUDIO RECORDER")
 
@@ -179,12 +192,25 @@ class AudioRecorderNode(Node):
                         self.audio_chunk_event.clear()
                     return chunk
 
-    def is_silent(self, data_chunk: bytes) -> bool:
-        """
-        Check whether a chunk of frames is below the minimum volume threshold.
-        """
+    def _on_voice_activity(self, msg: Bool) -> None:
+        """The array's hardware VAD. The live uplink does not use this topic."""
+        self._hardware_vad = bool(msg.data)
+
+    def _amplitude_is_silent(self, data_chunk: bytes) -> bool:
         as_ints = np.frombuffer(data_chunk, dtype=np.int16)
         return np.abs(as_ints).mean() < SILENCE_VOLUME_THRESHOLD
+
+    def is_silent(self, data_chunk: bytes) -> bool:
+        """
+        Silence for the turn-based recorder.
+
+        Once /voice_activity has arrived, that signal decides. Loud audio
+        without voice activity is not speech. Amplitude is only the fallback
+        before the first sample.
+        """
+        return not turn_based_is_speech(
+            self._hardware_vad, self._amplitude_is_silent(data_chunk)
+        )
 
     def create_result(self, text: str) -> RecordAudio.Result:
         """
@@ -295,13 +321,26 @@ class AudioRecorderNode(Node):
             goal_handle.abort()
             return self.create_result("")
 
-        # Perform STT transcription using local faster-whisper or tryb API based on configuration
-        stt_mode = os.getenv("STT_ENGINE", "local_whisper")
+        # Local faster-whisper needs no token. A provider id is not sent to
+        # the legacy cloud client: that client is only the old tryb_api path.
+        requested = getattr(request, "stt_engine", "") or ""
+        stt_mode = requested or os.getenv("STT_ENGINE", "local_whisper")
+        route = resolve_stt_route(stt_mode)
         try:
-            if stt_mode == "tryb_api":
+            if route == "local":
+                text, _ = self.stt_engine.transcribe(wav_data)
+                self._publish_engine_fallback(
+                    getattr(self.stt_engine, "active_backend", "")
+                )
+            elif route == "tryb":
                 text = public_voice_client.speech_to_text(wav_data, self.token)
             else:
-                text, _ = self.stt_engine.transcribe(wav_data)
+                self.get_logger().error(
+                    "stt backend %s is not the local engine and has no speech client",
+                    stt_mode,
+                )
+                goal_handle.abort()
+                return self.create_result("")
         except Exception as e:
             self.get_logger().error(f"failed speech_to_text: {e}")
             goal_handle.abort()
@@ -309,6 +348,15 @@ class AudioRecorderNode(Node):
 
         goal_handle.succeed()
         return self.create_result(text)
+
+    def _publish_engine_fallback(self, active_backend: object) -> None:
+        fallback = engine_is_fallback(active_backend)
+        if fallback == self._published_fallback:
+            return
+        self._published_fallback = fallback
+        message = Bool()
+        message.data = fallback
+        self.voice_using_fallback_publisher.publish(message)
 
 
 def main(args=None):

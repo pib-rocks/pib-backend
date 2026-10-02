@@ -77,7 +77,9 @@ def create_server(
         "pib",
         instructions=(
             "Schema-validated pib robot tools. Actuator tools require "
-            "PIB_MCP_ENABLE_ACTUATION=true in the server environment."
+            "PIB_MCP_ENABLE_ACTUATION=true in the server environment. "
+            "A gesture or a head turn while an answer is spoken is "
+            "apply_pose or move_motor, not a separate gesture system."
         ),
     )
 
