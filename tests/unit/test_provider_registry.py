@@ -10,6 +10,7 @@ from provider_registry import (
     CAPABILITY_KEYS,
     DEFAULT_PROVIDER_REF,
     active_entries,
+    capabilities_held_by_all,
     has_images_capability,
 )
 from service import personality_service, provider_service
@@ -27,11 +28,17 @@ def test_seed_copies_assistant_models_without_losing_ids(app_ctx):
         assert model.provider.endpoint_base is None
         assert model.provider.credential_ref is None
         assert has_images_capability(model.capabilities) is assistant.has_image_support
-        assert model.provider.capabilities == model.capabilities
+        siblings = [row.capabilities for row in model.provider.models]
+        assert model.provider.capabilities == capabilities_held_by_all(siblings)
 
     for personality in Personality.query.all():
         assert personality.assistant_model_id is not None
         assert personality.provider_ref == str(personality.assistant_model_id)
+
+
+def _listed_model_ids(client) -> set[int]:
+    providers = client.get("/provider").get_json()["providers"]
+    return {model["id"] for provider in providers for model in provider["models"]}
 
 
 def test_selection_offers_only_rows_with_images_capability(app):
@@ -40,32 +47,38 @@ def test_selection_offers_only_rows_with_images_capability(app):
 
         gpt6 = RegistryModel.query.filter_by(api_name="gpt-6").one()
         gemini = RegistryModel.query.filter_by(api_name="gemini-3.8-flash").one()
+        live = RegistryModel.query.filter_by(api_name="gemini-3.8-live").one()
         claude = RegistryModel.query.filter_by(api_name="claude-sonnet-5-5").one()
-        gpt6_id, gemini_id, claude_id = gpt6.id, gemini.id, claude.id
+        gpt6_id, gemini_id, live_id, claude_id = gpt6.id, gemini.id, live.id, claude.id
         all_ids = {row.id for row in RegistryModel.query.all()}
-        # Every seeded row carries images. Clear one flag so the filter shows.
+        # Clear one image flag so the filter shows. The live model has none.
         gemini.capabilities = {**gemini.capabilities, "images": False}
         db.session.commit()
 
     client = app.test_client()
     providers = client.get("/provider").get_json()["providers"]
-    offered = {row["id"] for row in providers}
-    assert set(providers[0]["capabilities"]) == {
+    google = next(row for row in providers if row["name"] == "Google")
+    assert set(google["models"][0]["capabilities"]) == {
         "tools",
         "images",
         "live",
         "stt",
         "tts",
     }
+    offered = _listed_model_ids(client)
     assistant_offered = {
         row["id"]
         for row in client.get("/assistant-model").get_json()["assistantModels"]
     }
-    assert offered == assistant_offered
+    # The assistant list is the image filter. The provider list also keeps
+    # the named live model, which has no images.
+    assert assistant_offered == all_ids - {gemini_id, live_id}
     assert offered == all_ids - {gemini_id}
     assert gpt6_id in offered
     assert claude_id in offered
+    assert live_id in offered
     assert gemini_id not in offered
+    assert live_id not in assistant_offered
 
     # The flag decides, not the name.
     with app.app_context():
@@ -75,12 +88,14 @@ def test_selection_offers_only_rows_with_images_capability(app):
         claude.capabilities = {**claude.capabilities, "images": False}
         db.session.commit()
 
-    offered = {row["id"] for row in client.get("/provider").get_json()["providers"]}
+    offered = _listed_model_ids(client)
     assert gemini_id in offered
+    assert live_id in offered
     assert claude_id not in offered
     by_id = client.get(f"/provider/{claude_id}")
     assert by_id.status_code == 200
     assert by_id.get_json()["capabilities"]["images"] is False
+    assert "liveModel" not in by_id.get_json()
 
 
 def test_new_personality_stores_default_pointer(app_ctx, monkeypatch):

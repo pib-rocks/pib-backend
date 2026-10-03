@@ -138,12 +138,14 @@ def test_upgrade_copies_assistant_model_ids_onto_the_provider_registry(tmp_path)
 
     supported = {
         "gemini-3.8-flash",
+        "gemini-3.8-live",
         "gpt-6",
         "claude-sonnet-5-5",
         "pib-cloud",
     }
     catalogue_providers = {
         "gemini-3.8-flash": "Google",
+        "gemini-3.8-live": "Google",
         "gpt-6": "OpenAI",
         "claude-sonnet-5-5": "Anthropic",
         "pib-cloud": "pib.Cloud",
@@ -164,7 +166,12 @@ def test_upgrade_copies_assistant_model_ids_onto_the_provider_registry(tmp_path)
     } <= model_columns
     assert set(providers) == supported
     assert set(assistant_models) == supported
-    assert len(accounts) == len(supported)
+    # Google owns both Gemini models. The other accounts own one each.
+    assert len(accounts) == 4
+    models_per_account: dict[int, int] = {}
+    for api_name in supported:
+        account_id = providers[api_name][8]
+        models_per_account[account_id] = models_per_account.get(account_id, 0) + 1
     for api_name in supported:
         model = providers[api_name]
         account = accounts[model[8]]
@@ -173,18 +180,24 @@ def test_upgrade_copies_assistant_model_ids_onto_the_provider_registry(tmp_path)
         assert account[1] == catalogue_providers[api_name]
         assert account[2] is None
         assert account[3] is None
-        assert json.loads(account[4]) == json.loads(model[4])
+        if models_per_account[model[8]] == 1:
+            assert json.loads(account[4]) == json.loads(model[4])
     assert "hermes-agent" not in providers
     assert "hermes-agent" not in assistant_models
     assert {providers[name][0] for name in supported} & {11, 12, 13, 14} == set()
     assert [name for name, row in providers.items() if row[5] == 1] == ["pib-cloud"]
     assert providers["pib-cloud"][2] == "pib.Cloud"
     assert json.loads(providers["pib-cloud"][4])["images"] is True
-    assert json.loads(providers["gemini-3.8-flash"][4])["live"] is True
-    assert providers["gemini-3.8-flash"][6:8] == (
-        "gemini-3.8-live",
-        "2026-10-01",
-    )
+    assert json.loads(providers["gemini-3.8-flash"][4])["live"] is False
+    assert providers["gemini-3.8-flash"][6:8] == (None, None)
+    assert json.loads(providers["gemini-3.8-live"][4])["live"] is True
+    assert providers["gemini-3.8-live"][2] == "Gemini 3.8 Live"
+    assert providers["gemini-3.8-live"][6:8] == (None, None)
+    assert providers["gemini-3.8-live"][8] == providers["gemini-3.8-flash"][8]
+    google = json.loads(accounts[providers["gemini-3.8-flash"][8]][4])
+    assert google["tools"] is True
+    assert google["images"] is False
+    assert google["live"] is False
     assert providers["gpt-6"][6:8] == (None, None)
     # The personality is not moved onto another model. Its reference stays and
     # now points at nothing, which is what reports it as needing a new model.

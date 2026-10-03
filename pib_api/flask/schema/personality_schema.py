@@ -16,7 +16,7 @@ from pib_hermes_config.channel import (
 from pib_hermes_config.live_session import (
     VOICE_MODE_LIVE,
     VOICE_MODE_TURN_BASED,
-    voice_start_mode,
+    voice_mode_for_model,
 )
 from pib_hermes_config.memory import (
     CHARACTER_LABEL,
@@ -85,9 +85,12 @@ class PersonalitySchemaSQLAutoWith(SQLAutoWithCamelCaseSchema):
         allow_none=True,
     )
     profile_provisioned = fields.Boolean(dump_only=True)
-    voice_mode = fields.String(
+    # Derived from the chosen model. Sending it does not switch a mode.
+    voice_mode = fields.Method(
+        serialize="get_voice_mode",
+        deserialize="load_voice_mode",
         required=False,
-        validate=validate.OneOf([VOICE_MODE_LIVE, VOICE_MODE_TURN_BASED]),
+        allow_none=True,
     )
     live_idle_timeout = fields.Integer(required=False, validate=validate.Range(min=1))
     thinking_filler = fields.String(
@@ -137,19 +140,30 @@ class PersonalitySchemaSQLAutoWith(SQLAutoWithCamelCaseSchema):
             return False
         return self._resolved_model(obj) is None
 
+    def get_voice_mode(self, obj: Personality) -> str:
+        """Live when the chosen model is a live model, otherwise turn-based."""
+        model = self._resolved_model(obj)
+        if model is None:
+            return VOICE_MODE_TURN_BASED
+        return voice_mode_for_model(
+            has_capability(model.capabilities, "live"), model.api_name
+        )
+
+    def load_voice_mode(self, _value: object) -> str:
+        raise ValidationError("Voice mode follows the chosen model.")
+
     def get_live_model(self, obj: Personality) -> str | None:
+        """The chosen model's own id when that model is live."""
         model = self._resolved_model(obj)
         if model is None:
             return None
-        return model.live_model
+        if self.get_voice_mode(obj) != VOICE_MODE_LIVE:
+            return None
+        return model.api_name
 
     def get_voice_start_mode(self, obj: Personality) -> str:
-        """What the one voice button will start: live or turn-based."""
-        model = self._resolved_model(obj)
-        capable = bool(model) and has_capability(model.capabilities, "live")
-        pinned = model.live_model if model is not None else None
-        mode = getattr(obj, "voice_mode", None) or VOICE_MODE_LIVE
-        return voice_start_mode(mode, capable, pinned)
+        """What the one voice button will start: the chosen model's mode."""
+        return self.get_voice_mode(obj)
 
     def _provider_is_live(self, obj: Personality) -> bool:
         return self.get_voice_start_mode(obj) == VOICE_MODE_LIVE

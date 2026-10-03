@@ -74,8 +74,8 @@ class Personality(db.Model):
         default=True,
         server_default="1",
     )
-    # live or turn_based. The provider's live flag and pinned model decide
-    # whether live is actually what the voice button starts.
+    # Derived from the chosen model: live for a live catalogue model,
+    # turn_based for every other model. The client does not set it.
     voice_mode = db.Column(
         db.String(255),
         nullable=False,

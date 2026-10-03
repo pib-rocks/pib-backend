@@ -67,9 +67,11 @@ class CatalogueEntry(NamedTuple):
 
 # Columns:
 # provider, api_name, visual_name, tools, images, live, stt, tts, status, is_default
+# A live model is its own line. It is not a flag pinned onto the chat model.
 # fmt: off
 _CATALOGUE_ROWS = (
-    ("Google", "gemini-3.8-flash", "Gemini 3.8 Flash", True, True, True, False, False, STATUS_ACTIVE, False),
+    ("Google", "gemini-3.8-flash", "Gemini 3.8 Flash", True, True, False, False, False, STATUS_ACTIVE, False),
+    ("Google", "gemini-3.8-live", "Gemini 3.8 Live", True, False, True, False, False, STATUS_ACTIVE, False),
     ("OpenAI", "gpt-6", "GPT-6", True, True, False, False, False, STATUS_ACTIVE, False),
     ("Anthropic", "claude-sonnet-5-5", "Claude Sonnet 5.5", True, True, False, False, False, STATUS_ACTIVE, False),
     ("pib.Cloud", PIB_CLOUD_API_NAME, "pib.Cloud", True, True, False, False, False, STATUS_ACTIVE, True),  # TODO(confirm id)
@@ -116,20 +118,27 @@ def model_status(api_name: str) -> str:
 
 
 def pins_gemini_live_model(api_name: str) -> bool:
-    """True when this chat id's row stores the pinned Gemini live model."""
-    entry = catalogue_entry(api_name)
-    if entry is None or not entry.live or not entry.api_name:
-        return False
-    return "gemini" in entry.api_name.lower()
+    """Live speech is its own catalogue line, never a pin on a chat row.
+
+    Older migrations still pass the chat id. It does not select a row.
+    """
+    del api_name
+    return False
 
 
 def gemini_live_chat_api_names() -> tuple[str, ...]:
-    """Chat ids whose registry row is pinned to the Gemini live model."""
+    """Chat ids that used to carry a hidden live pin. There are none."""
     return tuple(
         entry.api_name
         for entry in CATALOGUE
         if entry.api_name and pins_gemini_live_model(entry.api_name)
     )
+
+
+def is_listed_model(row: Any) -> bool:
+    """A personality may choose an image model or a named live model."""
+    capabilities = getattr(row, "capabilities", row)
+    return has_images_capability(capabilities) or has_capability(capabilities, "live")
 
 
 def capabilities_for(api_name: str, has_image_support: bool) -> dict[str, bool]:

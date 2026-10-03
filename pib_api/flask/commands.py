@@ -21,6 +21,7 @@ from provider_registry import (
     DEFAULT_PROVIDER_API_NAME,
     active_api_names,
     active_entries,
+    capabilities_for,
 )
 from service.provider_service import attach_registry_models, sync_shared_capabilities
 from model.controller_model import Controller
@@ -360,6 +361,7 @@ def _reconcile_model_catalogue() -> None:
     db.session.add_all(added)
     db.session.flush()
     attach_registry_models(added)
+    _align_existing_catalogue_rows()
     for provider in Provider.query.all():
         sync_shared_capabilities(provider)
     db.session.flush()
@@ -388,6 +390,30 @@ def _reconcile_model_catalogue() -> None:
             + ", ".join(model.api_name for model in added)
             + "."
         )
+
+
+def _align_existing_catalogue_rows() -> None:
+    """Copy catalogue flags onto rows that already exist and drop a hidden pin.
+
+    A live model is its own row. A chat model must not keep another id in
+    live_model, and its live flag must match the catalogue.
+    """
+    for entry in active_entries():
+        row = RegistryModel.query.filter_by(api_name=entry.api_name).one_or_none()
+        if row is None:
+            continue
+        row.visual_name = entry.visual_name
+        row.has_image_support = entry.images
+        row.capabilities = capabilities_for(entry.api_name, entry.images)
+        row.live_model = None
+        row.live_model_checked_on = None
+        assistant = AssistantModel.query.filter_by(
+            api_name=entry.api_name
+        ).one_or_none()
+        if assistant is None:
+            continue
+        assistant.visual_name = entry.visual_name
+        assistant.has_image_support = entry.images
 
 
 def _rebuild_button_programs(profile: HardwareProfile) -> None:

@@ -40,7 +40,7 @@ def test_name_only_create_succeeds_with_the_documented_defaults(client, app_ctx)
     assert created["pauseThreshold"] == 0.8
     assert created["messageHistory"] == 5
     assert created["toolCalling"] is True
-    assert created["voiceMode"] == "live"
+    assert created["voiceMode"] == "turn_based"
     assert created["liveIdleTimeout"] == 60
     assert created["sttEngine"] == "local_whisper"
     assert created["ttsEngine"] == "supertone"

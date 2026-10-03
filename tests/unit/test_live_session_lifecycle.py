@@ -8,7 +8,6 @@ from model.provider_model import RegistryModel
 from pib_hermes_config.live_session import (
     DEFAULT_LIVE_IDLE_TIMEOUT_SECONDS,
     GEMINI_LIVE_MODEL,
-    GEMINI_LIVE_MODEL_CHECKED_ON,
     OPENAI_LIVE_MODEL,
     RETIRED_LIVE_MODEL,
     VOICE_MODE_LIVE,
@@ -73,26 +72,32 @@ def test_voice_start_mode_is_gated_by_the_live_flag_and_the_pinned_model():
     )
 
 
-def test_gemini_row_is_pinned_and_openai_is_not(app_ctx):
-    gemini = RegistryModel.query.filter_by(api_name="gemini-3.8-flash").one()
-    assert gemini.capabilities["live"] is True
-    assert gemini.live_model == GEMINI_LIVE_MODEL
-    assert gemini.live_model_checked_on == date.fromisoformat(
-        GEMINI_LIVE_MODEL_CHECKED_ON
-    )
+def test_the_live_model_is_its_own_row_and_flash_is_not_pinned(app_ctx):
+    flash = RegistryModel.query.filter_by(api_name="gemini-3.8-flash").one()
+    live = RegistryModel.query.filter_by(api_name="gemini-3.8-live").one()
+    assert flash.capabilities["live"] is False
+    assert flash.live_model is None
+    assert flash.live_model_checked_on is None
+    assert live.visual_name == "Gemini 3.8 Live"
+    assert live.api_name == GEMINI_LIVE_MODEL
+    assert live.capabilities["live"] is True
+    assert live.live_model is None
+    assert live.provider_id == flash.provider_id
     openai = RegistryModel.query.filter_by(api_name="gpt-6").one()
     assert openai.live_model is None
     assert openai.live_model_checked_on is None
     assert openai.capabilities["live"] is False
 
 
-def test_provider_api_reports_the_pin_and_the_check_date(app):
-    with app.app_context():
-        gemini_id = RegistryModel.query.filter_by(api_name="gemini-3.8-flash").one().id
-    body = app.test_client().get(f"/provider/{gemini_id}").get_json()
-    assert body["liveModel"] == GEMINI_LIVE_MODEL
-    assert body["liveModelCheckedOn"] == GEMINI_LIVE_MODEL_CHECKED_ON
-    assert body["capabilities"]["live"] is True
+def test_provider_api_lists_the_live_model_beside_flash(app):
+    body = app.test_client().get("/provider").get_json()
+    google = next(row for row in body["providers"] if row["name"] == "Google")
+    by_name = {model["visualName"]: model for model in google["models"]}
+    assert by_name["Gemini 3.8 Flash"]["apiName"] == "gemini-3.8-flash"
+    assert by_name["Gemini 3.8 Flash"]["capabilities"]["live"] is False
+    assert "liveModel" not in by_name["Gemini 3.8 Flash"]
+    assert by_name["Gemini 3.8 Live"]["apiName"] == GEMINI_LIVE_MODEL
+    assert by_name["Gemini 3.8 Live"]["capabilities"]["live"] is True
 
 
 def test_personality_live_settings_choose_the_mode_the_button_starts(app, monkeypatch):
@@ -102,65 +107,89 @@ def test_personality_live_settings_choose_the_mode_the_button_starts(app, monkey
         MagicMock(return_value={"ok": True}),
     )
     with app.app_context():
-        gemini_id = RegistryModel.query.filter_by(api_name="gemini-3.8-flash").one().id
+        flash_id = RegistryModel.query.filter_by(api_name="gemini-3.8-flash").one().id
+        live_id = RegistryModel.query.filter_by(api_name="gemini-3.8-live").one().id
     client = app.test_client()
     created = client.post(
         "/voice-assistant/personality",
         json={
-            "name": "LiveDefault",
+            "name": "FlashChat",
             "gender": "Female",
             "pauseThreshold": 0.8,
             "messageHistory": 5,
-            "assistantModelId": gemini_id,
+            "assistantModelId": flash_id,
         },
     )
     assert created.status_code == 201
     body = created.get_json()
-    assert body["voiceMode"] == VOICE_MODE_LIVE
+    assert body["voiceMode"] == VOICE_MODE_TURN_BASED
     assert body["liveIdleTimeout"] == DEFAULT_LIVE_IDLE_TIMEOUT_SECONDS
-    assert body["liveModel"] == GEMINI_LIVE_MODEL
-    assert body["voiceStartMode"] == VOICE_MODE_LIVE
-    assert body["localVoiceApplies"] is False
-    assert body["liveVoiceNote"] == LIVE_VOICE_NOTE
+    assert body["liveModel"] is None
+    assert body["voiceStartMode"] == VOICE_MODE_TURN_BASED
+    assert body["localVoiceApplies"] is True
+    assert body["liveVoiceNote"] is None
 
     personality_id = body["personalityId"]
     updated = client.put(
         f"/voice-assistant/personality/{personality_id}",
-        json={"voiceMode": VOICE_MODE_TURN_BASED, "liveIdleTimeout": 45},
+        json={"liveIdleTimeout": 45},
     )
     assert updated.status_code == 200
     body = updated.get_json()
     assert body["voiceMode"] == VOICE_MODE_TURN_BASED
     assert body["liveIdleTimeout"] == 45
     assert body["voiceStartMode"] == VOICE_MODE_TURN_BASED
-    assert body["localVoiceApplies"] is True
-    assert body["liveVoiceNote"] is None
 
     rejected = client.put(
         f"/voice-assistant/personality/{personality_id}",
-        json={"voiceMode": "both", "liveIdleTimeout": 0},
+        json={"voiceMode": VOICE_MODE_LIVE, "liveIdleTimeout": 45},
     )
     assert rejected.status_code == 400
+    kept = client.get(f"/voice-assistant/personality/{personality_id}").get_json()
+    assert kept["voiceMode"] == VOICE_MODE_TURN_BASED
+    assert kept["liveIdleTimeout"] == 45
+
+    refused = client.put(
+        f"/voice-assistant/personality/{personality_id}",
+        json={"liveIdleTimeout": 0},
+    )
+    assert refused.status_code == 400
+
+    live = client.post(
+        "/voice-assistant/personality",
+        json={
+            "name": "LiveModel",
+            "gender": "Female",
+            "pauseThreshold": 0.8,
+            "messageHistory": 5,
+            "assistantModelId": live_id,
+        },
+    )
+    assert live.status_code == 201
+    live_body = live.get_json()
+    assert live_body["voiceMode"] == VOICE_MODE_LIVE
+    assert live_body["liveModel"] == GEMINI_LIVE_MODEL
+    assert live_body["voiceStartMode"] == VOICE_MODE_LIVE
+    assert live_body["localVoiceApplies"] is False
+    assert live_body["liveVoiceNote"] == LIVE_VOICE_NOTE
 
 
-def test_pin_rewrites_the_row_from_the_account_model_list(app_ctx):
+def test_pin_confirms_the_named_live_model_and_leaves_the_chat_model(app_ctx):
     from app.app import db
 
-    gemini = RegistryModel.query.filter_by(api_name="gemini-3.8-flash").one()
+    flash = RegistryModel.query.filter_by(api_name="gemini-3.8-flash").one()
+    live = RegistryModel.query.filter_by(api_name="gemini-3.8-live").one()
     openai = RegistryModel.query.filter_by(api_name="gpt-6").one()
-    gemini.provider.credential_ref = "provider-gemini"
-    gemini.live_model = None
-    gemini.capabilities = {**gemini.capabilities, "live": False}
+    flash.provider.credential_ref = "provider-gemini"
+    live.capabilities = {**live.capabilities, "live": False}
     openai.provider.credential_ref = "provider-openai"
     db.session.commit()
 
     def fetch(api_name, endpoint_base, api_key):
-        if "gemini" in api_name:
-            assert api_key == "gemini-secret"
-            assert endpoint_base is None
-            return [GEMINI_LIVE_MODEL, "gemini-3.8-flash"]
-        assert api_key == "openai-secret"
-        return ["gpt-6", OPENAI_LIVE_MODEL]
+        assert api_name == GEMINI_LIVE_MODEL
+        assert api_key == "gemini-secret"
+        assert endpoint_base is None
+        return [GEMINI_LIVE_MODEL, "gemini-3.8-flash"]
 
     live_model_service.pin_providers(
         RegistryModel.query.all(),
@@ -173,34 +202,44 @@ def test_pin_rewrites_the_row_from_the_account_model_list(app_ctx):
     )
     db.session.commit()
 
-    gemini = RegistryModel.query.filter_by(api_name="gemini-3.8-flash").one()
+    flash = RegistryModel.query.filter_by(api_name="gemini-3.8-flash").one()
+    live = RegistryModel.query.filter_by(api_name="gemini-3.8-live").one()
     openai = RegistryModel.query.filter_by(api_name="gpt-6").one()
-    assert gemini.live_model == GEMINI_LIVE_MODEL
-    assert gemini.live_model_checked_on == date(2026, 9, 30)
-    assert gemini.capabilities["live"] is True
-    assert openai.live_model == OPENAI_LIVE_MODEL
-    assert openai.live_model_checked_on == date(2026, 9, 30)
+    assert flash.live_model is None
+    assert flash.capabilities["live"] is False
+    assert flash.live_model_checked_on is None
+    assert live.live_model is None
+    assert live.api_name == GEMINI_LIVE_MODEL
+    assert live.live_model_checked_on == date(2026, 9, 30)
+    assert live.capabilities["live"] is True
+    assert openai.live_model is None
+    assert openai.live_model_checked_on is None
     assert openai.capabilities["live"] is False
 
 
-def test_a_list_without_the_candidate_clears_the_gemini_pin(app_ctx):
+def test_a_list_without_the_named_model_clears_its_live_flag(app_ctx):
     from app.app import db
 
-    gemini = RegistryModel.query.filter_by(api_name="gemini-3.8-flash").one()
-    gemini.provider.credential_ref = "provider-gemini"
+    live = RegistryModel.query.filter_by(api_name="gemini-3.8-live").one()
+    flash = RegistryModel.query.filter_by(api_name="gemini-3.8-flash").one()
+    live.provider.credential_ref = "provider-gemini"
     db.session.commit()
 
     live_model_service.pin_providers(
-        [gemini],
+        [live, flash],
         {"provider-gemini": "gemini-secret"},
         fetch=lambda api_name, endpoint_base, api_key: ["gemini-3.8-flash"],
         checked_on=date(2026, 9, 30),
     )
     db.session.commit()
-    gemini = RegistryModel.query.filter_by(api_name="gemini-3.8-flash").one()
-    assert gemini.live_model is None
-    assert gemini.capabilities["live"] is False
-    assert gemini.live_model_checked_on == date(2026, 9, 30)
+    live = RegistryModel.query.filter_by(api_name="gemini-3.8-live").one()
+    flash = RegistryModel.query.filter_by(api_name="gemini-3.8-flash").one()
+    assert live.live_model is None
+    assert live.capabilities["live"] is False
+    assert live.live_model_checked_on == date(2026, 9, 30)
+    assert flash.live_model is None
+    assert flash.capabilities["live"] is False
+    assert flash.live_model_checked_on is None
 
 
 def test_model_list_urls_and_payloads_do_not_put_the_key_in_the_query():

@@ -1,9 +1,9 @@
 """Live-session rules shared by the registry and the voice node.
 
-The live model identifier is a field of the provider row. The ``live``
-capability flag gates a session. Context-window compression stays on, an
-unused session ends at the personality's idle timeout, and one personality
-holds the voice channel at a time.
+A live model is a catalogue entry. Choosing that model is what starts a
+live session. Context-window compression stays on, an unused session ends
+at the personality's idle timeout, and one personality holds the voice
+channel at a time.
 """
 
 from __future__ import annotations
@@ -33,13 +33,24 @@ GEMINI_MODELS_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 
 
 def live_candidate_for(api_name: str) -> str | None:
-    """The live model this provider row may pin, or None when it has none."""
-    name = (api_name or "").lower()
-    if "gemini" in name:
+    """The row's own id when this row is a live model, else None.
+
+    A chat model does not carry a different live id.
+    """
+    if api_name == GEMINI_LIVE_MODEL:
         return GEMINI_LIVE_MODEL
-    if name.startswith("gpt-"):
+    if api_name == OPENAI_LIVE_MODEL:
         return OPENAI_LIVE_MODEL
     return None
+
+
+def voice_mode_for_model(live_capable: bool, api_name: object) -> str:
+    """Live when the chosen model is a live model this process can open."""
+    if not live_capable:
+        return VOICE_MODE_TURN_BASED
+    if gemini_live_connect_model(api_name) is None:
+        return VOICE_MODE_TURN_BASED
+    return VOICE_MODE_LIVE
 
 
 def gemini_live_connect_model(model: object) -> str | None:

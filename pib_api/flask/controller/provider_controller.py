@@ -1,6 +1,6 @@
 from flask import Blueprint, abort
 
-from schema.provider_schema import provider_schema, providers_schema
+from schema.provider_schema import provider_accounts_schema, provider_schema
 from service import provider_service
 
 bp = Blueprint("provider_controller", __name__)
@@ -8,12 +8,17 @@ bp = Blueprint("provider_controller", __name__)
 
 @bp.route("", methods=["GET"])
 def list_providers():
-    """Registry rows offered for selection.
+    """Each provider with the models a personality may choose.
 
-    A row without the images capability is omitted. The filter is the flag,
-    not a list of provider names. The registry is read-only.
+    A chat model without the images capability is omitted. A live model is
+    its own entry and stays. The filter is the flag, not a list of names.
+    The registry is read-only.
     """
-    return {"providers": providers_schema.dump(provider_service.selectable_models())}
+    providers = []
+    for provider, models in provider_service.providers_with_models():
+        provider._listed_models = models
+        providers.append(provider)
+    return {"providers": provider_accounts_schema.dump(providers)}
 
 
 @bp.route("/voice-backends", methods=["GET"])

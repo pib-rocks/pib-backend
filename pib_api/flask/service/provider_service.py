@@ -1,12 +1,7 @@
-from datetime import date
 from typing import List, Optional
 
 from model.assistant_model import AssistantModel
 from model.provider_model import Provider, RegistryModel
-from pib_hermes_config.live_session import (
-    GEMINI_LIVE_MODEL,
-    GEMINI_LIVE_MODEL_CHECKED_ON,
-)
 from pib_hermes_config.voice_backends import (
     LIVE_VOICE_NOTE,
     LOCAL_STT_ENGINE,
@@ -20,8 +15,8 @@ from provider_registry import (
     capabilities_held_by_all,
     has_capability,
     has_images_capability,
+    is_listed_model,
     is_registry_default,
-    pins_gemini_live_model,
     provider_name_for,
 )
 
@@ -53,17 +48,11 @@ def _provider_for(api_name: str, visual_name: str) -> Provider:
 def build_registry_model(model: AssistantModel) -> RegistryModel:
     """One model row for an assistant model, using that model's id.
 
-    The provider is the catalogue account. A Gemini chat id the catalogue
-    marks live carries the live model pinned on 2026-09-30. Other rows stay
-    unpinned until their own account list is read.
+    The provider is the catalogue account. A live model is its own row.
+    Nothing stores a second id beside the one the catalogue names.
     """
     flags = capabilities_for(model.api_name, bool(model.has_image_support))
     provider = _provider_for(model.api_name, model.visual_name)
-    live_model = None
-    checked_on = None
-    if pins_gemini_live_model(model.api_name):
-        live_model = GEMINI_LIVE_MODEL
-        checked_on = date.fromisoformat(GEMINI_LIVE_MODEL_CHECKED_ON)
     return RegistryModel(
         id=model.id,
         provider_id=provider.id,
@@ -72,8 +61,8 @@ def build_registry_model(model: AssistantModel) -> RegistryModel:
         has_image_support=bool(model.has_image_support),
         capabilities=flags,
         is_default=is_registry_default(model.api_name),
-        live_model=live_model,
-        live_model_checked_on=checked_on,
+        live_model=None,
+        live_model_checked_on=None,
     )
 
 
@@ -153,9 +142,27 @@ def speech_backends() -> dict:
 
 
 def selectable_models() -> List[RegistryModel]:
-    """Models a personality may be pointed at. Image support is the filter."""
+    """Chat models offered by the assistant-model list. Image support is the filter."""
     rows = RegistryModel.query.order_by(RegistryModel.id).all()
     return [row for row in rows if has_images_capability(row.capabilities)]
+
+
+def providers_with_models() -> List[tuple]:
+    """Each provider with the models a personality may choose.
+
+    A chat model without images is left out. A live model stays, because
+    choosing that model is how live speech is selected.
+    """
+    groups = []
+    for provider in Provider.query.order_by(Provider.id).all():
+        models = [
+            row
+            for row in sorted(provider.models, key=lambda row: row.id)
+            if is_listed_model(row)
+        ]
+        if models:
+            groups.append((provider, models))
+    return groups
 
 
 def resolve_model(provider_ref: str) -> RegistryModel:

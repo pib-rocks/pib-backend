@@ -73,9 +73,9 @@ def test_live_provider_states_that_the_local_voice_does_not_apply(app, monkeypat
         MagicMock(return_value={"ok": True}),
     )
     with app.app_context():
-        gemini = RegistryModel.query.filter_by(api_name="gemini-3.8-flash").one()
-        gemini_id = gemini.id
-        assert gemini.capabilities["live"] is True
+        live = RegistryModel.query.filter_by(api_name="gemini-3.8-live").one()
+        live_id = live.id
+        assert live.capabilities["live"] is True
     response = app.test_client().post(
         "/voice-assistant/personality",
         json={
@@ -83,7 +83,7 @@ def test_live_provider_states_that_the_local_voice_does_not_apply(app, monkeypat
             "gender": "Female",
             "pauseThreshold": 0.8,
             "messageHistory": 5,
-            "assistantModelId": gemini_id,
+            "assistantModelId": live_id,
         },
     )
     assert response.status_code == 201

@@ -30,9 +30,15 @@ THOMAS_PERSONALITY_ID = "8b310f95-92cd-4512-b42a-d3fe29c4bb8a"
 #: The maintained catalogue, in the order the file keeps it.
 SUPPORTED_API_NAMES = (
     "gemini-3.8-flash",
+    "gemini-3.8-live",
     "gpt-6",
     "claude-sonnet-5-5",
     PIB_CLOUD_API_NAME,
+)
+
+#: Chat models the assistant-model list offers. The live model has no images.
+IMAGE_API_NAMES = tuple(
+    name for name in SUPPORTED_API_NAMES if name != "gemini-3.8-live"
 )
 
 REMOVED_API_NAME = "hermes-agent"
@@ -134,13 +140,18 @@ def test_no_old_model_is_offered_or_stored(app):
     assert model_names == set(SUPPORTED_API_NAMES)
     assert provider_names == {entry.provider for entry in active_entries()}
 
-    for path, key in (
-        ("/provider", "providers"),
-        ("/assistant-model", "assistantModels"),
-    ):
-        offered = client.get(path).get_json()[key]
-        assert {row["apiName"] for row in offered} == set(SUPPORTED_API_NAMES)
-        assert all(row["status"] == STATUS_ACTIVE for row in offered)
+    assistant = client.get("/assistant-model").get_json()["assistantModels"]
+    assert {row["apiName"] for row in assistant} == set(IMAGE_API_NAMES)
+    assert all(row["status"] == STATUS_ACTIVE for row in assistant)
+    providers = client.get("/provider").get_json()["providers"]
+    nested = [model for provider in providers for model in provider["models"]]
+    assert {model["apiName"] for model in nested} == set(SUPPORTED_API_NAMES)
+    assert all(model["status"] == STATUS_ACTIVE for model in nested)
+    google = next(provider for provider in providers if provider["name"] == "Google")
+    assert [model["visualName"] for model in google["models"]] == [
+        "Gemini 3.8 Flash",
+        "Gemini 3.8 Live",
+    ]
     default = client.get("/provider/default").get_json()
     assert default["apiName"] == PIB_CLOUD_API_NAME
     assert default["isDefault"] is True
@@ -429,9 +440,12 @@ def test_new_personality_follows_the_default_route(app, monkeypatch):
             == resolved.provider_id
         )
         gemini = RegistryModel.query.filter_by(api_name="gemini-3.8-flash").one()
+        live = RegistryModel.query.filter_by(api_name="gemini-3.8-live").one()
         gemini_id = gemini.id
-        assert gemini.capabilities["live"] is True
+        assert gemini.capabilities["live"] is False
         assert gemini.capabilities["images"] is True
+        assert live.capabilities["live"] is True
+        assert live.provider_id == gemini.provider_id
     started = client.post(
         "/voice-assistant/chat",
         json={"topic": "current", "personalityId": body["personalityId"]},

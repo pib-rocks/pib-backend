@@ -23,8 +23,9 @@ from pib_hermes_config.live_interaction import personality_requests_actuation
 from pib_hermes_config.live_session import (
     DEFAULT_LIVE_IDLE_TIMEOUT_SECONDS,
     VOICE_MODE_LIVE,
+    VOICE_MODE_TURN_BASED,
     normalize_idle_timeout,
-    normalize_voice_mode,
+    voice_mode_for_model,
 )
 from pib_hermes_config.memory import write_memory
 from pib_hermes_config.turn_taking import normalize_thinking_filler
@@ -35,7 +36,7 @@ from pib_hermes_config.voice_backends import (
     normalize_tts_choice,
 )
 from provider_registry import DEFAULT_PROVIDER_REF, has_capability
-from service import soul_service
+from service import provider_service, soul_service
 
 #: Path of the daemon endpoint that owns the Hermes profile factory.
 DAEMON_PROFILE_PATH = "/profile"
@@ -223,20 +224,25 @@ def _apply_voice_backends(
             raise ValidationError({"ttsEngine": [str(exc)]}) from exc
 
 
+def _store_derived_voice_mode(personality: Personality) -> None:
+    """Store the mode of the chosen model. The client does not send one."""
+    ref = getattr(personality, "provider_ref", None)
+    model = provider_service.find_model(str(ref)) if ref else None
+    if model is None:
+        personality.voice_mode = VOICE_MODE_TURN_BASED
+        return
+    personality.voice_mode = voice_mode_for_model(
+        has_capability(model.capabilities, "live"), model.api_name
+    )
+
+
 def _apply_live_chat_settings(
     personality: Personality, personality_dto: Any, *, creating: bool
 ) -> None:
-    """Voice mode and the idle timeout that stops an unused live session."""
-    if creating or "voice_mode" in personality_dto:
-        raw = (
-            personality_dto.get("voice_mode")
-            if "voice_mode" in personality_dto
-            else VOICE_MODE_LIVE
-        )
-        try:
-            personality.voice_mode = normalize_voice_mode(raw)
-        except ValueError as exc:
-            raise ValidationError({"voiceMode": [str(exc)]}) from exc
+    """The idle timeout that stops an unused live session.
+
+    Voice mode is not taken from the client. It follows the chosen model.
+    """
     if creating or "live_idle_timeout" in personality_dto:
         raw = (
             personality_dto.get("live_idle_timeout")
@@ -303,6 +309,7 @@ def create_personality(personality_dto: Any) -> Personality:
     _apply_voice_backends(personality, personality_dto, creating=True)
     _apply_thinking_filler(personality, personality_dto)
     _apply_provider_choice(personality, personality_dto, creating=True)
+    _store_derived_voice_mode(personality)
     _apply_channel(personality, personality_dto, creating=True)
     custom = ""
     if "description" in personality_dto and personality_dto["description"]:
@@ -367,6 +374,7 @@ def update_personality(personality_id: str, personality_dto: Any) -> Personality
                 exc,
             )
     _apply_provider_choice(personality, personality_dto, creating=False)
+    _store_derived_voice_mode(personality)
     _apply_channel(personality, personality_dto, creating=False)
     if "tool_calling" in personality_dto:
         personality.tool_calling = bool(personality_dto["tool_calling"])
