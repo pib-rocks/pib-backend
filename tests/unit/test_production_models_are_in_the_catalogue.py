@@ -189,3 +189,23 @@ def test_removal_migration_drops_every_row_outside_the_catalogue():
     assert "DELETE FROM assistant_model WHERE api_name NOT IN" in later_source
     assert 'down_revision = "d9f2a6c41e88"' in later_source
     assert "hermes-agent" not in active_api_names()
+    # After the split, provider is the account and has no api_name. Removal
+    # follows registry_model, and it does not rewrite a personality's reference.
+    shaped = (
+        REPO_ROOT
+        / "pib_api"
+        / "flask"
+        / "migrations"
+        / "versions"
+        / "e4b8c1d90a72_remove_registry_models_outside_the_catalogue.py"
+    )
+    shaped_source = shaped.read_text(encoding="utf-8")
+    upgrade = shaped_source.split("def upgrade", 1)[1].split("def downgrade", 1)[0]
+    assert "active_api_names()" in upgrade
+    assert "DELETE FROM registry_model WHERE api_name NOT IN" in upgrade
+    assert "DELETE FROM assistant_model WHERE api_name NOT IN" in upgrade
+    assert "DELETE FROM provider WHERE api_name NOT IN" not in upgrade
+    assert "WHERE id NOT IN (SELECT provider_id FROM registry_model)" in upgrade
+    assert "assistant_model_id = NULL" in upgrade
+    assert "provider_ref" not in upgrade
+    assert 'down_revision = "b6d4f2a81c30"' in shaped_source
