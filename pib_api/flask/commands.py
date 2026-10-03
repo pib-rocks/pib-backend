@@ -16,13 +16,13 @@ from sqlalchemy.engine import URL, make_url
 
 from app.app import db, app
 from model.assistant_model import AssistantModel
-from model.provider_model import Provider
+from model.provider_model import Provider, RegistryModel
 from provider_registry import (
     DEFAULT_PROVIDER_API_NAME,
     active_api_names,
     active_entries,
 )
-from service.provider_service import build_provider
+from service.provider_service import attach_registry_models, sync_shared_capabilities
 from model.controller_model import Controller
 from model.camera_settings_model import CameraSettings
 from model.chat_message_model import ChatMessage
@@ -324,11 +324,12 @@ def _reconcile_model_catalogue() -> None:
     """Make the model rows of an already seeded database match the catalogue.
 
     Runs on every start of an already seeded database. Rows whose chat id is
-    not in the catalogue are deleted from provider and assistant_model. A
-    personality that pointed at such a row keeps its provider_ref, so it is
-    reported as needing a new model; only the foreign key is cleared. Nothing
-    is rewritten onto a different model. Catalogue models without a row are
-    added, and the catalogue default becomes the only default row.
+    not in the catalogue are deleted from registry_model and assistant_model.
+    A provider with no model left is deleted with them. A personality that
+    pointed at such a row keeps its provider_ref, so it is reported as needing
+    a new model; only the foreign key is cleared. Nothing is rewritten onto a
+    different model. Catalogue models without a row are added, and the
+    catalogue default becomes the only default model.
     """
     supported = active_api_names()
     removed_models = AssistantModel.query.filter(
@@ -339,28 +340,42 @@ def _reconcile_model_catalogue() -> None:
         Personality.query.filter(
             Personality.assistant_model_id.in_(removed_ids)
         ).update({Personality.assistant_model_id: None}, synchronize_session=False)
-    removed_providers = Provider.query.filter(~Provider.api_name.in_(supported)).all()
-    for row in removed_providers + removed_models:
+    removed_registry = RegistryModel.query.filter(
+        ~RegistryModel.api_name.in_(supported)
+    ).all()
+    for row in removed_registry + removed_models:
         db.session.delete(row)
+    db.session.flush()
+    still_used = {
+        provider_id
+        for (provider_id,) in db.session.query(RegistryModel.provider_id).distinct()
+    }
+    for provider in Provider.query.all():
+        if provider.id not in still_used:
+            db.session.delete(provider)
     db.session.flush()
 
     present = {model.api_name for model in AssistantModel.query.all()}
     added = _catalogue_models(present)
     db.session.add_all(added)
     db.session.flush()
-    db.session.add_all(build_provider(model) for model in added)
+    attach_registry_models(added)
+    for provider in Provider.query.all():
+        sync_shared_capabilities(provider)
     db.session.flush()
 
-    default_row = Provider.query.filter_by(api_name=DEFAULT_PROVIDER_API_NAME).one()
+    default_row = RegistryModel.query.filter_by(
+        api_name=DEFAULT_PROVIDER_API_NAME
+    ).one()
     if not default_row.is_default:
-        Provider.query.filter(Provider.is_default.is_(True)).update(
-            {Provider.is_default: False}, synchronize_session=False
+        RegistryModel.query.filter(RegistryModel.is_default.is_(True)).update(
+            {RegistryModel.is_default: False}, synchronize_session=False
         )
         db.session.flush()
         default_row.is_default = True
     db.session.commit()
 
-    removed_names = sorted({row.api_name for row in removed_providers + removed_models})
+    removed_names = sorted({row.api_name for row in removed_registry + removed_models})
     if removed_names:
         print(
             "Removed model rows that are not in the catalogue: "
@@ -558,7 +573,7 @@ def _create_chat_data_and_assistant() -> None:
     models = _catalogue_models(set())
     db.session.add_all(models)
     db.session.flush()
-    db.session.add_all(build_provider(model) for model in models)
+    attach_registry_models(models)
     db.session.flush()
 
     # The example personalities ship on the default route, pib.Cloud.

@@ -148,9 +148,9 @@ def test_display_cancel_is_not_an_error(app):
 
 
 def test_cancel_does_not_lock_an_open_store(app, app_ctx):
-    from model.provider_model import Provider
+    from model.provider_model import RegistryModel
 
-    vision = Provider.query.filter_by(api_name="gpt-6").one()
+    vision = RegistryModel.query.filter_by(api_name="gpt-6").one().provider
     key_store_service.put_secret(vision.id, PASSWORD, SECRET)
     opened = key_store_service.unlock(PASSWORD)
     assert SECRET in opened.values()
@@ -162,10 +162,10 @@ def test_cancel_does_not_lock_an_open_store(app, app_ctx):
 
 
 def test_display_path_unlocks_the_store(app, app_ctx, tmp_path, monkeypatch):
-    from model.provider_model import Provider
+    from model.provider_model import RegistryModel
 
     monkeypatch.setenv("PIB_UPDATE_DIR", str(tmp_path))
-    vision = Provider.query.filter_by(api_name="gpt-6").one()
+    vision = RegistryModel.query.filter_by(api_name="gpt-6").one().provider
     key_store_service.put_secret(vision.id, PASSWORD, SECRET)
     key_store_service.lock()
     assert key_store_service.operating_mode() == "degraded"

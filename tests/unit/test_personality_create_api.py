@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 from marshmallow import ValidationError
-from model.provider_model import Provider
+from model.provider_model import RegistryModel
 from service import personality_service
 
 API_YAML = Path(__file__).resolve().parents[2] / "pib_api" / "pib-api.yaml"
@@ -78,7 +78,7 @@ def test_name_only_create_persists_and_is_readable_and_updateable(client, app_ct
 
 
 def test_create_pointing_at_a_catalogue_provider_on_the_direct_channel(client, app_ctx):
-    gemini = Provider.query.filter_by(api_name="gemini-3.8-flash").one()
+    gemini = RegistryModel.query.filter_by(api_name="gemini-3.8-flash").one()
     response = client.post(
         PERSONALITY_URL,
         json={
@@ -205,7 +205,7 @@ def test_an_api_name_is_not_a_provider_reference(app_ctx):
         )
 
     assert caught.value.messages["providerRef"] == [
-        "Provider reference must be 'default' or the id of a provider row."
+        "Provider reference must be 'default' or the id of a model row."
     ]
     listed = personality_service.get_all_personalities()
     assert all(personality.name != "ApiName" for personality in listed)
@@ -220,7 +220,8 @@ def test_the_create_description_states_the_provider_reference_forms():
     )[0]
     assert "providerRef:" in body
     assert 'sentinel "default"' in body
-    assert "decimal id of a provider row" in body
+    assert "decimal id of a model row" in body
+    assert "The provider follows from that model." in body
     assert "gemini-3.8-flash, is not a reference" in body
     assert "enum: [smart, direct]" in body
 

@@ -159,6 +159,34 @@ def is_registry_default(api_name: str) -> bool:
     return api_name == DEFAULT_PROVIDER_API_NAME
 
 
+def provider_name_for(api_name: str, visual_name: str | None = None) -> str:
+    """Catalogue provider of a chat id. A row with no line keeps its own name."""
+    entry = catalogue_entry(api_name)
+    if entry is not None:
+        return entry.provider
+    if visual_name:
+        return visual_name
+    return api_name
+
+
+def capabilities_held_by_all(rows: Any) -> dict[str, bool]:
+    """Flags that are true on every model of one provider.
+
+    One model means its own flags: they hold for all of that provider's
+    models. A provider with none stores every flag off.
+    """
+    shared = {key: True for key in CAPABILITY_KEYS}
+    found = False
+    for row in rows:
+        found = True
+        parsed = _as_mapping(row)
+        for key in CAPABILITY_KEYS:
+            shared[key] = bool(shared[key] and parsed.get(key))
+    if not found:
+        return {key: False for key in CAPABILITY_KEYS}
+    return shared
+
+
 def has_images_capability(capabilities: Any) -> bool:
     """True when this row may be offered for selection."""
     return has_capability(capabilities, "images")

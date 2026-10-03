@@ -2,7 +2,7 @@
 
 from unittest.mock import MagicMock
 
-from model.provider_model import Provider
+from model.provider_model import RegistryModel
 from pib_hermes_config.voice_backends import LIVE_VOICE_NOTE
 from service import key_store_service, personality_service, provider_service
 
@@ -24,8 +24,8 @@ def test_offer_is_local_engines_until_a_capability_is_set(app):
     with app.app_context():
         from app.app import db
 
-        gemini = Provider.query.filter_by(api_name="gemini-3.8-flash").one()
-        gpt6 = Provider.query.filter_by(api_name="gpt-6").one()
+        gemini = RegistryModel.query.filter_by(api_name="gemini-3.8-flash").one()
+        gpt6 = RegistryModel.query.filter_by(api_name="gpt-6").one()
         gemini_id, gpt6_id = gemini.id, gpt6.id
         gemini.capabilities = {**gemini.capabilities, "stt": True}
         gpt6.capabilities = {**gpt6.capabilities, "tts": True}
@@ -73,7 +73,7 @@ def test_live_provider_states_that_the_local_voice_does_not_apply(app, monkeypat
         MagicMock(return_value={"ok": True}),
     )
     with app.app_context():
-        gemini = Provider.query.filter_by(api_name="gemini-3.8-flash").one()
+        gemini = RegistryModel.query.filter_by(api_name="gemini-3.8-flash").one()
         gemini_id = gemini.id
         assert gemini.capabilities["live"] is True
     response = app.test_client().post(
@@ -112,7 +112,7 @@ def test_only_a_capable_provider_can_be_stored(app, monkeypatch):
     personality_id = created.get_json()["personalityId"]
 
     with app.app_context():
-        text = Provider.query.filter_by(api_name="gpt-6").one()
+        text = RegistryModel.query.filter_by(api_name="gpt-6").one()
         text_id = text.id
 
     rejected = client.put(
@@ -133,7 +133,7 @@ def test_only_a_capable_provider_can_be_stored(app, monkeypatch):
     with app.app_context():
         from app.app import db
 
-        text = Provider.query.filter_by(id=text_id).one()
+        text = RegistryModel.query.filter_by(id=text_id).one()
         text.capabilities = {**text.capabilities, "stt": True, "tts": True}
         db.session.commit()
 

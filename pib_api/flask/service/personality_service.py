@@ -10,7 +10,7 @@ from model.personality_model import (
     DEFAULT_PAUSE_THRESHOLD,
     Personality,
 )
-from model.provider_model import Provider
+from model.provider_model import RegistryModel
 from app.app import db
 from pib_hermes_config import build_default_soul_text
 from pib_hermes_config.channel import (
@@ -126,25 +126,26 @@ def get_personality(personality_id: str) -> Personality:
     return personality
 
 
-# 'default', or the decimal id of a provider row. The catalogue api_name
+# 'default', or the decimal id of a model row. The catalogue api_name
 # is not a reference: gemini-3.8-flash names a catalogue line, not a row.
-PROVIDER_REF_ERROR = "Provider reference must be 'default' or the id of a provider row."
+# The provider follows from the model.
+PROVIDER_REF_ERROR = "Provider reference must be 'default' or the id of a model row."
 
 
 def _store_provider_ref(personality: Personality, ref: str) -> None:
-    """Persist a provider pointer. 'default' is not resolved into an id."""
+    """Persist a model pointer. 'default' is not resolved into an id."""
     if ref == DEFAULT_PROVIDER_REF:
         personality.provider_ref = DEFAULT_PROVIDER_REF
         personality.assistant_model_id = None
         return
     try:
-        provider_id = int(ref)
+        model_id = int(ref)
     except (TypeError, ValueError) as exc:
         raise ValidationError({"providerRef": [PROVIDER_REF_ERROR]}) from exc
-    if provider_id < 1 or Provider.query.filter_by(id=provider_id).first() is None:
+    if model_id < 1 or RegistryModel.query.filter_by(id=model_id).first() is None:
         raise ValidationError({"providerRef": [PROVIDER_REF_ERROR]})
-    personality.provider_ref = str(provider_id)
-    personality.assistant_model_id = provider_id
+    personality.provider_ref = str(model_id)
+    personality.assistant_model_id = model_id
 
 
 def _apply_channel(
@@ -187,8 +188,8 @@ def _apply_provider_choice(
 
 
 def _provider_has(capability: str):
-    def check(provider_id: int) -> bool:
-        row = Provider.query.filter_by(id=provider_id).first()
+    def check(model_id: int) -> bool:
+        row = RegistryModel.query.filter_by(id=model_id).first()
         if row is None:
             return False
         return has_capability(row.capabilities, capability)

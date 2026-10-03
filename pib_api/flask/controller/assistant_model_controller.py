@@ -10,15 +10,15 @@ bp = Blueprint("assistant_controller", __name__)
 @bp.route("", methods=["GET"])
 def get_all_assistant_models():
     """Selection list. Rows without the images capability are not offered."""
-    providers = provider_service.selectable_providers()
-    return {"assistantModels": providers_schema.dump(providers)}
+    models = provider_service.selectable_models()
+    return {"assistantModels": providers_schema.dump(models)}
 
 
 @bp.route("/<int:assistant_model_id>", methods=["GET"])
 def get_assistant_model(assistant_model_id):
     # An existing personality may still reference a row that is not offered
     # for new selection. Lookup by id returns that row, including its flags.
-    provider = provider_service.get_provider_by_id(assistant_model_id)
+    provider = provider_service.get_model_by_id(assistant_model_id)
     if provider is not None:
         return provider_schema.dump(provider)
     assistant_model = assistant_model_service.get_assistant_model_by_id(

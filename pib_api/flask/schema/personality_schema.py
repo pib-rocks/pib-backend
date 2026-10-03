@@ -63,8 +63,8 @@ class PersonalitySchemaSQLAutoWith(SQLAutoWithCamelCaseSchema):
     local_voice_applies = fields.Method("get_local_voice_applies", dump_only=True)
     live_voice_note = fields.Method("get_live_voice_note", dump_only=True)
     assistant_model_id = fields.Integer(required=False, allow_none=True)
-    # 'default', or the decimal id of a provider row, as text. The catalogue
-    # api_name is not a reference and is rejected with an unknown provider.
+    # 'default', or the decimal id of a model row, as text. The catalogue
+    # api_name is not a reference and is rejected. The provider follows.
     provider_ref = fields.String(required=False, allow_none=True)
     channel = fields.String(
         required=False,
@@ -121,11 +121,11 @@ class PersonalitySchemaSQLAutoWith(SQLAutoWithCamelCaseSchema):
     def get_smart_chats_enabled(self, _obj: Personality) -> bool:
         return smart_chats_enabled()
 
-    def _resolved_provider(self, obj: Personality):
+    def _resolved_model(self, obj: Personality):
         ref = getattr(obj, "provider_ref", None)
         if not ref:
             return None
-        return provider_service.find_provider(str(ref))
+        return provider_service.find_model(str(ref))
 
     def get_needs_new_model(self, obj: Personality) -> bool:
         """True when the referenced model row is gone and settings must replace it.
@@ -135,21 +135,21 @@ class PersonalitySchemaSQLAutoWith(SQLAutoWithCamelCaseSchema):
         ref = getattr(obj, "provider_ref", None)
         if not ref:
             return False
-        return self._resolved_provider(obj) is None
+        return self._resolved_model(obj) is None
 
     def get_live_model(self, obj: Personality) -> str | None:
-        provider = self._resolved_provider(obj)
-        if provider is None:
+        model = self._resolved_model(obj)
+        if model is None:
             return None
-        return provider.live_model
+        return model.live_model
 
     def get_voice_start_mode(self, obj: Personality) -> str:
         """What the one voice button will start: live or turn-based."""
-        provider = self._resolved_provider(obj)
-        capable = bool(provider) and has_capability(provider.capabilities, "live")
-        model = provider.live_model if provider is not None else None
+        model = self._resolved_model(obj)
+        capable = bool(model) and has_capability(model.capabilities, "live")
+        pinned = model.live_model if model is not None else None
         mode = getattr(obj, "voice_mode", None) or VOICE_MODE_LIVE
-        return voice_start_mode(mode, capable, model)
+        return voice_start_mode(mode, capable, pinned)
 
     def _provider_is_live(self, obj: Personality) -> bool:
         return self.get_voice_start_mode(obj) == VOICE_MODE_LIVE

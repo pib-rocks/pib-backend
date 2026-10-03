@@ -9,7 +9,7 @@ from commands import seed_db
 from model.assistant_model import AssistantModel
 from model.chat_model import Chat
 from model.personality_model import Personality
-from model.provider_model import Provider
+from model.provider_model import Provider, RegistryModel
 from provider_registry import (
     CAPABILITY_KEYS,
     CATALOGUE,
@@ -19,6 +19,7 @@ from provider_registry import (
     STATUS_ACTIVE,
     STATUS_UNCONFIRMED,
     active_api_names,
+    active_entries,
     capabilities_for,
 )
 from service import personality_service, provider_service
@@ -56,9 +57,18 @@ def _insert_old_rows() -> list[int]:
         )
         db.session.add(model)
         db.session.flush()
+        provider = Provider(
+            name=visual_name,
+            endpoint_base=None,
+            credential_ref=None,
+            capabilities=capabilities_for(api_name, images),
+        )
+        db.session.add(provider)
+        db.session.flush()
         db.session.add(
-            Provider(
+            RegistryModel(
                 id=model.id,
+                provider_id=provider.id,
                 api_name=api_name,
                 visual_name=visual_name,
                 has_image_support=images,
@@ -118,9 +128,11 @@ def test_no_old_model_is_offered_or_stored(app):
     client = app.test_client()
     with app.app_context():
         assistant_names = {model.api_name for model in AssistantModel.query.all()}
-        provider_names = {row.api_name for row in Provider.query.all()}
+        model_names = {row.api_name for row in RegistryModel.query.all()}
+        provider_names = {row.name for row in Provider.query.all()}
     assert assistant_names == set(SUPPORTED_API_NAMES)
-    assert provider_names == set(SUPPORTED_API_NAMES)
+    assert model_names == set(SUPPORTED_API_NAMES)
+    assert provider_names == {entry.provider for entry in active_entries()}
 
     for path, key in (
         ("/provider", "providers"),
@@ -152,27 +164,33 @@ def test_seeding_an_existing_database_removes_the_old_rows(app, monkeypatch):
         )
         db.session.commit()
         personality_id = on_old.personality_id
-        kept = Provider.query.filter_by(api_name="claude-sonnet-5-5").one()
-        kept.credential_ref = "provider-claude"
+        kept = RegistryModel.query.filter_by(api_name="claude-sonnet-5-5").one()
+        kept.provider.credential_ref = "provider-claude"
         db.session.commit()
-        assert {row.api_name for row in Provider.query.all()} & OLD_API_NAMES
+        assert {row.api_name for row in RegistryModel.query.all()} & OLD_API_NAMES
 
         result = CliRunner().invoke(seed_db, [])
         assert result.exception is None, result.output
         assert "Removed model rows that are not in the catalogue" in result.output
         db.session.remove()
 
-        assert {row.api_name for row in Provider.query.all()} == set(
+        assert {row.api_name for row in RegistryModel.query.all()} == set(
             SUPPORTED_API_NAMES
         )
         assert {model.api_name for model in AssistantModel.query.all()} == set(
             SUPPORTED_API_NAMES
         )
-        assert Provider.query.filter(Provider.id.in_(old_ids)).count() == 0
-        assert provider_service.get_default_provider().api_name == PIB_CLOUD_API_NAME
-        # Rows that stay are untouched.
-        kept = Provider.query.filter_by(api_name="claude-sonnet-5-5").one()
-        assert kept.credential_ref == "provider-claude"
+        assert RegistryModel.query.filter(RegistryModel.id.in_(old_ids)).count() == 0
+        assert (
+            Provider.query.filter(
+                Provider.name.in_([row[1] for row in OLD_ROWS])
+            ).count()
+            == 0
+        )
+        assert provider_service.get_default_model().api_name == PIB_CLOUD_API_NAME
+        # Rows that stay are untouched. The credential stays on the provider.
+        kept = RegistryModel.query.filter_by(api_name="claude-sonnet-5-5").one()
+        assert kept.provider.credential_ref == "provider-claude"
         # The personality is not moved. It keeps pointing at the gone row.
         reloaded = Personality.query.filter_by(personality_id=personality_id).one()
         assert reloaded.provider_ref == str(pointed_at)
@@ -186,8 +204,8 @@ def test_seeding_an_existing_database_removes_the_old_rows(app, monkeypatch):
 
 def test_seeding_an_existing_database_moves_the_default_to_pib_cloud(app):
     with app.app_context():
-        other = Provider.query.filter_by(api_name="gpt-6").one()
-        pib_cloud = Provider.query.filter_by(api_name=PIB_CLOUD_API_NAME).one()
+        other = RegistryModel.query.filter_by(api_name="gpt-6").one()
+        pib_cloud = RegistryModel.query.filter_by(api_name=PIB_CLOUD_API_NAME).one()
         pib_cloud.is_default = False
         db.session.flush()
         other.is_default = True
@@ -197,8 +215,8 @@ def test_seeding_an_existing_database_moves_the_default_to_pib_cloud(app):
         assert result.exception is None, result.output
         db.session.remove()
 
-        assert provider_service.get_default_provider().api_name == PIB_CLOUD_API_NAME
-        assert Provider.query.filter_by(is_default=True).count() == 1
+        assert provider_service.get_default_model().api_name == PIB_CLOUD_API_NAME
+        assert RegistryModel.query.filter_by(is_default=True).count() == 1
 
 
 def test_seeding_removes_hermes_agent_and_refuses_its_chat(app, monkeypatch):
@@ -217,9 +235,18 @@ def test_seeding_removes_hermes_agent_and_refuses_its_chat(app, monkeypatch):
             )
             db.session.add(model)
             db.session.flush()
+            provider = Provider(
+                name=model.visual_name,
+                endpoint_base=None,
+                credential_ref=None,
+                capabilities=capabilities_for(REMOVED_API_NAME, True),
+            )
+            db.session.add(provider)
+            db.session.flush()
             db.session.add(
-                Provider(
+                RegistryModel(
                     id=model.id,
+                    provider_id=provider.id,
                     api_name=REMOVED_API_NAME,
                     visual_name=model.visual_name,
                     has_image_support=True,
@@ -243,22 +270,22 @@ def test_seeding_removes_hermes_agent_and_refuses_its_chat(app, monkeypatch):
         db.session.commit()
         personality_id = on_removed.personality_id
         assert on_removed.provider_ref == str(removed_id)
-        assert Provider.query.filter_by(api_name=REMOVED_API_NAME).count() == 1
+        assert RegistryModel.query.filter_by(api_name=REMOVED_API_NAME).count() == 1
 
         result = CliRunner().invoke(seed_db, [])
         assert result.exception is None, result.output
         assert REMOVED_API_NAME in result.output
         db.session.remove()
 
-        assert Provider.query.filter_by(api_name=REMOVED_API_NAME).count() == 0
+        assert RegistryModel.query.filter_by(api_name=REMOVED_API_NAME).count() == 0
         assert AssistantModel.query.filter_by(api_name=REMOVED_API_NAME).count() == 0
-        assert {row.api_name for row in Provider.query.all()} == set(
+        assert {row.api_name for row in RegistryModel.query.all()} == set(
             SUPPORTED_API_NAMES
         )
         reloaded = Personality.query.filter_by(personality_id=personality_id).one()
         assert reloaded.provider_ref == str(removed_id)
         assert reloaded.assistant_model_id is None
-        assert provider_service.get_default_provider().api_name == PIB_CLOUD_API_NAME
+        assert provider_service.get_default_model().api_name == PIB_CLOUD_API_NAME
 
     body = client.get(f"/voice-assistant/personality/{personality_id}").get_json()
     assert body["needsNewModel"] is True
@@ -278,7 +305,7 @@ def test_a_personality_on_a_removed_row_needs_a_new_model_and_cannot_chat(
     _stub_provisioning(monkeypatch)
     client = app.test_client()
     with app.app_context():
-        gpt6 = Provider.query.filter_by(api_name="gpt-6").one()
+        gpt6 = RegistryModel.query.filter_by(api_name="gpt-6").one()
         gpt6_id = gpt6.id
     created = client.post(
         "/voice-assistant/personality",
@@ -302,7 +329,7 @@ def test_a_personality_on_a_removed_row_needs_a_new_model_and_cannot_chat(
     )
 
     with app.app_context():
-        db.session.delete(Provider.query.filter_by(id=gpt6_id).one())
+        db.session.delete(RegistryModel.query.filter_by(id=gpt6_id).one())
         db.session.commit()
         before = Chat.query.filter_by(personality_id=personality_id).count()
 
@@ -331,7 +358,7 @@ def test_a_personality_on_a_removed_row_needs_a_new_model_and_cannot_chat(
 
     # Choosing a current model in settings is the way out.
     with app.app_context():
-        claude_id = Provider.query.filter_by(api_name="claude-sonnet-5-5").one().id
+        claude_id = RegistryModel.query.filter_by(api_name="claude-sonnet-5-5").one().id
     repaired = client.put(
         f"/voice-assistant/personality/{personality_id}",
         json={"assistantModelId": claude_id},
@@ -349,7 +376,9 @@ def test_a_personality_on_a_removed_row_needs_a_new_model_and_cannot_chat(
 def test_example_personalities_ship_on_pib_cloud(app):
     client = app.test_client()
     with app.app_context():
-        pib_cloud_id = Provider.query.filter_by(api_name=PIB_CLOUD_API_NAME).one().id
+        pib_cloud_id = (
+            RegistryModel.query.filter_by(api_name=PIB_CLOUD_API_NAME).one().id
+        )
     for personality_id, name in (
         (EVA_PERSONALITY_ID, "Eva"),
         (THOMAS_PERSONALITY_ID, "Thomas"),
@@ -393,9 +422,13 @@ def test_new_personality_follows_the_default_route(app, monkeypatch):
     assert body["needsNewModel"] is False
     assert body["providerRef"] == "default"
     with app.app_context():
-        resolved = provider_service.resolve_provider(body["providerRef"])
+        resolved = provider_service.resolve_model(body["providerRef"])
         assert resolved.api_name == PIB_CLOUD_API_NAME
-        gemini = Provider.query.filter_by(api_name="gemini-3.8-flash").one()
+        assert (
+            provider_service.resolve_provider(body["providerRef"]).id
+            == resolved.provider_id
+        )
+        gemini = RegistryModel.query.filter_by(api_name="gemini-3.8-flash").one()
         gemini_id = gemini.id
         assert gemini.capabilities["live"] is True
         assert gemini.capabilities["images"] is True

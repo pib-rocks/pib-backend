@@ -15,7 +15,7 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from app.app import db
-from model.provider_model import Provider
+from model.provider_model import RegistryModel
 from pib_hermes_config.live_session import (
     GEMINI_LIVE_MODEL,
     GEMINI_MODELS_URL,
@@ -40,7 +40,7 @@ def _as_capabilities(raw: object) -> dict:
 
 
 def apply_live_pin(
-    provider: Provider, model_ids: Iterable[str], checked_on: date
+    model: RegistryModel, model_ids: Iterable[str], checked_on: date
 ) -> None:
     """Record one successful list read.
 
@@ -50,23 +50,23 @@ def apply_live_pin(
     instead. ``gpt-realtime`` is recorded when the list contains it, and the
     live flag stays off: this process has no OpenAI realtime transport.
     """
-    candidate = live_candidate_for(provider.api_name)
+    candidate = live_candidate_for(model.api_name)
     if candidate is None:
         return
     present = candidate in set(model_ids)
-    provider.live_model_checked_on = checked_on
+    model.live_model_checked_on = checked_on
     if candidate == GEMINI_LIVE_MODEL:
-        capabilities = _as_capabilities(provider.capabilities)
+        capabilities = _as_capabilities(model.capabilities)
         if present and gemini_live_connect_model(candidate):
-            provider.live_model = candidate
+            model.live_model = candidate
             capabilities["live"] = True
         else:
-            provider.live_model = None
+            model.live_model = None
             capabilities["live"] = False
-        provider.capabilities = capabilities
+        model.capabilities = capabilities
         return
     if candidate == OPENAI_LIVE_MODEL:
-        provider.live_model = candidate if present else None
+        model.live_model = candidate if present else None
 
 
 def ids_from_list_payload(
@@ -138,26 +138,29 @@ def fetch_model_ids(
 
 
 def pin_providers(
-    rows: Iterable[Provider],
+    rows: Iterable[RegistryModel],
     secrets: dict[str, str],
     fetch=None,
     checked_on: Optional[date] = None,
 ) -> None:
-    """Pin every row whose unlocked secret can read a model list."""
+    """Pin every model whose provider secret can read an account model list."""
     if fetch is None:
         fetch = fetch_model_ids
     day = checked_on or date.today()
-    for provider in rows:
+    for model in rows:
+        provider = model.provider
+        if provider is None:
+            continue
         ref = provider.credential_ref
         if not ref or ref not in secrets:
             continue
-        if live_candidate_for(provider.api_name) is None:
+        if live_candidate_for(model.api_name) is None:
             continue
         secret = secrets[ref]
         if not isinstance(secret, str) or not secret.strip():
             continue
         try:
-            model_ids = fetch(provider.api_name, provider.endpoint_base, secret)
+            model_ids = fetch(model.api_name, provider.endpoint_base, secret)
         except Exception:
             logger.warning(
                 "Live model list could not be read for provider %s.",
@@ -165,7 +168,7 @@ def pin_providers(
                 exc_info=True,
             )
             continue
-        apply_live_pin(provider, model_ids, day)
+        apply_live_pin(model, model_ids, day)
     db.session.flush()
 
 
@@ -176,4 +179,4 @@ def pin_unlocked_providers() -> None:
     secrets = unlocked_credentials()
     if not secrets:
         return
-    pin_providers(Provider.query.all(), secrets)
+    pin_providers(RegistryModel.query.all(), secrets)

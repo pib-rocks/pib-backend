@@ -19,7 +19,7 @@ from sqlalchemy import text
 
 from app.app import db
 from model.personality_model import Personality
-from model.provider_model import Provider
+from model.provider_model import RegistryModel
 from service import key_store_service, personality_service
 from service.key_store_service import (
     PASSWORD_CONFIRMATION_MESSAGE,
@@ -74,8 +74,8 @@ def test_token_service_uses_the_shared_primitive():
 
 
 def test_round_trip_uses_one_password_for_every_key(app_ctx, key_store_path):
-    vision = Provider.query.filter_by(api_name="gpt-6").one()
-    second = Provider.query.filter_by(api_name="claude-sonnet-5-5").one()
+    vision = RegistryModel.query.filter_by(api_name="gpt-6").one().provider
+    second = RegistryModel.query.filter_by(api_name="claude-sonnet-5-5").one().provider
 
     ref = key_store_service.put_secret(vision.id, PASSWORD, SECRET)
     assert ref == f"provider-{vision.id}"
@@ -106,8 +106,8 @@ def test_credential_route_returns_one_unlocked_key_and_never_logs_it(
 ):
     """The voice node reads one provider. A locked store and the status route do not."""
     caplog.set_level(logging.INFO)
-    gemini = Provider.query.filter_by(api_name="gemini-3.8-flash").one()
-    other = Provider.query.filter_by(api_name="gpt-6").one()
+    gemini = RegistryModel.query.filter_by(api_name="gemini-3.8-flash").one().provider
+    other = RegistryModel.query.filter_by(api_name="gpt-6").one().provider
     key_store_service.put_secret(gemini.id, PASSWORD, SECRET)
     key_store_service.put_secret(other.id, PASSWORD, OTHER_SECRET)
     db.session.commit()
@@ -142,7 +142,7 @@ def test_credential_route_returns_one_unlocked_key_and_never_logs_it(
 
 
 def test_wrong_password_returns_no_keys_and_does_not_crash(app, app_ctx):
-    vision = Provider.query.filter_by(api_name="gpt-6").one()
+    vision = RegistryModel.query.filter_by(api_name="gpt-6").one().provider
     key_store_service.put_secret(vision.id, PASSWORD, SECRET)
     db.session.commit()
 
@@ -209,7 +209,7 @@ def test_first_password_must_still_be_long_enough(app, app_ctx, key_store_path):
 
 
 def test_change_password_requires_the_new_one_twice(app, app_ctx, key_store_path):
-    vision = Provider.query.filter_by(api_name="gpt-6").one()
+    vision = RegistryModel.query.filter_by(api_name="gpt-6").one().provider
     client = app.test_client()
     stored = client.put(
         f"/system/key-store/{vision.id}",
@@ -271,15 +271,16 @@ def test_deleting_a_key_leaves_the_personality_reference(
         "_provision_profile",
         MagicMock(return_value={"ok": True}),
     )
-    vision = Provider.query.filter_by(api_name="gpt-6").one()
-    second = Provider.query.filter_by(api_name="claude-sonnet-5-5").one()
+    gpt6 = RegistryModel.query.filter_by(api_name="gpt-6").one()
+    vision = gpt6.provider
+    second = RegistryModel.query.filter_by(api_name="claude-sonnet-5-5").one().provider
     personality = personality_service.create_personality(
         {
             "name": "OrphanRef",
             "gender": "Female",
             "pause_threshold": 0.8,
             "message_history": 5,
-            "assistant_model_id": vision.id,
+            "assistant_model_id": gpt6.id,
         }
     )
     original_ref = personality.provider_ref
@@ -294,6 +295,7 @@ def test_deleting_a_key_leaves_the_personality_reference(
     assert reloaded.provider_ref == original_ref
     from service import provider_service
 
+    assert provider_service.resolve_model(reloaded.provider_ref).id == gpt6.id
     assert provider_service.resolve_provider(reloaded.provider_ref).id == vision.id
     db.session.refresh(vision)
     assert vision.credential_ref is None
@@ -318,14 +320,15 @@ def test_credentials_stay_out_of_soul_memory_logs_and_the_database(
         MagicMock(return_value={"ok": True}),
     )
     caplog.set_level(logging.DEBUG)
-    vision = Provider.query.filter_by(api_name="gpt-6").one()
+    gpt6 = RegistryModel.query.filter_by(api_name="gpt-6").one()
+    vision = gpt6.provider
     personality = personality_service.create_personality(
         {
             "name": "Cleartext",
             "gender": "Male",
             "pause_threshold": 0.8,
             "message_history": 5,
-            "assistant_model_id": vision.id,
+            "assistant_model_id": gpt6.id,
             "description": "A calm robot.",
         }
     )
@@ -352,7 +355,7 @@ def test_credentials_stay_out_of_soul_memory_logs_and_the_database(
     )
     assert wrong.status_code == 401
     status = client.get("/system/key-store")
-    provider = client.get(f"/provider/{vision.id}")
+    provider = client.get(f"/provider/{gpt6.id}")
 
     assert status.get_json()["encryptKeyStorage"] is True
     assert status.get_json()["credentialRefs"] == [f"provider-{vision.id}"]
@@ -387,7 +390,7 @@ def test_credentials_stay_out_of_soul_memory_logs_and_the_database(
 
 
 def test_short_password_does_not_create_a_store(app, app_ctx, key_store_path):
-    vision = Provider.query.filter_by(api_name="gpt-6").one()
+    vision = RegistryModel.query.filter_by(api_name="gpt-6").one().provider
     response = app.test_client().put(
         f"/system/key-store/{vision.id}",
         json={"password": "short", "secret": SECRET},
@@ -432,8 +435,8 @@ def test_cold_start_stores_a_first_key_with_encryption_on_and_off(
     settings = _settings_file(key_store_path)
     assert not key_store_path.exists()
     assert not settings.exists()
-    vision = Provider.query.filter_by(api_name="gpt-6").one()
-    second = Provider.query.filter_by(api_name="claude-sonnet-5-5").one()
+    vision = RegistryModel.query.filter_by(api_name="gpt-6").one().provider
+    second = RegistryModel.query.filter_by(api_name="claude-sonnet-5-5").one().provider
     client = app.test_client()
 
     stored = client.put(
@@ -493,8 +496,8 @@ def test_cold_start_stores_a_first_key_with_encryption_on_and_off(
 
 
 def test_switching_encryption_off_and_on_keeps_the_keys(app, app_ctx, key_store_path):
-    vision = Provider.query.filter_by(api_name="gpt-6").one()
-    second = Provider.query.filter_by(api_name="claude-sonnet-5-5").one()
+    vision = RegistryModel.query.filter_by(api_name="gpt-6").one().provider
+    second = RegistryModel.query.filter_by(api_name="claude-sonnet-5-5").one().provider
     client = app.test_client()
     assert (
         client.put(
@@ -577,7 +580,7 @@ def test_switching_encryption_off_and_on_keeps_the_keys(app, app_ctx, key_store_
 
 
 def test_wrong_password_refuses_turning_encryption_off(app, app_ctx, key_store_path):
-    vision = Provider.query.filter_by(api_name="gpt-6").one()
+    vision = RegistryModel.query.filter_by(api_name="gpt-6").one().provider
     client = app.test_client()
     stored = client.put(
         f"/system/key-store/{vision.id}",
@@ -604,7 +607,7 @@ def test_wrong_password_refuses_turning_encryption_off(app, app_ctx, key_store_p
 
 
 def test_short_password_refuses_turning_encryption_on(app, app_ctx, key_store_path):
-    vision = Provider.query.filter_by(api_name="gpt-6").one()
+    vision = RegistryModel.query.filter_by(api_name="gpt-6").one().provider
     client = app.test_client()
     switched = client.post("/system/key-store/encryption", json={"enabled": False})
     assert switched.status_code == 200
@@ -633,7 +636,7 @@ def test_short_password_refuses_turning_encryption_on(app, app_ctx, key_store_pa
 def test_failed_rewrite_does_not_persist_the_encryption_setting(
     app, app_ctx, key_store_path, monkeypatch
 ):
-    vision = Provider.query.filter_by(api_name="gpt-6").one()
+    vision = RegistryModel.query.filter_by(api_name="gpt-6").one().provider
     client = app.test_client()
     stored = client.put(
         f"/system/key-store/{vision.id}",
@@ -681,7 +684,7 @@ def test_status_reports_the_encryption_setting(app, key_store_path):
 
 
 def test_cleartext_keys_need_no_unlock(app_ctx, key_store_path):
-    vision = Provider.query.filter_by(api_name="gpt-6").one()
+    vision = RegistryModel.query.filter_by(api_name="gpt-6").one().provider
     ref = f"provider-{vision.id}"
     key_store_path.parent.mkdir(parents=True, exist_ok=True)
     key_store_path.write_text(
@@ -703,7 +706,7 @@ def test_cleartext_keys_need_no_unlock(app_ctx, key_store_path):
 
 def test_cleartext_file_is_not_read_as_an_envelope(app_ctx, key_store_path):
     """A cleartext mark blocks envelope reading, even if salt is also present."""
-    vision = Provider.query.filter_by(api_name="gpt-6").one()
+    vision = RegistryModel.query.filter_by(api_name="gpt-6").one().provider
     key_store_service.put_secret(vision.id, PASSWORD, SECRET)
     envelope = json.loads(key_store_path.read_text(encoding="utf-8"))
     envelope["cleartext"] = True
@@ -722,7 +725,7 @@ def test_cleartext_file_is_not_read_as_an_envelope(app_ctx, key_store_path):
 
 
 def test_envelope_is_not_read_as_cleartext(app_ctx, key_store_path):
-    vision = Provider.query.filter_by(api_name="gpt-6").one()
+    vision = RegistryModel.query.filter_by(api_name="gpt-6").one().provider
     key_store_service.put_secret(vision.id, PASSWORD, SECRET)
     _settings_file(key_store_path).parent.mkdir(parents=True, exist_ok=True)
     _settings_file(key_store_path).write_text(

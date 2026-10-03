@@ -101,11 +101,21 @@ def test_upgrade_copies_assistant_model_ids_onto_the_provider_registry(tmp_path)
     _upgrade(database, "head")
 
     with sqlite3.connect(database) as connection:
+        provider_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(provider)")
+        }
+        model_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(registry_model)")
+        }
+        accounts = {row[0]: row for row in connection.execute("""
+                SELECT id, name, endpoint_base, credential_ref, capabilities
+                FROM provider
+                """)}
         providers = {row[1]: row for row in connection.execute("""
                 SELECT id, api_name, visual_name, has_image_support,
-                       capabilities, is_default, endpoint_base, credential_ref,
-                       live_model, live_model_checked_on
-                FROM provider
+                       capabilities, is_default, live_model, live_model_checked_on,
+                       provider_id
+                FROM registry_model
                 ORDER BY id
                 """)}
         assistant_models = {
@@ -132,13 +142,38 @@ def test_upgrade_copies_assistant_model_ids_onto_the_provider_registry(tmp_path)
         "claude-sonnet-5-5",
         "pib-cloud",
     }
+    catalogue_providers = {
+        "gemini-3.8-flash": "Google",
+        "gpt-6": "OpenAI",
+        "claude-sonnet-5-5": "Anthropic",
+        "pib-cloud": "pib.Cloud",
+    }
+    assert provider_columns == {
+        "id",
+        "name",
+        "endpoint_base",
+        "credential_ref",
+        "capabilities",
+    }
+    assert {
+        "id",
+        "api_name",
+        "visual_name",
+        "capabilities",
+        "provider_id",
+    } <= model_columns
     assert set(providers) == supported
     assert set(assistant_models) == supported
+    assert len(accounts) == len(supported)
     for api_name in supported:
-        assert providers[api_name][0] == assistant_models[api_name][0]
-        assert providers[api_name][2] == assistant_models[api_name][2]
-        assert providers[api_name][6] is None
-        assert providers[api_name][7] is None
+        model = providers[api_name]
+        account = accounts[model[8]]
+        assert model[0] == assistant_models[api_name][0]
+        assert model[2] == assistant_models[api_name][2]
+        assert account[1] == catalogue_providers[api_name]
+        assert account[2] is None
+        assert account[3] is None
+        assert json.loads(account[4]) == json.loads(model[4])
     assert "hermes-agent" not in providers
     assert "hermes-agent" not in assistant_models
     assert {providers[name][0] for name in supported} & {11, 12, 13, 14} == set()
@@ -146,11 +181,11 @@ def test_upgrade_copies_assistant_model_ids_onto_the_provider_registry(tmp_path)
     assert providers["pib-cloud"][2] == "pib.Cloud"
     assert json.loads(providers["pib-cloud"][4])["images"] is True
     assert json.loads(providers["gemini-3.8-flash"][4])["live"] is True
-    assert providers["gemini-3.8-flash"][8:] == (
+    assert providers["gemini-3.8-flash"][6:8] == (
         "gemini-3.8-live",
         "2026-10-01",
     )
-    assert providers["gpt-6"][8:] == (None, None)
+    assert providers["gpt-6"][6:8] == (None, None)
     # The personality is not moved onto another model. Its reference stays and
     # now points at nothing, which is what reports it as needing a new model.
     assert personality == (None, "12")
@@ -164,14 +199,14 @@ def test_upgrade_copies_assistant_model_ids_onto_the_provider_registry(tmp_path)
     class Base(DeclarativeBase):
         pass
 
-    class ProviderRow(Base):
-        __tablename__ = "provider"
+    class ModelRow(Base):
+        __tablename__ = "registry_model"
         id = Column(Integer, primary_key=True)
         capabilities = Column(JSON)
 
     engine = create_engine(f"sqlite:///{database}")
     with Session(engine) as session:
-        pib_cloud = session.get(ProviderRow, providers["pib-cloud"][0])
+        pib_cloud = session.get(ModelRow, providers["pib-cloud"][0])
         assert isinstance(pib_cloud.capabilities, dict)
         assert pib_cloud.capabilities["images"] is True
         assert pib_cloud.capabilities["tools"] is True

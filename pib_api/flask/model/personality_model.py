@@ -54,7 +54,8 @@ class Personality(db.Model):
     assistant_model_id = db.Column(
         db.Integer, db.ForeignKey("assistant_model.id"), nullable=True
     )
-    # 'default' or the decimal id of a provider row. 'default' is a pointer.
+    # 'default' or the decimal id of a model row. 'default' is a pointer.
+    # The provider follows from that model.
     provider_ref = db.Column(db.String(255), nullable=False)
     # Independent of the provider. Smart is the Hermes agent; Direct is the
     # backend's own completion. The installer flag can force Direct at runtime

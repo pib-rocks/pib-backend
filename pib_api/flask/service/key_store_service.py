@@ -22,7 +22,7 @@ from base64 import urlsafe_b64decode, urlsafe_b64encode
 from typing import Optional
 
 from app.app import db
-from model.provider_model import Provider
+from model.provider_model import Provider, RegistryModel
 from pib_hermes_config.token_crypto import (
     MIN_PASSWORD_LENGTH,
     TokenCryptoError,
@@ -120,8 +120,11 @@ def unlocked_secret_for_api_name(api_name: str) -> Optional[str]:
     if not isinstance(api_name, str) or api_name.strip() == "":
         return None
     secrets = unlocked_credentials()
-    rows = Provider.query.filter_by(api_name=api_name).all()
-    for provider in rows:
+    rows = RegistryModel.query.filter_by(api_name=api_name).all()
+    for model in rows:
+        provider = model.provider
+        if provider is None:
+            continue
         ref = provider.credential_ref
         if not ref:
             continue
