@@ -17,6 +17,7 @@ from datatypes.srv import (
 )
 from pib_api_client import voice_assistant_client
 from pib_api_client.voice_assistant_client import Personality
+from pib_hermes_config.live_interaction import typed_text_joins_live
 from pib_hermes_config.live_session import (
     VOICE_MODE_LIVE,
     channel_turn_on_allowed,
@@ -479,7 +480,18 @@ class VoiceAssistantNode(Node):
     ) -> SendChatMessage.Response:
         """callback function for 'send_chat_message' service"""
 
-        if self.gemini_loop.is_listening:
+        # A typed line for the open live chat joins that session. It does not
+        # start a second turn, and it does not close the session.
+        decision = typed_text_joins_live(
+            live_open=self.gemini_loop.is_listening,
+            live_chat_id=self.state.chat_id,
+            message_chat_id=request.chat_id,
+            text=request.content,
+        )
+        if decision["join"]:
+            response.successful = self.gemini_loop.submit_typed_text(decision["text"])
+            return response
+        if self.gemini_loop.is_listening and request.chat_id == self.state.chat_id:
             return response
 
         # do not create a message, if chat is not listening

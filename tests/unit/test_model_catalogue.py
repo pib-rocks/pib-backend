@@ -36,11 +36,6 @@ SUPPORTED_API_NAMES = (
     PIB_CLOUD_API_NAME,
 )
 
-#: Chat models the assistant-model list offers. The live model has no images.
-IMAGE_API_NAMES = tuple(
-    name for name in SUPPORTED_API_NAMES if name != "gemini-3.8-live"
-)
-
 REMOVED_API_NAME = "hermes-agent"
 
 #: Rows the robot carries today. None of them may survive.
@@ -141,7 +136,7 @@ def test_no_old_model_is_offered_or_stored(app):
     assert provider_names == {entry.provider for entry in active_entries()}
 
     assistant = client.get("/assistant-model").get_json()["assistantModels"]
-    assert {row["apiName"] for row in assistant} == set(IMAGE_API_NAMES)
+    assert {row["apiName"] for row in assistant} == set(SUPPORTED_API_NAMES)
     assert all(row["status"] == STATUS_ACTIVE for row in assistant)
     providers = client.get("/provider").get_json()["providers"]
     nested = [model for provider in providers for model in provider["models"]]

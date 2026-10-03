@@ -297,9 +297,76 @@ class GeminiAudioLoop:
         self._speaking_listener: Optional[Any] = None
         self._speaking = False
         self._send_lock: Optional[asyncio.Lock] = None
+        self._pending_typed: list[str] = []
+        self._typed_lock = threading.Lock()
+        self._typed_drain: Optional[asyncio.Task] = None
         self._playback_slice_bytes = playback_slice_bytes(
             RECEIVE_SAMPLE_RATE, 2, CHANNELS
         )
+
+    def submit_typed_text(self, text: str) -> bool:
+        """Interrupt playback and send this line into the open live session.
+
+        The session stays open. Speech barge-in stays the provider's turn
+        detection. The line is also written into the chat, so the text is
+        visible while the model answers it.
+        """
+        cleaned = text.strip() if isinstance(text, str) else ""
+        loop = self._loop
+        if (
+            not self._is_listening
+            or not cleaned
+            or loop is None
+            or not loop.is_running()
+        ):
+            return False
+        with self._typed_lock:
+            self._pending_typed.append(cleaned)
+        loop.call_soon_threadsafe(self._schedule_typed_drain)
+        return True
+
+    def _schedule_typed_drain(self) -> None:
+        # A new task per wake-up. The lock keeps two of them from sending
+        # the same line, and a line that arrives as one task exits is not lost.
+        self._typed_drain = asyncio.create_task(self._drain_typed_text())
+
+    async def _drain_typed_text(self) -> None:
+        while self.session is not None:
+            with self._typed_lock:
+                if not self._pending_typed:
+                    return
+                text = self._pending_typed.pop(0)
+            await self._deliver_typed_text(text)
+
+    async def _deliver_typed_text(self, text: str) -> None:
+        """Stop the spoken turn and send the typed line. Do not close the session."""
+        session = self.session
+        if session is None:
+            with self._typed_lock:
+                self._pending_typed.insert(0, text)
+            return
+        self._note_activity()
+        decision = on_interruption(time.monotonic())
+        self._exclude_until = decision["exclude_until"]
+        self._playback_cancel.set()
+        audio_in = getattr(self, "audio_in_queue", None)
+        if audio_in is not None:
+            self._drain_queue(audio_in)
+            try:
+                audio_in.put_nowait((b"", None))
+            except asyncio.QueueFull:
+                self._playback_cancel.clear()
+        self._start_new_stream("user")
+        self._send_chat_piece(text, is_user=True, update_db=True, force_flush=True)
+        try:
+            lock = self._send_lock
+            if lock is None:
+                await session.send_realtime_input(text=text)
+            else:
+                async with lock:
+                    await session.send_realtime_input(text=text)
+        except Exception:
+            logger.exception("Could not send typed text into the live session")
 
     def set_action_announcer(self, announcer) -> None:
         """Speak a robot action on the existing speech player before it runs."""
@@ -367,6 +434,8 @@ class GeminiAudioLoop:
             return
 
         self._stop_event.set()
+        with self._typed_lock:
+            self._pending_typed.clear()
         # Wake chat worker so it can exit
         try:
             self._chat_queue.put_nowait(None)  # sentinel
@@ -1188,6 +1257,7 @@ class GeminiAudioLoop:
                     model=live_model, config=gemini_config
                 ) as session:
                     self.session = session
+                    self._schedule_typed_drain()
                     self._note_activity()
                     self._exclude_until = 0.0
                     self._session_paused = False

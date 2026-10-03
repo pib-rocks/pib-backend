@@ -70,15 +70,16 @@ def test_selection_offers_only_rows_with_images_capability(app):
         row["id"]
         for row in client.get("/assistant-model").get_json()["assistantModels"]
     }
-    # The assistant list is the image filter. The provider list also keeps
-    # the named live model, which has no images.
-    assert assistant_offered == all_ids - {gemini_id, live_id}
+    # Both lists offer image models and the named live model. A chat model
+    # whose images flag is off stays out.
+    assert assistant_offered == all_ids - {gemini_id}
     assert offered == all_ids - {gemini_id}
     assert gpt6_id in offered
     assert claude_id in offered
     assert live_id in offered
+    assert live_id in assistant_offered
     assert gemini_id not in offered
-    assert live_id not in assistant_offered
+    assert gemini_id not in assistant_offered
 
     # The flag decides, not the name.
     with app.app_context():
@@ -89,9 +90,14 @@ def test_selection_offers_only_rows_with_images_capability(app):
         db.session.commit()
 
     offered = _listed_model_ids(client)
+    assistant_offered = {
+        row["id"]
+        for row in client.get("/assistant-model").get_json()["assistantModels"]
+    }
     assert gemini_id in offered
     assert live_id in offered
     assert claude_id not in offered
+    assert assistant_offered == offered
     by_id = client.get(f"/provider/{claude_id}")
     assert by_id.status_code == 200
     assert by_id.get_json()["capabilities"]["images"] is False

@@ -14,7 +14,6 @@ from provider_registry import (
     capabilities_for,
     capabilities_held_by_all,
     has_capability,
-    has_images_capability,
     is_listed_model,
     is_registry_default,
     provider_name_for,
@@ -142,9 +141,9 @@ def speech_backends() -> dict:
 
 
 def selectable_models() -> List[RegistryModel]:
-    """Chat models offered by the assistant-model list. Image support is the filter."""
+    """Models a personality may choose. An image model or a named live model."""
     rows = RegistryModel.query.order_by(RegistryModel.id).all()
-    return [row for row in rows if has_images_capability(row.capabilities)]
+    return [row for row in rows if is_listed_model(row)]
 
 
 def providers_with_models() -> List[tuple]:

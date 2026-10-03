@@ -9,7 +9,7 @@ bp = Blueprint("assistant_controller", __name__)
 
 @bp.route("", methods=["GET"])
 def get_all_assistant_models():
-    """Selection list. Rows without the images capability are not offered."""
+    """Selection list. Image models and named live models are offered."""
     models = provider_service.selectable_models()
     return {"assistantModels": providers_schema.dump(models)}
 
