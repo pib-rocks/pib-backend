@@ -1,3 +1,4 @@
+# Voice models are not in this file. See voice/whisper-model.yaml.
 registry: pib-backend camera NN model blobs
 produced: '2026-09-15'
 producer: blobconverter 1.4.3 via https://blobconverter.luxonis.com

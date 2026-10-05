@@ -1,4 +1,4 @@
-from flask import jsonify, request, Blueprint
+from flask import abort, jsonify, request, Blueprint
 from schema.chat_message_schema import (
     chat_message_post_schema,
     chat_message_schema,
@@ -38,6 +38,22 @@ def get_chat_by_id(chat_id: str):
 def update_chat(chat_id: str):
     chat_dto = upload_chat_schema.load(request.json)
     chat = chat_service.update_chat(chat_id, chat_dto)
+    return chat_schema.dump(chat)
+
+
+@bp.route("/<string:chat_id>/first-token-latency", methods=["PUT"])
+def put_first_token_latency(chat_id: str):
+    """Record the first-token latency of this chat so an operator can read it."""
+    payload = request.get_json(silent=True) or {}
+    if "latencyMs" not in payload:
+        abort(400)
+    try:
+        latency = float(payload["latencyMs"])
+    except (TypeError, ValueError):
+        abort(400)
+    if latency < 0 or latency != latency:
+        abort(400)
+    chat = chat_service.record_first_token_latency(chat_id, latency)
     return chat_schema.dump(chat)
 
 

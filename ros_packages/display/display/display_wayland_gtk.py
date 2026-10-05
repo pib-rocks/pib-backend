@@ -27,10 +27,17 @@ from display.display_web_request import (
     SURFACE_WEB_FAILED,
     acknowledge_web_status,
     command_effect,
+    later_hide_releases,
     read_status,
     update_directory,
     write_hide_request,
     write_open_request,
+)
+from display.password_prompt import (
+    MAX_ATTEMPTS,
+    password_prompt_url,
+    prompt_decision,
+    read_operating_mode,
 )
 
 import gi
@@ -361,6 +368,8 @@ class DisplayNode(Node):
             os.getenv("PIB_DISPLAY_WEB_ACK_SECONDS", str(DEFAULT_ACK_SECONDS))
         )
         self.create_timer(0.5, self.poll_web_status)
+        self._prompt_attempts = 0
+        self._prompt_timer = self.create_timer(2.0, self.offer_password_prompt)
 
         msg = String()
         msg.data = "ready"
@@ -420,14 +429,52 @@ class DisplayNode(Node):
             return
         self.note_pending_web(document)
 
+    def offer_password_prompt(self) -> None:
+        """Open the password page on this screen while the store is locked.
+
+        A key store that cannot be read yet is retried. It does not fail the
+        display. After the last attempt the face stays up and the robot
+        remains in degraded mode.
+        """
+        if os.environ.get("PIB_DISPLAY_PASSWORD_PROMPT", "1") == "0":
+            self._prompt_timer.cancel()
+            return
+        self._prompt_attempts += 1
+        decision = prompt_decision(read_operating_mode())
+        if decision == "retry" and self._prompt_attempts < MAX_ATTEMPTS:
+            return
+        self._prompt_timer.cancel()
+        if decision != "open":
+            if decision == "retry":
+                self.get_logger().info(
+                    "key store mode was not readable; password prompt not opened"
+                )
+            return
+        try:
+            document = write_open_request(update_directory(), password_prompt_url())
+        except (ValueError, OSError) as exc:
+            self.get_logger().error(f"password prompt was not opened: {exc}")
+            return
+        self.note_pending_web(document)
+        self.command_queue.put(DisplayCommand("web_open"))
+        self.publish_surface(SURFACE_WEB)
+        self.get_logger().info("password prompt opened on the display")
+
     def poll_web_status(self) -> None:
         pending = self.pending_web
         if pending is None:
             return
+        status = read_status(update_directory())
+        if later_hide_releases(pending["requestedAt"], status):
+            self.command_queue.put(DisplayCommand("web_hide"))
+            self.publish_surface(SURFACE_READY)
+            self.pending_web = None
+            self.pending_web_failure_reported = False
+            return
         acknowledgement = acknowledge_web_status(
             pending["action"],
             pending["requestedAt"],
-            read_status(update_directory()),
+            status,
             time.monotonic() >= self.pending_web_deadline,
             self.pending_web_failure_reported,
         )

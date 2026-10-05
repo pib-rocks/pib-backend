@@ -1,3 +1,5 @@
+import threading
+import time
 from collections import deque
 from typing import Any, Callable, Optional
 
@@ -15,6 +17,23 @@ from datatypes.srv import (
 )
 from pib_api_client import voice_assistant_client
 from pib_api_client.voice_assistant_client import Personality
+from pib_hermes_config.live_session import (
+    VOICE_MODE_LIVE,
+    channel_turn_on_allowed,
+    live_session_ends_on_handover,
+)
+from pib_hermes_config.turn_taking import (
+    StreamingSpeech,
+    authored_filler,
+    first_token_budget_ms,
+    pause_threshold_now,
+)
+from pib_hermes_config.visible_state import (
+    VOICE_USING_FALLBACK_TOPIC,
+    answer_uses_fallback,
+)
+from public_api_client.hermes_agent_client import FALLBACK_REPLY
+from std_msgs.msg import Bool
 from rclpy.action import ActionClient
 from rclpy.action.client import ClientGoalHandle
 from rclpy.client import Client
@@ -25,6 +44,7 @@ from rclpy.service import Service
 from rclpy.task import Future
 from voice_assistant import START_SIGNAL_FILE, STOP_SIGNAL_FILE
 from voice_assistant.audio_loop import GeminiAudioLoop
+from voice_assistant.degraded_chat import allows_cloud_chat, fetch_operating_mode
 
 MAX_SILENT_SECONDS_BEFORE = 8.0
 
@@ -47,6 +67,13 @@ class VoiceAssistantNode(Node):
         self.state.turned_on = False
         # id of the active chat (may be an arbitrary value, if the va is turned off)
         self.state.chat_id = ""
+        self.state.live_session = False
+        self.state.personality_id = ""
+        self.state.speaking = False
+        self.state.using_fallback = False
+        self.state.personality_name = ""
+        self._answer_is_fallback = False
+        self._engine_fallback = False
         # indicates if the voice_assistant is currently turning off
         self.turning_off = False
         # the personality associated with the active chat
@@ -67,6 +94,12 @@ class VoiceAssistantNode(Node):
         self.stop_program_execution: Callable[[], None] = lambda: None
         # indicates if a program is currently executing
         self.is_executing_program = False
+        # Clauses already handed to the synthesizer for the current answer.
+        self._streaming_speech = StreamingSpeech()
+        self._filler_timer: Optional[threading.Timer] = None
+        self._filler_lock = threading.Lock()
+        self._first_token_seen = False
+        self._turn_has_playback = False
 
         # services ----------------------------------------------------------------------
 
@@ -105,6 +138,12 @@ class VoiceAssistantNode(Node):
         self.chat_is_listening_publisher: Publisher = self.create_publisher(
             ChatIsListening, "chat_is_listening", 10
         )
+        self.create_subscription(
+            Bool,
+            VOICE_USING_FALLBACK_TOPIC,
+            self._on_engine_fallback,
+            10,
+        )
 
         # clients -----------------------------------------------------------------------
 
@@ -136,6 +175,23 @@ class VoiceAssistantNode(Node):
         )
         self.run_program_client.wait_for_server()
 
+        self.gemini_loop.set_action_announcer(self._announce_live_action)
+        self.gemini_loop.set_speaking_listener(self._on_live_speaking)
+        self.create_timer(1.0, self._republish_visible_state)
+
+        from voice_assistant.attention import GREETING_CHECK_SECONDS, bind_attention
+
+        # Speech starting turns the head before a live answer. The timer greets
+        # a recognised person who is looking, once per cooldown.
+        self._attention = bind_attention(
+            self,
+            command_on_speech=True,
+            speech_allowed=lambda: bool(self.state.turned_on),
+        )
+        self._presence_timer = self.create_timer(
+            GREETING_CHECK_SECONDS, self._consider_presence_greeting
+        )
+
         self.get_logger().info("Now running VA")
 
     # client accessors ------------------------------------------------------------------
@@ -160,6 +216,9 @@ class VoiceAssistantNode(Node):
         goal = RecordAudio.Goal()
         goal.max_silent_seconds_before = max_silent_seconds_before
         goal.max_silent_seconds_after = max_silent_seconds_after
+        goal.stt_engine = (
+            getattr(self.personality, "stt_engine", None) or "local_whisper"
+        )
         feedback_callback = (
             None if on_stopped_recording is None else lambda _: on_stopped_recording()
         )
@@ -220,6 +279,43 @@ class VoiceAssistantNode(Node):
         if request.join:
             future.add_done_callback(lambda _: on_stopped_playing())
 
+    def _consider_presence_greeting(self) -> None:
+        """Greet a person who is looking, unless a turn is already underway."""
+        if not self.state.turned_on or self.personality is None:
+            return
+        if self.gemini_loop.is_listening:
+            return
+        if (
+            self.waiting_for_transcribed_text
+            or self._turn_has_playback
+            or self.is_executing_program
+        ):
+            return
+        line = self._attention.take_opening_greeting(
+            language=getattr(self.personality, "language", None)
+        )
+        if not line:
+            return
+        self.play_audio_from_speech(
+            line,
+            self.personality.gender,
+            self.personality.language,
+        )
+
+    def _announce_live_action(self, text: str) -> None:
+        """Speak a robot action on the turn-based player before it runs.
+
+        The call waits until playback finishes so the action cannot start first.
+        """
+        done = threading.Event()
+        gender = getattr(self.personality, "gender", None) or "Female"
+        language = getattr(self.personality, "language", None) or "German"
+        self.play_audio_from_speech(text, gender, language, done.set)
+        if not done.wait(timeout=30.0):
+            self.get_logger().warning(
+                "Live action announcement did not finish within 30s: %s", text
+            )
+
     def play_audio_from_speech(
         self,
         speech: str,
@@ -232,9 +328,103 @@ class VoiceAssistantNode(Node):
         request.gender = gender
         request.language = language
         request.join = on_stopped_playing is not None
+        request.tts_engine = (
+            getattr(self.personality, "tts_engine", None) or "supertone"
+        )
+        if speech and str(speech).strip():
+            self._note_spoken_answer(str(speech))
         future: Future = self.play_audio_from_speech_client.call_async(request)
         if request.join:
             future.add_done_callback(lambda _: on_stopped_playing())
+
+    def _refresh_personality_turn_taking(self) -> None:
+        """Read pause threshold and filler again so an edit applies while running."""
+        personality = self.personality
+        if personality is None:
+            return
+        personality_id = getattr(personality, "personality_id", None)
+        if not personality_id:
+            return
+        try:
+            ok, fresh = voice_assistant_client.get_personality(personality_id)
+        except Exception as exc:
+            self.get_logger().warning("personality refresh failed: %s", exc)
+            return
+        if not ok or fresh is None:
+            return
+        personality.pause_threshold = pause_threshold_now(
+            personality.pause_threshold,
+            getattr(fresh, "pause_threshold", None),
+        )
+        personality.thinking_filler = getattr(fresh, "thinking_filler", None)
+
+    def _start_spoken_turn(self) -> None:
+        """Arm clause playback and, when the personality wrote one, a filler."""
+        self._cancel_filler_timer()
+        self._streaming_speech = StreamingSpeech()
+        self._turn_has_playback = False
+        with self._filler_lock:
+            self._first_token_seen = False
+        self._refresh_personality_turn_taking()
+        self._arm_filler()
+
+    def _arm_filler(self) -> None:
+        personality = self.personality
+        if personality is None:
+            return
+        filler = getattr(personality, "thinking_filler", None)
+        if not isinstance(filler, str) or not filler.strip():
+            return
+        budget_ms = first_token_budget_ms()
+
+        def _fire() -> None:
+            with self._filler_lock:
+                phrase = authored_filler(
+                    filler,
+                    elapsed_ms=float(budget_ms),
+                    budget_ms=budget_ms,
+                    first_token_seen=self._first_token_seen,
+                )
+                if phrase is None:
+                    return
+            if self.personality is None:
+                return
+            self._turn_has_playback = True
+            self.play_audio_from_speech(
+                phrase,
+                personality.gender,
+                personality.language,
+            )
+
+        timer = threading.Timer(budget_ms / 1000.0, _fire)
+        timer.daemon = True
+        self._filler_timer = timer
+        timer.start()
+
+    def _note_first_token(self) -> None:
+        with self._filler_lock:
+            self._first_token_seen = True
+        self._cancel_filler_timer()
+
+    def _cancel_filler_timer(self) -> None:
+        timer = self._filler_timer
+        self._filler_timer = None
+        if timer is not None:
+            timer.cancel()
+
+    def _finish_spoken_turn(self) -> None:
+        """Restart listening after audio that was queued earlier in the turn."""
+        if self.personality is None:
+            return
+        if self._turn_has_playback:
+            self.play_audio_from_speech(
+                "",
+                self.personality.gender,
+                self.personality.language,
+                self.if_cycle_not_changed(self.on_final_sentence_played),
+            )
+            return
+        self.on_final_sentence_played()
 
     def run_program(
         self, code_visual: str, on_stopped_executing_program: Callable[[None], None]
@@ -257,6 +447,7 @@ class VoiceAssistantNode(Node):
         response: GetVoiceAssistantState.Response,
     ) -> GetVoiceAssistantState.Response:
         """callback function for 'get_voice_assistant_state' service"""
+        self._sync_voice_state()
         response.voice_assistant_state = self.state
         return response
 
@@ -275,8 +466,11 @@ class VoiceAssistantNode(Node):
         self, request: GetChatIsListening.Request, response: GetChatIsListening.Response
     ) -> GetChatIsListening.Response:
         """callback function for 'get_chat_is_listening' service"""
+        live_for_this_chat = (
+            self.gemini_loop.is_listening and request.chat_id == self.state.chat_id
+        )
         response.listening = (
-            self.get_is_listening(request.chat_id) or self.gemini_loop.is_listening
+            self.get_is_listening(request.chat_id) or live_for_this_chat
         )
         return response
 
@@ -298,6 +492,7 @@ class VoiceAssistantNode(Node):
             self.play_audio_from_file(STOP_SIGNAL_FILE)
             self.stop_recording()
             self.set_is_listening(request.chat_id, False)
+            self._start_spoken_turn()
             self.chat(
                 request.content,
                 self.state.chat_id,
@@ -323,13 +518,15 @@ class VoiceAssistantNode(Node):
 
     # callback cycle --------------------------------------------------------------------
 
+    def _cloud_session_allowed(self) -> bool:
+        """Live and other cloud sessions need the unlocked key store."""
+        return allows_cloud_chat(fetch_operating_mode())
+
     def on_start_signal_played(self) -> None:
-        if (
-            self.personality
-            and "gemini" in self.personality.assistant_model.api_name.lower()
-        ):
+        if self.gemini_loop.is_listening:
             return
 
+        self._refresh_personality_turn_taking()
         self.record_audio(
             MAX_SILENT_SECONDS_BEFORE,
             self.personality.pause_threshold,
@@ -337,6 +534,9 @@ class VoiceAssistantNode(Node):
             self.if_cycle_not_changed(self.on_transcribed_text_received),
         )
 
+        self._answer_is_fallback = False
+        self.state.speaking = False
+        self.state.using_fallback = self._engine_fallback
         self.set_is_listening(self.state.chat_id, True)
 
     def _on_stop_signal_played(self) -> None:
@@ -344,10 +544,7 @@ class VoiceAssistantNode(Node):
         self.get_logger().debug("_on_stop_signal_played")
 
     def on_stopped_recording(self) -> None:
-        if (
-            self.personality
-            and "gemini" in self.personality.assistant_model.api_name.lower()
-        ):
+        if self.gemini_loop.is_listening:
             return
 
         if not self.get_is_listening(self.state.chat_id):
@@ -363,6 +560,7 @@ class VoiceAssistantNode(Node):
         if not self.waiting_for_transcribed_text:
             return
         self.waiting_for_transcribed_text = False
+        self._start_spoken_turn()
         self.chat(
             transcribed_text,
             self.state.chat_id,
@@ -375,21 +573,27 @@ class VoiceAssistantNode(Node):
         if self.gemini_loop.is_listening:
             return
 
+        self._note_first_token()
         if not sentence:
             self.update_state(False)
             return
+        clauses = self._streaming_speech.take(sentence, is_final)
         self.final_chat_response_received = is_final
-        on_stopped_playing = (
-            self.if_cycle_not_changed(self.on_final_sentence_played)
-            if is_final and not self.is_executing_program
-            else None
-        )
-        self.play_audio_from_speech(
-            sentence,
-            self.personality.gender,
-            self.personality.language,
-            on_stopped_playing,
-        )
+        if not clauses:
+            if is_final and not self.is_executing_program:
+                self._finish_spoken_turn()
+            return
+        gender = self.personality.gender
+        language = self.personality.language
+        for index, clause in enumerate(clauses):
+            last = is_final and index == len(clauses) - 1
+            on_stopped_playing = (
+                self.if_cycle_not_changed(self.on_final_sentence_played)
+                if last and not self.is_executing_program
+                else None
+            )
+            self._turn_has_playback = True
+            self.play_audio_from_speech(clause, gender, language, on_stopped_playing)
 
     def on_code_visual_received(self, code_visual: str, is_final: bool) -> None:
         self.final_chat_response_received = is_final
@@ -465,6 +669,41 @@ class VoiceAssistantNode(Node):
         chat_is_listening.chat_id = chat_id
 
         self.chat_is_listening_publisher.publish(chat_is_listening)
+        self._publish_voice_state()
+
+    def _note_spoken_answer(self, speech: str) -> None:
+        """Speaking starts. A fallback sentence is shown as fallback."""
+        self._answer_is_fallback = answer_uses_fallback(speech, FALLBACK_REPLY)
+        self.state.speaking = True
+        self.state.using_fallback = self._answer_is_fallback or self._engine_fallback
+        self._publish_voice_state()
+
+    def _on_live_speaking(self, speaking: bool) -> None:
+        """Live playback. The session stays open, so listening is not cleared."""
+        self.state.speaking = bool(speaking)
+        if not speaking:
+            self._answer_is_fallback = False
+        self.state.using_fallback = self._answer_is_fallback or self._engine_fallback
+        self._publish_voice_state()
+
+    def _on_engine_fallback(self, msg: Bool) -> None:
+        """STT or TTS left its primary engine. The face reads this from voice state."""
+        self._engine_fallback = bool(msg.data)
+        self.state.using_fallback = self._engine_fallback or self._answer_is_fallback
+        self._publish_voice_state()
+
+    def _republish_visible_state(self) -> None:
+        """Repeat the current holder so a display that joined late still sees it."""
+        chat_id = self.state.chat_id
+        if chat_id:
+            listening = self.chat_id_to_is_listening.get(chat_id, False) or (
+                self.gemini_loop.is_listening and chat_id == self.state.chat_id
+            )
+            message = ChatIsListening()
+            message.listening = bool(listening)
+            message.chat_id = chat_id
+            self.chat_is_listening_publisher.publish(message)
+        self._publish_voice_state()
 
     def get_is_listening(self, chat_id: str) -> bool:
         """find out, if a chat is currently listening for user input"""
@@ -475,6 +714,23 @@ class VoiceAssistantNode(Node):
         stop_chat = self.chat_id_to_stop_chat.get(chat_id)
         if stop_chat is not None:
             stop_chat()
+
+    def _sync_voice_state(self) -> None:
+        """Fields both Cerebra windows read. The holder is backend state."""
+        self.state.live_session = bool(self.gemini_loop.is_listening)
+        if self.state.turned_on and self.personality is not None:
+            self.state.personality_id = self.personality.personality_id or ""
+            self.state.personality_name = getattr(self.personality, "name", "") or ""
+        else:
+            self.state.personality_id = ""
+            self.state.personality_name = ""
+            self.state.speaking = False
+            self._answer_is_fallback = False
+            self.state.using_fallback = self._engine_fallback
+
+    def _publish_voice_state(self) -> None:
+        self._sync_voice_state()
+        self.voice_assistant_state_publisher.publish(self.state)
 
     def update_state(self, turned_on: bool, chat_id: str = "") -> bool:
         """Attempts to update the internal state, and returns whether this was successful."""
@@ -493,19 +749,16 @@ class VoiceAssistantNode(Node):
 
         # ---------- TURNING OFF ----------
         if not turned_on:
-            # If we know we're currently on Gemini, stop it without fetching anything
-            if (
-                self.personality
-                and "gemini" in self.personality.assistant_model.api_name.lower()
-            ):
-                if self.gemini_loop.is_listening:
-                    self.gemini_loop.stop()
+            # Releasing the channel ends a live session. A turn-based session
+            # still uses the legacy cleanup below.
+            if self.gemini_loop.is_listening:
+                self.gemini_loop.stop()
                 self.play_audio_from_file(STOP_SIGNAL_FILE)
 
                 self.state.turned_on = False
                 # keep the current chat id if none was provided
                 self.state.chat_id = effective_chat_id
-                self.voice_assistant_state_publisher.publish(self.state)
+                self._publish_voice_state()
                 return True
 
             # Legacy deactivation (unchanged)
@@ -516,12 +769,13 @@ class VoiceAssistantNode(Node):
                     # already off → no-op
                     self.state.turned_on = False
                     self.state.chat_id = effective_chat_id
-                    self.voice_assistant_state_publisher.publish(self.state)
+                    self._publish_voice_state()
                     return True
 
                 self.cycle += 1
                 self.turning_off = True
                 self.waiting_for_transcribed_text = False
+                self._cancel_filler_timer()
                 self.stop_recording()
                 self.stop_chat(effective_chat_id)
                 self.stop_program_execution()
@@ -540,7 +794,7 @@ class VoiceAssistantNode(Node):
 
                 self.state.turned_on = False
                 self.state.chat_id = effective_chat_id
-                self.voice_assistant_state_publisher.publish(self.state)
+                self._publish_voice_state()
                 return True
 
             except Exception as e:
@@ -562,21 +816,59 @@ class VoiceAssistantNode(Node):
         if not is_success or pers is None:
             self.get_logger().error(f"no personality with chat id {effective_chat_id}")
             return False
-        self.personality = pers
-        api_name = self.personality.assistant_model.api_name.lower()
-        self.get_logger().debug(f"update_state: resolved api_name={api_name}")
 
-        # GEMINI path: short-circuit legacy logic
-        if "gemini" in api_name:
+        holder_id = (
+            self.personality.personality_id if self.personality is not None else None
+        )
+        if not channel_turn_on_allowed(
+            self.state.turned_on, holder_id, pers.personality_id
+        ):
+            self.get_logger().info(
+                "voice channel is held by personality %s; refusing %s",
+                holder_id,
+                pers.personality_id,
+            )
+            return False
+
+        # Moving the voice to another chat ends the open live session first.
+        if live_session_ends_on_handover(
+            self.state.turned_on,
+            self.state.chat_id,
+            effective_chat_id,
+            self.gemini_loop.is_listening,
+        ):
+            self.gemini_loop.stop()
+
+        self.personality = pers
+        start_live = (
+            getattr(pers, "voice_start_mode", None) == VOICE_MODE_LIVE
+            and bool(getattr(pers, "live_model", None))
+            and self._cloud_session_allowed()
+        )
+        self.get_logger().debug(
+            "update_state: voice_start_mode=%s live_model=%s",
+            getattr(pers, "voice_start_mode", None),
+            getattr(pers, "live_model", None),
+        )
+
+        # Live path: the provider row's pinned model, gated by the live flag
+        # (already folded into voice_start_mode). A locked key store falls
+        # through to the local recorder instead.
+        if start_live:
             if not self.gemini_loop.is_listening:
-                self.gemini_loop.start(chat_id=chat_id)
+                self.gemini_loop.start(
+                    chat_id=effective_chat_id,
+                    model=pers.live_model,
+                    idle_timeout_s=getattr(pers, "live_idle_timeout", None),
+                )
                 self.play_audio_from_file(START_SIGNAL_FILE)
             else:
-                self.get_logger().debug("Gemini already running; no-op")
+                self.get_logger().debug("Live session already running; no-op")
 
             self.state.turned_on = True
             self.state.chat_id = effective_chat_id
-            self.voice_assistant_state_publisher.publish(self.state)
+            self.state.speaking = False
+            self.set_is_listening(effective_chat_id, True)
             return True
 
         # Legacy activation (unchanged)
@@ -607,7 +899,7 @@ class VoiceAssistantNode(Node):
             )
             return False
 
-        self.voice_assistant_state_publisher.publish(self.state)
+        self._publish_voice_state()
         return True
 
 

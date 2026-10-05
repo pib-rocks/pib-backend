@@ -1,3 +1,5 @@
+from flask import abort, jsonify, request, Blueprint
+from pib_hermes_config.live_interaction import personality_requests_actuation
 from service import personality_service
 from schema.personality_schema import (
     personality_schema,
@@ -5,9 +7,14 @@ from schema.personality_schema import (
     upload_personality_schema,
     update_personality_schema,
 )
-from flask import abort, jsonify, request, Blueprint
 
 bp = Blueprint("personality_controller", __name__)
+
+
+def _reject_actuation_payload() -> None:
+    payload = request.get_json(silent=True) or {}
+    if isinstance(payload, dict) and personality_requests_actuation(payload):
+        abort(400)
 
 
 @bp.route("", methods=["GET"])
@@ -25,6 +32,7 @@ def get_personality(personality_id: str):
 
 @bp.route("", methods=["POST"])
 def create_personality():
+    _reject_actuation_payload()
     personality_dto = upload_personality_schema.load(request.json)
     personality = personality_service.create_personality(personality_dto)
     return personality_schema.dump(personality), 201
@@ -32,6 +40,7 @@ def create_personality():
 
 @bp.route("/<string:personality_id>", methods=["PUT"])
 def update_personality(personality_id: str):
+    _reject_actuation_payload()
     personality_dto = update_personality_schema.load(request.json)
     personality = personality_service.update_personality(
         personality_id, personality_dto

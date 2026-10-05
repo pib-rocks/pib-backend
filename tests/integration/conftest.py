@@ -44,6 +44,7 @@ def app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("PYTHON_CODE_DIR", str(programs_dir))
     monkeypatch.setenv("HOST_IP_FILE", str(host_ip_file))
     monkeypatch.setenv("PIB_HARDWARE_VARIANT", "pib5edu")
+    monkeypatch.setenv("PIB_SMART_CHATS", "1")
 
     flask_app.config.update(
         TESTING=True,

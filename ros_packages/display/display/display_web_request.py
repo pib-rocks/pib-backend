@@ -202,6 +202,23 @@ def acknowledge_web_status(
     return WebAcknowledgement()
 
 
+def later_hide_releases(pending_requested_at: str, status: dict | None) -> bool:
+    """A hide written after the open closed the password page.
+
+    The pending request is the open. The host status for a later hide carries
+    a newer timestamp, so the face can come back without waiting out the
+    acknowledgement timeout.
+    """
+    if not isinstance(status, dict):
+        return False
+    if status.get("state") != "done" or status.get("action") != "hide":
+        return False
+    requested_at = status.get("requestedAt")
+    if type(requested_at) is not str or type(pending_requested_at) is not str:
+        return False
+    return requested_at > pending_requested_at
+
+
 def _emit(ok: bool, action: str, url: str, requested_at: str, message: str) -> None:
     print("OK=" + ("true" if ok else "false"))
     print("ACTION=" + shlex.quote(action))
