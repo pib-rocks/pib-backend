@@ -62,7 +62,6 @@ COPY ./pib_api/client ./client
 # Shared with the flask API so both resolve the same Hermes profiles dir.
 COPY ./pib_hermes_config ./pib_hermes_config
 COPY ./public_api_client ./public_api_client
-RUN pip install --break-system-packages --no-cache-dir ./public_api_client/
 
 # Chat resolves the cloud model from the catalogue. This image does not
 # install Flask; the module itself imports nothing else.
