@@ -160,7 +160,7 @@ services:
       # and the Hermes turn both read that provider's secret from flask at
       # runtime. Hermes does not copy it into the profile.
     volumes:
-      - /media/dyan/project/projects/voice/:/data/voice
+      - ${PIB_VOICE_DATA_DIR:-/data/voice}:/data/voice
       - /dev/snd:/dev/snd
       - /dev/dsp:/dev/dsp
       - /etc/machine-id:/etc/machine-id
@@ -287,7 +287,7 @@ services:
       - /dev/bus/usb:/dev/bus/usb1
     privileged: true
     volumes:
-      - /media/dyan/project/projects/voice/:/data/voice
+      - ${PIB_VOICE_DATA_DIR:-/data/voice}:/data/voice
       - /dev/snd:/dev/snd
       - /dev/dsp:/dev/dsp
       - /etc/machine-id:/etc/machine-id

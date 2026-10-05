@@ -23,6 +23,11 @@ FROM ros:jazzy-ros-core
 
 SHELL ["/bin/bash", "-c"]
 
+# pip runs as root in an image build; silence the warning it prints for every install.
+ENV PIP_ROOT_USER_ACTION=ignore \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1
+
 RUN apt-get update && apt-get install --no-install-recommends -y \
     python3-pip \
     libusb-1.0-0 \
