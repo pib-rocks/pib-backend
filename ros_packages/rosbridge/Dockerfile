@@ -2,11 +2,12 @@ FROM ros:jazzy-ros-core
 
 SHELL ["/bin/bash", "-c"]
 
-RUN apt update && apt upgrade -y && apt install -y \
+# apt-get, not apt: apt warns "does not have a stable CLI interface" on every call in a build.
+RUN apt-get update && apt-get upgrade -y && apt-get install -y \
     build-essential \
     python3-colcon-common-extensions \
     python3-colcon-mixin \
-    ros-$ROS_DISTRO-rosbridge-server&& \
+    ros-$ROS_DISTRO-rosbridge-server && \
     apt-get autoremove -y && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*

@@ -85,6 +85,96 @@ function command_exists() {
     command -v "$@" >/dev/null 2>&1
 }
 
+# require_nonempty NAME...: fail loudly when a variable a file operation is about to use is
+# empty. `cp "" ...`, `grep ... ""` and `sed -i ... ""` only print a one-line complaint and the
+# surrounding step still reports success; this turns that into a named error. A global `set -u`
+# is not an option here because the ROS setup.bash files this script sources rely on unset
+# variables, so the guard sits at the call sites instead.
+function require_nonempty() {
+  local name
+  for name in "$@"; do
+    if [ -z "${!name}" ]; then
+      print ERROR "internal error: variable ${name} is empty (${FUNCNAME[1]:-top level})"
+      return 1
+    fi
+  done
+}
+
+# ---- step runner --------------------------------------------------------------------------
+# The install log mixes this script's progress with everything the steps print, so each step
+# gets a header, a footer with duration and result, and a line in the closing summary.
+# PIB_SETUP_STEP_LOG lets the unit tests read the summary data without parsing the output.
+STEP_NAMES=()
+STEP_RESULTS=()
+STEP_DURATIONS=()
+STEP_FAILURES=0
+
+# run_step LABEL COMMAND [ARGS...]: run COMMAND, record and print its result, and return its
+# exit status so callers keep deciding whether a failure is fatal.
+function run_step() {
+  local label="$1"
+  shift
+  local index=$(( ${#STEP_NAMES[@]} + 1 ))
+  local started finished duration status result
+
+  started="$(date +%s)"
+  print INFO "==== step ${index}: ${label} (started $(date -u +%H:%M:%S) UTC) ===="
+  "$@"
+  status=$?
+  finished="$(date +%s)"
+  duration=$((finished - started))
+
+  if [ "$status" -eq 0 ]; then
+    result="ok"
+    print SUCCESS "==== step ${index}: ${label}: ok (${duration}s) ===="
+  else
+    result="FAILED rc=${status}"
+    STEP_FAILURES=$((STEP_FAILURES + 1))
+    print ERROR "==== step ${index}: ${label}: FAILED rc=${status} (${duration}s) ===="
+  fi
+  STEP_NAMES+=("$label")
+  STEP_RESULTS+=("$result")
+  STEP_DURATIONS+=("$duration")
+  if [ -n "${PIB_SETUP_STEP_LOG:-}" ]; then
+    printf '%s\t%s\t%s\n' "$label" "$result" "$duration" >> "$PIB_SETUP_STEP_LOG"
+  fi
+  return "$status"
+}
+
+# One line per step, in order. This is the part of the log to read first.
+function print_step_summary() {
+  local index total="${#STEP_NAMES[@]}"
+  print INFO "Setup summary: ${total} steps, ${STEP_FAILURES} failed"
+  for (( index = 0; index < total; index++ )); do
+    printf '  %2d. %-48s %-16s %6ss\n' \
+      "$((index + 1))" "${STEP_NAMES[$index]}" "${STEP_RESULTS[$index]}" "${STEP_DURATIONS[$index]}"
+  done
+}
+
+# A step that must not be survived: print the summary so far and leave with status 1.
+function abort_setup() {
+  print ERROR "$1"
+  print_step_summary
+  exit 1
+}
+
+# wpctl addresses the default sink as @DEFAULT_AUDIO_SINK@. Right after wireplumber (re)starts
+# there is no default node yet and wpctl answers "Translate ID error: '-1' is not a valid ID",
+# so wait for one to appear before touching its volume. PIB_WPCTL_WAIT_SECONDS is for tests.
+function wait_for_default_audio_sink() {
+  local pib_uid="$1"
+  local attempts="${PIB_WPCTL_WAIT_SECONDS:-15}"
+  local attempt
+  for (( attempt = 1; attempt <= attempts; attempt++ )); do
+    if sudo -u pib XDG_RUNTIME_DIR="/run/user/${pib_uid}" \
+      wpctl inspect @DEFAULT_AUDIO_SINK@ >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
 function set_default_output_volume() {
   local pib_uid
 
@@ -97,6 +187,11 @@ function set_default_output_volume() {
     print WARN "user 'pib' does not exist; default output volume was not changed"
     return 0
   }
+
+  if ! wait_for_default_audio_sink "$pib_uid"; then
+    print WARN "no default audio sink appeared within ${PIB_WPCTL_WAIT_SECONDS:-15}s; default output volume was not changed"
+    return 0
+  fi
 
   if ! sudo -u pib XDG_RUNTIME_DIR="/run/user/${pib_uid}" \
     wpctl set-volume @DEFAULT_AUDIO_SINK@ 1.0; then
@@ -292,8 +387,9 @@ function remove_apps() {
 
 function install_system_packages() {
     print INFO "Installing system packages"
-    sudo apt update -qq && \
-    sudo apt-get install -y git curl gnupg openssh-server >/dev/null
+    # python3-yaml: installation_scripts/provision_whisper_model.py and seed_hermes_mcp_config
+    sudo apt-get update -qq && \
+    sudo apt-get install -y git curl gnupg openssh-server python3-yaml >/dev/null
 
     # Install Node.js (LTS) via NodeSource — needed for Cerebra frontend build
     # and for running Jest/Blockly generator tests without a Docker fallback.
@@ -313,11 +409,34 @@ function install_system_packages() {
     print SUCCESS "Installing system packages completed"
 }
 
+# True when the C library can already switch to en_US.UTF-8 on this machine.
+function locale_is_generated() {
+  locale -a 2>/dev/null | grep -qixE 'en_US\.(UTF-8|utf8)'
+}
+
+# Runs first thing after sudo is available: an ssh session forwards the client's LC_ALL and
+# every command before the locale exists complains "setlocale: LC_ALL: cannot change locale".
+# Until then the script runs under C.UTF-8, which glibc always provides.
 function install_locale() {
-  sudo apt-get install -y locales
-  sudo sed -i '/en_US.UTF-8/d' /etc/locale.gen
-  echo "en_US.UTF-8 UTF-8" | sudo tee -a /etc/locale.gen
-  sudo locale-gen en_US.UTF-8
+  if locale_is_generated; then
+    print INFO "Locale en_US.UTF-8 is already generated"
+  else
+    export LANG=C.UTF-8 LC_ALL=C.UTF-8
+    if ! command_exists locale-gen; then
+      sudo apt-get update -qq
+      sudo apt-get install -y locales >/dev/null || return 1
+    fi
+    if [ -f /etc/locale.gen ]; then
+      sudo sed -i '/^#\? *en_US.UTF-8 UTF-8/d' /etc/locale.gen
+    fi
+    echo "en_US.UTF-8 UTF-8" | sudo tee -a /etc/locale.gen >/dev/null
+    sudo locale-gen en_US.UTF-8 || return 1
+    if ! locale_is_generated; then
+      print ERROR "locale-gen ran but en_US.UTF-8 is still not available"
+      return 1
+    fi
+    print SUCCESS "Generated locale en_US.UTF-8"
+  fi
   sudo update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
   export LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
 }
@@ -468,6 +587,67 @@ if changed:
   print SUCCESS "Seeded mcp_servers.pib into /home/pib/.hermes/config.yaml"
 }
 
+# The Hermes installer drops its CLI into ~/.local/bin, which no shell on a fresh Raspberry Pi
+# OS has on PATH: `which hermes` over ssh answers nothing. Two files cover every shell kind:
+#   /etc/profile.d/pib-local-bin.sh  - login shells (console, `ssh pib@robot`, desktop session)
+#   the top of /home/pib/.bashrc     - non-login shells: terminals, and the commands sshd runs
+#                                      (`ssh pib@robot which hermes`; Debian's bash reads
+#                                      ~/.bashrc for those, but ~/.bashrc returns early for
+#                                      non-interactive shells, so the block must sit above
+#                                      that guard - appending it would not work).
+# PIB_PROFILE_D and PIB_USER_HOME let the unit tests write into a scratch directory.
+PIB_LOCAL_BIN_MARKER="# pib: ~/.local/bin on PATH (setup-pib.sh)"
+
+function local_bin_path_snippet() {
+  cat <<'EOF'
+case ":${PATH}:" in
+  *":${HOME}/.local/bin:"*) ;;
+  *) PATH="${HOME}/.local/bin:${PATH}" ;;
+esac
+export PATH
+EOF
+}
+
+function install_local_bin_path() {
+  local profile_d="${PIB_PROFILE_D:-/etc/profile.d}"
+  local user_home="${PIB_USER_HOME:-/home/pib}"
+  local profile_file="${profile_d}/pib-local-bin.sh"
+  local bashrc="${user_home}/.bashrc"
+  local staged
+
+  require_nonempty profile_d user_home || return 1
+
+  staged="$(mktemp)" || return 1
+  {
+    echo "$PIB_LOCAL_BIN_MARKER"
+    echo "# Login shells. The Hermes CLI installs into ~/.local/bin."
+    local_bin_path_snippet
+  } > "$staged"
+  sudo install -o root -g root -m 0644 "$staged" "$profile_file" || { rm -f "$staged"; return 1; }
+  rm -f "$staged"
+  print INFO "Installed ${profile_file}"
+
+  if [ -f "$bashrc" ] && grep -qF "$PIB_LOCAL_BIN_MARKER" "$bashrc"; then
+    print INFO "${bashrc} already puts ~/.local/bin on PATH"
+  else
+    staged="$(mktemp)" || return 1
+    {
+      echo "$PIB_LOCAL_BIN_MARKER"
+      echo "# Kept above the interactive-shell guard so ssh commands see it too."
+      local_bin_path_snippet
+      echo ""
+      if [ -f "$bashrc" ]; then
+        cat "$bashrc"
+      fi
+    } > "$staged"
+    sudo install -o pib -g pib -m 0644 "$staged" "$bashrc" || { rm -f "$staged"; return 1; }
+    rm -f "$staged"
+    print INFO "Prepended the ~/.local/bin PATH block to ${bashrc}"
+  fi
+
+  print SUCCESS "PATH of user pib includes ~/.local/bin in login and non-login shells"
+}
+
 function install_hermes_cli() {
   local hermes_bin="/home/pib/.local/bin/hermes"
   local hermes_profiles="/home/pib/.hermes/profiles"
@@ -488,8 +668,10 @@ function install_hermes_cli() {
   # Match the NodeSource install style already used in this file (curl | bash).
   # --skip-setup keeps provisioning non-interactive; credentials come later.
   # --skip-browser skips Playwright — the voice path does not need Chromium.
+  # sudo resets PATH to secure_path, so ~/.local/bin is put back explicitly: the installer
+  # (and the uv tool installs it runs) otherwise warn once per tool that it is not on PATH.
   if ! sudo -u pib -H bash -c \
-    'curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash -s -- --skip-setup --skip-browser'; then
+    'export PATH="$HOME/.local/bin:$PATH"; curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash -s -- --skip-setup --skip-browser'; then
     print ERROR "Hermes CLI installer failed"
     return 1
   fi
@@ -543,7 +725,9 @@ function move_setup_files() {
   sudo chmod 755 "$source_file"
   print SUCCESS "Installed update script"
 
-  cp "$BACKEND_DIR/setup/setup_files/pib-eyes-animated.gif" "$HOME/Desktop/pib-eyes-animated.gif"
+  require_nonempty HOME BACKEND_DIR || return 1
+  mkdir -p "$HOME/Desktop" || return 1
+  cp "$BACKEND_DIR/setup/setup_files/pib-eyes-animated.gif" "$HOME/Desktop/pib-eyes-animated.gif" || return 1
   print SUCCESS "Moved animated eyes to Desktop"
 
   # Add HTML that opens Cerebra + Database to the Desktop
@@ -552,15 +736,15 @@ function move_setup_files() {
 }
 
 function install_DBbrowser() {
-  sudo apt install -y sqlitebrowser
+  sudo apt-get install -y sqlitebrowser
   print SUCCESS "Installed DB browser"
 }
 
 function install_tinkerforge() {
   wget https://download.tinkerforge.com/apt/$(. /etc/os-release; echo $ID)/tinkerforge.asc -q -O - | sudo tee /etc/apt/trusted.gpg.d/tinkerforge.asc > /dev/null
   echo "deb https://download.tinkerforge.com/apt/$(. /etc/os-release; echo $ID $VERSION_CODENAME) main" | sudo tee /etc/apt/sources.list.d/tinkerforge.list
-  sudo apt update
-  sudo apt install -y brickd brickv python3-tinkerforge
+  sudo apt-get update
+  sudo apt-get install -y brickd brickv python3-tinkerforge
 
   # Disable unused mesh gateway server to save CPU resources
   if [ -f /etc/brickd.conf ]; then
@@ -893,40 +1077,67 @@ function provision_curated_models() {
   return 0
 }
 
-# Voice weights are not in models/manifest.yaml. Copy a vendored
-# faster-whisper tree into /data/voice/models/whisper/ when the files are
-# already on disk. A missing tree is not downloaded and does not fail install.
-function provision_whisper_model() {
-  local script_root dest result
+# Voice weights are not in models/manifest.yaml. The checkout that carries voice/whisper-model.yaml:
+# the repository this script lives in when run from a clone, otherwise the clone in BACKEND_DIR.
+function whisper_repo_root() {
+  local script_root
   script_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+  if [ -f "$script_root/voice/whisper-model.yaml" ]; then
+    echo "$script_root"
+  else
+    echo "$BACKEND_DIR"
+  fi
+}
+
+# Place the faster-whisper weights into /data/voice/models/whisper/ with the self-contained
+# installation_scripts/provision_whisper_model.py: vendored voice/whisper/ tree first, else the
+# pinned files from voice/whisper-model.yaml, fetched now while the network is up. Nothing here
+# imports the voice_assistant ROS package. The step's stderr goes to the log unchanged, so a
+# failure shows its reason, and the step returns non-zero so the summary shows it as failed.
+function provision_whisper_model() {
+  local repo_root dest helper output result
+  repo_root="$(whisper_repo_root)"
   dest="${WHISPER_MODEL_PATH:-/data/voice/models/whisper}"
+  helper="$repo_root/setup/installation_scripts/provision_whisper_model.py"
+
+  if [ ! -f "$repo_root/voice/whisper-model.yaml" ]; then
+    print WARN "whisper model: ${repo_root}/voice/whisper-model.yaml not found; nothing to place"
+    return 0
+  fi
+  if [ ! -f "$helper" ]; then
+    print ERROR "whisper model: ${helper} is missing"
+    return 1
+  fi
   if ! command_exists python3; then
-    print WARN "whisper model: python3 is missing; not downloading"
-    return 0
+    print ERROR "whisper model: python3 is missing"
+    return 1
   fi
-  if ! result="$(
-    PYTHONPATH="${script_root}/ros_packages/voice_assistant${PYTHONPATH:+:$PYTHONPATH}" \
-      WHISPER_MODEL_PATH="$dest" \
-      python3 -c 'import os, sys; from pathlib import Path; from voice_assistant.whisper_provision import provision_from_repo; print(provision_from_repo(Path(sys.argv[1]), Path(os.environ["WHISPER_MODEL_PATH"])))' \
-      "$script_root"
-  )"; then
-    print WARN "whisper model: provisioning failed; not downloading"
-    return 0
+  if ! ensure_model_store_directory "$dest"; then
+    print ERROR "whisper model: store directory ${dest} is not writable"
+    return 1
   fi
+
+  print INFO "whisper model: store ${dest}"
+  # stdout carries only the result word; stderr (the reasons) passes straight into the log.
+  output="$(python3 "$helper" --repo-root "$repo_root" --destination "$dest")"
+  result="${output##*result=}"
   case "$result" in
     placed)
-      print INFO "whisper model: placed into ${dest}"
+      print SUCCESS "whisper model: placed into ${dest}"
       ;;
     already_current)
       print INFO "whisper model: already current in ${dest}"
       ;;
-    missing)
-      print WARN "whisper model: weights are not vendored under voice/whisper; the engine will not download them into ${dest}"
-      ;;
     *)
-      print WARN "whisper model: unexpected result ${result}"
+      print ERROR "whisper model: provisioning failed (${result:-no result}); see the lines above"
+      return 1
       ;;
   esac
+  if [ ! -f "$dest/small/model.bin" ] && [ ! -f "$dest/model.bin" ] && \
+    ! compgen -G "$dest/*/model.bin" >/dev/null; then
+    print ERROR "whisper model: no model.bin under ${dest} after provisioning"
+    return 1
+  fi
   return 0
 }
 
@@ -953,7 +1164,7 @@ show_help()
 	echo -e "-f=YourBranchName or --frontend-branch=YourBranchName"
 	echo -e "-b=YourBranchName or --backend-branch=YourBranchName"
 	echo -e "-l or --local for a local installation of the software over using a containerized setup using Docker"
-	echo -e "--models refresh the persistent OAK model store from models/ and exit"
+	echo -e "--models refresh the persistent OAK model store from models/, place the whisper weights (fetched once if voice/whisper/ is empty; PIB_WHISPER_DOWNLOAD=0 forbids that) and exit"
 	echo -e "--verify-models check the model store against models/manifest.yaml and exit non-zero on mismatch"
 	echo -e "--no-smart-chats install without the Hermes channel; Direct is the only chat path"
 	echo -e "--pib4edu select the pib 4 educational hardware variant"
@@ -977,7 +1188,8 @@ show_help()
 
 # ---------- SETUP STARTS FROM HERE -----------
 
-# VALIDATE CLI ARGUMENTS (before sudo so --models / --verify-models stay offline and local)
+# VALIDATE CLI ARGUMENTS (before the sudoers step, so --models / --verify-models stay local;
+# --verify-models is offline, --models fetches the whisper weights only when they are missing)
 BRANCH_BACKEND="main"
 BRANCH_FRONTEND="main"
 INSTALL_METHOD="docker"
@@ -1038,7 +1250,7 @@ fi
 if [ "$MODELS_ONLY" = true ]; then
   provision_curated_models provision
   models_status=$?
-  provision_whisper_model
+  provision_whisper_model || models_status=1
   exit "$models_status"
 fi
 
@@ -1051,6 +1263,13 @@ fi
 LOG_FILE="$HOME/setup-pib.log"
 exec > >(tee -a "$LOG_FILE") 2>&1
 
+# An ssh client may forward LC_ALL=en_US.UTF-8 before that locale exists on a fresh image; every
+# command would then warn "setlocale: LC_ALL: cannot change locale". Run under C.UTF-8, which
+# glibc always has, until install_locale has generated en_US.UTF-8.
+if ! locale_is_generated; then
+  export LANG=C.UTF-8 LC_ALL=C.UTF-8
+fi
+
 warn_on_hardware_generation_mismatch
 
 echo "Hello $USER! We start the setup by allowing you permanently to run commands with admin-privileges. This change is reverted at the end of the setup."
@@ -1061,6 +1280,9 @@ else
 	echo "For this change please enter the root-password. It is most likely just your normal one..."
 	su root bash -c "usermod -aG sudo $USER ; echo '$USER ALL=(ALL) NOPASSWD:ALL' | tee /etc/sudoers.d/$USER"
 fi
+
+# First step on purpose: everything below runs commands that honour LC_ALL.
+run_step "Generate locale en_US.UTF-8" install_locale || print ERROR "failed to install locale"
 
 printf '%s\n' "$PIB_HARDWARE_VARIANT" |
   sudo tee /etc/pib_hardware_variant >/dev/null
@@ -1092,48 +1314,55 @@ export DIST_VERSION
 check_distribution
 
 if is_ubuntu_noble; then
-  remove_apps || print ERROR "failed to remove default software"
+  run_step "Remove unused default software" remove_apps || print ERROR "failed to remove default software"
 fi
 
 if is_supported_raspbian; then
-  disable_power_notification || print ERROR "failed to disable power notifications"
+  run_step "Disable power notifications" disable_power_notification || print ERROR "failed to disable power notifications"
 fi
 
-install_system_packages || { print ERROR "failed to install system packages"; return 1; }
-install_locale || { print ERROR "failed to install locale"; return 1; }
-clone_repositories || { print ERROR "failed to clone repositories"; return 1; }
+# Steps whose failure leaves nothing to build on end the setup through abort_setup; the rest
+# are reported in the summary and the setup goes on.
+run_step "Install system packages" install_system_packages || abort_setup "failed to install system packages"
+run_step "Clone repositories" clone_repositories || abort_setup "failed to clone repositories"
 # After checkout, before containers: copy vendored OAK blobs into the bind-mounted store.
-provision_curated_models provision || {
-  print ERROR "Model provisioning must succeed before containers are started"
-  exit 1
-}
-provision_whisper_model
-install_pib_python_packages || print ERROR "failed to install pib Python packages"
+run_step "Provision curated OAK models" provision_curated_models provision ||
+  abort_setup "Model provisioning must succeed before containers are started"
+run_step "Provision whisper model" provision_whisper_model || print ERROR "failed to provision the whisper model"
+run_step "Install pib Python packages" install_pib_python_packages || print ERROR "failed to install pib Python packages"
+# Before the Hermes installer runs: ~/.local/bin must be on PATH for every shell of user pib.
+run_step "Put ~/.local/bin on PATH" install_local_bin_path || print ERROR "failed to put ~/.local/bin on PATH"
 # Before docker-compose starts: hermes must exist on the host so the
 # ros-voice-assistant / flask-app bind mounts resolve to real paths.
-install_hermes_cli || print ERROR "failed to install Hermes CLI"
+run_step "Install Hermes CLI" install_hermes_cli || print ERROR "failed to install Hermes CLI"
 # The legacy ~/imitation host script is retired. ros_packages/imitation consumes
 # the camera owner's typed topic and must never run beside another OAK device owner.
 if is_supported_raspbian && [ "$DIST_VERSION" = "trixie" ]; then
-  source "$SETUP_INSTALLATION_DIR/ros_jazzy_install.sh" || { print ERROR "failed to install ROS 2 Jazzy"; return 1; }
+  run_step "Install ROS 2 Jazzy" source "$SETUP_INSTALLATION_DIR/ros_jazzy_install.sh" || abort_setup "failed to install ROS 2 Jazzy"
 fi
-move_setup_files || print ERROR "failed to move setup files"
-setup_pib_marimo_service || print ERROR "failed to setup pib marimo service"
-install_DBbrowser || print ERROR "failed to install DB browser"
-install_tinkerforge || print ERROR "failed to install tinkerforge"
-setup_ip_dispatcher || print ERROR "failed to setup ip dispatcher"
-source "$SETUP_INSTALLATION_DIR/set_system_settings.sh" || print ERROR "failed to set system settings"
-install_wireplumber_volume_defaults || print WARN "failed to install the wireplumber volume drop-in"
-set_default_output_volume || print WARN "failed to set default output volume"
+run_step "Install setup files" move_setup_files || print ERROR "failed to move setup files"
+run_step "Set up pib Marimo service" setup_pib_marimo_service || print ERROR "failed to setup pib marimo service"
+run_step "Install DB browser" install_DBbrowser || print ERROR "failed to install DB browser"
+run_step "Install Tinkerforge" install_tinkerforge || print ERROR "failed to install tinkerforge"
+run_step "Set up IP dispatcher" setup_ip_dispatcher || print ERROR "failed to setup ip dispatcher"
+run_step "Adjust system settings" source "$SETUP_INSTALLATION_DIR/set_system_settings.sh" || print ERROR "failed to set system settings"
+run_step "Install wireplumber volume drop-in" install_wireplumber_volume_defaults || print WARN "failed to install the wireplumber volume drop-in"
+run_step "Set default output volume" set_default_output_volume || print WARN "failed to set default output volume"
 print INFO "${INSTALL_METHOD}"
 if [ "$INSTALL_METHOD" = "legacy" ]; then
   print INFO "Going to install Cerebra locally (LEGACY MODE NOT WORKING ON RASPBERRY PI 5)"
-  source "$SETUP_INSTALLATION_DIR/local_install.sh" || print ERROR "failed to install Cerebra locally"
+  run_step "Install Cerebra locally" source "$SETUP_INSTALLATION_DIR/local_install.sh" || print ERROR "failed to install Cerebra locally"
 elif is_ubuntu_noble || is_supported_raspbian; then
   print INFO "Going to install Cerebra via Docker"
+  # docker_install.sh runs its own run_step calls, one per service it sets up.
   source "$SETUP_INSTALLATION_DIR/docker_install.sh" || print ERROR "failed to install Cerebra via Docker"
 fi
-cleanup
+run_step "Clean up" cleanup || print WARN "cleanup failed"
 
-print SUCCESS "Installation completed"
+print_step_summary
+if [ "$STEP_FAILURES" -eq 0 ]; then
+  print SUCCESS "Installation completed"
+else
+  print ERROR "Installation completed with ${STEP_FAILURES} failed step(s); see the summary above"
+fi
 print SUCCESS "Reboot pib to apply all changes"

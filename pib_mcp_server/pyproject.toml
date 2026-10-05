@@ -1,0 +1,20 @@
+[build-system]
+# setuptools >= 64 implements PEP 660, so `pip install -e` (setup-pib.sh) builds an
+# editable wheel instead of falling back to the deprecated `setup.py develop`.
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pib_mcp_server"
+version = "0.1.0"
+description = "MCP tools for pib robot capabilities"
+requires-python = ">=3.10"
+dependencies = ["mcp", "websocket-client"]
+
+[project.scripts]
+pib-mcp-server = "pib_mcp_server.server:main"
+
+[tool.setuptools]
+# The package is this directory itself (flat layout); no auto-discovery.
+packages = ["pib_mcp_server"]
+package-dir = { pib_mcp_server = "." }
