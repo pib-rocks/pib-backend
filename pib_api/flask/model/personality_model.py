@@ -6,6 +6,14 @@ from pib_hermes_config.live_session import (
     VOICE_MODE_LIVE,
 )
 
+# A new personality needs a name only. Everything else starts from these
+# values and is changed afterwards in the Advanced dialog.
+DEFAULT_GENDER = "Female"
+#: Seconds of silence that end the user's turn.
+DEFAULT_PAUSE_THRESHOLD = 0.8
+#: Number of earlier messages sent along with a turn.
+DEFAULT_MESSAGE_HISTORY = 5
+
 
 class Personality(db.Model):
 
@@ -16,13 +24,17 @@ class Personality(db.Model):
     personality_id = db.Column(
         db.String(255), nullable=False, default=generate_uuid, unique=True
     )
-    gender = db.Column(db.String(255), nullable=False)
+    gender = db.Column(db.String(255), nullable=False, default=DEFAULT_GENDER)
     description = db.Column(db.String(38000), nullable=True)
-    pause_threshold = db.Column(db.Float, nullable=False)
+    pause_threshold = db.Column(
+        db.Float, nullable=False, default=DEFAULT_PAUSE_THRESHOLD
+    )
     # Spoken only when the first token is later than the budget. Empty means
     # silence. The assistant never substitutes a phrase of its own.
     thinking_filler = db.Column(db.String(255), nullable=True)
-    message_history = db.Column(db.Integer, nullable=False)
+    message_history = db.Column(
+        db.Integer, nullable=False, default=DEFAULT_MESSAGE_HISTORY
+    )
     stt_engine = db.Column(
         db.String(255),
         nullable=False,
@@ -42,7 +54,8 @@ class Personality(db.Model):
     assistant_model_id = db.Column(
         db.Integer, db.ForeignKey("assistant_model.id"), nullable=True
     )
-    # 'default' or the decimal id of a provider row. 'default' is a pointer.
+    # 'default' or the decimal id of a model row. 'default' is a pointer.
+    # The provider follows from that model.
     provider_ref = db.Column(db.String(255), nullable=False)
     # Independent of the provider. Smart is the Hermes agent; Direct is the
     # backend's own completion. The installer flag can force Direct at runtime
@@ -61,8 +74,8 @@ class Personality(db.Model):
         default=True,
         server_default="1",
     )
-    # live or turn_based. The provider's live flag and pinned model decide
-    # whether live is actually what the voice button starts.
+    # Derived from the chosen model: live for a live catalogue model,
+    # turn_based for every other model. The client does not set it.
     voice_mode = db.Column(
         db.String(255),
         nullable=False,

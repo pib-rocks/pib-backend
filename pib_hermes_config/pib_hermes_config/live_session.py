@@ -1,9 +1,9 @@
 """Live-session rules shared by the registry and the voice node.
 
-The live model identifier is a field of the provider row. The ``live``
-capability flag gates a session. Context-window compression stays on, an
-unused session ends at the personality's idle timeout, and one personality
-holds the voice channel at a time.
+A live model is a catalogue entry. Choosing that model is what starts a
+live session. Context-window compression stays on, an unused session ends
+at the personality's idle timeout, and one personality holds the voice
+channel at a time.
 """
 
 from __future__ import annotations
@@ -12,13 +12,13 @@ from __future__ import annotations
 RETIRED_LIVE_MODEL = "gemini-2.5-flash-native-audio-preview-09-2025"
 
 #: Confirmed on this account's Gemini ``/v1beta/models`` list on the date below
-#: (``models/gemini-3.1-flash-live-preview``). Preview ids change, so a later
+#: (``models/gemini-3.8-live``). Preview ids change, so a later
 #: unlock re-reads the account list and rewrites the row.
-GEMINI_LIVE_MODEL = "gemini-3.1-flash-live-preview"
-GEMINI_LIVE_MODEL_CHECKED_ON = "2026-09-30"
+GEMINI_LIVE_MODEL = "gemini-3.8-live"
+GEMINI_LIVE_MODEL_CHECKED_ON = "2026-10-01"
 
 #: OpenAI realtime model. It is stored only after ``/v1/models`` on that
-#: account lists it. No OpenAI key was available to check on 2026-09-30.
+#: account lists it. No OpenAI key was available to check on 2026-10-01.
 OPENAI_LIVE_MODEL = "gpt-realtime"
 
 VOICE_MODE_LIVE = "live"
@@ -33,13 +33,24 @@ GEMINI_MODELS_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 
 
 def live_candidate_for(api_name: str) -> str | None:
-    """The live model this provider row may pin, or None when it has none."""
-    name = (api_name or "").lower()
-    if "gemini" in name:
+    """The row's own id when this row is a live model, else None.
+
+    A chat model does not carry a different live id.
+    """
+    if api_name == GEMINI_LIVE_MODEL:
         return GEMINI_LIVE_MODEL
-    if name.startswith("gpt-"):
+    if api_name == OPENAI_LIVE_MODEL:
         return OPENAI_LIVE_MODEL
     return None
+
+
+def voice_mode_for_model(live_capable: bool, api_name: object) -> str:
+    """Live when the chosen model is a live model this process can open."""
+    if not live_capable:
+        return VOICE_MODE_TURN_BASED
+    if gemini_live_connect_model(api_name) is None:
+        return VOICE_MODE_TURN_BASED
+    return VOICE_MODE_LIVE
 
 
 def gemini_live_connect_model(model: object) -> str | None:

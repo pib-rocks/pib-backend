@@ -116,6 +116,37 @@ def on_interruption(now: float) -> dict[str, Any]:
     }
 
 
+def typed_text_joins_live(
+    *,
+    live_open: bool,
+    live_chat_id: object,
+    message_chat_id: object,
+    text: object,
+) -> dict[str, Any]:
+    """A typed line for the open live chat joins that session.
+
+    Playback stops, so the spoken turn stays interruptible, and the text is
+    sent in. The session stays open. Speech barge-in stays the provider's
+    own turn detection. A line for another chat is left on the ordinary
+    text path. Blank text is ignored.
+    """
+    cleaned = text.strip() if isinstance(text, str) else ""
+    same_chat = bool(live_open and live_chat_id and message_chat_id == live_chat_id)
+    if same_chat and cleaned:
+        return {
+            "join": True,
+            "interrupt": True,
+            "text": cleaned,
+            "keep_session": True,
+        }
+    return {
+        "join": False,
+        "interrupt": False,
+        "text": None,
+        "keep_session": bool(live_open),
+    }
+
+
 def playback_slice_bytes(
     sample_rate: int = 24000, sample_width: int = 2, channels: int = 1
 ) -> int:

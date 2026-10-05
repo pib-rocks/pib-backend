@@ -2,7 +2,7 @@
 
 from unittest.mock import MagicMock
 
-from model.provider_model import Provider
+from model.provider_model import RegistryModel
 from pib_hermes_config.voice_backends import LIVE_VOICE_NOTE
 from service import key_store_service, personality_service, provider_service
 
@@ -24,19 +24,19 @@ def test_offer_is_local_engines_until_a_capability_is_set(app):
     with app.app_context():
         from app.app import db
 
-        gemini = Provider.query.filter_by(api_name="gemini-3.5-flash").one()
-        text = Provider.query.filter_by(visual_name="GPT-4o [Text]").one()
-        gemini_id, text_id = gemini.id, text.id
+        gemini = RegistryModel.query.filter_by(api_name="gemini-3.8-flash").one()
+        gpt6 = RegistryModel.query.filter_by(api_name="gpt-6").one()
+        gemini_id, gpt6_id = gemini.id, gpt6.id
         gemini.capabilities = {**gemini.capabilities, "stt": True}
-        text.capabilities = {**text.capabilities, "tts": True}
+        gpt6.capabilities = {**gpt6.capabilities, "tts": True}
         db.session.commit()
 
     body = client.get("/provider/voice-backends").get_json()
     stt_ids = [row["id"] for row in body["speechToText"]]
     tts_ids = [row["id"] for row in body["textToSpeech"]]
     assert stt_ids == ["local_whisper", str(gemini_id)]
-    assert str(text_id) not in stt_ids
-    assert tts_ids == ["supertone", str(text_id)]
+    assert str(gpt6_id) not in stt_ids
+    assert tts_ids == ["supertone", str(gpt6_id)]
     assert str(gemini_id) not in tts_ids
     assert "elevenlabs" not in str(body).lower()
 
@@ -73,9 +73,9 @@ def test_live_provider_states_that_the_local_voice_does_not_apply(app, monkeypat
         MagicMock(return_value={"ok": True}),
     )
     with app.app_context():
-        gemini = Provider.query.filter_by(api_name="gemini-3.5-flash").one()
-        gemini_id = gemini.id
-        assert gemini.capabilities["live"] is True
+        live = RegistryModel.query.filter_by(api_name="gemini-3.8-live").one()
+        live_id = live.id
+        assert live.capabilities["live"] is True
     response = app.test_client().post(
         "/voice-assistant/personality",
         json={
@@ -83,7 +83,7 @@ def test_live_provider_states_that_the_local_voice_does_not_apply(app, monkeypat
             "gender": "Female",
             "pauseThreshold": 0.8,
             "messageHistory": 5,
-            "assistantModelId": gemini_id,
+            "assistantModelId": live_id,
         },
     )
     assert response.status_code == 201
@@ -112,7 +112,7 @@ def test_only_a_capable_provider_can_be_stored(app, monkeypatch):
     personality_id = created.get_json()["personalityId"]
 
     with app.app_context():
-        text = Provider.query.filter_by(visual_name="GPT-4o [Text]").one()
+        text = RegistryModel.query.filter_by(api_name="gpt-6").one()
         text_id = text.id
 
     rejected = client.put(
@@ -133,7 +133,7 @@ def test_only_a_capable_provider_can_be_stored(app, monkeypatch):
     with app.app_context():
         from app.app import db
 
-        text = Provider.query.filter_by(id=text_id).one()
+        text = RegistryModel.query.filter_by(id=text_id).one()
         text.capabilities = {**text.capabilities, "stt": True, "tts": True}
         db.session.commit()
 

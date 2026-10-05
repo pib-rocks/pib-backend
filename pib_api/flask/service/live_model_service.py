@@ -1,8 +1,9 @@
-"""Pin each provider's live model against that account's model list.
+"""Confirm a named live model against that account's model list.
 
 Gemini is ``GET /v1beta/models``. An OpenAI-compatible account is
-``GET /v1/models``. The row records the identifier and the date of the check.
-A failed read leaves the row as it was: a missing key is not a pin.
+``GET /v1/models``. The check is recorded on the live model row itself.
+A chat model is left alone: the list must not hide a different id on it.
+A failed read leaves the row as it was.
 """
 
 from __future__ import annotations
@@ -15,13 +16,12 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from app.app import db
-from model.provider_model import Provider
+from model.provider_model import RegistryModel
 from pib_hermes_config.live_session import (
     GEMINI_LIVE_MODEL,
     GEMINI_MODELS_URL,
     OPENAI_LIVE_MODEL,
     gemini_live_connect_model,
-    live_candidate_for,
     openai_models_url,
 )
 
@@ -39,34 +39,39 @@ def _as_capabilities(raw: object) -> dict:
     return {}
 
 
-def apply_live_pin(
-    provider: Provider, model_ids: Iterable[str], checked_on: date
-) -> None:
-    """Record one successful list read.
+def _list_kind(api_name: str) -> Optional[str]:
+    """Which account list this id is read from. The id is not rewritten."""
+    name = (api_name or "").lower()
+    if "gemini" in name:
+        return "gemini"
+    if name.startswith("gpt-"):
+        return "openai"
+    return None
 
-    Gemini rows whose list contains the candidate become the live model and
-    the live flag is set, which is what gates the session. When the candidate
-    is absent the flag is cleared so the retired preview cannot be used
-    instead. ``gpt-realtime`` is recorded when the list contains it, and the
-    live flag stays off: this process has no OpenAI realtime transport.
+
+def apply_live_pin(
+    model: RegistryModel, model_ids: Iterable[str], checked_on: date
+) -> None:
+    """Record one successful list read on a named live model.
+
+    The row's own id is the live model. When that id is absent the live
+    flag is cleared so a retired preview cannot be used instead. A chat
+    model is not given another id. ``gpt-realtime`` keeps the live flag
+    off: this process has no OpenAI realtime transport.
     """
-    candidate = live_candidate_for(provider.api_name)
-    if candidate is None:
+    if model.api_name not in (GEMINI_LIVE_MODEL, OPENAI_LIVE_MODEL):
         return
-    present = candidate in set(model_ids)
-    provider.live_model_checked_on = checked_on
-    if candidate == GEMINI_LIVE_MODEL:
-        capabilities = _as_capabilities(provider.capabilities)
-        if present and gemini_live_connect_model(candidate):
-            provider.live_model = candidate
-            capabilities["live"] = True
-        else:
-            provider.live_model = None
-            capabilities["live"] = False
-        provider.capabilities = capabilities
-        return
-    if candidate == OPENAI_LIVE_MODEL:
-        provider.live_model = candidate if present else None
+    present = model.api_name in set(model_ids)
+    model.live_model = None
+    model.live_model_checked_on = checked_on
+    capabilities = _as_capabilities(model.capabilities)
+    if model.api_name == GEMINI_LIVE_MODEL:
+        capabilities["live"] = bool(
+            present and gemini_live_connect_model(model.api_name)
+        )
+    else:
+        capabilities["live"] = False
+    model.capabilities = capabilities
 
 
 def ids_from_list_payload(
@@ -96,14 +101,14 @@ def ids_from_list_payload(
 def _request_for(
     api_name: str, endpoint_base: object, api_key: str, page_token: Optional[str]
 ) -> Optional[Request]:
-    candidate = live_candidate_for(api_name)
-    if candidate == GEMINI_LIVE_MODEL:
+    kind = _list_kind(api_name)
+    if kind == "gemini":
         params = {"pageSize": "100"}
         if page_token:
             params["pageToken"] = page_token
         url = GEMINI_MODELS_URL + "?" + urlencode(params)
         return Request(url, headers={"x-goog-api-key": api_key})
-    if candidate == OPENAI_LIVE_MODEL:
+    if kind == "openai":
         return Request(
             openai_models_url(endpoint_base),
             headers={"Authorization": "Bearer " + api_key},
@@ -121,7 +126,7 @@ def fetch_model_ids(
     """Read one account's model list. The key is a header, never logged."""
     if opener is None:
         opener = urlopen
-    kind = "gemini" if live_candidate_for(api_name) == GEMINI_LIVE_MODEL else "openai"
+    kind = _list_kind(api_name) or "openai"
     found: list[str] = []
     page_token: Optional[str] = None
     for _ in range(_MAX_PAGES):
@@ -138,26 +143,29 @@ def fetch_model_ids(
 
 
 def pin_providers(
-    rows: Iterable[Provider],
+    rows: Iterable[RegistryModel],
     secrets: dict[str, str],
     fetch=None,
     checked_on: Optional[date] = None,
 ) -> None:
-    """Pin every row whose unlocked secret can read a model list."""
+    """Confirm each named live model whose provider secret can read a list."""
     if fetch is None:
         fetch = fetch_model_ids
     day = checked_on or date.today()
-    for provider in rows:
+    for model in rows:
+        provider = model.provider
+        if provider is None:
+            continue
         ref = provider.credential_ref
         if not ref or ref not in secrets:
             continue
-        if live_candidate_for(provider.api_name) is None:
+        if model.api_name not in (GEMINI_LIVE_MODEL, OPENAI_LIVE_MODEL):
             continue
         secret = secrets[ref]
         if not isinstance(secret, str) or not secret.strip():
             continue
         try:
-            model_ids = fetch(provider.api_name, provider.endpoint_base, secret)
+            model_ids = fetch(model.api_name, provider.endpoint_base, secret)
         except Exception:
             logger.warning(
                 "Live model list could not be read for provider %s.",
@@ -165,7 +173,7 @@ def pin_providers(
                 exc_info=True,
             )
             continue
-        apply_live_pin(provider, model_ids, day)
+        apply_live_pin(model, model_ids, day)
     db.session.flush()
 
 
@@ -176,4 +184,4 @@ def pin_unlocked_providers() -> None:
     secrets = unlocked_credentials()
     if not secrets:
         return
-    pin_providers(Provider.query.all(), secrets)
+    pin_providers(RegistryModel.query.all(), secrets)

@@ -1,6 +1,6 @@
 from flask import Blueprint, abort
 
-from schema.provider_schema import provider_schema, providers_schema
+from schema.provider_schema import provider_accounts_schema, provider_schema
 from service import provider_service
 
 bp = Blueprint("provider_controller", __name__)
@@ -8,12 +8,17 @@ bp = Blueprint("provider_controller", __name__)
 
 @bp.route("", methods=["GET"])
 def list_providers():
-    """Registry rows offered for selection.
+    """Each provider with the models a personality may choose.
 
-    A row without the images capability is omitted. The filter is the flag,
-    not a list of provider names. The registry is read-only.
+    A chat model without the images capability is omitted. A live model is
+    its own entry and stays. The filter is the flag, not a list of names.
+    The registry is read-only.
     """
-    return {"providers": providers_schema.dump(provider_service.selectable_providers())}
+    providers = []
+    for provider, models in provider_service.providers_with_models():
+        provider._listed_models = models
+        providers.append(provider)
+    return {"providers": provider_accounts_schema.dump(providers)}
 
 
 @bp.route("/voice-backends", methods=["GET"])
@@ -28,12 +33,13 @@ def list_voice_backends():
 
 @bp.route("/default", methods=["GET"])
 def get_default_provider():
-    return provider_schema.dump(provider_service.get_default_provider())
+    return provider_schema.dump(provider_service.get_default_model())
 
 
 @bp.route("/<int:provider_id>", methods=["GET"])
 def get_provider(provider_id: int):
-    provider = provider_service.get_provider_by_id(provider_id)
-    if provider is None:
+    """One model. The id is the model a personality stores."""
+    model = provider_service.get_model_by_id(provider_id)
+    if model is None:
         abort(404)
-    return provider_schema.dump(provider)
+    return provider_schema.dump(model)

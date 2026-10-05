@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import inspect
 import json
+import logging
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -47,13 +49,13 @@ def test_mcp_declarations_include_the_image_tool():
 
 def test_pinned_endpoint_is_the_stable_generate_content_method():
     assert PINNED_PROVIDER == "gemini"
-    assert PINNED_MODEL == "gemini-3.5-flash"
+    assert PINNED_MODEL == "gemini-3.8-flash"
     assert PINNED_CHECKED_ON == "2026-09-30"
     assert PINNED_ENDPOINT.endswith(f"/v1/models/{PINNED_MODEL}:generateContent")
     assert "beta" not in PINNED_ENDPOINT
-    assert supports_tool_endpoint("gemini-3.5-flash") is True
-    assert supports_tool_endpoint("hermes-agent") is True
-    assert supports_tool_endpoint("gpt-4o") is False
+    assert supports_tool_endpoint("gemini-3.8-flash") is True
+    assert supports_tool_endpoint("hermes-agent") is False
+    assert supports_tool_endpoint("gpt-6") is False
     with pytest.raises(DirectToolLoopError, match="beta"):
         assert_stable_url(
             "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
@@ -304,7 +306,7 @@ def test_personality_client_reads_the_tool_switch(monkeypatch):
     from pib_api_client.voice_assistant_client import Personality
 
     model = MagicMock()
-    model.api_name = "gemini-3.5-flash"
+    model.api_name = "gemini-3.8-flash"
     monkeypatch.setattr(
         "pib_api_client.voice_assistant_client.get_default_provider",
         lambda: (True, model),
@@ -358,3 +360,169 @@ def test_personality_api_defaults_tool_calling_on_and_can_switch_it_off(app, app
         json={"channel": "direct"},
     )
     assert restored_channel.get_json()["toolCalling"] is False
+
+
+# Distinct from each other so a branch that picks the wrong source fails.
+STORE_SECRET = "store-provider-key"
+ENV_SECRET = "env-provider-key"
+OTHER_SECRET = "other-provider-key"
+
+
+class _GeminiResponse:
+    def read(self):
+        return json.dumps(
+            {"candidates": [{"content": {"parts": [{"text": "pong"}]}}]}
+        ).encode()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+
+def _install_store_fetch(monkeypatch, fetch) -> None:
+    """Point the store read at ``fetch`` once the production hook exists."""
+    if hasattr(direct_tool_loop, "_fetch_store_key"):
+        monkeypatch.setattr(direct_tool_loop, "_fetch_store_key", fetch)
+
+
+def _direct_request(monkeypatch, sources: list[str]):
+    captured = {}
+
+    def fake_urlopen(request, timeout=None):
+        captured["header"] = request.get_header("X-goog-api-key")
+        captured["url"] = request.full_url
+        return _GeminiResponse()
+
+    monkeypatch.setattr(direct_tool_loop, "urlopen", fake_urlopen)
+    kwargs = dict(
+        system_prompt="Du bist pib.",
+        user_text="ping",
+        history=[],
+        tool_calling=False,
+        allow_image=False,
+    )
+    if "report_key_source" in inspect.signature(run_direct_turn).parameters:
+        kwargs["report_key_source"] = sources.append
+    list(run_direct_turn(**kwargs))
+    return captured
+
+
+def _visible(caplog, capsys) -> str:
+    captured = capsys.readouterr()
+    return caplog.text + captured.out + captured.err
+
+
+def test_unlocked_store_supplies_the_direct_key(monkeypatch, caplog, capsys):
+    """The store wins while it is unlocked, even when the environment is set."""
+    monkeypatch.setenv("GOOGLE_API_KEY", ENV_SECRET)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", OTHER_SECRET)
+    caplog.set_level(logging.INFO)
+
+    def fetch(provider):
+        assert provider == PINNED_PROVIDER
+        return {"mode": "unlocked", "secret": STORE_SECRET}
+
+    _install_store_fetch(monkeypatch, fetch)
+    sources: list[str] = []
+    captured = _direct_request(monkeypatch, sources)
+
+    assert captured["header"] == STORE_SECRET
+    assert captured["header"] != ENV_SECRET
+    assert captured["header"] != OTHER_SECRET
+    assert sources == ["key-store"]
+    assert "source=key-store" in caplog.text
+    assert "provider=gemini" in caplog.text
+    visible = _visible(caplog, capsys)
+    assert STORE_SECRET not in visible
+    assert ENV_SECRET not in visible
+    assert OTHER_SECRET not in visible
+
+
+@pytest.mark.parametrize("mode", ["degraded", "unavailable"])
+def test_locked_or_unavailable_store_uses_the_environment(
+    monkeypatch, caplog, capsys, mode
+):
+    """A locked or unreachable store falls back to this provider's variable."""
+    monkeypatch.setenv("GEMINI_API_KEY", ENV_SECRET)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", OTHER_SECRET)
+    caplog.set_level(logging.INFO)
+
+    def fetch(provider):
+        assert provider == PINNED_PROVIDER
+        return {"mode": mode, "secret": STORE_SECRET}
+
+    _install_store_fetch(monkeypatch, fetch)
+    sources: list[str] = []
+    captured = _direct_request(monkeypatch, sources)
+
+    assert captured["header"] == ENV_SECRET
+    assert captured["header"] != STORE_SECRET
+    assert captured["header"] != OTHER_SECRET
+    assert sources == ["environment"]
+    assert "source=environment" in caplog.text
+    assert "provider=gemini" in caplog.text
+    visible = _visible(caplog, capsys)
+    assert STORE_SECRET not in visible
+    assert ENV_SECRET not in visible
+    assert OTHER_SECRET not in visible
+
+
+def test_missing_provider_key_names_the_provider_and_hides_the_secret(
+    monkeypatch, caplog, capsys
+):
+    """An unlocked store with no key for this provider does not use another."""
+    monkeypatch.setenv("GOOGLE_API_KEY", ENV_SECRET)
+    monkeypatch.setenv("OPENAI_API_KEY", OTHER_SECRET)
+    caplog.set_level(logging.INFO)
+    asked = []
+
+    def fetch(provider):
+        asked.append(provider)
+        if provider != PINNED_PROVIDER:
+            return {"mode": "unlocked", "secret": OTHER_SECRET}
+        return {"mode": "unlocked", "secret": None}
+
+    _install_store_fetch(monkeypatch, fetch)
+    with pytest.raises(DirectToolLoopError) as caught:
+        _direct_request(monkeypatch, [])
+
+    message = str(caught.value)
+    assert message == "No keys are available for provider gemini."
+    assert asked == [PINNED_PROVIDER]
+    visible = _visible(caplog, capsys) + message
+    assert STORE_SECRET not in visible
+    assert ENV_SECRET not in visible
+    assert OTHER_SECRET not in visible
+
+
+def test_client_drops_a_secret_the_locked_store_must_not_return(caplog, capsys):
+    """A degraded payload is not a key, even if a secret field is present."""
+    from pib_api_client.key_store_client import read_provider_key
+
+    caplog.set_level(logging.INFO)
+
+    class Response:
+        def read(self):
+            return json.dumps(
+                {
+                    "mode": "degraded",
+                    "available": True,
+                    "secret": STORE_SECRET,
+                }
+            ).encode()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    state = read_provider_key(
+        "gemini-3.8-flash", opener=lambda *args, **kwargs: Response()
+    )
+    assert state == {"mode": "degraded", "secret": None}
+    assert STORE_SECRET not in _visible(caplog, capsys)

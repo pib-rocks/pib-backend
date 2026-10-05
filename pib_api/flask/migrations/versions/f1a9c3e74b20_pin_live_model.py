@@ -2,10 +2,10 @@
 
 Revision ID: f1a9c3e74b20
 Revises: a9c3e7b15d40
-Create Date: 2026-09-30 06:00:00.000000
+Create Date: 2026-10-01 06:00:00.000000
 
 The Gemini identifier was read from this account's /v1beta/models list on
-2026-09-30. gpt-realtime is not written here: no OpenAI key was available
+2026-10-01. gpt-realtime is not written here: no OpenAI key was available
 to read /v1/models.
 
 """
@@ -19,7 +19,7 @@ from pib_hermes_config.live_session import (
     GEMINI_LIVE_MODEL_CHECKED_ON,
     VOICE_MODE_LIVE,
 )
-from provider_registry import LIVE_API_NAME
+from provider_registry import gemini_live_chat_api_names
 
 revision = "f1a9c3e74b20"
 down_revision = "a9c3e7b15d40"
@@ -37,19 +37,21 @@ def upgrade():
         )
 
     conn = op.get_bind()
-    conn.execute(
-        sa.text("""
-            UPDATE provider
-            SET live_model = :live_model,
-                live_model_checked_on = :checked_on
-            WHERE api_name = :api_name
-            """),
-        {
-            "live_model": GEMINI_LIVE_MODEL,
-            "checked_on": GEMINI_LIVE_MODEL_CHECKED_ON,
-            "api_name": LIVE_API_NAME,
-        },
-    )
+    # The catalogue names which Gemini chat rows carry the live model.
+    for api_name in gemini_live_chat_api_names():
+        conn.execute(
+            sa.text("""
+                UPDATE provider
+                SET live_model = :live_model,
+                    live_model_checked_on = :checked_on
+                WHERE api_name = :api_name
+                """),
+            {
+                "live_model": GEMINI_LIVE_MODEL,
+                "checked_on": GEMINI_LIVE_MODEL_CHECKED_ON,
+                "api_name": api_name,
+            },
+        )
 
     with op.batch_alter_table("personality", schema=None) as batch_op:
         batch_op.add_column(

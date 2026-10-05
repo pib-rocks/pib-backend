@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 from marshmallow import ValidationError, fields, validate
-from model.personality_model import Personality
+from model.personality_model import (
+    DEFAULT_GENDER,
+    DEFAULT_MESSAGE_HISTORY,
+    DEFAULT_PAUSE_THRESHOLD,
+    Personality,
+)
 from pib_hermes_config.channel import (
     CHANNEL_DIRECT,
     CHANNEL_SMART,
@@ -11,7 +16,7 @@ from pib_hermes_config.channel import (
 from pib_hermes_config.live_session import (
     VOICE_MODE_LIVE,
     VOICE_MODE_TURN_BASED,
-    voice_start_mode,
+    voice_mode_for_model,
 )
 from pib_hermes_config.memory import (
     CHARACTER_LABEL,
@@ -30,6 +35,21 @@ class PersonalitySchemaSQLAutoWith(SQLAutoWithCamelCaseSchema):
         model = Personality
         include_fk = True
 
+    # A create needs the name only. The generated schema would make every
+    # non-nullable column required, so the three without a server default
+    # are declared here with the model's defaults. The ranges are the ones
+    # Cerebra's dialog enforces, so the API rejects what the dialog rejects.
+    gender = fields.String(required=False, load_default=DEFAULT_GENDER)
+    pause_threshold = fields.Float(
+        required=False,
+        load_default=DEFAULT_PAUSE_THRESHOLD,
+        validate=validate.Range(min=0.1, max=3.0),
+    )
+    message_history = fields.Integer(
+        required=False,
+        load_default=DEFAULT_MESSAGE_HISTORY,
+        validate=validate.Range(min=0),
+    )
     stt_engine = fields.String(
         required=False,
         dump_default="local_whisper",
@@ -43,6 +63,8 @@ class PersonalitySchemaSQLAutoWith(SQLAutoWithCamelCaseSchema):
     local_voice_applies = fields.Method("get_local_voice_applies", dump_only=True)
     live_voice_note = fields.Method("get_live_voice_note", dump_only=True)
     assistant_model_id = fields.Integer(required=False, allow_none=True)
+    # 'default', or the decimal id of a model row, as text. The catalogue
+    # api_name is not a reference and is rejected. The provider follows.
     provider_ref = fields.String(required=False, allow_none=True)
     channel = fields.String(
         required=False,
@@ -63,9 +85,12 @@ class PersonalitySchemaSQLAutoWith(SQLAutoWithCamelCaseSchema):
         allow_none=True,
     )
     profile_provisioned = fields.Boolean(dump_only=True)
-    voice_mode = fields.String(
+    # Derived from the chosen model. Sending it does not switch a mode.
+    voice_mode = fields.Method(
+        serialize="get_voice_mode",
+        deserialize="load_voice_mode",
         required=False,
-        validate=validate.OneOf([VOICE_MODE_LIVE, VOICE_MODE_TURN_BASED]),
+        allow_none=True,
     )
     live_idle_timeout = fields.Integer(required=False, validate=validate.Range(min=1))
     thinking_filler = fields.String(
@@ -75,6 +100,7 @@ class PersonalitySchemaSQLAutoWith(SQLAutoWithCamelCaseSchema):
     )
     live_model = fields.Method("get_live_model", dump_only=True)
     voice_start_mode = fields.Method("get_voice_start_mode", dump_only=True)
+    needs_new_model = fields.Method("get_needs_new_model", dump_only=True)
 
     def get_soul_path(self, obj: Personality) -> str:
         return soul_service.soul_path_for(obj.personality_id)
@@ -98,28 +124,46 @@ class PersonalitySchemaSQLAutoWith(SQLAutoWithCamelCaseSchema):
     def get_smart_chats_enabled(self, _obj: Personality) -> bool:
         return smart_chats_enabled()
 
-    def _resolved_provider(self, obj: Personality):
+    def _resolved_model(self, obj: Personality):
         ref = getattr(obj, "provider_ref", None)
         if not ref:
             return None
-        try:
-            return provider_service.resolve_provider(str(ref))
-        except Exception:
-            return None
+        return provider_service.find_model(str(ref))
+
+    def get_needs_new_model(self, obj: Personality) -> bool:
+        """True when the referenced model row is gone and settings must replace it.
+
+        There is no status to read: a removed model has no row at all.
+        """
+        ref = getattr(obj, "provider_ref", None)
+        if not ref:
+            return False
+        return self._resolved_model(obj) is None
+
+    def get_voice_mode(self, obj: Personality) -> str:
+        """Live when the chosen model is a live model, otherwise turn-based."""
+        model = self._resolved_model(obj)
+        if model is None:
+            return VOICE_MODE_TURN_BASED
+        return voice_mode_for_model(
+            has_capability(model.capabilities, "live"), model.api_name
+        )
+
+    def load_voice_mode(self, _value: object) -> str:
+        raise ValidationError("Voice mode follows the chosen model.")
 
     def get_live_model(self, obj: Personality) -> str | None:
-        provider = self._resolved_provider(obj)
-        if provider is None:
+        """The chosen model's own id when that model is live."""
+        model = self._resolved_model(obj)
+        if model is None:
             return None
-        return provider.live_model
+        if self.get_voice_mode(obj) != VOICE_MODE_LIVE:
+            return None
+        return model.api_name
 
     def get_voice_start_mode(self, obj: Personality) -> str:
-        """What the one voice button will start: live or turn-based."""
-        provider = self._resolved_provider(obj)
-        capable = bool(provider) and has_capability(provider.capabilities, "live")
-        model = provider.live_model if provider is not None else None
-        mode = getattr(obj, "voice_mode", None) or VOICE_MODE_LIVE
-        return voice_start_mode(mode, capable, model)
+        """What the one voice button will start: the chosen model's mode."""
+        return self.get_voice_mode(obj)
 
     def _provider_is_live(self, obj: Personality) -> bool:
         return self.get_voice_start_mode(obj) == VOICE_MODE_LIVE

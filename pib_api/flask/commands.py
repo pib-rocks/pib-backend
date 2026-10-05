@@ -16,7 +16,14 @@ from sqlalchemy.engine import URL, make_url
 
 from app.app import db, app
 from model.assistant_model import AssistantModel
-from service.provider_service import build_provider
+from model.provider_model import Provider, RegistryModel
+from provider_registry import (
+    DEFAULT_PROVIDER_API_NAME,
+    active_api_names,
+    active_entries,
+    capabilities_for,
+)
+from service.provider_service import attach_registry_models, sync_shared_capabilities
 from model.controller_model import Controller
 from model.camera_settings_model import CameraSettings
 from model.chat_message_model import ChatMessage
@@ -61,6 +68,7 @@ LEGACY_CEREBRA_TOGGLE_PROGRAM_NUMBER = "c3r3br4-f-u-l-l-s-c-r-e-e-n-001"
 def seed_db() -> None:
     if not _is_empty_db():
         _unbind_legacy_cerebra_toggle_program()
+        _reconcile_model_catalogue()
         print("Seeding database failed - database already contains data.")
         return
     variant, source = resolve_variant_and_source()
@@ -313,6 +321,101 @@ def _unbind_legacy_cerebra_toggle_program() -> None:
         )
 
 
+def _reconcile_model_catalogue() -> None:
+    """Make the model rows of an already seeded database match the catalogue.
+
+    Runs on every start of an already seeded database. Rows whose chat id is
+    not in the catalogue are deleted from registry_model and assistant_model.
+    A provider with no model left is deleted with them. A personality that
+    pointed at such a row keeps its provider_ref, so it is reported as needing
+    a new model; only the foreign key is cleared. Nothing is rewritten onto a
+    different model. Catalogue models without a row are added, and the
+    catalogue default becomes the only default model.
+    """
+    supported = active_api_names()
+    removed_models = AssistantModel.query.filter(
+        ~AssistantModel.api_name.in_(supported)
+    ).all()
+    removed_ids = [model.id for model in removed_models]
+    if removed_ids:
+        Personality.query.filter(
+            Personality.assistant_model_id.in_(removed_ids)
+        ).update({Personality.assistant_model_id: None}, synchronize_session=False)
+    removed_registry = RegistryModel.query.filter(
+        ~RegistryModel.api_name.in_(supported)
+    ).all()
+    for row in removed_registry + removed_models:
+        db.session.delete(row)
+    db.session.flush()
+    still_used = {
+        provider_id
+        for (provider_id,) in db.session.query(RegistryModel.provider_id).distinct()
+    }
+    for provider in Provider.query.all():
+        if provider.id not in still_used:
+            db.session.delete(provider)
+    db.session.flush()
+
+    present = {model.api_name for model in AssistantModel.query.all()}
+    added = _catalogue_models(present)
+    db.session.add_all(added)
+    db.session.flush()
+    attach_registry_models(added)
+    _align_existing_catalogue_rows()
+    for provider in Provider.query.all():
+        sync_shared_capabilities(provider)
+    db.session.flush()
+
+    default_row = RegistryModel.query.filter_by(
+        api_name=DEFAULT_PROVIDER_API_NAME
+    ).one()
+    if not default_row.is_default:
+        RegistryModel.query.filter(RegistryModel.is_default.is_(True)).update(
+            {RegistryModel.is_default: False}, synchronize_session=False
+        )
+        db.session.flush()
+        default_row.is_default = True
+    db.session.commit()
+
+    removed_names = sorted({row.api_name for row in removed_registry + removed_models})
+    if removed_names:
+        print(
+            "Removed model rows that are not in the catalogue: "
+            + ", ".join(removed_names)
+            + "."
+        )
+    if added:
+        print(
+            "Added catalogue models: "
+            + ", ".join(model.api_name for model in added)
+            + "."
+        )
+
+
+def _align_existing_catalogue_rows() -> None:
+    """Copy catalogue flags onto rows that already exist and drop a hidden pin.
+
+    A live model is its own row. A chat model must not keep another id in
+    live_model, and its live flag must match the catalogue.
+    """
+    for entry in active_entries():
+        row = RegistryModel.query.filter_by(api_name=entry.api_name).one_or_none()
+        if row is None:
+            continue
+        row.visual_name = entry.visual_name
+        row.has_image_support = entry.images
+        row.capabilities = capabilities_for(entry.api_name, entry.images)
+        row.live_model = None
+        row.live_model_checked_on = None
+        assistant = AssistantModel.query.filter_by(
+            api_name=entry.api_name
+        ).one_or_none()
+        if assistant is None:
+            continue
+        assistant.visual_name = entry.visual_name
+        assistant.has_image_support = entry.images
+
+
 def _rebuild_button_programs(profile: HardwareProfile) -> None:
     ButtonProgram.query.delete(synchronize_session=False)
     db.session.flush()
@@ -472,45 +575,45 @@ def _create_program_data() -> None:
     db.session.flush()
 
 
+def _catalogue_models(already: set[str]) -> list[AssistantModel]:
+    """One assistant row per active catalogue line that has no row yet.
+
+    Unconfirmed lines have no row until an identifier is confirmed.
+    """
+    added: list[AssistantModel] = []
+    for entry in active_entries():
+        if entry.api_name in already:
+            continue
+        added.append(
+            AssistantModel(
+                visual_name=entry.visual_name,
+                api_name=entry.api_name,
+                has_image_support=entry.images,
+            )
+        )
+        already.add(entry.api_name)
+    return added
+
+
 def _create_chat_data_and_assistant() -> None:
-    gpt4o1 = AssistantModel(
-        visual_name="GPT-4o [Vision]", api_name="gpt-4o", has_image_support=True
-    )
-    gpt4o2 = AssistantModel(
-        visual_name="GPT-4o [Text]", api_name="gpt-4o", has_image_support=False
-    )
-    gpt3 = AssistantModel(
-        visual_name="GPT-3.5 [Text]", api_name="gpt-3.5-turbo", has_image_support=False
-    )
-    claude = AssistantModel(
-        visual_name="Claude 3 Sonnet [Vision]",
-        api_name="anthropic.claude-3-sonnet-20240229-v1:0",
-        has_image_support=True,
-    )
-    gemini_text = AssistantModel(
-        visual_name="Gemini 3.5 Flash",
-        api_name="gemini-3.5-flash",
-        has_image_support=False,
-    )
-    hermes_agent = AssistantModel(
-        visual_name="Hermes Agent (selbstlernend)",
-        api_name="hermes-agent",
-        has_image_support=True,
-    )
-    models = [gpt4o2, gpt4o1, gpt3, claude, gemini_text, hermes_agent]
+    models = _catalogue_models(set())
     db.session.add_all(models)
     db.session.flush()
-    db.session.add_all(build_provider(model) for model in models)
+    attach_registry_models(models)
     db.session.flush()
 
+    # The example personalities ship on the default route, pib.Cloud.
+    pib_cloud = next(
+        model for model in models if model.api_name == DEFAULT_PROVIDER_API_NAME
+    )
     p_eva = Personality(
         name="Eva",
         personality_id="8f73b580-927e-41c2-98ac-e5df070e7288",
         gender="Female",
         pause_threshold=0.8,
         message_history=5,
-        assistant_model_id=claude.id,
-        provider_ref=str(claude.id),
+        assistant_model_id=pib_cloud.id,
+        provider_ref=str(pib_cloud.id),
         stt_engine="local_whisper",
     )
     p_thomas = Personality(
@@ -519,8 +622,8 @@ def _create_chat_data_and_assistant() -> None:
         gender="Male",
         pause_threshold=1.0,
         message_history=15,
-        assistant_model_id=gpt4o1.id,
-        provider_ref=str(gpt4o1.id),
+        assistant_model_id=pib_cloud.id,
+        provider_ref=str(pib_cloud.id),
         stt_engine="local_whisper",
     )
     db.session.add_all([p_eva, p_thomas])

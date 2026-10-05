@@ -4,8 +4,13 @@ from typing import Any, List, Optional
 
 from marshmallow import ValidationError
 
-from model.personality_model import Personality
-from model.provider_model import Provider
+from model.personality_model import (
+    DEFAULT_GENDER,
+    DEFAULT_MESSAGE_HISTORY,
+    DEFAULT_PAUSE_THRESHOLD,
+    Personality,
+)
+from model.provider_model import RegistryModel
 from app.app import db
 from pib_hermes_config import build_default_soul_text
 from pib_hermes_config.channel import (
@@ -18,8 +23,9 @@ from pib_hermes_config.live_interaction import personality_requests_actuation
 from pib_hermes_config.live_session import (
     DEFAULT_LIVE_IDLE_TIMEOUT_SECONDS,
     VOICE_MODE_LIVE,
+    VOICE_MODE_TURN_BASED,
     normalize_idle_timeout,
-    normalize_voice_mode,
+    voice_mode_for_model,
 )
 from pib_hermes_config.memory import write_memory
 from pib_hermes_config.turn_taking import normalize_thinking_filler
@@ -30,7 +36,7 @@ from pib_hermes_config.voice_backends import (
     normalize_tts_choice,
 )
 from provider_registry import DEFAULT_PROVIDER_REF, has_capability
-from service import soul_service
+from service import provider_service, soul_service
 
 #: Path of the daemon endpoint that owns the Hermes profile factory.
 DAEMON_PROFILE_PATH = "/profile"
@@ -121,20 +127,26 @@ def get_personality(personality_id: str) -> Personality:
     return personality
 
 
+# 'default', or the decimal id of a model row. The catalogue api_name
+# is not a reference: gemini-3.8-flash names a catalogue line, not a row.
+# The provider follows from the model.
+PROVIDER_REF_ERROR = "Provider reference must be 'default' or the id of a model row."
+
+
 def _store_provider_ref(personality: Personality, ref: str) -> None:
-    """Persist a provider pointer. 'default' is not resolved into an id."""
+    """Persist a model pointer. 'default' is not resolved into an id."""
     if ref == DEFAULT_PROVIDER_REF:
         personality.provider_ref = DEFAULT_PROVIDER_REF
         personality.assistant_model_id = None
         return
     try:
-        provider_id = int(ref)
+        model_id = int(ref)
     except (TypeError, ValueError) as exc:
-        raise ValidationError({"providerRef": ["Unknown provider reference."]}) from exc
-    if provider_id < 1 or Provider.query.filter_by(id=provider_id).first() is None:
-        raise ValidationError({"providerRef": ["Unknown provider reference."]})
-    personality.provider_ref = str(provider_id)
-    personality.assistant_model_id = provider_id
+        raise ValidationError({"providerRef": [PROVIDER_REF_ERROR]}) from exc
+    if model_id < 1 or RegistryModel.query.filter_by(id=model_id).first() is None:
+        raise ValidationError({"providerRef": [PROVIDER_REF_ERROR]})
+    personality.provider_ref = str(model_id)
+    personality.assistant_model_id = model_id
 
 
 def _apply_channel(
@@ -177,8 +189,8 @@ def _apply_provider_choice(
 
 
 def _provider_has(capability: str):
-    def check(provider_id: int) -> bool:
-        row = Provider.query.filter_by(id=provider_id).first()
+    def check(model_id: int) -> bool:
+        row = RegistryModel.query.filter_by(id=model_id).first()
         if row is None:
             return False
         return has_capability(row.capabilities, capability)
@@ -212,20 +224,25 @@ def _apply_voice_backends(
             raise ValidationError({"ttsEngine": [str(exc)]}) from exc
 
 
+def _store_derived_voice_mode(personality: Personality) -> None:
+    """Store the mode of the chosen model. The client does not send one."""
+    ref = getattr(personality, "provider_ref", None)
+    model = provider_service.find_model(str(ref)) if ref else None
+    if model is None:
+        personality.voice_mode = VOICE_MODE_TURN_BASED
+        return
+    personality.voice_mode = voice_mode_for_model(
+        has_capability(model.capabilities, "live"), model.api_name
+    )
+
+
 def _apply_live_chat_settings(
     personality: Personality, personality_dto: Any, *, creating: bool
 ) -> None:
-    """Voice mode and the idle timeout that stops an unused live session."""
-    if creating or "voice_mode" in personality_dto:
-        raw = (
-            personality_dto.get("voice_mode")
-            if "voice_mode" in personality_dto
-            else VOICE_MODE_LIVE
-        )
-        try:
-            personality.voice_mode = normalize_voice_mode(raw)
-        except ValueError as exc:
-            raise ValidationError({"voiceMode": [str(exc)]}) from exc
+    """The idle timeout that stops an unused live session.
+
+    Voice mode is not taken from the client. It follows the chosen model.
+    """
     if creating or "live_idle_timeout" in personality_dto:
         raw = (
             personality_dto.get("live_idle_timeout")
@@ -276,11 +293,12 @@ def _tool_calling_value(personality_dto: Any, default: bool) -> bool:
 
 def create_personality(personality_dto: Any) -> Personality:
     _reject_actuation_request(personality_dto)
+    # Only the name is required. The rest is defaulted here and edited later.
     personality = Personality(
         name=personality_dto["name"],
-        gender=personality_dto["gender"],
-        pause_threshold=personality_dto["pause_threshold"],
-        message_history=personality_dto["message_history"],
+        gender=personality_dto.get("gender") or DEFAULT_GENDER,
+        pause_threshold=personality_dto.get("pause_threshold", DEFAULT_PAUSE_THRESHOLD),
+        message_history=personality_dto.get("message_history", DEFAULT_MESSAGE_HISTORY),
         stt_engine=LOCAL_STT_ID,
         tts_engine=LOCAL_TTS_ID,
         tool_calling=_tool_calling_value(personality_dto, True),
@@ -291,6 +309,7 @@ def create_personality(personality_dto: Any) -> Personality:
     _apply_voice_backends(personality, personality_dto, creating=True)
     _apply_thinking_filler(personality, personality_dto)
     _apply_provider_choice(personality, personality_dto, creating=True)
+    _store_derived_voice_mode(personality)
     _apply_channel(personality, personality_dto, creating=True)
     custom = ""
     if "description" in personality_dto and personality_dto["description"]:
@@ -355,6 +374,7 @@ def update_personality(personality_id: str, personality_dto: Any) -> Personality
                 exc,
             )
     _apply_provider_choice(personality, personality_dto, creating=False)
+    _store_derived_voice_mode(personality)
     _apply_channel(personality, personality_dto, creating=False)
     if "tool_calling" in personality_dto:
         personality.tool_calling = bool(personality_dto["tool_calling"])
