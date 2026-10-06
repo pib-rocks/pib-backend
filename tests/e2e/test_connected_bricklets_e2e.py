@@ -23,8 +23,10 @@ import os
 import requests
 from playwright.sync_api import sync_playwright
 
-ROBOT_URL = os.getenv("PIB_ROBOT_URL", "http://localhost")
-API_URL = os.getenv("PIB_API_URL", "http://localhost/api")
+from robot_address import api_url, robot_base_url
+
+ROBOT_URL = robot_base_url()
+API_URL = api_url()
 UI_TIMEOUT_MS = int(os.getenv("PIB_E2E_UI_TIMEOUT_MS", "30000"))
 NAV_TIMEOUT_MS = int(os.getenv("PIB_E2E_NAV_TIMEOUT_MS", "60000"))
 REQUEST_TIMEOUT_S = 10

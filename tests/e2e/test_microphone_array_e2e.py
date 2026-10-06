@@ -1,9 +1,10 @@
-import os
 import re
 import pytest
 from playwright.sync_api import sync_playwright, Page, expect
 
-BASE_URL = os.getenv("PIB_ROBOT_URL", "http://localhost")
+from robot_address import robot_base_url
+
+BASE_URL = robot_base_url()
 
 
 @pytest.fixture(scope="function")
