@@ -15,6 +15,8 @@ import pytest
 import requests
 import shutil
 
+from robot_address import api_url, robot_base_url
+
 
 def _get_chromium_launch_kwargs() -> dict:
     kwargs = {"headless": True}
@@ -28,8 +30,8 @@ def _get_chromium_launch_kwargs() -> dict:
 from playwright.sync_api import Page, expect
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
-ROBOT_URL = os.environ.get("PIB_E2E_BASE_URL", "http://localhost").rstrip("/")
-API_URL = f"{ROBOT_URL}/api"
+ROBOT_URL = robot_base_url()
+API_URL = api_url()
 REQUEST_TIMEOUT = 15
 TURN_TIMEOUT = int(os.environ.get("PIB_HERMES_E2E_TURN_TIMEOUT", "300"))
 TURN_ATTEMPTS = int(os.environ.get("PIB_HERMES_E2E_TURN_ATTEMPTS", "2"))

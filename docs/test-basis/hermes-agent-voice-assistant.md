@@ -18,8 +18,9 @@ The live E2E test requires a reachable robot with the voice-assistant and
 rosbridge services running, a personality on the Smart channel, and a working
 cloned Hermes profile with provider credentials. It skips with an explicit
 reason when those prerequisites are absent. Set
-`PIB_HERMES_E2E_PERSONALITY_ID` to select the personality and optionally
-`PIB_E2E_BASE_URL` and `PIB_E2E_ROSBRIDGE_URL` for non-default robot addresses.
+`PIB_HERMES_E2E_PERSONALITY_ID` to select the personality. The robot address
+is `PIB_ROBOT_URL` (see `tests/README.md`); `PIB_E2E_BASE_URL` remains a
+fallback. `PIB_E2E_ROSBRIDGE_URL` still overrides rosbridge.
 
 ## Deployment preconditions (not code behaviour)
 

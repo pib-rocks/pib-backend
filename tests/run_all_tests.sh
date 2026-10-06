@@ -34,6 +34,10 @@ Options:
 Environment:
   RUN_DOCKER_TESTS=1  Required for live Docker tests (set automatically unless --skip-docker)
   ROS2_TEST_MOCK=true Set for Robot E2E without ROS hardware (set automatically)
+  PIB_ROBOT_URL       Live pytest E2E robot address (tests/e2e/test_*_e2e.py).
+                      Required for those modules; they do not use http://localhost
+                      unless this variable is set to it. Example on the robot:
+                      PIB_ROBOT_URL=http://localhost ./run_all_tests.sh
 EOF
 }
 
@@ -118,9 +122,8 @@ check_flask() {
 run_pytest_integration() {
     cd "${REPO_ROOT}"
     rm -rf /tmp/pytest-of-* /tmp/pytest-* 2>/dev/null || true
-    export PIB_ROBOT_URL="${PIB_ROBOT_URL:-http://localhost}"
-    export PIB_API_URL="${PIB_API_URL:-http://localhost/api}"
-    export PIB_E2E_BASE_URL="${PIB_E2E_BASE_URL:-http://localhost}"
+    # Live pytest modules read PIB_ROBOT_URL. Do not default it to localhost:
+    # an unset address has to fail those modules instead of dialing the wrong host.
     local log
     log="$(mktemp)"
     # --continue-on-collection-errors: one unimportable module must never cancel the whole

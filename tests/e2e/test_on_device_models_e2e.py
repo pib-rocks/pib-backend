@@ -17,9 +17,14 @@ from typing import Any, Callable
 import pytest
 import requests
 
-ROBOT_HOST = os.environ.get("PIB_MODEL_E2E_HOST", "localhost")
-API_URL = os.environ.get("PIB_MODEL_E2E_API_URL", f"http://{ROBOT_HOST}/api")
-ROSBRIDGE_URL = os.environ.get("PIB_MODEL_E2E_ROSBRIDGE_URL", f"ws://{ROBOT_HOST}:9090")
+from robot_address import api_url, robot_hostname
+
+ROBOT_HOST = robot_hostname()
+API_URL = api_url()
+ROSBRIDGE_URL = os.environ.get(
+    "PIB_MODEL_E2E_ROSBRIDGE_URL",
+    f"ws://{ROBOT_HOST}:9090" if ROBOT_HOST else "",
+)
 REQUEST_TIMEOUT = 10
 MODEL_TIMEOUT = 90
 PROGRAM_TIMEOUT = 120
