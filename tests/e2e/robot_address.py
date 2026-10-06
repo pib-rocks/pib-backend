@@ -42,9 +42,7 @@ class ResolvedRobot:
         if self.sources == ("PIB_ROBOT_URL",):
             return f"Live E2E robot address from PIB_ROBOT_URL: {self.url}"
         if "PIB_ROBOT_URL" in self.sources:
-            others = ", ".join(
-                name for name in self.sources if name != "PIB_ROBOT_URL"
-            )
+            others = ", ".join(name for name in self.sources if name != "PIB_ROBOT_URL")
             return (
                 f"Live E2E robot address from PIB_ROBOT_URL: {self.url} "
                 f"(same robot also set in {others})"
@@ -155,7 +153,7 @@ def _base_url(name: str, raw: str) -> str:
                 "PIB_ROBOT_URL=http://192.168.1.172. The API address is "
                 "derived from that."
             )
-        value = value[:-len("/api")].rstrip("/")
+        value = value[: -len("/api")].rstrip("/")
     _require_absolute_url(name, raw, value)
     if name == _HOST_VARIABLE and urlparse(value).path not in ("", "/"):
         raise RobotAddressError(
