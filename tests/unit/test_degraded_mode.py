@@ -216,6 +216,32 @@ def test_encryption_off_skips_the_startup_password_prompt(app, key_store_path):
     assert prompt_decision(mode) == "skip"
 
 
+def test_empty_store_does_not_open_the_startup_password_prompt(app, key_store_path):
+    """The first start after turning encryption off on an empty store stays quiet.
+
+    The store file exists and holds no keys. Encryption off is unlocked, which
+    is the mode the display reads before it decides to open the prompt.
+    """
+    client = app.test_client()
+    created = client.post(
+        "/system/key-store/password",
+        json={"oldPassword": "", "newPassword": PASSWORD, "confirmPassword": PASSWORD},
+    )
+    assert created.status_code == 200
+    assert key_store_path.is_file()
+    key_store_service.lock()
+    assert client.get("/system/key-store").get_json()["mode"] == "degraded"
+
+    turned_off = client.post("/system/key-store/encryption", json={"enabled": False})
+    assert turned_off.status_code == 200
+    assert turned_off.get_json()["encryptKeyStorage"] is False
+
+    key_store_service.lock()
+    mode = client.get("/system/key-store").get_json()["mode"]
+    assert mode == "unlocked"
+    assert prompt_decision(mode) == "skip"
+
+
 def test_display_opens_the_prompt_only_while_degraded(monkeypatch):
     assert prompt_decision("degraded") == "open"
     assert prompt_decision("unlocked") == "skip"
