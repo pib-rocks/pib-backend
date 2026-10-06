@@ -74,6 +74,19 @@ def _open_voice_assistant(page: "Page") -> None:
     )
 
 
+def _select_personality(page: "Page", personality_id: str) -> None:
+    """Choose a personality from the voice-assistant dropdown.
+
+    Cerebra lists personalities as options of #personality-select. The option
+    value is the personality id. The visible label is the name, with an
+    attention suffix when the personality needs a key, so the id selects the
+    option exactly. select_option waits until that option is present.
+    """
+    personality = page.locator("#personality-select")
+    expect(personality).to_be_visible(timeout=UI_TIMEOUT_MS)
+    personality.select_option(value=personality_id, timeout=UI_TIMEOUT_MS)
+
+
 def _personality_ids() -> set:
     payload = _get_json("/voice-assistant/personality")
     items = (
@@ -577,7 +590,7 @@ def test_chat_send_button_activation_with_smartconnect():
 
             # 3. Create a Smart personality. The channel is the Hermes agent.
             # Names are unique per run: a leftover persona/chat from an aborted run
-            # would otherwise be matched first by the sidebar locators below.
+            # would otherwise be matched first by the locators below.
             persona_name = f"SendButtonTester_{uuid.uuid4().hex[:6]}"
             chat_topic = f"Send Button E2E {uuid.uuid4().hex[:6]}"
 
@@ -602,14 +615,11 @@ def test_chat_send_button_activation_with_smartconnect():
             ).json()
             created_chat_id = chat_res["chatId"]
 
-            # 4. Open chat window in browser via UI clicks. The reload is what makes
-            # the persona created above appear in the sidebar.
+            # 4. Open chat window in browser via UI. The reload is what makes
+            # the persona created above appear in the personality dropdown.
             _open_voice_assistant(page)
 
-            # Click the persona in the sidebar
-            p_link = page.locator(f"a:has-text('{persona_name}')").first
-            expect(p_link).to_be_visible(timeout=UI_TIMEOUT_MS)
-            p_link.click()
+            _select_personality(page, created_p_id)
 
             # Click the chat topic
             chat_item = page.locator(f"text='{chat_topic}'").first
@@ -806,10 +816,7 @@ def test_voice_assistant_latency_and_smartconnect_e2e():
                     close_btn.click()
                     page.wait_for_timeout(500)
 
-            # Click newly created personality in sidebar
-            p_link = page.locator(f"a:has-text('{unique_persona_name}')").first
-            expect(p_link).to_be_visible(timeout=UI_TIMEOUT_MS)
-            p_link.click()
+            _select_personality(page, created_p_id)
 
             # Click chat topic
             chat_item = page.locator(f"text='{chat_topic}'").first
