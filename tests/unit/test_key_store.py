@@ -10,11 +10,6 @@ from unittest.mock import MagicMock
 
 import pytest
 from pib_hermes_config import profile_dir_for
-from pib_hermes_config.token_crypto import (
-    TokenCryptoError,
-    decrypt_token,
-    encrypt_token,
-)
 from sqlalchemy import text
 
 from app.app import db
@@ -28,6 +23,9 @@ from service.key_store_service import (
     UNWRITABLE_MESSAGE,
     WRONG_PASSWORD_MESSAGE,
     KeyStoreError,
+    TokenCryptoError,
+    decrypt_token,
+    encrypt_token,
 )
 from service.soul_service import write_soul
 
@@ -61,15 +59,17 @@ def test_token_crypto_round_trip_and_wrong_password():
     assert b"cloud-token" not in ciphertext
 
 
-def test_token_service_uses_the_shared_primitive():
+def test_token_service_reads_the_key_store_not_a_second_cipher():
+    """The voice node reads the cloud token from the key store."""
     source = (
         REPO_ROOT / "ros_packages/voice_assistant/voice_assistant/token_service.py"
     ).read_text(encoding="utf-8")
-    crypto = (
-        REPO_ROOT / "pib_hermes_config/pib_hermes_config/token_crypto.py"
-    ).read_text(encoding="utf-8")
-    assert "token_crypto.encrypt_token" in source
-    assert "token_crypto.decrypt_token" in source
+    crypto = (REPO_ROOT / "pib_api/flask/service/key_store_service.py").read_text(
+        encoding="utf-8"
+    )
+    assert "token_crypto" not in source
+    assert "read_cloud_token" in source
+    assert "log_cloud_token_source" in source
     assert "n=2**14" in crypto
 
 

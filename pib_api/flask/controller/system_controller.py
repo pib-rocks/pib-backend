@@ -17,7 +17,12 @@ from pib_hermes_config.channel import (
     CHANNEL_SMART,
     smart_chats_enabled,
 )
-from service import hardware_config_service, revision_service, update_service
+from service import (
+    hardware_config_service,
+    key_store_service,
+    revision_service,
+    update_service,
+)
 from service.system_property_service import (
     ALLOWED_HARDWARE_VARIANTS,
     HARDWARE_VARIANT_KEY,
@@ -91,6 +96,37 @@ def chat_channels_document() -> dict:
 def get_chat_channels():
     """Channels the UI may offer. Smart is omitted when the installer disabled it."""
     return jsonify(chat_channels_document())
+
+
+@bp.route("/smart-connect", methods=["POST"])
+def post_smart_connect():
+    """Store the SmartConnect token. The body carries the token and no password.
+
+    Encryption on uses the operator password this process already holds. A
+    locked store returns the clear message and no secret. The response is a
+    credential_ref, never the token.
+    """
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        return jsonify({"successful": False, "error": "Bad request."}), 400
+    token = body.get("token")
+    if not isinstance(token, str) or token.strip() == "":
+        return jsonify({"successful": False, "error": "Bad request."}), 400
+    try:
+        ref = key_store_service.put_cloud_token(token)
+    except key_store_service.KeyStoreError as error:
+        return jsonify({"successful": False, "error": str(error)}), error.status_code
+    return jsonify({"successful": True, "credentialRef": ref})
+
+
+@bp.route("/smart-connect", methods=["DELETE"])
+def delete_smart_connect():
+    """Remove the SmartConnect token. A locked store keeps it."""
+    try:
+        key_store_service.delete_cloud_token()
+    except key_store_service.KeyStoreError as error:
+        return jsonify({"successful": False, "error": str(error)}), error.status_code
+    return "", 204
 
 
 @voice_channel_bp.route("/channel", methods=["GET"])
