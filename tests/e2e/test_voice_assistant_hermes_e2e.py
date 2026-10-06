@@ -98,7 +98,7 @@ def _poll_messages(chat_id: str):
         return None
 
 
-def _activate_smart_connect(token: str, password: str) -> None:
+def _activate_smart_connect(token: str) -> None:
     """Wait until the SmartConnect setup request has completed successfully."""
     deadline = time.monotonic() + API_SETTLE_TIMEOUT_S
     last_error = None
@@ -106,7 +106,7 @@ def _activate_smart_connect(token: str, password: str) -> None:
         try:
             response = requests.post(
                 f"{API_URL}/system/smart-connect",
-                json={"token": token, "password": password},
+                json={"token": token},
                 timeout=REQUEST_TIMEOUT,
             )
             response.raise_for_status()
@@ -115,7 +115,7 @@ def _activate_smart_connect(token: str, password: str) -> None:
             last_error = exc
             time.sleep(1)
     raise requests.RequestException(
-        "SmartConnect token/password setup did not complete successfully within "
+        "SmartConnect token setup did not complete successfully within "
         f"{API_SETTLE_TIMEOUT_S}s ({last_error})"
     )
 
@@ -339,7 +339,7 @@ def _send_chat_message(chat_id: str, content: str) -> None:
 
 def test_voice_assistant_hermes_persists_reply_and_recalls_prior_fact():
     try:
-        _activate_smart_connect("12345678", "12345678")
+        _activate_smart_connect("12345678")
     except requests.RequestException:
         # Reachability is reported as a skip by the personality probe below.
         pass
@@ -550,14 +550,14 @@ def test_create_personality_via_browser_ui_generates_soul_md():
 
 def test_chat_send_button_activation_with_smartconnect():
     """
-    E2E UI test verifying SmartConnect token/password setup ('12345678'),
+    E2E UI test verifying SmartConnect token setup ('12345678'),
     Smart personality chat creation, deep-chat's >2-character submit-button
     state, and that submitting through #submit-icon renders the typed message.
     """
     from playwright.sync_api import sync_playwright
 
-    # 1. Activate SmartConnect via API or UI with token/password 12345678
-    _activate_smart_connect("12345678", "12345678")
+    # 1. Activate SmartConnect via API with token 12345678
+    _activate_smart_connect("12345678")
 
     created_chat_id = None
     created_p_id = None
@@ -685,7 +685,7 @@ def test_chat_send_button_activation_with_smartconnect():
 def test_voice_assistant_latency_and_smartconnect_e2e():
     """
     E2E UI Test according to user specification:
-    1. Activates SmartConnect with Token '1234567890' and Password '1234567890'.
+    1. Activates SmartConnect with token '1234567890'.
     2. Creates a new Smart personality (unique name).
     3. Types 'Wie geht es dir?' in deep-chat UI and measures response latency
        from Submit click until the assistant's real reply appears in the UI.
@@ -695,10 +695,10 @@ def test_voice_assistant_latency_and_smartconnect_e2e():
     token = "1234567890"
     password = "1234567890"
 
-    # 1. Activate SmartConnect via API
+    # 1. Activate SmartConnect via API. The token is the only field.
     requests.post(
         f"{API_URL}/system/smart-connect",
-        json={"token": token, "password": password},
+        json={"token": token},
         timeout=REQUEST_TIMEOUT,
     )
 

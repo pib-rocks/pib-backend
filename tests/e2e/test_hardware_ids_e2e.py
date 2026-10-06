@@ -119,7 +119,7 @@ class TestHardwareIDsE2E:
         try:
             requests.post(
                 f"{API_URL}/system/smart-connect",
-                json={"token": "12345678", "password": "12345678"},
+                json={"token": "12345678"},
                 timeout=REQUEST_TIMEOUT_S,
             )
         except Exception:
