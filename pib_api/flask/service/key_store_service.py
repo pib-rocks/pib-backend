@@ -382,11 +382,13 @@ def change_password(
 def set_encryption(enabled: bool, password: str = "") -> None:
     """Turn encryption on or off, rewriting the store before the setting.
 
-    Turning off with an encrypted store requires the current password and
-    rewrites the keys as cleartext. Turning on takes ``password`` as the new
-    operator password and rewrites cleartext keys as ciphertext. The settings
-    file is updated only after that rewrite succeeds. A failed rewrite leaves
-    the previous file and the previous setting in place.
+    Turning off rewrites the keys as cleartext. That needs the current
+    password when the store holds entries. A missing store, or one with no
+    entries, has nothing to decrypt and does not need a password. Turning
+    on takes ``password`` as the new operator password and rewrites
+    cleartext keys as ciphertext. The settings file is updated only after
+    that rewrite succeeds. A failed rewrite leaves the previous file and
+    the previous setting in place.
     """
     if enabled == encryption_enabled() and _store_agrees_with(enabled):
         return
@@ -397,19 +399,27 @@ def set_encryption(enabled: bool, password: str = "") -> None:
 
 
 def _turn_encryption_off(password: str) -> None:
-    if not _store_exists():
-        _write_settings(False)
-        _remember({})
-        _keep_password("")
-        logger.info("Key store encryption is now off")
+    """Drop encryption. An empty store is handled like a missing one.
+
+    The settings file is written only after a successful store rewrite, so
+    a failure leaves the previous store and the previous setting in place.
+    A missing store has nothing to rewrite.
+    """
+    if not _store_holds_entries():
+        _commit_encryption_off({})
         return
-    mapping = _mapping_for_disable(password)
+    _commit_encryption_off(_mapping_for_disable(password))
+
+
+def _commit_encryption_off(mapping: dict[str, str]) -> None:
     previous = _read_store_bytes()
-    _write_cleartext(mapping)
+    if previous is not None:
+        _write_cleartext(mapping)
     try:
         _write_settings(False)
     except KeyStoreError:
-        _restore_store_bytes(previous)
+        if previous is not None:
+            _restore_store_bytes(previous)
         raise
     _remember(mapping)
     _keep_password("")
@@ -483,6 +493,49 @@ def _provider_or_raise(provider_id: int) -> Provider:
 
 def _store_exists() -> bool:
     return os.path.isfile(store_path())
+
+
+def _store_holds_entries() -> bool:
+    """True when the file contains at least one secret.
+
+    File presence is the wrong test: setting a password writes an encrypted
+    ``{}`` before any key exists. That envelope has nothing to decrypt, so
+    turning encryption off must not ask for the operator password. A
+    ciphertext long enough to hold a ``provider-<id>`` entry still does.
+    Anything that cannot be measured is treated as holding entries.
+    """
+    if not _store_exists():
+        return False
+    document = _read_document()
+    if _is_cleartext_document(document):
+        return bool(_string_map(document.get("secrets")))
+    if _is_envelope_document(document):
+        return _envelope_holds_entries(document)
+    return True
+
+
+def _envelope_holds_entries(document: dict) -> bool:
+    """True unless the ciphertext can only be the empty map.
+
+    Fernet is ``0x80 || timestamp(8) || iv(16) || ciphertext || hmac(32)``.
+    ``{}`` is two bytes and occupies one AES block. Every secret this store
+    writes is a ``provider-<id>`` value, and that JSON does not fit in one
+    block. A missing, short, or longer token may hide a secret.
+    """
+    token = document.get("ciphertext")
+    if not isinstance(token, str) or token.strip() == "":
+        return True
+    try:
+        raw = urlsafe_b64decode(token.encode("ascii"))
+    except (ValueError, TypeError, UnicodeError):
+        return True
+    overhead = 1 + 8 + 16 + 32
+    if len(raw) < overhead + 16 or raw[:1] != b"\x80":
+        return True
+    body = len(raw) - overhead
+    if body % 16 != 0:
+        return True
+    return body != 16
 
 
 def _store_agrees_with(enabled: bool) -> bool:

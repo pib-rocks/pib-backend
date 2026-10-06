@@ -579,6 +579,86 @@ def test_switching_encryption_off_and_on_keeps_the_keys(app, app_ctx, key_store_
     assert caught.value.status_code == 401
 
 
+def test_empty_store_turns_encryption_off_without_a_password(
+    app, app_ctx, key_store_path
+):
+    """Setting a password creates a file even when no key was stored.
+
+    That file is an encrypted empty map. Turning encryption off used to
+    demand the operator password because the file existed. There is nothing
+    to decrypt, and the next start must not open the password prompt.
+    """
+    client = app.test_client()
+    created = client.post(
+        "/system/key-store/password",
+        json={"oldPassword": "", "newPassword": PASSWORD, "confirmPassword": PASSWORD},
+    )
+    assert created.status_code == 200
+    assert key_store_path.is_file()
+    before = key_store_path.read_bytes()
+    assert SECRET.encode() not in before
+    settings = _settings_file(key_store_path)
+    assert not settings.exists()
+    key_store_service.lock()
+    assert key_store_service.operating_mode() == "degraded"
+
+    turned_off = client.post("/system/key-store/encryption", json={"enabled": False})
+    assert turned_off.status_code == 200
+    body = turned_off.get_json()
+    assert body["encryptKeyStorage"] is False
+    assert body["mode"] == "unlocked"
+    assert key_store_service.operating_mode() == "unlocked"
+    assert PASSWORD not in turned_off.get_data(as_text=True)
+    document = json.loads(key_store_path.read_text(encoding="utf-8"))
+    assert document["cleartext"] is True
+    assert document["secrets"] == {}
+    assert "ciphertext" not in document
+    assert "salt" not in document
+    assert json.loads(settings.read_text(encoding="utf-8")) == {
+        "encrypt_key_storage": False
+    }
+
+    # A restarted process keeps nothing but the files. Unlocked is what the
+    # start-up prompt reads, so the prompt stays down.
+    key_store_service.lock()
+    assert key_store_service.operating_mode() == "unlocked"
+    status = client.get("/system/key-store").get_json()
+    assert status["encryptKeyStorage"] is False
+    assert status["credentialRefs"] == []
+    assert status["mode"] == "unlocked"
+
+
+def test_empty_store_keeps_encryption_when_the_rewrite_fails(
+    app, app_ctx, key_store_path, monkeypatch
+):
+    """The settings file is written only after the empty store is rewritten."""
+    client = app.test_client()
+    created = client.post(
+        "/system/key-store/password",
+        json={"oldPassword": "", "newPassword": PASSWORD, "confirmPassword": PASSWORD},
+    )
+    assert created.status_code == 200
+    before = key_store_path.read_bytes()
+    settings = _settings_file(key_store_path)
+    assert not settings.exists()
+    key_store_service.lock()
+    real_replace = key_store_service.os.replace
+
+    def fail_store_replace(src, dst):
+        if os.path.abspath(dst) == os.path.abspath(str(key_store_path)):
+            raise OSError("store replace failed")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(key_store_service.os, "replace", fail_store_replace)
+    refused = client.post("/system/key-store/encryption", json={"enabled": False})
+    assert refused.status_code == 500
+    assert refused.get_json()["error"] == UNWRITABLE_MESSAGE
+    assert not settings.exists()
+    assert key_store_path.read_bytes() == before
+    assert client.get("/system/key-store").get_json()["encryptKeyStorage"] is True
+    assert key_store_service.operating_mode() == "degraded"
+
+
 def test_wrong_password_refuses_turning_encryption_off(app, app_ctx, key_store_path):
     vision = RegistryModel.query.filter_by(api_name="gpt-6").one().provider
     client = app.test_client()
@@ -604,6 +684,15 @@ def test_wrong_password_refuses_turning_encryption_off(app, app_ctx, key_store_p
     assert not settings.exists()
     assert SECRET.encode() not in key_store_path.read_bytes()
     assert json.loads(before)["encrypt_key_storage"] is True
+
+    # The same request the empty-store case sends. A real entry still refuses it.
+    omitted = client.post("/system/key-store/encryption", json={"enabled": False})
+    assert omitted.status_code == 401
+    assert omitted.get_json()["error"] == WRONG_PASSWORD_MESSAGE
+    assert omitted.get_json()["credentials"] == []
+    assert SECRET not in omitted.get_data(as_text=True)
+    assert key_store_path.read_bytes() == before
+    assert not settings.exists()
 
 
 def test_short_password_refuses_turning_encryption_on(app, app_ctx, key_store_path):
