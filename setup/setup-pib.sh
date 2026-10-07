@@ -1148,6 +1148,11 @@ function provision_whisper_model() {
 # a model only when `ollama list` does not already show it. A second run therefore
 # re-downloads nothing and does not fail on an existing qwen-fast.
 #
+# Whether to install is decided from PIB_HARDWARE_VARIANT, which this setup has already
+# resolved. A variant that is not in that list logs one skip line and returns success,
+# so the step still appears in the setup summary and is not a failure. The RAM check
+# below stays as a warning for the variants that do install.
+#
 # qwen2.5:1.5b Q4 weights are about 1.0-1.1 GiB plus the KV cache for num_ctx 2048.
 # 1200 MiB is that requirement. Less than this is a warning before the pull, not a
 # hard stop, so an operator on a small machine can still proceed deliberately.
@@ -1155,6 +1160,16 @@ function install_ollama_qwen_fast() {
   local modelfile="" version="" available_kib="" available_mib="" required_mib
   local curl_status=0 installer_status=0 model_names="" line="" name=""
   local has_base=0 has_fast=0 service_user="" ready_attempts attempt=0
+
+  # pib5edu, pib5advanced and pib5museum are the generation-5 (8 GiB) variants.
+  case "${PIB_HARDWARE_VARIANT:-}" in
+    pib5edu | pib5advanced | pib5museum)
+      ;;
+    *)
+      print INFO "ollama: skipping variant ${PIB_HARDWARE_VARIANT:-unset}; the local model requires 8 GiB"
+      return 0
+      ;;
+  esac
 
   if [ -f "${BACKEND_DIR}/setup/ollama/Modelfile" ]; then
     modelfile="${BACKEND_DIR}/setup/ollama/Modelfile"
@@ -1514,7 +1529,8 @@ run_step "Provision curated OAK models" provision_curated_models provision ||
 run_step "Provision whisper model" provision_whisper_model || print ERROR "failed to provision the whisper model"
 # After the clone: the Modelfile is setup/ollama/Modelfile in the backend checkout.
 # A failure is recorded in the summary and setup continues; nothing else is pointed
-# at this model yet.
+# at this model yet. A skipped variant returns success, so this step stays in the
+# summary for every variant.
 run_step "Install Ollama qwen-fast" install_ollama_qwen_fast || print ERROR "failed to install Ollama qwen-fast"
 run_step "Install pib Python packages" install_pib_python_packages || print ERROR "failed to install pib Python packages"
 # Before the Hermes installer runs: ~/.local/bin must be on PATH for every shell of user pib.

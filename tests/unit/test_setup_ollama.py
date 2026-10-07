@@ -1,8 +1,9 @@
 """setup-pib.sh installs a CPU-tuned local Ollama only when it is missing (PR-1922).
 
-install_ollama_qwen_fast() is cut out of setup-pib.sh and run in a bash subprocess.
-curl, sh, sudo, systemctl, ollama and free are stubs on PATH, so the test does not
-need ollama installed and does not download a model.
+The step installs for the generation-5 (8 GiB) variants and skips the generation-4
+variants (PR-1923). install_ollama_qwen_fast() is cut out of setup-pib.sh and run
+in a bash subprocess. curl, sh, sudo, systemctl, ollama and free are stubs on PATH,
+so the test does not need ollama installed and does not download a model.
 """
 
 from __future__ import annotations
@@ -11,6 +12,8 @@ import os
 import re
 import subprocess
 from pathlib import Path
+
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SETUP_PIB = REPO_ROOT / "setup" / "setup-pib.sh"
@@ -21,6 +24,10 @@ MODELFILE = REPO_ROOT / "setup" / "ollama" / "Modelfile"
 AMPLE_AVAILABLE_KIB = 2_306_867
 # 1 GiB available is under the Q4 weights plus the 2048-token KV cache.
 LOW_AVAILABLE_KIB = 1_048_576
+
+# pib5edu, pib5advanced and pib5museum are the generation-5 (8 GiB) variants.
+INSTALLING_VARIANTS = ("pib5edu", "pib5advanced", "pib5museum")
+SKIPPING_VARIANTS = ("pib4edu", "pib4advanced")
 
 EXPECTED_MODELFILE = """\
 FROM qwen2.5:1.5b
@@ -203,6 +210,7 @@ def _run(
     runs: int = 1,
     backend_dir: Path | None = None,
     setup_dir: Path | None = None,
+    hardware_variant: str = "pib5edu",
 ):
     log_path = tmp_path / "stub.log"
     log_path.touch()
@@ -264,6 +272,7 @@ def _run(
             setup_dir if setup_dir is not None else REPO_ROOT / "setup"
         ),
         PIB_OLLAMA_READY_ATTEMPTS="2",
+        PIB_HARDWARE_VARIANT=hardware_variant,
     )
     result = subprocess.run(
         ["/bin/bash", "-c", script],
@@ -426,6 +435,47 @@ def test_a_missing_modelfile_fails_before_any_install(tmp_path):
     assert "rc1=1" in result.stdout, result.stdout + result.stderr
     assert "Modelfile not found" in result.stdout
     assert log == []
+
+
+def _skip_line(variant: str) -> str:
+    return f"ollama: skipping variant {variant}; the local model requires 8 GiB"
+
+
+@pytest.mark.parametrize("variant", INSTALLING_VARIANTS)
+def test_generation_5_variants_install_the_local_model(tmp_path, variant):
+    result, log = _run(tmp_path, hardware_variant=variant)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "rc1=0" in result.stdout
+    assert "skipping variant" not in result.stdout
+    assert "installing from https://ollama.com/install.sh" in result.stdout
+    assert "2252 MiB available RAM" in result.stdout
+    assert _logged(log, "curl -fsSL https://ollama.com/install.sh") == 1
+    assert _logged(log, "ollama pull qwen2.5:1.5b") == 1
+    assert (
+        _logged(log, f"ollama create qwen-fast -f {REPO_ROOT}/setup/ollama/Modelfile")
+        == 1
+    )
+
+
+@pytest.mark.parametrize("variant", SKIPPING_VARIANTS)
+def test_generation_4_variants_skip_without_installer_pull_or_create(tmp_path, variant):
+    result, log = _run(tmp_path, hardware_variant=variant, runs=2)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    first, second = result.stdout.split("--- run 2 ---", 1)
+    assert "rc1=0" in first
+    assert _skip_line(variant) in first
+    assert "rc2=0" in second
+    assert _skip_line(variant) in second
+    assert "installing from" not in result.stdout
+    assert "pulling qwen2.5:1.5b" not in result.stdout
+    assert "creating qwen-fast" not in result.stdout
+    assert _logged(log, "curl -fsSL https://ollama.com/install.sh") == 0
+    assert _logged(log, "sh") == 0
+    assert _logged(log, "ollama pull qwen2.5:1.5b") == 0
+    assert not any(line.startswith("ollama create ") for line in log)
+    assert not any(line.startswith("systemctl ") for line in log)
 
 
 def test_setup_runs_the_ollama_step_after_the_clone():
