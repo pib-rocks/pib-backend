@@ -16,10 +16,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SETUP_PIB = REPO_ROOT / "setup" / "setup-pib.sh"
 MODELFILE = REPO_ROOT / "setup" / "ollama" / "Modelfile"
 
-# 2.2 GiB, the available RAM measured on the 4 GiB rig (192.168.1.92, 2026-10-07).
-# free -k reports kibibytes; integer MiB is 2306867 // 1024 = 2252, above the
-# 1200 MiB the step treats as the model's requirement.
-RIG_AVAILABLE_KIB = 2_306_867
+# 2.2 GiB free: free -k reports kibibytes, so integer MiB is 2306867 // 1024 = 2252,
+# comfortably above the 1200 MiB the step treats as the model's requirement.
+AMPLE_AVAILABLE_KIB = 2_306_867
 # 1 GiB available is under the Q4 weights plus the 2048-token KV cache.
 LOW_AVAILABLE_KIB = 1_048_576
 
@@ -195,7 +194,7 @@ def _run(
     models: list[str] | None = None,
     service_active: bool = False,
     service_enabled: bool = False,
-    mem_available_kib: int = RIG_AVAILABLE_KIB,
+    mem_available_kib: int = AMPLE_AVAILABLE_KIB,
     curl_status: int = 0,
     installer_status: int = 0,
     start_status: int = 0,

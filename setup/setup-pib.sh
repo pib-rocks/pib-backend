@@ -1149,8 +1149,8 @@ function provision_whisper_model() {
 # re-downloads nothing and does not fail on an existing qwen-fast.
 #
 # qwen2.5:1.5b Q4 weights are about 1.0-1.1 GiB plus the KV cache for num_ctx 2048.
-# 1200 MiB is that requirement. The measured 4 GiB rig (2.2 GiB available on 2026-10-07)
-# stays above this line; less than this is a warning before the pull, not a hard stop.
+# 1200 MiB is that requirement. Less than this is a warning before the pull, not a
+# hard stop, so an operator on a small machine can still proceed deliberately.
 function install_ollama_qwen_fast() {
   local modelfile="" version="" available_kib="" available_mib="" required_mib
   local curl_status=0 installer_status=0 model_names="" line="" name=""
