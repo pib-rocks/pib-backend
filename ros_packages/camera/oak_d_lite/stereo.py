@@ -92,13 +92,22 @@ from .hand_tracking import (
 # Downscaled resolution for Haar cascade face detection (maps back to full frame).
 FACE_DETECT_WIDTH = 320
 FACE_DETECT_HEIGHT = 180
-# Keep ImageManip warp inputs below the full ISP resolution. A 256x256 camera
-# branch bounds the single palm manipulation's downscale to 2:1 while remaining
-# large enough for the 224x224 landmark crop. Limiting the source branch keeps
-# the complete field of view seen by each network; chaining or narrowing
-# ImageManip crops would change the pixels on which the models were trained.
+# Frame the UI displays. A model colour branch must share this aspect: the
+# camera crops any other aspect, and a later per-axis scale cannot put that
+# crop back onto the frame.
+PUBLISHED_FRAME_WIDTH = 1280
+PUBLISHED_FRAME_HEIGHT = 720
+# Full-field branch at that aspect, nine tenths of the preview. Model inputs
+# are stretched from this branch; the camera is not asked for their aspect.
+COLOUR_BRANCH_WIDTH = 1152
+COLOUR_BRANCH_HEIGHT = (
+    COLOUR_BRANCH_WIDTH * PUBLISHED_FRAME_HEIGHT // PUBLISHED_FRAME_WIDTH
+)
+# The palm warp downscales this branch to 128x128 and stays within 2:1 on the
+# long side. The short side follows the published aspect, so the branch is the
+# whole frame. A square branch would be a centred crop.
 HAND_NN_WIDTH = 256
-HAND_NN_HEIGHT = 256
+HAND_NN_HEIGHT = HAND_NN_WIDTH * PUBLISHED_FRAME_HEIGHT // PUBLISHED_FRAME_WIDTH
 IMITATION_FPS = 8
 # The neural branch carries the FULL 16:9 field of view at the size the
 # HandTrackerEdge reference uses (internal_frame_height=640 on a 16:9 sensor),
@@ -111,10 +120,10 @@ IMITATION_FPS = 8
 # was squashed in y - the signature of mapping square-normalised coordinates
 # onto a 16:9 frame. With a 16:9 branch the mapping back is a pure per-axis
 # scale, so that error cannot occur by construction.
-IMITATION_SOURCE_WIDTH = 1152
-IMITATION_SOURCE_HEIGHT = 648
-FACE_CROP_SOURCE_WIDTH = 1152
-FACE_CROP_SOURCE_HEIGHT = 648
+IMITATION_SOURCE_WIDTH = COLOUR_BRANCH_WIDTH
+IMITATION_SOURCE_HEIGHT = COLOUR_BRANCH_HEIGHT
+FACE_CROP_SOURCE_WIDTH = COLOUR_BRANCH_WIDTH
+FACE_CROP_SOURCE_HEIGHT = COLOUR_BRANCH_HEIGHT
 FACE_CROP_PAIR_WINDOW = 32
 MAX_FACE_CROP_BUFFER = 64
 # Exact timestamp pairing needs more than a single held frame. Four delivered
@@ -126,8 +135,8 @@ FACE_CROPPER_QUEUE = 4
 # uses on RVC2. The branch keeps the 16:9 field of view so the neural branch and
 # the published frame agree.
 HAND_MP_FPS = 8
-HAND_MP_SOURCE_WIDTH = 1152
-HAND_MP_SOURCE_HEIGHT = 648
+HAND_MP_SOURCE_WIDTH = COLOUR_BRANCH_WIDTH
+HAND_MP_SOURCE_HEIGHT = COLOUR_BRANCH_HEIGHT
 # How many palm detections are buffered while their landmark results arrive.
 HAND_MP_PAIR_WINDOW = 32
 # Unpaired entries older than this are dropped so the buffer cannot grow.
@@ -269,8 +278,8 @@ class CameraNode(Node):
             Int32MultiArray, "size_topic", self.preview_size_callback, 10
         )
 
-        self.preview_width = 1280
-        self.preview_height = 720
+        self.preview_width = PUBLISHED_FRAME_WIDTH
+        self.preview_height = PUBLISHED_FRAME_HEIGHT
         self.quality_factor = 80
         self.current_image = ""
         self.current_frame = None
@@ -1751,17 +1760,84 @@ class CameraNode(Node):
                 continue
             self._build_single_network_pipeline(model)
 
-    def _request_camera_branch(self, size, frame_type=None):
-        """Request a bounded-size colour stream for a model branch."""
+    def _published_frame_size(self):
+        """Width and height of the frame the UI displays."""
+        width = getattr(self, "preview_width", None)
+        height = getattr(self, "preview_height", None)
+        if (
+            isinstance(width, bool)
+            or isinstance(height, bool)
+            or not isinstance(width, (int, float))
+            or not isinstance(height, (int, float))
+            or width <= 0
+            or height <= 0
+        ):
+            return (PUBLISHED_FRAME_WIDTH, PUBLISHED_FRAME_HEIGHT)
+        return (int(width), int(height))
+
+    def _colour_branch_size(self, model_id):
+        """Chosen colour-branch size for one model.
+
+        The hand chain keeps a short branch so its palm warp stays within 2:1.
+        Every other model shares the full-field branch. Both sizes have the
+        published frame's aspect; the model's own input is a later stretch.
+        """
+        if model_id == "hand_tracking":
+            return (HAND_NN_WIDTH, HAND_NN_HEIGHT)
+        return (COLOUR_BRANCH_WIDTH, COLOUR_BRANCH_HEIGHT)
+
+    def _require_published_aspect(self, width, height):
+        """Refuse a branch whose aspect is not the published frame's."""
+        published_width, published_height = self._published_frame_size()
+        if (
+            width <= 0
+            or height <= 0
+            or width * published_height != height * published_width
+        ):
+            message = (
+                f"Refusing camera branch {width}x{height}: its aspect does not "
+                f"match the published frame {published_width}x{published_height}"
+            )
+            self.get_logger().error(message)
+            raise ValueError(message)
+
+    def _request_camera_branch(self, size, frame_type=None, fps=None):
+        """Request a colour branch in the published frame's aspect.
+
+        ``size`` is a chosen resolution. A size whose aspect differs from
+        ``preview_width`` / ``preview_height`` is refused: the camera would
+        deliver a centred crop, and a later per-axis scale cannot undo it.
+        The model's own input size is produced afterwards by an ImageManip
+        with ResizeMode.STRETCH.
+        """
+        width, height = int(size[0]), int(size[1])
+        self._require_published_aspect(width, height)
         if frame_type is None:
             frame_type = dai.ImgFrame.Type.BGR888p
-        output = self.camRgb.requestOutput(size, type=frame_type)
+        request = {"type": frame_type}
+        if fps is not None:
+            request["fps"] = fps
+        output = self.camRgb.requestOutput((width, height), **request)
         if output is None:
             raise RuntimeError(
-                f"Camera cannot provide a {size[0]}x{size[1]} "
-                f"{frame_type} branch output"
+                f"Camera cannot provide a {width}x{height} {frame_type} branch output"
             )
         return output
+
+    def _stretch_to_network_input(self, source, width, height, frame_type):
+        """Stretch a published-aspect branch to a model's own input size."""
+        manip = self.pipeline.create(dai.node.ImageManip)
+        channels = 1 if frame_type == dai.ImgFrame.Type.GRAY8 else 3
+        manip.setMaxOutputFrameSize(int(width) * int(height) * channels)
+        manip.initialConfig.setOutputSize(
+            int(width),
+            int(height),
+            mode=dai.ImageManipConfig.ResizeMode.STRETCH,
+        )
+        manip.initialConfig.setFrameType(frame_type)
+        self._relax_branch_input(manip.inputImage)
+        source.link(manip.inputImage)
+        return manip
 
     def _build_single_network_pipeline(self, model):
         """Build a parsed task when registered, preserving the plain fallback."""
@@ -1770,9 +1846,15 @@ class CameraNode(Node):
         if model.model_id == QR_MODEL_ID:
             validate_qr_blob(dai.OpenVINO.Blob(model.blob_path))
             frame_type = dai.ImgFrame.Type.GRAY8
-        nn_input = self._request_camera_branch(
-            (model.input_width, model.input_height), frame_type=frame_type
+        camera_branch = self._request_camera_branch(
+            self._colour_branch_size(model.model_id), frame_type=frame_type
         )
+        nn_input = self._stretch_to_network_input(
+            camera_branch,
+            model.input_width,
+            model.input_height,
+            frame_type,
+        ).out
         if archive is not None:
             neural_network = self.pipeline.create(ParsingNeuralNetwork).build(
                 nn_input, archive
@@ -1992,12 +2074,11 @@ class CameraNode(Node):
         # manip, both non-blocking. Requesting two identical Camera outputs
         # exceeds the OAK-D Lite camera-output budget once the colour output is
         # present.
-        hand_tap = self._request_camera_branch((HAND_NN_WIDTH, HAND_NN_HEIGHT))
+        hand_size = self._colour_branch_size("hand_tracking")
+        hand_tap = self._request_camera_branch(hand_size)
         # Every manip crops the frames this branch really carries, so the crops
         # follow the delivered size instead of the requested one.
-        self.hand_source_size = self._branch_output_size(
-            hand_tap, (HAND_NN_WIDTH, HAND_NN_HEIGHT)
-        )
+        self.hand_source_size = self._branch_output_size(hand_tap, hand_size)
         source_width, source_height = self.hand_source_size
 
         palm_manip = self.pipeline.create(dai.node.ImageManip)
@@ -2099,17 +2180,10 @@ class CameraNode(Node):
         # it. The Luxonis reference asks the camera for its own sized, rate
         # limited output instead - three consumers on THAT are fine, the running
         # example has two device consumers plus a host node on one output.
-        imitation_source = self.camRgb.requestOutput(
-            (IMITATION_SOURCE_WIDTH, IMITATION_SOURCE_HEIGHT),
-            type=dai.ImgFrame.Type.BGR888p,
+        imitation_source = self._request_camera_branch(
+            self._colour_branch_size("imitation"),
             fps=IMITATION_FPS,
         )
-        if imitation_source is None:
-            raise RuntimeError(
-                "Camera cannot provide a "
-                f"{IMITATION_SOURCE_WIDTH}x{IMITATION_SOURCE_HEIGHT} "
-                "BGR888p branch for the imitation pipeline"
-            )
         self.imitation_source_size = (
             IMITATION_SOURCE_WIDTH,
             IMITATION_SOURCE_HEIGHT,
@@ -2199,16 +2273,9 @@ class CameraNode(Node):
 
         # Keep the full 16:9 field of view and the sensor's existing rate. A
         # second fps request on this camera leaves the raw ISP colour queue empty.
-        face_source = self.camRgb.requestOutput(
-            (FACE_CROP_SOURCE_WIDTH, FACE_CROP_SOURCE_HEIGHT),
-            type=dai.ImgFrame.Type.BGR888p,
+        face_source = self._request_camera_branch(
+            self._colour_branch_size(composite.model_id)
         )
-        if face_source is None:
-            raise RuntimeError(
-                "Camera cannot provide a "
-                f"{FACE_CROP_SOURCE_WIDTH}x{FACE_CROP_SOURCE_HEIGHT} "
-                "BGR888p branch for face crops"
-            )
         self.face_crop_source_size = (
             FACE_CROP_SOURCE_WIDTH,
             FACE_CROP_SOURCE_HEIGHT,
@@ -2294,16 +2361,9 @@ class CameraNode(Node):
         # The camera must already be built before requesting this branch. It feeds
         # YuNet and all three croppers, so every consumer is bounded and
         # non-blocking to keep one slow path from back-pressuring the camera.
-        face_source = self.camRgb.requestOutput(
-            (FACE_CROP_SOURCE_WIDTH, FACE_CROP_SOURCE_HEIGHT),
-            type=dai.ImgFrame.Type.BGR888p,
+        face_source = self._request_camera_branch(
+            self._colour_branch_size(composite.model_id)
         )
-        if face_source is None:
-            raise RuntimeError(
-                "Camera cannot provide a "
-                f"{FACE_CROP_SOURCE_WIDTH}x{FACE_CROP_SOURCE_HEIGHT} "
-                "BGR888p branch for gaze estimation"
-            )
         self.face_crop_source_size = (
             FACE_CROP_SOURCE_WIDTH,
             FACE_CROP_SOURCE_HEIGHT,
@@ -2441,15 +2501,9 @@ class CameraNode(Node):
         # was taken out, while the same branch at the sensor's rate works. The rate
         # of the chain is set by the crop/landmark pairing, not by throttling the
         # camera.
-        hand_mp_source = self.camRgb.requestOutput(
-            (HAND_MP_SOURCE_WIDTH, HAND_MP_SOURCE_HEIGHT),
-            type=dai.ImgFrame.Type.BGR888p,
+        hand_mp_source = self._request_camera_branch(
+            self._colour_branch_size("hand_tracking_mp")
         )
-        if hand_mp_source is None:
-            raise RuntimeError(
-                "Camera cannot provide a "
-                f"{HAND_MP_SOURCE_WIDTH}x{HAND_MP_SOURCE_HEIGHT} BGR888p branch"
-            )
         self.hand_mp_source_size = (HAND_MP_SOURCE_WIDTH, HAND_MP_SOURCE_HEIGHT)
         hand_mp_source.link(detector_resize.inputImage)
 
