@@ -1141,6 +1141,189 @@ function provision_whisper_model() {
   return 0
 }
 
+# Local Ollama with a CPU-tuned qwen2.5:1.5b named qwen-fast. The official installer
+# (https://ollama.com/install.sh) creates a systemd service that runs as its own user
+# and owns the model store. This step installs only when the binary is missing, starts
+# the service only when it is down (never restarts a healthy one), and pulls or creates
+# a model only when `ollama list` does not already show it. A second run therefore
+# re-downloads nothing and does not fail on an existing qwen-fast.
+#
+# qwen2.5:1.5b Q4 weights are about 1.0-1.1 GiB plus the KV cache for num_ctx 2048.
+# 1200 MiB is that requirement. Less than this is a warning before the pull, not a
+# hard stop, so an operator on a small machine can still proceed deliberately.
+function install_ollama_qwen_fast() {
+  local modelfile="" version="" available_kib="" available_mib="" required_mib
+  local curl_status=0 installer_status=0 model_names="" line="" name=""
+  local has_base=0 has_fast=0 service_user="" ready_attempts attempt=0
+
+  if [ -f "${BACKEND_DIR}/setup/ollama/Modelfile" ]; then
+    modelfile="${BACKEND_DIR}/setup/ollama/Modelfile"
+  elif [ -f "${SETUP_SCRIPT_DIR}/ollama/Modelfile" ]; then
+    modelfile="${SETUP_SCRIPT_DIR}/ollama/Modelfile"
+  else
+    print ERROR "ollama: Modelfile not found under ${BACKEND_DIR}/setup/ollama or ${SETUP_SCRIPT_DIR}/ollama"
+    return 1
+  fi
+
+  if command_exists ollama; then
+    print INFO "ollama: already installed"
+  else
+    # The current official installer prefers a .tar.zst archive and exits if zstd
+    # is missing. Install it first so that failure is not the only signal.
+    if ! command_exists zstd; then
+      print INFO "ollama: installing zstd so the official installer can extract its archive"
+      if ! command_exists apt-get; then
+        print ERROR "ollama: zstd is required by https://ollama.com/install.sh and apt-get is missing"
+        return 1
+      fi
+      if ! sudo apt-get install -y zstd; then
+        print ERROR "ollama: could not install zstd, which the official installer needs"
+        return 1
+      fi
+    fi
+    print INFO "ollama: installing from https://ollama.com/install.sh"
+    # This script does not set pipefail. Both statuses have to be read in one
+    # assignment: a failed download would otherwise look like success when sh
+    # exits 0 on empty input.
+    curl -fsSL https://ollama.com/install.sh | sh
+    curl_status=${PIPESTATUS[0]} installer_status=${PIPESTATUS[1]}
+    if [ "$curl_status" -ne 0 ]; then
+      print ERROR "ollama: could not download https://ollama.com/install.sh (network unavailable?)"
+      return 1
+    fi
+    if [ "$installer_status" -ne 0 ]; then
+      print ERROR "ollama: official installer failed (rc=${installer_status})"
+      return 1
+    fi
+    hash -r
+    if ! command_exists ollama; then
+      if [ -x /usr/local/bin/ollama ]; then
+        export PATH="/usr/local/bin:${PATH}"
+      elif [ -x /usr/bin/ollama ]; then
+        export PATH="/usr/bin:${PATH}"
+      fi
+    fi
+    if ! command_exists ollama; then
+      print ERROR "ollama: installer finished but the ollama binary is still missing"
+      return 1
+    fi
+  fi
+
+  if ! version="$(ollama --version 2>&1)"; then
+    print ERROR "ollama: could not read the installed version"
+    return 1
+  fi
+  print INFO "ollama: version ${version}"
+
+  if ! command_exists systemctl; then
+    print ERROR "ollama: systemctl is missing; cannot enable the ollama service"
+    return 1
+  fi
+
+  # Enable, then start only when the unit is down. Neither call restarts a unit
+  # that is already active, and this step never calls restart. Pulling while the
+  # unit is down would start a second server as pib and write ~/.ollama instead
+  # of the service user's store.
+  if systemctl is-enabled --quiet ollama; then
+    print INFO "ollama: service already enabled"
+  elif ! sudo systemctl enable ollama; then
+    print ERROR "ollama: could not enable the ollama service"
+    return 1
+  else
+    print INFO "ollama: service enabled"
+  fi
+
+  if systemctl is-active --quiet ollama; then
+    print INFO "ollama: service already active; leaving it running"
+  elif ! sudo systemctl start ollama; then
+    print ERROR "ollama: could not start the ollama service"
+    return 1
+  elif ! systemctl is-active --quiet ollama; then
+    print ERROR "ollama: service is not active after start"
+    return 1
+  else
+    print INFO "ollama: service started"
+  fi
+
+  service_user="$(systemctl show -p User --value ollama 2>/dev/null || true)"
+  if [ -n "$service_user" ]; then
+    print INFO "ollama: service runs as user ${service_user}; the model store stays with that user"
+  else
+    print WARN "ollama: could not read the service user; the model store must stay with the ollama service, not with pib"
+  fi
+
+  required_mib=1200
+  available_kib=""
+  if ! command_exists free; then
+    print WARN "ollama: free is missing; cannot check RAM (qwen2.5:1.5b needs ${required_mib} MiB)"
+  else
+    while IFS= read -r line; do
+      if [[ "$line" == Mem:* ]]; then
+        available_kib="${line##* }"
+      fi
+    done < <(free -k)
+    if ! [[ "$available_kib" =~ ^[0-9]+$ ]]; then
+      print WARN "ollama: could not read available RAM; qwen2.5:1.5b needs ${required_mib} MiB"
+    else
+      available_mib=$((available_kib / 1024))
+      if [ "$available_mib" -lt "$required_mib" ]; then
+        print WARN "ollama: ${available_mib} MiB available RAM is below the ${required_mib} MiB qwen2.5:1.5b needs (Q4 weights plus the 2048-token KV cache)"
+      else
+        print INFO "ollama: ${available_mib} MiB available RAM (${required_mib} MiB required for qwen2.5:1.5b)"
+      fi
+    fi
+  fi
+
+  # The unit can be active before it accepts connections. PIB_OLLAMA_READY_ATTEMPTS
+  # is for tests; on the device this waits up to 15s.
+  ready_attempts="${PIB_OLLAMA_READY_ATTEMPTS:-15}"
+  attempt=1
+  while true; do
+    if model_names="$(ollama list 2>/dev/null)"; then
+      break
+    fi
+    if [ "$attempt" -ge "$ready_attempts" ]; then
+      print ERROR "ollama: the service is up but 'ollama list' failed"
+      return 1
+    fi
+    attempt=$((attempt + 1))
+    sleep 1
+  done
+
+  has_base=0
+  has_fast=0
+  while IFS= read -r line || [ -n "$line" ]; do
+    [ -z "$line" ] && continue
+    name="${line%% *}"
+    if [ "$name" = "qwen2.5:1.5b" ]; then
+      has_base=1
+    elif [ "$name" = "qwen-fast" ] || [ "$name" = "qwen-fast:latest" ]; then
+      has_fast=1
+    fi
+  done <<< "$model_names"
+
+  if [ "$has_base" -eq 1 ]; then
+    print INFO "ollama: qwen2.5:1.5b already present; not pulling"
+  else
+    print INFO "ollama: pulling qwen2.5:1.5b"
+    if ! ollama pull qwen2.5:1.5b; then
+      print ERROR "ollama: pull of qwen2.5:1.5b failed"
+      return 1
+    fi
+  fi
+
+  if [ "$has_fast" -eq 1 ]; then
+    print INFO "ollama: qwen-fast already present; not recreating"
+  else
+    print INFO "ollama: creating qwen-fast from ${modelfile}"
+    if ! ollama create qwen-fast -f "$modelfile"; then
+      print ERROR "ollama: could not create qwen-fast from ${modelfile}"
+      return 1
+    fi
+  fi
+  return 0
+}
+
 # clean setup files if local install + remove user from sudoers file again
 function cleanup() {
   if [ "$INSTALL_METHOD" = "legacy" ]; then
@@ -1329,6 +1512,10 @@ run_step "Clone repositories" clone_repositories || abort_setup "failed to clone
 run_step "Provision curated OAK models" provision_curated_models provision ||
   abort_setup "Model provisioning must succeed before containers are started"
 run_step "Provision whisper model" provision_whisper_model || print ERROR "failed to provision the whisper model"
+# After the clone: the Modelfile is setup/ollama/Modelfile in the backend checkout.
+# A failure is recorded in the summary and setup continues; nothing else is pointed
+# at this model yet.
+run_step "Install Ollama qwen-fast" install_ollama_qwen_fast || print ERROR "failed to install Ollama qwen-fast"
 run_step "Install pib Python packages" install_pib_python_packages || print ERROR "failed to install pib Python packages"
 # Before the Hermes installer runs: ~/.local/bin must be on PATH for every shell of user pib.
 run_step "Put ~/.local/bin on PATH" install_local_bin_path || print ERROR "failed to put ~/.local/bin on PATH"
