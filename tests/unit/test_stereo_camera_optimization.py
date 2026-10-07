@@ -1,5 +1,6 @@
 """Unit tests for stereo camera CPU optimization (PR-1507)."""
 
+import ast
 import os
 import sys
 import threading
@@ -198,6 +199,7 @@ else:
 
 import numpy as np
 
+from ros_packages.camera.oak_d_lite import stereo as camera_stereo
 from ros_packages.camera.oak_d_lite.hand_tracking import PalmRegion
 from ros_packages.camera.oak_d_lite.imu import (
     ClockOffsetEstimator,
@@ -215,6 +217,8 @@ from ros_packages.camera.oak_d_lite.stereo import (
     BRANCH_INPUT_QUEUE_DEPTH,
     BRANCH_OUTPUT_QUEUE_DEPTH,
     COLOR_OUTPUT_QUEUE_DEPTH,
+    COLOUR_BRANCH_HEIGHT,
+    COLOUR_BRANCH_WIDTH,
     CameraNode,
     FACE_DETECT_WIDTH,
     FACE_DETECT_HEIGHT,
@@ -225,6 +229,8 @@ from ros_packages.camera.oak_d_lite.stereo import (
     HAND_STAGE_NAMES,
     HAND_NN_HEIGHT,
     HAND_NN_WIDTH,
+    PUBLISHED_FRAME_HEIGHT,
+    PUBLISHED_FRAME_WIDTH,
     IMITATION_FPS,
     IMITATION_SOURCE_HEIGHT,
     IMITATION_SOURCE_WIDTH,
@@ -517,16 +523,36 @@ class TestSingleNetworkPipeline(unittest.TestCase):
             input_height=192,
             shaves=4,
         )
-        network = node.pipeline.create.return_value
+        manip = MagicMock()
+        network = MagicMock()
+        node.pipeline.create.side_effect = [manip, network]
         branch = node._request_camera_branch.return_value
 
         node._build_single_network_pipeline(model)
 
-        node.pipeline.create.assert_called_once_with(mock_dai.node.NeuralNetwork)
+        node._request_camera_branch.assert_called_once_with(
+            (COLOUR_BRANCH_WIDTH, COLOUR_BRANCH_HEIGHT),
+            frame_type=mock_dai.ImgFrame.Type.BGR888p,
+        )
+        self.assertEqual(
+            node.pipeline.create.call_args_list,
+            [
+                unittest.mock.call(mock_dai.node.ImageManip),
+                unittest.mock.call(mock_dai.node.NeuralNetwork),
+            ],
+        )
+        manip.setMaxOutputFrameSize.assert_called_once_with(192 * 192 * 3)
+        manip.initialConfig.setOutputSize.assert_called_once_with(
+            192,
+            192,
+            mode=mock_dai.ImageManipConfig.ResizeMode.STRETCH,
+        )
+        branch.link.assert_called_once_with(manip.inputImage)
+        manip.out.link.assert_called_once_with(network.input)
         network.setBlobPath.assert_called_once_with("/facemesh.blob")
         network.setNumShavesPerInferenceThread.assert_called_once_with(4)
-        node._relax_branch_input.assert_called_once_with(network.input)
-        branch.link.assert_called_once_with(network.input)
+        node._relax_branch_input.assert_any_call(manip.inputImage)
+        node._relax_branch_input.assert_any_call(network.input)
         self.assertNotIn(model.model_id, node.parsed_model_ids)
 
     @patch("ros_packages.camera.oak_d_lite.stereo.create_archive")
@@ -540,15 +566,32 @@ class TestSingleNetworkPipeline(unittest.TestCase):
             shaves=4,
         )
         archive = create_archive_mock.return_value
-        parser = node.pipeline.create.return_value
+        manip = MagicMock()
+        parser = MagicMock()
+        node.pipeline.create.side_effect = [manip, parser]
         network = parser.build.return_value
         branch = node._request_camera_branch.return_value
 
         node._build_single_network_pipeline(model)
 
-        node.pipeline.create.assert_called_once_with(ParsingNeuralNetwork)
-        parser.build.assert_called_once_with(branch, archive)
-        node._relax_branch_input.assert_not_called()
+        node._request_camera_branch.assert_called_once_with(
+            (COLOUR_BRANCH_WIDTH, COLOUR_BRANCH_HEIGHT),
+            frame_type=camera_stereo.dai.ImgFrame.Type.BGR888p,
+        )
+        manip.initialConfig.setOutputSize.assert_called_once_with(
+            160,
+            120,
+            mode=camera_stereo.dai.ImageManipConfig.ResizeMode.STRETCH,
+        )
+        self.assertEqual(
+            node.pipeline.create.call_args_list,
+            [
+                unittest.mock.call(camera_stereo.dai.node.ImageManip),
+                unittest.mock.call(ParsingNeuralNetwork),
+            ],
+        )
+        parser.build.assert_called_once_with(manip.out, archive)
+        node._relax_branch_input.assert_called_once_with(manip.inputImage)
         self.assertIn(model.model_id, node.parsed_model_ids)
         network.out.createOutputQueue.assert_called_once_with(
             maxSize=BRANCH_OUTPUT_QUEUE_DEPTH, blocking=False
@@ -572,12 +615,26 @@ class TestSingleNetworkPipeline(unittest.TestCase):
             },
         )
 
+        manip = MagicMock()
+        network = MagicMock()
+        node.pipeline.create.side_effect = [manip, network]
+
         node._build_single_network_pipeline(model)
 
         node._request_camera_branch.assert_called_once_with(
-            (384, 384), frame_type=mock_dai.ImgFrame.Type.GRAY8
+            (COLOUR_BRANCH_WIDTH, COLOUR_BRANCH_HEIGHT),
+            frame_type=mock_dai.ImgFrame.Type.GRAY8,
         )
-        network = node.pipeline.create.return_value
+        manip.setMaxOutputFrameSize.assert_called_once_with(384 * 384)
+        manip.initialConfig.setOutputSize.assert_called_once_with(
+            384,
+            384,
+            mode=mock_dai.ImageManipConfig.ResizeMode.STRETCH,
+        )
+        manip.initialConfig.setFrameType.assert_called_once_with(
+            mock_dai.ImgFrame.Type.GRAY8
+        )
+        manip.out.link.assert_called_once_with(network.input)
         network.setBlobPath.assert_called_once_with("/qr.blob")
         network.setNumShavesPerInferenceThread.assert_called_once_with(4)
 
@@ -908,7 +965,7 @@ class TestHandPipelineInput(unittest.TestCase):
         node.pipeline.create.side_effect = created
         node.camRgb = MagicMock()
         hand_tap = MagicMock()
-        # The camera answers the 256x256 request with a larger stream.
+        # The camera answers the branch request with a larger stream.
         hand_tap.getSize.return_value = (1280, 720)
         node.camRgb.requestOutput.return_value = hand_tap
 
@@ -956,7 +1013,11 @@ class TestHandPipelineInput(unittest.TestCase):
 
         node._build_hand_pipeline(types.SimpleNamespace(artifact_ids=tuple(artifacts)))
 
-        self.assertEqual((HAND_NN_WIDTH, HAND_NN_HEIGHT), (256, 256))
+        self.assertEqual((HAND_NN_WIDTH, HAND_NN_HEIGHT), (256, 144))
+        self.assertEqual(
+            HAND_NN_WIDTH * PUBLISHED_FRAME_HEIGHT,
+            HAND_NN_HEIGHT * PUBLISHED_FRAME_WIDTH,
+        )
         palm_manip, landmark_manip = created[0], created[3]
         palm_manip.setMaxOutputFrameSize.assert_called_once_with(128 * 128 * 3)
         landmark_manip.setMaxOutputFrameSize.assert_called_once_with(224 * 224 * 3)
@@ -1021,7 +1082,7 @@ class TestHandPipelineInput(unittest.TestCase):
             )
         # Landmark results stay blocking so _pending_hands keeps its pairing.
         landmark_nn.out.createOutputQueue.assert_called_once_with()
-        self.assertEqual(node.hand_source_size, (256, 256))
+        self.assertEqual(node.hand_source_size, (HAND_NN_WIDTH, HAND_NN_HEIGHT))
 
     @patch("ros_packages.camera.oak_d_lite.stereo.dai")
     def test_landmarks_use_packet_transformation_to_map_to_preview(self, mock_dai):
@@ -2929,3 +2990,174 @@ class TestStereoRequested(unittest.TestCase):
 
     def test_off_never_asks_for_depth(self):
         self.assertFalse(self._node("off", [])._stereo_requested())
+
+
+def _same_published_aspect(width, height):
+    return int(width) * PUBLISHED_FRAME_HEIGHT == int(height) * PUBLISHED_FRAME_WIDTH
+
+
+def _manifest_entries():
+    import yaml
+
+    path = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "../../models/manifest.yaml")
+    )
+    with open(path, encoding="utf-8") as handle:
+        manifest = yaml.safe_load(handle)
+    entries = manifest["models"]
+    if not isinstance(entries, list) or not entries:
+        raise AssertionError("model manifest has no models")
+    return entries
+
+
+def _branch_aspect_node():
+    with patch.object(CameraNode, "__init__", lambda self: None):
+        node = CameraNode()
+    node.preview_width = PUBLISHED_FRAME_WIDTH
+    node.preview_height = PUBLISHED_FRAME_HEIGHT
+    node.get_logger = MagicMock()
+    node.camRgb = MagicMock()
+    node.camRgb.requestOutput.return_value = MagicMock()
+    return node
+
+
+def _call_name(func):
+    if isinstance(func, ast.Attribute):
+        return func.attr
+    if isinstance(func, ast.Name):
+        return func.id
+    return None
+
+
+def _enclosing_function(spans, lineno):
+    matches = [
+        (end - start, name) for name, start, end in spans if start <= lineno <= end
+    ]
+    if not matches:
+        return None
+    matches.sort()
+    return matches[0][1]
+
+
+def _function_spans(tree):
+    spans = []
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            spans.append((node.name, node.lineno, node.end_lineno))
+    return spans
+
+
+def _delegated_branch_names(tree):
+    names = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+            continue
+        target = node.targets[0]
+        if isinstance(target, ast.Name) and _is_colour_branch_call(node.value):
+            names.add(target.id)
+    return names
+
+
+def _is_colour_branch_call(expr):
+    return isinstance(expr, ast.Call) and _call_name(expr.func) == "_colour_branch_size"
+
+
+def _dimension(expr):
+    if isinstance(expr, ast.Constant) and isinstance(expr.value, int):
+        return expr.value
+    if isinstance(expr, ast.Name) and isinstance(
+        getattr(camera_stereo, expr.id, None), int
+    ):
+        return getattr(camera_stereo, expr.id)
+    raise AssertionError(f"branch dimension is not a fixed size: {ast.dump(expr)}")
+
+
+class TestPublishedFrameBranchAspect(unittest.TestCase):
+    """Model colour branches stay in the published frame's aspect."""
+
+    def test_every_registered_model_branch_aspect_matches_published_frame(self):
+        self.assertEqual((PUBLISHED_FRAME_WIDTH, PUBLISHED_FRAME_HEIGHT), (1280, 720))
+        self.assertEqual((COLOUR_BRANCH_WIDTH, COLOUR_BRANCH_HEIGHT), (1152, 648))
+        self.assertEqual((HAND_NN_WIDTH, HAND_NN_HEIGHT), (256, 144))
+        node = _branch_aspect_node()
+        refused = 0
+        for entry in _manifest_entries():
+            model_id = str(entry["model_id"])
+            width, height = node._colour_branch_size(model_id)
+            self.assertTrue(
+                _same_published_aspect(width, height),
+                f"{model_id} branch {width}x{height} leaves the published aspect",
+            )
+            node._request_camera_branch((width, height))
+            input_width = int(entry.get("input_width") or 0)
+            input_height = int(entry.get("input_height") or 0)
+            if input_width <= 0 or input_height <= 0:
+                continue
+            if _same_published_aspect(input_width, input_height):
+                node._request_camera_branch((input_width, input_height))
+                continue
+            with self.assertRaises(ValueError):
+                node._request_camera_branch((input_width, input_height))
+            refused += 1
+        self.assertGreater(refused, 0)
+        self.assertGreater(node.get_logger.return_value.error.call_count, 0)
+
+    def test_no_call_site_requests_a_size_with_a_different_aspect(self):
+        source = open(camera_stereo.__file__, encoding="utf-8").read()
+        tree = ast.parse(source)
+        spans = _function_spans(tree)
+        delegated = _delegated_branch_names(tree)
+        branch_functions = set()
+        output_functions = set()
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            name = _call_name(node.func)
+            owner = _enclosing_function(spans, node.lineno)
+            if name == "requestOutput":
+                output_functions.add(owner)
+            if name != "_request_camera_branch":
+                continue
+            branch_functions.add(owner)
+            size_expr = None
+            if node.args:
+                size_expr = node.args[0]
+            for keyword in node.keywords:
+                if keyword.arg == "size":
+                    size_expr = keyword.value
+            self.assertIsNotNone(size_expr, owner)
+            if _is_colour_branch_call(size_expr):
+                continue
+            if isinstance(size_expr, ast.Name) and size_expr.id in delegated:
+                continue
+            if isinstance(size_expr, ast.Tuple):
+                width = _dimension(size_expr.elts[0])
+                height = _dimension(size_expr.elts[1])
+                self.assertTrue(
+                    _same_published_aspect(width, height),
+                    f"{owner} requests {width}x{height}",
+                )
+                continue
+            self.fail(
+                f"{owner} requests a branch size that is not checked: {ast.dump(size_expr)}"
+            )
+        self.assertEqual(
+            output_functions,
+            {"_request_camera_branch"},
+        )
+        self.assertEqual(
+            branch_functions,
+            {
+                "_build_single_network_pipeline",
+                "_build_hand_pipeline",
+                "_build_imitation_pipeline",
+                "_build_face_crop_pipeline",
+                "_build_gaze_pipeline",
+                "_build_hand_mp_pipeline",
+            },
+        )
+        node = _branch_aspect_node()
+        for refused_size in ((640, 640), (256, 256), (160, 120), (96, 48)):
+            with self.assertRaises(ValueError):
+                node._request_camera_branch(refused_size)
+        node.get_logger.return_value.error.assert_called()
