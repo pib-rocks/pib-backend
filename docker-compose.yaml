@@ -45,6 +45,7 @@ services:
       - PIB_SMART_CHATS=${PIB_SMART_CHATS:-}
     volumes:
       - ./pib_api/flask/:/app
+      - /home/pib/app/pib-backend/pib_hermes_config/pib_hermes_config:/app/pib_hermes_config
       # Ciphertext for provider keys. Not the flask source tree, and not the
       # Hermes profiles directory (SOUL.md / MEMORY.md live there).
       - /home/pib/app/secrets:/home/pib/app/secrets
