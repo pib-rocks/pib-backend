@@ -41,7 +41,11 @@ load_hardware_variant_resolver() {
 
   print ERROR "resolve_hardware_variant.sh is missing in: ${candidates[*]}"
   print ERROR "and could not be downloaded from $url"
-  print INFO "Download the repository and run setup/setup-pib.sh from there: git clone --depth 1 --branch ${BRANCH_BACKEND} ${BACKEND}"
+  # Not `--depth 1`: the release tag sits on the merge's second parent, so a
+  # depth-1 checkout cannot resolve the installed version (see resolve_app_version
+  # in setup/update_runner.sh). Measured: --depth 2 keeps HEAD^2 and the tag,
+  # --depth 1 loses both.
+  print INFO "Download the repository and run setup/setup-pib.sh from there: git clone --branch ${BRANCH_BACKEND} ${BACKEND}"
   return 1
 }
 
@@ -467,12 +471,13 @@ function clone_repositories() {
   fi
 
   git clone -b "$BRANCH_BACKEND" "$BACKEND" "$BACKEND_DIR" || print WARN "pib-backend repository already exists"
-  git clone --recurse-submodules -b "$BRANCH_FRONTEND" "$FRONTEND" "$FRONTEND_DIR" || print WARN "cerebra repository already exists"
-
-  if [ -d "$FRONTEND_DIR/.git" ]; then
-    cd "$FRONTEND_DIR" || return 1
-    git submodule update --init --recursive || return 1
-  fi
+  # No --recurse-submodules: neither repository has a .gitmodules, so the flag and
+  # the explicit `git submodule update --init --recursive` that used to follow it
+  # were both no-ops. The update path still runs `git submodule update --init
+  # --recursive` on the frontend (setup/update_runner.sh, setup/update-pib.sh), and
+  # that one reads .gitmodules from the working tree - so a submodule added later
+  # would be initialised by the first update.
+  git clone -b "$BRANCH_FRONTEND" "$FRONTEND" "$FRONTEND_DIR" || print WARN "cerebra repository already exists"
 
   local blockly_blocks="$BACKEND_DIR/pib_blockly/pib_blockly_server/src/pib-blockly/program-blocks/custom-blocks.ts"
   if [ ! -f "$blockly_blocks" ]; then
