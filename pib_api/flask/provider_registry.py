@@ -27,6 +27,61 @@ STATUS_UNCONFIRMED = "unconfirmed"
 
 CAPABILITY_KEYS = ("tools", "images", "live", "stt", "tts")
 
+#: Namespace of a typed, unambiguous model reference: ``model:<id>``.
+#: The prefix carries the kind, so a provider-account id can never be read as
+#: a model-row id: the numbers of the two sequences overlap, which is what
+#: made the bare ``providerRef`` string ambiguous (PR-1928 / PR-1930).
+MODEL_REF_PREFIX = "model:"
+
+#: Shown when a typed reference is not ``"default"`` or ``"model:<id>"``.
+MODEL_REF_FORM_ERROR = "modelRef must be 'default' or a model reference like 'model:6'."
+#: Shown when a typed reference names a row that does not exist.
+MODEL_REF_UNKNOWN_ERROR = "modelRef names no model row."
+#: Shown when the referenced model row has lost its provider account.
+MODEL_REF_PROVIDER_GONE_ERROR = "modelRef names a model whose provider is gone."
+#: Shown when the typed reference and a deprecated alias disagree.
+MODEL_REF_CONFLICT_ERROR = (
+    "modelRef disagrees with a deprecated reference field; send one reference."
+)
+
+
+def format_model_ref(model_id: int) -> str:
+    """The typed spelling of a concrete model row, for the wire."""
+    return f"{MODEL_REF_PREFIX}{model_id}"
+
+
+def typed_model_id(value: object) -> int:
+    """The row id inside a typed reference, or ValueError when it is not one.
+
+    Only ``model:<positive integer>`` passes. A bare number, an unknown
+    namespace such as ``account:5``, and the catalogue ``api_name`` all fail,
+    which is the point: a reference with no explicit kind is refused instead
+    of guessed.
+    """
+    text = "" if value is None else str(value).strip()
+    if not text.startswith(MODEL_REF_PREFIX):
+        raise ValueError(f"not a typed model reference: {value!r}")
+    digits = text[len(MODEL_REF_PREFIX) :]
+    if not digits.isdigit() or int(digits) < 1:
+        raise ValueError(f"not a typed model reference: {value!r}")
+    return int(digits)
+
+
+def model_ref_for_stored(provider_ref: object) -> str:
+    """The typed spelling of a stored reference (``"default"`` or a bare id).
+
+    The column keeps the bare row id, which was always unambiguous because it
+    is written only after the row was validated; this turns it back into the
+    typed wire form. An already-typed value is passed through unchanged.
+    """
+    if provider_ref is None or str(provider_ref).strip() in ("", DEFAULT_PROVIDER_REF):
+        return DEFAULT_PROVIDER_REF
+    text = str(provider_ref).strip()
+    if text.startswith(MODEL_REF_PREFIX):
+        return text
+    return format_model_ref(int(text))
+
+
 #: Shown when a chat is started on a personality whose model row is gone.
 #: The row carries the name, so there is none to show.
 MISSING_MODEL_CHAT_MESSAGE = (
