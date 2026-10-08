@@ -141,9 +141,7 @@ def test_personality_with_the_local_model_holds_a_conversation():
             page.get_by_text("New chat", exact=True).first.click(timeout=UI_TIMEOUT_MS)
             add_chat_dialog = page.locator("ngb-modal-window")
             add_chat_dialog.wait_for(state="visible", timeout=UI_TIMEOUT_MS)
-            page.locator("#name-input").fill(
-                f"{PERSONALITY_NAME} {int(time.time())}"
-            )
+            page.locator("#name-input").fill(f"{PERSONALITY_NAME} {int(time.time())}")
             page.locator("#modal-save-button").click(timeout=UI_TIMEOUT_MS)
             add_chat_dialog.wait_for(state="detached", timeout=UI_TIMEOUT_MS)
 
@@ -169,9 +167,7 @@ def test_personality_with_the_local_model_holds_a_conversation():
             # The chat panel also fills up with a failure bubble when the turn
             # never reaches the model. A real conversation means the local
             # model's own reply, so none of those markers may be present.
-            assert not any(
-                marker in answer for marker in CHAT_FAILURE_MARKERS
-            ), (
+            assert not any(marker in answer for marker in CHAT_FAILURE_MARKERS), (
                 "the chat showed a failure instead of the local model's reply, "
                 "so the personality never reached the model; the chat showed: "
                 f"{answer[:300]!r}"
