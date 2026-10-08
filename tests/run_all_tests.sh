@@ -155,11 +155,12 @@ run_pytest_docker() {
 
 run_jest() {
     cd "${SCRIPT_DIR}/blockly_generator"
-    # tests/blockly_generator/node_modules is vendored in the repo, so use it as-is and only
-    # install when it is missing. Jest is started via `node .../jest.js` so no executable bit
+    # Dependencies are locked in package-lock.json. When node_modules is already
+    # present, use that tree as-is (fast path). When it is missing, install it
+    # with npm ci. Jest is started via `node .../jest.js` so no executable bit
     # on node_modules/.bin is required.
     local jest_cmd='set -e
-if ! node node_modules/jest/bin/jest.js --version >/dev/null 2>&1; then npm install --silent --no-audit --no-fund; fi
+if [[ ! -d node_modules ]]; then npm ci; fi
 node node_modules/jest/bin/jest.js --config jest.config.js'
     if command -v docker >/dev/null 2>&1; then
         docker run --rm \
