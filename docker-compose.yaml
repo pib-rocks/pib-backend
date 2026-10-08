@@ -41,6 +41,7 @@ services:
       - PIB_HARDWARE_VARIANT=${PIB_HARDWARE_VARIANT:-}
       - PIB_UPDATE_DIR=/app/.update
       - PIB_KEY_STORE_PATH=/home/pib/app/secrets/provider_key_store.json
+      - PIB_OLLAMA_BASE_URL=http://host.docker.internal:11434
       # Empty means read /etc/pib_smart_chats. 0 disables the Hermes channel.
       - PIB_SMART_CHATS=${PIB_SMART_CHATS:-}
     volumes:
@@ -64,6 +65,8 @@ services:
     depends_on:
       - pib-blockly-server
 
+    extra_hosts:
+      - host.docker.internal:host-gateway
   rosbridge-ws:
     build:
       context: ./ros_packages
@@ -143,6 +146,7 @@ services:
       - FLASK_API_BASE_URL=http://flask-app:5000
       - VOICE_ASSISTANT_DIR=/app/ros2_ws/voice_assistant
       - PIB_MCP_ROSBRIDGE_URL=ws://rosbridge-ws:9090
+      - PIB_OLLAMA_BASE_URL=http://host.docker.internal:11434
       # Hardware-changing MCP calls remain blocked unless explicitly enabled.
       - PIB_MCP_ENABLE_ACTUATION=false
       # Hermes-agent personalities: same profiles dir as flask-app, so the
