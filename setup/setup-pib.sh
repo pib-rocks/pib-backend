@@ -872,17 +872,58 @@ EOF
   fi
 }
 
-# Persistent OAK blob store (bind-mounted into ros-camera). Never downloaded or
-# compiled on the robot; setup copies vendored artefacts from models/.
+# Persistent OAK blob store (bind-mounted into ros-camera at /models). The
+# compiled blobs are not in git and are not reproducible on the robot, so the
+# published release asset is the master copy. setup downloads that tarball into
+# a cache outside the repo, checks its sha256 before extracting, and copies
+# from the cache into PIB_MODEL_STORE. models/manifest.yaml in the repository
+# stays the checksum source of truth. --verify-models reads only the store and
+# that manifest; it does not fetch.
 PIB_MODEL_STORE_DEFAULT="/home/pib/app/pib-models"
+# Published as a pre-release: pre-releases are excluded from releases/latest, so
+# this data release never becomes the repository's latest release and never
+# enters the version pairing guard.
+PIB_MODEL_ASSET_TAG_DEFAULT="model-registry-2026-09-15"
+PIB_MODEL_ASSET_NAME_DEFAULT="models-2026-09-15.tar.gz"
+PIB_MODEL_ASSET_SHA256_DEFAULT="07357ec99e0b91014285aad2e6a03fcd1e6ca95fd7ed686670f7ab73c1f3ff02"
 
-function curated_models_dir() {
+function model_asset_tag() {
+  echo "${PIB_MODEL_ASSET_TAG:-$PIB_MODEL_ASSET_TAG_DEFAULT}"
+}
+
+function model_asset_name() {
+  echo "${PIB_MODEL_ASSET_NAME:-$PIB_MODEL_ASSET_NAME_DEFAULT}"
+}
+
+function model_asset_sha256() {
+  echo "${PIB_MODEL_ASSET_SHA256:-$PIB_MODEL_ASSET_SHA256_DEFAULT}"
+}
+
+# Default URL is the GitHub release asset for the tag and name above. Override
+# PIB_MODEL_ASSET_URL, PIB_MODEL_ASSET_TAG, PIB_MODEL_ASSET_NAME, or
+# PIB_MODEL_ASSET_SHA256 when the published file moves; no code change is required.
+function model_asset_url() {
+  if [ -n "${PIB_MODEL_ASSET_URL:-}" ]; then
+    echo "$PIB_MODEL_ASSET_URL"
+    return
+  fi
+  local tag name
+  tag="$(model_asset_tag)"
+  name="$(model_asset_name)"
+  echo "https://github.com/pib-rocks/pib-backend/releases/download/${tag}/${name}"
+}
+
+function model_blob_cache_dir() {
+  echo "${PIB_MODEL_CACHE:-${HOME}/app/.cache/pib-models}"
+}
+
+function curated_manifest_path() {
   local script_root
   script_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
   if [ -f "$script_root/models/manifest.yaml" ]; then
-    echo "$script_root/models"
+    echo "$script_root/models/manifest.yaml"
   else
-    echo "$BACKEND_DIR/models"
+    echo "$BACKEND_DIR/models/manifest.yaml"
   fi
 }
 
@@ -947,8 +988,153 @@ function ensure_model_store_directory() {
   fi
 }
 
+# Return 0 when every blob named by the manifest exists under root and matches
+# sha256. Composite entries have no file and are ignored. Used for the cache
+# and, when a download fails, for an already-populated store.
+function path_matches_model_manifest() {
+  local root="$1"
+  local manifest="$2"
+  local model_id rel_file expected_sha src actual count=0
+
+  [ -d "$root" ] || return 1
+  while IFS=$'\t' read -r model_id rel_file expected_sha; do
+    [ -n "$model_id" ] || continue
+    count=$((count + 1))
+    src="${root}/${rel_file}"
+    if [ ! -f "$src" ]; then
+      return 1
+    fi
+    actual="$(file_sha256 "$src")"
+    if [ "$actual" != "$expected_sha" ]; then
+      return 1
+    fi
+  done < <(parse_model_manifest "$manifest")
+  [ "$count" -gt 0 ]
+}
+
+function model_store_has_any_blob() {
+  local store="$1"
+  local manifest="$2"
+  local model_id rel_file expected_sha
+
+  while IFS=$'\t' read -r model_id rel_file expected_sha; do
+    [ -n "$rel_file" ] || continue
+    if [ -f "${store}/${rel_file}" ]; then
+      return 0
+    fi
+  done < <(parse_model_manifest "$manifest")
+  return 1
+}
+
+function report_model_asset_unavailable() {
+  local store="$1"
+  local manifest="$2"
+  local url tag sha256 state
+  url="$(model_asset_url)"
+  tag="$(model_asset_tag)"
+  sha256="$(model_asset_sha256)"
+  if model_store_has_any_blob "$store" "$manifest"; then
+    state="incomplete"
+  else
+    state="empty"
+  fi
+  print ERROR "OAK model asset could not be fetched and the model store at ${store} is ${state}."
+  print ERROR "The compiled blobs are not in git. They are published as release asset ${tag}: ${url} (sha256 ${sha256})."
+  print ERROR "Set PIB_MODEL_ASSET_URL to a reachable copy of that tarball, and PIB_MODEL_ASSET_SHA256 if that copy's checksum differs, then re-run './setup/setup-pib.sh --models'."
+}
+
+# Download the release asset, verify its sha256, then extract it. The checksum
+# is checked before tar runs so a corrupt download never replaces the cache.
+function fetch_and_unpack_model_asset() {
+  local cache="$1"
+  local url tag expected actual archive staging parent installed
+
+  if [ -z "$cache" ] || [ "$cache" = "/" ] || [ "$cache" = "." ]; then
+    print ERROR "refusing to use model cache path '${cache}'"
+    return 1
+  fi
+
+  url="$(model_asset_url)"
+  tag="$(model_asset_tag)"
+  expected="$(model_asset_sha256)"
+  if [ -z "$expected" ]; then
+    print ERROR "PIB_MODEL_ASSET_SHA256 is empty; refusing to extract an unverified OAK model asset"
+    return 1
+  fi
+
+  print INFO "Fetching OAK model asset ${tag} from ${url}"
+  archive="$(mktemp)"
+  if command_exists curl; then
+    if ! curl -fsSL "$url" -o "$archive"; then
+      rm -f "$archive"
+      print ERROR "could not download the OAK model asset from ${url}"
+      return 1
+    fi
+  elif command_exists wget; then
+    if ! wget -q "$url" -O "$archive"; then
+      rm -f "$archive"
+      print ERROR "could not download the OAK model asset from ${url}"
+      return 1
+    fi
+  else
+    rm -f "$archive"
+    print ERROR "neither curl nor wget is available to download ${url}"
+    return 1
+  fi
+
+  actual="$(file_sha256 "$archive")"
+  if [ "$actual" != "$expected" ]; then
+    rm -f "$archive"
+    print ERROR "OAK model asset sha256 mismatch (got ${actual}, expected ${expected}). Refusing to extract ${url}."
+    return 1
+  fi
+  print INFO "OAK model asset sha256 verified"
+
+  if tar -tzf "$archive" | grep -E '(^|/)\.\.(/|$)|^/' >/dev/null; then
+    rm -f "$archive"
+    print ERROR "OAK model asset contains unsafe paths; refusing to extract ${url}"
+    return 1
+  fi
+
+  staging="$(mktemp -d)"
+  if ! tar -xzf "$archive" -C "$staging"; then
+    rm -f "$archive"
+    rm -rf "$staging"
+    print ERROR "could not unpack the OAK model asset from ${url}"
+    return 1
+  fi
+  rm -f "$archive"
+
+  if [ ! -f "$staging/manifest.yaml" ]; then
+    rm -rf "$staging"
+    print ERROR "OAK model asset has no manifest.yaml at its archive root (${url})"
+    return 1
+  fi
+
+  parent="$(dirname "$cache")"
+  if ! ensure_model_store_directory "$parent"; then
+    rm -rf "$staging"
+    return 1
+  fi
+
+  installed="${cache}.new.$$"
+  rm -rf "$installed"
+  if ! mv "$staging" "$installed"; then
+    rm -rf "$staging" "$installed"
+    print ERROR "could not stage the unpacked OAK model asset for ${cache}"
+    return 1
+  fi
+  rm -rf "$cache"
+  if ! mv "$installed" "$cache"; then
+    print ERROR "could not install the unpacked OAK model asset into ${cache}"
+    return 1
+  fi
+  return 0
+}
+
 # Reusable by full install, --models, and --verify-models.
-# mode=provision copies missing/stale blobs and manifest.yaml.
+# mode=provision copies missing/stale blobs from the release-asset cache and
+# copies manifest.yaml from the repository. mode=verify is offline.
 # Both modes return non-zero on any failure.
 function provision_curated_models() {
   local mode="${1:-provision}"
@@ -957,8 +1143,8 @@ function provision_curated_models() {
   local placed=0 already_current=0 failed=0
   local model_id rel_file expected_sha src dest actual
 
-  models_dir="$(curated_models_dir)"
-  manifest="${models_dir}/manifest.yaml"
+  manifest="$(curated_manifest_path)"
+  models_dir=""
 
   print INFO "Curated model store: ${store}"
 
@@ -969,7 +1155,29 @@ function provision_curated_models() {
     return 1
   fi
 
+  # Verify never downloads. Provision reads blobs from the cache, fetching the
+  # release asset only when that cache does not already match the manifest.
   if [ "$mode" != "verify" ]; then
+    models_dir="$(model_blob_cache_dir)"
+    if path_matches_model_manifest "$models_dir" "$manifest"; then
+      print INFO "OAK model cache already matches models/manifest.yaml (${models_dir})"
+    elif ! fetch_and_unpack_model_asset "$models_dir"; then
+      if path_matches_model_manifest "$store" "$manifest"; then
+        print WARN "OAK model asset could not be fetched; the store at ${store} already matches models/manifest.yaml, so it was left in place."
+      else
+        report_model_asset_unavailable "$store" "$manifest"
+        print ERROR "Model provisioning failed. Fix the errors above, then run './setup/setup-pib.sh --models' before starting Docker containers."
+        print INFO "Models summary: placed=${placed} already current=${already_current} failed=1 store=${store}"
+        return 1
+      fi
+    elif ! path_matches_model_manifest "$models_dir" "$manifest"; then
+      print ERROR "Unpacked OAK model asset at ${models_dir} does not match ${manifest}."
+      print ERROR "The tarball sha256 matched, but a blob does not match the in-repo manifest. Refusing to provision."
+      print ERROR "Model provisioning failed. Fix the errors above, then run './setup/setup-pib.sh --models' before starting Docker containers."
+      print INFO "Models summary: placed=${placed} already current=${already_current} failed=1 store=${store}"
+      return 1
+    fi
+
     if ! ensure_model_store_directory "$store"; then
       print INFO "Models summary: placed=${placed} already current=${already_current} failed=1 store=${store}"
       return 1
@@ -1008,14 +1216,14 @@ function provision_curated_models() {
     fi
 
     if [ ! -f "$src" ]; then
-      print WARN "${model_id}: vendored file missing (${src})"
+      print WARN "${model_id}: cached model file missing (${src})"
       failed=$((failed + 1))
       continue
     fi
 
     actual="$(file_sha256 "$src")"
     if [ "$actual" != "$expected_sha" ]; then
-      print WARN "${model_id}: vendored file sha256 mismatch"
+      print WARN "${model_id}: cached model file sha256 mismatch"
       failed=$((failed + 1))
       continue
     fi
@@ -1050,7 +1258,7 @@ function provision_curated_models() {
     elif cmp -s "$manifest" "$store_manifest"; then
       print INFO "manifest.yaml: already current"
     else
-      print WARN "manifest.yaml: store copy differs from vendored manifest"
+      print WARN "manifest.yaml: store copy differs from the in-repo manifest"
       failed=$((failed + 1))
     fi
   elif [ "$failed" -eq 0 ]; then
@@ -1362,8 +1570,8 @@ show_help()
 	echo -e "-f=YourBranchName or --frontend-branch=YourBranchName"
 	echo -e "-b=YourBranchName or --backend-branch=YourBranchName"
 	echo -e "-l or --local for a local installation of the software over using a containerized setup using Docker"
-	echo -e "--models refresh the persistent OAK model store from models/, place the whisper weights (fetched once if voice/whisper/ is empty; PIB_WHISPER_DOWNLOAD=0 forbids that) and exit"
-	echo -e "--verify-models check the model store against models/manifest.yaml and exit non-zero on mismatch"
+	echo -e "--models fetch the OAK release asset into \$HOME/app/.cache/pib-models when the cache does not match models/manifest.yaml (override with PIB_MODEL_CACHE, PIB_MODEL_ASSET_URL, PIB_MODEL_ASSET_TAG, PIB_MODEL_ASSET_NAME, PIB_MODEL_ASSET_SHA256), refresh the persistent OAK model store from that cache, place the whisper weights (fetched once if voice/whisper/ is empty; PIB_WHISPER_DOWNLOAD=0 forbids that) and exit"
+	echo -e "--verify-models check the model store against models/manifest.yaml offline and exit non-zero on mismatch"
 	echo -e "--no-smart-chats install without the Hermes channel; Direct is the only chat path"
 	echo -e "--pib4edu select the pib 4 educational hardware variant"
 	echo -e "--pib4advanced select the pib 4 advanced hardware variant"
@@ -1387,7 +1595,8 @@ show_help()
 # ---------- SETUP STARTS FROM HERE -----------
 
 # VALIDATE CLI ARGUMENTS (before the sudoers step, so --models / --verify-models stay local;
-# --verify-models is offline, --models fetches the whisper weights only when they are missing)
+# --verify-models is offline and does not fetch. --models fetches the OAK release
+# asset when the cache does not match, and the whisper weights only when they are missing)
 BRANCH_BACKEND="main"
 BRANCH_FRONTEND="main"
 INSTALL_METHOD="docker"
@@ -1523,7 +1732,8 @@ fi
 # are reported in the summary and the setup goes on.
 run_step "Install system packages" install_system_packages || abort_setup "failed to install system packages"
 run_step "Clone repositories" clone_repositories || abort_setup "failed to clone repositories"
-# After checkout, before containers: copy vendored OAK blobs into the bind-mounted store.
+# After checkout, before containers: fetch the OAK release asset when the cache
+# does not match models/manifest.yaml, then copy blobs into the bind-mounted store.
 run_step "Provision curated OAK models" provision_curated_models provision ||
   abort_setup "Model provisioning must succeed before containers are started"
 run_step "Provision whisper model" provision_whisper_model || print ERROR "failed to provision the whisper model"

@@ -325,10 +325,26 @@ def test_models_mode_fails_when_the_whisper_step_fails(tmp_path):
         f"  sha256: {hashlib.sha256(content).hexdigest()}\n",
         encoding="utf-8",
     )
+    archive = tmp_path / "models-fixture.tar.gz"
+    subprocess.run(
+        [
+            "tar",
+            "-C",
+            str(root / "models"),
+            "-czf",
+            str(archive),
+            "manifest.yaml",
+            "demo/demo.blob",
+        ],
+        check=True,
+    )
     _write_config(root)  # no vendored weights, downloads disabled below
     env = dict(os.environ)
     env.update(
         PIB_MODEL_STORE=str(tmp_path / "store"),
+        PIB_MODEL_CACHE=str(tmp_path / "cache"),
+        PIB_MODEL_ASSET_URL=archive.as_uri(),
+        PIB_MODEL_ASSET_SHA256=hashlib.sha256(archive.read_bytes()).hexdigest(),
         WHISPER_MODEL_PATH=str(tmp_path / "voice-store"),
         PIB_WHISPER_DOWNLOAD="0",
     )

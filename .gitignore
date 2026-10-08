@@ -73,3 +73,7 @@ pib_api/flask/pibdata.db.bak-*
 
 # Blockly generator tests install dependencies with npm ci.
 tests/blockly_generator/node_modules/
+
+# Compiled OAK blobs are the GitHub release asset models-2026-09-15
+# (models-2026-09-15.tar.gz), not stored in git. models/manifest.yaml stays.
+models/**/*.blob
