@@ -3161,3 +3161,94 @@ class TestPublishedFrameBranchAspect(unittest.TestCase):
             with self.assertRaises(ValueError):
                 node._request_camera_branch(refused_size)
         node.get_logger.return_value.error.assert_called()
+
+
+class _BranchGeometry:
+    """Delivered colour-branch image. Its pixel size is not the published field."""
+
+    def getSize(self):
+        return (COLOUR_BRANCH_WIDTH, COLOUR_BRANCH_HEIGHT)
+
+    def getSourceSize(self):
+        return (COLOUR_BRANCH_WIDTH, COLOUR_BRANCH_HEIGHT)
+
+    def getSrcCrops(self):
+        return []
+
+    def isValid(self):
+        return True
+
+
+class _PreviewGeometry:
+    """Preview that places the branch in an inset window on both axes.
+
+    The horizontal inset is the branch width. Object detection has to keep x
+    on the published width. The vertical inset is the window y has to use.
+    """
+
+    def getSize(self):
+        return (PUBLISHED_FRAME_WIDTH, PUBLISHED_FRAME_HEIGHT)
+
+    def getSourceSize(self):
+        return (PUBLISHED_FRAME_WIDTH, PUBLISHED_FRAME_HEIGHT)
+
+    def isValid(self):
+        return True
+
+    def remapPointFrom(self, source, point):
+        width, height = source.getSize()
+        fx = float(point.x) / float(width)
+        fy = float(point.y) / float(height)
+        horizontal_origin = (PUBLISHED_FRAME_WIDTH - COLOUR_BRANCH_WIDTH) / 2.0
+        vertical_origin = (PUBLISHED_FRAME_HEIGHT - COLOUR_BRANCH_HEIGHT) / 2.0
+        return types.SimpleNamespace(
+            x=horizontal_origin + fx * float(COLOUR_BRANCH_WIDTH),
+            y=vertical_origin + fy * float(COLOUR_BRANCH_HEIGHT),
+        )
+
+
+class TestObjectDetectionField(unittest.TestCase):
+    """A detection fraction maps through the branch field on both axes."""
+
+    def test_synthetic_detection_uses_each_axis_reference(self):
+        with patch.object(CameraNode, "__init__", lambda self: None):
+            node = CameraNode()
+        node.current_frame = np.zeros(
+            (PUBLISHED_FRAME_HEIGHT, PUBLISHED_FRAME_WIDTH, 3), dtype=np.uint8
+        )
+        node.preview_width = PUBLISHED_FRAME_WIDTH
+        node.preview_height = PUBLISHED_FRAME_HEIGHT
+        node._colour_branch_field = None
+        node._preview_packet = types.SimpleNamespace(
+            getTransformation=lambda: _PreviewGeometry()
+        )
+        node.last_detections = {}
+        node.detection_publishers = {}
+        node.get_clock = MagicMock()
+        node.get_clock.return_value.now.return_value.to_msg.return_value = object()
+        box = types.SimpleNamespace(
+            center=types.SimpleNamespace(x=0.5, y=0.5),
+            size=types.SimpleNamespace(width=1.0, height=0.9),
+        )
+        parsed = types.SimpleNamespace(
+            label=0,
+            labelName="bottle",
+            confidence=0.9,
+            getBoundingBox=lambda: box,
+            getKeypoints=lambda: [],
+            scalar_names=(),
+            scalar_values=(),
+        )
+        packet = types.SimpleNamespace(
+            detections=[parsed],
+            getTransformation=lambda: _BranchGeometry(),
+        )
+
+        node._publish_parsed_detections("yolov6n_coco_640x640", packet)
+
+        detection = node.last_detections["yolov6n_coco_640x640"].detections[0]
+        self.assertEqual(detection.label, "bottle")
+        self.assertEqual(
+            (detection.x_min, detection.y_min, detection.x_max, detection.y_max),
+            (0, 68, 1280, 651),
+        )
