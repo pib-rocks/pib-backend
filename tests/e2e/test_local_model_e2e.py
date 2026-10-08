@@ -27,6 +27,13 @@ REQUEST_TIMEOUT_S = 20
 UI_TIMEOUT_MS = 30000
 REPLY_TIMEOUT_S = 120  # a 1.5b model on a CPU needs its time
 PERSONALITY_NAME = "Lokales Modell E2E"
+# What the chat shows when the turn never reaches the model. None of these is
+# an answer, so the length check below must not treat them as one.
+CHAT_FAILURE_MARKERS = (
+    "Failed to load history",
+    "Error, please try again.",
+    "needs a provider key",
+)
 
 
 def _local_model():
@@ -79,9 +86,10 @@ def test_personality_with_the_local_model_holds_a_conversation():
                 "name": PERSONALITY_NAME,
                 "channel": "direct",
                 "assistantModelId": model.get("id"),
-                "providerRef": str(
-                    model.get("providerRef") or model.get("providerId") or ""
-                ),
+                # PostVoiceAssistantPersonality: providerRef names a model row
+                # by its own id as text (or the sentinel "default"). providerId
+                # is the provider-account id and is not a reference.
+                "providerRef": str(model.get("id")),
             },
             timeout=REQUEST_TIMEOUT_S,
         )
@@ -126,9 +134,16 @@ def test_personality_with_the_local_model_holds_a_conversation():
             )
             page.wait_for_timeout(4000)
 
-            # "New chat" carries a space in its id, so click it by its text.
+            # "New chat" opens the ADD CHAT dialog. Completing it creates the
+            # chat and closes the modal. The open ngb-modal-window otherwise
+            # stays on top of the composer and intercepts the pointer events,
+            # so the dialog must be detached before the composer is clicked.
             page.get_by_text("New chat", exact=True).first.click(timeout=UI_TIMEOUT_MS)
-            page.wait_for_timeout(6000)
+            add_chat_dialog = page.locator("ngb-modal-window")
+            add_chat_dialog.wait_for(state="visible", timeout=UI_TIMEOUT_MS)
+            page.locator("#name-input").fill(f"{PERSONALITY_NAME} {int(time.time())}")
+            page.locator("#modal-save-button").click(timeout=UI_TIMEOUT_MS)
+            add_chat_dialog.wait_for(state="detached", timeout=UI_TIMEOUT_MS)
 
             # The composer lives inside the deep-chat web component.
             composer = page.locator("deep-chat #text-input")
@@ -149,6 +164,14 @@ def test_personality_with_the_local_model_holds_a_conversation():
             assert (
                 len(answer.strip()) > 20
             ), f"the local model produced no answer within {REPLY_TIMEOUT_S}s; the chat showed: {answer[:200]!r}"
+            # The chat panel also fills up with a failure bubble when the turn
+            # never reaches the model. A real conversation means the local
+            # model's own reply, so none of those markers may be present.
+            assert not any(marker in answer for marker in CHAT_FAILURE_MARKERS), (
+                "the chat showed a failure instead of the local model's reply, "
+                "so the personality never reached the model; the chat showed: "
+                f"{answer[:300]!r}"
+            )
             page.screenshot(path="/tmp/local_model_chat.png", full_page=False)
             browser.close()
     finally:
