@@ -175,12 +175,19 @@ def _apply_channel(
 def _apply_provider_choice(
     personality: Personality, personality_dto: Any, *, creating: bool
 ) -> None:
-    provider_ref = personality_dto.get("provider_ref")
+    """Store the chosen model row.
+
+    ``assistantModelId`` is the row the read side reports, so a client that
+    echoes that id names a concrete model and it decides, even when the same
+    body also carries a ``providerRef``. That pointer is only the fallback:
+    it carries the ``"default"`` sentinel or the id of the row.
+    """
     model_id = personality_dto.get("assistant_model_id")
-    if provider_ref:
-        ref = str(provider_ref)
-    elif model_id is not None:
+    provider_ref = personality_dto.get("provider_ref")
+    if model_id is not None:
         ref = str(model_id)
+    elif provider_ref:
+        ref = str(provider_ref)
     elif creating:
         ref = DEFAULT_PROVIDER_REF
     else:

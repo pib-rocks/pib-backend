@@ -121,7 +121,41 @@ def test_create_pointing_at_a_catalogue_provider_on_the_direct_channel(client, a
     assert again["pauseThreshold"] == 1.2
 
 
+# The on-device row is offered only while Ollama lists it, so its id is not
+# the default row's id. A create that carries the model's own id must select
+# that row even when the body also carries a provider account id, as the
+# catalogue dumps it next to the model.
+LOCAL_MODEL_TAGS = {
+    "models": [{"name": "qwen-fast:latest", "model": "qwen-fast:latest"}]
+}
+
+
+def test_a_create_carrying_the_model_id_selects_that_row(client, app_ctx, monkeypatch):
+    from service import local_model_service
+
+    monkeypatch.setattr(local_model_service, "fetch_tags", lambda: LOCAL_MODEL_TAGS)
+    models = client.get("/assistant-model").get_json()["assistantModels"]
+    local = next(row for row in models if row["apiName"] == "qwen-fast")
+    assert local["providerId"] != local["id"]
+
+    response = client.post(
+        PERSONALITY_URL,
+        json={
+            "name": "LocalModel",
+            "channel": "direct",
+            "assistantModelId": local["id"],
+            "providerRef": str(local["providerId"]),
+        },
+    )
+
+    assert response.status_code == 201
+    created = response.get_json()
+    assert created["assistantModelId"] == local["id"]
+    assert created["providerRef"] == str(local["id"])
+
+
 def test_create_with_the_formerly_required_fields_still_honours_them(client, app_ctx):
+
     response = client.post(
         PERSONALITY_URL,
         json={
