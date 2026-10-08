@@ -9,7 +9,11 @@ bp = Blueprint("assistant_controller", __name__)
 
 @bp.route("", methods=["GET"])
 def get_all_assistant_models():
-    """Selection list. Image models and named live models are offered."""
+    """Selection list.
+
+    Image models, named live models, and, when Ollama lists it, the
+    on-device model.
+    """
     models = provider_service.selectable_models()
     return {"assistantModels": providers_schema.dump(models)}
 

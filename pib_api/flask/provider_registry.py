@@ -16,6 +16,8 @@ from __future__ import annotations
 import json
 from typing import Any, Mapping, NamedTuple
 
+from pib_hermes_config.local_model import API_NAME as LOCAL_DEVICE_API_NAME
+
 #: Stored on a personality that follows the current default provider.
 #: Resolving it is a lookup, so changing which row is default needs no rewrite.
 DEFAULT_PROVIDER_REF = "default"
@@ -110,7 +112,13 @@ def catalogue_entry(api_name: str) -> CatalogueEntry | None:
 
 
 def model_status(api_name: str) -> str:
-    """Catalogue status for a chat id. An id with no line is unlisted."""
+    """Catalogue status for a chat id. An id with no line is unlisted.
+
+    The on-device model is not a cloud catalogue line. While its row is
+    offered it is active, so the interface can show it with the others.
+    """
+    if api_name == LOCAL_DEVICE_API_NAME:
+        return STATUS_ACTIVE
     entry = catalogue_entry(api_name)
     if entry is None:
         return "unlisted"
@@ -136,9 +144,18 @@ def gemini_live_chat_api_names() -> tuple[str, ...]:
 
 
 def is_listed_model(row: Any) -> bool:
-    """A personality may choose an image model or a named live model."""
+    """A personality may choose an image model, a live model, or the on-device model.
+
+    ``offline`` is set only on the local row. It means the model runs on the
+    device and works without a provider key. Cloud rows do not carry it, so
+    their place in the list is unchanged.
+    """
     capabilities = getattr(row, "capabilities", row)
-    return has_images_capability(capabilities) or has_capability(capabilities, "live")
+    return (
+        has_images_capability(capabilities)
+        or has_capability(capabilities, "live")
+        or has_capability(capabilities, "offline")
+    )
 
 
 def capabilities_for(api_name: str, has_image_support: bool) -> dict[str, bool]:

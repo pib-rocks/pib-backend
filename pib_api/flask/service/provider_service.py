@@ -90,6 +90,16 @@ def get_model_by_id(model_id: int) -> Optional[RegistryModel]:
 
 
 def get_default_model() -> RegistryModel:
+    """The model a ``default`` pointer resolves to.
+
+    The cloud row keeps ``is_default``. When Ollama lists the local model and
+    no provider has a credential, that local model is used instead.
+    """
+    from service.local_model_service import fallback_model
+
+    local = fallback_model()
+    if local is not None:
+        return local
     return RegistryModel.query.filter_by(is_default=True).one()
 
 
@@ -140,24 +150,48 @@ def speech_backends() -> dict:
     }
 
 
+def _row_offered(row: RegistryModel) -> bool:
+    """Selection filter. The local row is offered only while Ollama lists it."""
+    if not is_listed_model(row):
+        return False
+    from pib_hermes_config.local_model import API_NAME
+    from service.local_model_service import local_model_present
+
+    if row.api_name != API_NAME:
+        return True
+    return local_model_present()
+
+
 def selectable_models() -> List[RegistryModel]:
-    """Models a personality may choose. An image model or a named live model."""
+    """Models a personality may choose.
+
+    An image model, a named live model, or the on-device model when Ollama
+    lists it. A probe that fails or does not list it leaves this list as it
+    was.
+    """
+    from service.local_model_service import refresh_local_model
+
+    refresh_local_model()
     rows = RegistryModel.query.order_by(RegistryModel.id).all()
-    return [row for row in rows if is_listed_model(row)]
+    return [row for row in rows if _row_offered(row)]
 
 
 def providers_with_models() -> List[tuple]:
     """Each provider with the models a personality may choose.
 
     A chat model without images is left out. A live model stays, because
-    choosing that model is how live speech is selected.
+    choosing that model is how live speech is selected. The on-device model
+    stays only while Ollama lists it.
     """
+    from service.local_model_service import refresh_local_model
+
+    refresh_local_model()
     groups = []
     for provider in Provider.query.order_by(Provider.id).all():
         models = [
             row
             for row in sorted(provider.models, key=lambda row: row.id)
-            if is_listed_model(row)
+            if _row_offered(row)
         ]
         if models:
             groups.append((provider, models))
@@ -167,9 +201,11 @@ def providers_with_models() -> List[tuple]:
 def resolve_model(provider_ref: str) -> RegistryModel:
     """Turn a stored reference into the current model.
 
-    'default' is looked up from is_default. Any other reference is that
-    model's id. Changing the default does not rewrite personalities that
-    store it. The provider follows from the model.
+    'default' is the resolved default: the on-device model when Ollama lists
+    it and no provider key is configured, otherwise the row marked
+    is_default. Any other reference is that model's id. Changing which row
+    that is does not rewrite personalities that store 'default'. The provider
+    follows from the model.
     """
     if provider_ref == DEFAULT_PROVIDER_REF:
         return get_default_model()
@@ -184,6 +220,11 @@ def find_model(provider_ref: object) -> Optional[RegistryModel]:
     covers a row that was deleted by hand.
     """
     if provider_ref == DEFAULT_PROVIDER_REF:
+        from service.local_model_service import fallback_model
+
+        local = fallback_model()
+        if local is not None:
+            return local
         return RegistryModel.query.filter_by(is_default=True).first()
     try:
         model_id = int(str(provider_ref))

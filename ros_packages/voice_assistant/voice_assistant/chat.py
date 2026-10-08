@@ -28,6 +28,10 @@ from rclpy.publisher import Publisher
 from rclpy.service import Service
 from std_msgs.msg import String
 
+from pib_hermes_config.local_model import (
+    API_NAME as LOCAL_MODEL_API_NAME,
+    iter_reply,
+)
 from pib_hermes_config.turn_taking import unpublished_clauses
 from pib_hermes_config.channel import (
     CHANNEL_DIRECT,
@@ -860,6 +864,24 @@ class ChatNode(Node):
                 yield reply
             return
 
+    def _iter_local_tokens(self, chat_id: str, content: str, system_prompt: str):
+        """Tokens from the on-device model. No provider key is read."""
+        history: list[tuple[str, bool]] = []
+        try:
+            with self.voice_assistant_client_lock:
+                successful, chat_messages = voice_assistant_client.get_chat_history(
+                    chat_id, self.history_length
+                )
+            if successful:
+                history = [
+                    (message.content, message.is_user) for message in chat_messages
+                ]
+        except Exception as exc:
+            self.get_logger().error(
+                f"local model history could not be read for chat {chat_id}: {exc}"
+            )
+        return iter_reply(system_prompt, history, content)
+
     async def chat(self, goal_handle: ServerGoalHandle):
         """
         Action server callback for 'chat':
@@ -923,7 +945,13 @@ class ChatNode(Node):
         else:
             self.get_logger().info(f"chat channel={channel} chat={chat_id}")
 
-        if self._key_store_mode() != MODE_UNLOCKED:
+        api_name = getattr(
+            getattr(personality, "assistant_model", None), "api_name", None
+        )
+        local_model = api_name == LOCAL_MODEL_API_NAME
+        # A cloud turn needs the unlocked store. The on-device model does not:
+        # it has no provider key and still answers while the store is locked.
+        if not local_model and self._key_store_mode() != MODE_UNLOCKED:
             # Smart and Direct both stop here. The sentence is the personality
             # speaking: the assistant plays it with this personality's gender
             # and language on local Supertone. The goal succeeds.
@@ -942,7 +970,16 @@ class ChatNode(Node):
             return result
 
         try:
-            if is_smart:
+            if local_model:
+                system_prompt = direct_system_prompt(personality.description)
+                if generate_code:
+                    system_prompt = CODE_DESCRIPTION_PREFIX + system_prompt
+                system_prompt = plan.for_direct(system_prompt)
+                self.get_logger().info(
+                    f"local model chat={chat_id} model={LOCAL_MODEL_API_NAME}"
+                )
+                tokens = self._iter_local_tokens(chat_id, content, system_prompt)
+            elif is_smart:
                 if goal_handle.is_cancel_requested:
                     goal_handle.canceled()
                     return Chat.Result()

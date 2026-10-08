@@ -11,8 +11,9 @@ def list_providers():
     """Each provider with the models a personality may choose.
 
     A chat model without the images capability is omitted. A live model is
-    its own entry and stays. The filter is the flag, not a list of names.
-    The registry is read-only.
+    its own entry and stays. The on-device model stays while Ollama lists
+    it. The filter is the flag, not a list of names. The registry is
+    read-only.
     """
     providers = []
     for provider, models in provider_service.providers_with_models():

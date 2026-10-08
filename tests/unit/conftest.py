@@ -41,6 +41,17 @@ from service import personality_service  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
+def local_ollama_absent(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A host that has qwen-fast must not change every other test's catalogue.
+
+    Tests of the local model replace ``fetch_tags`` with a tags document.
+    """
+    from service import local_model_service
+
+    monkeypatch.setattr(local_model_service, "fetch_tags", lambda: {"models": []})
+
+
+@pytest.fixture(autouse=True)
 def skip_account_live_model_pin(monkeypatch: pytest.MonkeyPatch) -> None:
     """Unlock must not call a provider model list. Pin tests call the function."""
     import service.live_model_service as live_model_service
