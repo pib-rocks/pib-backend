@@ -34,9 +34,15 @@ def _local_model():
     response = requests.get(f"{API_URL}/assistant-model", timeout=REQUEST_TIMEOUT_S)
     response.raise_for_status()
     data = response.json()
-    rows = data if isinstance(data, list) else data.get("assistantModels", data.get("assistantModel", []))
+    rows = (
+        data
+        if isinstance(data, list)
+        else data.get("assistantModels", data.get("assistantModel", []))
+    )
     for row in rows:
-        haystack = " ".join(str(row.get(key, "")) for key in ("apiName", "name", "providerName"))
+        haystack = " ".join(
+            str(row.get(key, "")) for key in ("apiName", "name", "providerName")
+        )
         if LOCAL_MODEL_HINT in haystack.lower():
             return row
     return None
@@ -73,32 +79,51 @@ def test_personality_with_the_local_model_holds_a_conversation():
                 "name": PERSONALITY_NAME,
                 "channel": "direct",
                 "assistantModelId": model.get("id"),
-                "providerRef": str(model.get("providerRef") or model.get("providerId") or ""),
+                "providerRef": str(
+                    model.get("providerRef") or model.get("providerId") or ""
+                ),
             },
             timeout=REQUEST_TIMEOUT_S,
         )
-        assert response.status_code < 300, f"personality could not be created: {response.status_code} {response.text[:200]}"
+        assert (
+            response.status_code < 300
+        ), f"personality could not be created: {response.status_code} {response.text[:200]}"
         created_personality = response.json().get("personalityId")
         assert created_personality, "the created personality has no id"
 
-        served = requests.get(f"{API_URL}/voice-assistant/personality", timeout=REQUEST_TIMEOUT_S).json()
+        served = requests.get(
+            f"{API_URL}/voice-assistant/personality", timeout=REQUEST_TIMEOUT_S
+        ).json()
         rows = served.get("voiceAssistantPersonalities", [])
-        row = next((item for item in rows if item.get("personalityId") == created_personality), None)
-        assert row is not None, "the created personality is not offered by the robot"
-        assert row.get("assistantModelId") == model.get("id"), (
-            f"the personality does not use the local model: {row.get('assistantModelId')} != {model.get('id')}"
+        row = next(
+            (item for item in rows if item.get("personalityId") == created_personality),
+            None,
         )
+        assert row is not None, "the created personality is not offered by the robot"
+        assert row.get("assistantModelId") == model.get(
+            "id"
+        ), f"the personality does not use the local model: {row.get('assistantModelId')} != {model.get('id')}"
 
         with sync_playwright() as pw:
             browser = pw.chromium.launch(args=["--no-sandbox"])
             page = browser.new_page(viewport={"width": 1400, "height": 1000})
-            page.goto(f"{ROBOT_URL}/voice-assistant", wait_until="domcontentloaded", timeout=60000)
-            expect(page.locator("#personality-select")).to_be_visible(timeout=UI_TIMEOUT_MS)
+            page.goto(
+                f"{ROBOT_URL}/voice-assistant",
+                wait_until="domcontentloaded",
+                timeout=60000,
+            )
+            expect(page.locator("#personality-select")).to_be_visible(
+                timeout=UI_TIMEOUT_MS
+            )
             page.wait_for_timeout(3000)
 
-            option = page.locator("#personality-select option", has_text=PERSONALITY_NAME).first
+            option = page.locator(
+                "#personality-select option", has_text=PERSONALITY_NAME
+            ).first
             expect(option).to_have_count(1, timeout=UI_TIMEOUT_MS)
-            page.select_option("#personality-select", value=created_personality, timeout=UI_TIMEOUT_MS)
+            page.select_option(
+                "#personality-select", value=created_personality, timeout=UI_TIMEOUT_MS
+            )
             page.wait_for_timeout(4000)
 
             # "New chat" carries a space in its id, so click it by its text.
@@ -121,9 +146,9 @@ def test_personality_with_the_local_model_holds_a_conversation():
                 if len(answer.strip()) > 20:
                     break
 
-            assert len(answer.strip()) > 20, (
-                f"the local model produced no answer within {REPLY_TIMEOUT_S}s; the chat showed: {answer[:200]!r}"
-            )
+            assert (
+                len(answer.strip()) > 20
+            ), f"the local model produced no answer within {REPLY_TIMEOUT_S}s; the chat showed: {answer[:200]!r}"
             page.screenshot(path="/tmp/local_model_chat.png", full_page=False)
             browser.close()
     finally:
