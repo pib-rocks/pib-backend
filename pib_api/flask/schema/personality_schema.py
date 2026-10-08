@@ -25,7 +25,7 @@ from pib_hermes_config.memory import (
     read_memory,
 )
 from pib_hermes_config.voice_backends import live_voice_note, local_voice_applies
-from provider_registry import has_capability
+from provider_registry import has_capability, model_ref_for_stored
 from schema.sql_auto_with_camel_case_schema import SQLAutoWithCamelCaseSchema
 from service import provider_service, soul_service
 
@@ -65,7 +65,18 @@ class PersonalitySchemaSQLAutoWith(SQLAutoWithCamelCaseSchema):
     assistant_model_id = fields.Integer(required=False, allow_none=True)
     # 'default', or the decimal id of a model row, as text. The catalogue
     # api_name is not a reference and is rejected. The provider follows.
+    # DEPRECATED alias of modelRef: accepted until its named removal release.
     provider_ref = fields.String(required=False, allow_none=True)
+    # Typed, unambiguous model reference: 'default', or 'model:<id>'. The
+    # prefix carries the kind, so a provider-account id can never be read as
+    # a model-row id. This is the canonical spelling on the wire; the read
+    # side reports it and the write side takes it.
+    model_ref = fields.Method(
+        serialize="get_model_ref",
+        deserialize="load_model_ref",
+        required=False,
+        allow_none=True,
+    )
     channel = fields.String(
         required=False,
         validate=validate.OneOf([CHANNEL_SMART, CHANNEL_DIRECT]),
@@ -104,6 +115,14 @@ class PersonalitySchemaSQLAutoWith(SQLAutoWithCamelCaseSchema):
 
     def get_soul_path(self, obj: Personality) -> str:
         return soul_service.soul_path_for(obj.personality_id)
+
+    def get_model_ref(self, obj: Personality) -> str:
+        """The typed reference the read side reports: 'default' or 'model:<id>'."""
+        return model_ref_for_stored(getattr(obj, "provider_ref", None))
+
+    def load_model_ref(self, value):
+        """Pass the typed value through; the service validates and stores it."""
+        return value
 
     def get_memory_size(self, obj: Personality) -> int:
         return memory_size(obj.personality_id)
