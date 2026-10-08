@@ -7,6 +7,7 @@ points at a temporary directory.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -152,6 +153,29 @@ def _request(channel: str) -> dict[str, object]:
     }
 
 
+def _matching_model_fixture(backend: Path, store: Path) -> None:
+    """Give the fake checkout a store that matches, so the update does not provision.
+
+    setup-pib.sh resolves the manifest from the checkout that contains the
+    script. The runner's backend/setup entry is a symlink, and bash keeps that
+    logical path, so the manifest has to live in this fake checkout.
+    """
+    content = b"fixture model blob\n"
+    digest = hashlib.sha256(content).hexdigest()
+    relative = Path("demo") / "demo.blob"
+    manifest = (
+        "models:\n"
+        "- model_id: demo\n"
+        f"  file: {relative.as_posix()}\n"
+        f"  sha256: {digest}\n"
+    )
+    (backend / "models" / relative.parent).mkdir(parents=True)
+    (backend / "models" / "manifest.yaml").write_text(manifest, encoding="utf-8")
+    (store / relative.parent).mkdir(parents=True)
+    (store / relative).write_bytes(content)
+    (store / "manifest.yaml").write_text(manifest, encoding="utf-8")
+
+
 def _run(
     tmp_path: Path,
     channel: str,
@@ -170,6 +194,8 @@ def _run(
     (backend / ".git").mkdir()
     (cerebra / ".git").mkdir()
     (backend / "setup").symlink_to(REPO_ROOT / "setup")
+    model_store = tmp_path / "model-store"
+    _matching_model_fixture(backend, model_store)
     (update_dir / "request.json").write_text(
         json.dumps(_request(channel)), encoding="utf-8"
     )
@@ -196,6 +222,9 @@ def _run(
         PIB_UPDATE_PRUNE_BELOW_KIB="0",
         PIB_UPDATE_VERIFY_ATTEMPTS="3",
         PIB_UPDATE_VERIFY_INTERVAL_SECONDS="0",
+        PIB_MODEL_STORE=str(model_store),
+        PIB_MODEL_CACHE=str(tmp_path / "model-cache"),
+        PIB_MODEL_ASSET_URL="http://127.0.0.1:9/nope.tar.gz",
         DOCKER_LOG=str(docker_log),
         STUB_BACKEND_SHA=BACKEND_SHA,
         STUB_CEREBRA_SHA=CEREBRA_SHA,
@@ -240,6 +269,9 @@ def _assert_succeeded(
     result: subprocess.CompletedProcess[str], update_dir: Path
 ) -> None:
     assert result.returncode == 0, _failure_text(result, update_dir)
+    log = (update_dir / "update.log").read_text(encoding="utf-8", errors="replace")
+    assert "Model store matches models/manifest.yaml; skipping provisioning" in log
+    assert "Fetching OAK model asset" not in log
     status = json.loads((update_dir / "status.json").read_text(encoding="utf-8"))
     assert status["state"] == "done", _failure_text(result, update_dir)
     assert list(update_dir.glob(".revision.*")) == []

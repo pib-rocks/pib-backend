@@ -64,6 +64,9 @@ PREDECESSOR_INTERRUPTED="false"
 PREDECESSOR_STATE="unknown"
 WATCHDOG_ORIGINAL_US=""
 WATCHDOG_RESTORE_NEEDED="false"
+# Set only when this update is about to change the model store, so a later
+# rollback can put the previous blobs back. Empty means the store was not touched.
+MODEL_STORE_SNAPSHOT=""
 
 mkdir -p "$UPDATE_DIR"
 touch "$LOG_FILE"
@@ -632,11 +635,155 @@ except BaseException:
 PY
 }
 
+# setup-pib.sh defaults the blob cache to ${HOME}/app/.cache/pib-models.
+# This runner is started with elevated privileges, and HOME is then not
+# necessarily /home/pib, so an unset PIB_MODEL_CACHE is pinned to the pib
+# user's cache. A caller-supplied PIB_MODEL_CACHE is left alone. The store
+# path is not overridden: setup-pib.sh already defaults it to the absolute
+# /home/pib/app/pib-models (PIB_MODEL_STORE still wins when set).
+model_cache_dir() {
+    printf '%s\n' "${PIB_MODEL_CACHE:-/home/pib/app/.cache/pib-models}"
+}
+
+model_store_dir() {
+    printf '%s\n' "${PIB_MODEL_STORE:-/home/pib/app/pib-models}"
+}
+
+refuse_model_store_path() {
+    case "$1" in
+        "" | "/" | "." | ".." | "/home" | "/home/pib" | "/home/pib/app" | "/tmp" | "/var" | "/var/tmp")
+            return 0
+            ;;
+        /*)
+            return 1
+            ;;
+    esac
+    return 0
+}
+
+snapshot_model_store() {
+    local store="$1"
+    local destination
+    if refuse_model_store_path "$store"; then
+        log "refusing to snapshot model store path '${store}'"
+        return 1
+    fi
+    destination="$(mktemp -d "$UPDATE_DIR/model-store-snapshot.XXXXXX")"
+    if [ -d "$store" ] && [ -n "$(ls -A "$store")" ]; then
+        cp -a "$store"/. "$destination"/
+    fi
+    MODEL_STORE_SNAPSHOT="$destination"
+    log "Snapshotted model store ${store} before provisioning"
+}
+
+restore_model_store_snapshot() {
+    local store="$1"
+    if [ -z "$MODEL_STORE_SNAPSHOT" ] || [ ! -d "$MODEL_STORE_SNAPSHOT" ]; then
+        return 0
+    fi
+    if refuse_model_store_path "$store"; then
+        log "refusing to restore model store path '${store}'"
+        return 1
+    fi
+    log "Restoring model store ${store} from the pre-provision snapshot"
+    mkdir -p -- "$store"
+    find "$store" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+    if [ -n "$(ls -A "$MODEL_STORE_SNAPSHOT")" ]; then
+        cp -a "$MODEL_STORE_SNAPSHOT"/. "$store"/
+    fi
+    rm -rf "$MODEL_STORE_SNAPSHOT"
+    MODEL_STORE_SNAPSHOT=""
+}
+
+discard_model_store_snapshot() {
+    if [ -n "$MODEL_STORE_SNAPSHOT" ]; then
+        rm -rf "$MODEL_STORE_SNAPSHOT"
+        MODEL_STORE_SNAPSHOT=""
+    fi
+}
+
+# Last "Models summary: placed=N already current=N failed=N" line from --models.
+# Prints the failed count. Returns 1 when that OAK line is absent: a whisper
+# failure has no such line, and a crash before the summary must not look like success.
+oak_summary_failed_count() {
+    local output="$1"
+    local summary failed
+    summary="$(printf '%s\n' "$output" | grep -E 'Models summary: placed=[0-9]+ already current=[0-9]+ failed=[0-9]+' | tail -n 1 || true)"
+    [ -n "$summary" ] || return 1
+    failed="${summary##*failed=}"
+    failed="${failed%% *}"
+    case "$failed" in
+        '' | *[!0-9]*)
+            return 1
+            ;;
+    esac
+    printf '%s\n' "$failed"
+}
+
+# After the release checkout: compare the store with models/manifest.yaml.
+# --verify-models is offline. A match does no provisioning and no fetch.
+# A mismatch runs --models, which reads the cache and fetches the release asset
+# only when the cache does not match either. --models also provisions whisper
+# and exits 1 when that store is not writable; the OAK summary line is the
+# authority for model-store drift. failed=0 keeps the update, any other OAK
+# result restores the snapshot and fails. A real OAK failure is never ignored.
+sync_model_store() {
+    local setup cache store output status failed
+    setup="$BACKEND_DIR/setup/setup-pib.sh"
+    cache="$(model_cache_dir)"
+    store="$(model_store_dir)"
+
+    if [ ! -f "$setup" ]; then
+        log "Model store check failed: ${setup} is missing"
+        return 1
+    fi
+    if [ ! -f "$BACKEND_DIR/models/manifest.yaml" ]; then
+        log "Model store check failed: ${BACKEND_DIR}/models/manifest.yaml is missing"
+        return 1
+    fi
+
+    log "Comparing the model store with models/manifest.yaml (offline; cache ${cache})"
+    if PIB_MODEL_CACHE="$cache" bash "$setup" --verify-models; then
+        log "Model store matches models/manifest.yaml; skipping provisioning"
+        return 0
+    fi
+
+    log "Model store differs from models/manifest.yaml; provisioning changed blobs (cache ${cache})"
+    if ! snapshot_model_store "$store"; then
+        log "Model store check failed: could not snapshot ${store} before provisioning"
+        return 1
+    fi
+
+    status=0
+    output="$(PIB_MODEL_CACHE="$cache" bash "$setup" --models 2>&1)" || status=$?
+    printf '%s\n' "$output"
+
+    if ! failed="$(oak_summary_failed_count "$output")"; then
+        log "OAK model provisioning failed: no usable Models summary (setup-pib.sh --models exit ${status})"
+        restore_model_store_snapshot "$store" || log "WARNING: could not restore the model store snapshot"
+        return 1
+    fi
+    if [ "$failed" -ne 0 ]; then
+        log "OAK model provisioning failed: failed=${failed} (setup-pib.sh --models exit ${status})"
+        restore_model_store_snapshot "$store" || log "WARNING: could not restore the model store snapshot"
+        return 1
+    fi
+    if [ "$status" -ne 0 ]; then
+        log "WARNING: setup-pib.sh --models exited ${status} after the OAK store was provisioned (failed=0). A non-OAK step failed (whisper). This is not model-store drift."
+    else
+        log "OAK model store provisioned (failed=0)"
+    fi
+    return 0
+}
+
 rollback_once() {
     log "Verification failed; attempting one rollback build"
     git -C "$BACKEND_DIR" reset --hard "$BACKEND_BEFORE"
     git -C "$CEREBRA_DIR" reset --hard "$CEREBRA_BEFORE"
     git -C "$CEREBRA_DIR" submodule update --init --recursive
+    if ! restore_model_store_snapshot "$(model_store_dir)"; then
+        fail "Verification failed and the model store snapshot could not be restored"
+    fi
     if APP_VERSION="$(resolve_app_version "$BACKEND_DIR")"; then
         export APP_VERSION
         log "Rollback rebuild uses APP_VERSION=$APP_VERSION"
@@ -666,6 +813,13 @@ on_unexpected_error() {
     rm -f "$REQUEST_FILE"
     exit "$exit_code"
 }
+if [ "${1:-}" = "--sync-models" ]; then
+    if sync_model_store; then
+        exit 0
+    fi
+    exit 1
+fi
+
 trap on_unexpected_error ERR
 
 load_request
@@ -704,6 +858,10 @@ fi
 log "Resolved APP_VERSION=${APP_VERSION} for pib-backend at ${BACKEND_TARGET}"
 
 check_cancel
+write_status "fetching" "Comparing the model store with models/manifest.yaml"
+sync_model_store || fail "OAK model store does not match models/manifest.yaml and provisioning failed"
+
+check_cancel
 extend_watchdog_for_build
 write_status "building" "Building and recreating backend and cerebra containers (APP_VERSION=${APP_VERSION})"
 if [ "$FREE_KIB" -lt "$PRUNE_BELOW_KIB" ]; then
@@ -730,6 +888,7 @@ if ! verify_result; then
     rollback_once
 fi
 
+discard_model_store_snapshot
 write_revision "pib-backend" "$BACKEND_TARGET"
 write_revision "cerebra" "$CEREBRA_TARGET"
 write_status "done" "Update completed and verified"
