@@ -331,3 +331,44 @@ def test_voice_defaults_are_configurable_and_budget_defaults_to_four(monkeypatch
         "memory",
         "session_search",
     }
+
+
+def test_child_environment_sets_only_the_named_keys(monkeypatch):
+    """PR-1930b: a turn keys the child under its provider's own variables."""
+    from public_api_client.hermes_agent_client import _child_environment
+
+    env = _child_environment("secret", ("OPENAI_API_KEY",))
+    assert env["OPENAI_API_KEY"] == "secret"
+    assert "GOOGLE_API_KEY" not in env
+    assert "GEMINI_API_KEY" not in env
+
+
+def test_child_environment_is_none_for_a_keyless_provider():
+    from public_api_client.hermes_agent_client import _child_environment
+
+    assert _child_environment(None, ("OPENAI_API_KEY",)) is None
+    assert _child_environment("secret", ()) is None
+
+
+def test_ensure_profile_writes_the_supplied_model_and_provider(tmp_path, monkeypatch):
+    monkeypatch.setenv("PIB_HERMES_PROFILES_DIR", str(tmp_path / "profiles"))
+    monkeypatch.setenv("PIB_HERMES_PROFILE_FACTORY", "filesystem")
+    monkeypatch.setenv("PIB_HERMES_BIN", str(tmp_path / "not-installed" / "hermes"))
+
+    pdir = ensure_profile(
+        "p-local",
+        soul_text="Du bist pib.",
+        model="qwen-fast",
+        provider="Local",
+        base_url="http://host.docker.internal:11434/v1",
+    )
+
+    import yaml
+
+    with open(os.path.join(pdir, "config.yaml"), encoding="utf-8") as fh:
+        cfg = yaml.safe_load(fh)
+    assert cfg["model"] == "qwen-fast"
+    assert cfg["provider"] == "local"
+    assert cfg["providers"]["local"]["base_url"] == (
+        "http://host.docker.internal:11434/v1"
+    )
