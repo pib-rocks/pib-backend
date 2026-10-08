@@ -1,0 +1,72 @@
+name: Tests
+
+on:
+  pull_request:
+  push:
+    branches:
+      - develop
+      - main
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            pib_api/flask/requirements.txt
+            tests/requirements-unit.txt
+      - name: Install unit test dependencies
+        # tests/unit/conftest.py imports the Flask app at collection, so the app
+        # requirements are installed as well as tests/requirements-unit.txt.
+        # The unit file is second: it pins tinkerforge==2.1.32, the Flask file
+        # still pins 2.1.31. pytest matches tests/integration/requirements.txt.
+        # numpy is imported by the device-free camera tests. mcp and
+        # websocket-client are the dependencies declared by pib_mcp_server.
+        # PyYAML arrives via marimo in the Flask requirements.
+        run: |
+          python -m pip install -r pib_api/flask/requirements.txt
+          python -m pip install -r tests/requirements-unit.txt
+          python -m pip install pytest==8.3.4 "numpy>=1.26,<3" mcp==2.3.0 websocket-client==1.9.2
+      - name: Run unit tests
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          # test_qr_detection.py imports cv2 via oak_d_lite/qr_detection.py.
+          # opencv is a camera wheel in tests/requirements-camera.txt.
+          # The two face-crop tests import depthai (same camera requirements).
+          # The rest of test_camera_face_crop.py does not, so the file stays.
+          # The three chat tests need the Hermes agent package (hermes_constants
+          # / hermes_cli), which this job does not install. The rest of
+          # test_chat_hermes_routing.py stubs ROS and passes.
+          # Left in the run, skipping themselves when the camera wheels are
+          # absent: test_camera_imitation_math.py, test_imitation_archives.py,
+          # test_task_archives.py (depthai) and test_stereo_camera_optimization.py
+          # (opencv).
+          # Node ids are relative to tests/ (tests/pytest.ini is the pytest root).
+          python -m pytest tests/unit -q \
+            --ignore=tests/unit/test_qr_detection.py \
+            --deselect=unit/test_camera_face_crop.py::test_pixel_square_crop_is_square_in_pixels_not_in_normalised_units \
+            --deselect=unit/test_camera_face_crop.py::test_detection_crop_config_stretches_a_pixel_square_crop \
+            --deselect=unit/test_chat_hermes_routing.py::test_warm_daemon_turn_uses_in_process_runner \
+            --deselect=unit/test_chat_hermes_routing.py::test_warm_daemon_falls_back_to_subprocess_when_run_agent_missing \
+            --deselect=unit/test_chat_hermes_routing.py::test_smart_turn_fails_when_the_store_cannot_supply_the_provider_key
+
+  jest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: tests/blockly_generator/package-lock.json
+      - name: Install generator test dependencies
+        working-directory: tests/blockly_generator
+        run: npm ci
+      - name: Run generator tests
+        working-directory: tests/blockly_generator
+        run: node node_modules/jest/bin/jest.js --config jest.config.js
