@@ -24,6 +24,11 @@ jobs:
           # PRs are merged to develop continuously; main only receives them on the
           # rare develop->main sync. Without this, PRs merged to develop after the
           # last main-merge are missing from the notes.
-          commitish: refs/heads/develop
+          #
+          # A plain branch name, not `refs/heads/develop`: the full ref makes GitHub
+          # publish the release with a generated `untagged-<hash>` tag instead of
+          # the version tag (measured on the v0.6.5 release, Jira PR-1946). Cerebra
+          # has always used the branch name and published correctly.
+          commitish: develop
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
