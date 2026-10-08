@@ -121,6 +121,8 @@ services:
       - flask-app
 
   ros-voice-assistant:
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     image: ros_voice_assistant
     build:
       context: .
