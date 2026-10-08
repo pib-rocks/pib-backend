@@ -28,7 +28,28 @@ from rclpy.publisher import Publisher
 from rclpy.service import Service
 from std_msgs.msg import String
 
+from pib_hermes_config.local_model import (
+    API_NAME as LOCAL_MODEL_API_NAME,
+    iter_reply,
+    openai_base_url,
+)
+from pib_hermes_config import provider_for_profile
+from pib_hermes_config.turn_taking import unpublished_clauses
+from pib_hermes_config.channel import (
+    CHANNEL_DIRECT,
+    CHANNEL_SMART,
+    direct_system_prompt,
+    turn_channel,
+)
+from provider_registry import DEFAULT_PROVIDER_API_NAME, provider_name_for
 from public_api_client import hermes_agent_client, public_voice_client
+from voice_assistant import direct_tool_loop
+from voice_assistant.degraded_chat import (
+    MODE_UNLOCKED,
+    fetch_operating_mode,
+    refusal_sentence,
+)
+from voice_assistant.memory_consolidation import schedule_memory_consolidation
 
 # In future, this code will be prepended to the description in a chat-request
 # if it is specified that code should be generated. The text will contain
@@ -48,12 +69,48 @@ HERMES_WAIT_GRACE_SECONDS = 15
 HERMES_PROBE_TIMEOUT_SECONDS = 5
 
 
+def _model_provider_name(api_name: Optional[str]) -> Optional[str]:
+    """The registry provider name for a model's api_name (PR-1930b).
+
+    The on-device model has no catalogue line, so it is named directly; every
+    other model resolves to its provider through the catalogue.
+    """
+    if api_name == LOCAL_MODEL_API_NAME:
+        return "Local"
+    if not api_name:
+        return None
+    return provider_name_for(api_name)
+
+
+def _model_needs_provider_key(api_name: Optional[str]) -> bool:
+    """True when a turn on this model must have an unlocked provider key.
+
+    False for the on-device model: it runs locally and needs no key, so the
+    locked-store refusal must not fire for it.
+    """
+    mapping = provider_for_profile(_model_provider_name(api_name))
+    return bool(mapping.env_vars)
+
+
+def _model_base_url(api_name: Optional[str]) -> Optional[str]:
+    """The OpenAI-compatible base URL a custom route needs, or None.
+
+    The on-device model points at the Ollama endpoint; the backend writes the
+    same URL into the profile at provision time.
+    """
+    if api_name == LOCAL_MODEL_API_NAME:
+        return openai_base_url()
+    return None
+
+
 class ChatNode(Node):
     """
     Central chat node.
 
     Responsibilities:
-    - Exposes a ROS 2 Action "chat" for request/response (token streaming) via public_api.
+    - Exposes a ROS 2 Action "chat" for request/response (token streaming).
+      Smart and Direct both use this action, the chat_messages topic and the
+      same chat store; streaming republishes one message_id.
     - Publishes datatypes/ChatMessage on "chat_messages" so UIs/loggers can subscribe.
     - Talks to PIB API (voice_assistant_client) to persist chat messages.
     - (NEW) Exposes a ROS 2 Service "create_or_update_chat_message" so external nodes
@@ -131,8 +188,42 @@ class ChatNode(Node):
 
         self._preflight_hermes_binary()
         self._ensure_hermes_daemon()
+        schedule_memory_consolidation(self)
+        from voice_assistant.attention import bind_attention
+
+        # Head turn and per-person preface. Sensors are optional: a missing
+        # camera message must not stop the node from answering.
+        self._attention = bind_attention(self)
 
         self.get_logger().info("Now running CHAT")
+
+    def _attention_plan(self):
+        """The plan for this answer. Missing sensors leave the turn unchanged."""
+        from pib_hermes_config.attention import AttentionPlan
+
+        attention = getattr(self, "_attention", None)
+        if attention is None:
+            return AttentionPlan()
+        return attention.before_answer()
+
+    def _key_store_mode(self) -> str:
+        """Operating mode of the key store. Unreadable means degraded."""
+        return fetch_operating_mode()
+
+    def consolidate_memories(self) -> None:
+        """Fold old MEMORY.md entries. Recent entries stay verbatim."""
+        from voice_assistant.memory_consolidation import run_periodic_consolidation
+
+        try:
+            results = run_periodic_consolidation()
+        except Exception as exc:
+            self.get_logger().error("memory consolidation failed: %s", exc)
+            return
+        consolidated = sum(1 for status in results.values() if status == "consolidated")
+        if consolidated:
+            self.get_logger().info(
+                "consolidated memory for %s profile(s)", consolidated
+            )
 
     def destroy_node(self):
         # Abandoned hermes workers must not keep the process alive on shutdown.
@@ -171,8 +262,8 @@ class ChatNode(Node):
         """Report at startup whether the configured Hermes CLI actually runs.
 
         Without this, a robot whose hermes install is missing or not mounted looks
-        healthy while every hermes-agent personality quietly answers with the
-        fallback sentence. Legacy personalities are unaffected, so this only logs.
+        healthy while every Smart personality quietly answers with the
+        fallback sentence. This only logs.
 
         This runs the CLI instead of merely stat-ing it. A file check passed on a
         live robot whose CLI died with exit 127 on every turn, because the wrapper
@@ -196,7 +287,7 @@ class ChatNode(Node):
 
         self.get_logger().error(
             f"hermes agent preflight failed for '{path}': {detail}. "
-            "Personalities using the 'hermes-agent' model will fall back to a "
+            "Smart personalities will fall back to a "
             "canned reply. Check that the hermes CLI is installed for the pib "
             "user, that PIB_HERMES_BIN points at it, and that ~/.hermes, the "
             "wrapper and the uv-managed Python directory are all bind-mounted "
@@ -435,7 +526,9 @@ class ChatNode(Node):
                     ),
                     message_history=[],
                     image_base64=image_base64,
-                    model="gpt-4o",
+                    # Catalogue default. The public API's id is not confirmed
+                    # in this repository.
+                    model=DEFAULT_PROVIDER_API_NAME,  # TODO(confirm id)
                     public_api_token=self.token,
                 )
 
@@ -485,6 +578,10 @@ class ChatNode(Node):
         prev_text_type = None
         bool_update_chat_message: bool = False  # controls create vs update
         first_chunk_emitted = False
+        # Full answer as received, kept so a clause can be spoken before the
+        # sentence that contains it has finished.
+        raw_answer = ""
+        published_speech: list[str] = []
 
         for token in tokens:
             # TTFT fast-path: emit the first generated token immediately, before
@@ -497,9 +594,12 @@ class ChatNode(Node):
                     feedback.text_type = Chat.Goal.TEXT_TYPE_SENTENCE
                     goal_handle.publish_feedback(feedback)
                     first_chunk_emitted = True
+                    published_speech.append(immediate)
+                    elapsed_ms = (time.monotonic() - t0) * 1000.0
+                    self._remember_first_token_latency(chat_id, elapsed_ms)
                     self.get_logger().info(
                         f"[PERF_TRACE] FIRST_CHUNK_EMITTED chat={chat_id} "
-                        f"elapsed_ms={(time.monotonic() - t0) * 1000.0:.2f}"
+                        f"elapsed_ms={elapsed_ms:.2f}"
                     )
 
             # Publish previous completed chunk as feedback (Action protocol)
@@ -508,11 +608,15 @@ class ChatNode(Node):
                 feedback.text = prev_text
                 feedback.text_type = prev_text_type
                 goal_handle.publish_feedback(feedback)
+                if prev_text_type == Chat.Goal.TEXT_TYPE_SENTENCE:
+                    published_speech.append(prev_text)
                 prev_text = None
                 prev_text_type = None
 
             # Accumulate token (strip leading spaces if first)
-            curr_text = curr_text + (token if len(curr_text) > 0 else token.lstrip())
+            piece = token if len(curr_text) > 0 else token.lstrip()
+            curr_text = curr_text + piece
+            raw_answer = raw_answer + piece
 
             # Strip off complete chunks (code/sentences)
             while True:
@@ -570,6 +674,8 @@ class ChatNode(Node):
 
                 break
 
+            self._publish_ready_clauses(goal_handle, raw_answer, published_speech)
+
         # A reply can end without a sentence terminator. That tail is part of
         # the answer, so it is persisted here instead of being dropped.
         leftover = curr_text.strip()
@@ -583,10 +689,13 @@ class ChatNode(Node):
             )
             if not first_chunk_emitted:
                 first_chunk_emitted = True
+                elapsed_ms = (time.monotonic() - t0) * 1000.0
+                self._remember_first_token_latency(chat_id, elapsed_ms)
                 self.get_logger().info(
                     f"[PERF_TRACE] FIRST_CHUNK_EMITTED chat={chat_id} "
-                    f"elapsed_ms={(time.monotonic() - t0) * 1000.0:.2f}"
+                    f"elapsed_ms={elapsed_ms:.2f}"
                 )
+            self._publish_ready_clauses(goal_handle, raw_answer, published_speech)
             if prev_text is not None:
                 # Hand the completed chunk over as feedback the way the next
                 # token would have, so the tail can travel in Chat.Result.
@@ -598,6 +707,28 @@ class ChatNode(Node):
                 prev_text_type = None
 
         return prev_text, prev_text_type, curr_text
+
+    def _remember_first_token_latency(self, chat_id: str, elapsed_ms: float) -> None:
+        """Persist the measurement. A down API must not fail the turn."""
+        try:
+            voice_assistant_client.record_first_token_latency(chat_id, elapsed_ms)
+        except Exception as exc:
+            self.get_logger().warning(
+                "first-token latency was not stored for chat %s: %s",
+                chat_id,
+                exc,
+            )
+
+    def _publish_ready_clauses(
+        self, goal_handle, raw_answer: str, published_speech: list[str]
+    ) -> None:
+        """Publish each newly completed clause so speech can start on it."""
+        for clause in unpublished_clauses(raw_answer, published_speech):
+            feedback = Chat.Feedback()
+            feedback.text = clause
+            feedback.text_type = Chat.Goal.TEXT_TYPE_SENTENCE
+            goal_handle.publish_feedback(feedback)
+            published_speech.append(clause)
 
     def _hermes_timeout(self) -> int:
         """Timeout for one hermes turn, read live so ops can tune it via env."""
@@ -615,6 +746,9 @@ class ChatNode(Node):
         description: str,
         timeout: Optional[int] = None,
         goal_handle=None,
+        model: Optional[str] = None,
+        provider: Optional[str] = None,
+        base_url: Optional[str] = None,
     ) -> str:
         """Run one hermes turn and return speakable text. Never raises.
 
@@ -647,7 +781,11 @@ class ChatNode(Node):
                     or not hermes_agent_client.is_warm_daemon_active()
                 ):
                     hermes_agent_client.ensure_profile(
-                        personality_id, soul_text=description
+                        personality_id,
+                        soul_text=description,
+                        model=model,
+                        provider=provider,
+                        base_url=base_url,
                     )
             return hermes_agent_client.run_turn(
                 text=text,
@@ -666,6 +804,10 @@ class ChatNode(Node):
                 return future.result(timeout=HERMES_CANCEL_POLL_SECONDS)
             except FutureTimeoutError:
                 pass
+            except direct_tool_loop.DirectToolLoopError:
+                # The store could not supply the provider key. The goal aborts
+                # with that message; the fallback sentence would hide it.
+                raise
             except Exception as exc:
                 self.get_logger().error(f"hermes agent turn failed: {exc}")
                 return hermes_agent_client.FALLBACK_REPLY
@@ -692,6 +834,9 @@ class ChatNode(Node):
         personality_id: Optional[str],
         description: str,
         goal_handle=None,
+        model: Optional[str] = None,
+        provider: Optional[str] = None,
+        base_url: Optional[str] = None,
     ):
         """Yield daemon deltas, retrying through the non-streaming path on error."""
         timeout = self._hermes_timeout()
@@ -707,7 +852,11 @@ class ChatNode(Node):
                         or not hermes_agent_client.is_warm_daemon_active()
                     ):
                         hermes_agent_client.ensure_profile(
-                            personality_id, soul_text=description
+                            personality_id,
+                            soul_text=description,
+                            model=model,
+                            provider=provider,
+                            base_url=base_url,
                         )
                 for delta in hermes_agent_client.stream_turn(
                     text=text,
@@ -744,6 +893,8 @@ class ChatNode(Node):
                 continue
             if kind == "done":
                 return
+            if isinstance(value, direct_tool_loop.DirectToolLoopError):
+                raise value
 
             self.get_logger().warning(
                 f"hermes streaming failed (chat={chat_id}): {value}; "
@@ -756,12 +907,33 @@ class ChatNode(Node):
                 description=description,
                 timeout=timeout,
                 goal_handle=goal_handle,
+                model=model,
+                provider=provider,
+                base_url=base_url,
             )
             if emitted and reply.startswith(emitted):
                 reply = reply[len(emitted) :]
             if reply:
                 yield reply
             return
+
+    def _iter_local_tokens(self, chat_id: str, content: str, system_prompt: str):
+        """Tokens from the on-device model. No provider key is read."""
+        history: list[tuple[str, bool]] = []
+        try:
+            with self.voice_assistant_client_lock:
+                successful, chat_messages = voice_assistant_client.get_chat_history(
+                    chat_id, self.history_length
+                )
+            if successful:
+                history = [
+                    (message.content, message.is_user) for message in chat_messages
+                ]
+        except Exception as exc:
+            self.get_logger().error(
+                f"local model history could not be read for chat {chat_id}: {exc}"
+            )
+        return iter_reply(system_prompt, history, content)
 
     async def chat(self, goal_handle: ServerGoalHandle):
         """
@@ -789,6 +961,10 @@ class ChatNode(Node):
         # assistant chunks start creating and updating their own message.
         self.create_chat_message(chat_id, content, True, False, True)
 
+        # Turn toward the detected speaker before any answer, including the
+        # degraded-mode sentence. The stored user line stays the words they said.
+        plan = self._attention_plan()
+
         # Get personality (also sets how much history to include)
         with self.voice_assistant_client_lock:
             successful, personality = voice_assistant_client.get_personality_from_chat(
@@ -807,22 +983,77 @@ class ChatNode(Node):
         if generate_code:
             description = CODE_DESCRIPTION_PREFIX + description
 
-        is_hermes = hermes_agent_client.uses_hermes_backend(
-            personality.assistant_model.api_name
+        # Channel is a personality setting, not the provider's api name.
+        channel = turn_channel(personality)
+        is_smart = channel == CHANNEL_SMART
+        stored_channel = getattr(personality, "channel", None)
+        if (
+            channel == CHANNEL_DIRECT
+            and isinstance(stored_channel, str)
+            and stored_channel == CHANNEL_SMART
+        ):
+            self.get_logger().info(
+                f"smart chats disabled; routing chat={chat_id} as direct"
+            )
+        else:
+            self.get_logger().info(f"chat channel={channel} chat={chat_id}")
+
+        api_name = getattr(
+            getattr(personality, "assistant_model", None), "api_name", None
         )
+        local_model = api_name == LOCAL_MODEL_API_NAME
+        model_provider_name = _model_provider_name(api_name)
+        # Only a model whose provider needs a key is gated by the store. A
+        # cloud model does; the on-device model does not, and still answers
+        # while the store is locked.
+        if (
+            _model_needs_provider_key(api_name)
+            and self._key_store_mode() != MODE_UNLOCKED
+        ):
+            # Smart and Direct both stop here. The sentence is the personality
+            # speaking: the assistant plays it with this personality's gender
+            # and language on local Supertone. The goal succeeds.
+            if goal_handle.is_cancel_requested:
+                goal_handle.canceled()
+                return Chat.Result()
+            sentence = refusal_sentence(channel)
+            self.create_chat_message(chat_id, sentence, False, False, True)
+            goal_handle.succeed()
+            result = Chat.Result()
+            result.text = sentence
+            result.text_type = Chat.Goal.TEXT_TYPE_SENTENCE
+            self.get_logger().info(
+                f"chat refused in degraded mode channel={channel} chat={chat_id}"
+            )
+            return result
 
         try:
-            if is_hermes:
+            if is_smart:
+                # The channel decides Hermes, the model decides what Hermes
+                # runs. Smart + the on-device model therefore still goes
+                # through Hermes, never through the direct local token loop.
                 if goal_handle.is_cancel_requested:
                     goal_handle.canceled()
                     return Chat.Result()
                 tokens = self._stream_hermes_turn(
-                    text=content,
+                    text=plan.for_hermes(content),
                     chat_id=chat_id,
                     personality_id=getattr(personality, "personality_id", None),
                     description=description,
+                    model=api_name,
+                    provider=model_provider_name,
+                    base_url=_model_base_url(api_name),
                     goal_handle=goal_handle,
                 )
+            elif local_model:
+                system_prompt = direct_system_prompt(personality.description)
+                if generate_code:
+                    system_prompt = CODE_DESCRIPTION_PREFIX + system_prompt
+                system_prompt = plan.for_direct(system_prompt)
+                self.get_logger().info(
+                    f"local model chat={chat_id} model={LOCAL_MODEL_API_NAME}"
+                )
+                tokens = self._iter_local_tokens(chat_id, content, system_prompt)
             else:
                 # Pull recent message history for context
                 with self.voice_assistant_client_lock:
@@ -840,34 +1071,64 @@ class ChatNode(Node):
                     for message in chat_messages
                 ]
 
-                # get the current image from the camera if available
-                image_base64 = None
-                if personality.assistant_model.has_image_support:
-                    if not self.get_camera_image_client.service_is_ready():
-                        self.get_logger().warn(
-                            "get_camera_image service is not ready, proceeding without image."
+                # Direct: the SOUL text is the system prompt. MEMORY.md is not
+                # read; that file belongs to the Hermes profile on Smart turns.
+                # A camera frame is never attached here. It arrives only when
+                # the model calls capture_image, and that tool is absent while
+                # tool calling is off.
+                system_prompt = direct_system_prompt(personality.description)
+                if generate_code:
+                    system_prompt = CODE_DESCRIPTION_PREFIX + system_prompt
+                system_prompt = plan.for_direct(system_prompt)
+                tool_calling = direct_tool_loop.tool_calling_enabled(personality)
+                allow_image = direct_tool_loop.image_tool_allowed(
+                    personality, tool_calling
+                )
+                api_name = personality.assistant_model.api_name
+                if tool_calling:
+                    if not direct_tool_loop.supports_tool_endpoint(api_name):
+                        raise direct_tool_loop.DirectToolLoopError(
+                            "Direct tool calling has no non-beta endpoint for "
+                            f"model {api_name!r}. The pinned model is "
+                            f"{direct_tool_loop.PINNED_MODEL} "
+                            f"({direct_tool_loop.PINNED_PROVIDER}), checked "
+                            f"{direct_tool_loop.PINNED_CHECKED_ON}."
                         )
-                        image_base64 = None
-                    else:
-                        request = GetCameraImage.Request()
-                        try:
-                            future = self.get_camera_image_client.call_async(request)
-                            response = await future
-                            image_base64 = response.image_base64
-                        except Exception as e:
-                            self.get_logger().error(f"Camera service call failed: {e}")
-                            image_base64 = None
-
-                # Stream tokens from public API (yields text tokens)
-                with self.public_voice_client_lock:
-                    tokens = public_voice_client.chat_completion(
-                        text=content,
-                        description=description,
-                        message_history=message_history,
-                        image_base64=image_base64,
-                        model=personality.assistant_model.api_name,
-                        public_api_token=self.token,
+                    self.get_logger().info(
+                        f"direct tool loop model={direct_tool_loop.PINNED_MODEL} "
+                        f"provider={direct_tool_loop.PINNED_PROVIDER} chat={chat_id}"
                     )
+
+                    def report_key_source(source: str) -> None:
+                        # source is key-store or environment. The key itself
+                        # is not passed here, so it cannot land in the log.
+                        self.get_logger().info(
+                            f"direct provider key source={source} "
+                            f"provider={direct_tool_loop.PINNED_PROVIDER} "
+                            f"chat={chat_id}"
+                        )
+
+                    tokens = direct_tool_loop.run_direct_turn(
+                        system_prompt=system_prompt,
+                        user_text=content,
+                        history=[
+                            (message.content, message.is_user)
+                            for message in message_history
+                        ],
+                        tool_calling=True,
+                        allow_image=allow_image,
+                        report_key_source=report_key_source,
+                    )
+                else:
+                    with self.public_voice_client_lock:
+                        tokens = public_voice_client.chat_completion(
+                            text=content,
+                            description=system_prompt,
+                            message_history=message_history,
+                            image_base64=None,
+                            model=api_name,
+                            public_api_token=self.token,
+                        )
 
             prev_text, prev_text_type, curr_text = self._stream_chunks_to_goal(
                 goal_handle, chat_id, tokens, t0=t0
@@ -876,7 +1137,7 @@ class ChatNode(Node):
                 return Chat.Result()
 
         except Exception as e:
-            backend = "hermes-agent" if is_hermes else "public-api"
+            backend = "smart" if is_smart else "direct"
             self.get_logger().error(f"failed to send request to {backend}: {e}")
             goal_handle.abort()
             return Chat.Result()

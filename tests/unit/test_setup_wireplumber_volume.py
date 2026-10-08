@@ -208,6 +208,10 @@ def test_a_missing_drop_in_is_an_error_and_wireplumber_is_left_alone(tmp_path):
 def test_setup_installs_the_drop_in_and_keeps_the_existing_volume_step():
     text = SETUP_PIB.read_text(encoding="utf-8")
 
-    install = text.index("\ninstall_wireplumber_volume_defaults ||")
-    set_volume = text.index("\nset_default_output_volume ||")
+    install = text.index(
+        'run_step "Install wireplumber volume drop-in" install_wireplumber_volume_defaults ||'
+    )
+    set_volume = text.index(
+        'run_step "Set default output volume" set_default_output_volume ||'
+    )
     assert install < set_volume, "the drop-in must be in place before the sink is set"

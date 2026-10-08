@@ -1,5 +1,6 @@
 float32 max_silent_seconds_before # the amount of silent-seconds waited before recording is stopped, if user has not started talking yet
 float32 max_silent_seconds_after # the amount of silent-seconds waited before recording is stopped, if user has already started talking
+string stt_engine # empty selects local faster-whisper; a provider id needs the stt capability
 ---
 string transcribed_text  # the transcribed text of the recorded audio
 ---

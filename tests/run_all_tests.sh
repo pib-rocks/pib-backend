@@ -34,6 +34,10 @@ Options:
 Environment:
   RUN_DOCKER_TESTS=1  Required for live Docker tests (set automatically unless --skip-docker)
   ROS2_TEST_MOCK=true Set for Robot E2E without ROS hardware (set automatically)
+  PIB_ROBOT_URL       Live pytest E2E robot address (tests/e2e/test_*_e2e.py).
+                      Required for those modules; they do not use http://localhost
+                      unless this variable is set to it. Example on the robot:
+                      PIB_ROBOT_URL=http://localhost ./run_all_tests.sh
 EOF
 }
 
@@ -118,9 +122,8 @@ check_flask() {
 run_pytest_integration() {
     cd "${REPO_ROOT}"
     rm -rf /tmp/pytest-of-* /tmp/pytest-* 2>/dev/null || true
-    export PIB_ROBOT_URL="${PIB_ROBOT_URL:-http://localhost}"
-    export PIB_API_URL="${PIB_API_URL:-http://localhost/api}"
-    export PIB_E2E_BASE_URL="${PIB_E2E_BASE_URL:-http://localhost}"
+    # Live pytest modules read PIB_ROBOT_URL. Do not default it to localhost:
+    # an unset address has to fail those modules instead of dialing the wrong host.
     local log
     log="$(mktemp)"
     # --continue-on-collection-errors: one unimportable module must never cancel the whole
@@ -152,11 +155,13 @@ run_pytest_docker() {
 
 run_jest() {
     cd "${SCRIPT_DIR}/blockly_generator"
-    # tests/blockly_generator/node_modules is vendored in the repo, so use it as-is and only
-    # install when it is missing. Jest is started via `node .../jest.js` so no executable bit
-    # on node_modules/.bin is required.
+    # Dependencies are locked in package-lock.json. When node_modules is present
+    # and jest actually starts, use that tree as-is (fast path). Install with
+    # npm ci when it is missing or broken, so a half-removed or stale tree
+    # reinstalls itself instead of failing the run. Jest is started via
+    # `node .../jest.js` so no executable bit on node_modules/.bin is required.
     local jest_cmd='set -e
-if ! node node_modules/jest/bin/jest.js --version >/dev/null 2>&1; then npm install --silent --no-audit --no-fund; fi
+if [[ ! -d node_modules ]] || ! node node_modules/jest/bin/jest.js --version >/dev/null 2>&1; then npm ci; fi
 node node_modules/jest/bin/jest.js --config jest.config.js'
     if command -v docker >/dev/null 2>&1; then
         docker run --rm \

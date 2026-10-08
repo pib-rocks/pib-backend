@@ -43,7 +43,7 @@ jobs:
     if: github.ref != 'refs/heads/main'
     steps:
       - name: Checkout pib-backend (source)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           path: pib-backend
 
@@ -59,7 +59,7 @@ jobs:
           echo "Cerebra branch: sync/blockly-from-${SAFE_BRANCH}"
 
       - name: Checkout cerebra (target)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: ${{ env.CEREBRA_REPO }}
           token: ${{ secrets.CEREBRA_SYNC_TOKEN }}

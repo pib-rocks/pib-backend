@@ -63,9 +63,10 @@ python3 -m pytest tests/e2e/test_on_device_models_e2e.py -q -s
 ```
 
 It skips when the robot API or rosbridge is unreachable, or when the local
-`websocket-client` test prerequisite is absent. Override the default live
-target with `PIB_MODEL_E2E_HOST`, `PIB_MODEL_E2E_API_URL`, and
-`PIB_MODEL_E2E_ROSBRIDGE_URL`.
+`websocket-client` test prerequisite is absent. The robot address is
+`PIB_ROBOT_URL` (the API address is derived from it; see `tests/README.md`).
+`PIB_MODEL_E2E_HOST` and `PIB_MODEL_E2E_API_URL` remain fallbacks for that
+address. `PIB_MODEL_E2E_ROSBRIDGE_URL` still overrides rosbridge.
 
 ### Curated-registry measurement
 

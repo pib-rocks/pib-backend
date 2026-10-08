@@ -2,10 +2,13 @@ import logging
 import time
 from typing import Any, List
 
+from werkzeug.exceptions import UnprocessableEntity
+
 from app.app import db
 from model.chat_message_model import ChatMessage
 from model.chat_model import Chat
-from service import personality_service
+from provider_registry import MISSING_MODEL_CHAT_MESSAGE
+from service import personality_service, provider_service
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +40,10 @@ def get_message_history(chat_id: str, length: int) -> ChatMessage:
 
 def create_chat(chat_dto: Any) -> Chat:
     personality = personality_service.get_personality(chat_dto["personality_id"])
+    # The model row is gone, so the chat cannot be given a model. It is not
+    # started on a different one.
+    if provider_service.find_provider(personality.provider_ref) is None:
+        raise UnprocessableEntity(MISSING_MODEL_CHAT_MESSAGE)
     chat = Chat(topic=chat_dto["topic"], personality=personality)
     db.session.add(chat)
     db.session.flush()
@@ -46,6 +53,14 @@ def create_chat(chat_dto: Any) -> Chat:
 def update_chat(chat_id: str, chat_dto: Any) -> Chat:
     chat = get_chat(chat_id)
     chat.topic = chat_dto["topic"]
+    db.session.flush()
+    return chat
+
+
+def record_first_token_latency(chat_id: str, latency_ms: float) -> Chat:
+    """Store the latest first-token measurement for this chat."""
+    chat = get_chat(chat_id)
+    chat.first_token_latency_ms = float(latency_ms)
     db.session.flush()
     return chat
 

@@ -1,0 +1,42 @@
+# Local faster-whisper weights. This file is not models/manifest.yaml.
+# models/manifest.yaml lists the camera blobs only.
+path: /data/voice/models/whisper/
+model_size: small
+compute_type: int8
+cpu_threads: 4
+# The smallest shipped unit is the yardstick: a unit that declares itself
+# pib5edu and reports 4045 MB of RAM. medium is a permitted
+# WHISPER_MODEL_SIZE override. It is not the default.
+medium_is_default: false
+# Section 6.1 budgets the first token under 700 ms for Smart with a local
+# voice. That figure was not measured again after the default moved from
+# base to small. small costs roughly three times the compute of base, and
+# the engine already uses all four CPU threads, so 700 ms is unchecked
+# for small.
+first_token_budget_ms: 700
+first_token_budget_rechecked_for_small: false
+weights_file: model.bin
+# The engine loads only files already under path. It does not download
+# by model name when the directory is missing or empty.
+download_at_first_use: false
+# Install-time source for the default size. voice/whisper/ is empty in git,
+# so setup-pib.sh (installation_scripts/provision_whisper_model.py) fetches
+# these pinned files once while the network is up and verifies every byte
+# against the digests below; the first start then works offline. A vendored
+# tree under voice/whisper/ takes precedence and is never downloaded over.
+download:
+  repository: https://huggingface.co/Systran/faster-whisper-small
+  revision: 536b0662742c02347bc0e980a01041f333bce120
+  files:
+    model.bin:
+      sha256: 3e305921506d8872816023e4c273e75d2419fb89b24da97b4fe7bce14170d671
+      size: 483546902
+    config.json:
+      sha256: b55496ac7940a7ae47d2c01eab40edfd8701feec1229d9cce3b40014383fb828
+      size: 2370
+    tokenizer.json:
+      sha256: fb7b63191e9bb045082c79fd742a3106a12c99513ab30df4a0d47fa6cb6fd0ab
+      size: 2203239
+    vocabulary.txt:
+      sha256: 34ce3fe1c5041027b3f8d42912270993f986dbc4bb34cf27f951e34a1e453913
+      size: 459861

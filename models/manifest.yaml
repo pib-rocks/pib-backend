@@ -1,3 +1,4 @@
+# Voice models are not in this file. See voice/whisper-model.yaml.
 registry: pib-backend camera NN model blobs
 produced: '2026-09-15'
 producer: blobconverter 1.4.3 via https://blobconverter.luxonis.com
@@ -151,6 +152,7 @@ models:
   selectable: true
 - model_id: face-recognition-arcface-112x112
   task: face_recognition
+  selectable: false
   source_upstream: luxonis/depthai-model-zoo (deepinsight/insightface MobileFaceNet+ArcFace)
   source_url: https://github.com/luxonis/depthai-model-zoo/raw/main/models/face-recognition-arcface-112x112/face-recognition-arcface-112x112.xml
   licence: MIT License; https://github.com/deepinsight/insightface/blob/master/LICENSE

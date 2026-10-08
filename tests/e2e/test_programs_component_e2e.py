@@ -1,11 +1,12 @@
-import os
 import re
 import time
 import requests
 import pytest
 from playwright.sync_api import sync_playwright, FrameLocator, Page, expect
 
-BASE_URL = os.getenv("PIB_ROBOT_URL", "http://localhost")
+from robot_address import robot_base_url
+
+BASE_URL = robot_base_url()
 
 # Strict Marimo iframe selectors (PR-1526). Do NOT fall back to bare `body` —
 # nginx 502 / empty shells would otherwise pass. Live Marimo 0.23 uses

@@ -40,10 +40,19 @@ services:
       - PIB_HERMES_DAEMON_URL=http://ros-voice-assistant:8088
       - PIB_HARDWARE_VARIANT=${PIB_HARDWARE_VARIANT:-}
       - PIB_UPDATE_DIR=/app/.update
+      - PIB_KEY_STORE_PATH=/home/pib/app/secrets/provider_key_store.json
+      - PIB_OLLAMA_BASE_URL=http://host.docker.internal:11434
+      # Empty means read /etc/pib_smart_chats. 0 disables the Hermes channel.
+      - PIB_SMART_CHATS=${PIB_SMART_CHATS:-}
     volumes:
       - ./pib_api/flask/:/app
+      - /home/pib/app/pib-backend/pib_hermes_config/pib_hermes_config:/app/pib_hermes_config
+      # Ciphertext for provider keys. Not the flask source tree, and not the
+      # Hermes profiles directory (SOUL.md / MEMORY.md live there).
+      - /home/pib/app/secrets:/home/pib/app/secrets
       - /home/pib/app/.update:/app/.update
       - /etc/pib_hardware_variant:/etc/pib_hardware_variant:ro
+      - /etc/pib_smart_chats:/etc/pib_smart_chats:ro
       - programs:/root/cerebra_programs
       - /home/pib/programs/notebooks:/home/pib/programs/notebooks
       # A personality's SOUL.md must land on the host, at the same path the
@@ -56,6 +65,8 @@ services:
     depends_on:
       - pib-blockly-server
 
+    extra_hosts:
+      - host.docker.internal:host-gateway
   rosbridge-ws:
     build:
       context: ./ros_packages
@@ -114,6 +125,8 @@ services:
       - flask-app
 
   ros-voice-assistant:
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     image: ros_voice_assistant
     build:
       context: .
@@ -133,6 +146,7 @@ services:
       - FLASK_API_BASE_URL=http://flask-app:5000
       - VOICE_ASSISTANT_DIR=/app/ros2_ws/voice_assistant
       - PIB_MCP_ROSBRIDGE_URL=ws://rosbridge-ws:9090
+      - PIB_OLLAMA_BASE_URL=http://host.docker.internal:11434
       # Hardware-changing MCP calls remain blocked unless explicitly enabled.
       - PIB_MCP_ENABLE_ACTUATION=false
       # Hermes-agent personalities: same profiles dir as flask-app, so the
@@ -141,17 +155,23 @@ services:
       - HERMES_HOME=/home/pib/.hermes
       - PIB_HERMES_BIN=/home/pib/.local/bin/hermes
       - PIB_HERMES_DAEMON_HOST=0.0.0.0
+      # Empty means read /etc/pib_smart_chats. 0 disables the Hermes channel.
+      - PIB_SMART_CHATS=${PIB_SMART_CHATS:-}
       # GEMINI_API_KEY / GOOGLE_API_KEY are deliberately NOT listed here: they
       # come from the gitignored ./password.env (env_file above). Compose
       # interpolates ${VAR} from the shell or the tracked project-root .env, not
       # from env_file, so an `- GEMINI_API_KEY=${GEMINI_API_KEY}` entry resolves
       # to an empty string when the variable is unset and then overrides the
       # real value from password.env. No hardcoded key / fallback default here.
+      # An unlocked key store wins over those variables. The Direct tool loop
+      # and the Hermes turn both read that provider's secret from flask at
+      # runtime. Hermes does not copy it into the profile.
     volumes:
-      - /media/dyan/project/projects/voice/:/data/voice
+      - ${PIB_VOICE_DATA_DIR:-/data/voice}:/data/voice
       - /dev/snd:/dev/snd
       - /dev/dsp:/dev/dsp
       - /etc/machine-id:/etc/machine-id
+      - /etc/pib_smart_chats:/etc/pib_smart_chats:ro
       - /home/pib/.hermes:/home/pib/.hermes
       - /home/pib/.local/bin/hermes:/home/pib/.local/bin/hermes:ro
       # REQUIRED, do not remove: the hermes wrapper execs the venv interpreter
@@ -240,6 +260,8 @@ services:
       - PIB_DISPLAY_TEXT_CACHE_MAX=50
       - PIB_DISPLAY_POLL_MS=5
       - PIB_UPDATE_DIR=/app/.update
+      - FLASK_API_BASE_URL=http://flask-app:5000
+      - PIB_KEY_STORE_PROMPT_URL=http://127.0.0.1:5000/system/key-store/display
       - XDG_RUNTIME_DIR=/run/user/1000
       - WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-wayland-0}
       - GDK_BACKEND=wayland
@@ -272,7 +294,7 @@ services:
       - /dev/bus/usb:/dev/bus/usb1
     privileged: true
     volumes:
-      - /media/dyan/project/projects/voice/:/data/voice
+      - ${PIB_VOICE_DATA_DIR:-/data/voice}:/data/voice
       - /dev/snd:/dev/snd
       - /dev/dsp:/dev/dsp
       - /etc/machine-id:/etc/machine-id

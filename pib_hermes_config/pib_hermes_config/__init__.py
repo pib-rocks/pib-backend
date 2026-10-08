@@ -14,6 +14,7 @@ sync with the bind mounts in ``docker-compose.yaml``.
 import logging
 import os
 import re
+from typing import NamedTuple
 
 DEFAULT_PROFILES_DIR = "/home/pib/.hermes/profiles"
 PROFILES_DIR_ENV = "PIB_HERMES_PROFILES_DIR"
@@ -25,12 +26,132 @@ SOUL_FILE_MODE = 0o644
 ENV_FILE_MODE = 0o600
 
 # Permanent Hermes LLM pin. Kept in sync with hermes_agent_client and setup-pib.sh.
-DEFAULT_HERMES_MODEL = "gemini-3.5-flash"
+DEFAULT_HERMES_MODEL = "gemini-3.8-flash"
 DEFAULT_HERMES_LITE_MODEL = "gemini-3.5-flash-lite"
 DEFAULT_HERMES_PROVIDER = "gemini"
 DEFAULT_REASONING_EFFORT = "low"
 DEFAULT_MAX_TOKENS = 1024
 DEFAULT_TEMPERATURE = 0.3
+
+# --- pib provider name -> Hermes provider mapping -------------------------
+#
+# Source of every value below:
+#   * provider names and model ids: the Flask registry/catalogue
+#     (``pib_api/flask/provider_registry.py``) and ``local_model.PROVIDER_NAME``.
+#   * Hermes provider identifiers and the env var each built-in provider reads:
+#     the provider plugins shipped with Hermes
+#     (https://hermes-agent.nousresearch.com/docs/integrations/providers).
+#   * a user-defined route (pib.Cloud, Local): Hermes declares it under
+#     ``providers:`` in config.yaml with a ``base_url`` and an optional
+#     ``key_env`` (``hermes_cli/config_providers.py``). The base URL comes from
+#     the registry's ``Provider.endpoint_base``.
+PIB_PROVIDER_GOOGLE = "Google"
+PIB_PROVIDER_OPENAI = "OpenAI"
+PIB_PROVIDER_ANTHROPIC = "Anthropic"
+PIB_PROVIDER_PIB_CLOUD = "pib.Cloud"
+PIB_PROVIDER_LOCAL = "Local"
+
+HERMES_PROVIDER_GEMINI = "gemini"
+HERMES_PROVIDER_OPENAI = "openai"
+HERMES_PROVIDER_ANTHROPIC = "anthropic"
+#: Slug of a user-defined ``providers:`` entry for pib.Cloud / Local.
+HERMES_PROVIDER_PIB_CLOUD = "pib-cloud"
+HERMES_PROVIDER_LOCAL = "local"
+
+GEMINI_KEY_ENV_VARS = ("GOOGLE_API_KEY", "GEMINI_API_KEY")
+OPENAI_KEY_ENV_VARS = ("OPENAI_API_KEY",)
+ANTHROPIC_KEY_ENV_VARS = ("ANTHROPIC_API_KEY",)
+#: Env var Hermes reads for the custom pib.Cloud route. Written as the entry's
+#: ``key_env`` so a pib.Cloud turn can be keyed from the store.
+PIB_CLOUD_KEY_ENV_VARS = ("PIB_CLOUD_API_KEY",)
+
+#: Built-in providers Hermes already understands; no ``providers:`` entry needed.
+BUILTIN_KEY_ENV_VARS: dict[str, tuple[str, ...]] = {
+    HERMES_PROVIDER_GEMINI: GEMINI_KEY_ENV_VARS,
+    HERMES_PROVIDER_OPENAI: OPENAI_KEY_ENV_VARS,
+    HERMES_PROVIDER_ANTHROPIC: ANTHROPIC_KEY_ENV_VARS,
+}
+
+
+class ProviderMapping(NamedTuple):
+    """Hermes settings for one pib provider.
+
+    ``provider`` is the Hermes provider identifier (a built-in name or the key
+    of a ``providers:`` entry). ``env_vars`` are the environment variables
+    Hermes reads for that provider; empty means the route needs no key.
+    ``base_url`` is the custom-route base URL, or None for a built-in provider.
+    """
+
+    provider: str
+    env_vars: tuple[str, ...]
+    base_url: str | None
+
+
+def _clean_base_url(endpoint_base: object) -> str | None:
+    if isinstance(endpoint_base, str) and endpoint_base.strip():
+        return endpoint_base.strip().rstrip("/")
+    return None
+
+
+def _provider_slug(name: str) -> str:
+    return _UNSAFE.sub("-", name.strip().lower()).strip("-")
+
+
+def provider_for_profile(
+    provider_name: str | None, endpoint_base: object = None
+) -> ProviderMapping:
+    """Map a pib provider name to its Hermes provider settings.
+
+    ``provider_name`` is the registry ``Provider.name`` (Google, OpenAI,
+    Anthropic, pib.Cloud, Local). The Hermes identifier, the key env var names
+    and the custom base URL follow the fixed table documented above. An
+    unknown provider with an ``endpoint_base`` becomes its own user-defined
+    route; an unknown provider without one falls back to the pinned Gemini
+    provider.
+    """
+    name = (provider_name or "").strip()
+    base = _clean_base_url(endpoint_base)
+
+    if name in (PIB_PROVIDER_GOOGLE, HERMES_PROVIDER_GEMINI):
+        return ProviderMapping(HERMES_PROVIDER_GEMINI, GEMINI_KEY_ENV_VARS, None)
+    if name in (PIB_PROVIDER_OPENAI, HERMES_PROVIDER_OPENAI):
+        return ProviderMapping(HERMES_PROVIDER_OPENAI, OPENAI_KEY_ENV_VARS, None)
+    if name in (PIB_PROVIDER_ANTHROPIC, HERMES_PROVIDER_ANTHROPIC):
+        return ProviderMapping(HERMES_PROVIDER_ANTHROPIC, ANTHROPIC_KEY_ENV_VARS, None)
+    if name == PIB_PROVIDER_PIB_CLOUD:
+        return ProviderMapping(HERMES_PROVIDER_PIB_CLOUD, PIB_CLOUD_KEY_ENV_VARS, base)
+    if name == PIB_PROVIDER_LOCAL:
+        if base is None:
+            # No registry endpoint: the on-device OpenAI-compatible root.
+            from pib_hermes_config.local_model import openai_base_url
+
+            base = _clean_base_url(openai_base_url())
+        return ProviderMapping(HERMES_PROVIDER_LOCAL, (), base)
+
+    slug = _provider_slug(name)
+    if slug and base:
+        return ProviderMapping(slug, (), base)
+    return ProviderMapping(DEFAULT_HERMES_PROVIDER, GEMINI_KEY_ENV_VARS, None)
+
+
+def env_vars_for_provider(
+    hermes_provider: str | None, key_env: object = None
+) -> tuple[str, ...]:
+    """Env var names to place a provider key under, given a config entry.
+
+    Built-in providers have fixed names; a user-defined route states its own
+    via ``key_env``. Empty means the provider needs no key.
+    """
+    names = list(BUILTIN_KEY_ENV_VARS.get(hermes_provider or "", ()))
+    if isinstance(key_env, str) and key_env.strip() and key_env.strip() not in names:
+        names.append(key_env.strip())
+    return tuple(names)
+
+
+def provider_needs_key(hermes_provider: str | None, key_env: object = None) -> bool:
+    """True when Hermes must receive a key from the store for this provider."""
+    return bool(env_vars_for_provider(hermes_provider, key_env))
+
 
 _UNSAFE = re.compile(r"[^A-Za-z0-9_-]")
 

@@ -20,6 +20,10 @@ BACKEND_SHA = "17cd52bf17cd52bf17cd52bf17cd52bf17cd52bf"
 CEREBRA_SHA = "e6f5f09fe6f5f09fe6f5f09fe6f5f09fe6f5f09f"
 
 GIT_STUB = """#!/bin/bash
+if [ -n "${GIT_ARGV_LOG:-}" ]; then
+    printf '%s\\n' "$*" >> "$GIT_ARGV_LOG"
+fi
+
 directory=""
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -35,6 +39,16 @@ done
 
 command_name="${1:-}"
 case "$command_name" in
+    fetch)
+        if [ "${STUB_TAGS_AFTER_FETCH:-0}" = "1" ]; then
+            for argument in "$@"; do
+                if [ "$argument" = "--tags" ]; then
+                    printf '%s\\n' "$directory" >> "${STUB_TAG_FETCH_LOG:?}"
+                    break
+                fi
+            done
+        fi
+        ;;
     rev-parse)
         base="${directory##*/}"
         if [ "$base" = "cerebra" ]; then
@@ -44,6 +58,11 @@ case "$command_name" in
         fi
         ;;
     tag)
+        if [ "${STUB_TAGS_AFTER_FETCH:-0}" = "1" ]; then
+            if ! grep -Fxq -- "$directory" "${STUB_TAG_FETCH_LOG:?}"; then
+                exit 0
+            fi
+        fi
         revision=""
         previous=""
         for argument in "$@"; do
@@ -140,6 +159,7 @@ def _run(
     tag_on_second_parent: str = "",
     tag_on_head: str = "",
     second_parent_missing: bool = False,
+    tags_answered_only_after_tag_fetch: bool = False,
 ) -> tuple[subprocess.CompletedProcess[str], Path, str]:
     update_dir = tmp_path / "update"
     backend = tmp_path / "backend"
@@ -183,6 +203,12 @@ def _run(
         STUB_TAG_HEAD=tag_on_head,
         STUB_HEAD2_MISSING="1" if second_parent_missing else "0",
     )
+    if tags_answered_only_after_tag_fetch:
+        tag_fetch_log = tmp_path / "tag-fetches.log"
+        tag_fetch_log.write_text("", encoding="utf-8")
+        env["STUB_TAGS_AFTER_FETCH"] = "1"
+        env["STUB_TAG_FETCH_LOG"] = str(tag_fetch_log)
+        env["GIT_ARGV_LOG"] = str(tmp_path / "git-argv.log")
 
     result = subprocess.run(
         ["bash", str(RUNNER)],
@@ -204,6 +230,9 @@ def _failure_text(result: subprocess.CompletedProcess[str], update_dir: Path) ->
     status_path = update_dir / "status.json"
     if status_path.is_file():
         parts.append(status_path.read_text(encoding="utf-8"))
+    argv_log = update_dir.parent / "git-argv.log"
+    if argv_log.is_file():
+        parts.append(argv_log.read_text(encoding="utf-8", errors="replace"))
     return "\n".join(part for part in parts if part)
 
 
@@ -316,7 +345,11 @@ def test_release_without_a_tag_refuses_the_compose_fallback(tmp_path: Path) -> N
     assert result.returncode != 0
     status = json.loads((update_dir / "status.json").read_text(encoding="utf-8"))
     assert status["state"] == "failed"
-    assert "no git tag" in status["message"]
+    assert (
+        f"no git tag on {BACKEND_SHA} (HEAD^2 or HEAD) "
+        "after fetching branch main with tags" in status["message"]
+    )
+    assert "compose-file APP_VERSION fallback" in status["message"]
     assert _build_lines(docker_log) == []
     assert _up_lines(docker_log) == []
     assert "v0.6.2" not in docker_log
@@ -335,3 +368,20 @@ def test_develop_checkout_that_is_tagged_keeps_the_tag(tmp_path: Path) -> None:
     _assert_succeeded(result, update_dir)
     _assert_version_passed(docker_log, "v0.6.3")
     _assert_revisions(update_dir, "develop")
+
+
+def test_release_tag_resolves_only_after_a_tag_fetch(tmp_path: Path) -> None:
+    result, update_dir, docker_log = _run(
+        tmp_path,
+        "release",
+        tag_on_second_parent="v0.6.4",
+        tag_on_head="v0.0.0-not-this",
+        tags_answered_only_after_tag_fetch=True,
+    )
+
+    _assert_succeeded(result, update_dir)
+    _assert_version_passed(docker_log, "v0.6.4")
+    assert "v0.0.0-not-this" not in docker_log
+    _assert_revisions(update_dir, "release")
+    log = (update_dir / "update.log").read_text(encoding="utf-8")
+    assert f"Resolved APP_VERSION=v0.6.4 for pib-backend at {BACKEND_SHA}" in log

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import sys
@@ -19,6 +20,7 @@ import pytest
 from public_api_client import hermes_daemon as hd
 
 _REAL_DISCOVER_MCP_TOOLS = hd._discover_mcp_tools
+_REAL_IN_PROCESS_AVAILABLE = hd.in_process_available
 
 
 @pytest.fixture(autouse=True)
@@ -41,6 +43,20 @@ def fake_hermes_home_override(monkeypatch, sandboxed_hermes_home):
     module.reset_hermes_home_override = current_home.reset
     monkeypatch.setitem(sys.modules, "hermes_constants", module)
     return current_home
+
+
+@pytest.fixture(autouse=True)
+def matching_hermes_venv(monkeypatch):
+    """Declare the interpreter venv-compatible so the in-process path is taken.
+
+    ``_run_turn_in_home`` runs the agent in-process only when Hermes' own venv has
+    site-packages for THIS interpreter; without one it deliberately uses the CLI
+    subprocess instead (see test_no_matching_hermes_venv_uses_the_cli_subprocess).
+    These tests stub ``run_agent`` in ``sys.modules`` and assert in-process
+    behaviour, so they state the venv as present. ``venv_site_packages`` itself
+    keeps its real implementation, so its own tests still exercise it.
+    """
+    monkeypatch.setattr(hd, "in_process_available", lambda: True)
 
 
 class _FakeSessionDB:
@@ -203,6 +219,68 @@ def test_profile_endpoint_creates_complete_layout_idempotently(
     assert status["has_memories"] is True
     assert status["has_sessions"] is True
     assert status["has_soul"] is True
+
+
+def test_profile_endpoint_persists_the_personalitys_model_and_route(
+    daemon_server, monkeypatch
+):
+    """PR-1930b: /profile writes the model/provider a personality is set to."""
+    server, _ = daemon_server
+    monkeypatch.setenv("PIB_HERMES_PROFILE_FACTORY", "filesystem")
+    host, port = server.server_address
+    body = json.dumps(
+        {
+            "personality_id": "profile-model",
+            "personality_name": "Ada",
+            "soul_text": "Sei neugierig.",
+            "model": "qwen-fast",
+            "provider": "Local",
+            "endpoint_base": "http://host.docker.internal:11434/v1",
+        }
+    ).encode()
+    request = Request(
+        f"http://{host}:{port}/profile",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+    with urlopen(request, timeout=2) as response:
+        result = json.loads(response.read().decode())
+
+    profile_dir = Path(result["profile_dir"])
+    import yaml
+
+    with open(profile_dir / "config.yaml", encoding="utf-8") as fh:
+        cfg = yaml.safe_load(fh)
+
+    assert cfg["model"] == "qwen-fast"
+    assert cfg["provider"] == "local"
+    assert cfg["providers"]["local"]["base_url"] == (
+        "http://host.docker.internal:11434/v1"
+    )
+
+
+def test_profile_endpoint_rejects_a_non_string_model(daemon_server):
+    from urllib.error import HTTPError
+
+    server, _ = daemon_server
+    host, port = server.server_address
+    request = Request(
+        f"http://{host}:{port}/profile",
+        data=b'{"personality_id":"p","model":5}',
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+    with pytest.raises(HTTPError) as exc_info:
+        urlopen(request, timeout=2)
+
+    assert exc_info.value.code == 400
+    assert json.loads(exc_info.value.read().decode()) == {
+        "ok": False,
+        "error": "model must be a string",
+    }
 
 
 def test_profile_endpoint_surfaces_factory_failure_without_profile(
@@ -413,7 +491,7 @@ def test_client_uses_session_pooling_for_daemon(daemon_server, monkeypatch):
         replies["last"]["toolsets"]
         == "terminal,code_execution,file,memory,session_search"
     )
-    assert replies["last"]["enabled_toolsets"] == "mcp-pib,vision"
+    assert replies["last"]["enabled_toolsets"] == "pib,vision"
     assert replies["last"]["max_turns"] == 4
 
 
@@ -490,7 +568,11 @@ def test_empty_enabled_toolsets_falls_back_to_voice_default(monkeypatch):
         )
 
     assert created[0].kwargs["enabled_toolsets"] == DEFAULT_ENABLED_TOOLSETS.split(",")
-    assert "mcp-pib" in created[0].kwargs["enabled_toolsets"]
+    assert "pib" in created[0].kwargs["enabled_toolsets"], (
+        "the pib MCP server is named by its bare mcp_servers key: the mcp-<server> "
+        "alias only registers after MCP discovery, so passing it prints an "
+        "'Unknown toolsets' warning onto the reply"
+    )
 
 
 def test_cached_agent_is_built_with_the_shared_store_and_the_chat_session_id(
@@ -899,6 +981,7 @@ def test_run_turn_in_process_falls_back_to_subprocess_when_import_fails():
         toolsets="pib",
         enabled_toolsets="mcp-pib,vision",
         timeout=45,
+        provider_key="fixture-hermes-key",
     )
 
 
@@ -1150,7 +1233,7 @@ def test_run_turn_in_process_reads_reply_from_run_agent_stdout(tmp_path, monkeyp
     assert calls == {
         "query": "Wie geht es dir?",
         "model": hd.IN_PROCESS_MODEL,
-        "enabled_toolsets": "mcp-pib,vision",
+        "enabled_toolsets": "pib,vision",
         "disabled_toolsets": "terminal,code_execution,file,memory,session_search",
         "max_turns": 4,
     }
@@ -1189,8 +1272,9 @@ def test_run_turn_in_process_falls_back_when_stdout_has_no_final_response(monkey
         chat_id="chat-3",
         personality_id=None,
         toolsets="terminal,code_execution,file,memory,session_search",
-        enabled_toolsets="mcp-pib,vision",
+        enabled_toolsets="pib,vision",
         timeout=45,
+        provider_key="fixture-hermes-key",
     )
 
 
@@ -1312,3 +1396,187 @@ def test_run_turn_in_process_prepares_the_hermes_source(monkeypatch):
         hd.run_turn_in_process("hi", "chat-mixed")
 
     assert prepared.called
+
+
+def test_in_process_available_follows_the_venv_match(monkeypatch):
+    """The predicate is exactly "Hermes' venv has site-packages for this Python"."""
+    monkeypatch.setattr(hd, "in_process_available", _REAL_IN_PROCESS_AVAILABLE)
+    monkeypatch.setattr(hd, "venv_site_packages", lambda *args, **kwargs: [])
+    assert hd.in_process_available() is False
+
+    monkeypatch.setattr(
+        hd, "venv_site_packages", lambda *args, **kwargs: ["/hermes/venv/site-packages"]
+    )
+    assert hd.in_process_available() is True
+
+
+def test_no_matching_hermes_venv_uses_the_cli_subprocess(monkeypatch):
+    """Without a Hermes venv for this interpreter the agent is never imported.
+
+    Importing the agent source under a mismatched interpreter makes Hermes'
+    bootstrap re-exec THIS process -- the ROS ``chat`` node -- with its managed
+    Python, where the node's setuptools launcher cannot resolve the
+    ``voice-assistant`` distribution, so the node exits and every chat is lost
+    until the container restarts. The CLI subprocess is the supported path there.
+    """
+    monkeypatch.setattr(hd, "in_process_available", lambda: False)
+    source_prepared = MagicMock()
+    monkeypatch.setattr(hd, "ensure_hermes_source_on_path", source_prepared)
+    subprocess_reply = MagicMock(return_value="  from-the-cli  ")
+    hd.clear_agent_cache()
+
+    agent_module = _fake_agent_module([])
+    with (
+        patch.dict(sys.modules, {"run_agent": agent_module}),
+        patch(
+            "public_api_client.hermes_agent_client.run_turn_subprocess",
+            subprocess_reply,
+        ),
+    ):
+        reply = hd.run_turn_in_process("hi", "chat-no-venv")
+
+    subprocess_reply.assert_called_once()
+    assert agent_module.AIAgent.__name__ == "FakeAgent"  # the stub was never reached
+    assert not source_prepared.called, "the agent source must not be put on sys.path"
+    assert reply
+
+
+STORE_SECRET = "store-hermes-key"
+ENV_SECRET = "env-hermes-key"
+OTHER_SECRET = "other-hermes-key"
+
+
+def _visible(caplog, capsys) -> str:
+    captured = capsys.readouterr()
+    return caplog.text + captured.out + captured.err
+
+
+def _install_real_provider_key(monkeypatch, fetch) -> None:
+    """Use the production store read. The suite stand-in is replaced."""
+    voice = Path(__file__).resolve().parents[2] / "ros_packages" / "voice_assistant"
+    if str(voice) not in sys.path:
+        sys.path.insert(0, str(voice))
+    from public_api_client import hermes_agent_client as client
+    from voice_assistant import direct_tool_loop
+
+    if not hasattr(direct_tool_loop, "resolve_hermes_provider_key"):
+        pytest.fail("resolve_hermes_provider_key is missing")
+    monkeypatch.setattr(direct_tool_loop, "_fetch_store_key", fetch)
+
+    def real() -> str:
+        key, _source = direct_tool_loop.resolve_hermes_provider_key(
+            client.DEFAULT_HERMES_PROVIDER
+        )
+        return key
+
+    monkeypatch.setattr(client, "provider_key_for_turn", real)
+
+
+def test_unlocked_store_supplies_the_hermes_key(monkeypatch, caplog, capsys, tmp_path):
+    """The agent is built with the store key. The profile does not receive a copy."""
+    monkeypatch.setenv("GOOGLE_API_KEY", ENV_SECRET)
+    monkeypatch.setenv("OPENAI_API_KEY", OTHER_SECRET)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    caplog.set_level(logging.INFO)
+    profile = Path(os.environ["PIB_HERMES_PROFILES_DIR"]) / "pib_pers-key"
+    profile.mkdir(parents=True)
+    (profile / ".env").write_text("# kept\n", encoding="utf-8")
+    (profile / "config.yaml").write_text(
+        "model: gemini-3.8-flash\nprovider: gemini\n", encoding="utf-8"
+    )
+    before = {
+        path.name: path.read_bytes() for path in profile.iterdir() if path.is_file()
+    }
+
+    def fetch(provider):
+        assert provider == "gemini"
+        return {"mode": "unlocked", "secret": STORE_SECRET}
+
+    _install_real_provider_key(monkeypatch, fetch)
+    created = []
+    hd.clear_agent_cache()
+
+    with (
+        patch.dict(sys.modules, {"run_agent": _fake_agent_module(created)}),
+        patch(
+            "public_api_client.hermes_agent_client.ensure_profile",
+            return_value=str(profile),
+        ),
+        patch(
+            "public_api_client.hermes_agent_client.run_turn_subprocess"
+        ) as subprocess_runner,
+    ):
+        reply = hd.run_turn_in_process(
+            text="Hallo",
+            chat_id="chat-key",
+            personality_id="pers-key",
+        )
+
+    assert reply == "OK."
+    assert created[0].kwargs["api_key"] == STORE_SECRET
+    assert created[0].kwargs["provider"] == "gemini"
+    assert created[0].kwargs["api_key"] != ENV_SECRET
+    assert os.environ.get("GOOGLE_API_KEY") == ENV_SECRET
+    assert "GEMINI_API_KEY" not in os.environ
+    assert "hermes provider key source=key-store" in caplog.text
+    assert "provider=gemini" in caplog.text
+    after = {
+        path.name: path.read_bytes() for path in profile.iterdir() if path.is_file()
+    }
+    assert after == before
+    visible = _visible(caplog, capsys)
+    profile_text = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in profile.rglob("*")
+        if path.is_file()
+    )
+    assert STORE_SECRET not in visible
+    assert STORE_SECRET not in profile_text
+    assert ENV_SECRET not in visible
+    assert OTHER_SECRET not in visible
+    subprocess_runner.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "state",
+    [
+        {"mode": "degraded", "secret": STORE_SECRET},
+        {"mode": "unavailable", "secret": STORE_SECRET},
+        {"mode": "unlocked", "secret": None},
+    ],
+)
+def test_hermes_turn_fails_when_the_store_cannot_supply_the_key(
+    monkeypatch, caplog, capsys, state
+):
+    """No environment key and no other provider. The message names gemini only."""
+    monkeypatch.setenv("GOOGLE_API_KEY", ENV_SECRET)
+    monkeypatch.setenv("OPENAI_API_KEY", OTHER_SECRET)
+    caplog.set_level(logging.INFO)
+
+    def fetch(provider):
+        assert provider == "gemini"
+        return state
+
+    _install_real_provider_key(monkeypatch, fetch)
+    created = []
+    hd.clear_agent_cache()
+
+    with (
+        patch.dict(sys.modules, {"run_agent": _fake_agent_module(created)}),
+        patch(
+            "public_api_client.hermes_agent_client.run_turn_subprocess"
+        ) as subprocess_runner,
+        pytest.raises(Exception) as caught,
+    ):
+        hd.run_turn_in_process(text="Hallo", chat_id="chat-locked")
+
+    message = str(caught.value)
+    assert message == "No keys are available for provider gemini."
+    assert type(caught.value).__name__ == "DirectToolLoopError"
+    assert created == []
+    subprocess_runner.assert_not_called()
+    assert os.environ.get("GOOGLE_API_KEY") == ENV_SECRET
+    visible = _visible(caplog, capsys) + message
+    assert STORE_SECRET not in visible
+    assert ENV_SECRET not in visible
+    assert OTHER_SECRET not in visible

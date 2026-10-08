@@ -15,6 +15,8 @@ import pytest
 import requests
 import shutil
 
+from robot_address import api_url, robot_base_url
+
 
 def _get_chromium_launch_kwargs() -> dict:
     kwargs = {"headless": True}
@@ -28,8 +30,8 @@ def _get_chromium_launch_kwargs() -> dict:
 from playwright.sync_api import Page, expect
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
-ROBOT_URL = os.environ.get("PIB_E2E_BASE_URL", "http://localhost").rstrip("/")
-API_URL = f"{ROBOT_URL}/api"
+ROBOT_URL = robot_base_url()
+API_URL = api_url()
 REQUEST_TIMEOUT = 15
 TURN_TIMEOUT = int(os.environ.get("PIB_HERMES_E2E_TURN_TIMEOUT", "300"))
 TURN_ATTEMPTS = int(os.environ.get("PIB_HERMES_E2E_TURN_ATTEMPTS", "2"))
@@ -74,6 +76,19 @@ def _open_voice_assistant(page: "Page") -> None:
     )
 
 
+def _select_personality(page: "Page", personality_id: str) -> None:
+    """Choose a personality from the voice-assistant dropdown.
+
+    Cerebra lists personalities as options of #personality-select. The option
+    value is the personality id. The visible label is the name, with an
+    attention suffix when the personality needs a key, so the id selects the
+    option exactly. select_option waits until that option is present.
+    """
+    personality = page.locator("#personality-select")
+    expect(personality).to_be_visible(timeout=UI_TIMEOUT_MS)
+    personality.select_option(value=personality_id, timeout=UI_TIMEOUT_MS)
+
+
 def _personality_ids() -> set:
     payload = _get_json("/voice-assistant/personality")
     items = (
@@ -98,7 +113,7 @@ def _poll_messages(chat_id: str):
         return None
 
 
-def _activate_smart_connect(token: str, password: str) -> None:
+def _activate_smart_connect(token: str) -> None:
     """Wait until the SmartConnect setup request has completed successfully."""
     deadline = time.monotonic() + API_SETTLE_TIMEOUT_S
     last_error = None
@@ -106,7 +121,7 @@ def _activate_smart_connect(token: str, password: str) -> None:
         try:
             response = requests.post(
                 f"{API_URL}/system/smart-connect",
-                json={"token": token, "password": password},
+                json={"token": token},
                 timeout=REQUEST_TIMEOUT,
             )
             response.raise_for_status()
@@ -115,7 +130,7 @@ def _activate_smart_connect(token: str, password: str) -> None:
             last_error = exc
             time.sleep(1)
     raise requests.RequestException(
-        "SmartConnect token/password setup did not complete successfully within "
+        "SmartConnect token setup did not complete successfully within "
         f"{API_SETTLE_TIMEOUT_S}s ({last_error})"
     )
 
@@ -339,25 +354,10 @@ def _send_chat_message(chat_id: str, content: str) -> None:
 
 def test_voice_assistant_hermes_persists_reply_and_recalls_prior_fact():
     try:
-        _activate_smart_connect("12345678", "12345678")
+        _activate_smart_connect("12345678")
     except requests.RequestException:
-        # Reachability is reported as a skip by the assistant-model probe below.
+        # Reachability is reported as a skip by the personality probe below.
         pass
-    try:
-        models = _get_json("/assistant-model").get("assistantModels", [])
-    except (requests.RequestException, ValueError) as exc:
-        pytest.skip(
-            f"live Hermes E2E prerequisite absent: robot API is unreachable ({exc})"
-        )
-
-    hermes_model = next(
-        (model for model in models if model.get("apiName") == "hermes-agent"), None
-    )
-    if hermes_model is None:
-        pytest.skip(
-            "live Hermes E2E prerequisite absent: no hermes-agent assistant model exists"
-        )
-
     try:
         personalities = _get_json("/voice-assistant/personality").get(
             "voiceAssistantPersonalities", []
@@ -381,14 +381,14 @@ def test_voice_assistant_hermes_persists_reply_and_recalls_prior_fact():
         )
 
     personality_id = personality["personalityId"]
-    original_model_id = personality["assistantModelId"]
+    original_channel = personality.get("channel", "smart")
     chat_id = None
     token = f"PIB-COLOR-{uuid.uuid4().hex[:8].upper()}"
 
     try:
         update = requests.put(
             f"{API_URL}/voice-assistant/personality/{personality_id}",
-            json={"assistantModelId": hermes_model["id"]},
+            json={"channel": "smart"},
             timeout=REQUEST_TIMEOUT,
         )
         update.raise_for_status()
@@ -434,7 +434,7 @@ def test_voice_assistant_hermes_persists_reply_and_recalls_prior_fact():
         try:
             requests.put(
                 f"{API_URL}/voice-assistant/personality/{personality_id}",
-                json={"assistantModelId": original_model_id},
+                json={"channel": original_channel},
                 timeout=REQUEST_TIMEOUT,
             )
         except requests.RequestException:
@@ -565,14 +565,14 @@ def test_create_personality_via_browser_ui_generates_soul_md():
 
 def test_chat_send_button_activation_with_smartconnect():
     """
-    E2E UI test verifying SmartConnect token/password setup ('12345678'),
-    Hermes Agent persona chat creation, deep-chat's >2-character submit-button
+    E2E UI test verifying SmartConnect token setup ('12345678'),
+    Smart personality chat creation, deep-chat's >2-character submit-button
     state, and that submitting through #submit-icon renders the typed message.
     """
     from playwright.sync_api import sync_playwright
 
-    # 1. Activate SmartConnect via API or UI with token/password 12345678
-    _activate_smart_connect("12345678", "12345678")
+    # 1. Activate SmartConnect via API with token 12345678
+    _activate_smart_connect("12345678")
 
     created_chat_id = None
     created_p_id = None
@@ -590,22 +590,9 @@ def test_chat_send_button_activation_with_smartconnect():
             # 2. Open Voice Assistant
             _open_voice_assistant(page)
 
-            # 3. Create a persona with Hermes Agent backend
-            res_models = requests.get(
-                f"{API_URL}/assistant-model", timeout=REQUEST_TIMEOUT
-            ).json()
-            models = (
-                res_models.get("assistantModels", [])
-                if isinstance(res_models, dict)
-                else res_models
-            )
-            hermes_model = [
-                m for m in models if "hermes" in m.get("apiName", "").lower()
-            ][0]
-            hermes_model_id = hermes_model["id"]
-
+            # 3. Create a Smart personality. The channel is the Hermes agent.
             # Names are unique per run: a leftover persona/chat from an aborted run
-            # would otherwise be matched first by the sidebar locators below.
+            # would otherwise be matched first by the locators below.
             persona_name = f"SendButtonTester_{uuid.uuid4().hex[:6]}"
             chat_topic = f"Send Button E2E {uuid.uuid4().hex[:6]}"
 
@@ -615,7 +602,7 @@ def test_chat_send_button_activation_with_smartconnect():
                     "name": persona_name,
                     "gender": "Female",
                     "pauseThreshold": 0.8,
-                    "assistantModelId": hermes_model_id,
+                    "channel": "smart",
                     "messageHistory": 5,
                 },
                 timeout=REQUEST_TIMEOUT,
@@ -630,14 +617,11 @@ def test_chat_send_button_activation_with_smartconnect():
             ).json()
             created_chat_id = chat_res["chatId"]
 
-            # 4. Open chat window in browser via UI clicks. The reload is what makes
-            # the persona created above appear in the sidebar.
+            # 4. Open chat window in browser via UI. The reload is what makes
+            # the persona created above appear in the personality dropdown.
             _open_voice_assistant(page)
 
-            # Click the persona in the sidebar
-            p_link = page.locator(f"a:has-text('{persona_name}')").first
-            expect(p_link).to_be_visible(timeout=UI_TIMEOUT_MS)
-            p_link.click()
+            _select_personality(page, created_p_id)
 
             # Click the chat topic
             chat_item = page.locator(f"text='{chat_topic}'").first
@@ -713,8 +697,8 @@ def test_chat_send_button_activation_with_smartconnect():
 def test_voice_assistant_latency_and_smartconnect_e2e():
     """
     E2E UI Test according to user specification:
-    1. Activates SmartConnect with Token '1234567890' and Password '1234567890'.
-    2. Creates a new personality with configured Hermes Agent (unique name).
+    1. Activates SmartConnect with token '1234567890'.
+    2. Creates a new Smart personality (unique name).
     3. Types 'Wie geht es dir?' in deep-chat UI and measures response latency
        from Submit click until the assistant's real reply appears in the UI.
     """
@@ -723,10 +707,10 @@ def test_voice_assistant_latency_and_smartconnect_e2e():
     token = "1234567890"
     password = "1234567890"
 
-    # 1. Activate SmartConnect via API
+    # 1. Activate SmartConnect via API. The token is the only field.
     requests.post(
         f"{API_URL}/system/smart-connect",
-        json={"token": token, "password": password},
+        json={"token": token},
         timeout=REQUEST_TIMEOUT,
     )
 
@@ -734,26 +718,14 @@ def test_voice_assistant_latency_and_smartconnect_e2e():
     created_chat_id = None
     created_p_id = None
 
-    # Get Hermes Agent assistant model ID
-    res_models = requests.get(
-        f"{API_URL}/assistant-model", timeout=REQUEST_TIMEOUT
-    ).json()
-    models = (
-        res_models.get("assistantModels", [])
-        if isinstance(res_models, dict)
-        else res_models
-    )
-    hermes_model = [m for m in models if "hermes" in m.get("apiName", "").lower()][0]
-    hermes_model_id = hermes_model["id"]
-
-    # 2. Create new personality with configured Hermes Agent
+    # 2. Create a Smart personality. The channel is the Hermes agent.
     persona_res = requests.post(
         f"{API_URL}/voice-assistant/personality",
         json={
             "name": unique_persona_name,
             "gender": "Female",
             "pauseThreshold": 0.8,
-            "assistantModelId": hermes_model_id,
+            "channel": "smart",
             "messageHistory": 5,
         },
         timeout=REQUEST_TIMEOUT,
@@ -846,10 +818,7 @@ def test_voice_assistant_latency_and_smartconnect_e2e():
                     close_btn.click()
                     page.wait_for_timeout(500)
 
-            # Click newly created personality in sidebar
-            p_link = page.locator(f"a:has-text('{unique_persona_name}')").first
-            expect(p_link).to_be_visible(timeout=UI_TIMEOUT_MS)
-            p_link.click()
+            _select_personality(page, created_p_id)
 
             # Click chat topic
             chat_item = page.locator(f"text='{chat_topic}'").first

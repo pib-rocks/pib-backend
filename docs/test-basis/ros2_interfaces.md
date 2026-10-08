@@ -113,7 +113,7 @@ flowchart TB
 | `play_audio_from_file` | `datatypes/PlayAudioFromFile` | `audio_player` | — |
 | `clear_playback_queue` | `datatypes/ClearPlaybackQueue` | `audio_player` | — |
 | `get_mic_configuration` | `datatypes/GetMicConfiguration` | `audio_recorder` / `audio_streamer` | — |
-| `encrypt_token` / `decrypt_token` / `get_token_exists` | `datatypes/srv/*` | `token_service` | — |
+| `encrypt_token` / `decrypt_token` / `get_token_exists` | `datatypes/srv/*` | `token_service` | cloud token is the pib-cloud key-store entry; no separate password |
 | `/tf_button/set_color` | `button_service/SetButtonColor` | `button_service_node` | legacy direct set |
 | `/tf_button/read` | `button_service/ReadButton` | `button_service_node` | read taster/switch |
 | `/tf_button/wait` | `button_service/WaitForButton` | `button_service_node` | wait for press |

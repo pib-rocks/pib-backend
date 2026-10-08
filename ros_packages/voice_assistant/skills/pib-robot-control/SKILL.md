@@ -20,6 +20,10 @@ invent identifiers or payload fields. Prefer a read tool before a write.
 - Actuate only on explicit request with `pib_move_motor`, `pib_apply_pose`,
   `pib_run_program`, `pib_set_led`, or `pib_set_relay`. These tools are blocked
   by default and require operator enablement.
+- A gesture or a head turn while you are speaking an answer is an MCP tool
+  call: `apply_pose` or `move_motor`. Issue that call as the body language of
+  the answer. Do not describe the motion instead of calling the tool, and do
+  not use a separate gesture channel. The actuation gate still applies.
 - Append one durable lesson with `pib_soul_append`. Lessons must be non-empty
   and no longer than 500 characters; this operation never replaces the SOUL.
 
