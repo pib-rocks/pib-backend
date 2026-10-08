@@ -221,6 +221,68 @@ def test_profile_endpoint_creates_complete_layout_idempotently(
     assert status["has_soul"] is True
 
 
+def test_profile_endpoint_persists_the_personalitys_model_and_route(
+    daemon_server, monkeypatch
+):
+    """PR-1930b: /profile writes the model/provider a personality is set to."""
+    server, _ = daemon_server
+    monkeypatch.setenv("PIB_HERMES_PROFILE_FACTORY", "filesystem")
+    host, port = server.server_address
+    body = json.dumps(
+        {
+            "personality_id": "profile-model",
+            "personality_name": "Ada",
+            "soul_text": "Sei neugierig.",
+            "model": "qwen-fast",
+            "provider": "Local",
+            "endpoint_base": "http://host.docker.internal:11434/v1",
+        }
+    ).encode()
+    request = Request(
+        f"http://{host}:{port}/profile",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+    with urlopen(request, timeout=2) as response:
+        result = json.loads(response.read().decode())
+
+    profile_dir = Path(result["profile_dir"])
+    import yaml
+
+    with open(profile_dir / "config.yaml", encoding="utf-8") as fh:
+        cfg = yaml.safe_load(fh)
+
+    assert cfg["model"] == "qwen-fast"
+    assert cfg["provider"] == "local"
+    assert cfg["providers"]["local"]["base_url"] == (
+        "http://host.docker.internal:11434/v1"
+    )
+
+
+def test_profile_endpoint_rejects_a_non_string_model(daemon_server):
+    from urllib.error import HTTPError
+
+    server, _ = daemon_server
+    host, port = server.server_address
+    request = Request(
+        f"http://{host}:{port}/profile",
+        data=b'{"personality_id":"p","model":5}',
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+    with pytest.raises(HTTPError) as exc_info:
+        urlopen(request, timeout=2)
+
+    assert exc_info.value.code == 400
+    assert json.loads(exc_info.value.read().decode()) == {
+        "ok": False,
+        "error": "model must be a string",
+    }
+
+
 def test_profile_endpoint_surfaces_factory_failure_without_profile(
     daemon_server, monkeypatch, tmp_path
 ):

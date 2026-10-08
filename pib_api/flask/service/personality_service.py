@@ -63,9 +63,17 @@ def _provision_profile(
     personality_id: str,
     personality_name: Optional[str] = None,
     soul_text: Optional[str] = None,
+    model: Optional[str] = None,
+    provider: Optional[str] = None,
+    endpoint_base: Optional[str] = None,
     timeout: int = 60,
 ) -> dict:
     """Ask the Hermes daemon to create or repair a personality's Hermes profile.
+
+    ``model``/``provider``/``endpoint_base`` are the personality's chosen model
+    row (its api_name, the provider account's name and endpoint). The daemon
+    writes them into the profile's config.yaml, so the smart chat runs the
+    personality's model instead of a pinned default (PR-1930b).
 
     Deliberately a plain HTTP call: the client package cannot be imported in this
     image (`public_api_client.__init__` requires the tryb configuration at import
@@ -79,6 +87,12 @@ def _provision_profile(
         payload["personality_name"] = personality_name
     if soul_text is not None:
         payload["soul_text"] = soul_text
+    if model is not None:
+        payload["model"] = model
+    if provider is not None:
+        payload["provider"] = provider
+    if endpoint_base is not None:
+        payload["endpoint_base"] = endpoint_base
 
     url = _daemon_profile_url().rstrip("/") + DAEMON_PROFILE_PATH
     try:
@@ -394,6 +408,26 @@ def _tool_calling_value(personality_dto: Any, default: bool) -> bool:
     return bool(personality_dto["tool_calling"])
 
 
+def _model_provisioning_fields(personality: Personality) -> dict:
+    """Hermes profile fields for this personality's chosen model.
+
+    ``{model, provider, endpoint_base}`` from the resolved row, so the daemon
+    writes the model the personality is set to into its Hermes config.yaml.
+    Empty when the row is gone or the personality follows a default with no
+    row: the profile is then left exactly as it is.
+    """
+    model = provider_service.find_model(getattr(personality, "provider_ref", None))
+    if model is None or not model.api_name:
+        return {}
+    fields: dict = {"model": model.api_name}
+    provider = model.provider
+    if provider is not None and provider.name:
+        fields["provider"] = provider.name
+        if provider.endpoint_base:
+            fields["endpoint_base"] = provider.endpoint_base
+    return fields
+
+
 def create_personality(personality_dto: Any) -> Personality:
     _reject_actuation_request(personality_dto)
     # Only the name is required. The rest is defaulted here and edited later.
@@ -428,6 +462,7 @@ def create_personality(personality_dto: Any) -> Personality:
             personality.personality_id,
             personality_name=personality.name,
             soul_text=custom or None,
+            **_model_provisioning_fields(personality),
         )
         personality.profile_provisioned = True
     except Exception as exc:
@@ -461,12 +496,17 @@ def update_personality(personality_id: str, personality_dto: Any) -> Personality
             personality.description,
             personality_name=personality.name,
         )
-    if name_changed:
+    previous_model_ref = getattr(personality, "provider_ref", None)
+    _apply_provider_choice(personality, personality_dto, creating=False)
+    _store_derived_voice_mode(personality)
+    model_changed = getattr(personality, "provider_ref", None) != previous_model_ref
+    if name_changed or model_changed:
         try:
             _provision_profile(
                 personality.personality_id,
                 personality_name=personality.name,
                 soul_text=personality.description,
+                **_model_provisioning_fields(personality),
             )
             personality.profile_provisioned = True
         except Exception as exc:
@@ -476,8 +516,6 @@ def update_personality(personality_id: str, personality_dto: Any) -> Personality
                 personality.personality_id,
                 exc,
             )
-    _apply_provider_choice(personality, personality_dto, creating=False)
-    _store_derived_voice_mode(personality)
     _apply_channel(personality, personality_dto, creating=False)
     if "tool_calling" in personality_dto:
         personality.tool_calling = bool(personality_dto["tool_calling"])

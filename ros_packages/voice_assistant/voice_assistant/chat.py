@@ -31,7 +31,9 @@ from std_msgs.msg import String
 from pib_hermes_config.local_model import (
     API_NAME as LOCAL_MODEL_API_NAME,
     iter_reply,
+    openai_base_url,
 )
+from pib_hermes_config import provider_for_profile
 from pib_hermes_config.turn_taking import unpublished_clauses
 from pib_hermes_config.channel import (
     CHANNEL_DIRECT,
@@ -39,7 +41,7 @@ from pib_hermes_config.channel import (
     direct_system_prompt,
     turn_channel,
 )
-from provider_registry import DEFAULT_PROVIDER_API_NAME
+from provider_registry import DEFAULT_PROVIDER_API_NAME, provider_name_for
 from public_api_client import hermes_agent_client, public_voice_client
 from voice_assistant import direct_tool_loop
 from voice_assistant.degraded_chat import (
@@ -65,6 +67,40 @@ HERMES_WAIT_GRACE_SECONDS = 15
 # it stays short; a failed probe only downgrades hermes personalities to the
 # fallback reply and must never keep the node from starting.
 HERMES_PROBE_TIMEOUT_SECONDS = 5
+
+
+def _model_provider_name(api_name: Optional[str]) -> Optional[str]:
+    """The registry provider name for a model's api_name (PR-1930b).
+
+    The on-device model has no catalogue line, so it is named directly; every
+    other model resolves to its provider through the catalogue.
+    """
+    if api_name == LOCAL_MODEL_API_NAME:
+        return "Local"
+    if not api_name:
+        return None
+    return provider_name_for(api_name)
+
+
+def _model_needs_provider_key(api_name: Optional[str]) -> bool:
+    """True when a turn on this model must have an unlocked provider key.
+
+    False for the on-device model: it runs locally and needs no key, so the
+    locked-store refusal must not fire for it.
+    """
+    mapping = provider_for_profile(_model_provider_name(api_name))
+    return bool(mapping.env_vars)
+
+
+def _model_base_url(api_name: Optional[str]) -> Optional[str]:
+    """The OpenAI-compatible base URL a custom route needs, or None.
+
+    The on-device model points at the Ollama endpoint; the backend writes the
+    same URL into the profile at provision time.
+    """
+    if api_name == LOCAL_MODEL_API_NAME:
+        return openai_base_url()
+    return None
 
 
 class ChatNode(Node):
@@ -710,6 +746,9 @@ class ChatNode(Node):
         description: str,
         timeout: Optional[int] = None,
         goal_handle=None,
+        model: Optional[str] = None,
+        provider: Optional[str] = None,
+        base_url: Optional[str] = None,
     ) -> str:
         """Run one hermes turn and return speakable text. Never raises.
 
@@ -742,7 +781,11 @@ class ChatNode(Node):
                     or not hermes_agent_client.is_warm_daemon_active()
                 ):
                     hermes_agent_client.ensure_profile(
-                        personality_id, soul_text=description
+                        personality_id,
+                        soul_text=description,
+                        model=model,
+                        provider=provider,
+                        base_url=base_url,
                     )
             return hermes_agent_client.run_turn(
                 text=text,
@@ -791,6 +834,9 @@ class ChatNode(Node):
         personality_id: Optional[str],
         description: str,
         goal_handle=None,
+        model: Optional[str] = None,
+        provider: Optional[str] = None,
+        base_url: Optional[str] = None,
     ):
         """Yield daemon deltas, retrying through the non-streaming path on error."""
         timeout = self._hermes_timeout()
@@ -806,7 +852,11 @@ class ChatNode(Node):
                         or not hermes_agent_client.is_warm_daemon_active()
                     ):
                         hermes_agent_client.ensure_profile(
-                            personality_id, soul_text=description
+                            personality_id,
+                            soul_text=description,
+                            model=model,
+                            provider=provider,
+                            base_url=base_url,
                         )
                 for delta in hermes_agent_client.stream_turn(
                     text=text,
@@ -857,6 +907,9 @@ class ChatNode(Node):
                 description=description,
                 timeout=timeout,
                 goal_handle=goal_handle,
+                model=model,
+                provider=provider,
+                base_url=base_url,
             )
             if emitted and reply.startswith(emitted):
                 reply = reply[len(emitted) :]
@@ -949,9 +1002,14 @@ class ChatNode(Node):
             getattr(personality, "assistant_model", None), "api_name", None
         )
         local_model = api_name == LOCAL_MODEL_API_NAME
-        # A cloud turn needs the unlocked store. The on-device model does not:
-        # it has no provider key and still answers while the store is locked.
-        if not local_model and self._key_store_mode() != MODE_UNLOCKED:
+        model_provider_name = _model_provider_name(api_name)
+        # Only a model whose provider needs a key is gated by the store. A
+        # cloud model does; the on-device model does not, and still answers
+        # while the store is locked.
+        if (
+            _model_needs_provider_key(api_name)
+            and self._key_store_mode() != MODE_UNLOCKED
+        ):
             # Smart and Direct both stop here. The sentence is the personality
             # speaking: the assistant plays it with this personality's gender
             # and language on local Supertone. The goal succeeds.
@@ -970,16 +1028,10 @@ class ChatNode(Node):
             return result
 
         try:
-            if local_model:
-                system_prompt = direct_system_prompt(personality.description)
-                if generate_code:
-                    system_prompt = CODE_DESCRIPTION_PREFIX + system_prompt
-                system_prompt = plan.for_direct(system_prompt)
-                self.get_logger().info(
-                    f"local model chat={chat_id} model={LOCAL_MODEL_API_NAME}"
-                )
-                tokens = self._iter_local_tokens(chat_id, content, system_prompt)
-            elif is_smart:
+            if is_smart:
+                # The channel decides Hermes, the model decides what Hermes
+                # runs. Smart + the on-device model therefore still goes
+                # through Hermes, never through the direct local token loop.
                 if goal_handle.is_cancel_requested:
                     goal_handle.canceled()
                     return Chat.Result()
@@ -988,8 +1040,20 @@ class ChatNode(Node):
                     chat_id=chat_id,
                     personality_id=getattr(personality, "personality_id", None),
                     description=description,
+                    model=api_name,
+                    provider=model_provider_name,
+                    base_url=_model_base_url(api_name),
                     goal_handle=goal_handle,
                 )
+            elif local_model:
+                system_prompt = direct_system_prompt(personality.description)
+                if generate_code:
+                    system_prompt = CODE_DESCRIPTION_PREFIX + system_prompt
+                system_prompt = plan.for_direct(system_prompt)
+                self.get_logger().info(
+                    f"local model chat={chat_id} model={LOCAL_MODEL_API_NAME}"
+                )
+                tokens = self._iter_local_tokens(chat_id, content, system_prompt)
             else:
                 # Pull recent message history for context
                 with self.voice_assistant_client_lock:

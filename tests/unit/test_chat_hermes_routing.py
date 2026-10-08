@@ -1893,3 +1893,138 @@ def test_direct_turn_logs_the_store_key_source_and_does_not_print_the_secret(
     assert store_secret not in logged
     assert env_secret not in logged
     assert result.text == "pong"
+
+
+# ---------------------------------------------------------------------------
+# PR-1930b: smart + the on-device model runs through Hermes; the locked-store
+# refusal only fires for a model whose provider needs a key.
+# ---------------------------------------------------------------------------
+
+
+def _local_smart_personality():
+    personality = MagicMock()
+    personality.message_history = 5
+    personality.description = "Du bist der lokale pib."
+    personality.personality_id = "pers-local"
+    personality.assistant_model.api_name = "qwen-fast"
+    personality.assistant_model.has_image_support = False
+    personality.tool_calling = True
+    personality.channel = "smart"
+    personality.effective_channel = "smart"
+    return personality
+
+
+def test_smart_local_model_reaches_hermes_even_when_the_store_is_locked(
+    chat_module, chat_node
+):
+    """Decision 4: smart + on-device goes through Hermes, no key needed."""
+    Chat = chat_module.Chat
+    personality = _local_smart_personality()
+    chat_node._key_store_mode = lambda: "degraded"
+
+    goal_handle = MagicMock()
+    goal_handle.is_cancel_requested = False
+    goal_handle.request = Chat.Goal()
+    goal_handle.request.chat_id = "chat-smart-local"
+    goal_handle.request.text = "Hi"
+    goal_handle.request.generate_code = False
+
+    with (
+        patch.object(
+            chat_module.voice_assistant_client,
+            "get_personality_from_chat",
+            return_value=(True, personality),
+        ),
+        patch.object(
+            chat_node, "_stream_hermes_turn", return_value=["Vom Agent."]
+        ) as hermes_stream,
+        patch.object(chat_node, "_iter_local_tokens") as local_tokens,
+        patch.object(
+            chat_node,
+            "_stream_chunks_to_goal",
+            return_value=(None, None, "Vom Agent."),
+        ),
+    ):
+        result = drive_like_rclpy(chat_node.chat(goal_handle))
+
+    local_tokens.assert_not_called()
+    hermes_stream.assert_called_once()
+    kwargs = hermes_stream.call_args.kwargs
+    assert kwargs["model"] == "qwen-fast"
+    assert kwargs["provider"] == "Local"
+    assert kwargs["base_url"].endswith(":11434/v1")
+    goal_handle.succeed.assert_called_once()
+    goal_handle.abort.assert_not_called()
+    assert result.text == "Vom Agent."
+
+
+def test_direct_local_model_still_uses_the_local_token_loop(chat_module, chat_node):
+    """Decision 4: direct + on-device keeps the existing local token path."""
+    Chat = chat_module.Chat
+    personality = _local_smart_personality()
+    personality.channel = "direct"
+    personality.effective_channel = "direct"
+    chat_node._key_store_mode = lambda: "degraded"
+
+    goal_handle = MagicMock()
+    goal_handle.is_cancel_requested = False
+    goal_handle.request = Chat.Goal()
+    goal_handle.request.chat_id = "chat-direct-local"
+    goal_handle.request.text = "Hi"
+    goal_handle.request.generate_code = False
+
+    with (
+        patch.object(
+            chat_module.voice_assistant_client,
+            "get_personality_from_chat",
+            return_value=(True, personality),
+        ),
+        patch.object(
+            chat_node, "_iter_local_tokens", return_value=iter(["Lokal."])
+        ) as local_tokens,
+        patch.object(chat_node, "_stream_hermes_turn") as hermes_stream,
+        patch.object(
+            chat_node,
+            "_stream_chunks_to_goal",
+            return_value=(None, None, "Lokal."),
+        ),
+    ):
+        result = drive_like_rclpy(chat_node.chat(goal_handle))
+
+    hermes_stream.assert_not_called()
+    local_tokens.assert_called_once()
+    goal_handle.succeed.assert_called_once()
+    assert result.text == "Lokal."
+
+
+def test_smart_cloud_model_is_refused_while_the_store_is_locked(chat_module, chat_node):
+    """The refusal gate is key-driven: a model whose provider needs a key stops."""
+    from voice_assistant.degraded_chat import refusal_sentence
+
+    Chat = chat_module.Chat
+    personality = _local_smart_personality()
+    personality.assistant_model.api_name = "gpt-6"
+    chat_node._key_store_mode = lambda: "degraded"
+
+    goal_handle = MagicMock()
+    goal_handle.is_cancel_requested = False
+    goal_handle.request = Chat.Goal()
+    goal_handle.request.chat_id = "chat-smart-cloud"
+    goal_handle.request.text = "Hi"
+    goal_handle.request.generate_code = False
+
+    with (
+        patch.object(
+            chat_module.voice_assistant_client,
+            "get_personality_from_chat",
+            return_value=(True, personality),
+        ),
+        patch.object(chat_node, "_stream_hermes_turn") as hermes_stream,
+        patch.object(chat_node, "_iter_local_tokens") as local_tokens,
+    ):
+        result = drive_like_rclpy(chat_node.chat(goal_handle))
+
+    hermes_stream.assert_not_called()
+    local_tokens.assert_not_called()
+    goal_handle.succeed.assert_called_once()
+    assert result.text == refusal_sentence("smart")

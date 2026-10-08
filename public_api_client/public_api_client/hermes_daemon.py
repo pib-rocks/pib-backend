@@ -110,7 +110,7 @@ class _CachedAgent:
     def __init__(
         self,
         agent,
-        settings: tuple[Optional[str], Optional[str], int],
+        settings: tuple,
         key_token: str,
     ):
         self.agent = agent
@@ -125,17 +125,20 @@ _GEMINI_KEY_NAMES = ("GOOGLE_API_KEY", "GEMINI_API_KEY")
 
 
 @contextlib.contextmanager
-def _gemini_key_in_environment(key: str):
-    """Expose the store key while Hermes builds its client, then restore.
+def _provider_key_in_environment(env_names: tuple[str, ...], key: str):
+    """Expose the store key under this provider's names while Hermes builds.
 
-    Hermes reads these names from the process environment at construction
-    and keeps the value on the client. Restoring the previous environment
-    means a Direct turn does not observe this assignment. The secret is
-    not logged.
+    Hermes reads these names from the process environment when it constructs
+    its client and keeps the value on the client. Restoring the previous
+    environment means a Direct turn does not observe this assignment. The
+    secret is not logged.
     """
-    previous = {name: os.environ.get(name) for name in _GEMINI_KEY_NAMES}
+    if not env_names:
+        yield
+        return
+    previous = {name: os.environ.get(name) for name in env_names}
     try:
-        for name in _GEMINI_KEY_NAMES:
+        for name in env_names:
             os.environ[name] = key
         yield
     finally:
@@ -144,6 +147,13 @@ def _gemini_key_in_environment(key: str):
                 os.environ.pop(name, None)
             else:
                 os.environ[name] = value
+
+
+@contextlib.contextmanager
+def _gemini_key_in_environment(key: str):
+    """Back-compat wrapper: the Gemini key under its two names."""
+    with _provider_key_in_environment(_GEMINI_KEY_NAMES, key):
+        yield
 
 
 def _missing_provider_key(exc: BaseException) -> bool:
@@ -257,18 +267,34 @@ def ensure_profile_home(
     personality_id: str,
     personality_name: Optional[str] = None,
     soul_text: Optional[str] = None,
+    model: Optional[str] = None,
+    provider: Optional[str] = None,
+    base_url: Optional[str] = None,
 ) -> dict:
-    """Create or repair one complete Hermes home with the canonical factory."""
+    """Create or repair one complete Hermes home with the canonical factory.
+
+    ``model``/``provider``/``base_url`` are the personality's registry values
+    (``provider`` is the registry name, ``base_url`` its endpoint). They are
+    written into the profile's config.yaml so the smart chat runs the model the
+    personality is set to. Passing none keeps whatever the profile already has.
+    """
     from pib_hermes_config import (
         align_profile_ownership,
         build_default_soul_text,
         profile_dir_for,
         profile_name_for,
+        provider_for_profile,
     )
     from public_api_client.hermes_agent_client import _ensure_mcp_servers_pib
 
     if not isinstance(personality_id, str) or not personality_id:
         raise ValueError("personality_id must be a non-empty string")
+
+    mapping = (
+        provider_for_profile(provider, base_url)
+        if isinstance(provider, str) and provider.strip()
+        else None
+    )
 
     mode = os.environ.get(PROFILE_FACTORY_ENV, DEFAULT_PROFILE_FACTORY_MODE).lower()
     if mode not in {"require", "filesystem"}:
@@ -370,7 +396,13 @@ def ensure_profile_home(
     soul_path = os.path.join(profile_dir, "SOUL.md")
     with open(soul_path, "w", encoding="utf-8") as fh:
         fh.write(soul)
-    _ensure_mcp_servers_pib(profile_dir)
+    _ensure_mcp_servers_pib(
+        profile_dir,
+        model=model,
+        provider=mapping.provider if mapping else None,
+        base_url=mapping.base_url if mapping else None,
+        env_vars=mapping.env_vars if mapping else (),
+    )
     align_profile_ownership(profile_dir)
     os.chmod(profile_dir, 0o700)
     os.chmod(soul_path, 0o644)
@@ -562,19 +594,26 @@ def _agent_for_chat(
     toolsets: Optional[str],
     max_turns: int,
     agent_cls,
-    provider_key: str,
+    provider_key: Optional[str],
 ):
-    """Return the sole cached agent for a chat, evicting least-recently-used chats."""
-    from public_api_client.hermes_agent_client import DEFAULT_HERMES_PROVIDER
+    """Return the sole cached agent for a chat, evicting least-recently-used chats.
 
-    settings = (enabled_toolsets, toolsets, max_turns)
+    The model, provider and base URL come from the personality's config.yaml
+    (written by the backend at provision time), so a turn runs the model the
+    personality is set to. They are part of the cache key, so changing the
+    model rebuilds the agent instead of reusing the pinned one.
+    """
+    from public_api_client.hermes_agent_client import profile_hermes_settings
+
+    model, provider, base_url, env_vars = profile_hermes_settings()
+    settings = (enabled_toolsets, toolsets, max_turns, model, provider, base_url)
     key = (_current_home_key(), chat_id)
     with _agent_cache_lock:
         cached = _agent_cache.get(key)
         if (
             cached is not None
             and cached.settings == settings
-            and cached.key_token == provider_key
+            and cached.key_token == (provider_key or "")
         ):
             _agent_cache.move_to_end(key)
             return cached
@@ -583,14 +622,20 @@ def _agent_for_chat(
             _close_agent(cached.agent)
 
         construction_started = time.monotonic()
-        # provider is pinned so Hermes does not auto-select another one.
         # The key is in the environment only for this constructor: that is
         # when Hermes copies it onto the client. api_key is the same value,
-        # for a constructor that accepts it directly.
-        with _gemini_key_in_environment(provider_key):
+        # for a constructor that accepts it directly. A key-free route (the
+        # on-device model) is built without either.
+        key_scope = (
+            _provider_key_in_environment(env_vars, provider_key)
+            if provider_key and env_vars
+            else contextlib.nullcontext()
+        )
+        with key_scope:
             agent = agent_cls(
-                model=IN_PROCESS_MODEL,
-                provider=DEFAULT_HERMES_PROVIDER,
+                model=model,
+                provider=provider,
+                base_url=base_url,
                 api_key=provider_key,
                 session_db=_shared_session_db(),
                 session_id=session_id_for_chat(chat_id),
@@ -607,7 +652,7 @@ def _agent_for_chat(
             (time.monotonic() - construction_started) * 1000.0,
             _registered_mcp_tool_count(),
         )
-        cached = _CachedAgent(agent, settings, provider_key)
+        cached = _CachedAgent(agent, settings, provider_key or "")
         _agent_cache[key] = cached
 
         while len(_agent_cache) > DEFAULT_AGENT_CACHE_SIZE:
@@ -874,15 +919,20 @@ def _run_turn_in_home(
                 reply = "".join(produced).strip()
         else:
             captured = io.StringIO()
+            from public_api_client.hermes_agent_client import (
+                profile_hermes_settings,
+            )
+
+            _model, _provider, _base_url, key_env_vars = profile_hermes_settings()
             key_scope = (
-                _gemini_key_in_environment(provider_key)
-                if provider_key
+                _provider_key_in_environment(key_env_vars, provider_key)
+                if provider_key and key_env_vars
                 else contextlib.nullcontext()
             )
             with _stdout_capture_lock, contextlib.redirect_stdout(captured), key_scope:
                 returned = run_agent_main(
                     query=text,
-                    model=IN_PROCESS_MODEL,
+                    model=_model,
                     enabled_toolsets=effective_enabled_toolsets,
                     disabled_toolsets=effective_toolsets,
                     max_turns=effective_max_turns,
@@ -929,28 +979,18 @@ def run_turn_in_process(
     enabled_toolsets: Optional[str] = None,
 ) -> str:
     """Execute a turn inside the personality's context-local Hermes home."""
-    from public_api_client.hermes_agent_client import provider_key_for_turn
-
-    try:
-        provider_key = provider_key_for_turn()
-    except Exception as exc:
-        if not _missing_provider_key(exc):
-            raise
-        # Drop agents built with a key the store will no longer give out.
-        clear_agent_cache()
-        raise
-
     scope = contextlib.nullcontext()
     profile_dir = None
     if personality_id:
         from pib_hermes_config import profile_dir_for
-        from public_api_client.hermes_agent_client import ensure_profile
 
         profile_dir = profile_dir_for(personality_id)
         scope = hermes_home_scope(profile_dir)
 
     with scope:
         if personality_id:
+            from public_api_client.hermes_agent_client import ensure_profile
+
             profile_dir = ensure_profile(personality_id)
             logging.info(
                 "HERMES_TURN_HOME personality=%s home=%s memory_dir=%s session_db=%s",
@@ -959,6 +999,20 @@ def run_turn_in_process(
                 os.path.join(profile_dir, "memories"),
                 os.path.join(profile_dir, "state.db"),
             )
+
+        # Resolve the key inside the profile scope: the profile's config.yaml
+        # names the model and provider the backend wrote for this personality.
+        from public_api_client.hermes_agent_client import provider_key_for_turn
+
+        try:
+            provider_key = provider_key_for_turn()
+        except Exception as exc:
+            if not _missing_provider_key(exc):
+                raise
+            # Drop agents built with a key the store will no longer give out.
+            clear_agent_cache()
+            raise
+
         return _run_turn_in_home(
             text=text,
             chat_id=chat_id,
@@ -968,7 +1022,7 @@ def run_turn_in_process(
             timeout=timeout,
             stream_callback=stream_callback,
             enabled_toolsets=enabled_toolsets,
-            provider_key=provider_key,
+            provider_key=provider_key or "",
         )
 
 
@@ -1065,6 +1119,9 @@ class HermesDaemonHandler(BaseHTTPRequestHandler):
             personality_id = data.get("personality_id")
             personality_name = data.get("personality_name")
             soul_text = data.get("soul_text")
+            model = data.get("model")
+            provider = data.get("provider")
+            endpoint_base = data.get("endpoint_base")
             if not isinstance(personality_id, str) or not personality_id:
                 self._send_json(
                     400,
@@ -1082,11 +1139,24 @@ class HermesDaemonHandler(BaseHTTPRequestHandler):
                     400, {"ok": False, "error": "soul_text must be a string"}
                 )
                 return
+            for value, field in (
+                (model, "model"),
+                (provider, "provider"),
+                (endpoint_base, "endpoint_base"),
+            ):
+                if value is not None and not isinstance(value, str):
+                    self._send_json(
+                        400, {"ok": False, "error": f"{field} must be a string"}
+                    )
+                    return
             try:
                 result = ensure_profile_home(
                     personality_id,
                     personality_name=personality_name,
                     soul_text=soul_text,
+                    model=model,
+                    provider=provider,
+                    base_url=endpoint_base,
                 )
             except Exception as exc:
                 logging.exception("hermes-daemon /profile failed: %s", exc)

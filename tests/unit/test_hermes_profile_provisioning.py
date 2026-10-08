@@ -93,6 +93,17 @@ def _assert_pinned_gemini_model(cfg):
     assert cfg["provider"] == DEFAULT_HERMES_PROVIDER
 
 
+def _assert_existing_model_is_kept(cfg, model, provider=None):
+    """A profile that already names a model is not reset when none is supplied.
+
+    Only the backend supplies the model now (PR-1930b); the chat-time repair
+    path and a no-argument ensure_profile must leave the profile as it is.
+    """
+    assert cfg["model"] == model
+    if provider is not None:
+        assert cfg["provider"] == provider
+
+
 def test_ensure_profile_creates_profile_with_canonical_factory(
     tmp_path, monkeypatch, canonical_profile_factory
 ):
@@ -214,7 +225,9 @@ def test_ensure_profile_copies_base_credentials_with_factory(
     with open(os.path.join(pdir, ".env"), encoding="utf-8") as fh:
         assert fh.read() == BASE_ENV
     cfg = _load_profile_config(pdir)
-    _assert_pinned_gemini_model(cfg)
+    # The base install's operator model is kept: no model was supplied, so the
+    # profile is not reset to the pinned default (PR-1930b).
+    _assert_existing_model_is_kept(cfg, "anthropic/claude-opus-5")
     _assert_mcp_servers_pib(cfg)
 
 
@@ -370,13 +383,15 @@ def test_ensure_profile_seeds_mcp_servers_pib_on_fresh_profile(
 
     cfg = _load_profile_config(pdir)
     _assert_mcp_servers_pib(cfg)
-    _assert_pinned_gemini_model(cfg)
+    # The profile keeps the base install's model; the pinned default is only
+    # written for a profile that names none.
+    _assert_existing_model_is_kept(cfg, "anthropic/claude-opus-5")
 
 
 def test_ensure_profile_seeds_mcp_servers_pib_into_existing_config(
     tmp_path, monkeypatch, sandboxed_hermes_home
 ):
-    """An existing profile config.yaml still receives mcp_servers.pib and the pinned model."""
+    """An existing profile config.yaml still receives mcp_servers.pib."""
     _base_install_with_credentials(sandboxed_hermes_home)
     _absent_binary(tmp_path, monkeypatch)
     pdir = profile_dir_for("p-9")
@@ -387,7 +402,7 @@ def test_ensure_profile_seeds_mcp_servers_pib_into_existing_config(
     ensure_profile("p-9", soul_text="Du bist pib.")
 
     cfg = _load_profile_config(pdir)
-    _assert_pinned_gemini_model(cfg)
+    _assert_existing_model_is_kept(cfg, "custom/operator-model")
     _assert_mcp_servers_pib(cfg)
 
 
@@ -420,7 +435,7 @@ def test_ensure_profile_keeps_an_existing_mcp_servers_pib_entry(
     assert entry["command"] == custom["command"]
     assert entry["args"] == custom["args"]
     assert entry["env"] == PIB_MCP_SERVER["env"]
-    _assert_pinned_gemini_model(_load_profile_config(pdir))
+    assert _load_profile_config(pdir)["model"] == "custom/operator-model"
 
 
 def test_ensure_profile_adds_the_missing_env_to_a_seeded_mcp_servers_pib_entry(
@@ -478,10 +493,14 @@ def test_ensure_profile_never_overwrites_an_operator_set_mcp_env_value(
     assert env["PIB_MCP_ROSBRIDGE_URL"] == defaults["PIB_MCP_ROSBRIDGE_URL"]
 
 
-def test_ensure_profile_pins_gemini_model_even_when_already_configured(
+def test_ensure_profile_keeps_an_existing_model_and_provider(
     tmp_path, monkeypatch, sandboxed_hermes_home
 ):
-    """Model/provider are permanently pinned even if mcp_servers.pib already exists."""
+    """A configured model/provider is not reset when no model is supplied.
+
+    The backend supplies the personality's model at provision time; a repair
+    call must not pin the profile back to Gemini Flash (PR-1930b).
+    """
     _base_install_with_credentials(sandboxed_hermes_home)
     _absent_binary(tmp_path, monkeypatch)
     pdir = profile_dir_for("p-9")
@@ -499,5 +518,5 @@ def test_ensure_profile_pins_gemini_model_even_when_already_configured(
     ensure_profile("p-9", soul_text="Du bist pib.")
 
     cfg = _load_profile_config(pdir)
-    _assert_pinned_gemini_model(cfg)
+    _assert_existing_model_is_kept(cfg, "anthropic/claude-opus-5", "openrouter")
     _assert_mcp_servers_pib(cfg)

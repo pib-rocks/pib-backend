@@ -526,3 +526,115 @@ def test_client_drops_a_secret_the_locked_store_must_not_return(caplog, capsys):
     )
     assert state == {"mode": "degraded", "secret": None}
     assert STORE_SECRET not in _visible(caplog, capsys)
+
+
+# --- PR-1930b: the key store is addressed by the personality's model --------
+
+
+def _install_key_store(monkeypatch, read) -> None:
+    """Provide a key_store_client module without importing the real package.
+
+    ``test_chat_hermes_routing`` installs a bare ``pib_api_client`` stub into
+    ``sys.modules``; importing the real subpackage afterwards fails depending on
+    test order. Injecting the module keeps these tests order-independent.
+    """
+    import sys
+    import types
+
+    module = types.ModuleType("pib_api_client.key_store_client")
+    module.read_provider_key = read
+    package = types.ModuleType("pib_api_client")
+    package.__path__ = []
+    package.key_store_client = module
+    monkeypatch.setitem(sys.modules, "pib_api_client", package)
+    monkeypatch.setitem(sys.modules, "pib_api_client.key_store_client", module)
+
+
+def test_store_read_uses_the_model_api_name(monkeypatch):
+    """The store key is read for the personality's model, not a pinned one."""
+    seen = []
+
+    def fake_read(api_name, *args, **kwargs):
+        seen.append(api_name)
+        return {"mode": "unlocked", "secret": "k"}
+
+    _install_key_store(monkeypatch, fake_read)
+
+    state = direct_tool_loop._fetch_store_key("openai", "gpt-6")
+    assert state == {"mode": "unlocked", "secret": "k"}
+    assert seen == ["gpt-6"]
+
+
+def test_store_read_without_an_api_name_uses_the_pinned_model(monkeypatch):
+    seen = []
+
+    def fake_read(api_name, *args, **kwargs):
+        seen.append(api_name)
+        return {"mode": "unlocked", "secret": "k"}
+
+    _install_key_store(monkeypatch, fake_read)
+
+    direct_tool_loop._fetch_store_key("gemini")
+    assert seen == [PINNED_MODEL]
+
+
+def test_store_read_yields_no_secret_for_a_keyless_provider():
+    assert direct_tool_loop._fetch_store_key("local", "qwen-fast") == {
+        "mode": "unlocked",
+        "secret": None,
+    }
+
+
+@pytest.mark.parametrize(
+    "provider,env_name",
+    [
+        ("gemini", "GEMINI_API_KEY"),
+        ("openai", "OPENAI_API_KEY"),
+        ("anthropic", "ANTHROPIC_API_KEY"),
+        ("pib-cloud", "PIB_CLOUD_API_KEY"),
+    ],
+)
+def test_environment_key_reads_only_this_providers_variable(
+    monkeypatch, provider, env_name
+):
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("PIB_CLOUD_API_KEY", raising=False)
+    monkeypatch.setenv(env_name, "env-secret")
+
+    assert direct_tool_loop.environment_key(provider) == "env-secret"
+
+
+def test_environment_key_is_empty_for_the_keyless_local_model(monkeypatch):
+    monkeypatch.setenv("GOOGLE_API_KEY", "env-secret")
+    assert direct_tool_loop.environment_key("local") == ""
+
+
+def test_missing_key_names_the_personalitys_provider(monkeypatch):
+    def fetch(provider, api_name=None):
+        return {"mode": "unlocked", "secret": None}
+
+    monkeypatch.setattr(direct_tool_loop, "_fetch_store_key", fetch)
+    with pytest.raises(DirectToolLoopError) as caught:
+        direct_tool_loop.resolve_hermes_provider_key("openai", api_name="gpt-6")
+
+    assert str(caught.value) == "No keys are available for provider openai."
+
+
+def test_hermes_key_reads_the_store_for_the_personalitys_model(monkeypatch):
+    seen = []
+
+    def fake_read(api_name, *args, **kwargs):
+        seen.append(api_name)
+        return {"mode": "unlocked", "secret": STORE_SECRET}
+
+    _install_key_store(monkeypatch, fake_read)
+
+    key, source = direct_tool_loop.resolve_hermes_provider_key(
+        "openai", api_name="gpt-6"
+    )
+    assert key == STORE_SECRET
+    assert source == "key-store"
+    assert seen == ["gpt-6"]

@@ -77,7 +77,11 @@ def test_ensure_profile_seeds_speed_defaults_on_fresh_profile(
 def test_ensure_profile_seeds_speed_defaults_into_existing_config(
     tmp_path, monkeypatch, sandboxed_hermes_home
 ):
-    """Existing profile config.yaml is repaired with speed defaults on ensure_profile."""
+    """Existing profile config.yaml is repaired with speed defaults on ensure_profile.
+
+    The model/provider are not reset when none is supplied: the backend owns
+    them now (PR-1930b).
+    """
     (sandboxed_hermes_home / "config.yaml").write_text(
         "model: anthropic/claude-opus-5\n", encoding="utf-8"
     )
@@ -90,15 +94,20 @@ def test_ensure_profile_seeds_speed_defaults_into_existing_config(
     ensure_profile("speed-existing", soul_text="Du bist pib.")
 
     cfg = _load_profile_config(pdir)
-    assert cfg["model"] == DEFAULT_HERMES_MODEL
-    assert cfg["provider"] == DEFAULT_HERMES_PROVIDER
+    assert cfg["model"] == "custom/operator-model"
+    assert cfg["provider"] == "openrouter"
     _assert_speed_defaults(cfg)
 
 
-def test_ensure_profile_overwrites_non_speed_reasoning_settings(
+def test_ensure_profile_keeps_existing_non_speed_reasoning_settings(
     tmp_path, monkeypatch, sandboxed_hermes_home
 ):
-    """Testfall 1/2: reasoning_effort and max_tokens are permanently pinned low/1024."""
+    """Decision 5: reasoning_effort/max_tokens/temperature are only seeded when
+    unset. An operator's or a model's own values are not overwritten.
+
+    This replaces the earlier assertion that the pinned speed values were forced
+    onto every profile; that pin is exactly what PR-1930b removes.
+    """
     (sandboxed_hermes_home / "config.yaml").write_text(
         "model: gemini-3.8-flash\n", encoding="utf-8"
     )
@@ -121,4 +130,8 @@ def test_ensure_profile_overwrites_non_speed_reasoning_settings(
         ensure_profile("speed-pin", soul_text="Du bist pib.")
 
     cfg = _load_profile_config(pdir)
-    _assert_speed_defaults(cfg)
+    assert cfg["reasoning_effort"] == "high"
+    assert cfg["max_tokens"] == 8192
+    assert cfg["temperature"] == 1.0
+    assert cfg["model"] == DEFAULT_HERMES_MODEL
+    assert cfg["provider"] == DEFAULT_HERMES_PROVIDER

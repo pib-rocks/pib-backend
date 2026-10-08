@@ -111,6 +111,16 @@ def tools_for_turn(
 KEY_SOURCE_STORE = "key-store"
 KEY_SOURCE_ENVIRONMENT = "environment"
 
+#: Providers Hermes can key from the store, and the env var each reads. The
+#: list mirrors pib_hermes_config's provider mapping; the on-device model is
+#: absent on purpose, it needs no key.
+PROVIDER_KEY_ENV_VARS = {
+    "gemini": ("GOOGLE_API_KEY", "GEMINI_API_KEY"),
+    "openai": ("OPENAI_API_KEY",),
+    "anthropic": ("ANTHROPIC_API_KEY",),
+    "pib-cloud": ("PIB_CLOUD_API_KEY",),
+}
+
 
 def missing_key_message(provider: str) -> str:
     """Names the provider. The message never carries a secret."""
@@ -123,9 +133,11 @@ def environment_key(provider: str) -> str:
     A locked store may use these. An unlocked store does not, and another
     provider's variable is never read.
     """
-    if provider != PINNED_PROVIDER:
-        return ""
-    return os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY") or ""
+    for name in PROVIDER_KEY_ENV_VARS.get(provider, ()):
+        value = os.environ.get(name)
+        if value:
+            return value
+    return ""
 
 
 def gemini_api_key() -> str:
@@ -141,25 +153,28 @@ def _log_key_source(source: str, provider: str, channel: str = "direct") -> None
     logger.info("%s provider key source=%s provider=%s", channel, source, provider)
 
 
-def _fetch_store_key(provider: str) -> dict[str, Any]:
-    """The unlocked secret for this provider, or the mode with no secret.
+def _fetch_store_key(provider: str, api_name: Optional[str] = None) -> dict[str, Any]:
+    """The unlocked secret for this provider/model, or the mode with no secret.
 
-    A provider this loop does not call yields no secret, so another
-    provider's key cannot be selected by mistake.
+    The store is addressed by the model's api_name, so the caller passes the
+    model the personality is set to (``api_name``). A provider this loop does
+    not key, and an unknown model, yield no secret.
     """
-    if provider != PINNED_PROVIDER:
+    if provider not in PROVIDER_KEY_ENV_VARS:
         return {"mode": "unlocked", "secret": None}
+    name = api_name if isinstance(api_name, str) and api_name.strip() else PINNED_MODEL
     try:
         from pib_api_client.key_store_client import read_provider_key
     except Exception:
         return {"mode": "unavailable", "secret": None}
-    return read_provider_key(PINNED_MODEL)
+    return read_provider_key(name)
 
 
 def resolve_provider_key(
     provider: str,
     fetch: Optional[Callable[[str], Mapping[str, Any]]] = None,
     *,
+    api_name: Optional[str] = None,
     allow_environment: bool = True,
     log_channel: str = "direct",
 ) -> tuple[str, str]:
@@ -175,7 +190,7 @@ def resolve_provider_key(
         raise DirectToolLoopError("No keys are available for provider.")
     reader = fetch or _fetch_store_key
     try:
-        state = reader(provider)
+        state = reader(provider, api_name) if api_name else reader(provider)
     except Exception:
         state = {"mode": "unavailable", "secret": None}
     if not isinstance(state, dict):
@@ -199,15 +214,19 @@ def resolve_provider_key(
 def resolve_hermes_provider_key(
     provider: str = PINNED_PROVIDER,
     fetch: Optional[Callable[[str], Mapping[str, Any]]] = None,
+    *,
+    api_name: Optional[str] = None,
 ) -> tuple[str, str]:
     """Key for a Hermes turn. The store is the only source.
 
     The Direct helper above is the read. This caller refuses the environment
     fallback, so a locked store cannot select another provider's variable.
+    ``provider``/``api_name`` are the personality's model and provider.
     """
     return resolve_provider_key(
         provider,
         fetch,
+        api_name=api_name,
         allow_environment=False,
         log_channel="hermes",
     )

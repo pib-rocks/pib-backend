@@ -26,6 +26,7 @@ from pib_hermes_config import (
     PROFILE_PREFIX,
     align_profile_ownership,
     build_default_soul_text,
+    env_vars_for_provider,
     profile_dir_for,
     profile_name_for,
     profiles_dir,
@@ -90,6 +91,62 @@ DEFAULT_TEMPERATURE = 0.3
 PROBE_TIMEOUT_SECONDS = 5
 
 _UNSAFE = re.compile(r"[^A-Za-z0-9_-]")
+
+#: Top-level config.yaml key holding user-defined provider routes.
+PROVIDERS_CONFIG_KEY = "providers"
+
+
+def _current_hermes_home() -> str:
+    """The active Hermes home: the context-local override first, then env.
+
+    ``hermes_home_scope`` installs the personality's profile directory as a
+    context-local override while a turn runs, so reading it back gives the turn
+    the profile it belongs to. The override needs Hermes' own constants module;
+    without it (a plain voice container) this falls back to HERMES_HOME.
+    """
+    try:
+        from hermes_constants import get_hermes_home
+
+        return str(get_hermes_home())
+    except Exception:
+        return hermes_home()
+
+
+def _load_config_mapping(path: str) -> dict:
+    """Read a config.yaml into a mapping; an unreadable file is an empty one."""
+    if not os.path.isfile(path):
+        return {}
+    try:
+        with open(path, encoding="utf-8") as fh:
+            loaded = yaml.safe_load(fh) or {}
+    except (OSError, yaml.YAMLError):
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def profile_hermes_settings(
+    profile_dir: Optional[str] = None,
+) -> tuple[str, str, Optional[str], tuple[str, ...]]:
+    """The Hermes model/provider settings a profile's config.yaml declares.
+
+    Returns ``(model, provider, base_url, env_vars)``. The backend writes these
+    at provision time (see ``_ensure_mcp_servers_pib``); a turn reads them back
+    so it runs the personality's model instead of a pinned default. Missing
+    values fall back to the pinned Gemini defaults.
+    """
+    directory = profile_dir or _current_hermes_home()
+    cfg = _load_config_mapping(os.path.join(directory, CONFIG_FILENAME))
+    model = cfg.get("model") or DEFAULT_HERMES_MODEL
+    provider = cfg.get("provider") or DEFAULT_HERMES_PROVIDER
+    providers = cfg.get(PROVIDERS_CONFIG_KEY)
+    entry = providers.get(provider) if isinstance(providers, dict) else None
+    if not isinstance(entry, dict):
+        entry = {}
+    base_url = entry.get("base_url")
+    if not (isinstance(base_url, str) and base_url.strip()):
+        base_url = None
+    env_vars = env_vars_for_provider(provider, entry.get("key_env"))
+    return model, provider, base_url, env_vars
 
 
 def hermes_bin() -> str:
@@ -216,15 +273,32 @@ def _merge_missing_mcp_env(entry: dict) -> bool:
     return changed
 
 
-def _ensure_mcp_servers_pib(pdir: str) -> None:
-    """Pin Hermes model/provider/speed defaults and repair mcp_servers.pib.
+def _ensure_mcp_servers_pib(
+    pdir: str,
+    model: Optional[str] = None,
+    provider: Optional[str] = None,
+    base_url: Optional[str] = None,
+    env_vars: tuple[str, ...] = (),
+) -> None:
+    """Seed the personality's model/provider and repair mcp_servers.pib.
 
-    Always sets model/provider and high-speed defaults (reasoning_effort, max_tokens,
-    temperature) to the permanent Gemini Flash values. Runs even when config.yaml
-    already exists, so profiles created before auto-seeding still get pib_mcp_server
-    (and the pinned model/speed settings) on the next ensure_profile call. An
-    mcp_servers.pib entry that is already there keeps its command/args and only
-    gets the env keys it is missing.
+    The model and provider are the personality's own: the backend passes them
+    when it provisions or re-provisions a profile, instead of pinning every
+    profile to Gemini Flash (PR-1930b). When a caller does not pass them, an
+    existing value in config.yaml is kept and only a profile that has none gets
+    the pinned default — the chat-time repair path must not clobber what the
+    backend wrote.
+
+    A provider that is a user-defined route (Local, pib.Cloud, anything with a
+    ``base_url``) additionally gets a ``providers.<name>`` entry carrying its
+    ``base_url`` and, when it needs a key, its ``key_env``.
+
+    Speed defaults (reasoning_effort, max_tokens, temperature) are written only
+    when the key is absent, so an operator's or a model's own value survives.
+
+    Runs even when config.yaml already exists. An mcp_servers.pib entry that is
+    already there keeps its command/args and only gets the env keys it is
+    missing.
     """
     target = os.path.join(pdir, CONFIG_FILENAME)
     cfg = {}
@@ -244,23 +318,56 @@ def _ensure_mcp_servers_pib(pdir: str) -> None:
             return
 
     changed = False
-    if (
-        cfg.get("model") != DEFAULT_HERMES_MODEL
-        or cfg.get("provider") != DEFAULT_HERMES_PROVIDER
-    ):
-        cfg["model"] = DEFAULT_HERMES_MODEL
-        cfg["provider"] = DEFAULT_HERMES_PROVIDER
-        changed = True
 
-    if cfg.get("reasoning_effort") != DEFAULT_REASONING_EFFORT:
+    # The personality's model/provider win. A caller that did not supply one
+    # keeps the profile's existing pair; only a profile that has neither gets
+    # the pinned default. The chat-time repair path must not clobber what the
+    # backend already wrote.
+    instructed = bool(model or provider)
+    desired_model = model or cfg.get("model") or DEFAULT_HERMES_MODEL
+    desired_provider = provider or cfg.get("provider") or DEFAULT_HERMES_PROVIDER
+    if instructed or (not cfg.get("model") and not cfg.get("provider")):
+        if cfg.get("model") != desired_model:
+            cfg["model"] = desired_model
+            changed = True
+        if cfg.get("provider") != desired_provider:
+            cfg["provider"] = desired_provider
+            changed = True
+
+    # Decision 5: speed defaults are a starting point, not a per-model override.
+    if "reasoning_effort" not in cfg:
         cfg["reasoning_effort"] = DEFAULT_REASONING_EFFORT
         changed = True
-    if cfg.get("max_tokens") != DEFAULT_MAX_TOKENS:
+    if "max_tokens" not in cfg:
         cfg["max_tokens"] = DEFAULT_MAX_TOKENS
         changed = True
-    if cfg.get("temperature") != DEFAULT_TEMPERATURE:
+    if "temperature" not in cfg:
         cfg["temperature"] = DEFAULT_TEMPERATURE
         changed = True
+
+    # A user-defined route is declared under providers.<name>. Built-in
+    # providers (gemini/openai/anthropic) need no entry.
+    if base_url:
+        providers = cfg.get(PROVIDERS_CONFIG_KEY)
+        if not isinstance(providers, dict):
+            providers = {}
+            cfg[PROVIDERS_CONFIG_KEY] = providers
+            changed = True
+        entry = providers.get(desired_provider)
+        if not isinstance(entry, dict):
+            entry = {}
+            providers[desired_provider] = entry
+            changed = True
+        if entry.get("name") != desired_provider:
+            entry["name"] = desired_provider
+            changed = True
+        if entry.get("base_url") != base_url:
+            entry["base_url"] = base_url
+            changed = True
+        key_env = env_vars[0] if env_vars else None
+        if key_env and entry.get("key_env") != key_env:
+            entry["key_env"] = key_env
+            changed = True
 
     servers = cfg.get("mcp_servers")
     if not isinstance(servers, dict):
@@ -284,7 +391,9 @@ def _ensure_mcp_servers_pib(pdir: str) -> None:
         logging.warning("could not write profile config into %s: %s", target, exc)
         return
     logging.info(
-        "ensured hermes model/provider/speed defaults and mcp_servers.pib in %s",
+        "ensured hermes model=%s provider=%s and mcp_servers.pib in %s",
+        desired_model,
+        desired_provider,
         pdir,
     )
 
@@ -294,8 +403,16 @@ def ensure_profile(
     soul_text: str = "",
     timeout: int = 60,
     personality_name: Optional[str] = None,
+    model: Optional[str] = None,
+    provider: Optional[str] = None,
+    base_url: Optional[str] = None,
 ) -> str:
-    """Loud local repair path, executed only where Hermes is importable."""
+    """Loud local repair path, executed only where Hermes is importable.
+
+    ``model``/``provider``/``base_url`` are the personality's registry values.
+    The backend passes them; a chat-time repair leaves them None so it keeps the
+    model the backend already wrote.
+    """
     del timeout
     from public_api_client.hermes_daemon import ensure_profile_home
 
@@ -303,6 +420,9 @@ def ensure_profile(
         personality_id,
         personality_name=personality_name,
         soul_text=soul_text,
+        model=model,
+        provider=provider,
+        base_url=base_url,
     )
     return result["profile_dir"]
 
@@ -421,15 +541,21 @@ def _get_daemon_session():
         return _daemon_http_session
 
 
-def provider_key_for_turn() -> str:
-    """The configured provider's key, from the same store the Direct turn uses.
+def provider_key_for_turn() -> Optional[str]:
+    """The key for the current profile's provider, from the Flask key store.
 
-    A locked or empty store raises. The environment is not a fallback, and
-    the value is not logged.
+    The model and provider come from the profile's config.yaml, which the
+    backend writes at provision time. A provider that needs no key (the
+    on-device model) returns None instead of a key. A locked, empty or
+    mismatched store raises; the environment is not a fallback, and the value
+    is not logged.
     """
+    model, provider, _base_url, env_vars = profile_hermes_settings()
+    if not env_vars:
+        return None
     from voice_assistant.direct_tool_loop import resolve_hermes_provider_key
 
-    key, _source = resolve_hermes_provider_key(DEFAULT_HERMES_PROVIDER)
+    key, _source = resolve_hermes_provider_key(provider, api_name=model)
     return key
 
 
@@ -439,27 +565,29 @@ def _provider_key_was_refused(payload: object) -> bool:
     That message names the provider and carries no secret. A transport
     failure is a different case and may still use the subprocess path.
     """
-    try:
-        from voice_assistant.direct_tool_loop import missing_key_message
-    except ImportError:
-        return False
     if not isinstance(payload, dict):
         return False
-    return payload.get("error") == missing_key_message(DEFAULT_HERMES_PROVIDER)
+    error = payload.get("error")
+    if not isinstance(error, str):
+        return False
+    # The daemon names whichever provider it could not key, not a fixed one.
+    return error.startswith("No keys are available for provider")
 
 
-def _child_environment(provider_key: Optional[str]) -> Optional[dict]:
+def _child_environment(
+    provider_key: Optional[str], env_vars: tuple[str, ...] = ()
+) -> Optional[dict]:
     """Environment for one Hermes subprocess.
 
     None leaves the child with this process's environment. A key is placed
-    only in the child, under the names Hermes reads for Gemini, and is not
-    written to the profile.
+    only in the child, under the names Hermes reads for the provider, and is
+    not written to the profile.
     """
-    if not provider_key:
+    if not provider_key or not env_vars:
         return None
     env = os.environ.copy()
-    env["GOOGLE_API_KEY"] = provider_key
-    env["GEMINI_API_KEY"] = provider_key
+    for name in env_vars:
+        env[name] = provider_key
     return env
 
 
@@ -543,13 +671,11 @@ def _try_daemon_turn(
             payload = response.json()
         except ValueError:
             payload = None
+        error_text = payload.get("error") if isinstance(payload, dict) else None
         if _provider_key_was_refused(payload):
-            from voice_assistant.direct_tool_loop import (
-                DirectToolLoopError,
-                missing_key_message,
-            )
+            from voice_assistant.direct_tool_loop import DirectToolLoopError
 
-            raise DirectToolLoopError(missing_key_message(DEFAULT_HERMES_PROVIDER))
+            raise DirectToolLoopError(str(error_text))
         logging.warning(
             "hermes daemon returned %s (chat=%s); falling back to subprocess",
             response.status_code,
@@ -691,6 +817,7 @@ def run_turn_subprocess(
     if cli_toolsets is None and toolsets != DEFAULT_DISABLED_TOOLSETS:
         cli_toolsets = toolsets
     cmd = build_command(text, chat_id, personality_id, cli_toolsets)
+    _model, _provider, _base_url, env_vars = profile_hermes_settings()
     try:
         result = subprocess.run(
             cmd,
@@ -698,7 +825,7 @@ def run_turn_subprocess(
             text=True,
             timeout=timeout,
             check=False,
-            env=_child_environment(provider_key),
+            env=_child_environment(provider_key, env_vars),
         )
     except subprocess.TimeoutExpired:
         logging.warning("hermes turn timed out after %ss (chat=%s)", timeout, chat_id)
