@@ -39,9 +39,11 @@ HERMES_API_NAME = "hermes-agent"
 DEFAULT_TIMEOUT_SECONDS = int(os.environ.get("PIB_HERMES_TIMEOUT", "120"))
 # Voice turns use a narrow allowlist, with the existing blacklist retained as a
 # second isolation layer. Operators may tune both values without a rebuild.
-DEFAULT_ENABLED_TOOLSETS = os.environ.get(
-    "PIB_HERMES_ENABLED_TOOLSETS", "mcp-pib,vision"
-)
+# The MCP server is named by its bare `mcp_servers` key (`pib`): the `mcp-<server>`
+# alias is only registered after MCP discovery has run, so passing it here makes
+# Hermes print "Warning: Unknown toolsets: mcp-pib" on stdout, which lands in the
+# chat reply we hand back.
+DEFAULT_ENABLED_TOOLSETS = os.environ.get("PIB_HERMES_ENABLED_TOOLSETS", "pib,vision")
 DEFAULT_DISABLED_TOOLSETS = os.environ.get(
     "PIB_HERMES_DISABLED_TOOLSETS",
     "terminal,code_execution,file,memory,session_search",
@@ -170,14 +172,27 @@ def build_command(
     (<profiles_dir>/pib_<personality_id>/SOUL.md), selected via -p.
     Conversation memory comes from the named SESSION, selected via -c.
     Verified: -p and -c compose correctly (persona + memory together).
+
+    The `chat` subcommand carries the turn rather than the top-level -z oneshot
+    because only `chat` accepts `--create-if-missing`: a chat's FIRST turn has no
+    session yet, and `--continue <name>` alone exits 1 with "No session found
+    matching '<name>'". `-Q` keeps the stdout contract to the final response.
     """
     cmd = [hermes_bin()]
     if personality_id:
         cmd += ["-p", profile_name_for(personality_id)]
-    cmd += ["--continue", session_name_for(chat_id)]
+    cmd += [
+        "chat",
+        "-Q",
+        "--oneshot",
+        "-q",
+        text,
+        "--continue",
+        session_name_for(chat_id),
+        "--create-if-missing",
+    ]
     if toolsets:
         cmd += ["-t", toolsets]
-    cmd += ["-z", text]
     return cmd
 
 

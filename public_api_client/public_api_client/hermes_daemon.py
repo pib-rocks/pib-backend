@@ -742,6 +742,19 @@ def daemon_health_url() -> str:
     return daemon_base_url() + "/health"
 
 
+def in_process_available() -> bool:
+    """True when the Hermes agent can run inside THIS interpreter.
+
+    The in-process API needs Hermes' own venv site-packages for the running
+    Python. When none match, importing the agent source makes Hermes' bootstrap
+    re-exec this process under its managed Python -- which is fatal here, because
+    this process is the ROS ``chat`` node and its setuptools launcher cannot
+    resolve the ``voice-assistant`` distribution there. Callers fall back to the
+    CLI subprocess in that case.
+    """
+    return bool(venv_site_packages())
+
+
 def _run_turn_in_home(
     text: str,
     chat_id: str,
@@ -766,23 +779,6 @@ def _run_turn_in_home(
         run_turn_subprocess,
     )
 
-    ensure_hermes_source_on_path()
-
-    agent_module = None
-    for module_name in ("run_agent", "hermes.run_agent"):
-        try:
-            agent_module = importlib.import_module(module_name)
-            break
-        except ImportError as exc:
-            logging.info(
-                "run_agent import %s failed (%s); trying the next candidate",
-                module_name,
-                exc,
-            )
-            continue
-    agent_cls = getattr(agent_module, "AIAgent", None)
-    run_agent_main = getattr(agent_module, "main", None)
-
     effective_toolsets = DEFAULT_DISABLED_TOOLSETS if toolsets is None else toolsets
     effective_enabled_toolsets = enabled_toolsets or DEFAULT_ENABLED_TOOLSETS
     effective_max_turns = DEFAULT_MAX_TURNS if max_turns is None else max_turns
@@ -800,6 +796,38 @@ def _run_turn_in_home(
         if provider_key:
             kwargs["provider_key"] = provider_key
         return run_turn_subprocess(**kwargs)
+
+    # The in-process API runs the agent inside THIS interpreter, which only
+    # works when Hermes' own venv has site-packages for it. With none matching,
+    # importing the agent source lets Hermes' bootstrap re-exec this process
+    # under its managed Python. This process is the ROS `chat` node, whose
+    # setuptools launcher cannot resolve the `voice-assistant` distribution under
+    # that interpreter, so the node exits and every chat is lost until the
+    # container restarts. Run the supported CLI subprocess instead.
+    if not in_process_available():
+        logging.info(
+            "no Hermes venv site-packages match this interpreter; running the "
+            "turn as a CLI subprocess instead of in-process (chat=%s)",
+            chat_id,
+        )
+        return _subprocess_reply()
+
+    ensure_hermes_source_on_path()
+
+    agent_module = None
+    for module_name in ("run_agent", "hermes.run_agent"):
+        try:
+            agent_module = importlib.import_module(module_name)
+            break
+        except ImportError as exc:
+            logging.info(
+                "run_agent import %s failed (%s); trying the next candidate",
+                module_name,
+                exc,
+            )
+            continue
+    agent_cls = getattr(agent_module, "AIAgent", None)
+    run_agent_main = getattr(agent_module, "main", None)
 
     if agent_cls is None and run_agent_main is None:
         logging.info(
