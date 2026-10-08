@@ -208,6 +208,22 @@ def chat_module():
         sys.modules[name] = module
 
 
+@pytest.fixture(autouse=True)
+def in_process_hermes(monkeypatch):
+    """Declare the interpreter venv-compatible so the daemon runs the agent in-process.
+
+    ``run_turn_in_process`` imports the agent only when Hermes' own venv has
+    site-packages for THIS interpreter; with none matching it routes the turn to
+    the CLI subprocess instead, because importing the agent source there makes
+    Hermes' bootstrap re-exec the host process (the ROS ``chat`` node) and kills
+    it. See test_hermes_daemon.test_no_matching_hermes_venv_uses_the_cli_subprocess.
+    These tests stub ``run_agent`` in ``sys.modules`` and assert that route.
+    """
+    from public_api_client import hermes_daemon as hd
+
+    monkeypatch.setattr(hd, "in_process_available", lambda: True)
+
+
 @pytest.fixture
 def chat_node(chat_module):
     node = chat_module.ChatNode.__new__(chat_module.ChatNode)

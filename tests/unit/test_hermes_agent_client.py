@@ -49,9 +49,15 @@ def test_profile_name_is_derived_from_personality():
 def test_build_command_uses_oneshot_named_session_and_profile():
     cmd = build_command("hallo", "chat-1", personality_id="p-9")
     assert cmd[0].endswith("hermes")
-    assert "-p" in cmd and "pib_p-9" in cmd  # profile carries the SOUL.md
-    assert "-z" in cmd and "hallo" in cmd
+    # The `chat` subcommand carries the turn: only it accepts --create-if-missing.
+    assert cmd[1:3] == ["-p", "pib_p-9"]
+    assert "chat" in cmd
+    assert "-q" in cmd and "hallo" in cmd
+    assert "--oneshot" in cmd and "-Q" in cmd
     assert "--continue" in cmd and "pib_chat_chat-1" in cmd  # durable per-chat session
+    assert (
+        "--create-if-missing" in cmd
+    ), "a chat's first turn has no session to continue"
 
 
 def test_build_command_without_personality_omits_profile():
@@ -315,7 +321,9 @@ def test_voice_defaults_are_configurable_and_budget_defaults_to_four(monkeypatch
         importlib.reload(hac)
 
     assert hac.DEFAULT_MAX_TURNS == 4
-    assert set(hac.DEFAULT_ENABLED_TOOLSETS.split(",")) >= {"mcp-pib", "vision"}
+    # Bare `pib`, not `mcp-pib`: only the bare server name is registered before
+    # MCP discovery, and the alias makes Hermes warn on stdout.
+    assert set(hac.DEFAULT_ENABLED_TOOLSETS.split(",")) >= {"pib", "vision"}
     assert set(hac.DEFAULT_DISABLED_TOOLSETS.split(",")) >= {
         "terminal",
         "code_execution",

@@ -20,6 +20,7 @@ import pytest
 from public_api_client import hermes_daemon as hd
 
 _REAL_DISCOVER_MCP_TOOLS = hd._discover_mcp_tools
+_REAL_IN_PROCESS_AVAILABLE = hd.in_process_available
 
 
 @pytest.fixture(autouse=True)
@@ -42,6 +43,20 @@ def fake_hermes_home_override(monkeypatch, sandboxed_hermes_home):
     module.reset_hermes_home_override = current_home.reset
     monkeypatch.setitem(sys.modules, "hermes_constants", module)
     return current_home
+
+
+@pytest.fixture(autouse=True)
+def matching_hermes_venv(monkeypatch):
+    """Declare the interpreter venv-compatible so the in-process path is taken.
+
+    ``_run_turn_in_home`` runs the agent in-process only when Hermes' own venv has
+    site-packages for THIS interpreter; without one it deliberately uses the CLI
+    subprocess instead (see test_no_matching_hermes_venv_uses_the_cli_subprocess).
+    These tests stub ``run_agent`` in ``sys.modules`` and assert in-process
+    behaviour, so they state the venv as present. ``venv_site_packages`` itself
+    keeps its real implementation, so its own tests still exercise it.
+    """
+    monkeypatch.setattr(hd, "in_process_available", lambda: True)
 
 
 class _FakeSessionDB:
@@ -414,7 +429,7 @@ def test_client_uses_session_pooling_for_daemon(daemon_server, monkeypatch):
         replies["last"]["toolsets"]
         == "terminal,code_execution,file,memory,session_search"
     )
-    assert replies["last"]["enabled_toolsets"] == "mcp-pib,vision"
+    assert replies["last"]["enabled_toolsets"] == "pib,vision"
     assert replies["last"]["max_turns"] == 4
 
 
@@ -491,7 +506,11 @@ def test_empty_enabled_toolsets_falls_back_to_voice_default(monkeypatch):
         )
 
     assert created[0].kwargs["enabled_toolsets"] == DEFAULT_ENABLED_TOOLSETS.split(",")
-    assert "mcp-pib" in created[0].kwargs["enabled_toolsets"]
+    assert "pib" in created[0].kwargs["enabled_toolsets"], (
+        "the pib MCP server is named by its bare mcp_servers key: the mcp-<server> "
+        "alias only registers after MCP discovery, so passing it prints an "
+        "'Unknown toolsets' warning onto the reply"
+    )
 
 
 def test_cached_agent_is_built_with_the_shared_store_and_the_chat_session_id(
@@ -1152,7 +1171,7 @@ def test_run_turn_in_process_reads_reply_from_run_agent_stdout(tmp_path, monkeyp
     assert calls == {
         "query": "Wie geht es dir?",
         "model": hd.IN_PROCESS_MODEL,
-        "enabled_toolsets": "mcp-pib,vision",
+        "enabled_toolsets": "pib,vision",
         "disabled_toolsets": "terminal,code_execution,file,memory,session_search",
         "max_turns": 4,
     }
@@ -1191,7 +1210,7 @@ def test_run_turn_in_process_falls_back_when_stdout_has_no_final_response(monkey
         chat_id="chat-3",
         personality_id=None,
         toolsets="terminal,code_execution,file,memory,session_search",
-        enabled_toolsets="mcp-pib,vision",
+        enabled_toolsets="pib,vision",
         timeout=45,
         provider_key="fixture-hermes-key",
     )
@@ -1315,6 +1334,49 @@ def test_run_turn_in_process_prepares_the_hermes_source(monkeypatch):
         hd.run_turn_in_process("hi", "chat-mixed")
 
     assert prepared.called
+
+
+def test_in_process_available_follows_the_venv_match(monkeypatch):
+    """The predicate is exactly "Hermes' venv has site-packages for this Python"."""
+    monkeypatch.setattr(hd, "in_process_available", _REAL_IN_PROCESS_AVAILABLE)
+    monkeypatch.setattr(hd, "venv_site_packages", lambda *args, **kwargs: [])
+    assert hd.in_process_available() is False
+
+    monkeypatch.setattr(
+        hd, "venv_site_packages", lambda *args, **kwargs: ["/hermes/venv/site-packages"]
+    )
+    assert hd.in_process_available() is True
+
+
+def test_no_matching_hermes_venv_uses_the_cli_subprocess(monkeypatch):
+    """Without a Hermes venv for this interpreter the agent is never imported.
+
+    Importing the agent source under a mismatched interpreter makes Hermes'
+    bootstrap re-exec THIS process -- the ROS ``chat`` node -- with its managed
+    Python, where the node's setuptools launcher cannot resolve the
+    ``voice-assistant`` distribution, so the node exits and every chat is lost
+    until the container restarts. The CLI subprocess is the supported path there.
+    """
+    monkeypatch.setattr(hd, "in_process_available", lambda: False)
+    source_prepared = MagicMock()
+    monkeypatch.setattr(hd, "ensure_hermes_source_on_path", source_prepared)
+    subprocess_reply = MagicMock(return_value="  from-the-cli  ")
+    hd.clear_agent_cache()
+
+    agent_module = _fake_agent_module([])
+    with (
+        patch.dict(sys.modules, {"run_agent": agent_module}),
+        patch(
+            "public_api_client.hermes_agent_client.run_turn_subprocess",
+            subprocess_reply,
+        ),
+    ):
+        reply = hd.run_turn_in_process("hi", "chat-no-venv")
+
+    subprocess_reply.assert_called_once()
+    assert agent_module.AIAgent.__name__ == "FakeAgent"  # the stub was never reached
+    assert not source_prepared.called, "the agent source must not be put on sys.path"
+    assert reply
 
 
 STORE_SECRET = "store-hermes-key"
