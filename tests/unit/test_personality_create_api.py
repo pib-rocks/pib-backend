@@ -245,18 +245,19 @@ def test_an_api_name_is_not_a_provider_reference(app_ctx):
     assert all(personality.name != "ApiName" for personality in listed)
 
 
-def test_the_create_description_states_the_provider_reference_forms():
+def test_the_create_description_states_the_typed_reference():
     text = API_YAML.read_text(encoding="utf-8")
     post = text.split("  /voice-assistant/personality:", 1)[1].split("    get:", 1)[0]
     assert "PostVoiceAssistantPersonality" in post
     body = text.split("PostVoiceAssistantPersonality:", 1)[1].split(
         "VoiceAssistantPersonalities:", 1
     )[0]
+    assert "modelRef:" in body
     assert "providerRef:" in body
+    assert "deprecated: true" in body
     assert 'sentinel "default"' in body
-    assert "decimal id of a model row" in body
-    assert "The provider follows from that model." in body
-    assert "gemini-3.8-flash, is not a reference" in body
+    assert "model:<id>" in body
+    assert "v0.8.0" in body
     assert "enum: [smart, direct]" in body
 
 
@@ -272,3 +273,175 @@ def test_an_update_still_validates_what_it_is_given(client, app_ctx):
     unchanged = client.get(url).get_json()
     assert unchanged["pauseThreshold"] == 0.8
     assert unchanged["messageHistory"] == 5
+
+
+# ---------------------------------------------------------------------------
+# PR-1930 (option D2): typed, unambiguous model references.
+#
+# The canonical field is modelRef: "default" or "model:<id>". providerRef (a
+# bare id as text) and assistantModelId (a bare id as a number) are deprecated
+# aliases kept for the migration window and removed in v0.8.0.
+# ---------------------------------------------------------------------------
+
+
+def test_create_with_a_typed_model_reference_round_trips(client, app_ctx):
+    gemini = RegistryModel.query.filter_by(api_name="gemini-3.8-flash").one()
+
+    response = client.post(
+        PERSONALITY_URL,
+        json={"name": "Typed", "channel": "direct", "modelRef": f"model:{gemini.id}"},
+    )
+
+    assert response.status_code == 201
+    created = response.get_json()
+    assert created["modelRef"] == f"model:{gemini.id}"
+    # the deprecated aliases keep reporting the same model
+    assert created["assistantModelId"] == gemini.id
+    assert created["providerRef"] == str(gemini.id)
+
+    pid = created["personalityId"]
+    read = client.get(f"{PERSONALITY_URL}/{pid}").get_json()
+    assert read["modelRef"] == f"model:{gemini.id}"
+    assert read["assistantModelId"] == gemini.id
+    assert read["providerRef"] == str(gemini.id)
+
+    updated = client.put(f"{PERSONALITY_URL}/{pid}", json={"modelRef": "default"})
+    assert updated.status_code == 200
+    assert updated.get_json()["modelRef"] == "default"
+    assert updated.get_json()["assistantModelId"] is None
+    assert updated.get_json()["providerRef"] == "default"
+
+
+def test_a_typed_reference_and_an_agreeing_alias_are_accepted(client, app_ctx):
+    gemini = RegistryModel.query.filter_by(api_name="gemini-3.8-flash").one()
+
+    response = client.post(
+        PERSONALITY_URL,
+        json={
+            "name": "Agree",
+            "channel": "direct",
+            "modelRef": f"model:{gemini.id}",
+            "providerRef": str(gemini.id),
+            "assistantModelId": gemini.id,
+        },
+    )
+
+    assert response.status_code == 201
+    assert response.get_json()["modelRef"] == f"model:{gemini.id}"
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"modelRef": "6"},
+        {"modelRef": "account:5"},
+        {"modelRef": "provider:5"},
+        {"modelRef": "gemini-3.8-flash"},
+        {"modelRef": "model:0"},
+        {"modelRef": "model:99999"},
+        {"modelRef": "model:"},
+    ],
+    ids=[
+        "bare-id",
+        "account-namespace",
+        "provider-namespace",
+        "api-name",
+        "zero",
+        "unknown-row",
+        "empty-id",
+    ],
+)
+def test_an_invalid_typed_reference_is_rejected(client, app_ctx, bad):
+    response = client.post(PERSONALITY_URL, json={"name": "BadRef", **bad})
+
+    assert response.status_code == 400
+    listed = client.get(PERSONALITY_URL).get_json()["voiceAssistantPersonalities"]
+    assert all(personality["name"] != "BadRef" for personality in listed)
+
+
+def test_a_typed_reference_conflicting_with_an_alias_is_rejected(client, app_ctx):
+    gemini = RegistryModel.query.filter_by(api_name="gemini-3.8-flash").one()
+    other = RegistryModel.query.filter_by(api_name="gpt-6").one()
+
+    # The measured defect shape: two references that do not name the same
+    # model. It is rejected instead of one silently winning.
+    response = client.post(
+        PERSONALITY_URL,
+        json={
+            "name": "Conflict",
+            "channel": "direct",
+            "modelRef": f"model:{gemini.id}",
+            "assistantModelId": other.id,
+        },
+    )
+
+    assert response.status_code == 400
+    listed = client.get(PERSONALITY_URL).get_json()["voiceAssistantPersonalities"]
+    assert all(personality["name"] != "Conflict" for personality in listed)
+
+
+def test_a_provider_account_id_is_never_read_as_a_model_row(client, app_ctx):
+    """The measured defect: model-row ids and account ids overlap."""
+    from model.provider_model import Provider
+
+    account = Provider.query.order_by(Provider.id).first()
+    # The collision is real only when the account id also names a model row.
+    if RegistryModel.query.filter_by(id=account.id).first() is None:
+        pytest.skip("no provider-account/model-row id collision in this catalogue")
+
+    response = client.post(
+        PERSONALITY_URL,
+        json={"name": "Collision", "channel": "direct", "modelRef": str(account.id)},
+    )
+
+    assert response.status_code == 400
+
+
+def test_service_accepts_a_typed_reference(app_ctx):
+    gemini = RegistryModel.query.filter_by(api_name="gemini-3.8-flash").one()
+
+    personality = personality_service.create_personality(
+        {"name": "DienstTyped", "model_ref": f"model:{gemini.id}"}
+    )
+
+    assert personality.provider_ref == str(gemini.id)
+    assert personality.assistant_model_id == gemini.id
+
+
+def test_service_rejects_a_bare_reference_in_the_typed_field(app_ctx):
+    with pytest.raises(ValidationError) as caught:
+        personality_service.create_personality({"name": "Fremd", "model_ref": "5"})
+
+    assert caught.value.messages["modelRef"] == [
+        "modelRef must be 'default' or a model reference like 'model:6'."
+    ]
+
+
+def test_service_rejects_an_unknown_typed_reference(app_ctx):
+    with pytest.raises(ValidationError) as caught:
+        personality_service.create_personality(
+            {"name": "Fremd", "model_ref": "model:99999"}
+        )
+
+    assert caught.value.messages["modelRef"] == ["modelRef names no model row."]
+
+
+def test_an_existing_stored_reference_needs_no_conversion(app_ctx):
+    """AC5: the stored column is already a validated model-row id.
+
+    A row written with the deprecated spelling maps to the same typed
+    reference, so no row has to be converted and the model it had is kept.
+    """
+    from app.app import db
+    from schema.personality_schema import personality_schema
+
+    gemini = RegistryModel.query.filter_by(api_name="gemini-3.8-flash").one()
+    made = personality_service.create_personality(
+        {"name": "LegacyStored", "provider_ref": str(gemini.id)}
+    )
+    db.session.commit()
+
+    body = personality_schema.dump(made)
+    assert body["modelRef"] == f"model:{gemini.id}"
+    assert body["assistantModelId"] == gemini.id
+    assert body["providerRef"] == str(gemini.id)

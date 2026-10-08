@@ -35,7 +35,15 @@ from pib_hermes_config.voice_backends import (
     normalize_stt_choice,
     normalize_tts_choice,
 )
-from provider_registry import DEFAULT_PROVIDER_REF, has_capability
+from provider_registry import (
+    DEFAULT_PROVIDER_REF,
+    MODEL_REF_CONFLICT_ERROR,
+    MODEL_REF_FORM_ERROR,
+    MODEL_REF_PROVIDER_GONE_ERROR,
+    MODEL_REF_UNKNOWN_ERROR,
+    has_capability,
+    typed_model_id,
+)
 from service import provider_service, soul_service
 
 #: Path of the daemon endpoint that owns the Hermes profile factory.
@@ -133,11 +141,40 @@ def get_personality(personality_id: str) -> Personality:
 PROVIDER_REF_ERROR = "Provider reference must be 'default' or the id of a model row."
 
 
+def _validated_model_row(model_id: int) -> RegistryModel:
+    """The model row a typed reference names, or a 400 naming modelRef.
+
+    Covers both that the row exists and that it belongs to a provider: a
+    model whose provider account is gone is not a usable reference either.
+    """
+    row = RegistryModel.query.filter_by(id=model_id).first()
+    if row is None:
+        raise ValidationError({"modelRef": [MODEL_REF_UNKNOWN_ERROR]})
+    if row.provider is None:
+        raise ValidationError({"modelRef": [MODEL_REF_PROVIDER_GONE_ERROR]})
+    return row
+
+
+def _store_model_row(personality: Personality, model_id: int) -> None:
+    """Store a concrete model row. The column keeps the bare row id."""
+    _validated_model_row(model_id)
+    personality.provider_ref = str(model_id)
+    personality.assistant_model_id = model_id
+
+
+def _store_policy(personality: Personality) -> None:
+    """'default' follows the current default model; it is not an id."""
+    personality.provider_ref = DEFAULT_PROVIDER_REF
+    personality.assistant_model_id = None
+
+
 def _store_provider_ref(personality: Personality, ref: str) -> None:
-    """Persist a model pointer. 'default' is not resolved into an id."""
+    """DEPRECATED path: persist a bare reference ('default' or a bare id).
+
+    This is the old spelling of modelRef, accepted for the migration window.
+    """
     if ref == DEFAULT_PROVIDER_REF:
-        personality.provider_ref = DEFAULT_PROVIDER_REF
-        personality.assistant_model_id = None
+        _store_policy(personality)
         return
     try:
         model_id = int(ref)
@@ -147,6 +184,88 @@ def _store_provider_ref(personality: Personality, ref: str) -> None:
         raise ValidationError({"providerRef": [PROVIDER_REF_ERROR]})
     personality.provider_ref = str(model_id)
     personality.assistant_model_id = model_id
+
+
+def _typed_choice(personality_dto: Any) -> Optional[tuple]:
+    """(kind, id) for a typed modelRef, or None when none was sent.
+
+    'default' is the policy, everything else must be 'model:<id>'. A bare id
+    or an unknown namespace raises: the kind must be stated, never guessed.
+    """
+    raw = personality_dto.get("model_ref")
+    if raw is None or str(raw).strip() == "":
+        return None
+    text = str(raw).strip()
+    if text == DEFAULT_PROVIDER_REF:
+        return ("default", None)
+    try:
+        return ("model", typed_model_id(text))
+    except ValueError as exc:
+        raise ValidationError({"modelRef": [MODEL_REF_FORM_ERROR]}) from exc
+
+
+def _legacy_alias_models(personality_dto: Any) -> set:
+    """The models the deprecated aliases name, for the conflict check.
+
+    ``None`` stands for the 'default' policy. A malformed alias alongside a
+    typed reference is itself a conflict.
+    """
+    models: set = set()
+    raw_ref = personality_dto.get("provider_ref")
+    if raw_ref is not None and str(raw_ref).strip() != "":
+        text = str(raw_ref).strip()
+        if text == DEFAULT_PROVIDER_REF:
+            models.add(None)
+        elif text.isdigit() and int(text) >= 1:
+            models.add(int(text))
+        else:
+            raise ValidationError({"modelRef": [MODEL_REF_CONFLICT_ERROR]})
+    raw_id = personality_dto.get("assistant_model_id")
+    if raw_id is not None:
+        try:
+            models.add(int(raw_id))
+        except (TypeError, ValueError) as exc:
+            raise ValidationError({"modelRef": [MODEL_REF_CONFLICT_ERROR]}) from exc
+    return models
+
+
+def _apply_provider_choice(
+    personality: Personality, personality_dto: Any, *, creating: bool
+) -> None:
+    """Store the chosen model.
+
+    The canonical field is ``modelRef``, a typed reference: ``"default"`` or
+    ``"model:<id>"``. The prefix carries the kind, so a provider-account id
+    can never be read as a model-row id. ``providerRef`` (bare) and
+    ``assistantModelId`` are deprecated aliases that keep working for the
+    migration window; a typed reference and an alias that disagree are
+    rejected instead of silently resolved, and the deprecated spelling that
+    is no longer needed disappears in its named removal release.
+    """
+    choice = _typed_choice(personality_dto)
+    if choice is not None:
+        alias_models = _legacy_alias_models(personality_dto)
+        if alias_models and choice[1] not in alias_models:
+            raise ValidationError({"modelRef": [MODEL_REF_CONFLICT_ERROR]})
+        if choice[0] == "default":
+            _store_policy(personality)
+        else:
+            _store_model_row(personality, choice[1])
+        return
+
+    # Deprecated, alias-only path. Precedence is the documented one the
+    # interim fix (PR #412) set: an explicit assistantModelId wins.
+    model_id = personality_dto.get("assistant_model_id")
+    provider_ref = personality_dto.get("provider_ref")
+    if model_id is not None:
+        ref = str(model_id)
+    elif provider_ref:
+        ref = str(provider_ref)
+    elif creating:
+        ref = DEFAULT_PROVIDER_REF
+    else:
+        return
+    _store_provider_ref(personality, ref)
 
 
 def _apply_channel(
@@ -170,29 +289,6 @@ def _apply_channel(
             {"channel": ["Smart chats are not available on this robot."]}
         )
     personality.channel = requested
-
-
-def _apply_provider_choice(
-    personality: Personality, personality_dto: Any, *, creating: bool
-) -> None:
-    """Store the chosen model row.
-
-    ``assistantModelId`` is the row the read side reports, so a client that
-    echoes that id names a concrete model and it decides, even when the same
-    body also carries a ``providerRef``. That pointer is only the fallback:
-    it carries the ``"default"`` sentinel or the id of the row.
-    """
-    model_id = personality_dto.get("assistant_model_id")
-    provider_ref = personality_dto.get("provider_ref")
-    if model_id is not None:
-        ref = str(model_id)
-    elif provider_ref:
-        ref = str(provider_ref)
-    elif creating:
-        ref = DEFAULT_PROVIDER_REF
-    else:
-        return
-    _store_provider_ref(personality, ref)
 
 
 def _provider_has(capability: str):

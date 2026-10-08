@@ -1113,12 +1113,25 @@ components:
           examples:
             - 5
             - 15
-        providerRef:
+        modelRef:
           type: string
           description: >-
-            'default', which follows the current default model, or the
-            decimal id of a model row. The provider follows from that model.
-            The catalogue api_name is not a reference.
+            The typed, unambiguous reference to the model this personality
+            uses. Either the sentinel "default", which follows the current
+            default model, or "model:<id>", where <id> is the decimal id of
+            a model row. The "model:" prefix carries the kind, so a
+            provider-account id can never be read as a model-row id.
+          examples:
+            - default
+            - "model:6"
+        providerRef:
+          type: string
+          deprecated: true
+          description: >-
+            DEPRECATED alias of modelRef; removed in the v0.8.0 release.
+            Either 'default', which follows the current default model, or
+            the bare decimal id of a model row, sent as text. The provider
+            follows from that model.
           examples:
             - default
             - "1"
@@ -1133,6 +1146,10 @@ components:
             - direct
         assistantModelId:
           type: string
+          deprecated: true
+          description: >-
+            DEPRECATED alias of modelRef; removed in the v0.8.0 release. The
+            bare id of the model row. Use modelRef instead.
           examples:
             - 1
             - 2
@@ -1182,16 +1199,32 @@ components:
           examples:
             - 5
             - 15
-        providerRef:
+        modelRef:
           type: string
           description: >-
-            Which catalogue model this personality uses. Either the
-            sentinel "default", which follows the current default model,
-            or the decimal id of a model row nested under GET /provider,
-            sent as text. The provider follows from that model.
-            The catalogue api_name, for example
-            gemini-3.8-flash, is not a reference and is rejected. An id
-            that matches no row is rejected as well.
+            Which catalogue model this personality uses, written as a typed
+            reference. Either the sentinel "default", which follows the
+            current default model, or "model:<id>" where <id> is the decimal
+            id of a model row nested under GET /provider. The "model:" prefix
+            carries the kind, so a provider-account id can never be read as a
+            model-row id. A bare number, an unknown namespace, and the
+            catalogue api_name, for example gemini-3.8-flash, are not
+            references and are rejected. An id that matches no row is
+            rejected as well. The provider follows from that model.
+          examples:
+            - default
+            - "model:6"
+        providerRef:
+          type: string
+          deprecated: true
+          description: >-
+            DEPRECATED alias of modelRef, accepted until the v0.8.0 removal
+            release. Which catalogue model this personality uses. Either the
+            sentinel "default", which follows the current default model, or
+            the decimal id of a model row nested under GET /provider, sent as
+            text. The provider follows from that model. The catalogue
+            api_name, for example gemini-3.8-flash, is not a reference and is
+            rejected. An id that matches no row is rejected as well.
           examples:
             - default
             - "1"
