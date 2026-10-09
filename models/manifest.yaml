@@ -125,7 +125,8 @@ models:
   - face_detection_yunet_160x120
   - facemesh_192x192
   publish_topic: detections/facemesh_crop
-  selectable: true
+  selectable: false
+  unavailable_reason: 'Not offered in the camera model list. The stored artefact is unchanged.'
 - model_id: facial_landmarks_68_160x160
   selectable: false
   task: facial_landmarks
@@ -149,7 +150,8 @@ models:
   - face_detection_yunet_160x120
   - facial_landmarks_68_160x160
   publish_topic: detections/facial_landmarks_68_crop
-  selectable: true
+  selectable: false
+  unavailable_reason: 'Not offered in the camera model list. The stored artefact is unchanged.'
 - model_id: face-recognition-arcface-112x112
   task: face_recognition
   selectable: false
@@ -282,6 +284,8 @@ models:
   zoo_type: depthai
   notes: WeChat QR detector. Blob input 'data' U8F [384,384,1,1], GRAY8 [0-255], compiled '-ip U8'. Output 'detection_output' FP16 [7,100,1,1] uses SSD DetectionOutput tuples.
 - model_id: person-reidentification-retail-0031_96x48
+  selectable: false
+  unavailable_reason: 'Not offered in the camera model list. The stored artefact is unchanged.'
   task: person_reidentification
   source_upstream: openvinotoolkit/open_model_zoo (IR packaged in luxonis/depthai-model-zoo)
   source_url: https://github.com/luxonis/depthai-model-zoo/raw/main/models/person-reidentification-retail-0031_96x48/person-reidentification-retail-0031_96x48.xml
