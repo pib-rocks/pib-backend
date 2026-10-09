@@ -109,4 +109,3 @@ _pib_publish_string(_pib_display_web_hide_pub, "hide", "display web hide")
 `;
 }
 
-export {pythonGenerator};

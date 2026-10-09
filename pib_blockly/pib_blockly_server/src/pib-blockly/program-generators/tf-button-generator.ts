@@ -1,15 +1,6 @@
 import {Block} from "blockly/core/block";
 import {Order, pythonGenerator} from "blockly/python";
-import {
-    CONFIGURE_LOGGING,
-    IMPORT_LOGGING,
-    IMPORT_RCLPY,
-    IMPORT_SYS,
-    IMPORT_TF_BUTTON_SERVICES,
-    IMPORT_TF_BUTTON_BLOCKLY_CLIENT,
-    INIT_ROS,
-    INIT_TF_BUTTON_CLIENTS,
-} from "./util/definitions";
+import {CONFIGURE_LOGGING, IMPORT_LOGGING, IMPORT_RCLPY, IMPORT_SYS, IMPORT_TF_BUTTON_BLOCKLY_CLIENT, IMPORT_TF_BUTTON_SERVICES, INIT_ROS, INIT_TF_BUTTON_CLIENTS, addDefinitions} from "./util/definitions";
 import {
     TF_BUTTON_SET_COLOR_FUNCTION,
     TF_BUTTON_TASTER_FUNCTION,
@@ -26,7 +17,7 @@ function hexToRgb(hex: string): {red: number; green: number; blue: number} {
 }
 
 function configureGenerator(generator: typeof pythonGenerator): void {
-    Object.assign(generator.definitions_, {
+    addDefinitions(generator, {
         IMPORT_RCLPY,
         IMPORT_SYS,
         IMPORT_LOGGING,
@@ -45,7 +36,7 @@ export function tf_button_taster_to_variable(
     const buttonId = block.getFieldValue("BUTTON_ID") || "1";
     const color = block.getFieldValue("COLOR") || "#00ff00";
     const variableId = block.getFieldValue("VAR");
-    const variableName = generator.nameDB_.getName(variableId, "VARIABLE");
+    const variableName = generator.getVariableName(variableId);
     const {red, green, blue} = hexToRgb(color);
 
     configureGenerator(generator);
@@ -65,7 +56,7 @@ export function tf_button_switch_to_variable(
     const buttonId = block.getFieldValue("BUTTON_ID") || "1";
     const color = block.getFieldValue("COLOR") || "#ff0000";
     const variableId = block.getFieldValue("VAR");
-    const variableName = generator.nameDB_.getName(variableId, "VARIABLE");
+    const variableName = generator.getVariableName(variableId);
     const {red, green, blue} = hexToRgb(color);
 
     configureGenerator(generator);
@@ -114,4 +105,3 @@ export function tf_button_set_color_from_var(
     return `${functionName}(${buttonId}, int(${colorCode}[1:3], 16), int(${colorCode}[3:5], 16), int(${colorCode}[5:7], 16))\n`;
 }
 
-export {pythonGenerator};
