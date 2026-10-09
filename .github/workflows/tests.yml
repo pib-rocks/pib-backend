@@ -50,7 +50,11 @@ jobs:
           archive="$(mktemp)"
           curl -fsSL -o "${archive}" "${url}"
           echo "${sha}  ${archive}" | sha256sum -c -
-          tar -xzf "${archive}" -C models
+          # --exclude=manifest.yaml: the archive is a snapshot of the store and carries its own,
+          # older manifest.yaml. Extracting it would replace the checked-out one, so every test that
+          # reads models/manifest.yaml from disk would then assert against the release's copy
+          # instead of the branch's. The blobs are the only thing this step is for.
+          tar -xzf "${archive}" -C models --exclude=manifest.yaml
           rm -f "${archive}"
       - name: Run unit tests
         env:
