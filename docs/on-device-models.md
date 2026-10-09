@@ -82,7 +82,11 @@ Local checks, plus the post-merge procedure, are in
 script prints `NOT EXECUTED` for hardware and browser results. The production
 overlay measurement is the Cerebra script
 `scripts/verify-hand-overlay-acceptance.mjs`, run during the same real-hand
-interval. ROS message rate is not browser rendering rate.
+interval. That script samples source sequence and stamp plus the circle and
+connection elements in the DOM. A stationary hand is a fresh result when the
+sequence changes; a start/end counter is not a rate. ROS message rate is not
+browser rendering rate. Without `--execute-live` the browser result stays
+`NOT EXECUTED`.
 
 ## Safe verification
 

@@ -378,7 +378,9 @@ def live_report(args: argparse.Namespace) -> dict:
     report["browser"] = (
         "NOT EXECUTED here. Run the Cerebra script "
         "scripts/verify-hand-overlay-acceptance.mjs against the production page "
-        "during the same hand interval. ROS rate is not overlay FPS."
+        "during the same hand interval. It has to see distinct source sequences "
+        "and the circle and connection elements drawn for them. ROS rate, a "
+        "start/end counter, and a stationary pose are not overlay FPS."
     )
     return report
 
@@ -397,7 +399,7 @@ def remaining_steps() -> list[str]:
         f"Hold one real hand in view for at least {MIN_MEASURE_SECONDS:g}s after warm-up. "
         f"Record total messages, hand-containing messages, interval, and inter-message rate. "
         f"Require at least {MIN_HAND_RATE_HZ:g} hand messages per second, each with {KEYPOINT_COUNT} named x/y/z keypoints and a positive frame size.",
-        "During that same interval, on the production camera page, record distinct applied overlay updates and rendered keypoint positions. A static screenshot or the ROS rate alone is not UI evidence.",
+        "During that same interval, on the production camera page, sample distinct source sequence/stamp values and the DOM circle and connection coordinates throughout the window. Count those elements; do not trust a rendered-keypoint attribute. A stationary hand still counts when the sequence changes. A static screenshot, the ROS rate, or a start/end counter is not UI evidence.",
         "Move the hand across the frame and resize the browser. Markers stay on the displayed hand. An empty result and model stop both clear the markers.",
         "Repeat start/stop. Logs must show no getTensor exception, no model-start fallback, no device crash, and no device-in-use loop.",
         "Confirm the frame path still has no HostNode and one host queue (detections, maxSize=1, blocking=False). SHAVE budget remains 4+1+4.",
