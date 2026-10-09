@@ -69,6 +69,27 @@ function ensure_symlink_self() {
     fi
 }
 
+# 4 GiB images never install ollama (variant gate in setup-pib.sh). A missing
+# unit must not fail this update and must not create the drop-in. When the
+# unit exists, the shared helper restarts it only if the drop-in changed:
+# without that restart the daemon keeps its old bind until reboot. The
+# restart choice and the idempotency rule are in
+# installation_scripts/ollama_listen.sh.
+function ensure_ollama_for_update() {
+    local helper="${PIB_OLLAMA_LISTEN_HELPER:-$BACKEND_DIR/setup/installation_scripts/ollama_listen.sh}"
+    if [ ! -f "$helper" ]; then
+        print ERROR "ollama: listen helper not found at ${helper}"
+        return 1
+    fi
+    # shellcheck source=installation_scripts/ollama_listen.sh
+    source "$helper"
+    if ! ollama_unit_installed; then
+        print INFO "ollama: not installed; listen drop-in left unset"
+        return 0
+    fi
+    ensure_ollama_listen_dropin restart
+}
+
 function ensure_host_ip() {
     local primary="/etc/pib_host_ip"
     local legacy="$BACKEND_DIR/pib_api/flask/host_ip.txt"
@@ -118,6 +139,10 @@ function update_backend() {
         git pull --ff-only origin main || { print ERROR "backend git pull error"; exit 1; }
         # Ensure that the IP dispatcher script is set up so the IP display works correctly
         ensure_host_ip
+        # After the pull, before flask is recreated: the new container probes
+        # Ollama as soon as it starts, so the listen drop-in has to be in
+        # effect first. A missing ollama unit returns success.
+        ensure_ollama_for_update
         # Inject the release tag into the flask-app image, exactly as docs/RELEASE.md and
         # setup/update_runner.sh do. The export is required too: the following `up --build`
         # interpolates ${APP_VERSION:-v0.6.2} and would otherwise rebuild the image with that

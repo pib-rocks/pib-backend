@@ -269,8 +269,6 @@ def _run(
         calls.append(f"echo rc{index}=$?")
     script = (
         SETUP_PRELUDE
-        + _extract_bash_function(SETUP_PIB, "ensure_ollama_listen_dropin")
-        + "\n"
         + _extract_bash_function(SETUP_PIB, "install_ollama_qwen_fast")
         + "\n"
         + "\n".join(calls)
@@ -509,6 +507,8 @@ def test_setup_runs_the_ollama_step_after_the_clone():
     assert clone < step
     assert "curl -fsSL https://ollama.com/install.sh | sh" in text
     assert "systemctl restart ollama" not in text
+    assert "function ensure_ollama_listen_dropin" not in text
+    assert "installation_scripts/ollama_listen.sh" in text
     assert "required_mib=1200" in text
     assert "pib5edu | pib5advanced | pib5museum" in text
 
