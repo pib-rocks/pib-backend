@@ -14,6 +14,13 @@ from .model_registry import ModelRecord, ModelRegistry
 # of its windows even while the chain runs; averaging over several seconds
 # reports the rate the pipeline actually sustains.
 FPS_WINDOW_SECONDS = 10.0
+# rosbridge CallService.default_call_service_timeout. A call_service message
+# that omits timeout is abandoned after this many seconds, while the service
+# callback keeps running.
+ROSBRIDGE_DEFAULT_CALL_SERVICE_TIMEOUT_SECONDS = 5.0
+# start() and stop() return only after the pipeline is rebuilt and a frame or
+# detection result is verified. That exceeds the rosbridge default above.
+MODEL_LIFECYCLE_CALL_TIMEOUT_SECONDS = 90.0
 
 
 @dataclass(frozen=True)

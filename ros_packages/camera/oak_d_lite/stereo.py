@@ -492,6 +492,11 @@ class CameraNode(Node):
         return response
 
     def start_model_callback(self, request, response):
+        # Success is returned only after rebuild and frame verification inside
+        # PipelineManager.start. rosbridge abandons the call at
+        # ROSBRIDGE_DEFAULT_CALL_SERVICE_TIMEOUT_SECONDS when the call_service
+        # message omits timeout, which is shorter than this callback, so the
+        # client must send MODEL_LIFECYCLE_CALL_TIMEOUT_SECONDS.
         response.success, response.message = self.pipeline_manager.start(
             request.model_id, request.shaves, request.owner
         )

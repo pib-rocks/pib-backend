@@ -423,6 +423,13 @@ def map_crop_points_to_frame(
 # below and linked into ImageManip on the device. The host only receives the
 # marshalled detection result.
 FAST_MODEL_ID = "hand_tracking_fast"
+# Device lpb.NNData returns these FP16 layers. Host getTensor is not on the device.
+FAST_FP16_LAYERS = (
+    ("result", 16),
+    ("Identity_1", 1),
+    ("Identity_2", 1),
+    ("Identity_dense/BiasAdd/Add", 63),
+)
 # Smaller camera output than the 2104x1560 ISP frame. One manipulation from
 # that ISP frame down to the 128 palm input fails with
 # WARP_SWCH_ERR_CACHE_TOO_SMALL. 256x144 keeps the published 16:9 aspect, and
@@ -498,7 +505,9 @@ def normalize_radians(angle):
     return angle - 2 * pi * floor((angle + pi) / (2 * pi))
 
 def tensor_values(nn_data, name):
-    tensor = nn_data.getTensor(name)
+    # lpb.NNData on the device returns a float list from getLayerFp16.
+    # getTensor is the host binding and is absent on the device.
+    tensor = nn_data.getLayerFp16(name)
     values = []
     pending = [tensor]
     while pending:

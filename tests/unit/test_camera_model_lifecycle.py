@@ -1,6 +1,8 @@
 """Device-free tests for the camera model registry and pipeline manager."""
 
 from pathlib import Path
+import importlib.util
+import json
 import re
 import sys
 import tempfile
@@ -16,7 +18,9 @@ sys.path.insert(0, str(REPO_ROOT))
 from ros_packages.camera.oak_d_lite.model_registry import ModelRegistry
 from ros_packages.camera.oak_d_lite.pipeline_manager import (
     FPS_WINDOW_SECONDS,
+    MODEL_LIFECYCLE_CALL_TIMEOUT_SECONDS,
     PipelineManager,
+    ROSBRIDGE_DEFAULT_CALL_SERVICE_TIMEOUT_SECONDS,
 )
 
 
@@ -689,6 +693,55 @@ class TestSelectableModels(unittest.TestCase):
         self.assertIn("selectable_models()", status_source)
         # the chain itself still iterates every entry (publishers, composite build)
         self.assertIn("self.model_registry.models()", source)
+
+
+def test_model_start_budget_exceeds_the_rosbridge_default():
+    """The service callback verifies before it answers; 5s is not enough."""
+    assert (
+        MODEL_LIFECYCLE_CALL_TIMEOUT_SECONDS
+        > ROSBRIDGE_DEFAULT_CALL_SERVICE_TIMEOUT_SECONDS
+    )
+    assert MODEL_LIFECYCLE_CALL_TIMEOUT_SECONDS >= 90.0
+    assert ROSBRIDGE_DEFAULT_CALL_SERVICE_TIMEOUT_SECONDS == 5.0
+
+
+def test_measurement_client_sends_the_rosbridge_service_timeout():
+    path = REPO_ROOT / "tools/measure_on_device_models.py"
+    spec = importlib.util.spec_from_file_location("measure_on_device_models", path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    sent = []
+
+    class Connection:
+        def send(self, payload):
+            sent.append(payload)
+
+        def settimeout(self, _timeout):
+            return None
+
+        def recv(self):
+            request = json.loads(sent[-1])
+            return json.dumps(
+                {
+                    "op": "service_response",
+                    "id": request["id"],
+                    "result": True,
+                    "values": {"success": True, "message": "ok"},
+                }
+            )
+
+    values = module.RosbridgeClient(Connection()).call_service(
+        "/start_model",
+        "datatypes/srv/StartModel",
+        {"model_id": "hand_tracking_fast", "shaves": 0, "owner": "acceptance"},
+        MODEL_LIFECYCLE_CALL_TIMEOUT_SECONDS,
+    )
+
+    payload = json.loads(sent[0])
+    assert payload["timeout"] == MODEL_LIFECYCLE_CALL_TIMEOUT_SECONDS
+    assert payload["op"] == "call_service"
+    assert values["success"] is True
 
 
 if __name__ == "__main__":
