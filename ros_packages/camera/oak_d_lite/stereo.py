@@ -55,12 +55,14 @@ from .imitation import (
 )
 from .imitation_archive import create_landmark_archive, create_palm_archive
 from .face_crop import (
+    FACE_CROP_EXCLUSIVITY_RULE,
     FACE_CROP_TRANSLATORS,
     FACE_CROP_PADDING,
     FACE_DETECTOR_MODEL_ID,
     GAZE_MODEL_ID,
     HEAD_POSE_MODEL_ID,
     face_crop_classifier_id,
+    is_face_crop_composite,
     is_gaze_composite,
     packet_timestamp,
     translate_gaze,
@@ -1793,10 +1795,7 @@ class CameraNode(Node):
             if model.model_id == "imitation":
                 self._build_imitation_pipeline(model)
                 continue
-            if (
-                getattr(model, "composite", False)
-                and FACE_DETECTOR_MODEL_ID in model.artifact_ids
-            ):
+            if is_face_crop_composite(model):
                 if is_gaze_composite(model.artifact_ids):
                     self._build_gaze_pipeline(model)
                 else:
@@ -2548,7 +2547,7 @@ class CameraNode(Node):
         """Add parsed YuNet detection, timestamped crops, and a raw classifier."""
         classifier_id = face_crop_classifier_id(composite.artifact_ids)
         if self.face_crop_model_id is not None:
-            raise ValueError("only one face-crop composite may run at a time")
+            raise ValueError(FACE_CROP_EXCLUSIVITY_RULE)
         self.face_crop_model_id = composite.model_id
         self.face_crop_translator = FACE_CROP_TRANSLATORS[classifier_id]
         detector = self.model_registry.get(FACE_DETECTOR_MODEL_ID)
@@ -2635,7 +2634,7 @@ class CameraNode(Node):
         if not is_gaze_composite(composite.artifact_ids):
             raise ValueError("gaze composite is missing a required artifact")
         if self.face_crop_model_id is not None:
-            raise ValueError("only one face-crop composite may run at a time")
+            raise ValueError(FACE_CROP_EXCLUSIVITY_RULE)
         self.face_crop_model_id = composite.model_id
         self.face_crop_translator = translate_gaze
 
@@ -3268,8 +3267,14 @@ class CameraNode(Node):
             self._pipeline_lock = pipeline_lock
         with pipeline_lock, CameraNode._device_lifecycle_lock:
             pipeline = self.pipeline
+            # True when there is nothing to stop. A pipeline that never reports
+            # stopped used to return False before this cleanup, which left the
+            # pipeline object and _device_owner in place. The next open then
+            # failed with X_LINK_DEVICE_ALREADY_IN_USE for good.
+            released = True
             if pipeline is not None:
                 stop_failed = False
+                released = False
                 try:
                     pipeline.stop()
                 except Exception as exc:
@@ -3278,7 +3283,6 @@ class CameraNode(Node):
                         f"Camera pipeline stop reported an error: {exc}"
                     )
                 deadline = time.monotonic() + PIPELINE_STOP_TIMEOUT
-                released = False
                 while time.monotonic() < deadline:
                     try:
                         if pipeline.isRunning() is not True:
@@ -3292,11 +3296,12 @@ class CameraNode(Node):
                     self.get_logger().warning(
                         "Camera pipeline did not report stopped before timeout."
                     )
-                    return False
             owner_ref = CameraNode._device_owner
             if owner_ref is not None and owner_ref() is self:
                 CameraNode._device_owner = None
             self.pipeline = None
+            self.camRgb = None
+            self.isp_out = None
             self.queue = None
             self.depth_queue = None
             self.imu_queue = None
@@ -3333,7 +3338,7 @@ class CameraNode(Node):
             self._colour_branch_field = None
             if hasattr(self, "_pending_hands"):
                 self._pending_hands.clear()
-            return True
+            return released
 
     def _start_pipeline(self, include_stereo):
         """Build and start a fresh pipeline with bounded retries."""
@@ -3374,7 +3379,13 @@ class CameraNode(Node):
                         "Camera pipeline build/start attempt "
                         f"{attempt + 1}/{PIPELINE_START_ATTEMPTS} failed: {exc}"
                     )
-                    self._stop_pipeline()
+                    # False means the pipeline did not report stopped. The
+                    # holder is already cleared, but the device may still be
+                    # in use, so this attempt must not open another one.
+                    # A later start can open it; retrying here is the
+                    # X_LINK_DEVICE_ALREADY_IN_USE loop.
+                    if not self._stop_pipeline():
+                        return False
                     # Some OAK variants expose no IMU. If a graph containing
                     # dai.node.IMU is rejected at start, retry the same camera
                     # graph without it instead of taking down camera topics.
