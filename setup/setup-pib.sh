@@ -1470,8 +1470,8 @@ function provision_whisper_model() {
 # so the step still appears in the setup summary and is not a failure. The RAM check
 # below stays as a warning for the variants that do install.
 #
-# qwen2.5:1.5b Q4 weights are about 1.0-1.1 GiB plus the KV cache for num_ctx 2048.
-# 1200 MiB is that requirement. Less than this is a warning before the pull, not a
+# qwen2.5:1.5b Q4 weights are about 1.0-1.1 GiB plus the KV cache for num_ctx 8192.
+# 1788 MiB is that requirement. Less than this is a warning before the pull, not a
 # hard stop, so an operator on a small machine can still proceed deliberately.
 #
 # Containers reach the daemon at host.docker.internal, which is the bridge
@@ -1606,7 +1606,7 @@ function install_ollama_qwen_fast() {
     print WARN "ollama: could not read the service user; the model store must stay with the ollama service, not with pib"
   fi
 
-  required_mib=1200
+  required_mib=1788
   available_kib=""
   if ! command_exists free; then
     print WARN "ollama: free is missing; cannot check RAM (qwen2.5:1.5b needs ${required_mib} MiB)"
@@ -1621,7 +1621,7 @@ function install_ollama_qwen_fast() {
     else
       available_mib=$((available_kib / 1024))
       if [ "$available_mib" -lt "$required_mib" ]; then
-        print WARN "ollama: ${available_mib} MiB available RAM is below the ${required_mib} MiB qwen2.5:1.5b needs (Q4 weights plus the 2048-token KV cache)"
+        print WARN "ollama: ${available_mib} MiB available RAM is below the ${required_mib} MiB qwen2.5:1.5b needs (Q4 weights plus the 8192-token KV cache)"
       else
         print INFO "ollama: ${available_mib} MiB available RAM (${required_mib} MiB required for qwen2.5:1.5b)"
       fi
