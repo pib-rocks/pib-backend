@@ -79,6 +79,7 @@ class RosbridgeClient:
                 "service": service,
                 "type": service_type,
                 "args": args,
+                "timeout": timeout,
             }
         )
         response = self.receive_matching(

@@ -49,6 +49,41 @@ are in [`../models/README.md`](../models/README.md). In summary:
 The persistent host store defaults to `/home/pib/app/pib-models` (override with
 `PIB_MODEL_STORE`) and is mounted read-only at `/models` in `ros-camera`.
 
+## hand_tracking_fast delivery
+
+`hand_tracking_fast` keeps the existing `DetectionArray` topic
+`/detections/hand_tracking_fast`. The device Script reads FP16 with
+`getLayerFp16` (`result` 16, `Identity_1` 1, `Identity_2` 1,
+`Identity_dense/BiasAdd/Add` 63). Host `getTensor` is not available on device
+`lpb.NNData`.
+
+The only host queue in this chain is the Script `detections` output
+(`maxSize=1`, `blocking=False`). Palm and landmark crop configuration stay on
+device Script-to-ImageManip links. There is no HostNode and no host
+`createInputQueue` for crops. The camera preview stream is unchanged. The
+SHAVE budget is 4 + 1 + 4.
+
+`/start_model` answers only after the pipeline has been rebuilt and a result
+verified. rosbridge `CallService.default_call_service_timeout` is 5 seconds
+when the `call_service` message omits `timeout`, and that deadline is what
+returns `Timeout exceeded while waiting for service response` while the
+callback is still running. Cerebra and the measurement clients send
+`timeout: 90`. A later detection stream does not turn that timeout into a
+successful start.
+
+A checkout copy into a running container is not a deliverable. The camera
+image install path is
+`/app/ros2_ws/install/oak_d_lite/lib/python3.12/site-packages/oak_d_lite/hand_tracking.py`.
+After a normal image build, force-recreating `ros-camera` must still import
+`getLayerFp16` from that path.
+
+Local checks, plus the post-merge procedure, are in
+`tools/verify_hand_tracking_fast_acceptance.py`. Without `--execute-live` the
+script prints `NOT EXECUTED` for hardware and browser results. The production
+overlay measurement is the Cerebra script
+`scripts/verify-hand-overlay-acceptance.mjs`, run during the same real-hand
+interval. ROS message rate is not browser rendering rate.
+
 ## Safe verification
 
 Model start/stop and camera observation are non-actuating. Saving a pose records

@@ -136,6 +136,9 @@ class RosbridgeClient:
                 "service": service,
                 "type": service_type,
                 "args": args,
+                # rosbridge otherwise uses its 5s default and reports a false
+                # failure while the camera callback is still verifying.
+                "timeout": timeout,
             }
         )
         response = self.receive_matching(
