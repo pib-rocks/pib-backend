@@ -5,13 +5,9 @@ import sys
 import types
 from unittest.mock import MagicMock, patch
 
+# The imitation helpers import depthai. A missing wheel fails collection.
+import depthai
 import pytest
-
-# Installed by tests/requirements-camera.txt; skip instead of aborting collection on a
-# platform without the camera wheels.
-pytest.importorskip(
-    "depthai", reason="depthai not installed (tests/requirements-camera.txt)"
-)
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 

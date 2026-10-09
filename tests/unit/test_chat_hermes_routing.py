@@ -413,6 +413,33 @@ def test_ensure_hermes_daemon_never_raises(chat_module, chat_node):
     assert "oneshot subprocess fallback" in logger.warning.call_args[0][0]
 
 
+def _install_hermes_home_constants(monkeypatch):
+    """Stand in for hermes_constants so the daemon can enter hermes_home_scope.
+
+    run_turn_in_process enters that scope before ensure_profile, and the scope
+    imports hermes_constants. CI does not install the Hermes package, so the
+    import raises and the daemon answers 500 before ensure_profile_home runs.
+    """
+    from contextvars import ContextVar
+
+    current_home = ContextVar("test_hermes_home", default=Path("/tmp/hermes-home"))
+    module = types.ModuleType("hermes_constants")
+    module.get_hermes_home = current_home.get
+    module.set_hermes_home_override = current_home.set
+    module.reset_hermes_home_override = current_home.reset
+    monkeypatch.setitem(sys.modules, "hermes_constants", module)
+
+
+def _profile_home_result(profile_dir: str) -> dict:
+    """Shape ensure_profile reads back from ensure_profile_home."""
+    return {
+        "ok": True,
+        "profile_dir": profile_dir,
+        "created": False,
+        "factory": "filesystem",
+    }
+
+
 def test_warm_daemon_turn_uses_in_process_runner(chat_module, chat_node, monkeypatch):
     """Warm daemon must answer chat turns via hermes.run_agent, not CLI spawn."""
     import threading
@@ -433,15 +460,17 @@ def test_warm_daemon_turn_uses_in_process_runner(chat_module, chat_node, monkeyp
     # Never open the developer's live Hermes state.db from a unit test.
     monkeypatch.setattr(hd, "_create_session_db", MagicMock(return_value=None))
     hd.clear_agent_cache()
+    _install_hermes_home_constants(monkeypatch)
 
     with (
         patch.dict(
             sys.modules,
             {"run_agent": fake_module},
         ),
-        patch(
-            "public_api_client.hermes_agent_client.ensure_profile",
-            return_value="/tmp/p",
+        patch.object(
+            hd,
+            "ensure_profile_home",
+            return_value=_profile_home_result("/tmp/p"),
         ),
         patch(
             "public_api_client.hermes_agent_client.run_turn_subprocess",
@@ -521,15 +550,18 @@ def test_warm_daemon_falls_back_to_subprocess_when_run_agent_missing(
             raise ImportError("no hermes")
         return real_import(name, *args, **kwargs)
 
+    _install_hermes_home_constants(monkeypatch)
+
     with (
         patch.dict(
             sys.modules,
             {"run_agent": None, "hermes.run_agent": None},
         ),
         patch("builtins.__import__", side_effect=_block_hermes),
-        patch(
-            "public_api_client.hermes_agent_client.ensure_profile",
-            return_value="/tmp/profiles/pib_pers-1",
+        patch.object(
+            hd,
+            "ensure_profile_home",
+            return_value=_profile_home_result("/tmp/profiles/pib_pers-1"),
         ),
         patch(
             "public_api_client.hermes_agent_client.run_turn_subprocess",
@@ -1732,6 +1764,8 @@ def test_smart_turn_fails_when_the_store_cannot_supply_the_provider_key(
     other_secret = "other-hermes-key"
     monkeypatch.setenv("GOOGLE_API_KEY", env_secret)
     monkeypatch.setenv("OPENAI_API_KEY", other_secret)
+    # require (the default) imports hermes_cli. CI uses the filesystem factory.
+    monkeypatch.setenv("PIB_HERMES_PROFILE_FACTORY", "filesystem")
     Chat = chat_module.Chat
 
     voice = Path(__file__).resolve().parents[2] / "ros_packages" / "voice_assistant"

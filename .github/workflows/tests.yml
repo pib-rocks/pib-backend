@@ -19,6 +19,7 @@ jobs:
           cache-dependency-path: |
             pib_api/flask/requirements.txt
             tests/requirements-unit.txt
+            tests/requirements-camera.txt
       - name: Install unit test dependencies
         # tests/unit/conftest.py imports the Flask app at collection, so the app
         # requirements are installed as well as tests/requirements-unit.txt.
@@ -26,34 +27,35 @@ jobs:
         # still pins 2.1.31. pytest matches tests/integration/requirements.txt.
         # numpy is imported by the device-free camera tests. mcp and
         # websocket-client are the dependencies declared by pib_mcp_server.
-        # PyYAML arrives via marimo in the Flask requirements.
+        # tests/requirements-camera.txt supplies depthai, depthai-nodes and
+        # opencv. The camera unit tests import those wheels at module level, so
+        # a missing wheel has to fail collection. pyyaml is imported by the
+        # camera modules (ros_packages/camera/oak_d_lite/model_registry.py).
         run: |
           python -m pip install -r pib_api/flask/requirements.txt
           python -m pip install -r tests/requirements-unit.txt
-          python -m pip install pytest==8.3.4 "numpy>=1.26,<3" mcp==2.3.0 websocket-client==1.9.2
+          python -m pip install pytest==8.3.4 "numpy>=1.26,<3" mcp==2.3.0 websocket-client==1.9.2 pyyaml
+          python -m pip install -r tests/requirements-camera.txt
+      - name: Install model release asset
+        # Blobs are not in git. Tests read models/<model_id>/<model_id>.blob.
+        # Tag, name and sha256 are the defaults in setup/setup-pib.sh
+        # (PIB_MODEL_ASSET_TAG_DEFAULT, PIB_MODEL_ASSET_NAME_DEFAULT,
+        # PIB_MODEL_ASSET_SHA256_DEFAULT). The archive root is the models/ layout.
+        run: |
+          set -euo pipefail
+          tag="model-registry-2026-09-15"
+          name="models-2026-09-15.tar.gz"
+          sha="07357ec99e0b91014285aad2e6a03fcd1e6ca95fd7ed686670f7ab73c1f3ff02"
+          url="https://github.com/pib-rocks/pib-backend/releases/download/${tag}/${name}"
+          archive="$(mktemp)"
+          curl -fsSL -o "${archive}" "${url}"
+          echo "${sha}  ${archive}" | sha256sum -c -
+          tar -xzf "${archive}" -C models
+          rm -f "${archive}"
       - name: Run unit tests
         env:
           PYTHONPATH: ${{ github.workspace }}
-        run: |
-          # test_qr_detection.py imports cv2 via oak_d_lite/qr_detection.py.
-          # opencv is a camera wheel in tests/requirements-camera.txt.
-          # The two face-crop tests import depthai (same camera requirements).
-          # The rest of test_camera_face_crop.py does not, so the file stays.
-          # The three chat tests need the Hermes agent package (hermes_constants
-          # / hermes_cli), which this job does not install. The rest of
-          # test_chat_hermes_routing.py stubs ROS and passes.
-          # Left in the run, skipping themselves when the camera wheels are
-          # absent: test_camera_imitation_math.py, test_imitation_archives.py,
-          # test_task_archives.py (depthai) and test_stereo_camera_optimization.py
-          # (opencv).
-          # Node ids are relative to tests/ (tests/pytest.ini is the pytest root).
-          python -m pytest tests/unit -q \
-            --ignore=tests/unit/test_qr_detection.py \
-            --deselect=unit/test_camera_face_crop.py::test_pixel_square_crop_is_square_in_pixels_not_in_normalised_units \
-            --deselect=unit/test_camera_face_crop.py::test_detection_crop_config_stretches_a_pixel_square_crop \
-            --deselect=unit/test_chat_hermes_routing.py::test_warm_daemon_turn_uses_in_process_runner \
-            --deselect=unit/test_chat_hermes_routing.py::test_warm_daemon_falls_back_to_subprocess_when_run_agent_missing \
-            --deselect=unit/test_chat_hermes_routing.py::test_smart_turn_fails_when_the_store_cannot_supply_the_provider_key
+        run: bash tests/run_unit_suite.sh
 
   jest:
     runs-on: ubuntu-latest
