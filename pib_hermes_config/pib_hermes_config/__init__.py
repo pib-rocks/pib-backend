@@ -29,9 +29,29 @@ ENV_FILE_MODE = 0o600
 DEFAULT_HERMES_MODEL = "gemini-3.8-flash"
 DEFAULT_HERMES_LITE_MODEL = "gemini-3.5-flash-lite"
 DEFAULT_HERMES_PROVIDER = "gemini"
+# Seeded into agent.reasoning_effort only when that key is absent and no
+# personality value is being applied. Hermes reads the agent block; a
+# root-level reasoning_effort is ignored.
 DEFAULT_REASONING_EFFORT = "low"
 DEFAULT_MAX_TOKENS = 1024
 DEFAULT_TEMPERATURE = 0.3
+# Closed set Hermes accepts for agent.reasoning_effort.
+REASONING_EFFORTS = (
+    "none",
+    "minimal",
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+    "max",
+    "ultra",
+)
+REASONING_EFFORT_ERROR = (
+    "Reasoning effort must be one of: " + ", ".join(REASONING_EFFORTS) + "."
+)
+# A new personality starts here. NULL on a stored row means unmanaged:
+# the profile's existing agent.reasoning_effort is left as it is.
+DEFAULT_PERSONALITY_REASONING_EFFORT = "none"
 
 # --- pib provider name -> Hermes provider mapping -------------------------
 #

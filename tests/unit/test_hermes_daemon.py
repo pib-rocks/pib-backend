@@ -261,6 +261,91 @@ def test_profile_endpoint_persists_the_personalitys_model_and_route(
     )
 
 
+def test_profile_endpoint_writes_reasoning_effort_into_the_agent_block(
+    daemon_server, monkeypatch
+):
+    """The level Hermes reads is agent.reasoning_effort, not a root key."""
+    server, _ = daemon_server
+    monkeypatch.setenv("PIB_HERMES_PROFILE_FACTORY", "filesystem")
+    host, port = server.server_address
+    body = json.dumps(
+        {"personality_id": "profile-effort", "reasoning_effort": "none"}
+    ).encode()
+    request = Request(
+        f"http://{host}:{port}/profile",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+    with urlopen(request, timeout=2) as response:
+        result = json.loads(response.read().decode())
+
+    import yaml
+
+    with open(Path(result["profile_dir"]) / "config.yaml", encoding="utf-8") as fh:
+        cfg = yaml.safe_load(fh)
+
+    assert cfg["agent"]["reasoning_effort"] == "none"
+    assert "reasoning_effort" not in cfg
+
+
+def test_profile_endpoint_leaves_reasoning_effort_alone_when_null(
+    daemon_server, monkeypatch
+):
+    server, _ = daemon_server
+    monkeypatch.setenv("PIB_HERMES_PROFILE_FACTORY", "filesystem")
+    from pib_hermes_config import profile_dir_for
+
+    pdir = Path(profile_dir_for("profile-unmanaged"))
+    pdir.mkdir(parents=True)
+    (pdir / "config.yaml").write_text(
+        "agent:\n  reasoning_effort: medium\n", encoding="utf-8"
+    )
+    host, port = server.server_address
+    body = json.dumps(
+        {"personality_id": "profile-unmanaged", "reasoning_effort": None}
+    ).encode()
+    request = Request(
+        f"http://{host}:{port}/profile",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+    with urlopen(request, timeout=2) as response:
+        assert json.loads(response.read().decode())["ok"] is True
+
+    import yaml
+
+    with open(pdir / "config.yaml", encoding="utf-8") as fh:
+        cfg = yaml.safe_load(fh)
+    assert cfg["agent"]["reasoning_effort"] == "medium"
+    assert "reasoning_effort" not in cfg
+
+
+def test_profile_endpoint_rejects_an_unknown_reasoning_effort(daemon_server):
+    from urllib.error import HTTPError
+
+    server, _ = daemon_server
+    host, port = server.server_address
+    request = Request(
+        f"http://{host}:{port}/profile",
+        data=b'{"personality_id":"p","reasoning_effort":"turbo"}',
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+    with pytest.raises(HTTPError) as exc_info:
+        urlopen(request, timeout=2)
+
+    assert exc_info.value.code == 400
+    detail = json.loads(exc_info.value.read().decode())
+    assert detail["ok"] is False
+    assert "none" in detail["error"]
+    assert "ultra" in detail["error"]
+
+
 def test_profile_endpoint_rejects_a_non_string_model(daemon_server):
     from urllib.error import HTTPError
 

@@ -7,6 +7,11 @@ from model.personality_model import (
     DEFAULT_PAUSE_THRESHOLD,
     Personality,
 )
+from pib_hermes_config import (
+    DEFAULT_PERSONALITY_REASONING_EFFORT,
+    REASONING_EFFORT_ERROR,
+    REASONING_EFFORTS,
+)
 from pib_hermes_config.channel import (
     CHANNEL_DIRECT,
     CHANNEL_SMART,
@@ -80,6 +85,13 @@ class PersonalitySchemaSQLAutoWith(SQLAutoWithCamelCaseSchema):
     channel = fields.String(
         required=False,
         validate=validate.OneOf([CHANNEL_SMART, CHANNEL_DIRECT]),
+    )
+    # NULL is unmanaged. Omitted on create becomes "none".
+    reasoning_effort = fields.String(
+        required=False,
+        allow_none=True,
+        load_default=DEFAULT_PERSONALITY_REASONING_EFFORT,
+        validate=validate.OneOf(REASONING_EFFORTS, error=REASONING_EFFORT_ERROR),
     )
     effective_channel = fields.Method("get_effective_channel", dump_only=True)
     smart_chats_enabled = fields.Method("get_smart_chats_enabled", dump_only=True)

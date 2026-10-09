@@ -12,7 +12,12 @@ from model.personality_model import (
 )
 from model.provider_model import RegistryModel
 from app.app import db
-from pib_hermes_config import build_default_soul_text
+from pib_hermes_config import (
+    DEFAULT_PERSONALITY_REASONING_EFFORT,
+    REASONING_EFFORT_ERROR,
+    REASONING_EFFORTS,
+    build_default_soul_text,
+)
 from pib_hermes_config.channel import (
     CHANNEL_DIRECT,
     CHANNEL_SMART,
@@ -50,6 +55,8 @@ from service import provider_service, soul_service
 #: Path of the daemon endpoint that owns the Hermes profile factory.
 DAEMON_PROFILE_PATH = "/profile"
 DEFAULT_DAEMON_URL = "http://ros-voice-assistant:8088"
+# Sentinel: the caller did not name a reasoning level, so the payload omits it.
+_REASONING_OMITTED = object()
 
 
 def _daemon_profile_url() -> str:
@@ -67,6 +74,7 @@ def _provision_profile(
     model: Optional[str] = None,
     provider: Optional[str] = None,
     endpoint_base: Optional[str] = None,
+    reasoning_effort: Any = _REASONING_OMITTED,
     timeout: int = 60,
 ) -> dict:
     """Ask the Hermes daemon to create or repair a personality's Hermes profile.
@@ -75,6 +83,11 @@ def _provision_profile(
     row (its api_name, the provider account's name and endpoint). The daemon
     writes them into the profile's config.yaml, so the smart chat runs the
     personality's model instead of a pinned default (PR-1930b).
+
+    ``reasoning_effort`` is the personality column. A string is written to
+    ``agent.reasoning_effort``. ``None`` means unmanaged and the profile's
+    existing level is left as it is. Omitting the argument leaves the key
+    out of the payload.
 
     Deliberately a plain HTTP call: the client package cannot be imported in this
     image (`public_api_client.__init__` requires the tryb configuration at import
@@ -94,6 +107,10 @@ def _provision_profile(
         payload["provider"] = provider
     if endpoint_base is not None:
         payload["endpoint_base"] = endpoint_base
+    # Present even when null. Null tells the daemon the personality is
+    # unmanaged and the profile's agent.reasoning_effort must stay as it is.
+    if reasoning_effort is not _REASONING_OMITTED:
+        payload["reasoning_effort"] = reasoning_effort
 
     url = _daemon_profile_url().rstrip("/") + DAEMON_PROFILE_PATH
     try:
@@ -435,6 +452,26 @@ def _apply_memory(personality: Personality, personality_dto: Any) -> None:
     write_memory(personality.personality_id, text)
 
 
+def _apply_reasoning_effort(
+    personality: Personality, personality_dto: Any, *, creating: bool
+) -> None:
+    """Store the reasoning level. NULL leaves the Hermes profile alone.
+
+    A create that omits the field stores "none". An unknown level is rejected.
+    """
+    if "reasoning_effort" not in personality_dto:
+        if creating:
+            personality.reasoning_effort = DEFAULT_PERSONALITY_REASONING_EFFORT
+        return
+    value = personality_dto.get("reasoning_effort")
+    if value is None:
+        personality.reasoning_effort = None
+        return
+    if not isinstance(value, str) or value not in REASONING_EFFORTS:
+        raise ValidationError({"reasoningEffort": [REASONING_EFFORT_ERROR]})
+    personality.reasoning_effort = value
+
+
 def _apply_thinking_filler(personality: Personality, personality_dto: Any) -> None:
     if "thinking_filler" not in personality_dto:
         return
@@ -489,6 +526,7 @@ def create_personality(personality_dto: Any) -> Personality:
     _apply_provider_choice(personality, personality_dto, creating=True)
     _store_derived_voice_mode(personality)
     _apply_channel(personality, personality_dto, creating=True)
+    _apply_reasoning_effort(personality, personality_dto, creating=True)
     custom = ""
     if "description" in personality_dto and personality_dto["description"]:
         custom = str(personality_dto["description"]).strip()
@@ -503,6 +541,7 @@ def create_personality(personality_dto: Any) -> Personality:
             personality.personality_id,
             personality_name=personality.name,
             soul_text=custom or None,
+            reasoning_effort=personality.reasoning_effort,
             **_model_provisioning_fields(personality),
         )
         personality.profile_provisioned = True
@@ -541,12 +580,16 @@ def update_personality(personality_id: str, personality_dto: Any) -> Personality
     _apply_provider_choice(personality, personality_dto, creating=False)
     _store_derived_voice_mode(personality)
     model_changed = getattr(personality, "provider_ref", None) != previous_model_ref
-    if name_changed or model_changed:
+    previous_effort = personality.reasoning_effort
+    _apply_reasoning_effort(personality, personality_dto, creating=False)
+    effort_changed = personality.reasoning_effort != previous_effort
+    if name_changed or model_changed or effort_changed:
         try:
             _provision_profile(
                 personality.personality_id,
                 personality_name=personality.name,
                 soul_text=personality.description,
+                reasoning_effort=personality.reasoning_effort,
                 **_model_provisioning_fields(personality),
             )
             personality.profile_provisioned = True

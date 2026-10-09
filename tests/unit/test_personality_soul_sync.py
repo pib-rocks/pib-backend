@@ -159,14 +159,16 @@ def test_api_creation_provisions_profile_immediately(client, app_ctx, monkeypatc
     assert response.status_code == 201
     body = response.get_json()
     assert body["profileProvisioned"] is True
-    # The provisioning call now also carries the personality's model and
-    # provider, so the profile runs that model (PR-1930b).
+    # The provisioning call carries the personality's model and provider
+    # (PR-1930b) and its reasoning level, which a new personality stores
+    # as "none".
     from provider_registry import provider_name_for
 
     provision.assert_called_once_with(
         body["personalityId"],
         personality_name="CreationBot",
         soul_text="Custom.",
+        reasoning_effort="none",
         model=model.api_name,
         provider=provider_name_for(model.api_name),
     )
