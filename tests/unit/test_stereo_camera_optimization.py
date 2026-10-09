@@ -233,6 +233,7 @@ from ros_packages.camera.oak_d_lite.stereo import (
     IMU_STALE_MISSED_PUBLICATIONS,
     MAX_HAND_MP_BUFFER,
     ParsingNeuralNetwork,
+    TOTAL_SHAVES,
 )
 
 
@@ -3396,3 +3397,39 @@ class TestHandTrackingFast(unittest.TestCase):
         node.pipeline_manager.record_packet.assert_called_once_with(
             "hand_tracking_fast"
         )
+
+
+class TestListModelsShaveBudget(unittest.TestCase):
+    """`/list_models` reports the board SHAVE count the camera node owns."""
+
+    def test_list_models_callback_sets_total_shaves_from_the_board_constant(self):
+        with patch.object(CameraNode, "__init__", lambda self: None):
+            node = CameraNode()
+        model = types.SimpleNamespace(
+            model_id="demo",
+            task="test",
+            licence="Apache-2.0",
+            shaves=4,
+            size_bytes=4,
+            available=True,
+        )
+        node.model_registry = types.SimpleNamespace(selectable_models=lambda: [model])
+        node.pipeline_manager = types.SimpleNamespace(
+            statuses=lambda: {"demo": {"active": True}}
+        )
+        response = types.SimpleNamespace()
+
+        returned = node.list_models_callback(types.SimpleNamespace(), response)
+
+        self.assertIs(returned, response)
+        self.assertEqual(response.total_shaves, TOTAL_SHAVES)
+        self.assertEqual(len(response.models), 1)
+        self.assertEqual(response.models[0].model_id, "demo")
+        self.assertEqual(response.models[0].shaves, 4)
+        self.assertTrue(response.models[0].active)
+
+        node.model_registry = types.SimpleNamespace(selectable_models=lambda: [])
+        empty = types.SimpleNamespace()
+        node.list_models_callback(types.SimpleNamespace(), empty)
+        self.assertEqual(empty.models, [])
+        self.assertEqual(empty.total_shaves, TOTAL_SHAVES)

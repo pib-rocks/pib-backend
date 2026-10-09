@@ -84,7 +84,7 @@ class TestModelRegistry(unittest.TestCase):
     def test_model_service_interfaces_preserve_the_public_contract(self):
         self.assertEqual(
             _interface_fields("srv/ListModels.srv"),
-            ["---", "ModelInfo[] models"],
+            ["---", "ModelInfo[] models", "int32 total_shaves"],
         )
         self.assertEqual(
             _interface_fields("srv/StartModel.srv"),
@@ -677,9 +677,9 @@ class TestSelectableModels(unittest.TestCase):
             encoding="utf-8"
         )
 
-        self.assertIn(
-            "selectable_models()", self._function_source(source, "list_models_callback")
-        )
+        callback_source = self._function_source(source, "list_models_callback")
+        self.assertIn("selectable_models()", callback_source)
+        self.assertIn("response.total_shaves = TOTAL_SHAVES", callback_source)
         status_index = source.index("status_array.models = []")
         status_source = source[
             source.rfind("\n    def ", 0, status_index) : source.find(
