@@ -1,15 +1,14 @@
 import logging
-import os
 import time
 from typing import Optional
-
-import requests
 
 import rclpy
 from rclpy.node import Node
 
 from button_service.srv import ReadButton, WaitForButton, SetButtonManualOverride
+from button_service_node_pkg.button_resolution import uid_for_button
 from datatypes.msg import ButtonColor
+from pib_api_client import bricklet_client
 
 _node: Optional[Node] = None
 _set_button_color_publisher = None
@@ -92,42 +91,28 @@ def set_button_color(
     rclpy.spin_once(node, timeout_sec=0.25)
 
 
-def _button_id_to_uid(button_id: int) -> str:
-    """
-    Resolve button_id (1..3) to a bricklet UID using the same backend lookup
-    strategy as the button service.
-    """
-    button_id = int(button_id)
-    if button_id not in (1, 2, 3):
-        raise ValueError("button_id must be 1, 2, or 3")
-
-    api_base_url = os.getenv("FLASK_API_BASE_URL", "http://flask-app:5000").rstrip("/")
-    bricklet_numbers = [
-        int(number.strip())
-        for number in os.getenv("TF_BUTTON_BRICKLET_NUMBERS", "").split(",")
-        if number.strip()
-    ]
-    if len(bricklet_numbers) < button_id:
-        raise RuntimeError(
-            "TF_BUTTON_BRICKLET_NUMBERS must contain at least 3 entries to resolve UIDs "
-            f"(got {bricklet_numbers!r}, button_id={button_id})"
-        )
-
-    bricklet_number = bricklet_numbers[button_id - 1]
-    url = f"{api_base_url}/bricklet/{bricklet_number}"
+def _load_connected_devices() -> list:
+    """Same source as the button service: GET /bricklet/connected."""
     try:
-        response = requests.get(url, timeout=5)
-        response.raise_for_status()
+        successful, payload = bricklet_client.get_connected_bricklets()
     except Exception as exc:
         raise RuntimeError(
-            f"Failed to resolve button_id {button_id} via {url}: {exc}"
+            f"Failed to resolve button UID via /bricklet/connected: {exc}"
         ) from exc
-    uid = response.json().get("uid")
-    if not uid:
-        raise RuntimeError(
-            f"Bricklet {bricklet_number} has no UID configured in Cerebra (url={url})."
-        )
-    return str(uid)
+    if not successful or not isinstance(payload, dict):
+        raise RuntimeError("Failed to resolve button UID via /bricklet/connected")
+    devices = payload.get("bricklets") or []
+    if not isinstance(devices, list):
+        raise RuntimeError("Failed to resolve button UID via /bricklet/connected")
+    return devices
+
+
+def _button_id_to_uid(button_id: int) -> str:
+    """
+    Resolve button_id (1..3) to a bricklet UID with the same type-and-port
+    rule as the button service.
+    """
+    return uid_for_button(_load_connected_devices(), button_id)
 
 
 def set_button_manual_override(button_id: int, red: int, green: int, blue: int) -> None:

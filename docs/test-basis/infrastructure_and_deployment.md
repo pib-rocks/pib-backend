@@ -196,7 +196,6 @@ ros2 launch programs launch.py
 |---|---|
 | `PROGRAM_DIR` | `/ros2_ws/cerebra_programs` |
 | `PYTHON_BINARY` | `/usr/bin/python3` |
-| `TF_BUTTON_BRICKLET_NUMBERS` | `5,6,7` |
 | `SSH_HOST` | `host.docker.internal` |
 
 ### ros-voice-assistant

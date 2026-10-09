@@ -223,7 +223,6 @@ services:
       - VOICE_ASSISTANT_DIR=/app/ros2_ws/voice_assistant
       - TF_HOST=host.docker.internal
       - TF_PORT=4223
-      - TF_BUTTON_BRICKLET_NUMBERS=5,6,7
     volumes:
       - programs:/ros2_ws/cerebra_programs
       - /dev/bus/usb:/dev/bus/usb

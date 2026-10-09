@@ -107,6 +107,11 @@ def _import_bricklet_module(get_all_bricklets, sleep):
     with (
         mock.patch.dict(sys.modules, _fake_tinkerforge_modules()),
         mock.patch.object(bricklet_client, "get_all_bricklets", get_all_bricklets),
+        mock.patch.object(
+            bricklet_client,
+            "get_connected_bricklets",
+            mock.Mock(return_value=(True, {"bricklets": []})),
+        ),
         mock.patch("time.sleep", sleep),
     ):
         spec.loader.exec_module(module)
