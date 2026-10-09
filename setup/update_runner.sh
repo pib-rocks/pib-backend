@@ -76,6 +76,19 @@ log() {
     printf '[%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"
 }
 
+# installation_scripts/ollama_listen.sh reports with `print LEVEL message`.
+# This runner otherwise logs through log(); map print onto that so a sourced
+# helper stays in the update log.
+print() {
+    local level="$1"
+    local text="${2:-}"
+    if [ -z "$text" ]; then
+        text="$level"
+        level="INFO"
+    fi
+    log "${level}: ${text}"
+}
+
 read_remote_revision() {
     local name="$1"
     local directory="$2"
@@ -446,6 +459,40 @@ resolve_app_version() {
         return 0
     fi
     return 1
+}
+
+# 4 GiB images never install ollama (variant gate in setup-pib.sh). A missing
+# unit is success: the drop-in directory is not created, and this update
+# continues. The drop-in body, the installed-unit guard, and the idempotency
+# rule live in installation_scripts/ollama_listen.sh; this function only
+# decides when to apply them.
+#
+# This update restarts ollama when the drop-in file changes. The official unit
+# is already serving on loopback, and a file written without a restart is not
+# loaded until the next boot. build_backend_stack recreates flask-app
+# immediately afterwards, and that container probes Ollama as soon as it
+# starts, so the new bind has to be in effect first. The helper restarts only
+# when the file changed and the unit is active: a second update on an
+# already-configured device does not rewrite the drop-in or restart the
+# service, and a unit that is not active is not started.
+#
+# verify_result compares git revisions and the compose services snapshotted
+# before the update. ollama is a host systemd unit, not one of those services,
+# so this restart cannot fail that gate or the rollback that follows a failed
+# verification.
+ensure_ollama_for_update() {
+    local helper="${PIB_OLLAMA_LISTEN_HELPER:-$BACKEND_DIR/setup/installation_scripts/ollama_listen.sh}"
+    if [ ! -f "$helper" ]; then
+        print ERROR "ollama: listen helper not found at ${helper}"
+        return 1
+    fi
+    # shellcheck source=installation_scripts/ollama_listen.sh
+    source "$helper"
+    if ! ollama_unit_installed; then
+        print INFO "ollama: not installed; listen drop-in left unset"
+        return 0
+    fi
+    ensure_ollama_listen_dropin restart
 }
 
 # Documented injection is `docker compose build --build-arg APP_VERSION=<version>
@@ -868,6 +915,10 @@ if [ "$FREE_KIB" -lt "$PRUNE_BELOW_KIB" ]; then
     log "Disk space is below prune threshold; pruning Docker build cache"
     docker builder prune -af
 fi
+# After the fetch, before either stack is recreated. The new flask-app probes
+# Ollama as soon as it starts; a drop-in written afterwards would miss that
+# probe. A missing ollama unit returns success.
+ensure_ollama_for_update || fail "ollama listen drop-in could not be applied"
 build_backend_stack || fail "Backend container build failed"
 docker compose -f "$CEREBRA_DIR/docker-compose.yaml" \
     up -d --build --force-recreate || fail "Cerebra container build failed"

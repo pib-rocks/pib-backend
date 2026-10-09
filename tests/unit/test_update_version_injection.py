@@ -123,7 +123,13 @@ CURL_STUB = """#!/bin/bash
 exit 0
 """
 
+# `cat` is the ollama unit probe. This fixture has no unit, so the listen step
+# returns success and never calls sudo (this stub rejects sudo). `show` and
+# `list-unit-files` stay successful and empty, which is the watchdog path.
 SYSTEMCTL_STUB = """#!/bin/bash
+if [ "${1:-}" = "cat" ]; then
+    exit 1
+fi
 exit 0
 """
 
