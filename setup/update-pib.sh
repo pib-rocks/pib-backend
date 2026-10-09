@@ -70,46 +70,45 @@ function ensure_symlink_self() {
 }
 
 function ensure_host_ip() {
-    local outfile="$BACKEND_DIR/pib_api/flask/host_ip.txt"
+    local primary="/etc/pib_host_ip"
+    local legacy="$BACKEND_DIR/pib_api/flask/host_ip.txt"
     local dispatcher_script="/etc/NetworkManager/dispatcher.d/99-update-ip.sh"
+    local value
 
-    if [ ! -f "$outfile" ]; then
-        print INFO "host_ip.txt missing, ensuring dispatcher script exists..."
+    if [ -s "$primary" ] && [ -s "$legacy" ]; then
+        print INFO "host IP files already exist, skipping dispatcher setup"
+        return 0
+    fi
 
-        if [[ ! -f "$dispatcher_script" ]]; then
-            print INFO "Creating dispatcher script..."
-            sudo tee "$dispatcher_script" > /dev/null << 'EOF'
+    print INFO "host IP file missing, ensuring dispatcher script exists..."
+    sudo mkdir -p "$(dirname "$dispatcher_script")" "$(dirname "$primary")" "$(dirname "$legacy")"
+    sudo tee "$dispatcher_script" > /dev/null << 'EOF'
 #!/bin/bash
-LOG="/tmp/nm-dispatcher.log"
-OUTFILE="/home/pib/app/pib-backend/pib_api/flask/host_ip.txt"
-
-echo "$(date): Dispatcher triggered with IFACE=$1 STATE=$2" >> "$LOG"
-
-IP=$(ip route get 1 | grep -oP 'src \K[\d.]+' || echo "")
-
-CURRENT_IP=""
-if [[ -f "$OUTFILE" ]]; then
-    CURRENT_IP=$(cat "$OUTFILE")
+PRIMARY=/etc/pib_host_ip
+LEGACY=/home/pib/app/pib-backend/pib_api/flask/host_ip.txt
+IP=$(ip -4 route get 1 2>/dev/null | awk '{for (i = 1; i <= NF; i++) if ($i == "src") { print $(i + 1); exit }}')
+if [[ ! "$IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  exit 0
 fi
-
-if [[ "$IP" != "$CURRENT_IP" ]]; then
-    if [[ -n "$IP" ]]; then
-        echo "$IP" > "$OUTFILE"
-        echo "$(date): Updated IP to $IP" >> "$LOG"
-    else
-        > "$OUTFILE"
-        echo "$(date): No IP found" >> "$LOG"
-    fi
-fi
+for outfile in "$PRIMARY" "$LEGACY"; do
+  current=""
+  if [[ -f "$outfile" ]]; then
+    current=$(tr -d '[:space:]' < "$outfile")
+  fi
+  if [[ "$IP" != "$current" ]]; then
+    mkdir -p "$(dirname "$outfile")"
+    printf '%s\n' "$IP" > "$outfile"
+  fi
+done
 EOF
-            sudo chmod +x "$dispatcher_script"
-        fi
-
-        print INFO "Manually running dispatcher script to generate host_ip.txt..."
-        sudo bash -c "$dispatcher_script wlan0 dhcp4-change"
-    else
-        print INFO "host-ip.txt already exists, skipping dispatcher setup"
+    sudo chmod 755 "$dispatcher_script"
+    sudo bash "$dispatcher_script"
+    if [ ! -s "$primary" ]; then
+        print ERROR "host IP was not written to ${primary}"
+        return 1
     fi
+    value="$(tr -d '[:space:]' < "$primary")"
+    print INFO "host IP recorded in ${primary}: ${value}"
 }
 
 function update_backend() {

@@ -653,6 +653,38 @@ function install_local_bin_path() {
   print SUCCESS "PATH of user pib includes ~/.local/bin in login and non-login shells"
 }
 
+# Run a Hermes command as pib with ~/.local/bin on PATH. sudo's secure_path
+# drops that directory, and that is where the installer puts the CLI.
+function hermes_as_pib() {
+  sudo -u pib -H bash -c 'export PATH="$HOME/.local/bin:$PATH"; "$@"' bash "$@"
+}
+
+# The installer can leave an executable wrapper whose dependency environment was
+# never committed. `hermes --version` is the check: it exits non-zero with
+# "run hermes pm repair" until that environment exists. A binary that is merely
+# present is not a working CLI. A second run whose version already answers
+# does not repair again.
+function verify_hermes_cli() {
+  local output status
+
+  output="$(hermes_as_pib hermes --version 2>&1)"
+  status=$?
+  if [ "$status" -ne 0 ] || [ -z "$output" ]; then
+    print INFO "Hermes CLI is not usable (${output:-no output}); running hermes pm repair"
+    if ! hermes_as_pib hermes pm repair; then
+      print ERROR "hermes pm repair failed"
+      return 1
+    fi
+    output="$(hermes_as_pib hermes --version 2>&1)"
+    status=$?
+    if [ "$status" -ne 0 ] || [ -z "$output" ]; then
+      print ERROR "hermes --version still fails after pm repair (${output:-no output})"
+      return 1
+    fi
+  fi
+  print SUCCESS "Hermes CLI: ${output}"
+}
+
 function install_hermes_cli() {
   local hermes_bin="/home/pib/.local/bin/hermes"
   local hermes_profiles="/home/pib/.hermes/profiles"
@@ -662,7 +694,8 @@ function install_hermes_cli() {
     # Keep the shared profiles dir present for the flask/voice-assistant mounts.
     sudo -u pib -H mkdir -p "$hermes_profiles"
     seed_hermes_mcp_config
-    return 0
+    verify_hermes_cli
+    return $?
   fi
 
   print INFO "Installing Hermes CLI for user pib (idempotent; lands under /home/pib/.hermes)"
@@ -683,35 +716,92 @@ function install_hermes_cli() {
 
   sudo -u pib -H mkdir -p "$hermes_profiles"
 
-  if [ -x "$hermes_bin" ]; then
-    print SUCCESS "Hermes CLI installed at $hermes_bin"
-  else
+  if [ ! -x "$hermes_bin" ]; then
     print ERROR "Hermes CLI install finished but $hermes_bin is missing"
     return 1
   fi
 
   seed_hermes_mcp_config
+  verify_hermes_cli
 }
 
 
-function setup_pib_marimo_service() {
-  print INFO "Setting up pib Marimo Reactive Python Notebook Service..."
-  sudo -u pib -H mkdir -p /home/pib/programs/notebooks
-  sudo chmod 777 /home/pib/programs/notebooks 2>/dev/null || true
-  pip install --break-system-packages marimo 2>/dev/null || true
+# 2xx/3xx from the editor. Connection refused and 4xx/5xx are not "active".
+function marimo_http_ok() {
+  local code
+  code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 2 http://127.0.0.1:2718/ || true)"
+  case "$code" in
+    2*|3*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
 
+function setup_pib_marimo_service() {
+  local notebooks="${PIB_MARIMO_NOTEBOOKS:-/home/pib/programs/notebooks}"
   local service_src="$BACKEND_DIR/setup/setup_files/pib-marimo.service"
-  local service_target="/etc/systemd/system/pib-marimo.service"
-  if [ -f "$service_src" ]; then
-    sudo cp "$service_src" "$service_target"
-    sudo chmod 644 "$service_target"
-    sudo systemctl daemon-reload
-    sudo systemctl enable pib-marimo.service
-    sudo systemctl restart pib-marimo.service 2>/dev/null || true
-    print SUCCESS "Installed and enabled pib-marimo.service"
-  else
+  local service_target="${PIB_MARIMO_UNIT:-/etc/systemd/system/pib-marimo.service}"
+  local unit_changed=0 attempt state
+
+  print INFO "Setting up pib Marimo Reactive Python Notebook Service..."
+  sudo -u pib -H mkdir -p "$notebooks" || return 1
+  sudo chmod 777 "$notebooks" || return 1
+
+  if [ ! -f "$service_src" ]; then
     print ERROR "pib-marimo.service template not found at $service_src"
+    return 1
   fi
+
+  # The unit runs /usr/bin/python3 as user pib. Installing as that interpreter
+  # and then checking it as pib is the same import the unit will do. A missing
+  # module used to be discarded (`|| true`) and the unit restart-looped in
+  # "activating" while this step reported success.
+  if ! sudo -u pib -H /usr/bin/python3 -m marimo --version >/dev/null 2>&1; then
+    if ! /usr/bin/python3 -m pip --version >/dev/null 2>&1; then
+      sudo apt-get install -y python3-pip || return 1
+    fi
+    if ! /usr/bin/python3 -m pip install --break-system-packages 'marimo>=0.10.0'; then
+      print ERROR "could not install marimo for /usr/bin/python3"
+      return 1
+    fi
+  fi
+  if ! sudo -u pib -H /usr/bin/python3 -m marimo --version >/dev/null 2>&1; then
+    print ERROR "marimo is not importable for user pib"
+    return 1
+  fi
+
+  sudo mkdir -p "$(dirname "$service_target")" || return 1
+  if ! cmp -s "$service_src" "$service_target"; then
+    unit_changed=1
+    sudo cp "$service_src" "$service_target" || return 1
+    sudo chmod 644 "$service_target" || return 1
+    sudo systemctl daemon-reload || return 1
+  fi
+  sudo systemctl enable pib-marimo.service || return 1
+
+  # A second run whose unit file is unchanged and whose server already answers
+  # does not restart it.
+  if [ "$unit_changed" -eq 1 ] || ! systemctl is-active --quiet pib-marimo.service || ! marimo_http_ok; then
+    if ! sudo systemctl restart pib-marimo.service; then
+      print ERROR "could not restart pib-marimo.service"
+      return 1
+    fi
+  else
+    print INFO "pib-marimo already active"
+  fi
+
+  attempt=1
+  while [ "$attempt" -le 20 ]; do
+    if systemctl is-active --quiet pib-marimo.service && marimo_http_ok; then
+      print SUCCESS "pib-marimo is active and answering on port 2718"
+      return 0
+    fi
+    attempt=$((attempt + 1))
+    sleep 1
+  done
+
+  state="$(systemctl is-active pib-marimo.service 2>&1 || true)"
+  print ERROR "pib-marimo did not become active (systemctl is-active: ${state})"
+  return 1
 }
 
 # Install update script; move animated eyes, etc.
@@ -832,49 +922,63 @@ function disable_power_notification() {
 	# both only logged a change that never happened.
 }
 
-# Install a NetworkManager dispatcher script that observes IP changes and writes the current host IP to a file
+# `ip -4 route get 1` asks for a route to 0.0.0.1, which follows the default
+# route and prints `src <address>`. That address is not configured here.
+# awk, not grep -P: a grep without PCRE used to yield an empty string, and an
+# empty string compared equal to a missing file, so the file was never created.
+function host_ip_file_ok() {
+  local path="$1"
+  local value
+  [ -f "$path" ] || return 1
+  value="$(tr -d '[:space:]' < "$path")"
+  [[ "$value" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]
+}
+
+# Install a NetworkManager dispatcher that writes the current host IPv4 to
+# /etc/pib_host_ip (mounted into flask-app) and to the legacy flask file.
+# PIB_NM_DISPATCHER, PIB_HOST_IP_FILE and PIB_HOST_IP_LEGACY_FILE let the
+# unit tests use a scratch directory. A missing address fails the step.
 setup_ip_dispatcher() {
-  local dispatcher_script="/etc/NetworkManager/dispatcher.d/99-update-ip.sh"
-  local outfile="/home/pib/app/pib-backend/pib_api/flask/host_ip.txt"
+  local dispatcher_script="${PIB_NM_DISPATCHER:-/etc/NetworkManager/dispatcher.d/99-update-ip.sh}"
+  local primary="${PIB_HOST_IP_FILE:-/etc/pib_host_ip}"
+  local legacy="${PIB_HOST_IP_LEGACY_FILE:-${BACKEND_DIR}/pib_api/flask/host_ip.txt}"
+  local primary_q legacy_q
 
   print INFO "Creating dispatcher script..."
+  sudo mkdir -p "$(dirname "$dispatcher_script")" "$(dirname "$primary")" "$(dirname "$legacy")" || return 1
 
-  sudo tee "$dispatcher_script" > /dev/null << 'EOF'
+  primary_q="$(printf '%q' "$primary")"
+  legacy_q="$(printf '%q' "$legacy")"
+  sudo tee "$dispatcher_script" > /dev/null <<EOF
 #!/bin/bash
-LOG="/tmp/nm-dispatcher.log"
-OUTFILE="/home/pib/app/pib-backend/pib_api/flask/host_ip.txt"
-
-echo "$(date): Dispatcher triggered with IFACE=$1 STATE=$2" >> "$LOG"
-
-IP=$(ip route get 1 | grep -oP 'src \K[\d.]+' || echo "")
-
-CURRENT_IP=""
-if [[ -f "$OUTFILE" ]]; then
-    CURRENT_IP=$(cat "$OUTFILE")
+PRIMARY=${primary_q}
+LEGACY=${legacy_q}
+IP=\$(ip -4 route get 1 2>/dev/null | awk '{for (i = 1; i <= NF; i++) if (\$i == "src") { print \$(i + 1); exit }}')
+if [[ ! "\$IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+\$ ]]; then
+  exit 0
 fi
-
-if [[ "$IP" != "$CURRENT_IP" ]]; then
-    if [[ -n "$IP" ]]; then
-        echo "$IP" > "$OUTFILE"
-        echo "$(date): Updated IP to $IP" >> "$LOG"
-    else
-        > "$OUTFILE"
-        echo "$(date): No IP found" >> "$LOG"
-    fi
-fi
+for outfile in "\$PRIMARY" "\$LEGACY"; do
+  current=""
+  if [[ -f "\$outfile" ]]; then
+    current=\$(tr -d '[:space:]' < "\$outfile")
+  fi
+  if [[ "\$IP" != "\$current" ]]; then
+    mkdir -p "\$(dirname "\$outfile")"
+    printf '%s\n' "\$IP" > "\$outfile"
+  fi
+done
 EOF
 
-  sudo chmod +x "$dispatcher_script"
+  sudo chmod 755 "$dispatcher_script" || return 1
 
-  print INFO "Manually running dispatcher script to generate host_ip.txt..."
-  sudo bash -c "$dispatcher_script wlan0 dhcp4-change"
+  print INFO "Running the dispatcher once to record the host IP..."
+  sudo bash "$dispatcher_script" || return 1
 
-  if [[ -f "$outfile" ]]; then
-    print INFO "host_ip.txt was filled with the following IP:"
-    cat "$outfile"
-  else
-    print WARN "host_ip.txt does not exist!"
+  if ! host_ip_file_ok "$primary" || ! host_ip_file_ok "$legacy"; then
+    print ERROR "host IP was not written to ${primary} and ${legacy}"
+    return 1
   fi
+  print SUCCESS "host IP recorded in ${primary}: $(tr -d '[:space:]' < "$primary")"
 }
 
 # Persistent OAK blob store (bind-mounted into ros-camera at /models). The
@@ -1369,10 +1473,44 @@ function provision_whisper_model() {
 # qwen2.5:1.5b Q4 weights are about 1.0-1.1 GiB plus the KV cache for num_ctx 2048.
 # 1200 MiB is that requirement. Less than this is a warning before the pull, not a
 # hard stop, so an operator on a small machine can still proceed deliberately.
+#
+# Containers reach the daemon at host.docker.internal, which is the bridge
+# address, not 127.0.0.1. The official unit binds the loopback interface, so
+# the tags probe from flask fails and Cerebra never offers qwen-fast. The
+# drop-in binds every interface. PIB_OLLAMA_DROPIN points the unit tests at a
+# scratch file. An already-active unit is not restarted; a fresh install
+# writes the drop-in before the first start, so that start picks it up.
+function ensure_ollama_listen_dropin() {
+  local dropin="${PIB_OLLAMA_DROPIN:-/etc/systemd/system/ollama.service.d/override.conf}"
+  local staged="/tmp/pib-ollama-dropin.$$"
+  local already_active=0
+
+  # Absolute paths: the unit tests run this function with a PATH that contains
+  # only their stubs, and a bare mkdir/cmp would miss the real coreutils.
+  printf '%s\n' '[Service]' 'Environment="OLLAMA_HOST=0.0.0.0:11434"' > "$staged" || return 1
+  if [ -f "$dropin" ] && /usr/bin/cmp -s "$staged" "$dropin"; then
+    /usr/bin/rm -f "$staged"
+    print INFO "ollama: container listen address already configured"
+    return 0
+  fi
+  if systemctl is-active --quiet ollama; then
+    already_active=1
+  fi
+  sudo /usr/bin/mkdir -p "$(/usr/bin/dirname "$dropin")" || { /usr/bin/rm -f "$staged"; return 1; }
+  sudo /usr/bin/tee "$dropin" >/dev/null < "$staged" || { /usr/bin/rm -f "$staged"; return 1; }
+  /usr/bin/rm -f "$staged"
+  sudo systemctl daemon-reload || return 1
+  if [ "$already_active" -eq 1 ]; then
+    print WARN "ollama: OLLAMA_HOST applies on the next start; this step does not restart a service that is already active"
+  else
+    print INFO "ollama: configured OLLAMA_HOST=0.0.0.0:11434"
+  fi
+}
+
 function install_ollama_qwen_fast() {
   local modelfile="" version="" available_kib="" available_mib="" required_mib
   local curl_status=0 installer_status=0 model_names="" line="" name=""
-  local has_base=0 has_fast=0 service_user="" ready_attempts attempt=0
+  local has_base=0 has_fast=0 service_user="" ready_attempts attempt=0 tags=""
 
   # pib5edu, pib5advanced and pib5museum are the generation-5 (8 GiB) variants.
   case "${PIB_HARDWARE_VARIANT:-}" in
@@ -1447,6 +1585,8 @@ function install_ollama_qwen_fast() {
     print ERROR "ollama: systemctl is missing; cannot enable the ollama service"
     return 1
   fi
+
+  ensure_ollama_listen_dropin || return 1
 
   # Enable, then start only when the unit is down. Neither call restarts a unit
   # that is already active, and this step never calls restart. Pulling while the
@@ -1549,6 +1689,23 @@ function install_ollama_qwen_fast() {
       return 1
     fi
   fi
+
+  # The catalogue offers qwen-fast only when this document lists it. A unit
+  # that is "active" but whose tags endpoint does not name the model is the
+  # same false green as a missing host IP file.
+  if ! tags="$(curl -fsS --max-time 5 http://127.0.0.1:11434/api/tags)"; then
+    print ERROR "ollama: http://127.0.0.1:11434/api/tags did not answer"
+    return 1
+  fi
+  case "$tags" in
+    *qwen-fast*)
+      print INFO "ollama: /api/tags lists qwen-fast"
+      ;;
+    *)
+      print ERROR "ollama: /api/tags does not list qwen-fast"
+      return 1
+      ;;
+  esac
   return 0
 }
 
@@ -1762,7 +1919,7 @@ run_step "Install setup files" move_setup_files || print ERROR "failed to move s
 run_step "Set up pib Marimo service" setup_pib_marimo_service || print ERROR "failed to setup pib marimo service"
 run_step "Install DB browser" install_DBbrowser || print ERROR "failed to install DB browser"
 run_step "Install Tinkerforge" install_tinkerforge || print ERROR "failed to install tinkerforge"
-run_step "Set up IP dispatcher" setup_ip_dispatcher || print ERROR "failed to setup ip dispatcher"
+run_step "Set up IP dispatcher" setup_ip_dispatcher || abort_setup "failed to setup ip dispatcher"
 run_step "Adjust system settings" source "$SETUP_INSTALLATION_DIR/set_system_settings.sh" || print ERROR "failed to set system settings"
 run_step "Install wireplumber volume drop-in" install_wireplumber_volume_defaults || print WARN "failed to install the wireplumber volume drop-in"
 run_step "Set default output volume" set_default_output_volume || print WARN "failed to set default output volume"

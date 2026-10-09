@@ -13,3 +13,6 @@ class Config:
     PYTHON_CODE_DIR = os.getenv(
         "PYTHON_CODE_DIR", os.path.join(expanduser("~"), "cerebra_programs")
     )
+    # Absolute path. A relative default follows the process cwd, which is not
+    # the flask directory once the API is launched by a process supervisor.
+    HOST_IP_FILE = os.getenv("HOST_IP_FILE", os.path.join(BASE_DIR, "host_ip.txt"))

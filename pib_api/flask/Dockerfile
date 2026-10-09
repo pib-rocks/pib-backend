@@ -1,4 +1,5 @@
-FROM python:3.10-slim
+# 3.11 matches the unit-test job. hermes-agent (below) refuses Python 3.10.
+FROM python:3.11-slim
 
 WORKDIR /app
 
@@ -14,6 +15,12 @@ RUN printf '%s\n' "${APP_VERSION:-dev}" > /etc/pib_version
 # The pinned third-party set first, in one resolve.
 COPY ./pib_api/flask/requirements.txt /app
 RUN pip install -r requirements.txt
+
+# hermes_constants and hermes_cli are import-safe (stdlib only). --no-deps
+# keeps this from re-resolving Flask's pinned set; hermes-agent pins a newer
+# requests than this image. The voice image installs the same version with
+# its own dependency set.
+RUN pip install --no-deps hermes-agent==0.19.0
 
 # In-repo packages without dependencies; --no-deps keeps pip from re-resolving the environment.
 COPY ./pib_blockly/pib_blockly_client /tmp/pib_blockly_client

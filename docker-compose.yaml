@@ -42,6 +42,7 @@ services:
       - PIB_UPDATE_DIR=/app/.update
       - PIB_KEY_STORE_PATH=/home/pib/app/secrets/provider_key_store.json
       - PIB_OLLAMA_BASE_URL=http://host.docker.internal:11434
+      - HOST_IP_FILE=/etc/pib_host_ip
       # Empty means read /etc/pib_smart_chats. 0 disables the Hermes channel.
       - PIB_SMART_CHATS=${PIB_SMART_CHATS:-}
     volumes:
@@ -53,6 +54,7 @@ services:
       - /home/pib/app/.update:/app/.update
       - /etc/pib_hardware_variant:/etc/pib_hardware_variant:ro
       - /etc/pib_smart_chats:/etc/pib_smart_chats:ro
+      - /etc/pib_host_ip:/etc/pib_host_ip:ro
       - programs:/root/cerebra_programs
       - /home/pib/programs/notebooks:/home/pib/programs/notebooks
       # A personality's SOUL.md must land on the host, at the same path the

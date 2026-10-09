@@ -5,9 +5,13 @@ After=network.target
 [Service]
 Type=simple
 User=pib
+Environment=MARIMO_SKIP_UPDATE_CHECK=1
 Environment="MARIMO_CONFIG_OVERRIDES={\"display\": {\"theme\": \"dark\"}}"
 WorkingDirectory=/home/pib/programs/notebooks
-ExecStart=/usr/bin/python3 -m marimo edit --host 0.0.0.0 --port 2718 --no-token --headless
+# A directory, not a bare `marimo edit`: current marimo treats some empty
+# invocations as a remote notebook and exits into Docker. The notebooks
+# directory is local, so the editor stays in this process.
+ExecStart=/usr/bin/python3 -m marimo edit /home/pib/programs/notebooks --host 0.0.0.0 --port 2718 --no-token --headless
 Restart=always
 RestartSec=3
 

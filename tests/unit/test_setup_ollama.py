@@ -80,6 +80,18 @@ esac
 CURL_STUB = """#!/bin/bash
 PATH="/usr/bin:/bin"
 printf 'curl %s\\n' "$*" >> "$STUB_LOG"
+if [[ "$*" == *"/api/tags"* ]]; then
+  if [ "${STUB_TAGS_STATUS:-0}" -ne 0 ]; then
+    echo "curl: (7) tags endpoint refused" >&2
+    exit "$STUB_TAGS_STATUS"
+  fi
+  if [ -f "$STUB_STATE/tags.json" ]; then
+    cat "$STUB_STATE/tags.json"
+  else
+    echo '{"models":[{"name":"qwen-fast:latest"},{"name":"qwen2.5:1.5b"}]}'
+  fi
+  exit 0
+fi
 if [ "${STUB_CURL_STATUS:-0}" -ne 0 ]; then
   echo "curl: (6) Could not resolve host" >&2
   exit "$STUB_CURL_STATUS"
@@ -144,6 +156,9 @@ case "$cmd" in
     echo "ollama"
     exit 0
     ;;
+  daemon-reload)
+    exit 0
+    ;;
   *)
     echo "unexpected systemctl command: $*" >&2
     exit 99
@@ -206,6 +221,8 @@ def _run(
     installer_status: int = 0,
     start_status: int = 0,
     apt_status: int = 0,
+    tags_status: int = 0,
+    tags_body: str | None = None,
     zstd_present: bool = True,
     runs: int = 1,
     backend_dir: Path | None = None,
@@ -242,6 +259,8 @@ def _run(
         (state / "active").touch()
     if service_enabled:
         (state / "enabled").touch()
+    if tags_body is not None:
+        (state / "tags.json").write_text(tags_body, encoding="utf-8")
 
     calls = []
     for index in range(1, runs + 1):
@@ -250,6 +269,8 @@ def _run(
         calls.append(f"echo rc{index}=$?")
     script = (
         SETUP_PRELUDE
+        + _extract_bash_function(SETUP_PIB, "ensure_ollama_listen_dropin")
+        + "\n"
         + _extract_bash_function(SETUP_PIB, "install_ollama_qwen_fast")
         + "\n"
         + "\n".join(calls)
@@ -266,7 +287,9 @@ def _run(
         STUB_SH_STATUS=str(installer_status),
         STUB_START_STATUS=str(start_status),
         STUB_APT_STATUS=str(apt_status),
+        STUB_TAGS_STATUS=str(tags_status),
         STUB_MEM_AVAILABLE_KIB=str(mem_available_kib),
+        PIB_OLLAMA_DROPIN=str(tmp_path / "ollama-override.conf"),
         BACKEND_DIR=str(backend_dir if backend_dir is not None else REPO_ROOT),
         SETUP_SCRIPT_DIR=str(
             setup_dir if setup_dir is not None else REPO_ROOT / "setup"
@@ -487,3 +510,52 @@ def test_setup_runs_the_ollama_step_after_the_clone():
     assert "curl -fsSL https://ollama.com/install.sh | sh" in text
     assert "systemctl restart ollama" not in text
     assert "required_mib=1200" in text
+    assert "pib5edu | pib5advanced | pib5museum" in text
+
+
+def test_the_listen_dropin_is_written_before_the_first_start(tmp_path):
+    result, log = _run(tmp_path, runs=2)
+    dropin = tmp_path / "ollama-override.conf"
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (
+        dropin.read_text(encoding="utf-8")
+        == '[Service]\nEnvironment="OLLAMA_HOST=0.0.0.0:11434"\n'
+    )
+    assert _logged(log, f"sudo /usr/bin/tee {dropin}") == 1
+    assert log.index(f"sudo /usr/bin/tee {dropin}") < log.index(
+        "systemctl start ollama"
+    )
+    assert _logged(log, "systemctl restart ollama") == 0
+    assert (
+        "container listen address already configured"
+        in result.stdout.split("--- run 2 ---", 1)[1]
+    )
+
+
+def test_tags_that_omit_qwen_fast_fail_the_step(tmp_path):
+    result, _log = _run(
+        tmp_path,
+        ollama_installed=True,
+        models=["qwen2.5:1.5b", "qwen-fast:latest"],
+        service_active=True,
+        service_enabled=True,
+        tags_body='{"models":[{"name":"qwen2.5:1.5b"}]}',
+    )
+
+    assert "rc1=1" in result.stdout, result.stdout + result.stderr
+    assert "/api/tags does not list qwen-fast" in result.stdout
+
+
+def test_an_unreachable_tags_endpoint_fails_the_step(tmp_path):
+    result, _log = _run(
+        tmp_path,
+        ollama_installed=True,
+        models=["qwen-fast:latest"],
+        service_active=True,
+        service_enabled=True,
+        tags_status=7,
+    )
+
+    assert "rc1=1" in result.stdout, result.stdout + result.stderr
+    assert "did not answer" in result.stdout
