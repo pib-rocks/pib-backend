@@ -140,11 +140,55 @@ run_check() {
     cerebra_target="$REMOTE_TARGET"
     cerebra_error="$REMOTE_ERROR"
 
-    python3 "$CHECK_HELPER" write "$AVAILABLE_FILE" \
-        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-        "pib-backend" "$backend_installed" "$backend_target" "$backend_error" \
-        "cerebra" "$cerebra_installed" "$cerebra_target" "$cerebra_error"
-    log "Update availability check completed for channel $CHANNEL"
+    local checked_at spec_file
+    checked_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    spec_file="$UPDATE_DIR/.check-spec.json"
+    CHECK_ID="${CHECK_ID:-}" CHANNEL="$CHANNEL" CHECKED_AT="$checked_at" \
+        SPEC_FILE="$spec_file" AVAILABLE_FILE="$AVAILABLE_FILE" \
+        BACKEND_INSTALLED="$backend_installed" BACKEND_TARGET="$backend_target" \
+        BACKEND_ERROR="$backend_error" CEREBRA_INSTALLED="$cerebra_installed" \
+        CEREBRA_TARGET="$cerebra_target" CEREBRA_ERROR="$cerebra_error" \
+        python3 - <<'PY'
+import json
+import os
+from pathlib import Path
+
+previous = None
+available = Path(os.environ["AVAILABLE_FILE"])
+if available.is_file():
+    try:
+        loaded = json.loads(available.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        loaded = None
+    if isinstance(loaded, dict):
+        loaded.pop("previous", None)
+        previous = loaded
+spec = {
+    "checkedAt": os.environ["CHECKED_AT"],
+    "checkId": os.environ.get("CHECK_ID") or None,
+    "channel": os.environ["CHANNEL"],
+    "state": "completed",
+    "previous": previous,
+    "installed": {
+        "pib-backend": os.environ["BACKEND_INSTALLED"],
+        "cerebra": os.environ["CEREBRA_INSTALLED"],
+    },
+    "remote": {
+        "pib-backend": {
+            "target": os.environ["BACKEND_TARGET"],
+            "error": os.environ["BACKEND_ERROR"],
+        },
+        "cerebra": {
+            "target": os.environ["CEREBRA_TARGET"],
+            "error": os.environ["CEREBRA_ERROR"],
+        },
+    },
+}
+Path(os.environ["SPEC_FILE"]).write_text(json.dumps(spec), encoding="utf-8")
+PY
+    python3 "$CHECK_HELPER" commit "$spec_file" "$AVAILABLE_FILE"
+    rm -f "$spec_file"
+    log "Update availability check completed for channel $CHANNEL check ${CHECK_ID:-unknown}"
 }
 
 if [ "${1:-}" = "--check" ]; then
@@ -311,6 +355,69 @@ restore_watchdog() {
     rm -f "$WATCHDOG_TARGET_FILE" || true
 }
 
+# executor.json is the liveness signal. service.json only records installation.
+# The parent writes it immediately; the child refreshes it during long builds.
+HEARTBEAT_PID=""
+write_executor_heartbeat() {
+    JOB_ID="$JOB_ID" UPDATE_DIR="$UPDATE_DIR" python3 - <<'PY'
+import json
+import os
+import tempfile
+from datetime import datetime, timezone
+
+directory = os.environ["UPDATE_DIR"]
+document = {
+    "schemaVersion": 1,
+    "jobId": os.environ["JOB_ID"],
+    "updatedAt": datetime.now(timezone.utc).isoformat(),
+    "pid": os.getppid(),
+}
+path = os.path.join(directory, "executor.json")
+descriptor, temporary = tempfile.mkstemp(prefix=".executor.json.", dir=directory)
+try:
+    with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+        json.dump(document, output, sort_keys=True)
+        output.write("\n")
+        output.flush()
+        os.fsync(output.fileno())
+    os.chmod(temporary, 0o660)
+    os.replace(temporary, path)
+except BaseException:
+    try:
+        os.unlink(temporary)
+    except FileNotFoundError:
+        pass
+    raise
+PY
+}
+
+start_heartbeat() {
+    write_executor_heartbeat
+    (
+        while true; do
+            sleep 30
+            write_executor_heartbeat || true
+        done
+    ) &
+    HEARTBEAT_PID=$!
+}
+
+stop_heartbeat() {
+    if [ -n "${HEARTBEAT_PID:-}" ]; then
+        kill "$HEARTBEAT_PID" 2>/dev/null || true
+        wait "$HEARTBEAT_PID" 2>/dev/null || true
+        HEARTBEAT_PID=""
+    fi
+}
+
+on_runner_exit() {
+    # A failing EXIT handler must not replace the terminal status via the ERR trap.
+    trap - ERR
+    stop_heartbeat || true
+    restore_watchdog || true
+    return 0
+}
+
 extend_watchdog_for_build() {
     local current_display original_us target_us
     current_display="$(systemctl show --property=RuntimeWatchdogUSec --value 2>/dev/null || true)"
@@ -347,7 +454,7 @@ extend_watchdog_for_build() {
     # target but before sudo returns, the EXIT trap still restores the original.
     WATCHDOG_ORIGINAL_US="$original_us"
     WATCHDOG_RESTORE_NEEDED="true"
-    trap restore_watchdog EXIT
+    trap on_runner_exit EXIT
     if sudo -n "$WATCHDOG_HELPER"; then
         log "Extended systemd watchdog timeout from ${original_us}us to ${target_us}us for the update build"
     else
@@ -870,6 +977,8 @@ fi
 trap on_unexpected_error ERR
 
 load_request
+start_heartbeat
+trap on_runner_exit EXIT
 load_predecessor_status
 enforce_retry_policy
 write_status "preflight" "Validating repositories, disk, watchdog ownership, and database backup (attempt ${ATTEMPT} of ${MAX_ATTEMPTS})"
