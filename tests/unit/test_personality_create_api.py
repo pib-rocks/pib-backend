@@ -46,6 +46,7 @@ def test_name_only_create_succeeds_with_the_documented_defaults(client, app_ctx)
     assert created["ttsEngine"] == "supertone"
     assert created["providerRef"] == "default"
     assert created["channel"] == "smart"
+    assert created["reasoningEffort"] == "none"
     assert created["thinkingFiller"] is None
     assert "Nur Name" in created["description"]
 

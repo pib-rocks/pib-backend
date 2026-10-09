@@ -24,6 +24,8 @@ import yaml
 from pib_hermes_config import (
     DEFAULT_SOUL,
     PROFILE_PREFIX,
+    REASONING_EFFORT_ERROR,
+    REASONING_EFFORTS,
     align_profile_ownership,
     build_default_soul_text,
     env_vars_for_provider,
@@ -85,6 +87,8 @@ DEFAULT_HERMES_MODEL = "gemini-3.8-flash"
 DEFAULT_HERMES_LITE_MODEL = "gemini-3.5-flash-lite"
 DEFAULT_HERMES_PROVIDER = "gemini"
 # High-speed defaults for Gemini Flash / Flash-Lite (PR-1524).
+# Written into the agent block. Hermes reads agent.reasoning_effort and
+# ignores the same keys at the config root.
 DEFAULT_REASONING_EFFORT = "low"
 DEFAULT_MAX_TOKENS = 1024
 DEFAULT_TEMPERATURE = 0.3
@@ -277,12 +281,62 @@ def _merge_missing_mcp_env(entry: dict) -> bool:
     return changed
 
 
+def _agent_block(cfg: dict) -> tuple[dict, bool]:
+    """The config's agent mapping, created when it is missing or not a mapping."""
+    agent = cfg.get("agent")
+    if isinstance(agent, dict):
+        return agent, False
+    agent = {}
+    cfg["agent"] = agent
+    return agent, True
+
+
+def _apply_agent_speed_defaults(
+    cfg: dict,
+    reasoning_effort: Optional[str] = None,
+    *,
+    personality_reasoning: bool = False,
+) -> bool:
+    """Write speed settings into the agent block. Returns whether cfg changed.
+
+    Hermes reads ``agent.reasoning_effort`` (and the speed keys beside it).
+    The same keys at the config root are never read, so they are not written.
+
+    ``personality_reasoning`` means the personality column is the authority.
+    A string overwrites ``agent.reasoning_effort``. ``None`` is unmanaged and
+    leaves whatever the profile already has. Without that flag, a missing
+    agent key is seeded with the speed default and an existing value is kept.
+    ``max_tokens`` and ``temperature`` are seeded only when absent.
+    """
+    agent, changed = _agent_block(cfg)
+    if personality_reasoning:
+        if reasoning_effort is not None:
+            if reasoning_effort not in REASONING_EFFORTS:
+                raise ValueError(REASONING_EFFORT_ERROR)
+            if agent.get("reasoning_effort") != reasoning_effort:
+                agent["reasoning_effort"] = reasoning_effort
+                changed = True
+    elif "reasoning_effort" not in agent:
+        agent["reasoning_effort"] = DEFAULT_REASONING_EFFORT
+        changed = True
+    if "max_tokens" not in agent:
+        agent["max_tokens"] = DEFAULT_MAX_TOKENS
+        changed = True
+    if "temperature" not in agent:
+        agent["temperature"] = DEFAULT_TEMPERATURE
+        changed = True
+    return changed
+
+
 def _ensure_mcp_servers_pib(
     pdir: str,
     model: Optional[str] = None,
     provider: Optional[str] = None,
     base_url: Optional[str] = None,
     env_vars: tuple[str, ...] = (),
+    reasoning_effort: Optional[str] = None,
+    *,
+    personality_reasoning: bool = False,
 ) -> None:
     """Seed the personality's model/provider and repair mcp_servers.pib.
 
@@ -297,8 +351,12 @@ def _ensure_mcp_servers_pib(
     ``base_url``) additionally gets a ``providers.<name>`` entry carrying its
     ``base_url`` and, when it needs a key, its ``key_env``.
 
-    Speed defaults (reasoning_effort, max_tokens, temperature) are written only
-    when the key is absent, so an operator's or a model's own value survives.
+    Speed defaults (reasoning_effort, max_tokens, temperature) are written into
+    the agent block, and only when that key is absent, so an operator's or a
+    model's own value survives. A personality reasoning level, when given,
+    overwrites agent.reasoning_effort. NULL (personality_reasoning with no
+    level) leaves the profile's existing level alone. Root-level copies of
+    these keys are not written: Hermes does not read them.
 
     Runs even when config.yaml already exists. An mcp_servers.pib entry that is
     already there keeps its command/args and only gets the env keys it is
@@ -338,15 +396,12 @@ def _ensure_mcp_servers_pib(
             cfg["provider"] = desired_provider
             changed = True
 
-    # Decision 5: speed defaults are a starting point, not a per-model override.
-    if "reasoning_effort" not in cfg:
-        cfg["reasoning_effort"] = DEFAULT_REASONING_EFFORT
-        changed = True
-    if "max_tokens" not in cfg:
-        cfg["max_tokens"] = DEFAULT_MAX_TOKENS
-        changed = True
-    if "temperature" not in cfg:
-        cfg["temperature"] = DEFAULT_TEMPERATURE
+    # Decision 5, corrected: speed defaults live in the agent block.
+    if _apply_agent_speed_defaults(
+        cfg,
+        reasoning_effort,
+        personality_reasoning=personality_reasoning,
+    ):
         changed = True
 
     # A user-defined route is declared under providers.<name>. Built-in
@@ -410,6 +465,9 @@ def ensure_profile(
     model: Optional[str] = None,
     provider: Optional[str] = None,
     base_url: Optional[str] = None,
+    reasoning_effort: Optional[str] = None,
+    *,
+    personality_reasoning: bool = False,
 ) -> str:
     """Loud local repair path, executed only where Hermes is importable.
 
@@ -427,6 +485,8 @@ def ensure_profile(
         model=model,
         provider=provider,
         base_url=base_url,
+        reasoning_effort=reasoning_effort,
+        personality_reasoning=personality_reasoning,
     )
     return result["profile_dir"]
 
@@ -489,6 +549,9 @@ def provision_profile(
     personality_name: Optional[str] = None,
     soul_text: Optional[str] = None,
     timeout: int = 60,
+    reasoning_effort: Optional[str] = None,
+    *,
+    personality_reasoning: bool = False,
 ) -> dict:
     """Ask the Hermes daemon to create or repair a complete profile."""
     try:
@@ -503,6 +566,8 @@ def provision_profile(
         payload["personality_name"] = personality_name
     if soul_text is not None:
         payload["soul_text"] = soul_text
+    if personality_reasoning:
+        payload["reasoning_effort"] = reasoning_effort
 
     session = _get_daemon_session()
     post = session.post if session is not None else requests.post

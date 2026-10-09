@@ -270,6 +270,9 @@ def ensure_profile_home(
     model: Optional[str] = None,
     provider: Optional[str] = None,
     base_url: Optional[str] = None,
+    reasoning_effort: Optional[str] = None,
+    *,
+    personality_reasoning: bool = False,
 ) -> dict:
     """Create or repair one complete Hermes home with the canonical factory.
 
@@ -277,6 +280,9 @@ def ensure_profile_home(
     (``provider`` is the registry name, ``base_url`` its endpoint). They are
     written into the profile's config.yaml so the smart chat runs the model the
     personality is set to. Passing none keeps whatever the profile already has.
+
+    ``personality_reasoning`` writes ``reasoning_effort`` into the agent block.
+    ``None`` leaves the profile's existing agent.reasoning_effort alone.
     """
     from pib_hermes_config import (
         align_profile_ownership,
@@ -402,6 +408,8 @@ def ensure_profile_home(
         provider=mapping.provider if mapping else None,
         base_url=mapping.base_url if mapping else None,
         env_vars=mapping.env_vars if mapping else (),
+        reasoning_effort=reasoning_effort,
+        personality_reasoning=personality_reasoning,
     )
     align_profile_ownership(profile_dir)
     os.chmod(profile_dir, 0o700)
@@ -1149,6 +1157,19 @@ class HermesDaemonHandler(BaseHTTPRequestHandler):
                         400, {"ok": False, "error": f"{field} must be a string"}
                     )
                     return
+            personality_reasoning = "reasoning_effort" in data
+            reasoning_effort = (
+                data.get("reasoning_effort") if personality_reasoning else None
+            )
+            if personality_reasoning and reasoning_effort is not None:
+                from pib_hermes_config import REASONING_EFFORT_ERROR, REASONING_EFFORTS
+
+                if (
+                    not isinstance(reasoning_effort, str)
+                    or reasoning_effort not in REASONING_EFFORTS
+                ):
+                    self._send_json(400, {"ok": False, "error": REASONING_EFFORT_ERROR})
+                    return
             try:
                 result = ensure_profile_home(
                     personality_id,
@@ -1157,6 +1178,8 @@ class HermesDaemonHandler(BaseHTTPRequestHandler):
                     model=model,
                     provider=provider,
                     base_url=endpoint_base,
+                    reasoning_effort=reasoning_effort,
+                    personality_reasoning=personality_reasoning,
                 )
             except Exception as exc:
                 logging.exception("hermes-daemon /profile failed: %s", exc)
