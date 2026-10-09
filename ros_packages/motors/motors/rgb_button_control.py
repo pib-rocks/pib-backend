@@ -3,6 +3,7 @@ import rclpy
 from rclpy.node import Node
 from rclpy.client import Client
 from rclpy.task import Future
+from std_srvs.srv import Empty
 from tinkerforge.bricklet_rgb_led_button import BrickletRGBLEDButton
 from pib_motors.bricklet import uid_to_rgb_led_bricklet
 from datatypes.srv import ProxyRunProgramStart, ProxyRunProgramStop
@@ -11,11 +12,12 @@ from datatypes.msg import ButtonColor
 from pib_api_client import button_programs_client
 from button_service.srv import SetButtonManualOverride
 
-ERROR_COLOR_DURATION_SECONDS = 2.0  # how long red stays before reverting to blue
+ERROR_COLOR_DURATION_SECONDS = (
+    2.0  # how long red stays before reverting to the idle color
+)
 BLUE_COLOR = (0, 0, 255)  # blue color for idle state
 GREEN_COLOR = (0, 255, 0)  # green color for program running state
 RED_COLOR = (255, 0, 0)  # red color for error state
-POLL_INTERVAL_SECONDS = 5.0
 
 
 class RGBButtonControl(Node):
@@ -84,9 +86,13 @@ class RGBButtonControl(Node):
             self.handle_manual_override,
         )
 
-        self.update_button_colors()
+        self.refresh_colors_service = self.create_service(
+            Empty,
+            "refresh_colors",
+            self.handle_refresh_colors,
+        )
 
-        self.create_timer(POLL_INTERVAL_SECONDS, self.update_button_colors)
+        self.update_button_colors()
 
         self.get_logger().info("Now Running RGB_BUTTON_CONTROL")
 
@@ -144,8 +150,13 @@ class RGBButtonControl(Node):
         if uid not in self.goal_to_uid.values():
             self.set_button_color(uid, r, g, b)
 
+    def handle_refresh_colors(self, request, response):
+        """Refresh all idle button colors (e.g. when button-program assignments changed). Empty request and response."""
+        self.update_button_colors()
+        return response
+
     def program_result_callback(self, msg: ProxyRunProgramResult) -> None:
-        """Set button color to red on error (temporary), blue on success."""
+        """Set button color to red on error (temporarily), then back to idle."""
         uid = self.goal_to_uid.pop(msg.proxy_goal_id, None)
         if not uid:
             return
@@ -155,6 +166,16 @@ class RGBButtonControl(Node):
             self.get_logger().warning(
                 f"Program failed for UID {uid}, exit_code={msg.exit_code}"
             )
+
+            def revert_to_idle(u=uid):
+                if u not in self.goal_to_uid.values():
+                    self.restore_idle_color(u)
+                self.destroy_timer(error_timer)
+
+            error_timer = self.create_timer(
+                ERROR_COLOR_DURATION_SECONDS, revert_to_idle
+            )
+
         else:
             self.restore_idle_color(uid)
             self.get_logger().info(f"Program finished successfully for UID {uid}")
@@ -255,7 +276,7 @@ class RGBButtonControl(Node):
             self.set_button_color(uid, 0, 0, 0)
 
     def update_button_colors(self) -> None:
-        """Periodically updates button colors based on current program assignments."""
+        """Updates button colors based on current program assignments."""
         self.load_button_programs()
         for uid in self.rgb_led_bricklets:
             if uid in self.goal_to_uid.values():
