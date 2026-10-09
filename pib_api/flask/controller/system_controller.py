@@ -231,6 +231,17 @@ def start_update():
     payload = request.get_json(silent=True)
     if not isinstance(payload, dict):
         return jsonify({"error": "Request body must be a JSON object"}), 400
+    # Clients name a tag or ask to pin the checked develop commits. They do
+    # not supply the commits that will be checked out.
+    if "targets" in payload or "targetKind" in payload:
+        return (
+            jsonify(
+                {
+                    "error": "targets are resolved by the server from the confirmed check"
+                }
+            ),
+            400,
+        )
 
     running_signal = update_service.program_running_signal()
     if running_signal is True:
@@ -243,6 +254,13 @@ def start_update():
             confirmation=payload.get("confirmation"),
             actor=request.remote_addr or "unknown",
         )
+        if payload.get("release") is not None or payload.get("pin", False) is not False:
+            update_request = update_service.pin_accepted_job(
+                update_request,
+                release=payload.get("release"),
+                check_id=payload.get("checkId"),
+                pin=payload.get("pin", False),
+            )
         status = update_service.enqueue_update(update_request)
     except update_service.UpdateValidationError as error:
         return jsonify({"error": str(error)}), 400
@@ -295,7 +313,9 @@ def check_update_available():
 @bp.route("/update/available", methods=["GET"])
 def get_update_available():
     try:
-        available = update_service.get_available()
+        available = update_service.annotate_installed_release(
+            update_service.get_available(), revision_service.installed_revisions()
+        )
     except update_service.UpdateNotInstalledError as error:
         return jsonify({"error": str(error), "state": error.state}), 503
     return jsonify(available), 200

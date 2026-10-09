@@ -127,3 +127,93 @@ def test_queued_request_past_the_start_deadline_is_recoverable(
     assert observed.get_json()["state"] == "queued"
     assert "start" in observed.get_json()["staleReason"].lower()
     assert started.status_code == 202
+
+
+def _paired_available(check_id="11111111-1111-4111-8111-111111111111"):
+    backend = "a" * 40
+    cerebra = "b" * 40
+    return {
+        "schemaVersion": 1,
+        "state": "completed",
+        "checkId": check_id,
+        "channel": "release",
+        "checkedAt": "2026-10-10T00:00:00+00:00",
+        "latestInstallable": "v1.2.3",
+        "releases": [
+            {
+                "tag": "v1.2.3",
+                "installable": True,
+                "notes": "fixture notes",
+                "targets": {
+                    "pib-backend": {"commit": backend, "tag": "v1.2.3"},
+                    "cerebra": {"commit": cerebra, "tag": "v1.2.3"},
+                },
+            }
+        ],
+        "repositories": {
+            "pib-backend": {
+                "installed": "c" * 40,
+                "target": "d" * 40,
+                "updateAvailable": "unknown",
+            },
+            "cerebra": {
+                "installed": "c" * 40,
+                "target": "d" * 40,
+                "updateAvailable": "unknown",
+            },
+        },
+    }
+
+
+def test_confirmed_release_pins_the_checked_commits_and_ignores_client_targets(
+    client, tmp_path, monkeypatch
+):
+    update_dir = _installed_update_dir(tmp_path)
+    monkeypatch.setenv("PIB_UPDATE_DIR", str(update_dir))
+    check_id = "11111111-1111-4111-8111-111111111111"
+    (update_dir / "available.json").write_text(
+        json.dumps(_paired_available(check_id)), encoding="utf-8"
+    )
+
+    rejected = client.post(
+        "/system/update",
+        json={
+            **_request(),
+            "release": "v1.2.3",
+            "checkId": check_id,
+            "targets": {"pib-backend": "e" * 40, "cerebra": "f" * 40},
+        },
+    )
+    assert rejected.status_code == 400
+
+    started = client.post(
+        "/system/update",
+        json={**_request(), "release": "v1.2.3", "checkId": check_id},
+    )
+    assert started.status_code == 202
+    job = started.get_json()["job"]
+    assert "state" not in job
+    assert job["targetKind"] == "published-release"
+    assert job["targets"] == {"pib-backend": "a" * 40, "cerebra": "b" * 40}
+    stored = json.loads((update_dir / "request.json").read_text(encoding="utf-8"))
+    assert stored["targets"] == job["targets"]
+
+    moved = _paired_available(check_id)
+    moved["releases"][0]["targets"]["pib-backend"]["commit"] = "e" * 40
+    (update_dir / "available.json").write_text(json.dumps(moved), encoding="utf-8")
+    stored_again = json.loads((update_dir / "request.json").read_text(encoding="utf-8"))
+    assert stored_again["targets"]["pib-backend"] == "a" * 40
+
+
+def test_channel_only_request_stays_unpinned(client, tmp_path, monkeypatch):
+    update_dir = _installed_update_dir(tmp_path)
+    monkeypatch.setenv("PIB_UPDATE_DIR", str(update_dir))
+
+    started = client.post("/system/update", json=_request("develop"))
+
+    assert started.status_code == 202
+    job = started.get_json()["job"]
+    assert job["channel"] == "develop"
+    assert "targets" not in job
+    assert "release" not in job
+    assert "targetKind" not in job

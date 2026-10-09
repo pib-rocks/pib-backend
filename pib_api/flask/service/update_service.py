@@ -7,6 +7,7 @@ requests; the systemd-triggered host runner performs the destructive work.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -31,6 +32,9 @@ HOST_UPDATE_UNITS = (
 )
 CANCEL_SAFE_STATES = frozenset({"queued", "preflight", "fetching"})
 CHECK_ID_PATTERN = re.compile(r"^[0-9a-fA-F-]{36}$")
+STABLE_TAG_PATTERN = re.compile(r"^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
+COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
+_RELEASES_MODULE = None
 # Queued work with no executor start, and a heartbeat that has stopped.
 # In-progress jobs from a runner that does not write executor.json stay active:
 # a long source build must not be classified as dead merely because status.json
@@ -732,6 +736,139 @@ def read_log(offset: int, directory: Path | None = None) -> dict[str, Any]:
         "content": content.decode("utf-8", errors="replace"),
         "eof": actual_offset + len(content) >= size,
     }
+
+
+def _release_module():
+    """Load the host pairing helper. It has no Flask dependency."""
+    global _RELEASES_MODULE
+    if _RELEASES_MODULE is None:
+        path = Path(__file__).resolve().parents[3] / "setup" / "update_releases.py"
+        spec = importlib.util.spec_from_file_location("update_releases", path)
+        if spec is None or spec.loader is None:
+            raise UpdateValidationError("release pairing helper is not available")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _RELEASES_MODULE = module
+    return _RELEASES_MODULE
+
+
+def _commit_map(targets: object) -> dict[str, str]:
+    if not isinstance(targets, dict):
+        raise UpdateValidationError("confirmed release is missing commit targets")
+    resolved: dict[str, str] = {}
+    for name in UPDATE_REPOSITORIES:
+        entry = targets.get(name)
+        commit = entry.get("commit") if isinstance(entry, dict) else entry
+        if not isinstance(commit, str) or not COMMIT_PATTERN.fullmatch(commit):
+            raise UpdateValidationError(f"confirmed release is missing a {name} commit")
+        resolved[name] = commit
+    return resolved
+
+
+def pin_accepted_job(
+    request: Mapping[str, Any],
+    *,
+    release: Any,
+    check_id: Any,
+    pin: Any,
+    directory: Path | None = None,
+) -> dict[str, Any]:
+    """Copy server-resolved commits into the immutable job.
+
+    Client ``targets`` are never read. A channel-only request must not call
+    this: that shape remains the legacy moving-branch update.
+    """
+    if type(pin) is not bool:
+        raise UpdateValidationError("pin must be a boolean")
+    directory = directory or update_directory()
+    available = _read_json(directory / "available.json")
+    if (
+        not isinstance(available, dict)
+        or "repositories" not in available
+        and "releases" not in available
+    ):
+        raise UpdateValidationError(
+            "A completed availability check is required before a pinned install"
+        )
+    if available.get("state") not in {None, "completed"}:
+        raise UpdateValidationError("The availability check has not completed")
+    if check_id is not None:
+        if not isinstance(check_id, str) or not CHECK_ID_PATTERN.fullmatch(check_id):
+            raise UpdateValidationError("checkId must be a UUID")
+        if available.get("checkId") != check_id:
+            raise UpdateValidationError(
+                "The availability check does not match the confirmed check id"
+            )
+    if (
+        isinstance(available.get("channel"), str)
+        and available.get("channel") != request["channel"]
+    ):
+        raise UpdateValidationError(
+            "The availability check channel does not match the install request"
+        )
+    pinned = dict(request)
+    if request["channel"] == "release":
+        if not isinstance(release, str) or not STABLE_TAG_PATTERN.fullmatch(release):
+            raise UpdateValidationError(
+                "release must be a stable published tag such as v1.2.3"
+            )
+        match = None
+        for item in available.get("releases") or []:
+            if (
+                isinstance(item, dict)
+                and item.get("tag") == release
+                and item.get("installable") is True
+            ):
+                match = item
+                break
+        if match is None:
+            raise UpdateValidationError(
+                "That release is not an installable paired release in the confirmed check"
+            )
+        pinned["release"] = release
+        pinned["targets"] = _commit_map(match.get("targets"))
+        pinned["targetKind"] = "published-release"
+    else:
+        if pin is not True:
+            raise UpdateValidationError(
+                "A develop install must set pin true so the checked commits are recorded"
+            )
+        repositories = available.get("repositories")
+        if not isinstance(repositories, dict):
+            raise UpdateValidationError(
+                "The develop check did not pin both repository commits"
+            )
+        targets = {}
+        for name in UPDATE_REPOSITORIES:
+            entry = repositories.get(name)
+            sha = entry.get("target") if isinstance(entry, dict) else None
+            if not isinstance(sha, str) or not COMMIT_PATTERN.fullmatch(sha):
+                raise UpdateValidationError(
+                    "The develop check did not pin both repository commits"
+                )
+            targets[name] = sha
+        pinned["targets"] = targets
+        pinned["targetKind"] = "develop-pin"
+    if isinstance(available.get("checkId"), str):
+        pinned["checkId"] = available["checkId"]
+    return pinned
+
+
+def annotate_installed_release(
+    document: Mapping[str, Any], installed: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Attach release relations when the check discovered paired tags."""
+    if not isinstance(document, dict):
+        return dict(document) if isinstance(document, Mapping) else {}
+    if document.get("state") == "pending":
+        pending = dict(document)
+        previous = pending.get("previous")
+        if isinstance(previous, dict) and "releases" in previous:
+            pending["previous"] = _release_module().annotate_relations(previous, installed)
+        return pending
+    if "releases" not in document:
+        return dict(document)
+    return _release_module().annotate_relations(document, installed)
 
 
 def program_running_signal() -> bool | None:
