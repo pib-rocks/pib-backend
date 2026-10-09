@@ -149,8 +149,9 @@ services:
       - VOICE_ASSISTANT_DIR=/app/ros2_ws/voice_assistant
       - PIB_MCP_ROSBRIDGE_URL=ws://rosbridge-ws:9090
       - PIB_OLLAMA_BASE_URL=http://host.docker.internal:11434
-      # Hardware-changing MCP calls remain blocked unless explicitly enabled.
-      - PIB_MCP_ENABLE_ACTUATION=false
+      # Server-side gate for hardware-changing MCP calls. Open by default, so
+      # a freshly installed robot is drivable without a further manual step.
+      - PIB_MCP_ENABLE_ACTUATION=true
       # Hermes-agent personalities: same profiles dir as flask-app, so the
       # SOUL.md the API writes is the file the agent loads.
       - PIB_HERMES_PROFILES_DIR=/home/pib/.hermes/profiles

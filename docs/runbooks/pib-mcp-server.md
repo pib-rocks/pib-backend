@@ -6,7 +6,8 @@ Hermes with `python3 -m pib_mcp_server`.
 
 ## Safety model
 
-The five actuator tools are discoverable but reject every call by default:
+The actuator tools are discoverable, and the server-side gate that allows them
+to change hardware is open by default (`PIB_MCP_ENABLE_ACTUATION=true`):
 
 - `pib_move_motor`
 - `pib_apply_pose`
@@ -14,10 +15,16 @@ The five actuator tools are discoverable but reject every call by default:
 - `pib_set_led`
 - `pib_set_relay`
 
-Set `PIB_MCP_ENABLE_ACTUATION=true` in the MCP server's environment only for a
-personality that is allowed to change hardware. This server-side gate is
-independent of Hermes tool selection. `hermes mcp configure pib` can hide tools
-from a profile, but selecting an actuator there does not bypass the gate.
+The gate is global by design. Every personality that has the pib tools
+registered can move hardware. A personality payload cannot carry the gate:
+`personality_service._reject_actuation_request` rejects the request with
+"The actuation gate is an installation setting", and
+`pib_hermes_config/live_interaction.py` lists `pib_mcp_enable_actuation` among
+the fields a personality payload must not carry. A per-personality actuation
+switch is out of scope.
+
+`hermes mcp configure pib` can hide tools from a profile. Hiding a tool is not
+the gate. Selecting an actuator there does not bypass a closed gate.
 
 `pib_soul_append` remains available because it is an append-only write. Its
 `lesson` is schema-capped at 500 characters and the API enforces the same limit.
@@ -29,7 +36,7 @@ from a profile, but selecting an actuator there does not bypass the gate.
 | `FLASK_API_BASE_URL` | `http://flask-app:5000` | Persisted motors, poses, programs, diagnostics, and SOUL |
 | `PIB_MCP_ROSBRIDGE_URL` | `ws://rosbridge-ws:9090` | Live ROS services |
 | `PIB_MCP_REQUEST_TIMEOUT` | `10` | HTTP/ROS request timeout in seconds |
-| `PIB_MCP_ENABLE_ACTUATION` | `false` | Server-side actuator gate |
+| `PIB_MCP_ENABLE_ACTUATION` | `true` | Server-side actuator gate, open by default |
 
 `PIB_MCP_API_BASE_URL` may be set to override `FLASK_API_BASE_URL`.
 
@@ -47,7 +54,7 @@ sudo -u pib -H env HERMES_HOME="$PROFILE" \
   --connect-timeout 15 \
   --env FLASK_API_BASE_URL=http://flask-app:5000 \
         PIB_MCP_ROSBRIDGE_URL=ws://rosbridge-ws:9090 \
-        PIB_MCP_ENABLE_ACTUATION=false \
+        PIB_MCP_ENABLE_ACTUATION=true \
   --args -m pib_mcp_server
 ```
 
@@ -66,6 +73,7 @@ The test should discover eleven tools. A standalone protocol smoke test is:
 ```bash
 FLASK_API_BASE_URL=http://flask-app:5000 \
 PIB_MCP_ROSBRIDGE_URL=ws://rosbridge-ws:9090 \
+PIB_MCP_ENABLE_ACTUATION=true \
 python3 -m pib_mcp_server
 ```
 
@@ -82,11 +90,10 @@ sudo -u pib -H env HERMES_HOME="$PROFILE" hermes mcp configure pib
 
 For a read-only profile, leave only `pib_list_motors`, `pib_get_state`,
 `pib_list_poses`, `pib_list_programs`, and `pib_capture_image` selected.
-
-To permit hardware changes, remove and re-register the server with
-`PIB_MCP_ENABLE_ACTUATION=true`, then select only the required actuator tools
-with `hermes mcp configure pib`. Do not enable the gate globally merely to grant
-one personality access.
+That hides actuator tools from that profile. It does not close the gate, and
+it is not a per-personality actuation setting. The gate stays the installation
+variable `PIB_MCP_ENABLE_ACTUATION`, which defaults to `true` for every
+registration.
 
 ## Deregister
 
@@ -103,8 +110,9 @@ the personality, SOUL, sessions, stored poses/programs, or robot data.
 - `api_unavailable`: verify `flask-app` and `FLASK_API_BASE_URL`.
 - `ros_unavailable` or `ros_timeout`: verify `rosbridge-ws`, port 9090, and the
   target ROS service.
-- `actuation_disabled`: expected until the registration environment explicitly
-  enables actuation.
+- `actuation_disabled`: the registration environment has the gate closed.
+  The shipped default is enabled. An unset, empty, or other non-true value
+  closes it.
 - `position_out_of_range`: inspect the motor's `rotationRangeMin` and
   `rotationRangeMax`; the server rejects rather than clamps unsafe values.
 - `camera_empty`: verify `ros-camera` and `/get_camera_image`.

@@ -22,6 +22,7 @@ EXPECTED_PIB_ENTRY = {
         "FLASK_API_BASE_URL": "http://flask-app:5000",
         "PIB_MCP_API_BASE_URL": "http://flask-app:5000",
         "PIB_MCP_ROSBRIDGE_URL": "ws://rosbridge-ws:9090",
+        "PIB_MCP_ENABLE_ACTUATION": "true",
     },
 }
 
@@ -110,7 +111,10 @@ def test_setup_pib_keeps_an_operator_customized_mcp_entry(tmp_path, monkeypatch)
                     "pib": {
                         "command": "python3",
                         "args": ["-m", "custom_mcp"],
-                        "env": {"FLASK_API_BASE_URL": "http://operators-own-host:5000"},
+                        "env": {
+                            "FLASK_API_BASE_URL": "http://operators-own-host:5000",
+                            "PIB_MCP_ENABLE_ACTUATION": "false",
+                        },
                     }
                 },
             },
@@ -123,3 +127,29 @@ def test_setup_pib_keeps_an_operator_customized_mcp_entry(tmp_path, monkeypatch)
     assert entry["env"]["FLASK_API_BASE_URL"] == "http://operators-own-host:5000"
     assert entry["env"]["PIB_MCP_API_BASE_URL"] == "http://flask-app:5000"
     assert entry["env"]["PIB_MCP_ROSBRIDGE_URL"] == "ws://rosbridge-ws:9090"
+    # An operator who closed the gate keeps that value; only a missing key is filled.
+    assert entry["env"]["PIB_MCP_ENABLE_ACTUATION"] == "false"
+
+
+def test_compose_and_runbook_default_the_actuator_gate_open():
+    """Compose, the runbook, and the seeded entry agree the gate is open."""
+    compose = (REPO_ROOT / "docker-compose.yaml").read_text(encoding="utf-8")
+    runbook = (REPO_ROOT / "docs/runbooks/pib-mcp-server.md").read_text(
+        encoding="utf-8"
+    )
+    skill = (
+        REPO_ROOT / "ros_packages/voice_assistant/skills/pib-robot-control/SKILL.md"
+    ).read_text(encoding="utf-8")
+
+    assert "PIB_MCP_ENABLE_ACTUATION=true" in compose
+    assert "PIB_MCP_ENABLE_ACTUATION=false" not in compose
+    assert "PIB_MCP_ENABLE_ACTUATION=false" not in runbook
+    assert "| `PIB_MCP_ENABLE_ACTUATION` | `true` |" in runbook
+    assert "open by default" in runbook
+    assert "per-personality actuation" in runbook
+    assert "blocked by default" not in skill
+    assert EXPECTED_PIB_ENTRY["env"]["PIB_MCP_ENABLE_ACTUATION"] == "true"
+    assert (
+        PIB_MCP_SERVER["env"]["PIB_MCP_ENABLE_ACTUATION"]
+        == EXPECTED_PIB_ENTRY["env"]["PIB_MCP_ENABLE_ACTUATION"]
+    )

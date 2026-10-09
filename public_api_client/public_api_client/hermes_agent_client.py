@@ -59,8 +59,11 @@ ENV_FILE_MODE = 0o600
 # Hermes spawns it as a subprocess without forwarding this process' environment,
 # so without `env` pib_mcp_server resolves the REST base URL to its own
 # http://localhost:5000 default and every robot tool call fails in the container.
-# The single definition of that entry — setup/setup-pib.sh seeds the same one and
-# tests/unit/test_setup_hermes_model_pin.py fails if the two ever drift.
+# PIB_MCP_ENABLE_ACTUATION is written explicitly for the same reason: an omitted
+# value leaves the actuator gate closed. The shipped value is true, matching
+# docker-compose.yaml. The single definition of that entry — setup/setup-pib.sh
+# seeds the same one and tests/unit/test_setup_hermes_model_pin.py fails if the
+# two ever drift.
 PIB_MCP_SERVER = {
     "command": "python3",
     "args": ["-m", "pib_mcp_server"],
@@ -72,6 +75,7 @@ PIB_MCP_SERVER = {
         "PIB_MCP_ROSBRIDGE_URL": os.getenv(
             "PIB_MCP_ROSBRIDGE_URL", "ws://rosbridge-ws:9090"
         ),
+        "PIB_MCP_ENABLE_ACTUATION": "true",
     },
 }
 
