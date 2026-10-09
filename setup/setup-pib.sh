@@ -1475,38 +1475,9 @@ function provision_whisper_model() {
 # hard stop, so an operator on a small machine can still proceed deliberately.
 #
 # Containers reach the daemon at host.docker.internal, which is the bridge
-# address, not 127.0.0.1. The official unit binds the loopback interface, so
-# the tags probe from flask fails and Cerebra never offers qwen-fast. The
-# drop-in binds every interface. PIB_OLLAMA_DROPIN points the unit tests at a
-# scratch file. An already-active unit is not restarted; a fresh install
-# writes the drop-in before the first start, so that start picks it up.
-function ensure_ollama_listen_dropin() {
-  local dropin="${PIB_OLLAMA_DROPIN:-/etc/systemd/system/ollama.service.d/override.conf}"
-  local staged="/tmp/pib-ollama-dropin.$$"
-  local already_active=0
-
-  # Absolute paths: the unit tests run this function with a PATH that contains
-  # only their stubs, and a bare mkdir/cmp would miss the real coreutils.
-  printf '%s\n' '[Service]' 'Environment="OLLAMA_HOST=0.0.0.0:11434"' > "$staged" || return 1
-  if [ -f "$dropin" ] && /usr/bin/cmp -s "$staged" "$dropin"; then
-    /usr/bin/rm -f "$staged"
-    print INFO "ollama: container listen address already configured"
-    return 0
-  fi
-  if systemctl is-active --quiet ollama; then
-    already_active=1
-  fi
-  sudo /usr/bin/mkdir -p "$(/usr/bin/dirname "$dropin")" || { /usr/bin/rm -f "$staged"; return 1; }
-  sudo /usr/bin/tee "$dropin" >/dev/null < "$staged" || { /usr/bin/rm -f "$staged"; return 1; }
-  /usr/bin/rm -f "$staged"
-  sudo systemctl daemon-reload || return 1
-  if [ "$already_active" -eq 1 ]; then
-    print WARN "ollama: OLLAMA_HOST applies on the next start; this step does not restart a service that is already active"
-  else
-    print INFO "ollama: configured OLLAMA_HOST=0.0.0.0:11434"
-  fi
-}
-
+# address. The official unit binds the loopback interface, so the tags probe
+# from flask fails and Cerebra never offers qwen-fast. The listen drop-in
+# lives in installation_scripts/ollama_listen.sh, shared with update-pib.sh.
 function install_ollama_qwen_fast() {
   local modelfile="" version="" available_kib="" available_mib="" required_mib
   local curl_status=0 installer_status=0 model_names="" line="" name=""
@@ -1586,6 +1557,21 @@ function install_ollama_qwen_fast() {
     return 1
   fi
 
+  # Shared with setup/update-pib.sh. No argument: defer mode does not restart.
+  # This write is before the first start below, so that start loads the
+  # drop-in. An already-active unit is left running; the update path passes
+  # "restart" (see installation_scripts/ollama_listen.sh).
+  local listen_helper=""
+  if [ -f "${SETUP_INSTALLATION_DIR:-}/ollama_listen.sh" ]; then
+    listen_helper="${SETUP_INSTALLATION_DIR}/ollama_listen.sh"
+  elif [ -f "${SETUP_SCRIPT_DIR:-}/installation_scripts/ollama_listen.sh" ]; then
+    listen_helper="${SETUP_SCRIPT_DIR}/installation_scripts/ollama_listen.sh"
+  else
+    print ERROR "ollama: listen helper not found under setup/installation_scripts"
+    return 1
+  fi
+  # shellcheck source=installation_scripts/ollama_listen.sh
+  source "$listen_helper"
   ensure_ollama_listen_dropin || return 1
 
   # Enable, then start only when the unit is down. Neither call restarts a unit
