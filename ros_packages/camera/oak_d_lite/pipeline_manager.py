@@ -6,6 +6,7 @@ import time
 import traceback
 from typing import Callable, Dict, Iterable, Optional, Set, Tuple
 
+from .face_crop import face_crop_conflict_message, is_face_crop_composite
 from .model_registry import ModelRecord, ModelRegistry
 
 # Packets are counted over a window this long instead of over the interval
@@ -88,6 +89,18 @@ class PipelineManager:
         """Report a pipeline rejection with its cause, not just its symptom."""
         if self._logger is not None:
             self._logger.error(message)
+
+    def _active_face_crop_conflict(self, model):
+        """Return the running face-crop model this start would collide with."""
+        if not is_face_crop_composite(model):
+            return None
+        for other in self.registry.models():
+            if other.model_id == model.model_id or not is_face_crop_composite(other):
+                continue
+            runtime = self._runtime[other.model_id]
+            if runtime.active or runtime.state == "running":
+                return other.model_id
+        return None
 
     def _active_specs(self):
         specs = []
@@ -182,6 +195,9 @@ class PipelineManager:
                     False,
                     f"Model {model_id} is compiled for {model.shaves} shaves",
                 )
+            conflict = self._active_face_crop_conflict(model)
+            if conflict is not None:
+                return False, face_crop_conflict_message(model_id, conflict)
 
             runtime = self._runtime[model_id]
             if owner in runtime.owners:

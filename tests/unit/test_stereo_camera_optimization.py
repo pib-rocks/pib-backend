@@ -189,7 +189,9 @@ else:
 import numpy as np
 
 from ros_packages.camera.oak_d_lite import stereo as camera_stereo
+from ros_packages.camera.oak_d_lite.face_crop import FACE_DETECTOR_MODEL_ID
 from ros_packages.camera.oak_d_lite.hand_tracking import PalmRegion
+from ros_packages.camera.oak_d_lite.pipeline_manager import PipelineManager
 from ros_packages.camera.oak_d_lite.imu import (
     ClockOffsetEstimator,
     IMU_CLOCK_OFFSET_WINDOW,
@@ -3433,3 +3435,154 @@ class TestListModelsShaveBudget(unittest.TestCase):
         node.list_models_callback(types.SimpleNamespace(), empty)
         self.assertEqual(empty.models, [])
         self.assertEqual(empty.total_shaves, TOTAL_SHAVES)
+
+
+def _selectable_record(model_id, shaves, artifact_ids=(), composite=False):
+    return types.SimpleNamespace(
+        model_id=model_id,
+        shaves=shaves,
+        available=True,
+        unavailable_reason="",
+        composite=composite,
+        artifact_ids=artifact_ids,
+        selectable=True,
+    )
+
+
+class TestRefusedRebuildReleasesTheDevice(unittest.TestCase):
+    """A refused face-crop start must not take the camera down with it."""
+
+    def _face_crop_registry(self):
+        emotion = _selectable_record(
+            "emotion_recognition_crop",
+            8,
+            artifact_ids=(
+                FACE_DETECTOR_MODEL_ID,
+                "emotion_recognition_lfw_64x64",
+            ),
+            composite=True,
+        )
+        head_pose = _selectable_record(
+            "head_pose_estimation_crop",
+            8,
+            artifact_ids=(
+                FACE_DETECTOR_MODEL_ID,
+                "head-pose-estimation-adas-0001",
+            ),
+            composite=True,
+        )
+        hand = _selectable_record(
+            "hand_tracking",
+            9,
+            artifact_ids=("palm_detection_128x128",),
+            composite=True,
+        )
+        records = (emotion, head_pose, hand)
+        by_id = {record.model_id: record for record in records}
+        registry = types.SimpleNamespace(
+            get=lambda model_id: by_id.get(model_id),
+            models=lambda: list(by_id.values()),
+            selectable_models=lambda: list(by_id.values()),
+        )
+        return registry
+
+    def _manager(self, registry):
+        rebuild = MagicMock(return_value=True)
+        manager = PipelineManager(
+            registry,
+            rebuild,
+            lambda timeout: True,
+            lambda: True,
+            sleep=lambda delay: None,
+        )
+        return manager, rebuild
+
+    def test_failed_build_clears_the_device_holder(self):
+        with patch.object(CameraNode, "__init__", lambda self: None):
+            node = CameraNode()
+        node._pipeline_lock = threading.RLock()
+        node.get_logger = MagicMock()
+        node.pipeline = None
+        CameraNode._device_owner = weakref.ref(node)
+
+        def fail_during_build(_include_stereo):
+            held = MagicMock()
+            held.isRunning.return_value = True
+            node.pipeline = held
+            raise RuntimeError("only one face-crop composite may run at a time")
+
+        node._build_pipeline = MagicMock(side_effect=fail_during_build)
+        try:
+            with (
+                patch.object(camera_stereo, "PIPELINE_STOP_TIMEOUT", 0),
+                patch("ros_packages.camera.oak_d_lite.stereo.time.sleep"),
+            ):
+                self.assertFalse(node._start_pipeline(include_stereo=False))
+            self.assertIsNone(node.pipeline)
+            self.assertIsNone(CameraNode._device_owner)
+            self.assertEqual(node._build_pipeline.call_count, 1)
+        finally:
+            CameraNode._device_owner = None
+
+    def test_second_face_crop_is_refused_before_rebuild(self):
+        registry = self._face_crop_registry()
+        manager, rebuild = self._manager(registry)
+
+        started, _message = manager.start("emotion_recognition_crop", 0, "ui")
+        self.assertTrue(started)
+        rebuild.reset_mock()
+
+        success, message = manager.start("head_pose_estimation_crop", 0, "ui")
+
+        self.assertFalse(success)
+        self.assertEqual(
+            message,
+            "Model head_pose_estimation_crop conflicts with the active "
+            "emotion_recognition_crop: only one face-crop composite may run "
+            "at a time",
+        )
+        rebuild.assert_not_called()
+        emotion = manager.status("emotion_recognition_crop")
+        self.assertEqual(emotion["state"], "running")
+        self.assertTrue(emotion["active"])
+        self.assertEqual(emotion["owners"], {"ui"})
+        refused = manager.status("head_pose_estimation_crop")
+        self.assertEqual(refused["state"], "idle")
+        self.assertEqual(refused["owners"], set())
+
+    def test_models_status_keeps_publishing_the_running_model_after_refusal(self):
+        registry = self._face_crop_registry()
+        manager, _rebuild = self._manager(registry)
+        self.assertTrue(manager.start("emotion_recognition_crop", 0, "ui")[0])
+        success, _message = manager.start("head_pose_estimation_crop", 0, "ui")
+        self.assertFalse(success)
+
+        with patch.object(CameraNode, "__init__", lambda self: None):
+            node = CameraNode()
+        node.pipeline_manager = manager
+        node.model_registry = registry
+        node.models_status_publisher_ = MagicMock()
+        node.get_clock = MagicMock()
+        node.get_logger = MagicMock()
+
+        node.publish_model_statuses()
+
+        status_array = node.models_status_publisher_.publish.call_args.args[0]
+        listed = {status.model_id: status for status in status_array.models}
+        self.assertIn("emotion_recognition_crop", listed)
+        self.assertEqual(listed["emotion_recognition_crop"].state, "running")
+        self.assertTrue(listed["emotion_recognition_crop"].active)
+
+    def test_non_excluded_start_still_reaches_the_rebuild(self):
+        registry = self._face_crop_registry()
+        manager, rebuild = self._manager(registry)
+        self.assertTrue(manager.start("emotion_recognition_crop", 0, "ui")[0])
+        rebuild.reset_mock()
+
+        success, message = manager.start("hand_tracking", 0, "ui")
+
+        self.assertTrue(success)
+        self.assertEqual(message, "Model hand_tracking started")
+        rebuild.assert_called_once()
+        started = [active.model.model_id for active in rebuild.call_args.args[0]]
+        self.assertEqual(started, ["emotion_recognition_crop", "hand_tracking"])
