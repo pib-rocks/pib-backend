@@ -3550,6 +3550,24 @@ class TestRefusedRebuildReleasesTheDevice(unittest.TestCase):
         self.assertEqual(refused["state"], "idle")
         self.assertEqual(refused["owners"], set())
 
+    def test_second_face_crop_is_refused_while_the_first_is_still_starting(self):
+        """A requested model is in the next rebuild even before it runs."""
+        registry = self._face_crop_registry()
+        manager, rebuild = self._manager(registry)
+        self.assertTrue(manager.start("emotion_recognition_crop", 0, "ui")[0])
+        # The window between "the start was accepted" and "the rebuild finished":
+        # the model is requested, its state is still "starting".
+        runtime = manager._runtime["emotion_recognition_crop"]
+        runtime.state = "starting"
+        runtime.active = False
+        rebuild.reset_mock()
+
+        success, message = manager.start("head_pose_estimation_crop", 0, "ui")
+
+        self.assertFalse(success)
+        self.assertIn("conflicts with the active emotion_recognition_crop", message)
+        rebuild.assert_not_called()
+
     def test_models_status_keeps_publishing_the_running_model_after_refusal(self):
         registry = self._face_crop_registry()
         manager, _rebuild = self._manager(registry)

@@ -98,7 +98,12 @@ class PipelineManager:
             if other.model_id == model.model_id or not is_face_crop_composite(other):
                 continue
             runtime = self._runtime[other.model_id]
-            if runtime.active or runtime.state == "running":
+            # Same notion as _active_specs(): a requested model is part of the
+            # next rebuild even while its state is still "starting", and two
+            # face-crop composites cannot be built into one pipeline. Asking
+            # for the second one during the first rebuild is the same
+            # collision as asking for it while the first one runs.
+            if runtime.owners:
                 return other.model_id
         return None
 
