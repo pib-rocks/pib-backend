@@ -1,12 +1,7 @@
 from pathlib import Path
 
-import pytest
-
-pytest.importorskip(
-    "depthai", reason="depthai not installed (tests/requirements-camera.txt)"
-)
-
 import depthai as dai
+import pytest
 
 from ros_packages.camera.oak_d_lite.task_archives import (
     YOLOV6N_COCO_LABELS,
