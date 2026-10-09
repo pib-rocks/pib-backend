@@ -1,5 +1,4 @@
 import {Block} from "blockly/core/block";
-import {pythonGenerator} from "blockly/python";
 
 function pibDisplayRuntime() {
     return `
