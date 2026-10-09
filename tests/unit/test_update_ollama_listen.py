@@ -1,8 +1,10 @@
-"""update-pib.sh applies the Ollama listen drop-in on an already-installed device.
+"""Both updaters apply the Ollama listen drop-in on an already-installed device.
 
-ensure_ollama_for_update() is cut out of setup/update-pib.sh and run in a bash
-subprocess. systemctl and sudo are stubs, so the test does not need a real
-ollama unit and does not restart a host service.
+ensure_ollama_for_update() is cut out of setup/update-pib.sh and out of
+setup/update_runner.sh and run in a bash subprocess. systemctl and sudo are
+stubs, so the test does not need a real ollama unit and does not restart a
+host service. The device service runs update_runner.sh; update-pib.sh is the
+sourced setup path.
 """
 
 from __future__ import annotations
@@ -12,9 +14,13 @@ import re
 import subprocess
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 UPDATE_PIB = REPO_ROOT / "setup" / "update-pib.sh"
+RUNNER = REPO_ROOT / "setup" / "update_runner.sh"
 LISTEN_HELPER = REPO_ROOT / "setup" / "installation_scripts" / "ollama_listen.sh"
+UPDATERS = [UPDATE_PIB, RUNNER]
 
 DROPIN_BODY = '[Service]\nEnvironment="OLLAMA_HOST=0.0.0.0:11434"\n'
 
@@ -80,6 +86,7 @@ def _logged(log: list[str], command: str) -> int:
 
 def _run(
     tmp_path: Path,
+    script: Path,
     *,
     unit_installed: bool = True,
     service_active: bool = True,
@@ -112,7 +119,7 @@ def _run(
         calls.append(f"echo rc{index}=$?")
     script = (
         SETUP_PRELUDE
-        + _extract_bash_function(UPDATE_PIB, "ensure_ollama_for_update")
+        + _extract_bash_function(script, "ensure_ollama_for_update")
         + "\n"
         + "\n".join(calls)
         + "\n"
@@ -137,8 +144,9 @@ def _run(
     return result, log, dropin
 
 
-def test_update_writes_the_dropin_and_restarts_an_active_unit_once(tmp_path):
-    result, log, dropin = _run(tmp_path, runs=2)
+@pytest.mark.parametrize("script", UPDATERS, ids=["update-pib.sh", "update_runner.sh"])
+def test_update_writes_the_dropin_and_restarts_an_active_unit_once(tmp_path, script):
+    result, log, dropin = _run(tmp_path, script, runs=2)
 
     assert result.returncode == 0, result.stdout + result.stderr
     first, second = result.stdout.split("--- run 2 ---", 1)
@@ -158,8 +166,9 @@ def test_update_writes_the_dropin_and_restarts_an_active_unit_once(tmp_path):
     assert log.index("systemctl daemon-reload") < log.index("systemctl restart ollama")
 
 
-def test_an_already_configured_unit_is_not_rewritten_or_restarted(tmp_path):
-    result, log, dropin = _run(tmp_path, preseeded=True, runs=2)
+@pytest.mark.parametrize("script", UPDATERS, ids=["update-pib.sh", "update_runner.sh"])
+def test_an_already_configured_unit_is_not_rewritten_or_restarted(tmp_path, script):
+    result, log, dropin = _run(tmp_path, script, preseeded=True, runs=2)
     before = dropin.read_text(encoding="utf-8")
 
     assert result.returncode == 0, result.stdout + result.stderr
@@ -172,9 +181,10 @@ def test_an_already_configured_unit_is_not_rewritten_or_restarted(tmp_path):
     assert not any(line.startswith("sudo ") for line in log)
 
 
-def test_a_device_without_ollama_stays_untouched(tmp_path):
+@pytest.mark.parametrize("script", UPDATERS, ids=["update-pib.sh", "update_runner.sh"])
+def test_a_device_without_ollama_stays_untouched(tmp_path, script):
     result, log, dropin = _run(
-        tmp_path, unit_installed=False, service_active=False, runs=2
+        tmp_path, script, unit_installed=False, service_active=False, runs=2
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
@@ -190,8 +200,9 @@ def test_a_device_without_ollama_stays_untouched(tmp_path):
     assert "restarted so" not in result.stdout
 
 
-def test_an_inactive_unit_gets_the_dropin_without_being_started(tmp_path):
-    result, log, dropin = _run(tmp_path, service_active=False)
+@pytest.mark.parametrize("script", UPDATERS, ids=["update-pib.sh", "update_runner.sh"])
+def test_an_inactive_unit_gets_the_dropin_without_being_started(tmp_path, script):
+    result, log, dropin = _run(tmp_path, script, service_active=False)
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "rc1=0" in result.stdout
@@ -201,8 +212,9 @@ def test_an_inactive_unit_gets_the_dropin_without_being_started(tmp_path):
     assert _logged(log, "systemctl restart ollama") == 0
 
 
-def test_a_failed_restart_fails_the_update_step(tmp_path):
-    result, log, dropin = _run(tmp_path, restart_status=1)
+@pytest.mark.parametrize("script", UPDATERS, ids=["update-pib.sh", "update_runner.sh"])
+def test_a_failed_restart_fails_the_update_step(tmp_path, script):
+    result, log, dropin = _run(tmp_path, script, restart_status=1)
 
     assert result.returncode != 0
     assert "rc1=0" not in result.stdout
@@ -228,3 +240,28 @@ def test_update_backend_applies_the_dropin_after_pull_and_before_compose():
     assert 'Environment="OLLAMA_HOST=0.0.0.0:11434"' in helper
     assert "systemctl restart ollama" in helper
     assert "ensure_ollama_listen_dropin restart" in text
+
+
+def test_update_runner_applies_the_dropin_before_containers_are_recreated():
+    text = RUNNER.read_text(encoding="utf-8")
+    helper = LISTEN_HELPER.read_text(encoding="utf-8")
+    main = text.split("trap on_unexpected_error ERR", 1)[1]
+    rollback = text.split("rollback_once() {", 1)[1].split(
+        "\non_unexpected_error() {", 1
+    )[0]
+
+    assert "installation_scripts/ollama_listen.sh" in text
+    assert "ensure_ollama_listen_dropin restart" in text
+    assert 'Environment="OLLAMA_HOST=0.0.0.0:11434"' not in text
+    assert 'Environment="OLLAMA_HOST=0.0.0.0:11434"' in helper
+    assert 'fetch_repository "$BACKEND_DIR"' in main
+    assert main.index('fetch_repository "$BACKEND_DIR"') < main.index(
+        "ensure_ollama_for_update"
+    )
+    assert main.index("ensure_ollama_for_update") < main.index("build_backend_stack")
+    assert main.index("ensure_ollama_for_update") < main.index(
+        'up -d --build --force-recreate || fail "Cerebra container build failed"'
+    )
+    assert "ensure_ollama" not in rollback
+    verify = text.split("verify_result() {", 1)[1].split("\nwrite_revision() {", 1)[0]
+    assert "ollama" not in verify

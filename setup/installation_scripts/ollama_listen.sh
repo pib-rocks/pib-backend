@@ -1,7 +1,7 @@
 #!/bin/bash
 #
-# Sourced by setup/setup-pib.sh and setup/update-pib.sh. Defines functions
-# only; sourcing this file does not write or restart anything.
+# Sourced by setup/setup-pib.sh, setup/update-pib.sh, and setup/update_runner.sh.
+# Defines functions only; sourcing this file does not write or restart anything.
 
 # True when the ollama unit exists. The 4 GiB variants never install it
 # (setup-pib.sh variant gate). Callers treat a missing unit as success and
