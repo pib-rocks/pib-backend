@@ -14,7 +14,13 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y \
 
 WORKDIR /app
 
+# rosbridge builds the request for a `call_service` from the service's .srv type, so every
+# interface package the MCP tools call over the websocket has to be built in this image.
+# Without button_service, "/tf_button/set_color" failed before it reached the node with
+# "Unable to import button_service.srv from package button_service" - while the same call
+# answered success=True inside the container that runs the node.
 COPY ./datatypes ros2_ws/datatypes
+COPY ./button_service ros2_ws/button_service
 
 RUN cd ros2_ws && \
     source /opt/ros/jazzy/setup.bash && \
