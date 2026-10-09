@@ -20,9 +20,9 @@ SETUP_PIB = REPO_ROOT / "setup" / "setup-pib.sh"
 MODELFILE = REPO_ROOT / "setup" / "ollama" / "Modelfile"
 
 # 2.2 GiB free: free -k reports kibibytes, so integer MiB is 2306867 // 1024 = 2252,
-# comfortably above the 1200 MiB the step treats as the model's requirement.
+# comfortably above the 1788 MiB the step treats as the model's requirement.
 AMPLE_AVAILABLE_KIB = 2_306_867
-# 1 GiB available is under the Q4 weights plus the 2048-token KV cache.
+# 1 GiB available is under the Q4 weights plus the 8192-token KV cache.
 LOW_AVAILABLE_KIB = 1_048_576
 
 # pib5edu, pib5advanced and pib5museum are the generation-5 (8 GiB) variants.
@@ -32,7 +32,7 @@ SKIPPING_VARIANTS = ("pib4edu", "pib4advanced")
 EXPECTED_MODELFILE = """\
 FROM qwen2.5:1.5b
 PARAMETER num_thread 4
-PARAMETER num_ctx 2048
+PARAMETER num_ctx 8192
 PARAMETER num_predict 256
 PARAMETER temperature 0.5
 PARAMETER top_p 0.9
@@ -311,7 +311,7 @@ def test_modelfile_pins_the_cpu_parameters_and_the_german_prompt():
 
     assert text == EXPECTED_MODELFILE
     assert "PARAMETER num_thread 4\n" in text
-    assert "PARAMETER num_ctx 2048\n" in text
+    assert "PARAMETER num_ctx 8192\n" in text
     assert "PARAMETER num_predict 256\n" in text
     assert "PARAMETER temperature 0.5\n" in text
     assert "PARAMETER top_p 0.9\n" in text
@@ -391,8 +391,8 @@ def test_warns_when_available_ram_is_below_the_model_requirement(tmp_path):
 
     assert "rc1=0" in result.stdout, result.stdout + result.stderr
     warning = (
-        "1024 MiB available RAM is below the 1200 MiB qwen2.5:1.5b needs "
-        "(Q4 weights plus the 2048-token KV cache)"
+        "1024 MiB available RAM is below the 1788 MiB qwen2.5:1.5b needs "
+        "(Q4 weights plus the 8192-token KV cache)"
     )
     assert warning in result.stdout
     assert result.stdout.index(warning) < result.stdout.index("pulling qwen2.5:1.5b")
@@ -509,7 +509,7 @@ def test_setup_runs_the_ollama_step_after_the_clone():
     assert "systemctl restart ollama" not in text
     assert "function ensure_ollama_listen_dropin" not in text
     assert "installation_scripts/ollama_listen.sh" in text
-    assert "required_mib=1200" in text
+    assert "required_mib=1788" in text
     assert "pib5edu | pib5advanced | pib5museum" in text
 
 
