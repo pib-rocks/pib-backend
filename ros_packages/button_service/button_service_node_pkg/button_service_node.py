@@ -15,7 +15,6 @@ from pib_api_client import bricklet_client
 from tinkerforge.ip_connection import IPConnection
 from tinkerforge.bricklet_rgb_led_button import BrickletRGBLEDButton
 
-
 CONNECTED_BRICKLET_ATTEMPTS = 30
 CONNECTED_BRICKLET_RETRY_SECONDS = 2
 
@@ -190,9 +189,7 @@ class TinkerforgeButtonService(Node):
             numeric_id = None
         if numeric_id not in (1, 2, 3):
             response.success = False
-            response.message = (
-                f"Unknown button_id {button_id}. Valid ids are 1, 2, 3."
-            )
+            response.message = f"Unknown button_id {button_id}. Valid ids are 1, 2, 3."
             return response
         reason = self.unavailable.get(
             numeric_id, "no RGB LED Button Bricklet connected"

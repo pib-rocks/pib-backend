@@ -38,18 +38,68 @@ RELAY_IDENTIFIER = 296
 
 # Measured on the robot, then shuffled so a test cannot pass by keeping list order.
 SHUFFLED_ROBOT = [
-    {"deviceIdentifier": RGB_IDENTIFIER, "name": RGB_NAME, "parentUid": "29yN", "port": "h", "uid": "24eF"},
-    {"deviceIdentifier": SERVO_IDENTIFIER, "name": SERVO_NAME, "parentUid": "29yN", "port": "c", "uid": "SF1"},
-    {"deviceIdentifier": RELAY_IDENTIFIER, "name": RELAY_NAME, "parentUid": "29yN", "port": "e", "uid": "27Fn"},
-    {"deviceIdentifier": RGB_IDENTIFIER, "name": RGB_NAME, "parentUid": "29yN", "port": "f", "uid": "24eD"},
-    {"deviceIdentifier": SERVO_IDENTIFIER, "name": SERVO_NAME, "parentUid": "29yN", "port": "a", "uid": "2iJK"},
-    {"deviceIdentifier": RGB_IDENTIFIER, "name": RGB_NAME, "parentUid": "29yN", "port": "g", "uid": "2dcw"},
-    {"deviceIdentifier": SERVO_IDENTIFIER, "name": SERVO_NAME, "parentUid": "29yN", "port": "d", "uid": "29FA"},
-    {"deviceIdentifier": SERVO_IDENTIFIER, "name": SERVO_NAME, "parentUid": "29yN", "port": "b", "uid": "SHT"},
+    {
+        "deviceIdentifier": RGB_IDENTIFIER,
+        "name": RGB_NAME,
+        "parentUid": "29yN",
+        "port": "h",
+        "uid": "24eF",
+    },
+    {
+        "deviceIdentifier": SERVO_IDENTIFIER,
+        "name": SERVO_NAME,
+        "parentUid": "29yN",
+        "port": "c",
+        "uid": "SF1",
+    },
+    {
+        "deviceIdentifier": RELAY_IDENTIFIER,
+        "name": RELAY_NAME,
+        "parentUid": "29yN",
+        "port": "e",
+        "uid": "27Fn",
+    },
+    {
+        "deviceIdentifier": RGB_IDENTIFIER,
+        "name": RGB_NAME,
+        "parentUid": "29yN",
+        "port": "f",
+        "uid": "24eD",
+    },
+    {
+        "deviceIdentifier": SERVO_IDENTIFIER,
+        "name": SERVO_NAME,
+        "parentUid": "29yN",
+        "port": "a",
+        "uid": "2iJK",
+    },
+    {
+        "deviceIdentifier": RGB_IDENTIFIER,
+        "name": RGB_NAME,
+        "parentUid": "29yN",
+        "port": "g",
+        "uid": "2dcw",
+    },
+    {
+        "deviceIdentifier": SERVO_IDENTIFIER,
+        "name": SERVO_NAME,
+        "parentUid": "29yN",
+        "port": "d",
+        "uid": "29FA",
+    },
+    {
+        "deviceIdentifier": SERVO_IDENTIFIER,
+        "name": SERVO_NAME,
+        "parentUid": "29yN",
+        "port": "b",
+        "uid": "SHT",
+    },
 ]
 
 
-def _rgb(port: str, uid: str, name: str = RGB_NAME, identifier: int = RGB_IDENTIFIER) -> dict:
+def _rgb(
+    port: str, uid: str, name: str = RGB_NAME, identifier: int = RGB_IDENTIFIER
+) -> dict:
     return {
         "deviceIdentifier": identifier,
         "name": name,
@@ -141,7 +191,12 @@ def _ros_modules() -> dict[str, types.ModuleType]:
 
     button_service = types.ModuleType("button_service")
     srv = types.ModuleType("button_service.srv")
-    for name in ("ReadButton", "SetButtonColor", "WaitForButton", "SetButtonManualOverride"):
+    for name in (
+        "ReadButton",
+        "SetButtonColor",
+        "WaitForButton",
+        "SetButtonManualOverride",
+    ):
         setattr(srv, name, type(name, (), {}))
     button_service.srv = srv
 
@@ -214,7 +269,11 @@ def test_rgb_buttons_resolve_by_type_and_port_order():
 
     resolved = resolve_buttons(SHUFFLED_ROBOT)
 
-    assert [resolved[button_id].uid for button_id in (1, 2, 3)] == ["24eD", "2dcw", "24eF"]
+    assert [resolved[button_id].uid for button_id in (1, 2, 3)] == [
+        "24eD",
+        "2dcw",
+        "24eF",
+    ]
     assert [resolved[button_id].port for button_id in (1, 2, 3)] == ["f", "g", "h"]
     assert [resolved[button_id].reason for button_id in (1, 2, 3)] == [None, None, None]
     assert "27Fn" not in {slot.uid for slot in resolved.values()}
@@ -249,8 +308,18 @@ def test_unnamed_device_falls_back_to_the_button_identifier():
 
     resolved = resolve_buttons(
         [
-            {"deviceIdentifier": RELAY_IDENTIFIER, "name": "", "port": "a", "uid": "27Fn"},
-            {"deviceIdentifier": RGB_IDENTIFIER, "name": "", "port": "c", "uid": "24eD"},
+            {
+                "deviceIdentifier": RELAY_IDENTIFIER,
+                "name": "",
+                "port": "a",
+                "uid": "27Fn",
+            },
+            {
+                "deviceIdentifier": RGB_IDENTIFIER,
+                "name": "",
+                "port": "c",
+                "uid": "24eD",
+            },
         ]
     )
 
@@ -273,7 +342,11 @@ def test_empty_uid_occupies_its_port_slot_and_names_the_reason():
 def test_node_maps_ports_and_still_publishes_every_service(monkeypatch):
     node = _service(monkeypatch, SHUFFLED_ROBOT)
 
-    assert [node.buttons[button_id].uid for button_id in (1, 2, 3)] == ["24eD", "2dcw", "24eF"]
+    assert [node.buttons[button_id].uid for button_id in (1, 2, 3)] == [
+        "24eD",
+        "2dcw",
+        "24eF",
+    ]
     assert {name for name, _callback in node.services} == {
         "/tf_button/set_color",
         "/tf_button/read",
@@ -458,7 +531,9 @@ def _fake_tinkerforge_modules() -> dict[str, types.ModuleType]:
 
     return {
         "tinkerforge": module("tinkerforge"),
-        "tinkerforge.brick_hat": module("tinkerforge.brick_hat", BrickHAT=_FakeMotorBricklet),
+        "tinkerforge.brick_hat": module(
+            "tinkerforge.brick_hat", BrickHAT=_FakeMotorBricklet
+        ),
         "tinkerforge.bricklet_servo_v2": module(
             "tinkerforge.bricklet_servo_v2", BrickletServoV2=_FakeMotorBricklet
         ),
@@ -467,7 +542,8 @@ def _fake_tinkerforge_modules() -> dict[str, types.ModuleType]:
             BrickletSolidStateRelayV2=_FakeMotorBricklet,
         ),
         "tinkerforge.bricklet_rgb_led_button": module(
-            "tinkerforge.bricklet_rgb_led_button", BrickletRGBLEDButton=_FakeMotorBricklet
+            "tinkerforge.bricklet_rgb_led_button",
+            BrickletRGBLEDButton=_FakeMotorBricklet,
         ),
         "tinkerforge.ip_connection": module(
             "tinkerforge.ip_connection", IPConnection=FakeIPConnection, Error=FakeError
@@ -476,7 +552,9 @@ def _fake_tinkerforge_modules() -> dict[str, types.ModuleType]:
 
 
 def _import_bricklet(configured: dict, connected: list[dict]):
-    spec = importlib.util.spec_from_file_location("bricklet_mismatch_under_test", BRICKLET_PATH)
+    spec = importlib.util.spec_from_file_location(
+        "bricklet_mismatch_under_test", BRICKLET_PATH
+    )
     module = importlib.util.module_from_spec(spec)
     with (
         mock.patch.dict(sys.modules, _fake_tinkerforge_modules()),
