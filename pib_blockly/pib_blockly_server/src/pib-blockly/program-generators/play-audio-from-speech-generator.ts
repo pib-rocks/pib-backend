@@ -1,15 +1,7 @@
 import {Block} from "blockly/core/block";
 
 import {Order, pythonGenerator} from "blockly/python";
-import {
-    CONFIGURE_LOGGING,
-    IMPORT_LOGGING,
-    IMPORT_PLAY_AUDIO_FROM_SPREECH,
-    IMPORT_RCLPY,
-    IMPORT_SYS,
-    INIT_PLAY_AUDIO_FROM_SPEECH_CLIENT,
-    INIT_ROS,
-} from "./util/definitions";
+import {CONFIGURE_LOGGING, IMPORT_LOGGING, IMPORT_PLAY_AUDIO_FROM_SPREECH, IMPORT_RCLPY, IMPORT_SYS, INIT_PLAY_AUDIO_FROM_SPEECH_CLIENT, INIT_ROS, addDefinitions} from "./util/definitions";
 import {PLAY_AUDIO_FROM_SPEECH_FUNCTION} from "./util/function-declarations";
 
 export function playAudioFromSpeechGenerator(
@@ -23,7 +15,7 @@ export function playAudioFromSpeechGenerator(
     const voiceName = <string>(block.getFieldValue("VOICENAME") || '"F1"');
 
     // add definitions to generator
-    Object.assign(generator.definitions_, {
+    addDefinitions(generator, {
         IMPORT_RCLPY,
         IMPORT_SYS,
         IMPORT_LOGGING,
@@ -42,4 +34,3 @@ export function playAudioFromSpeechGenerator(
     return `${functionName}(${textInput}, ${voiceName}, ${language})\n`;
 }
 
-export {pythonGenerator};

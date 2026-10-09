@@ -1,13 +1,13 @@
 import {Block} from "blockly/core/block";
 import {Order, pythonGenerator} from "blockly/python";
-import {IMPORT_OS, IMPORT_PIB_SDK_CAMERA} from "./util/definitions";
+import {IMPORT_OS, IMPORT_PIB_SDK_CAMERA, addDefinitions} from "./util/definitions";
 import {
     GET_CAMERA_DEPTH_FRAME_FUNCTION,
     GET_CAMERA_DISTANCE_AT_PX_FUNCTION,
 } from "./util/function-declarations";
 
 function addCameraDefinitions(generator: typeof pythonGenerator) {
-    Object.assign(generator.definitions_, {
+    addDefinitions(generator, {
         IMPORT_OS,
         IMPORT_PIB_SDK_CAMERA,
     });

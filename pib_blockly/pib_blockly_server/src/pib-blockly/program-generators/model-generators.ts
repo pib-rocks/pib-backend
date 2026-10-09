@@ -1,16 +1,6 @@
 import {Block} from "blockly/core/block";
 import {Order, pythonGenerator} from "blockly/python";
-import {
-    CONFIGURE_LOGGING,
-    IMPORT_DETECTION_ARRAY,
-    IMPORT_LOGGING,
-    IMPORT_OS,
-    IMPORT_PIB_SDK_MODELS,
-    IMPORT_RCLPY,
-    IMPORT_SYS,
-    IMPORT_TIME,
-    INIT_ROS,
-} from "./util/definitions";
+import {CONFIGURE_LOGGING, IMPORT_DETECTION_ARRAY, IMPORT_LOGGING, IMPORT_OS, IMPORT_PIB_SDK_MODELS, IMPORT_RCLPY, IMPORT_SYS, IMPORT_TIME, INIT_ROS, addDefinitions} from "./util/definitions";
 import {STOP_ALL_MODELS_VALUE} from "../program-blocks/model-blocks";
 import {
     GET_FACE_DETECTIONS_FUNCTION,
@@ -33,7 +23,7 @@ function modelIdFromDropdown(
 }
 
 function ensureModelsSdk(generator: typeof pythonGenerator) {
-    Object.assign(generator.definitions_, {
+    addDefinitions(generator, {
         IMPORT_OS,
         IMPORT_PIB_SDK_MODELS,
     });
@@ -73,7 +63,7 @@ function latestDetectionsReporter(
         _block: Block,
         generator: typeof pythonGenerator,
     ): [string, Order] => {
-        Object.assign(generator.definitions_, {
+        addDefinitions(generator, {
             IMPORT_RCLPY,
             IMPORT_TIME,
             IMPORT_LOGGING,
@@ -117,4 +107,3 @@ export const get_head_pose_detections = latestDetectionsReporter(
     GET_HEAD_POSE_DETECTIONS_FUNCTION,
 );
 
-export {pythonGenerator};

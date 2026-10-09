@@ -1,10 +1,10 @@
 import {Block} from "blockly/core/block";
 import {pythonGenerator} from "blockly/python";
-import {IMPORT_LOGGING, IMPORT_VISION_PROMPT} from "./util/definitions";
+import {IMPORT_LOGGING, IMPORT_VISION_PROMPT, addDefinitions} from "./util/definitions";
 import {VISION_HELPER_CLASS} from "./util/function-declarations";
 
 function ensureVisionHelper(generator: typeof pythonGenerator): string {
-    Object.assign(generator.definitions_, {
+    addDefinitions(generator, {
         IMPORT_LOGGING,
         IMPORT_VISION_PROMPT,
     });
@@ -83,4 +83,3 @@ export function vision_describe_image(
     ].join("\n");
 }
 
-export {pythonGenerator};

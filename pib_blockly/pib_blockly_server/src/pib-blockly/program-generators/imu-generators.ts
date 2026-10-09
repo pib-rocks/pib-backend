@@ -1,6 +1,6 @@
 import {Block} from "blockly/core/block";
 import {Order, pythonGenerator} from "blockly/python";
-import {IMPORT_MATH, IMPORT_OS, IMPORT_PIB_SDK_IMU} from "./util/definitions";
+import {IMPORT_MATH, IMPORT_OS, IMPORT_PIB_SDK_IMU, addDefinitions} from "./util/definitions";
 import {
     GET_IMU_ACCELERATION_FUNCTION,
     GET_IMU_ANGULAR_VELOCITY_FUNCTION,
@@ -15,7 +15,7 @@ function addImuDefinitions(
     generator: typeof pythonGenerator,
     includeMath = false,
 ) {
-    Object.assign(generator.definitions_, {
+    addDefinitions(generator, {
         IMPORT_OS,
         IMPORT_PIB_SDK_IMU,
         ...(includeMath ? {IMPORT_MATH} : {}),
