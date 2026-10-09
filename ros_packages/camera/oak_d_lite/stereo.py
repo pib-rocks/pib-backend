@@ -93,6 +93,11 @@ from .hand_tracking import (
     PalmRegion,
 )
 
+# The OAK-D Lite is an RVC2 board with 16 SHAVE cores
+# (https://docs.luxonis.com/hardware/platform/rvc/rvc2/). This is the board's
+# total, not a model-store value.
+TOTAL_SHAVES = 16
+
 # Downscaled resolution for Haar cascade face detection (maps back to full frame).
 FACE_DETECT_WIDTH = 320
 FACE_DETECT_HEIGHT = 180
@@ -472,6 +477,7 @@ class CameraNode(Node):
     def list_models_callback(self, request, response):
         statuses = self.pipeline_manager.statuses()
         response.models = []
+        response.total_shaves = TOTAL_SHAVES
         for model in self.model_registry.selectable_models():
             status = statuses[model.model_id]
             info = ModelInfo()
