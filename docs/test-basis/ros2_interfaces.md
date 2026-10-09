@@ -211,7 +211,6 @@ flowchart TB
 | `TINKERFORGE_HOST` | `localhost` / `host.docker.internal` | `pib_motors.bricklet` |
 | `TINKERFORGE_PORT` | `4223` | Tinkerforge stack |
 | `TF_HOST` / `TF_PORT` | `host.docker.internal` / `4223` | `button_service_node` |
-| `TF_BUTTON_BRICKLET_NUMBERS` | `5,6,7` | Button UID lookup |
 | `VOICE_ASSISTANT_DIR` | package path | voice assistant assets |
 
 ---
