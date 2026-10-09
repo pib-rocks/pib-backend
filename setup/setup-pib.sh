@@ -542,7 +542,10 @@ cfg_path = '/home/pib/.hermes/config.yaml'
 # Hermes starts the MCP server as a subprocess without handing it this process'
 # environment, so the entry has to carry its own env: without it pib_mcp_server
 # talks to its http://localhost:5000 default and every robot tool call fails.
-# Same entry as public_api_client.hermes_agent_client.PIB_MCP_SERVER;
+# The actuator gate is the same kind of value. An omitted PIB_MCP_ENABLE_ACTUATION
+# leaves the gate closed, so the entry carries true explicitly, matching the
+# container default. Same entry as
+# public_api_client.hermes_agent_client.PIB_MCP_SERVER;
 # tests/unit/test_setup_hermes_model_pin.py fails if the two ever drift.
 flask_url = os.environ.get('FLASK_API_BASE_URL', 'http://flask-app:5000')
 pib_mcp_server = {
@@ -554,6 +557,7 @@ pib_mcp_server = {
         'PIB_MCP_ROSBRIDGE_URL': os.environ.get(
             'PIB_MCP_ROSBRIDGE_URL', 'ws://rosbridge-ws:9090'
         ),
+        'PIB_MCP_ENABLE_ACTUATION': 'true',
     },
 }
 cfg = {}
