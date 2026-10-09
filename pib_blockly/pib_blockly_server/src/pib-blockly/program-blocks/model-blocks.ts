@@ -3,7 +3,7 @@ import * as Blockly from "blockly";
 type ModelOption = [string, string];
 
 const FALLBACK_MODEL_OPTIONS: ModelOption[] = [
-    ["hand_tracking", "hand_tracking"],
+    ["hand_tracking_fast", "hand_tracking_fast"],
 ];
 export const STOP_ALL_MODELS_VALUE = "__all__";
 const STOP_ALL_MODELS_OPTION: ModelOption = ["All", STOP_ALL_MODELS_VALUE];
