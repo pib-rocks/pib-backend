@@ -73,6 +73,7 @@ from .qr_detection import (
 )
 from .task_archives import create_archive, labels_for_model
 from .hand_tracking import (
+    FAST_MODEL_ID,
     HAND_KEYPOINT_NAMES,
     LANDMARK_HANDEDNESS_LAYER,
     LANDMARK_SCORE_LAYER,
@@ -80,11 +81,14 @@ from .hand_tracking import (
     LANDMARK_VALUE_COUNT,
     LANDMARK_XYZ_LAYERS,
     MANIP_CROP_INSET_PIXELS,
+    build_fast_hand_graph,
     decode_palm_result,
     fit_manip_crop,
     landmark_score,
     landmarks_in_crop_pixels,
+    map_fast_hand,
     map_landmarks_to_frame,
+    parse_fast_script_result,
     relative_landmark_z,
     PalmRegion,
 )
@@ -113,6 +117,8 @@ COLOUR_BRANCH_FIELD_DIR = "/tmp/pib-colour-branch-field"
 # The palm warp downscales this branch to 128x128 and stays within 2:1 on the
 # long side. The short side follows the published aspect, so the branch is the
 # whole frame. A square branch would be a centred crop.
+# hand_tracking_fast uses this same output. One manipulation from the 2104x1560
+# ISP frame down to the 128 palm input fails with WARP_SWCH_ERR_CACHE_TOO_SMALL.
 HAND_NN_WIDTH = 256
 HAND_NN_HEIGHT = HAND_NN_WIDTH * PUBLISHED_FRAME_HEIGHT // PUBLISHED_FRAME_WIDTH
 IMITATION_FPS = 8
@@ -344,6 +350,9 @@ class CameraNode(Node):
         self.hand_mp_detection_queue = None
         self.hand_mp_landmark_queue = None
         self.hand_mp_source_size = (0, 0)
+        self.hand_fast_queue = None
+        self.hand_fast_source_size = (0, 0)
+        self._pending_hand_fast_packet = None
         self._preview_packet = None
         self._colour_branch_field = None
         self._colour_branch_capture_queues = {}
@@ -1743,6 +1752,9 @@ class CameraNode(Node):
         self.hand_mp_detection_queue = None
         self.hand_mp_landmark_queue = None
         self.hand_mp_source_size = (0, 0)
+        self.hand_fast_queue = None
+        self.hand_fast_source_size = (0, 0)
+        self._pending_hand_fast_packet = None
         self._colour_branch_capture_queues = {}
         self._pending_colour_branch_packet = None
         self._colour_branch_field = None
@@ -1763,6 +1775,9 @@ class CameraNode(Node):
                 continue
             if model.model_id == "hand_tracking_mp":
                 self._build_hand_mp_pipeline(model)
+                continue
+            if model.model_id == FAST_MODEL_ID:
+                self._build_hand_fast_pipeline(model)
                 continue
             if model.model_id == "imitation":
                 self._build_imitation_pipeline(model)
@@ -1796,11 +1811,13 @@ class CameraNode(Node):
     def _colour_branch_size(self, model_id):
         """Chosen colour-branch size for one model.
 
-        The hand chain keeps a short branch so its palm warp stays within 2:1.
+        The hand chains keep a short branch so the palm warp stays within 2:1.
+        hand_tracking_fast uses that 256x144 output rather than the 2104x1560
+        ISP frame, which cannot be warped to the palm input in one step.
         Every other model shares the full-field branch. Both sizes have the
         published frame's aspect; the model's own input is a later stretch.
         """
-        if model_id == "hand_tracking":
+        if model_id in ("hand_tracking", FAST_MODEL_ID):
             return (HAND_NN_WIDTH, HAND_NN_HEIGHT)
         return (COLOUR_BRANCH_WIDTH, COLOUR_BRANCH_HEIGHT)
 
@@ -2828,6 +2845,131 @@ class CameraNode(Node):
             maxSize=HAND_MP_PAIR_WINDOW, blocking=False
         )
 
+    def _build_hand_fast_pipeline(self, composite):
+        """Add the device-side palm, top-2 decoder and landmark chain.
+
+        The Script computes both crop configurations and links them on the
+        device. The only host queue is the detection result.
+        """
+        required = {
+            "palm_detection_sh4",
+            "pd_postprocessing_top2_sh1",
+            "hand_landmark_full_sh4",
+        }
+        artifact_ids = set(composite.artifact_ids)
+        if not required.issubset(artifact_ids):
+            raise ValueError(
+                "hand_tracking_fast composite is missing a palm, decoder, or "
+                "landmark blob"
+            )
+        palm = self.model_registry.get("palm_detection_sh4")
+        decoder = self.model_registry.get("pd_postprocessing_top2_sh1")
+        landmark = self.model_registry.get("hand_landmark_full_sh4")
+        branch_size = self._colour_branch_size(FAST_MODEL_ID)
+        source = self._request_camera_branch(branch_size)
+        self.hand_fast_source_size = self._branch_output_size(source, branch_size)
+        source_width, source_height = self.hand_fast_source_size
+        self.hand_fast_queue = build_fast_hand_graph(
+            self.pipeline,
+            source,
+            palm,
+            decoder,
+            landmark,
+            source_width,
+            source_height,
+        )
+
+    def _hand_fast_chain_is_built(self):
+        requested = any(
+            active.model.model_id == FAST_MODEL_ID
+            for active in getattr(self, "_pipeline_models", ())
+        )
+        if not requested:
+            return False
+        return getattr(self, "hand_fast_queue", None) is not None
+
+    def _fast_detection_message(self, hand):
+        detection = Detection()
+        detection.label = "hand"
+        detection.score = float(hand.landmark_score)
+        detection.x_min = int(hand.x_min)
+        detection.y_min = int(hand.y_min)
+        detection.x_max = int(hand.x_max)
+        detection.y_max = int(hand.y_max)
+        detection.keypoint_names = list(HAND_KEYPOINT_NAMES)
+        detection.keypoint_x = [float(value) for value in hand.keypoint_x]
+        detection.keypoint_y = [float(value) for value in hand.keypoint_y]
+        detection.keypoint_z = [float(value) for value in hand.keypoint_z]
+        detection.scalar_names = [
+            "handedness",
+            "palm_score",
+            "landmark_score",
+            "z_source",
+        ]
+        detection.scalar_values = [
+            float(hand.handedness),
+            float(hand.palm_score),
+            float(hand.landmark_score),
+            1.0,
+        ]
+        return detection
+
+    def _publish_hand_fast_detections(self, frame_width, frame_height, detections):
+        message = DetectionArray()
+        message.header.stamp = self.get_clock().now().to_msg()
+        message.model_id = FAST_MODEL_ID
+        message.frame_width = frame_width
+        message.frame_height = frame_height
+        message.detections = detections
+        self.last_detections[FAST_MODEL_ID] = message
+        publisher = self.detection_publishers.get(FAST_MODEL_ID)
+        if publisher is not None:
+            publisher.publish(message)
+        self.pipeline_manager.record_packet(FAST_MODEL_ID)
+
+    def _process_hand_tracking_fast(self):
+        queue = getattr(self, "hand_fast_queue", None)
+        if queue is None or self.current_frame is None:
+            return
+        frame_height, frame_width = self.current_frame.shape[:2]
+        source_width, source_height = getattr(self, "hand_fast_source_size", (0, 0))
+        if source_width <= 0 or source_height <= 0:
+            return
+        packet = getattr(self, "_pending_hand_fast_packet", None)
+        self._pending_hand_fast_packet = None
+        for _ in range(32):
+            if packet is None:
+                packet = queue.tryGet()
+            if packet is None:
+                break
+            try:
+                detections = [
+                    self._fast_detection_message(
+                        map_fast_hand(
+                            hand,
+                            frame_width,
+                            frame_height,
+                            source_width,
+                            source_height,
+                        )
+                    )
+                    for hand in parse_fast_script_result(packet)
+                ]
+            except (KeyError, TypeError, ValueError) as exc:
+                self._hand_fast_error_count = (
+                    getattr(self, "_hand_fast_error_count", 0) + 1
+                )
+                if self._hand_fast_error_count % 25 == 1:
+                    self.get_logger().error(
+                        "HAND_FAST_DROP "
+                        f"count={self._hand_fast_error_count} "
+                        f"type={type(exc).__name__} message={exc}"
+                    )
+                packet = None
+                continue
+            self._publish_hand_fast_detections(frame_width, frame_height, detections)
+            packet = None
+
     def _publish_ready_face_crops(self, stamp):
         entry = self.face_crop_pairs.get(stamp)
         if entry is None or entry["faces"] is None:
@@ -3172,6 +3314,9 @@ class CameraNode(Node):
             self.hand_mp_detection_queue = None
             self.hand_mp_landmark_queue = None
             self.hand_mp_source_size = (0, 0)
+            self.hand_fast_queue = None
+            self.hand_fast_source_size = (0, 0)
+            self._pending_hand_fast_packet = None
             self._colour_branch_capture_queues = {}
             self._pending_colour_branch_packet = None
             self._colour_branch_field = None
@@ -3261,6 +3406,7 @@ class CameraNode(Node):
                 "hand_tracking",
                 "imitation",
                 "hand_tracking_mp",
+                FAST_MODEL_ID,
                 getattr(self, "face_crop_model_id", None),
             }
             missing = [
@@ -3281,6 +3427,10 @@ class CameraNode(Node):
                 or (
                     active.model.model_id == "hand_tracking_mp"
                     and not self._hand_mp_chain_is_built()
+                )
+                or (
+                    active.model.model_id == FAST_MODEL_ID
+                    and not self._hand_fast_chain_is_built()
                 )
                 or (
                     active.model.model_id not in special_ids
@@ -3305,6 +3455,7 @@ class CameraNode(Node):
             "hand_tracking",
             "imitation",
             "hand_tracking_mp",
+            FAST_MODEL_ID,
             face_crop_id,
         }
         if "hand_tracking" in requested_ids and not self._hand_chain_is_built():
@@ -3325,6 +3476,11 @@ class CameraNode(Node):
         if "hand_tracking_mp" in requested_ids and not self._hand_mp_chain_is_built():
             self.get_logger().error(
                 "Cannot verify hand_tracking_mp: the reference chain is absent"
+            )
+            return False
+        if FAST_MODEL_ID in requested_ids and not self._hand_fast_chain_is_built():
+            self.get_logger().error(
+                "Cannot verify hand_tracking_fast: the detection queue is absent"
             )
             return False
         if any(
@@ -3399,6 +3555,16 @@ class CameraNode(Node):
                 )
                 return False
             self._count_hand_stage("publish")
+        if FAST_MODEL_ID in requested_ids:
+            # The Script emits a result on every cycle, including a frame with
+            # no hand, so this wait does not require a hand to be in view.
+            packet = self._wait_for_queue_packet(self.hand_fast_queue, timeout)
+            if packet is None:
+                self.get_logger().error(
+                    "hand_tracking_fast chain started but no detection result arrived"
+                )
+                return False
+            self._pending_hand_fast_packet = packet
         return True
 
     def _revert_to_color_only(self):
@@ -3709,6 +3875,10 @@ class CameraNode(Node):
             self._process_hand_mp()
         except Exception as exc:  # pragma: no cover - defensive, verified by E2E
             self._warn_hand_once(f"hand_mp processing failed: {exc!r}")
+        try:
+            self._process_hand_tracking_fast()
+        except Exception as exc:  # pragma: no cover - defensive, verified by E2E
+            self._warn_hand_once(f"hand_tracking_fast processing failed: {exc!r}")
         self._process_imitation()
         try:
             self._process_face_crop()

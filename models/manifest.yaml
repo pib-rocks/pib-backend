@@ -73,6 +73,7 @@ models:
   - palm_detection_128x128_decoding
   - hand_landmark_224x224
   publish_topic: detections/hand_tracking
+  selectable: false
 - model_id: hand_tracking_mp
   task: hand_tracking
   composite: true
@@ -85,7 +86,18 @@ models:
   - palm_detection_128x128
   - hand_landmark_224x224
   publish_topic: detections/hand_tracking
+  selectable: false
+- model_id: hand_tracking_fast
+  task: hand_tracking
+  composite: true
   selectable: true
+  artifacts:
+  # Device-side palm detector, top-2 decoder and full landmarker. The crop
+  # configuration is computed on the device. Shave budget is 4 + 1 + 4.
+  - palm_detection_sh4
+  - pd_postprocessing_top2_sh1
+  - hand_landmark_full_sh4
+  publish_topic: detections/hand_tracking_fast
 - model_id: face_detection_yunet_160x120
   task: face_detection
   publish_topic: detections/face_detection_yunet_160x120
