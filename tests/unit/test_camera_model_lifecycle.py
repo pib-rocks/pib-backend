@@ -165,6 +165,42 @@ class TestModelRegistry(unittest.TestCase):
             },
         )
 
+    def test_hand_tracking_fast_replaces_the_selectable_hand_models(self):
+        manifest = yaml.safe_load(
+            (REPO_ROOT / "models/manifest.yaml").read_text(encoding="utf-8")
+        )
+        by_id = {entry["model_id"]: entry for entry in manifest["models"]}
+        fast = by_id["hand_tracking_fast"]
+
+        self.assertEqual(fast["task"], "hand_tracking")
+        self.assertTrue(fast["composite"])
+        self.assertTrue(fast["selectable"])
+        self.assertEqual(fast["publish_topic"], "detections/hand_tracking_fast")
+        self.assertEqual(
+            fast["artifacts"],
+            [
+                "palm_detection_sh4",
+                "pd_postprocessing_top2_sh1",
+                "hand_landmark_full_sh4",
+            ],
+        )
+        self.assertFalse(by_id["hand_tracking"].get("selectable", True))
+        self.assertFalse(by_id["hand_tracking_mp"].get("selectable", True))
+        self.assertEqual(
+            by_id["hand_tracking"]["publish_topic"], "detections/hand_tracking"
+        )
+        self.assertEqual(
+            by_id["hand_tracking_mp"]["publish_topic"], "detections/hand_tracking"
+        )
+        component_shaves = [
+            by_id[artifact_id]["shaves"] for artifact_id in fast["artifacts"]
+        ]
+        self.assertEqual(component_shaves, [4, 1, 4])
+        self.assertEqual(sum(component_shaves), 9)
+        for artifact_id in fast["artifacts"]:
+            self.assertIn("file", by_id[artifact_id])
+            self.assertIn("sha256", by_id[artifact_id])
+
     def test_parses_manifest_and_marks_present_blob_available(self):
         with tempfile.TemporaryDirectory() as store:
             store_path = Path(store)

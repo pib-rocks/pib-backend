@@ -7,13 +7,25 @@ import numpy as np
 import pytest
 
 from ros_packages.camera.oak_d_lite.hand_tracking import (
+    FAST_BRANCH_HEIGHT,
+    FAST_BRANCH_WIDTH,
+    FAST_DECODER_INPUT,
+    FAST_LANDMARK_CONFIG_OUTPUT,
+    FAST_LANDMARK_INPUT,
+    FAST_PALM_CONFIG_OUTPUT,
+    FAST_RESULT_OUTPUT,
     PalmRegion,
+    build_fast_tracker_script,
     decode_palm_result,
     fit_manip_crop,
     landmark_score,
     landmark_xyz,
+    letterbox_square,
+    map_fast_hand,
     map_landmarks_to_frame,
+    parse_fast_script_result,
     relative_landmark_z,
+    validate_fast_branch_size,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -266,3 +278,89 @@ def test_relative_landmark_z_preserves_the_sign_of_the_relative_depth():
 
 def test_relative_landmark_z_is_empty_without_landmarks():
     assert relative_landmark_z(np.zeros((0,), dtype=np.float32), 224) == []
+
+
+def test_decoder_accepts_the_top2_postprocessing_layout():
+    top2 = np.zeros((2, 8), dtype=np.float32)
+    top2[0] = [0.8, 0.4, 0.4, 0.2, 0.4, 0.5, 0.4, 0.3]
+    zoo = np.zeros((10, 8), dtype=np.float32)
+    zoo[0] = top2[0]
+
+    from_top2 = decode_palm_result(top2)
+    from_zoo = decode_palm_result(zoo)
+
+    assert len(from_top2) == 1
+    assert from_top2[0] == from_zoo[0]
+
+
+def test_fast_branch_stays_inside_the_palm_warp_limit():
+    assert (FAST_BRANCH_WIDTH, FAST_BRANCH_HEIGHT) == (256, 144)
+    assert validate_fast_branch_size(256, 144) == pytest.approx(2.0)
+    with pytest.raises(ValueError, match="WARP_SWCH_ERR_CACHE_TOO_SMALL"):
+        validate_fast_branch_size(2104, 1560)
+    with pytest.raises(ValueError, match="within 2:1"):
+        validate_fast_branch_size(1152, 648)
+
+
+def test_fast_script_letterboxes_256x144_and_stays_on_the_device():
+    side, pad_w, pad_h = letterbox_square(256, 144)
+    assert (side, pad_w, pad_h) == (256, 0, 56)
+
+    script = build_fast_tracker_script(256, 144)
+    compile(script, "hand_tracking_fast.py", "exec")
+    assert "pad_h = 56" in script
+    assert "img_w = 256" in script
+    assert "img_h = 144" in script
+    assert "2.9 * box_size" in script
+    assert f"node.io['{FAST_PALM_CONFIG_OUTPUT}']" in script
+    assert f"node.io['{FAST_LANDMARK_CONFIG_OUTPUT}']" in script
+    assert f"node.io['{FAST_DECODER_INPUT}']" in script
+    assert f"node.io['{FAST_LANDMARK_INPUT}']" in script
+    assert f"node.io['{FAST_RESULT_OUTPUT}']" in script
+    lowered = script.lower()
+    assert "hostnode" not in lowered
+    assert "createinputqueue" not in lowered
+    assert "xlink" not in lowered
+
+
+def _fast_payload(**overrides):
+    crop = np.tile([112.0, 112.0, 22.4], 21).tolist()
+    crop[3:5] = [224.0, 112.0]
+    payload = {
+        "lm_score": [0.91],
+        "handedness": [0.2],
+        "palm_score": [0.8],
+        "rotation": [0.0],
+        "rect_center_x": [0.5],
+        "rect_center_y": [0.5],
+        "rect_size": [0.5],
+        "rrn_lms": [crop],
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_fast_result_maps_the_letterboxed_square_onto_the_published_frame():
+    import marshal
+
+    hands = parse_fast_script_result(marshal.dumps(_fast_payload()))
+    assert len(hands) == 1
+
+    detection = map_fast_hand(hands[0], 1280, 720, 256, 144)
+
+    assert detection.keypoint_x[0] == pytest.approx(640.0)
+    assert detection.keypoint_y[0] == pytest.approx(360.0)
+    assert detection.keypoint_x[1] == pytest.approx(960.0)
+    assert detection.keypoint_y[1] == pytest.approx(360.0)
+    assert detection.keypoint_z[0] == pytest.approx(0.1)
+    assert detection.landmark_score == pytest.approx(0.91)
+    assert detection.palm_score == pytest.approx(0.8)
+    assert detection.handedness == pytest.approx(0.2)
+    assert detection.x_min <= 640 < detection.x_max
+    assert detection.y_min <= 360 <= detection.y_max
+
+
+def test_fast_result_drops_a_landmark_below_the_score_gate():
+    import marshal
+
+    assert parse_fast_script_result(marshal.dumps(_fast_payload(lm_score=[0.1]))) == []

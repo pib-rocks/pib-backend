@@ -3143,6 +3143,7 @@ class TestPublishedFrameBranchAspect(unittest.TestCase):
                 "_build_face_crop_pipeline",
                 "_build_gaze_pipeline",
                 "_build_hand_mp_pipeline",
+                "_build_hand_fast_pipeline",
             },
         )
         node = _branch_aspect_node()
@@ -3240,4 +3241,158 @@ class TestObjectDetectionField(unittest.TestCase):
         self.assertEqual(
             (detection.x_min, detection.y_min, detection.x_max, detection.y_max),
             (0, 68, 1280, 651),
+        )
+
+
+class TestHandTrackingFast(unittest.TestCase):
+    def _artifacts(self):
+        return {
+            "palm_detection_sh4": types.SimpleNamespace(
+                input_width=128,
+                input_height=128,
+                blob_path="/palm_detection_sh4.blob",
+                shaves=4,
+            ),
+            "pd_postprocessing_top2_sh1": types.SimpleNamespace(
+                input_width=128,
+                input_height=128,
+                blob_path="/pd_postprocessing_top2_sh1.blob",
+                shaves=1,
+            ),
+            "hand_landmark_full_sh4": types.SimpleNamespace(
+                input_width=224,
+                input_height=224,
+                blob_path="/hand_landmark_full_sh4.blob",
+                shaves=4,
+            ),
+        }
+
+    def test_graph_keeps_frames_and_crop_configs_on_the_device(self):
+        import depthai as dai
+
+        with patch.object(CameraNode, "__init__", lambda self: None):
+            node = CameraNode()
+        node.preview_width = PUBLISHED_FRAME_WIDTH
+        node.preview_height = PUBLISHED_FRAME_HEIGHT
+        node.get_logger = MagicMock()
+        artifacts = self._artifacts()
+        node.model_registry = MagicMock()
+        node.model_registry.get.side_effect = artifacts.get
+        created = []
+
+        def _create(node_type):
+            made = MagicMock(name=getattr(node_type, "__name__", "node"))
+            made.node_type = node_type
+            created.append(made)
+            return made
+
+        node.pipeline = MagicMock()
+        node.pipeline.create.side_effect = _create
+        node.camRgb = MagicMock()
+        node.camRgb.requestOutput.return_value = MagicMock()
+
+        node._build_hand_fast_pipeline(
+            types.SimpleNamespace(artifact_ids=tuple(artifacts))
+        )
+
+        self.assertEqual(
+            [item.node_type for item in created],
+            [
+                dai.node.Script,
+                dai.node.ImageManip,
+                dai.node.NeuralNetwork,
+                dai.node.NeuralNetwork,
+                dai.node.ImageManip,
+                dai.node.NeuralNetwork,
+            ],
+        )
+        script, palm_manip, palm_nn, decoder_nn, landmark_manip, landmark_nn = created
+        self.assertEqual(node.hand_fast_source_size, (HAND_NN_WIDTH, HAND_NN_HEIGHT))
+        self.assertEqual(node.camRgb.requestOutput.call_args.args[0], (256, 144))
+        palm_nn.setNumShavesPerInferenceThread.assert_called_once_with(4)
+        decoder_nn.setNumShavesPerInferenceThread.assert_called_once_with(1)
+        landmark_nn.setNumShavesPerInferenceThread.assert_called_once_with(4)
+        script_text = script.setScript.call_args.args[0]
+        self.assertNotIn("HostNode", script_text)
+        self.assertNotIn("createInputQueue", script_text)
+        self.assertNotIn("XLink", script_text)
+        palm_manip.inputConfig.setWaitForMessage.assert_called_once_with(True)
+        landmark_manip.inputConfig.setWaitForMessage.assert_called_once_with(True)
+        for manip in (palm_manip, landmark_manip):
+            manip.out.createOutputQueue.assert_not_called()
+            manip.inputConfig.createInputQueue.assert_not_called()
+        for network in (palm_nn, decoder_nn, landmark_nn):
+            network.out.createOutputQueue.assert_not_called()
+        host_queues = [
+            call
+            for item in created
+            for call in item.mock_calls
+            if "createOutputQueue" in call[0]
+        ]
+        input_queues = [
+            call
+            for item in created
+            for call in item.mock_calls
+            if "createInputQueue" in call[0]
+        ]
+        self.assertEqual(input_queues, [])
+        self.assertEqual(len(host_queues), 1)
+        self.assertEqual(
+            [call.args[0] for call in script.outputs.__getitem__.call_args_list],
+            ["pre_pd_manip_cfg", "pre_lm_manip_cfg", "detections"],
+        )
+        self.assertEqual(
+            host_queues[0],
+            unittest.mock.call.outputs.__getitem__().createOutputQueue(
+                maxSize=1, blocking=False
+            ),
+        )
+
+    def test_detection_result_publishes_the_existing_message(self):
+        import marshal
+
+        with patch.object(CameraNode, "__init__", lambda self: None):
+            node = CameraNode()
+        node.current_frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+        node.hand_fast_source_size = (256, 144)
+        node._pending_hand_fast_packet = None
+        node.last_detections = {}
+        node.pipeline_manager = MagicMock()
+        node.get_logger = MagicMock()
+        node.get_clock = MagicMock()
+        publisher = MagicMock()
+        node.detection_publishers = {"hand_tracking_fast": publisher}
+        packet = MagicMock()
+        packet.getData.return_value = marshal.dumps(
+            {
+                "lm_score": [0.91],
+                "handedness": [0.2],
+                "palm_score": [0.8],
+                "rotation": [0.0],
+                "rect_center_x": [0.5],
+                "rect_center_y": [0.5],
+                "rect_size": [0.5],
+                "rrn_lms": [[112.0, 112.0, 22.4] * 21],
+            }
+        )
+        node.hand_fast_queue = MagicMock()
+        node.hand_fast_queue.tryGet.side_effect = [packet, None]
+
+        node._process_hand_tracking_fast()
+
+        message = node.last_detections["hand_tracking_fast"]
+        self.assertEqual(message.model_id, "hand_tracking_fast")
+        self.assertEqual((message.frame_width, message.frame_height), (1280, 720))
+        self.assertEqual(len(message.detections), 1)
+        detection = message.detections[0]
+        self.assertEqual(detection.label, "hand")
+        self.assertEqual(len(detection.keypoint_names), 21)
+        self.assertEqual(len(detection.keypoint_x), 21)
+        self.assertEqual(
+            detection.scalar_names,
+            ["handedness", "palm_score", "landmark_score", "z_source"],
+        )
+        publisher.publish.assert_called_once_with(message)
+        node.pipeline_manager.record_packet.assert_called_once_with(
+            "hand_tracking_fast"
         )
