@@ -37,6 +37,7 @@ def stubbed_tinkerforge(monkeypatch):
         monkeypatch.setitem(sys.modules, name, mod)
     return _TINKERFORGE_STUBS
 
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 for path in (
     str(REPO_ROOT / "ros_packages" / "motors" / "pib_motors"),
