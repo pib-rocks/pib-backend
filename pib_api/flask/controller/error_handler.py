@@ -75,16 +75,6 @@ def handle_invalid_request_error(error):
     return jsonify({"error": str(error)}), 400
 
 
-def handle_compilation_error(error):
-    """The visual-code does not compile - the Blockly server's reason is the answer.
-
-    A refused workspace is the caller's to fix, so it answers 400 with the reason
-    rather than the catch-all 500 (PR-1977).
-    """
-    app.logger.warning(error)
-    return jsonify({"error": str(error)}), 400
-
-
 def handle_unknown_error(error):
     app.logger.error(traceback.format_exc())
     app.logger.error(error)
