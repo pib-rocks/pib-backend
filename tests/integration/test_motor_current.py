@@ -26,9 +26,6 @@ _STUB_MODULE_NAMES = (
     "tinkerforge.bricklet_rgb_led_button",
     "tinkerforge.ip_connection",
 )
-_ABSENT_BEFORE_STUBS = frozenset(
-    name for name in _STUB_MODULE_NAMES if name not in sys.modules
-)
 
 # Ensure rclpy and diagnostic_msgs are mocked if not installed in host environment
 if "rclpy" not in sys.modules:
@@ -118,26 +115,30 @@ _tinkerforge.bricklet_solid_state_relay_v2 = MagicMock()
 _tinkerforge.bricklet_rgb_led_button = MagicMock()
 _tinkerforge.ip_connection = _ip_connection
 
-for name, mod in [
-    ("tinkerforge", _tinkerforge),
-    ("tinkerforge.brick_hat", _tinkerforge.brick_hat),
-    ("tinkerforge.bricklet_servo_v2", _servo_v2),
-    (
-        "tinkerforge.bricklet_solid_state_relay_v2",
-        _tinkerforge.bricklet_solid_state_relay_v2,
+_TINKERFORGE_STUBS = {
+    "tinkerforge": _tinkerforge,
+    "tinkerforge.brick_hat": _tinkerforge.brick_hat,
+    "tinkerforge.bricklet_servo_v2": _servo_v2,
+    "tinkerforge.bricklet_solid_state_relay_v2": (
+        _tinkerforge.bricklet_solid_state_relay_v2
     ),
-    ("tinkerforge.bricklet_rgb_led_button", _tinkerforge.bricklet_rgb_led_button),
-    ("tinkerforge.ip_connection", _ip_connection),
-]:
-    sys.modules[name] = mod
+    "tinkerforge.bricklet_rgb_led_button": _tinkerforge.bricklet_rgb_led_button,
+    "tinkerforge.ip_connection": _ip_connection,
+}
 
 
-@pytest.fixture(scope="module", autouse=True)
-def _drop_stubbed_modules():
-    """Remove the stand-in modules again once this module's tests are done."""
-    yield
-    for name in _ABSENT_BEFORE_STUBS:
-        sys.modules.pop(name, None)
+@pytest.fixture()
+def stubbed_tinkerforge(monkeypatch):
+    """Install the stand-ins for one test only, then let monkeypatch restore sys.modules.
+
+    Writing them into sys.modules at import time replaced the real package for every module
+    collected afterwards (nothing had imported it yet at that point), and the fake
+    ``ip_connection.Error`` is a bare Exception without the Tinkerforge error codes - so tests
+    that need those codes failed in a full run while passing on their own.
+    """
+    for name, mod in _TINKERFORGE_STUBS.items():
+        monkeypatch.setitem(sys.modules, name, mod)
+    return _TINKERFORGE_STUBS
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -151,7 +152,7 @@ for p in (
 
 
 @pytest.fixture()
-def mock_motor_setup():
+def mock_motor_setup(stubbed_tinkerforge):
     """Mock motor and bricklet setup for MotorCurrent testing."""
     for name in list(sys.modules):
         if name.startswith("pib_motors") or name.startswith("motors"):
