@@ -216,5 +216,6 @@ Then Blockly Workspace Is Visible
 
 When User Saves Program Visual Code
     [Arguments]    ${program_number}
+    # A workspace that cannot be compiled is a bad request (PR-1977), not a server error.
     ${response}=    Evaluate    __import__('requests').put('${FLASK_BASE_URL}/program/${program_number}/code', json={'codeVisual': '{}'}, timeout=10)
-    Should Be Equal As Integers    ${response.status_code}    500
+    Should Be Equal As Integers    ${response.status_code}    400
