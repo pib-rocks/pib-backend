@@ -18,7 +18,8 @@ def code_visual_to_python(code_visual: str) -> Tuple[bool, str | None]:
     compile the provided visual-code into python-code via the pib-blockly-server.
 
     Returns a bool indicating if compilation was succesful and, in case of a success,
-    the rsulting python-code.
+    the rsulting python-code. If the server refuses the visual-code, the second value
+    is the server's error message instead.
     """
 
     try:
@@ -36,6 +37,7 @@ def code_visual_to_python(code_visual: str) -> Tuple[bool, str | None]:
         logging.error(
             f"pib-blockly-server responded with error '{response.text}' (code: {response.status_code})"
         )
+        return False, response.text
 
     except Exception as error:
         logging.error(f"unexpected error occured: {error}.")
