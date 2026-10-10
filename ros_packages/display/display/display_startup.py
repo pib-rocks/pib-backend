@@ -10,6 +10,7 @@ up ends the process with a non-zero status, so ROS launch and Docker see a failu
 
 from __future__ import annotations
 
+import math
 import os
 import socket
 import stat
@@ -124,7 +125,7 @@ def wait_seconds(environ: Mapping[str, str], log: Callable[[str], None]) -> floa
         seconds = float(value)
     except ValueError:
         seconds = -1.0
-    if seconds < 0:
+    if seconds < 0 or not math.isfinite(seconds):
         log(
             f"{WAIT_SECONDS_VARIABLE}={value!r} is not a number of seconds; "
             f"using {DEFAULT_WAIT_SECONDS:.0f}"

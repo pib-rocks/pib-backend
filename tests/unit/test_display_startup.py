@@ -294,6 +294,18 @@ def test_the_wait_budget_comes_from_the_environment():
     assert len(messages) == 2
 
 
+@pytest.mark.parametrize("value", ["nan", "inf", "-inf"])
+def test_the_wait_budget_rejects_nonfinite_values(value):
+    messages = []
+    assert (
+        startup.wait_seconds(
+            {"PIB_DISPLAY_WAYLAND_WAIT_SECONDS": value}, messages.append
+        )
+        == startup.DEFAULT_WAIT_SECONDS
+    )
+    assert len(messages) == 1
+
+
 # ---- readiness and exit status -------------------------------------------------------------
 
 

@@ -99,5 +99,6 @@ sudo cp /boot/firmware/config.txt.pib-backup-<timestamp> /boot/firmware/config.t
 sudo reboot
 ```
 
-SSH is not affected by the display driver, so a robot without a picture stays reachable.
+The repair does not change network or SSH configuration. If the graphics change prevents
+normal boot or remote access, restore the saved boot file using local console/SD-card access.
 The next setup or `--repair-display` run restores full KMS again.
