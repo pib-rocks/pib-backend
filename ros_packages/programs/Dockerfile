@@ -18,10 +18,12 @@ ENV PIP_ROOT_USER_ACTION=ignore \
 
 # PEP 668: Jazzy (Ubuntu 24.04, Python 3.12) requires --break-system-packages
 # --ignore-installed: avoid conflict with system numpy (installed by ros:jazzy-ros-core)
-# Third-party packages first, pinned, in one resolve. opencv-python-headless stays below 5
-# for the same reason as in camera/Dockerfile (5.x dropped cv2 APIs user programs rely on).
+# Third-party packages first, in one resolve. Everything is pinned except pib-sdk, which
+# takes the newest release (>= keeps it from resolving to one that predates the shared
+# rosbridge client of PR-1882). opencv-python-headless stays below 5 for the same reason as
+# in camera/Dockerfile (5.x dropped cv2 APIs user programs rely on).
 RUN pip install --break-system-packages --ignore-installed \
-        pib-sdk==0.5.4 \
+        pib-sdk>=0.5.5 \
         requests==2.32.3 \
         paramiko==3.5.1 \
         tinkerforge==2.1.32 \
