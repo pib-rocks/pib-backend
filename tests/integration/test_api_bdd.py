@@ -44,7 +44,10 @@ class TestFlaskHttpErrorHandling:
             for p in client.get("/pose").get_json()["poses"]
             if p["name"] == CALIBRATION_POSE_NAME
         )
-        assert client.delete(f"/pose/{cal_id}").status_code == 500
+        response = client.delete(f"/pose/{cal_id}")
+
+        assert response.status_code == 409
+        assert "not deletable" in response.get_json()["error"]
 
     def test_missing_content_type_returns_500_not_400(self, client):
         response = client.open(
@@ -56,10 +59,12 @@ class TestFlaskHttpErrorHandling:
 
 
 class TestPoseMotorPositionMismatch:
-    def test_motor_count_mismatch_500(self, client):
+    def test_motor_count_mismatch_400(self, client):
         startup = client.get("/pose/by-name/Startup%2FResting").get_json()
         response = client.patch(
             f"/pose/{startup['poseId']}/motor-positions",
             json={"motorPositions": [{"position": 0, "motorName": "turn_head_motor"}]},
         )
-        assert response.status_code == 500
+
+        assert response.status_code == 400
+        assert "motor positions" in response.get_json()["error"]

@@ -126,10 +126,16 @@ class TestPoseEndpoints:
         assert body["name"] == STARTUP_POSE_NAME
         assert body["deletable"] is False
 
-    def test_delete_calibration_pose_500(self, client):
+    def test_delete_calibration_pose_409(self, client):
+        """A protected pose is a refusal, not a server error (PR-1974)."""
         poses = client.get("/pose").get_json()["poses"]
         cal_id = next(p["poseId"] for p in poses if p["name"] == CALIBRATION_POSE_NAME)
-        assert client.delete(f"/pose/{cal_id}").status_code == 500
+
+        response = client.delete(f"/pose/{cal_id}")
+
+        assert response.status_code == 409
+        assert "not deletable" in response.get_json()["error"]
+        assert CALIBRATION_POSE_NAME in response.get_json()["error"]
 
     def test_create_pose_201(self, client):
         name = f"pose_{uuid.uuid4().hex[:8]}"
