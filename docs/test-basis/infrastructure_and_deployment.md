@@ -214,6 +214,7 @@ ros2 launch programs launch.py
 | `PIB_DISPLAY_ON_DEMAND` | `1` |
 | `WAYLAND_DISPLAY` | `wayland-0` |
 | `GDK_BACKEND` | `wayland` |
+| `PIB_DISPLAY_WAYLAND_WAIT_SECONDS` | `600` (wait for the host compositor, then exit 75) |
 
 ---
 

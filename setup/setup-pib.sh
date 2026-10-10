@@ -342,6 +342,31 @@ function is_supported_raspbian(){
   " ${supported_versions[@]} " =~ " ${DIST_VERSION} " ]]
 }
 
+# --repair-display: run only the display part of "Adjust system settings" on an installed robot,
+# from the checkout this script is in. The same function runs in every full setup, so the
+# repair is not undone by the next setup run. The new boot configuration needs a reboot.
+function repair_display_settings() {
+  local settings="$SETUP_SCRIPT_DIR/installation_scripts/set_system_settings.sh"
+
+  if [ "$(id -u)" -eq 0 ]; then
+    print ERROR "--repair-display must run as user pib, not as root (code lives in /home/pib/app)"
+    return 1
+  fi
+  DISTRIBUTION=$(get_distribution)
+  DIST_VERSION=$(get_dist_version "$DISTRIBUTION")
+  if ! is_supported_raspbian; then
+    print ERROR "--repair-display only applies to Raspberry Pi OS bookworm or trixie (found ${DISTRIBUTION} ${DIST_VERSION})"
+    return 1
+  fi
+  if [ ! -f "$settings" ]; then
+    print ERROR "${settings} is missing"
+    return 1
+  fi
+  # shellcheck source=/dev/null
+  PIB_SYSTEM_SETTINGS_DEFINE_ONLY=1 source "$settings" || return 1
+  configure_display_settings
+}
+
 function check_distribution() {
   if is_ubuntu_noble || is_supported_raspbian; then
     print INFO "You are running the setup-script on: $DISTRIBUTION $DIST_VERSION which is one of the supported operating-systems! So, we can happily start the setup…"
@@ -1724,6 +1749,7 @@ show_help()
 	echo -e "-l or --local for a local installation of the software over using a containerized setup using Docker"
 	echo -e "--models fetch the OAK release asset into \$HOME/app/.cache/pib-models when the cache does not match models/manifest.yaml (override with PIB_MODEL_CACHE, PIB_MODEL_ASSET_URL, PIB_MODEL_ASSET_TAG, PIB_MODEL_ASSET_NAME, PIB_MODEL_ASSET_SHA256), refresh the persistent OAK model store from that cache, place the whisper weights (fetched once if voice/whisper/ is empty; PIB_WHISPER_DOWNLOAD=0 forbids that) and exit"
 	echo -e "--verify-models check the model store against models/manifest.yaml offline and exit non-zero on mismatch"
+	echo -e "--repair-display restore the full KMS display driver in /boot/firmware/config.txt on an installed pib (backup next to the file, reboot afterwards) and exit"
 	echo -e "--no-smart-chats install without the Hermes channel; Direct is the only chat path"
 	echo -e "--pib4edu select the pib 4 educational hardware variant"
 	echo -e "--pib4advanced select the pib 4 advanced hardware variant"
@@ -1738,6 +1764,7 @@ show_help()
     echo -e "    ./setup-pib --backend-branch=main --frontend-branch=PR-566"
 	echo -e "    ./setup-pib --models"
 	echo -e "    ./setup-pib --verify-models"
+	echo -e "    ./setup-pib --repair-display"
 	echo -e "Provision models before starting Docker containers so the bind-mount store is created with the correct owner."
 
 	exit
@@ -1754,6 +1781,7 @@ BRANCH_FRONTEND="main"
 INSTALL_METHOD="docker"
 MODELS_ONLY=false
 VERIFY_MODELS_ONLY=false
+REPAIR_DISPLAY_ONLY=false
 SMART_CHATS_ENABLED=1
 HARDWARE_VARIANT_ARGUMENTS=()
 while [ $# -gt 0 ]; do
@@ -1772,6 +1800,9 @@ while [ $# -gt 0 ]; do
       ;;
     --verify-models)
       VERIFY_MODELS_ONLY=true
+      ;;
+    --repair-display)
+      REPAIR_DISPLAY_ONLY=true
       ;;
     --no-smart-chats)
       SMART_CHATS_ENABLED=0
@@ -1815,6 +1846,11 @@ fi
 
 if [ "$VERIFY_MODELS_ONLY" = true ]; then
   provision_curated_models verify
+  exit $?
+fi
+
+if [ "$REPAIR_DISPLAY_ONLY" = true ]; then
+  repair_display_settings
   exit $?
 fi
 
