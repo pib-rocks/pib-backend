@@ -27,8 +27,10 @@ app.register_error_handler(
 app.register_error_handler(
     pose_service.PoseValidationError, error_handler.handle_invalid_request_error
 )
+# A refused workspace is the caller's to fix and it is not a conflict, so it shares the
+# 400-with-the-reason handler rather than getting an identical one of its own.
 app.register_error_handler(
-    program_service.ProgramCompilationError, error_handler.handle_compilation_error
+    program_service.ProgramCompilationError, error_handler.handle_invalid_request_error
 )
 app.register_error_handler(
     motor_service.MotorValidationError, error_handler.handle_invalid_request_error
