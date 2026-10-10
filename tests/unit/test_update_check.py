@@ -132,6 +132,41 @@ def test_validate_request_names_missing_and_invalid_fields(field, value):
         update_check.validate_request(document)
 
 
+def test_commit_records_check_identity_and_keeps_previous_result(tmp_path):
+    destination = tmp_path / "available.json"
+    spec = tmp_path / "spec.json"
+    spec.write_text(
+        json.dumps(
+            {
+                "checkedAt": "2026-10-10T00:00:00+00:00",
+                "checkId": "11111111-1111-4111-8111-111111111111",
+                "channel": "release",
+                "state": "completed",
+                "previous": {
+                    "checkId": "00000000-0000-4000-8000-000000000000",
+                    "checkedAt": "2020-01-01T00:00:00+00:00",
+                    "previous": {"checkId": "should-not-nest"},
+                },
+                "installed": {"pib-backend": SHA_A, "cerebra": SHA_A},
+                "remote": {
+                    "pib-backend": {"target": SHA_B, "error": ""},
+                    "cerebra": {"target": SHA_A, "error": ""},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert update_check.main(["commit", str(spec), str(destination)]) == 0
+    document = json.loads(destination.read_text(encoding="utf-8"))
+    assert document["checkId"] == "11111111-1111-4111-8111-111111111111"
+    assert document["channel"] == "release"
+    assert document["repositories"]["pib-backend"]["updateAvailable"] == "unknown"
+    assert document["repositories"]["pib-backend"]["branchTarget"] == SHA_B
+    assert document["previous"]["checkId"] == "00000000-0000-4000-8000-000000000000"
+    assert "previous" not in document["previous"]
+
+
 def test_write_cli_replaces_json_with_group_writable_file(tmp_path):
     destination = tmp_path / "available.json"
 

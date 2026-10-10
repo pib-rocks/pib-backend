@@ -190,6 +190,8 @@ def _run(
     tag_on_head: str = "",
     second_parent_missing: bool = False,
     tags_answered_only_after_tag_fetch: bool = False,
+    targets: dict[str, str] | None = None,
+    release: str = "",
 ) -> tuple[subprocess.CompletedProcess[str], Path, str]:
     update_dir = tmp_path / "update"
     backend = tmp_path / "backend"
@@ -202,8 +204,16 @@ def _run(
     (backend / "setup").symlink_to(REPO_ROOT / "setup")
     model_store = tmp_path / "model-store"
     _matching_model_fixture(backend, model_store)
+    request_document = _request(channel)
+    if targets is not None:
+        request_document["targets"] = targets
+        request_document["targetKind"] = (
+            "published-release" if release else "develop-pin"
+        )
+        if release:
+            request_document["release"] = release
     (update_dir / "request.json").write_text(
-        json.dumps(_request(channel)), encoding="utf-8"
+        json.dumps(request_document), encoding="utf-8"
     )
 
     stub_bin = tmp_path / "bin"
@@ -232,12 +242,14 @@ def _run(
         PIB_MODEL_CACHE=str(tmp_path / "model-cache"),
         PIB_MODEL_ASSET_URL="http://127.0.0.1:9/nope.tar.gz",
         DOCKER_LOG=str(docker_log),
-        STUB_BACKEND_SHA=BACKEND_SHA,
-        STUB_CEREBRA_SHA=CEREBRA_SHA,
+        STUB_BACKEND_SHA=(targets or {}).get("pib-backend", BACKEND_SHA),
+        STUB_CEREBRA_SHA=(targets or {}).get("cerebra", CEREBRA_SHA),
         STUB_TAG_HEAD2=tag_on_second_parent,
         STUB_TAG_HEAD=tag_on_head,
         STUB_HEAD2_MISSING="1" if second_parent_missing else "0",
     )
+    if targets is not None:
+        env["GIT_ARGV_LOG"] = str(tmp_path / "git-argv.log")
     if tags_answered_only_after_tag_fetch:
         tag_fetch_log = tmp_path / "tag-fetches.log"
         tag_fetch_log.write_text("", encoding="utf-8")
@@ -423,3 +435,28 @@ def test_release_tag_resolves_only_after_a_tag_fetch(tmp_path: Path) -> None:
     _assert_revisions(update_dir, "release")
     log = (update_dir / "update.log").read_text(encoding="utf-8")
     assert f"Resolved APP_VERSION=v0.6.4 for pib-backend at {BACKEND_SHA}" in log
+
+
+def test_confirmed_targets_are_checked_out_instead_of_the_moving_branch(
+    tmp_path: Path,
+) -> None:
+    backend_pin = "a" * 40
+    cerebra_pin = "b" * 40
+    result, update_dir, docker_log = _run(
+        tmp_path,
+        "release",
+        tag_on_head="v1.2.3",
+        second_parent_missing=True,
+        targets={"pib-backend": backend_pin, "cerebra": cerebra_pin},
+        release="v1.2.3",
+    )
+
+    _assert_succeeded(result, update_dir)
+    _assert_version_passed(docker_log, "v1.2.3")
+    assert _revision(update_dir, "pib-backend")["gitSha"] == backend_pin
+    assert _revision(update_dir, "cerebra")["gitSha"] == cerebra_pin
+    git_log = (tmp_path / "git-argv.log").read_text(encoding="utf-8")
+    assert f"checkout --detach {backend_pin}" in git_log
+    assert f"checkout --detach {cerebra_pin}" in git_log
+    assert "reset --hard origin/main" not in git_log
+    assert "reset --hard origin/develop" not in git_log

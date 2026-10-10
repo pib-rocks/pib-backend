@@ -14,6 +14,7 @@ CANCEL_FILE="$UPDATE_DIR/cancel.json"
 CHECK_FILE="$UPDATE_DIR/check.json"
 AVAILABLE_FILE="$UPDATE_DIR/available.json"
 CHECK_HELPER="$BACKEND_DIR/setup/update_check.py"
+RELEASE_HELPER="$BACKEND_DIR/setup/update_releases.py"
 if [ "${1:-}" = "--check" ]; then
     LOG_FILE="$UPDATE_DIR/check.log"
 else
@@ -140,11 +141,79 @@ run_check() {
     cerebra_target="$REMOTE_TARGET"
     cerebra_error="$REMOTE_ERROR"
 
-    python3 "$CHECK_HELPER" write "$AVAILABLE_FILE" \
-        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-        "pib-backend" "$backend_installed" "$backend_target" "$backend_error" \
-        "cerebra" "$cerebra_installed" "$cerebra_target" "$cerebra_error"
-    log "Update availability check completed for channel $CHANNEL"
+    local checked_at spec_file releases_file
+    checked_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    spec_file="$UPDATE_DIR/.check-spec.json"
+    releases_file="$UPDATE_DIR/.releases.json"
+    rm -f "$releases_file"
+    if [ "$CHANNEL" = "release" ]; then
+        if ! python3 "$RELEASE_HELPER" discover "$releases_file"; then
+            log "Release discovery could not write a result"
+        fi
+    fi
+    CHECK_ID="${CHECK_ID:-}" CHANNEL="$CHANNEL" CHECKED_AT="$checked_at" \
+        SPEC_FILE="$spec_file" AVAILABLE_FILE="$AVAILABLE_FILE" \
+        RELEASES_FILE="$releases_file" \
+        BACKEND_INSTALLED="$backend_installed" BACKEND_TARGET="$backend_target" \
+        BACKEND_ERROR="$backend_error" CEREBRA_INSTALLED="$cerebra_installed" \
+        CEREBRA_TARGET="$cerebra_target" CEREBRA_ERROR="$cerebra_error" \
+        python3 - <<'PY'
+import json
+import os
+from pathlib import Path
+
+previous = None
+available = Path(os.environ["AVAILABLE_FILE"])
+if available.is_file():
+    try:
+        loaded = json.loads(available.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        loaded = None
+    if isinstance(loaded, dict):
+        loaded.pop("previous", None)
+        previous = loaded
+releases = None
+releases_path = Path(os.environ.get("RELEASES_FILE", ""))
+if os.environ.get("CHANNEL") == "release" and releases_path.is_file():
+    try:
+        loaded_releases = json.loads(releases_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        loaded_releases = {
+            "releases": [],
+            "incomplete": [],
+            "excluded": [],
+            "latestInstallable": None,
+            "error": "Release discovery result could not be read",
+        }
+    if isinstance(loaded_releases, dict):
+        releases = loaded_releases
+spec = {
+    "checkedAt": os.environ["CHECKED_AT"],
+    "checkId": os.environ.get("CHECK_ID") or None,
+    "channel": os.environ["CHANNEL"],
+    "state": "completed",
+    "previous": previous,
+    "installed": {
+        "pib-backend": os.environ["BACKEND_INSTALLED"],
+        "cerebra": os.environ["CEREBRA_INSTALLED"],
+    },
+    "remote": {
+        "pib-backend": {
+            "target": os.environ["BACKEND_TARGET"],
+            "error": os.environ["BACKEND_ERROR"],
+        },
+        "cerebra": {
+            "target": os.environ["CEREBRA_TARGET"],
+            "error": os.environ["CEREBRA_ERROR"],
+        },
+    },
+    "releases": releases,
+}
+Path(os.environ["SPEC_FILE"]).write_text(json.dumps(spec), encoding="utf-8")
+PY
+    python3 "$CHECK_HELPER" commit "$spec_file" "$AVAILABLE_FILE"
+    rm -f "$spec_file" "$releases_file"
+    log "Update availability check completed for channel $CHANNEL check ${CHECK_ID:-unknown}"
 }
 
 if [ "${1:-}" = "--check" ]; then
@@ -221,6 +290,7 @@ load_request() {
     if ! parsed=$(REQUEST_FILE="$REQUEST_FILE" python3 - <<'PY'
 import json
 import os
+import re
 import shlex
 
 with open(os.environ["REQUEST_FILE"], encoding="utf-8") as source:
@@ -241,10 +311,32 @@ if request["channel"] not in {"release", "develop"}:
     raise ValueError("invalid request channel")
 if request["confirmation"] != "UPDATE":
     raise ValueError("invalid confirmation token")
+release = request.get("release", "")
+if release is None:
+    release = ""
+if not isinstance(release, str) or (
+    release and not re.fullmatch(r"v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)", release)
+):
+    raise ValueError("invalid request field: release")
+backend_pin = ""
+cerebra_pin = ""
+targets = request.get("targets")
+if targets is not None:
+    if not isinstance(targets, dict):
+        raise ValueError("invalid request field: targets")
+    for name in ("pib-backend", "cerebra"):
+        value = targets.get(name)
+        if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{40}", value):
+            raise ValueError(f"invalid request field: targets.{name}")
+    backend_pin = targets["pib-backend"]
+    cerebra_pin = targets["cerebra"]
 print("JOB_ID=" + shlex.quote(request["jobId"]))
 print("REQUESTED_AT=" + shlex.quote(request["requestedAt"]))
 print("CHANNEL=" + shlex.quote(request["channel"]))
 print("FORCE=" + ("true" if request["force"] else "false"))
+print("RELEASE_TAG=" + shlex.quote(release))
+print("BACKEND_PIN=" + shlex.quote(backend_pin))
+print("CEREBRA_PIN=" + shlex.quote(cerebra_pin))
 PY
     ); then
         fail "request.json is invalid"
@@ -311,6 +403,69 @@ restore_watchdog() {
     rm -f "$WATCHDOG_TARGET_FILE" || true
 }
 
+# executor.json is the liveness signal. service.json only records installation.
+# The parent writes it immediately; the child refreshes it during long builds.
+HEARTBEAT_PID=""
+write_executor_heartbeat() {
+    JOB_ID="$JOB_ID" UPDATE_DIR="$UPDATE_DIR" python3 - <<'PY'
+import json
+import os
+import tempfile
+from datetime import datetime, timezone
+
+directory = os.environ["UPDATE_DIR"]
+document = {
+    "schemaVersion": 1,
+    "jobId": os.environ["JOB_ID"],
+    "updatedAt": datetime.now(timezone.utc).isoformat(),
+    "pid": os.getppid(),
+}
+path = os.path.join(directory, "executor.json")
+descriptor, temporary = tempfile.mkstemp(prefix=".executor.json.", dir=directory)
+try:
+    with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+        json.dump(document, output, sort_keys=True)
+        output.write("\n")
+        output.flush()
+        os.fsync(output.fileno())
+    os.chmod(temporary, 0o660)
+    os.replace(temporary, path)
+except BaseException:
+    try:
+        os.unlink(temporary)
+    except FileNotFoundError:
+        pass
+    raise
+PY
+}
+
+start_heartbeat() {
+    write_executor_heartbeat
+    (
+        while true; do
+            sleep 30
+            write_executor_heartbeat || true
+        done
+    ) &
+    HEARTBEAT_PID=$!
+}
+
+stop_heartbeat() {
+    if [ -n "${HEARTBEAT_PID:-}" ]; then
+        kill "$HEARTBEAT_PID" 2>/dev/null || true
+        wait "$HEARTBEAT_PID" 2>/dev/null || true
+        HEARTBEAT_PID=""
+    fi
+}
+
+on_runner_exit() {
+    # A failing EXIT handler must not replace the terminal status via the ERR trap.
+    trap - ERR
+    stop_heartbeat || true
+    restore_watchdog || true
+    return 0
+}
+
 extend_watchdog_for_build() {
     local current_display original_us target_us
     current_display="$(systemctl show --property=RuntimeWatchdogUSec --value 2>/dev/null || true)"
@@ -347,7 +502,7 @@ extend_watchdog_for_build() {
     # target but before sudo returns, the EXIT trap still restores the original.
     WATCHDOG_ORIGINAL_US="$original_us"
     WATCHDOG_RESTORE_NEEDED="true"
-    trap restore_watchdog EXIT
+    trap on_runner_exit EXIT
     if sudo -n "$WATCHDOG_HELPER"; then
         log "Extended systemd watchdog timeout from ${original_us}us to ${target_us}us for the update build"
     else
@@ -529,6 +684,27 @@ fetch_repository() {
         git -C "$directory" clean -fd
     fi
     git -C "$directory" reset --hard "origin/$branch"
+}
+
+# Install the commits recorded when the operator confirmed the job.
+# A later origin/main or origin/develop head is not the target.
+checkout_recorded_target() {
+    local directory="$1"
+    local branch="$2"
+    local pin="$3"
+    local head=""
+    git -C "$directory" fetch --prune --tags --force origin "$branch" || return 1
+    if [ -n "${RELEASE_TAG:-}" ]; then
+        git -C "$directory" fetch origin "refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}" || return 1
+    fi
+    git -C "$directory" fetch origin "$pin" || return 1
+    if [ "$FORCE" = "true" ]; then
+        git -C "$directory" reset --hard || return 1
+        git -C "$directory" clean -fd || return 1
+    fi
+    git -C "$directory" checkout --detach "$pin" || return 1
+    head="$(git -C "$directory" rev-parse HEAD)"
+    [ "$head" = "$pin" ] || fail "$(basename "$directory") is at ${head}, not the recorded target ${pin}"
 }
 
 wait_for_flask() {
@@ -846,11 +1022,11 @@ rollback_once() {
     if wait_for_flask && verify_migration && verify_result; then
         write_revision "pib-backend" "$BACKEND_BEFORE" "unknown"
         write_revision "cerebra" "$CEREBRA_BEFORE" "unknown"
-        write_status "rolled_back" "Verification failed; previous revisions were rebuilt successfully"
+        write_status "rolled_back" "Verification failed. Previous revisions were rebuilt (pib-backend ${BACKEND_BEFORE}, cerebra ${CEREBRA_BEFORE}). The WAL-safe backup was kept and was not applied; user data was not rolled back."
         rm -f "$REQUEST_FILE" "$CANCEL_FILE"
         exit 1
     fi
-    fail "Verification failed and the single rollback attempt also failed"
+    fail "Verification failed and the single rollback attempt also failed. The WAL-safe backup was not applied. Do not assume the previous release is installed."
 }
 
 on_unexpected_error() {
@@ -870,6 +1046,8 @@ fi
 trap on_unexpected_error ERR
 
 load_request
+start_heartbeat
+trap on_runner_exit EXIT
 load_predecessor_status
 enforce_retry_policy
 write_status "preflight" "Validating repositories, disk, watchdog ownership, and database backup (attempt ${ATTEMPT} of ${MAX_ATTEMPTS})"
@@ -894,13 +1072,28 @@ if [ "$CHANNEL" = "release" ]; then
 else
     BRANCH="develop"
 fi
-fetch_repository "$BACKEND_DIR" "$BRANCH" || fail "Failed to fetch pib-backend"
-fetch_repository "$CEREBRA_DIR" "$BRANCH" || fail "Failed to fetch cerebra"
+if [ -n "${BACKEND_PIN:-}" ] || [ -n "${CEREBRA_PIN:-}" ]; then
+    [ -n "${BACKEND_PIN:-}" ] && [ -n "${CEREBRA_PIN:-}" ] || fail "Pinned update is missing one repository target"
+    log "Installing recorded targets pib-backend=${BACKEND_PIN} cerebra=${CEREBRA_PIN} release=${RELEASE_TAG:-develop-pin}"
+    checkout_recorded_target "$BACKEND_DIR" "$BRANCH" "$BACKEND_PIN" || fail "Failed to check out recorded pib-backend target ${BACKEND_PIN}"
+    checkout_recorded_target "$CEREBRA_DIR" "$BRANCH" "$CEREBRA_PIN" || fail "Failed to check out recorded cerebra target ${CEREBRA_PIN}"
+    BACKEND_TARGET="$BACKEND_PIN"
+    CEREBRA_TARGET="$CEREBRA_PIN"
+else
+    log "Channel-only request: checking out the moving ${BRANCH} branch. This is the legacy request shape and is not a pinned release."
+    fetch_repository "$BACKEND_DIR" "$BRANCH" || fail "Failed to fetch pib-backend"
+    fetch_repository "$CEREBRA_DIR" "$BRANCH" || fail "Failed to fetch cerebra"
+    BACKEND_TARGET="$(git -C "$BACKEND_DIR" rev-parse HEAD)"
+    CEREBRA_TARGET="$(git -C "$CEREBRA_DIR" rev-parse HEAD)"
+fi
 git -C "$CEREBRA_DIR" submodule update --init --recursive || fail "Failed to update cerebra submodules"
-BACKEND_TARGET="$(git -C "$BACKEND_DIR" rev-parse HEAD)"
-CEREBRA_TARGET="$(git -C "$CEREBRA_DIR" rev-parse HEAD)"
 if ! APP_VERSION="$(resolve_app_version "$BACKEND_DIR")"; then
-    fail "Release checkout has no git tag on ${BACKEND_TARGET} (HEAD^2 or HEAD) after fetching branch ${BRANCH} with tags; refusing to build with the compose-file APP_VERSION fallback"
+    if [ -n "${RELEASE_TAG:-}" ]; then
+        APP_VERSION="$RELEASE_TAG"
+        log "Confirmed release ${RELEASE_TAG} is the APP_VERSION; tag lookup on HEAD^2/HEAD did not find a different tag"
+    else
+        fail "Release checkout has no git tag on ${BACKEND_TARGET} (HEAD^2 or HEAD) after fetching branch ${BRANCH} with tags; refusing to build with the compose-file APP_VERSION fallback"
+    fi
 fi
 log "Resolved APP_VERSION=${APP_VERSION} for pib-backend at ${BACKEND_TARGET}"
 
@@ -942,5 +1135,5 @@ fi
 discard_model_store_snapshot
 write_revision "pib-backend" "$BACKEND_TARGET"
 write_revision "cerebra" "$CEREBRA_TARGET"
-write_status "done" "Update completed and verified"
+write_status "done" "Update completed and verified. Installed ${APP_VERSION}; pib-backend ${BACKEND_TARGET}; cerebra ${CEREBRA_TARGET}. The API answered and the database migration matches the Alembic head. The WAL-safe backup was kept; user data was not restored from it."
 rm -f "$REQUEST_FILE" "$CANCEL_FILE"

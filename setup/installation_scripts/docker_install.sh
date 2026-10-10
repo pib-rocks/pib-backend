@@ -155,7 +155,7 @@ function setup_update_service() {
     # a missing host directory on its own - a bare directory is not a runner.
     local marker
     marker="$(mktemp)"
-    printf '{"schemaVersion":1,"installedAt":"%s","runner":"%s","updateCheck":true}\n' \
+    printf '{"schemaVersion":1,"installedAt":"%s","runner":"%s","updateCheck":true,"units":["pib-update.path","pib-update.service","pib-update-check.path","pib-update-check.service"]}\n' \
         "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
         "$BACKEND_DIR/setup/update_runner.sh" > "$marker"
     sudo install -o pib -g pib -m 0664 "$marker" /home/pib/app/.update/service.json
