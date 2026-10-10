@@ -5,7 +5,7 @@ from werkzeug.exceptions import MethodNotAllowed, UnprocessableEntity
 
 from app.app import app, db
 from controller import error_handler
-from service import pose_service, program_service
+from service import motor_service, pose_service, program_service
 
 app.register_error_handler(ValidationError, error_handler.handle_bad_request_error)
 app.register_error_handler(NoResultFound, error_handler.handle_not_found_error)
@@ -29,6 +29,9 @@ app.register_error_handler(
 )
 app.register_error_handler(
     program_service.ProgramCompilationError, error_handler.handle_compilation_error
+)
+app.register_error_handler(
+    motor_service.MotorValidationError, error_handler.handle_invalid_request_error
 )
 
 
