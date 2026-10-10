@@ -194,7 +194,11 @@ def test_program_running_hook_explicitly_has_no_signal():
 
 
 def _marker(directory, **extra):
-    document = {"schemaVersion": 1, "updateCheck": True, "runner": "/host/setup/update_runner.sh"}
+    document = {
+        "schemaVersion": 1,
+        "updateCheck": True,
+        "runner": "/host/setup/update_runner.sh",
+    }
     document.update(extra)
     (directory / "service.json").write_text(json.dumps(document), encoding="utf-8")
 
@@ -280,17 +284,27 @@ def test_stopped_heartbeat_does_not_block_forever(tmp_path):
     assert "heartbeat" in status["staleReason"].lower()
 
 
-def test_readiness_requires_attested_units_and_does_not_treat_marker_as_liveness(tmp_path):
+def test_readiness_requires_attested_units_and_does_not_treat_marker_as_liveness(
+    tmp_path,
+):
     directory = tmp_path / "update"
     directory.mkdir()
-    (directory / "service.json").write_text('{"schemaVersion":1,"updateCheck":true}', encoding="utf-8")
+    (directory / "service.json").write_text(
+        '{"schemaVersion":1,"updateCheck":true}', encoding="utf-8"
+    )
 
     incomplete = update_service.evaluate_readiness(directory)
     assert incomplete["ready"] is False
     assert incomplete["serviceMarkerIsNotLiveness"] is True
-    missing = [item["name"] for item in incomplete["checks"] if item["status"] == "missing"]
+    missing = [
+        item["name"] for item in incomplete["checks"] if item["status"] == "missing"
+    ]
     assert "host_units" in missing
-    assert any(item.get("repair") for item in incomplete["checks"] if item["name"] == "host_units")
+    assert any(
+        item.get("repair")
+        for item in incomplete["checks"]
+        if item["name"] == "host_units"
+    )
 
     _marker(directory, units=list(update_service.HOST_UPDATE_UNITS))
     ready = update_service.evaluate_readiness(directory)

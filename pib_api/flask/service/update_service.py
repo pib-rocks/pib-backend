@@ -293,7 +293,9 @@ def _deadline_seconds(name: str, default: int) -> int:
     return value
 
 
-def _check_result(name: str, status: str, detail: str, repair: str | None = None) -> dict[str, str]:
+def _check_result(
+    name: str, status: str, detail: str, repair: str | None = None
+) -> dict[str, str]:
     item = {"name": name, "status": status, "detail": detail}
     if repair:
         item["repair"] = repair
@@ -327,12 +329,16 @@ def evaluate_readiness(directory: Path | None = None) -> dict[str, Any]:
         _check_result(
             "shared_directory",
             "ok" if writable else "failed",
-            "Shared update directory is mounted and writable."
-            if writable
-            else f"{directory} is not writable by the API process.",
-            None
-            if writable
-            else "On the host: sudo install -d -o pib -g pib -m 2770 /home/pib/app/.update",
+            (
+                "Shared update directory is mounted and writable."
+                if writable
+                else f"{directory} is not writable by the API process."
+            ),
+            (
+                None
+                if writable
+                else "On the host: sudo install -d -o pib -g pib -m 2770 /home/pib/app/.update"
+            ),
         )
     )
     marker_path = directory / SERVICE_MARKER_NAME
@@ -361,13 +367,17 @@ def evaluate_readiness(directory: Path | None = None) -> dict[str, Any]:
                 _check_result(
                     "runner",
                     "ok" if executable else "failed",
-                    f"Runner is executable at {runner}."
-                    if executable
-                    else f"Runner exists but is not executable: {runner}.",
-                    None
-                    if executable
-                    else "Keep setup/update_runner.sh executable in git (mode 100755). "
-                    "Do not chmod a live checkout; a mode change is a dirty file.",
+                    (
+                        f"Runner is executable at {runner}."
+                        if executable
+                        else f"Runner exists but is not executable: {runner}."
+                    ),
+                    (
+                        None
+                        if executable
+                        else "Keep setup/update_runner.sh executable in git (mode 100755). "
+                        "Do not chmod a live checkout; a mode change is a dirty file."
+                    ),
                 )
             )
         else:
@@ -432,9 +442,7 @@ def evaluate_readiness(directory: Path | None = None) -> dict[str, Any]:
     return {"ready": ready, "checks": checks, "serviceMarkerIsNotLiveness": True}
 
 
-def _matching_heartbeat(
-    directory: Path, job_id: object
-) -> datetime | None:
+def _matching_heartbeat(directory: Path, job_id: object) -> datetime | None:
     document = _read_json(directory / EXECUTOR_LIVENESS_NAME)
     if not isinstance(document, dict) or "error" in document:
         return None
@@ -498,7 +506,10 @@ def _apply_liveness(
                 "Re-run setup/installation_scripts/docker_install.sh, then start a new update. "
                 "This request no longer blocks a new one.",
             )
-    response["blocksNewUpdate"] = response.get("classification") in {"queued", "running"}
+    response["blocksNewUpdate"] = response.get("classification") in {
+        "queued",
+        "running",
+    }
     response["cancelSafe"] = bool(
         response.get("classification") in {"queued", "running"}
         and response.get("state") in CANCEL_SAFE_STATES
@@ -551,11 +562,21 @@ def get_status(
         response["readiness"] = evaluate_readiness(directory)
         return response
     status = _read_json(directory / "status.json")
-    if status and "error" in status and "state" in status and status.get("jobId") is None:
+    if (
+        status
+        and "error" in status
+        and "state" in status
+        and status.get("jobId") is None
+    ):
         # Unreadable status.json is a failed document, not an active runner state.
         pass
     pending = (directory / "request.json").is_file()
-    if status is None or (isinstance(status, dict) and status.get("state") == "failed" and "jobId" not in status and "error" in status):
+    if status is None or (
+        isinstance(status, dict)
+        and status.get("state") == "failed"
+        and "jobId" not in status
+        and "error" in status
+    ):
         response = {
             "state": "queued" if pending else "idle",
         }
@@ -566,11 +587,19 @@ def get_status(
             response.update(
                 {
                     key: queued_request[key]
-                    for key in ("jobId", "channel", "requestedAt", "release", "targetKind")
+                    for key in (
+                        "jobId",
+                        "channel",
+                        "requestedAt",
+                        "release",
+                        "targetKind",
+                    )
                     if key in queued_request
                 }
             )
-        classified_status = None if response.get("state") in {"queued", "idle"} else response
+        classified_status = (
+            None if response.get("state") in {"queued", "idle"} else response
+        )
     else:
         response = dict(status)
         classified_status = status
@@ -653,7 +682,11 @@ def _unknown_availability() -> dict[str, Any]:
 def _previous_result(document: dict[str, Any] | None) -> dict[str, Any] | None:
     if not isinstance(document, dict):
         return None
-    if "error" in document and "repositories" not in document and "checkId" not in document:
+    if (
+        "error" in document
+        and "repositories" not in document
+        and "checkId" not in document
+    ):
         return None
     previous = {key: value for key, value in document.items() if key != "previous"}
     return previous
@@ -864,7 +897,9 @@ def annotate_installed_release(
         pending = dict(document)
         previous = pending.get("previous")
         if isinstance(previous, dict) and "releases" in previous:
-            pending["previous"] = _release_module().annotate_relations(previous, installed)
+            pending["previous"] = _release_module().annotate_relations(
+                previous, installed
+            )
         return pending
     if "releases" not in document:
         return dict(document)

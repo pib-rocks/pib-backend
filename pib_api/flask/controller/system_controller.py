@@ -236,9 +236,7 @@ def start_update():
     if "targets" in payload or "targetKind" in payload:
         return (
             jsonify(
-                {
-                    "error": "targets are resolved by the server from the confirmed check"
-                }
+                {"error": "targets are resolved by the server from the confirmed check"}
             ),
             400,
         )

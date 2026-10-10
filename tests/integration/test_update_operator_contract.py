@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timedelta, timezone
 
+
 def _request(channel="release"):
     return {"channel": channel, "force": False, "confirmation": "UPDATE"}
 
@@ -18,7 +19,9 @@ def _installed_update_dir(tmp_path):
     return update_dir
 
 
-def test_accepted_job_has_no_state_and_status_is_separate(client, tmp_path, monkeypatch):
+def test_accepted_job_has_no_state_and_status_is_separate(
+    client, tmp_path, monkeypatch
+):
     update_dir = _installed_update_dir(tmp_path)
     monkeypatch.setenv("PIB_UPDATE_DIR", str(update_dir))
 
@@ -92,9 +95,10 @@ def test_nonterminal_status_without_a_live_request_is_stale_and_not_blocking(
     assert observed.status_code == 200
     assert observed.get_json()["classification"] == "stale"
     assert observed.get_json()["jobId"] == "stale-job"
-    assert "block" in observed.get_json()["staleReason"].lower() or observed.get_json()[
-        "staleReason"
-    ]
+    assert (
+        "block" in observed.get_json()["staleReason"].lower()
+        or observed.get_json()["staleReason"]
+    )
     assert started.status_code == 202
     assert started.get_json()["job"]["jobId"] != "stale-job"
 

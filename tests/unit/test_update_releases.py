@@ -82,14 +82,23 @@ def test_complete_stable_pair_is_installable_and_drafts_are_not():
             },
         }
     ]
-    assert any(item["tag"] == "v1.2.4" and item["installable"] is False for item in paired["incomplete"])
+    assert any(
+        item["tag"] == "v1.2.4" and item["installable"] is False
+        for item in paired["incomplete"]
+    )
     assert {item["tag"] for item in paired["excluded"]} >= {
         "v1.3.0-rc.1",
         "v9.9.9",
         "models-2026.10.08",
     }
-    assert any(item["tag"] == "v9.9.9" and "prerelease" in item["reason"] for item in paired["excluded"])
-    assert all("prerelease" in item["reason"] or "not a stable" in item["reason"] for item in paired["excluded"])
+    assert any(
+        item["tag"] == "v9.9.9" and "prerelease" in item["reason"]
+        for item in paired["excluded"]
+    )
+    assert all(
+        "prerelease" in item["reason"] or "not a stable" in item["reason"]
+        for item in paired["excluded"]
+    )
 
 
 def test_incomplete_pair_and_unresolved_commit_are_not_installable():
@@ -147,7 +156,9 @@ def test_relations_cover_newer_current_older_drift_unknown_and_channel_change():
             },
         },
     )
-    assert {item["tag"]: item["relation"] for item in drift["releases"]}["v1.3.0"] == "drift"
+    assert {item["tag"]: item["relation"] for item in drift["releases"]}[
+        "v1.3.0"
+    ] == "drift"
 
     unknown = releases.annotate_relations(
         document,
@@ -225,14 +236,19 @@ def test_discover_uses_only_the_two_known_repositories():
             repo = "pib-backend" if "pib-backend" in url else "cerebra"
             sha = SHA_A if repo == "pib-backend" else SHA_B
             return 200, {"sha": sha}
-        if "pib-rocks/pib-backend/releases" in url or "pib-rocks/cerebra/releases" in url:
+        if (
+            "pib-rocks/pib-backend/releases" in url
+            or "pib-rocks/cerebra/releases" in url
+        ):
             return 200, [_release("v1.2.3")]
         raise AssertionError(url)
 
     discovered = releases.discover(transport)
     assert discovered["latestInstallable"] == "v1.2.3"
     assert discovered["error"] is None
-    assert all(url.startswith("https://api.github.com/repos/pib-rocks/") for url in seen)
+    assert all(
+        url.startswith("https://api.github.com/repos/pib-rocks/") for url in seen
+    )
     assert not any("model" in url for url in seen)
 
     with pytest.raises(ValueError, match="unsupported repository"):

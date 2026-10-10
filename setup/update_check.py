@@ -143,9 +143,8 @@ def validate_request(document: object) -> dict[str, Any]:
     }
     if "checkId" in document:
         check_id = document["checkId"]
-        if (
-            type(check_id) is not str
-            or not re.fullmatch(r"[0-9a-fA-F-]{36}", check_id.strip())
+        if type(check_id) is not str or not re.fullmatch(
+            r"[0-9a-fA-F-]{36}", check_id.strip()
         ):
             raise ValueError("invalid request field: checkId")
         validated["checkId"] = check_id.strip()

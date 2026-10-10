@@ -69,7 +69,9 @@ def _notes(release: Mapping[str, Any] | None) -> str:
     return body.strip()[:NOTE_LIMIT]
 
 
-def _commit(commits: Mapping[str, Mapping[str, object]], repo: str, tag: str) -> str | None:
+def _commit(
+    commits: Mapping[str, Mapping[str, object]], repo: str, tag: str
+) -> str | None:
     value = (commits.get(repo) or {}).get(tag)
     if isinstance(value, str) and SHA.fullmatch(value):
         return value
@@ -214,7 +216,11 @@ def device_channel(repositories: object) -> str:
         if not isinstance(entry, Mapping):
             continue
         channel = entry.get("channel")
-        if isinstance(channel, str) and channel.strip() and channel.strip() != "unknown":
+        if (
+            isinstance(channel, str)
+            and channel.strip()
+            and channel.strip() != "unknown"
+        ):
             channels.append(channel.strip())
     if not channels:
         return "unknown"
@@ -262,7 +268,9 @@ def relation_for(tag: str, targets: object, installed: Mapping[str, Any]) -> str
     return "older"
 
 
-def annotate_relations(document: Mapping[str, Any], installed: Mapping[str, Any]) -> dict[str, Any]:
+def annotate_relations(
+    document: Mapping[str, Any], installed: Mapping[str, Any]
+) -> dict[str, Any]:
     """Add installed-version relations without treating a branch SHA as a release."""
     copied = dict(document)
     releases: list[dict[str, Any]] = []
@@ -284,7 +292,8 @@ def annotate_relations(document: Mapping[str, Any], installed: Mapping[str, Any]
     copied["releases"] = releases
     copied["installedVersion"] = (
         installed.get("imageVersion")
-        if isinstance(installed.get("imageVersion"), str) and installed.get("imageVersion")
+        if isinstance(installed.get("imageVersion"), str)
+        and installed.get("imageVersion")
         else "unknown"
     )
     copied["deviceChannel"] = device_channel(installed.get("repositories"))
@@ -312,7 +321,9 @@ def annotate_relations(document: Mapping[str, Any], installed: Mapping[str, Any]
                 relation = highlighted.get("relation") if highlighted else None
                 if relation == "newer":
                     target = ((highlighted or {}).get("targets") or {}).get(name)
-                    commit = target.get("commit") if isinstance(target, Mapping) else None
+                    commit = (
+                        target.get("commit") if isinstance(target, Mapping) else None
+                    )
                     installed_sha = entry.get("installed")
                     repo_entry["updateAvailable"] = (
                         True
@@ -377,7 +388,9 @@ def list_releases(repo: str, transport: Transport) -> list[object]:
 def resolve_commit(repo: str, tag: str, transport: Transport) -> str | None:
     _require_repo(repo)
     if version_tuple(tag) is None:
-        raise ValueError("refusing to resolve a tag that is not a stable system release")
+        raise ValueError(
+            "refusing to resolve a tag that is not a stable system release"
+        )
     status, payload = transport(f"{API}/repos/{repo}/commits/{tag}")
     if status != 200 or not isinstance(payload, dict):
         return None
@@ -396,8 +409,7 @@ def discover(transport: Transport | None = None) -> dict[str, Any]:
         paired_preview = pair_releases(backend, cerebra, {})
         tags = [
             item["tag"]
-            for item in paired_preview["releases"]
-            + paired_preview["incomplete"]
+            for item in paired_preview["releases"] + paired_preview["incomplete"]
             if isinstance(item.get("tag"), str) and version_tuple(item["tag"])
         ]
         commits: dict[str, dict[str, str | None]] = {
