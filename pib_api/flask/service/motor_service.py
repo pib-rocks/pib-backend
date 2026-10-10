@@ -4,6 +4,14 @@ from typing import Any, List
 from app.app import db
 
 
+class MotorValidationError(Exception):
+    """The request does not describe a valid change of a motor (PR-1978).
+
+    A controller update that names neither a controller number nor an address is a
+    bad request (400), not a server error.
+    """
+
+
 def get_all_motors() -> List[Motor]:
     return Motor.query.all()
 
@@ -43,7 +51,7 @@ def set_motor_controller(motor_name: str, controller_dto: Any, channel: int):
     elif address is not None:
         controller = query.filter(Controller.address == address).one()
     else:
-        raise ValueError("Controller requires a number or address")
+        raise MotorValidationError("Controller requires a number or address")
     motor.controller = controller
     motor.channel = channel
     db.session.flush()
