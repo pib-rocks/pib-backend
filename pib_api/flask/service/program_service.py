@@ -6,6 +6,15 @@ from app.app import db
 import pib_blockly_client
 
 
+class ProgramCompilationError(Exception):
+    """The pib-blockly-server refused to compile the visual-code (PR-1977).
+
+    A workspace the server cannot compile (e.g. one using a block it no longer defines)
+    is a bad request, not a server fault. A named condition so the app answers 400 with
+    the server's reason instead of the catch-all 500 handler.
+    """
+
+
 def get_all_programs() -> list[Program]:
     return Program.query.all()
 
@@ -41,7 +50,10 @@ def update_program_code(program_number: str, program_dto: dict[str, Any]) -> Non
     program.code_visual = code_visual
     successful, code_python = pib_blockly_client.code_visual_to_python(code_visual)
     if not successful:
-        raise Exception("failed to generate python-code")
+        message = "failed to generate python-code"
+        raise ProgramCompilationError(
+            f"{message}: {code_python}" if code_python else message
+        )
     _write_to_python_code_file(program_number, code_python)
     db.session.flush()
 

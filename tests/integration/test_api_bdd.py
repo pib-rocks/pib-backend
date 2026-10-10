@@ -35,8 +35,8 @@ class TestFlaskHttpErrorHandling:
             "programNumber"
         ]
         response = client.put(f"/program/{pn}/code", json={"codeVisual": "{}"})
-        assert response.status_code == 500
-        assert "an unknown error occured." in response.get_json()["error"]
+        assert response.status_code == 400
+        assert "failed to generate python-code" in response.get_json()["error"]
 
     def test_non_deletable_pose_deletion(self, client):
         cal_id = next(
