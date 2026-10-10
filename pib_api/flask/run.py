@@ -5,6 +5,7 @@ from werkzeug.exceptions import MethodNotAllowed, UnprocessableEntity
 
 from app.app import app, db
 from controller import error_handler
+from service import pose_service
 
 app.register_error_handler(ValidationError, error_handler.handle_bad_request_error)
 app.register_error_handler(NoResultFound, error_handler.handle_not_found_error)
@@ -20,6 +21,12 @@ app.register_error_handler(
 )
 app.register_error_handler(Exception, error_handler.handle_unknown_error)
 app.register_error_handler(IntegrityError, error_handler.handle_bad_request_error)
+app.register_error_handler(
+    pose_service.PoseRefusedError, error_handler.handle_conflict_error
+)
+app.register_error_handler(
+    pose_service.PoseValidationError, error_handler.handle_invalid_request_error
+)
 
 
 def on_connect(dbapi_con, con_record):
