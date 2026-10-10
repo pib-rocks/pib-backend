@@ -20,6 +20,11 @@ from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPo
 from std_msgs.msg import String
 
 from datatypes.msg import DisplayImage, ImageFormat, ImageId
+from display.display_startup import (
+    EXIT_RENDERER_FAILED,
+    RendererReadiness,
+    renderer_exit_status,
+)
 from display.display_web_request import (
     DEFAULT_ACK_SECONDS,
     SURFACE_READY,
@@ -73,6 +78,13 @@ def log_info(message: str) -> None:
         _ros_logger.get_logger().info(message)
     else:
         print(f"[display-v2] {message}", flush=True)
+
+
+def log_error(message: str) -> None:
+    if _ros_logger is not None:
+        _ros_logger.get_logger().error(message)
+    else:
+        print(f"[display-v2] ERROR {message}", flush=True)
 
 
 @dataclass(frozen=True)
@@ -176,9 +188,12 @@ class TextRenderer:
 
 
 class DisplayApp(Gtk.Application):
-    def __init__(self, command_queue: Queue[DisplayCommand]):
+    def __init__(
+        self, command_queue: Queue[DisplayCommand], readiness: RendererReadiness
+    ):
         super().__init__(application_id="pib.display.wayland")
         self.command_queue = command_queue
+        self.readiness = readiness
         self.window: Gtk.ApplicationWindow | None = None
         self.picture: Gtk.Picture | None = None
         self.text_renderer = TextRenderer(DISPLAY_WIDTH, DISPLAY_HEIGHT)
@@ -186,33 +201,71 @@ class DisplayApp(Gtk.Application):
 
     def do_activate(self) -> None:  # type: ignore[override]
         if self.window is None:
-            self.window = Gtk.ApplicationWindow(application=self)
-            self.window.set_default_size(DISPLAY_WIDTH, DISPLAY_HEIGHT)
-            self.window.fullscreen()
-            self.window.set_decorated(False)
-
-            self.picture = Gtk.Picture()
-            self.picture.set_can_shrink(False)
-            self.picture.set_keep_aspect_ratio(False)
-            self.window.set_child(self.picture)
-
-            controller = Gtk.EventControllerKey()
-            controller.connect("key-pressed", self._on_key)
-            self.window.add_controller(controller)
-
-            click = Gtk.GestureClick()
-            click.connect("pressed", self._on_click)
-            self.window.add_controller(click)
-
-            if DISPLAY_ON_DEMAND or self.web_surface_open:
-                self.window.hide()
-            else:
-                self.window.present()
-
+            try:
+                self._create_window()
+            except (RuntimeError, GLib.Error) as exc:
+                self._fail(f"GTK window could not be created: {exc}")
+                return
+            self._check_surface()
             GLib.timeout_add(10, self._poll_commands)
 
         if not DISPLAY_ON_DEMAND and not self.web_surface_open:
             self.window.present()
+
+    def _create_window(self) -> None:
+        self.window = Gtk.ApplicationWindow(application=self)
+        self.window.set_default_size(DISPLAY_WIDTH, DISPLAY_HEIGHT)
+        self.window.fullscreen()
+        self.window.set_decorated(False)
+
+        self.picture = Gtk.Picture()
+        self.picture.set_can_shrink(False)
+        self.picture.set_keep_aspect_ratio(False)
+        self.window.set_child(self.picture)
+
+        controller = Gtk.EventControllerKey()
+        controller.connect("key-pressed", self._on_key)
+        self.window.add_controller(controller)
+
+        click = Gtk.GestureClick()
+        click.connect("pressed", self._on_click)
+        self.window.add_controller(click)
+
+        if DISPLAY_ON_DEMAND or self.web_surface_open:
+            self.window.hide()
+        else:
+            self.window.present()
+
+    def _check_surface(self) -> None:
+        # realize() creates the Wayland surface without mapping it, so on-demand mode
+        # stays hidden while the compositor connection is proven.
+        self.window.realize()
+        if not self.window.get_realized() or self.window.get_surface() is None:
+            self._fail("GTK window has no Wayland surface")
+            return
+        monitors = self.window.get_display().get_monitors()
+        if monitors.get_n_items() == 0:
+            log_info(
+                "compositor reports no output; display not ready until one appears"
+            )
+            monitors.connect("items-changed", self._on_monitors_changed)
+            return
+        self._mark_ready(monitors.get_n_items())
+
+    def _on_monitors_changed(self, monitors, _position, _removed, _added) -> None:
+        if not self.readiness.ready and monitors.get_n_items() > 0:
+            self._mark_ready(monitors.get_n_items())
+
+    def _mark_ready(self, outputs: int) -> None:
+        self.readiness.mark_ready()
+        log_info(
+            f"GTK window realized on Wayland ({outputs} output(s)); renderer ready"
+        )
+
+    def _fail(self, reason: str) -> None:
+        log_error(reason)
+        self.readiness.mark_failed(reason)
+        self.quit()
 
     def _ensure_visible(self) -> None:
         if self.web_surface_open or self.window is None:
@@ -336,10 +389,13 @@ def load_rgba_from_raw(raw: RawImage) -> bytes:
 
 
 class DisplayNode(Node):
-    def __init__(self, command_queue: Queue[DisplayCommand]) -> None:
+    def __init__(
+        self, command_queue: Queue[DisplayCommand], readiness: RendererReadiness
+    ) -> None:
         super().__init__("display")
         set_ros_logger(self)
         self.command_queue = command_queue
+        self.readiness = readiness
 
         display_qos = QoSProfile(
             reliability=ReliabilityPolicy.RELIABLE,
@@ -370,13 +426,20 @@ class DisplayNode(Node):
         self.create_timer(0.5, self.poll_web_status)
         self._prompt_attempts = 0
         self._prompt_timer = self.create_timer(2.0, self.offer_password_prompt)
+        self._ready_announced = False
+        self._ready_timer = self.create_timer(0.1, self.announce_ready)
 
-        msg = String()
-        msg.data = "ready"
-        self.ready_pub.publish(msg)
+        self.get_logger().info(
+            "Display V2 node started (Wayland/GTK4); "
+            "/pib/display_ready follows once the GTK window is usable"
+        )
 
-        self.get_logger().info("Display V2 running (Wayland/GTK4)")
-        self.get_logger().info("published /pib/display_ready")
+    def announce_ready(self) -> None:
+        if self._ready_announced or not self.readiness.ready:
+            return
+        self._ready_announced = True
+        self._ready_timer.cancel()
+        self.publish_surface(SURFACE_READY)
 
     def on_expression(self, msg: String) -> None:
         self.get_logger().info(f"expression requested: {msg.data}")
@@ -390,6 +453,11 @@ class DisplayNode(Node):
         self.command_queue.put(DisplayCommand("hide"))
 
     def publish_surface(self, state: str) -> None:
+        if state == SURFACE_READY and not self.readiness.ready:
+            self.get_logger().info(
+                "renderer not usable yet; /pib/display_ready is not set to ready"
+            )
+            return
         msg = String()
         msg.data = state
         self.ready_pub.publish(msg)
@@ -438,6 +506,9 @@ class DisplayNode(Node):
         """
         if os.environ.get("PIB_DISPLAY_PASSWORD_PROMPT", "1") == "0":
             self._prompt_timer.cancel()
+            return
+        # The prompt replaces the face; "ready" has to be on the topic before "web".
+        if not self._ready_announced:
             return
         self._prompt_attempts += 1
         decision = prompt_decision(read_operating_mode())
@@ -510,26 +581,35 @@ class DisplayNode(Node):
         return None
 
 
-def run_ros(command_queue: Queue[DisplayCommand]) -> None:
+def run_ros(command_queue: Queue[DisplayCommand], readiness: RendererReadiness) -> None:
     rclpy.init()
     executor = SingleThreadedExecutor()
-    node = DisplayNode(command_queue)
+    node = DisplayNode(command_queue, readiness)
     executor.add_node(node)
     executor.spin()
     node.destroy_node()
     rclpy.shutdown()
 
 
-def main(args=None) -> None:
-    # Force Wayland backend; this prevents accidental X fallback.
-    os.environ.setdefault("GDK_BACKEND", "wayland")
+def run_renderer() -> int:
+    """Run the GTK main loop; started by display_startup.main once Wayland is usable."""
+    # Importing Gtk ran Gtk.init_check(); without a default display it failed for good.
+    if Gdk.Display.get_default() is None:
+        log_error(
+            "GTK could not open the Wayland display "
+            f"{os.environ.get('WAYLAND_DISPLAY', 'wayland-0')}"
+        )
+        return EXIT_RENDERER_FAILED
 
+    readiness = RendererReadiness()
     command_queue: Queue[DisplayCommand] = Queue(maxsize=200)
-    Thread(target=run_ros, args=(command_queue,), daemon=True).start()
+    Thread(target=run_ros, args=(command_queue, readiness), daemon=True).start()
 
-    app = DisplayApp(command_queue)
-    app.run(None)
-
-
-if __name__ == "__main__":
-    main()
+    app = DisplayApp(command_queue, readiness)
+    status = app.run(None)
+    result = renderer_exit_status(status, readiness)
+    if result != status:
+        log_error(
+            f"GTK main loop ended without a usable window ({readiness.failure or 'never ready'})"
+        )
+    return result
