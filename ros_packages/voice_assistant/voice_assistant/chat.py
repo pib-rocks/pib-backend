@@ -5,7 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from queue import Empty, Queue
 from threading import Lock
-from typing import Optional
+from typing import Any, Optional
 
 import rclpy
 import datetime
@@ -41,9 +41,13 @@ from pib_hermes_config.channel import (
     direct_system_prompt,
     turn_channel,
 )
-from provider_registry import DEFAULT_PROVIDER_API_NAME, provider_name_for
+from provider_registry import (
+    DEFAULT_PROVIDER_API_NAME,
+    PIB_CLOUD_API_NAME,
+    provider_name_for,
+)
 from public_api_client import hermes_agent_client, public_voice_client
-from voice_assistant import direct_tool_loop
+from voice_assistant import direct_tool_loop, pib_cloud_stream
 from voice_assistant.degraded_chat import (
     MODE_UNLOCKED,
     fetch_operating_mode,
@@ -95,11 +99,14 @@ def _model_needs_provider_key(api_name: Optional[str]) -> bool:
 def _model_base_url(api_name: Optional[str]) -> Optional[str]:
     """The OpenAI-compatible base URL a custom route needs, or None.
 
-    The on-device model points at the Ollama endpoint; the backend writes the
-    same URL into the profile at provision time.
+    The on-device model points at the Ollama endpoint; pib.Cloud points at the
+    configured pib.Cloud endpoint; the backend writes the same URL into the
+    profile at provision time.
     """
     if api_name == LOCAL_MODEL_API_NAME:
         return openai_base_url()
+    if api_name == PIB_CLOUD_API_NAME:
+        return pib_cloud_stream.pib_cloud_base_url()
     return None
 
 
@@ -161,6 +168,7 @@ class ChatNode(Node):
         # Locks for shared clients (defensive: public voice client & PIB client)
         self.public_voice_client_lock = Lock()
         self.voice_assistant_client_lock = Lock()
+        self._turn_lock = Lock()
 
         # NEW: Lightweight service for external streamers to create/update + publish
         # a ChatMessage without duplicating persistence logic.
@@ -578,6 +586,7 @@ class ChatNode(Node):
         prev_text_type = None
         bool_update_chat_message: bool = False  # controls create vs update
         first_chunk_emitted = False
+        first_sentence_flushed = False
         # Full answer as received, kept so a clause can be spoken before the
         # sentence that contains it has finished.
         raw_answer = ""
@@ -656,6 +665,13 @@ class ChatNode(Node):
                     )
                     prev_text = sentence
                     prev_text_type = Chat.Goal.TEXT_TYPE_SENTENCE
+                    if not first_sentence_flushed:
+                        first_sentence_flushed = True
+                        elapsed_ms = (time.monotonic() - t0) * 1000.0
+                        self.get_logger().info(
+                            f"[PERF_TRACE] FIRST_SENTENCE_FLUSHED chat={chat_id} "
+                            f"elapsed_ms={elapsed_ms:.2f}"
+                        )
                     chat_message_text = sentence
                     self.create_chat_message(
                         chat_id,
@@ -674,7 +690,14 @@ class ChatNode(Node):
 
                 break
 
-            self._publish_ready_clauses(goal_handle, raw_answer, published_speech)
+            if self._publish_ready_clauses(
+                goal_handle,
+                raw_answer,
+                published_speech,
+                chat_id=chat_id,
+                t0=t0 if not first_sentence_flushed else None,
+            ):
+                first_sentence_flushed = True
 
         # A reply can end without a sentence terminator. That tail is part of
         # the answer, so it is persisted here instead of being dropped.
@@ -695,7 +718,14 @@ class ChatNode(Node):
                     f"[PERF_TRACE] FIRST_CHUNK_EMITTED chat={chat_id} "
                     f"elapsed_ms={elapsed_ms:.2f}"
                 )
-            self._publish_ready_clauses(goal_handle, raw_answer, published_speech)
+            if self._publish_ready_clauses(
+                goal_handle,
+                raw_answer,
+                published_speech,
+                chat_id=chat_id,
+                t0=t0 if not first_sentence_flushed else None,
+            ):
+                first_sentence_flushed = True
             if prev_text is not None:
                 # Hand the completed chunk over as feedback the way the next
                 # token would have, so the tail can travel in Chat.Result.
@@ -720,15 +750,29 @@ class ChatNode(Node):
             )
 
     def _publish_ready_clauses(
-        self, goal_handle, raw_answer: str, published_speech: list[str]
-    ) -> None:
+        self,
+        goal_handle,
+        raw_answer: str,
+        published_speech: list[str],
+        chat_id: str = "",
+        t0: Optional[float] = None,
+    ) -> bool:
         """Publish each newly completed clause so speech can start on it."""
+        flushed_any = False
         for clause in unpublished_clauses(raw_answer, published_speech):
             feedback = Chat.Feedback()
             feedback.text = clause
             feedback.text_type = Chat.Goal.TEXT_TYPE_SENTENCE
             goal_handle.publish_feedback(feedback)
+            if not flushed_any and t0 is not None:
+                elapsed_ms = (time.monotonic() - t0) * 1000.0
+                self.get_logger().info(
+                    f"[PERF_TRACE] FIRST_SENTENCE_FLUSHED chat={chat_id} "
+                    f"elapsed_ms={elapsed_ms:.2f}"
+                )
+            flushed_any = True
             published_speech.append(clause)
+        return flushed_any
 
     def _hermes_timeout(self) -> int:
         """Timeout for one hermes turn, read live so ops can tune it via env."""
@@ -935,14 +979,74 @@ class ChatNode(Node):
             )
         return iter_reply(system_prompt, history, content)
 
+    def _get_turn_lock(self) -> Lock:
+        """Return the per-node turn serialization lock (created lazily for test doubles)."""
+        lock = getattr(self, "_turn_lock", None)
+        if lock is None:
+            lock = Lock()
+            self._turn_lock = lock
+        return lock
+
+    def _stream_pib_cloud_turn(
+        self,
+        *,
+        chat_id: str,
+        content: str,
+        personality: Any,
+        plan: Any,
+        generate_code: bool,
+        goal_handle=None,
+    ):
+        """Stream SSE tokens from pib.Cloud (POST /v1/chat/completions, stream=true)."""
+        history: list[tuple[str, bool]] = []
+        try:
+            with self.voice_assistant_client_lock:
+                successful, chat_messages = voice_assistant_client.get_chat_history(
+                    chat_id, self.history_length
+                )
+            if successful and chat_messages:
+                history = [
+                    (message.content, message.is_user) for message in chat_messages
+                ]
+        except Exception as exc:
+            self.get_logger().warning(
+                f"pib.Cloud history could not be read for chat {chat_id}: {exc}"
+            )
+
+        system_prompt = direct_system_prompt(getattr(personality, "description", None))
+        if generate_code:
+            system_prompt = CODE_DESCRIPTION_PREFIX + system_prompt
+        system_prompt = plan.for_direct(system_prompt)
+        endpoint_base = getattr(
+            getattr(personality, "assistant_model", None), "endpoint_base", None
+        )
+        return pib_cloud_stream.stream_pib_cloud_chat(
+            system_prompt=system_prompt,
+            user_text=content,
+            history=history,
+            chat_id=chat_id,
+            endpoint_base=endpoint_base,
+            local_fallback=lambda: self._iter_local_tokens(
+                chat_id, content, system_prompt
+            ),
+            is_cancelled=lambda: bool(
+                goal_handle is not None and goal_handle.is_cancel_requested
+            ),
+        )
+
     async def chat(self, goal_handle: ServerGoalHandle):
         """
         Action server callback for 'chat':
+        - Serializes turns on one pib (OQ12: two turns never run concurrently).
         - Creates an initial user ChatMessage in PIB + publishes it on ROS.
-        - Fetches personality + history and streams tokens from public_api.
-        - Splits assistant output into sentences (and <pib-program> blocks),
-          publishing each chunk as an updated ChatMessage via create_chat_message().
+        - Fetches personality + history and streams tokens from pib.Cloud / Hermes / Direct.
+        - Splits assistant output into sentences/clauses (with N-token fallback),
+          publishing each chunk as feedback and updating the ChatMessage.
         """
+        with self._get_turn_lock():
+            return self._execute_chat_turn(goal_handle)
+
+    def _execute_chat_turn(self, goal_handle: ServerGoalHandle):
         t0 = time.monotonic()
         self.get_logger().info("start chat request")
 
@@ -1002,6 +1106,7 @@ class ChatNode(Node):
             getattr(personality, "assistant_model", None), "api_name", None
         )
         local_model = api_name == LOCAL_MODEL_API_NAME
+        pib_cloud_model = api_name == PIB_CLOUD_API_NAME
         model_provider_name = _model_provider_name(api_name)
         # Only a model whose provider needs a key is gated by the store. A
         # cloud model does; the on-device model does not, and still answers
@@ -1028,7 +1133,22 @@ class ChatNode(Node):
             return result
 
         try:
-            if is_smart:
+            if pib_cloud_model:
+                if goal_handle.is_cancel_requested:
+                    goal_handle.canceled()
+                    return Chat.Result()
+                self.get_logger().info(
+                    f"pib.Cloud streaming chat={chat_id} model={PIB_CLOUD_API_NAME}"
+                )
+                tokens = self._stream_pib_cloud_turn(
+                    chat_id=chat_id,
+                    content=content,
+                    personality=personality,
+                    plan=plan,
+                    generate_code=generate_code,
+                    goal_handle=goal_handle,
+                )
+            elif is_smart:
                 # The channel decides Hermes, the model decides what Hermes
                 # runs. Smart + the on-device model therefore still goes
                 # through Hermes, never through the direct local token loop.

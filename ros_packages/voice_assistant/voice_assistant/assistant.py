@@ -727,6 +727,29 @@ class VoiceAssistantNode(Node):
         if stop_chat is not None:
             stop_chat()
 
+    def barge_in(self, chat_id: Optional[str] = None) -> bool:
+        """Interrupt active playback and stream cleanly so the next turn can start."""
+        effective_chat_id = chat_id or self.state.chat_id
+        if not effective_chat_id:
+            return False
+        self.cycle += 1
+        self._cancel_filler_timer()
+        self.stop_chat(effective_chat_id)
+        self._streaming_speech = StreamingSpeech()
+        self._turn_has_playback = False
+        self.final_chat_response_received = False
+        self.state.speaking = False
+
+        def on_cleared():
+            if self.state.turned_on and effective_chat_id == self.state.chat_id:
+                self.on_start_signal_played()
+            else:
+                self.set_is_listening(effective_chat_id, True)
+
+        self.clear_playback_queue(on_cleared)
+        self._publish_voice_state()
+        return True
+
     def _sync_voice_state(self) -> None:
         """Fields both Cerebra windows read. The holder is backend state."""
         self.state.live_session = bool(self.gemini_loop.is_listening)
