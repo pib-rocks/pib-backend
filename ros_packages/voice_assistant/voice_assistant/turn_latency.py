@@ -43,6 +43,11 @@ EIGHT_STAGES = (
 # Recorded when they happen, but they do not count toward stages=n/8.
 EXTRA_STAGES = ("text_received", "stream_done")
 
+# The stages the audio player reports. The turn owner only accepts them once
+# this turn's first answer clause has been handed to the synthesiser, because a
+# signal file or a filler plays through the same player.
+AUDIO_STAGES = ("first_audio", "last_audio")
+
 # Named gaps printed in ``deltas=``. Each value is later_stage - earlier_stage.
 DELTA_SPECS = (
     ("eos_to_text", "end_of_speech", "text_received"),
@@ -77,6 +82,20 @@ _LINE_STAGES = (
     "last_audio",
     "turn_end",
 )
+
+
+def audio_event_belongs_to_turn(stage: str, sentence_flushed: bool) -> bool:
+    """Whether a reported audio stage belongs to this turn's answer.
+
+    A signal file (the start/stop beep) or a thinking filler plays through the
+    same audio player while a turn is open. Only audio that begins after this
+    turn's first answer clause was handed to the synthesiser is the answer's
+    audio; anything earlier would make ``first_audio`` - and with it the
+    first-audio latency the concept page asks for - mean something else.
+    """
+    if stage not in AUDIO_STAGES:
+        return True
+    return bool(sentence_flushed)
 
 
 def now_ms() -> float:

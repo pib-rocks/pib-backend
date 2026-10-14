@@ -40,6 +40,7 @@ from voice_assistant.turn_latency import (
     TURN_TRACE_TOPIC,
     TurnTrace,
     append_record,
+    audio_event_belongs_to_turn,
     default_log_path,
     now_ms,
     parse_event,
@@ -778,6 +779,12 @@ class VoiceAssistantNode(Node):
                     self._orphan_dropped += 1
                 return
             if self._turn_trace.is_open:
+                if not audio_event_belongs_to_turn(
+                    str(event.get("stage") or ""), self._sentence_flushed
+                ):
+                    # A signal file or a filler is not the answer's audio.
+                    self._turn_trace.dropped_events += 1
+                    return
                 self._turn_trace.observe(event)
                 return
             if event.get("stage") == "end_of_speech":

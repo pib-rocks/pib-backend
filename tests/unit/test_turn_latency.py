@@ -16,6 +16,7 @@ if str(VOICE_ASSISTANT_PKG) not in sys.path:
 
 from voice_assistant.turn_latency import (  # noqa: E402
     EIGHT_STAGES,
+    audio_event_belongs_to_turn,
     TurnTrace,
     append_record,
     format_event,
@@ -218,3 +219,39 @@ def test_streaming_usage_frame_fills_the_usage_fields_and_headers_win():
         }
     )
     assert "usage_prompt_tokens=11" in render_line(traced.close())
+
+
+def test_audio_before_the_first_answer_clause_is_not_the_answers_audio():
+    """The start/stop beep and a filler play through the same audio player."""
+    # A signal file plays while the turn is open but before any answer clause.
+    assert audio_event_belongs_to_turn("first_audio", sentence_flushed=False) is False
+    assert audio_event_belongs_to_turn("last_audio", sentence_flushed=False) is False
+    # Once the first answer clause is handed over, the audio is the answer's.
+    assert audio_event_belongs_to_turn("first_audio", sentence_flushed=True) is True
+    assert audio_event_belongs_to_turn("last_audio", sentence_flushed=True) is True
+    # Other stages are never filtered.
+    for stage in ("end_of_speech", "request_sent", "first_token", "turn_end"):
+        assert audio_event_belongs_to_turn(stage, sentence_flushed=False) is True
+
+    # And an early beacon does not reach the turn's line.
+    trace = TurnTrace()
+    trace.open("chat-1", "pib-cloud", origin_ms=1000.0)
+    for event in (
+        {"stage": "first_audio", "ts_ms": 1183.0},
+        {"stage": "last_audio", "ts_ms": 1681.0},
+    ):
+        if audio_event_belongs_to_turn(str(event["stage"]), False):
+            trace.observe(event)
+    trace.observe({"stage": "first_sentence_flushed", "ts_ms": 1995.0})
+    for event in (
+        {"stage": "first_audio", "ts_ms": 2897.0},
+        {"stage": "last_audio", "ts_ms": 4310.0},
+        {"stage": "turn_end", "ts_ms": 4410.0},
+    ):
+        if audio_event_belongs_to_turn(str(event["stage"]), True):
+            trace.observe(event)
+    line = render_line(trace.close())
+    assert "first_audio_ms=1897.00" in line
+    assert "last_audio_ms=3310.00" in line
+    assert "sentence_to_first_audio=902.00" in line
+    assert "audio=1413.00" in line
