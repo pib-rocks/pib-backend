@@ -52,7 +52,7 @@ class TokenServiceNode(Node):
         try:
             delete_stored_cloud_token()
         except CloudTokenError as error:
-            self.get_logger().warn("%s", error)
+            self.get_logger().warn(str(error))
             return
         self.is_token_stored = False
         self._source_announced = False
@@ -73,7 +73,7 @@ class TokenServiceNode(Node):
         try:
             submit_cloud_token(request.token)
         except CloudTokenError as error:
-            self.get_logger().warn("%s", error)
+            self.get_logger().warn(str(error))
             response.successful = False
             return response
         self._refresh_from_store()
@@ -95,7 +95,7 @@ class TokenServiceNode(Node):
         except CloudTokenError as error:
             self._source_announced = False
             if not self._locked_announced:
-                self.get_logger().warn("%s", error)
+                self.get_logger().warn(str(error))
                 self._locked_announced = True
             if self.active_token:
                 self.publish_token("")

@@ -344,7 +344,7 @@ class VoiceAssistantNode(Node):
         self.play_audio_from_speech(text, gender, language, done.set)
         if not done.wait(timeout=30.0):
             self.get_logger().warning(
-                "Live action announcement did not finish within 30s: %s", text
+                f"Live action announcement did not finish within 30s: {text}"
             )
 
     def play_audio_from_speech(
@@ -379,7 +379,7 @@ class VoiceAssistantNode(Node):
         try:
             ok, fresh = voice_assistant_client.get_personality(personality_id)
         except Exception as exc:
-            self.get_logger().warning("personality refresh failed: %s", exc)
+            self.get_logger().warning(f"personality refresh failed: {exc}")
             return
         if not ok or fresh is None:
             return
@@ -1019,9 +1019,8 @@ class VoiceAssistantNode(Node):
             self.state.turned_on, holder_id, pers.personality_id
         ):
             self.get_logger().info(
-                "voice channel is held by personality %s; refusing %s",
-                holder_id,
-                pers.personality_id,
+                f"voice channel is held by personality {holder_id}; "
+                f"refusing {pers.personality_id}"
             )
             return False
 
@@ -1041,9 +1040,9 @@ class VoiceAssistantNode(Node):
             and self._cloud_session_allowed()
         )
         self.get_logger().debug(
-            "update_state: voice_start_mode=%s live_model=%s",
-            getattr(pers, "voice_start_mode", None),
-            getattr(pers, "live_model", None),
+            "update_state: voice_start_mode="
+            f"{getattr(pers, 'voice_start_mode', None)} "
+            f"live_model={getattr(pers, 'live_model', None)}"
         )
 
         # Live path: the provider row's pinned model, gated by the live flag
