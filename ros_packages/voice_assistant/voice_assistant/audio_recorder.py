@@ -31,7 +31,10 @@ from pib_hermes_config.visible_state import (
     VOICE_USING_FALLBACK_TOPIC,
     engine_is_fallback,
 )
-from pib_hermes_config.voice_backends import resolve_stt_route
+from pib_hermes_config.voice_backends import (
+    configured_stt_language,
+    resolve_stt_route,
+)
 from public_api_client import public_voice_client
 from voice_assistant.stt_transcription import (
     FasterWhisperSTTEngine,
@@ -77,6 +80,12 @@ class AudioRecorderNode(Node):
 
         self.token: Optional[str] = None
         self.stt_engine = FasterWhisperSTTEngine()
+        # Pinned once at start-up, not per turn: the engine's own language
+        # detection costs about half a turn (PC-39). "" leaves it on detect.
+        self.stt_language = configured_stt_language()
+        self.get_logger().info(
+            f"local STT language pinned to '{self.stt_language or 'auto'}'"
+        )
         self._published_fallback = None
         self.voice_using_fallback_publisher = self.create_publisher(
             Bool, VOICE_USING_FALLBACK_TOPIC, 10
@@ -353,7 +362,9 @@ class AudioRecorderNode(Node):
             if route == "local":
                 started = time.monotonic()
                 try:
-                    text, metadata = self.stt_engine.transcribe(wav_data)
+                    text, metadata = self.stt_engine.transcribe(
+                        wav_data, language=self.stt_language or None
+                    )
                 except STTTranscriptionError as e:
                     # A broken engine must not look like a user who said
                     # nothing. Name the cause on the visible state, publish it
@@ -370,7 +381,8 @@ class AudioRecorderNode(Node):
                 self.get_logger().info(
                     f"transcribed {len(text)} chars in "
                     f"{int((time.monotonic() - started) * 1000)} ms with engine "
-                    f"{metadata.get('backend')}"
+                    f"{metadata.get('backend')} (language "
+                    f"{metadata.get('language')})"
                 )
             elif route == "tryb":
                 text = public_voice_client.speech_to_text(wav_data, self.token)
