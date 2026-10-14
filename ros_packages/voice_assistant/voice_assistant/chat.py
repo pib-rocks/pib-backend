@@ -202,8 +202,26 @@ class ChatNode(Node):
         # Head turn and per-person preface. Sensors are optional: a missing
         # camera message must not stop the node from answering.
         self._attention = bind_attention(self)
+        self._install_turn_trace_emitter()
 
         self.get_logger().info("Now running CHAT")
+
+    def _install_turn_trace_emitter(self) -> None:
+        """Publish pib.Cloud stage events. A failure here must not stop the node."""
+        try:
+            from voice_assistant.turn_latency import TURN_TRACE_TOPIC
+
+            publisher = self.create_publisher(String, TURN_TRACE_TOPIC, 10)
+            self._turn_trace_publisher = publisher
+
+            def emit(raw: str) -> None:
+                message = String()
+                message.data = raw
+                publisher.publish(message)
+
+            pib_cloud_stream.set_trace_emitter(emit)
+        except Exception as exc:
+            self.get_logger().warning(f"turn trace emitter was not installed: {exc}")
 
     def _attention_plan(self):
         """The plan for this answer. Missing sensors leave the turn unchanged."""

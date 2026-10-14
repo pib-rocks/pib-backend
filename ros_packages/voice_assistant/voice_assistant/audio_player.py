@@ -1,4 +1,18 @@
+"""Playback for spoken clauses.
+
+``first_audio`` is the first non-empty PCM chunk handed to the audio device
+for the current playback burst. ``last_audio`` is stamped once that burst's
+queue is empty after the last queued item has been written (including an
+empty join barrier, which is not itself audio). The burst flag is then
+re-armed so the next turn can record its own first chunk.
+
+The completion event is set only after ``last_audio`` has been handed to the
+trace publisher, so the voice-assistant node can observe it before ``turn_end``.
+Neither stamp adds a sleep or changes what is written.
+"""
+
 import io
+import logging
 import os
 import sys
 import time
@@ -25,8 +39,64 @@ from pib_hermes_config.visible_state import (
 )
 from pib_hermes_config.voice_backends import resolve_tts_route
 from public_api_client import public_voice_client
+from voice_assistant.turn_latency import TURN_TRACE_TOPIC, format_event
 from . import util
 from .tts_synthesis import SupertoneTTSEngine
+
+logger = logging.getLogger(__name__)
+
+# The audio thread is the only writer. The service thread only enqueues items.
+_trace_emitter = None
+_playback_queue: Optional[Queue] = None
+_burst_started = False
+
+
+def set_trace_emitter(fn) -> None:
+    """Install the audio-player node's publisher. None restores the no-op."""
+    global _trace_emitter
+    _trace_emitter = fn
+
+
+def bind_playback_queue(playback_queue: Queue) -> None:
+    global _playback_queue
+    _playback_queue = playback_queue
+
+
+def _emit_stage(stage: str) -> None:
+    emitter = _trace_emitter
+    if emitter is None:
+        return
+    try:
+        emitter(format_event(stage, source="audio_player"))
+    except Exception:
+        logger.warning("turn trace emit failed for stage %s", stage)
+
+
+def _note_pcm_written() -> None:
+    """First non-empty chunk of a burst. Later chunks in the burst do not repeat it."""
+    global _burst_started
+    if _burst_started:
+        return
+    _burst_started = True
+    _emit_stage("first_audio")
+
+
+def _emit_last_audio_if_drained() -> None:
+    """Stamp last_audio once the queue is empty, then re-arm the burst."""
+    global _burst_started
+    if not _burst_started:
+        return
+    playback_queue = _playback_queue
+    if playback_queue is None:
+        return
+    try:
+        drained = playback_queue.empty()
+    except Exception:
+        return
+    if not drained:
+        return
+    _burst_started = False
+    _emit_stage("last_audio")
 
 
 class AudioEncoding:
@@ -68,6 +138,7 @@ class PlaybackItem:
     def play(self) -> None:
 
         if self.is_cleared() or pyaudio is None:
+            _emit_last_audio_if_drained()
             self.finished_playing.set()
             return
 
@@ -88,11 +159,14 @@ class PlaybackItem:
                     if self.is_cleared():
                         break
                     stream.write(chunk)
+                    if chunk:
+                        _note_pcm_written()
 
                 time.sleep(self.pause_seconds)
         except Exception as e:
             print(f"failed to playback audio: {e}", file=sys.stderr)
         finally:
+            _emit_last_audio_if_drained()
             self.finished_playing.set()
             if stream is not None:
                 try:
@@ -121,6 +195,7 @@ class AudioPlayerNode(Node):
         super().__init__("audio_player")
         self.token: Optional[str] = None
         self.playback_queue = playback_queue
+        bind_playback_queue(playback_queue)
         self.counter = 0
         self.counter_lock = Lock()
 
@@ -160,8 +235,24 @@ class AudioPlayerNode(Node):
         self.voice_using_fallback_publisher = self.create_publisher(
             Bool, VOICE_USING_FALLBACK_TOPIC, 10
         )
+        self._install_turn_trace_emitter()
 
         self.get_logger().info("Now running AUDIO PLAYER")
+
+    def _install_turn_trace_emitter(self) -> None:
+        """Publish first_audio / last_audio. A failure must not stop playback."""
+        try:
+            publisher = self.create_publisher(String, TURN_TRACE_TOPIC, 10)
+            self._turn_trace_publisher = publisher
+
+            def emit(raw: str) -> None:
+                message = String()
+                message.data = raw
+                publisher.publish(message)
+
+            set_trace_emitter(emit)
+        except Exception as exc:
+            self.get_logger().warning(f"turn trace emitter was not installed: {exc}")
 
     def get_public_api_token_listener(self, msg):
         token = msg.data
@@ -332,10 +423,15 @@ class AudioPlayerNode(Node):
 def main(args=None):
 
     playback_queue: Queue[PlaybackItem] = Queue()
+    bind_playback_queue(playback_queue)
 
     def audio_loop(playback_queue: Queue[PlaybackItem]) -> None:
         while True:
             playback_queue.get(True).play()
+            # play() already stamps last_audio when the queue is empty before
+            # it signals completion. This second check covers a clear that
+            # returned early, then re-arms the burst for the next turn.
+            _emit_last_audio_if_drained()
 
     Thread(target=audio_loop, args=(playback_queue,), daemon=True).start()
 

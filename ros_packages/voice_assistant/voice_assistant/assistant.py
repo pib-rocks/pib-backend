@@ -1,3 +1,4 @@
+import os
 import threading
 import time
 from collections import deque
@@ -34,7 +35,17 @@ from pib_hermes_config.visible_state import (
     answer_uses_fallback,
 )
 from public_api_client.hermes_agent_client import FALLBACK_REPLY
-from std_msgs.msg import Bool
+from std_msgs.msg import Bool, String
+from voice_assistant.turn_latency import (
+    TURN_TRACE_TOPIC,
+    TurnTrace,
+    append_record,
+    audio_event_belongs_to_turn,
+    default_log_path,
+    now_ms,
+    parse_event,
+    render_line,
+)
 from rclpy.action import ActionClient
 from rclpy.action.client import ClientGoalHandle
 from rclpy.client import Client
@@ -48,6 +59,18 @@ from voice_assistant.audio_loop import GeminiAudioLoop
 from voice_assistant.degraded_chat import allows_cloud_chat, fetch_operating_mode
 
 MAX_SILENT_SECONDS_BEFORE = 8.0
+
+
+def _turn_trace_max_seconds() -> float:
+    """How long an open turn may stay open before the watchdog closes it."""
+    raw = os.environ.get("PIB_TURN_TRACE_MAX_SECONDS", "120")
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return 120.0
+    if value <= 0:
+        return 120.0
+    return value
 
 
 class VoiceAssistantNode(Node):
@@ -101,6 +124,11 @@ class VoiceAssistantNode(Node):
         self._filler_lock = threading.Lock()
         self._first_token_seen = False
         self._turn_has_playback = False
+        self._turn_trace = TurnTrace()
+        self._pending_end_of_speech: Optional[dict] = None
+        self._orphan_dropped = 0
+        self._sentence_flushed = False
+        self._turn_trace_max_seconds = _turn_trace_max_seconds()
 
         # services ----------------------------------------------------------------------
 
@@ -145,6 +173,9 @@ class VoiceAssistantNode(Node):
             self._on_engine_fallback,
             10,
         )
+        self._turn_trace_publisher = self.create_publisher(String, TURN_TRACE_TOPIC, 10)
+        self.create_subscription(String, TURN_TRACE_TOPIC, self._on_turn_trace, 10)
+        self.create_timer(1.0, self._turn_trace_watchdog)
 
         # clients -----------------------------------------------------------------------
 
@@ -368,6 +399,7 @@ class VoiceAssistantNode(Node):
             self._first_token_seen = False
         self._refresh_personality_turn_taking()
         self._arm_filler()
+        self._open_latency_turn()
 
     def _arm_filler(self) -> None:
         personality = self.personality
@@ -573,6 +605,7 @@ class VoiceAssistantNode(Node):
             return
         self.waiting_for_transcribed_text = False
         self._start_spoken_turn()
+        self._mark_text_received()
         self.chat(
             transcribed_text,
             self.state.chat_id,
@@ -591,6 +624,11 @@ class VoiceAssistantNode(Node):
             return
         clauses = self._streaming_speech.take(sentence, is_final)
         self.final_chat_response_received = is_final
+        if clauses:
+            # This is the handoff of the turn's first answer clause to the
+            # synthesiser. Marked here rather than in play_audio_from_speech so
+            # a thinking filler never becomes the answer's first sentence.
+            self._mark_first_sentence_flushed()
         if not clauses:
             if is_final and not self.is_executing_program:
                 self._finish_spoken_turn()
@@ -634,11 +672,140 @@ class VoiceAssistantNode(Node):
                 )
 
     def on_final_sentence_played(self) -> None:
+        self._close_latency_turn(incomplete=False)
         self.play_audio_from_file(
             START_SIGNAL_FILE, self.if_cycle_not_changed(self.on_start_signal_played)
         )
 
     # helper functions ------------------------------------------------------------------
+
+    def _trace_source(self) -> str:
+        """Model id when the personality has one, otherwise a generic label."""
+        model = getattr(self.personality, "assistant_model", None)
+        api_name = getattr(model, "api_name", None)
+        if isinstance(api_name, str) and api_name.strip():
+            return api_name.strip()
+        return "voice"
+
+    def _open_latency_turn(self) -> None:
+        """Open the trace. An end_of_speech seen while idle becomes the origin."""
+        try:
+            pending = self._pending_end_of_speech
+            self._pending_end_of_speech = None
+            origin_ms = None
+            if isinstance(pending, dict):
+                try:
+                    stamp = float(pending["ts_ms"])
+                except (KeyError, TypeError, ValueError):
+                    pending = None
+                    self._orphan_dropped += 1
+                else:
+                    age_ms = now_ms() - stamp
+                    limit_ms = self._turn_trace_max_seconds * 1000.0
+                    if age_ms < 0 or age_ms > limit_ms:
+                        pending = None
+                        self._orphan_dropped += 1
+                    else:
+                        origin_ms = stamp
+            if self._turn_trace.is_open:
+                self._close_latency_turn(incomplete=True)
+            self._sentence_flushed = False
+            self._turn_trace.open(
+                self.state.chat_id or "",
+                self._trace_source(),
+                origin_ms=origin_ms,
+            )
+            if self._orphan_dropped:
+                self._turn_trace.dropped_events += self._orphan_dropped
+                self._orphan_dropped = 0
+            if pending is not None and origin_ms is not None:
+                self._turn_trace.observe(pending)
+        except Exception as exc:
+            self.get_logger().warning(f"turn trace open failed: {exc}")
+
+    def _mark_text_received(self) -> None:
+        try:
+            self._turn_trace.mark_local("text_received")
+        except Exception as exc:
+            self.get_logger().warning(f"turn trace text_received failed: {exc}")
+
+    def _mark_first_sentence_flushed(self) -> None:
+        """The turn's first answer clause handed to the synthesiser."""
+        try:
+            if not self._turn_trace.is_open or self._sentence_flushed:
+                return
+            self._sentence_flushed = True
+            self._turn_trace.mark_local("first_sentence_flushed")
+        except Exception as exc:
+            self.get_logger().warning(
+                f"turn trace first_sentence_flushed failed: {exc}"
+            )
+
+    def _close_latency_turn(self, *, incomplete: bool) -> None:
+        """Log the one line and append the JSON record. A closed turn is a no-op."""
+        try:
+            trace = self._turn_trace
+            if not trace.is_open:
+                return
+            if not incomplete:
+                # The audio player stamps last_audio when the burst's queue
+                # drains. Its event may still be in flight for a few
+                # milliseconds when the turn closes, so the completion of the
+                # last playback call - the same boundary, observed here - fills
+                # the gap. Never invented: it only applies to a turn whose
+                # first audio was already reported.
+                if (
+                    trace.elapsed("last_audio") is None
+                    and trace.elapsed("first_audio") is not None
+                ):
+                    trace.mark_local("last_audio")
+                trace.mark_local("turn_end")
+            record = trace.close(incomplete=incomplete)
+            if record is None:
+                return
+            self.get_logger().info(render_line(record))
+            append_record(default_log_path(), record)
+        except Exception as exc:
+            self.get_logger().warning(f"turn trace close failed: {exc}")
+
+    def _on_turn_trace(self, msg: String) -> None:
+        """Subscription callback. Parse and store; never block and never raise."""
+        try:
+            event = parse_event(getattr(msg, "data", "") or "")
+            if event is None:
+                if self._turn_trace.is_open:
+                    self._turn_trace.dropped_events += 1
+                else:
+                    self._orphan_dropped += 1
+                return
+            if self._turn_trace.is_open:
+                if not audio_event_belongs_to_turn(
+                    str(event.get("stage") or ""), self._sentence_flushed
+                ):
+                    # A signal file or a filler is not the answer's audio.
+                    self._turn_trace.dropped_events += 1
+                    return
+                self._turn_trace.observe(event)
+                return
+            if event.get("stage") == "end_of_speech":
+                self._pending_end_of_speech = event
+                return
+            self._orphan_dropped += 1
+        except Exception as exc:
+            self.get_logger().warning(f"turn trace event dropped: {exc}")
+
+    def _turn_trace_watchdog(self) -> None:
+        """Close a turn that outlived PIB_TURN_TRACE_MAX_SECONDS so it cannot leak."""
+        try:
+            trace = self._turn_trace
+            if not trace.is_open:
+                return
+            limit_ms = self._turn_trace_max_seconds * 1000.0
+            if now_ms() - trace.origin_ms < limit_ms:
+                return
+            self._close_latency_turn(incomplete=True)
+        except Exception as exc:
+            self.get_logger().warning(f"turn trace watchdog failed: {exc}")
 
     def if_cycle_not_changed(self, callback: Callable) -> Callable:
         """a decorator. the decorated callback only executes, if the cycle has not changed after its creation"""
