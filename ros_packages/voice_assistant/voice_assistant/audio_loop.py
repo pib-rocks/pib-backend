@@ -1457,6 +1457,7 @@ class GeminiAudioLoop:
             ANSWER_GESTURE_TOOLS,
             issue_answer_gesture,
         )
+
         if name in ANSWER_GESTURE_TOOLS:
             try:
                 result = issue_answer_gesture(name, arguments, self._execute_named_tool)
