@@ -255,3 +255,27 @@ def test_audio_before_the_first_answer_clause_is_not_the_answers_audio():
     assert "last_audio_ms=3310.00" in line
     assert "sentence_to_first_audio=902.00" in line
     assert "audio=1413.00" in line
+
+
+def test_last_audio_is_the_last_burst_not_the_first():
+    """Playback runs one burst per clause; the turn is over after the last one."""
+    trace = TurnTrace()
+    trace.open("chat-1", "pib-cloud", origin_ms=1000.0)
+    # first burst: the first clause, whose playback drains before the next one
+    trace.observe({"stage": "first_audio", "ts_ms": 3137.71})
+    trace.observe({"stage": "last_audio", "ts_ms": 4544.17})
+    # a later burst must move last_audio, while first_audio stays the earliest
+    trace.observe({"stage": "last_audio", "ts_ms": 26000.00})
+    trace.observe({"stage": "first_audio", "ts_ms": 9000.00})
+    trace.observe({"stage": "turn_end", "ts_ms": 28973.11})
+    record = trace.close()
+    line = render_line(record)
+    assert "first_audio_ms=2137.71" in line
+    assert "last_audio_ms=25000.00" in line
+    assert "audio=22862.29" in line
+    # first-wins still holds for the other stages
+    trace2 = TurnTrace()
+    trace2.open("chat-2", "pib-cloud", origin_ms=1000.0)
+    trace2.observe({"stage": "first_token", "ts_ms": 1039.20})
+    trace2.observe({"stage": "first_token", "ts_ms": 2000.00})
+    assert "first_token_ms=39.20" in render_line(trace2.close())

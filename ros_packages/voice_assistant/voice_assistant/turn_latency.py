@@ -48,6 +48,12 @@ EXTRA_STAGES = ("text_received", "stream_done")
 # signal file or a filler plays through the same player.
 AUDIO_STAGES = ("first_audio", "last_audio")
 
+# A turn's playback runs in bursts: one burst per clause, and a burst ends
+# whenever the queue happens to drain between clauses. ``last_audio`` therefore
+# has to be the LAST burst's end, not the first one - the answer is over when
+# the final clause stopped playing. Every other stage keeps its first value.
+LAST_WINS_STAGES = ("last_audio",)
+
 # Named gaps printed in ``deltas=``. Each value is later_stage - earlier_stage.
 DELTA_SPECS = (
     ("eos_to_text", "end_of_speech", "text_received"),
@@ -235,7 +241,7 @@ class TurnTrace:
         ):
             self.dropped_events += 1
             return
-        if stage in self._stages:
+        if stage in self._stages and stage not in LAST_WINS_STAGES:
             return
         self._stages[stage] = ts_ms
         detail = event.get("detail")

@@ -187,11 +187,21 @@ def run(argv: list[str] | None = None) -> int:
         log_path = Path(args.log)
         offset = log_path.stat().st_size if log_path.is_file() else 0
         for index in range(args.turns):
+            # The turn is over in the log before the assistant has finished its
+            # start signal and started listening again; a message sent into that
+            # window is refused, so wait for the listening state first.
+            _ensure_listening(node, clients, args.chat_id, args.timeout)
             request = SendChatMessage.Request()
             request.chat_id = args.chat_id
             request.content = _utterance(index)
-            response = _call(node, clients["send"], request, args.timeout)
-            if not bool(getattr(response, "successful", False)):
+            response = None
+            deadline = time.monotonic() + args.timeout
+            while time.monotonic() < deadline:
+                response = _call(node, clients["send"], request, args.timeout)
+                if bool(getattr(response, "successful", False)):
+                    break
+                time.sleep(0.5)
+            if response is None or not bool(getattr(response, "successful", False)):
                 print(
                     "measure_turn_latency: send_chat_message was not accepted",
                     file=sys.stderr,
