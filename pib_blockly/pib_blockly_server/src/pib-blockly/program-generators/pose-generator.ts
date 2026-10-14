@@ -1,22 +1,6 @@
 import {Block} from "blockly/core/block";
 import {Order, pythonGenerator} from "blockly/python";
-import {
-    CONFIGURE_LOGGING,
-    IMPORT_LOGGING,
-    IMPORT_OS,
-    IMPORT_PIB_SDK,
-    IMPORT_PIB_SDK_BACKEND,
-    IMPORT_PIB_SDK_POSE_CONTROL,
-    IMPORT_PIB_SDK_PLAY_POSE_SEQUENCE_TIMED,
-    IMPORT_PIB_SDK_POSES,
-    IMPORT_PIB_SDK_TELEMETRY,
-    IMPORT_POSE_CLIENT,
-    IMPORT_RCLPY,
-    IMPORT_SYS,
-    IMPORT_URLPARSE,
-    INIT_PIB_SDK_POSE_BACKEND,
-    INIT_ROS,
-} from "./util/definitions";
+import {CONFIGURE_LOGGING, IMPORT_LOGGING, IMPORT_OS, IMPORT_PIB_SDK, IMPORT_PIB_SDK_BACKEND, IMPORT_PIB_SDK_PLAY_POSE_SEQUENCE_TIMED, IMPORT_PIB_SDK_POSES, IMPORT_PIB_SDK_POSE_CONTROL, IMPORT_PIB_SDK_TELEMETRY, IMPORT_POSE_CLIENT, IMPORT_RCLPY, IMPORT_SYS, IMPORT_URLPARSE, INIT_PIB_SDK_POSE_BACKEND, INIT_ROS, addDefinitions} from "./util/definitions";
 import {
     APPLY_POSE_FUNCTION,
     PLAY_POSE_SEQUENCE_TIMED_FUNCTION,
@@ -31,7 +15,7 @@ export function moveToPoseGenerator(
     const poseId = <string>block.getFieldValue("POSE");
 
     // add definitions to generator
-    Object.assign(generator.definitions_, {
+    addDefinitions(generator, {
         IMPORT_RCLPY,
         IMPORT_SYS,
         IMPORT_OS,
@@ -52,7 +36,7 @@ export function moveToPoseGenerator(
 }
 
 function addPoseSdkDefinitions(generator: typeof pythonGenerator) {
-    Object.assign(generator.definitions_, {
+    addDefinitions(generator, {
         IMPORT_OS,
         IMPORT_PIB_SDK_POSES,
         IMPORT_PIB_SDK_BACKEND,
@@ -74,7 +58,7 @@ export function save_current_pose(
     generator: typeof pythonGenerator,
 ) {
     addPoseSdkDefinitions(generator);
-    Object.assign(generator.definitions_, {
+    addDefinitions(generator, {
         IMPORT_PIB_SDK_POSE_CONTROL,
         IMPORT_PIB_SDK_TELEMETRY,
     });
@@ -144,7 +128,7 @@ export function play_pose_sequence(
     const sequence =
         generator.valueToCode(block, "SEQUENCE", Order.NONE) || "[]";
 
-    Object.assign(generator.definitions_, {
+    addDefinitions(generator, {
         IMPORT_OS,
         IMPORT_PIB_SDK,
         IMPORT_PIB_SDK_PLAY_POSE_SEQUENCE_TIMED,
@@ -161,4 +145,3 @@ export function play_pose_sequence(
     return `${functionName}(${sequence})\n`;
 }
 
-export {pythonGenerator};

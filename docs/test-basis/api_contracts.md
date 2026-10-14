@@ -232,7 +232,21 @@ Unknown JSON properties (including UI-only `isActive`) are ignored on PUT; they 
 
 ### `/voice-assistant/personality`
 
-**PersonalityObject:** `{ "personalityId", "name", "gender", "description", "pauseThreshold", "messageHistory", "assistantModelId" }`
+**PersonalityObject:** `{ "personalityId", "name", "gender", "description", "pauseThreshold", "messageHistory", "modelRef", "assistantModelId", "providerRef" }`
+
+The model is referenced by the typed **`modelRef`**: the sentinel `"default"`
+(follow the current default model), or `"model:<id>"` where `<id>` is the
+decimal id of a model row nested under `GET /provider`. The `model:` prefix
+carries the kind, so a provider-account id can never be read as a model-row
+id.
+
+`providerRef` (the bare model-row id, as text) and `assistantModelId` (the
+bare model-row id, as a number) are **deprecated aliases** of `modelRef`.
+They keep working for the migration window and are removed in the **v0.8.0**
+release. A write that sends `modelRef` together with an alias that names a
+different model is rejected with 400 instead of silently resolved; a bare id,
+an unknown namespace such as `account:5`, and the catalogue `apiName` (for
+example `gemini-3.8-flash`) are rejected with 400 as well.
 
 | Method | Path | Status |
 |---|---|---|

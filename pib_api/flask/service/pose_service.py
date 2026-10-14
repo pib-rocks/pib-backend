@@ -6,6 +6,24 @@ from model.pose_model import Pose
 from model.motor_position_model import MotorPosition
 
 
+class PoseRefusedError(Exception):
+    """The data model refuses this change to the pose (PR-1974).
+
+    Deleting, renaming or updating a protected pose is a conflict with the pose's own
+    state, not a server fault. A named condition so the app answers 409 Conflict instead
+    of letting it fall through to the catch-all 500 handler - a caller has to be able to
+    tell "you may not do this" from "the server broke".
+    """
+
+
+class PoseValidationError(Exception):
+    """The request does not describe a valid update of a pose (PR-1974).
+
+    Count and name mismatches between the request and the stored pose: a bad request
+    (400), not a conflict and not a server error.
+    """
+
+
 def get_all_poses() -> List[Pose]:
     return Pose.query.filter().order_by(Pose.deletable.asc()).all()
 
@@ -30,7 +48,7 @@ def create_pose(pose_dto: dict[str, Any]) -> Pose:
 def delete_pose(pose_id: str) -> None:
     pose = get_pose(pose_id)
     if not pose.deletable:
-        raise ValueError(f"Pose '{pose.name}' is not deletable")
+        raise PoseRefusedError(f"Pose '{pose.name}' is not deletable")
     db.session.delete(pose)
     db.session.flush()
 
@@ -47,7 +65,7 @@ def _create_motor_position(motor_position_dto: dict[str, Any]) -> MotorPosition:
 def rename_pose(pose_id: str, pose_dto: dict[str, Any]) -> Pose:
     pose = get_pose(pose_id)
     if not pose.deletable:
-        raise ValueError(f"Pose '{pose.name}' cannot be renamed.")
+        raise PoseRefusedError(f"Pose '{pose.name}' cannot be renamed.")
     pose.name = pose_dto["name"]
     db.session.flush()
     return pose
@@ -56,16 +74,18 @@ def rename_pose(pose_id: str, pose_dto: dict[str, Any]) -> Pose:
 def update_motor_positions_of_pose(pose_id: str, pose_dto: dict[str, Any]) -> Pose:
     pose = get_pose(pose_id)
     if not pose.deletable and pose.name != STARTUP_POSE_NAME:
-        raise ValueError(f"Pose '{pose.name}' cannot be updated.")
+        raise PoseRefusedError(f"Pose '{pose.name}' cannot be updated.")
     motor_position_dtos = pose_dto["motor_positions"]
     if len(motor_position_dtos) != len(pose.motor_positions):
-        raise ValueError("Number of motor positions does not match existing pose.")
+        raise PoseValidationError(
+            "Number of motor positions does not match existing pose."
+        )
     motor_name_to_position = {
         mp["motor_name"]: mp["position"] for mp in motor_position_dtos
     }
     for existing_mp in pose.motor_positions:
         if existing_mp.motor_name not in motor_name_to_position:
-            raise ValueError(
+            raise PoseValidationError(
                 f"Motor '{existing_mp.motor_name}' not found in update request."
             )
         existing_mp.position = motor_name_to_position[existing_mp.motor_name]

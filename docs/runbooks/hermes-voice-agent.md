@@ -2,7 +2,7 @@
 
 ## Host deployment requirements
 
-These are preconditions discovered on a live robot. Without them, hermes-agent
+These are preconditions discovered on a live robot. Without them, Smart
 personalities appear healthy in Cerebra / the API while every turn falls back.
 
 ### 1. Hermes CLI on the host (pib user)
@@ -22,7 +22,7 @@ sudo -u pib -H bash -c \
 ```
 
 Provider credentials are still a one-time step after install, and they must be in
-place **before** a hermes-agent personality is used: each personality profile
+place **before** a Smart personality is used: each personality profile
 inherits its credentials by copying them from this base install (see "How a
 personality profile is provisioned").
 
@@ -73,7 +73,7 @@ container, so every hermes call dies immediately:
 ```
 
 The exit status is `127`, and the only user-visible symptom is that every
-hermes-agent personality answers with the fallback sentence. The container's own
+Smart personality answers with the fallback sentence. The container's own
 `python3.12` cannot be substituted, because the venv is built against 3.11.
 
 Mount the whole `uv` directory rather than one versioned `cpython-3.11.x` path: a
@@ -123,7 +123,7 @@ Defaults in code match those values; prefer setting them explicitly in compose.
    - `hermes agent binary available at /home/pib/.local/bin/hermes (Hermes Agent
      v...)`, or
    - `hermes agent preflight failed for '<path>': ...` including the captured
-     stderr, plus a note that hermes-agent personalities will fall back.
+     stderr, plus a note that Smart personalities will fall back.
 
    A failed probe never blocks or crashes startup; legacy personalities keep
    working.
@@ -136,43 +136,31 @@ Defaults in code match those values; prefer setting them explicitly in compose.
 
 ## Switch a personality to Hermes
 
-In Cerebra, open **Voice Assistant**, edit the personality, and select
-**Hermes Agent (selbstlernend)** as its assistant model. Save the personality;
-no service redeploy is required.
-
-For API-based operation, first find the IDs:
-
-```bash
-curl -s http://localhost/api/v1/assistant-model
-curl -s http://localhost/api/v1/voice-assistant/personality
-```
-
-Then update only the selected personality's model:
+Hermes is the Smart channel, not a provider row. In Cerebra, open **Voice
+Assistant**, edit the personality, and set its channel to Smart. The model
+stays whichever catalogue provider the personality already uses. Save the
+personality; no service redeploy is required.
 
 ```bash
 curl -X PUT http://localhost/api/v1/voice-assistant/personality/<personality_id> \
   -H 'Content-Type: application/json' \
-  -d '{"assistantModelId": <hermes_model_id>}'
+  -d '{"channel": "smart"}'
 ```
 
-The first Hermes turn ensures that profile `pib_<personality_id>` exists,
+The first Smart turn ensures that profile `pib_<personality_id>` exists,
 materializes the personality description as its `SOUL.md`, copies the base
 install's `config.yaml` and `.env` into it, and uses session
 `pib_chat_<chat_id>`.
 
 ## Roll back without a redeploy
 
-In the same personality editor, select any legacy model (for example the model
-that was selected before Hermes) and save. The next turn uses the existing
-public-api backend immediately. Existing Hermes sessions and profiles remain on
-disk so that switching models does not destroy memory.
-
-The equivalent API operation is:
+Set the same personality's channel to Direct and save. The next turn uses this
+backend's own completion. Existing Hermes sessions and profiles remain on disk.
 
 ```bash
 curl -X PUT http://localhost/api/v1/voice-assistant/personality/<personality_id> \
   -H 'Content-Type: application/json' \
-  -d '{"assistantModelId": <legacy_model_id>}'
+  -d '{"channel": "direct"}'
 ```
 
 ## Storage layout
@@ -232,7 +220,7 @@ shows.
 
 The backend provisions a profile with **filesystem operations only**, because the
 hermes CLI is not mounted into every container that provisions one (the flask
-service does not have it). On the first turn of a hermes-agent personality it:
+service does not have it). On the first turn of a Smart personality it:
 
 1. creates `<profiles_dir>/pib_<personality_id>/`,
 2. writes `SOUL.md` from the personality description,
@@ -242,7 +230,7 @@ service does not have it). On the first turn of a hermes-agent personality it:
 
 Consequences to plan for:
 
-- **The base install must have working credentials _before_ any hermes-agent
+- **The base install must have working credentials _before_ any Smart
   personality is used.** There is nothing to copy otherwise, and the profile is
   provisioned without a provider. Run `sudo -u pib -H hermes setup` (or write the
   keys into `/home/pib/.hermes/.env`) first, then verify:
@@ -252,7 +240,7 @@ Consequences to plan for:
   ```
 
   When either file is absent, the log carries a `WARNING` naming the missing file
-  and stating that hermes-agent personalities fall back until it is configured.
+  and stating that Smart personalities fall back until it is configured.
 - **Copies, not symlinks.** A later `hermes profile delete` cannot damage the base
   install, and a per-personality key can be set without affecting other
   personalities.

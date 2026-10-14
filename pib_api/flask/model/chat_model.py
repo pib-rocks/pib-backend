@@ -12,6 +12,9 @@ class Chat(db.Model):
         db.String(255), nullable=False, default=generate_uuid, unique=True
     )
     topic = db.Column(db.String(255), nullable=False)
+    # Milliseconds from the start of the turn until the first token. Null
+    # until a turn has been measured. The operator reads it with the chat.
+    first_token_latency_ms = db.Column(db.Float, nullable=True)
     personality_id = db.Column(
         db.String(255), db.ForeignKey("personality.personality_id"), nullable=False
     )

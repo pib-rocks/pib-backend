@@ -17,9 +17,14 @@ from typing import Any, Callable
 import pytest
 import requests
 
-ROBOT_HOST = os.environ.get("PIB_MODEL_E2E_HOST", "localhost")
-API_URL = os.environ.get("PIB_MODEL_E2E_API_URL", f"http://{ROBOT_HOST}/api")
-ROSBRIDGE_URL = os.environ.get("PIB_MODEL_E2E_ROSBRIDGE_URL", f"ws://{ROBOT_HOST}:9090")
+from robot_address import api_url, robot_hostname
+
+ROBOT_HOST = robot_hostname()
+API_URL = api_url()
+ROSBRIDGE_URL = os.environ.get(
+    "PIB_MODEL_E2E_ROSBRIDGE_URL",
+    f"ws://{ROBOT_HOST}:9090" if ROBOT_HOST else "",
+)
 REQUEST_TIMEOUT = 10
 MODEL_TIMEOUT = 90
 PROGRAM_TIMEOUT = 120
@@ -74,6 +79,7 @@ class RosbridgeClient:
                 "service": service,
                 "type": service_type,
                 "args": args,
+                "timeout": timeout,
             }
         )
         response = self.receive_matching(
@@ -172,15 +178,19 @@ def _text(value: str) -> dict[str, Any]:
     return {"block": {"type": "text", "fields": {"TEXT": value}}}
 
 
-def _number(value: int) -> dict[str, Any]:
-    return {"block": {"type": "math_number", "fields": {"NUM": value}}}
+# The start/stop dropdown is filled from the robot's *selectable* models
+# (/models/manifest.yaml), so the test must name one of those - face_detection_yunet_160x120
+# is a pipeline stage with selectable=False and cannot be started on its own. Its pipeline
+# (and this one's) publishes the /detections/face_detection_yunet_160x120 topic that
+# get_face_detections reads.
+FACE_PIPELINE_MODEL_ID = "head_pose_estimation_crop"
 
 
 def _blockly_pose_workspace(pose_name: str, marker: str) -> str:
     stop = {
         "block": {
             "type": "stop_model",
-            "fields": {"MODEL_ID": "hand_tracking"},
+            "fields": {"MODEL_ID": FACE_PIPELINE_MODEL_ID},
         }
     }
     print_marker = {
@@ -200,22 +210,11 @@ def _blockly_pose_workspace(pose_name: str, marker: str) -> str:
     read_detection = {
         "block": {
             "type": "text_print",
-            "inputs": {
-                "TEXT": {
-                    "block": {
-                        "type": "get_detection_field",
-                        "fields": {"FIELD": "label"},
-                        "inputs": {
-                            "MODEL_ID": _text("hand_tracking"),
-                            "INDEX": _number(0),
-                        },
-                    }
-                }
-            },
+            "inputs": {"TEXT": {"block": {"type": "get_face_detections"}}},
             "next": save_pose,
         }
     }
-    wait_for_hand = {
+    wait_for_face = {
         "block": {
             "type": "sleep_for_seconds",
             "fields": {"SECONDS": 2},
@@ -224,8 +223,8 @@ def _blockly_pose_workspace(pose_name: str, marker: str) -> str:
     }
     start = {
         "type": "start_model",
-        "fields": {"MODEL_ID": "hand_tracking"},
-        "next": wait_for_hand,
+        "fields": {"MODEL_ID": FACE_PIPELINE_MODEL_ID},
+        "next": wait_for_face,
     }
     return json.dumps(
         {"blocks": {"languageVersion": 0, "blocks": [start]}},
@@ -386,13 +385,12 @@ def test_blockly_detection_to_named_pose_e2e(live_robot):
         assert marker in output
 
         printed_lines = {line["content"].strip() for line in output_lines}
-        no_detection_warning = (
-            "no detection 0 received from model 'hand_tracking'" in output
-        )
-        if no_detection_warning:
-            assert "0" in printed_lines
+        if "no face detections received" in output:
+            assert "[]" in printed_lines
         else:
-            assert "hand" in printed_lines, f"detection label was not printed: {output}"
+            assert any(
+                line.startswith("[[") for line in printed_lines
+            ), f"face detection list was not printed: {output}"
 
         poses = session.get(f"{API_URL}/pose", timeout=REQUEST_TIMEOUT)
         poses.raise_for_status()

@@ -60,6 +60,8 @@ pib_blockly/pib_blockly_server/dist/**
 pib_blockly/pib_blockly_server/dist-test/**
 pib_blockly/pib_blockly_server/node_modules/**
 package-lock.json
+# Generator tests install with npm ci, so this lockfile is tracked.
+!tests/blockly_generator/package-lock.json
 /Pipfile
 /Pipfile.lock
 .test-venv/
@@ -69,7 +71,9 @@ package-lock.json
 # Test artifacts: seed_hardware/seed_db create backups next to the shared test database
 pib_api/flask/pibdata.db.bak-*
 
-# vendored test tree must be complete, so compiled package output is tracked there
-!tests/blockly_generator/node_modules/**/build/
-!tests/blockly_generator/node_modules/**/dist/
-!tests/blockly_generator/node_modules/**/lib/
+# Blockly generator tests install dependencies with npm ci.
+tests/blockly_generator/node_modules/
+
+# Compiled OAK blobs are the GitHub release asset models-2026-09-15
+# (models-2026-09-15.tar.gz), not stored in git. models/manifest.yaml stays.
+models/**/*.blob

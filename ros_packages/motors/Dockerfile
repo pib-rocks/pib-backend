@@ -4,6 +4,11 @@ SHELL ["/bin/bash", "-c"]
 
 WORKDIR /app
 
+# pip runs as root in an image build; silence the warning it prints for every install.
+ENV PIP_ROOT_USER_ACTION=ignore \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1
+
 RUN apt-get update && apt-get install --no-install-recommends -y curl
 
 # Tinkerforge apt repository (GPG key via signed-by, not deprecated apt-key)
@@ -22,13 +27,12 @@ RUN curl -sSL https://download.tinkerforge.com/apt/$(. /etc/os-release; echo $ID
     && rm -rf /var/lib/apt/lists/*
 
 # PEP 668: Jazzy (Ubuntu 24.04, Python 3.12) requires --break-system-packages
-RUN pip install --break-system-packages --no-cache-dir requests
+RUN pip install --break-system-packages requests==2.32.3
 
 COPY ./pib_api/client ./client
-RUN pip install --break-system-packages --no-cache-dir ./client
-
 COPY ./ros_packages/motors/pib_motors ./motors/pib_motors
-RUN pip install --break-system-packages --no-cache-dir ./motors/pib_motors
+# In-repo packages without dependencies; --no-deps keeps pip from re-resolving the environment.
+RUN pip install --break-system-packages --no-deps ./client ./motors/pib_motors
 
 COPY ./ros_packages/datatypes ros2_ws/datatypes
 COPY ./ros_packages/button_service ros2_ws/button_service

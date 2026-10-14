@@ -1,10 +1,11 @@
 import json
-from typing import Any, Tuple, List
-from urllib.request import Request
+from typing import Any, Optional, Tuple, List
+from urllib.request import Request, urlopen
 
 from pib_api_client import send_request, URL_PREFIX
 
 ASSISTANT_MODEL_URL = URL_PREFIX + "/assistant-model/%s"
+PROVIDER_DEFAULT_URL = URL_PREFIX + "/provider/default"
 PERSONALITY_URL = URL_PREFIX + "/voice-assistant/personality/%s"
 CHAT_URL = URL_PREFIX + "/voice-assistant/chat/%s"
 CHAT_MESSAGES_URL = URL_PREFIX + "/voice-assistant/chat/%s/messages"
@@ -21,19 +22,51 @@ class AssistantModel:
 class Personality:
     def __init__(self, personality_dto: dict[str, Any]):
         self.personality_id = personality_dto.get("personalityId")
+        self.name = personality_dto.get("name") or ""
         self.soul_path = personality_dto.get("soulPath")
         self.gender = personality_dto["gender"]
         self.language = "German"  # TODO: language should be stored as part of a personality -> personality_dto["language"]
         self.pause_threshold = personality_dto["pauseThreshold"]
+        raw_filler = personality_dto.get("thinkingFiller")
+        if isinstance(raw_filler, str):
+            raw_filler = raw_filler.strip()
+            self.thinking_filler = raw_filler or None
+        else:
+            self.thinking_filler = None
         self.message_history = personality_dto["messageHistory"]
         self.description = personality_dto.get("description")
         self.stt_engine = personality_dto.get("sttEngine", "local_whisper")
-        self.assistant_model = self._get_assistant_model(
-            personality_dto["assistantModelId"]
+        self.tts_engine = personality_dto.get("ttsEngine", "supertone")
+        applies = personality_dto.get("localVoiceApplies", True)
+        self.local_voice_applies = True if applies is None else bool(applies)
+        self.live_voice_note = personality_dto.get("liveVoiceNote")
+        self.provider_ref = personality_dto.get("providerRef")
+        self.channel = personality_dto.get("channel") or "smart"
+        # Absent means on. Only an explicit false disables tools and images.
+        raw_tools = personality_dto.get("toolCalling", True)
+        self.tool_calling = True if raw_tools is None else bool(raw_tools)
+        self.voice_mode = personality_dto.get("voiceMode") or "live"
+        self.live_model = personality_dto.get("liveModel")
+        self.voice_start_mode = personality_dto.get("voiceStartMode") or "turn_based"
+        raw_idle = personality_dto.get("liveIdleTimeout", 60)
+        try:
+            self.live_idle_timeout = int(raw_idle)
+        except (TypeError, ValueError):
+            self.live_idle_timeout = 60
+        reported = personality_dto.get("effectiveChannel")
+        self.effective_channel = (
+            reported if reported in ("smart", "direct") else self.channel
         )
+        self.assistant_model = self._resolve_assistant_model(personality_dto)
 
-    def _get_assistant_model(self, assistant_model_id: int) -> AssistantModel:
-        successful, model = get_assistant_model(assistant_model_id)
+    def _resolve_assistant_model(
+        self, personality_dto: dict[str, Any]
+    ) -> AssistantModel:
+        kind, model_id = model_endpoint_for(personality_dto)
+        if kind == "default":
+            successful, model = get_default_provider()
+        else:
+            successful, model = get_assistant_model(model_id)
         if not successful:
             raise Exception("Could not find the assistant model")
         return model
@@ -56,10 +89,38 @@ class ChatMessage:
         self.content = chat_message_dto["content"]
 
 
+def model_endpoint_for(
+    personality_dto: dict[str, Any],
+) -> Tuple[str, Optional[int]]:
+    """Decide which registry read resolves this personality.
+
+    A stored providerRef of 'default' stays a pointer: the caller asks for the
+    current default instead of an id copied onto the personality. An explicit
+    reference is that provider's id.
+    """
+    provider_ref = personality_dto.get("providerRef")
+    model_id = personality_dto.get("assistantModelId")
+    if provider_ref == "default" or (provider_ref in (None, "") and model_id is None):
+        return "default", None
+    if provider_ref not in (None, "") and str(provider_ref).isdigit():
+        return "id", int(provider_ref)
+    return "id", int(model_id)
+
+
 def get_assistant_model(assistant_model_id: int) -> Tuple[bool, AssistantModel]:
     request = Request(ASSISTANT_MODEL_URL % assistant_model_id, method="GET")
     successful, assistant_model_dto = send_request(request)
-    return successful, AssistantModel(assistant_model_dto)
+    if not successful or not isinstance(assistant_model_dto, dict):
+        return False, None
+    return True, AssistantModel(assistant_model_dto)
+
+
+def get_default_provider() -> Tuple[bool, AssistantModel]:
+    request = Request(PROVIDER_DEFAULT_URL, method="GET")
+    successful, provider_dto = send_request(request)
+    if not successful or not isinstance(provider_dto, dict):
+        return False, None
+    return True, AssistantModel(provider_dto)
 
 
 def get_personality(personality_id: str) -> Tuple[bool, Personality]:
@@ -71,6 +132,23 @@ def get_personality(personality_id: str) -> Tuple[bool, Personality]:
         successful = False
         personality = None
     return successful, personality
+
+
+def record_first_token_latency(chat_id: str, latency_ms: float) -> bool:
+    """Store one measurement. A missing API must not stall the turn."""
+    data = json.dumps({"latencyMs": latency_ms}).encode("utf-8")
+    request = Request(
+        CHAT_URL % chat_id + "/first-token-latency",
+        method="PUT",
+        headers={"Content-Type": "application/json"},
+        data=data,
+    )
+    try:
+        with urlopen(request, timeout=0.25) as response:
+            response.read()
+        return True
+    except Exception:
+        return False
 
 
 def get_chat(chat_id: str) -> Tuple[bool, Chat]:

@@ -20,6 +20,30 @@ from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPo
 from std_msgs.msg import String
 
 from datatypes.msg import DisplayImage, ImageFormat, ImageId
+from display.display_startup import (
+    EXIT_RENDERER_FAILED,
+    RendererReadiness,
+    renderer_exit_status,
+)
+from display.display_web_request import (
+    DEFAULT_ACK_SECONDS,
+    SURFACE_READY,
+    SURFACE_WEB,
+    SURFACE_WEB_FAILED,
+    acknowledge_web_status,
+    command_effect,
+    later_hide_releases,
+    read_status,
+    update_directory,
+    write_hide_request,
+    write_open_request,
+)
+from display.password_prompt import (
+    MAX_ATTEMPTS,
+    password_prompt_url,
+    prompt_decision,
+    read_operating_mode,
+)
 
 import gi
 
@@ -56,6 +80,13 @@ def log_info(message: str) -> None:
         print(f"[display-v2] {message}", flush=True)
 
 
+def log_error(message: str) -> None:
+    if _ros_logger is not None:
+        _ros_logger.get_logger().error(message)
+    else:
+        print(f"[display-v2] ERROR {message}", flush=True)
+
+
 @dataclass(frozen=True)
 class RawImage:
     format_value: int
@@ -64,7 +95,7 @@ class RawImage:
 
 @dataclass(frozen=True)
 class DisplayCommand:
-    kind: str  # "expression" | "text" | "raw" | "hide"
+    kind: str  # "expression" | "text" | "raw" | "hide" | "web_open" | "web_hide"
     value: object = None
 
 
@@ -157,53 +188,97 @@ class TextRenderer:
 
 
 class DisplayApp(Gtk.Application):
-    def __init__(self, command_queue: Queue[DisplayCommand]):
+    def __init__(
+        self, command_queue: Queue[DisplayCommand], readiness: RendererReadiness
+    ):
         super().__init__(application_id="pib.display.wayland")
         self.command_queue = command_queue
+        self.readiness = readiness
         self.window: Gtk.ApplicationWindow | None = None
         self.picture: Gtk.Picture | None = None
         self.text_renderer = TextRenderer(DISPLAY_WIDTH, DISPLAY_HEIGHT)
+        self.web_surface_open = False
 
     def do_activate(self) -> None:  # type: ignore[override]
         if self.window is None:
-            self.window = Gtk.ApplicationWindow(application=self)
-            self.window.set_default_size(DISPLAY_WIDTH, DISPLAY_HEIGHT)
-            self.window.fullscreen()
-            self.window.set_decorated(False)
-
-            self.picture = Gtk.Picture()
-            self.picture.set_can_shrink(False)
-            self.picture.set_keep_aspect_ratio(False)
-            self.window.set_child(self.picture)
-
-            controller = Gtk.EventControllerKey()
-            controller.connect("key-pressed", self._on_key)
-            self.window.add_controller(controller)
-
-            click = Gtk.GestureClick()
-            click.connect("pressed", self._on_click)
-            self.window.add_controller(click)
-
-            if DISPLAY_ON_DEMAND:
-                self.window.hide()
-            else:
-                self.window.present()
-
+            try:
+                self._create_window()
+            except (RuntimeError, GLib.Error) as exc:
+                self._fail(f"GTK window could not be created: {exc}")
+                return
+            self._check_surface()
             GLib.timeout_add(10, self._poll_commands)
 
-        if not DISPLAY_ON_DEMAND:
+        if not DISPLAY_ON_DEMAND and not self.web_surface_open:
             self.window.present()
 
+    def _create_window(self) -> None:
+        self.window = Gtk.ApplicationWindow(application=self)
+        self.window.set_default_size(DISPLAY_WIDTH, DISPLAY_HEIGHT)
+        self.window.fullscreen()
+        self.window.set_decorated(False)
+
+        self.picture = Gtk.Picture()
+        self.picture.set_can_shrink(False)
+        self.picture.set_keep_aspect_ratio(False)
+        self.window.set_child(self.picture)
+
+        controller = Gtk.EventControllerKey()
+        controller.connect("key-pressed", self._on_key)
+        self.window.add_controller(controller)
+
+        click = Gtk.GestureClick()
+        click.connect("pressed", self._on_click)
+        self.window.add_controller(click)
+
+        if DISPLAY_ON_DEMAND or self.web_surface_open:
+            self.window.hide()
+        else:
+            self.window.present()
+
+    def _check_surface(self) -> None:
+        # realize() creates the Wayland surface without mapping it, so on-demand mode
+        # stays hidden while the compositor connection is proven.
+        self.window.realize()
+        if not self.window.get_realized() or self.window.get_surface() is None:
+            self._fail("GTK window has no Wayland surface")
+            return
+        monitors = self.window.get_display().get_monitors()
+        if monitors.get_n_items() == 0:
+            log_info(
+                "compositor reports no output; display not ready until one appears"
+            )
+            monitors.connect("items-changed", self._on_monitors_changed)
+            return
+        self._mark_ready(monitors.get_n_items())
+
+    def _on_monitors_changed(self, monitors, _position, _removed, _added) -> None:
+        if not self.readiness.ready and monitors.get_n_items() > 0:
+            self._mark_ready(monitors.get_n_items())
+
+    def _mark_ready(self, outputs: int) -> None:
+        self.readiness.mark_ready()
+        log_info(
+            f"GTK window realized on Wayland ({outputs} output(s)); renderer ready"
+        )
+
+    def _fail(self, reason: str) -> None:
+        log_error(reason)
+        self.readiness.mark_failed(reason)
+        self.quit()
+
     def _ensure_visible(self) -> None:
-        if self.window is None:
+        if self.web_surface_open or self.window is None:
             return
         if not self.window.is_visible():
             self.window.present()
 
+    def _hide_window(self) -> None:
+        if self.window is not None:
+            self.window.hide()
+
     def _hide(self) -> None:
-        if self.window is None:
-            return
-        self.window.hide()
+        self._hide_window()
         log_info("display dismissed by user")
 
     def _on_key(self, _controller, keyval, _keycode, _state) -> bool:
@@ -225,11 +300,32 @@ class DisplayApp(Gtk.Application):
         return True
 
     def _handle_command(self, cmd: DisplayCommand) -> None:
+        effect = command_effect(self.web_surface_open, cmd.kind)
+        if effect == "web_open":
+            self.web_surface_open = True
+            self._hide_window()
+            log_info("web surface open; face and text suppressed")
+            return
+        if effect == "web_hide":
+            self.web_surface_open = False
+            # Closing takes the HTML component away and puts the window back into its
+            # idle state, which is hidden, so the desktop is on the screen again.
+            # Presenting the window here instead shows an empty white rectangle: nothing
+            # draws a face until an expression arrives, and no node publishes one while
+            # the robot is idle.
+            self._hide_window()
+            log_info("web surface closed")
+            return
         if self.window is None or self.picture is None:
             return
 
-        if cmd.kind == "hide":
+        if effect == "hide":
             self._hide()
+            return
+        if effect == "suppress":
+            log_info(f"suppressed {cmd.kind} while the web surface is open")
+            return
+        if effect != "draw":
             return
 
         if cmd.kind == "text":
@@ -293,10 +389,13 @@ def load_rgba_from_raw(raw: RawImage) -> bytes:
 
 
 class DisplayNode(Node):
-    def __init__(self, command_queue: Queue[DisplayCommand]) -> None:
+    def __init__(
+        self, command_queue: Queue[DisplayCommand], readiness: RendererReadiness
+    ) -> None:
         super().__init__("display")
         set_ros_logger(self)
         self.command_queue = command_queue
+        self.readiness = readiness
 
         display_qos = QoSProfile(
             reliability=ReliabilityPolicy.RELIABLE,
@@ -314,13 +413,33 @@ class DisplayNode(Node):
         self.ready_pub = self.create_publisher(
             String, "/pib/display_ready", display_qos
         )
+        self.create_subscription(String, "/pib/display_web", self.on_display_web, 10)
+        self.create_subscription(
+            String, "/pib/display_web_hide", self.on_display_web_hide, 10
+        )
+        self.pending_web: dict | None = None
+        self.pending_web_deadline = 0.0
+        self.pending_web_failure_reported = False
+        self.web_ack_seconds = float(
+            os.getenv("PIB_DISPLAY_WEB_ACK_SECONDS", str(DEFAULT_ACK_SECONDS))
+        )
+        self.create_timer(0.5, self.poll_web_status)
+        self._prompt_attempts = 0
+        self._prompt_timer = self.create_timer(2.0, self.offer_password_prompt)
+        self._ready_announced = False
+        self._ready_timer = self.create_timer(0.1, self.announce_ready)
 
-        msg = String()
-        msg.data = "ready"
-        self.ready_pub.publish(msg)
+        self.get_logger().info(
+            "Display V2 node started (Wayland/GTK4); "
+            "/pib/display_ready follows once the GTK window is usable"
+        )
 
-        self.get_logger().info("Display V2 running (Wayland/GTK4)")
-        self.get_logger().info("published /pib/display_ready")
+    def announce_ready(self) -> None:
+        if self._ready_announced or not self.readiness.ready:
+            return
+        self._ready_announced = True
+        self._ready_timer.cancel()
+        self.publish_surface(SURFACE_READY)
 
     def on_expression(self, msg: String) -> None:
         self.get_logger().info(f"expression requested: {msg.data}")
@@ -332,6 +451,118 @@ class DisplayNode(Node):
 
     def on_hide(self, msg: String) -> None:
         self.command_queue.put(DisplayCommand("hide"))
+
+    def publish_surface(self, state: str) -> None:
+        if state == SURFACE_READY and not self.readiness.ready:
+            self.get_logger().info(
+                "renderer not usable yet; /pib/display_ready is not set to ready"
+            )
+            return
+        msg = String()
+        msg.data = state
+        self.ready_pub.publish(msg)
+        self.get_logger().info(f"published /pib/display_ready: {state}")
+
+    def note_pending_web(self, document: dict) -> None:
+        self.pending_web = document
+        self.pending_web_deadline = time.monotonic() + self.web_ack_seconds
+        self.pending_web_failure_reported = False
+
+    def on_display_web(self, msg: String) -> None:
+        self.get_logger().info("display web requested")
+        try:
+            document = write_open_request(update_directory(), msg.data)
+        except ValueError as exc:
+            # The surface did not change. Report the rejection, then put the
+            # latched ready value back so existing subscribers still see it.
+            self.get_logger().error(f"display web request rejected: {exc}")
+            self.publish_surface(SURFACE_WEB_FAILED)
+            self.publish_surface(SURFACE_READY)
+            return
+        except OSError as exc:
+            self.get_logger().error(f"display web request rejected: {exc}")
+            self.publish_surface(SURFACE_WEB_FAILED)
+            return
+        self.note_pending_web(document)
+        self.command_queue.put(DisplayCommand("web_open"))
+        self.publish_surface(SURFACE_WEB)
+
+    def on_display_web_hide(self, msg: String) -> None:
+        self.get_logger().info("display web hide requested")
+        try:
+            document = write_hide_request(update_directory())
+        except (ValueError, OSError) as exc:
+            self.get_logger().error(f"display web hide request rejected: {exc}")
+            self.publish_surface(SURFACE_WEB_FAILED)
+            return
+        self.note_pending_web(document)
+
+    def offer_password_prompt(self) -> None:
+        """Open the password page on this screen while the store is locked.
+
+        A key store that cannot be read yet is retried. It does not fail the
+        display. After the last attempt the face stays up and the robot
+        remains in degraded mode.
+        """
+        if os.environ.get("PIB_DISPLAY_PASSWORD_PROMPT", "1") == "0":
+            self._prompt_timer.cancel()
+            return
+        # The prompt replaces the face; "ready" has to be on the topic before "web".
+        if not self._ready_announced:
+            return
+        self._prompt_attempts += 1
+        decision = prompt_decision(read_operating_mode())
+        if decision == "retry" and self._prompt_attempts < MAX_ATTEMPTS:
+            return
+        self._prompt_timer.cancel()
+        if decision != "open":
+            if decision == "retry":
+                self.get_logger().info(
+                    "key store mode was not readable; password prompt not opened"
+                )
+            return
+        try:
+            document = write_open_request(update_directory(), password_prompt_url())
+        except (ValueError, OSError) as exc:
+            self.get_logger().error(f"password prompt was not opened: {exc}")
+            return
+        self.note_pending_web(document)
+        self.command_queue.put(DisplayCommand("web_open"))
+        self.publish_surface(SURFACE_WEB)
+        self.get_logger().info("password prompt opened on the display")
+
+    def poll_web_status(self) -> None:
+        pending = self.pending_web
+        if pending is None:
+            return
+        status = read_status(update_directory())
+        if later_hide_releases(pending["requestedAt"], status):
+            self.command_queue.put(DisplayCommand("web_hide"))
+            self.publish_surface(SURFACE_READY)
+            self.pending_web = None
+            self.pending_web_failure_reported = False
+            return
+        acknowledgement = acknowledge_web_status(
+            pending["action"],
+            pending["requestedAt"],
+            status,
+            time.monotonic() >= self.pending_web_deadline,
+            self.pending_web_failure_reported,
+        )
+        if acknowledgement.suppression == "hold":
+            self.command_queue.put(DisplayCommand("web_open"))
+        elif acknowledgement.suppression == "release":
+            self.command_queue.put(DisplayCommand("web_hide"))
+        if acknowledgement.surface is not None:
+            self.publish_surface(acknowledgement.surface)
+        if (
+            acknowledgement.surface == SURFACE_WEB_FAILED
+            and not acknowledgement.clear_pending
+        ):
+            self.pending_web_failure_reported = True
+        if acknowledgement.clear_pending:
+            self.pending_web = None
+            self.pending_web_failure_reported = False
 
     def on_display_image(self, msg: DisplayImage) -> None:
         raw = self.raw_from_display_image(msg)
@@ -350,26 +581,35 @@ class DisplayNode(Node):
         return None
 
 
-def run_ros(command_queue: Queue[DisplayCommand]) -> None:
+def run_ros(command_queue: Queue[DisplayCommand], readiness: RendererReadiness) -> None:
     rclpy.init()
     executor = SingleThreadedExecutor()
-    node = DisplayNode(command_queue)
+    node = DisplayNode(command_queue, readiness)
     executor.add_node(node)
     executor.spin()
     node.destroy_node()
     rclpy.shutdown()
 
 
-def main(args=None) -> None:
-    # Force Wayland backend; this prevents accidental X fallback.
-    os.environ.setdefault("GDK_BACKEND", "wayland")
+def run_renderer() -> int:
+    """Run the GTK main loop; started by display_startup.main once Wayland is usable."""
+    # Importing Gtk ran Gtk.init_check(); without a default display it failed for good.
+    if Gdk.Display.get_default() is None:
+        log_error(
+            "GTK could not open the Wayland display "
+            f"{os.environ.get('WAYLAND_DISPLAY', 'wayland-0')}"
+        )
+        return EXIT_RENDERER_FAILED
 
+    readiness = RendererReadiness()
     command_queue: Queue[DisplayCommand] = Queue(maxsize=200)
-    Thread(target=run_ros, args=(command_queue,), daemon=True).start()
+    Thread(target=run_ros, args=(command_queue, readiness), daemon=True).start()
 
-    app = DisplayApp(command_queue)
-    app.run(None)
-
-
-if __name__ == "__main__":
-    main()
+    app = DisplayApp(command_queue, readiness)
+    status = app.run(None)
+    result = renderer_exit_status(status, readiness)
+    if result != status:
+        log_error(
+            f"GTK main loop ended without a usable window ({readiness.failure or 'never ready'})"
+        )
+    return result

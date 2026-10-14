@@ -29,13 +29,18 @@ def _load_profile_config(pdir):
 
 
 def _assert_speed_defaults(cfg):
-    assert cfg["reasoning_effort"] == DEFAULT_REASONING_EFFORT
-    assert cfg["max_tokens"] == DEFAULT_MAX_TOKENS
-    assert cfg["temperature"] == DEFAULT_TEMPERATURE
+    """Hermes reads the agent block. The same keys at the root are unread."""
+    agent = cfg["agent"]
+    assert agent["reasoning_effort"] == DEFAULT_REASONING_EFFORT
+    assert agent["max_tokens"] == DEFAULT_MAX_TOKENS
+    assert agent["temperature"] == DEFAULT_TEMPERATURE
+    assert "reasoning_effort" not in cfg
+    assert "max_tokens" not in cfg
+    assert "temperature" not in cfg
 
 
 def test_speed_constants_in_hermes_agent_client():
-    assert DEFAULT_HERMES_MODEL == "gemini-3.5-flash"
+    assert DEFAULT_HERMES_MODEL == "gemini-3.8-flash"
     assert DEFAULT_HERMES_LITE_MODEL == "gemini-3.5-flash-lite"
     assert DEFAULT_HERMES_PROVIDER == "gemini"
     assert DEFAULT_REASONING_EFFORT == "low"
@@ -44,7 +49,7 @@ def test_speed_constants_in_hermes_agent_client():
 
 
 def test_speed_constants_in_pib_hermes_config():
-    assert hermes_cfg.DEFAULT_HERMES_MODEL == "gemini-3.5-flash"
+    assert hermes_cfg.DEFAULT_HERMES_MODEL == "gemini-3.8-flash"
     assert hermes_cfg.DEFAULT_HERMES_LITE_MODEL == "gemini-3.5-flash-lite"
     assert hermes_cfg.DEFAULT_HERMES_PROVIDER == "gemini"
     assert hermes_cfg.DEFAULT_REASONING_EFFORT == "low"
@@ -77,7 +82,11 @@ def test_ensure_profile_seeds_speed_defaults_on_fresh_profile(
 def test_ensure_profile_seeds_speed_defaults_into_existing_config(
     tmp_path, monkeypatch, sandboxed_hermes_home
 ):
-    """Existing profile config.yaml is repaired with speed defaults on ensure_profile."""
+    """Existing profile config.yaml is repaired with speed defaults on ensure_profile.
+
+    The model/provider are not reset when none is supplied: the backend owns
+    them now (PR-1930b).
+    """
     (sandboxed_hermes_home / "config.yaml").write_text(
         "model: anthropic/claude-opus-5\n", encoding="utf-8"
     )
@@ -90,17 +99,23 @@ def test_ensure_profile_seeds_speed_defaults_into_existing_config(
     ensure_profile("speed-existing", soul_text="Du bist pib.")
 
     cfg = _load_profile_config(pdir)
-    assert cfg["model"] == DEFAULT_HERMES_MODEL
-    assert cfg["provider"] == DEFAULT_HERMES_PROVIDER
+    assert cfg["model"] == "custom/operator-model"
+    assert cfg["provider"] == "openrouter"
     _assert_speed_defaults(cfg)
 
 
-def test_ensure_profile_overwrites_non_speed_reasoning_settings(
+def test_ensure_profile_keeps_existing_non_speed_reasoning_settings(
     tmp_path, monkeypatch, sandboxed_hermes_home
 ):
-    """Testfall 1/2: reasoning_effort and max_tokens are permanently pinned low/1024."""
+    """Decision 5: reasoning_effort/max_tokens/temperature are only seeded when
+    unset in the agent block. An operator's or a model's own values are not
+    overwritten. Root-level copies are not the setting Hermes reads.
+
+    This replaces the earlier assertion that the pinned speed values were forced
+    onto every profile; that pin is exactly what PR-1930b removes.
+    """
     (sandboxed_hermes_home / "config.yaml").write_text(
-        "model: gemini-3.5-flash\n", encoding="utf-8"
+        "model: gemini-3.8-flash\n", encoding="utf-8"
     )
     _absent_binary(tmp_path, monkeypatch)
     pdir = profile_dir_for("speed-pin")
@@ -108,11 +123,14 @@ def test_ensure_profile_overwrites_non_speed_reasoning_settings(
     with open(os.path.join(pdir, "config.yaml"), "w", encoding="utf-8") as fh:
         yaml.safe_dump(
             {
-                "model": "gemini-3.5-flash",
+                "model": "gemini-3.8-flash",
                 "provider": "gemini",
-                "reasoning_effort": "high",
-                "max_tokens": 8192,
-                "temperature": 1.0,
+                "agent": {
+                    "reasoning_effort": "high",
+                    "max_tokens": 8192,
+                    "temperature": 1.0,
+                    "max_turns": 4,
+                },
             },
             fh,
         )
@@ -121,4 +139,12 @@ def test_ensure_profile_overwrites_non_speed_reasoning_settings(
         ensure_profile("speed-pin", soul_text="Du bist pib.")
 
     cfg = _load_profile_config(pdir)
-    _assert_speed_defaults(cfg)
+    assert cfg["agent"]["reasoning_effort"] == "high"
+    assert cfg["agent"]["max_tokens"] == 8192
+    assert cfg["agent"]["temperature"] == 1.0
+    assert cfg["agent"]["max_turns"] == 4
+    assert "reasoning_effort" not in cfg
+    assert "max_tokens" not in cfg
+    assert "temperature" not in cfg
+    assert cfg["model"] == DEFAULT_HERMES_MODEL
+    assert cfg["provider"] == DEFAULT_HERMES_PROVIDER

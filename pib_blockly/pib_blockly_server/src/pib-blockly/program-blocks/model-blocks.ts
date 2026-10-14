@@ -3,12 +3,21 @@ import * as Blockly from "blockly";
 type ModelOption = [string, string];
 
 const FALLBACK_MODEL_OPTIONS: ModelOption[] = [
-    ["hand_tracking", "hand_tracking"],
+    ["hand_tracking_fast", "hand_tracking_fast"],
 ];
+export const STOP_ALL_MODELS_VALUE = "__all__";
+const STOP_ALL_MODELS_OPTION: ModelOption = ["All", STOP_ALL_MODELS_VALUE];
 const MODEL_REFRESH_INTERVAL_MS = 5_000;
 let cachedModelOptions = FALLBACK_MODEL_OPTIONS;
 let requestInFlight = false;
 let lastRequestAt = 0;
+
+/** Puts the module back to its initial state. For unit tests only. */
+export function resetModelOptionsForTests(): void {
+    cachedModelOptions = FALLBACK_MODEL_OPTIONS;
+    requestInFlight = false;
+    lastRequestAt = 0;
+}
 
 export function rosbridgeUrl(
     location?: Pick<Location, "protocol" | "hostname">,
@@ -98,9 +107,13 @@ export function getModelDropdownOptions(): ModelOption[] {
     return cachedModelOptions;
 }
 
+export function getStopModelDropdownOptions(): ModelOption[] {
+    return [STOP_ALL_MODELS_OPTION, ...getModelDropdownOptions()];
+}
+
 class ModelFieldDropdown extends Blockly.FieldDropdown {
-    constructor() {
-        super(getModelDropdownOptions);
+    constructor(menuGenerator: () => ModelOption[] = getModelDropdownOptions) {
+        super(menuGenerator);
     }
 
     override doClassValidation_(newValue: any) {
@@ -131,11 +144,16 @@ const lifecycleBlocks = {
             refreshModelOptions();
             this.appendDummyInput()
                 .appendField("stop model")
-                .appendField(new ModelFieldDropdown(), "MODEL_ID");
+                .appendField(
+                    new ModelFieldDropdown(getStopModelDropdownOptions),
+                    "MODEL_ID",
+                );
             this.setPreviousStatement(true);
             this.setNextStatement(true);
             this.setColour(200);
-            this.setTooltip("Stops the selected vision model.");
+            this.setTooltip(
+                "Stops the selected vision model, or all active models of this program when All is chosen. Models started elsewhere are left running.",
+            );
             this.setHelpUrl("");
         },
     },

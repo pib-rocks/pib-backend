@@ -16,8 +16,14 @@ from datatypes.srv import PlayAudioFromFile, PlayAudioFromSpeech, ClearPlaybackQ
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
-from std_msgs.msg import String
+from std_msgs.msg import Bool, String
 
+from pib_hermes_config.turn_taking import clauses_to_synthesize
+from pib_hermes_config.visible_state import (
+    VOICE_USING_FALLBACK_TOPIC,
+    engine_is_fallback,
+)
+from pib_hermes_config.voice_backends import resolve_tts_route
 from public_api_client import public_voice_client
 from . import util
 from .tts_synthesis import SupertoneTTSEngine
@@ -150,6 +156,10 @@ class AudioPlayerNode(Node):
         )
 
         self.tts_engine = SupertoneTTSEngine()
+        self._published_fallback = None
+        self.voice_using_fallback_publisher = self.create_publisher(
+            Bool, VOICE_USING_FALLBACK_TOPIC, 10
+        )
 
         self.get_logger().info("Now running AUDIO PLAYER")
 
@@ -231,45 +241,82 @@ class AudioPlayerNode(Node):
         response: PlayAudioFromSpeech.Response,
     ) -> PlayAudioFromSpeech.Response:
 
-        order = self.counter_next()
+        speech = request.speech or ""
+        if not speech.strip():
+            # A barrier, so the caller can wait until earlier clauses finish.
+            playback_item = PlaybackItem(
+                [b""], SPEECH_ENCODING, 0.0, self.counter_next()
+            )
+            self.playback_queue.put(playback_item, True)
+            if request.join:
+                playback_item.finished_playing.wait()
+            return response
 
+        route = resolve_tts_route(getattr(request, "tts_engine", "") or "")
+        if route != "local":
+            self.get_logger().error(
+                "tts backend %s is not the local Supertone engine and has no speech client",
+                request.tts_engine,
+            )
+            return response
+
+        pieces = clauses_to_synthesize(speech)
+        last_item = None
+        for index, piece in enumerate(pieces):
+            # Queue each clause as soon as it is synthesized so playback of
+            # the first clause overlaps synthesis of the next one.
+            pause = 0.2 if index == len(pieces) - 1 else 0.0
+            try:
+                data = self._synthesize_clause(piece, request)
+            except Exception as exc:
+                self.get_logger().error("clause synthesis failed: %s", exc)
+                return response
+            playback_item = PlaybackItem(
+                data, SPEECH_ENCODING, pause, self.counter_next()
+            )
+            self.playback_queue.put(playback_item, True)
+            last_item = playback_item
+
+        if request.join and last_item is not None:
+            last_item.finished_playing.wait()
+        return response
+
+    def _synthesize_clause(self, text: str, request: PlayAudioFromSpeech.Request):
         try:
-            # Use local Supertone supertonic-3 expressive TTS engine
             wav_bytes = self.tts_engine.synthesize(
-                text=request.speech,
+                text=text,
                 language=request.language or "auto",
                 voice=request.gender or "F1",
                 emotion="expressive",
             )
+            self._publish_engine_fallback(
+                getattr(self.tts_engine, "active_backend", "")
+            )
             buf = io.BytesIO(wav_bytes)
             with wave.open(buf, "rb") as wf:
-                nframes = wf.getnframes()
-                raw_pcm = wf.readframes(nframes)
-
+                raw_pcm = wf.readframes(wf.getnframes())
             data = [
                 raw_pcm[i : i + BYTES_PER_CHUNK]
                 for i in range(0, len(raw_pcm), BYTES_PER_CHUNK)
             ]
-        except Exception as e:
+        except Exception as exc:
             self.get_logger().warning(
-                f"Local Supertone TTS synthesis error, attempting public voice client: {e}"
+                "Local Supertone TTS synthesis error, attempting public voice client: %s",
+                exc,
             )
-            try:
-                data = public_voice_client.text_to_speech(
-                    request.speech, request.gender, request.language, self.token
-                )
-            except Exception as e2:
-                self.get_logger().error(f"text_to_speech failed: {e2}")
-                return response
+            data = public_voice_client.text_to_speech(
+                text, request.gender, request.language, self.token
+            )
+        return self.adjust_data_granularity(data, BYTES_PER_CHUNK)
 
-        data = self.adjust_data_granularity(data, BYTES_PER_CHUNK)
-
-        playback_item = PlaybackItem(data, SPEECH_ENCODING, 0.2, order)
-        self.playback_queue.put(playback_item, True)
-
-        if request.join:
-            playback_item.finished_playing.wait()
-        return response
+    def _publish_engine_fallback(self, active_backend: object) -> None:
+        fallback = engine_is_fallback(active_backend)
+        if fallback == self._published_fallback:
+            return
+        self._published_fallback = fallback
+        message = Bool()
+        message.data = fallback
+        self.voice_using_fallback_publisher.publish(message)
 
     def clear_playback_queue(
         self, _: PlayAudioFromFile.Request, response: PlayAudioFromFile.Response

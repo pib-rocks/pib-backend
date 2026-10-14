@@ -32,6 +32,14 @@ from click.testing import CliRunner  # noqa: E402
 from commands import seed_db  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def local_ollama_absent(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A host that has qwen-fast must not change these contract catalogues."""
+    from service import local_model_service
+
+    monkeypatch.setattr(local_model_service, "fetch_tags", lambda: {"models": []})
+
+
 @pytest.fixture()
 def app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     db_file = tmp_path / "test.db"
@@ -44,6 +52,7 @@ def app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("PYTHON_CODE_DIR", str(programs_dir))
     monkeypatch.setenv("HOST_IP_FILE", str(host_ip_file))
     monkeypatch.setenv("PIB_HARDWARE_VARIANT", "pib5edu")
+    monkeypatch.setenv("PIB_SMART_CHATS", "1")
 
     flask_app.config.update(
         TESTING=True,

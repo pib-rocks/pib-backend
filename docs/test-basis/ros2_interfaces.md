@@ -113,7 +113,7 @@ flowchart TB
 | `play_audio_from_file` | `datatypes/PlayAudioFromFile` | `audio_player` | — |
 | `clear_playback_queue` | `datatypes/ClearPlaybackQueue` | `audio_player` | — |
 | `get_mic_configuration` | `datatypes/GetMicConfiguration` | `audio_recorder` / `audio_streamer` | — |
-| `encrypt_token` / `decrypt_token` / `get_token_exists` | `datatypes/srv/*` | `token_service` | — |
+| `encrypt_token` / `decrypt_token` / `get_token_exists` | `datatypes/srv/*` | `token_service` | cloud token is the pib-cloud key-store entry; no separate password |
 | `/tf_button/set_color` | `button_service/SetButtonColor` | `button_service_node` | legacy direct set |
 | `/tf_button/read` | `button_service/ReadButton` | `button_service_node` | read taster/switch |
 | `/tf_button/wait` | `button_service/WaitForButton` | `button_service_node` | wait for press |
@@ -211,7 +211,6 @@ flowchart TB
 | `TINKERFORGE_HOST` | `localhost` / `host.docker.internal` | `pib_motors.bricklet` |
 | `TINKERFORGE_PORT` | `4223` | Tinkerforge stack |
 | `TF_HOST` / `TF_PORT` | `host.docker.internal` / `4223` | `button_service_node` |
-| `TF_BUTTON_BRICKLET_NUMBERS` | `5,6,7` | Button UID lookup |
 | `VOICE_ASSISTANT_DIR` | package path | voice assistant assets |
 
 ---

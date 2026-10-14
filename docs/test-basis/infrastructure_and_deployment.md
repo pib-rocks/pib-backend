@@ -196,7 +196,6 @@ ros2 launch programs launch.py
 |---|---|
 | `PROGRAM_DIR` | `/ros2_ws/cerebra_programs` |
 | `PYTHON_BINARY` | `/usr/bin/python3` |
-| `TF_BUTTON_BRICKLET_NUMBERS` | `5,6,7` |
 | `SSH_HOST` | `host.docker.internal` |
 
 ### ros-voice-assistant
@@ -215,6 +214,7 @@ ros2 launch programs launch.py
 | `PIB_DISPLAY_ON_DEMAND` | `1` |
 | `WAYLAND_DISPLAY` | `wayland-0` |
 | `GDK_BACKEND` | `wayland` |
+| `PIB_DISPLAY_WAYLAND_WAIT_SECONDS` | `600` (wait for the host compositor, then exit 75) |
 
 ---
 

@@ -1,0 +1,21 @@
+[Unit]
+Description=Show or hide a fullscreen web page on the robot display
+After=graphical.target
+ConditionPathExists=/home/pib/app/.update/display-web.json
+
+[Service]
+Type=oneshot
+User=pib
+Group=pib
+# The oneshot must exit so a later hide request can start this unit again.
+# The browser it launches has to keep running, so systemd must not kill the
+# leftover process when the shell exits. Hide finds that process via the pidfile.
+KillMode=none
+WorkingDirectory=/home/pib/app/pib-backend
+Environment=PIB_UPDATE_DIR=/home/pib/app/.update
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+Environment=WAYLAND_DISPLAY=wayland-0
+ExecStart=/home/pib/app/pib-backend/setup/display_web_runner.sh
+UMask=0007
+StandardOutput=journal
+StandardError=journal

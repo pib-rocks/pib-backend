@@ -438,6 +438,27 @@ FACE_CROP_TRANSLATORS = {
     "head-pose-estimation-adas-0001": translate_head_pose,
 }
 
+# One chain owns the shared YuNet crop on the device. Both the build and the
+# start refusal use this sentence so the two paths cannot drift apart.
+FACE_CROP_EXCLUSIVITY_RULE = "only one face-crop composite may run at a time"
+
+
+def is_face_crop_composite(model):
+    """Whether this model builds the shared YuNet face-crop chain."""
+    artifact_ids = getattr(model, "artifact_ids", ())
+    return (
+        bool(getattr(model, "composite", False))
+        and FACE_DETECTOR_MODEL_ID in artifact_ids
+    )
+
+
+def face_crop_conflict_message(requested_model_id, active_model_id):
+    """Name both models and the single exclusivity rule."""
+    return (
+        f"Model {requested_model_id} conflicts with the active "
+        f"{active_model_id}: {FACE_CROP_EXCLUSIVITY_RULE}"
+    )
+
 
 def is_gaze_composite(artifact_ids):
     """Return whether the artifact set is the complete three-network gaze chain."""

@@ -55,17 +55,19 @@ from .imitation import (
 )
 from .imitation_archive import create_landmark_archive, create_palm_archive
 from .face_crop import (
+    FACE_CROP_EXCLUSIVITY_RULE,
     FACE_CROP_TRANSLATORS,
     FACE_CROP_PADDING,
     FACE_DETECTOR_MODEL_ID,
     GAZE_MODEL_ID,
     HEAD_POSE_MODEL_ID,
     face_crop_classifier_id,
+    is_face_crop_composite,
     is_gaze_composite,
     packet_timestamp,
     translate_gaze,
 )
-from .parsed_detections import translate_detections
+from .parsed_detections import published_field, translate_detections
 from .qr_detection import (
     QR_MODEL_ID,
     decode_qr_detections,
@@ -73,6 +75,7 @@ from .qr_detection import (
 )
 from .task_archives import create_archive, labels_for_model
 from .hand_tracking import (
+    FAST_MODEL_ID,
     HAND_KEYPOINT_NAMES,
     LANDMARK_HANDEDNESS_LAYER,
     LANDMARK_SCORE_LAYER,
@@ -80,25 +83,51 @@ from .hand_tracking import (
     LANDMARK_VALUE_COUNT,
     LANDMARK_XYZ_LAYERS,
     MANIP_CROP_INSET_PIXELS,
+    build_fast_hand_graph,
     decode_palm_result,
     fit_manip_crop,
     landmark_score,
     landmarks_in_crop_pixels,
+    map_fast_hand,
     map_landmarks_to_frame,
+    parse_fast_script_result,
     relative_landmark_z,
     PalmRegion,
 )
 
+# The OAK-D Lite is an RVC2 board with 16 SHAVE cores
+# (https://docs.luxonis.com/hardware/platform/rvc/rvc2/). This is the board's
+# total, not a model-store value.
+TOTAL_SHAVES = 16
+
 # Downscaled resolution for Haar cascade face detection (maps back to full frame).
 FACE_DETECT_WIDTH = 320
 FACE_DETECT_HEIGHT = 180
-# Keep ImageManip warp inputs below the full ISP resolution. A 256x256 camera
-# branch bounds the single palm manipulation's downscale to 2:1 while remaining
-# large enough for the 224x224 landmark crop. Limiting the source branch keeps
-# the complete field of view seen by each network; chaining or narrowing
-# ImageManip crops would change the pixels on which the models were trained.
+# Frame the UI displays. A model colour branch must share this aspect: the
+# camera crops any other aspect, and a later per-axis scale cannot put that
+# crop back onto the frame.
+PUBLISHED_FRAME_WIDTH = 1280
+PUBLISHED_FRAME_HEIGHT = 720
+# Full-field branch at that aspect, nine tenths of the preview. Model inputs
+# are stretched from this branch; the camera is not asked for their aspect.
+# A stretch keeps fractions, so a detection maps back through the window the
+# branch actually covers. That window is read from the delivered frame.
+COLOUR_BRANCH_WIDTH = 1152
+COLOUR_BRANCH_HEIGHT = (
+    COLOUR_BRANCH_WIDTH * PUBLISHED_FRAME_HEIGHT // PUBLISHED_FRAME_WIDTH
+)
+# Opt-in capture of that delivered window beside the preview. Absent unless
+# PIB_COLOUR_BRANCH_FIELD names a directory, or the operator creates the
+# request file. The running camera node writes both frames itself.
+COLOUR_BRANCH_FIELD_REQUEST = "/tmp/pib-colour-branch-field.request"
+COLOUR_BRANCH_FIELD_DIR = "/tmp/pib-colour-branch-field"
+# The palm warp downscales this branch to 128x128 and stays within 2:1 on the
+# long side. The short side follows the published aspect, so the branch is the
+# whole frame. A square branch would be a centred crop.
+# hand_tracking_fast uses this same output. One manipulation from the 2104x1560
+# ISP frame down to the 128 palm input fails with WARP_SWCH_ERR_CACHE_TOO_SMALL.
 HAND_NN_WIDTH = 256
-HAND_NN_HEIGHT = 256
+HAND_NN_HEIGHT = HAND_NN_WIDTH * PUBLISHED_FRAME_HEIGHT // PUBLISHED_FRAME_WIDTH
 IMITATION_FPS = 8
 # The neural branch carries the FULL 16:9 field of view at the size the
 # HandTrackerEdge reference uses (internal_frame_height=640 on a 16:9 sensor),
@@ -111,10 +140,10 @@ IMITATION_FPS = 8
 # was squashed in y - the signature of mapping square-normalised coordinates
 # onto a 16:9 frame. With a 16:9 branch the mapping back is a pure per-axis
 # scale, so that error cannot occur by construction.
-IMITATION_SOURCE_WIDTH = 1152
-IMITATION_SOURCE_HEIGHT = 648
-FACE_CROP_SOURCE_WIDTH = 1152
-FACE_CROP_SOURCE_HEIGHT = 648
+IMITATION_SOURCE_WIDTH = COLOUR_BRANCH_WIDTH
+IMITATION_SOURCE_HEIGHT = COLOUR_BRANCH_HEIGHT
+FACE_CROP_SOURCE_WIDTH = COLOUR_BRANCH_WIDTH
+FACE_CROP_SOURCE_HEIGHT = COLOUR_BRANCH_HEIGHT
 FACE_CROP_PAIR_WINDOW = 32
 MAX_FACE_CROP_BUFFER = 64
 # Exact timestamp pairing needs more than a single held frame. Four delivered
@@ -126,8 +155,8 @@ FACE_CROPPER_QUEUE = 4
 # uses on RVC2. The branch keeps the 16:9 field of view so the neural branch and
 # the published frame agree.
 HAND_MP_FPS = 8
-HAND_MP_SOURCE_WIDTH = 1152
-HAND_MP_SOURCE_HEIGHT = 648
+HAND_MP_SOURCE_WIDTH = COLOUR_BRANCH_WIDTH
+HAND_MP_SOURCE_HEIGHT = COLOUR_BRANCH_HEIGHT
 # How many palm detections are buffered while their landmark results arrive.
 HAND_MP_PAIR_WINDOW = 32
 # Unpaired entries older than this are dropped so the buffer cannot grow.
@@ -269,8 +298,8 @@ class CameraNode(Node):
             Int32MultiArray, "size_topic", self.preview_size_callback, 10
         )
 
-        self.preview_width = 1280
-        self.preview_height = 720
+        self.preview_width = PUBLISHED_FRAME_WIDTH
+        self.preview_height = PUBLISHED_FRAME_HEIGHT
         self.quality_factor = 80
         self.current_image = ""
         self.current_frame = None
@@ -328,6 +357,15 @@ class CameraNode(Node):
         self.hand_mp_detection_queue = None
         self.hand_mp_landmark_queue = None
         self.hand_mp_source_size = (0, 0)
+        self.hand_fast_queue = None
+        self.hand_fast_source_size = (0, 0)
+        self._pending_hand_fast_packet = None
+        self._preview_packet = None
+        self._colour_branch_field = None
+        self._colour_branch_capture_queues = {}
+        self._colour_branch_capture_written = False
+        self._colour_branch_capture_dir = None
+        self._colour_branch_capture = self._colour_branch_capture_requested()
         self._pipeline_lock = threading.RLock()
         self._reset_hand_stage_counters()
         self._reset_imitation_stage_counters()
@@ -441,6 +479,7 @@ class CameraNode(Node):
     def list_models_callback(self, request, response):
         statuses = self.pipeline_manager.statuses()
         response.models = []
+        response.total_shaves = TOTAL_SHAVES
         for model in self.model_registry.selectable_models():
             status = statuses[model.model_id]
             info = ModelInfo()
@@ -455,6 +494,11 @@ class CameraNode(Node):
         return response
 
     def start_model_callback(self, request, response):
+        # Success is returned only after rebuild and frame verification inside
+        # PipelineManager.start. rosbridge abandons the call at
+        # ROSBRIDGE_DEFAULT_CALL_SERVICE_TIMEOUT_SECONDS when the call_service
+        # message omits timeout, which is shorter than this callback, so the
+        # client must send MODEL_LIFECYCLE_CALL_TIMEOUT_SECONDS.
         response.success, response.message = self.pipeline_manager.start(
             request.model_id, request.shaves, request.owner
         )
@@ -930,11 +974,13 @@ class CameraNode(Node):
             frame_height = self.preview_height
         else:
             frame_height, frame_width = self.current_frame.shape[:2]
+        field = self._object_detection_field(packet, frame_width, frame_height)
         detections = translate_detections(
             packet,
             labels_for_model(model_id),
             frame_width,
             frame_height,
+            field,
         )
 
         message = DetectionArray()
@@ -1719,6 +1765,12 @@ class CameraNode(Node):
         self.hand_mp_detection_queue = None
         self.hand_mp_landmark_queue = None
         self.hand_mp_source_size = (0, 0)
+        self.hand_fast_queue = None
+        self.hand_fast_source_size = (0, 0)
+        self._pending_hand_fast_packet = None
+        self._colour_branch_capture_queues = {}
+        self._pending_colour_branch_packet = None
+        self._colour_branch_field = None
         if hasattr(self, "_pending_hands"):
             self._pending_hands.clear()
         else:
@@ -1737,13 +1789,13 @@ class CameraNode(Node):
             if model.model_id == "hand_tracking_mp":
                 self._build_hand_mp_pipeline(model)
                 continue
+            if model.model_id == FAST_MODEL_ID:
+                self._build_hand_fast_pipeline(model)
+                continue
             if model.model_id == "imitation":
                 self._build_imitation_pipeline(model)
                 continue
-            if (
-                getattr(model, "composite", False)
-                and FACE_DETECTOR_MODEL_ID in model.artifact_ids
-            ):
+            if is_face_crop_composite(model):
                 if is_gaze_composite(model.artifact_ids):
                     self._build_gaze_pipeline(model)
                 else:
@@ -1751,17 +1803,86 @@ class CameraNode(Node):
                 continue
             self._build_single_network_pipeline(model)
 
-    def _request_camera_branch(self, size, frame_type=None):
-        """Request a bounded-size colour stream for a model branch."""
+    def _published_frame_size(self):
+        """Width and height of the frame the UI displays."""
+        width = getattr(self, "preview_width", None)
+        height = getattr(self, "preview_height", None)
+        if (
+            isinstance(width, bool)
+            or isinstance(height, bool)
+            or not isinstance(width, (int, float))
+            or not isinstance(height, (int, float))
+            or width <= 0
+            or height <= 0
+        ):
+            return (PUBLISHED_FRAME_WIDTH, PUBLISHED_FRAME_HEIGHT)
+        return (int(width), int(height))
+
+    def _colour_branch_size(self, model_id):
+        """Chosen colour-branch size for one model.
+
+        The hand chains keep a short branch so the palm warp stays within 2:1.
+        hand_tracking_fast uses that 256x144 output rather than the 2104x1560
+        ISP frame, which cannot be warped to the palm input in one step.
+        Every other model shares the full-field branch. Both sizes have the
+        published frame's aspect; the model's own input is a later stretch.
+        """
+        if model_id in ("hand_tracking", FAST_MODEL_ID):
+            return (HAND_NN_WIDTH, HAND_NN_HEIGHT)
+        return (COLOUR_BRANCH_WIDTH, COLOUR_BRANCH_HEIGHT)
+
+    def _require_published_aspect(self, width, height):
+        """Refuse a branch whose aspect is not the published frame's."""
+        published_width, published_height = self._published_frame_size()
+        if (
+            width <= 0
+            or height <= 0
+            or width * published_height != height * published_width
+        ):
+            message = (
+                f"Refusing camera branch {width}x{height}: its aspect does not "
+                f"match the published frame {published_width}x{published_height}"
+            )
+            self.get_logger().error(message)
+            raise ValueError(message)
+
+    def _request_camera_branch(self, size, frame_type=None, fps=None):
+        """Request a colour branch in the published frame's aspect.
+
+        ``size`` is a chosen resolution. A size whose aspect differs from
+        ``preview_width`` / ``preview_height`` is refused: the camera would
+        deliver a centred crop, and a later per-axis scale cannot undo it.
+        The model's own input size is produced afterwards by an ImageManip
+        with ResizeMode.STRETCH.
+        """
+        width, height = int(size[0]), int(size[1])
+        self._require_published_aspect(width, height)
         if frame_type is None:
             frame_type = dai.ImgFrame.Type.BGR888p
-        output = self.camRgb.requestOutput(size, type=frame_type)
+        request = {"type": frame_type}
+        if fps is not None:
+            request["fps"] = fps
+        output = self.camRgb.requestOutput((width, height), **request)
         if output is None:
             raise RuntimeError(
-                f"Camera cannot provide a {size[0]}x{size[1]} "
-                f"{frame_type} branch output"
+                f"Camera cannot provide a {width}x{height} {frame_type} branch output"
             )
         return output
+
+    def _stretch_to_network_input(self, source, width, height, frame_type):
+        """Stretch a published-aspect branch to a model's own input size."""
+        manip = self.pipeline.create(dai.node.ImageManip)
+        channels = 1 if frame_type == dai.ImgFrame.Type.GRAY8 else 3
+        manip.setMaxOutputFrameSize(int(width) * int(height) * channels)
+        manip.initialConfig.setOutputSize(
+            int(width),
+            int(height),
+            mode=dai.ImageManipConfig.ResizeMode.STRETCH,
+        )
+        manip.initialConfig.setFrameType(frame_type)
+        self._relax_branch_input(manip.inputImage)
+        source.link(manip.inputImage)
+        return manip
 
     def _build_single_network_pipeline(self, model):
         """Build a parsed task when registered, preserving the plain fallback."""
@@ -1770,9 +1891,23 @@ class CameraNode(Node):
         if model.model_id == QR_MODEL_ID:
             validate_qr_blob(dai.OpenVINO.Blob(model.blob_path))
             frame_type = dai.ImgFrame.Type.GRAY8
-        nn_input = self._request_camera_branch(
-            (model.input_width, model.input_height), frame_type=frame_type
+        camera_branch = self._request_camera_branch(
+            self._colour_branch_size(model.model_id), frame_type=frame_type
         )
+        if getattr(self, "_colour_branch_capture", False):
+            queues = getattr(self, "_colour_branch_capture_queues", None)
+            if queues is None:
+                queues = {}
+                self._colour_branch_capture_queues = queues
+            queues[model.model_id] = camera_branch.createOutputQueue(
+                maxSize=1, blocking=False
+            )
+        nn_input = self._stretch_to_network_input(
+            camera_branch,
+            model.input_width,
+            model.input_height,
+            frame_type,
+        ).out
         if archive is not None:
             neural_network = self.pipeline.create(ParsingNeuralNetwork).build(
                 nn_input, archive
@@ -1845,6 +1980,252 @@ class CameraNode(Node):
             "delivered size."
         )
         self.hand_source_size = size
+
+    def _colour_branch_capture_requested(self):
+        """Return whether the operator asked to see the colour branch."""
+        raw = os.environ.get("PIB_COLOUR_BRANCH_FIELD", "")
+        if isinstance(raw, str) and raw.strip():
+            self._colour_branch_capture_dir = raw.strip()
+            return True
+        if os.path.isfile(COLOUR_BRANCH_FIELD_REQUEST):
+            self._colour_branch_capture_dir = COLOUR_BRANCH_FIELD_DIR
+            return True
+        return False
+
+    def _plane_point(self, x, y):
+        """Build a point the transformation remap can read."""
+        point_type = getattr(dai, "Point2f", None)
+        if not callable(point_type):
+            return type("PlanePoint", (), {"x": float(x), "y": float(y)})()
+        try:
+            point = point_type(float(x), float(y))
+        except TypeError:
+            point = point_type()
+            point.x = float(x)
+            point.y = float(y)
+            return point
+        if getattr(point, "x", None) is None or getattr(point, "y", None) is None:
+            try:
+                point.x = float(x)
+                point.y = float(y)
+            except Exception:
+                return type("PlanePoint", (), {"x": float(x), "y": float(y)})()
+        return point
+
+    def _point_xy(self, point):
+        if isinstance(point, (tuple, list)) and len(point) >= 2:
+            return float(point[0]), float(point[1])
+        return float(point.x), float(point.y)
+
+    def _packet_transformation(self, packet):
+        """Read a live ImgTransformation, the same source the hand chain uses."""
+        getter = getattr(packet, "getTransformation", None)
+        if not callable(getter):
+            return None
+        try:
+            transformation = getter()
+        except Exception:
+            return None
+        if transformation is None:
+            return None
+        valid = getattr(transformation, "isValid", None)
+        if callable(valid):
+            try:
+                if valid() is False:
+                    return None
+            except Exception:
+                return None
+        return transformation
+
+    def _remap_into_preview(self, source, preview, point):
+        remap_from = getattr(preview, "remapPointFrom", None)
+        if callable(remap_from):
+            return remap_from(source, point)
+        remap_to = getattr(source, "remapPointTo", None)
+        if callable(remap_to):
+            return remap_to(preview, point)
+        return None
+
+    def _field_from_packets(self, source_packet, frame_width, frame_height):
+        """Field the source packet covers inside the published frame.
+
+        The corners of the delivered image are remapped into the preview, then
+        scaled into the published frame. The result is the window a fraction
+        of that image occupies: origin plus size on each axis. Node outputs
+        have no size getter here, so the size comes from the packet.
+        """
+        preview_packet = getattr(self, "_preview_packet", None)
+        if source_packet is None or preview_packet is None:
+            return None
+        source = self._packet_transformation(source_packet)
+        preview = self._packet_transformation(preview_packet)
+        if source is None or preview is None:
+            return None
+        try:
+            source_size = self._size_pair(source.getSize())
+            preview_size = self._size_pair(preview.getSize())
+            if source_size is None or preview_size is None:
+                return None
+            origin = self._remap_into_preview(source, preview, self._plane_point(0, 0))
+            far = self._remap_into_preview(
+                source,
+                preview,
+                self._plane_point(source_size[0], source_size[1]),
+            )
+            if origin is None or far is None:
+                return None
+            origin_xy = self._point_xy(origin)
+            far_xy = self._point_xy(far)
+            return published_field(
+                origin_xy,
+                far_xy,
+                preview_size,
+                (frame_width, frame_height),
+            )
+        except Exception:
+            return None
+
+    def _object_detection_field(self, packet, frame_width, frame_height):
+        """Inverse-map object detections from the branch window.
+
+        Horizontal boxes already match the published frame, including an
+        object on the left or right border, so that axis stays the full
+        width. The vertical axis uses the window the branch really covers.
+        """
+        derived = getattr(self, "_colour_branch_field", None)
+        if derived is None:
+            derived = self._field_from_packets(packet, frame_width, frame_height)
+            if derived is not None:
+                self._colour_branch_field = derived
+        if derived is None:
+            return (0.0, float(frame_width), 0.0, float(frame_height))
+        return (0.0, float(frame_width), float(derived[2]), float(derived[3]))
+
+    def _poll_colour_branch_capture(self):
+        """Attach the capture to a node that is already running, then rebuild.
+
+        Creating the request file must not start a second camera: this process
+        already owns the device, and it rebuilds its own pipeline.
+        """
+        if getattr(self, "_colour_branch_capture", False):
+            return False
+        if getattr(self, "_colour_branch_capture_attempted", False):
+            return False
+        if not os.path.isfile(COLOUR_BRANCH_FIELD_REQUEST):
+            return False
+        self._colour_branch_capture_attempted = True
+        with self._pipeline_lock:
+            if not self._stop_pipeline():
+                return False
+            self._colour_branch_capture = True
+            self._colour_branch_capture_dir = COLOUR_BRANCH_FIELD_DIR
+            self._colour_branch_capture_written = False
+            self.get_logger().info(
+                "Colour branch field capture enabled; rebuilding the camera pipeline."
+            )
+            self.camera_available = self.init_pipeline()
+        return True
+
+    def _format_src_crops(self, transformation):
+        getter = getattr(transformation, "getSrcCrops", None)
+        if not callable(getter):
+            return "unavailable"
+        try:
+            crops = list(getter())
+        except Exception:
+            return "unavailable"
+        if not crops:
+            return "none"
+        parts = []
+        for crop in crops:
+            center = getattr(crop, "center", None)
+            size = getattr(crop, "size", None)
+            parts.append(
+                "center=({0},{1}) size=({2},{3}) angle={4}".format(
+                    getattr(center, "x", None),
+                    getattr(center, "y", None),
+                    getattr(size, "width", None),
+                    getattr(size, "height", None),
+                    getattr(crop, "angle", None),
+                )
+            )
+        return "; ".join(parts)
+
+    def _write_colour_branch_capture(self, model_id, packet):
+        """Save the delivered branch beside the preview from this same tick."""
+        if self.current_frame is None or getattr(self, "_preview_packet", None) is None:
+            self._pending_colour_branch_packet = (model_id, packet)
+            return
+        directory = getattr(self, "_colour_branch_capture_dir", None)
+        if not directory:
+            directory = COLOUR_BRANCH_FIELD_DIR
+        os.makedirs(directory, exist_ok=True)
+        frame = packet.getCvFrame()
+        delivered = (int(frame.shape[1]), int(frame.shape[0]))
+        transformation = self._packet_transformation(packet)
+        transformation_size = None
+        source_size = None
+        crops = "unavailable"
+        if transformation is not None:
+            transformation_size = self._size_pair(
+                getattr(transformation, "getSize", lambda: None)()
+            )
+            source_size = self._size_pair(
+                getattr(transformation, "getSourceSize", lambda: None)()
+            )
+            crops = self._format_src_crops(transformation)
+        frame_height, frame_width = self.current_frame.shape[:2]
+        field = self._field_from_packets(packet, frame_width, frame_height)
+        if field is not None:
+            self._colour_branch_field = field
+        branch_path = os.path.join(directory, "colour-branch.png")
+        preview_path = os.path.join(directory, "preview.png")
+        report_path = os.path.join(directory, "field.txt")
+        wrote_branch = cv2.imwrite(branch_path, frame)
+        wrote_preview = cv2.imwrite(preview_path, self.current_frame)
+        report = (
+            f"model={model_id}\n"
+            f"delivered={delivered[0]}x{delivered[1]}\n"
+            f"transformation_size={transformation_size}\n"
+            f"source_size={source_size}\n"
+            f"src_crops={crops}\n"
+            f"published={frame_width}x{frame_height}\n"
+            f"field={field}\n"
+        )
+        with open(report_path, "w", encoding="utf-8") as handle:
+            handle.write(report)
+        self._colour_branch_capture_written = True
+        self._pending_colour_branch_packet = None
+        self.get_logger().info(
+            "Colour branch field capture wrote "
+            f"{branch_path} and {preview_path} "
+            f"(branch_image={wrote_branch}, preview_image={wrote_preview}). "
+            f"{report.replace(chr(10), ' ')}"
+        )
+
+    def _drain_colour_branch_capture(self):
+        if not getattr(self, "_colour_branch_capture", False):
+            return
+        if getattr(self, "_colour_branch_capture_written", False):
+            return
+        try:
+            pending = getattr(self, "_pending_colour_branch_packet", None)
+            if pending is not None:
+                self._write_colour_branch_capture(pending[0], pending[1])
+                return
+            queues = getattr(self, "_colour_branch_capture_queues", {})
+            for model_id, queue in queues.items():
+                if queue is None:
+                    continue
+                packet = queue.tryGet()
+                if packet is None:
+                    continue
+                self._write_colour_branch_capture(model_id, packet)
+                return
+        except Exception as exc:
+            self.get_logger().warning(
+                f"Colour branch field capture failed: {type(exc).__name__}: {exc}"
+            )
 
     def _configure_hand_manip(
         self,
@@ -1992,12 +2373,11 @@ class CameraNode(Node):
         # manip, both non-blocking. Requesting two identical Camera outputs
         # exceeds the OAK-D Lite camera-output budget once the colour output is
         # present.
-        hand_tap = self._request_camera_branch((HAND_NN_WIDTH, HAND_NN_HEIGHT))
+        hand_size = self._colour_branch_size("hand_tracking")
+        hand_tap = self._request_camera_branch(hand_size)
         # Every manip crops the frames this branch really carries, so the crops
         # follow the delivered size instead of the requested one.
-        self.hand_source_size = self._branch_output_size(
-            hand_tap, (HAND_NN_WIDTH, HAND_NN_HEIGHT)
-        )
+        self.hand_source_size = self._branch_output_size(hand_tap, hand_size)
         source_width, source_height = self.hand_source_size
 
         palm_manip = self.pipeline.create(dai.node.ImageManip)
@@ -2099,17 +2479,10 @@ class CameraNode(Node):
         # it. The Luxonis reference asks the camera for its own sized, rate
         # limited output instead - three consumers on THAT are fine, the running
         # example has two device consumers plus a host node on one output.
-        imitation_source = self.camRgb.requestOutput(
-            (IMITATION_SOURCE_WIDTH, IMITATION_SOURCE_HEIGHT),
-            type=dai.ImgFrame.Type.BGR888p,
+        imitation_source = self._request_camera_branch(
+            self._colour_branch_size("imitation"),
             fps=IMITATION_FPS,
         )
-        if imitation_source is None:
-            raise RuntimeError(
-                "Camera cannot provide a "
-                f"{IMITATION_SOURCE_WIDTH}x{IMITATION_SOURCE_HEIGHT} "
-                "BGR888p branch for the imitation pipeline"
-            )
         self.imitation_source_size = (
             IMITATION_SOURCE_WIDTH,
             IMITATION_SOURCE_HEIGHT,
@@ -2174,7 +2547,7 @@ class CameraNode(Node):
         """Add parsed YuNet detection, timestamped crops, and a raw classifier."""
         classifier_id = face_crop_classifier_id(composite.artifact_ids)
         if self.face_crop_model_id is not None:
-            raise ValueError("only one face-crop composite may run at a time")
+            raise ValueError(FACE_CROP_EXCLUSIVITY_RULE)
         self.face_crop_model_id = composite.model_id
         self.face_crop_translator = FACE_CROP_TRANSLATORS[classifier_id]
         detector = self.model_registry.get(FACE_DETECTOR_MODEL_ID)
@@ -2199,16 +2572,9 @@ class CameraNode(Node):
 
         # Keep the full 16:9 field of view and the sensor's existing rate. A
         # second fps request on this camera leaves the raw ISP colour queue empty.
-        face_source = self.camRgb.requestOutput(
-            (FACE_CROP_SOURCE_WIDTH, FACE_CROP_SOURCE_HEIGHT),
-            type=dai.ImgFrame.Type.BGR888p,
+        face_source = self._request_camera_branch(
+            self._colour_branch_size(composite.model_id)
         )
-        if face_source is None:
-            raise RuntimeError(
-                "Camera cannot provide a "
-                f"{FACE_CROP_SOURCE_WIDTH}x{FACE_CROP_SOURCE_HEIGHT} "
-                "BGR888p branch for face crops"
-            )
         self.face_crop_source_size = (
             FACE_CROP_SOURCE_WIDTH,
             FACE_CROP_SOURCE_HEIGHT,
@@ -2268,7 +2634,7 @@ class CameraNode(Node):
         if not is_gaze_composite(composite.artifact_ids):
             raise ValueError("gaze composite is missing a required artifact")
         if self.face_crop_model_id is not None:
-            raise ValueError("only one face-crop composite may run at a time")
+            raise ValueError(FACE_CROP_EXCLUSIVITY_RULE)
         self.face_crop_model_id = composite.model_id
         self.face_crop_translator = translate_gaze
 
@@ -2294,16 +2660,9 @@ class CameraNode(Node):
         # The camera must already be built before requesting this branch. It feeds
         # YuNet and all three croppers, so every consumer is bounded and
         # non-blocking to keep one slow path from back-pressuring the camera.
-        face_source = self.camRgb.requestOutput(
-            (FACE_CROP_SOURCE_WIDTH, FACE_CROP_SOURCE_HEIGHT),
-            type=dai.ImgFrame.Type.BGR888p,
+        face_source = self._request_camera_branch(
+            self._colour_branch_size(composite.model_id)
         )
-        if face_source is None:
-            raise RuntimeError(
-                "Camera cannot provide a "
-                f"{FACE_CROP_SOURCE_WIDTH}x{FACE_CROP_SOURCE_HEIGHT} "
-                "BGR888p branch for gaze estimation"
-            )
         self.face_crop_source_size = (
             FACE_CROP_SOURCE_WIDTH,
             FACE_CROP_SOURCE_HEIGHT,
@@ -2441,15 +2800,9 @@ class CameraNode(Node):
         # was taken out, while the same branch at the sensor's rate works. The rate
         # of the chain is set by the crop/landmark pairing, not by throttling the
         # camera.
-        hand_mp_source = self.camRgb.requestOutput(
-            (HAND_MP_SOURCE_WIDTH, HAND_MP_SOURCE_HEIGHT),
-            type=dai.ImgFrame.Type.BGR888p,
+        hand_mp_source = self._request_camera_branch(
+            self._colour_branch_size("hand_tracking_mp")
         )
-        if hand_mp_source is None:
-            raise RuntimeError(
-                "Camera cannot provide a "
-                f"{HAND_MP_SOURCE_WIDTH}x{HAND_MP_SOURCE_HEIGHT} BGR888p branch"
-            )
         self.hand_mp_source_size = (HAND_MP_SOURCE_WIDTH, HAND_MP_SOURCE_HEIGHT)
         hand_mp_source.link(detector_resize.inputImage)
 
@@ -2501,6 +2854,131 @@ class CameraNode(Node):
         self.hand_mp_landmark_queue = landmark_nn.out.createOutputQueue(
             maxSize=HAND_MP_PAIR_WINDOW, blocking=False
         )
+
+    def _build_hand_fast_pipeline(self, composite):
+        """Add the device-side palm, top-2 decoder and landmark chain.
+
+        The Script computes both crop configurations and links them on the
+        device. The only host queue is the detection result.
+        """
+        required = {
+            "palm_detection_sh4",
+            "pd_postprocessing_top2_sh1",
+            "hand_landmark_full_sh4",
+        }
+        artifact_ids = set(composite.artifact_ids)
+        if not required.issubset(artifact_ids):
+            raise ValueError(
+                "hand_tracking_fast composite is missing a palm, decoder, or "
+                "landmark blob"
+            )
+        palm = self.model_registry.get("palm_detection_sh4")
+        decoder = self.model_registry.get("pd_postprocessing_top2_sh1")
+        landmark = self.model_registry.get("hand_landmark_full_sh4")
+        branch_size = self._colour_branch_size(FAST_MODEL_ID)
+        source = self._request_camera_branch(branch_size)
+        self.hand_fast_source_size = self._branch_output_size(source, branch_size)
+        source_width, source_height = self.hand_fast_source_size
+        self.hand_fast_queue = build_fast_hand_graph(
+            self.pipeline,
+            source,
+            palm,
+            decoder,
+            landmark,
+            source_width,
+            source_height,
+        )
+
+    def _hand_fast_chain_is_built(self):
+        requested = any(
+            active.model.model_id == FAST_MODEL_ID
+            for active in getattr(self, "_pipeline_models", ())
+        )
+        if not requested:
+            return False
+        return getattr(self, "hand_fast_queue", None) is not None
+
+    def _fast_detection_message(self, hand):
+        detection = Detection()
+        detection.label = "hand"
+        detection.score = float(hand.landmark_score)
+        detection.x_min = int(hand.x_min)
+        detection.y_min = int(hand.y_min)
+        detection.x_max = int(hand.x_max)
+        detection.y_max = int(hand.y_max)
+        detection.keypoint_names = list(HAND_KEYPOINT_NAMES)
+        detection.keypoint_x = [float(value) for value in hand.keypoint_x]
+        detection.keypoint_y = [float(value) for value in hand.keypoint_y]
+        detection.keypoint_z = [float(value) for value in hand.keypoint_z]
+        detection.scalar_names = [
+            "handedness",
+            "palm_score",
+            "landmark_score",
+            "z_source",
+        ]
+        detection.scalar_values = [
+            float(hand.handedness),
+            float(hand.palm_score),
+            float(hand.landmark_score),
+            1.0,
+        ]
+        return detection
+
+    def _publish_hand_fast_detections(self, frame_width, frame_height, detections):
+        message = DetectionArray()
+        message.header.stamp = self.get_clock().now().to_msg()
+        message.model_id = FAST_MODEL_ID
+        message.frame_width = frame_width
+        message.frame_height = frame_height
+        message.detections = detections
+        self.last_detections[FAST_MODEL_ID] = message
+        publisher = self.detection_publishers.get(FAST_MODEL_ID)
+        if publisher is not None:
+            publisher.publish(message)
+        self.pipeline_manager.record_packet(FAST_MODEL_ID)
+
+    def _process_hand_tracking_fast(self):
+        queue = getattr(self, "hand_fast_queue", None)
+        if queue is None or self.current_frame is None:
+            return
+        frame_height, frame_width = self.current_frame.shape[:2]
+        source_width, source_height = getattr(self, "hand_fast_source_size", (0, 0))
+        if source_width <= 0 or source_height <= 0:
+            return
+        packet = getattr(self, "_pending_hand_fast_packet", None)
+        self._pending_hand_fast_packet = None
+        for _ in range(32):
+            if packet is None:
+                packet = queue.tryGet()
+            if packet is None:
+                break
+            try:
+                detections = [
+                    self._fast_detection_message(
+                        map_fast_hand(
+                            hand,
+                            frame_width,
+                            frame_height,
+                            source_width,
+                            source_height,
+                        )
+                    )
+                    for hand in parse_fast_script_result(packet)
+                ]
+            except (KeyError, TypeError, ValueError) as exc:
+                self._hand_fast_error_count = (
+                    getattr(self, "_hand_fast_error_count", 0) + 1
+                )
+                if self._hand_fast_error_count % 25 == 1:
+                    self.get_logger().error(
+                        "HAND_FAST_DROP "
+                        f"count={self._hand_fast_error_count} "
+                        f"type={type(exc).__name__} message={exc}"
+                    )
+                packet = None
+                continue
+            self._publish_hand_fast_detections(frame_width, frame_height, detections)
+            packet = None
 
     def _publish_ready_face_crops(self, stamp):
         entry = self.face_crop_pairs.get(stamp)
@@ -2789,8 +3267,14 @@ class CameraNode(Node):
             self._pipeline_lock = pipeline_lock
         with pipeline_lock, CameraNode._device_lifecycle_lock:
             pipeline = self.pipeline
+            # True when there is nothing to stop. A pipeline that never reports
+            # stopped used to return False before this cleanup, which left the
+            # pipeline object and _device_owner in place. The next open then
+            # failed with X_LINK_DEVICE_ALREADY_IN_USE for good.
+            released = True
             if pipeline is not None:
                 stop_failed = False
+                released = False
                 try:
                     pipeline.stop()
                 except Exception as exc:
@@ -2799,7 +3283,6 @@ class CameraNode(Node):
                         f"Camera pipeline stop reported an error: {exc}"
                     )
                 deadline = time.monotonic() + PIPELINE_STOP_TIMEOUT
-                released = False
                 while time.monotonic() < deadline:
                     try:
                         if pipeline.isRunning() is not True:
@@ -2813,11 +3296,12 @@ class CameraNode(Node):
                     self.get_logger().warning(
                         "Camera pipeline did not report stopped before timeout."
                     )
-                    return False
             owner_ref = CameraNode._device_owner
             if owner_ref is not None and owner_ref() is self:
                 CameraNode._device_owner = None
             self.pipeline = None
+            self.camRgb = None
+            self.isp_out = None
             self.queue = None
             self.depth_queue = None
             self.imu_queue = None
@@ -2846,9 +3330,15 @@ class CameraNode(Node):
             self.hand_mp_detection_queue = None
             self.hand_mp_landmark_queue = None
             self.hand_mp_source_size = (0, 0)
+            self.hand_fast_queue = None
+            self.hand_fast_source_size = (0, 0)
+            self._pending_hand_fast_packet = None
+            self._colour_branch_capture_queues = {}
+            self._pending_colour_branch_packet = None
+            self._colour_branch_field = None
             if hasattr(self, "_pending_hands"):
                 self._pending_hands.clear()
-            return True
+            return released
 
     def _start_pipeline(self, include_stereo):
         """Build and start a fresh pipeline with bounded retries."""
@@ -2889,7 +3379,13 @@ class CameraNode(Node):
                         "Camera pipeline build/start attempt "
                         f"{attempt + 1}/{PIPELINE_START_ATTEMPTS} failed: {exc}"
                     )
-                    self._stop_pipeline()
+                    # False means the pipeline did not report stopped. The
+                    # holder is already cleared, but the device may still be
+                    # in use, so this attempt must not open another one.
+                    # A later start can open it; retrying here is the
+                    # X_LINK_DEVICE_ALREADY_IN_USE loop.
+                    if not self._stop_pipeline():
+                        return False
                     # Some OAK variants expose no IMU. If a graph containing
                     # dai.node.IMU is rejected at start, retry the same camera
                     # graph without it instead of taking down camera topics.
@@ -2932,6 +3428,7 @@ class CameraNode(Node):
                 "hand_tracking",
                 "imitation",
                 "hand_tracking_mp",
+                FAST_MODEL_ID,
                 getattr(self, "face_crop_model_id", None),
             }
             missing = [
@@ -2952,6 +3449,10 @@ class CameraNode(Node):
                 or (
                     active.model.model_id == "hand_tracking_mp"
                     and not self._hand_mp_chain_is_built()
+                )
+                or (
+                    active.model.model_id == FAST_MODEL_ID
+                    and not self._hand_fast_chain_is_built()
                 )
                 or (
                     active.model.model_id not in special_ids
@@ -2976,6 +3477,7 @@ class CameraNode(Node):
             "hand_tracking",
             "imitation",
             "hand_tracking_mp",
+            FAST_MODEL_ID,
             face_crop_id,
         }
         if "hand_tracking" in requested_ids and not self._hand_chain_is_built():
@@ -2996,6 +3498,11 @@ class CameraNode(Node):
         if "hand_tracking_mp" in requested_ids and not self._hand_mp_chain_is_built():
             self.get_logger().error(
                 "Cannot verify hand_tracking_mp: the reference chain is absent"
+            )
+            return False
+        if FAST_MODEL_ID in requested_ids and not self._hand_fast_chain_is_built():
+            self.get_logger().error(
+                "Cannot verify hand_tracking_fast: the detection queue is absent"
             )
             return False
         if any(
@@ -3070,6 +3577,16 @@ class CameraNode(Node):
                 )
                 return False
             self._count_hand_stage("publish")
+        if FAST_MODEL_ID in requested_ids:
+            # The Script emits a result on every cycle, including a frame with
+            # no hand, so this wait does not require a hand to be in view.
+            packet = self._wait_for_queue_packet(self.hand_fast_queue, timeout)
+            if packet is None:
+                self.get_logger().error(
+                    "hand_tracking_fast chain started but no detection result arrived"
+                )
+                return False
+            self._pending_hand_fast_packet = packet
         return True
 
     def _revert_to_color_only(self):
@@ -3296,12 +3813,15 @@ class CameraNode(Node):
                     )
 
     def timer_callback(self):
+        if self._poll_colour_branch_capture():
+            return
         if self.queue:
             image_rgb = self._pending_color_packet
             self._pending_color_packet = None
             if image_rgb is None:
                 image_rgb = self.queue.tryGet()
             if image_rgb is not None:
+                self._preview_packet = image_rgb
                 frame = image_rgb.getCvFrame()
                 self.current_source_size = (frame.shape[1], frame.shape[0])
 
@@ -3327,6 +3847,8 @@ class CameraNode(Node):
                         msg = String()
                         msg.data = encoded
                         self.publisher_.publish(msg)
+
+        self._drain_colour_branch_capture()
 
         for model_id, nn_queue in self.nn_queues.items():
             packet = self._pending_nn_packets.pop(model_id, None)
@@ -3375,6 +3897,10 @@ class CameraNode(Node):
             self._process_hand_mp()
         except Exception as exc:  # pragma: no cover - defensive, verified by E2E
             self._warn_hand_once(f"hand_mp processing failed: {exc!r}")
+        try:
+            self._process_hand_tracking_fast()
+        except Exception as exc:  # pragma: no cover - defensive, verified by E2E
+            self._warn_hand_once(f"hand_tracking_fast processing failed: {exc!r}")
         self._process_imitation()
         try:
             self._process_face_crop()

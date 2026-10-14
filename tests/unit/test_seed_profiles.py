@@ -12,6 +12,11 @@ from seed_profiles import (
     resolve_variant_and_source,
     resolve_variant_from_environment,
 )
+from seed_profiles.edu_motor_parameters import (
+    FINGER_MOTOR_PARAMETERS,
+    INVERTED_FINGER_MOTOR_PARAMETERS,
+    MOTOR_PARAMETER_DEVIATIONS,
+)
 
 TINKERFORGE = "tinkerforge_bricklet"
 SERVO = "Servo Bricklet"
@@ -101,16 +106,71 @@ def test_rgb_button_controller_ids_are_variant_specific():
 
 
 def test_edu_profiles_share_motor_parameters():
+    """Defaults stay one shared object. Deviations sharing was narrowed on purpose.
+
+    pib5edu extends the shared deviations. Six of the eight inverted motors already
+    have a finger entry there, so those entries are replaced; elbow_left and
+    shoulder_vertical_left are the new keys. The motors whose deviation object
+    differs are exactly the eight inverted ones.
+    """
     pib4_profile = get_profile("pib4edu")
     pib5_profile = get_profile("pib5edu")
 
     assert (
         pib4_profile.motor_parameter_defaults is pib5_profile.motor_parameter_defaults
     )
-    assert (
-        pib4_profile.motor_parameter_deviations
-        is pib5_profile.motor_parameter_deviations
-    )
+
+    shared_deviations = pib4_profile.motor_parameter_deviations
+    pib5_deviations = pib5_profile.motor_parameter_deviations
+    inverted_motors = {
+        "elbow_left",
+        "shoulder_vertical_left",
+        "index_right_stretch",
+        "ring_right_stretch",
+        "pinky_right_stretch",
+        "index_left_stretch",
+        "ring_left_stretch",
+        "pinky_left_stretch",
+    }
+    non_inverted_fingers = {
+        "thumb_right_opposition",
+        "thumb_right_stretch",
+        "middle_right_stretch",
+        "thumb_left_opposition",
+        "thumb_left_stretch",
+        "middle_left_stretch",
+    }
+
+    assert shared_deviations is MOTOR_PARAMETER_DEVIATIONS
+    assert pib5_deviations is not shared_deviations
+    assert set(shared_deviations) < set(pib5_deviations)
+
+    extra_keys = set(pib5_deviations) - set(shared_deviations)
+    replaced_keys = {
+        name
+        for name in shared_deviations
+        if pib5_deviations[name] is not shared_deviations[name]
+    }
+    assert extra_keys == {"elbow_left", "shoulder_vertical_left"}
+    assert replaced_keys == inverted_motors - extra_keys
+    assert extra_keys | replaced_keys == inverted_motors
+
+    for name in extra_keys:
+        assert pib5_deviations[name] == {"invert": True}
+    for name in replaced_keys:
+        assert pib5_deviations[name] is INVERTED_FINGER_MOTOR_PARAMETERS
+        assert shared_deviations[name] is FINGER_MOTOR_PARAMETERS
+        for key, value in FINGER_MOTOR_PARAMETERS.items():
+            assert pib5_deviations[name][key] == value
+    for name in non_inverted_fingers:
+        assert shared_deviations[name] is FINGER_MOTOR_PARAMETERS
+        assert pib5_deviations[name] is FINGER_MOTOR_PARAMETERS
+        assert "invert" not in pib5_deviations[name]
+    for name, deviation in shared_deviations.items():
+        if name in replaced_keys:
+            assert "invert" not in deviation
+            continue
+        assert pib5_deviations[name] is deviation
 
 
 @pytest.mark.parametrize("variant", ["pib4advanced", "pib5advanced", "pib5museum"])

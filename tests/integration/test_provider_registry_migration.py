@@ -1,0 +1,225 @@
+"""Upgrade an existing database into the provider registry."""
+
+import json
+import os
+from pathlib import Path
+import sqlite3
+import subprocess
+import sys
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+FLASK_DIR = REPO_ROOT / "pib_api" / "flask"
+IMPORT_DIRS = (
+    FLASK_DIR,
+    REPO_ROOT / "pib_blockly" / "pib_blockly_client",
+    REPO_ROOT / "pib_api" / "client",
+    REPO_ROOT / "public_api_client",
+    REPO_ROOT / "pib_hermes_config",
+)
+
+
+def _upgrade(database: Path, revision: str) -> None:
+    environment = os.environ.copy()
+    environment["SQLALCHEMY_DATABASE_URI"] = f"sqlite:///{database}"
+    environment["PYTHONPATH"] = os.pathsep.join(map(str, IMPORT_DIRS))
+    environment["PYTHON_CODE_DIR"] = str(database.parent / "programs")
+    environment["TRYB_URL_PREFIX"] = "http://localhost/test"
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "flask",
+            "--app",
+            "run",
+            "db",
+            "upgrade",
+            revision,
+        ],
+        cwd=FLASK_DIR,
+        env=environment,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_upgrade_copies_assistant_model_ids_onto_the_provider_registry(tmp_path):
+    database = tmp_path / "existing.db"
+    (tmp_path / "programs").mkdir()
+    _upgrade(database, "b17461748001")
+
+    with sqlite3.connect(database) as connection:
+        connection.execute("""
+            INSERT INTO assistant_model (id, api_name, visual_name, has_image_support)
+            VALUES
+                (11, 'gpt-4o', 'GPT-4o [Vision]', 1),
+                (12, 'gpt-4o', 'GPT-4o [Text]', 0),
+                (13, 'gemini-3.5-flash', 'Gemini 3.5 Flash', 0),
+                (14, 'hermes-agent', 'Hermes Agent (selbstlernend)', 1)
+            """)
+        connection.execute("""
+            INSERT INTO personality (
+                id, name, personality_id, gender, description, pause_threshold,
+                message_history, assistant_model_id, stt_engine
+            )
+            VALUES
+                (
+                    21, 'Existing', 'person-existing', 'Female', 'kept', 0.8,
+                    5, 12, 'local_whisper'
+                ),
+                (
+                    22, 'OnHermes', 'person-hermes', 'Male', 'kept', 0.8,
+                    5, 14, 'local_whisper'
+                )
+            """)
+        connection.commit()
+
+    # The registry is created from the legacy rows first, keeping their ids.
+    _upgrade(database, "c4e8a1b27d90")
+
+    with sqlite3.connect(database) as connection:
+        copied = {
+            row[0]: row
+            for row in connection.execute(
+                "SELECT id, api_name, visual_name, has_image_support FROM provider"
+            )
+        }
+        personality = connection.execute("""
+            SELECT assistant_model_id, provider_ref
+            FROM personality WHERE id = 21
+            """).fetchone()
+        on_hermes = connection.execute("""
+            SELECT assistant_model_id, provider_ref
+            FROM personality WHERE id = 22
+            """).fetchone()
+    assert set(copied) == {11, 12, 13, 14}
+    assert copied[12][1:] == ("gpt-4o", "GPT-4o [Text]", 0)
+    assert personality == (12, "12")
+    assert on_hermes == (14, "14")
+
+    # At head, only the catalogue's models are left. Nothing old survives.
+    _upgrade(database, "head")
+
+    with sqlite3.connect(database) as connection:
+        provider_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(provider)")
+        }
+        model_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(registry_model)")
+        }
+        accounts = {row[0]: row for row in connection.execute("""
+                SELECT id, name, endpoint_base, credential_ref, capabilities
+                FROM provider
+                """)}
+        providers = {row[1]: row for row in connection.execute("""
+                SELECT id, api_name, visual_name, has_image_support,
+                       capabilities, is_default, live_model, live_model_checked_on,
+                       provider_id
+                FROM registry_model
+                ORDER BY id
+                """)}
+        assistant_models = {
+            row[1]: row
+            for row in connection.execute(
+                "SELECT id, api_name, visual_name, has_image_support FROM assistant_model"
+            )
+        }
+        personality = connection.execute("""
+            SELECT assistant_model_id, provider_ref
+            FROM personality WHERE id = 21
+            """).fetchone()
+        on_hermes = connection.execute("""
+            SELECT assistant_model_id, provider_ref
+            FROM personality WHERE id = 22
+            """).fetchone()
+        voice = connection.execute("""
+            SELECT voice_mode, live_idle_timeout FROM personality WHERE id = 21
+            """).fetchone()
+
+    supported = {
+        "gemini-3.8-flash",
+        "gemini-3.8-live",
+        "gpt-6",
+        "claude-sonnet-5-5",
+        "pib-cloud",
+    }
+    catalogue_providers = {
+        "gemini-3.8-flash": "Google",
+        "gemini-3.8-live": "Google",
+        "gpt-6": "OpenAI",
+        "claude-sonnet-5-5": "Anthropic",
+        "pib-cloud": "pib.Cloud",
+    }
+    assert provider_columns == {
+        "id",
+        "name",
+        "endpoint_base",
+        "credential_ref",
+        "capabilities",
+    }
+    assert {
+        "id",
+        "api_name",
+        "visual_name",
+        "capabilities",
+        "provider_id",
+    } <= model_columns
+    assert set(providers) == supported
+    assert set(assistant_models) == supported
+    # Google owns both Gemini models. The other accounts own one each.
+    assert len(accounts) == 4
+    models_per_account: dict[int, int] = {}
+    for api_name in supported:
+        account_id = providers[api_name][8]
+        models_per_account[account_id] = models_per_account.get(account_id, 0) + 1
+    for api_name in supported:
+        model = providers[api_name]
+        account = accounts[model[8]]
+        assert model[0] == assistant_models[api_name][0]
+        assert model[2] == assistant_models[api_name][2]
+        assert account[1] == catalogue_providers[api_name]
+        assert account[2] is None
+        assert account[3] is None
+        if models_per_account[model[8]] == 1:
+            assert json.loads(account[4]) == json.loads(model[4])
+    assert "hermes-agent" not in providers
+    assert "hermes-agent" not in assistant_models
+    assert {providers[name][0] for name in supported} & {11, 12, 13, 14} == set()
+    assert [name for name, row in providers.items() if row[5] == 1] == ["pib-cloud"]
+    assert providers["pib-cloud"][2] == "pib.Cloud"
+    assert json.loads(providers["pib-cloud"][4])["images"] is True
+    assert json.loads(providers["gemini-3.8-flash"][4])["live"] is False
+    assert providers["gemini-3.8-flash"][6:8] == (None, None)
+    assert json.loads(providers["gemini-3.8-live"][4])["live"] is True
+    assert providers["gemini-3.8-live"][2] == "Gemini 3.8 Live"
+    assert providers["gemini-3.8-live"][6:8] == (None, None)
+    assert providers["gemini-3.8-live"][8] == providers["gemini-3.8-flash"][8]
+    google = json.loads(accounts[providers["gemini-3.8-flash"][8]][4])
+    assert google["tools"] is True
+    assert google["images"] is False
+    assert google["live"] is False
+    assert providers["gpt-6"][6:8] == (None, None)
+    # The personality is not moved onto another model. Its reference stays and
+    # now points at nothing, which is what reports it as needing a new model.
+    assert personality == (None, "12")
+    # The personality that pointed at hermes-agent keeps that reference.
+    assert on_hermes == (None, "14")
+    assert voice == ("live", 60)
+
+    from sqlalchemy import Column, Integer, JSON, create_engine
+    from sqlalchemy.orm import DeclarativeBase, Session
+
+    class Base(DeclarativeBase):
+        pass
+
+    class ModelRow(Base):
+        __tablename__ = "registry_model"
+        id = Column(Integer, primary_key=True)
+        capabilities = Column(JSON)
+
+    engine = create_engine(f"sqlite:///{database}")
+    with Session(engine) as session:
+        pib_cloud = session.get(ModelRow, providers["pib-cloud"][0])
+        assert isinstance(pib_cloud.capabilities, dict)
+        assert pib_cloud.capabilities["images"] is True
+        assert pib_cloud.capabilities["tools"] is True

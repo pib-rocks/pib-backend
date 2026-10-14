@@ -1,0 +1,10 @@
+[Unit]
+Description=Watch for robot display web requests
+After=local-fs.target
+
+[Path]
+PathExists=/home/pib/app/.update/display-web.json
+Unit=pib-display-web.service
+
+[Install]
+WantedBy=multi-user.target

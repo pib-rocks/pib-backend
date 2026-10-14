@@ -3,7 +3,9 @@ import {
     getModelDropdownOptions,
     modelBlocks,
     refreshModelOptions,
+    resetModelOptionsForTests,
     rosbridgeUrl,
+    STOP_ALL_MODELS_VALUE,
 } from "./model-blocks";
 
 interface RosbridgeRequest {
@@ -77,6 +79,7 @@ describe("model blocks", () => {
     });
 
     beforeEach(() => {
+        resetModelOptionsForTests();
         originalWebSocket = window.WebSocket;
         FakeWebSocket.instances = [];
         window.WebSocket = FakeWebSocket as unknown as typeof WebSocket;
@@ -146,7 +149,15 @@ describe("model blocks", () => {
             (start.getField("MODEL_ID") as Blockly.FieldDropdown).getOptions(
                 false,
             ),
-        ).toEqual([["hand_tracking", "hand_tracking"]]);
+        ).toEqual([["hand_tracking_fast", "hand_tracking_fast"]]);
+        expect(
+            (stop.getField("MODEL_ID") as Blockly.FieldDropdown).getOptions(
+                false,
+            ),
+        ).toEqual([
+            ["All", STOP_ALL_MODELS_VALUE],
+            ["hand_tracking_fast", "hand_tracking_fast"],
+        ]);
         start.setFieldValue("saved_custom_model", "MODEL_ID");
         expect(start.getFieldValue("MODEL_ID")).toBe("saved_custom_model");
 
@@ -192,6 +203,21 @@ describe("model blocks", () => {
         expect(FakeWebSocket.instances.length).toBe(1);
 
         jasmine.clock().tick(5_000);
+        refreshModelOptions();
+        expect(FakeWebSocket.instances.length).toBe(2);
+        FakeWebSocket.instances[1].close();
+    });
+
+    it("sends a request, deduplicates the next call, and sends again after the test reset", () => {
+        expect(getModelDropdownOptions()).toEqual([
+            ["hand_tracking_fast", "hand_tracking_fast"],
+        ]);
+        expect(FakeWebSocket.instances.length).toBe(1);
+
+        refreshModelOptions();
+        expect(FakeWebSocket.instances.length).toBe(1);
+
+        resetModelOptionsForTests();
         refreshModelOptions();
         expect(FakeWebSocket.instances.length).toBe(2);
     });

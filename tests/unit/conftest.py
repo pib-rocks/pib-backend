@@ -36,9 +36,27 @@ from app.app import app as flask_app  # noqa: E402
 from app.app import db  # noqa: E402
 from click.testing import CliRunner  # noqa: E402
 from commands import seed_db  # noqa: E402
-from model.assistant_model import AssistantModel  # noqa: E402
 from model.personality_model import Personality  # noqa: E402
 from service import personality_service  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def local_ollama_absent(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A host that has qwen-fast must not change every other test's catalogue.
+
+    Tests of the local model replace ``fetch_tags`` with a tags document.
+    """
+    from service import local_model_service
+
+    monkeypatch.setattr(local_model_service, "fetch_tags", lambda: {"models": []})
+
+
+@pytest.fixture(autouse=True)
+def skip_account_live_model_pin(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Unlock must not call a provider model list. Pin tests call the function."""
+    import service.live_model_service as live_model_service
+
+    monkeypatch.setattr(live_model_service, "pin_unlocked_providers", lambda: None)
 
 
 @pytest.fixture(autouse=True)
@@ -53,9 +71,16 @@ def sandboxed_hermes_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Pa
     home.mkdir()
     monkeypatch.setenv("HERMES_HOME", str(home))
     monkeypatch.setenv("PIB_HERMES_PROFILES_DIR", str(home / "profiles"))
+    # A host marker file must not flip channel tests. 1 keeps Smart available.
+    monkeypatch.setenv("PIB_SMART_CHATS", "1")
     # Host Gemini keys must not leak into profile-provisioning assertions.
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    # A host key-store settings file must not flip encryption off under the tests.
+    monkeypatch.setenv(
+        "PIB_KEY_STORE_PATH", str(tmp_path / "secrets" / "provider_key_store.json")
+    )
+    monkeypatch.delenv("PIB_KEY_STORE_SETTINGS_PATH", raising=False)
     return home
 
 
@@ -71,6 +96,8 @@ def app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("PYTHON_CODE_DIR", str(programs_dir))
     monkeypatch.setenv("HOST_IP_FILE", str(host_ip_file))
     monkeypatch.setenv("PIB_HARDWARE_VARIANT", "pib5edu")
+    # A host marker file must not flip channel tests. 1 keeps Smart available.
+    monkeypatch.setenv("PIB_SMART_CHATS", "1")
     # Keep SOUL materialization inside the test sandbox instead of the robot's
     # real, container-shared profiles directory.
     monkeypatch.setenv("PIB_HERMES_PROFILES_DIR", str(tmp_path / "hermes-profiles"))
@@ -136,17 +163,109 @@ def app_ctx(app) -> Generator:
 @pytest.fixture()
 def make_personality(app_ctx):
     def _make(**kwargs):
-        model = AssistantModel.query.first()
+        # The default provider is the one the catalogue maintains, pib.Cloud.
         dto = {
             "name": kwargs.get("name", "Test"),
             "gender": kwargs.get("gender", "Female"),
             "pause_threshold": kwargs.get("pause_threshold", 0.8),
             "message_history": kwargs.get("message_history", 5),
-            "assistant_model_id": kwargs.get("assistant_model_id", model.id),
             "description": kwargs.get("description", ""),
         }
+        if "assistant_model_id" in kwargs:
+            dto["assistant_model_id"] = kwargs["assistant_model_id"]
         personality = personality_service.create_personality(dto)
         db.session.commit()
         return personality
 
     return _make
+
+
+@pytest.fixture(autouse=True)
+def hermes_turn_has_a_provider_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Existing Hermes tests do not open the key store.
+
+    A turn now asks the store before it starts. This stand-in keeps those
+    tests on their previous path. Tests of the store itself replace it.
+    """
+    from public_api_client import hermes_agent_client
+
+    if not hasattr(hermes_agent_client, "provider_key_for_turn"):
+        return
+    monkeypatch.setattr(
+        hermes_agent_client,
+        "provider_key_for_turn",
+        lambda: "fixture-hermes-key",
+    )
+
+
+# A skip whose reason is not listed here fails the session. A missing camera
+# wheel or a missing model blob must run, not skip, once the unit job installs
+# the wheels and the model release asset.
+_ALLOWED_SKIP_REASONS = (
+    # test_setup_build_hygiene.py: two parametrized checks share this reason.
+    # A Dockerfile that never invokes pip has no pin and no root-user action
+    # to assert, so the skip is the check.
+    "image does not use pip",
+)
+
+_seen_skips: list[tuple[str, str]] = []
+
+
+def _skip_reason(report) -> str:
+    longrepr = getattr(report, "longrepr", None)
+    if isinstance(longrepr, tuple) and len(longrepr) >= 3:
+        text = str(longrepr[2])
+    else:
+        text = str(longrepr or "")
+    prefix = "Skipped: "
+    if text.startswith(prefix):
+        text = text[len(prefix) :]
+    return text.strip()
+
+
+def _record_skip(nodeid: str, reason: str) -> None:
+    item = (nodeid, reason)
+    if item not in _seen_skips:
+        _seen_skips.append(item)
+
+
+def _disallowed_skips() -> list[tuple[str, str]]:
+    return [
+        (nodeid, reason)
+        for nodeid, reason in _seen_skips
+        if reason not in _ALLOWED_SKIP_REASONS
+    ]
+
+
+def pytest_collectreport(report):
+    """Module-level pytest.skip is reported at collection, not as a test call."""
+    if getattr(report, "skipped", False):
+        _record_skip(getattr(report, "nodeid", ""), _skip_reason(report))
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    outcome = yield
+    report = outcome.get_result()
+    if report.skipped and report.when in ("setup", "call"):
+        _record_skip(report.nodeid, _skip_reason(report))
+
+
+def pytest_terminal_summary(terminalreporter, exitstatus, config):
+    if not _seen_skips:
+        return
+    terminalreporter.write_sep("=", "unit skip policy")
+    for nodeid, reason in _seen_skips:
+        mark = "ALLOW" if reason in _ALLOWED_SKIP_REASONS else "DENY"
+        terminalreporter.write_line(f"{mark} {nodeid}: {reason}")
+    disallowed = _disallowed_skips()
+    if disallowed:
+        terminalreporter.write_line(
+            f"{len(disallowed)} skip(s) outside the allowlist in tests/unit/conftest.py"
+        )
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_sessionfinish(session, exitstatus):
+    if _disallowed_skips() and session.exitstatus == 0:
+        session.exitstatus = pytest.ExitCode.TESTS_FAILED

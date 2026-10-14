@@ -49,7 +49,7 @@ function build_ros_datatypes() {
     # NOTE: Debian Trixie / Rospian does NOT provide the python3-colcon-common-extensions
     # metapackage, so we install the individual colcon packages that do exist. Without
     # python3-colcon-bash, colcon build would not generate install/setup.bash.
-    sudo apt install -y \
+    sudo apt-get install -y \
         python3-colcon-core python3-colcon-ros python3-colcon-cmake \
         python3-colcon-bash python3-colcon-python-setup-py \
         python3-colcon-defaults python3-colcon-library-path \
@@ -123,8 +123,8 @@ function install_ros_jazzy() {
         print INFO "Added Rospian APT repository"
     fi
 
-    sudo apt update -qq
-    sudo apt install -y ros-jazzy-ros-base
+    sudo apt-get update -qq
+    sudo apt-get install -y ros-jazzy-ros-base
 
     configure_ros_jazzy_bashrc
     build_ros_datatypes || return 1

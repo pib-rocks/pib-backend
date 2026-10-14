@@ -45,8 +45,9 @@ DOCKER_STUB = """#!/bin/bash
 exit 0
 """
 
-# print() and command_exists() come from setup-pib.sh, which sources
-# docker_install.sh; sourcing setup-pib.sh itself would run the installer.
+# print(), command_exists(), run_step() and require_nonempty() come from setup-pib.sh,
+# which sources docker_install.sh; sourcing setup-pib.sh itself would run the
+# installer. run_step is reduced to "run the command" here.
 HARNESS = """
 function print() {
     if [ -z "${2:-}" ]; then
@@ -56,6 +57,13 @@ function print() {
     fi
 }
 function command_exists() { command -v "$@" >/dev/null 2>&1; }
+function run_step() { shift; "$@"; }
+function require_nonempty() {
+    local name
+    for name in "$@"; do
+        [ -n "${!name}" ] || { echo "[ERROR][[ ${name} is empty ]]"; return 1; }
+    done
+}
 source "$DOCKER_INSTALL"
 """
 
@@ -97,6 +105,8 @@ def _run(tmp_path: Path, script: str, start_status: int = 0):
         BACKEND_DIR=str(backend_dir),
         FRONTEND_DIR=str(tmp_path / "cerebra"),
         DOCKER_INSTALL=str(DOCKER_INSTALL),
+        # The compose output file defaults to $HOME; keep it inside the sandbox.
+        PIB_DOCKER_BUILD_LOG=str(tmp_path / "docker-build.log"),
     )
     result = subprocess.run(
         ["bash", "-c", script],

@@ -1,18 +1,19 @@
 # Test Basis: Local Speech-to-Text (STT) Transcription with faster-whisper
 
 ## Overview
-This document specifies the requirements and acceptance criteria for the local Speech-to-Text (STT) transcription system in `pib-backend` (`ros_packages/voice_assistant`). The STT engine is powered by `faster-whisper` using the optimized **`base`** model size for 100% offline speech recognition on Raspberry Pi 5 ARM64 CPU.
+This document specifies the requirements and acceptance criteria for the local Speech-to-Text (STT) transcription system in `pib-backend` (`ros_packages/voice_assistant`). The STT engine is powered by `faster-whisper` using the **`small`** model size for offline speech recognition on Raspberry Pi 5 ARM64 CPU. Weights are read from `/data/voice/models/whisper/` (`voice/whisper-model.yaml`). `medium` is an override, not the default. Compute type stays `int8`.
 
 ---
 
 ## BDD Specifications
 
-### Scenario 1: Offline Local Audio Transcription with "base" Model
+### Scenario 1: Offline Local Audio Transcription with "small" Model
 ```gherkin
 Given the voice assistant STT engine is initialized
 When an incoming 16kHz mono PCM or WAV audio buffer is received
 Then the "FasterWhisperSTTEngine" transcribes the audio locally without external API calls
-And the default model size used is "base" with INT8 or float32 quantization
+And the default model size used is "small" with INT8 quantization and four CPU threads
+And a missing model directory does not download weights by model name
 And the recognized text string and detected language are returned
 ```
 

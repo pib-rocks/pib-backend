@@ -7,6 +7,7 @@ from typing import Any, Iterable, List, Optional
 
 import requests
 
+from provider_registry import DEFAULT_PROVIDER_API_NAME
 from public_api_client import (
     SPEECH_TO_TEXT_URL,
     TEXT_TO_SPEECH_URL,
@@ -98,7 +99,8 @@ def chat_completion(
     message_history: List[PublicApiChatMessage],
     public_api_token: str,
     image_base64: Optional[str] = None,
-    model: str = "gpt-3.5-turbo",
+    # Catalogue default. The public API's id is not confirmed in this repository.
+    model: str = DEFAULT_PROVIDER_API_NAME,  # TODO(confirm id)
 ) -> Iterable[str]:
     """
     receive a textual llm response, that takes into account the provided description

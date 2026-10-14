@@ -1,18 +1,6 @@
 import {Block} from "blockly/core/block";
 import {Order, pythonGenerator} from "blockly/python";
-import {
-    CONFIGURE_LOGGING,
-    IMPORT_GET_JOINT_POSITION,
-    IMPORT_LOGGING,
-    IMPORT_OS,
-    IMPORT_PIB_SDK,
-    IMPORT_PIB_SDK_IK,
-    IMPORT_PIB_SDK_TELEMETRY,
-    IMPORT_RCLPY,
-    IMPORT_SYS,
-    INIT_GET_JOINT_POSITION_CLIENT,
-    INIT_ROS,
-} from "./util/definitions";
+import {CONFIGURE_LOGGING, IMPORT_GET_JOINT_POSITION, IMPORT_LOGGING, IMPORT_OS, IMPORT_PIB_SDK, IMPORT_PIB_SDK_IK, IMPORT_PIB_SDK_TELEMETRY, IMPORT_RCLPY, IMPORT_SYS, INIT_GET_JOINT_POSITION_CLIENT, INIT_ROS, addDefinitions} from "./util/definitions";
 import {
     APPLY_JOINT_TRAJECTORY_FUNCTION,
     GET_JOINT_POSITION_FUNCTION,
@@ -68,7 +56,7 @@ export function move_motor(block: Block, generator: typeof pythonGenerator) {
     }
 
     // add definitions to generator
-    Object.assign(generator.definitions_, {
+    addDefinitions(generator, {
         IMPORT_RCLPY,
         IMPORT_SYS,
         IMPORT_OS,
@@ -79,7 +67,7 @@ export function move_motor(block: Block, generator: typeof pythonGenerator) {
     });
 
     if (modeInput == "RELATIVE") {
-        Object.assign(generator.definitions_, {
+        addDefinitions(generator, {
             IMPORT_GET_JOINT_POSITION,
             INIT_GET_JOINT_POSITION_CLIENT,
         });
@@ -119,7 +107,7 @@ export function motor_current(
         );
     }
 
-    Object.assign(generator.definitions_, {
+    addDefinitions(generator, {
         IMPORT_OS,
         IMPORT_PIB_SDK_TELEMETRY,
     });
@@ -151,7 +139,7 @@ export function set_hand_position_xyz(
         generator.valueToCode(block, "Z", Order.ATOMIC) || "0",
     );
 
-    Object.assign(generator.definitions_, {
+    addDefinitions(generator, {
         IMPORT_RCLPY,
         IMPORT_SYS,
         IMPORT_OS,
@@ -185,7 +173,7 @@ function getHandPositionComponent(
 ): [string, Order] {
     const side = readSide(block);
 
-    Object.assign(generator.definitions_, {
+    addDefinitions(generator, {
         IMPORT_PIB_SDK_GET_HAND_POSITION_XYZ,
     });
 
@@ -204,4 +192,3 @@ export function get_hand_z(block: Block, generator: typeof pythonGenerator) {
     return getHandPositionComponent(block, generator, 2);
 }
 
-export {pythonGenerator};

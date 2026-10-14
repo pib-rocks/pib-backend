@@ -9,7 +9,7 @@ Generated from `docs/test-basis/` specifications.
 | `integration/` | Pytest | Flask API contracts, BDD error handling, motor clamping |
 | `infrastructure/` | Pytest | docker-compose.yaml contract + optional live Docker tests |
 | `frontend/` | Robot Framework + Browser | Cerebra UI and Blockly interactions |
-| `e2e/` | Robot Framework | Full-system REST/ROS safety and infrastructure BDD |
+| `e2e/` | Robot Framework and Pytest | Robot suites are full-system BDD. `test_*_e2e.py` is the live robot suite and reads `PIB_ROBOT_URL`. |
 | `blockly_generator/` | Jest | Blockly Python code generator unit tests |
 | `resources/` | Python/Robot | Shared keywords and `ROS2TestLibrary.py` |
 
@@ -41,6 +41,28 @@ Live Docker deployment tests (slow, builds images):
 set RUN_DOCKER_TESTS=1
 pytest tests/infrastructure/test_docker_deployment.py -m docker
 ```
+
+## Live pytest E2E
+
+The pytest modules in `tests/e2e/` (`test_*_e2e.py`) run against one live robot.
+Set `PIB_ROBOT_URL` to that robot's address. The API address is derived from it
+(`$PIB_ROBOT_URL/api`) and is not a separate setting.
+
+```bash
+PIB_ROBOT_URL=http://192.168.1.172 python3 -m pytest tests/e2e -q
+```
+
+With no address configured, the suite stops and names `PIB_ROBOT_URL`. It does
+not try `http://localhost`.
+
+Older names still work as fallbacks when `PIB_ROBOT_URL` is unset:
+`PIB_API_URL`, `PIB_E2E_BASE_URL`, `PIB_MODEL_E2E_HOST`, and
+`PIB_MODEL_E2E_API_URL`. The run prints which variable it used. If more than
+one of these is set, they must describe the same robot; the suite does not
+pick between them.
+
+On the robot itself, set `PIB_ROBOT_URL=http://localhost`. Robot Framework
+suites in this directory do not read `PIB_ROBOT_URL`.
 
 ## Robot Framework
 

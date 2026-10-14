@@ -6,12 +6,12 @@ Dieses ROS2-Paket bindet drei Tinkerforge RGB LED Button Bricklets ein und stell
 
 ## Hardware-Konfiguration
 
-In der Umgebung des ROS-Containers setzen:
+Die Button-UIDs kommen von `GET /bricklet/connected`. Es zählen nur RGB LED Button Bricklets, und `button_id` 1..3 folgt der Port-Reihenfolge.
 
 ```bash
 TF_HOST=localhost
 TF_PORT=4223
-TF_BUTTON_UIDS=UID_BUTTON_1,UID_BUTTON_2,UID_BUTTON_3
+FLASK_API_BASE_URL=http://flask-app:5000
 ```
 
 In Docker ist `TF_HOST` abhängig davon, wo `brickd` läuft:
@@ -35,4 +35,4 @@ ros2 run button_service button_service_node
 /tf_button/wait
 ```
 
-Button IDs sind `1`, `2`, `3` entsprechend der Reihenfolge in `TF_BUTTON_UIDS`.
+Button IDs sind `1`, `2`, `3` in Port-Reihenfolge der angeschlossenen RGB LED Button Bricklets.

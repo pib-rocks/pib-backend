@@ -12,7 +12,17 @@ from model.controller_model import (
     TINKERFORGE_BRICKLET,
 )
 from seed_profiles import PROFILES, resolve_variant_and_source
-from service import hardware_config_service, revision_service, update_service
+from pib_hermes_config.channel import (
+    CHANNEL_DIRECT,
+    CHANNEL_SMART,
+    smart_chats_enabled,
+)
+from service import (
+    hardware_config_service,
+    key_store_service,
+    revision_service,
+    update_service,
+)
 from service.system_property_service import (
     ALLOWED_HARDWARE_VARIANTS,
     HARDWARE_VARIANT_KEY,
@@ -23,6 +33,9 @@ from service.system_property_service import (
 )
 
 bp = Blueprint("system_controller", __name__)
+# Cerebra calls /api/voice-assistant/channel. Nginx strips /api, so Flask
+# serves that document here. It is the same fact as /system/chat-channels.
+voice_channel_bp = Blueprint("voice_assistant_channel", __name__)
 
 # This describes the API's observable/configurable surface. The motor node's
 # actuator registry remains authoritative for actually driving each kind.
@@ -57,6 +70,69 @@ CONTROLLER_CAPABILITIES = {
         "meaningfulSettings": COMMON_SETTINGS + ["current_limit", "torque_limit"],
     },
 }
+
+
+def chat_channels_document() -> dict:
+    """Channels the UI may offer. Smart is omitted when the installer disabled it.
+
+    The stored personality channel is not part of this document and is not
+    rewritten. Clearing the installer marker puts Smart back on the list.
+    """
+    enabled = smart_chats_enabled()
+    if enabled:
+        channels = [CHANNEL_SMART, CHANNEL_DIRECT]
+        default = CHANNEL_SMART
+    else:
+        channels = [CHANNEL_DIRECT]
+        default = CHANNEL_DIRECT
+    return {
+        "smartChatsEnabled": enabled,
+        "channels": channels,
+        "defaultChannel": default,
+    }
+
+
+@bp.route("/chat-channels", methods=["GET"])
+def get_chat_channels():
+    """Channels the UI may offer. Smart is omitted when the installer disabled it."""
+    return jsonify(chat_channels_document())
+
+
+@bp.route("/smart-connect", methods=["POST"])
+def post_smart_connect():
+    """Store the SmartConnect token. The body carries the token and no password.
+
+    Encryption on uses the operator password this process already holds. A
+    locked store returns the clear message and no secret. The response is a
+    credential_ref, never the token.
+    """
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        return jsonify({"successful": False, "error": "Bad request."}), 400
+    token = body.get("token")
+    if not isinstance(token, str) or token.strip() == "":
+        return jsonify({"successful": False, "error": "Bad request."}), 400
+    try:
+        ref = key_store_service.put_cloud_token(token)
+    except key_store_service.KeyStoreError as error:
+        return jsonify({"successful": False, "error": str(error)}), error.status_code
+    return jsonify({"successful": True, "credentialRef": ref})
+
+
+@bp.route("/smart-connect", methods=["DELETE"])
+def delete_smart_connect():
+    """Remove the SmartConnect token. A locked store keeps it."""
+    try:
+        key_store_service.delete_cloud_token()
+    except key_store_service.KeyStoreError as error:
+        return jsonify({"successful": False, "error": str(error)}), error.status_code
+    return "", 204
+
+
+@voice_channel_bp.route("/channel", methods=["GET"])
+def get_voice_assistant_channel():
+    """Installer flag for the personality dialog. Same document as /system/chat-channels."""
+    return jsonify(chat_channels_document())
 
 
 @bp.route("/hardware-variant", methods=["GET"])
@@ -155,6 +231,15 @@ def start_update():
     payload = request.get_json(silent=True)
     if not isinstance(payload, dict):
         return jsonify({"error": "Request body must be a JSON object"}), 400
+    # Clients name a tag or ask to pin the checked develop commits. They do
+    # not supply the commits that will be checked out.
+    if "targets" in payload or "targetKind" in payload:
+        return (
+            jsonify(
+                {"error": "targets are resolved by the server from the confirmed check"}
+            ),
+            400,
+        )
 
     running_signal = update_service.program_running_signal()
     if running_signal is True:
@@ -167,6 +252,13 @@ def start_update():
             confirmation=payload.get("confirmation"),
             actor=request.remote_addr or "unknown",
         )
+        if payload.get("release") is not None or payload.get("pin", False) is not False:
+            update_request = update_service.pin_accepted_job(
+                update_request,
+                release=payload.get("release"),
+                check_id=payload.get("checkId"),
+                pin=payload.get("pin", False),
+            )
         status = update_service.enqueue_update(update_request)
     except update_service.UpdateValidationError as error:
         return jsonify({"error": str(error)}), 400
@@ -219,7 +311,9 @@ def check_update_available():
 @bp.route("/update/available", methods=["GET"])
 def get_update_available():
     try:
-        available = update_service.get_available()
+        available = update_service.annotate_installed_release(
+            update_service.get_available(), revision_service.installed_revisions()
+        )
     except update_service.UpdateNotInstalledError as error:
         return jsonify({"error": str(error), "state": error.state}), 503
     return jsonify(available), 200

@@ -155,12 +155,39 @@ function setup_update_service() {
     # a missing host directory on its own - a bare directory is not a runner.
     local marker
     marker="$(mktemp)"
-    printf '{"schemaVersion":1,"installedAt":"%s","runner":"%s","updateCheck":true}\n' \
+    printf '{"schemaVersion":1,"installedAt":"%s","runner":"%s","updateCheck":true,"units":["pib-update.path","pib-update.service","pib-update-check.path","pib-update-check.service"]}\n' \
         "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
         "$BACKEND_DIR/setup/update_runner.sh" > "$marker"
     sudo install -o pib -g pib -m 0664 "$marker" /home/pib/app/.update/service.json
     rm -f "$marker"
     print SUCCESS "Host-side update service installed and watching for requests"
+}
+
+function setup_display_web_service() {
+    print INFO "Setting up host-side display web service"
+    # Separate from pib-update.service: that unit is exclusive and holds
+    # docker-level power. The directory already exists and is drwxrws--- pib:pib.
+    # Do not change its mode or ownership. The runner is executable in git;
+    # do not change that mode here either, or the next update sees a dirty tree.
+    sudo install -o root -g root -m 0644 \
+      "$BACKEND_DIR/setup/setup_files/pib-display-web.service" \
+      /etc/systemd/system/pib-display-web.service
+    sudo install -o root -g root -m 0644 \
+      "$BACKEND_DIR/setup/setup_files/pib-display-web.path" \
+      /etc/systemd/system/pib-display-web.path
+    sudo systemctl daemon-reload
+
+    local enable_output
+    if ! enable_output=$(sudo systemctl enable pib-display-web.path 2>&1); then
+        print ERROR "failed to enable pib-display-web.path: ${enable_output}"
+        return 1
+    fi
+    local start_output
+    if ! start_output=$(sudo systemctl start pib-display-web.path 2>&1); then
+        print ERROR "failed to start pib-display-web.path: ${start_output}"
+        return 1
+    fi
+    print SUCCESS "Host-side display web service installed and watching for requests"
 }
 
 function verify_vendored_blockly() {
@@ -175,25 +202,63 @@ function verify_vendored_blockly() {
     print SUCCESS "Vendored pib-blockly sources found"
 }
 
+# The image builds print thousands of lines. They go to their own file so setup-pib.log keeps
+# only the progress of the setup; the terminal still shows them when one is attached.
+DOCKER_BUILD_LOG="${PIB_DOCKER_BUILD_LOG:-$HOME/setup-pib-docker-build.log}"
+
+# run_logged_compose LABEL COMMAND...: run a compose command with its output appended to
+# DOCKER_BUILD_LOG (and mirrored to the terminal, if any). Returns the command's status.
+function run_logged_compose() {
+    local label="$1"
+    shift
+    local status
+    print INFO "${label}: output goes to ${DOCKER_BUILD_LOG}"
+    if { : >/dev/tty; } 2>/dev/null; then
+        "$@" 2>&1 | tee -a "$DOCKER_BUILD_LOG" >/dev/tty
+        status=${PIPESTATUS[0]}
+    else
+        "$@" >>"$DOCKER_BUILD_LOG" 2>&1
+        status=$?
+    fi
+    if [ "$status" -ne 0 ]; then
+        print ERROR "${label} failed (rc=${status}); last lines of ${DOCKER_BUILD_LOG}:"
+        tail -n 40 "$DOCKER_BUILD_LOG"
+    fi
+    return "$status"
+}
+
 function start_container() {
     print INFO "Starting container"
     echo "TRYB_URL_PREFIX=https://platform.tryb.ai" > "$BACKEND_DIR"/password.env
-    sudo PIB_HARDWARE_VARIANT="$PIB_HARDWARE_VARIANT" \
+    run_logged_compose "pib-backend image build" \
+      sudo PIB_HARDWARE_VARIANT="$PIB_HARDWARE_VARIANT" \
+      PIB_SMART_CHATS="${PIB_SMART_CHATS:-1}" \
       docker compose -f "$BACKEND_DIR/docker-compose.yaml" --profile all up -d --build \
       || return 1
     print SUCCESS "Started pib-backend container"
-    sudo docker compose -f "$FRONTEND_DIR/docker-compose.yaml" up -d || return 1
+    run_logged_compose "cerebra container start" \
+      sudo docker compose -f "$FRONTEND_DIR/docker-compose.yaml" up -d || return 1
     print SUCCESS "Started cerebra container"
 }
 
-install_docker_engine || print ERROR "failed to install docker engine"
+function add_pib_to_docker_group() {
+    sudo usermod -aG docker pib
+}
+
+function open_database_permissions() {
+    require_nonempty BACKEND_DIR || return 1
+    sudo chmod 777 "$BACKEND_DIR/pib_api/flask/pibdata.db"
+}
+
+run_step "Install Docker Engine" install_docker_engine || print ERROR "failed to install docker engine"
 # The docker group only exists after the engine is installed, and
 # docker_cleaner.service runs as User=pib, so the membership has to be granted
 # before that unit is started.
-sudo usermod -aG docker pib || { print ERROR "failed to add user 'pib' to docker group"; return 1; }
-verify_vendored_blockly || print ERROR "failed to verify vendored pib-blockly sources"
-start_container || print ERROR "failed to start containers"
-setup_docker_cleaner_service || print ERROR "failed to setup docker cleaner service"
-setup_update_watchdog_helper || print ERROR "failed to setup update watchdog helper"
-setup_update_service || print ERROR "failed to setup host-side update service"
-sudo chmod 777 "$BACKEND_DIR/pib_api/flask/pibdata.db"
+run_step "Add user pib to the docker group" add_pib_to_docker_group || { print ERROR "failed to add user 'pib' to docker group"; return 1; }
+run_step "Verify vendored pib-blockly" verify_vendored_blockly || print ERROR "failed to verify vendored pib-blockly sources"
+run_step "Build and start containers" start_container || print ERROR "failed to start containers"
+run_step "Set up Docker cleaner service" setup_docker_cleaner_service || print ERROR "failed to setup docker cleaner service"
+run_step "Set up update watchdog helper" setup_update_watchdog_helper || print ERROR "failed to setup update watchdog helper"
+run_step "Set up host-side update service" setup_update_service || print ERROR "failed to setup host-side update service"
+run_step "Set up host-side display web service" setup_display_web_service || print ERROR "failed to setup host-side display web service"
+run_step "Open database permissions" open_database_permissions || print ERROR "failed to open database permissions"

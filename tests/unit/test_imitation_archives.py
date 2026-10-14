@@ -2,15 +2,8 @@ import os
 from pathlib import Path
 import types
 
-import pytest
-
-# Installed by tests/requirements-camera.txt; skip instead of aborting collection on a
-# platform without the camera wheels.
-pytest.importorskip(
-    "depthai", reason="depthai not installed (tests/requirements-camera.txt)"
-)
-
 import depthai as dai
+import pytest
 
 from ros_packages.camera.oak_d_lite.imitation import _world_values
 from ros_packages.camera.oak_d_lite.imitation_archive import (
@@ -30,7 +23,15 @@ def _heads(archive):
     return list(archive.getConfig().model.heads)
 
 
+def _require_blob(path: Path) -> None:
+    if not path.is_file():
+        pytest.skip(
+            f"{path.name} is not in git; it ships in the models-2026-09-15 release asset"
+        )
+
+
 def test_real_palm_blob_loads_as_128_archive_with_four_shaves(tmp_path):
+    _require_blob(PALM_BLOB)
     archive = create_palm_archive(PALM_BLOB, tmp_path)
 
     assert isinstance(archive, dai.NNArchive)
@@ -44,6 +45,7 @@ def test_real_palm_blob_loads_as_128_archive_with_four_shaves(tmp_path):
 
 
 def test_real_landmark_blob_has_stable_four_head_order(tmp_path):
+    _require_blob(LANDMARK_BLOB)
     archive = create_landmark_archive(LANDMARK_BLOB, tmp_path)
 
     assert isinstance(archive, dai.NNArchive)
@@ -55,6 +57,7 @@ def test_real_landmark_blob_has_stable_four_head_order(tmp_path):
 
 
 def test_archive_cache_reuses_the_sha_keyed_file(tmp_path):
+    _require_blob(PALM_BLOB)
     first = create_palm_archive(PALM_BLOB, tmp_path)
     [cache_path] = tmp_path.glob("*.tar.xz")
     first_stat = cache_path.stat()
@@ -74,6 +77,7 @@ def test_archive_cache_reuses_the_sha_keyed_file(tmp_path):
 
 
 def test_world_regression_values_are_not_clipped(tmp_path):
+    _require_blob(LANDMARK_BLOB)
     archive = create_landmark_archive(LANDMARK_BLOB, tmp_path)
     world_head = _heads(archive)[3]
     assert world_head.parser == "RegressionParser"

@@ -7,10 +7,16 @@ from pathlib import Path
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy, HistoryPolicy
-from std_msgs.msg import String
-from datatypes.msg import DisplayImage
+from std_msgs.msg import Bool, String
+from datatypes.msg import ChatIsListening, DisplayImage, VoiceAssistantState
 from PIL import Image, ImageDraw, ImageFont
 import io
+
+from pib_hermes_config.visible_state import (
+    PHASE_IDLE,
+    cached_key_store_mode,
+    resolve_visible_state,
+)
 
 
 class PibExpressionManager(Node):
@@ -36,7 +42,20 @@ class PibExpressionManager(Node):
         self.auto_return_seconds = float(os.environ.get("PIB_EXPRESSION_TIMEOUT", "15"))
         self.last_expression_time = time.monotonic()
         self.default_is_active = True
+        # Hardware VAD drives the face only while no conversation phase is showing.
+        self._hardware_vad_active = False
+        self._applied_phase = None
+        self._applied_text = None
+        self._operating_mode = None
+        self._voice_turned_on = False
+        self._voice_chat_id = ""
+        self._personality_id = ""
+        self._personality_name = ""
+        self._speaking = False
+        self._using_fallback = False
+        self._listening_by_chat = {}
         self.create_timer(0.1, self.on_timer)
+        self.create_timer(2.0, self._refresh_operating_mode)
 
         self.subscription = self.create_subscription(
             String,
@@ -50,6 +69,16 @@ class PibExpressionManager(Node):
             "/pib/display_text",
             self.on_display_text,
             10,
+        )
+        self.create_subscription(Bool, "/voice_activity", self.on_voice_activity, 10)
+        self.create_subscription(
+            VoiceAssistantState,
+            "voice_assistant_state",
+            self.on_voice_assistant_state,
+            10,
+        )
+        self.create_subscription(
+            ChatIsListening, "chat_is_listening", self.on_chat_is_listening, 10
         )
 
         self.get_logger().info("PIB expression manager started")
@@ -127,7 +156,10 @@ class PibExpressionManager(Node):
         if self.auto_return_seconds <= 0:
             return
 
-        if self.default_is_active:
+        if self._applied_phase not in (None, PHASE_IDLE):
+            return
+
+        if self.default_is_active or self._hardware_vad_active:
             return
 
         elapsed = time.monotonic() - self.last_expression_time
@@ -224,6 +256,151 @@ class PibExpressionManager(Node):
         buffer = io.BytesIO()
         image.save(buffer, format="PNG")
         return buffer.getvalue()
+
+    def _refresh_operating_mode(self) -> None:
+        mode = cached_key_store_mode()
+        if mode == self._operating_mode:
+            return
+        self._operating_mode = mode
+        self._apply_visible_state()
+
+    def on_voice_assistant_state(self, msg: VoiceAssistantState) -> None:
+        """chat_is_listening and this message are what the three states come from."""
+        self._voice_turned_on = bool(getattr(msg, "turned_on", False))
+        self._voice_chat_id = getattr(msg, "chat_id", "") or ""
+        self._personality_id = getattr(msg, "personality_id", "") or ""
+        self._personality_name = getattr(msg, "personality_name", "") or ""
+        self._speaking = bool(getattr(msg, "speaking", False))
+        self._using_fallback = bool(getattr(msg, "using_fallback", False))
+        self._apply_visible_state()
+
+    def on_chat_is_listening(self, msg: ChatIsListening) -> None:
+        chat_id = getattr(msg, "chat_id", "") or ""
+        if not chat_id:
+            return
+        self._listening_by_chat[chat_id] = bool(getattr(msg, "listening", False))
+        self._apply_visible_state()
+
+    def _apply_visible_state(self) -> None:
+        listening = self._listening_by_chat.get(self._voice_chat_id, False)
+        state = resolve_visible_state(
+            turned_on=self._voice_turned_on,
+            chat_id=self._voice_chat_id,
+            personality_id=self._personality_id,
+            personality_name=self._personality_name,
+            listening=listening,
+            listening_chat_id=self._voice_chat_id if listening else "",
+            speaking=self._speaking,
+            using_fallback=self._using_fallback,
+            operating_mode=self._operating_mode,
+        )
+        if (
+            state.phase == self._applied_phase
+            and state.display_text == self._applied_text
+        ):
+            return
+        self._applied_phase = state.phase
+        self._applied_text = state.display_text
+        if state.phase == PHASE_IDLE:
+            if self._hardware_vad_active:
+                text = String()
+                text.data = "listening"
+                self.on_display_text(text)
+                return
+            self.show_default_animation()
+            return
+        self._show_phase(state.phase, state.display_text or state.phase)
+
+    def _show_phase(self, phase: str, caption: str) -> None:
+        """Animated face for the phase, with the holder named on the display.
+
+        The drawing carries both: the eyes and mouth are the face, and the
+        caption is who holds the voice. A missing expression file cannot drop
+        the name.
+        """
+        self.last_expression_time = time.monotonic()
+        self.default_is_active = False
+        try:
+            self.publish_png_bytes(self.render_phase_png(phase, caption))
+            self.get_logger().info(f"Conversation face shown: {caption!r}")
+        except Exception as exc:
+            self.get_logger().error(f"Could not show conversation face: {exc}")
+
+    def render_phase_png(self, phase: str, caption: str) -> bytes:
+        """A face for listening, thinking, speaking, degraded or fallback."""
+        width = int(os.environ.get("PIB_DISPLAY_WIDTH", "800"))
+        height = int(os.environ.get("PIB_DISPLAY_HEIGHT", "480"))
+        image = Image.new("RGBA", (width, height), (0, 0, 0, 255))
+        draw = ImageDraw.Draw(image)
+        eye = (69, 183, 255, 255)
+        left = width // 2 - 140
+        right = width // 2 + 60
+        top = height // 2 - 80
+        if phase == "degraded":
+            draw.line((left, top + 30, left + 80, top + 70), fill=eye, width=10)
+            draw.line((left + 80, top + 30, left, top + 70), fill=eye, width=10)
+            draw.line((right, top + 30, right + 80, top + 70), fill=eye, width=10)
+            draw.line((right + 80, top + 30, right, top + 70), fill=eye, width=10)
+        else:
+            draw.ellipse((left, top, left + 80, top + 80), outline=eye, width=8)
+            draw.ellipse((right, top, right + 80, top + 80), outline=eye, width=8)
+            pupil_dx = 18 if phase == "thinking" else 28
+            draw.ellipse(
+                (left + pupil_dx, top + 28, left + pupil_dx + 24, top + 52),
+                fill=eye,
+            )
+            draw.ellipse(
+                (right + pupil_dx, top + 28, right + pupil_dx + 24, top + 52),
+                fill=eye,
+            )
+        mouth_y = height // 2 + 50
+        mouth_x = width // 2
+        if phase == "speaking":
+            draw.ellipse(
+                (mouth_x - 36, mouth_y, mouth_x + 36, mouth_y + 48),
+                outline=eye,
+                width=8,
+            )
+        elif phase == "listening":
+            draw.arc(
+                (mouth_x - 40, mouth_y, mouth_x + 40, mouth_y + 36),
+                start=20,
+                end=160,
+                fill=eye,
+                width=8,
+            )
+        else:
+            draw.line(
+                (mouth_x - 36, mouth_y + 16, mouth_x + 36, mouth_y + 16),
+                fill=eye,
+                width=8,
+            )
+        font = self.load_font(36)
+        y = height - 120
+        for line in str(caption).splitlines():
+            box = draw.textbbox((0, 0), line, font=font)
+            line_width = box[2] - box[0]
+            draw.text(((width - line_width) // 2, y), line, font=font, fill=eye)
+            y += 44
+        buffer = io.BytesIO()
+        image.save(buffer, format="PNG")
+        return buffer.getvalue()
+
+    def on_voice_activity(self, msg: Bool) -> None:
+        """Show listening while the array hears speech, then return to the eyes."""
+        active = bool(msg.data)
+        if active == self._hardware_vad_active:
+            return
+        self._hardware_vad_active = active
+        if self._applied_phase not in (None, PHASE_IDLE):
+            return
+        if active:
+            text = String()
+            text.data = "listening"
+            self.on_display_text(text)
+            return
+        self.show_default_animation()
+        self.default_is_active = True
 
     def on_display_text(self, msg: String):
         t0 = time.monotonic()

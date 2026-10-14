@@ -1,15 +1,6 @@
 import {Block} from "blockly/core/block";
-import {pythonGenerator} from "blockly/python";
-import {
-    CONFIGURE_LOGGING,
-    IMPORT_LOGGING,
-    IMPORT_SYS,
-    IMPORT_RCLPY,
-    IMPORT_SET_SOLID_STATE_RELAY,
-    IMPORT_SOLID_STATE_RELAY_STATE,
-    INIT_ROS,
-    INIT_SET_SOLID_STATE_RELAY_STATE_CLIENT,
-} from "./util/definitions";
+import {Order, pythonGenerator} from "blockly/python";
+import {CONFIGURE_LOGGING, IMPORT_LOGGING, IMPORT_RCLPY, IMPORT_SET_SOLID_STATE_RELAY, IMPORT_SOLID_STATE_RELAY_STATE, IMPORT_SYS, INIT_ROS, INIT_SET_SOLID_STATE_RELAY_STATE_CLIENT, addDefinitions} from "./util/definitions";
 import {
     SET_SOLID_STATE_RELAY_FUNCTION,
     GET_SOLID_STATE_RELAY_FUNCTION,
@@ -23,7 +14,7 @@ export function set_solid_state_relay(
     const relayStatus = <string>block.getFieldValue("STATUS");
 
     // add definitions to generator
-    Object.assign(generator.definitions_, {
+    addDefinitions(generator, {
         CONFIGURE_LOGGING,
         IMPORT_LOGGING,
         IMPORT_SYS,
@@ -46,9 +37,9 @@ export function set_solid_state_relay(
 export function get_solid_state_relay(
     block: Block,
     generator: typeof pythonGenerator,
-) {
+): [string, Order] {
     // add definitions to generator
-    Object.assign(generator.definitions_, {
+    addDefinitions(generator, {
         CONFIGURE_LOGGING,
         IMPORT_LOGGING,
         IMPORT_SYS,
@@ -63,7 +54,6 @@ export function get_solid_state_relay(
         GET_SOLID_STATE_RELAY_FUNCTION(generator),
     );
 
-    return [`${functionName}()`, generator.ORDER_FUNCTION_CALL];
+    return [`${functionName}()`, Order.FUNCTION_CALL];
 }
 
-export {pythonGenerator};

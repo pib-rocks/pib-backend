@@ -12,14 +12,15 @@ feature it fails (placeholder 'dev' or absent element) - i.e. it goes RED before
 the fix is deployed and GREEN after.
 """
 
-import os
 import re
 import requests
 import pytest
 from playwright.sync_api import sync_playwright, Page, expect
 
-BASE_URL = os.getenv("PIB_ROBOT_URL", "http://localhost")
-API_URL = os.getenv("PIB_API_URL", f"{BASE_URL}/api")
+from robot_address import api_url, robot_base_url
+
+BASE_URL = robot_base_url()
+API_URL = api_url()
 VERSION_RE = re.compile(r"^v?\d+\.\d+\.\d+")
 
 

@@ -1,6 +1,8 @@
 """Device-free tests for the camera model registry and pipeline manager."""
 
 from pathlib import Path
+import importlib.util
+import json
 import re
 import sys
 import tempfile
@@ -16,7 +18,9 @@ sys.path.insert(0, str(REPO_ROOT))
 from ros_packages.camera.oak_d_lite.model_registry import ModelRegistry
 from ros_packages.camera.oak_d_lite.pipeline_manager import (
     FPS_WINDOW_SECONDS,
+    MODEL_LIFECYCLE_CALL_TIMEOUT_SECONDS,
     PipelineManager,
+    ROSBRIDGE_DEFAULT_CALL_SERVICE_TIMEOUT_SECONDS,
 )
 
 
@@ -84,7 +88,7 @@ class TestModelRegistry(unittest.TestCase):
     def test_model_service_interfaces_preserve_the_public_contract(self):
         self.assertEqual(
             _interface_fields("srv/ListModels.srv"),
-            ["---", "ModelInfo[] models"],
+            ["---", "ModelInfo[] models", "int32 total_shaves"],
         )
         self.assertEqual(
             _interface_fields("srv/StartModel.srv"),
@@ -164,6 +168,42 @@ class TestModelRegistry(unittest.TestCase):
                 "hand_landmark_224x224": 4,
             },
         )
+
+    def test_hand_tracking_fast_replaces_the_selectable_hand_models(self):
+        manifest = yaml.safe_load(
+            (REPO_ROOT / "models/manifest.yaml").read_text(encoding="utf-8")
+        )
+        by_id = {entry["model_id"]: entry for entry in manifest["models"]}
+        fast = by_id["hand_tracking_fast"]
+
+        self.assertEqual(fast["task"], "hand_tracking")
+        self.assertTrue(fast["composite"])
+        self.assertTrue(fast["selectable"])
+        self.assertEqual(fast["publish_topic"], "detections/hand_tracking_fast")
+        self.assertEqual(
+            fast["artifacts"],
+            [
+                "palm_detection_sh4",
+                "pd_postprocessing_top2_sh1",
+                "hand_landmark_full_sh4",
+            ],
+        )
+        self.assertFalse(by_id["hand_tracking"].get("selectable", True))
+        self.assertFalse(by_id["hand_tracking_mp"].get("selectable", True))
+        self.assertEqual(
+            by_id["hand_tracking"]["publish_topic"], "detections/hand_tracking"
+        )
+        self.assertEqual(
+            by_id["hand_tracking_mp"]["publish_topic"], "detections/hand_tracking"
+        )
+        component_shaves = [
+            by_id[artifact_id]["shaves"] for artifact_id in fast["artifacts"]
+        ]
+        self.assertEqual(component_shaves, [4, 1, 4])
+        self.assertEqual(sum(component_shaves), 9)
+        for artifact_id in fast["artifacts"]:
+            self.assertIn("file", by_id[artifact_id])
+            self.assertIn("sha256", by_id[artifact_id])
 
     def test_parses_manifest_and_marks_present_blob_available(self):
         with tempfile.TemporaryDirectory() as store:
@@ -641,9 +681,9 @@ class TestSelectableModels(unittest.TestCase):
             encoding="utf-8"
         )
 
-        self.assertIn(
-            "selectable_models()", self._function_source(source, "list_models_callback")
-        )
+        callback_source = self._function_source(source, "list_models_callback")
+        self.assertIn("selectable_models()", callback_source)
+        self.assertIn("response.total_shaves = TOTAL_SHAVES", callback_source)
         status_index = source.index("status_array.models = []")
         status_source = source[
             source.rfind("\n    def ", 0, status_index) : source.find(
@@ -653,6 +693,55 @@ class TestSelectableModels(unittest.TestCase):
         self.assertIn("selectable_models()", status_source)
         # the chain itself still iterates every entry (publishers, composite build)
         self.assertIn("self.model_registry.models()", source)
+
+
+def test_model_start_budget_exceeds_the_rosbridge_default():
+    """The service callback verifies before it answers; 5s is not enough."""
+    assert (
+        MODEL_LIFECYCLE_CALL_TIMEOUT_SECONDS
+        > ROSBRIDGE_DEFAULT_CALL_SERVICE_TIMEOUT_SECONDS
+    )
+    assert MODEL_LIFECYCLE_CALL_TIMEOUT_SECONDS >= 90.0
+    assert ROSBRIDGE_DEFAULT_CALL_SERVICE_TIMEOUT_SECONDS == 5.0
+
+
+def test_measurement_client_sends_the_rosbridge_service_timeout():
+    path = REPO_ROOT / "tools/measure_on_device_models.py"
+    spec = importlib.util.spec_from_file_location("measure_on_device_models", path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    sent = []
+
+    class Connection:
+        def send(self, payload):
+            sent.append(payload)
+
+        def settimeout(self, _timeout):
+            return None
+
+        def recv(self):
+            request = json.loads(sent[-1])
+            return json.dumps(
+                {
+                    "op": "service_response",
+                    "id": request["id"],
+                    "result": True,
+                    "values": {"success": True, "message": "ok"},
+                }
+            )
+
+    values = module.RosbridgeClient(Connection()).call_service(
+        "/start_model",
+        "datatypes/srv/StartModel",
+        {"model_id": "hand_tracking_fast", "shaves": 0, "owner": "acceptance"},
+        MODEL_LIFECYCLE_CALL_TIMEOUT_SECONDS,
+    )
+
+    payload = json.loads(sent[0])
+    assert payload["timeout"] == MODEL_LIFECYCLE_CALL_TIMEOUT_SECONDS
+    assert payload["op"] == "call_service"
+    assert values["success"] is True
 
 
 if __name__ == "__main__":

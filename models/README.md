@@ -1,8 +1,83 @@
-# Vendored OAK / RVC2 model blobs (PR-1693 S1)
+# OAK / RVC2 model registry (PR-1693 S1, asset PR-1943)
 
-This directory is the on-device model registry: one folder per `model_id`, a
-`.blob` compiled for Myriad-X with its manifest-declared per-network SHAVE
-count, plus `manifest.yaml`.
+`models/manifest.yaml` is the on-device model registry: one entry per
+`model_id`, the per-network SHAVE count, and the sha256 of the `.blob`
+compiled for Myriad-X. The `.blob` files themselves are not in git.
+
+The compiled blobs are not reproducible on the robot. BlobConverter is an
+external service, and the camera runtime never downloads or compiles a model.
+The published GitHub release asset is the master copy. This manifest is the
+checksum source of truth: `./setup/setup-pib.sh --verify-models` compares the
+host store to it and does not use the network.
+
+## Release asset (master copy)
+
+| Field | Value |
+| --- | --- |
+| Asset tag | `model-registry-2026-09-15` |
+| Asset file | `models-2026-09-15.tar.gz` |
+| Default URL | `https://github.com/pib-rocks/pib-backend/releases/download/model-registry-2026-09-15/models-2026-09-15.tar.gz` |
+| Tarball sha256 | `07357ec99e0b91014285aad2e6a03fcd1e6ca95fd7ed686670f7ab73c1f3ff02` |
+| Tarball size | 34581804 bytes |
+
+The archive root matches this directory: `manifest.yaml` plus
+`<model_id>/<model_id>.blob` for each network. It does not contain this
+README or `verify_models.py`.
+
+`setup/setup-pib.sh` reads those four values from `PIB_MODEL_ASSET_TAG`,
+`PIB_MODEL_ASSET_NAME`, `PIB_MODEL_ASSET_URL`, and `PIB_MODEL_ASSET_SHA256`. The
+defaults are the table above, so publishing this file on that tag needs no code
+change. Point the same variables at a mirror or a newer asset when the file moves.
+
+### Produce the tarball
+
+From a tree that contains the current blobs and `manifest.yaml` (an unpacked
+copy of the previous asset, or the tree that compiled them). The flags below
+make the bytes reproducible; the sha256 above is the result.
+
+```bash
+list=$(mktemp)
+find models -name '*.blob' -printf '%P\n' | sort > "$list"
+tar -C models --sort=name --mtime='2026-09-15T00:00:00Z' \
+  --owner=0 --group=0 --numeric-owner \
+  -cf - manifest.yaml -T "$list" | gzip -n > models-2026-09-15.tar.gz
+rm -f "$list"
+sha256sum models-2026-09-15.tar.gz
+```
+
+Do not commit the `.blob` files or the tarball. Publish
+`models-2026-09-15.tar.gz` as a GitHub release asset on tag
+`model-registry-2026-09-15`, and mark that release as a **pre-release**: GitHub
+excludes pre-releases from `releases/latest`, so a data release never becomes the
+repository's latest release and never enters the version pairing guard.
+
+### Where setup puts it
+
+`--models` downloads the asset into
+`${PIB_MODEL_CACHE:-$HOME/app/.cache/pib-models}`, checks the tarball sha256
+before extracting, then copies any missing or mismatched blob into
+`${PIB_MODEL_STORE:-/home/pib/app/pib-models}`. The runtime mount is unchanged:
+that store is bind-mounted read-only at `/models`. `PIB_MODEL_STORE` is the
+store the camera sees, not the download cache.
+
+### Repair a missing or corrupt store
+
+`--verify-models` is offline. It exits non-zero when a store blob is missing
+or its sha256 does not match `models/manifest.yaml`. Repair by provisioning
+again. If the cache does not match the manifest, `--models` downloads the
+asset again and replaces the bad blobs:
+
+```bash
+./setup/setup-pib.sh --verify-models
+./setup/setup-pib.sh --models
+./setup/setup-pib.sh --verify-models
+```
+
+If the download fails and the store is empty, `--models` exits non-zero and
+prints the asset URL, tag, and checksum. It does not install an empty store.
+To use a mirror, set `PIB_MODEL_ASSET_URL` (and `PIB_MODEL_ASSET_SHA256` when
+the file differs) and run `--models` again. A store that already matches the
+manifest is left in place when the download fails.
 
 ## Where the artefacts come from
 
@@ -15,11 +90,12 @@ Weights are **not** invented here. IR (`.xml` / `.bin`) comes from:
   `person-reidentification-retail-0031_96x48` is an OMZ model that Luxonis
   already packaged in the DepthAI zoo at 96×48.
 
-The **vendored files** are compiled `.blob` outputs from the still-live
+The **published blobs** are compiled `.blob` outputs from the still-live
 BlobConverter service (`https://blobconverter.luxonis.com`, Python package
 `blobconverter==1.4.3`). HubAI (`models.luxonis.com`) is the replacement
 zoo UI; unauthenticated HubAI SDK downloads require `HUBAI_API_KEY` and
-were **not** used.
+were **not** used. Those outputs are the release asset above, not files in
+git.
 
 ## Hand path (three artefacts)
 
@@ -83,10 +159,15 @@ Cached blobs land in `~/.cache/blobconverter/` as
 
 1. Re-run the commands above (same `shaves`, `version`, and `zoo_type` as
    in `manifest.yaml`).
-2. Copy the new blobs into the per-model directories.
+2. Copy the new blobs into the per-model directories. Those paths are
+   gitignored; do not `git add` them.
 3. Update `sha256` and `size_bytes` in `manifest.yaml`.
 4. Run `python3 models/verify_models.py` from the repository root (or
-   from this directory).
+   from this directory) while the blobs are on disk next to the manifest.
+5. Rebuild and publish `models-<produced-date>.tar.gz` with the command in
+   **Produce the tarball**, and set `PIB_MODEL_ASSET_TAG`,
+   `PIB_MODEL_ASSET_NAME`, `PIB_MODEL_ASSET_URL`, and `PIB_MODEL_ASSET_SHA256`
+   (or the defaults in `setup/setup-pib.sh`) to that new asset.
 
 `facial_landmarks_68_160x160` **must** stay on OpenVINO **2021.4**. A 2022.1
 compile returns HTTP 400 from blobconverter (`Function contains several
@@ -109,24 +190,25 @@ Provisioning is idempotent. To check an existing store without changing it:
 ./setup/setup-pib.sh --verify-models
 ```
 
-To verify the vendored source artefacts themselves:
-
-```bash
-python3 models/verify_models.py
-```
-
-The script needs no third-party packages. It exits non-zero if a listed
-file is missing or the SHA-256 does not match.
+`python3 models/verify_models.py` checks blob files that sit next to the
+manifest (the producer tree, or an unpacked asset copied there). It needs no
+third-party packages and exits non-zero if a listed file is missing or the
+SHA-256 does not match. A fresh git checkout has no `.blob` files, so that
+command fails until the asset has been unpacked into `models/`. Devices do
+not use it; they use `--verify-models`, which stays offline against the host
+store.
 
 ## Add and vend a model
 
-Models are immutable, repository-vendored runtime inputs. The robot does not
-download or compile a model. Add a new single-network model as follows:
+Models are immutable runtime inputs. The camera runtime does not download or
+compile a model; the published release asset is the master copy. Add a new
+single-network model as follows:
 
 1. Confirm the upstream source and licence, then compile the IR for Myriad-X
    with the network's chosen OpenVINO version and SHAVE count.
 2. Create `models/<model_id>/` and copy exactly one blob to
-   `models/<model_id>/<model_id>.blob`.
+   `models/<model_id>/<model_id>.blob`. The blob stays out of git
+   (see `.gitignore`).
 3. Add the blob entry to `manifest.yaml`. Do not silently change an existing
    network's `shaves`: the value is part of the compiled blob and a mismatched
    `/start_model` request is rejected.
@@ -137,8 +219,9 @@ download or compile a model. Add a new single-network model as follows:
    stat --printf='%s\n' models/<model_id>/<model_id>.blob
    ```
 
-5. Run `python3 models/verify_models.py`, provision the host store with
-   `./setup/setup-pib.sh --models`, and confirm it with
+5. Run `python3 models/verify_models.py` against the local blobs, rebuild the
+   release tarball, publish it, then provision the host store with
+   `./setup/setup-pib.sh --models` and confirm it with
    `./setup/setup-pib.sh --verify-models`.
 6. Restart `ros-camera`, call `/list_models`, and start the model with
    `shaves=0` (registry default). Verify `/models_status` and the model's typed

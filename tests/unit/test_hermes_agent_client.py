@@ -39,7 +39,7 @@ def test_session_name_strips_unsafe_chars():
 
 def test_uses_hermes_backend_for_hermes_api_name():
     assert uses_hermes_backend("hermes-agent") is True
-    assert uses_hermes_backend("gpt-4o") is False
+    assert uses_hermes_backend("gpt-6") is False
 
 
 def test_profile_name_is_derived_from_personality():
@@ -49,9 +49,15 @@ def test_profile_name_is_derived_from_personality():
 def test_build_command_uses_oneshot_named_session_and_profile():
     cmd = build_command("hallo", "chat-1", personality_id="p-9")
     assert cmd[0].endswith("hermes")
-    assert "-p" in cmd and "pib_p-9" in cmd  # profile carries the SOUL.md
-    assert "-z" in cmd and "hallo" in cmd
+    # The `chat` subcommand carries the turn: only it accepts --create-if-missing.
+    assert cmd[1:3] == ["-p", "pib_p-9"]
+    assert "chat" in cmd
+    assert "-q" in cmd and "hallo" in cmd
+    assert "--oneshot" in cmd and "-Q" in cmd
     assert "--continue" in cmd and "pib_chat_chat-1" in cmd  # durable per-chat session
+    assert (
+        "--create-if-missing" in cmd
+    ), "a chat's first turn has no session to continue"
 
 
 def test_build_command_without_personality_omits_profile():
@@ -315,7 +321,9 @@ def test_voice_defaults_are_configurable_and_budget_defaults_to_four(monkeypatch
         importlib.reload(hac)
 
     assert hac.DEFAULT_MAX_TURNS == 4
-    assert set(hac.DEFAULT_ENABLED_TOOLSETS.split(",")) >= {"mcp-pib", "vision"}
+    # Bare `pib`, not `mcp-pib`: only the bare server name is registered before
+    # MCP discovery, and the alias makes Hermes warn on stdout.
+    assert set(hac.DEFAULT_ENABLED_TOOLSETS.split(",")) >= {"pib", "vision"}
     assert set(hac.DEFAULT_DISABLED_TOOLSETS.split(",")) >= {
         "terminal",
         "code_execution",
@@ -323,3 +331,44 @@ def test_voice_defaults_are_configurable_and_budget_defaults_to_four(monkeypatch
         "memory",
         "session_search",
     }
+
+
+def test_child_environment_sets_only_the_named_keys(monkeypatch):
+    """PR-1930b: a turn keys the child under its provider's own variables."""
+    from public_api_client.hermes_agent_client import _child_environment
+
+    env = _child_environment("secret", ("OPENAI_API_KEY",))
+    assert env["OPENAI_API_KEY"] == "secret"
+    assert "GOOGLE_API_KEY" not in env
+    assert "GEMINI_API_KEY" not in env
+
+
+def test_child_environment_is_none_for_a_keyless_provider():
+    from public_api_client.hermes_agent_client import _child_environment
+
+    assert _child_environment(None, ("OPENAI_API_KEY",)) is None
+    assert _child_environment("secret", ()) is None
+
+
+def test_ensure_profile_writes_the_supplied_model_and_provider(tmp_path, monkeypatch):
+    monkeypatch.setenv("PIB_HERMES_PROFILES_DIR", str(tmp_path / "profiles"))
+    monkeypatch.setenv("PIB_HERMES_PROFILE_FACTORY", "filesystem")
+    monkeypatch.setenv("PIB_HERMES_BIN", str(tmp_path / "not-installed" / "hermes"))
+
+    pdir = ensure_profile(
+        "p-local",
+        soul_text="Du bist pib.",
+        model="qwen-fast",
+        provider="Local",
+        base_url="http://host.docker.internal:11434/v1",
+    )
+
+    import yaml
+
+    with open(os.path.join(pdir, "config.yaml"), encoding="utf-8") as fh:
+        cfg = yaml.safe_load(fh)
+    assert cfg["model"] == "qwen-fast"
+    assert cfg["provider"] == "local"
+    assert cfg["providers"]["local"]["base_url"] == (
+        "http://host.docker.internal:11434/v1"
+    )

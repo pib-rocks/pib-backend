@@ -19,11 +19,14 @@ E2E-BDD-SAF-001 Flask Does Not Return 503 On Motor List
     Ros2 Assert No Http 503 From Flask    ${FLASK_BASE_URL}
 
 E2E-BDD-SAF-002 Non Deletable Calibration Pose Rejects Delete
-    [Documentation]    Given Calibration pose When DELETE Then 500 not 404.
+    [Documentation]    Given Calibration pose When DELETE Then 409 Conflict - not 404, not 500,
+    ...                and the body names the pose that refuses the change.
     ${response}=    GET    ${FLASK_BASE_URL}/pose    expected_status=200
     ${poses}=    Set Variable    ${response.json()}[poses]
     ${cal_id}=    Evaluate    next(p['poseId'] for p in $poses if p['name'] == 'Calibration')
-    ${response}=    DELETE    ${FLASK_BASE_URL}/pose/${cal_id}    expected_status=500
+    ${response}=    DELETE    ${FLASK_BASE_URL}/pose/${cal_id}    expected_status=409
+    Should Contain    ${response.json()}[error]    not deletable
+    Should Contain    ${response.json()}[error]    Calibration
 
 E2E-BDD-SAF-003 Unknown Motor Returns 404 Not 503
     [Documentation]    Given unknown motor path When GET Then 404 entity not found envelope.

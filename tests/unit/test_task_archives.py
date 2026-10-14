@@ -1,12 +1,7 @@
 from pathlib import Path
 
-import pytest
-
-pytest.importorskip(
-    "depthai", reason="depthai not installed (tests/requirements-camera.txt)"
-)
-
 import depthai as dai
+import pytest
 
 from ros_packages.camera.oak_d_lite.task_archives import (
     YOLOV6N_COCO_LABELS,
@@ -23,7 +18,15 @@ YUNET_BLOB = (
 YOLOV6N_BLOB = REPO_ROOT / "models/yolov6n_coco_640x640/yolov6n_coco_640x640.blob"
 
 
+def _require_blob(path: Path) -> None:
+    if not path.is_file():
+        pytest.skip(
+            f"{path.name} is not in git; it ships in the models-2026-09-15 release asset"
+        )
+
+
 def test_real_yunet_blob_builds_archive_from_its_tensor_metadata(tmp_path):
+    _require_blob(YUNET_BLOB)
     blob = dai.OpenVINO.Blob(YUNET_BLOB)
     archive = create_archive(YUNET_MODEL_ID, YUNET_BLOB, tmp_path)
 
@@ -41,6 +44,7 @@ def test_model_without_registered_parser_keeps_the_plain_network_path():
 
 
 def test_real_yolov6n_blob_builds_archive_from_its_tensor_metadata(tmp_path):
+    _require_blob(YOLOV6N_BLOB)
     blob = dai.OpenVINO.Blob(YOLOV6N_BLOB)
     archive = create_archive(YOLOV6N_MODEL_ID, YOLOV6N_BLOB, tmp_path)
 

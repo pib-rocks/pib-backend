@@ -41,6 +41,19 @@ function print() {
     echo -e "${!color}[$(date -u)][[ ${text} ]]${RESET_TEXT_COLOR}"
 }
 
+# Prints the release tag of the current checkout. docs/RELEASE.md: the tag published on
+# develop rides on the second parent of the `develop -> main` merge, or on HEAD after a
+# fast-forward. Fails (non-zero) when the checkout carries no tag.
+function release_tag_here() {
+    local tag
+    tag="$(git tag --points-at 'HEAD^2' 2>/dev/null | head -n 1)"
+    if [ -z "$tag" ]; then
+        tag="$(git tag --points-at HEAD 2>/dev/null | head -n 1)"
+    fi
+    [ -n "$tag" ] || return 1
+    printf '%s\n' "$tag"
+}
+
 # Ensure that the update-pib command is installed as a symlink
 function ensure_symlink_self() {
     local update_bin="/usr/local/bin/update-pib"
@@ -56,47 +69,67 @@ function ensure_symlink_self() {
     fi
 }
 
+# 4 GiB images never install ollama (variant gate in setup-pib.sh). A missing
+# unit must not fail this update and must not create the drop-in. When the
+# unit exists, the shared helper restarts it only if the drop-in changed:
+# without that restart the daemon keeps its old bind until reboot. The
+# restart choice and the idempotency rule are in
+# installation_scripts/ollama_listen.sh.
+function ensure_ollama_for_update() {
+    local helper="${PIB_OLLAMA_LISTEN_HELPER:-$BACKEND_DIR/setup/installation_scripts/ollama_listen.sh}"
+    if [ ! -f "$helper" ]; then
+        print ERROR "ollama: listen helper not found at ${helper}"
+        return 1
+    fi
+    # shellcheck source=installation_scripts/ollama_listen.sh
+    source "$helper"
+    if ! ollama_unit_installed; then
+        print INFO "ollama: not installed; listen drop-in left unset"
+        return 0
+    fi
+    ensure_ollama_listen_dropin restart
+}
+
 function ensure_host_ip() {
-    local outfile="$BACKEND_DIR/pib_api/flask/host_ip.txt"
+    local primary="/etc/pib_host_ip"
+    local legacy="$BACKEND_DIR/pib_api/flask/host_ip.txt"
     local dispatcher_script="/etc/NetworkManager/dispatcher.d/99-update-ip.sh"
+    local value
 
-    if [ ! -f "$outfile" ]; then
-        print INFO "host_ip.txt missing, ensuring dispatcher script exists..."
+    if [ -s "$primary" ] && [ -s "$legacy" ]; then
+        print INFO "host IP files already exist, skipping dispatcher setup"
+        return 0
+    fi
 
-        if [[ ! -f "$dispatcher_script" ]]; then
-            print INFO "Creating dispatcher script..."
-            sudo tee "$dispatcher_script" > /dev/null << 'EOF'
+    print INFO "host IP file missing, ensuring dispatcher script exists..."
+    sudo mkdir -p "$(dirname "$dispatcher_script")" "$(dirname "$primary")" "$(dirname "$legacy")"
+    sudo tee "$dispatcher_script" > /dev/null << 'EOF'
 #!/bin/bash
-LOG="/tmp/nm-dispatcher.log"
-OUTFILE="/home/pib/app/pib-backend/pib_api/flask/host_ip.txt"
-
-echo "$(date): Dispatcher triggered with IFACE=$1 STATE=$2" >> "$LOG"
-
-IP=$(ip route get 1 | grep -oP 'src \K[\d.]+' || echo "")
-
-CURRENT_IP=""
-if [[ -f "$OUTFILE" ]]; then
-    CURRENT_IP=$(cat "$OUTFILE")
+PRIMARY=/etc/pib_host_ip
+LEGACY=/home/pib/app/pib-backend/pib_api/flask/host_ip.txt
+IP=$(ip -4 route get 1 2>/dev/null | awk '{for (i = 1; i <= NF; i++) if ($i == "src") { print $(i + 1); exit }}')
+if [[ ! "$IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  exit 0
 fi
-
-if [[ "$IP" != "$CURRENT_IP" ]]; then
-    if [[ -n "$IP" ]]; then
-        echo "$IP" > "$OUTFILE"
-        echo "$(date): Updated IP to $IP" >> "$LOG"
-    else
-        > "$OUTFILE"
-        echo "$(date): No IP found" >> "$LOG"
-    fi
-fi
+for outfile in "$PRIMARY" "$LEGACY"; do
+  current=""
+  if [[ -f "$outfile" ]]; then
+    current=$(tr -d '[:space:]' < "$outfile")
+  fi
+  if [[ "$IP" != "$current" ]]; then
+    mkdir -p "$(dirname "$outfile")"
+    printf '%s\n' "$IP" > "$outfile"
+  fi
+done
 EOF
-            sudo chmod +x "$dispatcher_script"
-        fi
-
-        print INFO "Manually running dispatcher script to generate host_ip.txt..."
-        sudo bash -c "$dispatcher_script wlan0 dhcp4-change"
-    else
-        print INFO "host-ip.txt already exists, skipping dispatcher setup"
+    sudo chmod 755 "$dispatcher_script"
+    sudo bash "$dispatcher_script"
+    if [ ! -s "$primary" ]; then
+        print ERROR "host IP was not written to ${primary}"
+        return 1
     fi
+    value="$(tr -d '[:space:]' < "$primary")"
+    print INFO "host IP recorded in ${primary}: ${value}"
 }
 
 function update_backend() {
@@ -106,7 +139,23 @@ function update_backend() {
         git pull --ff-only origin main || { print ERROR "backend git pull error"; exit 1; }
         # Ensure that the IP dispatcher script is set up so the IP display works correctly
         ensure_host_ip
-        sudo docker compose --profile all up --force-recreate --build -d || { print ERROR "docker compose backend build error"; exit 1; }
+        # After the pull, before flask is recreated: the new container probes
+        # Ollama as soon as it starts, so the listen drop-in has to be in
+        # effect first. A missing ollama unit returns success.
+        ensure_ollama_for_update
+        # Inject the release tag into the flask-app image, exactly as docs/RELEASE.md and
+        # setup/update_runner.sh do. The export is required too: the following `up --build`
+        # interpolates ${APP_VERSION:-v0.6.2} and would otherwise rebuild the image with that
+        # fallback, so the compose call needs `sudo -E` to keep the value.
+        if APP_VERSION="$(release_tag_here)"; then
+            export APP_VERSION
+            print INFO "flask-app APP_VERSION=$APP_VERSION"
+            sudo -E docker compose --profile all build --build-arg "APP_VERSION=$APP_VERSION" flask-app || { print ERROR "docker compose backend build error"; exit 1; }
+        else
+            unset APP_VERSION
+            print WARN "no release tag on the checkout; flask-app keeps the compose-file APP_VERSION fallback"
+        fi
+        sudo -E docker compose --profile all up --force-recreate --build -d || { print ERROR "docker compose backend build error"; exit 1; }
     else
         print ERROR "Directory $BACKEND_DIR does not exist"
         exit 1 
@@ -119,7 +168,17 @@ function update_frontend() {
         cd "$FRONTEND_DIR" || { print ERROR "Cannot get to $FRONTEND_DIR"; exit 1; }
         git pull --recurse-submodules || { print ERROR "frontend git pull error"; exit 1; }
         git submodule update --init --recursive || { print ERROR "frontend submodule update error"; exit 1; }
-        sudo docker compose up --force-recreate --build -d || { print ERROR "docker compose frontend build error"; exit 1; }
+        # Same tag injection as the backend: cerebra's Dockerfile writes APP_VERSION into the
+        # footer, and `up --build` would otherwise re-interpolate the compose-file fallback.
+        if APP_VERSION="$(release_tag_here)"; then
+            export APP_VERSION
+            print INFO "cerebra APP_VERSION=$APP_VERSION"
+            sudo -E docker compose build --build-arg "APP_VERSION=$APP_VERSION" angular-app || { print ERROR "docker compose frontend build error"; exit 1; }
+        else
+            unset APP_VERSION
+            print WARN "no release tag on the checkout; cerebra keeps the compose-file APP_VERSION fallback"
+        fi
+        sudo -E docker compose up --force-recreate --build -d || { print ERROR "docker compose frontend build error"; exit 1; }
     else
         print ERROR "Directory $FRONTEND_DIR does not exist"
         exit 1 
