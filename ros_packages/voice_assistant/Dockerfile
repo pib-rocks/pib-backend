@@ -29,6 +29,7 @@ RUN apt-get update --fix-missing && \
         pulseaudio \
         portaudio19-dev \
         libusb-1.0-0-dev \
+        python3-usb \
     && rm -rf /var/lib/apt/lists/*
 
 COPY ./ros_packages/voice_assistant/requirements.txt .

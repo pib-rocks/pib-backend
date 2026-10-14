@@ -533,6 +533,24 @@ function install_depthai_udev_rules() {
     || print WARN "could not reload udev rules; a reboot/replug may be required"
 }
 
+# Install ReSpeaker udev rules so the voice node can open the microphone array
+# as a non-root user. Same shape as the Luxonis rule above.
+function install_respeaker_udev_rules() {
+  local rules_file="/etc/udev/rules.d/99-respeaker.rules"
+  local rule='SUBSYSTEM=="usb", ATTRS{idVendor}=="2886", ATTRS{idProduct}=="0018", MODE="0666", GROUP="plugdev"'
+
+  if [ -f "$rules_file" ] && grep -q '2886' "$rules_file"; then
+    print INFO "ReSpeaker udev rules already present"
+  else
+    echo "$rule" | sudo tee "$rules_file" > /dev/null
+    print INFO "Installed ReSpeaker udev rules to $rules_file"
+  fi
+
+  # Reload so the rule applies without a reboot (no-op effect if udev is unavailable).
+  sudo udevadm control --reload-rules && sudo udevadm trigger \
+    || print WARN "could not reload udev rules; a reboot/replug may be required"
+}
+
 # Install pib-sdk and pib_mcp_server into system Python so Marimo notebooks,
 # Hermes MCP, and host scripts can import them without sys.path hacks.
 function install_pib_python_packages() {
@@ -1919,6 +1937,9 @@ fi
 # Steps whose failure leaves nothing to build on end the setup through abort_setup; the rest
 # are reported in the summary and the setup goes on.
 run_step "Install system packages" install_system_packages || abort_setup "failed to install system packages"
+# Host udev, before containers. install_depthai_udev_rules is defined above
+# and has no call in this script, so the ReSpeaker rule is invoked here.
+run_step "Install ReSpeaker udev rules" install_respeaker_udev_rules || print WARN "failed to install ReSpeaker udev rules"
 run_step "Clone repositories" clone_repositories || abort_setup "failed to clone repositories"
 # After checkout, before containers: fetch the OAK release asset when the cache
 # does not match models/manifest.yaml, then copy blobs into the bind-mounted store.

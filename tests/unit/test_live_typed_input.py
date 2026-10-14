@@ -75,9 +75,12 @@ def test_typed_text_joins_the_open_live_chat_and_leaves_it_interruptible():
     assert closed["join"] is False
     assert closed["keep_session"] is False
 
-    detection = live_turn_detection_config()["realtime_input_config"]
-    assert detection["automatic_activity_detection"]["disabled"] is False
-    assert detection["activity_handling"] == "START_OF_ACTIVITY_INTERRUPTS"
+    # PC-30 reversed this contract: the client owns the gate now.
+    config = live_turn_detection_config()
+    detection = config["realtime_input_config"]
+    assert detection["automatic_activity_detection"]["disabled"] is True
+    assert "activity_handling" not in detection
+    assert config["activity_handling"] == "START_OF_ACTIVITY_INTERRUPTS"
 
     assistant = ASSISTANT.read_text(encoding="utf-8")
     send = _function_body(assistant, "def send_chat_message")
@@ -90,4 +93,6 @@ def test_typed_text_joins_the_open_live_chat_and_leaves_it_interruptible():
     assert "on_interruption(" in deliver
     assert "send_realtime_input(text=text)" in deliver
     assert ".stop(" not in deliver
-    assert "activity_start" not in loop
+    # PC-30: the loop now sends the activity marks itself.
+    assert "activity_start_message()" in loop
+    assert "activity_end_message()" in loop

@@ -1,8 +1,8 @@
 """Live interaction quality: who owns the turn, self-hearing, robot actions.
 
-The provider's server-side turn detection owns the live uplink. The microphone
-array's hardware voice-activity signal keeps the LED ring, the face, and the
-turn-based recorder. A live interruption stops playback, drops the speaker
+The client owns the live uplink. The microphone array's voice-activity signal
+gates what leaves the robot, and it still drives the LED ring, the face, and
+the turn-based recorder. A live interruption stops playback, drops the speaker
 tail from the uplink, and tells the model the turn was cut. A robot action is
 spoken first, and the session stays paused while it runs. A long-running
 action is not offered in a live turn. The actuation gate stays the
@@ -56,27 +56,49 @@ FACE_LISTENING_TEXT = "listening"
 
 
 def live_turn_detection_config() -> dict[str, Any]:
-    """Provider turn detection stays on. The client does not send activity marks."""
+    """The client owns the gate. Provider activity detection stays off.
+
+    The microphone array decides the turn. The client sends the activity
+    marks. The provider does not detect them on its own.
+    """
     return {
         "realtime_input_config": {
-            "automatic_activity_detection": {"disabled": False},
-            "activity_handling": "START_OF_ACTIVITY_INTERRUPTS",
-        }
+            "automatic_activity_detection": {"disabled": True},
+        },
+        "activity_handling": "START_OF_ACTIVITY_INTERRUPTS",
     }
 
 
 def admit_live_uplink(
-    *, now: float, exclude_until: float, session_paused: bool
+    *,
+    now: float,
+    exclude_until: float,
+    session_paused: bool,
+    streaming: bool,
 ) -> bool:
     """Whether a microphone chunk may leave for the provider.
 
-    Hardware voice activity is not an input. It must not gate this decision.
+    The local activity gate owns this decision. ``streaming`` false means the
+    chunk is outside an open turn and must stay on the robot. Playback tail
+    and a paused robot action still hold an open turn back.
     """
+    if not streaming:
+        return False
     if session_paused:
         return False
     if now < exclude_until:
         return False
     return True
+
+
+def activity_start_message() -> dict[str, Any]:
+    """Body for ``session.send_realtime_input(**message)`` when a turn opens."""
+    return {"activity_start": {}}
+
+
+def activity_end_message() -> dict[str, Any]:
+    """Body for ``session.send_realtime_input(**message)`` when a turn closes."""
+    return {"activity_end": {}}
 
 
 def playback_exclusion_deadline(playback_ended_at: float) -> float:
@@ -126,9 +148,9 @@ def typed_text_joins_live(
     """A typed line for the open live chat joins that session.
 
     Playback stops, so the spoken turn stays interruptible, and the text is
-    sent in. The session stays open. Speech barge-in stays the provider's
-    own turn detection. A line for another chat is left on the ordinary
-    text path. Blank text is ignored.
+    sent in. The session stays open. Speech barge-in is the client's activity
+    gate. A line for another chat is left on the ordinary text path. Blank
+    text is ignored.
     """
     cleaned = text.strip() if isinstance(text, str) else ""
     same_chat = bool(live_open and live_chat_id and message_chat_id == live_chat_id)

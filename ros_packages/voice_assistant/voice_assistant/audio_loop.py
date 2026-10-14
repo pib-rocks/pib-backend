@@ -1,7 +1,7 @@
 # audio_loop.py
 #
 # Gemini live audio loop that:
-# - Subscribes to a ROS audio topic and forwards PCM chunks to Gemini live session.
+# - Subscribes to a ROS audio topic and forwards gated PCM chunks to a Gemini live session.
 # - Receives audio (TTS) and transcript events back from Gemini.
 # - Streams user/assistant transcripts into ChatNode via the CreateOrUpdateChatMessage srv
 #   so the chat UI updates live while Gemini speaks.
@@ -20,6 +20,8 @@ from rclpy.executors import SingleThreadedExecutor
 from std_msgs.msg import Int16MultiArray
 from pib_api_client import voice_assistant_client
 from pib_hermes_config.live_interaction import (
+    activity_end_message,
+    activity_start_message,
     admit_live_uplink,
     gemini_function_declarations,
     interruption_detected,
@@ -31,6 +33,8 @@ from pib_hermes_config.live_interaction import (
     playback_slice_bytes,
     iter_playback_slices,
 )
+from voice_assistant.live_gate import ActivityGate
+from voice_assistant.live_registers import PRODUCT_ID, VENDOR_ID, open_register_port
 from pib_hermes_config.live_session import (
     context_window_compression,
     gemini_live_connect_model,
@@ -65,7 +69,16 @@ FORMAT = pyaudio.paInt16
 CHANNELS = 1  # send mono to Gemini
 SEND_SAMPLE_RATE = 16000  # recorder publishes 16 kHz mono
 RECEIVE_SAMPLE_RATE = 24000  # model replies at 24 kHz
+# Measured on the robot 2026-10-14: /audio_stream messages are 1024 samples
+# at 16 kHz (64 ms, about 12 messages per second). The gate's chunk counts
+# are derived from this length and the target durations, not from 10 and 14.
 CHUNK_SIZE = 1024
+PRE_ROLL_MS = 320
+TURN_END_MS = 450
+# Raised on GAMMAVAD_SR while a motor tool runs. The value read at the start
+# of the motion is what gets written back. 8.5 is the default, never 3.5.
+DEFAULT_MOTION_VAD_DB = 8.5
+_MOTION_VAD_ENV = "GAMMAVAD_SR_MOTION_DB"
 
 # The live model id is a field of the provider row. This loop opens whatever
 # pinned Gemini model the caller passes in.
@@ -103,6 +116,278 @@ class LiveIdleTimeout(RuntimeError):
     """The personality's idle timeout elapsed with nobody speaking."""
 
     pass
+
+
+def gate_counts_for_message(
+    samples_per_message: int, sample_rate: int = SEND_SAMPLE_RATE
+) -> tuple[int, int]:
+    """Pre-roll and silence-end counts for one microphone message length.
+
+    320 ms of audio is kept before the trigger, and about 450 ms of silence
+    ends the turn. ``samples_per_message`` is the length actually observed.
+    """
+    if samples_per_message <= 0 or sample_rate <= 0:
+        samples_per_message = CHUNK_SIZE
+        sample_rate = SEND_SAMPLE_RATE
+    chunk_ms = (samples_per_message / float(sample_rate)) * 1000.0
+    pre_roll = max(1, int(round(PRE_ROLL_MS / chunk_ms)))
+    silence_end = max(1, int(round(TURN_END_MS / chunk_ms)))
+    return pre_roll, silence_end
+
+
+def motion_vad_threshold_db() -> float:
+    """Configured GAMMAVAD_SR while a motor moves. Default 8.5 dB."""
+    raw = os.getenv(_MOTION_VAD_ENV, "").strip()
+    if not raw:
+        return DEFAULT_MOTION_VAD_DB
+    try:
+        return float(raw)
+    except ValueError:
+        return DEFAULT_MOTION_VAD_DB
+
+
+def _session_root(endpoint_base: str) -> str:
+    """Origin for ``POST /v1/session``.
+
+    ``pib_cloud_base_url`` is the OpenAI-compatible root and already ends in
+    ``/v1``. The session client appends ``/v1/session`` itself.
+    """
+    base = endpoint_base.strip().rstrip("/")
+    if base.endswith("/v1"):
+        return base[: -len("/v1")]
+    return base
+
+
+def _pcm_from_message(msg: object) -> bytes:
+    if isinstance(msg, dict):
+        data = msg.get("data") or b""
+    else:
+        data = msg
+    if isinstance(data, bytes):
+        return data
+    try:
+        return bytes(data)
+    except Exception:
+        return b""
+
+
+def _mime_from_message(msg: object) -> str:
+    if isinstance(msg, dict) and isinstance(msg.get("mime_type"), str):
+        return msg["mime_type"]
+    return "audio/pcm"
+
+
+def _json_ready(value: object) -> object:
+    """A JSON value. Usage metadata must not need the token to be rendered."""
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, dict):
+        return {str(key): _json_ready(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_ready(item) for item in value]
+    enum_value = getattr(value, "value", None)
+    if enum_value is not None and not callable(enum_value):
+        return _json_ready(enum_value)
+    return str(value)
+
+
+def _usage_dict(usage: object) -> dict:
+    if usage is None:
+        return {}
+    if isinstance(usage, dict):
+        data = usage
+    else:
+        dump = getattr(usage, "model_dump", None)
+        data = dump(exclude_none=True) if callable(dump) else None
+    if not isinstance(data, dict):
+        return {}
+    ready = _json_ready(data)
+    return ready if isinstance(ready, dict) else {}
+
+
+def _int_field(data: dict, *names: str) -> Optional[int]:
+    for name in names:
+        value = data.get(name)
+        if isinstance(value, bool) or not isinstance(value, int):
+            continue
+        return value
+    return None
+
+
+def _modality_tokens(data: dict, detail_keys: tuple[str, ...], modality: str) -> int:
+    wanted = modality.upper()
+    for key in detail_keys:
+        details = data.get(key)
+        if not isinstance(details, list):
+            continue
+        total = 0
+        found = False
+        for item in details:
+            if not isinstance(item, dict):
+                continue
+            name = item.get("modality")
+            count = item.get("token_count", item.get("tokenCount"))
+            if not isinstance(name, str) or str(name).upper() != wanted:
+                continue
+            if isinstance(count, bool) or not isinstance(count, int):
+                continue
+            total += count
+            found = True
+        if found:
+            return total
+    return 0
+
+
+class _RedactingFilter(logging.Filter):
+    """Drops the pib token and the ephemeral session token from every line."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._secrets: list[str] = []
+
+    def add(self, secret: object) -> None:
+        if not isinstance(secret, str) or len(secret) < 8:
+            return
+        if secret not in self._secrets:
+            self._secrets.append(secret)
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            secrets = tuple(self._secrets)
+            if not secrets:
+                return True
+            if record.args:
+                record.msg = record.getMessage()
+                record.args = ()
+            message = record.msg
+            if isinstance(message, str):
+                for secret in secrets:
+                    if secret in message:
+                        message = message.replace(secret, "<redacted>")
+                record.msg = message
+            if record.exc_info:
+                text = record.exc_text
+                if text is None:
+                    text = logging.Formatter().formatException(record.exc_info)
+                for secret in secrets:
+                    if secret in text:
+                        text = text.replace(secret, "<redacted>")
+                record.exc_text = text
+        except Exception:
+            return True
+        return True
+
+
+class _StatusRing:
+    """LED ring states. A missing ring, or a missing pyusb, does nothing.
+
+    The existing ``PixelRing`` helper is used when that package is importable.
+    Otherwise the same vendor writes (off / listen / think / speak) go out
+    directly, which is what the voice image can do once python3-usb is installed.
+    """
+
+    def __init__(self) -> None:
+        self._ring = None
+        self._opened = False
+
+    def show(self, state: str) -> None:
+        ring = self._ensure()
+        if ring is None:
+            return
+        method = {
+            "idle": "off",
+            "listening": "listen",
+            "thinking": "think",
+            "speaking": "speak",
+        }.get(state)
+        if method is None:
+            return
+        try:
+            getattr(ring, method)()
+        except Exception:
+            return
+
+    def _ensure(self):
+        if self._opened:
+            return self._ring
+        self._opened = True
+        try:
+            import usb.core
+
+            device = usb.core.find(idVendor=VENDOR_ID, idProduct=PRODUCT_ID)
+        except Exception:
+            return None
+        if not device:
+            return None
+        try:
+            from ros_audio_io.pixel_ring import PixelRing
+
+            self._ring = PixelRing(device)
+            return self._ring
+        except Exception:
+            pass
+        try:
+            self._ring = _DirectStatusRing(device)
+        except Exception:
+            self._ring = None
+        return self._ring
+
+
+class _DirectStatusRing:
+    """The PixelRing write protocol, used when that module is not installed."""
+
+    def __init__(self, device) -> None:
+        self._device = device
+
+    def _write(self, command: int, data) -> None:
+        import usb.util
+
+        self._device.ctrl_transfer(
+            usb.util.CTRL_OUT
+            | usb.util.CTRL_TYPE_VENDOR
+            | usb.util.CTRL_RECIPIENT_DEVICE,
+            0,
+            command,
+            0x1C,
+            [0] if data is None else data,
+            8000,
+        )
+
+    def off(self) -> None:
+        self._write(1, [0, 0, 0, 0])
+
+    def listen(self) -> None:
+        self._write(2, None)
+
+    def speak(self) -> None:
+        self._write(3, None)
+
+    def think(self) -> None:
+        self._write(4, None)
+
+
+def _capture_bound_attention() -> None:
+    """Remember the handle ``bind_attention`` already returns.
+
+    The voice node binds that handle after this module is imported. The gate's
+    start edge calls ``command_toward_speaker`` on it. No second head
+    controller is built.
+    """
+    try:
+        from voice_assistant import attention as attention_mod
+    except Exception:
+        return
+    original = getattr(attention_mod, "bind_attention", None)
+    if original is None or getattr(original, "_captures_handle", False):
+        return
+
+    def bind_attention(*args, **kwargs):
+        handle = original(*args, **kwargs)
+        attention_mod.bound_attention_handle = handle
+        return handle
+
+    bind_attention._captures_handle = True
+    attention_mod.bind_attention = bind_attention
 
 
 # ——————————————————————————————————————————
@@ -284,8 +569,8 @@ class GeminiAudioLoop:
         self._model: Optional[str] = None
         self._idle_timeout_s: Optional[float] = None
         self._last_activity: float = 0.0
-        # Hardware VAD does not gate this uplink. The tail after playback does,
-        # and so does a pause while a robot action runs.
+        # The local activity gate owns the uplink. Playback tail and a pause
+        # while a robot action runs still hold an open turn back.
         self._exclude_until: float = 0.0
         self._session_paused: bool = False
         self._playback_cancel = threading.Event()
@@ -303,12 +588,27 @@ class GeminiAudioLoop:
         self._playback_slice_bytes = playback_slice_bytes(
             RECEIVE_SAMPLE_RATE, 2, CHANNELS
         )
+        self._activity_gate: Optional[ActivityGate] = None
+        self._gate_samples: Optional[int] = None
+        self._turn_announced = False
+        self._register_port = None
+        self._usb_lock = threading.Lock()
+        self._motion_vad_depth = 0
+        self._vad_before_motion: Optional[float] = None
+        self._motion_vad_db = motion_vad_threshold_db()
+        self._ring = _StatusRing()
+        self._usage_metadata: object = None
+        self._cloud_client = None
+        self._cloud_session_id: Optional[str] = None
+        self._live_was_open = False
+        self._redactor = _RedactingFilter()
+        logging.getLogger().addFilter(self._redactor)
 
     def submit_typed_text(self, text: str) -> bool:
         """Interrupt playback and send this line into the open live session.
 
-        The session stays open. Speech barge-in stays the provider's turn
-        detection. The line is also written into the chat, so the text is
+        The session stays open. Speech barge-in is the client's activity
+        gate. The line is also written into the chat, so the text is
         visible while the model answers it.
         """
         cleaned = text.strip() if isinstance(text, str) else ""
@@ -381,6 +681,7 @@ class GeminiAudioLoop:
         if speaking == self._speaking:
             return
         self._speaking = speaking
+        self._show_ring("speaking" if speaking else self._idle_or_listening())
         listener = self._speaking_listener
         if listener is None:
             return
@@ -388,6 +689,121 @@ class GeminiAudioLoop:
             listener(speaking)
         except Exception:
             logger.exception("speaking listener failed")
+
+    def _idle_or_listening(self) -> str:
+        if self.session is not None:
+            return "listening"
+        return "idle"
+
+    def _show_ring(self, state: str) -> None:
+        try:
+            self._ring.show(state)
+        except Exception:
+            return
+
+    def _install_redactor(self) -> _RedactingFilter:
+        redactor = self._redactor
+        root = logging.getLogger()
+        if redactor not in root.filters:
+            root.addFilter(redactor)
+        return redactor
+
+    def _read_voice_activity(self) -> bool:
+        port = self._register_port
+        if port is None:
+            return False
+        with self._usb_lock:
+            return bool(port.read_voice_activity())
+
+    def _gate_for_samples(self, samples: int) -> ActivityGate:
+        if samples <= 0:
+            samples = CHUNK_SIZE
+        gate = self._activity_gate
+        if gate is not None and (gate.streaming or samples == self._gate_samples):
+            return gate
+        pre_roll, silence_end = gate_counts_for_message(samples)
+        self._gate_samples = samples
+        self._activity_gate = ActivityGate(
+            pre_roll_chunks=pre_roll,
+            silence_end_chunks=silence_end,
+        )
+        return self._activity_gate
+
+    def _begin_motion_vad(self) -> None:
+        """Raise GAMMAVAD_SR for a motor tool. The read-back is restored later."""
+        port = self._register_port
+        if port is None:
+            return
+        with self._usb_lock:
+            if self._motion_vad_depth == 0:
+                self._vad_before_motion = port.read_vad_threshold_db()
+                port.write_vad_threshold_db(self._motion_vad_db)
+            self._motion_vad_depth += 1
+
+    def _end_motion_vad(self) -> None:
+        port = self._register_port
+        if port is None:
+            return
+        with self._usb_lock:
+            if self._motion_vad_depth <= 0:
+                return
+            self._motion_vad_depth -= 1
+            if self._motion_vad_depth > 0:
+                return
+            previous = self._vad_before_motion
+            self._vad_before_motion = None
+            if previous is not None:
+                port.write_vad_threshold_db(previous)
+
+    def _execute_named_tool(self, tool_name: str, args: dict):
+        from pib_hermes_config.visible_state import ANSWER_GESTURE_TOOLS
+        from voice_assistant.direct_tool_loop import execute_mcp_tool
+
+        motor = tool_name in ANSWER_GESTURE_TOOLS
+        if motor:
+            self._begin_motion_vad()
+        try:
+            return execute_mcp_tool(tool_name, args)
+        finally:
+            if motor:
+                self._end_motion_vad()
+
+    def _fire_head_turn(self, started_at: float) -> None:
+        """Turn toward the speaker without waiting on the cloud."""
+
+        def _run() -> None:
+            try:
+                from voice_assistant import attention as attention_mod
+
+                handle = getattr(attention_mod, "bound_attention_handle", None)
+                command = getattr(handle, "command_toward_speaker", None)
+                if command is None:
+                    return
+                port = self._register_port
+                angle = None
+                if port is not None:
+                    with self._usb_lock:
+                        angle = port.read_doa_angle()
+                if isinstance(angle, int):
+                    buffer = getattr(handle, "buffer", None)
+                    note = getattr(buffer, "note_doa", None)
+                    if note is not None:
+                        note(angle)
+                command()
+            except Exception:
+                logger.exception("head turn on activity start failed")
+                return
+            delay_ms = (time.monotonic() - started_at) * 1000.0
+            logger.info("head command delay_ms=%.1f", delay_ms)
+
+        threading.Thread(target=_run, name="activity-head-turn", daemon=True).start()
+
+    def _note_usage(self, message: object) -> None:
+        usage = getattr(message, "usage_metadata", None)
+        if usage is None:
+            usage = getattr(message, "usageMetadata", None)
+        if usage is not None:
+            self._usage_metadata = usage
 
     @property
     def is_listening(self) -> bool:
@@ -731,26 +1147,44 @@ class GeminiAudioLoop:
             raise
 
     async def send_realtime(self):
-        """Feeds PCM chunks from out_queue into the Gemini live session.
+        """Feed every microphone message through the local activity gate.
 
-        The array's voice-activity signal is not consulted. Chunks are dropped
-        only for the playback tail and while a robot action has the session paused.
+        Only ``decision.uplink`` is admitted. Activity start and activity end
+        marks go out on the gate's edges. Playback tail and a paused robot
+        action still hold the uplink, and excluded audio is not kept.
         """
         try:
             while not self._stop_event.is_set():
                 msg = await self.out_queue.get()
-                if not admit_live_uplink(
-                    now=time.monotonic(),
+                pcm = _pcm_from_message(msg)
+                if not pcm:
+                    continue
+                now = time.monotonic()
+                held = not admit_live_uplink(
+                    now=now,
                     exclude_until=self._exclude_until,
                     session_paused=self._session_paused,
+                    streaming=True,
+                )
+                gate = self._gate_for_samples(len(pcm) // 2)
+                was_streaming = gate.streaming
+                voice = await asyncio.to_thread(self._read_voice_activity)
+                decision = gate.observe(bool(voice), pcm)
+                started_at = time.monotonic() if decision.start else 0.0
+                if held:
+                    await self._drop_held_turn(was_streaming)
+                    continue
+                in_turn = bool(decision.uplink) or decision.start or decision.end
+                if not admit_live_uplink(
+                    now=now,
+                    exclude_until=self._exclude_until,
+                    session_paused=self._session_paused,
+                    streaming=in_turn,
                 ):
                     continue
-                # If desired, uncomment to log input audio:
-                # data = msg.get("data", b"")
-                # if data:
-                #     await self._log_input_bytes(data)
-                async with self._send_lock:
-                    await self.session.send_realtime_input(audio=msg)
+                await self._send_gate_decision(
+                    decision, _mime_from_message(msg), started_at
+                )
         except asyncio.CancelledError:
             logger.debug("send_realtime: cancelled")
             raise
@@ -762,6 +1196,42 @@ class GeminiAudioLoop:
                 exc_info=True,
             )
             raise ReconnectRequested("send_realtime failed") from e
+
+    async def _drop_held_turn(self, was_streaming: bool) -> None:
+        """Exclusion and pause drop the chunk. An announced turn is closed."""
+        gate = self._activity_gate
+        if gate is not None:
+            gate.reset()
+        announced = was_streaming and self._turn_announced
+        self._turn_announced = False
+        if not announced or self.session is None:
+            return
+        try:
+            async with self._send_lock:
+                await self.session.send_realtime_input(**activity_end_message())
+        except Exception:
+            logger.exception("Could not end the turn while the uplink is held")
+
+    async def _send_gate_decision(self, decision, mime: str, started_at: float) -> None:
+        session = self.session
+        if session is None:
+            return
+        if decision.start:
+            self._fire_head_turn(started_at)
+            self._show_ring("listening")
+        async with self._send_lock:
+            if decision.start:
+                await session.send_realtime_input(**activity_start_message())
+                self._turn_announced = True
+            for chunk in decision.uplink:
+                await session.send_realtime_input(
+                    audio={"data": chunk, "mime_type": mime}
+                )
+            if decision.end:
+                await session.send_realtime_input(**activity_end_message())
+                self._turn_announced = False
+        if decision.end and not self._speaking:
+            self._show_ring("thinking")
 
     def _log_user_transcriptions(self, sc):
         """
@@ -834,6 +1304,7 @@ class GeminiAudioLoop:
                 assistant_text_piece: Optional[str] = None
                 turn_sent_audio = False
                 async for resp in turn:
+                    self._note_usage(resp)
                     # ----- Session management signals -----
                     # Session resumption checkpoints (store handle for reconnect)
                     session_resumption_update = getattr(
@@ -986,11 +1457,10 @@ class GeminiAudioLoop:
             ANSWER_GESTURE_TOOLS,
             issue_answer_gesture,
         )
-        from voice_assistant.direct_tool_loop import execute_mcp_tool
 
         if name in ANSWER_GESTURE_TOOLS:
             try:
-                result = issue_answer_gesture(name, arguments, execute_mcp_tool)
+                result = issue_answer_gesture(name, arguments, self._execute_named_tool)
             except Exception:
                 logger.exception("Answer gesture %s failed", name)
                 result = {
@@ -1032,7 +1502,7 @@ class GeminiAudioLoop:
                 self._exclude_until = playback_exclusion_deadline(time.monotonic())
 
         def execute(tool_name: str, args: dict):
-            return execute_mcp_tool(tool_name, args)
+            return self_loop._execute_named_tool(tool_name, args)
 
         class _Pause:
             def begin(self) -> None:
@@ -1194,7 +1664,25 @@ class GeminiAudioLoop:
             logger.error("Refusing live session without a pinned Gemini model.")
             return
 
-        client = genai.Client(api_key=self.api_key)
+        grant = self._request_live_grant(live_model)
+        if grant is None:
+            return
+        if grant.use_cascade:
+            logger.info(
+                "pib.Cloud live session not opened; cascade reason=%s",
+                grant.reason or "unspecified",
+            )
+            return
+        if not grant.token:
+            logger.error("pib.Cloud live grant has no ephemeral token")
+            return
+
+        client = genai.Client(
+            api_key=grant.token,
+            http_options={"api_version": "v1alpha"},
+        )
+        if grant.model:
+            live_model = grant.model
 
         # Read chat personality/description from PIB to seed the model (once)
         description = "You are pib, a humanoid robot."
@@ -1216,6 +1704,18 @@ class GeminiAudioLoop:
 
         base_config = dict(CONFIG)
         base_config.update(live_turn_detection_config())
+        # The SDK reads activity handling on the realtime input config. The
+        # client-owned gate still publishes it at the top level as well.
+        handling = base_config.get("activity_handling")
+        realtime = base_config.get("realtime_input_config")
+        if (
+            handling
+            and isinstance(realtime, dict)
+            and "activity_handling" not in realtime
+        ):
+            realtime = dict(realtime)
+            realtime["activity_handling"] = handling
+            base_config["realtime_input_config"] = realtime
         base_config["system_instruction"] = description
         self._offer_tools = bool(getattr(personality, "tool_calling", True))
 
@@ -1234,13 +1734,124 @@ class GeminiAudioLoop:
             return connection_config
 
         self._send_lock = asyncio.Lock()
+        self._register_port = open_register_port()
+        pre_roll, silence_end = gate_counts_for_message(CHUNK_SIZE)
+        logger.info(
+            "activity gate samples_per_message=%s pre_roll_chunks=%s silence_end_chunks=%s",
+            CHUNK_SIZE,
+            pre_roll,
+            silence_end,
+        )
 
         # Outer loop: reconnect as needed until stopped
+        try:
+            await self._run_live_sessions(client, live_model, _connect_config)
+        finally:
+            self._show_ring("idle")
+            if self._live_was_open:
+                self._settle_live_usage(live_model)
+            port = self._register_port
+            self._register_port = None
+            close = getattr(port, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:
+                    logger.exception("Could not close the microphone register port")
+
+        logger.info("GeminiAudioLoop.run: terminated")
+
+    def _request_live_grant(self, model: str):
+        """Ephemeral live grant. The pib token and the grant token are not logged."""
+        from voice_assistant.cloud_session import CloudSessionClient, CloudSessionError
+        from voice_assistant.cloud_token import CloudTokenError, resolve_cloud_token
+        from voice_assistant.pib_cloud_stream import pib_cloud_base_url
+
+        redactor = self._install_redactor()
+        redactor.add(self.api_key)
+        try:
+            pib_token = resolve_cloud_token()
+        except CloudTokenError as exc:
+            logger.error("pib.Cloud token unavailable: %s", exc)
+            return None
+        redactor.add(pib_token)
+        try:
+            cloud = CloudSessionClient(
+                base_url=_session_root(pib_cloud_base_url()),
+                token=pib_token,
+            )
+            grant = cloud.open_session(model=model)
+        except CloudSessionError as exc:
+            logger.error(
+                "pib.Cloud did not grant a live session code=%s status=%s",
+                exc.code,
+                exc.status,
+            )
+            return None
+        except Exception:
+            logger.exception("pib.Cloud session request failed")
+            return None
+        redactor.add(grant.token)
+        self._cloud_client = cloud
+        self._cloud_session_id = grant.session_id
+        return grant
+
+    def _settle_live_usage(self, model: str) -> None:
+        """Report the live session's own usage when the session is finished."""
+        client = self._cloud_client
+        session_id = self._cloud_session_id
+        if client is None or not session_id:
+            return
+        usage = self._usage_metadata
+        if usage is None and self.session is not None:
+            usage = getattr(self.session, "usage_metadata", None)
+            if usage is None:
+                usage = getattr(self.session, "usageMetadata", None)
+        data = _usage_dict(usage)
+        audio_in = _int_field(data, "audio_input_tokens", "audioInputTokens")
+        if audio_in is None:
+            audio_in = _modality_tokens(
+                data, ("prompt_tokens_details", "promptTokensDetails"), "AUDIO"
+            )
+        audio_out = _int_field(data, "audio_output_tokens", "audioOutputTokens")
+        if audio_out is None:
+            audio_out = _modality_tokens(
+                data, ("response_tokens_details", "responseTokensDetails"), "AUDIO"
+            )
+        text_tokens = _int_field(data, "text_tokens", "textTokens")
+        if text_tokens is None:
+            text_tokens = _modality_tokens(
+                data, ("prompt_tokens_details", "promptTokensDetails"), "TEXT"
+            ) + _modality_tokens(
+                data, ("response_tokens_details", "responseTokensDetails"), "TEXT"
+            )
+        video_in = _int_field(data, "video_input_tokens", "videoInputTokens")
+        if video_in is None:
+            video_in = _modality_tokens(
+                data, ("prompt_tokens_details", "promptTokensDetails"), "VIDEO"
+            )
+        try:
+            client.report_usage(
+                session_id,
+                audio_input_tokens=audio_in or 0,
+                audio_output_tokens=audio_out or 0,
+                text_tokens=text_tokens or 0,
+                video_input_tokens=video_in or 0,
+                usage_metadata=data or None,
+                model=model,
+            )
+        except Exception as exc:
+            logger.warning(
+                "live session usage was not reported code=%s",
+                getattr(exc, "code", None),
+            )
+
+    async def _run_live_sessions(self, client, live_model: str, connect_config) -> None:
         while not self._stop_event.is_set():
             ros_started = False
             tasks = []
             try:
-                gemini_config = await _connect_config()
+                gemini_config = await connect_config()
                 if self._offer_tools:
                     try:
                         declarations = await asyncio.to_thread(
@@ -1257,6 +1868,11 @@ class GeminiAudioLoop:
                     model=live_model, config=gemini_config
                 ) as session:
                     self.session = session
+                    self._live_was_open = True
+                    self._turn_announced = False
+                    self._activity_gate = None
+                    self._gate_samples = None
+                    self._show_ring("listening")
                     self._schedule_typed_drain()
                     self._note_activity()
                     self._exclude_until = 0.0
@@ -1359,13 +1975,16 @@ class GeminiAudioLoop:
                 except Exception:
                     pass
 
+                if self.session is not None:
+                    self._note_usage(self.session)
                 self.session = None
 
             # Backoff before reconnecting
             if not self._stop_event.is_set():
                 await asyncio.sleep(LIVE_RECONNECT_BACKOFF_S)
 
-        logger.info("GeminiAudioLoop.run: terminated")
+
+_capture_bound_attention()
 
 
 def main():
