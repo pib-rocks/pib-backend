@@ -173,3 +173,48 @@ def test_append_record_writes_jsonl_creates_parent_and_swallows_oserror(
     with caplog.at_level(logging.WARNING):
         append_record(str(blocker / "turns.jsonl"), {"turn_id": "nope"})
     assert any("turn latency" in record.message for record in caplog.records)
+
+
+def test_streaming_usage_frame_fills_the_usage_fields_and_headers_win():
+    """A streaming turn has no X-Usage-* header; the counts arrive on the last frame."""
+    trace = TurnTrace()
+    trace.open("chat-1", "pib-cloud", origin_ms=1000.0)
+    trace.observe(
+        {
+            "stage": "response_headers",
+            "ts_ms": 1213.0,
+            "detail": {"upstream_ttft_ms": 190, "budget_remaining_tokens": 49999.83},
+        }
+    )
+    trace.observe(
+        {
+            "stage": "usage",
+            "ts_ms": 1990.0,
+            "detail": {"usage_prompt_tokens": 75, "usage_completion_tokens": 30},
+        }
+    )
+    record = trace.close()
+    line = render_line(record)
+    assert "upstream_ttft_ms=190" in line
+    assert "usage_prompt_tokens=75" in line
+    assert "usage_completion_tokens=30" in line
+    assert "budget_remaining_tokens=49999.83" in line
+
+    # A non-streaming turn carries the counts as headers; those win.
+    traced = TurnTrace()
+    traced.open("chat-2", "pib-cloud", origin_ms=1000.0)
+    traced.observe(
+        {
+            "stage": "response_headers",
+            "ts_ms": 1100.0,
+            "detail": {"usage_prompt_tokens": 11, "usage_completion_tokens": 22},
+        }
+    )
+    traced.observe(
+        {
+            "stage": "usage",
+            "ts_ms": 1200.0,
+            "detail": {"usage_prompt_tokens": 99, "usage_completion_tokens": 98},
+        }
+    )
+    assert "usage_prompt_tokens=11" in render_line(traced.close())

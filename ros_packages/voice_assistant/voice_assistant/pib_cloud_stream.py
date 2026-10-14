@@ -262,6 +262,27 @@ def extract_visible_delta(frame: Mapping[str, Any]) -> Optional[str]:
     return content
 
 
+def _stream_usage_detail(frame: Mapping[str, Any]) -> Optional[dict[str, Any]]:
+    """The provider's usage report as the API forwards it on the closing frame.
+
+    A streaming turn does not carry ``X-Usage-*`` headers (they exist only at
+    stream end, see the interface description); the API forwards the provider's
+    report on the last SSE frame instead. Only counts that are actually present
+    are reported - a missing count is left out, never zeroed.
+    """
+    usage = frame.get("usage")
+    if not isinstance(usage, Mapping):
+        return None
+    detail: dict[str, Any] = {}
+    prompt = _header_number(usage.get("prompt_tokens"))
+    completion = _header_number(usage.get("completion_tokens"))
+    if prompt is not None:
+        detail["usage_prompt_tokens"] = prompt
+    if completion is not None:
+        detail["usage_completion_tokens"] = completion
+    return detail or None
+
+
 def _extract_error_details(payload: object) -> tuple[str, Optional[str], Optional[int]]:
     """Extract (message, code, status) from an HTTP or SSE error payload."""
     if not isinstance(payload, Mapping):
@@ -523,6 +544,10 @@ def stream_pib_cloud_chat(
                 if event_type == "error" or frame.get("error"):
                     msg, code, err_status = _extract_error_details(frame)
                     raise _SSEStreamError(msg, code=code, status=err_status)
+
+                usage_detail = _stream_usage_detail(frame)
+                if usage_detail is not None:
+                    trace_emit("usage", chat_id=chat_id, detail=usage_detail)
 
                 event_type = None
                 piece = extract_visible_delta(frame)

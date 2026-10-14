@@ -354,7 +354,6 @@ class VoiceAssistantNode(Node):
         language: str,
         on_stopped_playing: Callable[[], None] = None,
     ) -> None:
-        self._mark_first_sentence_flushed(speech)
         request = PlayAudioFromSpeech.Request()
         request.speech = speech
         request.gender = gender
@@ -624,6 +623,11 @@ class VoiceAssistantNode(Node):
             return
         clauses = self._streaming_speech.take(sentence, is_final)
         self.final_chat_response_received = is_final
+        if clauses:
+            # This is the handoff of the turn's first answer clause to the
+            # synthesiser. Marked here rather than in play_audio_from_speech so
+            # a thinking filler never becomes the answer's first sentence.
+            self._mark_first_sentence_flushed()
         if not clauses:
             if is_final and not self.is_executing_program:
                 self._finish_spoken_turn()
@@ -724,11 +728,9 @@ class VoiceAssistantNode(Node):
         except Exception as exc:
             self.get_logger().warning("turn trace text_received failed: %s", exc)
 
-    def _mark_first_sentence_flushed(self, speech: str) -> None:
-        """The first non-empty handoff of this turn is first_sentence_flushed."""
+    def _mark_first_sentence_flushed(self) -> None:
+        """The turn's first answer clause handed to the synthesiser."""
         try:
-            if not speech or not str(speech).strip():
-                return
             if not self._turn_trace.is_open or self._sentence_flushed:
                 return
             self._sentence_flushed = True
@@ -745,6 +747,17 @@ class VoiceAssistantNode(Node):
             if not trace.is_open:
                 return
             if not incomplete:
+                # The audio player stamps last_audio when the burst's queue
+                # drains. Its event may still be in flight for a few
+                # milliseconds when the turn closes, so the completion of the
+                # last playback call - the same boundary, observed here - fills
+                # the gap. Never invented: it only applies to a turn whose
+                # first audio was already reported.
+                if (
+                    trace.elapsed("last_audio") is None
+                    and trace.elapsed("first_audio") is not None
+                ):
+                    trace.mark_local("last_audio")
                 trace.mark_local("turn_end")
             record = trace.close(incomplete=incomplete)
             if record is None:

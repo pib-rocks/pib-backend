@@ -270,6 +270,13 @@ class TurnTrace:
         for field in HEADER_FIELDS:
             if field in headers:
                 record[field] = headers[field]
+        # A streaming turn carries the provider's usage report on its closing
+        # frame instead of in a header (interface description), so the same two
+        # fields may arrive as the ``usage`` stage. Headers win when both exist.
+        usage = self._details.get("usage") or {}
+        for field in HEADER_FIELDS:
+            if field not in record and field in usage:
+                record[field] = usage[field]
         stream_detail = self._details.get("stream_done") or {}
         stream_end = stream_detail.get("stream_end")
         if isinstance(stream_end, str) and stream_end:

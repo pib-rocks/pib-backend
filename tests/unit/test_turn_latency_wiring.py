@@ -275,3 +275,101 @@ def test_chat_node_emitter_publishes_cloud_trace_stages(monkeypatch):
     blob = "\n".join(published)
     assert SECRET not in blob
     assert "Bearer" not in blob
+
+
+class _StreamingResponseUsageFrameOnly(_FakeResponse):
+    """What the deployed API really sends on a streaming turn.
+
+    Measured 2026-10-14 against http://192.168.1.252:8090: the streaming response
+    carries X-Upstream-Ttft-Ms and X-Budget-Remaining-Tokens, and the provider's
+    usage counts travel on the closing frame before ``data: [DONE]``.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.headers = _Headers(
+            {
+                "x-upstream-ttft-ms": "190",
+                "x-budget-remaining-tokens": "49999.83",
+            }
+        )
+
+    def iter_lines(self, chunk_size=1, decode_unicode=True):
+        del chunk_size, decode_unicode
+        yield 'data: {"choices":[{"delta":{"content":"Hallo"}}]}'
+        yield (
+            'data: {"choices":[],"usage":{"prompt_tokens":75,'
+            '"completion_tokens":30,"total_tokens":105}}'
+        )
+        yield "data: [DONE]"
+
+
+def test_streaming_usage_report_reaches_the_turn_line(monkeypatch):
+    _install_ros_stubs()
+    from voice_assistant import chat as chat_mod
+    from voice_assistant.turn_latency import TurnTrace, render_line
+
+    pib_cloud_stream = chat_mod.pib_cloud_stream
+    published: list[str] = []
+    original_create = chat_mod.Node.create_publisher
+
+    def create_publisher(self, msg_type, topic, qos=10):
+        publisher = original_create(self, msg_type, topic, qos)
+        if topic == "/voice_turn_trace":
+            publisher.publish.side_effect = lambda message: published.append(
+                message.data
+            )
+        return publisher
+
+    monkeypatch.setattr(chat_mod.Node, "create_publisher", create_publisher)
+    monkeypatch.setattr(
+        chat_mod.hermes_agent_client, "probe_binary", lambda timeout=5: (True, "stub")
+    )
+    monkeypatch.setattr(chat_mod, "schedule_memory_consolidation", lambda node: None)
+    import public_api_client.hermes_daemon as hermes_daemon
+
+    monkeypatch.setattr(hermes_daemon, "ensure_daemon_running", lambda: False)
+    import voice_assistant.attention as attention
+
+    monkeypatch.setattr(
+        attention, "bind_attention", lambda *args, **kwargs: MagicMock()
+    )
+
+    pib_cloud_stream.set_trace_emitter(None)
+    pib_cloud_stream.reset_cloud_auth_state()
+    node = None
+    try:
+        node = chat_mod.ChatNode()
+        list(
+            pib_cloud_stream.stream_pib_cloud_chat(
+                system_prompt="Du bist pib.",
+                user_text="Sag hallo.",
+                chat_id="chat-wire-2",
+                endpoint_base="http://192.168.1.252:8090/v1",
+                token_fetcher=lambda: {"mode": "unlocked", "secret": SECRET},
+                http_post=lambda *args, **kwargs: _StreamingResponseUsageFrameOnly(),
+                retry_delay_s=0,
+            )
+        )
+    finally:
+        if node is not None:
+            node.destroy_node()
+        pib_cloud_stream.set_trace_emitter(None)
+        pib_cloud_stream.reset_cloud_auth_state()
+
+    events = [json.loads(raw) for raw in published]
+    by_stage = {event["stage"]: event for event in events}
+    assert "usage" in by_stage, events
+    assert by_stage["usage"]["detail"]["usage_prompt_tokens"] == 75
+    assert by_stage["usage"]["detail"]["usage_completion_tokens"] == 30
+    # No X-Usage-* header exists on a streaming turn, so the line takes the
+    # counts from the frame.
+    origin = min(event["ts_ms"] for event in events)
+    trace = TurnTrace()
+    trace.open("chat-wire-2", "pib-cloud", origin_ms=origin)
+    for event in events:
+        trace.observe(event)
+    line = render_line(trace.close())
+    assert "usage_prompt_tokens=75" in line
+    assert "usage_completion_tokens=30" in line
+    assert "upstream_ttft_ms=190" in line
