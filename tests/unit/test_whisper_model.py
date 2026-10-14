@@ -22,7 +22,7 @@ from voice_assistant.stt_transcription import (  # noqa: E402
 from voice_assistant.whisper_provision import provision_whisper_model  # noqa: E402
 
 
-def test_shipped_default_is_small_int8_on_four_threads():
+def test_shipped_default_is_small_int8_on_three_threads():
     document = yaml.safe_load(
         (REPO_ROOT / "voice" / "whisper-model.yaml").read_text(encoding="utf-8")
     )
@@ -32,13 +32,17 @@ def test_shipped_default_is_small_int8_on_four_threads():
     )
     assert DEFAULT_WHISPER_MODEL_SIZE == "small"
     assert DEFAULT_COMPUTE_TYPE == "int8"
-    assert CPU_THREADS == 4
+    assert CPU_THREADS == 3
     assert "ENV WHISPER_MODEL_SIZE=small" in dockerfile
     assert "ENV WHISPER_MODEL_SIZE=base" not in dockerfile
     assert document["path"] == "/data/voice/models/whisper/"
     assert document["model_size"] == "small"
     assert document["compute_type"] == "int8"
-    assert document["cpu_threads"] == 4
+    # The declared thread count must follow the code, or the two drift apart.
+    assert document["cpu_threads"] == CPU_THREADS
+    # A Pi 5 teaches this the hard way: all four cores make the decode no
+    # faster and starve the rest of the container (PC-39).
+    assert CPU_THREADS < 4
     assert document["medium_is_default"] is False
     assert document["download_at_first_use"] is False
     assert document["first_token_budget_ms"] == 700
@@ -106,7 +110,7 @@ def test_provisioned_directory_is_what_the_loader_opens(tmp_path, monkeypatch):
     assert calls[-1]["identifier"] == str(flat)
     assert calls[-1]["identifier"] != "small"
     assert calls[-1]["compute_type"] == "int8"
-    assert calls[-1]["cpu_threads"] == 4
+    assert calls[-1]["cpu_threads"] == CPU_THREADS
 
     sized = tmp_path / "sized"
     medium = sized / "medium"
@@ -114,7 +118,7 @@ def test_provisioned_directory_is_what_the_loader_opens(tmp_path, monkeypatch):
     (medium / "model.bin").write_bytes(b"medium-weights")
     FasterWhisperSTTEngine(model_path=sized, model_size="medium", compute_type="int8")
     assert calls[-1]["identifier"] == str(medium)
-    assert calls[-1]["cpu_threads"] == 4
+    assert calls[-1]["cpu_threads"] == CPU_THREADS
 
 
 def test_provision_copies_local_weights_and_does_not_invent_them(tmp_path):

@@ -67,6 +67,11 @@ RUN pip install --break-system-packages --ignore-installed \
 ENV SUPERTONE_MODEL_PATH=/data/voice/models/supertone/
 ENV WHISPER_MODEL_SIZE=small
 ENV WHISPER_MODEL_PATH=/data/voice/models/whisper/
+# Language the local engine transcribes in. Pinned, because the engine's own
+# detection runs a pass over 99 languages on every turn and cost about half the
+# turn on the test robot (PC-39, 8 s recording: 37.0 s -> 19.2 s). Set
+# STT_LANGUAGE=auto to hand that decision back to the engine.
+ENV STT_LANGUAGE=de
 
 COPY ./pib_api/client ./client
 # Shared with the flask API so both resolve the same Hermes profiles dir.

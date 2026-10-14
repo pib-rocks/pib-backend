@@ -3,7 +3,9 @@ Local Speech-to-Text (STT) transcription engine powered by faster-whisper.
 
 The default size is ``small``. ``medium`` is a permitted override, not the
 default: the yardstick is the smallest shipped unit, a pib5edu with 4045 MB
-of RAM. Compute type stays ``int8`` and the engine keeps four CPU threads.
+of RAM. Compute type stays ``int8`` and the engine keeps three CPU threads -
+three, because the decode does not get faster on the fourth core and holding
+all four starves the rest of the robot (PC-39, ``CPU_THREADS``).
 
 Weights are read from ``/data/voice/models/whisper/`` (see
 ``voice/whisper-model.yaml``). That path is not ``models/manifest.yaml``,
@@ -31,7 +33,12 @@ logger = logging.getLogger(__name__)
 DEFAULT_WHISPER_MODEL_SIZE = "small"
 DEFAULT_WHISPER_MODEL_PATH = "/data/voice/models/whisper/"
 DEFAULT_COMPUTE_TYPE = "int8"
-CPU_THREADS = 4
+#: Three, not four: the Pi has four cores and the decode does not get faster
+#: with all of them. Measured on the test robot with the shipped weights and an
+#: 8 s recording (PC-39): 4 threads 11.9 s, 3 threads 9.6 s, 2 threads 9.3 s -
+#: and holding every core starves the rest of the container (rosbridge's
+#: parameter reads time out while a turn is being transcribed, see PC-37).
+CPU_THREADS = 3
 CT2_MODEL_FILE = "model.bin"
 
 #: ``active_backend`` while the engine cannot transcribe at all.

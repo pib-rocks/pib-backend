@@ -8,10 +8,35 @@ personality's local voice does not apply.
 
 from __future__ import annotations
 
+import os
+
 LOCAL_STT_ID = "local_whisper"
 LOCAL_TTS_ID = "supertone"
 LOCAL_STT_ENGINE = "faster-whisper"
 LOCAL_TTS_ENGINE = "supertone"
+
+#: Language the local STT engine is pinned to when nothing overrides it.
+#: faster-whisper's own default (``language=None``) runs a language-ID pass
+#: over 99 languages on every turn; measured on the test robot that pass cost
+#: about half the turn (37.0 s -> 19.2 s for one 8 s recording, PC-39), and on
+#: silence the detector reported 'en' with p=0.34.
+DEFAULT_STT_LANGUAGE = "de"
+STT_LANGUAGE_ENV = "STT_LANGUAGE"
+#: Value that asks for the engine's own detection again.
+STT_LANGUAGE_AUTO = "auto"
+
+#: Spellings the rest of the code base uses for the same language.
+_STT_LANGUAGE_CODES = {
+    "de": "de",
+    "deu": "de",
+    "ger": "de",
+    "german": "de",
+    "deutsch": "de",
+    "en": "en",
+    "eng": "en",
+    "english": "en",
+    "englisch": "en",
+}
 
 #: The recorder's previous cloud name. It is not offered: offering reads the
 #: stt capability, not a list of provider names.
@@ -93,3 +118,39 @@ def resolve_tts_route(engine: object) -> str:
     if not isinstance(engine, str) or engine.strip() in ("", *_LOCAL_TTS):
         return "local"
     return "unsupported"
+
+
+def whisper_language_code(value: object) -> str:
+    """ISO 639-1 code for faster-whisper, or "" when it cannot be pinned.
+
+    Accepts both the code (``de``, ``de-DE``) and the spelled-out names the
+    rest of the code base carries (``German``, ``Deutsch``). Anything unknown
+    returns "", which leaves the engine on its own detection instead of
+    guessing a language that would silently mistranslate a turn.
+    """
+    if not isinstance(value, str):
+        return ""
+    raw = value.strip()
+    if not raw:
+        return ""
+    lowered = raw.lower()
+    if lowered in _STT_LANGUAGE_CODES:
+        return _STT_LANGUAGE_CODES[lowered]
+    code = lowered.replace("_", "-").split("-", 1)[0]
+    if len(code) == 2 and code.isalpha():
+        return code
+    return ""
+
+
+def configured_stt_language() -> str:
+    """Language the local engine transcribes in, as a code ("" = detect).
+
+    Ships pinned to German. ``STT_LANGUAGE`` overrides it; ``auto`` asks for
+    the engine's own detection again.
+    """
+    raw = os.getenv(STT_LANGUAGE_ENV)
+    if raw is None or not raw.strip():
+        return DEFAULT_STT_LANGUAGE
+    if raw.strip().lower() == STT_LANGUAGE_AUTO:
+        return ""
+    return whisper_language_code(raw)
