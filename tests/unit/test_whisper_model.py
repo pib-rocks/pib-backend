@@ -12,6 +12,7 @@ if str(VOICE_ROOT) not in sys.path:
     sys.path.insert(0, str(VOICE_ROOT))
 
 from voice_assistant.stt_transcription import (  # noqa: E402
+    SELF_CHECK_EXPECTED_TEXT,
     CPU_THREADS,
     DEFAULT_COMPUTE_TYPE,
     DEFAULT_WHISPER_MODEL_SIZE,
@@ -83,6 +84,15 @@ def test_provisioned_directory_is_what_the_loader_opens(tmp_path, monkeypatch):
                     "cpu_threads": cpu_threads,
                 }
             )
+
+        # The loader proves itself once at start-up by transcribing the
+        # bundled sample (PC-35), so a stand-in model answers that one call.
+        def transcribe(self, audio, language=None, beam_size=5, vad_filter=True):
+            segment = types.SimpleNamespace(text=SELF_CHECK_EXPECTED_TEXT)
+            info = types.SimpleNamespace(
+                language="de", language_probability=1.0, duration=1.0
+            )
+            return [segment], info
 
     module = types.ModuleType("faster_whisper")
     module.WhisperModel = WhisperModel

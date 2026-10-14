@@ -31,6 +31,7 @@ from pib_hermes_config.turn_taking import (
     pause_threshold_now,
 )
 from pib_hermes_config.visible_state import (
+    VOICE_STT_FAILURE_TOPIC,
     VOICE_USING_FALLBACK_TOPIC,
     answer_uses_fallback,
 )
@@ -57,6 +58,7 @@ from rclpy.task import Future
 from voice_assistant import START_SIGNAL_FILE, STOP_SIGNAL_FILE
 from voice_assistant.audio_loop import GeminiAudioLoop
 from voice_assistant.degraded_chat import allows_cloud_chat, fetch_operating_mode
+from voice_assistant.stt_transcription import visible_failure_hint
 
 MAX_SILENT_SECONDS_BEFORE = 8.0
 
@@ -98,6 +100,8 @@ class VoiceAssistantNode(Node):
         self.state.personality_name = ""
         self._answer_is_fallback = False
         self._engine_fallback = False
+        # technical cause of a failed local transcription, None while healthy
+        self._stt_failure_cause: Optional[str] = None
         # indicates if the voice_assistant is currently turning off
         self.turning_off = False
         # the personality associated with the active chat
@@ -171,6 +175,13 @@ class VoiceAssistantNode(Node):
             Bool,
             VOICE_USING_FALLBACK_TOPIC,
             self._on_engine_fallback,
+            10,
+        )
+        # A failed local transcription is spoken, never passed off as silence.
+        self.create_subscription(
+            String,
+            VOICE_STT_FAILURE_TOPIC,
+            self._on_stt_failure,
             10,
         )
         self._turn_trace_publisher = self.create_publisher(String, TURN_TRACE_TOPIC, 10)
@@ -579,6 +590,7 @@ class VoiceAssistantNode(Node):
         )
 
         self._answer_is_fallback = False
+        self._stt_failure_cause = None
         self.state.speaking = False
         self.state.using_fallback = self._engine_fallback
         self.set_is_listening(self.state.chat_id, True)
@@ -604,6 +616,11 @@ class VoiceAssistantNode(Node):
         if not self.waiting_for_transcribed_text:
             return
         self.waiting_for_transcribed_text = False
+        if self._stt_failure_cause:
+            # The recording was aborted because the engine failed; the hint
+            # naming the cause is already being spoken. An empty transcript
+            # here is not a user who said nothing.
+            return
         self._start_spoken_turn()
         self._mark_text_received()
         self.chat(
@@ -870,6 +887,30 @@ class VoiceAssistantNode(Node):
         self._engine_fallback = bool(msg.data)
         self.state.using_fallback = self._engine_fallback or self._answer_is_fallback
         self._publish_voice_state()
+
+    def _on_stt_failure(self, msg: String) -> None:
+        """The local engine could not transcribe. Name the cause out loud.
+
+        The recorder aborts that goal, so nothing continues with an empty
+        transcript; the technical cause is spoken instead of the canned
+        "could not hear you" line, which would hide a broken engine behind a
+        sentence about silence.
+        """
+        cause = (msg.data or "").strip()
+        self._stt_failure_cause = cause
+        self.waiting_for_transcribed_text = False
+        self._engine_fallback = True
+        self.state.using_fallback = True
+        self._publish_voice_state()
+        self.get_logger().error(f"STT engine failure: {cause}")
+        personality = self.personality
+        if personality is None:
+            return
+        self.play_audio_from_speech(
+            visible_failure_hint(cause),
+            getattr(personality, "gender", None) or "Female",
+            getattr(personality, "language", None) or "German",
+        )
 
     def _republish_visible_state(self) -> None:
         """Repeat the current holder so a display that joined late still sees it."""

@@ -7,6 +7,7 @@ frame, and it is taken before transcription starts.
 """
 
 import os
+import time
 import wave
 from collections import deque
 from threading import Lock, Event
@@ -26,12 +27,16 @@ from std_msgs.msg import Bool, String, Int16MultiArray
 
 from pib_hermes_config.live_interaction import turn_based_is_speech
 from pib_hermes_config.visible_state import (
+    VOICE_STT_FAILURE_TOPIC,
     VOICE_USING_FALLBACK_TOPIC,
     engine_is_fallback,
 )
 from pib_hermes_config.voice_backends import resolve_stt_route
 from public_api_client import public_voice_client
-from voice_assistant.stt_transcription import FasterWhisperSTTEngine
+from voice_assistant.stt_transcription import (
+    FasterWhisperSTTEngine,
+    STTTranscriptionError,
+)
 from voice_assistant.turn_latency import TURN_TRACE_TOPIC, format_event
 from . import util
 
@@ -75,6 +80,11 @@ class AudioRecorderNode(Node):
         self._published_fallback = None
         self.voice_using_fallback_publisher = self.create_publisher(
             Bool, VOICE_USING_FALLBACK_TOPIC, 10
+        )
+        # The technical cause of a failed transcription goes here so the turn
+        # owner can say it out loud instead of pretending silence.
+        self.stt_failure_publisher = self.create_publisher(
+            String, VOICE_STT_FAILURE_TOPIC, 10
         )
         self.turn_trace_publisher = self.create_publisher(String, TURN_TRACE_TOPIC, 10)
 
@@ -341,9 +351,26 @@ class AudioRecorderNode(Node):
         route = resolve_stt_route(stt_mode)
         try:
             if route == "local":
-                text, _ = self.stt_engine.transcribe(wav_data)
+                started = time.monotonic()
+                try:
+                    text, metadata = self.stt_engine.transcribe(wav_data)
+                except STTTranscriptionError as e:
+                    # A broken engine must not look like a user who said
+                    # nothing. Name the cause on the visible state, publish it
+                    # for the turn owner, and abort so no empty transcript
+                    # reaches the chat.
+                    self._publish_engine_fallback("unavailable")
+                    self._publish_stt_failure(e.cause)
+                    self.get_logger().error(f"local speech engine failed: {e.cause}")
+                    goal_handle.abort()
+                    return self.create_result("")
                 self._publish_engine_fallback(
                     getattr(self.stt_engine, "active_backend", "")
+                )
+                self.get_logger().info(
+                    f"transcribed {len(text)} chars in "
+                    f"{int((time.monotonic() - started) * 1000)} ms with engine "
+                    f"{metadata.get('backend')}"
                 )
             elif route == "tryb":
                 text = public_voice_client.speech_to_text(wav_data, self.token)
@@ -384,6 +411,12 @@ class AudioRecorderNode(Node):
         message = Bool()
         message.data = fallback
         self.voice_using_fallback_publisher.publish(message)
+
+    def _publish_stt_failure(self, cause: object) -> None:
+        """Tell the turn owner why the local engine could not transcribe."""
+        message = String()
+        message.data = str(cause)
+        self.stt_failure_publisher.publish(message)
 
 
 def main(args=None):
