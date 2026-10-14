@@ -20,8 +20,98 @@ from typing import Any, Callable, Iterable, Iterator, Mapping, Optional, Sequenc
 import requests
 
 from voice_assistant.cloud_token import CloudTokenError, resolve_cloud_token
+from voice_assistant.turn_latency import format_event
 
 logger = logging.getLogger(__name__)
+
+# ChatNode installs this. Until then emissions are a no-op and cannot delay a turn.
+_trace_emitter: Optional[Callable[[str], None]] = None
+
+_TRACE_HEADER_FIELDS = (
+    ("X-Upstream-Ttft-Ms", "upstream_ttft_ms"),
+    ("X-Usage-Prompt-Tokens", "usage_prompt_tokens"),
+    ("X-Usage-Completion-Tokens", "usage_completion_tokens"),
+    ("X-Budget-Remaining-Tokens", "budget_remaining_tokens"),
+)
+
+
+def set_trace_emitter(fn: Optional[Callable[[str], None]]) -> None:
+    """Register the chat node's ``/voice_turn_trace`` publisher. None clears it."""
+    global _trace_emitter
+    _trace_emitter = fn
+
+
+def trace_emit(
+    stage: str,
+    *,
+    chat_id: str = "",
+    detail: Optional[Mapping[str, Any]] = None,
+) -> None:
+    """Publish one stage. A failure is a warning and never leaves this function."""
+    emitter = _trace_emitter
+    if emitter is None:
+        return
+    try:
+        emitter(
+            format_event(
+                stage,
+                source="pib-cloud",
+                chat_id=chat_id,
+                detail=detail,
+            )
+        )
+    except Exception:
+        logger.warning("turn trace emit failed for stage %s", stage)
+
+
+def _header_value(headers: Any, name: str) -> Any:
+    if headers is None:
+        return None
+    try:
+        getter = getattr(headers, "get", None)
+        if getter is not None:
+            value = getter(name)
+            if value not in (None, ""):
+                return value
+    except Exception:
+        return None
+    try:
+        for key, value in headers.items():
+            if str(key).lower() == name.lower() and value not in (None, ""):
+                return value
+    except Exception:
+        return None
+    return None
+
+
+def _header_number(value: Any) -> Any:
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return value
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        if "." in text:
+            return float(text)
+        return int(text)
+    except ValueError:
+        return None
+
+
+def _response_header_detail(response: Any) -> Optional[dict[str, Any]]:
+    """API timing and usage headers. Missing headers are left out, never zeroed."""
+    headers = getattr(response, "headers", None)
+    detail: dict[str, Any] = {}
+    for header_name, field in _TRACE_HEADER_FIELDS:
+        parsed = _header_number(_header_value(headers, header_name))
+        if parsed is not None:
+            detail[field] = parsed
+    return detail or None
+
 
 DEFAULT_PIB_CLOUD_BASE_URL = "http://192.168.1.252:8090/v1"
 PIB_CLOUD_BASE_URL_ENV = "PIB_CLOUD_BASE_URL"
@@ -284,6 +374,18 @@ def stream_pib_cloud_chat(
 
     post = http_post or _get_http_session().post
     emitted_content = False
+    stream_outcome_sent = False
+
+    def _trace_stream_end(outcome: str) -> None:
+        nonlocal stream_outcome_sent
+        if stream_outcome_sent:
+            return
+        stream_outcome_sent = True
+        trace_emit(
+            "stream_done",
+            chat_id=chat_id,
+            detail={"stream_end": outcome},
+        )
 
     for attempt in range(2):
         if cancelled():
@@ -295,6 +397,7 @@ def stream_pib_cloud_chat(
             chat_id,
             attempt + 1,
         )
+        trace_emit("request_sent", chat_id=chat_id)
         response = None
         try:
             response = post(
@@ -305,6 +408,11 @@ def stream_pib_cloud_chat(
                 timeout=timeout,
             )
             status = getattr(response, "status_code", 200)
+            trace_emit(
+                "response_headers",
+                chat_id=chat_id,
+                detail=_response_header_detail(response),
+            )
 
             if status in _AUTH_ERROR_STATUS_CODES:
                 _mark_token_revoked(token)
@@ -314,6 +422,7 @@ def stream_pib_cloud_chat(
                     status,
                     chat_id,
                 )
+                _trace_stream_end("error")
                 yield from _yield_local_or_notice(
                     local_fallback, CLOUD_AUTH_FAILED_NOTICE
                 )
@@ -325,6 +434,7 @@ def stream_pib_cloud_chat(
                     "switching turn to local model",
                     chat_id,
                 )
+                _trace_stream_end("error")
                 yield from _yield_local_or_notice(
                     local_fallback, BUDGET_EXHAUSTED_NOTICE
                 )
@@ -347,6 +457,7 @@ def stream_pib_cloud_chat(
                     status,
                     chat_id,
                 )
+                _trace_stream_end("error")
                 yield from _yield_local_or_notice(
                     local_fallback, CLOUD_UNAVAILABLE_NOTICE
                 )
@@ -359,6 +470,7 @@ def stream_pib_cloud_chat(
                     status,
                     chat_id,
                 )
+                _trace_stream_end("error")
                 yield from _yield_local_or_notice(
                     local_fallback, CLOUD_UNAVAILABLE_NOTICE
                 )
@@ -397,6 +509,7 @@ def stream_pib_cloud_chat(
                         chat_id,
                         (time.monotonic() - req_t0) * 1000.0,
                     )
+                    _trace_stream_end("done")
                     break
 
                 try:
@@ -421,6 +534,7 @@ def stream_pib_cloud_chat(
                             chat_id,
                             (time.monotonic() - req_t0) * 1000.0,
                         )
+                        trace_emit("first_token", chat_id=chat_id)
                     emitted_content = True
                     yield piece
 
@@ -444,6 +558,7 @@ def stream_pib_cloud_chat(
                     chat_id,
                     exc,
                 )
+                _trace_stream_end("error")
                 yield f" {STREAM_CUTOFF_NOTICE}"
                 return
             if exc.code == "budget_exhausted" or exc.status == 402:
@@ -452,6 +567,7 @@ def stream_pib_cloud_chat(
                     "switching turn to local model",
                     chat_id,
                 )
+                _trace_stream_end("error")
                 yield from _yield_local_or_notice(
                     local_fallback, BUDGET_EXHAUSTED_NOTICE
                 )
@@ -466,6 +582,7 @@ def stream_pib_cloud_chat(
                     chat_id,
                     exc,
                 )
+                _trace_stream_end("error")
                 yield from _yield_local_or_notice(
                     local_fallback, CLOUD_AUTH_FAILED_NOTICE
                 )
@@ -476,6 +593,7 @@ def stream_pib_cloud_chat(
                 chat_id,
                 exc,
             )
+            _trace_stream_end("error")
             yield from _yield_local_or_notice(local_fallback, CLOUD_UNAVAILABLE_NOTICE)
             return
 
@@ -487,6 +605,7 @@ def stream_pib_cloud_chat(
                     chat_id,
                     exc,
                 )
+                _trace_stream_end("error")
                 yield f" {STREAM_CUTOFF_NOTICE}"
                 return
             if attempt == 0:
@@ -506,6 +625,7 @@ def stream_pib_cloud_chat(
                 chat_id,
                 exc,
             )
+            _trace_stream_end("error")
             yield from _yield_local_or_notice(local_fallback, CLOUD_UNAVAILABLE_NOTICE)
             return
 

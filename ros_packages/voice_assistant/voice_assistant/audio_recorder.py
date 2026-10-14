@@ -1,3 +1,11 @@
+"""Capture-side voice recorder.
+
+``end_of_speech`` is published when this loop decides the utterance is over,
+which is one ``pause_threshold`` (``max_silent_seconds_after``) of silence
+after the last voiced frame. The stamp is that decision, not the last voiced
+frame, and it is taken before transcription starts.
+"""
+
 import os
 import wave
 from collections import deque
@@ -24,6 +32,7 @@ from pib_hermes_config.visible_state import (
 from pib_hermes_config.voice_backends import resolve_stt_route
 from public_api_client import public_voice_client
 from voice_assistant.stt_transcription import FasterWhisperSTTEngine
+from voice_assistant.turn_latency import TURN_TRACE_TOPIC, format_event
 from . import util
 
 # these values define the PCM encoding in which the recorded
@@ -67,6 +76,7 @@ class AudioRecorderNode(Node):
         self.voice_using_fallback_publisher = self.create_publisher(
             Bool, VOICE_USING_FALLBACK_TOPIC, 10
         )
+        self.turn_trace_publisher = self.create_publisher(String, TURN_TRACE_TOPIC, 10)
 
         self.goal_queue: deque[ServerGoalHandle] = deque()
         self.goal_queue_lock = Lock()
@@ -296,7 +306,10 @@ class AudioRecorderNode(Node):
                 # Continue collecting until we accumulate enough silence after speech
                 continue
 
-        # Recording phase has ended; notify client that we are transcribing
+        # Recording phase has ended; notify client that we are transcribing.
+        # end_of_speech is this decision, one pause threshold after the last
+        # voiced frame, and it is published before transcription starts.
+        self._emit_end_of_speech()
         goal_handle.publish_feedback(RecordAudio.Feedback())
 
         # Write the collected raw PCM chunks into a WAV file using the correct sample rate
@@ -348,6 +361,20 @@ class AudioRecorderNode(Node):
 
         goal_handle.succeed()
         return self.create_result(text)
+
+    def _emit_end_of_speech(self) -> None:
+        """Tell the turn owner the capture layer closed the utterance.
+
+        The recording loop has already broken because silence reached
+        ``max_silent_seconds_after`` (the personality pause threshold). This
+        stamp therefore sits that pause after the last voiced frame.
+        """
+        try:
+            message = String()
+            message.data = format_event("end_of_speech", source="audio_recorder")
+            self.turn_trace_publisher.publish(message)
+        except Exception as exc:
+            self.get_logger().warning("turn trace end_of_speech failed: %s", exc)
 
     def _publish_engine_fallback(self, active_backend: object) -> None:
         fallback = engine_is_fallback(active_backend)
