@@ -105,9 +105,12 @@ ARRAY_VAD_SILENT_CHUNKS = 32
 ARRAY_VAD_SILENT_WARNING = (
     "Captured audio is loud while the hardware voice-activity signal has "
     f"reported false for the last {ARRAY_VAD_SILENT_CHUNKS} chunks, so the "
-    "turn therefore ends on the fixed timeout. Candidates: the array's VAD "
-    "threshold GAMMAVAD_SR is stricter than the XVF3000 default (3.5 dB; "
-    "15.0 dB measured on 192.168.1.172); the array may not be reporting at all."
+    "turn therefore ends on the fixed timeout. Candidates: the array is not "
+    "reporting at all - measured on the test robot as 0 of 156 samples while "
+    "DOAANGLE still tracked the sound, working again after the host rebooted, "
+    "so re-enumerating the device clears it; or this audio is the robot's own "
+    "playback through the array's loudspeaker, which the detectors trip only "
+    "weakly."
 )
 
 ARRAY_VAD_SILENT_CLEARED = (

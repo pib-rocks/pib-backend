@@ -1,9 +1,12 @@
 """Loud audio with a voice-activity signal that never reports speech.
 
-Measured on the test robot 192.168.1.172 (2026-10-15): with GAMMAVAD_SR at
-15.0 dB, a loud sentence moved DOAANGLE and left VOICEACTIVITY false for every
-sample. The turn-based recorder then treats the window as silence and ends on
-max_silent_seconds_before. This diagnostic says so. It does not end the turn.
+Measured on the test robot 192.168.1.172 (2026-10-15): a loud sentence in the
+room moved DOAANGLE while VOICEACTIVITY stayed false for every sample (0 of
+156), and the same sentence was detected again after the host rebooted
+(17 of 188 and 50 of 188 with unchanged settings). A device state like that
+makes the turn-based recorder treat the window as silence and end on
+max_silent_seconds_before; the array's own playback is a second, weaker case.
+This diagnostic says so. It does not end the turn.
 """
 
 from __future__ import annotations
@@ -27,11 +30,8 @@ AUDIO_RECORDER = (
     / "audio_recorder.py"
 )
 
-THRESHOLD_CANDIDATE = (
-    "the array's VAD threshold GAMMAVAD_SR is stricter than the XVF3000 "
-    "default (3.5 dB; 15.0 dB measured on 192.168.1.172)"
-)
-REPORTING_CANDIDATE = "the array may not be reporting at all"
+NOT_REPORTING_CANDIDATE = "the array is not reporting at all"
+OWN_PLAYBACK_CANDIDATE = "the robot's own playback"
 
 
 def _chunks(state, voice_activity, amplitude_silent, count):
@@ -51,8 +51,8 @@ def test_loud_and_vad_false_for_n_chunks_warns_once():
     assert messages[:-1] == [None] * (ARRAY_VAD_SILENT_CHUNKS - 1)
     assert messages[-1] == ARRAY_VAD_SILENT_WARNING
     assert state.active is True
-    assert THRESHOLD_CANDIDATE in ARRAY_VAD_SILENT_WARNING
-    assert REPORTING_CANDIDATE in ARRAY_VAD_SILENT_WARNING
+    assert NOT_REPORTING_CANDIDATE in ARRAY_VAD_SILENT_WARNING
+    assert OWN_PLAYBACK_CANDIDATE in ARRAY_VAD_SILENT_WARNING
     assert "turn therefore ends on the fixed timeout" in ARRAY_VAD_SILENT_WARNING
 
 
