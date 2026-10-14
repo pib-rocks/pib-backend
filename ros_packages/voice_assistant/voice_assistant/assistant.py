@@ -720,13 +720,13 @@ class VoiceAssistantNode(Node):
             if pending is not None and origin_ms is not None:
                 self._turn_trace.observe(pending)
         except Exception as exc:
-            self.get_logger().warning("turn trace open failed: %s", exc)
+            self.get_logger().warning(f"turn trace open failed: {exc}")
 
     def _mark_text_received(self) -> None:
         try:
             self._turn_trace.mark_local("text_received")
         except Exception as exc:
-            self.get_logger().warning("turn trace text_received failed: %s", exc)
+            self.get_logger().warning(f"turn trace text_received failed: {exc}")
 
     def _mark_first_sentence_flushed(self) -> None:
         """The turn's first answer clause handed to the synthesiser."""
@@ -737,7 +737,7 @@ class VoiceAssistantNode(Node):
             self._turn_trace.mark_local("first_sentence_flushed")
         except Exception as exc:
             self.get_logger().warning(
-                "turn trace first_sentence_flushed failed: %s", exc
+                f"turn trace first_sentence_flushed failed: {exc}"
             )
 
     def _close_latency_turn(self, *, incomplete: bool) -> None:
@@ -765,7 +765,7 @@ class VoiceAssistantNode(Node):
             self.get_logger().info(render_line(record))
             append_record(default_log_path(), record)
         except Exception as exc:
-            self.get_logger().warning("turn trace close failed: %s", exc)
+            self.get_logger().warning(f"turn trace close failed: {exc}")
 
     def _on_turn_trace(self, msg: String) -> None:
         """Subscription callback. Parse and store; never block and never raise."""
@@ -785,7 +785,7 @@ class VoiceAssistantNode(Node):
                 return
             self._orphan_dropped += 1
         except Exception as exc:
-            self.get_logger().warning("turn trace event dropped: %s", exc)
+            self.get_logger().warning(f"turn trace event dropped: {exc}")
 
     def _turn_trace_watchdog(self) -> None:
         """Close a turn that outlived PIB_TURN_TRACE_MAX_SECONDS so it cannot leak."""
@@ -798,7 +798,7 @@ class VoiceAssistantNode(Node):
                 return
             self._close_latency_turn(incomplete=True)
         except Exception as exc:
-            self.get_logger().warning("turn trace watchdog failed: %s", exc)
+            self.get_logger().warning(f"turn trace watchdog failed: {exc}")
 
     def if_cycle_not_changed(self, callback: Callable) -> Callable:
         """a decorator. the decorated callback only executes, if the cycle has not changed after its creation"""

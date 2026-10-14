@@ -221,7 +221,7 @@ class ChatNode(Node):
 
             pib_cloud_stream.set_trace_emitter(emit)
         except Exception as exc:
-            self.get_logger().warning("turn trace emitter was not installed: %s", exc)
+            self.get_logger().warning(f"turn trace emitter was not installed: {exc}")
 
     def _attention_plan(self):
         """The plan for this answer. Missing sensors leave the turn unchanged."""

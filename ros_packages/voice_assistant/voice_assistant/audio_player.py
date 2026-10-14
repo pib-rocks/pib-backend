@@ -252,7 +252,7 @@ class AudioPlayerNode(Node):
 
             set_trace_emitter(emit)
         except Exception as exc:
-            self.get_logger().warning("turn trace emitter was not installed: %s", exc)
+            self.get_logger().warning(f"turn trace emitter was not installed: {exc}")
 
     def get_public_api_token_listener(self, msg):
         token = msg.data

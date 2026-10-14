@@ -374,7 +374,7 @@ class AudioRecorderNode(Node):
             message.data = format_event("end_of_speech", source="audio_recorder")
             self.turn_trace_publisher.publish(message)
         except Exception as exc:
-            self.get_logger().warning("turn trace end_of_speech failed: %s", exc)
+            self.get_logger().warning(f"turn trace end_of_speech failed: {exc}")
 
     def _publish_engine_fallback(self, active_backend: object) -> None:
         fallback = engine_is_fallback(active_backend)
