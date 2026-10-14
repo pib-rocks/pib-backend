@@ -2062,3 +2062,52 @@ def test_smart_cloud_model_is_refused_while_the_store_is_locked(chat_module, cha
     local_tokens.assert_not_called()
     goal_handle.succeed.assert_called_once()
     assert result.text == refusal_sentence("smart")
+
+
+def test_chat_node_routes_pib_cloud_and_flushes_first_sentence(chat_module, chat_node):
+    """PC-12: ChatNode routes pib-cloud to SSE streaming and flushes sentences incrementally."""
+    Chat = chat_module.Chat
+    logger = MagicMock()
+    chat_node.get_logger = MagicMock(return_value=logger)
+
+    personality = _local_smart_personality()
+    personality.assistant_model.api_name = "pib-cloud"
+    personality.assistant_model.endpoint_base = "http://192.168.1.252:8090/v1"
+
+    goal_handle = MagicMock()
+    goal_handle.is_cancel_requested = False
+    goal_handle.request = Chat.Goal()
+    goal_handle.request.chat_id = "chat-cloud-1"
+    goal_handle.request.text = "Sag zwei Saetze."
+    goal_handle.request.generate_code = False
+
+    feedback_events: list[str] = []
+    goal_handle.publish_feedback.side_effect = lambda fb: feedback_events.append(
+        fb.text
+    )
+
+    with (
+        patch.object(
+            chat_module.voice_assistant_client,
+            "get_personality_from_chat",
+            return_value=(True, personality),
+        ),
+        patch.object(
+            chat_module.voice_assistant_client,
+            "get_chat_history",
+            return_value=(True, []),
+        ),
+        patch.object(
+            chat_module.pib_cloud_stream,
+            "stream_pib_cloud_chat",
+            return_value=iter(["Erster ", "Satz. ", "Zweiter ", "Satz."]),
+        ) as cloud_stream,
+    ):
+        result = drive_like_rclpy(chat_node.chat(goal_handle))
+
+    cloud_stream.assert_called_once()
+    goal_handle.succeed.assert_called_once()
+    assert "Erster Satz." in feedback_events
+    assert result.text == "Zweiter Satz."
+    info_logs = [call[0][0] for call in logger.info.call_args_list]
+    assert any("FIRST_SENTENCE_FLUSHED" in line for line in info_logs)
