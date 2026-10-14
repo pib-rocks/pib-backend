@@ -2,15 +2,17 @@
 
 The provider's server-side turn detection owns the live uplink. The microphone
 array's hardware voice-activity signal keeps the LED ring, the face, and the
-turn-based recorder. A live interruption stops playback, drops the speaker
-tail from the uplink, and tells the model the turn was cut. A robot action is
-spoken first, and the session stays paused while it runs. A long-running
-action is not offered in a live turn. The actuation gate stays the
-installation environment variable.
+turn-based recorder. Loud audio that never trips that signal is reported; the
+report does not decide when the turn ends. A live interruption stops playback,
+drops the speaker tail from the uplink, and tells the model the turn was cut.
+A robot action is spoken first, and the session stays paused while it runs.
+A long-running action is not offered in a live turn. The actuation gate stays
+the installation environment variable.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Iterator, Mapping, Optional
 
 # The turn-based player already waits 0.2 s after speech so the speaker tail
@@ -93,6 +95,75 @@ def turn_based_is_speech(
     if voice_activity is None:
         return not amplitude_silent
     return bool(voice_activity)
+
+
+# Recorder chunks, not DOA polls. The streamer publishes 1024 frames, which is
+# 64 ms at 16 kHz, so this run is about two seconds: past one buffer, and
+# still inside the 8 s max_silent_seconds_before window.
+ARRAY_VAD_SILENT_CHUNKS = 32
+
+ARRAY_VAD_SILENT_WARNING = (
+    "Captured audio is loud while the hardware voice-activity signal has "
+    f"reported false for the last {ARRAY_VAD_SILENT_CHUNKS} chunks, so the "
+    "turn therefore ends on the fixed timeout. Candidates: the array is not "
+    "reporting at all - measured on the test robot as 0 of 156 samples while "
+    "DOAANGLE still tracked the sound, working again after the host rebooted, "
+    "so re-enumerating the device clears it; or this audio is the robot's own "
+    "playback through the array's loudspeaker, which the detectors trip only "
+    "weakly."
+)
+
+ARRAY_VAD_SILENT_CLEARED = (
+    "array voice activity returned; the loud-audio voice-activity warning cleared"
+)
+
+
+@dataclass(frozen=True)
+class ArrayVadWarningState:
+    """Rate limit for the loud-audio, voice-activity-false diagnostic.
+
+    ``active`` is whether that warning is already in effect. ``loud_false_chunks``
+    is how many of the latest chunks were loud while voice activity was false.
+    """
+
+    active: bool = False
+    loud_false_chunks: int = 0
+
+
+def array_vad_silent_warning(
+    voice_activity: Optional[bool],
+    amplitude_silent: bool,
+    state: ArrayVadWarningState,
+) -> tuple[Optional[str], ArrayVadWarningState]:
+    """What to log when loud audio never trips the array's voice activity.
+
+    ``voice_activity`` is the newest sample (``None`` before the first one).
+    ``amplitude_silent`` is the chunk's amplitude verdict. ``state.active`` is
+    whether a warning is already active. The text is one line, or ``None``
+    when nothing should be logged. The returned state is the rate limit: one
+    warning per run of ``ARRAY_VAD_SILENT_CHUNKS`` loud chunks with voice
+    activity false, then one line when voice activity returns.
+
+    No sample yet is the amplitude fallback and does not warn. A quiet chunk
+    does not warn and does not clear an active warning.
+    """
+    if voice_activity is None:
+        return None, state
+
+    if voice_activity:
+        cleared = ARRAY_VAD_SILENT_CLEARED if state.active else None
+        return cleared, ArrayVadWarningState()
+
+    if amplitude_silent:
+        return None, ArrayVadWarningState(active=state.active)
+
+    streak = state.loud_false_chunks + 1
+    if not state.active and streak >= ARRAY_VAD_SILENT_CHUNKS:
+        return (
+            ARRAY_VAD_SILENT_WARNING,
+            ArrayVadWarningState(active=True, loud_false_chunks=streak),
+        )
+    return None, ArrayVadWarningState(active=state.active, loud_false_chunks=streak)
 
 
 def face_for_hardware_vad(voice_activity: bool) -> Optional[str]:

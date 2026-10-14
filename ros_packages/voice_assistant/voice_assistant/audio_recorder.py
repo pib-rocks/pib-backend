@@ -25,7 +25,11 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from std_msgs.msg import Bool, String, Int16MultiArray
 
-from pib_hermes_config.live_interaction import turn_based_is_speech
+from pib_hermes_config.live_interaction import (
+    ArrayVadWarningState,
+    array_vad_silent_warning,
+    turn_based_is_speech,
+)
 from pib_hermes_config.visible_state import (
     VOICE_STT_FAILURE_TOPIC,
     VOICE_USING_FALLBACK_TOPIC,
@@ -125,6 +129,7 @@ class AudioRecorderNode(Node):
         )
         # None until the array publishes. After that, its VAD owns end-of-turn.
         self._hardware_vad: Optional[bool] = None
+        self._array_vad_warning = ArrayVadWarningState()
         self.create_subscription(Bool, "/voice_activity", self._on_voice_activity, 10)
 
         self.get_logger().info("Now running AUDIO RECORDER")
@@ -236,10 +241,22 @@ class AudioRecorderNode(Node):
         Once /voice_activity has arrived, that signal decides. Loud audio
         without voice activity is not speech. Amplitude is only the fallback
         before the first sample.
+
+        A run of loud chunks while that signal stays false is logged once.
+        The log does not change this decision or the recording window.
         """
-        return not turn_based_is_speech(
-            self._hardware_vad, self._amplitude_is_silent(data_chunk)
+        amplitude_silent = self._amplitude_is_silent(data_chunk)
+        message, self._array_vad_warning = array_vad_silent_warning(
+            self._hardware_vad,
+            amplitude_silent,
+            self._array_vad_warning,
         )
+        if message is not None:
+            if self._array_vad_warning.active:
+                self.get_logger().warning(message)
+            else:
+                self.get_logger().info(message)
+        return not turn_based_is_speech(self._hardware_vad, amplitude_silent)
 
     def create_result(self, text: str) -> RecordAudio.Result:
         """
