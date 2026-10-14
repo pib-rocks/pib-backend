@@ -225,13 +225,11 @@ class ChatNode(Node):
         try:
             results = run_periodic_consolidation()
         except Exception as exc:
-            self.get_logger().error("memory consolidation failed: %s", exc)
+            self.get_logger().error(f"memory consolidation failed: {exc}")
             return
         consolidated = sum(1 for status in results.values() if status == "consolidated")
         if consolidated:
-            self.get_logger().info(
-                "consolidated memory for %s profile(s)", consolidated
-            )
+            self.get_logger().info(f"consolidated memory for {consolidated} profile(s)")
 
     def destroy_node(self):
         # Abandoned hermes workers must not keep the process alive on shutdown.
@@ -744,9 +742,7 @@ class ChatNode(Node):
             voice_assistant_client.record_first_token_latency(chat_id, elapsed_ms)
         except Exception as exc:
             self.get_logger().warning(
-                "first-token latency was not stored for chat %s: %s",
-                chat_id,
-                exc,
+                f"first-token latency was not stored for chat {chat_id}: {exc}"
             )
 
     def _publish_ready_clauses(
