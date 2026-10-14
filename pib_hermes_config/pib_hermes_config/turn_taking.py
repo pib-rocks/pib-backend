@@ -16,6 +16,20 @@ from pathlib import Path
 DEFAULT_FIRST_TOKEN_BUDGET_MS = 700
 DEFAULT_FALLBACK_TOKEN_LIMIT = 25
 
+
+def transcript_opens_turn(text: object) -> bool:
+    """Whether a transcript may open a chat turn (PC-40).
+
+    A window nobody spoke into transcribes to an empty string. Sending that on
+    makes the robot answer itself: the model replies to an empty message with a
+    filler sentence and that answer is spoken - measured on the test robot as
+    seven self-triggered turns with empty transcripts in four minutes, each
+    answered with 6.5-55 s of audio. So only text opens a turn; anything that
+    is not a non-blank string is "nothing was said".
+    """
+    return isinstance(text, str) and bool(text.strip())
+
+
 _CLAUSE_MARK = re.compile(r"[,;:.!?\n]")
 _PROGRAM_BLOCK = re.compile(r"<pib-program>.*?</pib-program>", re.DOTALL)
 _OPEN_PROGRAM = re.compile(r"<pib-program>.*\Z", re.DOTALL)

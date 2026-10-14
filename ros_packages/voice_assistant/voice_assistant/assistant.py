@@ -29,6 +29,7 @@ from pib_hermes_config.turn_taking import (
     authored_filler,
     first_token_budget_ms,
     pause_threshold_now,
+    transcript_opens_turn,
 )
 from pib_hermes_config.visible_state import (
     VOICE_STT_FAILURE_TOPIC,
@@ -128,6 +129,9 @@ class VoiceAssistantNode(Node):
         self._filler_lock = threading.Lock()
         self._first_token_seen = False
         self._turn_has_playback = False
+        # True while this turn's answer audio is queued or playing. A recording
+        # window must not open on top of it (PC-40).
+        self._answer_audio_pending = False
         self._turn_trace = TurnTrace()
         self._pending_end_of_speech: Optional[dict] = None
         self._orphan_dropped = 0
@@ -406,6 +410,7 @@ class VoiceAssistantNode(Node):
         self._cancel_filler_timer()
         self._streaming_speech = StreamingSpeech()
         self._turn_has_playback = False
+        self._answer_audio_pending = False
         with self._filler_lock:
             self._first_token_seen = False
         self._refresh_personality_turn_taking()
@@ -581,6 +586,21 @@ class VoiceAssistantNode(Node):
         if self.gemini_loop.is_listening:
             return
 
+        if self._answer_audio_pending:
+            # The previous answer's audio is still queued or playing. Opening
+            # the next recording window now would put two turns into one player
+            # queue, and the user would hear them interleaved (PC-40). Wait for
+            # the drain instead: the start signal is short and re-queued, and
+            # on_final_sentence_played clears the flag when the audio is gone.
+            self.get_logger().warning(
+                "start signal while an answer is still playing; waiting for the drain"
+            )
+            self.play_audio_from_file(
+                START_SIGNAL_FILE,
+                self.if_cycle_not_changed(self.on_start_signal_played),
+            )
+            return
+
         self._refresh_personality_turn_taking()
         self.record_audio(
             MAX_SILENT_SECONDS_BEFORE,
@@ -621,6 +641,21 @@ class VoiceAssistantNode(Node):
             # naming the cause is already being spoken. An empty transcript
             # here is not a user who said nothing.
             return
+        if not transcript_opens_turn(transcribed_text):
+            # Nobody said anything in that window. Answering it makes the robot
+            # talk to itself: the model replies to an empty message with a
+            # filler sentence, that answer is spoken for 6.5-55 s, and the next
+            # window follows - measured on the test robot as seven
+            # self-triggered turns with empty transcripts in four minutes
+            # (PC-40). So: no chat turn, no speech, just listen again.
+            self.get_logger().info(
+                "nothing transcribed in this window; no chat turn, listening again"
+            )
+            self.play_audio_from_file(
+                START_SIGNAL_FILE,
+                self.if_cycle_not_changed(self.on_start_signal_played),
+            )
+            return
         self._start_spoken_turn()
         self._mark_text_received()
         self.chat(
@@ -660,6 +695,7 @@ class VoiceAssistantNode(Node):
                 else None
             )
             self._turn_has_playback = True
+            self._answer_audio_pending = True
             self.play_audio_from_speech(clause, gender, language, on_stopped_playing)
 
     def on_code_visual_received(self, code_visual: str, is_final: bool) -> None:
@@ -689,6 +725,9 @@ class VoiceAssistantNode(Node):
                 )
 
     def on_final_sentence_played(self) -> None:
+        # The player has drained this turn's audio: a new recording window may
+        # open again (PC-40).
+        self._answer_audio_pending = False
         self._close_latency_turn(incomplete=False)
         self.play_audio_from_file(
             START_SIGNAL_FILE, self.if_cycle_not_changed(self.on_start_signal_played)
