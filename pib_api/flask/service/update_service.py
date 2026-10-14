@@ -61,6 +61,15 @@ class UpdateValidationError(ValueError):
     """Raised when an update request is not safe to enqueue."""
 
 
+class UpdateHelperUnavailableError(UpdateValidationError):
+    """Raised when the repository's release pairing helper cannot be located.
+
+    The helper lives in the repository's ``setup`` directory, outside the flask source tree, so a
+    container that never got it can still serve the availability document - just without the
+    pairing relations between the released and the installed revisions.
+    """
+
+
 class UpdateNotInstalledError(RuntimeError):
     """Raised when the host update service is absent or not fully installed.
 
@@ -771,14 +780,52 @@ def read_log(offset: int, directory: Path | None = None) -> dict[str, Any]:
     }
 
 
+RELEASE_HELPER_PATH = Path("setup") / "update_releases.py"
+RELEASE_HELPER_ENV = "PIB_UPDATE_RELEASES_PATH"
+RELEASE_HELPER_CONTAINER_PATH = Path("/app/setup/update_releases.py")
+
+
+def _release_helper_candidates() -> list[Path]:
+    """Every path the release pairing helper may live at, nearest first.
+
+    The helper belongs to the repository (``<repo>/setup/update_releases.py``). In the flask
+    container ``/app`` is a bind mount of ``pib_api/flask``, so no parent of this module reaches the
+    repository root; the compose file mounts the directory at ``/app/setup`` instead. The former
+    fixed ``parents[3]`` covered only the checkout layout and raised ``IndexError`` where the path
+    was shallower - a 500 on ``GET /system/update/available``.
+    """
+    candidates: list[Path] = []
+    override = os.environ.get(RELEASE_HELPER_ENV)
+    if override:
+        candidates.append(Path(override))
+    module_path = Path(__file__).resolve()
+    candidates.extend(parent / RELEASE_HELPER_PATH for parent in module_path.parents)
+    candidates.append(RELEASE_HELPER_CONTAINER_PATH)
+    unique: list[Path] = []
+    for candidate in candidates:
+        if candidate not in unique:
+            unique.append(candidate)
+    return unique
+
+
 def _release_module():
     """Load the host pairing helper. It has no Flask dependency."""
     global _RELEASES_MODULE
     if _RELEASES_MODULE is None:
-        path = Path(__file__).resolve().parents[3] / "setup" / "update_releases.py"
+        candidates = _release_helper_candidates()
+        path = next(
+            (candidate for candidate in candidates if candidate.is_file()), None
+        )
+        if path is None:
+            looked_at = ", ".join(str(candidate) for candidate in candidates)
+            raise UpdateHelperUnavailableError(
+                f"release pairing helper is not available; looked at {looked_at}"
+            )
         spec = importlib.util.spec_from_file_location("update_releases", path)
         if spec is None or spec.loader is None:
-            raise UpdateValidationError("release pairing helper is not available")
+            raise UpdateHelperUnavailableError(
+                f"release pairing helper at {path} could not be loaded"
+            )
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         _RELEASES_MODULE = module
@@ -890,20 +937,31 @@ def pin_accepted_job(
 def annotate_installed_release(
     document: Mapping[str, Any], installed: Mapping[str, Any]
 ) -> dict[str, Any]:
-    """Attach release relations when the check discovered paired tags."""
+    """Attach release relations when the check discovered paired tags.
+
+    The relations come from the repository's pairing helper. When that helper cannot be located the
+    availability document stays useful on its own - the host runner wrote it - so the failure
+    degrades to the plain document plus a named reason instead of failing the whole endpoint with a
+    500 (``GET /system/update/available``). The compose file mounts the helper at
+    ``/app/setup/update_releases.py`` so the normal case keeps annotating.
+    """
     if not isinstance(document, dict):
         return dict(document) if isinstance(document, Mapping) else {}
+    try:
+        release_module = _release_module()
+    except UpdateHelperUnavailableError as error:
+        degraded = dict(document)
+        degraded["annotationsUnavailable"] = str(error)
+        return degraded
     if document.get("state") == "pending":
         pending = dict(document)
         previous = pending.get("previous")
         if isinstance(previous, dict) and "releases" in previous:
-            pending["previous"] = _release_module().annotate_relations(
-                previous, installed
-            )
+            pending["previous"] = release_module.annotate_relations(previous, installed)
         return pending
     if "releases" not in document:
         return dict(document)
-    return _release_module().annotate_relations(document, installed)
+    return release_module.annotate_relations(document, installed)
 
 
 def program_running_signal() -> bool | None:

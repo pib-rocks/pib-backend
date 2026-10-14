@@ -2,10 +2,56 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 import json
+from pathlib import Path
 
 import pytest
 
 from service import revision_service, update_service
+
+
+def test_release_helper_is_found_in_this_checkout(monkeypatch):
+    """The checkout layout keeps working, and the container path is among the candidates."""
+    monkeypatch.delenv(update_service.RELEASE_HELPER_ENV, raising=False)
+    monkeypatch.setattr(update_service, "_RELEASES_MODULE", None)
+    candidates = update_service._release_helper_candidates()
+    repo_root = Path(__file__).resolve().parents[2]
+    assert repo_root / "setup" / "update_releases.py" in candidates
+    assert update_service.RELEASE_HELPER_CONTAINER_PATH in candidates
+    # every parent of the module is tried, not a fixed index (the container layout is shallower)
+    assert len(candidates) >= len(Path(update_service.__file__).resolve().parents)
+    module = update_service._release_module()
+    assert callable(module.annotate_relations)
+
+
+def test_release_helper_missing_names_the_cause(monkeypatch, tmp_path):
+    """A layout without the helper names what was tried - not IndexError, which was a 500."""
+    monkeypatch.setattr(update_service, "_RELEASES_MODULE", None)
+    monkeypatch.setattr(
+        update_service,
+        "_release_helper_candidates",
+        lambda: [tmp_path / "setup" / "update_releases.py"],
+    )
+    with pytest.raises(update_service.UpdateHelperUnavailableError) as error:
+        update_service._release_module()
+    message = str(error.value)
+    assert "release pairing helper is not available" in message
+    assert str(tmp_path) in message
+
+
+def test_annotate_degrades_when_the_helper_is_unavailable(monkeypatch, tmp_path):
+    """The availability document is written by the host runner, so it stays usable without it."""
+    monkeypatch.setattr(update_service, "_RELEASES_MODULE", None)
+    monkeypatch.setattr(
+        update_service, "_release_helper_candidates", lambda: [tmp_path / "nope.py"]
+    )
+    document = {"state": "idle", "releases": [{"tag": "v1.0.0", "commitTargets": {}}]}
+    result = update_service.annotate_installed_release(document, {})
+    assert result["state"] == "idle"
+    assert result["releases"] == document["releases"]
+    assert "looked at" in result["annotationsUnavailable"]
+    # a pending document keeps its shape too
+    pending = {"state": "pending", "previous": {"releases": []}, "jobId": "job-1"}
+    assert update_service.annotate_installed_release(pending, {})["jobId"] == "job-1"
 
 
 def test_request_validation_and_building():

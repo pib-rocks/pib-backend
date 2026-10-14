@@ -52,6 +52,10 @@ services:
       # Hermes profiles directory (SOUL.md / MEMORY.md live there).
       - /home/pib/app/secrets:/home/pib/app/secrets
       - /home/pib/app/.update:/app/.update
+      # The release pairing helper lives in the repository's setup directory, which the flask bind
+      # mount above hides: /app *is* pib_api/flask, so nothing inside the container reaches the
+      # repository root. Without this mount GET /system/update/available cannot annotate releases.
+      - ./setup:/app/setup:ro
       - /etc/pib_hardware_variant:/etc/pib_hardware_variant:ro
       - /etc/pib_smart_chats:/etc/pib_smart_chats:ro
       - /etc/pib_host_ip:/etc/pib_host_ip:ro
