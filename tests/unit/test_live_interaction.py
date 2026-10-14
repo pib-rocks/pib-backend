@@ -8,6 +8,8 @@ from pib_hermes_config.live_interaction import (
     FACE_LISTENING_TEXT,
     INTERRUPTION_REPORT,
     PLAYBACK_TAIL_EXCLUSION_SECONDS,
+    activity_end_message,
+    activity_start_message,
     admit_live_uplink,
     consume_playback,
     face_for_hardware_vad,
@@ -73,23 +75,51 @@ class _Pause:
         self.events.append("resume")
 
 
-def test_live_uplink_is_not_gated_by_hardware_vad():
-    assert "voice_activity" not in inspect.signature(admit_live_uplink).parameters
-    assert admit_live_uplink(now=10.0, exclude_until=0.0, session_paused=False) is True
+def test_the_client_gate_owns_the_live_uplink():
+    """The old contract (provider-owned turn detection, hardware VAD ignored) is reversed."""
+    streaming = inspect.signature(admit_live_uplink).parameters["streaming"]
+    assert streaming.kind is inspect.Parameter.KEYWORD_ONLY
+    assert streaming.default is inspect.Parameter.empty
     assert (
-        admit_live_uplink(now=10.0, exclude_until=10.2, session_paused=False) is False
+        admit_live_uplink(
+            now=10.0, exclude_until=0.0, session_paused=False, streaming=False
+        )
+        is False
     )
-    assert admit_live_uplink(now=10.0, exclude_until=0.0, session_paused=True) is False
+    assert (
+        admit_live_uplink(
+            now=10.0, exclude_until=0.0, session_paused=False, streaming=True
+        )
+        is True
+    )
+    assert (
+        admit_live_uplink(
+            now=10.0, exclude_until=10.2, session_paused=False, streaming=True
+        )
+        is False
+    )
+    assert (
+        admit_live_uplink(
+            now=10.0, exclude_until=0.0, session_paused=True, streaming=True
+        )
+        is False
+    )
 
-    detection = live_turn_detection_config()["realtime_input_config"]
-    assert detection["automatic_activity_detection"]["disabled"] is False
-    assert detection["activity_handling"] == "START_OF_ACTIVITY_INTERRUPTS"
+    config = live_turn_detection_config()
+    detection = config["realtime_input_config"]
+    assert detection["automatic_activity_detection"]["disabled"] is True
+    assert "activity_handling" not in detection
+    assert config["activity_handling"] == "START_OF_ACTIVITY_INTERRUPTS"
+    assert activity_start_message() == {"activity_start": {}}
+    assert activity_end_message() == {"activity_end": {}}
+    assert "client owns the gate" in (live_turn_detection_config.__doc__ or "").lower()
 
     loop = AUDIO_LOOP.read_text(encoding="utf-8")
     assert "admit_live_uplink(" in loop
     assert "live_turn_detection_config(" in loop
-    assert "voice_activity" not in loop
-    assert "activity_start" not in loop
+    assert "ActivityGate(" in loop
+    assert "activity_start_message(" in loop
+    assert "activity_end_message(" in loop
 
 
 def test_hardware_vad_drives_the_turn_based_path_the_face_and_the_led_ring():
