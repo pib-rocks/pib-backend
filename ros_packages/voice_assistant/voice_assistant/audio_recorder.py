@@ -336,8 +336,8 @@ class AudioRecorderNode(Node):
                 text = public_voice_client.speech_to_text(wav_data, self.token)
             else:
                 self.get_logger().error(
-                    "stt backend %s is not the local engine and has no speech client",
-                    stt_mode,
+                    f"stt backend {stt_mode} is not the local engine and has no "
+                    "speech client"
                 )
                 goal_handle.abort()
                 return self.create_result("")

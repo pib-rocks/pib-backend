@@ -255,8 +255,8 @@ class AudioPlayerNode(Node):
         route = resolve_tts_route(getattr(request, "tts_engine", "") or "")
         if route != "local":
             self.get_logger().error(
-                "tts backend %s is not the local Supertone engine and has no speech client",
-                request.tts_engine,
+                f"tts backend {request.tts_engine} is not the local Supertone "
+                "engine and has no speech client"
             )
             return response
 
@@ -269,7 +269,7 @@ class AudioPlayerNode(Node):
             try:
                 data = self._synthesize_clause(piece, request)
             except Exception as exc:
-                self.get_logger().error("clause synthesis failed: %s", exc)
+                self.get_logger().error(f"clause synthesis failed: {exc}")
                 return response
             playback_item = PlaybackItem(
                 data, SPEECH_ENCODING, pause, self.counter_next()
@@ -301,8 +301,8 @@ class AudioPlayerNode(Node):
             ]
         except Exception as exc:
             self.get_logger().warning(
-                "Local Supertone TTS synthesis error, attempting public voice client: %s",
-                exc,
+                "Local Supertone TTS synthesis error, attempting public voice "
+                f"client: {exc}"
             )
             data = public_voice_client.text_to_speech(
                 text, request.gender, request.language, self.token

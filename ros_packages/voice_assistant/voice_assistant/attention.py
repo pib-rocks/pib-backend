@@ -95,7 +95,7 @@ def bind_attention(node, *, command_on_speech: bool = False, speech_allowed=None
             speech_allowed,
         )
     except Exception as exc:
-        node.get_logger().warning("attention sensors unavailable: %s", exc)
+        node.get_logger().warning(f"attention sensors unavailable: {exc}")
         handle = AttentionHandle(buffer, _noop)
     return handle
 
@@ -123,9 +123,7 @@ def _ros_command(node):
         trajectory.points = [point]
         request.joint_trajectory = trajectory
         client.call_async(request)
-        node.get_logger().info(
-            "turning %s to %s before answering", str(motor), int(position)
-        )
+        node.get_logger().info(f"turning {motor} to {int(position)} before answering")
 
     return command
 
