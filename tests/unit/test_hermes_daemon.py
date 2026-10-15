@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import errno
 import json
 import logging
 import os
 import re
+import stat
 import sys
 import threading
 import time
@@ -219,6 +221,75 @@ def test_profile_endpoint_creates_complete_layout_idempotently(
     assert status["has_memories"] is True
     assert status["has_sessions"] is True
     assert status["has_soul"] is True
+
+
+def _post_profile(server, personality_id: str, name: str = "Ada") -> dict:
+    """Provision (or repair) one profile through the daemon's own endpoint."""
+    host, port = server.server_address
+    body = json.dumps(
+        {
+            "personality_id": personality_id,
+            "personality_name": name,
+            "soul_text": "Sei neugierig.",
+        }
+    ).encode()
+    request = Request(
+        f"http://{host}:{port}/profile",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urlopen(request, timeout=2) as response:
+        return json.loads(response.read().decode())
+
+
+def test_profile_env_is_restricted_to_0600(daemon_server, monkeypatch):
+    """The guard must not quietly drop the mode change where it does apply."""
+    server, _ = daemon_server
+    monkeypatch.setenv("PIB_HERMES_PROFILE_FACTORY", "filesystem")
+
+    result = _post_profile(server, "cover-mode")
+
+    env_path = Path(result["profile_dir"]) / ".env"
+    assert env_path.is_file()
+    assert stat.S_IMODE(env_path.stat().st_mode) == 0o600
+
+
+def test_read_only_profile_env_cover_does_not_abort_provisioning(
+    daemon_server, monkeypatch
+):
+    """PC-45: the voice container's profile .env is a read-only credential cover.
+
+    Measured on .172 after the voice container was recreated with the filtered
+    Hermes view: ``os.chmod`` on the covered ``profiles/<id>/.env`` raises
+    EROFS, which aborted ``ensure_profile_home`` and made every Hermes-mediated
+    voice turn answer with the fallback reply. The cover is a blank placeholder,
+    so a refused chmod must not stop provisioning.
+    """
+    server, _ = daemon_server
+    monkeypatch.setenv("PIB_HERMES_PROFILE_FACTORY", "filesystem")
+
+    env_path = Path(_post_profile(server, "cover-readonly")["profile_dir"]) / ".env"
+    assert env_path.is_file()
+
+    real_chmod = hd.os.chmod
+
+    def read_only_cover(path, mode, *args, **kwargs):
+        if str(path) == str(env_path):
+            raise OSError(errno.EROFS, "Read-only file system", str(path))
+        return real_chmod(path, mode, *args, **kwargs)
+
+    monkeypatch.setattr(hd.os, "chmod", read_only_cover)
+
+    repaired = _post_profile(server, "cover-readonly")
+
+    # The turn path aborts on the exception, so the response and the layout are
+    # the contract: a repaired profile answers ok and holds its files.
+    assert repaired["ok"] is True
+    profile_dir = Path(repaired["profile_dir"])
+    assert (profile_dir / "config.yaml").is_file()
+    assert (profile_dir / "SOUL.md").is_file()
+    assert (profile_dir / "memories").is_dir()
 
 
 def test_profile_endpoint_persists_the_personalitys_model_and_route(
