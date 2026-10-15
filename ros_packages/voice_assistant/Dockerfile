@@ -52,6 +52,7 @@ COPY ./ros_packages/voice_assistant/requirements.txt .
 # pin only together with a faster-whisper version that dropped the keyword.
 RUN pip install --break-system-packages --ignore-installed \
         requests==2.33.0 \
+        httpx==0.28.1 \
         pyaudio==0.2.14 \
         google-genai==2.28.0 \
         supertonic==1.3.1 \

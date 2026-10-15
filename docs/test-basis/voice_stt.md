@@ -41,3 +41,39 @@ When processed by the STT engine
 Then the engine returns a clean empty string or silent response
 And no uncaught exceptions are raised
 ```
+
+
+## Cloud STT and visible local fallback (PC-44)
+
+Selecting `cloud_whisper` posts one WAV multipart `file` to the sold cloud API
+`/v1/voice-assistant/speech-to-text`, with optional pinned `language`.
+`PIB_CLOUD_BASE_URL` is the cloud service root or `/v1` base (LAN default
+`http://192.168.1.252:8090/v1`), **not** `FLASK_API_BASE_URL`, which is robot-local.
+`PIB_CLOUD_MODE=production` requires HTTPS. Userinfo, query, fragment and unrelated
+paths are refused. No bearer token, provider credential, proxy environment or
+redirect is used. `X-Request-ID` is a UUID logged on both robot and API. The action
+has no personality-id field, so this client deliberately omits `X-Personality-ID`
+rather than claiming an identifier it did not receive.
+
+`PIB_CLOUD_STT_TIMEOUT_SECONDS` defaults to 3 and must be finite and positive.
+It bounds the entire async connect/upload/read, not only a socket inactivity gap.
+Responses are bounded to 64 KiB; non-200, malformed, empty and invalid text trigger
+local fallback. Each request owns and closes its async HTTP client; the persistent
+provider HTTP/2 pool remains server-side. Robot-to-cloud pooling is not claimed.
+
+Cloud failure publishes `voice_using_fallback=true` **before** local inference,
+then transcribes the exact same WAV with the existing pinned-language local
+engine. Local success does not clear fallback; a subsequent cloud success does.
+Cloud and local failure (including empty fallback text) publish the combined
+technical cause on `voice_stt_failure`, mark fallback and abort the action. The
+existing assistant subscriber presents the cause and opens no chat turn.
+Local-only and legacy tryb routing are unchanged. Foreign engines never upload.
+Logs contain correlation, byte count, status and duration, not audio, transcript,
+provider body or credential. The existing local engine start-up self-check is
+unchanged; lazy loading and memory savings are not claimed by this slice.
+
+Verification: `tests/unit/test_cloud_stt_client.py` executes the actual recorder
+method with ROS boundary substitutes and exercises real TCP multipart/error/drip
+responses. It does not claim acoustic or provider acceptance. Real robot acoustic
+chat and controlled fallback measurements are recorded separately in PC-44;
+PC-45 owns egress locking and PC-46 owns broader latency/cost/FLAC evaluation.

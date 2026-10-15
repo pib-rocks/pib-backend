@@ -4,3 +4,6 @@
 tinkerforge==2.1.32
 # Fernet, shared with the token service. The key store imports it at app startup.
 cryptography>=42.0.0
+
+# Robot cloud STT uses the same async HTTP client in loopback deadline tests.
+httpx==0.28.1

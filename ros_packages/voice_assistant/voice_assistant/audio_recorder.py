@@ -45,6 +45,7 @@ from voice_assistant.stt_transcription import (
     STTTranscriptionError,
 )
 from voice_assistant.turn_latency import TURN_TRACE_TOPIC, format_event
+from voice_assistant.cloud_stt_dispatch import transcribe_cloud_or_local
 from . import util
 
 # these values define the PCM encoding in which the recorded
@@ -400,6 +401,15 @@ class AudioRecorderNode(Node):
                     f"{int((time.monotonic() - started) * 1000)} ms with engine "
                     f"{metadata.get('backend')} (language "
                     f"{metadata.get('language')})"
+                )
+            elif route == "cloud":
+                text = transcribe_cloud_or_local(
+                    wav_data,
+                    language=self.stt_language or None,
+                    local_engine=self.stt_engine,
+                    log=self.get_logger(),
+                    publish_fallback=self._publish_engine_fallback,
+                    publish_failure=self._publish_stt_failure,
                 )
             elif route == "tryb":
                 text = public_voice_client.speech_to_text(wav_data, self.token)
