@@ -7,8 +7,8 @@ DefaultDependencies=no
 Type=oneshot
 RemainAfterExit=yes
 Environment=PIB_BACKEND_DIR=/home/pib/app/pib-backend
-ExecStart=/bin/bash -c 'exec "${PIB_BACKEND_DIR:-/home/pib/app/pib-backend}/setup/voice_egress/apply.sh" prepare-view'
-ExecStop=/bin/bash -c 'exec "${PIB_BACKEND_DIR:-/home/pib/app/pib-backend}/setup/voice_egress/apply.sh" remove-view'
+ExecStart=/bin/bash -c 'exec /bin/bash "${PIB_BACKEND_DIR:-/home/pib/app/pib-backend}/setup/voice_egress/apply.sh" prepare-view'
+ExecStop=/bin/bash -c 'exec /bin/bash "${PIB_BACKEND_DIR:-/home/pib/app/pib-backend}/setup/voice_egress/apply.sh" remove-view'
 
 [Install]
 WantedBy=docker.service
