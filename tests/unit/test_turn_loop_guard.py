@@ -77,8 +77,10 @@ def test_a_recording_window_waits_for_the_answer_audio_to_drain():
     assert "_answer_audio_pending" in block
     # The guard must come before the recording is opened.
     assert block.index("_answer_audio_pending") < block.index("self.record_audio(")
-    # Waiting is a re-queued start signal, never a silent drop.
-    assert "play_audio_from_file(" in block
+    # Waiting must not poll with audible start tones (PC-49); use a drain watchdog.
+    assert "_arm_pending_drain_watchdog(" in block
+    pending_branch = block[block.index("_answer_audio_pending") :]
+    assert "START_SIGNAL_FILE" not in pending_branch.split("self.record_audio(", 1)[0]
 
 
 def test_the_pending_flag_is_set_and_cleared_on_both_ends():
@@ -91,7 +93,8 @@ def test_the_pending_flag_is_set_and_cleared_on_both_ends():
     drained = source[source.index("def on_final_sentence_played") :]
     assert "_answer_audio_pending = False" in drained[:400]
     fresh = source[source.index("def _start_spoken_turn") :]
-    assert "_answer_audio_pending = False" in fresh[:400]
+    fresh = fresh[: fresh.index("\n    def ", 1)]
+    assert "_answer_audio_pending = False" in fresh
     # The flag exists as state, not only inside the handler.
     assert (
         "self._answer_audio_pending = False"
