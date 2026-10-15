@@ -17,7 +17,9 @@
     {
       "id": "pib-cloud",
       "enabled": true,
-      "modes": ["common"],
+      "modes": [
+        "common"
+      ],
       "destination": "192.168.1.252",
       "port": 8090,
       "protocol": "tcp",
@@ -29,7 +31,9 @@
     {
       "id": "ollama",
       "enabled": true,
-      "modes": ["common"],
+      "modes": [
+        "common"
+      ],
       "destination": "host.docker.internal",
       "port": 11434,
       "protocol": "tcp",
@@ -41,7 +45,9 @@
     {
       "id": "pib-network",
       "enabled": true,
-      "modes": ["common"],
+      "modes": [
+        "common"
+      ],
       "destination": "pib-network",
       "port": null,
       "protocol": "any",
@@ -53,7 +59,9 @@
     {
       "id": "ros-dds-multicast",
       "enabled": true,
-      "modes": ["common"],
+      "modes": [
+        "common"
+      ],
       "destination": "224.0.0.0/4",
       "port": null,
       "protocol": "any",
@@ -65,7 +73,11 @@
     {
       "id": "gemini",
       "enabled": true,
-      "modes": ["direct", "smart", "live"],
+      "modes": [
+        "direct",
+        "smart",
+        "live"
+      ],
       "destination": "generativelanguage.googleapis.com",
       "port": 443,
       "protocol": "tcp",
@@ -75,9 +87,39 @@
       "evidence": "Measured on .172 on 2026-10-15 (PC-45 plan): HTTPS to generativelanguage.googleapis.com returned 404, so the host is reachable. Hermes provider is gemini. Code: direct_tool_loop.py PINNED_ENDPOINT and audio_loop.py client.aio.live.connect (google-genai). A live Direct, Smart, or Live flow was not captured in this session."
     },
     {
+      "id": "huggingface",
+      "enabled": true,
+      "modes": [
+        "common"
+      ],
+      "destination": "huggingface.co",
+      "port": 443,
+      "protocol": "tcp",
+      "resolve": "dns",
+      "hook": "forward",
+      "purpose": "TTS assets. audio_player loads the Supertone/supertonic-3 voice styles at container start; without this destination the player cannot load them and speech output breaks.",
+      "evidence": "Measured on .172 on 2026-10-15 in the recreated container's log: 54 requests to https://huggingface.co (HEAD resolve path 307, GET api/resolve-cache/... 200, 'Fetching 26 files'), and this was the only external host contacted besides the allowlisted ones. Re-measured after the privilege and mount reduction, not carried over from the plan."
+    },
+    {
+      "id": "huggingface-cdn",
+      "enabled": true,
+      "modes": [
+        "common"
+      ],
+      "destination": "cdn-lfs.huggingface.co",
+      "port": 443,
+      "protocol": "tcp",
+      "resolve": "dns",
+      "hook": "forward",
+      "purpose": "Hugging Face LFS asset host. Large model files are served from the CDN after the resolve request redirects there. Kept so a cold cache does not cut the TTS asset download.",
+      "evidence": "NOT observed: the HEAD to huggingface.co answered 307 Temporary Redirect and the redirect target is not visible in the container log. Marked as inferred, not measured - check it on the wire before relying on this entry."
+    },
+    {
       "id": "tryb",
       "enabled": false,
-      "modes": ["legacy-tryb"],
+      "modes": [
+        "legacy-tryb"
+      ],
       "destination": "platform.tryb.ai",
       "port": 443,
       "protocol": "tcp",
