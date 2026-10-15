@@ -131,7 +131,7 @@ _CATALOGUE_ROWS = (
     ("Google", "gemini-3.8-live", "Gemini 3.8 Live", True, False, True, False, False, STATUS_ACTIVE, False),
     ("OpenAI", "gpt-6", "GPT-6", True, True, False, False, False, STATUS_ACTIVE, False),
     ("Anthropic", "claude-sonnet-5-5", "Claude Sonnet 5.5", True, True, False, False, False, STATUS_ACTIVE, False),
-    ("pib.Cloud", PIB_CLOUD_API_NAME, "pib.Cloud", True, True, False, False, False, STATUS_ACTIVE, True),  # TODO(confirm id)
+    ("pib.Cloud", PIB_CLOUD_API_NAME, "pib.Cloud", True, True, False, True, False, STATUS_ACTIVE, True),  # TODO(confirm id)
     ("OpenAI", "gpt-realtime", "GPT Realtime", False, False, True, False, False, STATUS_UNCONFIRMED, False),  # TODO(confirm id)
     ("Mistral", None, "Mistral", False, False, False, False, False, STATUS_UNCONFIRMED, False),  # TODO(confirm id)
 )
@@ -218,8 +218,8 @@ def capabilities_for(api_name: str, has_image_support: bool) -> dict[str, bool]:
 
     tools, live, stt and tts come from the catalogue. images follows the row's
     own has_image_support value. A chat id that is not in the catalogue keeps
-    tools on and live, stt and tts off. stt and tts stay off for these rows:
-    they are chat models, and the local speech engines are not rows.
+    tools on and live, stt and tts off. Only pib.Cloud carries stt (cloud
+    whisper). The local speech engines are not rows.
     """
     entry = catalogue_entry(api_name)
     if entry is None:

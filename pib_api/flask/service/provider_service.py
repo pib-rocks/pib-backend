@@ -3,6 +3,7 @@ from typing import List, Optional
 from model.assistant_model import AssistantModel
 from model.provider_model import Provider, RegistryModel
 from pib_hermes_config.voice_backends import (
+    CLOUD_STT_ID,
     LIVE_VOICE_NOTE,
     LOCAL_STT_ENGINE,
     LOCAL_STT_ID,
@@ -11,6 +12,7 @@ from pib_hermes_config.voice_backends import (
 )
 from provider_registry import (
     DEFAULT_PROVIDER_REF,
+    PIB_CLOUD_API_NAME,
     capabilities_for,
     capabilities_held_by_all,
     has_capability,
@@ -126,11 +128,34 @@ def _model_speech_option(row: RegistryModel) -> dict:
     }
 
 
+def _cloud_stt_option(row: RegistryModel) -> dict:
+    return {
+        "id": CLOUD_STT_ID,
+        "kind": "provider",
+        "engine": CLOUD_STT_ID,
+        "label": f"{row.visual_name} Whisper",
+    }
+
+
+def cloud_stt_model() -> Optional[RegistryModel]:
+    """The pib.Cloud row while it carries stt, otherwise None."""
+    row = RegistryModel.query.filter_by(api_name=PIB_CLOUD_API_NAME).first()
+    if row is None or not has_capability(row.capabilities, "stt"):
+        return None
+    return row
+
+
+def cloud_stt_model_id() -> Optional[int]:
+    row = cloud_stt_model()
+    return None if row is None else row.id
+
+
 def speech_backends() -> dict:
     """Local engines plus model rows that carry stt or tts.
 
     The image filter does not apply here. A model is offered for speech only
-    when its own capability flag is set. ElevenLabs is not a row.
+    when its own capability flag is set. The pib.Cloud stt row is offered as
+    ``cloud_whisper``, not as its row id. ElevenLabs is not a row.
     """
     speech_to_text = [
         _local_speech_option(LOCAL_STT_ID, LOCAL_STT_ENGINE, "Local faster-whisper")
@@ -140,7 +165,10 @@ def speech_backends() -> dict:
     ]
     for row in RegistryModel.query.order_by(RegistryModel.id).all():
         if has_capability(row.capabilities, "stt"):
-            speech_to_text.append(_model_speech_option(row))
+            if row.api_name == PIB_CLOUD_API_NAME:
+                speech_to_text.append(_cloud_stt_option(row))
+            else:
+                speech_to_text.append(_model_speech_option(row))
         if has_capability(row.capabilities, "tts"):
             text_to_speech.append(_model_speech_option(row))
     return {

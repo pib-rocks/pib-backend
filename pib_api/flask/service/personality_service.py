@@ -36,6 +36,7 @@ from pib_hermes_config.live_session import (
 from pib_hermes_config.memory import write_memory
 from pib_hermes_config.turn_taking import normalize_thinking_filler
 from pib_hermes_config.voice_backends import (
+    CLOUD_STT_ID,
     LOCAL_STT_ID,
     LOCAL_TTS_ID,
     normalize_stt_choice,
@@ -373,18 +374,39 @@ def _provider_has(capability: str):
     return check
 
 
+def _default_stt_engine(personality: Personality, cloud_model_id) -> str:
+    """Cloud whisper when the chosen model is the pib.Cloud stt row, else local.
+
+    The model is the one ``_apply_provider_choice`` already stored, so the
+    ``default`` policy counts as pib.Cloud only while it resolves to that row.
+    """
+    if cloud_model_id is None:
+        return LOCAL_STT_ID
+    ref = getattr(personality, "provider_ref", None)
+    model = provider_service.find_model(str(ref)) if ref else None
+    if model is not None and model.id == cloud_model_id:
+        return CLOUD_STT_ID
+    return LOCAL_STT_ID
+
+
 def _apply_voice_backends(
     personality: Personality, personality_dto: Any, *, creating: bool
 ) -> None:
-    """Local faster-whisper and Supertone, or a provider with that capability."""
+    """Local faster-whisper and Supertone, cloud whisper, or a capable provider.
+
+    No STT choice (omitted on create, or blank) stores the default for the
+    chosen model. An explicit choice is stored as sent, and an update that
+    does not name sttEngine keeps the stored engine.
+    """
     if creating or "stt_engine" in personality_dto:
-        raw = (
-            personality_dto.get("stt_engine")
-            if "stt_engine" in personality_dto
-            else LOCAL_STT_ID
-        )
+        cloud_model_id = provider_service.cloud_stt_model_id()
         try:
-            personality.stt_engine = normalize_stt_choice(raw, _provider_has("stt"))
+            personality.stt_engine = normalize_stt_choice(
+                personality_dto.get("stt_engine"),
+                _provider_has("stt"),
+                cloud_model_id,
+                default=_default_stt_engine(personality, cloud_model_id),
+            )
         except ValueError as exc:
             raise ValidationError({"sttEngine": [str(exc)]}) from exc
     if creating or "tts_engine" in personality_dto:
@@ -521,10 +543,11 @@ def create_personality(personality_dto: Any) -> Personality:
         live_idle_timeout=DEFAULT_LIVE_IDLE_TIMEOUT_SECONDS,
     )
     _apply_live_chat_settings(personality, personality_dto, creating=True)
-    _apply_voice_backends(personality, personality_dto, creating=True)
     _apply_thinking_filler(personality, personality_dto)
     _apply_provider_choice(personality, personality_dto, creating=True)
     _store_derived_voice_mode(personality)
+    # The STT default follows the chosen model, so it runs after that choice.
+    _apply_voice_backends(personality, personality_dto, creating=True)
     _apply_channel(personality, personality_dto, creating=True)
     _apply_reasoning_effort(personality, personality_dto, creating=True)
     custom = ""
