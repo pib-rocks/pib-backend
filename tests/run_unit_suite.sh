@@ -7,4 +7,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "${REPO_ROOT}"
 
+# Device-free infrastructure regressions belong to this canonical recipe too.
+python -m pytest tests/infrastructure/test_voice_egress_policy.py -q
 exec python -m pytest tests/unit -q "$@"

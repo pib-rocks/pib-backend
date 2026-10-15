@@ -60,8 +60,6 @@ jobs:
         env:
           PYTHONPATH: ${{ github.workspace }}
         run: bash tests/run_unit_suite.sh
-      - name: Run voice egress infrastructure regression tests
-        run: python -m pytest tests/infrastructure/test_voice_egress_policy.py -q
 
   jest:
     runs-on: ubuntu-latest
