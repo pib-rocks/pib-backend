@@ -416,7 +416,20 @@ def ensure_profile_home(
     os.chmod(soul_path, 0o644)
     env_path = os.path.join(profile_dir, ".env")
     if os.path.exists(env_path):
-        os.chmod(env_path, 0o600)
+        try:
+            os.chmod(env_path, 0o600)
+        except OSError as exc:
+            # PC-45: the voice container sees a filtered view of the Hermes home
+            # in which credential files are replaced by read-only, blank covers.
+            # Such a placeholder carries no secret, so failing to restrict it is
+            # not fatal - aborting here made every Hermes turn answer with the
+            # fallback reply inside the recreated voice container. The runtime
+            # provider key comes from the key store, never from this file.
+            logging.warning(
+                "could not restrict %s to 0600 (%s); continuing without it",
+                env_path,
+                exc,
+            )
 
     return {
         "ok": True,
