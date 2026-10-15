@@ -547,11 +547,11 @@ function install_pib_python_packages() {
 
 # Install the Hermes CLI for the pib user.
 #
-# WHY: docker-compose bind-mounts /home/pib/.hermes and
-# /home/pib/.local/bin/hermes into ros-voice-assistant (and the profiles/
-# subtree into flask-app). hermes-agent personalities need that host-side CLI
-# plus the ~/.hermes profiles dir; without the install those mounts resolve to
-# nothing and every hermes turn silently falls back.
+# WHY: ros-voice-assistant bind-mounts a filtered view of /home/pib/.hermes
+# (setup/voice_egress/apply.sh prepare-view) and /home/pib/.local/bin/hermes.
+# flask-app bind-mounts the profiles/ subtree. hermes-agent personalities need
+# that host-side CLI plus the ~/.hermes profiles dir; without the install those
+# mounts resolve to nothing and every hermes turn silently falls back.
 #
 # Provider credentials are NOT configured here — after install, run
 # `sudo -u pib -H hermes setup` (or write /home/pib/.hermes/.env) once before

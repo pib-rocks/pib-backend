@@ -75,5 +75,6 @@ unchanged; lazy loading and memory savings are not claimed by this slice.
 Verification: `tests/unit/test_cloud_stt_client.py` executes the actual recorder
 method with ROS boundary substitutes and exercises real TCP multipart/error/drip
 responses. It does not claim acoustic or provider acceptance. Real robot acoustic
-chat and controlled fallback measurements are recorded separately in PC-44;
-PC-45 owns egress locking and PC-46 owns broader latency/cost/FLAC evaluation.
+chat and controlled fallback measurements are recorded separately in PC-44.
+PC-45 is the host egress policy in `docs/runbooks/voice-egress.md` and
+`setup/voice_egress/`. PC-46 owns broader latency/cost/FLAC evaluation.

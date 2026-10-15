@@ -138,7 +138,24 @@ services:
       context: .
       dockerfile: ./ros_packages/voice_assistant/Dockerfile
     command: ros2 launch voice_assistant launch.py
-    privileged: true
+    # Host nftables is the enforcement point (setup/voice_egress). A privileged
+    # root container can mount the host disk and rewrite that policy.
+    privileged: false
+    cap_drop:
+      - NET_ADMIN
+      - NET_RAW
+      - SYS_ADMIN
+      - SYS_MODULE
+      - SYS_RAWIO
+      - SYS_PTRACE
+    security_opt:
+      - no-new-privileges:true
+    group_add:
+      - "${PIB_AUDIO_GID:-29}"
+    device_cgroup_rules:
+      - "c 116:* rmw"
+      - "c 14:* rmw"
+      - "c 189:* rmw"
     profiles:
       - all
       - voice_assistant
@@ -176,14 +193,22 @@ services:
       # real value from password.env. No hardcoded key / fallback default here.
       # An unlocked key store wins over those variables. The Direct tool loop
       # and the Hermes turn both read that provider's secret from flask at
-      # runtime. Hermes does not copy it into the profile.
+      # runtime. Hermes does not copy it into the profile. The Hermes tree
+      # itself is not mounted raw: profiles/*/.env and ~/.hermes/.env would
+      # come with it. prepare-view publishes a filtered view and covers those
+      # files. The cloud-operator key is not on this robot.
     volumes:
       - ${PIB_VOICE_DATA_DIR:-/data/voice}:/data/voice
       - /dev/snd:/dev/snd
       - /dev/dsp:/dev/dsp
       - /etc/machine-id:/etc/machine-id
       - /etc/pib_smart_chats:/etc/pib_smart_chats:ro
-      - /home/pib/.hermes:/home/pib/.hermes
+      - type: bind
+        source: ${PIB_VOICE_HERMES_VIEW:-/var/lib/pib-voice-egress/view}
+        target: /home/pib/.hermes
+        bind:
+          propagation: rslave
+          create_host_path: false
       - /home/pib/.local/bin/hermes:/home/pib/.local/bin/hermes:ro
       # REQUIRED, do not remove: the hermes wrapper execs the venv interpreter
       # under /home/pib/.hermes/hermes-agent/venv/bin, and that interpreter is a
