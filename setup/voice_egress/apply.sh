@@ -50,6 +50,42 @@ rollback() {
   echo "policy_present=false"
 }
 
+restore_policy() {
+  local batch
+  need_root
+  if [[ ! -s "$APPLIED" ]]; then
+    echo "policy_error=no saved policy; refusing Docker startup" >&2
+    return 1
+  fi
+  # Saved rules contain only checked destination/interface facts, never keys.
+  # This path intentionally needs neither a running Docker daemon nor DNS.
+  mkdir -p "$STATE_DIR"
+  batch="$(mktemp "$STATE_DIR/restore.XXXXXX.nft")"
+  if "$NFT" list table bridge "$TABLE" >/dev/null 2>&1; then
+    echo "delete table bridge $TABLE" > "$batch"
+  fi
+  cat "$APPLIED" >> "$batch"
+  if ! "$NFT" -c -f "$batch" || ! "$NFT" -f "$batch"; then
+    rm -f "$batch"
+    echo "policy_error=saved policy restore failed" >&2
+    return 1
+  fi
+  rm -f "$batch"
+  echo "policy_restored=true"
+}
+
+recover_policy() {
+  # APPLIED is written only after a successful check, never by install_rules.
+  # A failed refresh must restore the last checked policy, not open egress.
+  if [[ -s "$APPLIED" ]]; then
+    restore_policy
+    echo "policy_recovered=last-checked"
+  else
+    # Initial setup has no accepted policy yet; preserve its explicit rollback.
+    rollback
+  fi
+}
+
 probe_http() {
   local url="$1"
   docker exec "$CONTAINER" \
@@ -199,19 +235,19 @@ install_rules() {
     rm -f "$batch"
     return 1
   fi
-  cp "$rendered" "$APPLIED"
   rm -f "$batch"
   echo "policy_applied=true"
 }
 
 start_watchdog() {
   local stamp="$STATE_DIR/selfcheck-ok"
-  rm -f "$stamp"
+  rm -f "$stamp" "$STATE_DIR/watchdog-reverted"
   (
     sleep "$ROLLBACK_DEADLINE"
     if [[ ! -f "$stamp" ]]; then
-      echo "watchdog=revert" >&2
-      "$NFT" delete table bridge "$TABLE" >/dev/null 2>&1 || true
+      echo "watchdog=recover" >&2
+      touch "$STATE_DIR/watchdog-reverted"
+      recover_policy
     fi
   ) &
   WATCHDOG_PID=$!
@@ -228,7 +264,7 @@ stop_watchdog() {
 }
 
 apply_policy() {
-  local rendered
+  local rendered saved
   need_root
   load_constants
   py preflight >/dev/null
@@ -249,15 +285,20 @@ apply_policy() {
     rm -f "$rendered"
     return 1
   fi
-  rm -f "$rendered"
   start_watchdog
-  if ! self_check; then
+  if ! self_check || [[ -f "$STATE_DIR/watchdog-reverted" ]]; then
     echo "self_check=failed" >&2
     stop_watchdog
-    rollback
+    recover_policy
+    rm -f "$rendered"
     return 1
   fi
   stop_watchdog
+  # Atomic publication of the last CHECKED policy for reboot/recovery.
+  saved="$(mktemp "$LIB_DIR/checked.XXXXXX.nft")"
+  install -m 600 "$rendered" "$saved"
+  mv -f "$saved" "$APPLIED"
+  rm -f "$rendered"
   echo "self_check=ok"
 }
 
@@ -336,6 +377,9 @@ command="${1:-}"
 case "$command" in
   preflight)
     py preflight
+    ;;
+  restore)
+    restore_policy
     ;;
   prepare-view)
     prepare_view

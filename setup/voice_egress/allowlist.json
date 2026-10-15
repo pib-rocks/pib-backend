@@ -4,6 +4,7 @@
   "subject": {
     "compose_service": "ros-voice-assistant",
     "container_name": "multirepo-ros-voice-assistant-1",
+    "mac_address": "02:50:49:42:00:45",
     "network": "pib-network"
   },
   "notes": [
