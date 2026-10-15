@@ -326,7 +326,9 @@ def test_personality_client_reads_the_tool_switch(monkeypatch):
     assert off.tool_calling is False
 
 
-def test_personality_api_defaults_tool_calling_on_and_can_switch_it_off(app, app_ctx):
+def test_personality_api_defaults_tools_on_and_rejects_retired_direct_switch(
+    app, app_ctx
+):
     from model.assistant_model import AssistantModel
 
     client = app.test_client()
@@ -351,15 +353,18 @@ def test_personality_api_defaults_tool_calling_on_and_can_switch_it_off(app, app
         f"/voice-assistant/personality/{body['personalityId']}",
         json={"toolCalling": False},
     )
-    assert switched.status_code == 200
-    assert switched.get_json()["toolCalling"] is False
-    assert switched.get_json()["description"] == body["description"]
+    assert switched.status_code == 400
+    assert "toolCalling" in str(switched.get_json())
+    stored = client.get(f"/voice-assistant/personality/{body['personalityId']}")
+    assert stored.status_code == 200
+    assert stored.get_json()["toolCalling"] is True
+    assert stored.get_json()["description"] == body["description"]
 
     restored_channel = client.put(
         f"/voice-assistant/personality/{body['personalityId']}",
         json={"channel": "direct"},
     )
-    assert restored_channel.get_json()["toolCalling"] is False
+    assert restored_channel.get_json()["toolCalling"] is True
 
 
 # Distinct from each other so a branch that picks the wrong source fails.

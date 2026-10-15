@@ -188,6 +188,13 @@ def _install_ros_stubs():
 
 @pytest.fixture(scope="module")
 def chat_module():
+    # Do not leave fake, non-package API clients installed for later test files.
+    client_prefixes = ("pib_api_client", "public_api_client.public_voice_client")
+    saved_clients = {
+        name: module
+        for name, module in sys.modules.items()
+        if any(name == p or name.startswith(p + ".") for p in client_prefixes)
+    }
     _install_ros_stubs()
     # Force re-import if a previous failed import left a partial module.
     # The entries are put back afterwards: dropping "voice_assistant" from
@@ -204,6 +211,10 @@ def chat_module():
 
     yield chat_mod
 
+    for name in tuple(sys.modules):
+        if any(name == p or name.startswith(p + ".") for p in client_prefixes):
+            sys.modules.pop(name, None)
+    sys.modules.update(saved_clients)
     for name, module in stolen.items():
         sys.modules[name] = module
 
@@ -1379,8 +1390,10 @@ def test_chat_module_does_not_reintroduce_asyncio_loop_lookup():
     assert "asyncio" not in referenced
 
 
-def test_direct_without_tool_calling_uses_public_api_and_attaches_no_image(
-    chat_module, chat_node
+@pytest.mark.parametrize("store_mode", ["unlocked", "locked", "degraded"])
+@pytest.mark.parametrize("generate_code", [False, True])
+def test_retired_direct_without_tools_is_explicit_before_key_store(
+    chat_module, chat_node, store_mode, generate_code
 ):
     import asyncio
 
@@ -1396,13 +1409,16 @@ def test_direct_without_tool_calling_uses_public_api_and_attaches_no_image(
     personality.channel = "direct"
     personality.effective_channel = "direct"
     personality.description = "Du bist der eine Soul."
+    personality.voice_mode = "turn_based"
+    chat_node.token = None
+    chat_node._key_store_mode = MagicMock(return_value=store_mode)
 
     goal_handle = MagicMock()
     goal_handle.is_cancel_requested = False
     goal_handle.request = Chat.Goal()
     goal_handle.request.chat_id = "chat-2"
     goal_handle.request.text = "Hallo"
-    goal_handle.request.generate_code = False
+    goal_handle.request.generate_code = generate_code
 
     with (
         patch.object(
@@ -1433,17 +1449,45 @@ def test_direct_without_tool_calling_uses_public_api_and_attaches_no_image(
 
         result = asyncio.run(chat_node.chat(goal_handle))
 
-    get_history.assert_called_once()
+    from pib_hermes_config.retired_direct_text import RETIRED_DIRECT_TEXT_SENTENCE
+
+    get_history.assert_not_called()
+    chat_node._key_store_mode.assert_not_called()
     run_direct_turn.assert_not_called()
-    chat_completion.assert_called_once()
-    assert chat_completion.call_args.kwargs["description"] == "Du bist der eine Soul."
-    assert chat_completion.call_args.kwargs["image_base64"] is None
+    chat_completion.assert_not_called()
     chat_node.get_camera_image_client.call_async.assert_not_called()
     run_turn.assert_not_called()
-    stream.assert_called_once()
+    stream.assert_not_called()
     chat_node.create_chat_message.assert_any_call("chat-2", "Hallo", True, False, True)
-    assert result.text == "Hi."
+    chat_node.create_chat_message.assert_any_call(
+        "chat-2", RETIRED_DIRECT_TEXT_SENTENCE, False, False, True
+    )
+    assert result.text == RETIRED_DIRECT_TEXT_SENTENCE
+    assert result.text_type == TEXT_TYPE_SENTENCE
+    assert personality.channel == "direct"
+    assert personality.tool_calling is False
     goal_handle.succeed.assert_called_once()
+
+
+def test_retired_reply_honors_cancellation(chat_module, chat_node):
+    goal = MagicMock()
+    goal.is_cancel_requested = True
+    result = chat_node._finish_retired_direct_text(goal, "cancelled-chat", "gpt-6")
+    goal.canceled.assert_called_once()
+    goal.succeed.assert_not_called()
+    chat_node.create_chat_message.assert_not_called()
+    assert result.text == ""
+
+
+def test_legacy_vision_never_uses_camera_or_retired_text(chat_module, chat_node):
+    req = types.SimpleNamespace(prompt="Find the cube")
+    resp = types.SimpleNamespace(response="unset")
+    with patch.object(chat_module.public_voice_client, "chat_completion") as old_text:
+        result = chat_node._handle_vision_prompt(req, resp)
+    assert result.response == "0"
+    old_text.assert_not_called()
+    chat_node.get_camera_image_client.call_async.assert_not_called()
+    chat_node.get_logger().error.assert_called_once()
 
 
 def _degraded_goal(chat_module, chat_id: str):

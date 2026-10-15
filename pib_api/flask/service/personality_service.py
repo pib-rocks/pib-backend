@@ -1,6 +1,6 @@
 import logging
 import os
-from typing import Any, List, Optional
+from typing import Any, List, NamedTuple, Optional
 
 from marshmallow import ValidationError
 
@@ -22,7 +22,12 @@ from pib_hermes_config.channel import (
     CHANNEL_DIRECT,
     CHANNEL_SMART,
     CHANNELS,
+    effective_channel,
     smart_chats_enabled,
+)
+from pib_hermes_config.retired_direct_text import (
+    RETIRED_DIRECT_TEXT_VALIDATION,
+    legacy_direct_text_selected,
 )
 from pib_hermes_config.local_model import OFFLINE_CAPABILITY
 from pib_hermes_config.live_interaction import personality_requests_actuation
@@ -508,6 +513,93 @@ def _tool_calling_value(personality_dto: Any, default: bool) -> bool:
     return bool(personality_dto["tool_calling"])
 
 
+class _DispatchSelection(NamedTuple):
+    channel: str
+    provider_ref: Optional[str]
+    tool_calling: bool
+    api_name: Optional[str]
+    voice_mode: Optional[str]
+
+
+def _dispatch_selection(personality: Personality) -> _DispatchSelection:
+    """The values that decide whether a turn would use the retired text route."""
+    ref = getattr(personality, "provider_ref", None)
+    ref_text = None if ref is None else str(ref)
+    model = provider_service.find_model(ref_text) if ref_text else None
+    api_name = model.api_name if model is not None else None
+    return _DispatchSelection(
+        effective_channel(getattr(personality, "channel", None)),
+        ref_text,
+        bool(getattr(personality, "tool_calling", True)),
+        api_name,
+        (
+            voice_mode_for_model(has_capability(model.capabilities, "live"), api_name)
+            if model is not None
+            else None
+        ),
+    )
+
+
+def _model_validation_field(personality_dto: Any) -> str:
+    if personality_dto.get("model_ref") not in (None, ""):
+        return "modelRef"
+    if personality_dto.get("provider_ref") not in (None, ""):
+        return "providerRef"
+    if personality_dto.get("assistant_model_id") is not None:
+        return "assistantModelId"
+    return "modelRef"
+
+
+def _retired_validation_field(
+    personality_dto: Any,
+    *,
+    creating: bool,
+    before: Optional[_DispatchSelection],
+    after: _DispatchSelection,
+) -> str:
+    """The request field that entered the retired combination."""
+    if not creating and before is not None:
+        if before.tool_calling != after.tool_calling:
+            return "toolCalling"
+        if before.channel != after.channel:
+            return "channel"
+        return _model_validation_field(personality_dto)
+    if "tool_calling" in personality_dto and not bool(personality_dto["tool_calling"]):
+        return "toolCalling"
+    if personality_dto.get("channel"):
+        return "channel"
+    return _model_validation_field(personality_dto)
+
+
+def _reject_retired_direct_text(
+    personality: Personality,
+    personality_dto: Any,
+    *,
+    creating: bool,
+    before: Optional[_DispatchSelection] = None,
+) -> None:
+    """Reject a new or changed selection that would call the retired route.
+
+    An existing obsolete selection can still be read and edited in unrelated
+    fields, and can be changed onto a supported path. The stored row is not
+    rewritten on its own.
+    """
+    after = _dispatch_selection(personality)
+    if not legacy_direct_text_selected(
+        channel=after.channel,
+        api_name=after.api_name,
+        tool_calling=after.tool_calling,
+        voice_mode=after.voice_mode,
+    ):
+        return
+    if before is not None and before == after:
+        return
+    field = _retired_validation_field(
+        personality_dto, creating=creating, before=before, after=after
+    )
+    raise ValidationError({field: [RETIRED_DIRECT_TEXT_VALIDATION]})
+
+
 def _model_provisioning_fields(personality: Personality) -> dict:
     """Hermes profile fields for this personality's chosen model.
 
@@ -550,6 +642,7 @@ def create_personality(personality_dto: Any) -> Personality:
     _apply_voice_backends(personality, personality_dto, creating=True)
     _apply_channel(personality, personality_dto, creating=True)
     _apply_reasoning_effort(personality, personality_dto, creating=True)
+    _reject_retired_direct_text(personality, personality_dto, creating=True)
     custom = ""
     if "description" in personality_dto and personality_dto["description"]:
         custom = str(personality_dto["description"]).strip()
@@ -582,6 +675,7 @@ def create_personality(personality_dto: Any) -> Personality:
 def update_personality(personality_id: str, personality_dto: Any) -> Personality:
     _reject_actuation_request(personality_dto)
     personality = get_personality(personality_id)
+    before_selection = _dispatch_selection(personality)
     name_changed = False
     if "name" in personality_dto:
         name_changed = personality.name != personality_dto["name"]
@@ -594,11 +688,6 @@ def update_personality(personality_id: str, personality_dto: Any) -> Personality
         personality.message_history = personality_dto["message_history"]
     if "description" in personality_dto:
         personality.description = personality_dto["description"]
-        soul_service.write_soul(
-            personality.personality_id,
-            personality.description,
-            personality_name=personality.name,
-        )
     previous_model_ref = getattr(personality, "provider_ref", None)
     _apply_provider_choice(personality, personality_dto, creating=False)
     _store_derived_voice_mode(personality)
@@ -606,6 +695,23 @@ def update_personality(personality_id: str, personality_dto: Any) -> Personality
     previous_effort = personality.reasoning_effort
     _apply_reasoning_effort(personality, personality_dto, creating=False)
     effort_changed = personality.reasoning_effort != previous_effort
+    _apply_channel(personality, personality_dto, creating=False)
+    if "tool_calling" in personality_dto:
+        personality.tool_calling = bool(personality_dto["tool_calling"])
+    _reject_retired_direct_text(
+        personality,
+        personality_dto,
+        creating=False,
+        before=before_selection,
+    )
+    # Validate the dispatch before any external SOUL/profile write. A 400
+    # rolls back the SQL row but cannot roll back an already-written file.
+    if "description" in personality_dto:
+        soul_service.write_soul(
+            personality.personality_id,
+            personality.description,
+            personality_name=personality.name,
+        )
     if name_changed or model_changed or effort_changed:
         try:
             _provision_profile(
@@ -623,9 +729,6 @@ def update_personality(personality_id: str, personality_dto: Any) -> Personality
                 personality.personality_id,
                 exc,
             )
-    _apply_channel(personality, personality_dto, creating=False)
-    if "tool_calling" in personality_dto:
-        personality.tool_calling = bool(personality_dto["tool_calling"])
     _apply_live_chat_settings(personality, personality_dto, creating=False)
     _apply_voice_backends(personality, personality_dto, creating=False)
     _apply_thinking_filler(personality, personality_dto)

@@ -1,17 +1,16 @@
 """provides methods for accessing TRYB's public-voice-api"""
 
 import base64
-import json
 import logging
 from typing import Any, Iterable, List, Optional
 
 import requests
 
+from pib_hermes_config.retired_direct_text import RETIRED_DIRECT_TEXT_SENTENCE
 from provider_registry import DEFAULT_PROVIDER_API_NAME
 from public_api_client import (
     SPEECH_TO_TEXT_URL,
     TEXT_TO_SPEECH_URL,
-    VOICE_ASSISTANT_TEXT_URL,
 )
 
 logging.basicConfig(
@@ -102,34 +101,11 @@ def chat_completion(
     # Catalogue default. The public API's id is not confirmed in this repository.
     model: str = DEFAULT_PROVIDER_API_NAME,  # TODO(confirm id)
 ) -> Iterable[str]:
+    """Retired text transport. The signature stays; no request is sent.
+
+    Callers receive the explicit retirement sentence. A missing token is not
+    consulted, so it cannot hide that reason. Speech routes in this module are
+    unchanged.
     """
-    receive a textual llm response, that takes into account the provided description
-    """
-    headers = {"Accept": "text/event-stream", "Content-Type": "application/json"}
-
-    # Claude does not accept empty strings as input
-    if (text is None) or (text == ""):
-        text = "echo 'I could not hear you, please repeat your message.'"
-
-    body = {
-        "data": text,
-        "messageHistory": [
-            {"content": message.content, "isUser": message.is_user}
-            for message in message_history
-        ],
-        "personality": {"description": description, "model": model},
-    }
-
-    if image_base64 is not None:
-        body["imageBase64"] = image_base64
-
-    response = _send_request(
-        "POST", VOICE_ASSISTANT_TEXT_URL, headers, body, True, public_api_token
-    )
-
-    line_bin: bytes
-    for line_bin in response.iter_lines():
-        line_str = line_bin.decode("utf-8")
-        if not line_str.startswith("data:"):
-            continue
-        yield json.loads(line_str[21:-1])
+    del text, description, message_history, public_api_token, image_base64, model
+    return (RETIRED_DIRECT_TEXT_SENTENCE,)

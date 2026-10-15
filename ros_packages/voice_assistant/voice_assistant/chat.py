@@ -41,8 +41,11 @@ from pib_hermes_config.channel import (
     direct_system_prompt,
     turn_channel,
 )
+from pib_hermes_config.retired_direct_text import (
+    RETIRED_DIRECT_TEXT_SENTENCE,
+    legacy_direct_text_selected,
+)
 from provider_registry import (
-    DEFAULT_PROVIDER_API_NAME,
     PIB_CLOUD_API_NAME,
     provider_name_for,
 )
@@ -235,6 +238,27 @@ class ChatNode(Node):
     def _key_store_mode(self) -> str:
         """Operating mode of the key store. Unreadable means degraded."""
         return fetch_operating_mode()
+
+    def _finish_retired_direct_text(self, goal_handle, chat_id: str, api_name):
+        """Succeed the turn with the retired-path sentence. No network call.
+
+        The user line is already stored. This appends the assistant sentence
+        through the same chat-message path as any other spoken reply. Channel,
+        model and credentials are left as they are.
+        """
+        if goal_handle.is_cancel_requested:
+            goal_handle.canceled()
+            return Chat.Result()
+        sentence = RETIRED_DIRECT_TEXT_SENTENCE
+        self.create_chat_message(chat_id, sentence, False, False, True)
+        goal_handle.succeed()
+        result = Chat.Result()
+        result.text = sentence
+        result.text_type = Chat.Goal.TEXT_TYPE_SENTENCE
+        self.get_logger().info(
+            f"retired direct text transport chat={chat_id} model={api_name}"
+        )
+        return result
 
     def consolidate_memories(self) -> None:
         """Fold old MEMORY.md entries. Recent entries stay verbatim."""
@@ -480,91 +504,13 @@ class ChatNode(Node):
             resp.response = "0"
             return resp
 
-        if self.token is None:
-            self.get_logger().error(
-                "VisionPrompt failed: public_api_token is not available."
-            )
-            resp.response = "0"
-            return resp
-
-        image_base64 = None
-
-        if not self.get_camera_image_client.service_is_ready():
-            self.get_logger().warn(
-                "VisionPrompt: get_camera_image service is not ready."
-            )
-            resp.response = "0"
-            return resp
-
-        try:
-            camera_request = GetCameraImage.Request()
-
-            tmp_node = rclpy.create_node("vision_prompt_camera_client")
-            try:
-                tmp_client = tmp_node.create_client(GetCameraImage, "get_camera_image")
-
-                if not tmp_client.wait_for_service(timeout_sec=5.0):
-                    self.get_logger().error(
-                        "VisionPrompt: get_camera_image service unavailable."
-                    )
-                    resp.response = "0"
-                    return resp
-
-                camera_future = tmp_client.call_async(camera_request)
-                rclpy.spin_until_future_complete(
-                    tmp_node,
-                    camera_future,
-                    timeout_sec=5.0,
-                )
-
-                if not camera_future.done():
-                    self.get_logger().error(
-                        "VisionPrompt: get_camera_image request timed out."
-                    )
-                    resp.response = "0"
-                    return resp
-
-                camera_response = camera_future.result()
-            finally:
-                tmp_node.destroy_node()
-
-            if camera_response is None or not camera_response.image_base64:
-                self.get_logger().warn("VisionPrompt: camera returned no image.")
-                resp.response = "0"
-                return resp
-
-            image_base64 = camera_response.image_base64
-
-        except Exception as exc:
-            self.get_logger().error(f"VisionPrompt camera request failed: {exc}")
-            resp.response = "0"
-            return resp
-
-        try:
-            with self.public_voice_client_lock:
-                tokens = public_voice_client.chat_completion(
-                    text=prompt,
-                    description=(
-                        "Du bist ein Vision-Erkennungsmodul fuer Blockly. "
-                        "Befolge das verlangte Antwortformat exakt."
-                    ),
-                    message_history=[],
-                    image_base64=image_base64,
-                    # Catalogue default. The public API's id is not confirmed
-                    # in this repository.
-                    model=DEFAULT_PROVIDER_API_NAME,  # TODO(confirm id)
-                    public_api_token=self.token,
-                )
-
-                response_text = "".join(tokens).strip()
-
-            resp.response = response_text
-            return resp
-
-        except Exception as exc:
-            self.get_logger().error(f"VisionPrompt public API request failed: {exc}")
-            resp.response = "0"
-            return resp
+        # Blockly vision used the retired text endpoint. It must not call it,
+        # and a missing token must not be the reason the caller sees.
+        self.get_logger().error(
+            "VisionPrompt refused: the tryb text endpoint is retired."
+        )
+        resp.response = "0"
+        return resp
 
     # ---------- Action server (unchanged) ----------
 
@@ -1122,6 +1068,17 @@ class ChatNode(Node):
         local_model = api_name == LOCAL_MODEL_API_NAME
         pib_cloud_model = api_name == PIB_CLOUD_API_NAME
         model_provider_name = _model_provider_name(api_name)
+        tool_calling = direct_tool_loop.tool_calling_enabled(personality)
+        # Old Direct text selections stop here, before the key store. A locked
+        # or missing key must not hide the retirement reason, and the stored
+        # selection is not migrated.
+        if legacy_direct_text_selected(
+            channel=channel,
+            api_name=api_name,
+            tool_calling=tool_calling,
+            voice_mode=getattr(personality, "voice_mode", None),
+        ):
+            return self._finish_retired_direct_text(goal_handle, chat_id, api_name)
         # Only a model whose provider needs a key is gated by the store. A
         # cloud model does; the on-device model does not, and still answers
         # while the store is locked.
@@ -1214,55 +1171,47 @@ class ChatNode(Node):
                 if generate_code:
                     system_prompt = CODE_DESCRIPTION_PREFIX + system_prompt
                 system_prompt = plan.for_direct(system_prompt)
-                tool_calling = direct_tool_loop.tool_calling_enabled(personality)
                 allow_image = direct_tool_loop.image_tool_allowed(
                     personality, tool_calling
                 )
                 api_name = personality.assistant_model.api_name
-                if tool_calling:
-                    if not direct_tool_loop.supports_tool_endpoint(api_name):
-                        raise direct_tool_loop.DirectToolLoopError(
-                            "Direct tool calling has no non-beta endpoint for "
-                            f"model {api_name!r}. The pinned model is "
-                            f"{direct_tool_loop.PINNED_MODEL} "
-                            f"({direct_tool_loop.PINNED_PROVIDER}), checked "
-                            f"{direct_tool_loop.PINNED_CHECKED_ON}."
-                        )
+                if not tool_calling:
+                    return self._finish_retired_direct_text(
+                        goal_handle, chat_id, api_name
+                    )
+                if not direct_tool_loop.supports_tool_endpoint(api_name):
+                    raise direct_tool_loop.DirectToolLoopError(
+                        "Direct tool calling has no non-beta endpoint for "
+                        f"model {api_name!r}. The pinned model is "
+                        f"{direct_tool_loop.PINNED_MODEL} "
+                        f"({direct_tool_loop.PINNED_PROVIDER}), checked "
+                        f"{direct_tool_loop.PINNED_CHECKED_ON}."
+                    )
+                self.get_logger().info(
+                    f"direct tool loop model={direct_tool_loop.PINNED_MODEL} "
+                    f"provider={direct_tool_loop.PINNED_PROVIDER} chat={chat_id}"
+                )
+
+                def report_key_source(source: str) -> None:
+                    # source is key-store or environment. The key itself
+                    # is not passed here, so it cannot land in the log.
                     self.get_logger().info(
-                        f"direct tool loop model={direct_tool_loop.PINNED_MODEL} "
-                        f"provider={direct_tool_loop.PINNED_PROVIDER} chat={chat_id}"
+                        f"direct provider key source={source} "
+                        f"provider={direct_tool_loop.PINNED_PROVIDER} "
+                        f"chat={chat_id}"
                     )
 
-                    def report_key_source(source: str) -> None:
-                        # source is key-store or environment. The key itself
-                        # is not passed here, so it cannot land in the log.
-                        self.get_logger().info(
-                            f"direct provider key source={source} "
-                            f"provider={direct_tool_loop.PINNED_PROVIDER} "
-                            f"chat={chat_id}"
-                        )
-
-                    tokens = direct_tool_loop.run_direct_turn(
-                        system_prompt=system_prompt,
-                        user_text=content,
-                        history=[
-                            (message.content, message.is_user)
-                            for message in message_history
-                        ],
-                        tool_calling=True,
-                        allow_image=allow_image,
-                        report_key_source=report_key_source,
-                    )
-                else:
-                    with self.public_voice_client_lock:
-                        tokens = public_voice_client.chat_completion(
-                            text=content,
-                            description=system_prompt,
-                            message_history=message_history,
-                            image_base64=None,
-                            model=api_name,
-                            public_api_token=self.token,
-                        )
+                tokens = direct_tool_loop.run_direct_turn(
+                    system_prompt=system_prompt,
+                    user_text=content,
+                    history=[
+                        (message.content, message.is_user)
+                        for message in message_history
+                    ],
+                    tool_calling=True,
+                    allow_image=allow_image,
+                    report_key_source=report_key_source,
+                )
 
             prev_text, prev_text_type, curr_text = self._stream_chunks_to_goal(
                 goal_handle, chat_id, tokens, t0=t0
