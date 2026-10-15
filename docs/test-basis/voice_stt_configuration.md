@@ -8,13 +8,13 @@ This document specifies the functional and non-functional requirements in BDD (G
 ## Requirements & Acceptance Criteria
 
 ### Functional Requirements
-1. **Local Faster-Whisper Default**: Personalities must default to `stt_engine="local_whisper"` upon creation if no STT engine preference is specified.
-2. **Database Persistence**: The personality stores `stt_engine` as `local_whisper` (faster-whisper) or the id of a provider whose `stt` capability is set, and `tts_engine` as `supertone` or the id of a provider whose `tts` capability is set. ElevenLabs is not a value.
-3. **API Endpoint Support**: The Flask API (`GET`, `POST`, `PUT` on `/voice-assistant/personality`) serializes the fields as `sttEngine` and `ttsEngine`. `GET /provider/voice-backends` lists the local engines plus capable providers.
-4. **Dynamic Routing**: `audio_recorder.py` uses the personality's `stt_engine` (the record goal) and transcribes with local faster-whisper. The legacy `tryb_api` value still calls the existing public voice client. Any other id is not sent to that client.
+1. **Default Follows the Model**: A personality created without an STT choice (omitted or blank `sttEngine`) stores `cloud_whisper` when its model is pib.Cloud (directly, or through the `default` policy while it resolves to pib.Cloud) and pib.Cloud carries the `stt` capability. Every other model stores `local_whisper`. An explicit choice always wins, and an update that does not name `sttEngine` keeps the stored engine, also when the model changes.
+2. **Database Persistence**: The personality stores `stt_engine` as `local_whisper` (faster-whisper), `cloud_whisper` (pib.Cloud, only while that row carries `stt`; the bare pib.Cloud row id is stored as `cloud_whisper`), or the id of another provider whose `stt` capability is set, and `tts_engine` as `supertone` or the id of a provider whose `tts` capability is set. ElevenLabs is not a value.
+3. **API Endpoint Support**: The Flask API (`GET`, `POST`, `PUT` on `/voice-assistant/personality`) serializes the fields as `sttEngine` and `ttsEngine`. `GET /provider/voice-backends` lists the local engines, `cloud_whisper` while pib.Cloud carries `stt`, and other capable providers by row id.
+4. **Dynamic Routing**: `audio_recorder.py` uses the personality's `stt_engine` (the record goal) and transcribes with local faster-whisper. `resolve_stt_route("cloud_whisper")` is `cloud`, distinct from the legacy `tryb_api` value (`tryb`), which still calls the existing public voice client. Cloud route execution is PC-44 and remains unimplemented; until it lands the recorder has no client for the `cloud` route.
 
 ### Non-Functional Requirements
-1. **Backward Compatibility**: Existing database records without explicit `stt_engine` values must default to `"local_whisper"`.
+1. **Backward Compatibility**: Existing database records without explicit `stt_engine` values default to `"local_whisper"`, and stored engines are never rewritten by the new pib.Cloud default.
 2. **Resilience & Fallback**: Network failures or API lookup errors in `audio_recorder.py` must default safely to local `FasterWhisperSTTEngine` without crashing ROS2 node execution.
 
 ---
@@ -27,23 +27,29 @@ This document specifies the functional and non-functional requirements in BDD (G
 ```gherkin
 Given a request to create a new personality without specifying an sttEngine
 When the POST request is processed by /voice-assistant/personality
-Then the personality is created with stt_engine default value "local_whisper"
-And the response JSON includes "sttEngine": "local_whisper"
+Then a personality on pib.Cloud is created with stt_engine "cloud_whisper"
+And a personality on any other model is created with stt_engine "local_whisper"
+And the response JSON reports that value as "sttEngine"
 ```
 
 #### Scenario 2: Validating and Updating STT Engine Configuration
 ```gherkin
 Given an existing personality in the database
-When a PUT request is sent to /voice-assistant/personality/{personalityId} with "sttEngine": "tryb_api"
-Then the database record is updated with stt_engine="tryb_api"
-And a subsequent GET request returns "sttEngine": "tryb_api"
+And pib.Cloud carries the stt capability
+When a PUT request is sent to /voice-assistant/personality/{personalityId} with "sttEngine": "cloud_whisper"
+Then the database record is updated with stt_engine="cloud_whisper"
+And a subsequent GET request returns "sttEngine": "cloud_whisper"
+When a PUT request is sent with "sttEngine": "tryb_api"
+Then the API responds with a 400 Bad Request status code
+And the stored stt_engine is left unchanged
 When a PUT request is sent with an invalid sttEngine value "invalid_engine"
 Then the API responds with a 400 Bad Request status code
+And the stored stt_engine is left unchanged
 ```
 
 #### Scenario 3: STT Engine Retrieval via API
 ```gherkin
-Given personalities configured with different stt_engine values ("local_whisper" and "tryb_api")
+Given personalities configured with different stt_engine values ("local_whisper" and "cloud_whisper")
 When querying GET /voice-assistant/personality or GET /voice-assistant/personality/{personalityId}
 Then the returned JSON representation correctly serializes the sttEngine field for each personality
 ```
@@ -59,13 +65,16 @@ Then audio_recorder routes the recorded audio to FasterWhisperSTTEngine
 And transcription is processed locally without calling external public voice APIs
 ```
 
-#### Scenario 5: Dynamic STT Routing to Cloud API (tryb_api)
+#### Scenario 5: Legacy stored tryb_api still dispatches to the public voice client
 ```gherkin
 Given the audio_recorder node is initialized
-And the active personality stt_engine setting is updated to "tryb_api"
+And the active personality already stores the legacy stt_engine value "tryb_api"
+And "tryb_api" is not selectable through the personality API
 When audio recording finishes and transcription is triggered
-Then audio_recorder routes the recorded audio to public_voice_client.speech_to_text
-And transcription is completed using the cloud API service
+Then resolve_stt_route("tryb_api") is "tryb"
+And audio_recorder routes the recorded audio to public_voice_client.speech_to_text
+And transcription is completed using the existing public voice client
+And cloud route execution for "cloud_whisper" is PC-44 and remains unimplemented
 ```
 
 #### Scenario 6: Non-Functional Requirement - Fallback on Network or Service Failure

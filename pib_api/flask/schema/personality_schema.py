@@ -55,10 +55,11 @@ class PersonalitySchemaSQLAutoWith(SQLAutoWithCamelCaseSchema):
         load_default=DEFAULT_MESSAGE_HISTORY,
         validate=validate.Range(min=0),
     )
+    # No load default: an omitted sttEngine is no choice, and the service
+    # stores the default for the chosen model (cloud whisper on pib.Cloud).
     stt_engine = fields.String(
         required=False,
         dump_default="local_whisper",
-        load_default="local_whisper",
     )
     tts_engine = fields.String(
         required=False,

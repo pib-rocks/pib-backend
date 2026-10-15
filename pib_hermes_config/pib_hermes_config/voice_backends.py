@@ -1,8 +1,9 @@
 """Per-personality speech backends.
 
-The local engines are not provider rows. A cloud choice is a provider id,
-and only a row whose capability flag is set may be stored. ElevenLabs is
-not a backend. In live mode the provider's voice is used, so the
+The local engines are not provider rows. Cloud whisper on pib.Cloud is
+stored as its own id, ``cloud_whisper``. Any other cloud choice is a provider
+id. Either is stored only while the row's capability flag is set. ElevenLabs
+is not a backend. In live mode the provider's voice is used, so the
 personality's local voice does not apply.
 """
 
@@ -14,6 +15,11 @@ LOCAL_STT_ID = "local_whisper"
 LOCAL_TTS_ID = "supertone"
 LOCAL_STT_ENGINE = "faster-whisper"
 LOCAL_TTS_ENGINE = "supertone"
+
+#: Cloud whisper on pib.Cloud. It is not the pib.Cloud row id, so the stored
+#: value names the engine and its route is never the legacy tryb_api client.
+CLOUD_STT_ID = "cloud_whisper"
+CLOUD_STT_ROUTE = "cloud"
 
 #: Language the local STT engine is pinned to when nothing overrides it.
 #: faster-whisper's own default (``language=None``) runs a language-ID pass
@@ -68,14 +74,34 @@ def _reject_elevenlabs(value: str) -> None:
         raise ValueError("ElevenLabs is out of scope.")
 
 
-def normalize_stt_choice(value: object, provider_has_stt) -> str:
-    """Store the local engine, or the id of a provider with stt."""
+def normalize_stt_choice(
+    value: object,
+    provider_has_stt,
+    cloud_stt_model_id: int | None = None,
+    default: str = LOCAL_STT_ID,
+) -> str:
+    """Store the local engine, cloud whisper, or the id of a provider with stt.
+
+    ``cloud_stt_model_id`` is the pib.Cloud row id while that row carries the
+    stt capability, otherwise None. Cloud whisper is accepted only then, and
+    the bare pib.Cloud row id is stored as ``cloud_whisper``. A missing or
+    blank value is no choice and stores ``default``.
+    """
     if not isinstance(value, str) or not value.strip():
-        return LOCAL_STT_ID
+        return default
     raw = value.strip()
     _reject_elevenlabs(raw)
     if raw in _LOCAL_STT:
         return LOCAL_STT_ID
+    names_cloud = raw == CLOUD_STT_ID or (
+        raw.isdigit()
+        and cloud_stt_model_id is not None
+        and int(raw) == cloud_stt_model_id
+    )
+    if names_cloud:
+        if cloud_stt_model_id is None:
+            raise ValueError("Cloud whisper needs pib.Cloud with the stt capability.")
+        return CLOUD_STT_ID
     if raw.isdigit() and provider_has_stt(int(raw)):
         return str(int(raw))
     raise ValueError(
@@ -101,13 +127,17 @@ def normalize_tts_choice(value: object, provider_has_tts) -> str:
 
 
 def resolve_stt_route(engine: object) -> str:
-    """``local``, ``tryb`` (legacy cloud client), or ``unsupported``.
+    """``local``, ``cloud`` (pib.Cloud whisper), ``tryb`` (legacy cloud
+    client), or ``unsupported``.
 
-    ``unsupported`` has no speech client in this repo. Callers must not
-    send that audio to a different provider.
+    ``cloud`` is not ``tryb``: cloud whisper must not be sent to the legacy
+    client. ``unsupported`` has no speech client in this repo. Callers must
+    not send that audio to a different provider.
     """
     if not isinstance(engine, str) or engine.strip() in ("", *_LOCAL_STT):
         return "local"
+    if engine.strip() == CLOUD_STT_ID:
+        return CLOUD_STT_ROUTE
     if engine.strip() == LEGACY_CLOUD_STT:
         return "tryb"
     return "unsupported"
