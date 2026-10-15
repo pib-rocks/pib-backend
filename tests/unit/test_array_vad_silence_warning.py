@@ -1,12 +1,17 @@
-"""Loud audio with a voice-activity signal that never reports speech.
+"""Loud audio with a voice-activity signal that reports no speech.
 
-Measured on the test robot 192.168.1.172 (2026-10-15): a loud sentence in the
-room moved DOAANGLE while VOICEACTIVITY stayed false for every sample (0 of
-156), and the same sentence was detected again after the host rebooted
-(17 of 188 and 50 of 188 with unchanged settings). A device state like that
-makes the turn-based recorder treat the window as silence and end on
-max_silent_seconds_before; the array's own playback is a second, weaker case.
-This diagnostic says so. It does not end the turn.
+Measured on the test robot 192.168.1.172 (2026-10-15): counts for the same
+sentence differed between intervals (VOICEACTIVITY 0 of 156 in one, 17 of 188 and
+SPEECHDETECTED 50 of 188 in another) with room acoustics, human speech and
+playback alignment uncontrolled, so no cause follows from that comparison. What
+is established is a real communication failure: the array's control reads
+returned '[Errno 32] Pipe error' and the device then left the USB bus.
+
+A run like that can make the turn-based recorder count the window as silence and
+end on max_silent_seconds_before. Loud audio alone is NOT a fault: the array's
+echo canceller may be keeping the robot's own playback out of the detectors on
+purpose. This diagnostic reports the observation and says so. It does not end
+the turn and it claims no repair.
 """
 
 from __future__ import annotations
@@ -30,8 +35,10 @@ AUDIO_RECORDER = (
     / "audio_recorder.py"
 )
 
-NOT_REPORTING_CANDIDATE = "the array is not reporting at all"
+NOT_A_FAULT_CANDIDATE = "This is not a fault by itself"
 OWN_PLAYBACK_CANDIDATE = "the robot's own playback"
+TELEMETRY_CANDIDATE = "telemetry is unavailable"
+EVIDENCE_CANDIDATE = "Pipe error"
 
 
 def _chunks(state, voice_activity, amplitude_silent, count):
@@ -51,9 +58,14 @@ def test_loud_and_vad_false_for_n_chunks_warns_once():
     assert messages[:-1] == [None] * (ARRAY_VAD_SILENT_CHUNKS - 1)
     assert messages[-1] == ARRAY_VAD_SILENT_WARNING
     assert state.active is True
-    assert NOT_REPORTING_CANDIDATE in ARRAY_VAD_SILENT_WARNING
+    assert NOT_A_FAULT_CANDIDATE in ARRAY_VAD_SILENT_WARNING
     assert OWN_PLAYBACK_CANDIDATE in ARRAY_VAD_SILENT_WARNING
-    assert "turn therefore ends on the fixed timeout" in ARRAY_VAD_SILENT_WARNING
+    assert TELEMETRY_CANDIDATE in ARRAY_VAD_SILENT_WARNING
+    assert EVIDENCE_CANDIDATE in ARRAY_VAD_SILENT_WARNING
+    assert "recorder counts that as silence" in ARRAY_VAD_SILENT_WARNING
+    # The text must not claim a repair that a reboot or a re-enumeration performs.
+    for claim in ("re-enumerating", "working again after", "clears it"):
+        assert claim not in ARRAY_VAD_SILENT_WARNING, claim
 
 
 def test_further_loud_false_chunks_do_not_repeat():
