@@ -46,7 +46,6 @@ def _binding(**dns):
     addresses = dns or {
         "generativelanguage.googleapis.com": ("203.0.113.10", "203.0.113.11"),
         "huggingface.co": ("203.0.113.20", "203.0.113.21"),
-        "cdn-lfs.huggingface.co": ("203.0.113.30",),
     }
     return mod.RuntimeBinding(
         veth="vethvoice1",
@@ -102,7 +101,6 @@ def test_rendered_tcp_allows_match_the_enabled_allowlist_exactly():
         ("203.0.113.11", "443"),
         ("203.0.113.20", "443"),
         ("203.0.113.21", "443"),
-        ("203.0.113.30", "443"),
         ("172.18.0.1", "11434"),
     }
     assert "platform.tryb.ai" not in text
@@ -124,7 +122,6 @@ def test_enabling_tryb_adds_only_that_destination():
             **{
                 "generativelanguage.googleapis.com": ("203.0.113.10",),
                 "huggingface.co": ("203.0.113.20",),
-                "cdn-lfs.huggingface.co": ("203.0.113.30",),
                 "platform.tryb.ai": ("198.51.100.20",),
             }
         ),

@@ -50,9 +50,14 @@ Machine-readable source: `setup/voice_egress/allowlist.json`.
 | pib-network bridge subnet, except the gateway | any | any | common | flask-app:5000, rosbridge-ws:9090, blockly:2442, ROS 2 DDS unicast. Container address measured as `172.18.0.11`. The prefix is read from Docker at apply time. |
 | `224.0.0.0/4` out the bridge only | any | any | common | ROS 2 DDS multicast. **Unproven on the wire.** Kept so discovery is not cut. |
 | `huggingface.co` | 443 | tcp | common | TTS assets: `audio_player` loads the Supertone/supertonic-3 voice styles at container start. Measured 2026-10-15 in the recreated container's log: 54 requests, and no other external host. Without it speech output breaks. |
-| `cdn-lfs.huggingface.co` | 443 | tcp | common | Hugging Face LFS asset host. **Inferred, not measured**: `huggingface.co` answers 307 redirects for `resolve/` paths and the redirect target is not in the log. |
 | `generativelanguage.googleapis.com` | 443 | tcp | direct, smart, live | Direct, Hermes gemini, native Live. Host reachability measured 2026-10-15 (HTTPS 404). A live turn was not captured in the implementation session. Addresses are resolved at apply time. |
 | `platform.tryb.ai` | 443 | tcp | legacy-tryb | **Disabled.** `TRYB_URL_PREFIX` is set. No connection was observed. Enable the entry only after a measurement shows the legacy route in use. |
+
+**The TTS asset list is measured, the weight CDN is not.** `huggingface.co` is the only asset host seen in the container
+log, and the `resolve/` request answers 307 with a *relative* location back to the same host. Hugging Face serves large
+blobs through a CDN or Xet host; none was observed, and the obvious names (`cdn-lfs.huggingface.co`,
+`cdn-lfs-us-1.huggingface.co`, `cdn-lfs-eu-1.huggingface.co`) do not resolve on this robot. A cold-cache download of
+large weights may therefore need another entry. Measure the redirect target before relying on this list for weights.
 
 `example.com` was reachable (HTTP 200) on 2026-10-15 with no policy. It is not on the allowlist. After apply it must fail.
 

@@ -11,7 +11,8 @@
     "Docker embedded DNS at 127.0.0.11 is inside the container network namespace and is not filtered here. A name can still resolve; the connection to the resolved address is what this policy accepts or rejects.",
     "IPv6 egress from the voice container is rejected so an AAAA answer is not an alternate route.",
     "Direct, Smart, and native Live share generativelanguage.googleapis.com:443. Host and port filtering cannot separate those URL paths.",
-    "platform.tryb.ai stays disabled until a live connection is observed."
+    "platform.tryb.ai stays disabled until a live connection is observed.",
+    "huggingface.co is the only TTS asset host measured on .172. Hugging Face serves large blobs through a CDN or Xet host; none was observed in the container log, and the three cdn-lfs.huggingface.co* names do not resolve at all. A cold-cache download of a large blob may therefore need another entry - measure the redirect target before relying on this list for weights."
   ],
   "entries": [
     {
@@ -99,20 +100,6 @@
       "hook": "forward",
       "purpose": "TTS assets. audio_player loads the Supertone/supertonic-3 voice styles at container start; without this destination the player cannot load them and speech output breaks.",
       "evidence": "Measured on .172 on 2026-10-15 in the recreated container's log: 54 requests to https://huggingface.co (HEAD resolve path 307, GET api/resolve-cache/... 200, 'Fetching 26 files'), and this was the only external host contacted besides the allowlisted ones. Re-measured after the privilege and mount reduction, not carried over from the plan."
-    },
-    {
-      "id": "huggingface-cdn",
-      "enabled": true,
-      "modes": [
-        "common"
-      ],
-      "destination": "cdn-lfs.huggingface.co",
-      "port": 443,
-      "protocol": "tcp",
-      "resolve": "dns",
-      "hook": "forward",
-      "purpose": "Hugging Face LFS asset host. Large model files are served from the CDN after the resolve request redirects there. Kept so a cold cache does not cut the TTS asset download.",
-      "evidence": "NOT observed: the HEAD to huggingface.co answered 307 Temporary Redirect and the redirect target is not visible in the container log. Marked as inferred, not measured - check it on the wire before relying on this entry."
     },
     {
       "id": "tryb",
