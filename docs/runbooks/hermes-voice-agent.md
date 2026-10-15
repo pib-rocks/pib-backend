@@ -33,15 +33,18 @@ sudo -u pib -H hermes setup
 
 ### 2. Shared profiles directory (bind-mounted into both services)
 
-`/home/pib/.hermes/profiles` must exist on the **host** and is bind-mounted into
-**both** `flask-app` and `ros-voice-assistant` at the same path. The API writes
-`SOUL.md` there; the agent reads it. If the mount is missing, the API reports
-success (`soulPath=...`) while the agent sees nothing on disk.
+`/home/pib/.hermes/profiles` must exist on the **host**. `flask-app` bind-mounts
+that directory directly. `ros-voice-assistant` does **not** mount the raw Hermes
+home: `setup/voice_egress/apply.sh prepare-view` publishes a filtered view and
+covers every `.env` (and `credentials.json` / `auth.json` / `secrets.json`) with
+a blank file before the container starts. The API still writes `SOUL.md` on the
+host path; the agent reads it through the view. If the view is missing, the API
+can report success (`soulPath=...`) while the agent sees nothing on disk.
 
-`ros-voice-assistant` additionally mounts all of `/home/pib/.hermes` (sessions,
-credentials, the hermes-agent venv) and the CLI wrapper
-`/home/pib/.local/bin/hermes`. Those two are not sufficient on their own — see
-2a.
+The voice container also needs the CLI wrapper `/home/pib/.local/bin/hermes`.
+The wrapper alone is not sufficient — see 2a. Provider keys for Direct and
+Smart are read from the Flask key store at turn time. They are not taken from
+a Hermes `.env` inside the container. See `docs/runbooks/voice-egress.md`.
 
 ### 2a. uv-managed Python directory (easy to miss, breaks everything)
 
@@ -51,7 +54,7 @@ non-functional if any one of them is absent:
 
 | Host path | Why |
 |---|---|
-| `/home/pib/.hermes` | profiles, sessions, credentials, the hermes-agent venv |
+| `/var/lib/pib-voice-egress/view` (bind of `/home/pib/.hermes`, secret files covered) | profiles, sessions, the hermes-agent venv. Not the raw credential files. |
 | `/home/pib/.local/bin/hermes` | the CLI wrapper (entry point) |
 | `/home/pib/.local/share/uv` | the interpreter and stdlib the venv symlinks to |
 
@@ -64,8 +67,8 @@ symlink out of `~/.hermes` into uv-managed Python:
   -> /home/pib/.local/share/uv/python/cpython-3.11-linux-<arch>-gnu/bin/python3.11
 ```
 
-Mounting only `~/.hermes` and the wrapper leaves that symlink dangling inside the
-container, so every hermes call dies immediately:
+Mounting only the Hermes view and the wrapper leaves that symlink dangling
+inside the container, so every hermes call dies immediately:
 
 ```text
 /home/pib/.local/bin/hermes: line 4:
@@ -89,7 +92,7 @@ Set in `docker-compose.yaml` and forwarded into the chat node via
 |---|---|---|
 | `PIB_HERMES_PROFILES_DIR` | `/home/pib/.hermes/profiles` | Shared profiles root (flask-app + ros-voice-assistant) |
 | `PIB_HERMES_BIN` | `/home/pib/.local/bin/hermes` | CLI wrapper path (ros-voice-assistant / ChatNode) |
-| `HERMES_HOME` | `/home/pib/.hermes` | Sessions, credentials, hermes-agent install (ros-voice-assistant) |
+| `HERMES_HOME` | `/home/pib/.hermes` | Sessions and the hermes-agent install inside the container. The path is the filtered view, not the raw host tree. |
 | `PIB_HERMES_TIMEOUT` | `120` (default) | Per-turn subprocess timeout in seconds |
 
 Defaults in code match those values; prefer setting them explicitly in compose.

@@ -1,0 +1,14 @@
+[Unit]
+Description=Default-deny egress policy for the voice container
+After=docker.service
+Wants=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+Environment=PIB_BACKEND_DIR=/home/pib/app/pib-backend
+ExecStart=/bin/bash -c 'exec "${PIB_BACKEND_DIR:-/home/pib/app/pib-backend}/setup/voice_egress/apply.sh" apply'
+ExecStop=/bin/bash -c 'exec "${PIB_BACKEND_DIR:-/home/pib/app/pib-backend}/setup/voice_egress/apply.sh" rollback'
+
+[Install]
+WantedBy=multi-user.target

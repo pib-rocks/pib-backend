@@ -1,0 +1,90 @@
+{
+  "version": 1,
+  "table": "pib_voice_egress",
+  "subject": {
+    "compose_service": "ros-voice-assistant",
+    "container_name": "multirepo-ros-voice-assistant-1",
+    "network": "pib-network"
+  },
+  "notes": [
+    "The policy limits destinations (address and port), not URL paths on a host.",
+    "Docker embedded DNS at 127.0.0.11 is inside the container network namespace and is not filtered here. A name can still resolve; the connection to the resolved address is what this policy accepts or rejects.",
+    "IPv6 egress from the voice container is rejected so an AAAA answer is not an alternate route.",
+    "Direct, Smart, and native Live share generativelanguage.googleapis.com:443. Host and port filtering cannot separate those URL paths.",
+    "platform.tryb.ai stays disabled until a live connection is observed."
+  ],
+  "entries": [
+    {
+      "id": "pib-cloud",
+      "enabled": true,
+      "modes": ["common"],
+      "destination": "192.168.1.252",
+      "port": 8090,
+      "protocol": "tcp",
+      "resolve": "literal",
+      "hook": "forward",
+      "purpose": "pib.Cloud speech-to-text upload and streaming chat.",
+      "evidence": "Measured on .172 on 2026-10-15 (PC-45 plan): PIB_CLOUD_BASE_URL=http://192.168.1.252:8090/v1 and GET /ready returned 200. Code: ros_packages/voice_assistant/voice_assistant/cloud_stt.py speech_to_text_url and pib_cloud_stream.py. Not re-measured from this session."
+    },
+    {
+      "id": "ollama",
+      "enabled": true,
+      "modes": ["common"],
+      "destination": "host.docker.internal",
+      "port": 11434,
+      "protocol": "tcp",
+      "resolve": "bridge-gateway",
+      "hook": "input",
+      "purpose": "On-device model endpoint. host-gateway is the bridge gateway, so these packets are delivered to the host, not forwarded.",
+      "evidence": "Measured on .172 on 2026-10-15 (PC-45 plan): PIB_OLLAMA_BASE_URL=http://host.docker.internal:11434 and GET / returned 200. Compose extra_hosts maps the name to host-gateway."
+    },
+    {
+      "id": "pib-network",
+      "enabled": true,
+      "modes": ["common"],
+      "destination": "pib-network",
+      "port": null,
+      "protocol": "any",
+      "resolve": "bridge-subnet",
+      "hook": "forward",
+      "purpose": "Intra-bridge peers: flask-app:5000, rosbridge-ws:9090, pib-blockly-server:2442, and ROS 2 DDS unicast. The bridge gateway address is excluded so this rule is not a full allow to every host port.",
+      "evidence": "Measured on .172 on 2026-10-15 (PC-45 plan): NetworkMode=multirepo_pib-network, container address 172.18.0.11, shared with the other robot containers. Compose environment names those peers. The subnet prefix was not recorded and is read from Docker at apply time."
+    },
+    {
+      "id": "ros-dds-multicast",
+      "enabled": true,
+      "modes": ["common"],
+      "destination": "224.0.0.0/4",
+      "port": null,
+      "protocol": "any",
+      "resolve": "multicast",
+      "hook": "forward",
+      "purpose": "ROS 2 DDS multicast discovery, accepted only when it leaves via the pib-network bridge. It is not forwarded to the LAN.",
+      "evidence": "The voice service launches ROS 2 nodes (assistant, audio_player, audio_recorder, chat, token_service). On-wire multicast was not observed; this entry exists so discovery is not cut. Unproven until conntrack on .172 shows it."
+    },
+    {
+      "id": "gemini",
+      "enabled": true,
+      "modes": ["direct", "smart", "live"],
+      "destination": "generativelanguage.googleapis.com",
+      "port": 443,
+      "protocol": "tcp",
+      "resolve": "dns",
+      "hook": "forward",
+      "purpose": "Direct generateContent, the Hermes daemon's gemini provider, and the native Live websocket. All three use this host on port 443. Addresses are resolved when the policy is applied.",
+      "evidence": "Measured on .172 on 2026-10-15 (PC-45 plan): HTTPS to generativelanguage.googleapis.com returned 404, so the host is reachable. Hermes provider is gemini. Code: direct_tool_loop.py PINNED_ENDPOINT and audio_loop.py client.aio.live.connect (google-genai). A live Direct, Smart, or Live flow was not captured in this session."
+    },
+    {
+      "id": "tryb",
+      "enabled": false,
+      "modes": ["legacy-tryb"],
+      "destination": "platform.tryb.ai",
+      "port": 443,
+      "protocol": "tcp",
+      "resolve": "dns",
+      "hook": "forward",
+      "purpose": "Legacy tryb_api speech route. Disabled because use was not observed. Enabling this entry is what adds the destination; the code path is unchanged.",
+      "evidence": "Unproven. TRYB_URL_PREFIX=https://platform.tryb.ai is set (PC-45 plan). No connection to platform.tryb.ai was observed from this session, and the legacy route was not exercised."
+    }
+  ]
+}
