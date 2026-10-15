@@ -79,6 +79,7 @@ class RuntimeBinding:
     bridge_subnet: str
     gateway: str
     dns_addresses: Mapping[str, tuple[str, ...]]
+    host_address: str = "172.18.0.1"
 
 
 def constants() -> dict[str, int]:
@@ -357,7 +358,10 @@ def tcp_allows(
         elif entry.resolve == "dns":
             addresses = _dns_ips(entry, binding)
         elif entry.resolve == "bridge-gateway":
-            addresses = (binding.gateway,)
+            address = ipaddress.ip_address(binding.host_address)
+            if not isinstance(address, ipaddress.IPv4Address):
+                raise PolicyError("host gateway must be IPv4")
+            addresses = (str(address),)
         else:
             raise PolicyError(f"{entry.id}: tcp entry has no address")
         for address in addresses:
@@ -371,129 +375,67 @@ def render_ruleset(
     binding: RuntimeBinding,
     modes: Optional[Iterable[str]] = None,
 ) -> str:
-    """Nftables ruleset. Rejects only packets that enter on the voice veth."""
+    """Enforce on bridge input/forward, where the actual ingress port is visible.
+
+    The inet input/forward hooks see the bridge master on this Docker host;
+    matching a veth there silently leaves traffic unrestricted. Bridge-family
+    hooks observe the port without enabling br_netfilter globally.
+    """
     entries = active_entries(allowlist, modes)
     validate_selection(entries)
     veth = _iface(binding.veth, "veth")
-    bridge = _iface(binding.bridge, "bridge")
+    _iface(binding.bridge, "bridge")
     network = _binding_network(binding)
     pairs = tcp_allows(entries, binding)
-    forward_pairs = [item for item in pairs if _hook(entries, item[2]) == "forward"]
-    input_pairs = [item for item in pairs if _hook(entries, item[2]) == "input"]
-    if not forward_pairs:
-        raise PolicyError("forward allow set would be empty")
-    if not any(item[2] == "pib-cloud" for item in forward_pairs):
-        raise PolicyError(f"rendered ruleset omits {CLOUD_ADDRESS}:{CLOUD_PORT}")
-    if not any(entry.id == "pib-network" for entry in entries):
-        raise PolicyError("rendered ruleset omits pib-network")
-
+    if not any(item[2] == "pib-cloud" for item in pairs):
+        raise PolicyError("rendered ruleset omits the cloud API")
     lines = [
         f"# {PATH_LIMITATION}",
         f"# {DNS_NOTE}",
         f"# {IPV6_NOTE}",
-        "# Other containers are not matched: reject rules sit behind iifname of",
-        "# the voice veth only. Intra-bridge traffic is an explicit accept.",
-        f"table inet {TABLE} {{",
+        "# Bridge hooks match only the voice ingress port; no br_netfilter dependency.",
+        f"table bridge {TABLE} {{",
         "    set allow_v4_tcp {",
         "        type ipv4_addr . inet_service",
         "        elements = {",
+        ",\n".join(f"            {address} . {port}" for address, port, _ in pairs),
+        "        }",
+        "    }",
     ]
-    rendered_pairs = ",\n".join(
-        f"            {address} . {port}" for address, port, _entry_id in forward_pairs
-    )
-    lines.append(rendered_pairs)
+    for hook in ("input", "forward"):
+        lines.extend(
+            [
+                f"    chain {hook} {{",
+                f"        type filter hook {hook} priority 0; policy accept;",
+                f'        iifname "{veth}" counter jump voice_egress',
+                "    }",
+            ]
+        )
     lines.extend(
         [
-            "        }",
-            "    }",
-            "",
-            "    chain forward {",
-            "        type filter hook forward priority -1; policy accept;",
-            f'        iifname "{veth}" jump voice_forward',
-            "    }",
-            "",
-            "    chain input {",
-            "        type filter hook input priority -1; policy accept;",
-            f'        iifname "{veth}" jump voice_input',
-            "    }",
-            "",
-            "    chain voice_forward {",
-            "        meta nfproto ipv6 reject with icmpv6 type no-route",
-            "        ct state established,related accept",
-            (
-                f"        ip daddr {network} ip daddr != {binding.gateway} "
-                'accept comment "pib-network"'
-            ),
+            "    chain voice_egress {",
+            "        ether type arp accept",
+            "        ether type ip6 counter drop",
+            f'        ip daddr {network} ip daddr != {binding.gateway} accept comment "pib-network"',
         ]
     )
     if any(entry.id == "ros-dds-multicast" for entry in entries):
-        lines.append(
-            f'        ip daddr 224.0.0.0/4 oifname "{bridge}" '
-            'accept comment "ros-dds-multicast"'
-        )
-        lines.append(
-            f'        ip protocol igmp oifname "{bridge}" accept comment "igmp"'
-        )
-    lines.extend(
-        [
-            "        ip daddr . tcp dport @allow_v4_tcp accept",
-            "        meta l4proto tcp reject with tcp reset",
-            "        reject with icmp type port-unreachable",
-            "    }",
-            "",
-            "    chain voice_input {",
-            "        meta nfproto ipv6 reject with icmpv6 type no-route",
-            "        ct state established,related accept",
-        ]
-    )
-    if not input_pairs:
-        raise PolicyError("input allow would be empty")
-    for address, port, entry_id in input_pairs:
-        lines.append(
-            f'        ip daddr {address} tcp dport {port} accept comment "{entry_id}"'
+        lines.extend(
+            [
+                '        ip daddr 224.0.0.0/4 accept comment "ros-dds-multicast"',
+                '        ip protocol igmp accept comment "igmp"',
+            ]
         )
     lines.extend(
         [
-            "        meta l4proto tcp reject with tcp reset",
-            "        reject with icmp type port-unreachable",
+            "        ip daddr . tcp dport @allow_v4_tcp counter accept",
+            "        counter drop",
             "    }",
             "}",
             "",
         ]
     )
-    text = "\n".join(lines)
-    _assert_rendered(text, veth, forward_pairs, input_pairs)
-    return text
-
-
-def _hook(entries: Sequence[Entry], entry_id: str) -> str:
-    for entry in entries:
-        if entry.id == entry_id:
-            return entry.hook
-    raise PolicyError(f"missing hook for {entry_id}")
-
-
-def _assert_rendered(
-    text: str,
-    veth: str,
-    forward_pairs: Sequence[tuple[str, int, str]],
-    input_pairs: Sequence[tuple[str, int, str]],
-) -> None:
-    if PATH_LIMITATION not in text or DNS_NOTE not in text or IPV6_NOTE not in text:
-        raise PolicyError("rendered ruleset lost its boundary notes")
-    if f'iifname "{veth}" jump voice_forward' not in text:
-        raise PolicyError("forward chain is not scoped to the voice veth")
-    if "reject" not in text.split("chain voice_forward", 1)[-1]:
-        raise PolicyError("voice forward chain does not reject")
-    for address, port, _entry_id in forward_pairs:
-        token = f"{address} . {port}"
-        if token not in text:
-            raise PolicyError(f"rendered ruleset omits {token}")
-    for address, port, _entry_id in input_pairs:
-        if f"ip daddr {address} tcp dport {port} accept" not in text:
-            raise PolicyError(f"rendered ruleset omits input {address}:{port}")
-    if CLOUD_ADDRESS not in text or str(CLOUD_PORT) not in text:
-        raise PolicyError("rendered ruleset omits the cloud API")
+    return "\n".join(lines)
 
 
 def dns_names(allowlist: Allowlist, modes: Optional[Iterable[str]] = None) -> list[str]:
@@ -540,6 +482,7 @@ def _build_parser() -> argparse.ArgumentParser:
     render.add_argument("--bridge", required=True)
     render.add_argument("--subnet", required=True)
     render.add_argument("--gateway", required=True)
+    render.add_argument("--host-address", required=True)
     render.add_argument("--dns", action="append", default=[])
     render.add_argument("--modes", default=None)
 
@@ -578,6 +521,7 @@ def main(argv: Sequence[str]) -> int:
                 bridge=args.bridge,
                 bridge_subnet=args.subnet,
                 gateway=args.gateway,
+                host_address=args.host_address,
                 dns_addresses=_parse_dns(args.dns),
             )
             sys.stdout.write(

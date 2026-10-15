@@ -130,16 +130,34 @@ def test_enabling_tryb_adds_only_that_destination():
     assert ("203.0.113.10", "443") in _tcp_tokens(text)
 
 
-def test_reject_is_reached_only_from_the_voice_veth():
+def test_bridge_hooks_enforce_without_br_netfilter():
+    """L3 iifname is the bridge, not its port; enforce at L2 on the voice port."""
     text = mod.render_ruleset(mod.load_allowlist(str(ALLOWLIST_PATH)), _binding())
-    forward = _chain(text, "forward")
-    voice = _chain(text, "voice_forward")
-    assert "reject" not in forward
-    assert 'iifname "vethvoice1" jump voice_forward' in forward
-    assert "reject with tcp reset" in voice
-    assert voice.index("meta nfproto ipv6 reject") < voice.index("ct state established")
+    assert "table bridge pib_voice_egress {" in text
+    assert "table inet" not in text
+    for hook in ("forward", "input"):
+        base = _chain(text, hook)
+        assert f"hook {hook}" in base
+        assert 'iifname "vethvoice1" counter jump voice_egress' in base
+        assert "drop" not in base
+    voice = _chain(text, "voice_egress")
+    assert "ether type arp accept" in voice
+    assert "ether type ip6 counter drop" in voice
+    # No grandfathering of outbound connections, and no dependency on the
+    # nf_conntrack_bridge module (not shipped by this robot kernel).
+    assert "ct state" not in voice
+    assert "ct direction" not in voice
     assert "224.0.0.0/4" in voice
-    assert "oifname" in voice
+    assert "counter drop" in voice
+
+
+def test_ollama_uses_actual_host_gateway_not_assumed_network_gateway():
+    import dataclasses
+
+    binding = dataclasses.replace(_binding(), host_address="172.17.0.1")
+    text = mod.render_ruleset(mod.load_allowlist(str(ALLOWLIST_PATH)), binding)
+    assert ("172.17.0.1", "11434") in _tcp_tokens(text)
+    assert ("172.18.0.1", "11434") not in _tcp_tokens(text)
 
 
 def test_multicast_rule_follows_the_allowlist_entry():
@@ -273,6 +291,81 @@ def test_verify_script_does_not_print_credential_material():
     assert "groq_env_present=" in text
     assert "policy_self_modify=" in text
     assert "allowed_stt_http=" in text
+
+
+def test_apply_failure_executes_rollback(tmp_path):
+    """Execute the control flow, not just an assertion on a word in the script."""
+    library = tmp_path / "library.sh"
+    library.write_text(APPLY.read_text().split('command="${1:-}"', 1)[0])
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            """
+source "$1"
+need_root() { :; }
+load_constants() { :; }
+py() { :; }
+discover() { :; }
+render_rules() { printf 'test rules\n'; }
+baseline() { :; }
+install_rules() { :; }
+start_watchdog() { :; }
+stop_watchdog() { :; }
+self_check() { return 1; }
+rollback() { echo ROLLBACK_EXECUTED; }
+apply_policy
+""",
+            "test",
+            str(library),
+        ],
+        env={
+            **os.environ,
+            "PIB_VOICE_EGRESS_STATE": str(tmp_path / "state"),
+            "PIB_VOICE_EGRESS_LIB": str(tmp_path / "lib"),
+        },
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0
+    assert "self_check=failed" in result.stderr
+    assert "ROLLBACK_EXECUTED" in result.stdout
+
+
+def test_refresh_unit_does_not_undo_rules_when_it_finishes():
+    service = (EGRESS / "pib-voice-egress.service").read_text()
+    timer = (EGRESS / "pib-voice-egress.timer").read_text()
+    assert "RemainAfterExit=yes" not in service
+    assert "\nExecStop=" not in service
+    assert "OnUnitInactiveSec=30s" in timer
+    assert "Unit=pib-voice-egress.service" in timer
+
+
+def test_verification_checks_actual_ros_nodes_and_requires_a_policy():
+    script = VERIFY.read_text()
+    assert "--no-daemon --spin-time 5" in script
+    assert (
+        "for expected in voice_assistant audio_player audio_recorder chat token_service"
+        in script
+    )
+    assert '"$HOST_BEFORE" == "1" && "$HOST_AFTER" == "1"' in script
+    assert 'table bridge "$TABLE"' in script
+    assert "getsize(path)" not in script
+
+
+def test_missing_secret_cache_does_not_hide_other_secret_files(tmp_path):
+    cache = tmp_path / "profiles" / "pib_a" / "cache" / "scratch"
+    cache.mkdir(parents=True)
+    (cache / ".env").touch()
+    (tmp_path / ".env").touch()
+    assert mod.secret_relpaths(str(tmp_path)) == [
+        ".env",
+        "profiles/pib_a/cache/scratch/.env",
+    ]
+    script = APPLY.read_text()
+    assert "secret_cover=skipped-disappeared" in script
+    assert "symlink at secret path; refusing to follow" in script
+    assert 'mount -o remount,bind,ro "$target"' in script
 
 
 def test_voice_compose_drops_privilege_and_the_raw_hermes_mount(compose_dict):

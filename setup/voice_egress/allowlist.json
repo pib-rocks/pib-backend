@@ -40,8 +40,8 @@
       "protocol": "tcp",
       "resolve": "bridge-gateway",
       "hook": "input",
-      "purpose": "On-device model endpoint. host-gateway is the bridge gateway, so these packets are delivered to the host, not forwarded.",
-      "evidence": "Measured on .172 on 2026-10-15 (PC-45 plan): PIB_OLLAMA_BASE_URL=http://host.docker.internal:11434 and GET / returned 200. Compose extra_hosts maps the name to host-gateway."
+      "purpose": "On-device model endpoint. Resolve host.docker.internal inside the container: Docker host-gateway need not equal the attached bridge gateway.",
+      "evidence": "Measured on .172 on 2026-10-15: host.docker.internal resolves to 172.17.0.1 while the attached bridge gateway is 172.18.0.1. TCP 11434 remains reachable with the corrected bridge-family policy applied."
     },
     {
       "id": "pib-network",

@@ -154,7 +154,7 @@ IPV6="$(
   docker exec "$CONTAINER" python3 -c '
 import os
 path = "/proc/net/if_inet6"
-print("true" if os.path.isfile(path) and os.path.getsize(path) > 0 else "false")
+print("true" if os.path.isfile(path) and any(line.split()[-1] != "lo" for line in open(path)) else "false")
 ' 2>/dev/null || echo false
 )"
 note "ipv6_enabled=$IPV6"
@@ -275,11 +275,11 @@ fi
 
 # Host policy must survive an in-container delete/flush. Restore if it does not.
 HOST_BEFORE=0
-if "$NFT" list table inet "$TABLE" >/dev/null 2>&1; then
+if "$NFT" list table bridge "$TABLE" >/dev/null 2>&1; then
   HOST_BEFORE=1
 fi
 note "host_policy_present_before=$HOST_BEFORE"
-docker exec "$CONTAINER" nft delete table inet "$TABLE" >/dev/null 2>&1 || true
+docker exec "$CONTAINER" nft delete table bridge "$TABLE" >/dev/null 2>&1 || true
 docker exec "$CONTAINER" iptables -F >/dev/null 2>&1 || true
 set +e
 docker exec "$CONTAINER" mount -t tmpfs tmpfs /mnt >/dev/null 2>&1
@@ -293,12 +293,15 @@ else
   note "mount_tmpfs=denied"
 fi
 HOST_AFTER=0
-if "$NFT" list table inet "$TABLE" >/dev/null 2>&1; then
+if "$NFT" list table bridge "$TABLE" >/dev/null 2>&1; then
   HOST_AFTER=1
 fi
 note "host_policy_present_after=$HOST_AFTER"
-if [[ "$HOST_BEFORE" == "$HOST_AFTER" ]]; then
+if [[ "$HOST_BEFORE" == "1" && "$HOST_AFTER" == "1" ]]; then
   note "policy_self_modify=denied"
+elif [[ "$HOST_BEFORE" == "0" ]]; then
+  note "policy_self_modify=unverified-no-host-policy"
+  mark_fail
 else
   note "policy_self_modify=allowed"
   if [[ -f "$APPLIED" ]]; then
@@ -353,14 +356,14 @@ fi
 
 NODES="$(
   docker exec "$CONTAINER" bash -lc \
-    'source /opt/ros/jazzy/setup.bash && source /app/ros2_ws/install/setup.bash && ros2 node list' \
+    'source /opt/ros/jazzy/setup.bash && source /app/ros2_ws/install/setup.bash && ros2 node list --no-daemon --spin-time 5' \
     2>/dev/null || true
 )"
 NODE_LINE="$(echo "$NODES" | tr '\n' ' ' | sed 's/  */ /g')"
 note "ros_nodes=$NODE_LINE"
 ROS_OK=true
-for expected in assistant audio_player audio_recorder chat token_service; do
-  if ! grep -q "$expected" <<<"$NODE_LINE"; then
+for expected in voice_assistant audio_player audio_recorder chat token_service; do
+  if ! grep -Fxq "/$expected" <<<"$NODES"; then
     ROS_OK=false
   fi
 done

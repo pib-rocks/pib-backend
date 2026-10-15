@@ -43,8 +43,8 @@ load_constants() {
 }
 
 rollback() {
-  if "$NFT" list table inet "$TABLE" >/dev/null 2>&1; then
-    "$NFT" delete table inet "$TABLE"
+  if "$NFT" list table bridge "$TABLE" >/dev/null 2>&1; then
+    "$NFT" delete table bridge "$TABLE"
   fi
   rm -f "$APPLIED"
   echo "policy_present=false"
@@ -97,10 +97,12 @@ self_check() {
     return 1
   fi
   echo "self_check_rosbridge=open"
-  # An allow that fails open still reaches example.com. Timeout or reset is blocked.
+  # Any HTTP response proves the destination was reached, including 403/404/500.
+  # DNS itself must work; a resolver failure is not network enforcement evidence.
+  docker exec "$CONTAINER" getent ahostsv4 example.com >/dev/null || return 1
   code="$(probe_http "https://example.com/")"
   echo "self_check_unlisted=$code"
-  if [[ "$code" == "200" || "$code" == "301" || "$code" == "302" ]]; then
+  if [[ "$code" != "000" ]]; then
     return 1
   fi
   return 0
@@ -138,6 +140,9 @@ discover() {
   NETWORK="$(docker inspect -f '{{range $name, $net := .NetworkSettings.Networks}}{{$name}}{{end}}' "$CONTAINER")"
   SUBNET="$(docker network inspect -f '{{range .IPAM.Config}}{{.Subnet}}{{end}}' "$NETWORK")"
   GATEWAY="$(docker network inspect -f '{{range .IPAM.Config}}{{.Gateway}}{{end}}' "$NETWORK")"
+  # Docker's host-gateway is normally docker0, NOT this bridge's gateway.
+  HOST_ADDRESS="$(docker exec "$CONTAINER" getent ahostsv4 host.docker.internal | awk 'NR==1 {print $1}')"
+  [[ -n "$HOST_ADDRESS" ]] || { echo "policy_error=host gateway unresolved" >&2; return 1; }
   echo "container=$CONTAINER"
   echo "veth=$VETH"
   echo "bridge=$BRIDGE"
@@ -167,6 +172,7 @@ render_rules() {
     --bridge "$BRIDGE" \
     --subnet "$SUBNET" \
     --gateway "$GATEWAY" \
+    --host-address "$HOST_ADDRESS" \
     "${dns_args[@]}" \
     "${modes_args[@]}"
 }
@@ -175,9 +181,9 @@ install_rules() {
   local rendered="$1"
   local batch
   batch="$(mktemp "$STATE_DIR/batch.XXXXXX.nft")"
-  if "$NFT" list table inet "$TABLE" >/dev/null 2>&1; then
+  if "$NFT" list table bridge "$TABLE" >/dev/null 2>&1; then
     {
-      echo "delete table inet $TABLE"
+      echo "delete table bridge $TABLE"
       cat "$rendered"
     } >"$batch"
   else
@@ -205,7 +211,7 @@ start_watchdog() {
     sleep "$ROLLBACK_DEADLINE"
     if [[ ! -f "$stamp" ]]; then
       echo "watchdog=revert" >&2
-      "$NFT" delete table inet "$TABLE" >/dev/null 2>&1 || true
+      "$NFT" delete table bridge "$TABLE" >/dev/null 2>&1 || true
     fi
   ) &
   WATCHDOG_PID=$!
@@ -281,17 +287,24 @@ prepare_view() {
         ;;
     esac
     target="$VIEW/$relative"
-    if [[ ! -e "$target" ]]; then
-      echo "policy_error=secret path missing in view" >&2
+    # A cache may disappear after enumeration. It no longer exposes a file;
+    # do not abort the entire view update for that benign race. Never mount
+    # through a symlink: mount would follow it outside the intended view.
+    if [[ -L "$target" ]]; then
+      echo "policy_error=symlink at secret path; refusing to follow" >&2
       return 1
+    fi
+    if [[ ! -e "$target" ]]; then
+      echo "secret_cover=skipped-disappeared"
+      continue
     fi
     cover="$COVER_DIR/${relative//\//__}"
     cp "$BLANK" "$cover"
     chmod 644 "$cover"
-    if awk '{print $5}' /proc/self/mountinfo | grep -Fxq "$target"; then
-      continue
+    if ! awk '{print $5}' /proc/self/mountinfo | grep -Fxq "$target"; then
+      mount --bind "$cover" "$target"
     fi
-    mount --bind "$cover" "$target"
+    mount -o remount,bind,ro "$target"
   done < <(python3 "$PY" secret-relpaths --root "$SRC")
   echo "hermes_view=$VIEW"
   echo "prepare_view=ok"
