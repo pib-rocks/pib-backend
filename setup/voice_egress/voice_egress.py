@@ -69,6 +69,7 @@ class Allowlist:
     version: int
     table: str
     container_name: str
+    mac_address: str
     entries: tuple[Entry, ...]
 
 
@@ -117,10 +118,19 @@ def allowlist_from_dict(raw: Mapping[str, object]) -> Allowlist:
     ids = [entry.id for entry in entries]
     if len(ids) != len(set(ids)):
         raise PolicyError("allowlist entry ids must be unique")
+    mac = subject.get("mac_address")
+    if (
+        not isinstance(mac, str)
+        or re.fullmatch(r"[0-9a-f]{2}(?::[0-9a-f]{2}){5}", mac) is None
+    ):
+        raise PolicyError("subject.mac_address must be a lowercase Ethernet address")
+    if int(mac[:2], 16) & 1:
+        raise PolicyError("subject.mac_address must be unicast")
     parsed = Allowlist(
         version=1,
         table=TABLE,
         container_name=container,
+        mac_address=mac,
         entries=entries,
     )
     preflight_static(parsed)
@@ -407,7 +417,8 @@ def render_ruleset(
             [
                 f"    chain {hook} {{",
                 f"        type filter hook {hook} priority 0; policy accept;",
-                f'        iifname "{veth}" counter jump voice_egress',
+                f"        ether saddr {allowlist.mac_address} counter jump voice_egress",
+                f'        iifname "{veth}" ether saddr != {allowlist.mac_address} counter jump voice_egress',
                 "    }",
             ]
         )

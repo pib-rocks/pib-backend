@@ -138,7 +138,10 @@ def test_bridge_hooks_enforce_without_br_netfilter():
     for hook in ("forward", "input"):
         base = _chain(text, hook)
         assert f"hook {hook}" in base
-        assert 'iifname "vethvoice1" counter jump voice_egress' in base
+        assert (
+            f'iifname "vethvoice1" ether saddr != {mod.load_allowlist(str(ALLOWLIST_PATH)).mac_address} counter jump voice_egress'
+            in base
+        )
         assert "drop" not in base
     voice = _chain(text, "voice_egress")
     assert "ether type arp accept" in voice
@@ -241,7 +244,7 @@ def test_deadline_is_bounded_and_apply_reverts():
     assert 'sleep "$ROLLBACK_DEADLINE"' in text
     assert "self_check=failed" in text
     after_failure = text.split("self_check=failed", 1)[1]
-    assert "rollback" in after_failure[:500]
+    assert "recover_policy" in after_failure[:500]
     assert "table inet pib_voice_egress {" not in text
     assert "http://192.168.1.252:8090/ready" in text
     assert "flask-app" in text
@@ -293,8 +296,12 @@ def test_verify_script_does_not_print_credential_material():
     assert "allowed_stt_http=" in text
 
 
-def test_apply_failure_executes_rollback(tmp_path):
-    """Execute the control flow, not just an assertion on a word in the script."""
+@pytest.mark.parametrize("has_checked_policy", [False, True])
+def test_apply_failure_executes_rollback(tmp_path, has_checked_policy):
+    """Recover a checked policy on refresh; initial setup can roll back explicitly."""
+    checked = tmp_path / "checked.nft"
+    if has_checked_policy:
+        checked.write_text("previous checked rules")
     library = tmp_path / "library.sh"
     library.write_text(APPLY.read_text().split('command="${1:-}"', 1)[0])
     result = subprocess.run(
@@ -314,6 +321,7 @@ start_watchdog() { :; }
 stop_watchdog() { :; }
 self_check() { return 1; }
 rollback() { echo ROLLBACK_EXECUTED; }
+restore_policy() { echo RESTORE_CHECKED; }
 apply_policy
 """,
             "test",
@@ -323,13 +331,19 @@ apply_policy
             **os.environ,
             "PIB_VOICE_EGRESS_STATE": str(tmp_path / "state"),
             "PIB_VOICE_EGRESS_LIB": str(tmp_path / "lib"),
+            "PIB_VOICE_EGRESS_APPLIED": str(checked),
         },
         capture_output=True,
         text=True,
     )
     assert result.returncode != 0
     assert "self_check=failed" in result.stderr
-    assert "ROLLBACK_EXECUTED" in result.stdout
+    if has_checked_policy:
+        assert "RESTORE_CHECKED" in result.stdout
+        assert "ROLLBACK_EXECUTED" not in result.stdout
+        assert checked.read_text() == "previous checked rules"
+    else:
+        assert "ROLLBACK_EXECUTED" in result.stdout
 
 
 def test_refresh_unit_does_not_undo_rules_when_it_finishes():
@@ -366,6 +380,53 @@ def test_missing_secret_cache_does_not_hide_other_secret_files(tmp_path):
     assert "secret_cover=skipped-disappeared" in script
     assert "symlink at secret path; refusing to follow" in script
     assert 'mount -o remount,bind,ro "$target"' in script
+
+
+def test_policy_identity_survives_port_recreation(compose_dict):
+    import dataclasses
+
+    allow = mod.load_allowlist(str(ALLOWLIST_PATH))
+    mac = allow.mac_address
+    voice = compose_dict["services"]["ros-voice-assistant"]
+    assert voice["mac_address"] == mac
+    first = mod.render_ruleset(allow, _binding())
+    second = mod.render_ruleset(
+        allow, dataclasses.replace(_binding(), veth="vethnew42")
+    )
+    for rules in (first, second):
+        for hook in ("input", "forward"):
+            assert f"ether saddr {mac} counter jump voice_egress" in _chain(rules, hook)
+
+
+def test_restore_failure_blocks_startup_without_calling_docker(tmp_path):
+    library = tmp_path / "library.sh"
+    library.write_text(APPLY.read_text().split('command="${1:-}"', 1)[0])
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            'source "$1"; need_root() { :; }; restore_policy',
+            "test",
+            str(library),
+        ],
+        env={**os.environ, "PIB_VOICE_EGRESS_APPLIED": str(tmp_path / "missing.nft")},
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0
+    assert "refusing Docker startup" in result.stderr
+
+
+def test_docker_requires_policy_restore_before_it_can_start():
+    restore = (EGRESS / "pib-voice-egress-restore.service").read_text()
+    dependency = (EGRESS / "docker-voice-egress.conf").read_text()
+    assert "Requires=pib-voice-egress-restore.service" in dependency
+    assert "After=pib-voice-egress-restore.service" in dependency
+    assert "Before=docker.service" in restore
+    assert " restore'" in restore
+    script = APPLY.read_text()
+    assert "restore_policy()" in script
+    assert "policy_error=no saved policy; refusing Docker startup" in script
 
 
 def test_voice_compose_drops_privilege_and_the_raw_hermes_mount(compose_dict):
