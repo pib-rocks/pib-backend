@@ -92,22 +92,44 @@ sudo bash setup/voice_egress/verify.sh
 ```
 
 The preflight checks cloud readiness and Flask/rosbridge before installing.
-Installation is an nft transaction preceded by `nft -c`; failure of the positive
-or negative post-check removes the policy. A 20-second watchdog covers a stalled
-post-check. This operational rollback **fails open**, deliberately restoring the
-pre-change network; it must not be described as fail-closed hardening.
+Installation is an nft transaction preceded by `nft -c`. A failed refresh or
+stalled post-check restores the last checked ruleset rather than opening egress.
+Only a successful positive/negative self-check atomically publishes the saved
+root-owned policy. The watchdog also marks recovery so a late self-check cannot
+publish a candidate after the watchdog has already restored the previous policy.
+On initial setup only, before any checked policy exists, failure rolls back to
+the pre-install state; do not enable Docker's boot dependency until first apply
+has succeeded. An explicit operator `rollback` remains an intentional removal.
 
-A recreation changes the veth. Reapply immediately after recreation; the timer
-is recovery/refresh, not a zero-gap startup barrier. Until reapplication a newly
-created port is not protected. Trusted deployment procedures must perform and
-verify this sequence; fail-closed lifecycle gating is not delivered here.
+A fixed, locally administered MAC (`02:50:49:42:00:45`) is the policy identity,
+pinned identically in compose and the allowlist and checked by regression tests.
+Native bridge input/forward match that identity before any per-port migration
+fallback. A new container therefore stays restricted even before the next DNS/
+port refresh. The container lacks NET_ADMIN/NET_RAW, so it cannot change that
+identity or inject arbitrary Ethernet frames with its retained capabilities.
+The fallback on the current veth permits migration from the previous dynamic MAC;
+it does not replace the stable-identity rule.
+
+`pib-voice-egress-restore.service` restores the last checked, root-owned ruleset
+before Docker starts. The Docker drop-in requires successful restoration, so a
+missing or invalid saved policy stops Docker startup rather than starting voice
+workloads with open egress. SSH and host administration remain available for
+repair. The restore path needs neither running Docker nor DNS; DNS refresh runs
+later. This deliberately affects Docker startup on the host and must be installed
+only after a successful apply has saved a checked policy. Never install it on .35.
 
 For boot preparation and periodic refresh:
 
 ```bash
 sudo cp setup/voice_egress/pib-voice-hermes-view.service /etc/systemd/system/
 sudo cp setup/voice_egress/pib-voice-egress.{service,timer} /etc/systemd/system/
+sudo cp setup/voice_egress/pib-voice-egress-restore.service /etc/systemd/system/
+# Apply/save successfully BEFORE installing the startup dependency.
+sudo bash setup/voice_egress/apply.sh apply
+sudo mkdir -p /etc/systemd/system/docker.service.d
+sudo cp setup/voice_egress/docker-voice-egress.conf /etc/systemd/system/docker.service.d/50-voice-egress.conf
 sudo systemctl daemon-reload
+sudo systemctl start pib-voice-egress-restore.service
 sudo systemctl enable pib-voice-hermes-view.service
 sudo systemctl enable --now pib-voice-egress.timer
 sudo systemctl start pib-voice-egress.service
@@ -123,6 +145,8 @@ Explicit firewall rollback (container shape remains reduced):
 
 ```bash
 sudo systemctl stop pib-voice-egress.timer
+sudo rm /etc/systemd/system/docker.service.d/50-voice-egress.conf
+sudo systemctl daemon-reload
 sudo bash setup/voice_egress/apply.sh rollback
 ```
 

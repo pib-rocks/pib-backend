@@ -131,6 +131,8 @@ services:
       - flask-app
 
   ros-voice-assistant:
+    # Stable policy identity: keep identical to setup/voice_egress/allowlist.json.
+    mac_address: "02:50:49:42:00:45"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     image: ros_voice_assistant
