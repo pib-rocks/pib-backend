@@ -19,10 +19,14 @@ from typing import Any, Callable, Iterable, Iterator, Mapping, Optional, Sequenc
 
 import requests
 
+from pib_hermes_config.local_model import API_NAME as LOCAL_FALLBACK_MODEL_NAME
+
 from voice_assistant.cloud_token import CloudTokenError, resolve_cloud_token
 from voice_assistant.turn_latency import format_event
 
 logger = logging.getLogger(__name__)
+
+LOCAL_FALLBACK_LOG_PREFIX = "[PIB_CLOUD_LOCAL_FALLBACK]"
 
 # ChatNode installs this. Until then emissions are a no-op and cannot delay a turn.
 _trace_emitter: Optional[Callable[[str], None]] = None
@@ -111,6 +115,86 @@ def _response_header_detail(response: Any) -> Optional[dict[str, Any]]:
         if parsed is not None:
             detail[field] = parsed
     return detail or None
+
+
+def _cloud_failure_detail(
+    response: Any,
+    *,
+    reason: str,
+    http_status: Optional[int] = None,
+) -> dict[str, Any]:
+    """Sanitized cloud failure context for a local fallback (no bodies or secrets)."""
+    detail: dict[str, Any] = {"fallback_reason": reason}
+    if http_status is not None:
+        detail["cloud_http_status"] = int(http_status)
+    headers = getattr(response, "headers", None) if response is not None else None
+    request_id = _header_value(headers, "X-Request-ID")
+    attempt_id = _header_value(headers, "X-Attempt-ID")
+    if request_id is not None:
+        detail["cloud_request_id"] = str(request_id)
+    if attempt_id is not None:
+        detail["cloud_attempt_id"] = str(attempt_id)
+    return detail
+
+
+def format_local_fallback_line(
+    *,
+    chat_id: str,
+    cloud_failure: Mapping[str, Any],
+    local_model: str,
+    outcome: str,
+    local_total_ms: float,
+    local_first_token_ms: Optional[float] = None,
+) -> str:
+    """One machine-readable stderr/log line for a cloud-to-local fallback turn."""
+    payload: dict[str, Any] = {
+        "event": "pib_cloud_local_fallback",
+        "chat_id": chat_id or "",
+        "local_model": local_model,
+        "outcome": outcome,
+        "local_total_ms": round(float(local_total_ms), 2),
+    }
+    for key, value in cloud_failure.items():
+        if value is not None:
+            payload[str(key)] = value
+    if local_first_token_ms is not None:
+        payload["local_first_token_ms"] = round(float(local_first_token_ms), 2)
+    return f"{LOCAL_FALLBACK_LOG_PREFIX} " + json.dumps(
+        payload, separators=(",", ":"), sort_keys=True
+    )
+
+
+def parse_local_fallback_line(line: str) -> Optional[dict[str, Any]]:
+    """Parse a ``[PIB_CLOUD_LOCAL_FALLBACK]`` line, or return None."""
+    prefix = LOCAL_FALLBACK_LOG_PREFIX + " "
+    if not isinstance(line, str) or not line.startswith(prefix):
+        return None
+    try:
+        data = json.loads(line[len(prefix) :])
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _log_local_fallback_event(
+    *,
+    chat_id: str,
+    cloud_failure: Mapping[str, Any],
+    outcome: str,
+    local_total_ms: float,
+    local_first_token_ms: Optional[float] = None,
+) -> None:
+    logger.info(
+        "%s",
+        format_local_fallback_line(
+            chat_id=chat_id,
+            cloud_failure=cloud_failure,
+            local_model=LOCAL_FALLBACK_MODEL_NAME,
+            outcome=outcome,
+            local_total_ms=local_total_ms,
+            local_first_token_ms=local_first_token_ms,
+        ),
+    )
 
 
 DEFAULT_PIB_CLOUD_BASE_URL = "http://192.168.1.252:8090/v1"
@@ -317,19 +401,51 @@ def _iter_sse_lines(response: Any) -> Iterator[str]:
 def _yield_local_or_notice(
     local_fallback: Optional[Callable[[], Iterable[str]]],
     notice: str,
+    *,
+    chat_id: str = "",
+    cloud_failure: Optional[Mapping[str, Any]] = None,
 ) -> Iterator[str]:
     """Run the local model fallback when available; otherwise yield ``notice``."""
     if local_fallback is not None:
+        t0 = time.monotonic()
+        first_token_ms: Optional[float] = None
         try:
             produced = False
             for token in local_fallback():
                 if isinstance(token, str) and token:
+                    if first_token_ms is None:
+                        first_token_ms = (time.monotonic() - t0) * 1000.0
                     produced = True
                     yield token
+            total_ms = (time.monotonic() - t0) * 1000.0
             if produced:
+                if cloud_failure is not None:
+                    _log_local_fallback_event(
+                        chat_id=chat_id,
+                        cloud_failure=cloud_failure,
+                        outcome="success",
+                        local_total_ms=total_ms,
+                        local_first_token_ms=first_token_ms,
+                    )
                 return
+            if cloud_failure is not None:
+                _log_local_fallback_event(
+                    chat_id=chat_id,
+                    cloud_failure=cloud_failure,
+                    outcome="empty",
+                    local_total_ms=total_ms,
+                )
         except Exception as exc:
+            total_ms = (time.monotonic() - t0) * 1000.0
             logger.warning("local model fallback failed: %s", exc)
+            if cloud_failure is not None:
+                _log_local_fallback_event(
+                    chat_id=chat_id,
+                    cloud_failure=cloud_failure,
+                    outcome="error",
+                    local_total_ms=total_ms,
+                    local_first_token_ms=first_token_ms,
+                )
     yield notice
 
 
@@ -367,7 +483,12 @@ def stream_pib_cloud_chat(
         token = resolve_cloud_token(token_fetcher)
     except CloudTokenError as exc:
         logger.error("pib.Cloud token unavailable (chat=%s): %s", chat_id, exc)
-        yield from _yield_local_or_notice(local_fallback, CLOUD_AUTH_FAILED_NOTICE)
+        yield from _yield_local_or_notice(
+            local_fallback,
+            CLOUD_AUTH_FAILED_NOTICE,
+            chat_id=chat_id,
+            cloud_failure={"fallback_reason": "cloud_token_unavailable"},
+        )
         return
 
     if _is_token_revoked(token):
@@ -376,7 +497,12 @@ def stream_pib_cloud_chat(
             "skipping cloud and answering locally (chat=%s)",
             chat_id,
         )
-        yield from _yield_local_or_notice(local_fallback, CLOUD_AUTH_FAILED_NOTICE)
+        yield from _yield_local_or_notice(
+            local_fallback,
+            CLOUD_AUTH_FAILED_NOTICE,
+            chat_id=chat_id,
+            cloud_failure={"fallback_reason": "cloud_token_revoked"},
+        )
         return
 
     url = chat_completions_url(endpoint_base)
@@ -445,7 +571,14 @@ def stream_pib_cloud_chat(
                 )
                 _trace_stream_end("error")
                 yield from _yield_local_or_notice(
-                    local_fallback, CLOUD_AUTH_FAILED_NOTICE
+                    local_fallback,
+                    CLOUD_AUTH_FAILED_NOTICE,
+                    chat_id=chat_id,
+                    cloud_failure=_cloud_failure_detail(
+                        response,
+                        reason="cloud_auth_rejected",
+                        http_status=status,
+                    ),
                 )
                 return
 
@@ -457,7 +590,14 @@ def stream_pib_cloud_chat(
                 )
                 _trace_stream_end("error")
                 yield from _yield_local_or_notice(
-                    local_fallback, BUDGET_EXHAUSTED_NOTICE
+                    local_fallback,
+                    BUDGET_EXHAUSTED_NOTICE,
+                    chat_id=chat_id,
+                    cloud_failure=_cloud_failure_detail(
+                        response,
+                        reason="cloud_budget_exhausted",
+                        http_status=status,
+                    ),
                 )
                 return
 
@@ -480,7 +620,14 @@ def stream_pib_cloud_chat(
                 )
                 _trace_stream_end("error")
                 yield from _yield_local_or_notice(
-                    local_fallback, CLOUD_UNAVAILABLE_NOTICE
+                    local_fallback,
+                    CLOUD_UNAVAILABLE_NOTICE,
+                    chat_id=chat_id,
+                    cloud_failure=_cloud_failure_detail(
+                        response,
+                        reason="cloud_http_retry_exhausted",
+                        http_status=status,
+                    ),
                 )
                 return
 
@@ -493,7 +640,14 @@ def stream_pib_cloud_chat(
                 )
                 _trace_stream_end("error")
                 yield from _yield_local_or_notice(
-                    local_fallback, CLOUD_UNAVAILABLE_NOTICE
+                    local_fallback,
+                    CLOUD_UNAVAILABLE_NOTICE,
+                    chat_id=chat_id,
+                    cloud_failure=_cloud_failure_detail(
+                        response,
+                        reason="cloud_http_error",
+                        http_status=status,
+                    ),
                 )
                 return
 
@@ -594,7 +748,13 @@ def stream_pib_cloud_chat(
                 )
                 _trace_stream_end("error")
                 yield from _yield_local_or_notice(
-                    local_fallback, BUDGET_EXHAUSTED_NOTICE
+                    local_fallback,
+                    BUDGET_EXHAUSTED_NOTICE,
+                    chat_id=chat_id,
+                    cloud_failure={
+                        "fallback_reason": "cloud_sse_budget_exhausted",
+                        "cloud_http_status": 402,
+                    },
                 )
                 return
             if exc.status in _AUTH_ERROR_STATUS_CODES or exc.code in (
@@ -609,7 +769,13 @@ def stream_pib_cloud_chat(
                 )
                 _trace_stream_end("error")
                 yield from _yield_local_or_notice(
-                    local_fallback, CLOUD_AUTH_FAILED_NOTICE
+                    local_fallback,
+                    CLOUD_AUTH_FAILED_NOTICE,
+                    chat_id=chat_id,
+                    cloud_failure={
+                        "fallback_reason": "cloud_sse_auth_rejected",
+                        "cloud_http_status": exc.status,
+                    },
                 )
                 return
             logger.warning(
@@ -619,7 +785,12 @@ def stream_pib_cloud_chat(
                 exc,
             )
             _trace_stream_end("error")
-            yield from _yield_local_or_notice(local_fallback, CLOUD_UNAVAILABLE_NOTICE)
+            yield from _yield_local_or_notice(
+                local_fallback,
+                CLOUD_UNAVAILABLE_NOTICE,
+                chat_id=chat_id,
+                cloud_failure={"fallback_reason": "cloud_sse_pre_content"},
+            )
             return
 
         except requests.RequestException as exc:
@@ -644,6 +815,11 @@ def stream_pib_cloud_chat(
                 if retry_delay_s > 0:
                     sleep_fn(retry_delay_s)
                 continue
+            transport_reason = (
+                "cloud_transport_timeout"
+                if isinstance(exc, requests.Timeout)
+                else "cloud_transport_retry_exhausted"
+            )
             logger.error(
                 "pib.Cloud unreachable after retry (chat=%s): %s; "
                 "falling back locally",
@@ -651,7 +827,12 @@ def stream_pib_cloud_chat(
                 exc,
             )
             _trace_stream_end("error")
-            yield from _yield_local_or_notice(local_fallback, CLOUD_UNAVAILABLE_NOTICE)
+            yield from _yield_local_or_notice(
+                local_fallback,
+                CLOUD_UNAVAILABLE_NOTICE,
+                chat_id=chat_id,
+                cloud_failure={"fallback_reason": transport_reason},
+            )
             return
 
         finally:
