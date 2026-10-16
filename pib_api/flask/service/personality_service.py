@@ -17,6 +17,7 @@ from pib_hermes_config import (
     REASONING_EFFORT_ERROR,
     REASONING_EFFORTS,
     build_default_soul_text,
+    strip_mcp_tools_soul_section,
 )
 from pib_hermes_config.channel import (
     CHANNEL_DIRECT,
@@ -644,8 +645,13 @@ def create_personality(personality_dto: Any) -> Personality:
     _reject_retired_direct_text(personality, personality_dto, creating=True)
     custom = ""
     if "description" in personality_dto and personality_dto["description"]:
-        custom = str(personality_dto["description"]).strip()
-    # Always seed the full SOUL.md (identity + optional custom + MCP docs) so
+        # A description stored while the SOUL template still advertised the MCP
+        # tools carries that block; folded in as-is it would put the tool prose
+        # back into the new SOUL, so it is stripped before the SOUL is built.
+        custom = strip_mcp_tools_soul_section(
+            str(personality_dto["description"])
+        ).strip()
+    # Always seed the full SOUL.md (identity + optional custom) so
     # Cerebra's SOUL.md editor receives complete content, not an empty placeholder.
     soul_content = build_default_soul_text(personality.name, custom or None)
     personality.description = soul_content

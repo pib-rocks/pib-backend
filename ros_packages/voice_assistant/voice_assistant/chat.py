@@ -1113,7 +1113,8 @@ class ChatNode(Node):
             return result
 
         try:
-            if pib_cloud_model:
+            if pib_cloud_model and not tool_calling:
+                turn_path = "pib.Cloud"
                 if goal_handle.is_cancel_requested:
                     goal_handle.canceled()
                     return Chat.Result()
@@ -1128,10 +1129,21 @@ class ChatNode(Node):
                     generate_code=generate_code,
                     goal_handle=goal_handle,
                 )
-            elif is_smart:
-                # The channel decides Hermes, the model decides what Hermes
-                # runs. Smart + the on-device model therefore still goes
-                # through Hermes, never through the direct local token loop.
+            elif is_smart or (pib_cloud_model and tool_calling):
+                turn_path = "Hermes"
+                # D3: the capability decides, not the model. The plain cloud
+                # stream carries no tools, so a pib.Cloud personality with the
+                # tool switch on has to run where the agent runtime and its MCP
+                # server are; the agent asks the MCP server for the tool
+                # definitions itself. Smart is on Hermes regardless, and the
+                # model decides what Hermes runs, so Smart + the on-device model
+                # still goes through Hermes, never through the direct local
+                # token loop.
+                if pib_cloud_model:
+                    self.get_logger().info(
+                        f"tools enabled: pib.Cloud model routed through Hermes "
+                        f"chat={chat_id}"
+                    )
                 if goal_handle.is_cancel_requested:
                     goal_handle.canceled()
                     return Chat.Result()
@@ -1146,6 +1158,7 @@ class ChatNode(Node):
                     goal_handle=goal_handle,
                 )
             elif local_model:
+                turn_path = "the on-device model"
                 system_prompt = direct_system_prompt(personality.description)
                 if generate_code:
                     system_prompt = CODE_DESCRIPTION_PREFIX + system_prompt
@@ -1155,6 +1168,7 @@ class ChatNode(Node):
                 )
                 tokens = self._iter_local_tokens(chat_id, content, system_prompt)
             else:
+                turn_path = "the direct tool loop"
                 # Pull recent message history for context
                 with self.voice_assistant_client_lock:
                     successful, chat_messages = voice_assistant_client.get_chat_history(
@@ -1225,8 +1239,10 @@ class ChatNode(Node):
                 return Chat.Result()
 
         except Exception as e:
-            backend = "smart" if is_smart else "direct"
-            self.get_logger().error(f"failed to send request to {backend}: {e}")
+            # Name the path the turn actually took: a pib.Cloud turn with tools
+            # enabled runs on Hermes, and a log that still says "direct" sends
+            # the next diagnosis to the wrong component.
+            self.get_logger().error(f"failed to send request to {turn_path}: {e}")
             goal_handle.abort()
             return Chat.Result()
 

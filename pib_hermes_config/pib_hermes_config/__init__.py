@@ -328,16 +328,99 @@ def _build_mcp_tools_soul_section() -> str:
 MCP_TOOLS_SOUL_SECTION = _build_mcp_tools_soul_section()
 
 
+# Heading line of that section. The umlaut is matched in both spellings, because
+# a copy made through tooling that drops it ("Verfuegbare") names the same block
+# and has to be removed just like the generated one.
+_MCP_TOOLS_SOUL_HEADING = re.compile(
+    r"^##\s+Verf(?:ü|ue)gbare\s+MCP-Werkzeuge\s+\(pib_mcp_server\)\s*$"
+)
+
+#: The exact lines the generator writes for the section, used to recognise a
+#: stored copy of it line by line.
+_MCP_TOOLS_SOUL_SECTION_LINES = tuple(MCP_TOOLS_SOUL_SECTION.rstrip("\n").split("\n"))
+
+
+def _is_mcp_tools_soul_heading(line: str) -> bool:
+    return bool(_MCP_TOOLS_SOUL_HEADING.match(line.strip()))
+
+
+def _mcp_tools_soul_section_end(lines: list[str], start: int) -> int | None:
+    """Exclusive end index of the generated section starting at ``start``.
+
+    None when the lines do not hold the section the generator writes. A block
+    that was edited by hand is then left in place instead of being cut by
+    guesswork, which is the only safe thing to do with prose we no longer
+    produce.
+    """
+    end = start + len(_MCP_TOOLS_SOUL_SECTION_LINES)
+    if end > len(lines):
+        return None
+    for offset, expected in enumerate(_MCP_TOOLS_SOUL_SECTION_LINES):
+        actual = lines[start + offset].strip()
+        if offset == 0:
+            if not _is_mcp_tools_soul_heading(actual):
+                return None
+            continue
+        if actual != expected.strip():
+            return None
+    return end
+
+
+def strip_mcp_tools_soul_section(text: str) -> str:
+    """Remove a previously generated MCP tool section from a stored SOUL text.
+
+    ``build_default_soul_text`` no longer appends the section: its tool prose
+    made the model talk about its tools or write tool calls as text instead of
+    calling them, and the agent reads the real names and schemas from the MCP
+    server anyway. Rows written before that change still carry the block, and a
+    personality's description is folded into its SOUL.md on the write path, so
+    the block is stripped there.
+
+    The block is matched by its own shape - the heading through the last tool's
+    description - not by cutting at the first blank line, which would eat a
+    custom description sitting in front of it. The blank lines the section
+    introduced go with it, surrounding text stays untouched, and a text without
+    the section comes back unchanged, so a second pass is a no-op.
+    """
+    if not isinstance(text, str) or "MCP-Werkzeuge (pib_mcp_server)" not in text:
+        return text
+    lines = text.split("\n")
+    start = None
+    for index, line in enumerate(lines):
+        if _is_mcp_tools_soul_heading(line):
+            start = index
+            break
+    if start is None:
+        return text
+    end = _mcp_tools_soul_section_end(lines, start)
+    if end is None:
+        return text
+    while end < len(lines) and not lines[end].strip():
+        end += 1
+    return "\n".join(lines[:start] + lines[end:])
+
+
 def build_default_soul_text(
     personality_name: str,
     custom_description: str | None = None,
 ) -> str:
-    """Build the standard SOUL.md with robot identity and MCP tools documentation."""
+    """Build the standard SOUL.md: robot identity plus an optional custom text.
+
+    No tool section. The tool names live on in ``MCP_TOOLS`` and
+    ``MCP_TOOLS_SOUL_SECTION`` so old SOUL rows can still be cleaned, but the
+    text handed to the agent no longer advertises them: the agent runtime asks
+    the MCP server for its tool list, and a SOUL that named the tools only made
+    the model describe them or emit tool calls as text.
+
+    A custom text that still carries the section is stripped first. Every
+    caller folds its text in here, including the daemon that rebuilds SOUL.md
+    from a personality's stored description, so a stored block cannot come
+    back through a path this package does not own.
+    """
     name = (personality_name or "").strip() or "pib"
     parts = [f"Du bist der humanoide Roboter {name}."]
-    if custom_description and custom_description.strip():
+    custom = strip_mcp_tools_soul_section(custom_description or "").strip()
+    if custom:
         parts.append("")
-        parts.append(custom_description.strip())
-    parts.append("")
-    parts.append(MCP_TOOLS_SOUL_SECTION.strip())
+        parts.append(custom)
     return "\n".join(parts) + "\n"
