@@ -326,9 +326,7 @@ def test_personality_client_reads_the_tool_switch(monkeypatch):
     assert off.tool_calling is False
 
 
-def test_personality_api_defaults_tools_on_and_rejects_retired_direct_switch(
-    app, app_ctx
-):
+def test_personality_api_defaults_tools_on_and_allows_turning_them_off(app, app_ctx):
     from model.assistant_model import AssistantModel
 
     client = app.test_client()
@@ -348,23 +346,21 @@ def test_personality_api_defaults_tools_on_and_rejects_retired_direct_switch(
     assert created.status_code == 201
     body = created.get_json()
     assert body["toolCalling"] is True
+    url = f"/voice-assistant/personality/{body['personalityId']}"
 
-    switched = client.put(
-        f"/voice-assistant/personality/{body['personalityId']}",
-        json={"toolCalling": False},
-    )
-    assert switched.status_code == 400
-    assert "toolCalling" in str(switched.get_json())
-    stored = client.get(f"/voice-assistant/personality/{body['personalityId']}")
+    # PC-58: the switch selects no transport any more, so turning tools off is
+    # a plain chat and the value is stored in both directions.
+    switched = client.put(url, json={"toolCalling": False})
+    assert switched.status_code == 200, switched.get_json()
+    assert switched.get_json()["toolCalling"] is False
+    stored = client.get(url)
     assert stored.status_code == 200
-    assert stored.get_json()["toolCalling"] is True
+    assert stored.get_json()["toolCalling"] is False
     assert stored.get_json()["description"] == body["description"]
 
-    restored_channel = client.put(
-        f"/voice-assistant/personality/{body['personalityId']}",
-        json={"channel": "direct"},
-    )
-    assert restored_channel.get_json()["toolCalling"] is True
+    restored = client.put(url, json={"toolCalling": True})
+    assert restored.status_code == 200
+    assert restored.get_json()["toolCalling"] is True
 
 
 # Distinct from each other so a branch that picks the wrong source fails.

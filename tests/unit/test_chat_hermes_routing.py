@@ -1504,6 +1504,76 @@ def test_retired_direct_without_tools_is_explicit_before_key_store(
     goal_handle.succeed.assert_called_once()
 
 
+def test_direct_without_tools_runs_a_plain_chat_on_the_supported_model(
+    chat_module, chat_node
+):
+    """PC-58: the tool switch selects no transport, so tools off is a chat.
+
+    On the supported Direct model the turn answers without a retired sentence
+    and without tools; the loop is called with tool_calling false.
+    """
+
+    import asyncio
+
+    Chat = chat_module.Chat
+
+    personality = MagicMock()
+    personality.message_history = 5
+    personality.personality_id = "pers-3"
+    personality.assistant_model.api_name = "gemini-3.8-flash"
+    personality.assistant_model.has_image_support = True
+    personality.assistant_model.capabilities = {"images": True}
+    personality.tool_calling = False
+    personality.channel = "direct"
+    personality.effective_channel = "direct"
+    personality.description = "Du bist der eine Soul."
+    personality.voice_mode = "turn_based"
+    chat_node.token = None
+    chat_node._key_store_mode = MagicMock(return_value="unlocked")
+
+    goal_handle = MagicMock()
+    goal_handle.is_cancel_requested = False
+    goal_handle.request = Chat.Goal()
+    goal_handle.request.chat_id = "chat-3"
+    goal_handle.request.text = "Hallo"
+    goal_handle.request.generate_code = False
+
+    with (
+        patch.object(
+            chat_module.voice_assistant_client,
+            "get_personality_from_chat",
+            return_value=(True, personality),
+        ),
+        patch.object(
+            chat_module.voice_assistant_client,
+            "get_chat_history",
+            return_value=(True, []),
+        ),
+        patch.object(
+            chat_module.direct_tool_loop,
+            "run_direct_turn",
+            return_value=iter(["Hi."]),
+        ) as run_direct_turn,
+        patch.object(
+            chat_node,
+            "_stream_chunks_to_goal",
+            return_value=("Hi.", TEXT_TYPE_SENTENCE, ""),
+        ),
+        patch("public_api_client.hermes_agent_client.run_turn") as run_turn,
+    ):
+
+        result = asyncio.run(chat_node.chat(goal_handle))
+
+    from pib_hermes_config.retired_direct_text import RETIRED_DIRECT_TEXT_SENTENCE
+
+    run_direct_turn.assert_called_once()
+    assert run_direct_turn.call_args.kwargs["tool_calling"] is False
+    run_turn.assert_not_called()
+    assert result.text == "Hi."
+    assert RETIRED_DIRECT_TEXT_SENTENCE not in str(result.text)
+    goal_handle.succeed.assert_called_once()
+
+
 def test_retired_reply_honors_cancellation(chat_module, chat_node):
     goal = MagicMock()
     goal.is_cancel_requested = True
@@ -1582,7 +1652,7 @@ def test_degraded_direct_chat_names_the_missing_password(chat_module, chat_node)
     personality.personality_id = "pers-1"
     personality.gender = "Male"
     personality.language = "German"
-    personality.assistant_model.api_name = "gpt-6"
+    personality.assistant_model.api_name = "gemini-3.8-flash"
     personality.channel = "direct"
     personality.effective_channel = "direct"
     chat_node._key_store_mode = lambda: "degraded"
@@ -1785,10 +1855,17 @@ def test_direct_tool_calling_offers_the_image_tool_and_does_not_attach_a_frame(
     assert result.text == "Ein Stuhl."
 
 
-def test_direct_tool_calling_aborts_when_the_model_has_no_stable_endpoint(
+def test_direct_without_a_transport_is_answered_with_the_retirement_sentence(
     chat_module, chat_node
 ):
-    """An OpenAI model has no non-beta tool endpoint on this account."""
+    """PC-58: a Direct model with no transport of its own is refused uniformly.
+
+    An OpenAI model has no non-beta tool endpoint on this account. The
+    tool-calling flag no longer opens this path, so the turn is answered with
+    the retirement sentence instead of failing after a provider attempt. The
+    guard that used to abort the turn is unit-tested directly in
+    test_direct_tool_loop.py (supports_tool_endpoint).
+    """
     Chat = chat_module.Chat
 
     personality = MagicMock()
@@ -1826,12 +1903,14 @@ def test_direct_tool_calling_aborts_when_the_model_has_no_stable_endpoint(
     ):
         result = drive_like_rclpy(chat_node.chat(goal_handle))
 
+    from pib_hermes_config.retired_direct_text import RETIRED_DIRECT_TEXT_SENTENCE
+
     run_direct_turn.assert_not_called()
     completion.assert_not_called()
     chat_node.get_camera_image_client.call_async.assert_not_called()
-    goal_handle.abort.assert_called_once()
-    goal_handle.succeed.assert_not_called()
-    assert result.text == ""
+    goal_handle.abort.assert_not_called()
+    goal_handle.succeed.assert_called_once()
+    assert result.text == RETIRED_DIRECT_TEXT_SENTENCE
 
 
 def test_smart_turn_fails_when_the_store_cannot_supply_the_provider_key(

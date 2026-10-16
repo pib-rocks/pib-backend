@@ -13,23 +13,23 @@ from pib_hermes_config.local_model import API_NAME as LOCAL_API_NAME
 
 
 @pytest.mark.parametrize(
-    "channel,api_name,tools,mode,retired",
+    "channel,api_name,mode,retired",
     [
-        ("direct", "gemini-3.8-flash", False, "turn_based", True),
-        ("direct", "gpt-6", False, None, True),
-        ("direct", "gemini-3.8-flash", True, None, False),
-        ("smart", "gemini-3.8-flash", False, None, False),
-        ("direct", "pib-cloud", False, None, False),
-        ("direct", LOCAL_API_NAME, False, None, False),
-        ("direct", "gemini-3.8-live", False, "live", False),
-        ("direct", None, False, None, True),
+        # PC-58: the tool-calling flag selects no transport any more. Direct on
+        # the supported model stays, with tools off it is a plain chat.
+        ("direct", "gemini-3.8-flash", "turn_based", False),
+        ("direct", "gpt-6", None, True),
+        ("direct", "claude-sonnet-5-5", None, True),
+        ("smart", "gemini-3.8-flash", None, False),
+        ("direct", "pib-cloud", None, False),
+        ("direct", LOCAL_API_NAME, None, False),
+        ("direct", "gemini-3.8-live", "live", False),
+        ("direct", None, None, True),
     ],
 )
-def test_shared_dispatch_boundary(channel, api_name, tools, mode, retired):
+def test_shared_dispatch_boundary(channel, api_name, mode, retired):
     assert (
-        legacy_direct_text_selected(
-            channel=channel, api_name=api_name, tool_calling=tools, voice_mode=mode
-        )
+        legacy_direct_text_selected(channel=channel, api_name=api_name, voice_mode=mode)
         is retired
     )
 
@@ -90,6 +90,9 @@ def _create(client, api_name="gemini-3.8-flash", **extra):
         (LOCAL_API_NAME, "direct"),
         ("gemini-3.8-live", "direct"),
         ("gemini-3.8-flash", "smart"),
+        # PC-58: the supported Direct model answers with tools off as a plain
+        # chat instead of being sent down the retired path.
+        ("gemini-3.8-flash", "direct"),
     ],
 )
 def test_supported_no_tool_selections_are_not_retired(
@@ -121,9 +124,11 @@ def test_new_legacy_selection_is_rejected_without_creating_row(app, app_ctx):
     from model.personality_model import Personality
 
     before = Personality.query.count()
-    response = _create(app.test_client(), toolCalling=False)
+    # PC-58: gpt-6 has no Direct transport of its own, so Direct on it is the
+    # combination that is still refused. The tool-calling flag is not the cause.
+    response = _create(app.test_client(), api_name="gpt-6", toolCalling=False)
     assert response.status_code == 400
-    assert "toolCalling" in str(response.get_json())
+    assert "channel" in str(response.get_json())
     assert "retired" in str(response.get_json()).lower()
     assert Personality.query.count() == before
 
@@ -133,8 +138,9 @@ def test_invalid_switch_rolls_back_row_and_does_not_write_soul(
 ):
     from service import soul_service
 
+    monkeypatch.setenv("PIB_HERMES_ENABLED", "true")
     client = app.test_client()
-    created = _create(client)
+    created = _create(client, api_name="gpt-6", channel="smart")
     assert created.status_code == 201
     body = created.get_json()
     url = "/voice-assistant/personality/" + body["personalityId"]
@@ -143,7 +149,7 @@ def test_invalid_switch_rolls_back_row_and_does_not_write_soul(
     response = client.put(
         url,
         json={
-            "toolCalling": False,
+            "channel": "direct",
             "description": "MUST NOT WRITE",
             "name": "MUST NOT STORE",
         },
@@ -151,7 +157,7 @@ def test_invalid_switch_rolls_back_row_and_does_not_write_soul(
     assert response.status_code == 400
     write.assert_not_called()
     stored = client.get(url).get_json()
-    assert stored["toolCalling"] is True
+    assert stored["channel"] == "smart"
     assert stored["name"] == body["name"]
     assert stored["description"] == body["description"]
 
@@ -159,10 +165,14 @@ def test_invalid_switch_rolls_back_row_and_does_not_write_soul(
 @pytest.mark.parametrize(
     "start,change,field",
     [
-        ({"channel": "smart", "toolCalling": False}, {"channel": "direct"}, "channel"),
         (
-            {"api_name": "gemini-3.8-live", "toolCalling": False},
-            {"model": "gemini-3.8-flash"},
+            {"api_name": "gpt-6", "channel": "smart"},
+            {"channel": "direct"},
+            "channel",
+        ),
+        (
+            {"api_name": "gemini-3.8-flash", "channel": "direct"},
+            {"model": "claude-sonnet-5-5"},
             "modelRef",
         ),
     ],
@@ -185,7 +195,6 @@ def test_channel_and_model_changes_cannot_reenter_legacy(
     stored = client.get(url).get_json()
     assert stored["channel"] == body["channel"]
     assert stored["modelRef"] == body["modelRef"]
-    assert stored["toolCalling"] is False
 
 
 def test_old_selection_is_readable_editable_and_not_silently_migrated(app, app_ctx):

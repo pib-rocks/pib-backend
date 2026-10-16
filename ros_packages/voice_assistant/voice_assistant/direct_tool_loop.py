@@ -19,6 +19,7 @@ import os
 from typing import Any, Callable, Iterator, Mapping, Optional, Sequence
 from urllib.request import Request, urlopen
 
+from pib_hermes_config.retired_direct_text import DIRECT_TEXT_MODEL_API_NAME
 from pib_hermes_config.visible_state import (
     ANSWER_GESTURE_TOOLS,
     issue_answer_gesture,
@@ -27,9 +28,11 @@ from pib_hermes_config.visible_state import (
 logger = logging.getLogger(__name__)
 
 PINNED_PROVIDER = "gemini"
-# Pinned, checked on 2026-09-30: the catalogue's Gemini chat model.
-# The id this replaced is not in the catalogue, so this loop does not send it.
-PINNED_MODEL = "gemini-3.8-flash"
+# Pinned, checked on 2026-09-30: the catalogue's Gemini chat model. The id this
+# replaced is not in the catalogue, so this loop does not send it. The name
+# comes from the shared Direct-transport constant, so the retirement rule and
+# this loop can not disagree about which model has a transport.
+PINNED_MODEL = DIRECT_TEXT_MODEL_API_NAME
 PINNED_CHECKED_ON = "2026-09-30"
 PINNED_ENDPOINT = (
     "https://generativelanguage.googleapis.com/v1/models/"
