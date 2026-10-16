@@ -228,69 +228,113 @@ def unpublished_clauses(
     return fresh
 
 
+def _speech_emitted_prefix(published: list[str]) -> str:
+    return "".join(item for item in published if isinstance(item, str))
+
+
+def _clause_spans(
+    speakable: str, *, max_tokens: int | None = None
+) -> list[tuple[int, int]]:
+    clauses = clauses_to_synthesize(speakable, max_tokens=max_tokens)
+    spans: list[tuple[int, int]] = []
+    cursor = 0
+    for clause in clauses:
+        index = speakable.find(clause, cursor)
+        if index < 0:
+            index = cursor
+        spans.append((index, index + len(clause)))
+        cursor = index + len(clause)
+    return spans
+
+
+def next_speech_delta(
+    answer: str, published: list[str], *, max_tokens: int | None = None
+) -> str:
+    """Next speakable substring not yet present in published deltas."""
+    speakable = speakable_answer(answer)
+    if not speakable:
+        return ""
+    emitted = _speech_emitted_prefix(published)
+    if not speakable.startswith(emitted):
+        return ""
+    emitted_len = len(emitted)
+    if emitted_len >= len(speakable):
+        return ""
+    for _start, end in _clause_spans(speakable, max_tokens=max_tokens):
+        if end > emitted_len:
+            return speakable[emitted_len:end]
+    return speakable[emitted_len:]
+
+
+def speech_result_tail(
+    answer: str, published: list[str], *, max_tokens: int | None = None
+) -> str:
+    """Speakable text not yet sent as action feedback (Chat.Result delta)."""
+    speakable = speakable_answer(answer)
+    emitted = _speech_emitted_prefix(published)
+    if not speakable.startswith(emitted):
+        return ""
+    return speakable[len(emitted) :]
+
+
 class StreamingSpeech:
-    """Speak each clause once while later chunks of the same answer arrive."""
+    """Consume delta-only speech payloads for one assistant answer."""
 
     def __init__(self, *, max_tokens: int | None = None) -> None:
-        self.pending = ""
-        self._spoken = ""
+        self._buffer = ""
+        self._emitted_clause_count = 0
+        self._finalized = False
         self.max_tokens = (
             fallback_token_limit() if max_tokens is None else int(max_tokens)
         )
 
-    def take(self, chunk: str, is_final: bool) -> list[str]:
-        """Clauses to hand to the synthesizer for this chunk.
+    @property
+    def finalized(self) -> bool:
+        return self._finalized
 
-        A later chunk that repeats or extends text already seen does not
-        speak that text again. The final chunk also speaks an unfinished tail.
+    def take(self, delta: str, is_final: bool) -> list[str]:
+        """Clauses to synthesize from this delta-only payload.
+
+        Each call receives only text not yet emitted on the wire. Repeated
+        final delivery after finalization is ignored; intentional repeated
+        phrases in distinct deltas are spoken again.
         """
-        if not isinstance(chunk, str) or not chunk.strip():
+        if self._finalized:
             return []
-        merged = self._merge(chunk)
-        clauses, rest = completed_clauses(merged, max_tokens=self.max_tokens)
+        if not isinstance(delta, str):
+            delta = ""
+        if is_final:
+            self._finalized = True
+
+        # Buffer every delta, including whitespace-only separators: the wire
+        # splits one answer across payloads, and dropping a lone " " would glue
+        # the neighbouring words together in the synthesized text.
+        self._buffer += delta
+        if not self._buffer.strip():
+            return []
+
+        clauses, rest = completed_clauses(
+            speakable_answer(self._buffer), max_tokens=self.max_tokens
+        )
         if (
             not is_final
             and self.max_tokens > 0
             and rest.strip()
             and len(_WORD.findall(rest)) == self.max_tokens
-            and len(_WORD.findall(chunk)) >= self.max_tokens
+            and len(_WORD.findall(delta)) >= self.max_tokens
         ):
+            clauses = list(clauses)
             clauses.append(rest.strip())
             rest = ""
-        fresh: list[str] = []
-        consumed = ""
-        for clause in clauses:
-            candidate = (consumed + " " + clause).strip() if consumed else clause
-            consumed = candidate
-            if _already_spoken(self._spoken, candidate):
-                continue
-            fresh.append(clause)
-            self._spoken = _norm(candidate)
+
+        fresh = clauses[self._emitted_clause_count :]
+        self._emitted_clause_count = len(clauses)
         if is_final:
             tail = rest.strip()
-            whole = _norm(merged)
-            if tail and not _already_spoken(self._spoken, whole):
+            if tail:
+                fresh = list(fresh)
                 fresh.append(tail)
-                self._spoken = whole
-        return fresh
-
-    def _merge(self, chunk: str) -> str:
-        trailing = " " if chunk[-1:].isspace() else ""
-        incoming = chunk.strip()
-        if not self.pending:
-            self.pending = incoming + trailing
-            return self.pending
-        pending = _norm(self.pending)
-        new = _norm(incoming)
-        if pending == new or _extends(pending, new):
-            if trailing and not self.pending.endswith(" "):
-                self.pending = self.pending + " "
-            return self.pending
-        if _extends(new, pending):
-            self.pending = incoming + trailing
-            return self.pending
-        self.pending = f"{self.pending.rstrip()} {incoming}".strip() + trailing
-        return self.pending
+        return list(fresh)
 
 
 def _whisper_model_yaml() -> Path:

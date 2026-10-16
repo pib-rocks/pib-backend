@@ -34,7 +34,7 @@ from pib_hermes_config.local_model import (
     openai_base_url,
 )
 from pib_hermes_config import provider_for_profile
-from pib_hermes_config.turn_taking import unpublished_clauses
+from pib_hermes_config.turn_taking import next_speech_delta, speech_result_tail
 from pib_hermes_config.channel import (
     CHANNEL_DIRECT,
     CHANNEL_SMART,
@@ -526,9 +526,10 @@ class ChatNode(Node):
 
         Returns (prev_text, prev_text_type, curr_text) so the caller can build Chat.Result.
 
-        For TTFT, the first non-empty token is published as Action feedback
-        immediately (before sentence buffering completes) so downstream TTS can
-        start without waiting for a terminator.
+        Speech feedback and Chat.Result use a delta-only contract: each payload
+        carries only speakable text not yet emitted on the wire (empty final is
+        valid). Persisted chat messages stay cumulative. For TTFT, the first
+        non-empty token is published immediately before a terminator arrives.
         """
         if t0 is None:
             t0 = time.monotonic()
@@ -573,14 +574,15 @@ class ChatNode(Node):
                         f"elapsed_ms={elapsed_ms:.2f}"
                     )
 
-            # Publish previous completed chunk as feedback (Action protocol)
-            if prev_text is not None:
+            # Blockly code blocks still publish on the next token; speech does not.
+            if (
+                prev_text is not None
+                and prev_text_type == Chat.Goal.TEXT_TYPE_CODE_VISUAL
+            ):
                 feedback = Chat.Feedback()
                 feedback.text = prev_text
                 feedback.text_type = prev_text_type
                 goal_handle.publish_feedback(feedback)
-                if prev_text_type == Chat.Goal.TEXT_TYPE_SENTENCE:
-                    published_speech.append(prev_text)
                 prev_text = None
                 prev_text_type = None
 
@@ -688,9 +690,10 @@ class ChatNode(Node):
                 t0=t0 if not first_sentence_flushed else None,
             ):
                 first_sentence_flushed = True
-            if prev_text is not None:
-                # Hand the completed chunk over as feedback the way the next
-                # token would have, so the tail can travel in Chat.Result.
+            if (
+                prev_text is not None
+                and prev_text_type == Chat.Goal.TEXT_TYPE_CODE_VISUAL
+            ):
                 feedback = Chat.Feedback()
                 feedback.text = prev_text
                 feedback.text_type = prev_text_type
@@ -698,7 +701,11 @@ class ChatNode(Node):
                 prev_text = None
                 prev_text_type = None
 
-        return prev_text, prev_text_type, curr_text
+        if prev_text_type == Chat.Goal.TEXT_TYPE_CODE_VISUAL:
+            return prev_text, prev_text_type, curr_text
+
+        speech_tail = speech_result_tail(raw_answer, published_speech)
+        return None, None, speech_tail
 
     def _remember_first_token_latency(self, chat_id: str, elapsed_ms: float) -> None:
         """Persist the measurement. A down API must not fail the turn."""
@@ -717,11 +724,14 @@ class ChatNode(Node):
         chat_id: str = "",
         t0: Optional[float] = None,
     ) -> bool:
-        """Publish each newly completed clause so speech can start on it."""
+        """Publish the next incremental speech delta so TTS can start early."""
         flushed_any = False
-        for clause in unpublished_clauses(raw_answer, published_speech):
+        while True:
+            delta = next_speech_delta(raw_answer, published_speech)
+            if not delta:
+                break
             feedback = Chat.Feedback()
-            feedback.text = clause
+            feedback.text = delta
             feedback.text_type = Chat.Goal.TEXT_TYPE_SENTENCE
             goal_handle.publish_feedback(feedback)
             if not flushed_any and t0 is not None:
@@ -731,7 +741,7 @@ class ChatNode(Node):
                     f"elapsed_ms={elapsed_ms:.2f}"
                 )
             flushed_any = True
-            published_speech.append(clause)
+            published_speech.append(delta)
         return flushed_any
 
     def _hermes_timeout(self) -> int:

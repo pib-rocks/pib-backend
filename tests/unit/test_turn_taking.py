@@ -87,19 +87,34 @@ def test_decimal_point_is_not_a_clause_boundary():
 def test_streaming_speech_speaks_a_clause_once():
     speech = StreamingSpeech()
     assert speech.take("Sure, ", False) == ["Sure,"]
-    assert speech.take("Sure, I can help.", True) == ["I can help."]
+    assert speech.take(" I can help.", True) == ["I can help."]
 
 
 def test_streaming_speech_does_not_repeat_the_first_token():
     speech = StreamingSpeech()
     assert speech.take("Hallo Welt. ", False) == ["Hallo Welt."]
-    assert speech.take("Hallo Welt.", True) == []
+    assert speech.take("", True) == []
+    assert speech.finalized
 
 
 def test_streaming_speech_appends_the_next_sentence():
     speech = StreamingSpeech()
     assert speech.take("Eins. ", False) == ["Eins."]
     assert speech.take("Zwei.", True) == ["Zwei."]
+
+
+def test_streaming_speech_repeats_intentional_duplicate_phrases():
+    speech = StreamingSpeech()
+    assert speech.take("Ja. ", False) == ["Ja."]
+    assert speech.take("Ja. ", False) == ["Ja."]
+    assert speech.take("", True) == []
+
+
+def test_streaming_speech_ignores_repeated_final_delivery():
+    speech = StreamingSpeech()
+    assert speech.take("Hallo.", True) == ["Hallo."]
+    assert speech.take("", True) == []
+    assert speech.take("Hallo.", True) == []
 
 
 def test_unpublished_clauses_skip_text_already_sent():
@@ -124,7 +139,7 @@ def test_streaming_speech_flushes_n_token_fallback_without_repeating_tail():
     emitted_mid = speech.take("eins zwei drei vier fuenf sechs", False)
     assert emitted_mid == ["eins zwei drei vier fuenf"]
     # Feed the rest of the clause with punctuation at stream end (is_final=True)
-    emitted_end = speech.take("eins zwei drei vier fuenf sechs sieben acht.", True)
+    emitted_end = speech.take(" sieben acht.", True)
     assert emitted_end == ["sechs sieben acht."]
 
 
