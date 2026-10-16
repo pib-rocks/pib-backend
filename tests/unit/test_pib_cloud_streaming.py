@@ -38,9 +38,10 @@ def _clean_auth_state():
 
 
 class _FakeSSEResponse:
-    def __init__(self, lines, status_code: int = 200):
+    def __init__(self, lines, status_code: int = 200, headers=None):
         self._lines = lines
         self.status_code = status_code
+        self.headers = dict(headers or {})
         self.closed = False
 
     def iter_lines(self, chunk_size: int = 1, decode_unicode: bool = True):
