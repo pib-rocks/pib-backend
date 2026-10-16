@@ -7,6 +7,7 @@ import requests
 from playwright.sync_api import sync_playwright, expect
 
 from robot_address import api_url, robot_base_url
+from smart_connect_token import ensure_smart_connect_token
 
 ROBOT_URL = robot_base_url()
 API_URL = api_url()
@@ -158,13 +159,11 @@ class TestHardwareIDsE2E:
         The robot's own hardware config is snapshotted before the first write and
         restored afterwards, including when the test fails.
         """
-        # 1. Ensure SmartConnect is active on backend
+        # 1. Ensure SmartConnect is active without touching a real token. An
+        # existing token stays; a placeholder written here is removed by the
+        # session fixture at the end of the run.
         try:
-            requests.post(
-                f"{API_URL}/system/smart-connect",
-                json={"token": "12345678"},
-                timeout=REQUEST_TIMEOUT_S,
-            )
+            ensure_smart_connect_token(API_URL)
         except Exception:
             pass
 
