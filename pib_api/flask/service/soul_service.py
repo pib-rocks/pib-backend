@@ -18,6 +18,7 @@ from pib_hermes_config import (
     profile_name_for,
     profiles_dir,
     soul_path_for,
+    strip_mcp_tools_soul_section,
 )
 
 __all__ = [
@@ -34,7 +35,9 @@ def write_soul(personality_id: str, text: str, personality_name: str = "pib") ->
     """Write the SOUL text to the profile, creating parent dirs.
 
     When ``text`` is blank, seeds the default SOUL template for ``personality_name``.
-    Otherwise writes ``text`` as-is so the DB/editor content stays authoritative.
+    Otherwise writes ``text`` as-is so the DB/editor content stays authoritative,
+    minus a previously generated MCP tool section (see
+    ``strip_mcp_tools_soul_section``): that prose is no longer part of a SOUL.
 
     Returns the full written soul content string.
     """
@@ -42,7 +45,10 @@ def write_soul(personality_id: str, text: str, personality_name: str = "pib") ->
     profile_dir = os.path.dirname(path)
     os.makedirs(profile_dir, exist_ok=True)
     if text and text.strip():
-        soul_content = text
+        # Text written before the SOUL template dropped its tool prose still
+        # carries the MCP section. This is the last point before the agent
+        # reads the file, so the block is removed here rather than shipped.
+        soul_content = strip_mcp_tools_soul_section(text)
     else:
         soul_content = build_default_soul_text(personality_name)
     with open(path, "w", encoding="utf-8") as fh:

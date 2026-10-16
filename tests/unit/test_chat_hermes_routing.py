@@ -2231,6 +2231,10 @@ def test_chat_node_routes_pib_cloud_and_flushes_first_sentence(chat_module, chat
     personality = _local_smart_personality()
     personality.assistant_model.api_name = "pib-cloud"
     personality.assistant_model.endpoint_base = "http://192.168.1.252:8090/v1"
+    # The tool switch is off here on purpose: SSE streaming is the pib.Cloud
+    # route for a personality that does not use tools. With the switch on the
+    # same model goes through Hermes instead (concept D3).
+    personality.tool_calling = False
 
     goal_handle = MagicMock()
     goal_handle.is_cancel_requested = False

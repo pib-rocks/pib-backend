@@ -446,9 +446,9 @@ def test_voice_assistant_hermes_persists_reply_and_recalls_prior_fact():
 def test_create_personality_via_browser_ui_generates_soul_md():
     """
     Create a new personality via the real browser UI (#add-personality-button),
-    and verify on the Pi host filesystem that its SOUL.md is automatically created,
-    contains the replaced name ('Du bist der humanoide Roboter <Name>.'), and documents
-    all available MCP tools.
+    and verify on the Pi host filesystem that its SOUL.md is automatically created
+    and contains the replaced name ('Du bist der humanoide Roboter <Name>.').
+    It carries no MCP tool prose: the agent reads its tools from the MCP server.
     """
     from playwright.sync_api import sync_playwright
 
@@ -544,13 +544,18 @@ def test_create_personality_via_browser_ui_generates_soul_md():
             assert (
                 f"Du bist der humanoide Roboter {unique_name}." in soul_content
             ), f"Expected robot name identity in SOUL.md, got:\n{soul_content}"
-            assert "## Verfügbare MCP-Werkzeuge (pib_mcp_server)" in soul_content
-            assert "mcp__pib__list_motors" in soul_content
-            assert "mcp__pib__get_state" in soul_content
-            assert "mcp__pib__list_poses" in soul_content
-            assert "mcp__pib__list_programs" in soul_content
-            assert "mcp__pib__capture_image" in soul_content
-            assert "mcp__pib__move_motor" in soul_content
+            # The template no longer documents the MCP tools, so a fresh SOUL
+            # carries neither the section nor any tool name.
+            assert "MCP-Werkzeuge" not in soul_content
+            for tool in (
+                "mcp__pib__list_motors",
+                "mcp__pib__get_state",
+                "mcp__pib__list_poses",
+                "mcp__pib__list_programs",
+                "mcp__pib__capture_image",
+                "mcp__pib__move_motor",
+            ):
+                assert tool not in soul_content
 
         finally:
             browser.close()
