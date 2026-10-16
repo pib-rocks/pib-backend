@@ -1085,7 +1085,6 @@ class ChatNode(Node):
         if legacy_direct_text_selected(
             channel=channel,
             api_name=api_name,
-            tool_calling=tool_calling,
             voice_mode=getattr(personality, "voice_mode", None),
         ):
             return self._finish_retired_direct_text(goal_handle, chat_id, api_name)
@@ -1185,10 +1184,6 @@ class ChatNode(Node):
                     personality, tool_calling
                 )
                 api_name = personality.assistant_model.api_name
-                if not tool_calling:
-                    return self._finish_retired_direct_text(
-                        goal_handle, chat_id, api_name
-                    )
                 if not direct_tool_loop.supports_tool_endpoint(api_name):
                     raise direct_tool_loop.DirectToolLoopError(
                         "Direct tool calling has no non-beta endpoint for "
@@ -1218,7 +1213,7 @@ class ChatNode(Node):
                         (message.content, message.is_user)
                         for message in message_history
                     ],
-                    tool_calling=True,
+                    tool_calling=tool_calling,
                     allow_image=allow_image,
                     report_key_source=report_key_source,
                 )

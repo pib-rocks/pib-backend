@@ -557,15 +557,15 @@ def _retired_validation_field(
     before: Optional[_DispatchSelection],
     after: _DispatchSelection,
 ) -> str:
-    """The request field that entered the retired combination."""
+    """The request field that entered the retired combination.
+
+    The tool-calling flag is deliberately absent: it no longer selects a
+    transport, so it can not be the field that makes a selection obsolete.
+    """
     if not creating and before is not None:
-        if before.tool_calling != after.tool_calling:
-            return "toolCalling"
         if before.channel != after.channel:
             return "channel"
         return _model_validation_field(personality_dto)
-    if "tool_calling" in personality_dto and not bool(personality_dto["tool_calling"]):
-        return "toolCalling"
     if personality_dto.get("channel"):
         return "channel"
     return _model_validation_field(personality_dto)
@@ -588,7 +588,6 @@ def _reject_retired_direct_text(
     if not legacy_direct_text_selected(
         channel=after.channel,
         api_name=after.api_name,
-        tool_calling=after.tool_calling,
         voice_mode=after.voice_mode,
     ):
         return
