@@ -105,15 +105,13 @@ def test_sse_stream_flushes_first_sentence_to_tts_before_stream_done():
             token_fetcher=lambda: {"mode": "unlocked", "secret": "row4-secret-token"},
             http_post=fake_post,
         )
-        accumulated = ""
         for tok in tokens:
-            accumulated += tok
-            for clause in speech.take(accumulated, False):
+            for clause in speech.take(tok, False):
                 spoken_clauses.append((clause, time.monotonic()))
                 if "ich bin pib." in clause:
                     first_sentence_spoken.set()
                     allow_second_sentence.set()
-        for clause in speech.take(accumulated, True):
+        for clause in speech.take("", True):
             spoken_clauses.append((clause, time.monotonic()))
 
     worker = threading.Thread(target=run_consumer)

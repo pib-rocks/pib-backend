@@ -15,6 +15,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from pib_hermes_config.turn_taking import speakable_answer
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 VOICE_ASSISTANT_PKG = REPO_ROOT / "ros_packages" / "voice_assistant"
 if str(VOICE_ASSISTANT_PKG) not in sys.path:
@@ -23,6 +25,37 @@ if str(VOICE_ASSISTANT_PKG) not in sys.path:
 
 TEXT_TYPE_SENTENCE = 0
 TEXT_TYPE_CODE_VISUAL = 1
+
+
+def _sentence_feedback_texts(goal_handle) -> list[str]:
+    texts: list[str] = []
+    for call in goal_handle.publish_feedback.call_args_list:
+        fb = call[0][0]
+        if fb.text_type == TEXT_TYPE_SENTENCE:
+            texts.append(fb.text)
+    return texts
+
+
+def _assert_delta_only_sentence_feedback(
+    feedback_texts: list[str],
+    raw_answer: str,
+    *,
+    first_token: str | None = None,
+) -> None:
+    """SENTENCE feedback must be incremental deltas that concatenate to the speakable answer."""
+    expected_full = speakable_answer(raw_answer)
+    assert feedback_texts, "expected at least one SENTENCE feedback delta"
+    if first_token is not None:
+        assert feedback_texts[0] == first_token
+    emitted = ""
+    for piece in feedback_texts:
+        assert piece, "empty SENTENCE feedback payload is invalid here"
+        assert expected_full.startswith(emitted + piece)
+        emitted += piece
+    assert emitted == expected_full
+    if len(feedback_texts) > 1:
+        for piece in feedback_texts:
+            assert piece != expected_full, "cumulative full-answer payload in feedback"
 
 
 def _install_ros_stubs():
@@ -627,9 +660,9 @@ def test_stream_chunks_to_goal_splits_sentences(chat_module, chat_node):
         goal_handle, "chat-1", ["Hallo Welt. "]
     )
 
-    # Last completed sentence stays in prev for Chat.Result; nothing left in curr.
-    assert prev == "Hallo Welt."
-    assert ptype == TEXT_TYPE_SENTENCE
+    # Speech was emitted in feedback; Chat.Result tail is empty.
+    assert prev is None
+    assert ptype is None
     assert curr == ""
     chat_node.create_chat_message.assert_called()
     # TTFT fast-path publishes the first token immediately as feedback.
@@ -667,17 +700,15 @@ def test_stream_chunks_to_goal_persists_text_without_terminator(chat_module, cha
 
     texts = [call[0][1] for call in chat_node.create_chat_message.call_args_list]
     assert texts == ["Eins.", "Zwei ohne Punkt"]
-    # The completed sentence goes out as feedback so the tail can ride along in
-    # Chat.Result, which the caller only fills from curr_text when prev is None.
+    # Every speakable piece travelled as a feedback delta, so the Result
+    # carries no second copy of the tail (measured: text is empty).
     assert prev is None
     assert ptype is None
-    assert curr == "Zwei ohne Punkt"
-    # First call is TTFT immediate emit of "Eins. "; later call publishes prior sentence.
-    feedback_texts = [
-        call[0][0].text for call in goal_handle.publish_feedback.call_args_list
-    ]
-    assert "Eins. " in feedback_texts
-    assert "Eins." in feedback_texts
+    assert curr == ""
+    feedback_texts = _sentence_feedback_texts(goal_handle)
+    _assert_delta_only_sentence_feedback(
+        feedback_texts, "Eins. Zwei ohne Punkt", first_token="Eins. "
+    )
 
 
 def test_stream_chunks_to_goal_creates_when_only_unterminated_text_arrives(
@@ -694,7 +725,13 @@ def test_stream_chunks_to_goal_creates_when_only_unterminated_text_arrives(
         "chat-1", "Antwort ohne Satzzeichen", False, False, True
     )
     assert prev is None
-    assert curr == "Antwort ohne Satzzeichen"
+    assert curr == ""
+    feedback_texts = _sentence_feedback_texts(goal_handle)
+    _assert_delta_only_sentence_feedback(
+        feedback_texts,
+        "Antwort ohne Satzzeichen",
+        first_token="Antwort ohne Satzzeichen",
+    )
     # TTFT: first token is published immediately even without a terminator.
     assert goal_handle.publish_feedback.call_count >= 1
     assert (
@@ -709,20 +746,17 @@ def test_stream_chunks_to_goal_publishes_prior_sentence_as_feedback(
     goal_handle = MagicMock()
     goal_handle.is_cancel_requested = False
 
-    # Feedback for a completed sentence is published when the *next* token arrives.
-    # Plus TTFT immediate emit of the first token.
     prev, ptype, curr = chat_node._stream_chunks_to_goal(
         goal_handle, "chat-1", ["Eins. ", "Zwei."]
     )
 
-    assert goal_handle.publish_feedback.call_count >= 2
-    feedback_texts = [
-        call[0][0].text for call in goal_handle.publish_feedback.call_args_list
-    ]
-    assert "Eins. " in feedback_texts  # TTFT first-token emit
-    assert "Eins." in feedback_texts  # prior completed sentence
-    assert prev == "Zwei."
-    assert ptype == TEXT_TYPE_SENTENCE
+    feedback_texts = _sentence_feedback_texts(goal_handle)
+    _assert_delta_only_sentence_feedback(
+        feedback_texts, "Eins. Zwei.", first_token="Eins. "
+    )
+    assert feedback_texts[-1] == "Zwei."
+    assert prev is None
+    assert ptype is None
     assert curr == ""
 
 
@@ -736,11 +770,14 @@ def test_stream_chunks_to_goal_extracts_pib_program(chat_module, chat_node):
     prev, ptype, curr = chat_node._stream_chunks_to_goal(goal_handle, "chat-1", tokens)
 
     assert goal_handle.publish_feedback.call_count >= 2
-    feedback_texts = [
-        call[0][0].text for call in goal_handle.publish_feedback.call_args_list
-    ]
-    assert "Hallo. " in feedback_texts
-    assert "Hallo." in feedback_texts
+    feedback_texts = _sentence_feedback_texts(goal_handle)
+    # Speakable sentence only; the Blockly block travels as Chat.Result.
+    # The helper derives the speakable target from the raw answer itself.
+    _assert_delta_only_sentence_feedback(
+        feedback_texts,
+        "Hallo. <pib-program>xml-here</pib-program>",
+        first_token="Hallo. ",
+    )
     assert prev == "xml-here"
     assert ptype == TEXT_TYPE_CODE_VISUAL
     assert curr == ""
@@ -757,13 +794,11 @@ def test_stream_chunks_publishes_a_clause_before_the_sentence_ends(
         goal_handle, "chat-1", ["Sure", ", I can", " help you."]
     )
 
-    feedback_texts = [
-        call[0][0].text for call in goal_handle.publish_feedback.call_args_list
-    ]
-    assert feedback_texts[0] == "Sure"
-    assert "Sure," in feedback_texts
-    assert "I can help you." in feedback_texts
-    assert feedback_texts.index("Sure,") < feedback_texts.index("I can help you.")
+    feedback_texts = _sentence_feedback_texts(goal_handle)
+    _assert_delta_only_sentence_feedback(
+        feedback_texts, "Sure, I can help you.", first_token="Sure"
+    )
+    assert feedback_texts.index(",") < feedback_texts.index(" help you.")
     chat_node._remember_first_token_latency.assert_called()
     chat_id, elapsed_ms = chat_node._remember_first_token_latency.call_args[0]
     assert chat_id == "chat-1"
@@ -2125,11 +2160,6 @@ def test_chat_node_routes_pib_cloud_and_flushes_first_sentence(chat_module, chat
     goal_handle.request.text = "Sag zwei Saetze."
     goal_handle.request.generate_code = False
 
-    feedback_events: list[str] = []
-    goal_handle.publish_feedback.side_effect = lambda fb: feedback_events.append(
-        fb.text
-    )
-
     with (
         patch.object(
             chat_module.voice_assistant_client,
@@ -2151,7 +2181,14 @@ def test_chat_node_routes_pib_cloud_and_flushes_first_sentence(chat_module, chat
 
     cloud_stream.assert_called_once()
     goal_handle.succeed.assert_called_once()
-    assert "Erster Satz." in feedback_events
-    assert result.text == "Zweiter Satz."
+    feedback_events = _sentence_feedback_texts(goal_handle)
+    _assert_delta_only_sentence_feedback(
+        feedback_events,
+        "Erster Satz. Zweiter Satz.",
+        first_token="Erster ",
+    )
+    # Both sentences already travelled as feedback deltas, so the Result
+    # carries no duplicate copy (speech stays once-only).
+    assert result.text == ""
     info_logs = [call[0][0] for call in logger.info.call_args_list]
     assert any("FIRST_SENTENCE_FLUSHED" in line for line in info_logs)
