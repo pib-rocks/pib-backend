@@ -90,6 +90,22 @@ DEFAULT_HERMES_PROVIDER = "gemini"
 # Written into the agent block. Hermes reads agent.reasoning_effort and
 # ignores the same keys at the config root.
 DEFAULT_REASONING_EFFORT = "low"
+
+# Provider name of the pib.Cloud route. The cloud decides the reasoning effort of its own upstream
+# call (Settings.reasoning_effort), so a value in the profile only travels with every request and
+# its API refuses the field - measured as a 400 on `reasoning_effort` (PC-69).
+PIB_CLOUD_PROVIDER = "pib-cloud"
+
+# The tools a robot personality may see (decision 2026-10-16, extended the same day): the MCP
+# server's tools, memory, and the Hermes skills, so a personality can read its own skills. Before this
+# the profile was cloned with the whole Hermes tool zoo, so the cloud model picked vision_analyze or
+# the generic tool dispatcher and narrated an answer instead of calling the robot tool (PC-70).
+ROBOT_TOOLSETS = ("pib", "memory", "skills")
+
+# The Hermes platform the robot's agent runs as (measured: the daemon's turn logs platform=cli), and
+# the config key that maps a platform to its toolsets.
+ROBOT_PLATFORM = "cli"
+PLATFORM_TOOLSETS_KEY = "platform_toolsets"
 DEFAULT_MAX_TOKENS = 1024
 DEFAULT_TEMPERATURE = 0.3
 
@@ -296,6 +312,7 @@ def _apply_agent_speed_defaults(
     reasoning_effort: Optional[str] = None,
     *,
     personality_reasoning: bool = False,
+    provider: Optional[str] = None,
 ) -> bool:
     """Write speed settings into the agent block. Returns whether cfg changed.
 
@@ -309,6 +326,19 @@ def _apply_agent_speed_defaults(
     ``max_tokens`` and ``temperature`` are seeded only when absent.
     """
     agent, changed = _agent_block(cfg)
+    if provider == PIB_CLOUD_PROVIDER:
+        # The cloud sets the effort itself; every value here is one more field the cloud refuses.
+        # Purging rather than skipping also repairs profiles that already carry it (PC-69).
+        if "reasoning_effort" in agent:
+            del agent["reasoning_effort"]
+            changed = True
+        if "max_tokens" not in agent:
+            agent["max_tokens"] = DEFAULT_MAX_TOKENS
+            changed = True
+        if "temperature" not in agent:
+            agent["temperature"] = DEFAULT_TEMPERATURE
+            changed = True
+        return changed
     if personality_reasoning:
         if reasoning_effort is not None:
             if reasoning_effort not in REASONING_EFFORTS:
@@ -396,11 +426,26 @@ def _ensure_mcp_servers_pib(
             cfg["provider"] = desired_provider
             changed = True
 
+    # The robot tool surface: the MCP server's tools and memory, nothing else. Written on every
+    # provisioning run so a profile cloned with the full Hermes configuration (browser, web, image
+    # generation, vision, terminal, the generic tool dispatcher) is narrowed as well - the cloud
+    # model with fifty choices picked the wrong ones and narrated an answer instead of calling the
+    # robot tool (PC-70).
+    toolsets = cfg.get(PLATFORM_TOOLSETS_KEY)
+    if not isinstance(toolsets, dict):
+        toolsets = {}
+        cfg[PLATFORM_TOOLSETS_KEY] = toolsets
+        changed = True
+    if toolsets.get(ROBOT_PLATFORM) != list(ROBOT_TOOLSETS):
+        toolsets[ROBOT_PLATFORM] = list(ROBOT_TOOLSETS)
+        changed = True
+
     # Decision 5, corrected: speed defaults live in the agent block.
     if _apply_agent_speed_defaults(
         cfg,
         reasoning_effort,
         personality_reasoning=personality_reasoning,
+        provider=desired_provider,
     ):
         changed = True
 
