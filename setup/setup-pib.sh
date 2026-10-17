@@ -573,8 +573,12 @@ cfg_path = '/home/pib/.hermes/config.yaml'
 # public_api_client.hermes_agent_client.PIB_MCP_SERVER;
 # tests/unit/test_setup_hermes_model_pin.py fails if the two ever drift.
 flask_url = os.environ.get('FLASK_API_BASE_URL', 'http://flask-app:5000')
+# The interpreter the installers put pib_mcp_server AND its runtime dependencies into
+# (this script and the voice image both install into the system Python). A bare 'python3'
+# resolves to the Hermes install venv when the CLI spawns the server, and that venv carries
+# pib_mcp_server without websocket-client - every rosbridge tool call then failed (PC-71).
 pib_mcp_server = {
-    'command': 'python3',
+    'command': os.environ.get('PIB_MCP_PYTHON', '/usr/bin/python3'),
     'args': ['-m', 'pib_mcp_server'],
     'env': {
         'FLASK_API_BASE_URL': flask_url,
