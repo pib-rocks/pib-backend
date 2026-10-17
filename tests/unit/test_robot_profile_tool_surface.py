@@ -132,3 +132,12 @@ def test_a_broader_toolset_list_is_narrowed_for_the_robot_platform_only(tmp_path
     cfg = _read_profile(pdir)
     assert cfg["platform_toolsets"]["cli"] == list(ROBOT_TOOLSETS)
     assert cfg["platform_toolsets"]["telegram"] == ["hermes-telegram"]
+
+
+def test_the_mcp_server_runs_on_the_interpreter_that_has_its_dependencies():
+    """PC-71: a bare "python3" resolved to the Hermes venv, which lacks websocket-client."""
+    from public_api_client.hermes_agent_client import MCP_SERVER_PYTHON, PIB_MCP_SERVER
+
+    assert MCP_SERVER_PYTHON == "/usr/bin/python3"
+    assert PIB_MCP_SERVER["command"] == MCP_SERVER_PYTHON
+    assert PIB_MCP_SERVER["args"] == ["-m", "pib_mcp_server"]

@@ -66,8 +66,15 @@ ENV_FILE_MODE = 0o600
 # docker-compose.yaml. The single definition of that entry — setup/setup-pib.sh
 # seeds the same one and tests/unit/test_setup_hermes_model_pin.py fails if the
 # two ever drift.
+# Interpreter that runs the MCP server. It must be the one the installers put pib_mcp_server AND its
+# runtime dependencies into (Dockerfile and setup-pib.sh both install into the system Python with
+# --break-system-packages). A bare "python3" resolves to the Hermes install venv when the CLI spawns
+# the server, and that venv carries pib_mcp_server without websocket-client - every tool that goes
+# through rosbridge then failed with an ImportError while the read tools kept working (PC-71).
+MCP_SERVER_PYTHON = os.getenv("PIB_MCP_PYTHON", "/usr/bin/python3")
+
 PIB_MCP_SERVER = {
-    "command": "python3",
+    "command": MCP_SERVER_PYTHON,
     "args": ["-m", "pib_mcp_server"],
     "env": {
         "FLASK_API_BASE_URL": os.getenv("FLASK_API_BASE_URL", "http://flask-app:5000"),
@@ -293,6 +300,14 @@ def _merge_missing_mcp_env(entry: dict) -> bool:
     for key, value in PIB_MCP_SERVER["env"].items():
         if key not in env:
             env[key] = value
+            changed = True
+    # The interpreter is repaired too, but only where the shipped default is still in place: a bare
+    # "python3" resolves to the Hermes venv when the CLI spawns the server, and that venv carries
+    # pib_mcp_server without websocket-client (PC-71). A deliberate absolute path stays untouched.
+    shipped_args = entry.get("args") in (None, PIB_MCP_SERVER["args"])
+    if shipped_args and entry.get("command") in (None, "", "python3"):
+        if entry.get("command") != MCP_SERVER_PYTHON:
+            entry["command"] = MCP_SERVER_PYTHON
             changed = True
     return changed
 

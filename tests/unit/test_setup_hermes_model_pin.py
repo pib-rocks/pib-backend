@@ -16,7 +16,10 @@ SETUP_PIB = REPO_ROOT / "setup" / "setup-pib.sh"
 # server is spawned by Hermes without the parent environment, so the entry has
 # to carry these URLs itself.
 EXPECTED_PIB_ENTRY = {
-    "command": "python3",
+    # The system Python the installer (and the voice image) put pib_mcp_server and its runtime
+    # dependencies into; a bare python3 resolves to the Hermes venv, which lacks websocket-client
+    # (PC-71).
+    "command": "/usr/bin/python3",
     "args": ["-m", "pib_mcp_server"],
     "env": {
         "FLASK_API_BASE_URL": "http://flask-app:5000",
