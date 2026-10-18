@@ -150,16 +150,20 @@ def test_systemd_tmpfiles_is_a_no_op_before_any_apt_install(relative):
     assert divert < text.index("apt-get install"), relative
 
 
-def test_the_flask_image_can_import_hermes_on_python_311():
-    """hermes-agent 0.19 refuses Python 3.10, which is why flask is 3.11.
+def test_the_flask_image_can_import_hermes_on_python_312():
+    """hermes-agent 0.19 refuses Python 3.10, and 3.12 is what ros:jazzy ships.
 
+    One Python version on the API side, and the same one the unit-test job runs.
     --no-deps: the package pins a newer requests than Flask's requirements.
     hermes_constants and hermes_cli import with the standard library alone.
     """
     text = (REPO_ROOT / "pib_api/flask/Dockerfile").read_text(encoding="utf-8")
-    assert "FROM python:3.11-slim" in text
+    assert "FROM python:3.12-slim" in text
     assert "hermes-agent==0.19.0" in text
     assert "--no-deps hermes-agent==0.19.0" in text
+    # The base image and the unit-test job must not drift apart again.
+    workflow = (REPO_ROOT / ".github/workflows/tests.yml").read_text(encoding="utf-8")
+    assert 'python-version: "3.12"' in workflow
 
 
 def test_the_voice_image_installs_the_mcp_server_dependencies_itself():

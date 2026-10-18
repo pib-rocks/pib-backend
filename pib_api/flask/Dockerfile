@@ -1,5 +1,6 @@
-# 3.11 matches the unit-test job. hermes-agent (below) refuses Python 3.10.
-FROM python:3.11-slim
+# 3.12 matches the unit-test job and matches the ROS images (ros:jazzy ships 3.12),
+# so the API side speaks one Python version. hermes-agent (below) refuses 3.10.
+FROM python:3.12-slim
 
 WORKDIR /app
 
