@@ -48,7 +48,8 @@ validates it and resolves the current Docker/network facts at apply time.
 is `172.18.0.1`. The runtime discovery and regression test cover this distinction.
 
 Provider addresses are DNS snapshots, not SNI restrictions. The optional timer
-refreshes the snapshot and current port binding every 30 seconds. Address changes
+refreshes the snapshot and current port binding every 15 minutes (`OnUnitInactiveSec=900s`, was 30
+seconds until the refresh cost was measured: 1.0 s CPU per run, 121 s CPU per hour). Address changes
 can interrupt an existing connection if its old address is no longer in the set;
 continuous-stream behavior across DNS rotation has not been accepted as proven.
 

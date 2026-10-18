@@ -3,7 +3,7 @@ Description=Refresh voice-port binding and allowed provider addresses
 
 [Timer]
 OnBootSec=20s
-OnUnitInactiveSec=30s
+OnUnitInactiveSec=900s
 AccuracySec=1s
 Unit=pib-voice-egress.service
 

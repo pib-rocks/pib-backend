@@ -359,7 +359,7 @@ def test_refresh_unit_does_not_undo_rules_when_it_finishes():
     timer = (EGRESS / "pib-voice-egress.timer").read_text()
     assert "RemainAfterExit=yes" not in service
     assert "\nExecStop=" not in service
-    assert "OnUnitInactiveSec=30s" in timer
+    assert "OnUnitInactiveSec=900s" in timer
     assert "Unit=pib-voice-egress.service" in timer
 
 
