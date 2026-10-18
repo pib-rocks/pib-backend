@@ -37,8 +37,11 @@ IPV6_NOTE = (
 )
 ALWAYS_MODES = frozenset({"common"})
 REQUIRED_IDS = ("pib-cloud", "ollama", "pib-network", "gemini")
-CLOUD_ADDRESS = "192.168.1.252"
-CLOUD_PORT = 8090
+CLOUD_ADDRESS = "api.pib.rocks"
+CLOUD_PORT = 443
+#: How the cloud destination reaches the ruleset: a name is resolved at apply
+#: time (pib.Cloud is a public HTTPS host, not a LAN address any more).
+CLOUD_RESOLVE = "dns"
 GEMINI_MODES = frozenset({"direct", "smart", "live"})
 SECRET_BASENAMES = frozenset({".env", "credentials.json", "auth.json", "secrets.json"})
 PROBE_TIMEOUT_SECONDS = 3
@@ -226,7 +229,7 @@ def preflight_static(allowlist: Allowlist) -> None:
         cloud.destination != CLOUD_ADDRESS
         or cloud.port != CLOUD_PORT
         or cloud.protocol != "tcp"
-        or cloud.resolve != "literal"
+        or cloud.resolve != CLOUD_RESOLVE
         or cloud.hook != "forward"
     ):
         raise PolicyError(
@@ -316,6 +319,15 @@ def _iface(name: str, label: str) -> str:
     return name
 
 
+def _cloud_literal_address() -> Optional[ipaddress.IPv4Address]:
+    """The cloud destination as an address, when the allowlist pins one by IP."""
+    try:
+        parsed = ipaddress.ip_address(CLOUD_ADDRESS)
+    except ValueError:
+        return None
+    return parsed if isinstance(parsed, ipaddress.IPv4Address) else None
+
+
 def _binding_network(binding: RuntimeBinding) -> ipaddress.IPv4Network:
     try:
         network = ipaddress.ip_network(binding.bridge_subnet, strict=True)
@@ -325,8 +337,8 @@ def _binding_network(binding: RuntimeBinding) -> ipaddress.IPv4Network:
         raise PolicyError("bridge subnet must be IPv4")
     if not 8 <= network.prefixlen <= 30:
         raise PolicyError("bridge subnet prefix is not a docker bridge")
-    cloud = ipaddress.ip_address(CLOUD_ADDRESS)
-    if cloud in network:
+    cloud = _cloud_literal_address()
+    if cloud is not None and cloud in network:
         raise PolicyError(
             "bridge subnet contains the cloud host; refusing an over-broad allow"
         )
@@ -367,6 +379,14 @@ def tcp_allows(
             addresses = (entry.destination,)
         elif entry.resolve == "dns":
             addresses = _dns_ips(entry, binding)
+            if entry.id == "pib-cloud":
+                network = _binding_network(binding)
+                for address in addresses:
+                    if ipaddress.ip_address(address) in network:
+                        raise PolicyError(
+                            "resolved cloud address is inside the bridge subnet; "
+                            "refusing an over-broad allow"
+                        )
         elif entry.resolve == "bridge-gateway":
             address = ipaddress.ip_address(binding.host_address)
             if not isinstance(address, ipaddress.IPv4Address):

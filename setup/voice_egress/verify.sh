@@ -11,7 +11,7 @@ BLANK="${PIB_VOICE_EGRESS_BLANK:-$ROOT/blank.env}"
 APPLIED="${PIB_VOICE_EGRESS_APPLIED:-/var/lib/pib-voice-egress/applied.nft}"
 NFT="${NFT:-nft}"
 TABLE="pib_voice_egress"
-CLOUD="http://192.168.1.252:8090"
+CLOUD="https://api.pib.rocks"
 WAV="${PIB_VOICE_EGRESS_WAV:-/app/ros2_ws/voice_assistant/assets/stt_self_check.wav}"
 FAIL=0
 

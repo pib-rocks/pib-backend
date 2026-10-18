@@ -170,7 +170,7 @@ services:
       - ALSA_CARD=ArrayUAC10
       - FLASK_API_BASE_URL=http://flask-app:5000
       # Sold cloud API, distinct from the robot-local Flask API above.
-      - PIB_CLOUD_BASE_URL=${PIB_CLOUD_BASE_URL:-http://192.168.1.252:8090/v1}
+      - PIB_CLOUD_BASE_URL=${PIB_CLOUD_BASE_URL:-https://api.pib.rocks/v1}
       - PIB_CLOUD_STT_TIMEOUT_SECONDS=${PIB_CLOUD_STT_TIMEOUT_SECONDS:-3}
       - PIB_CLOUD_MODE=${PIB_CLOUD_MODE:-test}
       - VOICE_ASSISTANT_DIR=/app/ros2_ws/voice_assistant

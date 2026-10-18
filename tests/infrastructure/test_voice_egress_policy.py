@@ -46,6 +46,7 @@ def _binding(**dns):
     addresses = dns or {
         "generativelanguage.googleapis.com": ("203.0.113.10", "203.0.113.11"),
         "huggingface.co": ("203.0.113.20", "203.0.113.21"),
+        "api.pib.rocks": ("203.0.113.30",),
     }
     return mod.RuntimeBinding(
         veth="vethvoice1",
@@ -74,8 +75,9 @@ def test_shipped_allowlist_keeps_required_destinations_and_disables_tryb():
     allow = mod.load_allowlist(str(ALLOWLIST_PATH))
     by_id = {entry.id: entry for entry in allow.entries}
     assert by_id["pib-cloud"].enabled is True
-    assert by_id["pib-cloud"].destination == "192.168.1.252"
-    assert by_id["pib-cloud"].port == 8090
+    assert by_id["pib-cloud"].destination == "api.pib.rocks"
+    assert by_id["pib-cloud"].port == 443
+    assert by_id["pib-cloud"].resolve == "dns"
     assert by_id["pib-network"].enabled is True
     assert by_id["gemini"].enabled is True
     assert {"direct", "smart", "live"} <= set(by_id["gemini"].modes)
@@ -88,7 +90,7 @@ def test_static_preflight_refuses_a_missing_cloud_destination():
     for entry in raw["entries"]:
         if entry["id"] == "pib-cloud":
             entry["destination"] = "10.0.0.1"
-    with pytest.raises(mod.PolicyError, match="192.168.1.252"):
+    with pytest.raises(mod.PolicyError, match="api.pib.rocks"):
         mod.allowlist_from_dict(raw)
 
 
@@ -96,7 +98,7 @@ def test_rendered_tcp_allows_match_the_enabled_allowlist_exactly():
     allow = mod.load_allowlist(str(ALLOWLIST_PATH))
     text = mod.render_ruleset(allow, _binding())
     assert _tcp_tokens(text) == {
-        ("192.168.1.252", "8090"),
+        ("203.0.113.30", "443"),
         ("203.0.113.10", "443"),
         ("203.0.113.11", "443"),
         ("203.0.113.20", "443"),
@@ -122,6 +124,7 @@ def test_enabling_tryb_adds_only_that_destination():
             **{
                 "generativelanguage.googleapis.com": ("203.0.113.10",),
                 "huggingface.co": ("203.0.113.20",),
+                "api.pib.rocks": ("203.0.113.30",),
                 "platform.tryb.ai": ("198.51.100.20",),
             }
         ),
@@ -179,15 +182,20 @@ def test_mode_filter_cannot_drop_direct_smart_or_live():
 
 
 def test_bridge_subnet_must_not_swallow_the_cloud_host_or_the_default_route():
+    """The cloud is a public name now, so the guard runs on its resolved address."""
     allow = mod.load_allowlist(str(ALLOWLIST_PATH))
     wide = mod.RuntimeBinding(
         veth="vethvoice1",
         bridge="br-pibtest01",
         bridge_subnet="192.168.1.0/24",
         gateway="192.168.1.1",
-        dns_addresses={"generativelanguage.googleapis.com": ("203.0.113.10",)},
+        dns_addresses={
+            "generativelanguage.googleapis.com": ("203.0.113.10",),
+            "huggingface.co": ("203.0.113.20",),
+            "api.pib.rocks": ("192.168.1.50",),
+        },
     )
-    with pytest.raises(mod.PolicyError, match="cloud host"):
+    with pytest.raises(mod.PolicyError, match="inside the bridge subnet"):
         mod.render_ruleset(allow, wide)
     default = mod.RuntimeBinding(
         veth="vethvoice1",
@@ -246,7 +254,7 @@ def test_deadline_is_bounded_and_apply_reverts():
     after_failure = text.split("self_check=failed", 1)[1]
     assert "recover_policy" in after_failure[:500]
     assert "table inet pib_voice_egress {" not in text
-    assert "http://192.168.1.252:8090/ready" in text
+    assert "https://api.pib.rocks/ready" in text
     assert "flask-app" in text
     assert "rosbridge-ws" in text
 

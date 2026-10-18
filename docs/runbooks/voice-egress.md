@@ -35,7 +35,7 @@ validates it and resolves the current Docker/network facts at apply time.
 
 | Destination | Port | Purpose |
 |---|---|---|
-| `192.168.1.252` | TCP 8090 | pib.Cloud STT and streaming chat |
+| `api.pib.rocks` | TCP 443 | pib.Cloud STT and streaming chat (public HTTPS host) |
 | `host.docker.internal` | TCP 11434 | Local Ollama; resolve inside the container |
 | Robot bridge peers except its gateway | Internal protocols | Flask, rosbridge and ROS DDS |
 | `224.0.0.0/4`, IGMP on this bridge | Multicast | ROS DDS discovery |

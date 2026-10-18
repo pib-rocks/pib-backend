@@ -22,13 +22,13 @@
       "modes": [
         "common"
       ],
-      "destination": "192.168.1.252",
-      "port": 8090,
+      "destination": "api.pib.rocks",
+      "port": 443,
       "protocol": "tcp",
-      "resolve": "literal",
+      "resolve": "dns",
       "hook": "forward",
       "purpose": "pib.Cloud speech-to-text upload and streaming chat.",
-      "evidence": "Measured on .172 on 2026-10-15 (PC-45 plan): PIB_CLOUD_BASE_URL=http://192.168.1.252:8090/v1 and GET /ready returned 200. Code: ros_packages/voice_assistant/voice_assistant/cloud_stt.py speech_to_text_url and pib_cloud_stream.py. Not re-measured from this session."
+      "evidence": "Measured on .172 on 2026-10-18 (PC-75): GET https://api.pib.rocks/health 200, GET /ready 200 {ready:true, model:openai/gpt-oss-120b, provider:groq, upstream:warm}, GET /v1/models 401 with the same error contract as the retired LAN port, and POST /v1/voice-assistant/speech-to-text 400 (same multipart contract). The container resolves api.pib.rocks to 178.105.138.93 through Docker DNS, so resolve:dns has an address at apply time."
     },
     {
       "id": "ollama",
