@@ -1862,9 +1862,7 @@ def test_a_turn_announces_its_transport_and_model_on_the_trace_topic(
                 "run_direct_turn",
                 return_value=iter(["Hallo."]),
             ),
-            patch.object(
-                chat_node, "_stream_hermes_turn", return_value=["Hallo."]
-            ),
+            patch.object(chat_node, "_stream_hermes_turn", return_value=["Hallo."]),
             patch.object(
                 chat_node,
                 "_stream_chunks_to_goal",
