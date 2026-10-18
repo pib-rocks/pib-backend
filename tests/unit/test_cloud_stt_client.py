@@ -163,9 +163,15 @@ def test_production_requires_tls_and_flask_is_not_destination(monkeypatch):
     monkeypatch.delenv("PIB_CLOUD_BASE_URL", raising=False)
     assert (
         client.speech_to_text_url()
-        == "http://192.168.1.252:8090/v1/voice-assistant/speech-to-text"
+        == "https://api.pib.rocks/v1/voice-assistant/speech-to-text"
     )
     monkeypatch.setenv("PIB_CLOUD_MODE", "production")
+    # The shipped default is TLS now, so production no longer refuses it.
+    assert (
+        client.speech_to_text_url()
+        == "https://api.pib.rocks/v1/voice-assistant/speech-to-text"
+    )
+    monkeypatch.setenv("PIB_CLOUD_BASE_URL", "http://cloud.example")
     with pytest.raises(ValueError):
         client.speech_to_text_url()
     monkeypatch.setenv("PIB_CLOUD_BASE_URL", "https://cloud.example")

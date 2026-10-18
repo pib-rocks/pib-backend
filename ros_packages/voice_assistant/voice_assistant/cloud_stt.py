@@ -18,7 +18,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
-DEFAULT_BASE = "http://192.168.1.252:8090/v1"
+DEFAULT_BASE = "https://api.pib.rocks/v1"
 MAX_RESPONSE_BYTES = 65536
 
 

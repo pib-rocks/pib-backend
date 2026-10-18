@@ -103,7 +103,7 @@ probe_tcp() {
 
 baseline() {
   local code
-  code="$(probe_http "http://192.168.1.252:8090/ready")"
+  code="$(probe_http "https://api.pib.rocks/ready")"
   if [[ "$code" != "200" ]]; then
     echo "baseline_cloud=$code" >&2
     echo "policy_error=refusing to apply; cloud :8090 is not reachable" >&2
@@ -118,7 +118,7 @@ baseline() {
 
 self_check() {
   local code
-  code="$(probe_http "http://192.168.1.252:8090/ready")"
+  code="$(probe_http "https://api.pib.rocks/ready")"
   echo "self_check_cloud=$code"
   if [[ "$code" != "200" ]]; then
     return 1

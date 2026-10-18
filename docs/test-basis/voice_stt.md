@@ -48,7 +48,7 @@ And no uncaught exceptions are raised
 Selecting `cloud_whisper` posts one WAV multipart `file` to the sold cloud API
 `/v1/voice-assistant/speech-to-text`, with optional pinned `language`.
 `PIB_CLOUD_BASE_URL` is the cloud service root or `/v1` base (LAN default
-`http://192.168.1.252:8090/v1`), **not** `FLASK_API_BASE_URL`, which is robot-local.
+`https://api.pib.rocks/v1`), **not** `FLASK_API_BASE_URL`, which is robot-local.
 `PIB_CLOUD_MODE=production` requires HTTPS. Userinfo, query, fragment and unrelated
 paths are refused. No bearer token, provider credential, proxy environment or
 redirect is used. `X-Request-ID` is a UUID logged on both robot and API. The action

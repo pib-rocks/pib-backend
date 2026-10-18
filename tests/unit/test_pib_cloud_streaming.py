@@ -102,7 +102,7 @@ def test_sse_stream_flushes_first_sentence_to_tts_before_stream_done():
         tokens = stream_pib_cloud_chat(
             system_prompt="Du bist pib.",
             user_text="Sag hallo.",
-            endpoint_base="http://192.168.1.252:8090/v1",
+            endpoint_base="https://api.pib.rocks/v1",
             token_fetcher=lambda: {"mode": "unlocked", "secret": "row4-secret-token"},
             http_post=fake_post,
         )
@@ -121,7 +121,7 @@ def test_sse_stream_flushes_first_sentence_to_tts_before_stream_done():
     worker.join(timeout=2.0)
     assert not worker.is_alive()
 
-    assert captured_req["url"] == "http://192.168.1.252:8090/v1/chat/completions"
+    assert captured_req["url"] == "https://api.pib.rocks/v1/chat/completions"
     assert captured_req["headers"]["Authorization"] == "Bearer row4-secret-token"
     assert captured_req["stream"] is True
     assert "model" not in captured_req["json"]
