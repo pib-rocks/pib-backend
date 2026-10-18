@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import errno
+import importlib
 import json
 import logging
 import os
@@ -1506,6 +1507,45 @@ def test_hermes_source_is_placed_in_front_of_sys_path(tmp_path, monkeypatch):
     assert hd.sys.path[0] == str(agent_dir)
     assert hd.sys.path.count(str(agent_dir)) == 1
     assert hd.sys.path.count(str(venv)) == 1
+
+
+def test_foreign_hermes_modules_are_dropped_so_the_mounted_source_wins(
+    tmp_path, monkeypatch
+):
+    """A module imported before the path was prepared must not shadow the mounted source.
+
+    Live, provisioning imported ``hermes_cli`` from the mounted tree while
+    ``hermes_constants`` stayed cached from the container's older ``hermes-agent``. The
+    version mix raised ``ImportError: cannot import name 'LOCAL_RUNTIME_ROOT_DIRS' from
+    'hermes_constants'``, so no profile was provisioned and every newly created
+    personality answered with the fallback sentence.
+    """
+    agent_dir = tmp_path / "hermes-agent"
+    agent_dir.mkdir()
+    (agent_dir / "hermes_constants.py").write_text(
+        "LOCAL_RUNTIME_ROOT_DIRS = ('profiles',)\n"
+    )
+    foreign_dir = tmp_path / "dist-packages"
+    foreign_dir.mkdir()
+    (foreign_dir / "hermes_constants.py").write_text("OLD_VERSION = True\n")
+
+    monkeypatch.setattr(hd, "hermes_agent_dir", lambda: str(agent_dir))
+    monkeypatch.setattr(hd, "venv_site_packages", lambda _base: [])
+    monkeypatch.setattr(hd, "_HERMES_SOURCE_PREPARED", False)
+    monkeypatch.syspath_prepend(str(foreign_dir))
+    monkeypatch.delitem(sys.modules, "hermes_constants", raising=False)
+    try:
+        foreign = importlib.import_module("hermes_constants")
+        assert str(foreign_dir) in str(foreign.__file__ or "")
+        assert not hasattr(foreign, "LOCAL_RUNTIME_ROOT_DIRS")
+
+        hd.ensure_hermes_source_on_path()
+
+        reimported = importlib.import_module("hermes_constants")
+        assert str(reimported.__file__ or "").startswith(str(agent_dir))
+        assert reimported.LOCAL_RUNTIME_ROOT_DIRS == ("profiles",)
+    finally:
+        sys.modules.pop("hermes_constants", None)
 
 
 def test_provisioning_prepares_the_hermes_source_before_importing_the_factory(

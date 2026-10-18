@@ -202,8 +202,40 @@ def _profile_is_complete(profile_dir: str) -> bool:
 _HERMES_SOURCE_PREPARED = False
 
 
+def _drop_foreign_hermes_modules(agent_dir: str) -> list:
+    """Forget ``hermes*`` modules that were imported from outside ``agent_dir``.
+
+    A ``sys.path`` entry only decides what the *next* import finds: a module that was
+    imported before the path was prepared keeps its foreign version in ``sys.modules``.
+    Live, that produced a mixed pair - the mounted ``hermes_cli`` next to the container's
+    older ``hermes_constants`` - and the import died with ``cannot import name
+    'LOCAL_RUNTIME_ROOT_DIRS' from 'hermes_constants'``, so no profile was provisioned and
+    every new personality answered with the fallback sentence.
+
+    Dropping the foreign copies is cheap: the following import re-reads them from the
+    mounted source. Modules without a ``__file__`` (frozen or namespace builds) are kept,
+    because their origin cannot be judged.
+    """
+    root = os.path.abspath(agent_dir)
+    dropped = []
+    for name, module in list(sys.modules.items()):
+        if not (name == "hermes" or name.startswith("hermes")):
+            continue
+        origin = getattr(module, "__file__", None)
+        if not origin:
+            continue
+        origin_abs = os.path.abspath(origin)
+        if origin_abs == root or origin_abs.startswith(root + os.sep):
+            continue
+        sys.modules.pop(name, None)
+        dropped.append(name)
+    if dropped:
+        logging.info("dropped foreign hermes modules: %s", dropped)
+    return dropped
+
+
 def ensure_hermes_source_on_path() -> str:
-    """Put the mounted Hermes source in front of ``sys.path``, once per process.
+    """Put the mounted Hermes source in front of ``sys.path`` and drop foreign Hermes modules.
 
     Provisioning and turns must resolve the SAME Hermes. Live, provisioning imported
     ``hermes_cli`` from the container's site-packages first; that foreign version then
@@ -220,6 +252,7 @@ def ensure_hermes_source_on_path() -> str:
     for path_entry in reversed(entries):
         if os.path.exists(path_entry):
             sys.path.insert(0, path_entry)
+    _drop_foreign_hermes_modules(agent_dir)
     if not _HERMES_SOURCE_PREPARED:
         _HERMES_SOURCE_PREPARED = True
         logging.info(
