@@ -492,7 +492,7 @@ def test_turn_accepts_payload_and_returns_reply(daemon_server):
         assert resp.status == 200
         payload = json.loads(resp.read().decode())
 
-    assert payload == {"reply": "daemon-says-hi"}
+    assert payload == {"reply": "daemon-says-hi", "toolsUsed": []}
     assert replies["last"] == {
         "text": "hallo",
         "chat_id": "c-1",
@@ -520,7 +520,7 @@ def test_streaming_turn_emits_deltas_and_final_reply(daemon_server):
         chunks = [json.loads(line) for line in resp if line.strip()]
 
     assert chunks[:-1] == [{"delta": "Hallo"}, {"delta": " Welt."}]
-    assert chunks[-1] == {"reply": "daemon-says-hi"}
+    assert chunks[-1] == {"reply": "daemon-says-hi", "toolsUsed": []}
 
 
 def test_turn_rejects_missing_fields(daemon_server):
@@ -1142,6 +1142,76 @@ def test_run_turn_in_process_falls_back_to_subprocess_when_import_fails():
     )
 
 
+def test_tools_used_reads_the_answered_tool_messages():
+    """A tool message names the tool that answered; names only, no arguments."""
+    result = {
+        "final_response": "done",
+        "messages": [
+            {"role": "user", "content": "look"},
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {"function": {"name": "capture_image", "arguments": "{secret}"}}
+                ],
+            },
+            {"role": "tool", "name": "capture_image", "content": "{}"},
+            {"role": "assistant", "content": "fertig"},
+        ],
+    }
+
+    assert hd._tools_used(result) == [{"name": "capture_image", "ok": True}]
+    assert "secret" not in json.dumps(hd._tools_used(result))
+
+
+def test_tools_used_falls_back_to_the_requested_calls_and_ignores_other_shapes():
+    requested = {
+        "messages": [
+            {"role": "assistant", "tool_calls": [{"function": {"name": "set_led"}}]},
+            {"role": "assistant", "tool_calls": [{"name": "play_sound"}]},
+        ]
+    }
+    assert hd._tools_used(requested) == [
+        {"name": "set_led", "ok": True},
+        {"name": "play_sound", "ok": True},
+    ]
+    assert hd._tools_used(None) == []
+    assert hd._tools_used({"messages": "nope"}) == []
+    assert hd._tools_used("text") == []
+
+
+def test_a_turn_returns_the_tools_it_used():
+    """The daemon may return more than the text (decision PC-84)."""
+
+    def runner(**kwargs):
+        kwargs["on_tool_call"](
+            {"name": "capture_image", "ok": True, "durationMs": 12.5}
+        )
+        return "gesehen"
+
+    server = hd.create_server(port=0, turn_runner=runner)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    host, port = server.server_address
+    body = json.dumps({"text": "was siehst du?", "chat_id": "c-tool"}).encode()
+    req = Request(
+        f"http://{host}:{port}/turn",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urlopen(req, timeout=5) as resp:
+            payload = json.loads(resp.read().decode())
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    assert payload["reply"] == "gesehen"
+    assert payload["toolsUsed"] == [
+        {"name": "capture_image", "ok": True, "durationMs": 12.5}
+    ]
+
+
 def test_default_turn_runner_uses_in_process_path():
     """create_server default runner must be the in-process implementation."""
     with patch.object(
@@ -1163,6 +1233,7 @@ def test_default_turn_runner_uses_in_process_path():
         text="hi",
         chat_id="c1",
         personality_id="p1",
+        on_tool_call=None,
         toolsets=None,
         enabled_toolsets="mcp-pib,vision",
         max_turns=None,

@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from typing import Any, Callable, Iterator, Mapping, Optional, Sequence
 from urllib.request import Request, urlopen
 
@@ -255,6 +256,7 @@ def run_direct_turn(
     declarations: Optional[Sequence[Mapping[str, Any]]] = None,
     complete: Optional[Complete] = None,
     execute_tool: Optional[ExecuteTool] = None,
+    on_tool_call: Optional[Callable[[dict], None]] = None,
     max_rounds: int = MAX_TOOL_ROUNDS,
     api_key: Optional[str] = None,
     report_key_source: Optional[Callable[[str], None]] = None,
@@ -325,10 +327,34 @@ def run_direct_turn(
             if not isinstance(arguments, dict):
                 arguments = {}
             logger.info("direct tool call name=%s", name)
-            if name in ANSWER_GESTURE_TOOLS:
-                output = issue_answer_gesture(name, arguments, runner)
-            else:
-                output = runner(name, arguments)
+            started = time.monotonic()
+            ok_call = True
+            error_name = ""
+            try:
+                if name in ANSWER_GESTURE_TOOLS:
+                    output = issue_answer_gesture(name, arguments, runner)
+                else:
+                    output = runner(name, arguments)
+            except Exception as exc:
+                ok_call = False
+                error_name = type(exc).__name__
+                _report_tool_call(
+                    on_tool_call,
+                    name=name,
+                    arguments=arguments,
+                    started=started,
+                    ok=False,
+                    error=error_name,
+                )
+                raise
+            _report_tool_call(
+                on_tool_call,
+                name=name,
+                arguments=arguments,
+                started=started,
+                ok=ok_call,
+                error=error_name,
+            )
             messages.append(
                 {
                     "role": "tool",
@@ -338,6 +364,37 @@ def run_direct_turn(
                 }
             )
     raise DirectToolLoopError("tool loop ended without a final answer")
+
+
+def _report_tool_call(
+    reporter: Optional[Callable[[dict], None]],
+    *,
+    name: str,
+    arguments: Mapping[str, Any],
+    started: float,
+    ok: bool,
+    error: str,
+) -> None:
+    """Tell the caller about one executed tool, without its argument values.
+
+    Only the argument *names* travel: a tool argument can carry a location, a
+    message or a key, and none of that belongs in a chat message, a trace event or
+    a log line. A reporter that raises must not break the turn.
+    """
+    if reporter is None:
+        return
+    record: dict = {
+        "name": name,
+        "ok": ok,
+        "durationMs": round((time.monotonic() - started) * 1000.0, 1),
+        "argNames": sorted(str(key) for key in (arguments or {})),
+    }
+    if error:
+        record["error"] = error
+    try:
+        reporter(record)
+    except Exception:  # noqa: BLE001 - reporting must never fail a turn
+        logger.warning("tool call reporter failed name=%s", name, exc_info=True)
 
 
 def _json_object(value: Any) -> dict[str, Any]:

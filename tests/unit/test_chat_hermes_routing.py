@@ -1960,6 +1960,48 @@ def test_the_answer_is_created_with_the_turn_metadata_and_a_user_line_without(
     assert user_line.kwargs["meta"] is None
 
 
+def test_a_reported_tool_call_reaches_the_metadata_and_the_trace(
+    chat_module, chat_node
+):
+    """PC-84: one reported tool ends up in the stored facts and on the trace."""
+    node = chat_node
+    node.get_logger = MagicMock(return_value=MagicMock())
+    node._turn_trace_publisher = MagicMock()
+    node._reset_turn_meta()
+    node._emit_turn_path(chat_id="chat-tools", path="Hermes", model="gemini-3.8-flash")
+
+    node._record_tool_call(
+        {
+            "name": "capture_image",
+            "ok": True,
+            "durationMs": 12.5,
+            "argNames": ["hint"],
+        }
+    )
+    node._record_tool_call(
+        {"name": "set_led", "ok": False, "argNames": [], "error": "RuntimeError"}
+    )
+
+    meta = node._turn_meta()
+    assert meta["source"] == "hermes"
+    assert meta["toolCalls"] == [
+        {"name": "capture_image", "ok": True, "durationMs": 12.5, "argNames": ["hint"]},
+        {"name": "set_led", "ok": False, "argNames": [], "error": "RuntimeError"},
+    ]
+
+    published = [
+        json.loads(call.args[0].data)
+        for call in node._turn_trace_publisher.publish.call_args_list
+    ]
+    tool_events = [event for event in published if event["stage"] == "tool_call"]
+    assert [event["source"] for event in tool_events] == ["capture_image", "set_led"]
+    assert tool_events[1]["detail"]["ok"] is False
+    assert tool_events[1]["detail"]["error"] == "RuntimeError"
+    # Argument *names* travel, values never do - the record has no value field.
+    assert tool_events[0]["detail"]["arg_names"] == ["hint"]
+    assert set(meta["toolCalls"][0]) == {"name", "ok", "durationMs", "argNames"}
+
+
 def test_disabled_hermes_channel_routes_a_smart_personality_direct(
     chat_module, chat_node, monkeypatch
 ):
