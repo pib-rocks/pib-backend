@@ -737,6 +737,7 @@ def is_warm_daemon_active(timeout: float = 0.15) -> bool:
 
 
 def _try_daemon_turn(
+    tool_sink: Optional[list],
     text: str,
     chat_id: str,
     personality_id: Optional[str] = None,
@@ -821,6 +822,8 @@ def _try_daemon_turn(
         )
         return None
 
+    if isinstance(tool_sink, list) and isinstance(data.get("toolsUsed"), list):
+        tool_sink.extend(data["toolsUsed"])
     reply = data.get("reply") if isinstance(data, dict) else None
     if not isinstance(reply, str):
         logging.warning(
@@ -840,6 +843,7 @@ def stream_turn(
     max_turns: int = DEFAULT_MAX_TURNS,
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
     enabled_toolsets: Optional[str] = DEFAULT_ENABLED_TOOLSETS,
+    tool_sink: Optional[list] = None,
 ) -> Iterator[str]:
     """Yield daemon text deltas.
 
@@ -899,6 +903,10 @@ def stream_turn(
                 if delta:
                     assembled += delta
                     yield delta
+            if isinstance(tool_sink, list) and isinstance(data.get("toolsUsed"), list):
+                # The daemon reports the tools of this turn next to the text
+                # (decision PC-84); only names and outcomes travel.
+                tool_sink.extend(data["toolsUsed"])
             if "reply" in data:
                 final_reply = data["reply"]
                 if not isinstance(final_reply, str):
@@ -984,6 +992,7 @@ def run_turn(
     max_turns: int = DEFAULT_MAX_TURNS,
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
     enabled_toolsets: Optional[str] = DEFAULT_ENABLED_TOOLSETS,
+    tool_sink: Optional[list] = None,
 ) -> str:
     """Run one conversational turn. Returns speakable text.
 
@@ -1000,6 +1009,7 @@ def run_turn(
 
     # Try the warm daemon first — no filesystem binary/profile checks on this path.
     daemon_reply = _try_daemon_turn(
+        tool_sink,
         text,
         chat_id,
         personality_id,

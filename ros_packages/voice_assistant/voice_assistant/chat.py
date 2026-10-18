@@ -231,6 +231,38 @@ class ChatNode(Node):
         except Exception as exc:
             self.get_logger().warning(f"turn trace emitter was not installed: {exc}")
 
+    def _record_tool_call(self, record: dict) -> None:
+        """Keep one executed tool of this turn and publish it on the trace.
+
+        The record carries the tool name, its outcome, its duration and the names
+        of its arguments - never the values (PC-84).
+        """
+        calls = getattr(self, "_turn_tool_calls", None)
+        if not isinstance(calls, list):
+            calls = self._turn_tool_calls = []
+        calls.append(record)
+        publisher = getattr(self, "_turn_trace_publisher", None)
+        if publisher is None:
+            return
+        try:
+            from voice_assistant.turn_latency import format_event, now_ms
+
+            message = String()
+            message.data = format_event(
+                "tool_call",
+                ts_ms=now_ms(),
+                source=str(record.get("name") or "tool"),
+                detail={
+                    "ok": bool(record.get("ok", True)),
+                    "duration_ms": record.get("durationMs"),
+                    "arg_names": record.get("argNames") or [],
+                    "error": record.get("error"),
+                },
+            )
+            publisher.publish(message)
+        except Exception as exc:
+            self.get_logger().warning(f"tool call trace was not published: {exc}")
+
     def _reset_turn_meta(self) -> None:
         """A new turn forgets the previous turn's facts."""
         self._turn_stages = {}
@@ -239,6 +271,7 @@ class ChatNode(Node):
         self._turn_stream_end = None
         self._turn_path_token = ""
         self._turn_model = ""
+        self._turn_tool_calls = []
 
     def _record_turn_trace(self, raw: str) -> None:
         """Keep stage timings and the fallback reason of the running turn."""
@@ -285,6 +318,9 @@ class ChatNode(Node):
             meta["fallbackReason"] = reason
         if stream_end:
             meta["streamEnd"] = stream_end
+        tool_calls = getattr(self, "_turn_tool_calls", None)
+        if isinstance(tool_calls, list) and tool_calls:
+            meta["toolCalls"] = list(tool_calls)
         return meta or None
 
     def _finalize_message_meta(self, chat_id: str) -> None:
@@ -998,16 +1034,29 @@ class ChatNode(Node):
                             provider=provider,
                             base_url=base_url,
                         )
-                for delta in hermes_agent_client.stream_turn(
-                    text=text,
-                    chat_id=chat_id,
-                    personality_id=personality_id,
-                    toolsets=hermes_agent_client.DEFAULT_DISABLED_TOOLSETS,
-                    enabled_toolsets=hermes_agent_client.DEFAULT_ENABLED_TOOLSETS,
-                    timeout=timeout,
-                ):
-                    events.put(("delta", delta))
-                events.put(("done", None))
+                hermes_tools: list = []
+                try:
+                    for delta in hermes_agent_client.stream_turn(
+                        text=text,
+                        chat_id=chat_id,
+                        personality_id=personality_id,
+                        toolsets=hermes_agent_client.DEFAULT_DISABLED_TOOLSETS,
+                        enabled_toolsets=hermes_agent_client.DEFAULT_ENABLED_TOOLSETS,
+                        timeout=timeout,
+                        tool_sink=hermes_tools,
+                    ):
+                        events.put(("delta", delta))
+                    for record in hermes_tools:
+                        self._record_tool_call(
+                            {
+                                "name": str(record.get("name") or "tool"),
+                                "ok": bool(record.get("ok", True)),
+                                "argNames": [],
+                            }
+                        )
+                    events.put(("done", None))
+                except Exception as exc:
+                    events.put(("error", exc))
             except Exception as exc:
                 events.put(("error", exc))
 
@@ -1358,6 +1407,7 @@ class ChatNode(Node):
                     tool_calling=tool_calling,
                     allow_image=allow_image,
                     report_key_source=report_key_source,
+                    on_tool_call=self._record_tool_call,
                 )
 
             # Which runtime serves this turn, before the first token is asked

@@ -639,3 +639,106 @@ def test_hermes_key_reads_the_store_for_the_personalitys_model(monkeypatch):
     assert key == STORE_SECRET
     assert source == "key-store"
     assert seen == ["gpt-6"]
+
+
+def test_a_tool_call_is_reported_without_its_argument_values():
+    """PC-84: the caller learns name, outcome and duration - never a value."""
+    reported: list = []
+    seen: list = []
+
+    def complete(messages, tools):
+        seen.append((messages, tools))
+        if len(seen) == 1:
+            return {
+                "tool_calls": [
+                    {
+                        "name": "set_led",
+                        "arguments": {"color": "red", "api_key": "s3cr3t-value"},
+                    }
+                ]
+            }
+        return {"text": "Erledigt."}
+
+    answer = "".join(
+        run_direct_turn(
+            system_prompt="Du bist pib.",
+            user_text="Mach das Licht rot.",
+            history=[],
+            tool_calling=True,
+            allow_image=False,
+            declarations=[{"name": "set_led", "description": "led"}],
+            complete=complete,
+            execute_tool=lambda name, arguments: {"ok": True},
+            on_tool_call=reported.append,
+        )
+    )
+
+    assert answer == "Erledigt."
+    assert len(reported) == 1
+    record = reported[0]
+    assert record["name"] == "set_led"
+    assert record["ok"] is True
+    assert record["argNames"] == ["api_key", "color"]
+    assert isinstance(record["durationMs"], float)
+    assert "s3cr3t-value" not in json.dumps(reported)
+
+
+def test_a_failing_tool_is_reported_and_still_raises():
+    reported: list = []
+    seen: list = []
+
+    def complete(messages, tools):
+        seen.append(messages)
+        if len(seen) == 1:
+            return {"tool_calls": [{"name": "set_led", "arguments": {}}]}
+        return {"text": "nie"}
+
+    def broken_runner(name, arguments):
+        raise RuntimeError("hardware not ready")
+
+    with pytest.raises(RuntimeError):
+        list(
+            run_direct_turn(
+                system_prompt="Du bist pib.",
+                user_text="Mach das Licht an.",
+                history=[],
+                tool_calling=True,
+                allow_image=False,
+                declarations=[{"name": "set_led", "description": "led"}],
+                complete=complete,
+                execute_tool=broken_runner,
+                on_tool_call=reported.append,
+            )
+        )
+
+    assert len(reported) == 1
+    assert reported[0]["name"] == "set_led"
+    assert reported[0]["ok"] is False
+    assert reported[0]["error"] == "RuntimeError"
+    assert reported[0]["argNames"] == []
+
+
+def test_a_raising_reporter_does_not_break_the_turn():
+    def complete(messages, tools):
+        if len(messages) <= 1:
+            return {"tool_calls": [{"name": "set_led", "arguments": {}}]}
+        return {"text": "Erledigt."}
+
+    def exploding(record):
+        raise RuntimeError("reporter is broken")
+
+    answer = "".join(
+        run_direct_turn(
+            system_prompt="Du bist pib.",
+            user_text="Mach das Licht an.",
+            history=[],
+            tool_calling=True,
+            allow_image=False,
+            declarations=[{"name": "set_led", "description": "led"}],
+            complete=complete,
+            execute_tool=lambda name, arguments: {"ok": True},
+            on_tool_call=exploding,
+        )
+    )
+
+    assert answer == "Erledigt."

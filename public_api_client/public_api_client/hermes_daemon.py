@@ -743,6 +743,60 @@ def extract_final_response(stdout_text: str) -> str:
     return "\n".join(body).strip()
 
 
+def _runner_reports_tool_calls(runner: object) -> bool:
+    """True when this runner accepts the ``on_tool_call`` collector.
+
+    A runner injected by a caller (tests, embedders) may predate the parameter, so
+    the keyword is only passed when the signature accepts it.
+    """
+    try:
+        signature = inspect.signature(runner)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return False
+    if "on_tool_call" in signature.parameters:
+        return True
+    return any(
+        parameter.kind is inspect.Parameter.VAR_KEYWORD
+        for parameter in signature.parameters.values()
+    )
+
+
+def _tools_used(result: object) -> list:
+    """Tool names of one agent turn, read from the conversation it returns.
+
+    An assistant message lists the tool calls it asked for, a ``tool`` message
+    names the tool that answered. Only names and outcomes travel - argument values
+    stay in the agent's own transcript, so nothing secret can leak into a chat
+    message or a trace event (PC-84).
+    """
+    if not isinstance(result, dict):
+        return []
+    messages = result.get("messages")
+    if not isinstance(messages, list):
+        return []
+    answered = [
+        {"name": str(message["name"]), "ok": True}
+        for message in messages
+        if isinstance(message, dict)
+        and message.get("role") == "tool"
+        and message.get("name")
+    ]
+    if answered:
+        return answered
+    requested: list = []
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        for call in message.get("tool_calls") or []:
+            if not isinstance(call, dict):
+                continue
+            function = call.get("function") or {}
+            name = function.get("name") or call.get("name")
+            if name:
+                requested.append({"name": str(name), "ok": True})
+    return requested
+
+
 def _coerce_reply(reply: object) -> str:
     """Normalise the various shapes ``run_agent`` implementations return."""
     if reply is None:
@@ -864,6 +918,7 @@ def _run_turn_in_home(
     stream_callback: Optional[Callable[[str], None]] = None,
     enabled_toolsets: Optional[str] = None,
     provider_key: str = "",
+    on_tool_call: Optional[Callable[[dict], None]] = None,
 ) -> str:
     """Execute one turn after its Hermes home scope has been installed.
 
@@ -962,13 +1017,15 @@ def _run_turn_in_home(
                     chat_id,
                     len(history),
                 )
-                reply = _coerce_reply(
-                    cached.agent.run_conversation(
-                        user_message=text,
-                        conversation_history=history or None,
-                        stream_callback=capture_delta,
-                    )
+                turn_result = cached.agent.run_conversation(
+                    user_message=text,
+                    conversation_history=history or None,
+                    stream_callback=capture_delta,
                 )
+                reply = _coerce_reply(turn_result)
+                if on_tool_call is not None:
+                    for record in _tools_used(turn_result):
+                        on_tool_call(record)
             if not reply:
                 reply = "".join(produced).strip()
         else:
@@ -1031,6 +1088,7 @@ def run_turn_in_process(
     timeout: Optional[int] = None,
     stream_callback: Optional[Callable[[str], None]] = None,
     enabled_toolsets: Optional[str] = None,
+    on_tool_call: Optional[Callable[[dict], None]] = None,
 ) -> str:
     """Execute a turn inside the personality's context-local Hermes home."""
     scope = contextlib.nullcontext()
@@ -1077,6 +1135,7 @@ def run_turn_in_process(
             stream_callback=stream_callback,
             enabled_toolsets=enabled_toolsets,
             provider_key=provider_key or "",
+            on_tool_call=on_tool_call,
         )
 
 
@@ -1089,6 +1148,7 @@ def _default_turn_runner(
     timeout: Optional[int] = None,
     stream_callback: Optional[Callable[[str], None]] = None,
     enabled_toolsets: Optional[str] = None,
+    on_tool_call: Optional[Callable[[dict], None]] = None,
 ) -> str:
     """Execute one turn in-process via Hermes Agent (subprocess fallback)."""
     return run_turn_in_process(
@@ -1097,6 +1157,7 @@ def _default_turn_runner(
         personality_id=personality_id,
         toolsets=toolsets,
         enabled_toolsets=enabled_toolsets,
+        on_tool_call=on_tool_call,
         max_turns=max_turns,
         timeout=timeout,
         stream_callback=stream_callback,
@@ -1297,6 +1358,7 @@ class HermesDaemonHandler(BaseHTTPRequestHandler):
         if stream:
             self._start_stream()
 
+        tools_used: list = []
         runner_kwargs = {
             "text": text,
             "chat_id": chat_id,
@@ -1307,6 +1369,8 @@ class HermesDaemonHandler(BaseHTTPRequestHandler):
         }
         if max_turns is not None:
             runner_kwargs["max_turns"] = max_turns
+        if _runner_reports_tool_calls(runner):
+            runner_kwargs["on_tool_call"] = tools_used.append
         if stream:
             runner_kwargs["stream_callback"] = emit_delta
 
@@ -1331,7 +1395,12 @@ class HermesDaemonHandler(BaseHTTPRequestHandler):
             chat_id,
             (time.monotonic() - t0) * 1000.0,
         )
-        payload = {"reply": reply if isinstance(reply, str) else str(reply)}
+        payload = {
+            "reply": reply if isinstance(reply, str) else str(reply),
+            # The daemon may return more than the text (decision PC-84): the tools
+            # this turn used, names only.
+            "toolsUsed": tools_used,
+        }
         if stream:
             self._send_stream_chunk(payload)
         else:
