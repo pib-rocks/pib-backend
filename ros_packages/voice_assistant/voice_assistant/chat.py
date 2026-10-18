@@ -226,6 +226,41 @@ class ChatNode(Node):
         except Exception as exc:
             self.get_logger().warning(f"turn trace emitter was not installed: {exc}")
 
+    #: Machine token per transport for the turn-path trace event. A UI reads this
+    #: to say which runtime answered; the human words above it stay for the log.
+    TURN_PATH_TOKENS = {
+        "Hermes": "hermes",
+        "pib.Cloud": "pib-cloud",
+        "the on-device model": "local",
+        "the direct tool loop": "direct-tool-loop",
+    }
+
+    def _emit_turn_path(self, *, chat_id: str, path: str, model: str | None) -> None:
+        """Announce the transport and model of this turn on the trace topic.
+
+        The trace already carries per-stage timings from the recorder, the player
+        and the cloud client. None of them names the model that answered, so a UI
+        could not tell pib.Cloud from the on-device fallback. This event closes
+        that gap; a failure here must not stop the turn.
+        """
+        publisher = getattr(self, "_turn_trace_publisher", None)
+        if publisher is None:
+            return
+        try:
+            from voice_assistant.turn_latency import format_event
+
+            detail = {"model": model} if model else None
+            message = String()
+            message.data = format_event(
+                "turn_path",
+                source=self.TURN_PATH_TOKENS.get(path, path),
+                chat_id=chat_id,
+                detail=detail,
+            )
+            publisher.publish(message)
+        except Exception as exc:
+            self.get_logger().warning(f"turn path trace was not published: {exc}")
+
     def _attention_plan(self):
         """The plan for this answer. Missing sensors leave the turn unchanged."""
         from pib_hermes_config.attention import AttentionPlan
@@ -1234,6 +1269,9 @@ class ChatNode(Node):
                     report_key_source=report_key_source,
                 )
 
+            # Which runtime serves this turn, before the first token is asked
+            # for: a UI needs it even when the transport fails afterwards.
+            self._emit_turn_path(chat_id=chat_id, path=turn_path, model=api_name)
             prev_text, prev_text_type, curr_text = self._stream_chunks_to_goal(
                 goal_handle, chat_id, tokens, t0=t0
             )

@@ -5,6 +5,7 @@ rclpy / ROS message types are stubbed so these run without a live ROS env.
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 import threading
@@ -1804,6 +1805,87 @@ def test_direct_channel_never_uses_hermes_even_with_a_tool_capable_cloud_model(
     # a plain chat.
     assert any("no direct tool transport" in str(c) for c in logger.method_calls)
     assert result.text == "Erledigt."
+
+
+def test_a_turn_announces_its_transport_and_model_on_the_trace_topic(
+    chat_module, chat_node
+):
+    """The trace names the model that answered; no other event does.
+
+    The recorder, the player and the cloud client publish stage timings with their
+    own source ("audio_recorder", "audio_player", "pib-cloud"). A UI therefore
+    could not tell a pib.Cloud answer from the on-device fallback, so the chat node
+    announces the transport it selected as its own event.
+    """
+    Chat = chat_module.Chat
+
+    def run(path_channel, api_name, tools):
+        personality = MagicMock()
+        personality.message_history = 5
+        personality.description = "Du bist pib."
+        personality.personality_id = "pers-trace"
+        personality.assistant_model.api_name = api_name
+        personality.assistant_model.has_image_support = False
+        personality.assistant_model.capabilities = {"images": False, "tools": tools}
+        personality.tool_calling = tools
+        personality.channel = path_channel
+        personality.effective_channel = path_channel
+
+        goal_handle = MagicMock()
+        goal_handle.is_cancel_requested = False
+        goal_handle.request = Chat.Goal()
+        goal_handle.request.chat_id = "chat-trace"
+        goal_handle.request.text = "Hallo"
+        goal_handle.request.generate_code = False
+
+        chat_node._turn_trace_publisher = MagicMock()
+        chat_node.get_logger = MagicMock(return_value=MagicMock())
+
+        with (
+            patch.object(
+                chat_module.voice_assistant_client,
+                "get_personality_from_chat",
+                return_value=(True, personality),
+            ),
+            patch.object(
+                chat_module.voice_assistant_client,
+                "get_chat_history",
+                return_value=(True, []),
+            ),
+            patch.object(
+                chat_module.pib_cloud_stream,
+                "stream_pib_cloud_chat",
+                return_value=iter(["Hallo."]),
+            ),
+            patch.object(
+                chat_module.direct_tool_loop,
+                "run_direct_turn",
+                return_value=iter(["Hallo."]),
+            ),
+            patch.object(chat_node, "_stream_hermes_turn", return_value=["Hallo."]),
+            patch.object(
+                chat_node,
+                "_stream_chunks_to_goal",
+                return_value=(None, None, "Hallo."),
+            ),
+        ):
+            drive_like_rclpy(chat_node.chat(goal_handle))
+
+        events = [
+            json.loads(call.args[0].data)
+            for call in chat_node._turn_trace_publisher.publish.call_args_list
+        ]
+        return [event for event in events if event["stage"] == "turn_path"]
+
+    direct = run("direct", "pib-cloud", False)
+    assert direct, "no turn_path event published"
+    assert direct[0]["source"] == "pib-cloud"
+    assert direct[0]["detail"]["model"] == "pib-cloud"
+    assert direct[0]["chat_id"] == "chat-trace"
+
+    smart = run("smart", "gemini-3.8-flash", False)
+    assert smart and smart[0]["source"] == "hermes"
+    assert smart[0]["detail"]["model"] == "gemini-3.8-flash"
 
 
 def test_disabled_hermes_channel_routes_a_smart_personality_direct(
