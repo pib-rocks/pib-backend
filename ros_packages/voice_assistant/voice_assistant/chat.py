@@ -1113,8 +1113,38 @@ class ChatNode(Node):
             return result
 
         try:
-            if pib_cloud_model and not tool_calling:
+            if is_smart:
+                turn_path = "Hermes"
+                # The channel decides the transport: Smart runs on Hermes, Direct
+                # never does. Tool calling says whether a turn offers MCP tools
+                # inside whichever runtime serves it - it is not a transport
+                # switch, so it must not move a Direct personality onto Hermes.
+                # Smart stays on Hermes even for the on-device model: the model
+                # decides what Hermes runs, never the transport.
+                if goal_handle.is_cancel_requested:
+                    goal_handle.canceled()
+                    return Chat.Result()
+                tokens = self._stream_hermes_turn(
+                    text=plan.for_hermes(content),
+                    chat_id=chat_id,
+                    personality_id=getattr(personality, "personality_id", None),
+                    description=description,
+                    model=api_name,
+                    provider=model_provider_name,
+                    base_url=_model_base_url(api_name),
+                    goal_handle=goal_handle,
+                )
+            elif pib_cloud_model:
                 turn_path = "pib.Cloud"
+                # Direct on pib.Cloud. The plain cloud stream carries no tools and
+                # the direct tool loop has no tool transport for this model, so a
+                # Direct turn on pib.Cloud is a plain chat. Say so instead of
+                # silently moving the turn to Hermes.
+                if tool_calling:
+                    self.get_logger().info(
+                        "tools enabled: pib.Cloud has no direct tool transport; "
+                        f"Direct runs a plain cloud chat chat={chat_id}"
+                    )
                 if goal_handle.is_cancel_requested:
                     goal_handle.canceled()
                     return Chat.Result()
@@ -1127,34 +1157,6 @@ class ChatNode(Node):
                     personality=personality,
                     plan=plan,
                     generate_code=generate_code,
-                    goal_handle=goal_handle,
-                )
-            elif is_smart or (pib_cloud_model and tool_calling):
-                turn_path = "Hermes"
-                # D3: the capability decides, not the model. The plain cloud
-                # stream carries no tools, so a pib.Cloud personality with the
-                # tool switch on has to run where the agent runtime and its MCP
-                # server are; the agent asks the MCP server for the tool
-                # definitions itself. Smart is on Hermes regardless, and the
-                # model decides what Hermes runs, so Smart + the on-device model
-                # still goes through Hermes, never through the direct local
-                # token loop.
-                if pib_cloud_model:
-                    self.get_logger().info(
-                        f"tools enabled: pib.Cloud model routed through Hermes "
-                        f"chat={chat_id}"
-                    )
-                if goal_handle.is_cancel_requested:
-                    goal_handle.canceled()
-                    return Chat.Result()
-                tokens = self._stream_hermes_turn(
-                    text=plan.for_hermes(content),
-                    chat_id=chat_id,
-                    personality_id=getattr(personality, "personality_id", None),
-                    description=description,
-                    model=api_name,
-                    provider=model_provider_name,
-                    base_url=_model_base_url(api_name),
                     goal_handle=goal_handle,
                 )
             elif local_model:

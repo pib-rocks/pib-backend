@@ -1,9 +1,10 @@
-"""Capability-based dispatch of a chat turn (concept D3).
+"""Channel-based dispatch of a chat turn.
 
-The tool switch decides the transport, not the model. A pib.Cloud personality
-with tool calling on runs on the Hermes path, where the agent runtime and its
-MCP server live; a pib.Cloud personality without it keeps the plain cloud
-stream, which carries no tools at all. Everything else routes as it did.
+The channel decides the transport, not the tool switch: Smart runs on Hermes,
+Direct never does. Tool calling says whether a turn offers tools inside
+whichever runtime serves it - on the agent side those are the MCP tools, on the
+direct side the local tool loop, and pib.Cloud has no direct tool transport at
+all, so a Direct turn on it is a plain cloud chat.
 
 rclpy / ROS message types are stubbed so these run without a live ROS env,
 the same way tests/unit/test_chat_hermes_routing.py does it.
@@ -308,11 +309,11 @@ def _run_turn(chat_module, chat_node, personality, chat_id="chat-tools"):
     return goal_handle, result, hermes_stream, cloud_stream, run_direct_turn
 
 
-def test_tools_on_with_the_pib_cloud_model_routes_through_hermes(
+def test_tools_on_with_the_pib_cloud_model_on_smart_routes_through_hermes(
     chat_module, chat_node
 ):
-    """D3: the capability decides. The cloud stream cannot run a tool turn."""
-    personality = _personality(PIB_CLOUD_API_NAME, tool_calling=True)
+    """Smart is Hermes; the tool switch decides what the turn offers there."""
+    personality = _personality(PIB_CLOUD_API_NAME, tool_calling=True, channel="smart")
 
     goal_handle, result, hermes, cloud, run_direct = _run_turn(
         chat_module, chat_node, personality
@@ -335,17 +336,26 @@ def test_tools_on_with_the_pib_cloud_model_routes_through_hermes(
     goal_handle.abort.assert_not_called()
 
 
-def test_tools_on_with_the_pib_cloud_model_logs_the_decision(chat_module, chat_node):
+def test_a_direct_cloud_turn_with_tools_on_says_why_it_is_a_plain_chat(
+    chat_module, chat_node
+):
+    """No silent transport change: Direct stays Direct and the log says so."""
     logger = MagicMock()
     chat_node.get_logger = MagicMock(return_value=logger)
     personality = _personality(PIB_CLOUD_API_NAME, tool_calling=True)
 
-    _run_turn(chat_module, chat_node, personality)
+    _goal_handle, _result, hermes, cloud, run_direct = _run_turn(
+        chat_module, chat_node, personality
+    )
 
+    hermes.assert_not_called()
+    run_direct.assert_not_called()
+    cloud.assert_called_once()
     infos = [call[0][0] for call in logger.info.call_args_list]
     assert any(
         message.startswith(
-            "tools enabled: pib.Cloud model routed through Hermes chat=chat-tools"
+            "tools enabled: pib.Cloud has no direct tool transport; "
+            "Direct runs a plain cloud chat chat=chat-tools"
         )
         for message in infos
     )
@@ -368,18 +378,18 @@ def test_tools_off_with_the_pib_cloud_model_keeps_the_cloud_stream(
     goal_handle.succeed.assert_called_once()
 
 
-def test_tools_off_with_the_pib_cloud_model_on_a_smart_channel_keeps_the_cloud_stream(
+def test_a_smart_channel_wins_over_the_tool_switch_and_uses_hermes(
     chat_module, chat_node
 ):
-    """The channel does not open the tools; only the switch does."""
+    """Smart is Hermes even with the tool switch off; Direct is never Hermes."""
     personality = _personality(PIB_CLOUD_API_NAME, tool_calling=False, channel="smart")
 
     _goal_handle, _result, hermes, cloud, _run_direct = _run_turn(
         chat_module, chat_node, personality
     )
 
-    cloud.assert_called_once()
-    hermes.assert_not_called()
+    hermes.assert_called_once()
+    cloud.assert_not_called()
 
 
 def test_tools_on_with_a_smart_personality_still_uses_hermes(chat_module, chat_node):
@@ -477,12 +487,12 @@ def test_direct_model_without_a_tool_endpoint_is_still_refused(chat_module, chat
 def test_a_failing_cloud_tool_turn_is_logged_with_its_own_path(chat_module, chat_node):
     """The failure log names the path the turn took, not the stored channel.
 
-    A pib.Cloud personality with the tool switch on runs on Hermes, so an error
-    logged as "direct" would send the next diagnosis to the wrong component.
+    A Smart pib.Cloud personality runs on Hermes, so an error logged as "direct"
+    would send the next diagnosis to the wrong component.
     """
     logger = MagicMock()
     chat_node.get_logger = MagicMock(return_value=logger)
-    personality = _personality(PIB_CLOUD_API_NAME, tool_calling=True)
+    personality = _personality(PIB_CLOUD_API_NAME, tool_calling=True, channel="smart")
     goal_handle = _goal(chat_module, "chat-tools")
 
     with (
