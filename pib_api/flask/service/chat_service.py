@@ -87,6 +87,7 @@ def create_chat_message(chat_id: str, chat_message_dto: Any) -> ChatMessage:
     chat_message = ChatMessage(
         is_user=chat_message_dto["is_user"],
         content=chat_message_dto["content"],
+        meta=chat_message_dto.get("meta"),
         chat=chat,
     )
     db.session.add(chat_message)
@@ -109,6 +110,8 @@ def update_chat_message(
     )
     chat_message = get_message(message_id)
     chat_message.content = chat_message_dto["content"]
+    if chat_message_dto.get("meta") is not None:
+        chat_message.meta = chat_message_dto["meta"]
     db.session.flush()
     logger.info(
         "[PERF_TRACE] API_EXIT update_chat_message message=%s elapsed_ms=%.2f",
