@@ -1729,6 +1729,83 @@ def test_smart_channel_uses_hermes_even_when_the_model_is_not(chat_module, chat_
     assert result.text == "Vom Agent."
 
 
+def test_direct_channel_never_uses_hermes_even_with_a_tool_capable_cloud_model(
+    chat_module, chat_node
+):
+    """Direct is the Hermes-free channel; tool calling is not a transport switch.
+
+    Live, a Direct personality on pib.Cloud with the tool switch on was routed
+    through Hermes because the cloud SSE stream carries no tools. The channel is
+    what decides - Smart runs on Hermes, Direct never does - and the tool switch
+    only controls whether the turn offers MCP tools.
+    """
+    Chat = chat_module.Chat
+
+    personality = MagicMock()
+    personality.message_history = 5
+    personality.description = "Du bist pib."
+    personality.personality_id = "pers-direct-cloud"
+    personality.assistant_model.api_name = "pib-cloud"
+    personality.assistant_model.has_image_support = False
+    personality.assistant_model.capabilities = {"images": False, "tools": True}
+    personality.assistant_model.endpoint_base = "http://192.168.1.252:8090/v1"
+    personality.tool_calling = True
+    personality.channel = "direct"
+    personality.effective_channel = "direct"
+
+    logger = MagicMock()
+    chat_node.get_logger = MagicMock(return_value=logger)
+
+    goal_handle = MagicMock()
+    goal_handle.is_cancel_requested = False
+    goal_handle.request = Chat.Goal()
+    goal_handle.request.chat_id = "chat-direct-cloud"
+    goal_handle.request.text = "Schalte das Licht an."
+    goal_handle.request.generate_code = False
+
+    with (
+        patch.object(
+            chat_module.voice_assistant_client,
+            "get_personality_from_chat",
+            return_value=(True, personality),
+        ),
+        patch.object(
+            chat_module.voice_assistant_client,
+            "get_chat_history",
+            return_value=(True, []),
+        ),
+        patch.object(
+            chat_module.direct_tool_loop,
+            "run_direct_turn",
+            return_value=iter(["Erledigt."]),
+        ) as run_direct_turn,
+        patch.object(
+            chat_module.pib_cloud_stream,
+            "stream_pib_cloud_chat",
+            return_value=iter(["Erledigt."]),
+        ) as cloud,
+        patch.object(
+            chat_node, "_stream_hermes_turn", return_value=["Vom Agent."]
+        ) as hermes_stream,
+        patch.object(
+            chat_node,
+            "_stream_chunks_to_goal",
+            return_value=(None, None, "Erledigt."),
+        ),
+    ):
+        result = drive_like_rclpy(chat_node.chat(goal_handle))
+
+    # Direct never uses Hermes. pib.Cloud has no direct tool transport, so the
+    # turn is the plain cloud stream - not the direct tool loop.
+    hermes_stream.assert_not_called()
+    run_direct_turn.assert_not_called()
+    cloud.assert_called_once()
+    # Explicit, not silent: the operator sees why a tool-capable Direct turn is
+    # a plain chat.
+    assert any("no direct tool transport" in str(c) for c in logger.method_calls)
+    assert result.text == "Erledigt."
+
+
 def test_disabled_hermes_channel_routes_a_smart_personality_direct(
     chat_module, chat_node, monkeypatch
 ):
@@ -2231,9 +2308,10 @@ def test_chat_node_routes_pib_cloud_and_flushes_first_sentence(chat_module, chat
     personality = _local_smart_personality()
     personality.assistant_model.api_name = "pib-cloud"
     personality.assistant_model.endpoint_base = "http://192.168.1.252:8090/v1"
-    # The tool switch is off here on purpose: SSE streaming is the pib.Cloud
-    # route for a personality that does not use tools. With the switch on the
-    # same model goes through Hermes instead (concept D3).
+    # Direct: the channel decides the transport, so this is the plain cloud SSE
+    # route. A Smart personality on the same model runs on Hermes instead.
+    personality.channel = "direct"
+    personality.effective_channel = "direct"
     personality.tool_calling = False
 
     goal_handle = MagicMock()
