@@ -23,8 +23,9 @@ jobs:
       - name: Install unit test dependencies
         # tests/unit/conftest.py imports the Flask app at collection, so the app
         # requirements are installed as well as tests/requirements-unit.txt.
-        # The unit file is second: it pins tinkerforge==2.1.32, the Flask file
-        # still pins 2.1.31. pytest matches tests/integration/requirements.txt.
+        # The unit file is second: both pin tinkerforge==2.1.32 now, and this
+        # file also carries the test-only setuptools that setup.py-based tests
+        # need since 3.12 dropped it from ensurepip.
         # numpy is imported by the device-free camera tests. mcp and
         # websocket-client are the dependencies declared by pib_mcp_server.
         # tests/requirements-camera.txt supplies depthai, depthai-nodes and
