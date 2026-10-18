@@ -28,7 +28,8 @@ def test_a_message_keeps_the_metadata_it_was_created_with(app):
 
     with app.test_client() as client:
         response = client.post(
-            f"/voice-assistant/chat/{chat_id}/messages", json={"isUser": False, "content": "Hallo.", "meta": META}
+            f"/voice-assistant/chat/{chat_id}/messages",
+            json={"isUser": False, "content": "Hallo.", "meta": META},
         )
 
     assert response.status_code == 201
@@ -44,7 +45,8 @@ def test_a_message_without_metadata_stays_valid(app):
 
     with app.test_client() as client:
         response = client.post(
-            f"/voice-assistant/chat/{chat_id}/messages", json={"isUser": True, "content": "Nur Text."}
+            f"/voice-assistant/chat/{chat_id}/messages",
+            json={"isUser": True, "content": "Nur Text."},
         )
 
     assert response.status_code == 201
@@ -59,7 +61,8 @@ def test_an_update_sets_the_metadata_and_a_later_update_without_it_keeps_it(app)
 
     with app.test_client() as client:
         created = client.post(
-            f"/voice-assistant/chat/{chat_id}/messages", json={"isUser": False, "content": "Teil."}
+            f"/voice-assistant/chat/{chat_id}/messages",
+            json={"isUser": False, "content": "Teil."},
         ).get_json()
         message_id = created["messageId"]
 
@@ -84,9 +87,12 @@ def test_the_message_list_carries_the_metadata(app):
 
     with app.test_client() as client:
         client.post(
-            f"/voice-assistant/chat/{chat_id}/messages", json={"isUser": False, "content": "Hallo.", "meta": META}
+            f"/voice-assistant/chat/{chat_id}/messages",
+            json={"isUser": False, "content": "Hallo.", "meta": META},
         )
         listed = client.get(f"/voice-assistant/chat/{chat_id}/messages").get_json()
 
-    messages = listed["chatMessages"] if "chatMessages" in listed else listed["messages"]
+    messages = (
+        listed["chatMessages"] if "chatMessages" in listed else listed["messages"]
+    )
     assert messages[0]["meta"] == META
