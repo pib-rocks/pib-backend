@@ -1847,3 +1847,41 @@ def test_hermes_turn_fails_when_the_store_cannot_supply_the_key(
     assert STORE_SECRET not in visible
     assert ENV_SECRET not in visible
     assert OTHER_SECRET not in visible
+
+
+def test_agent_source_imports_here_probes_a_real_agent_tree(tmp_path, monkeypatch):
+    """A PM-managed install has no venv/lib inside the agent dir: the import decides."""
+    from public_api_client import hermes_daemon
+
+    (tmp_path / "hermes_constants.py").write_text("VALUE = 1\n")
+    (tmp_path / "hermes_bootstrap.py").write_text("READY = True\n")
+    monkeypatch.setattr(hermes_daemon, "_AGENT_IMPORT_PROBE", None)
+
+    assert hermes_daemon.agent_source_imports_here(str(tmp_path)) is True
+
+
+def test_agent_source_imports_here_reports_false_when_the_import_fails(
+    tmp_path, monkeypatch
+):
+    from public_api_client import hermes_daemon
+
+    monkeypatch.setattr(hermes_daemon, "_AGENT_IMPORT_PROBE", None)
+    # An empty directory: the probe cannot import hermes_constants.
+    assert hermes_daemon.agent_source_imports_here(str(tmp_path)) is False
+
+
+def test_agent_source_imports_here_caches_the_answer(tmp_path, monkeypatch):
+    from public_api_client import hermes_daemon
+
+    calls = []
+
+    def fake_run(*args, **kwargs):
+        calls.append(args)
+        return types.SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(hermes_daemon, "_AGENT_IMPORT_PROBE", None)
+    monkeypatch.setattr(hermes_daemon.subprocess, "run", fake_run)
+
+    assert hermes_daemon.agent_source_imports_here(str(tmp_path)) is True
+    assert hermes_daemon.agent_source_imports_here(str(tmp_path)) is True
+    assert len(calls) == 1

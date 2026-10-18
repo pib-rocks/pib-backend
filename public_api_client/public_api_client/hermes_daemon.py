@@ -23,11 +23,13 @@ import os
 import re
 import shutil
 import socket
+import subprocess
 import sys
 import threading
 import time
 from collections import OrderedDict
 from pathlib import Path
+from typing import Optional
 
 # Force IPv4 preference in socket.getaddrinfo to prevent 10s IPv6 timeouts on Pi networks
 _orig_getaddrinfo = socket.getaddrinfo
@@ -87,6 +89,9 @@ SESSION_ID_PREFIX = "pib_chat_"
 # Hermes install layout used to import the agent in-process.
 DEFAULT_HERMES_HOME = "/home/pib/.hermes"
 HERMES_AGENT_DIRNAME = "hermes-agent"
+# Cached answer of agent_source_imports_here(); None = not probed yet.
+_AGENT_IMPORT_PROBE: Optional[bool] = None
+AGENT_IMPORT_PROBE_TIMEOUT = 20.0
 _VENV_SITE_PACKAGES_GLOB = os.path.join("venv", "lib", "python3.*", "site-packages")
 _PYTHON_VERSION = re.compile(r"python(\d+)\.(\d+)")
 
@@ -895,17 +900,53 @@ def daemon_health_url() -> str:
     return daemon_base_url() + "/health"
 
 
+def agent_source_imports_here(agent_dir: Optional[str] = None) -> bool:
+    """True when the agent source imports in THIS interpreter.
+
+    A PIB install keeps the agent's dependencies in a PM-managed environment
+    (``~/.hermes/installs/<id>/environments/<id>/venv/lib/pythonX.Y``), which
+    ``venv_site_packages()`` does not scan -- it only looks for ``venv/lib``
+    inside the agent directory. Probing the import answers the actual question
+    and covers both layouts.
+
+    Runs in a subprocess on purpose: importing the agent here would leave its
+    modules in ``sys.modules`` and could let the bootstrap re-exec this process.
+    The answer is cached per process because a probe costs an interpreter start.
+    """
+    global _AGENT_IMPORT_PROBE
+    if _AGENT_IMPORT_PROBE is None:
+        base = agent_dir or hermes_agent_dir()
+        code = (
+            "import sys; sys.path.insert(0, %r); "
+            "import hermes_constants, hermes_bootstrap" % (base,)
+        )
+        try:
+            done = subprocess.run(
+                [sys.executable, "-c", code],
+                capture_output=True,
+                timeout=AGENT_IMPORT_PROBE_TIMEOUT,
+                stdin=subprocess.DEVNULL,
+            )
+            _AGENT_IMPORT_PROBE = done.returncode == 0
+        except (OSError, subprocess.SubprocessError) as exc:
+            logging.info("agent import probe failed: %s", exc)
+            _AGENT_IMPORT_PROBE = False
+    return _AGENT_IMPORT_PROBE
+
+
 def in_process_available() -> bool:
     """True when the Hermes agent can run inside THIS interpreter.
 
-    The in-process API needs Hermes' own venv site-packages for the running
-    Python. When none match, importing the agent source makes Hermes' bootstrap
-    re-exec this process under its managed Python -- which is fatal here, because
-    this process is the ROS ``chat`` node and its setuptools launcher cannot
-    resolve the ``voice-assistant`` distribution there. Callers fall back to the
-    CLI subprocess in that case.
+    The in-process API needs Hermes' packages importable for the running Python.
+    Two layouts provide them: a ``venv/lib/pythonX.Y`` inside the agent directory
+    (a matching one is prepended to ``sys.path``), or a PM-managed environment
+    that the interpreter already carries. When neither holds, importing the agent
+    source would make Hermes' bootstrap re-exec this process under its managed
+    Python -- fatal here, because this process is the ROS ``chat`` node and its
+    setuptools launcher cannot resolve the ``voice-assistant`` distribution
+    there. Callers fall back to the CLI subprocess in that case.
     """
-    return bool(venv_site_packages())
+    return bool(venv_site_packages()) or agent_source_imports_here()
 
 
 def _run_turn_in_home(
