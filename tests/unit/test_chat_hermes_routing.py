@@ -1888,6 +1888,78 @@ def test_a_turn_announces_its_transport_and_model_on_the_trace_topic(
     assert smart[0]["detail"]["model"] == "gemini-3.8-flash"
 
 
+def test_the_turn_metadata_carries_transport_stages_and_the_fallback_reason(
+    chat_module, chat_node
+):
+    """PC-82: the stored answer explains itself - which transport, how fast, why fallback."""
+    node = chat_node
+    node._turn_trace_publisher = MagicMock()
+    node.get_logger = MagicMock(return_value=MagicMock())
+    node._reset_turn_meta()
+
+    node._record_turn_trace(json.dumps({"stage": "end_of_speech", "ts_ms": 1000.0}))
+    node._record_turn_trace(json.dumps({"stage": "request_sent", "ts_ms": 1084.5}))
+    node._emit_turn_path(chat_id="chat-meta", path="pib.Cloud", model="pib-cloud")
+    node._record_turn_trace(json.dumps({"stage": "first_token", "ts_ms": 1332.1}))
+    node._record_turn_trace(
+        json.dumps(
+            {
+                "stage": "stream_done",
+                "ts_ms": 1400.0,
+                "detail": {"fallback_reason": "cloud_sse_preflight"},
+            }
+        )
+    )
+
+    meta = node._turn_meta()
+
+    assert meta["source"] == "pib-cloud"
+    assert meta["model"] == "pib-cloud"
+    assert meta["stagesMs"]["request_sent"] == 84.5
+    assert meta["stagesMs"]["first_token"] == 332.1
+    assert meta["fallbackReason"] == "cloud_sse_preflight"
+    assert meta["streamEnd"] == "done"
+
+
+def test_a_turn_without_a_transport_has_no_metadata(chat_module, chat_node):
+    node = chat_node
+    node.get_logger = MagicMock(return_value=MagicMock())
+    node._reset_turn_meta()
+
+    assert node._turn_meta() is None
+
+
+def test_the_answer_is_created_with_the_turn_metadata_and_a_user_line_without(
+    chat_module, chat_node
+):
+    node = chat_node
+    node.get_logger = MagicMock(return_value=MagicMock())
+    node._turn_trace_publisher = MagicMock()
+    node._reset_turn_meta()
+    node._emit_turn_path(chat_id="chat-meta", path="pib.Cloud", model="pib-cloud")
+    # The fixture stubs the node's own writer; this test needs the real one.
+    node.create_chat_message = types.MethodType(
+        chat_module.ChatNode.create_chat_message, node
+    )
+
+    stored = MagicMock()
+    stored.message_id = "msg-1"
+    with (
+        patch.object(
+            chat_module.voice_assistant_client,
+            "create_chat_message",
+            return_value=(True, stored),
+        ) as create,
+        patch.object(node, "_publish_chat_message"),
+    ):
+        node.create_chat_message("chat-meta", "Hallo.", False, False, True)
+        node.create_chat_message("chat-meta", "Und ich.", True, False, True)
+
+    answer, user_line = create.call_args_list
+    assert answer.kwargs["meta"] == {"source": "pib-cloud", "model": "pib-cloud"}
+    assert user_line.kwargs["meta"] is None
+
+
 def test_disabled_hermes_channel_routes_a_smart_personality_direct(
     chat_module, chat_node, monkeypatch
 ):

@@ -1,3 +1,4 @@
+import json
 import os
 import re
 import time
@@ -205,6 +206,7 @@ class ChatNode(Node):
         # Head turn and per-person preface. Sensors are optional: a missing
         # camera message must not stop the node from answering.
         self._attention = bind_attention(self)
+        self._reset_turn_meta()
         self._install_turn_trace_emitter()
 
         self.get_logger().info("Now running CHAT")
@@ -218,6 +220,9 @@ class ChatNode(Node):
             self._turn_trace_publisher = publisher
 
             def emit(raw: str) -> None:
+                # The same events a UI consumes also describe this turn in the
+                # stored answer (PC-82), so record them before publishing.
+                self._record_turn_trace(raw)
                 message = String()
                 message.data = raw
                 publisher.publish(message)
@@ -225,6 +230,87 @@ class ChatNode(Node):
             pib_cloud_stream.set_trace_emitter(emit)
         except Exception as exc:
             self.get_logger().warning(f"turn trace emitter was not installed: {exc}")
+
+    def _reset_turn_meta(self) -> None:
+        """A new turn forgets the previous turn's facts."""
+        self._turn_stages = {}
+        self._turn_started_ms = None
+        self._turn_fallback_reason = None
+        self._turn_stream_end = None
+        self._turn_path_token = ""
+        self._turn_model = ""
+
+    def _record_turn_trace(self, raw: str) -> None:
+        """Keep stage timings and the fallback reason of the running turn."""
+        try:
+            event = json.loads(raw)
+        except (TypeError, ValueError):
+            return
+        stage = event.get("stage")
+        ts = event.get("ts_ms")
+        if stage == "end_of_speech":
+            self._turn_stages = {}
+            self._turn_started_ms = float(ts) if isinstance(ts, (int, float)) else None
+        elif stage == "stream_done":
+            self._turn_stream_end = "done"
+        reason = (event.get("detail") or {}).get("fallback_reason")
+        if isinstance(reason, str) and reason:
+            self._turn_fallback_reason = reason
+        started = getattr(self, "_turn_started_ms", None)
+        if started is not None and isinstance(ts, (int, float)):
+            stages = getattr(self, "_turn_stages", None)
+            if not isinstance(stages, dict):
+                stages = self._turn_stages = {}
+            stages[stage] = round(float(ts) - started, 1)
+
+    def _turn_meta(self) -> dict | None:
+        """Facts of this turn, stored with the answer (PC-82).
+
+        Empty for a turn without a transport announcement - a user message or a
+        turn that never reached a transport must not invent metadata.
+        """
+        meta: dict = {}
+        source = getattr(self, "_turn_path_token", "")
+        model = getattr(self, "_turn_model", "")
+        stages = getattr(self, "_turn_stages", None)
+        reason = getattr(self, "_turn_fallback_reason", None)
+        stream_end = getattr(self, "_turn_stream_end", None)
+        if source:
+            meta["source"] = source
+        if model:
+            meta["model"] = model
+        if isinstance(stages, dict) and stages:
+            meta["stagesMs"] = dict(stages)
+        if reason:
+            meta["fallbackReason"] = reason
+        if stream_end:
+            meta["streamEnd"] = stream_end
+        return meta or None
+
+    def _finalize_message_meta(self, chat_id: str) -> None:
+        """Write the completed turn facts onto the answer that was just stored."""
+        try:
+            meta = self._turn_meta()
+            message_id = getattr(self, "last_pib_message_id", None)
+            if not meta or not message_id:
+                return
+            with self.voice_assistant_client_lock:
+                successful, _ = voice_assistant_client.update_chat_message(
+                    chat_id,
+                    getattr(self, "message_content", ""),
+                    False,
+                    message_id,
+                    meta=meta,
+                )
+            if not successful:
+                self.get_logger().warning(
+                    f"turn metadata was not stored chat={chat_id}"
+                )
+        except Exception as exc:
+            self.get_logger().warning(f"turn metadata failed: {exc}")
+        finally:
+            # The next turn starts clean; a recorder end_of_speech sets its anchor.
+            self._reset_turn_meta()
 
     #: Machine token per transport for the turn-path trace event. A UI reads this
     #: to say which runtime answered; the human words above it stay for the log.
@@ -249,6 +335,8 @@ class ChatNode(Node):
         try:
             from voice_assistant.turn_latency import format_event
 
+            self._turn_path_token = self.TURN_PATH_TOKENS.get(path, path)
+            self._turn_model = model or ""
             detail = {"model": model} if model else None
             message = String()
             message.data = format_event(
@@ -439,7 +527,10 @@ class ChatNode(Node):
             else:
                 # CREATE path
                 successful, chat_message = voice_assistant_client.create_chat_message(
-                    chat_id, text, is_user
+                    chat_id,
+                    text,
+                    is_user,
+                    meta=None if is_user else self._turn_meta(),
                 )
                 if not successful or chat_message is None:
                     self.get_logger().error(
@@ -1275,6 +1366,7 @@ class ChatNode(Node):
             prev_text, prev_text_type, curr_text = self._stream_chunks_to_goal(
                 goal_handle, chat_id, tokens, t0=t0
             )
+            self._finalize_message_meta(chat_id)
             if goal_handle.is_cancel_requested:
                 return Chat.Result()
 

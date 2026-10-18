@@ -13,4 +13,8 @@ class ChatMessage(db.Model):
     timestamp = db.Column(db.DateTime, nullable=False, default=func.now())
     is_user = db.Column(db.Boolean, nullable=False)
     content = db.Column(db.String(100000), nullable=False)
+    #: Facts about the turn that produced this message (answering transport,
+    #: model, stage timings, fallback reason). Null for user messages and for
+    #: answers recorded before the column existed.
+    meta = db.Column(db.JSON, nullable=True)
     chat_id = db.Column(db.String(255), db.ForeignKey("chat.chat_id"), nullable=False)

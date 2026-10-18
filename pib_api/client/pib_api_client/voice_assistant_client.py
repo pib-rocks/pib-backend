@@ -165,9 +165,15 @@ def get_personality_from_chat(chat_id: str) -> Tuple[bool, Personality]:
 
 
 def create_chat_message(
-    chat_id: str, message_content: str, is_user: bool
+    chat_id: str,
+    message_content: str,
+    is_user: bool,
+    meta: Optional[dict] = None,
 ) -> Tuple[bool, ChatMessage]:
-    data = json.dumps({"isUser": is_user, "content": message_content}).encode("UTF-8")
+    payload: dict = {"isUser": is_user, "content": message_content}
+    if meta is not None:
+        payload["meta"] = meta
+    data = json.dumps(payload).encode("UTF-8")
     request = Request(
         CHAT_MESSAGES_URL % chat_id,
         method="POST",
@@ -179,9 +185,16 @@ def create_chat_message(
 
 
 def update_chat_message(
-    chat_id: str, message_content: str, is_user: bool, message_id: str
+    chat_id: str,
+    message_content: str,
+    is_user: bool,
+    message_id: str,
+    meta: Optional[dict] = None,
 ) -> Tuple[bool, ChatMessage]:
-    data = json.dumps({"isUser": is_user, "content": message_content}).encode("UTF-8")
+    payload: dict = {"isUser": is_user, "content": message_content}
+    if meta is not None:
+        payload["meta"] = meta
+    data = json.dumps(payload).encode("UTF-8")
     request = Request(
         CHAT_MESSAGES_URL % chat_id + "/" + message_id,
         method="PUT",
