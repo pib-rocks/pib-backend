@@ -188,10 +188,18 @@ def websocket_connection(url: str, token: Optional[str], timeout: float) -> Conn
             socket.send_binary(data)
 
         def recv(self):  # type: ignore[no-untyped-def]
-            opcode, payload = socket.recv_data()
-            if opcode == websocket.ABNF.OPCODE_TEXT:
-                return opcode, payload.decode("utf-8", "replace")
-            return opcode, payload
+            # Control frames are the websocket's business, not the relay protocol's.
+            # A pong (two bytes) reaching the frame decoder logs a malformed-frame
+            # warning every ping interval and would be counted as audio otherwise.
+            while True:
+                opcode, payload = socket.recv_data()
+                if opcode == websocket.ABNF.OPCODE_TEXT:
+                    return opcode, payload.decode("utf-8", "replace")
+                if opcode == websocket.ABNF.OPCODE_BINARY:
+                    return opcode, payload
+                if opcode == websocket.ABNF.OPCODE_CLOSE:
+                    raise ConnectionError("relay closed the socket")
+                # ping/pong: skipped; websocket-client answers pings itself
 
         def close(self) -> None:
             try:

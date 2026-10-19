@@ -266,3 +266,72 @@ def test_sending_without_a_connection_is_a_no_op_not_an_exception() -> None:
     assert client.send_turn_start("nichts") == 1
     assert client.send_audio(b"\x00\x00") == 0
     assert client.send_progress(0) is False
+
+
+def test_the_websocket_adapter_skips_control_frames(monkeypatch) -> None:
+    """A pong is two bytes; the frame decoder must never see it."""
+    import sys
+    import types
+
+    class Abnf:
+        OPCODE_TEXT = 1
+        OPCODE_BINARY = 2
+        OPCODE_CLOSE = 8
+        OPCODE_PING = 9
+        OPCODE_PONG = 10
+
+    frames = [
+        (Abnf.OPCODE_PING, b"keepalive"),
+        (Abnf.OPCODE_PONG, b"\x00\x00"),
+        (Abnf.OPCODE_TEXT, b'{"type":"pong"}'),
+    ]
+
+    class Socket:
+        def recv_data(self):
+            return frames.pop(0)
+
+        def send(self, *args):
+            pass
+
+        def send_binary(self, *args):
+            pass
+
+        def close(self):
+            pass
+
+    fake = types.SimpleNamespace(ABNF=Abnf, create_connection=lambda *a, **k: Socket())
+    monkeypatch.setitem(sys.modules, "websocket", fake)
+
+    from voice_assistant.pib_duplex import websocket_connection
+
+    connection = websocket_connection("wss://relay.test/v1/pib/stream", None, 5.0)
+    assert connection.recv() == (Abnf.OPCODE_TEXT, '{"type":"pong"}')
+    assert frames == []
+
+
+def test_a_closed_socket_ends_the_receive_loop(monkeypatch) -> None:
+    import sys
+    import types
+
+    class Abnf:
+        OPCODE_TEXT = 1
+        OPCODE_BINARY = 2
+        OPCODE_CLOSE = 8
+        OPCODE_PING = 9
+        OPCODE_PONG = 10
+
+    class Socket:
+        def recv_data(self):
+            return Abnf.OPCODE_CLOSE, b""
+
+        def close(self):
+            pass
+
+    fake = types.SimpleNamespace(ABNF=Abnf, create_connection=lambda *a, **k: Socket())
+    monkeypatch.setitem(sys.modules, "websocket", fake)
+
+    from voice_assistant.pib_duplex import websocket_connection
+
+    connection = websocket_connection("wss://relay.test/v1/pib/stream", None, 5.0)
+    with pytest.raises(ConnectionError):
+        connection.recv()
