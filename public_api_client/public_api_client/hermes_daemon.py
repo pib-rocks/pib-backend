@@ -916,10 +916,11 @@ def agent_source_imports_here(agent_dir: Optional[str] = None) -> bool:
     global _AGENT_IMPORT_PROBE
     if _AGENT_IMPORT_PROBE is None:
         base = agent_dir or hermes_agent_dir()
-        code = (
-            "import sys; sys.path.insert(0, %r); "
-            "import hermes_constants, hermes_bootstrap" % (base,)
-        )
+        # hermes_constants is stdlib-only. hermes_bootstrap is deliberately NOT
+        # imported here: importing it can make the bootstrap re-exec the probe
+        # interpreter, which fails in an isolated subprocess and would report the
+        # agent as unavailable although it is importable.
+        code = "import sys; sys.path.insert(0, %r); import hermes_constants" % (base,)
         try:
             done = subprocess.run(
                 [sys.executable, "-c", code],

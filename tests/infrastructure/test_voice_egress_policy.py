@@ -104,8 +104,6 @@ def test_rendered_tcp_allows_match_the_enabled_allowlist_exactly():
         ("203.0.113.20", "443"),
         ("203.0.113.21", "443"),
         ("172.18.0.1", "11434"),
-        # The Hermes turn daemon on the host's 3.14 runtime (PC-89).
-        ("172.18.0.1", "8088"),
     }
     assert "platform.tryb.ai" not in text
     assert "198.51.100.20" not in text
@@ -116,7 +114,22 @@ def test_rendered_tcp_allows_match_the_enabled_allowlist_exactly():
 
 def test_network_gateway_uses_the_bridge_gateway_not_docker0():
     """host.docker.internal points at docker0; the container's own gateway is routable."""
-    allow = mod.load_allowlist(str(ALLOWLIST_PATH))
+    raw = json.loads(ALLOWLIST_PATH.read_text(encoding="utf-8"))
+    raw["entries"].append(
+        {
+            "id": "host-svc",
+            "enabled": True,
+            "modes": ["common"],
+            "destination": "host-gateway",
+            "port": 8088,
+            "protocol": "tcp",
+            "resolve": "network-gateway",
+            "hook": "input",
+            "purpose": "test",
+            "evidence": "test",
+        }
+    )
+    allow = mod.allowlist_from_dict(raw)
     text = mod.render_ruleset(allow, _binding())
     assert ("172.18.0.1", "8088") in _tcp_tokens(text)
     assert ("172.17.0.1", "8088") not in _tcp_tokens(text)
