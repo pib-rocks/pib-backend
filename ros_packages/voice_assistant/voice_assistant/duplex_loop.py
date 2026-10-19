@@ -31,6 +31,29 @@ from voice_assistant.duplex_session import DuplexVoiceSession
 
 logger = logging.getLogger(__name__)
 
+# How long a silence ends the spoken turn. The relay path is not the button path:
+# there is no second press, so the answer has to start as soon as the sentence is
+# over. 450 ms is what the measured local gate used (PC-30); whisper's endpointing
+# needs a little more than a provider VAD, so the default sits at 700 ms and the
+# personality's own pause threshold is honoured up to 800 ms.
+DEFAULT_SILENCE_AFTER_S = 0.7
+MIN_SILENCE_AFTER_S = 0.3
+MAX_SILENCE_AFTER_S = 0.8
+DEFAULT_SILENCE_BEFORE_S = 8.0
+
+
+def silence_after_s(
+    pause_threshold: Optional[float] = None, override: Optional[float] = None
+) -> float:
+    """Seconds of silence that end the turn, clamped to what still sounds natural."""
+    if override is not None:
+        return max(MIN_SILENCE_AFTER_S, float(override))
+    value = (
+        DEFAULT_SILENCE_AFTER_S if pause_threshold is None else float(pause_threshold)
+    )
+    return max(MIN_SILENCE_AFTER_S, min(value, MAX_SILENCE_AFTER_S))
+
+
 STATE_IDLE = "idle"
 STATE_LISTENING = "listening"
 STATE_SPEAKING = "speaking"

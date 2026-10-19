@@ -27,9 +27,15 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from typing import Callable, Optional
 
 import numpy as np
+
+from pib_hermes_config.live_interaction import (
+    admit_live_uplink,
+    playback_exclusion_deadline,
+)
 
 from voice_assistant.audio_devices import PROCESSED_CHANNEL, extract_channel
 from voice_assistant.pib_duplex import (
@@ -87,6 +93,13 @@ class DuplexVoiceSession:
         self._suspected = False
         self._accepting = False
         self._dropped_turns = 0
+        # The speaker is still audible after the last frame was written: the device
+        # buffer, then the room. The live path already excludes that tail from its
+        # uplink; the relay path needs the same window or pib answers its own echo.
+        self._last_audio_at = 0.0
+        self._exclude_until = 0.0
+        self._uplink_paused = False
+        self._dropped_echo_chunks = 0
         self.client = DuplexClient(
             url,
             on_audio=self._on_audio,
@@ -147,6 +160,7 @@ class DuplexVoiceSession:
                 gated = self._gate.process(rendered)
                 if gated:
                     self._sink(gated)
+                    self._last_audio_at = time.monotonic()
         except Exception:  # noqa: BLE001 - a bad frame must not kill the socket
             logger.exception("playback failed for turn %s", turn_id)
 
@@ -163,6 +177,12 @@ class DuplexVoiceSession:
 
     def _end_turn(self, *, reason: str) -> None:
         was_accepting = self._accepting
+        # Start the echo window where the sound actually ends, not where the turn
+        # does: the last frame was written to the device, which plays it later.
+        ended_at = max(time.monotonic(), self._last_audio_at)
+        self._exclude_until = max(
+            self._exclude_until, playback_exclusion_deadline(ended_at)
+        )
         self._accepting = False
         self._gate.cancel()
         self._suspected = False
@@ -238,8 +258,22 @@ class DuplexVoiceSession:
 
     # ------------------------------------------------------------------ microphone
 
+    def pause_uplink(self) -> None:
+        """Stop sending audio while a robot action runs - the motors are the signal."""
+        self._uplink_paused = True
+
+    def resume_uplink(self) -> None:
+        self._uplink_paused = False
+
     def on_microphone(self, pcm: bytes) -> int:
         """Send microphone PCM upstream, taking channel 0 when the array is multichannel."""
+        if not admit_live_uplink(
+            now=time.monotonic(),
+            exclude_until=self._exclude_until,
+            session_paused=self._uplink_paused,
+        ):
+            self._dropped_echo_chunks += 1
+            return 0
         samples = np.frombuffer(pcm, dtype="<i2")
         if self._input_channels > 1:
             samples = extract_channel(samples, self._input_channels, PROCESSED_CHANNEL)

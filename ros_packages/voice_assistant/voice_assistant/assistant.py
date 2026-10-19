@@ -336,13 +336,26 @@ class VoiceAssistantNode(Node):
         return loop
 
     def _request_duplex_transcription(self, on_text) -> None:
-        """One utterance from the existing recorder, then hand the text to the relay."""
+        """One utterance from the existing recorder, then hand the text to the relay.
+
+        The pause threshold stays the personality's own, capped at 800 ms: 1.2 s of
+        dead air after every sentence is what makes a conversation feel switched off
+        rather than paused. The "before" window is how long pib waits for someone to
+        start speaking at all, so it stays as generous as the button path.
+        """
+        from voice_assistant.duplex_loop import (
+            DEFAULT_SILENCE_BEFORE_S,
+            silence_after_s,
+        )
+
+        override = os.getenv("PIB_DUPLEX_SILENCE_AFTER", "").strip()
         self.record_audio(
             max_silent_seconds_before=float(
-                os.getenv("PIB_DUPLEX_SILENCE_BEFORE", "3.0")
+                os.getenv("PIB_DUPLEX_SILENCE_BEFORE", str(DEFAULT_SILENCE_BEFORE_S))
             ),
-            max_silent_seconds_after=float(
-                os.getenv("PIB_DUPLEX_SILENCE_AFTER", "1.2")
+            max_silent_seconds_after=silence_after_s(
+                getattr(self.personality, "pause_threshold", None),
+                float(override) if override else None,
             ),
             on_transcribed_text_received=on_text,
         )

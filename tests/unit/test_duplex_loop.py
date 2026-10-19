@@ -7,10 +7,13 @@ interruption starts the next question instead of finishing the interrupted one.
 from __future__ import annotations
 
 from voice_assistant.duplex_loop import (
+    DEFAULT_SILENCE_AFTER_S,
+    MAX_SILENCE_AFTER_S,
     STATE_IDLE,
     STATE_LISTENING,
     STATE_SPEAKING,
     DuplexVoiceLoop,
+    silence_after_s,
 )
 
 
@@ -149,3 +152,11 @@ def test_stop_closes_the_session_and_does_not_listen_on() -> None:
     assert loop.is_listening is False
     assert loop.state == STATE_IDLE
     assert recorder.requests == 1
+
+
+def test_the_pause_threshold_is_capped_so_answers_do_not_stall() -> None:
+    assert silence_after_s(None) == DEFAULT_SILENCE_AFTER_S
+    assert silence_after_s(0.5) == 0.5
+    assert silence_after_s(1.2) == MAX_SILENCE_AFTER_S  # the old duplex default
+    assert silence_after_s(1.2, override=0.45) == 0.45
+    assert silence_after_s(0.05) >= 0.3
