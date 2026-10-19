@@ -173,6 +173,13 @@ services:
       - PIB_CLOUD_BASE_URL=${PIB_CLOUD_BASE_URL:-https://api.pib.rocks/v1}
       - PIB_CLOUD_STT_TIMEOUT_SECONDS=${PIB_CLOUD_STT_TIMEOUT_SECONDS:-3}
       - PIB_CLOUD_MODE=${PIB_CLOUD_MODE:-test}
+      # Which live voice path answers: "gemini" (speech-to-speech) or "duplex"
+      # (the pib.Cloud relay answers and speaks; transcription stays on the robot).
+      # Default keeps the path every robot runs today; a robot opts in per host.
+      - PIB_VOICE_BACKEND=${PIB_VOICE_BACKEND:-gemini}
+      - PIB_CLOUD_VOICE_URL=${PIB_CLOUD_VOICE_URL:-wss://api.pib.rocks/v1/pib/stream}
+      # Channels the array publishes. 1 unless the driver reports its raw channels.
+      - PIB_MIC_CHANNELS=${PIB_MIC_CHANNELS:-1}
       - VOICE_ASSISTANT_DIR=/app/ros2_ws/voice_assistant
       - PIB_MCP_ROSBRIDGE_URL=ws://rosbridge-ws:9090
       - PIB_OLLAMA_BASE_URL=http://host.docker.internal:11434
