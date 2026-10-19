@@ -48,6 +48,16 @@ user_program_env/
 
 password.env
 
+# Environment files carry credentials and per-host settings; they must never be
+# committed. The one tracked exception is ros-audio.env, which holds ALSA device
+# names and channel counts (no secrets) and is required by docker-compose.
+.env
+*.env
+!ros-audio.env
+!*.env.example
+*.properties
+secrets.properties
+
 pibdata.db
 
 host_ip.txt
