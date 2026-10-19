@@ -115,6 +115,20 @@
       "hook": "forward",
       "purpose": "Legacy tryb_api speech route. Disabled because use was not observed. Enabling this entry is what adds the destination; the code path is unchanged.",
       "evidence": "Unproven. TRYB_URL_PREFIX=https://platform.tryb.ai is set (PC-45 plan). No connection to platform.tryb.ai was observed from this session, and the legacy route was not exercised."
+    },
+    {
+      "id": "hermes-daemon",
+      "enabled": true,
+      "modes": [
+        "common"
+      ],
+      "destination": "host.docker.internal",
+      "port": 8088,
+      "protocol": "tcp",
+      "resolve": "bridge-gateway",
+      "hook": "input",
+      "purpose": "The Hermes turn daemon runs on the host's managed Python 3.14: the voice container's 3.12 cannot import the agent (its dependencies are gated to 3.14), so the daemon serves /turn from the host and the voice node reaches it at the bridge gateway through PIB_HERMES_DAEMON_URL. Without this destination the daemon is unreachable and every Smart turn falls back to a CLI subprocess.",
+      "evidence": "Measured on .172 on 2026-10-19: the container timed out to 172.18.0.1 on ports 22, 8088 and 5000, and the rendered ruleset drops `ip daddr 172.18.0.1` on the bridge forward hook while allowing 172.18.0.0/16 minus the gateway. The daemon itself was listening on 172.18.0.1:8088 (`ss -ltnp`) and answered /health from the host."
     }
   ]
 }
