@@ -185,6 +185,11 @@ services:
       - HERMES_HOME=/home/pib/.hermes
       - PIB_HERMES_BIN=/home/pib/.local/bin/hermes
       - PIB_HERMES_DAEMON_HOST=0.0.0.0
+      # Where the turn daemon listens FROM THE NODE'S POINT OF VIEW. Default keeps
+      # the daemon that runs in this container. Set it to the host's bridge
+      # gateway when the daemon must run on the host's Python 3.14 runtime
+      # (the container's 3.12 cannot import the agent; see PC-89).
+      - PIB_HERMES_DAEMON_URL=${PIB_HERMES_DAEMON_URL:-http://0.0.0.0:8088}
       # Empty means read /etc/pib_smart_chats. 0 disables the Hermes channel.
       - PIB_SMART_CHATS=${PIB_SMART_CHATS:-}
       # GEMINI_API_KEY / GOOGLE_API_KEY are deliberately NOT listed here: they
