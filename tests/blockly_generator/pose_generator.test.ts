@@ -2,16 +2,19 @@ import * as Blockly from "blockly";
 import { Block } from "blockly/core/block";
 import { Order, pythonGenerator } from "blockly/python";
 import {
-  get_all_poses,
-  get_pose_joints,
-  has_pose,
-  moveToPoseGenerator,
-  play_pose_sequence,
-  pose_count,
-  save_current_pose,
-  save_detection_as_pose,
+    get_all_poses,
+    get_pose_joints,
+    has_pose,
+    moveToPoseGenerator,
+    play_pose_sequence,
+    pose_count,
+    save_current_pose,
+    save_detection_as_pose,
 } from "../../pib_blockly/pib_blockly_server/src/pib-blockly/program-generators/pose-generator";
-import { poseBlocks } from "../../pib_blockly/pib_blockly_server/src/pib-blockly/program-blocks/pose-block";
+import {
+    moveToPose,
+    poseBlocks,
+} from "../../pib_blockly/pib_blockly_server/src/pib-blockly/program-blocks/pose-block";
 
 type MockGenerator = typeof pythonGenerator & {
   definitions_: Record<string, string>;
@@ -35,7 +38,7 @@ function createMockGenerator(): MockGenerator {
 }
 
 describe("moveToPoseGenerator", () => {
-  it("generates apply_pose call with pose UUID", () => {
+  it("generates apply_pose call with pose UUID and converts centi-degrees to degrees in a single batched Write.move", () => {
     const poseId = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
     const block = {
       getFieldValue: (field: string) => {
@@ -50,9 +53,37 @@ describe("moveToPoseGenerator", () => {
     expect(code).toBe(`apply_pose("${poseId}")\n`);
     const defs = Object.values(generator.definitions_).join("\n");
     expect(defs).toContain("from pib_api_client import pose_client");
-    expect(defs).toContain("pib_sdk.Write");
     expect(defs).toContain("import pib_sdk");
+    expect(defs).toContain('motor_position["position"] / 100.0');
+    expect(defs).toContain("with pib_sdk.Write(host=rosbridge_host, port=9090) as writer:");
+    expect(defs).toContain("writer.move(*args)");
+    expect(defs).not.toContain('.move(motor_name, position)');
   });
+
+    it("registers move_to_pose without polluting Blockly.Blocks with init or getPoses", () => {
+        delete Blockly.Blocks["init"];
+        delete Blockly.Blocks["getPoses"];
+        Blockly.common.defineBlocks(moveToPose);
+
+        expect(Blockly.Blocks["move_to_pose"]).toBeDefined();
+        expect(typeof Blockly.Blocks["move_to_pose"].getPoses).toBe("function");
+        expect(Blockly.Blocks["init"]).toBeUndefined();
+        expect(Blockly.Blocks["getPoses"]).toBeUndefined();
+
+        const workspace = new Blockly.Workspace();
+        Blockly.Events.disable();
+        try {
+            const block = workspace.newBlock("move_to_pose");
+            Blockly.Blocks["move_to_pose"].getPoses = () => [
+                ["Head up", "pose-1"],
+            ];
+            const field = block.getField("POSE") as Blockly.FieldDropdown;
+            expect(field.getOptions(false)).toEqual([["Head up", "pose-1"]]);
+        } finally {
+            workspace.dispose();
+            Blockly.Events.enable();
+        }
+    });
 });
 
 function blockWithName(name: string): Block {

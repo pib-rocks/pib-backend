@@ -8,7 +8,7 @@ from provider_registry import PIB_CLOUD_API_NAME
 from service import key_store_service, personality_service, provider_service
 
 
-def test_offer_is_local_engines_and_cloud_whisper_until_a_capability_is_set(app):
+def test_offer_is_local_engines_and_cloud_speech_until_a_capability_is_set(app):
     client = app.test_client()
     body = client.get("/provider/voice-backends").get_json()
     assert [row["id"] for row in body["speechToText"]] == [
@@ -17,8 +17,9 @@ def test_offer_is_local_engines_and_cloud_whisper_until_a_capability_is_set(app)
     ]
     assert body["speechToText"][0]["engine"] == "faster-whisper"
     assert body["speechToText"][1]["engine"] == "cloud_whisper"
-    assert [row["id"] for row in body["textToSpeech"]] == ["supertone"]
+    assert [row["id"] for row in body["textToSpeech"]] == ["supertone", "cloud_tts"]
     assert body["textToSpeech"][0]["engine"] == "supertone"
+    assert body["textToSpeech"][1]["engine"] == "cloud_tts"
     assert body["liveVoiceNote"] == LIVE_VOICE_NOTE
     offered = " ".join(
         f"{row['id']} {row['engine']} {row['label']}"
@@ -44,7 +45,8 @@ def test_offer_is_local_engines_and_cloud_whisper_until_a_capability_is_set(app)
     assert stt_ids == ["local_whisper", *[option for _, option in by_row]]
     assert str(cloud_id) not in stt_ids
     assert str(gpt6_id) not in stt_ids
-    assert tts_ids == ["supertone", str(gpt6_id)]
+    assert tts_ids == ["supertone", str(gpt6_id), "cloud_tts"]
+    assert str(cloud_id) not in tts_ids
     assert str(gemini_id) not in tts_ids
     assert "elevenlabs" not in str(body).lower()
 
@@ -69,9 +71,9 @@ def test_new_personality_voice_defaults_before_the_password(app, monkeypatch):
     )
     assert response.status_code == 201
     body = response.get_json()
-    # The default route is pib.Cloud, so its STT default is cloud whisper.
+    # The default route is pib.Cloud, so its speech defaults are cloud engines.
     assert body["sttEngine"] == "cloud_whisper"
-    assert body["ttsEngine"] == "supertone"
+    assert body["ttsEngine"] == "cloud_tts"
     assert body["localVoiceApplies"] is True
     assert body["liveVoiceNote"] is None
 
@@ -142,7 +144,7 @@ def test_only_a_capable_provider_can_be_stored(app, monkeypatch):
     assert rejected.status_code == 400
     unchanged = client.get(f"/voice-assistant/personality/{personality_id}").get_json()
     assert unchanged["sttEngine"] == "cloud_whisper"
-    assert unchanged["ttsEngine"] == "supertone"
+    assert unchanged["ttsEngine"] == "cloud_tts"
 
     named = client.put(
         f"/voice-assistant/personality/{personality_id}",

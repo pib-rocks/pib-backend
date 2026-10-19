@@ -236,14 +236,24 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(poseId: str) -> None:
         logging.error(f"getting motor-positions of pose failed.")
         return
 
-    rosbridge_host = os.getenv("ROSBRIDGE_HOST", "rosbridge-ws")
+    args = []
     for motor_position in motor_positions["motorPositions"]:
-        motor_name = motor_position["motorName"]
-        position = motor_position["position"]
-        try:
-            pib_sdk.Write(host=rosbridge_host, port=9090).move(motor_name, position)
-        except Exception:
-            pib_sdk.Write(host="localhost", port=9090).move(motor_name, position)
+        args.extend(
+            (
+                motor_position["motorName"],
+                motor_position["position"] / 100.0,
+            )
+        )
+    if not args:
+        return
+
+    rosbridge_host = os.getenv("ROSBRIDGE_HOST", "rosbridge-ws")
+    try:
+        with pib_sdk.Write(host=rosbridge_host, port=9090) as writer:
+            writer.move(*args)
+    except Exception:
+        with pib_sdk.Write(host="localhost", port=9090) as writer:
+            writer.move(*args)
 `;
 
 export const SAVE_CURRENT_POSE_FUNCTION = (generator: typeof pythonGenerator) => `

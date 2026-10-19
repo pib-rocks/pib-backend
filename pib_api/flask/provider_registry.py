@@ -25,7 +25,7 @@ DEFAULT_PROVIDER_REF = "default"
 STATUS_ACTIVE = "active"
 STATUS_UNCONFIRMED = "unconfirmed"
 
-CAPABILITY_KEYS = ("tools", "images", "live", "stt", "tts")
+CAPABILITY_KEYS = ("tools", "images", "live", "stt", "tts", "reasoning")
 
 #: Namespace of a typed, unambiguous model reference: ``model:<id>``.
 #: The prefix carries the kind, so a provider-account id can never be read as
@@ -99,6 +99,9 @@ class CatalogueEntry(NamedTuple):
 
     ``api_name`` is None until the operator confirms an identifier.
     ``is_default`` marks the default route, pib.Cloud.
+    ``reasoning`` says whether a personality may set a reasoning effort for
+    the model itself. pib.Cloud sets its own and answers HTTP 400 on
+    ``reasoning_effort``, so it carries the flag off.
     """
 
     provider: str
@@ -109,6 +112,7 @@ class CatalogueEntry(NamedTuple):
     live: bool
     stt: bool
     tts: bool
+    reasoning: bool
     status: str
     is_default: bool
 
@@ -119,21 +123,25 @@ class CatalogueEntry(NamedTuple):
             "live": self.live,
             "stt": self.stt,
             "tts": self.tts,
+            "reasoning": self.reasoning,
         }
 
 
 # Columns:
-# provider, api_name, visual_name, tools, images, live, stt, tts, status, is_default
+# provider, api_name, visual_name, tools, images, live, stt, tts, reasoning,
+# status, is_default
 # A live model is its own line. It is not a flag pinned onto the chat model.
+# A reasoning flag is set on the cloud chat models whose effort the
+# personality owns. pib.Cloud sets its own effort, so its flag is off.
 # fmt: off
 _CATALOGUE_ROWS = (
-    ("Google", "gemini-3.8-flash", "Gemini 3.8 Flash", True, True, False, False, False, STATUS_ACTIVE, False),
-    ("Google", "gemini-3.8-live", "Gemini 3.8 Live", True, False, True, False, False, STATUS_ACTIVE, False),
-    ("OpenAI", "gpt-6", "GPT-6", True, True, False, False, False, STATUS_ACTIVE, False),
-    ("Anthropic", "claude-sonnet-5-5", "Claude Sonnet 5.5", True, True, False, False, False, STATUS_ACTIVE, False),
-    ("pib.Cloud", PIB_CLOUD_API_NAME, "pib.Cloud", True, True, False, True, False, STATUS_ACTIVE, True),  # TODO(confirm id)
-    ("OpenAI", "gpt-realtime", "GPT Realtime", False, False, True, False, False, STATUS_UNCONFIRMED, False),  # TODO(confirm id)
-    ("Mistral", None, "Mistral", False, False, False, False, False, STATUS_UNCONFIRMED, False),  # TODO(confirm id)
+    ("Google", "gemini-3.8-flash", "Gemini 3.8 Flash", True, True, False, False, False, True, STATUS_ACTIVE, False),
+    ("Google", "gemini-3.8-live", "Gemini 3.8 Live", True, False, True, False, False, False, STATUS_ACTIVE, False),
+    ("OpenAI", "gpt-6", "GPT-6", True, True, False, False, False, True, STATUS_ACTIVE, False),
+    ("Anthropic", "claude-sonnet-5-5", "Claude Sonnet 5.5", True, True, False, False, False, True, STATUS_ACTIVE, False),
+    ("pib.Cloud", PIB_CLOUD_API_NAME, "pib.Cloud", True, True, False, True, True, False, STATUS_ACTIVE, True),  # TODO(confirm id)
+    ("OpenAI", "gpt-realtime", "GPT Realtime", False, False, True, False, False, False, STATUS_UNCONFIRMED, False),  # TODO(confirm id)
+    ("Mistral", None, "Mistral", False, False, False, False, False, False, STATUS_UNCONFIRMED, False),  # TODO(confirm id)
 )
 # fmt: on
 
@@ -216,10 +224,11 @@ def is_listed_model(row: Any) -> bool:
 def capabilities_for(api_name: str, has_image_support: bool) -> dict[str, bool]:
     """Flags stored on one registry row.
 
-    tools, live, stt and tts come from the catalogue. images follows the row's
-    own has_image_support value. A chat id that is not in the catalogue keeps
-    tools on and live, stt and tts off. Only pib.Cloud carries stt (cloud
-    whisper). The local speech engines are not rows.
+    tools, live, stt, tts and reasoning come from the catalogue. images
+    follows the row's own has_image_support value. A chat id that is not in
+    the catalogue keeps tools on and live, stt, tts and reasoning off. Only
+    pib.Cloud carries stt (cloud whisper) and tts (cloud speech). The local
+    speech engines are not rows.
     """
     entry = catalogue_entry(api_name)
     if entry is None:
@@ -229,6 +238,7 @@ def capabilities_for(api_name: str, has_image_support: bool) -> dict[str, bool]:
             "live": False,
             "stt": False,
             "tts": False,
+            "reasoning": False,
         }
     else:
         flags = entry.capabilities()

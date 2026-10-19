@@ -190,6 +190,27 @@ function setup_display_web_service() {
     print SUCCESS "Host-side display web service installed and watching for requests"
 }
 
+function setup_hermes_view_service() {
+    print INFO "Setting up filtered Hermes view service"
+    require_nonempty BACKEND_DIR || return 1
+    sudo install -o root -g root -m 0644 \
+      "$BACKEND_DIR/setup/voice_egress/pib-voice-hermes-view.service" \
+      /etc/systemd/system/pib-voice-hermes-view.service || return 1
+    sudo systemctl daemon-reload || return 1
+
+    local enable_output
+    if ! enable_output=$(sudo systemctl enable pib-voice-hermes-view.service 2>&1); then
+        print ERROR "failed to enable pib-voice-hermes-view.service: ${enable_output}"
+        return 1
+    fi
+    local start_output
+    if ! start_output=$(sudo systemctl start pib-voice-hermes-view.service 2>&1); then
+        print ERROR "failed to start pib-voice-hermes-view.service: ${start_output}"
+        return 1
+    fi
+    print SUCCESS "Filtered Hermes view service installed and started"
+}
+
 function verify_vendored_blockly() {
     print INFO "Verifying vendored pib-blockly sources"
 
@@ -227,17 +248,43 @@ function run_logged_compose() {
     return "$status"
 }
 
+# Prints the release tag of a checkout (HEAD^2 on a --no-ff release merge, else HEAD).
+function release_tag_at() {
+    local directory="$1"
+    local tag
+    tag="$(git -C "$directory" tag --points-at 'HEAD^2' 2>/dev/null | head -n 1)"
+    if [ -z "$tag" ]; then
+        tag="$(git -C "$directory" tag --points-at HEAD 2>/dev/null | head -n 1)"
+    fi
+    [ -n "$tag" ] || return 1
+    printf '%s\n' "$tag"
+}
+
 function start_container() {
     print INFO "Starting container"
     echo "TRYB_URL_PREFIX=https://platform.tryb.ai" > "$BACKEND_DIR"/password.env
+    local backend_version="" frontend_version=""
+    local -a backend_env=(
+      "PIB_HARDWARE_VARIANT=$PIB_HARDWARE_VARIANT"
+      "PIB_SMART_CHATS=${PIB_SMART_CHATS:-1}"
+    )
+    local -a frontend_env=()
+    if backend_version="$(release_tag_at "$BACKEND_DIR")"; then
+        print INFO "pib-backend APP_VERSION=${backend_version}"
+        backend_env+=("APP_VERSION=$backend_version")
+    fi
+    if frontend_version="$(release_tag_at "$FRONTEND_DIR")"; then
+        print INFO "cerebra APP_VERSION=${frontend_version}"
+        frontend_env+=("APP_VERSION=$frontend_version")
+    fi
     run_logged_compose "pib-backend image build" \
-      sudo PIB_HARDWARE_VARIANT="$PIB_HARDWARE_VARIANT" \
-      PIB_SMART_CHATS="${PIB_SMART_CHATS:-1}" \
+      sudo "${backend_env[@]}" \
       docker compose -f "$BACKEND_DIR/docker-compose.yaml" --profile all up -d --build \
       || return 1
     print SUCCESS "Started pib-backend container"
     run_logged_compose "cerebra container start" \
-      sudo docker compose -f "$FRONTEND_DIR/docker-compose.yaml" up -d || return 1
+      sudo "${frontend_env[@]}" \
+      docker compose -f "$FRONTEND_DIR/docker-compose.yaml" up -d --build || return 1
     print SUCCESS "Started cerebra container"
 }
 
@@ -256,6 +303,7 @@ run_step "Install Docker Engine" install_docker_engine || print ERROR "failed to
 # before that unit is started.
 run_step "Add user pib to the docker group" add_pib_to_docker_group || { print ERROR "failed to add user 'pib' to docker group"; return 1; }
 run_step "Verify vendored pib-blockly" verify_vendored_blockly || print ERROR "failed to verify vendored pib-blockly sources"
+run_step "Set up Hermes view service" setup_hermes_view_service || print ERROR "failed to setup hermes view service"
 run_step "Build and start containers" start_container || print ERROR "failed to start containers"
 run_step "Set up Docker cleaner service" setup_docker_cleaner_service || print ERROR "failed to setup docker cleaner service"
 run_step "Set up update watchdog helper" setup_update_watchdog_helper || print ERROR "failed to setup update watchdog helper"

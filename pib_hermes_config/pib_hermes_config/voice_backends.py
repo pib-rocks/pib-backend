@@ -1,10 +1,10 @@
 """Per-personality speech backends.
 
-The local engines are not provider rows. Cloud whisper on pib.Cloud is
-stored as its own id, ``cloud_whisper``. Any other cloud choice is a provider
-id. Either is stored only while the row's capability flag is set. ElevenLabs
-is not a backend. In live mode the provider's voice is used, so the
-personality's local voice does not apply.
+The local engines are not provider rows. Cloud whisper and cloud speech on
+pib.Cloud are stored as their own ids, ``cloud_whisper`` and ``cloud_tts``.
+Any other cloud choice is a provider id. Either is stored only while the
+row's capability flag is set. ElevenLabs is not a backend. In live mode the
+provider's voice is used, so the personality's local voice does not apply.
 """
 
 from __future__ import annotations
@@ -20,6 +20,11 @@ LOCAL_TTS_ENGINE = "supertone"
 #: value names the engine and its route is never the legacy tryb_api client.
 CLOUD_STT_ID = "cloud_whisper"
 CLOUD_STT_ROUTE = "cloud"
+
+#: Cloud speech on pib.Cloud. Same shape as cloud whisper: the stored value
+#: names the engine, never the bare row id, and its route is ``cloud``.
+CLOUD_TTS_ID = "cloud_tts"
+CLOUD_TTS_ROUTE = "cloud"
 
 #: Language the local STT engine is pinned to when nothing overrides it.
 #: faster-whisper's own default (``language=None``) runs a language-ID pass
@@ -110,14 +115,34 @@ def normalize_stt_choice(
     )
 
 
-def normalize_tts_choice(value: object, provider_has_tts) -> str:
-    """Store the local engine, or the id of a provider with tts."""
+def normalize_tts_choice(
+    value: object,
+    provider_has_tts,
+    cloud_tts_model_id: int | None = None,
+    default: str = LOCAL_TTS_ID,
+) -> str:
+    """Store the local engine, cloud speech, or the id of a provider with tts.
+
+    ``cloud_tts_model_id`` is the pib.Cloud row id while that row carries the
+    tts capability, otherwise None. Cloud speech is accepted only then, and
+    the bare pib.Cloud row id is stored as ``cloud_tts``. A missing or blank
+    value is no choice and stores ``default``.
+    """
     if not isinstance(value, str) or not value.strip():
-        return LOCAL_TTS_ID
+        return default
     raw = value.strip()
     _reject_elevenlabs(raw)
     if raw in _LOCAL_TTS:
         return LOCAL_TTS_ID
+    names_cloud = raw == CLOUD_TTS_ID or (
+        raw.isdigit()
+        and cloud_tts_model_id is not None
+        and int(raw) == cloud_tts_model_id
+    )
+    if names_cloud:
+        if cloud_tts_model_id is None:
+            raise ValueError("Cloud speech needs pib.Cloud with the tts capability.")
+        return CLOUD_TTS_ID
     if raw.isdigit() and provider_has_tts(int(raw)):
         return str(int(raw))
     raise ValueError(
@@ -144,9 +169,15 @@ def resolve_stt_route(engine: object) -> str:
 
 
 def resolve_tts_route(engine: object) -> str:
-    """``local`` or ``unsupported``. The local engine is Supertone."""
+    """``local``, ``cloud`` (pib.Cloud speech), or ``unsupported``.
+
+    The local engine is Supertone. ``cloud`` is pib.Cloud's own speech
+    endpoint; ``unsupported`` has no speech client in this repo.
+    """
     if not isinstance(engine, str) or engine.strip() in ("", *_LOCAL_TTS):
         return "local"
+    if engine.strip() == CLOUD_TTS_ID:
+        return CLOUD_TTS_ROUTE
     return "unsupported"
 
 

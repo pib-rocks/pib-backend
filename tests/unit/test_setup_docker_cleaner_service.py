@@ -129,7 +129,65 @@ def test_pib_joins_docker_group_before_the_cleaner_service_is_started(tmp_path):
     result, calls = _run(tmp_path, HARNESS)
 
     assert _index_of(calls, USERMOD_CALL) < _index_of(calls, START_CALL)
+    assert _index_of(
+        calls, "systemctl start pib-voice-hermes-view.service"
+    ) < _index_of(calls, "docker compose")
     assert SUCCESS_TEXT in result.stdout
+    assert "Filtered Hermes view service installed and started" in result.stdout
+
+
+def test_hermes_view_service_failing_start_returns_non_zero(tmp_path):
+    script = HARNESS + """
+setup_hermes_view_service
+echo "hermes_view_status=$?"
+"""
+    result, _ = _run(tmp_path, script, start_status=1)
+
+    assert "hermes_view_status=0" not in result.stdout
+    assert "hermes_view_status=1" in result.stdout
+    assert "failed to start pib-voice-hermes-view.service" in result.stdout
+
+
+def test_start_container_forwards_release_tag_to_backend_and_frontend_compose(tmp_path):
+    backend_dir = _make_backend_dir(tmp_path)
+    frontend_dir = tmp_path / "cerebra"
+    frontend_dir.mkdir()
+    for repo in (backend_dir, frontend_dir):
+        subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+        subprocess.run(
+            ["git", "config", "user.email", "test@example.com"], cwd=repo, check=True
+        )
+        subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True)
+        (repo / "README.md").write_text("hi\n", encoding="utf-8")
+        subprocess.run(["git", "add", "README.md"], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=repo, check=True)
+        subprocess.run(["git", "tag", "v0.7.0"], cwd=repo, check=True)
+
+    sudo_raw = tmp_path / "sudo_raw.log"
+    sudo_raw.touch()
+    stub_bin = _make_stub_bin(tmp_path)
+    (stub_bin / "sudo").write_text(
+        '#!/bin/bash\nprintf "%s\\n" "$*" >> "$SUDO_RAW_LOG"\nexit 0\n',
+        encoding="utf-8",
+    )
+    env = dict(os.environ)
+    env.update(
+        PATH=f"{stub_bin}{os.pathsep}{env['PATH']}",
+        STUB_LOG=str(tmp_path / "sudo.log"),
+        SUDO_RAW_LOG=str(sudo_raw),
+        BACKEND_DIR=str(backend_dir),
+        FRONTEND_DIR=str(frontend_dir),
+        PIB_HARDWARE_VARIANT="pib5edu",
+        DOCKER_INSTALL=str(DOCKER_INSTALL),
+        PIB_DOCKER_BUILD_LOG=str(tmp_path / "docker-build.log"),
+    )
+    subprocess.run(["bash", "-c", HARNESS], env=env, check=True, capture_output=True)
+    raw_calls = sudo_raw.read_text(encoding="utf-8").splitlines()
+    compose_calls = [c for c in raw_calls if "docker compose" in c]
+    assert len(compose_calls) == 2, compose_calls
+    assert "APP_VERSION=v0.7.0" in compose_calls[0]
+    assert "APP_VERSION=v0.7.0" in compose_calls[1]
+    assert "--build" in compose_calls[1]
 
 
 def test_failing_start_returns_non_zero_and_does_not_report_success(tmp_path):

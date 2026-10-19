@@ -50,6 +50,7 @@ def player(monkeypatch):
         Thread=Thread,
         clauses_to_synthesize=helper.clauses_to_synthesize,
         resolve_tts_route=lambda engine: "local",
+        CLOUD_TTS_ROUTE="cloud",
         util=SimpleNamespace(surpress_stderr=contextlib.nullcontext),
     )
     tree = ast.parse(SOURCE.read_text())

@@ -153,6 +153,19 @@ def test_is_software_trajectory_ignores_legacy_zip_pose() -> None:
     assert is_software_trajectory(jt) is False
 
 
+def test_is_software_trajectory_ignores_pib_sdk_write_move_zip_pose() -> None:
+    """pib_sdk.Write.move sends N single-position points with a constant 1 ms time_from_start."""
+    jt = FakeJointTrajectory(
+        ["tilt_forward_motor", "shoulder_vertical_left", "turn_head_motor"],
+        [
+            FakePoint([1800.0], 0.001),
+            FakePoint([-6800.0], 0.001),
+            FakePoint([0.0], 0.001),
+        ],
+    )
+    assert is_software_trajectory(jt) is False
+
+
 def test_is_software_trajectory_detects_time_from_start() -> None:
     jt = FakeJointTrajectory(
         ["elbow"],

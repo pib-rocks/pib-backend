@@ -173,6 +173,7 @@ def test_docker_install_reports_each_service_as_its_own_step():
     for label, command in (
         ("Install Docker Engine", "install_docker_engine"),
         ("Add user pib to the docker group", "add_pib_to_docker_group"),
+        ("Set up Hermes view service", "setup_hermes_view_service"),
         ("Build and start containers", "start_container"),
         ("Set up Docker cleaner service", "setup_docker_cleaner_service"),
         ("Set up host-side update service", "setup_update_service"),
@@ -180,6 +181,10 @@ def test_docker_install_reports_each_service_as_its_own_step():
         ("Open database permissions", "open_database_permissions"),
     ):
         assert f'run_step "{label}" {command}' in text, label
+    assert text.index("setup_hermes_view_service") < text.index("start_container")
+    assert text.index('run_step "Set up Hermes view service"') < text.index(
+        'run_step "Build and start containers"'
+    )
 
 
 # ---- docker build output -----------------------------------------------------------------
@@ -205,6 +210,7 @@ def _run_start_container(tmp_path: Path, status: int):
         PRELUDE
         + 'DOCKER_BUILD_LOG="${PIB_DOCKER_BUILD_LOG:-$HOME/setup-pib-docker-build.log}"\n'
         + _extract(DOCKER_INSTALL, "run_logged_compose")
+        + _extract(DOCKER_INSTALL, "release_tag_at")
         + _extract(DOCKER_INSTALL, "start_container")
         + "\nstart_container\necho rc=$?\n"
     )
