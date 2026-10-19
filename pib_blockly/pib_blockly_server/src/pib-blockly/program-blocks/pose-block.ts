@@ -1,22 +1,29 @@
 import * as Blockly from "blockly";
 
-export const moveToPose = (Blockly.Blocks["move_to_pose"] = {
-    init() {
-        this.appendDummyInput()
-            .appendField("set Pose")
-            .appendField(new CustomFieldDropdown(this.getPoses), "POSE");
-        this.setColour(355);
-        this.setPreviousStatement(true, null);
-        this.setNextStatement(true, null);
-        this.setTooltip("moves to selected pose");
-        this.setHelpUrl("");
-    },
+export const moveToPose = {
+    move_to_pose: {
+        init(this: Blockly.Block) {
+            this.appendDummyInput()
+                .appendField("set Pose")
+                .appendField(
+                    new CustomFieldDropdown(() =>
+                        Blockly.Blocks["move_to_pose"].getPoses(),
+                    ),
+                    "POSE",
+                );
+            this.setColour(355);
+            this.setPreviousStatement(true, null);
+            this.setNextStatement(true, null);
+            this.setTooltip("moves to selected pose");
+            this.setHelpUrl("");
+        },
 
-    getPoses() {
-        // Initial placeholder before options are fetched
-        return [["Loading...", "LOADING"]];
+        getPoses() {
+            // Initial placeholder before options are fetched
+            return [["Loading...", "LOADING"]];
+        },
     },
-});
+};
 
 export const poseBlocks = Blockly.common.createBlockDefinitionsFromJsonArray([
     {
