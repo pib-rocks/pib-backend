@@ -73,7 +73,9 @@ def tune_array() -> None:
     """Put the echo canceller's switches into their known-good state, once."""
     device = open_hid()
     if device is None:
-        logger.warning("no ReSpeaker HID device found; echo cancellation tuning skipped")
+        logger.warning(
+            "no ReSpeaker HID device found; echo cancellation tuning skipped"
+        )
         return
     outcome = apply_tuning(device)
     if outcome.applied:

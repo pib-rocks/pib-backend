@@ -29,7 +29,10 @@ def tone(samples: int = FRAME_SAMPLES, amplitude: int = 8000) -> bytes:
     """One frame of a square wave: loud enough that a gain change is visible."""
     half = samples // 2
     return np.concatenate(
-        [np.full(half, amplitude, dtype="<i2"), np.full(samples - half, -amplitude, dtype="<i2")]
+        [
+            np.full(half, amplitude, dtype="<i2"),
+            np.full(samples - half, -amplitude, dtype="<i2"),
+        ]
     ).tobytes()
 
 
@@ -68,7 +71,9 @@ class FakeConnection:
         return [payload for how, payload in self.sent if how == "bin"]
 
 
-def make_session(**kwargs) -> tuple[DuplexVoiceSession, FakeConnection, list[bytes], list[bool]]:
+def make_session(
+    **kwargs,
+) -> tuple[DuplexVoiceSession, FakeConnection, list[bytes], list[bool]]:
     connection = FakeConnection()
     played: list[bytes] = []
     speaking: list[bool] = []
@@ -239,7 +244,9 @@ def test_a_relay_error_ends_the_turn_and_is_reported() -> None:
     session, connection, _, _ = make_session()
     start(session, connection)
     session.say("Hallo")
-    connection.push_event({"type": "error", "code": "tts_unpriced", "message": "no price"})
+    connection.push_event(
+        {"type": "error", "code": "tts_unpriced", "message": "no price"}
+    )
     assert wait_for(lambda: session.is_speaking is False)
     seen = [e for e in session._test_events if e.get("type") == "error"]  # type: ignore[attr-defined]
     assert seen and seen[0]["code"] == "tts_unpriced"

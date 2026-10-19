@@ -104,7 +104,9 @@ class DuplexVoiceLoop:
         if closer is not None:
             try:
                 closer()
-            except Exception:  # noqa: BLE001 - a device that fails to close is not fatal
+            except (
+                Exception
+            ):  # noqa: BLE001 - a device that fails to close is not fatal
                 logger.exception("closing the voice devices failed")
 
     def set_speaking_listener(self, listener: Optional[Callable[[bool], None]]) -> None:
