@@ -311,3 +311,38 @@ def test_no_progress_is_reported_when_nothing_is_speaking() -> None:
     time.sleep(0.2)
     assert connection.events("playback_progress") == []
     session.close()
+
+
+# ------------------------------------------------------------------ echo window
+
+
+def test_the_microphone_is_held_back_right_after_playback() -> None:
+    """The speaker is still audible for a moment after the last frame: pib must not hear itself."""
+    session, connection, played, _ = make_session()
+    start(session, connection)
+    turn = session.say("Hallo")
+    for _ in range(4):
+        connection.push_audio(turn, tone())
+    assert wait_for(lambda: played)
+
+    connection.push_event({"type": "turn_complete", "turn_id": turn})
+    assert wait_for(lambda: session.is_speaking is False)
+
+    sent_before = len(connection.binary())
+    assert session.on_microphone(tone()) == 0
+    assert len(connection.binary()) == sent_before
+
+    time.sleep(0.25)  # the tail window is 200 ms
+    assert session.on_microphone(tone()) == 1
+    session.close()
+
+
+def test_a_paused_uplink_sends_nothing_until_it_resumes() -> None:
+    session, connection, _, _ = make_session()
+    start(session, connection)
+    session.say("Hallo")
+    session.pause_uplink()
+    assert session.on_microphone(tone()) == 0
+    session.resume_uplink()
+    assert session.on_microphone(tone()) == 1
+    session.close()
