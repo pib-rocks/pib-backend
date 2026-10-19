@@ -67,31 +67,34 @@ def duration_to_seconds(time_from_start: Any) -> float:
 def is_software_trajectory(jt: Any) -> bool:
     """True when ``jt`` is a timed / waypoint trajectory, not a legacy zip pose.
 
-    Existing pib callers (poses, Blockly, MCP ``apply_pose``) send one
-    JointTrajectoryPoint per motor, each with a single position and no
-    ``time_from_start``. That shape must keep using ``as_motor_positions``.
+    Existing pib callers (poses, Blockly, MCP ``apply_pose``, ``pib_sdk.Write.move``)
+    send one JointTrajectoryPoint per motor, each with a single position (and
+    in ``pib_sdk.Write._trajectory_point`` a constant 1 ms ``time_from_start``).
+    That shape must keep using ``as_motor_positions``.
 
     A software trajectory is:
-    - any message with a non-zero ``time_from_start``, or
     - more than one waypoint in the standard JointTrajectory layout
-      (each point carries a position per joint).
+      (each point carries a position per joint), with or without
+      ``time_from_start`` values.
     """
     points = list(getattr(jt, "points", []) or [])
     if not points:
+        return False
+    names = list(getattr(jt, "joint_names", []) or [])
+    n_joints = len(names)
+    if len(points) <= 1 or n_joints == 0:
+        return False
+    # Legacy zip: N names (N > 1), N points, each point has a single position.
+    if (
+        n_joints > 1
+        and len(points) == n_joints
+        and all(len(getattr(p, "positions", []) or []) <= 1 for p in points)
+    ):
         return False
     if any(
         duration_to_seconds(getattr(p, "time_from_start", None)) > 0.0 for p in points
     ):
         return True
-    names = list(getattr(jt, "joint_names", []) or [])
-    n_joints = len(names)
-    if len(points) <= 1 or n_joints == 0:
-        return False
-    # Legacy zip: N names, N points, each point has a single position.
-    if len(points) == n_joints and all(
-        len(getattr(p, "positions", []) or []) <= 1 for p in points
-    ):
-        return False
     return all(len(getattr(p, "positions", []) or []) >= n_joints for p in points)
 
 
