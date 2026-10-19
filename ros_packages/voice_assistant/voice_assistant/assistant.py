@@ -221,6 +221,13 @@ class VoiceAssistantNode(Node):
         )
         self.record_audio_client.wait_for_server()
 
+        # Which live voice path speaks. "gemini" is the speech-to-speech session
+        # that has always been here; "duplex" hands the answer and the synthesis to
+        # the pib.Cloud relay and keeps transcription local.
+        self.voice_backend = os.getenv("PIB_VOICE_BACKEND", "gemini").strip().lower()
+        if self.voice_backend == "duplex":
+            self.gemini_loop = self._build_duplex_loop()
+
         self.play_audio_from_file_client: Client = self.create_client(
             PlayAudioFromFile, "play_audio_from_file"
         )
@@ -299,6 +306,46 @@ class VoiceAssistantNode(Node):
         timer = threading.Timer(_CLEAR_PLAYBACK_ACK_LOG_SECONDS, log_missing_ack)
         timer.daemon = True
         timer.start()
+
+    def _build_duplex_loop(self):
+        """Swap the Gemini live session for the relay, behind one env switch.
+
+        The loop keeps the interface the rest of this node already calls
+        (``is_listening``, ``start``, ``stop``, ``submit_typed_text``,
+        ``set_speaking_listener``, ``set_action_announcer``), so nothing else in
+        the node has to know which path is active.
+        """
+        from voice_assistant.ros_duplex import build_duplex_voice_loop
+
+        url = os.getenv("PIB_CLOUD_VOICE_URL", "wss://api.pib.rocks/v1/pib/stream")
+        try:
+            loop = build_duplex_voice_loop(
+                self,
+                url=url,
+                token=os.getenv("PIB_CLOUD_TOKEN") or None,
+                request_transcription=self._request_duplex_transcription,
+                mic_channels=int(os.getenv("PIB_MIC_CHANNELS", "1")),
+            )
+        except Exception:
+            self.get_logger().error(
+                "duplex voice backend unavailable; staying on the Gemini live path",
+                exc_info=True,
+            )
+            return self.gemini_loop
+        self.get_logger().info(f"voice backend: duplex relay at {url}")
+        return loop
+
+    def _request_duplex_transcription(self, on_text) -> None:
+        """One utterance from the existing recorder, then hand the text to the relay."""
+        self.record_audio(
+            max_silent_seconds_before=float(
+                os.getenv("PIB_DUPLEX_SILENCE_BEFORE", "3.0")
+            ),
+            max_silent_seconds_after=float(
+                os.getenv("PIB_DUPLEX_SILENCE_AFTER", "1.2")
+            ),
+            on_transcribed_text_received=on_text,
+        )
 
     def record_audio(
         self,
