@@ -136,6 +136,18 @@ class TurnFilter:
         self._open = True
         return self._turn_id
 
+    def adopt(self, turn_id: int) -> int:
+        """Take the server's numbering for this turn.
+
+        The two sides count independently and the server's counter starts over on
+        every connection, while this client survives reconnects. Without adopting
+        the acknowledgement, every frame after a reconnect would be filtered out
+        as another turn's audio - silence with no error anywhere.
+        """
+        self._turn_id = turn_id % TURN_MODULUS
+        self._open = True
+        return self._turn_id
+
     def accepts(self, frame: Frame) -> bool:
         """Nothing plays before the first turn: no open turn means no audio is wanted."""
         return self._open and frame.kind == FRAME_TTS and frame.turn_id == self._turn_id
@@ -381,6 +393,10 @@ class DuplexClient:
         turn = self._turns.advance()
         self._send_event({"type": "turn_start", "turn_id": turn, "text": text})
         return turn
+
+    def adopt_turn(self, turn_id: int) -> int:
+        """Re-sync the turn filter to the id the server acknowledged."""
+        return self._turns.adopt(turn_id)
 
     def send_turn_end(self) -> bool:
         return self._send_event({"type": "turn_end", "turn_id": self._turns.turn_id})

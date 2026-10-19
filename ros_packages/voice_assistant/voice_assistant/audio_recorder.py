@@ -45,6 +45,7 @@ from voice_assistant.stt_transcription import (
     STTTranscriptionError,
 )
 from voice_assistant.turn_latency import TURN_TRACE_TOPIC, format_event
+from voice_assistant.audio_devices import PROCESSED_CHANNEL, extract_channel
 from voice_assistant.cloud_stt_dispatch import transcribe_cloud_or_local
 from . import util
 
@@ -69,6 +70,8 @@ class AudioRecorderNode(Node):
 
         # Set defaults for mic configuration
         self.mic_channels = None
+        # How many channels the array publishes; 1 keeps a mono driver untouched.
+        self._mic_channels = int(os.getenv("PIB_MIC_CHANNELS", "1"))
         self.chunk_size = None
         self.audio_format = None
         self.sample_rate = None
@@ -207,9 +210,31 @@ class AudioRecorderNode(Node):
     def audio_stream_callback(self, msg: Int16MultiArray):
         """
         Callback for incoming Int16MultiArray audio data.
-        Convert to bytes and push into the chunks deque.
+
+        The array can publish its six raw channels interleaved. Everything here -
+        the VAD, whisper, the cloud - wants one mono signal, and the array's channel
+        0 is the one it has already echo-cancelled and beamformed (PC-88). The width
+        comes from the message layout when the driver sets it, otherwise from
+        PIB_MIC_CHANNELS, so a mono driver keeps behaving exactly as before.
         """
-        chunk_bytes = np.array(msg.data, dtype=np.int16).tobytes()
+        samples = np.array(msg.data, dtype=np.int16)
+        channels = self._mic_channels
+        layout = getattr(msg, "layout", None)
+        try:
+            width = layout.dim[0].size if layout is not None and layout.dim else 0
+        except (AttributeError, IndexError):
+            width = 0
+        if width and width > 1:
+            channels = int(width)
+        if channels > 1:
+            try:
+                samples = extract_channel(samples, channels, PROCESSED_CHANNEL)
+            except ValueError:
+                self.get_logger().warning(
+                    f"audio frame does not fit {channels} channels; dropping it"
+                )
+                return
+        chunk_bytes = samples.astype(np.int16, copy=False).tobytes()
         with self.audio_chunks_lock:
             self.audio_chunks.append(chunk_bytes)
             self.audio_chunk_event.set()
