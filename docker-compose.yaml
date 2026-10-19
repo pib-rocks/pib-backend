@@ -1,6 +1,48 @@
 version: '3'
 
 services:
+  # The Hermes turn daemon, on the Python version the agent requires (3.14).
+  # The voice container reaches it by service name; see PIB_HERMES_DAEMON_URL.
+  hermes-daemon:
+    image: pib-hermes-daemon
+    build:
+      context: .
+      dockerfile: ./public_api_client/Dockerfile
+      additional_contexts:
+        # The agent checkout supplies pyproject.toml and uv.lock for its own
+        # dependency set.
+        hermes: /home/pib/.hermes/hermes-agent
+    restart: always
+    environment:
+      HERMES_HOME: /home/pib/.hermes
+      PIB_HERMES_PROFILES_DIR: /home/pib/.hermes/profiles
+      # Prevent hermes_bootstrap from trying to sync/re-exec into a host-managed
+      # store Python; the image carries its own 3.14 venv in /src/.venv.
+      HERMES_DISABLE_LAZY_INSTALLS: "1"
+      # hermes_home_scope imports hermes_constants before a turn sets its own path,
+      # and the agent sources come from the mounted view, so they belong on the path.
+      PYTHONPATH: /app:/app/public_api_client:/app/pib_hermes_config:/app/pib_api_client:/app/pib_mcp_server:/home/pib/.hermes/hermes-agent:/src/.venv/lib/python3.14/site-packages
+      PIB_HERMES_DAEMON_HOST: 0.0.0.0
+      PIB_HERMES_DAEMON_PORT: "8088"
+      FLASK_API_BASE_URL: http://flask-app:5000
+      TRYB_URL_PREFIX: https://platform.tryb.ai
+      PIB_MCP_API_BASE_URL: http://flask-app:5000
+      PIB_MCP_ROSBRIDGE_URL: ws://rosbridge-ws:9090
+      PIB_MCP_ENABLE_ACTUATION: "true"
+    volumes:
+      # Same filtered view the voice container uses: profiles plus the agent
+      # sources, with the .env files covered by prepare-view.
+      - type: bind
+        source: ${PIB_VOICE_HERMES_VIEW:-/var/lib/pib-voice-egress/view}
+        target: /home/pib/.hermes
+        bind:
+          propagation: rslave
+          create_host_path: false
+    networks:
+      - pib-network
+    security_opt:
+      - no-new-privileges:true
+
   pib-blockly-server:
     image: pib-blockly-server
     build:
@@ -192,11 +234,9 @@ services:
       - HERMES_HOME=/home/pib/.hermes
       - PIB_HERMES_BIN=/home/pib/.local/bin/hermes
       - PIB_HERMES_DAEMON_HOST=0.0.0.0
-      # Where the turn daemon listens FROM THE NODE'S POINT OF VIEW. Default keeps
-      # the daemon that runs in this container. Set it to the host's bridge
-      # gateway when the daemon must run on the host's Python 3.14 runtime
-      # (the container's 3.12 cannot import the agent; see PC-89).
-      - PIB_HERMES_DAEMON_URL=${PIB_HERMES_DAEMON_URL:-http://0.0.0.0:8088}
+      # Where the turn daemon listens FROM THE NODE'S POINT OF VIEW. Default is the
+      # hermes-daemon service: the agent needs Python 3.14, this container has 3.12.
+      - PIB_HERMES_DAEMON_URL=${PIB_HERMES_DAEMON_URL:-http://hermes-daemon:8088}
       # Empty means read /etc/pib_smart_chats. 0 disables the Hermes channel.
       - PIB_SMART_CHATS=${PIB_SMART_CHATS:-}
       # GEMINI_API_KEY / GOOGLE_API_KEY are deliberately NOT listed here: they
