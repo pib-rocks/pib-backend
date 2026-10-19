@@ -4,14 +4,19 @@ from unittest.mock import MagicMock
 
 from model.provider_model import RegistryModel
 from pib_hermes_config.voice_backends import LIVE_VOICE_NOTE
+from provider_registry import PIB_CLOUD_API_NAME
 from service import key_store_service, personality_service, provider_service
 
 
-def test_offer_is_local_engines_until_a_capability_is_set(app):
+def test_offer_is_local_engines_and_cloud_whisper_until_a_capability_is_set(app):
     client = app.test_client()
     body = client.get("/provider/voice-backends").get_json()
-    assert [row["id"] for row in body["speechToText"]] == ["local_whisper"]
+    assert [row["id"] for row in body["speechToText"]] == [
+        "local_whisper",
+        "cloud_whisper",
+    ]
     assert body["speechToText"][0]["engine"] == "faster-whisper"
+    assert body["speechToText"][1]["engine"] == "cloud_whisper"
     assert [row["id"] for row in body["textToSpeech"]] == ["supertone"]
     assert body["textToSpeech"][0]["engine"] == "supertone"
     assert body["liveVoiceNote"] == LIVE_VOICE_NOTE
@@ -26,7 +31,8 @@ def test_offer_is_local_engines_until_a_capability_is_set(app):
 
         gemini = RegistryModel.query.filter_by(api_name="gemini-3.8-flash").one()
         gpt6 = RegistryModel.query.filter_by(api_name="gpt-6").one()
-        gemini_id, gpt6_id = gemini.id, gpt6.id
+        cloud = RegistryModel.query.filter_by(api_name=PIB_CLOUD_API_NAME).one()
+        gemini_id, gpt6_id, cloud_id = gemini.id, gpt6.id, cloud.id
         gemini.capabilities = {**gemini.capabilities, "stt": True}
         gpt6.capabilities = {**gpt6.capabilities, "tts": True}
         db.session.commit()
@@ -34,14 +40,16 @@ def test_offer_is_local_engines_until_a_capability_is_set(app):
     body = client.get("/provider/voice-backends").get_json()
     stt_ids = [row["id"] for row in body["speechToText"]]
     tts_ids = [row["id"] for row in body["textToSpeech"]]
-    assert stt_ids == ["local_whisper", str(gemini_id)]
+    by_row = sorted([(gemini_id, str(gemini_id)), (cloud_id, "cloud_whisper")])
+    assert stt_ids == ["local_whisper", *[option for _, option in by_row]]
+    assert str(cloud_id) not in stt_ids
     assert str(gpt6_id) not in stt_ids
     assert tts_ids == ["supertone", str(gpt6_id)]
     assert str(gemini_id) not in tts_ids
     assert "elevenlabs" not in str(body).lower()
 
 
-def test_new_personality_defaults_to_local_voice_before_the_password(app, monkeypatch):
+def test_new_personality_voice_defaults_before_the_password(app, monkeypatch):
     monkeypatch.setattr(
         personality_service,
         "_provision_profile",
@@ -49,7 +57,8 @@ def test_new_personality_defaults_to_local_voice_before_the_password(app, monkey
     )
     key_store_service.lock()
     assert key_store_service.operating_mode() == "degraded"
-    response = app.test_client().post(
+    client = app.test_client()
+    response = client.post(
         "/voice-assistant/personality",
         json={
             "name": "OfflineVoice",
@@ -60,10 +69,21 @@ def test_new_personality_defaults_to_local_voice_before_the_password(app, monkey
     )
     assert response.status_code == 201
     body = response.get_json()
-    assert body["sttEngine"] == "local_whisper"
+    # The default route is pib.Cloud, so its STT default is cloud whisper.
+    assert body["sttEngine"] == "cloud_whisper"
     assert body["ttsEngine"] == "supertone"
     assert body["localVoiceApplies"] is True
     assert body["liveVoiceNote"] is None
+
+    with app.app_context():
+        gpt6_id = RegistryModel.query.filter_by(api_name="gpt-6").one().id
+    other = client.post(
+        "/voice-assistant/personality",
+        json={"name": "OfflineOther", "modelRef": f"model:{gpt6_id}"},
+    )
+    assert other.status_code == 201
+    assert other.get_json()["sttEngine"] == "local_whisper"
+    assert other.get_json()["ttsEngine"] == "supertone"
 
 
 def test_live_provider_states_that_the_local_voice_does_not_apply(app, monkeypatch):
@@ -121,7 +141,7 @@ def test_only_a_capable_provider_can_be_stored(app, monkeypatch):
     )
     assert rejected.status_code == 400
     unchanged = client.get(f"/voice-assistant/personality/{personality_id}").get_json()
-    assert unchanged["sttEngine"] == "local_whisper"
+    assert unchanged["sttEngine"] == "cloud_whisper"
     assert unchanged["ttsEngine"] == "supertone"
 
     named = client.put(

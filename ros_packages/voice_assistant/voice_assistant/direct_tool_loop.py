@@ -16,9 +16,11 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from typing import Any, Callable, Iterator, Mapping, Optional, Sequence
 from urllib.request import Request, urlopen
 
+from pib_hermes_config.retired_direct_text import DIRECT_TEXT_MODEL_API_NAME
 from pib_hermes_config.visible_state import (
     ANSWER_GESTURE_TOOLS,
     issue_answer_gesture,
@@ -27,9 +29,11 @@ from pib_hermes_config.visible_state import (
 logger = logging.getLogger(__name__)
 
 PINNED_PROVIDER = "gemini"
-# Pinned, checked on 2026-09-30: the catalogue's Gemini chat model.
-# The id this replaced is not in the catalogue, so this loop does not send it.
-PINNED_MODEL = "gemini-3.8-flash"
+# Pinned, checked on 2026-09-30: the catalogue's Gemini chat model. The id this
+# replaced is not in the catalogue, so this loop does not send it. The name
+# comes from the shared Direct-transport constant, so the retirement rule and
+# this loop can not disagree about which model has a transport.
+PINNED_MODEL = DIRECT_TEXT_MODEL_API_NAME
 PINNED_CHECKED_ON = "2026-09-30"
 PINNED_ENDPOINT = (
     "https://generativelanguage.googleapis.com/v1/models/"
@@ -120,6 +124,9 @@ PROVIDER_KEY_ENV_VARS = {
     "anthropic": ("ANTHROPIC_API_KEY",),
     "pib-cloud": ("PIB_CLOUD_API_KEY",),
 }
+# Built-in providers key per catalogue model id; custom routes (pib.Cloud) key
+# by provider slug, matching cloud_token and the credential HTTP route.
+_BUILTIN_KEYED_PROVIDERS = frozenset({"gemini", "openai", "anthropic"})
 
 
 def missing_key_message(provider: str) -> str:
@@ -153,16 +160,32 @@ def _log_key_source(source: str, provider: str, channel: str = "direct") -> None
     logger.info("%s provider key source=%s provider=%s", channel, source, provider)
 
 
+def _store_credential_id(provider: str, api_name: Optional[str] = None) -> str:
+    """Catalogue id passed to the credential route for this turn's provider.
+
+    Built-in providers (Gemini, OpenAI, Anthropic) store keys per model
+    ``api_name``. A custom route such as pib.Cloud is always addressed by its
+    provider slug, even when a stale profile still names a pinned Gemini model.
+    """
+    if provider not in _BUILTIN_KEYED_PROVIDERS:
+        return provider
+    if isinstance(api_name, str) and api_name.strip():
+        return api_name.strip()
+    if provider == PINNED_PROVIDER:
+        return PINNED_MODEL
+    return provider
+
+
 def _fetch_store_key(provider: str, api_name: Optional[str] = None) -> dict[str, Any]:
     """The unlocked secret for this provider/model, or the mode with no secret.
 
-    The store is addressed by the model's api_name, so the caller passes the
-    model the personality is set to (``api_name``). A provider this loop does
-    not key, and an unknown model, yield no secret.
+    The store is addressed by the model's api_name for built-in providers, or by
+    the provider slug for a custom keyed route. A provider this loop does not
+    key, and an unknown model, yield no secret.
     """
     if provider not in PROVIDER_KEY_ENV_VARS:
         return {"mode": "unlocked", "secret": None}
-    name = api_name if isinstance(api_name, str) and api_name.strip() else PINNED_MODEL
+    name = _store_credential_id(provider, api_name)
     try:
         from pib_api_client.key_store_client import read_provider_key
     except Exception:
@@ -252,6 +275,7 @@ def run_direct_turn(
     declarations: Optional[Sequence[Mapping[str, Any]]] = None,
     complete: Optional[Complete] = None,
     execute_tool: Optional[ExecuteTool] = None,
+    on_tool_call: Optional[Callable[[dict], None]] = None,
     max_rounds: int = MAX_TOOL_ROUNDS,
     api_key: Optional[str] = None,
     report_key_source: Optional[Callable[[str], None]] = None,
@@ -322,10 +346,34 @@ def run_direct_turn(
             if not isinstance(arguments, dict):
                 arguments = {}
             logger.info("direct tool call name=%s", name)
-            if name in ANSWER_GESTURE_TOOLS:
-                output = issue_answer_gesture(name, arguments, runner)
-            else:
-                output = runner(name, arguments)
+            started = time.monotonic()
+            ok_call = True
+            error_name = ""
+            try:
+                if name in ANSWER_GESTURE_TOOLS:
+                    output = issue_answer_gesture(name, arguments, runner)
+                else:
+                    output = runner(name, arguments)
+            except Exception as exc:
+                ok_call = False
+                error_name = type(exc).__name__
+                _report_tool_call(
+                    on_tool_call,
+                    name=name,
+                    arguments=arguments,
+                    started=started,
+                    ok=False,
+                    error=error_name,
+                )
+                raise
+            _report_tool_call(
+                on_tool_call,
+                name=name,
+                arguments=arguments,
+                started=started,
+                ok=ok_call,
+                error=error_name,
+            )
             messages.append(
                 {
                     "role": "tool",
@@ -335,6 +383,37 @@ def run_direct_turn(
                 }
             )
     raise DirectToolLoopError("tool loop ended without a final answer")
+
+
+def _report_tool_call(
+    reporter: Optional[Callable[[dict], None]],
+    *,
+    name: str,
+    arguments: Mapping[str, Any],
+    started: float,
+    ok: bool,
+    error: str,
+) -> None:
+    """Tell the caller about one executed tool, without its argument values.
+
+    Only the argument *names* travel: a tool argument can carry a location, a
+    message or a key, and none of that belongs in a chat message, a trace event or
+    a log line. A reporter that raises must not break the turn.
+    """
+    if reporter is None:
+        return
+    record: dict = {
+        "name": name,
+        "ok": ok,
+        "durationMs": round((time.monotonic() - started) * 1000.0, 1),
+        "argNames": sorted(str(key) for key in (arguments or {})),
+    }
+    if error:
+        record["error"] = error
+    try:
+        reporter(record)
+    except Exception:  # noqa: BLE001 - reporting must never fail a turn
+        logger.warning("tool call reporter failed name=%s", name, exc_info=True)
 
 
 def _json_object(value: Any) -> dict[str, Any]:

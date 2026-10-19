@@ -1,3 +1,4 @@
 # Empty request: list models known to the registry / model store.
 ---
 ModelInfo[] models
+int32 total_shaves        # SHAVE slots available to models on this device (0 = unknown)

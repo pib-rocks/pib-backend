@@ -16,6 +16,7 @@ import requests
 import shutil
 
 from robot_address import api_url, robot_base_url
+from smart_connect_token import ensure_smart_connect_token
 
 
 def _get_chromium_launch_kwargs() -> dict:
@@ -113,19 +114,20 @@ def _poll_messages(chat_id: str):
         return None
 
 
-def _activate_smart_connect(token: str) -> None:
-    """Wait until the SmartConnect setup request has completed successfully."""
+def _activate_smart_connect(token: str) -> bool:
+    """Store a SmartConnect token only when the robot holds none.
+
+    Returns whether this call created the token. The robot's key store holds the
+    operator's real pib.Cloud token; overwriting it with a test placeholder used
+    to leave every cloud turn answering ``401`` (see ``smart_connect_token.py``).
+    The session fixture ``smart_connect_token_state`` removes a placeholder it
+    created again.
+    """
     deadline = time.monotonic() + API_SETTLE_TIMEOUT_S
     last_error = None
     while time.monotonic() < deadline:
         try:
-            response = requests.post(
-                f"{API_URL}/system/smart-connect",
-                json={"token": token},
-                timeout=REQUEST_TIMEOUT,
-            )
-            response.raise_for_status()
-            return
+            return ensure_smart_connect_token(API_URL, token=token)
         except requests.RequestException as exc:
             last_error = exc
             time.sleep(1)
@@ -444,9 +446,9 @@ def test_voice_assistant_hermes_persists_reply_and_recalls_prior_fact():
 def test_create_personality_via_browser_ui_generates_soul_md():
     """
     Create a new personality via the real browser UI (#add-personality-button),
-    and verify on the Pi host filesystem that its SOUL.md is automatically created,
-    contains the replaced name ('Du bist der humanoide Roboter <Name>.'), and documents
-    all available MCP tools.
+    and verify on the Pi host filesystem that its SOUL.md is automatically created
+    and contains the replaced name ('Du bist der humanoide Roboter <Name>.').
+    It carries no MCP tool prose: the agent reads its tools from the MCP server.
     """
     from playwright.sync_api import sync_playwright
 
@@ -542,13 +544,18 @@ def test_create_personality_via_browser_ui_generates_soul_md():
             assert (
                 f"Du bist der humanoide Roboter {unique_name}." in soul_content
             ), f"Expected robot name identity in SOUL.md, got:\n{soul_content}"
-            assert "## Verfügbare MCP-Werkzeuge (pib_mcp_server)" in soul_content
-            assert "mcp__pib__list_motors" in soul_content
-            assert "mcp__pib__get_state" in soul_content
-            assert "mcp__pib__list_poses" in soul_content
-            assert "mcp__pib__list_programs" in soul_content
-            assert "mcp__pib__capture_image" in soul_content
-            assert "mcp__pib__move_motor" in soul_content
+            # The template no longer documents the MCP tools, so a fresh SOUL
+            # carries neither the section nor any tool name.
+            assert "MCP-Werkzeuge" not in soul_content
+            for tool in (
+                "mcp__pib__list_motors",
+                "mcp__pib__get_state",
+                "mcp__pib__list_poses",
+                "mcp__pib__list_programs",
+                "mcp__pib__capture_image",
+                "mcp__pib__move_motor",
+            ):
+                assert tool not in soul_content
 
         finally:
             browser.close()
@@ -707,12 +714,10 @@ def test_voice_assistant_latency_and_smartconnect_e2e():
     token = "1234567890"
     password = "1234567890"
 
-    # 1. Activate SmartConnect via API. The token is the only field.
-    requests.post(
-        f"{API_URL}/system/smart-connect",
-        json={"token": token},
-        timeout=REQUEST_TIMEOUT,
-    )
+    # 1. Make sure SmartConnect is active. An existing (real) token stays
+    # untouched; only an empty store receives this placeholder, and the session
+    # fixture removes it again.
+    _activate_smart_connect(token)
 
     unique_persona_name = f"HermesLatencyTester_{uuid.uuid4().hex[:6]}"
     created_chat_id = None

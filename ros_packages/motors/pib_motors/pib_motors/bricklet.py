@@ -24,6 +24,15 @@ ipcon.connect(cfg.TINKERFORGE_HOST, cfg.TINKERFORGE_PORT)
 BRICKLET_LOAD_RETRY_INTERVAL_SECONDS = 2.0
 BRICKLET_LOAD_TIMEOUT_SECONDS = 60.0
 
+# Configured Cerebra types, and the device identifier brickd reports for the
+# matching hardware. The detected name carries the hardware revision
+# ("Servo Bricklet 2.0"); the identifier covers an entry that has no name.
+_CONFIGURED_TYPE_IDENTIFIERS = {
+    "Servo Bricklet": 2157,
+    "Solid State Relay Bricklet": 296,
+    "RGB LED Button Bricklet": 282,
+}
+
 
 def load_bricklets(
     retry_interval_seconds: float = BRICKLET_LOAD_RETRY_INTERVAL_SECONDS,
@@ -61,6 +70,88 @@ def load_bricklets(
     raise RuntimeError("failed to load bricklets from pib-api...")
 
 
+def load_connected_devices() -> list:
+    """Devices brickd currently reports, used to cross-check configured types.
+
+    A failure here must not take the motor node down: the configured UIDs are
+    still built, and tinkerforge remains the backstop for a device that was
+    not enumerated.
+    """
+    try:
+        successful, payload = bricklet_client.get_connected_bricklets()
+    except Exception as error:
+        logging.warning(
+            "could not load connected bricklets from pib-api "
+            f"({type(error).__name__}: {error}) - device-type cross-check skipped"
+        )
+        return []
+    if not successful or not isinstance(payload, dict):
+        logging.warning(
+            "could not load connected bricklets from pib-api - "
+            "device-type cross-check skipped"
+        )
+        return []
+    devices = payload.get("bricklets") or []
+    if not isinstance(devices, list):
+        return []
+    return devices
+
+
+def _detected_by_uid(devices: list) -> dict[str, dict]:
+    found: dict[str, dict] = {}
+    for device in devices:
+        if not isinstance(device, dict):
+            continue
+        uid = device.get("uid")
+        if isinstance(uid, str) and uid:
+            found[uid] = device
+    return found
+
+
+def _type_mismatch_reason(configured_type: str, detected: dict) -> str | None:
+    """Why ``detected`` is not the device Cerebra configured, or None if it is.
+
+    The name is preferred. "Servo Bricklet 2.0" matches the configured type
+    "Servo Bricklet". A different name is reported with both sides, which is
+    the case a relay UID stored on a servo slot used to hit only inside the
+    Tinkerforge constructor.
+    """
+    name = str(detected.get("name") or "").strip()
+    if name:
+        if name.startswith(configured_type):
+            return None
+        return f"configured as {configured_type}, detected as {name}"
+    expected = _CONFIGURED_TYPE_IDENTIFIERS.get(configured_type)
+    try:
+        identifier = int(detected.get("deviceIdentifier"))
+    except (TypeError, ValueError):
+        return None
+    if expected is not None and identifier == expected:
+        return None
+    return f"configured as {configured_type}, detected as device {identifier}"
+
+
+def _uids_matching_detected_type(
+    uids: list, device_type: str, detected_by_uid: dict[str, dict]
+) -> list:
+    """Drop UIDs whose connected device is a different type, logging each one."""
+    kept = []
+    for uid in uids:
+        detected = detected_by_uid.get(uid)
+        if not isinstance(detected, dict):
+            kept.append(uid)
+            continue
+        reason = _type_mismatch_reason(device_type, detected)
+        if reason is None:
+            kept.append(uid)
+            continue
+        logging.error(
+            f"skipping {device_type} '{uid}': {reason} - "
+            "this device stays unavailable until its UID is corrected"
+        )
+    return kept
+
+
 bricklet_dtos = load_bricklets()
 
 servo_bricklet_uids = []
@@ -74,6 +165,21 @@ for dto in bricklet_dtos["bricklets"]:
         solid_state_relay_bricklet_uid = dto["uid"]
     elif dto["type"] == "RGB LED Button Bricklet" and dto["uid"]:
         rgb_led_bricklet_uids.append(dto["uid"])
+
+detected_by_uid = _detected_by_uid(load_connected_devices())
+servo_bricklet_uids = _uids_matching_detected_type(
+    servo_bricklet_uids, "Servo Bricklet", detected_by_uid
+)
+if solid_state_relay_bricklet_uid is not None:
+    matching_relays = _uids_matching_detected_type(
+        [solid_state_relay_bricklet_uid],
+        "Solid State Relay Bricklet",
+        detected_by_uid,
+    )
+    solid_state_relay_bricklet_uid = matching_relays[0] if matching_relays else None
+rgb_led_bricklet_uids = _uids_matching_detected_type(
+    rgb_led_bricklet_uids, "RGB LED Button Bricklet", detected_by_uid
+)
 
 
 def build_bricklets(

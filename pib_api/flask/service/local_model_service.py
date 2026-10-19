@@ -30,7 +30,10 @@ from pib_hermes_config.local_model import (
 
 logger = logging.getLogger(__name__)
 
-_TAGS_TIMEOUT_SECONDS = 0.4
+# Long enough for a cold connection across the docker bridge. Shorter than
+# this, a slow accept looks like "Ollama has no qwen-fast" and Cerebra hides
+# the model that is installed.
+_TAGS_TIMEOUT_SECONDS = 2.0
 _REQUEST_CACHE_KEY = "pib.local_model_present"
 
 

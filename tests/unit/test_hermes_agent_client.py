@@ -9,11 +9,17 @@ from public_api_client.hermes_agent_client import (
     run_turn,
     uses_hermes_backend,
 )
-from pib_hermes_config import MCP_TOOLS_SOUL_SECTION
+from pib_hermes_config import (
+    MCP_TOOLS,
+    MCP_TOOLS_SOUL_SECTION,
+    strip_mcp_tools_soul_section,
+)
 import os
 import subprocess
 from unittest.mock import patch
 
+# The MCP tool names as the module publishes them. These must NOT appear in a
+# generated SOUL any more; they are asserted against the removed section below.
 EXPECTED_MCP_TOOLS = (
     "mcp__pib__list_motors",
     "mcp__pib__get_state",
@@ -27,6 +33,14 @@ EXPECTED_MCP_TOOLS = (
     "mcp__pib__set_relay",
     "mcp__pib__soul_append",
 )
+
+
+def _legacy_soul_with_mcp_section(
+    personality_name: str, custom_description: str | None = None
+) -> str:
+    """A SOUL exactly as the template generated it while it advertised the tools."""
+    text = build_default_soul_text(personality_name, custom_description)
+    return text.rstrip("\n") + "\n\n" + MCP_TOOLS_SOUL_SECTION.strip() + "\n"
 
 
 def test_session_name_is_prefixed_and_sanitized():
@@ -94,13 +108,70 @@ def test_build_default_soul_text_includes_custom_description():
     assert "Sei freundlich und neugierig." in text
 
 
-def test_build_default_soul_text_documents_mcp_tools():
+def test_build_default_soul_text_carries_no_tool_prose():
+    """The SOUL must not advertise the MCP tools any more.
+
+    This replaces an assertion that pinned the generated
+    "## Verfuegbare MCP-Werkzeuge (pib_mcp_server)" section: tool prose in the
+    SOUL made the model talk about its tools or write the calls out as text,
+    and the agent gets their real names and schemas from the MCP server itself.
+    """
     text = build_default_soul_text("pib")
-    assert "## Verfügbare MCP-Werkzeuge (pib_mcp_server)" in text
+    assert "MCP-Werkzeuge" not in text
+    assert MCP_TOOLS_SOUL_SECTION.strip() not in text
     for tool in EXPECTED_MCP_TOOLS:
-        assert tool in text
-    # Section body stays in sync with the module constant.
-    assert MCP_TOOLS_SOUL_SECTION.strip() in text
+        assert tool not in text
+    for tool, _description in MCP_TOOLS:
+        assert tool not in text
+
+
+def test_build_default_soul_text_keeps_identity_and_custom_text():
+    text = build_default_soul_text("Eva", custom_description="Sei neugierig.")
+    assert text == "Du bist der humanoide Roboter Eva.\n\nSei neugierig.\n"
+
+
+def test_build_default_soul_text_strips_a_custom_text_that_carries_the_section():
+    """Every caller folds its text in here, the daemon rebuild included."""
+    text = build_default_soul_text("Eva", custom_description=MCP_TOOLS_SOUL_SECTION)
+    assert text == "Du bist der humanoide Roboter Eva.\n"
+
+
+def test_strip_mcp_tools_soul_section_leaves_a_text_without_the_section_alone():
+    text = "Du bist der humanoide Roboter pib.\n\nSei freundlich.\n"
+    assert strip_mcp_tools_soul_section(text) == text
+
+
+def test_strip_mcp_tools_soul_section_removes_the_section_at_the_end():
+    assert (
+        strip_mcp_tools_soul_section(_legacy_soul_with_mcp_section("Eva"))
+        == "Du bist der humanoide Roboter Eva.\n"
+    )
+
+
+def test_strip_mcp_tools_soul_section_removes_a_section_in_the_middle():
+    """The custom text in front of it is not cut, and the text behind it stays."""
+    legacy = _legacy_soul_with_mcp_section("Eva", "Sei freundlich.")
+    text = legacy.rstrip("\n") + "\n\nNach dem Werkzeugblock.\n"
+    assert strip_mcp_tools_soul_section(text) == (
+        "Du bist der humanoide Roboter Eva.\n\nSei freundlich."
+        "\n\nNach dem Werkzeugblock.\n"
+    )
+
+
+def test_strip_mcp_tools_soul_section_is_idempotent():
+    once = strip_mcp_tools_soul_section(_legacy_soul_with_mcp_section("Eva"))
+    assert strip_mcp_tools_soul_section(once) == once
+
+
+def test_strip_mcp_tools_soul_section_recognises_a_transliterated_heading():
+    """A copy made through tooling that drops the umlaut names the same block."""
+    legacy = _legacy_soul_with_mcp_section("Eva").replace(
+        "## Verfügbare MCP-Werkzeuge (pib_mcp_server)",
+        "## Verfuegbare MCP-Werkzeuge (pib_mcp_server)",
+    )
+    assert strip_mcp_tools_soul_section(legacy) == (
+        "Du bist der humanoide Roboter Eva.\n"
+    )
 
 
 def test_build_default_soul_text_defaults_blank_name_to_pib():
@@ -108,7 +179,7 @@ def test_build_default_soul_text_defaults_blank_name_to_pib():
     assert text.startswith("Du bist der humanoide Roboter pib.")
 
 
-def test_ensure_profile_writes_templated_soul_with_name_and_mcp_docs(
+def test_ensure_profile_writes_templated_soul_with_name_and_no_mcp_docs(
     tmp_path, monkeypatch
 ):
     monkeypatch.setenv("PIB_HERMES_PROFILES_DIR", str(tmp_path / "profiles"))
@@ -127,8 +198,12 @@ def test_ensure_profile_writes_templated_soul_with_name_and_mcp_docs(
         content = fh.read()
     assert content.startswith("Du bist der humanoide Roboter Eva.")
     assert "Sei neugierig." in content
+    # The provisioned SOUL no longer documents the tools; the agent reads them
+    # from the MCP server.
+    assert "MCP-Werkzeuge" not in content
     for tool in EXPECTED_MCP_TOOLS:
-        assert tool in content
+        assert tool not in content
+    assert content == build_default_soul_text("Eva", "Sei neugierig.")
 
 
 def test_ensure_profile_defaults_personality_name_to_pib(tmp_path, monkeypatch):

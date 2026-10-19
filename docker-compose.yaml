@@ -1,6 +1,49 @@
 version: '3'
 
 services:
+  # The Hermes turn daemon, on the Python version the agent requires (3.14).
+  # The voice container reaches it by service name; see PIB_HERMES_DAEMON_URL.
+  hermes-daemon:
+    image: pib-hermes-daemon
+    build:
+      context: .
+      dockerfile: ./public_api_client/Dockerfile
+      additional_contexts:
+        # The agent checkout supplies pyproject.toml and uv.lock for its own
+        # dependency set.
+        hermes: /home/pib/.hermes/hermes-agent
+    restart: always
+    environment:
+      HERMES_HOME: /home/pib/.hermes
+      PIB_HERMES_PROFILES_DIR: /home/pib/.hermes/profiles
+      # Prevent hermes_bootstrap from trying to sync/re-exec into a host-managed
+      # store Python; the image carries its own 3.14 venv in /src/.venv.
+      HERMES_DISABLE_LAZY_INSTALLS: "1"
+      # hermes_home_scope imports hermes_constants before a turn sets its own path,
+      # and the agent sources come from the mounted view, so they belong on the path.
+      PYTHONPATH: /app:/app/public_api_client:/app/pib_hermes_config:/app/pib_api_client:/app/pib_mcp_server:/home/pib/.hermes/hermes-agent:/src/.venv/lib/python3.14/site-packages
+      PIB_HERMES_DAEMON_HOST: 0.0.0.0
+      PIB_HERMES_DAEMON_PORT: "8088"
+      FLASK_API_BASE_URL: http://flask-app:5000
+      PIB_CLOUD_BASE_URL: ${PIB_CLOUD_BASE_URL:-https://api.pib.rocks/v1}
+      TRYB_URL_PREFIX: https://platform.tryb.ai
+      PIB_MCP_API_BASE_URL: http://flask-app:5000
+      PIB_MCP_ROSBRIDGE_URL: ws://rosbridge-ws:9090
+      PIB_MCP_ENABLE_ACTUATION: "true"
+    volumes:
+      # Same filtered view the voice container uses: profiles plus the agent
+      # sources, with the .env files covered by prepare-view.
+      - type: bind
+        source: ${PIB_VOICE_HERMES_VIEW:-/var/lib/pib-voice-egress/view}
+        target: /home/pib/.hermes
+        bind:
+          propagation: rslave
+          create_host_path: false
+    networks:
+      - pib-network
+    security_opt:
+      - no-new-privileges:true
+
   pib-blockly-server:
     image: pib-blockly-server
     build:
@@ -37,11 +80,12 @@ services:
       - PYTHON_CODE_DIR=/root/cerebra_programs
       - MARIMO_NOTEBOOKS_DIR=/home/pib/programs/notebooks
       - PIB_HERMES_PROFILES_DIR=/home/pib/.hermes/profiles
-      - PIB_HERMES_DAEMON_URL=http://ros-voice-assistant:8088
+      - PIB_HERMES_DAEMON_URL=${PIB_HERMES_DAEMON_URL:-http://hermes-daemon:8088}
       - PIB_HARDWARE_VARIANT=${PIB_HARDWARE_VARIANT:-}
       - PIB_UPDATE_DIR=/app/.update
       - PIB_KEY_STORE_PATH=/home/pib/app/secrets/provider_key_store.json
       - PIB_OLLAMA_BASE_URL=http://host.docker.internal:11434
+      - HOST_IP_FILE=/etc/pib_host_ip
       # Empty means read /etc/pib_smart_chats. 0 disables the Hermes channel.
       - PIB_SMART_CHATS=${PIB_SMART_CHATS:-}
     volumes:
@@ -51,8 +95,13 @@ services:
       # Hermes profiles directory (SOUL.md / MEMORY.md live there).
       - /home/pib/app/secrets:/home/pib/app/secrets
       - /home/pib/app/.update:/app/.update
+      # The release pairing helper lives in the repository's setup directory, which the flask bind
+      # mount above hides: /app *is* pib_api/flask, so nothing inside the container reaches the
+      # repository root. Without this mount GET /system/update/available cannot annotate releases.
+      - ./setup:/app/setup:ro
       - /etc/pib_hardware_variant:/etc/pib_hardware_variant:ro
       - /etc/pib_smart_chats:/etc/pib_smart_chats:ro
+      - /etc/pib_host_ip:/etc/pib_host_ip:ro
       - programs:/root/cerebra_programs
       - /home/pib/programs/notebooks:/home/pib/programs/notebooks
       # A personality's SOUL.md must land on the host, at the same path the
@@ -125,6 +174,8 @@ services:
       - flask-app
 
   ros-voice-assistant:
+    # Stable policy identity: keep identical to setup/voice_egress/allowlist.json.
+    mac_address: "02:50:49:42:00:45"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     image: ros_voice_assistant
@@ -132,7 +183,24 @@ services:
       context: .
       dockerfile: ./ros_packages/voice_assistant/Dockerfile
     command: ros2 launch voice_assistant launch.py
-    privileged: true
+    # Host nftables is the enforcement point (setup/voice_egress). A privileged
+    # root container can mount the host disk and rewrite that policy.
+    privileged: false
+    cap_drop:
+      - NET_ADMIN
+      - NET_RAW
+      - SYS_ADMIN
+      - SYS_MODULE
+      - SYS_RAWIO
+      - SYS_PTRACE
+    security_opt:
+      - no-new-privileges:true
+    group_add:
+      - "${PIB_AUDIO_GID:-29}"
+    device_cgroup_rules:
+      - "c 116:* rmw"
+      - "c 14:* rmw"
+      - "c 189:* rmw"
     profiles:
       - all
       - voice_assistant
@@ -144,17 +212,32 @@ services:
     environment:
       - ALSA_CARD=ArrayUAC10
       - FLASK_API_BASE_URL=http://flask-app:5000
+      # Sold cloud API, distinct from the robot-local Flask API above.
+      - PIB_CLOUD_BASE_URL=${PIB_CLOUD_BASE_URL:-https://api.pib.rocks/v1}
+      - PIB_CLOUD_STT_TIMEOUT_SECONDS=${PIB_CLOUD_STT_TIMEOUT_SECONDS:-3}
+      - PIB_CLOUD_MODE=${PIB_CLOUD_MODE:-test}
+      # Which live voice path answers: "gemini" (speech-to-speech) or "duplex"
+      # (the pib.Cloud relay answers and speaks; transcription stays on the robot).
+      # Default keeps the path every robot runs today; a robot opts in per host.
+      - PIB_VOICE_BACKEND=${PIB_VOICE_BACKEND:-gemini}
+      - PIB_CLOUD_VOICE_URL=${PIB_CLOUD_VOICE_URL:-wss://api.pib.rocks/v1/pib/stream}
+      # Channels the array publishes. 1 unless the driver reports its raw channels.
+      - PIB_MIC_CHANNELS=${PIB_MIC_CHANNELS:-1}
       - VOICE_ASSISTANT_DIR=/app/ros2_ws/voice_assistant
       - PIB_MCP_ROSBRIDGE_URL=ws://rosbridge-ws:9090
       - PIB_OLLAMA_BASE_URL=http://host.docker.internal:11434
-      # Hardware-changing MCP calls remain blocked unless explicitly enabled.
-      - PIB_MCP_ENABLE_ACTUATION=false
+      # Server-side gate for hardware-changing MCP calls. Open by default, so
+      # a freshly installed robot is drivable without a further manual step.
+      - PIB_MCP_ENABLE_ACTUATION=true
       # Hermes-agent personalities: same profiles dir as flask-app, so the
       # SOUL.md the API writes is the file the agent loads.
       - PIB_HERMES_PROFILES_DIR=/home/pib/.hermes/profiles
       - HERMES_HOME=/home/pib/.hermes
       - PIB_HERMES_BIN=/home/pib/.local/bin/hermes
       - PIB_HERMES_DAEMON_HOST=0.0.0.0
+      # Where the turn daemon listens FROM THE NODE'S POINT OF VIEW. Default is the
+      # hermes-daemon service: the agent needs Python 3.14, this container has 3.12.
+      - PIB_HERMES_DAEMON_URL=${PIB_HERMES_DAEMON_URL:-http://hermes-daemon:8088}
       # Empty means read /etc/pib_smart_chats. 0 disables the Hermes channel.
       - PIB_SMART_CHATS=${PIB_SMART_CHATS:-}
       # GEMINI_API_KEY / GOOGLE_API_KEY are deliberately NOT listed here: they
@@ -165,14 +248,22 @@ services:
       # real value from password.env. No hardcoded key / fallback default here.
       # An unlocked key store wins over those variables. The Direct tool loop
       # and the Hermes turn both read that provider's secret from flask at
-      # runtime. Hermes does not copy it into the profile.
+      # runtime. Hermes does not copy it into the profile. The Hermes tree
+      # itself is not mounted raw: profiles/*/.env and ~/.hermes/.env would
+      # come with it. prepare-view publishes a filtered view and covers those
+      # files. The cloud-operator key is not on this robot.
     volumes:
       - ${PIB_VOICE_DATA_DIR:-/data/voice}:/data/voice
       - /dev/snd:/dev/snd
       - /dev/dsp:/dev/dsp
       - /etc/machine-id:/etc/machine-id
       - /etc/pib_smart_chats:/etc/pib_smart_chats:ro
-      - /home/pib/.hermes:/home/pib/.hermes
+      - type: bind
+        source: ${PIB_VOICE_HERMES_VIEW:-/var/lib/pib-voice-egress/view}
+        target: /home/pib/.hermes
+        bind:
+          propagation: rslave
+          create_host_path: false
       - /home/pib/.local/bin/hermes:/home/pib/.local/bin/hermes:ro
       # REQUIRED, do not remove: the hermes wrapper execs the venv interpreter
       # under /home/pib/.hermes/hermes-agent/venv/bin, and that interpreter is a
@@ -220,7 +311,6 @@ services:
       - VOICE_ASSISTANT_DIR=/app/ros2_ws/voice_assistant
       - TF_HOST=host.docker.internal
       - TF_PORT=4223
-      - TF_BUTTON_BRICKLET_NUMBERS=5,6,7
     volumes:
       - programs:/ros2_ws/cerebra_programs
       - /dev/bus/usb:/dev/bus/usb

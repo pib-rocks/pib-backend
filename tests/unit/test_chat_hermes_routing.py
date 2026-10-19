@@ -5,6 +5,7 @@ rclpy / ROS message types are stubbed so these run without a live ROS env.
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 import threading
@@ -15,6 +16,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from pib_hermes_config.turn_taking import speakable_answer
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 VOICE_ASSISTANT_PKG = REPO_ROOT / "ros_packages" / "voice_assistant"
 if str(VOICE_ASSISTANT_PKG) not in sys.path:
@@ -23,6 +26,37 @@ if str(VOICE_ASSISTANT_PKG) not in sys.path:
 
 TEXT_TYPE_SENTENCE = 0
 TEXT_TYPE_CODE_VISUAL = 1
+
+
+def _sentence_feedback_texts(goal_handle) -> list[str]:
+    texts: list[str] = []
+    for call in goal_handle.publish_feedback.call_args_list:
+        fb = call[0][0]
+        if fb.text_type == TEXT_TYPE_SENTENCE:
+            texts.append(fb.text)
+    return texts
+
+
+def _assert_delta_only_sentence_feedback(
+    feedback_texts: list[str],
+    raw_answer: str,
+    *,
+    first_token: str | None = None,
+) -> None:
+    """SENTENCE feedback must be incremental deltas that concatenate to the speakable answer."""
+    expected_full = speakable_answer(raw_answer)
+    assert feedback_texts, "expected at least one SENTENCE feedback delta"
+    if first_token is not None:
+        assert feedback_texts[0] == first_token
+    emitted = ""
+    for piece in feedback_texts:
+        assert piece, "empty SENTENCE feedback payload is invalid here"
+        assert expected_full.startswith(emitted + piece)
+        emitted += piece
+    assert emitted == expected_full
+    if len(feedback_texts) > 1:
+        for piece in feedback_texts:
+            assert piece != expected_full, "cumulative full-answer payload in feedback"
 
 
 def _install_ros_stubs():
@@ -188,6 +222,13 @@ def _install_ros_stubs():
 
 @pytest.fixture(scope="module")
 def chat_module():
+    # Do not leave fake, non-package API clients installed for later test files.
+    client_prefixes = ("pib_api_client", "public_api_client.public_voice_client")
+    saved_clients = {
+        name: module
+        for name, module in sys.modules.items()
+        if any(name == p or name.startswith(p + ".") for p in client_prefixes)
+    }
     _install_ros_stubs()
     # Force re-import if a previous failed import left a partial module.
     # The entries are put back afterwards: dropping "voice_assistant" from
@@ -204,6 +245,10 @@ def chat_module():
 
     yield chat_mod
 
+    for name in tuple(sys.modules):
+        if any(name == p or name.startswith(p + ".") for p in client_prefixes):
+            sys.modules.pop(name, None)
+    sys.modules.update(saved_clients)
     for name, module in stolen.items():
         sys.modules[name] = module
 
@@ -413,6 +458,33 @@ def test_ensure_hermes_daemon_never_raises(chat_module, chat_node):
     assert "oneshot subprocess fallback" in logger.warning.call_args[0][0]
 
 
+def _install_hermes_home_constants(monkeypatch):
+    """Stand in for hermes_constants so the daemon can enter hermes_home_scope.
+
+    run_turn_in_process enters that scope before ensure_profile, and the scope
+    imports hermes_constants. CI does not install the Hermes package, so the
+    import raises and the daemon answers 500 before ensure_profile_home runs.
+    """
+    from contextvars import ContextVar
+
+    current_home = ContextVar("test_hermes_home", default=Path("/tmp/hermes-home"))
+    module = types.ModuleType("hermes_constants")
+    module.get_hermes_home = current_home.get
+    module.set_hermes_home_override = current_home.set
+    module.reset_hermes_home_override = current_home.reset
+    monkeypatch.setitem(sys.modules, "hermes_constants", module)
+
+
+def _profile_home_result(profile_dir: str) -> dict:
+    """Shape ensure_profile reads back from ensure_profile_home."""
+    return {
+        "ok": True,
+        "profile_dir": profile_dir,
+        "created": False,
+        "factory": "filesystem",
+    }
+
+
 def test_warm_daemon_turn_uses_in_process_runner(chat_module, chat_node, monkeypatch):
     """Warm daemon must answer chat turns via hermes.run_agent, not CLI spawn."""
     import threading
@@ -433,15 +505,17 @@ def test_warm_daemon_turn_uses_in_process_runner(chat_module, chat_node, monkeyp
     # Never open the developer's live Hermes state.db from a unit test.
     monkeypatch.setattr(hd, "_create_session_db", MagicMock(return_value=None))
     hd.clear_agent_cache()
+    _install_hermes_home_constants(monkeypatch)
 
     with (
         patch.dict(
             sys.modules,
             {"run_agent": fake_module},
         ),
-        patch(
-            "public_api_client.hermes_agent_client.ensure_profile",
-            return_value="/tmp/p",
+        patch.object(
+            hd,
+            "ensure_profile_home",
+            return_value=_profile_home_result("/tmp/p"),
         ),
         patch(
             "public_api_client.hermes_agent_client.run_turn_subprocess",
@@ -521,15 +595,18 @@ def test_warm_daemon_falls_back_to_subprocess_when_run_agent_missing(
             raise ImportError("no hermes")
         return real_import(name, *args, **kwargs)
 
+    _install_hermes_home_constants(monkeypatch)
+
     with (
         patch.dict(
             sys.modules,
             {"run_agent": None, "hermes.run_agent": None},
         ),
         patch("builtins.__import__", side_effect=_block_hermes),
-        patch(
-            "public_api_client.hermes_agent_client.ensure_profile",
-            return_value="/tmp/profiles/pib_pers-1",
+        patch.object(
+            hd,
+            "ensure_profile_home",
+            return_value=_profile_home_result("/tmp/profiles/pib_pers-1"),
         ),
         patch(
             "public_api_client.hermes_agent_client.run_turn_subprocess",
@@ -584,9 +661,9 @@ def test_stream_chunks_to_goal_splits_sentences(chat_module, chat_node):
         goal_handle, "chat-1", ["Hallo Welt. "]
     )
 
-    # Last completed sentence stays in prev for Chat.Result; nothing left in curr.
-    assert prev == "Hallo Welt."
-    assert ptype == TEXT_TYPE_SENTENCE
+    # Speech was emitted in feedback; Chat.Result tail is empty.
+    assert prev is None
+    assert ptype is None
     assert curr == ""
     chat_node.create_chat_message.assert_called()
     # TTFT fast-path publishes the first token immediately as feedback.
@@ -624,17 +701,15 @@ def test_stream_chunks_to_goal_persists_text_without_terminator(chat_module, cha
 
     texts = [call[0][1] for call in chat_node.create_chat_message.call_args_list]
     assert texts == ["Eins.", "Zwei ohne Punkt"]
-    # The completed sentence goes out as feedback so the tail can ride along in
-    # Chat.Result, which the caller only fills from curr_text when prev is None.
+    # Every speakable piece travelled as a feedback delta, so the Result
+    # carries no second copy of the tail (measured: text is empty).
     assert prev is None
     assert ptype is None
-    assert curr == "Zwei ohne Punkt"
-    # First call is TTFT immediate emit of "Eins. "; later call publishes prior sentence.
-    feedback_texts = [
-        call[0][0].text for call in goal_handle.publish_feedback.call_args_list
-    ]
-    assert "Eins. " in feedback_texts
-    assert "Eins." in feedback_texts
+    assert curr == ""
+    feedback_texts = _sentence_feedback_texts(goal_handle)
+    _assert_delta_only_sentence_feedback(
+        feedback_texts, "Eins. Zwei ohne Punkt", first_token="Eins. "
+    )
 
 
 def test_stream_chunks_to_goal_creates_when_only_unterminated_text_arrives(
@@ -651,7 +726,13 @@ def test_stream_chunks_to_goal_creates_when_only_unterminated_text_arrives(
         "chat-1", "Antwort ohne Satzzeichen", False, False, True
     )
     assert prev is None
-    assert curr == "Antwort ohne Satzzeichen"
+    assert curr == ""
+    feedback_texts = _sentence_feedback_texts(goal_handle)
+    _assert_delta_only_sentence_feedback(
+        feedback_texts,
+        "Antwort ohne Satzzeichen",
+        first_token="Antwort ohne Satzzeichen",
+    )
     # TTFT: first token is published immediately even without a terminator.
     assert goal_handle.publish_feedback.call_count >= 1
     assert (
@@ -666,20 +747,17 @@ def test_stream_chunks_to_goal_publishes_prior_sentence_as_feedback(
     goal_handle = MagicMock()
     goal_handle.is_cancel_requested = False
 
-    # Feedback for a completed sentence is published when the *next* token arrives.
-    # Plus TTFT immediate emit of the first token.
     prev, ptype, curr = chat_node._stream_chunks_to_goal(
         goal_handle, "chat-1", ["Eins. ", "Zwei."]
     )
 
-    assert goal_handle.publish_feedback.call_count >= 2
-    feedback_texts = [
-        call[0][0].text for call in goal_handle.publish_feedback.call_args_list
-    ]
-    assert "Eins. " in feedback_texts  # TTFT first-token emit
-    assert "Eins." in feedback_texts  # prior completed sentence
-    assert prev == "Zwei."
-    assert ptype == TEXT_TYPE_SENTENCE
+    feedback_texts = _sentence_feedback_texts(goal_handle)
+    _assert_delta_only_sentence_feedback(
+        feedback_texts, "Eins. Zwei.", first_token="Eins. "
+    )
+    assert feedback_texts[-1] == "Zwei."
+    assert prev is None
+    assert ptype is None
     assert curr == ""
 
 
@@ -693,11 +771,14 @@ def test_stream_chunks_to_goal_extracts_pib_program(chat_module, chat_node):
     prev, ptype, curr = chat_node._stream_chunks_to_goal(goal_handle, "chat-1", tokens)
 
     assert goal_handle.publish_feedback.call_count >= 2
-    feedback_texts = [
-        call[0][0].text for call in goal_handle.publish_feedback.call_args_list
-    ]
-    assert "Hallo. " in feedback_texts
-    assert "Hallo." in feedback_texts
+    feedback_texts = _sentence_feedback_texts(goal_handle)
+    # Speakable sentence only; the Blockly block travels as Chat.Result.
+    # The helper derives the speakable target from the raw answer itself.
+    _assert_delta_only_sentence_feedback(
+        feedback_texts,
+        "Hallo. <pib-program>xml-here</pib-program>",
+        first_token="Hallo. ",
+    )
     assert prev == "xml-here"
     assert ptype == TEXT_TYPE_CODE_VISUAL
     assert curr == ""
@@ -714,13 +795,11 @@ def test_stream_chunks_publishes_a_clause_before_the_sentence_ends(
         goal_handle, "chat-1", ["Sure", ", I can", " help you."]
     )
 
-    feedback_texts = [
-        call[0][0].text for call in goal_handle.publish_feedback.call_args_list
-    ]
-    assert feedback_texts[0] == "Sure"
-    assert "Sure," in feedback_texts
-    assert "I can help you." in feedback_texts
-    assert feedback_texts.index("Sure,") < feedback_texts.index("I can help you.")
+    feedback_texts = _sentence_feedback_texts(goal_handle)
+    _assert_delta_only_sentence_feedback(
+        feedback_texts, "Sure, I can help you.", first_token="Sure"
+    )
+    assert feedback_texts.index(",") < feedback_texts.index(" help you.")
     chat_node._remember_first_token_latency.assert_called()
     chat_id, elapsed_ms = chat_node._remember_first_token_latency.call_args[0]
     assert chat_id == "chat-1"
@@ -1347,8 +1426,10 @@ def test_chat_module_does_not_reintroduce_asyncio_loop_lookup():
     assert "asyncio" not in referenced
 
 
-def test_direct_without_tool_calling_uses_public_api_and_attaches_no_image(
-    chat_module, chat_node
+@pytest.mark.parametrize("store_mode", ["unlocked", "locked", "degraded"])
+@pytest.mark.parametrize("generate_code", [False, True])
+def test_retired_direct_without_tools_is_explicit_before_key_store(
+    chat_module, chat_node, store_mode, generate_code
 ):
     import asyncio
 
@@ -1364,13 +1445,16 @@ def test_direct_without_tool_calling_uses_public_api_and_attaches_no_image(
     personality.channel = "direct"
     personality.effective_channel = "direct"
     personality.description = "Du bist der eine Soul."
+    personality.voice_mode = "turn_based"
+    chat_node.token = None
+    chat_node._key_store_mode = MagicMock(return_value=store_mode)
 
     goal_handle = MagicMock()
     goal_handle.is_cancel_requested = False
     goal_handle.request = Chat.Goal()
     goal_handle.request.chat_id = "chat-2"
     goal_handle.request.text = "Hallo"
-    goal_handle.request.generate_code = False
+    goal_handle.request.generate_code = generate_code
 
     with (
         patch.object(
@@ -1401,17 +1485,115 @@ def test_direct_without_tool_calling_uses_public_api_and_attaches_no_image(
 
         result = asyncio.run(chat_node.chat(goal_handle))
 
-    get_history.assert_called_once()
+    from pib_hermes_config.retired_direct_text import RETIRED_DIRECT_TEXT_SENTENCE
+
+    get_history.assert_not_called()
+    chat_node._key_store_mode.assert_not_called()
     run_direct_turn.assert_not_called()
-    chat_completion.assert_called_once()
-    assert chat_completion.call_args.kwargs["description"] == "Du bist der eine Soul."
-    assert chat_completion.call_args.kwargs["image_base64"] is None
+    chat_completion.assert_not_called()
     chat_node.get_camera_image_client.call_async.assert_not_called()
     run_turn.assert_not_called()
-    stream.assert_called_once()
+    stream.assert_not_called()
     chat_node.create_chat_message.assert_any_call("chat-2", "Hallo", True, False, True)
-    assert result.text == "Hi."
+    chat_node.create_chat_message.assert_any_call(
+        "chat-2", RETIRED_DIRECT_TEXT_SENTENCE, False, False, True
+    )
+    assert result.text == RETIRED_DIRECT_TEXT_SENTENCE
+    assert result.text_type == TEXT_TYPE_SENTENCE
+    assert personality.channel == "direct"
+    assert personality.tool_calling is False
     goal_handle.succeed.assert_called_once()
+
+
+def test_direct_without_tools_runs_a_plain_chat_on_the_supported_model(
+    chat_module, chat_node
+):
+    """PC-58: the tool switch selects no transport, so tools off is a chat.
+
+    On the supported Direct model the turn answers without a retired sentence
+    and without tools; the loop is called with tool_calling false.
+    """
+
+    import asyncio
+
+    Chat = chat_module.Chat
+
+    personality = MagicMock()
+    personality.message_history = 5
+    personality.personality_id = "pers-3"
+    personality.assistant_model.api_name = "gemini-3.8-flash"
+    personality.assistant_model.has_image_support = True
+    personality.assistant_model.capabilities = {"images": True}
+    personality.tool_calling = False
+    personality.channel = "direct"
+    personality.effective_channel = "direct"
+    personality.description = "Du bist der eine Soul."
+    personality.voice_mode = "turn_based"
+    chat_node.token = None
+    chat_node._key_store_mode = MagicMock(return_value="unlocked")
+
+    goal_handle = MagicMock()
+    goal_handle.is_cancel_requested = False
+    goal_handle.request = Chat.Goal()
+    goal_handle.request.chat_id = "chat-3"
+    goal_handle.request.text = "Hallo"
+    goal_handle.request.generate_code = False
+
+    with (
+        patch.object(
+            chat_module.voice_assistant_client,
+            "get_personality_from_chat",
+            return_value=(True, personality),
+        ),
+        patch.object(
+            chat_module.voice_assistant_client,
+            "get_chat_history",
+            return_value=(True, []),
+        ),
+        patch.object(
+            chat_module.direct_tool_loop,
+            "run_direct_turn",
+            return_value=iter(["Hi."]),
+        ) as run_direct_turn,
+        patch.object(
+            chat_node,
+            "_stream_chunks_to_goal",
+            return_value=("Hi.", TEXT_TYPE_SENTENCE, ""),
+        ),
+        patch("public_api_client.hermes_agent_client.run_turn") as run_turn,
+    ):
+
+        result = asyncio.run(chat_node.chat(goal_handle))
+
+    from pib_hermes_config.retired_direct_text import RETIRED_DIRECT_TEXT_SENTENCE
+
+    run_direct_turn.assert_called_once()
+    assert run_direct_turn.call_args.kwargs["tool_calling"] is False
+    run_turn.assert_not_called()
+    assert result.text == "Hi."
+    assert RETIRED_DIRECT_TEXT_SENTENCE not in str(result.text)
+    goal_handle.succeed.assert_called_once()
+
+
+def test_retired_reply_honors_cancellation(chat_module, chat_node):
+    goal = MagicMock()
+    goal.is_cancel_requested = True
+    result = chat_node._finish_retired_direct_text(goal, "cancelled-chat", "gpt-6")
+    goal.canceled.assert_called_once()
+    goal.succeed.assert_not_called()
+    chat_node.create_chat_message.assert_not_called()
+    assert result.text == ""
+
+
+def test_legacy_vision_never_uses_camera_or_retired_text(chat_module, chat_node):
+    req = types.SimpleNamespace(prompt="Find the cube")
+    resp = types.SimpleNamespace(response="unset")
+    with patch.object(chat_module.public_voice_client, "chat_completion") as old_text:
+        result = chat_node._handle_vision_prompt(req, resp)
+    assert result.response == "0"
+    old_text.assert_not_called()
+    chat_node.get_camera_image_client.call_async.assert_not_called()
+    chat_node.get_logger().error.assert_called_once()
 
 
 def _degraded_goal(chat_module, chat_id: str):
@@ -1471,7 +1653,7 @@ def test_degraded_direct_chat_names_the_missing_password(chat_module, chat_node)
     personality.personality_id = "pers-1"
     personality.gender = "Male"
     personality.language = "German"
-    personality.assistant_model.api_name = "gpt-6"
+    personality.assistant_model.api_name = "gemini-3.8-flash"
     personality.channel = "direct"
     personality.effective_channel = "direct"
     chat_node._key_store_mode = lambda: "degraded"
@@ -1546,6 +1728,288 @@ def test_smart_channel_uses_hermes_even_when_the_model_is_not(chat_module, chat_
     stream.assert_called_once()
     chat_node.create_chat_message.assert_any_call("chat-smart", "Hi", True, False, True)
     assert result.text == "Vom Agent."
+
+
+def test_direct_channel_never_uses_hermes_even_with_a_tool_capable_cloud_model(
+    chat_module, chat_node
+):
+    """Direct is the Hermes-free channel; tool calling is not a transport switch.
+
+    Live, a Direct personality on pib.Cloud with the tool switch on was routed
+    through Hermes because the cloud SSE stream carries no tools. The channel is
+    what decides - Smart runs on Hermes, Direct never does - and the tool switch
+    only controls whether the turn offers MCP tools.
+    """
+    Chat = chat_module.Chat
+
+    personality = MagicMock()
+    personality.message_history = 5
+    personality.description = "Du bist pib."
+    personality.personality_id = "pers-direct-cloud"
+    personality.assistant_model.api_name = "pib-cloud"
+    personality.assistant_model.has_image_support = False
+    personality.assistant_model.capabilities = {"images": False, "tools": True}
+    personality.assistant_model.endpoint_base = "http://192.168.1.252:8090/v1"
+    personality.tool_calling = True
+    personality.channel = "direct"
+    personality.effective_channel = "direct"
+
+    logger = MagicMock()
+    chat_node.get_logger = MagicMock(return_value=logger)
+
+    goal_handle = MagicMock()
+    goal_handle.is_cancel_requested = False
+    goal_handle.request = Chat.Goal()
+    goal_handle.request.chat_id = "chat-direct-cloud"
+    goal_handle.request.text = "Schalte das Licht an."
+    goal_handle.request.generate_code = False
+
+    with (
+        patch.object(
+            chat_module.voice_assistant_client,
+            "get_personality_from_chat",
+            return_value=(True, personality),
+        ),
+        patch.object(
+            chat_module.voice_assistant_client,
+            "get_chat_history",
+            return_value=(True, []),
+        ),
+        patch.object(
+            chat_module.direct_tool_loop,
+            "mcp_tool_declarations",
+            return_value=[
+                {
+                    "name": "set_led",
+                    "description": "LED setzen.",
+                    "parameters": {"type": "object", "properties": {}},
+                }
+            ],
+        ),
+        patch.object(
+            chat_module.direct_tool_loop,
+            "run_direct_turn",
+            return_value=iter(["Erledigt."]),
+        ) as run_direct_turn,
+        patch.object(
+            chat_module.pib_cloud_stream,
+            "stream_pib_cloud_chat",
+            return_value=iter(["Erledigt."]),
+        ) as cloud,
+        patch.object(
+            chat_node, "_stream_hermes_turn", return_value=["Vom Agent."]
+        ) as hermes_stream,
+        patch.object(
+            chat_node,
+            "_stream_chunks_to_goal",
+            return_value=(None, None, "Erledigt."),
+        ),
+    ):
+        result = drive_like_rclpy(chat_node.chat(goal_handle))
+
+    # Direct never uses Hermes. pib.Cloud runs on the Direct cloud SSE stream and
+    # receives the MCP tool declarations when tool_calling is True.
+    hermes_stream.assert_not_called()
+    run_direct_turn.assert_not_called()
+    cloud.assert_called_once()
+    assert [t["name"] for t in cloud.call_args.kwargs["tools"]] == ["set_led"]
+    assert not any("no direct tool transport" in str(c) for c in logger.method_calls)
+    assert result.text == "Erledigt."
+
+
+def test_a_turn_announces_its_transport_and_model_on_the_trace_topic(
+    chat_module, chat_node
+):
+    """The trace names the model that answered; no other event does.
+
+    The recorder, the player and the cloud client publish stage timings with their
+    own source ("audio_recorder", "audio_player", "pib-cloud"). A UI therefore
+    could not tell a pib.Cloud answer from the on-device fallback, so the chat node
+    announces the transport it selected as its own event.
+    """
+    Chat = chat_module.Chat
+
+    def run(path_channel, api_name, tools):
+        personality = MagicMock()
+        personality.message_history = 5
+        personality.description = "Du bist pib."
+        personality.personality_id = "pers-trace"
+        personality.assistant_model.api_name = api_name
+        personality.assistant_model.has_image_support = False
+        personality.assistant_model.capabilities = {"images": False, "tools": tools}
+        personality.tool_calling = tools
+        personality.channel = path_channel
+        personality.effective_channel = path_channel
+
+        goal_handle = MagicMock()
+        goal_handle.is_cancel_requested = False
+        goal_handle.request = Chat.Goal()
+        goal_handle.request.chat_id = "chat-trace"
+        goal_handle.request.text = "Hallo"
+        goal_handle.request.generate_code = False
+
+        chat_node._turn_trace_publisher = MagicMock()
+        chat_node.get_logger = MagicMock(return_value=MagicMock())
+
+        with (
+            patch.object(
+                chat_module.voice_assistant_client,
+                "get_personality_from_chat",
+                return_value=(True, personality),
+            ),
+            patch.object(
+                chat_module.voice_assistant_client,
+                "get_chat_history",
+                return_value=(True, []),
+            ),
+            patch.object(
+                chat_module.pib_cloud_stream,
+                "stream_pib_cloud_chat",
+                return_value=iter(["Hallo."]),
+            ),
+            patch.object(
+                chat_module.direct_tool_loop,
+                "run_direct_turn",
+                return_value=iter(["Hallo."]),
+            ),
+            patch.object(chat_node, "_stream_hermes_turn", return_value=["Hallo."]),
+            patch.object(
+                chat_node,
+                "_stream_chunks_to_goal",
+                return_value=(None, None, "Hallo."),
+            ),
+        ):
+            drive_like_rclpy(chat_node.chat(goal_handle))
+
+        events = [
+            json.loads(call.args[0].data)
+            for call in chat_node._turn_trace_publisher.publish.call_args_list
+        ]
+        return [event for event in events if event["stage"] == "turn_path"]
+
+    direct = run("direct", "pib-cloud", False)
+    assert direct, "no turn_path event published"
+    assert direct[0]["source"] == "pib-cloud"
+    assert direct[0]["detail"]["model"] == "pib-cloud"
+    assert direct[0]["chat_id"] == "chat-trace"
+
+    smart = run("smart", "gemini-3.8-flash", False)
+    assert smart and smart[0]["source"] == "hermes"
+    assert smart[0]["detail"]["model"] == "gemini-3.8-flash"
+
+
+def test_the_turn_metadata_carries_transport_stages_and_the_fallback_reason(
+    chat_module, chat_node
+):
+    """PC-82: the stored answer explains itself - which transport, how fast, why fallback."""
+    node = chat_node
+    node._turn_trace_publisher = MagicMock()
+    node.get_logger = MagicMock(return_value=MagicMock())
+    node._reset_turn_meta()
+
+    node._record_turn_trace(json.dumps({"stage": "end_of_speech", "ts_ms": 1000.0}))
+    node._record_turn_trace(json.dumps({"stage": "request_sent", "ts_ms": 1084.5}))
+    node._emit_turn_path(chat_id="chat-meta", path="pib.Cloud", model="pib-cloud")
+    node._record_turn_trace(json.dumps({"stage": "first_token", "ts_ms": 1332.1}))
+    node._record_turn_trace(
+        json.dumps(
+            {
+                "stage": "stream_done",
+                "ts_ms": 1400.0,
+                "detail": {"fallback_reason": "cloud_sse_preflight"},
+            }
+        )
+    )
+
+    meta = node._turn_meta()
+
+    assert meta["source"] == "pib-cloud"
+    assert meta["model"] == "pib-cloud"
+    assert meta["stagesMs"]["request_sent"] == 84.5
+    assert meta["stagesMs"]["first_token"] == 332.1
+    assert meta["fallbackReason"] == "cloud_sse_preflight"
+    assert meta["streamEnd"] == "done"
+
+
+def test_a_turn_without_a_transport_has_no_metadata(chat_module, chat_node):
+    node = chat_node
+    node.get_logger = MagicMock(return_value=MagicMock())
+    node._reset_turn_meta()
+
+    assert node._turn_meta() is None
+
+
+def test_the_answer_is_created_with_the_turn_metadata_and_a_user_line_without(
+    chat_module, chat_node
+):
+    node = chat_node
+    node.get_logger = MagicMock(return_value=MagicMock())
+    node._turn_trace_publisher = MagicMock()
+    node._reset_turn_meta()
+    node._emit_turn_path(chat_id="chat-meta", path="pib.Cloud", model="pib-cloud")
+    # The fixture stubs the node's own writer; this test needs the real one.
+    node.create_chat_message = types.MethodType(
+        chat_module.ChatNode.create_chat_message, node
+    )
+
+    stored = MagicMock()
+    stored.message_id = "msg-1"
+    with (
+        patch.object(
+            chat_module.voice_assistant_client,
+            "create_chat_message",
+            return_value=(True, stored),
+        ) as create,
+        patch.object(node, "_publish_chat_message"),
+    ):
+        node.create_chat_message("chat-meta", "Hallo.", False, False, True)
+        node.create_chat_message("chat-meta", "Und ich.", True, False, True)
+
+    answer, user_line = create.call_args_list
+    assert answer.kwargs["meta"] == {"source": "pib-cloud", "model": "pib-cloud"}
+    assert user_line.kwargs["meta"] is None
+
+
+def test_a_reported_tool_call_reaches_the_metadata_and_the_trace(
+    chat_module, chat_node
+):
+    """PC-84: one reported tool ends up in the stored facts and on the trace."""
+    node = chat_node
+    node.get_logger = MagicMock(return_value=MagicMock())
+    node._turn_trace_publisher = MagicMock()
+    node._reset_turn_meta()
+    node._emit_turn_path(chat_id="chat-tools", path="Hermes", model="gemini-3.8-flash")
+
+    node._record_tool_call(
+        {
+            "name": "capture_image",
+            "ok": True,
+            "durationMs": 12.5,
+            "argNames": ["hint"],
+        }
+    )
+    node._record_tool_call(
+        {"name": "set_led", "ok": False, "argNames": [], "error": "RuntimeError"}
+    )
+
+    meta = node._turn_meta()
+    assert meta["source"] == "hermes"
+    assert meta["toolCalls"] == [
+        {"name": "capture_image", "ok": True, "durationMs": 12.5, "argNames": ["hint"]},
+        {"name": "set_led", "ok": False, "argNames": [], "error": "RuntimeError"},
+    ]
+
+    published = [
+        json.loads(call.args[0].data)
+        for call in node._turn_trace_publisher.publish.call_args_list
+    ]
+    tool_events = [event for event in published if event["stage"] == "tool_call"]
+    assert [event["source"] for event in tool_events] == ["capture_image", "set_led"]
+    assert tool_events[1]["detail"]["ok"] is False
+    assert tool_events[1]["detail"]["error"] == "RuntimeError"
+    # Argument *names* travel, values never do - the record has no value field.
+    assert tool_events[0]["detail"]["arg_names"] == ["hint"]
+    assert set(meta["toolCalls"][0]) == {"name", "ok", "durationMs", "argNames"}
 
 
 def test_disabled_hermes_channel_routes_a_smart_personality_direct(
@@ -1674,10 +2138,17 @@ def test_direct_tool_calling_offers_the_image_tool_and_does_not_attach_a_frame(
     assert result.text == "Ein Stuhl."
 
 
-def test_direct_tool_calling_aborts_when_the_model_has_no_stable_endpoint(
+def test_direct_without_a_transport_is_answered_with_the_retirement_sentence(
     chat_module, chat_node
 ):
-    """An OpenAI model has no non-beta tool endpoint on this account."""
+    """PC-58: a Direct model with no transport of its own is refused uniformly.
+
+    An OpenAI model has no non-beta tool endpoint on this account. The
+    tool-calling flag no longer opens this path, so the turn is answered with
+    the retirement sentence instead of failing after a provider attempt. The
+    guard that used to abort the turn is unit-tested directly in
+    test_direct_tool_loop.py (supports_tool_endpoint).
+    """
     Chat = chat_module.Chat
 
     personality = MagicMock()
@@ -1715,12 +2186,14 @@ def test_direct_tool_calling_aborts_when_the_model_has_no_stable_endpoint(
     ):
         result = drive_like_rclpy(chat_node.chat(goal_handle))
 
+    from pib_hermes_config.retired_direct_text import RETIRED_DIRECT_TEXT_SENTENCE
+
     run_direct_turn.assert_not_called()
     completion.assert_not_called()
     chat_node.get_camera_image_client.call_async.assert_not_called()
-    goal_handle.abort.assert_called_once()
-    goal_handle.succeed.assert_not_called()
-    assert result.text == ""
+    goal_handle.abort.assert_not_called()
+    goal_handle.succeed.assert_called_once()
+    assert result.text == RETIRED_DIRECT_TEXT_SENTENCE
 
 
 def test_smart_turn_fails_when_the_store_cannot_supply_the_provider_key(
@@ -1732,6 +2205,8 @@ def test_smart_turn_fails_when_the_store_cannot_supply_the_provider_key(
     other_secret = "other-hermes-key"
     monkeypatch.setenv("GOOGLE_API_KEY", env_secret)
     monkeypatch.setenv("OPENAI_API_KEY", other_secret)
+    # require (the default) imports hermes_cli. CI uses the filesystem factory.
+    monkeypatch.setenv("PIB_HERMES_PROFILE_FACTORY", "filesystem")
     Chat = chat_module.Chat
 
     voice = Path(__file__).resolve().parents[2] / "ros_packages" / "voice_assistant"
@@ -2028,3 +2503,59 @@ def test_smart_cloud_model_is_refused_while_the_store_is_locked(chat_module, cha
     local_tokens.assert_not_called()
     goal_handle.succeed.assert_called_once()
     assert result.text == refusal_sentence("smart")
+
+
+def test_chat_node_routes_pib_cloud_and_flushes_first_sentence(chat_module, chat_node):
+    """PC-12: ChatNode routes pib-cloud to SSE streaming and flushes sentences incrementally."""
+    Chat = chat_module.Chat
+    logger = MagicMock()
+    chat_node.get_logger = MagicMock(return_value=logger)
+
+    personality = _local_smart_personality()
+    personality.assistant_model.api_name = "pib-cloud"
+    personality.assistant_model.endpoint_base = "http://192.168.1.252:8090/v1"
+    # Direct: the channel decides the transport, so this is the plain cloud SSE
+    # route. A Smart personality on the same model runs on Hermes instead.
+    personality.channel = "direct"
+    personality.effective_channel = "direct"
+    personality.tool_calling = False
+
+    goal_handle = MagicMock()
+    goal_handle.is_cancel_requested = False
+    goal_handle.request = Chat.Goal()
+    goal_handle.request.chat_id = "chat-cloud-1"
+    goal_handle.request.text = "Sag zwei Saetze."
+    goal_handle.request.generate_code = False
+
+    with (
+        patch.object(
+            chat_module.voice_assistant_client,
+            "get_personality_from_chat",
+            return_value=(True, personality),
+        ),
+        patch.object(
+            chat_module.voice_assistant_client,
+            "get_chat_history",
+            return_value=(True, []),
+        ),
+        patch.object(
+            chat_module.pib_cloud_stream,
+            "stream_pib_cloud_chat",
+            return_value=iter(["Erster ", "Satz. ", "Zweiter ", "Satz."]),
+        ) as cloud_stream,
+    ):
+        result = drive_like_rclpy(chat_node.chat(goal_handle))
+
+    cloud_stream.assert_called_once()
+    goal_handle.succeed.assert_called_once()
+    feedback_events = _sentence_feedback_texts(goal_handle)
+    _assert_delta_only_sentence_feedback(
+        feedback_events,
+        "Erster Satz. Zweiter Satz.",
+        first_token="Erster ",
+    )
+    # Both sentences already travelled as feedback deltas, so the Result
+    # carries no duplicate copy (speech stays once-only).
+    assert result.text == ""
+    info_logs = [call[0][0] for call in logger.info.call_args_list]
+    assert any("FIRST_SENTENCE_FLUSHED" in line for line in info_logs)

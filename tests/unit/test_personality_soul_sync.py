@@ -1,8 +1,23 @@
+"""A personality's description mirrors its SOUL.md.
+
+The SOUL template no longer advertises the MCP tools: a SOUL that named them
+made the model talk about its tools or write the calls out as text, and the
+agent gets the real names and schemas from the MCP server itself. The
+assertions that pinned the "## Verfuegbare MCP-Werkzeuge (pib_mcp_server)"
+section are therefore inverted here into assertions that it is absent, and a
+description stored under the old template is stripped on the write path.
+"""
+
 import pytest
 from unittest.mock import MagicMock
-from pib_hermes_config import build_default_soul_text
+from pib_hermes_config import (
+    MCP_TOOLS,
+    MCP_TOOLS_SOUL_SECTION,
+    build_default_soul_text,
+)
 from service import personality_service, soul_service
 
+# The tool names that used to be documented in the SOUL and must not come back.
 EXPECTED_MCP_TOOLS = (
     "mcp__pib__list_motors",
     "mcp__pib__get_state",
@@ -16,6 +31,23 @@ EXPECTED_MCP_TOOLS = (
     "mcp__pib__set_relay",
     "mcp__pib__soul_append",
 )
+
+
+def _legacy_description_with_mcp_section(
+    personality_name: str, custom_description: str | None = None
+) -> str:
+    """A description exactly as the old template stored it, tool section and all."""
+    text = build_default_soul_text(personality_name, custom_description)
+    return text.rstrip("\n") + "\n\n" + MCP_TOOLS_SOUL_SECTION.strip() + "\n"
+
+
+def _assert_no_tool_prose(text: str) -> None:
+    assert "MCP-Werkzeuge" not in text
+    assert MCP_TOOLS_SOUL_SECTION.strip() not in text
+    for tool in EXPECTED_MCP_TOOLS:
+        assert tool not in text
+    for tool, _description in MCP_TOOLS:
+        assert tool not in text
 
 
 @pytest.fixture()
@@ -55,9 +87,7 @@ def test_create_personality_populates_description_with_full_soul(
     assert p.description == expected
     assert soul_service.read_soul(p.personality_id) == expected
     assert "Du bist der humanoide Roboter Eva." in p.description
-    assert "## Verfügbare MCP-Werkzeuge (pib_mcp_server)" in p.description
-    for tool in EXPECTED_MCP_TOOLS:
-        assert tool in p.description
+    _assert_no_tool_prose(p.description)
 
 
 def test_create_personality_embeds_custom_description_in_soul(
@@ -71,8 +101,41 @@ def test_create_personality_embeds_custom_description_in_soul(
     assert p.description == expected
     assert "Sei freundlich und neugierig." in p.description
     assert soul_service.read_soul(p.personality_id) == expected
-    for tool in EXPECTED_MCP_TOOLS:
-        assert tool in p.description
+    _assert_no_tool_prose(p.description)
+
+
+def test_create_personality_strips_the_old_tool_section_from_a_description(
+    tmp_path, monkeypatch, app_ctx, make_personality
+):
+    """A description written under the old template must not put the prose back.
+
+    Such a stored description already carries the generated section; folding it
+    in as-is would have re-created the SOUL this change removes it from.
+    """
+    monkeypatch.setenv("PIB_HERMES_PROFILES_DIR", str(tmp_path))
+
+    stored = "Sei freundlich.\n\n" + MCP_TOOLS_SOUL_SECTION.strip() + "\n"
+    p = make_personality(name="Nora", description=stored)
+
+    assert p.description == build_default_soul_text("Nora", "Sei freundlich.")
+    assert soul_service.read_soul(p.personality_id) == p.description
+    _assert_no_tool_prose(p.description)
+
+
+def test_update_description_with_the_old_tool_section_writes_a_cleaned_soul(
+    tmp_path, monkeypatch, app_ctx, make_personality
+):
+    """The SOUL.md the agent reads is cleaned even when the row still has the block."""
+    monkeypatch.setenv("PIB_HERMES_PROFILES_DIR", str(tmp_path))
+
+    p = make_personality(name="Nora", description="alt")
+    stored = _legacy_description_with_mcp_section("Nora", "Sei freundlich.")
+
+    personality_service.update_personality(p.personality_id, {"description": stored})
+
+    written = soul_service.read_soul(p.personality_id)
+    assert written == build_default_soul_text("Nora", "Sei freundlich.")
+    _assert_no_tool_prose(written)
 
 
 def test_get_personality_backfills_empty_description_from_soul(
@@ -130,8 +193,7 @@ def test_api_create_and_get_return_full_soul_description(
     created = create_resp.get_json()
     expected = build_default_soul_text("ApiSoulBot")
     assert created["description"] == expected
-    for tool in EXPECTED_MCP_TOOLS:
-        assert tool in created["description"]
+    _assert_no_tool_prose(created["description"])
 
     get_resp = client.get(f"/voice-assistant/personality/{created['personalityId']}")
     assert get_resp.status_code == 200
@@ -159,14 +221,17 @@ def test_api_creation_provisions_profile_immediately(client, app_ctx, monkeypatc
     assert response.status_code == 201
     body = response.get_json()
     assert body["profileProvisioned"] is True
-    # The provisioning call now also carries the personality's model and
-    # provider, so the profile runs that model (PR-1930b).
+    # The provisioning call carries the personality's model and provider
+    # (PR-1930b) and its reasoning level, which a new personality stores
+    # as "none".
     from provider_registry import provider_name_for
 
     provision.assert_called_once_with(
         body["personalityId"],
         personality_name="CreationBot",
         soul_text="Custom.",
+        reasoning_effort="none",
+        tool_calling=True,
         model=model.api_name,
         provider=provider_name_for(model.api_name),
     )

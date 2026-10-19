@@ -43,7 +43,7 @@
 | `ros-camera` | `all`, `camera` | — | yes | `rosbridge-ws` |
 | `ros-motors` | `all`, `motors` | — | no | `rosbridge-ws`, `flask-app` |
 | `ros-programs` | `all`, `programs` | — | no | `rosbridge-ws`, `pib-blockly-server`, `flask-app` |
-| `ros-voice-assistant` | `all`, `voice_assistant` | — | yes | `rosbridge-ws`, `flask-app`, `pib-blockly-server`, `ros-audio-io` |
+| `ros-voice-assistant` | `all`, `voice_assistant` | — | no (device cgroup; host nftables egress, `docs/runbooks/voice-egress.md`) | `rosbridge-ws`, `flask-app`, `pib-blockly-server`, `ros-audio-io` |
 | `ros-display` | `all`, `display` | — | yes | — |
 | `ros-audio-io` | `all`, `ros_audio_io`, `voice_assistant` | — | yes | `rosbridge-ws` |
 
@@ -196,7 +196,6 @@ ros2 launch programs launch.py
 |---|---|
 | `PROGRAM_DIR` | `/ros2_ws/cerebra_programs` |
 | `PYTHON_BINARY` | `/usr/bin/python3` |
-| `TF_BUTTON_BRICKLET_NUMBERS` | `5,6,7` |
 | `SSH_HOST` | `host.docker.internal` |
 
 ### ros-voice-assistant
@@ -215,6 +214,7 @@ ros2 launch programs launch.py
 | `PIB_DISPLAY_ON_DEMAND` | `1` |
 | `WAYLAND_DISPLAY` | `wayland-0` |
 | `GDK_BACKEND` | `wayland` |
+| `PIB_DISPLAY_WAYLAND_WAIT_SECONDS` | `600` (wait for the host compositor, then exit 75) |
 
 ---
 

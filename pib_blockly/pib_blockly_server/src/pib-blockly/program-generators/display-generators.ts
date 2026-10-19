@@ -1,5 +1,4 @@
 import {Block} from "blockly/core/block";
-import {pythonGenerator} from "blockly/python";
 
 function pibDisplayRuntime() {
     return `
@@ -109,4 +108,3 @@ _pib_publish_string(_pib_display_web_hide_pub, "hide", "display web hide")
 `;
 }
 
-export {pythonGenerator};

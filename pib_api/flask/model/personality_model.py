@@ -90,3 +90,7 @@ class Personality(db.Model):
         default=DEFAULT_LIVE_IDLE_TIMEOUT_SECONDS,
         server_default=str(DEFAULT_LIVE_IDLE_TIMEOUT_SECONDS),
     )
+    # Hermes agent.reasoning_effort. NULL means unmanaged: the profile's
+    # existing setting is left as it is. A new personality is created with
+    # "none"; existing rows are not backfilled.
+    reasoning_effort = db.Column(db.String(32), nullable=True)

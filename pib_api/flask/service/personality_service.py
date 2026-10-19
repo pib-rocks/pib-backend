@@ -1,6 +1,6 @@
 import logging
 import os
-from typing import Any, List, Optional
+from typing import Any, List, NamedTuple, Optional
 
 from marshmallow import ValidationError
 
@@ -12,13 +12,25 @@ from model.personality_model import (
 )
 from model.provider_model import RegistryModel
 from app.app import db
-from pib_hermes_config import build_default_soul_text
+from pib_hermes_config import (
+    DEFAULT_PERSONALITY_REASONING_EFFORT,
+    REASONING_EFFORT_ERROR,
+    REASONING_EFFORTS,
+    build_default_soul_text,
+    strip_mcp_tools_soul_section,
+)
 from pib_hermes_config.channel import (
     CHANNEL_DIRECT,
     CHANNEL_SMART,
     CHANNELS,
+    effective_channel,
     smart_chats_enabled,
 )
+from pib_hermes_config.retired_direct_text import (
+    RETIRED_DIRECT_TEXT_VALIDATION,
+    legacy_direct_text_selected,
+)
+from pib_hermes_config.local_model import OFFLINE_CAPABILITY
 from pib_hermes_config.live_interaction import personality_requests_actuation
 from pib_hermes_config.live_session import (
     DEFAULT_LIVE_IDLE_TIMEOUT_SECONDS,
@@ -30,6 +42,7 @@ from pib_hermes_config.live_session import (
 from pib_hermes_config.memory import write_memory
 from pib_hermes_config.turn_taking import normalize_thinking_filler
 from pib_hermes_config.voice_backends import (
+    CLOUD_STT_ID,
     LOCAL_STT_ID,
     LOCAL_TTS_ID,
     normalize_stt_choice,
@@ -48,7 +61,9 @@ from service import provider_service, soul_service
 
 #: Path of the daemon endpoint that owns the Hermes profile factory.
 DAEMON_PROFILE_PATH = "/profile"
-DEFAULT_DAEMON_URL = "http://ros-voice-assistant:8088"
+DEFAULT_DAEMON_URL = "http://hermes-daemon:8088"
+# Sentinel: the caller did not name a reasoning level, so the payload omits it.
+_REASONING_OMITTED = object()
 
 
 def _daemon_profile_url() -> str:
@@ -66,6 +81,8 @@ def _provision_profile(
     model: Optional[str] = None,
     provider: Optional[str] = None,
     endpoint_base: Optional[str] = None,
+    reasoning_effort: Any = _REASONING_OMITTED,
+    tool_calling: Optional[bool] = None,
     timeout: int = 60,
 ) -> dict:
     """Ask the Hermes daemon to create or repair a personality's Hermes profile.
@@ -74,6 +91,11 @@ def _provision_profile(
     row (its api_name, the provider account's name and endpoint). The daemon
     writes them into the profile's config.yaml, so the smart chat runs the
     personality's model instead of a pinned default (PR-1930b).
+
+    ``reasoning_effort`` is the personality column. A string is written to
+    ``agent.reasoning_effort``. ``None`` means unmanaged and the profile's
+    existing level is left as it is. Omitting the argument leaves the key
+    out of the payload.
 
     Deliberately a plain HTTP call: the client package cannot be imported in this
     image (`public_api_client.__init__` requires the tryb configuration at import
@@ -93,6 +115,12 @@ def _provision_profile(
         payload["provider"] = provider
     if endpoint_base is not None:
         payload["endpoint_base"] = endpoint_base
+    # Present even when null. Null tells the daemon the personality is
+    # unmanaged and the profile's agent.reasoning_effort must stay as it is.
+    if reasoning_effort is not _REASONING_OMITTED:
+        payload["reasoning_effort"] = reasoning_effort
+    if tool_calling is not None:
+        payload["tool_calling"] = bool(tool_calling)
 
     url = _daemon_profile_url().rstrip("/") + DAEMON_PROFILE_PATH
     try:
@@ -288,9 +316,13 @@ def _apply_channel(
     """Store the channel. Does not touch the identity text or MEMORY.md.
 
     With Hermes disabled, Smart cannot be stored. A create that omits the
-    channel then stores Direct, which is the only path.
+    channel then stores Direct, which is the only path. When the chosen
+    model carries the offline capability, a client that asks for Smart is
+    refused, because that model does not provide the context window the
+    agent requires.
     """
-    if "channel" in personality_dto and personality_dto["channel"]:
+    channel_sent = "channel" in personality_dto and personality_dto["channel"]
+    if channel_sent:
         requested = str(personality_dto["channel"])
     elif creating:
         requested = CHANNEL_DIRECT if not smart_chats_enabled() else CHANNEL_SMART
@@ -302,7 +334,43 @@ def _apply_channel(
         raise ValidationError(
             {"channel": ["Smart chats are not available on this robot."]}
         )
+    # An omitted channel on create still stores the default. Only a channel
+    # the client sent is refused for a model with the offline capability.
+    if (
+        channel_sent
+        and requested == CHANNEL_SMART
+        and _model_has_offline_capability(personality)
+    ):
+        raise ValidationError(
+            {
+                "channel": [
+                    "Smart chats are not available for the on-device model "
+                    "because it does not provide the context window the agent "
+                    "requires."
+                ]
+            }
+        )
     personality.channel = requested
+
+
+def _model_has_offline_capability(personality: Personality) -> bool:
+    """True when the stored model row carries the offline capability.
+
+    The row is the one ``_apply_provider_choice`` already stored. ``default``
+    is a policy rather than a row, so this read does not resolve it and does
+    not probe the device.
+    """
+    ref = getattr(personality, "provider_ref", None)
+    if ref is None or str(ref) == DEFAULT_PROVIDER_REF:
+        return False
+    try:
+        model_id = int(str(ref))
+    except (TypeError, ValueError):
+        return False
+    row = RegistryModel.query.filter_by(id=model_id).first()
+    if row is None:
+        return False
+    return has_capability(row.capabilities, OFFLINE_CAPABILITY)
 
 
 def _provider_has(capability: str):
@@ -315,18 +383,39 @@ def _provider_has(capability: str):
     return check
 
 
+def _default_stt_engine(personality: Personality, cloud_model_id) -> str:
+    """Cloud whisper when the chosen model is the pib.Cloud stt row, else local.
+
+    The model is the one ``_apply_provider_choice`` already stored, so the
+    ``default`` policy counts as pib.Cloud only while it resolves to that row.
+    """
+    if cloud_model_id is None:
+        return LOCAL_STT_ID
+    ref = getattr(personality, "provider_ref", None)
+    model = provider_service.find_model(str(ref)) if ref else None
+    if model is not None and model.id == cloud_model_id:
+        return CLOUD_STT_ID
+    return LOCAL_STT_ID
+
+
 def _apply_voice_backends(
     personality: Personality, personality_dto: Any, *, creating: bool
 ) -> None:
-    """Local faster-whisper and Supertone, or a provider with that capability."""
+    """Local faster-whisper and Supertone, cloud whisper, or a capable provider.
+
+    No STT choice (omitted on create, or blank) stores the default for the
+    chosen model. An explicit choice is stored as sent, and an update that
+    does not name sttEngine keeps the stored engine.
+    """
     if creating or "stt_engine" in personality_dto:
-        raw = (
-            personality_dto.get("stt_engine")
-            if "stt_engine" in personality_dto
-            else LOCAL_STT_ID
-        )
+        cloud_model_id = provider_service.cloud_stt_model_id()
         try:
-            personality.stt_engine = normalize_stt_choice(raw, _provider_has("stt"))
+            personality.stt_engine = normalize_stt_choice(
+                personality_dto.get("stt_engine"),
+                _provider_has("stt"),
+                cloud_model_id,
+                default=_default_stt_engine(personality, cloud_model_id),
+            )
         except ValueError as exc:
             raise ValidationError({"sttEngine": [str(exc)]}) from exc
     if creating or "tts_engine" in personality_dto:
@@ -394,6 +483,26 @@ def _apply_memory(personality: Personality, personality_dto: Any) -> None:
     write_memory(personality.personality_id, text)
 
 
+def _apply_reasoning_effort(
+    personality: Personality, personality_dto: Any, *, creating: bool
+) -> None:
+    """Store the reasoning level. NULL leaves the Hermes profile alone.
+
+    A create that omits the field stores "none". An unknown level is rejected.
+    """
+    if "reasoning_effort" not in personality_dto:
+        if creating:
+            personality.reasoning_effort = DEFAULT_PERSONALITY_REASONING_EFFORT
+        return
+    value = personality_dto.get("reasoning_effort")
+    if value is None:
+        personality.reasoning_effort = None
+        return
+    if not isinstance(value, str) or value not in REASONING_EFFORTS:
+        raise ValidationError({"reasoningEffort": [REASONING_EFFORT_ERROR]})
+    personality.reasoning_effort = value
+
+
 def _apply_thinking_filler(personality: Personality, personality_dto: Any) -> None:
     if "thinking_filler" not in personality_dto:
         return
@@ -406,6 +515,92 @@ def _tool_calling_value(personality_dto: Any, default: bool) -> bool:
     if "tool_calling" not in personality_dto:
         return default
     return bool(personality_dto["tool_calling"])
+
+
+class _DispatchSelection(NamedTuple):
+    channel: str
+    provider_ref: Optional[str]
+    tool_calling: bool
+    api_name: Optional[str]
+    voice_mode: Optional[str]
+
+
+def _dispatch_selection(personality: Personality) -> _DispatchSelection:
+    """The values that decide whether a turn would use the retired text route."""
+    ref = getattr(personality, "provider_ref", None)
+    ref_text = None if ref is None else str(ref)
+    model = provider_service.find_model(ref_text) if ref_text else None
+    api_name = model.api_name if model is not None else None
+    return _DispatchSelection(
+        effective_channel(getattr(personality, "channel", None)),
+        ref_text,
+        bool(getattr(personality, "tool_calling", True)),
+        api_name,
+        (
+            voice_mode_for_model(has_capability(model.capabilities, "live"), api_name)
+            if model is not None
+            else None
+        ),
+    )
+
+
+def _model_validation_field(personality_dto: Any) -> str:
+    if personality_dto.get("model_ref") not in (None, ""):
+        return "modelRef"
+    if personality_dto.get("provider_ref") not in (None, ""):
+        return "providerRef"
+    if personality_dto.get("assistant_model_id") is not None:
+        return "assistantModelId"
+    return "modelRef"
+
+
+def _retired_validation_field(
+    personality_dto: Any,
+    *,
+    creating: bool,
+    before: Optional[_DispatchSelection],
+    after: _DispatchSelection,
+) -> str:
+    """The request field that entered the retired combination.
+
+    The tool-calling flag is deliberately absent: it no longer selects a
+    transport, so it can not be the field that makes a selection obsolete.
+    """
+    if not creating and before is not None:
+        if before.channel != after.channel:
+            return "channel"
+        return _model_validation_field(personality_dto)
+    if personality_dto.get("channel"):
+        return "channel"
+    return _model_validation_field(personality_dto)
+
+
+def _reject_retired_direct_text(
+    personality: Personality,
+    personality_dto: Any,
+    *,
+    creating: bool,
+    before: Optional[_DispatchSelection] = None,
+) -> None:
+    """Reject a new or changed selection that would call the retired route.
+
+    An existing obsolete selection can still be read and edited in unrelated
+    fields, and can be changed onto a supported path. The stored row is not
+    rewritten on its own.
+    """
+    after = _dispatch_selection(personality)
+    if not legacy_direct_text_selected(
+        channel=after.channel,
+        api_name=after.api_name,
+        voice_mode=after.voice_mode,
+    ):
+        return
+    if before is not None and before == after:
+        return
+    field = _retired_validation_field(
+        personality_dto, creating=creating, before=before, after=after
+    )
+    raise ValidationError({field: [RETIRED_DIRECT_TEXT_VALIDATION]})
 
 
 def _model_provisioning_fields(personality: Personality) -> dict:
@@ -443,15 +638,23 @@ def create_personality(personality_dto: Any) -> Personality:
         live_idle_timeout=DEFAULT_LIVE_IDLE_TIMEOUT_SECONDS,
     )
     _apply_live_chat_settings(personality, personality_dto, creating=True)
-    _apply_voice_backends(personality, personality_dto, creating=True)
     _apply_thinking_filler(personality, personality_dto)
     _apply_provider_choice(personality, personality_dto, creating=True)
     _store_derived_voice_mode(personality)
+    # The STT default follows the chosen model, so it runs after that choice.
+    _apply_voice_backends(personality, personality_dto, creating=True)
     _apply_channel(personality, personality_dto, creating=True)
+    _apply_reasoning_effort(personality, personality_dto, creating=True)
+    _reject_retired_direct_text(personality, personality_dto, creating=True)
     custom = ""
     if "description" in personality_dto and personality_dto["description"]:
-        custom = str(personality_dto["description"]).strip()
-    # Always seed the full SOUL.md (identity + optional custom + MCP docs) so
+        # A description stored while the SOUL template still advertised the MCP
+        # tools carries that block; folded in as-is it would put the tool prose
+        # back into the new SOUL, so it is stripped before the SOUL is built.
+        custom = strip_mcp_tools_soul_section(
+            str(personality_dto["description"])
+        ).strip()
+    # Always seed the full SOUL.md (identity + optional custom) so
     # Cerebra's SOUL.md editor receives complete content, not an empty placeholder.
     soul_content = build_default_soul_text(personality.name, custom or None)
     personality.description = soul_content
@@ -462,6 +665,8 @@ def create_personality(personality_dto: Any) -> Personality:
             personality.personality_id,
             personality_name=personality.name,
             soul_text=custom or None,
+            reasoning_effort=personality.reasoning_effort,
+            tool_calling=bool(personality.tool_calling),
             **_model_provisioning_fields(personality),
         )
         personality.profile_provisioned = True
@@ -479,6 +684,7 @@ def create_personality(personality_dto: Any) -> Personality:
 def update_personality(personality_id: str, personality_dto: Any) -> Personality:
     _reject_actuation_request(personality_dto)
     personality = get_personality(personality_id)
+    before_selection = _dispatch_selection(personality)
     name_changed = False
     if "name" in personality_dto:
         name_changed = personality.name != personality_dto["name"]
@@ -491,21 +697,43 @@ def update_personality(personality_id: str, personality_dto: Any) -> Personality
         personality.message_history = personality_dto["message_history"]
     if "description" in personality_dto:
         personality.description = personality_dto["description"]
+    previous_model_ref = getattr(personality, "provider_ref", None)
+    _apply_provider_choice(personality, personality_dto, creating=False)
+    _store_derived_voice_mode(personality)
+    model_changed = getattr(personality, "provider_ref", None) != previous_model_ref
+    previous_effort = personality.reasoning_effort
+    _apply_reasoning_effort(personality, personality_dto, creating=False)
+    effort_changed = personality.reasoning_effort != previous_effort
+    _apply_channel(personality, personality_dto, creating=False)
+    previous_tool_calling = bool(getattr(personality, "tool_calling", True))
+    if "tool_calling" in personality_dto:
+        personality.tool_calling = bool(personality_dto["tool_calling"])
+    tool_calling_changed = (
+        "tool_calling" in personality_dto
+        and bool(personality.tool_calling) != previous_tool_calling
+    )
+    _reject_retired_direct_text(
+        personality,
+        personality_dto,
+        creating=False,
+        before=before_selection,
+    )
+    # Validate the dispatch before any external SOUL/profile write. A 400
+    # rolls back the SQL row but cannot roll back an already-written file.
+    if "description" in personality_dto:
         soul_service.write_soul(
             personality.personality_id,
             personality.description,
             personality_name=personality.name,
         )
-    previous_model_ref = getattr(personality, "provider_ref", None)
-    _apply_provider_choice(personality, personality_dto, creating=False)
-    _store_derived_voice_mode(personality)
-    model_changed = getattr(personality, "provider_ref", None) != previous_model_ref
-    if name_changed or model_changed:
+    if name_changed or model_changed or effort_changed or tool_calling_changed:
         try:
             _provision_profile(
                 personality.personality_id,
                 personality_name=personality.name,
                 soul_text=personality.description,
+                reasoning_effort=personality.reasoning_effort,
+                tool_calling=bool(personality.tool_calling),
                 **_model_provisioning_fields(personality),
             )
             personality.profile_provisioned = True
@@ -516,9 +744,6 @@ def update_personality(personality_id: str, personality_dto: Any) -> Personality
                 personality.personality_id,
                 exc,
             )
-    _apply_channel(personality, personality_dto, creating=False)
-    if "tool_calling" in personality_dto:
-        personality.tool_calling = bool(personality_dto["tool_calling"])
     _apply_live_chat_settings(personality, personality_dto, creating=False)
     _apply_voice_backends(personality, personality_dto, creating=False)
     _apply_thinking_filler(personality, personality_dto)

@@ -1,4 +1,13 @@
+"""Capture-side voice recorder.
+
+``end_of_speech`` is published when this loop decides the utterance is over,
+which is one ``pause_threshold`` (``max_silent_seconds_after``) of silence
+after the last voiced frame. The stamp is that decision, not the last voiced
+frame, and it is taken before transcription starts.
+"""
+
 import os
+import time
 import wave
 from collections import deque
 from threading import Lock, Event
@@ -16,14 +25,28 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from std_msgs.msg import Bool, String, Int16MultiArray
 
-from pib_hermes_config.live_interaction import turn_based_is_speech
+from pib_hermes_config.live_interaction import (
+    ArrayVadWarningState,
+    array_vad_silent_warning,
+    turn_based_is_speech,
+)
 from pib_hermes_config.visible_state import (
+    VOICE_STT_FAILURE_TOPIC,
     VOICE_USING_FALLBACK_TOPIC,
     engine_is_fallback,
 )
-from pib_hermes_config.voice_backends import resolve_stt_route
+from pib_hermes_config.voice_backends import (
+    configured_stt_language,
+    resolve_stt_route,
+)
 from public_api_client import public_voice_client
-from voice_assistant.stt_transcription import FasterWhisperSTTEngine
+from voice_assistant.stt_transcription import (
+    FasterWhisperSTTEngine,
+    STTTranscriptionError,
+)
+from voice_assistant.turn_latency import TURN_TRACE_TOPIC, format_event
+from voice_assistant.audio_devices import PROCESSED_CHANNEL, extract_channel
+from voice_assistant.cloud_stt_dispatch import transcribe_cloud_or_local
 from . import util
 
 # these values define the PCM encoding in which the recorded
@@ -47,6 +70,8 @@ class AudioRecorderNode(Node):
 
         # Set defaults for mic configuration
         self.mic_channels = None
+        # How many channels the array publishes; 1 keeps a mono driver untouched.
+        self._mic_channels = int(os.getenv("PIB_MIC_CHANNELS", "1"))
         self.chunk_size = None
         self.audio_format = None
         self.sample_rate = None
@@ -63,10 +88,22 @@ class AudioRecorderNode(Node):
 
         self.token: Optional[str] = None
         self.stt_engine = FasterWhisperSTTEngine()
+        # Pinned once at start-up, not per turn: the engine's own language
+        # detection costs about half a turn (PC-39). "" leaves it on detect.
+        self.stt_language = configured_stt_language()
+        self.get_logger().info(
+            f"local STT language pinned to '{self.stt_language or 'auto'}'"
+        )
         self._published_fallback = None
         self.voice_using_fallback_publisher = self.create_publisher(
             Bool, VOICE_USING_FALLBACK_TOPIC, 10
         )
+        # The technical cause of a failed transcription goes here so the turn
+        # owner can say it out loud instead of pretending silence.
+        self.stt_failure_publisher = self.create_publisher(
+            String, VOICE_STT_FAILURE_TOPIC, 10
+        )
+        self.turn_trace_publisher = self.create_publisher(String, TURN_TRACE_TOPIC, 10)
 
         self.goal_queue: deque[ServerGoalHandle] = deque()
         self.goal_queue_lock = Lock()
@@ -96,6 +133,7 @@ class AudioRecorderNode(Node):
         )
         # None until the array publishes. After that, its VAD owns end-of-turn.
         self._hardware_vad: Optional[bool] = None
+        self._array_vad_warning = ArrayVadWarningState()
         self.create_subscription(Bool, "/voice_activity", self._on_voice_activity, 10)
 
         self.get_logger().info("Now running AUDIO RECORDER")
@@ -172,9 +210,31 @@ class AudioRecorderNode(Node):
     def audio_stream_callback(self, msg: Int16MultiArray):
         """
         Callback for incoming Int16MultiArray audio data.
-        Convert to bytes and push into the chunks deque.
+
+        The array can publish its six raw channels interleaved. Everything here -
+        the VAD, whisper, the cloud - wants one mono signal, and the array's channel
+        0 is the one it has already echo-cancelled and beamformed (PC-88). The width
+        comes from the message layout when the driver sets it, otherwise from
+        PIB_MIC_CHANNELS, so a mono driver keeps behaving exactly as before.
         """
-        chunk_bytes = np.array(msg.data, dtype=np.int16).tobytes()
+        samples = np.array(msg.data, dtype=np.int16)
+        channels = self._mic_channels
+        layout = getattr(msg, "layout", None)
+        try:
+            width = layout.dim[0].size if layout is not None and layout.dim else 0
+        except (AttributeError, IndexError):
+            width = 0
+        if width and width > 1:
+            channels = int(width)
+        if channels > 1:
+            try:
+                samples = extract_channel(samples, channels, PROCESSED_CHANNEL)
+            except ValueError:
+                self.get_logger().warning(
+                    f"audio frame does not fit {channels} channels; dropping it"
+                )
+                return
+        chunk_bytes = samples.astype(np.int16, copy=False).tobytes()
         with self.audio_chunks_lock:
             self.audio_chunks.append(chunk_bytes)
             self.audio_chunk_event.set()
@@ -207,10 +267,22 @@ class AudioRecorderNode(Node):
         Once /voice_activity has arrived, that signal decides. Loud audio
         without voice activity is not speech. Amplitude is only the fallback
         before the first sample.
+
+        A run of loud chunks while that signal stays false is logged once.
+        The log does not change this decision or the recording window.
         """
-        return not turn_based_is_speech(
-            self._hardware_vad, self._amplitude_is_silent(data_chunk)
+        amplitude_silent = self._amplitude_is_silent(data_chunk)
+        message, self._array_vad_warning = array_vad_silent_warning(
+            self._hardware_vad,
+            amplitude_silent,
+            self._array_vad_warning,
         )
+        if message is not None:
+            if self._array_vad_warning.active:
+                self.get_logger().warning(message)
+            else:
+                self.get_logger().info(message)
+        return not turn_based_is_speech(self._hardware_vad, amplitude_silent)
 
     def create_result(self, text: str) -> RecordAudio.Result:
         """
@@ -296,7 +368,10 @@ class AudioRecorderNode(Node):
                 # Continue collecting until we accumulate enough silence after speech
                 continue
 
-        # Recording phase has ended; notify client that we are transcribing
+        # Recording phase has ended; notify client that we are transcribing.
+        # end_of_speech is this decision, one pause threshold after the last
+        # voiced frame, and it is published before transcription starts.
+        self._emit_end_of_speech()
         goal_handle.publish_feedback(RecordAudio.Feedback())
 
         # Write the collected raw PCM chunks into a WAV file using the correct sample rate
@@ -328,16 +403,45 @@ class AudioRecorderNode(Node):
         route = resolve_stt_route(stt_mode)
         try:
             if route == "local":
-                text, _ = self.stt_engine.transcribe(wav_data)
+                started = time.monotonic()
+                try:
+                    text, metadata = self.stt_engine.transcribe(
+                        wav_data, language=self.stt_language or None
+                    )
+                except STTTranscriptionError as e:
+                    # A broken engine must not look like a user who said
+                    # nothing. Name the cause on the visible state, publish it
+                    # for the turn owner, and abort so no empty transcript
+                    # reaches the chat.
+                    self._publish_engine_fallback("unavailable")
+                    self._publish_stt_failure(e.cause)
+                    self.get_logger().error(f"local speech engine failed: {e.cause}")
+                    goal_handle.abort()
+                    return self.create_result("")
                 self._publish_engine_fallback(
                     getattr(self.stt_engine, "active_backend", "")
+                )
+                self.get_logger().info(
+                    f"transcribed {len(text)} chars in "
+                    f"{int((time.monotonic() - started) * 1000)} ms with engine "
+                    f"{metadata.get('backend')} (language "
+                    f"{metadata.get('language')})"
+                )
+            elif route == "cloud":
+                text = transcribe_cloud_or_local(
+                    wav_data,
+                    language=self.stt_language or None,
+                    local_engine=self.stt_engine,
+                    log=self.get_logger(),
+                    publish_fallback=self._publish_engine_fallback,
+                    publish_failure=self._publish_stt_failure,
                 )
             elif route == "tryb":
                 text = public_voice_client.speech_to_text(wav_data, self.token)
             else:
                 self.get_logger().error(
-                    "stt backend %s is not the local engine and has no speech client",
-                    stt_mode,
+                    f"stt backend {stt_mode} is not the local engine and has no "
+                    "speech client"
                 )
                 goal_handle.abort()
                 return self.create_result("")
@@ -349,6 +453,20 @@ class AudioRecorderNode(Node):
         goal_handle.succeed()
         return self.create_result(text)
 
+    def _emit_end_of_speech(self) -> None:
+        """Tell the turn owner the capture layer closed the utterance.
+
+        The recording loop has already broken because silence reached
+        ``max_silent_seconds_after`` (the personality pause threshold). This
+        stamp therefore sits that pause after the last voiced frame.
+        """
+        try:
+            message = String()
+            message.data = format_event("end_of_speech", source="audio_recorder")
+            self.turn_trace_publisher.publish(message)
+        except Exception as exc:
+            self.get_logger().warning(f"turn trace end_of_speech failed: {exc}")
+
     def _publish_engine_fallback(self, active_backend: object) -> None:
         fallback = engine_is_fallback(active_backend)
         if fallback == self._published_fallback:
@@ -357,6 +475,12 @@ class AudioRecorderNode(Node):
         message = Bool()
         message.data = fallback
         self.voice_using_fallback_publisher.publish(message)
+
+    def _publish_stt_failure(self, cause: object) -> None:
+        """Tell the turn owner why the local engine could not transcribe."""
+        message = String()
+        message.data = str(cause)
+        self.stt_failure_publisher.publish(message)
 
 
 def main(args=None):

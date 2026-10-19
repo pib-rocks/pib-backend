@@ -2,15 +2,8 @@ import os
 from pathlib import Path
 import types
 
-import pytest
-
-# Installed by tests/requirements-camera.txt; skip instead of aborting collection on a
-# platform without the camera wheels.
-pytest.importorskip(
-    "depthai", reason="depthai not installed (tests/requirements-camera.txt)"
-)
-
 import depthai as dai
+import pytest
 
 from ros_packages.camera.oak_d_lite.imitation import _world_values
 from ros_packages.camera.oak_d_lite.imitation_archive import (

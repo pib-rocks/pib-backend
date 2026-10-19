@@ -39,9 +39,18 @@ LED_BY_PHASE = {
 ANSWER_GESTURE_TOOLS = frozenset({"apply_pose", "move_motor"})
 
 VOICE_USING_FALLBACK_TOPIC = "voice_using_fallback"
+#: The local speech engine could not transcribe. The payload is the technical
+#: cause. The turn owner speaks it, so a broken engine is never mistaken for
+#: a user who said nothing.
+VOICE_STT_FAILURE_TOPIC = "voice_stt_failure"
 MODE_DEGRADED = "degraded"
 MODE_UNLOCKED = "unlocked"
 _KEY_STORE_PATH = "/system/key-store"
+
+#: Backends that mean "the primary engine is not answering". ``unavailable``
+#: is set when the engine cannot transcribe at all (self-check failed, model
+#: missing); ``fallback`` is the older name for the same visible state.
+FALLBACK_BACKENDS = frozenset({"fallback", "unavailable"})
 
 
 @dataclass(frozen=True)
@@ -58,7 +67,7 @@ class VisibleState:
 
 def engine_is_fallback(active_backend: object) -> bool:
     """True when speech in or out had to leave its primary engine."""
-    return active_backend == "fallback"
+    return active_backend in FALLBACK_BACKENDS
 
 
 def answer_uses_fallback(text: object, fallback_reply: str) -> bool:

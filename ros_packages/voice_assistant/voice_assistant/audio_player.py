@@ -1,11 +1,25 @@
+"""Playback for spoken clauses.
+
+``first_audio`` is the first non-empty PCM chunk handed to the audio device
+for the current playback burst. ``last_audio`` is stamped once that burst's
+queue is empty after the last queued item has been written (including an
+empty join barrier, which is not itself audio). The burst flag is then
+re-armed so the next turn can record its own first chunk.
+
+The completion event is set only after ``last_audio`` has been handed to the
+trace publisher, so the voice-assistant node can observe it before ``turn_end``.
+Neither stamp adds a sleep or changes what is written.
+"""
+
 import io
+import logging
 import os
 import sys
 import time
 import wave
-from queue import Queue
+from queue import Empty, Queue
 from threading import Lock, Event, Thread
-from typing import Iterable, Optional
+from typing import Iterable, Iterator, Optional
 
 try:
     import pyaudio
@@ -25,8 +39,67 @@ from pib_hermes_config.visible_state import (
 )
 from pib_hermes_config.voice_backends import resolve_tts_route
 from public_api_client import public_voice_client
+from voice_assistant.turn_latency import TURN_TRACE_TOPIC, format_event
 from . import util
 from .tts_synthesis import SupertoneTTSEngine
+
+logger = logging.getLogger(__name__)
+
+# Join waits must not block forever; a timeout is not proof the device stopped.
+JOIN_WAIT_TIMEOUT_SECONDS = 120.0
+
+# The audio thread is the only writer. The service thread only enqueues items.
+_trace_emitter = None
+_playback_queue: Optional[Queue] = None
+_burst_started = False
+
+
+def set_trace_emitter(fn) -> None:
+    """Install the audio-player node's publisher. None restores the no-op."""
+    global _trace_emitter
+    _trace_emitter = fn
+
+
+def bind_playback_queue(playback_queue: Queue) -> None:
+    global _playback_queue
+    _playback_queue = playback_queue
+
+
+def _emit_stage(stage: str) -> None:
+    emitter = _trace_emitter
+    if emitter is None:
+        return
+    try:
+        emitter(format_event(stage, source="audio_player"))
+    except Exception:
+        logger.warning("turn trace emit failed for stage %s", stage)
+
+
+def _note_pcm_written() -> None:
+    """First non-empty chunk of a burst. Later chunks in the burst do not repeat it."""
+    global _burst_started
+    if _burst_started:
+        return
+    _burst_started = True
+    _emit_stage("first_audio")
+
+
+def _emit_last_audio_if_drained() -> None:
+    """Stamp last_audio once the queue is empty, then re-arm the burst."""
+    global _burst_started
+    if not _burst_started:
+        return
+    playback_queue = _playback_queue
+    if playback_queue is None:
+        return
+    try:
+        drained = playback_queue.empty()
+    except Exception:
+        return
+    if not drained:
+        return
+    _burst_started = False
+    _emit_stage("last_audio")
 
 
 class AudioEncoding:
@@ -65,9 +138,15 @@ class PlaybackItem:
         with PlaybackItem.clear_threshold_lock:
             return self.order < PlaybackItem.clear_threshold
 
+    @staticmethod
+    def order_is_stale(order: int) -> bool:
+        with PlaybackItem.clear_threshold_lock:
+            return order < PlaybackItem.clear_threshold
+
     def play(self) -> None:
 
         if self.is_cleared() or pyaudio is None:
+            _emit_last_audio_if_drained()
             self.finished_playing.set()
             return
 
@@ -88,11 +167,14 @@ class PlaybackItem:
                     if self.is_cleared():
                         break
                     stream.write(chunk)
+                    if chunk:
+                        _note_pcm_written()
 
                 time.sleep(self.pause_seconds)
         except Exception as e:
             print(f"failed to playback audio: {e}", file=sys.stderr)
         finally:
+            _emit_last_audio_if_drained()
             self.finished_playing.set()
             if stream is not None:
                 try:
@@ -121,6 +203,7 @@ class AudioPlayerNode(Node):
         super().__init__("audio_player")
         self.token: Optional[str] = None
         self.playback_queue = playback_queue
+        bind_playback_queue(playback_queue)
         self.counter = 0
         self.counter_lock = Lock()
 
@@ -160,8 +243,24 @@ class AudioPlayerNode(Node):
         self.voice_using_fallback_publisher = self.create_publisher(
             Bool, VOICE_USING_FALLBACK_TOPIC, 10
         )
+        self._install_turn_trace_emitter()
 
         self.get_logger().info("Now running AUDIO PLAYER")
+
+    def _install_turn_trace_emitter(self) -> None:
+        """Publish first_audio / last_audio. A failure must not stop playback."""
+        try:
+            publisher = self.create_publisher(String, TURN_TRACE_TOPIC, 10)
+            self._turn_trace_publisher = publisher
+
+            def emit(raw: str) -> None:
+                message = String()
+                message.data = raw
+                publisher.publish(message)
+
+            set_trace_emitter(emit)
+        except Exception as exc:
+            self.get_logger().warning(f"turn trace emitter was not installed: {exc}")
 
     def get_public_api_token_listener(self, msg):
         token = msg.data
@@ -223,11 +322,21 @@ class AudioPlayerNode(Node):
                     if len(chunk) < frames_per_chunk:
                         break
 
+            if PlaybackItem.order_is_stale(order):
+                self.get_logger().info(
+                    "play_audio_from_file: admission fence dropped stale file playback (order=%s)"
+                    % (order,)
+                )
+                return response
+
             playback_item = PlaybackItem(data, encoding, 0.0, order)
-            self.playback_queue.put(playback_item, True)
+            if not self._enqueue_current(playback_item):
+                return response
 
             if request.join:
-                playback_item.finished_playing.wait()
+                self._wait_playback_finished(
+                    playback_item, context="play_audio_from_file"
+                )
         except Exception as e:
             self.get_logger().error(
                 f"Error reading audio file '{request.filepath}': {e}"
@@ -241,44 +350,65 @@ class AudioPlayerNode(Node):
         response: PlayAudioFromSpeech.Response,
     ) -> PlayAudioFromSpeech.Response:
 
+        order = self.counter_next()
         speech = request.speech or ""
         if not speech.strip():
             # A barrier, so the caller can wait until earlier clauses finish.
-            playback_item = PlaybackItem(
-                [b""], SPEECH_ENCODING, 0.0, self.counter_next()
-            )
-            self.playback_queue.put(playback_item, True)
+            if PlaybackItem.order_is_stale(order):
+                self.get_logger().info(
+                    "play_audio_from_speech: admission fence dropped empty join barrier (order=%s)"
+                    % (order,)
+                )
+                return response
+            playback_item = PlaybackItem([b""], SPEECH_ENCODING, 0.0, order)
+            if not self._enqueue_current(playback_item):
+                return response
             if request.join:
-                playback_item.finished_playing.wait()
+                self._wait_playback_finished(
+                    playback_item, context="play_audio_from_speech_barrier"
+                )
             return response
 
         route = resolve_tts_route(getattr(request, "tts_engine", "") or "")
         if route != "local":
             self.get_logger().error(
-                "tts backend %s is not the local Supertone engine and has no speech client",
-                request.tts_engine,
+                f"tts backend {request.tts_engine} is not the local Supertone "
+                "engine and has no speech client"
             )
             return response
 
         pieces = clauses_to_synthesize(speech)
         last_item = None
         for index, piece in enumerate(pieces):
+            # Every clause retains the request admission made before synthesis.
+            if PlaybackItem.order_is_stale(order):
+                self.get_logger().info(
+                    "play_audio_from_speech: admission fence skipped clause (order=%s piece_index=%s)"
+                    % (order, index)
+                )
+                return response
             # Queue each clause as soon as it is synthesized so playback of
             # the first clause overlaps synthesis of the next one.
             pause = 0.2 if index == len(pieces) - 1 else 0.0
             try:
                 data = self._synthesize_clause(piece, request)
             except Exception as exc:
-                self.get_logger().error("clause synthesis failed: %s", exc)
+                self.get_logger().error(f"clause synthesis failed: {exc}")
                 return response
-            playback_item = PlaybackItem(
-                data, SPEECH_ENCODING, pause, self.counter_next()
-            )
-            self.playback_queue.put(playback_item, True)
+            if PlaybackItem.order_is_stale(order):
+                self.get_logger().info(
+                    "play_audio_from_speech: admission fence dropped post-synthesis clause (order=%s piece_index=%s)"
+                    % (order, index)
+                )
+                return response
+            data = self._fence_pcm_iterable(data, order)
+            playback_item = PlaybackItem(data, SPEECH_ENCODING, pause, order)
+            if not self._enqueue_current(playback_item):
+                return response
             last_item = playback_item
 
         if request.join and last_item is not None:
-            last_item.finished_playing.wait()
+            self._wait_playback_finished(last_item, context="play_audio_from_speech")
         return response
 
     def _synthesize_clause(self, text: str, request: PlayAudioFromSpeech.Request):
@@ -301,13 +431,42 @@ class AudioPlayerNode(Node):
             ]
         except Exception as exc:
             self.get_logger().warning(
-                "Local Supertone TTS synthesis error, attempting public voice client: %s",
-                exc,
+                "Local Supertone TTS synthesis error, attempting public voice "
+                f"client: {exc}"
             )
             data = public_voice_client.text_to_speech(
                 text, request.gender, request.language, self.token
             )
         return self.adjust_data_granularity(data, BYTES_PER_CHUNK)
+
+    def _fence_pcm_iterable(self, data: Iterable[bytes], order: int) -> Iterator[bytes]:
+        """Stop yielding PCM if this admission generation was cancelled."""
+        for chunk in data:
+            if PlaybackItem.order_is_stale(order):
+                return
+            yield chunk
+
+    def _enqueue_current(self, item: PlaybackItem) -> bool:
+        # Same lock order as clear: counter -> threshold -> queue. No engine or
+        # device work is performed under this admission lock.
+        with self.counter_lock:
+            if item.is_cleared():
+                item.finished_playing.set()
+                return False
+            self.playback_queue.put(item, True)
+            return True
+
+    def _wait_playback_finished(self, item: PlaybackItem, context: str) -> None:
+        next_report = time.monotonic() + JOIN_WAIT_TIMEOUT_SECONDS
+        while not item.finished_playing.wait(timeout=0.05):
+            if item.is_cleared():
+                return  # cancellation ACK, not completed device playback
+            if time.monotonic() >= next_report:
+                self.get_logger().warning(
+                    f"playback join still pending ({context}); no drain ACK; "
+                    "waiting for actual completion or explicit cancellation"
+                )
+                next_report = time.monotonic() + JOIN_WAIT_TIMEOUT_SECONDS
 
     def _publish_engine_fallback(self, active_backend: object) -> None:
         fallback = engine_is_fallback(active_backend)
@@ -319,23 +478,43 @@ class AudioPlayerNode(Node):
         self.voice_using_fallback_publisher.publish(message)
 
     def clear_playback_queue(
-        self, _: PlayAudioFromFile.Request, response: PlayAudioFromFile.Response
-    ) -> PlayAudioFromFile.Response:
+        self, _: ClearPlaybackQueue.Request, response: ClearPlaybackQueue.Response
+    ) -> ClearPlaybackQueue.Response:
 
-        with PlaybackItem.clear_threshold_lock:
-            with self.counter_lock:
+        self.get_logger().info(
+            "clear_playback_queue: accepting cancellation (ACK is not proof device stopped)"
+        )
+        with self.counter_lock:
+            with PlaybackItem.clear_threshold_lock:
                 PlaybackItem.clear_threshold = self.counter
+                threshold = PlaybackItem.clear_threshold
+            drained = 0
+            while True:
+                try:
+                    pending = self.playback_queue.get_nowait()
+                except Empty:
+                    break
+                pending.finished_playing.set()
+                drained += 1
 
+        self.get_logger().info(
+            "clear_playback_queue: ACK threshold=%s drained=%s" % (threshold, drained)
+        )
         return response
 
 
 def main(args=None):
 
     playback_queue: Queue[PlaybackItem] = Queue()
+    bind_playback_queue(playback_queue)
 
     def audio_loop(playback_queue: Queue[PlaybackItem]) -> None:
         while True:
             playback_queue.get(True).play()
+            # play() already stamps last_audio when the queue is empty before
+            # it signals completion. This second check covers a clear that
+            # returned early, then re-arms the burst for the next turn.
+            _emit_last_audio_if_drained()
 
     Thread(target=audio_loop, args=(playback_queue,), daemon=True).start()
 

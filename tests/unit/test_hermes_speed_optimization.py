@@ -29,9 +29,14 @@ def _load_profile_config(pdir):
 
 
 def _assert_speed_defaults(cfg):
-    assert cfg["reasoning_effort"] == DEFAULT_REASONING_EFFORT
-    assert cfg["max_tokens"] == DEFAULT_MAX_TOKENS
-    assert cfg["temperature"] == DEFAULT_TEMPERATURE
+    """Hermes reads the agent block. The same keys at the root are unread."""
+    agent = cfg["agent"]
+    assert agent["reasoning_effort"] == DEFAULT_REASONING_EFFORT
+    assert agent["max_tokens"] == DEFAULT_MAX_TOKENS
+    assert agent["temperature"] == DEFAULT_TEMPERATURE
+    assert "reasoning_effort" not in cfg
+    assert "max_tokens" not in cfg
+    assert "temperature" not in cfg
 
 
 def test_speed_constants_in_hermes_agent_client():
@@ -103,7 +108,8 @@ def test_ensure_profile_keeps_existing_non_speed_reasoning_settings(
     tmp_path, monkeypatch, sandboxed_hermes_home
 ):
     """Decision 5: reasoning_effort/max_tokens/temperature are only seeded when
-    unset. An operator's or a model's own values are not overwritten.
+    unset in the agent block. An operator's or a model's own values are not
+    overwritten. Root-level copies are not the setting Hermes reads.
 
     This replaces the earlier assertion that the pinned speed values were forced
     onto every profile; that pin is exactly what PR-1930b removes.
@@ -119,9 +125,12 @@ def test_ensure_profile_keeps_existing_non_speed_reasoning_settings(
             {
                 "model": "gemini-3.8-flash",
                 "provider": "gemini",
-                "reasoning_effort": "high",
-                "max_tokens": 8192,
-                "temperature": 1.0,
+                "agent": {
+                    "reasoning_effort": "high",
+                    "max_tokens": 8192,
+                    "temperature": 1.0,
+                    "max_turns": 4,
+                },
             },
             fh,
         )
@@ -130,8 +139,12 @@ def test_ensure_profile_keeps_existing_non_speed_reasoning_settings(
         ensure_profile("speed-pin", soul_text="Du bist pib.")
 
     cfg = _load_profile_config(pdir)
-    assert cfg["reasoning_effort"] == "high"
-    assert cfg["max_tokens"] == 8192
-    assert cfg["temperature"] == 1.0
+    assert cfg["agent"]["reasoning_effort"] == "high"
+    assert cfg["agent"]["max_tokens"] == 8192
+    assert cfg["agent"]["temperature"] == 1.0
+    assert cfg["agent"]["max_turns"] == 4
+    assert "reasoning_effort" not in cfg
+    assert "max_tokens" not in cfg
+    assert "temperature" not in cfg
     assert cfg["model"] == DEFAULT_HERMES_MODEL
     assert cfg["provider"] == DEFAULT_HERMES_PROVIDER

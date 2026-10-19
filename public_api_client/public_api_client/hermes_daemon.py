@@ -23,11 +23,13 @@ import os
 import re
 import shutil
 import socket
+import subprocess
 import sys
 import threading
 import time
 from collections import OrderedDict
 from pathlib import Path
+from typing import Optional
 
 # Force IPv4 preference in socket.getaddrinfo to prevent 10s IPv6 timeouts on Pi networks
 _orig_getaddrinfo = socket.getaddrinfo
@@ -87,6 +89,9 @@ SESSION_ID_PREFIX = "pib_chat_"
 # Hermes install layout used to import the agent in-process.
 DEFAULT_HERMES_HOME = "/home/pib/.hermes"
 HERMES_AGENT_DIRNAME = "hermes-agent"
+# Cached answer of agent_source_imports_here(); None = not probed yet.
+_AGENT_IMPORT_PROBE: Optional[bool] = None
+AGENT_IMPORT_PROBE_TIMEOUT = 20.0
 _VENV_SITE_PACKAGES_GLOB = os.path.join("venv", "lib", "python3.*", "site-packages")
 _PYTHON_VERSION = re.compile(r"python(\d+)\.(\d+)")
 
@@ -202,8 +207,40 @@ def _profile_is_complete(profile_dir: str) -> bool:
 _HERMES_SOURCE_PREPARED = False
 
 
+def _drop_foreign_hermes_modules(agent_dir: str) -> list:
+    """Forget ``hermes*`` modules that were imported from outside ``agent_dir``.
+
+    A ``sys.path`` entry only decides what the *next* import finds: a module that was
+    imported before the path was prepared keeps its foreign version in ``sys.modules``.
+    Live, that produced a mixed pair - the mounted ``hermes_cli`` next to the container's
+    older ``hermes_constants`` - and the import died with ``cannot import name
+    'LOCAL_RUNTIME_ROOT_DIRS' from 'hermes_constants'``, so no profile was provisioned and
+    every new personality answered with the fallback sentence.
+
+    Dropping the foreign copies is cheap: the following import re-reads them from the
+    mounted source. Modules without a ``__file__`` (frozen or namespace builds) are kept,
+    because their origin cannot be judged.
+    """
+    root = os.path.abspath(agent_dir)
+    dropped = []
+    for name, module in list(sys.modules.items()):
+        if not (name == "hermes" or name.startswith("hermes")):
+            continue
+        origin = getattr(module, "__file__", None)
+        if not origin:
+            continue
+        origin_abs = os.path.abspath(origin)
+        if origin_abs == root or origin_abs.startswith(root + os.sep):
+            continue
+        sys.modules.pop(name, None)
+        dropped.append(name)
+    if dropped:
+        logging.info("dropped foreign hermes modules: %s", dropped)
+    return dropped
+
+
 def ensure_hermes_source_on_path() -> str:
-    """Put the mounted Hermes source in front of ``sys.path``, once per process.
+    """Put the mounted Hermes source in front of ``sys.path`` and drop foreign Hermes modules.
 
     Provisioning and turns must resolve the SAME Hermes. Live, provisioning imported
     ``hermes_cli`` from the container's site-packages first; that foreign version then
@@ -220,6 +257,7 @@ def ensure_hermes_source_on_path() -> str:
     for path_entry in reversed(entries):
         if os.path.exists(path_entry):
             sys.path.insert(0, path_entry)
+    _drop_foreign_hermes_modules(agent_dir)
     if not _HERMES_SOURCE_PREPARED:
         _HERMES_SOURCE_PREPARED = True
         logging.info(
@@ -270,6 +308,10 @@ def ensure_profile_home(
     model: Optional[str] = None,
     provider: Optional[str] = None,
     base_url: Optional[str] = None,
+    reasoning_effort: Optional[str] = None,
+    *,
+    personality_reasoning: bool = False,
+    tool_calling: Optional[bool] = None,
 ) -> dict:
     """Create or repair one complete Hermes home with the canonical factory.
 
@@ -277,6 +319,9 @@ def ensure_profile_home(
     (``provider`` is the registry name, ``base_url`` its endpoint). They are
     written into the profile's config.yaml so the smart chat runs the model the
     personality is set to. Passing none keeps whatever the profile already has.
+
+    ``personality_reasoning`` writes ``reasoning_effort`` into the agent block.
+    ``None`` leaves the profile's existing agent.reasoning_effort alone.
     """
     from pib_hermes_config import (
         align_profile_ownership,
@@ -402,13 +447,29 @@ def ensure_profile_home(
         provider=mapping.provider if mapping else None,
         base_url=mapping.base_url if mapping else None,
         env_vars=mapping.env_vars if mapping else (),
+        reasoning_effort=reasoning_effort,
+        personality_reasoning=personality_reasoning,
+        tool_calling=tool_calling,
     )
     align_profile_ownership(profile_dir)
     os.chmod(profile_dir, 0o700)
     os.chmod(soul_path, 0o644)
     env_path = os.path.join(profile_dir, ".env")
     if os.path.exists(env_path):
-        os.chmod(env_path, 0o600)
+        try:
+            os.chmod(env_path, 0o600)
+        except OSError as exc:
+            # PC-45: the voice container sees a filtered view of the Hermes home
+            # in which credential files are replaced by read-only, blank covers.
+            # Such a placeholder carries no secret, so failing to restrict it is
+            # not fatal - aborting here made every Hermes turn answer with the
+            # fallback reply inside the recreated voice container. The runtime
+            # provider key comes from the key store, never from this file.
+            logging.warning(
+                "could not restrict %s to 0600 (%s); continuing without it",
+                env_path,
+                exc,
+            )
 
     return {
         "ok": True,
@@ -603,10 +664,27 @@ def _agent_for_chat(
     personality is set to. They are part of the cache key, so changing the
     model rebuilds the agent instead of reusing the pinned one.
     """
-    from public_api_client.hermes_agent_client import profile_hermes_settings
+    from public_api_client.hermes_agent_client import (
+        disabled_toolsets_for_turn,
+        enabled_toolsets_for_turn,
+        profile_hermes_settings,
+        profile_tool_calling_enabled,
+    )
 
     model, provider, base_url, env_vars = profile_hermes_settings()
-    settings = (enabled_toolsets, toolsets, max_turns, model, provider, base_url)
+    tool_calling = profile_tool_calling_enabled()
+    if not tool_calling:
+        enabled_toolsets = enabled_toolsets_for_turn(False, enabled_toolsets)
+        toolsets = disabled_toolsets_for_turn(False, toolsets)
+    settings = (
+        enabled_toolsets,
+        toolsets,
+        max_turns,
+        model,
+        provider,
+        base_url,
+        tool_calling,
+    )
     key = (_current_home_key(), chat_id)
     with _agent_cache_lock:
         cached = _agent_cache.get(key)
@@ -687,6 +765,60 @@ def extract_final_response(stdout_text: str) -> str:
         body.pop()
 
     return "\n".join(body).strip()
+
+
+def _runner_reports_tool_calls(runner: object) -> bool:
+    """True when this runner accepts the ``on_tool_call`` collector.
+
+    A runner injected by a caller (tests, embedders) may predate the parameter, so
+    the keyword is only passed when the signature accepts it.
+    """
+    try:
+        signature = inspect.signature(runner)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return False
+    if "on_tool_call" in signature.parameters:
+        return True
+    return any(
+        parameter.kind is inspect.Parameter.VAR_KEYWORD
+        for parameter in signature.parameters.values()
+    )
+
+
+def _tools_used(result: object) -> list:
+    """Tool names of one agent turn, read from the conversation it returns.
+
+    An assistant message lists the tool calls it asked for, a ``tool`` message
+    names the tool that answered. Only names and outcomes travel - argument values
+    stay in the agent's own transcript, so nothing secret can leak into a chat
+    message or a trace event (PC-84).
+    """
+    if not isinstance(result, dict):
+        return []
+    messages = result.get("messages")
+    if not isinstance(messages, list):
+        return []
+    answered = [
+        {"name": str(message["name"]), "ok": True}
+        for message in messages
+        if isinstance(message, dict)
+        and message.get("role") == "tool"
+        and message.get("name")
+    ]
+    if answered:
+        return answered
+    requested: list = []
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        for call in message.get("tool_calls") or []:
+            if not isinstance(call, dict):
+                continue
+            function = call.get("function") or {}
+            name = function.get("name") or call.get("name")
+            if name:
+                requested.append({"name": str(name), "ok": True})
+    return requested
 
 
 def _coerce_reply(reply: object) -> str:
@@ -787,17 +919,54 @@ def daemon_health_url() -> str:
     return daemon_base_url() + "/health"
 
 
+def agent_source_imports_here(agent_dir: Optional[str] = None) -> bool:
+    """True when the agent source imports in THIS interpreter.
+
+    A PIB install keeps the agent's dependencies in a PM-managed environment
+    (``~/.hermes/installs/<id>/environments/<id>/venv/lib/pythonX.Y``), which
+    ``venv_site_packages()`` does not scan -- it only looks for ``venv/lib``
+    inside the agent directory. Probing the import answers the actual question
+    and covers both layouts.
+
+    Runs in a subprocess on purpose: importing the agent here would leave its
+    modules in ``sys.modules`` and could let the bootstrap re-exec this process.
+    The answer is cached per process because a probe costs an interpreter start.
+    """
+    global _AGENT_IMPORT_PROBE
+    if _AGENT_IMPORT_PROBE is None:
+        base = agent_dir or hermes_agent_dir()
+        # hermes_constants is stdlib-only. hermes_bootstrap is deliberately NOT
+        # imported here: importing it can make the bootstrap re-exec the probe
+        # interpreter, which fails in an isolated subprocess and would report the
+        # agent as unavailable although it is importable.
+        code = "import sys; sys.path.insert(0, %r); import hermes_constants" % (base,)
+        try:
+            done = subprocess.run(
+                [sys.executable, "-c", code],
+                capture_output=True,
+                timeout=AGENT_IMPORT_PROBE_TIMEOUT,
+                stdin=subprocess.DEVNULL,
+            )
+            _AGENT_IMPORT_PROBE = done.returncode == 0
+        except (OSError, subprocess.SubprocessError) as exc:
+            logging.info("agent import probe failed: %s", exc)
+            _AGENT_IMPORT_PROBE = False
+    return _AGENT_IMPORT_PROBE
+
+
 def in_process_available() -> bool:
     """True when the Hermes agent can run inside THIS interpreter.
 
-    The in-process API needs Hermes' own venv site-packages for the running
-    Python. When none match, importing the agent source makes Hermes' bootstrap
-    re-exec this process under its managed Python -- which is fatal here, because
-    this process is the ROS ``chat`` node and its setuptools launcher cannot
-    resolve the ``voice-assistant`` distribution there. Callers fall back to the
-    CLI subprocess in that case.
+    The in-process API needs Hermes' packages importable for the running Python.
+    Two layouts provide them: a ``venv/lib/pythonX.Y`` inside the agent directory
+    (a matching one is prepended to ``sys.path``), or a PM-managed environment
+    that the interpreter already carries. When neither holds, importing the agent
+    source would make Hermes' bootstrap re-exec this process under its managed
+    Python -- fatal here, because this process is the ROS ``chat`` node and its
+    setuptools launcher cannot resolve the ``voice-assistant`` distribution
+    there. Callers fall back to the CLI subprocess in that case.
     """
-    return bool(venv_site_packages())
+    return bool(venv_site_packages()) or agent_source_imports_here()
 
 
 def _run_turn_in_home(
@@ -810,6 +979,7 @@ def _run_turn_in_home(
     stream_callback: Optional[Callable[[str], None]] = None,
     enabled_toolsets: Optional[str] = None,
     provider_key: str = "",
+    on_tool_call: Optional[Callable[[dict], None]] = None,
 ) -> str:
     """Execute one turn after its Hermes home scope has been installed.
 
@@ -821,11 +991,17 @@ def _run_turn_in_home(
         DEFAULT_ENABLED_TOOLSETS,
         DEFAULT_MAX_TURNS,
         FALLBACK_REPLY,
+        disabled_toolsets_for_turn,
+        enabled_toolsets_for_turn,
+        profile_tool_calling_enabled,
         run_turn_subprocess,
     )
 
-    effective_toolsets = DEFAULT_DISABLED_TOOLSETS if toolsets is None else toolsets
-    effective_enabled_toolsets = enabled_toolsets or DEFAULT_ENABLED_TOOLSETS
+    tool_calling = profile_tool_calling_enabled()
+    effective_toolsets = disabled_toolsets_for_turn(tool_calling, toolsets)
+    effective_enabled_toolsets = enabled_toolsets_for_turn(
+        tool_calling, enabled_toolsets
+    )
     effective_max_turns = DEFAULT_MAX_TURNS if max_turns is None else max_turns
 
     def _subprocess_reply() -> str:
@@ -883,7 +1059,10 @@ def _run_turn_in_home(
 
     try:
         if agent_cls is not None:
-            _ensure_mcp_tools_discovered()
+            if tool_calling and "pib" in (
+                _toolset_list(effective_enabled_toolsets) or []
+            ):
+                _ensure_mcp_tools_discovered()
             cached = _agent_for_chat(
                 chat_id,
                 effective_enabled_toolsets,
@@ -908,13 +1087,15 @@ def _run_turn_in_home(
                     chat_id,
                     len(history),
                 )
-                reply = _coerce_reply(
-                    cached.agent.run_conversation(
-                        user_message=text,
-                        conversation_history=history or None,
-                        stream_callback=capture_delta,
-                    )
+                turn_result = cached.agent.run_conversation(
+                    user_message=text,
+                    conversation_history=history or None,
+                    stream_callback=capture_delta,
                 )
+                reply = _coerce_reply(turn_result)
+                if on_tool_call is not None:
+                    for record in _tools_used(turn_result):
+                        on_tool_call(record)
             if not reply:
                 reply = "".join(produced).strip()
         else:
@@ -977,6 +1158,7 @@ def run_turn_in_process(
     timeout: Optional[int] = None,
     stream_callback: Optional[Callable[[str], None]] = None,
     enabled_toolsets: Optional[str] = None,
+    on_tool_call: Optional[Callable[[dict], None]] = None,
 ) -> str:
     """Execute a turn inside the personality's context-local Hermes home."""
     scope = contextlib.nullcontext()
@@ -1023,6 +1205,7 @@ def run_turn_in_process(
             stream_callback=stream_callback,
             enabled_toolsets=enabled_toolsets,
             provider_key=provider_key or "",
+            on_tool_call=on_tool_call,
         )
 
 
@@ -1035,6 +1218,7 @@ def _default_turn_runner(
     timeout: Optional[int] = None,
     stream_callback: Optional[Callable[[str], None]] = None,
     enabled_toolsets: Optional[str] = None,
+    on_tool_call: Optional[Callable[[dict], None]] = None,
 ) -> str:
     """Execute one turn in-process via Hermes Agent (subprocess fallback)."""
     return run_turn_in_process(
@@ -1043,6 +1227,7 @@ def _default_turn_runner(
         personality_id=personality_id,
         toolsets=toolsets,
         enabled_toolsets=enabled_toolsets,
+        on_tool_call=on_tool_call,
         max_turns=max_turns,
         timeout=timeout,
         stream_callback=stream_callback,
@@ -1149,6 +1334,25 @@ class HermesDaemonHandler(BaseHTTPRequestHandler):
                         400, {"ok": False, "error": f"{field} must be a string"}
                     )
                     return
+            personality_reasoning = "reasoning_effort" in data
+            reasoning_effort = (
+                data.get("reasoning_effort") if personality_reasoning else None
+            )
+            if personality_reasoning and reasoning_effort is not None:
+                from pib_hermes_config import REASONING_EFFORT_ERROR, REASONING_EFFORTS
+
+                if (
+                    not isinstance(reasoning_effort, str)
+                    or reasoning_effort not in REASONING_EFFORTS
+                ):
+                    self._send_json(400, {"ok": False, "error": REASONING_EFFORT_ERROR})
+                    return
+            tool_calling = data.get("tool_calling")
+            if tool_calling is not None and not isinstance(tool_calling, bool):
+                self._send_json(
+                    400, {"ok": False, "error": "tool_calling must be a boolean"}
+                )
+                return
             try:
                 result = ensure_profile_home(
                     personality_id,
@@ -1157,6 +1361,9 @@ class HermesDaemonHandler(BaseHTTPRequestHandler):
                     model=model,
                     provider=provider,
                     base_url=endpoint_base,
+                    reasoning_effort=reasoning_effort,
+                    personality_reasoning=personality_reasoning,
+                    tool_calling=tool_calling,
                 )
             except Exception as exc:
                 logging.exception("hermes-daemon /profile failed: %s", exc)
@@ -1228,6 +1435,7 @@ class HermesDaemonHandler(BaseHTTPRequestHandler):
         if stream:
             self._start_stream()
 
+        tools_used: list = []
         runner_kwargs = {
             "text": text,
             "chat_id": chat_id,
@@ -1238,6 +1446,8 @@ class HermesDaemonHandler(BaseHTTPRequestHandler):
         }
         if max_turns is not None:
             runner_kwargs["max_turns"] = max_turns
+        if _runner_reports_tool_calls(runner):
+            runner_kwargs["on_tool_call"] = tools_used.append
         if stream:
             runner_kwargs["stream_callback"] = emit_delta
 
@@ -1262,7 +1472,12 @@ class HermesDaemonHandler(BaseHTTPRequestHandler):
             chat_id,
             (time.monotonic() - t0) * 1000.0,
         )
-        payload = {"reply": reply if isinstance(reply, str) else str(reply)}
+        payload = {
+            "reply": reply if isinstance(reply, str) else str(reply),
+            # The daemon may return more than the text (decision PC-84): the tools
+            # this turn used, names only.
+            "toolsUsed": tools_used,
+        }
         if stream:
             self._send_stream_chunk(payload)
         else:

@@ -326,7 +326,7 @@ def test_personality_client_reads_the_tool_switch(monkeypatch):
     assert off.tool_calling is False
 
 
-def test_personality_api_defaults_tool_calling_on_and_can_switch_it_off(app, app_ctx):
+def test_personality_api_defaults_tools_on_and_allows_turning_them_off(app, app_ctx):
     from model.assistant_model import AssistantModel
 
     client = app.test_client()
@@ -346,20 +346,21 @@ def test_personality_api_defaults_tool_calling_on_and_can_switch_it_off(app, app
     assert created.status_code == 201
     body = created.get_json()
     assert body["toolCalling"] is True
+    url = f"/voice-assistant/personality/{body['personalityId']}"
 
-    switched = client.put(
-        f"/voice-assistant/personality/{body['personalityId']}",
-        json={"toolCalling": False},
-    )
-    assert switched.status_code == 200
+    # PC-58: the switch selects no transport any more, so turning tools off is
+    # a plain chat and the value is stored in both directions.
+    switched = client.put(url, json={"toolCalling": False})
+    assert switched.status_code == 200, switched.get_json()
     assert switched.get_json()["toolCalling"] is False
-    assert switched.get_json()["description"] == body["description"]
+    stored = client.get(url)
+    assert stored.status_code == 200
+    assert stored.get_json()["toolCalling"] is False
+    assert stored.get_json()["description"] == body["description"]
 
-    restored_channel = client.put(
-        f"/voice-assistant/personality/{body['personalityId']}",
-        json={"channel": "direct"},
-    )
-    assert restored_channel.get_json()["toolCalling"] is False
+    restored = client.put(url, json={"toolCalling": True})
+    assert restored.status_code == 200
+    assert restored.get_json()["toolCalling"] is True
 
 
 # Distinct from each other so a branch that picks the wrong source fails.
@@ -638,3 +639,209 @@ def test_hermes_key_reads_the_store_for_the_personalitys_model(monkeypatch):
     assert key == STORE_SECRET
     assert source == "key-store"
     assert seen == ["gpt-6"]
+
+
+def test_pib_cloud_credential_uses_the_provider_slug_not_a_pinned_model(monkeypatch):
+    """pib.Cloud keys live under the provider id, not gemini-3.8-flash."""
+    seen = []
+
+    def fake_read(api_name, *args, **kwargs):
+        seen.append(api_name)
+        return {"mode": "unlocked", "secret": STORE_SECRET}
+
+    _install_key_store(monkeypatch, fake_read)
+
+    key, source = direct_tool_loop.resolve_hermes_provider_key(
+        "pib-cloud", api_name=PINNED_MODEL
+    )
+    assert key == STORE_SECRET
+    assert source == "key-store"
+    assert seen == ["pib-cloud"]
+
+
+def test_pib_cloud_without_an_api_name_reads_the_provider_slug(monkeypatch):
+    seen = []
+
+    def fake_read(api_name, *args, **kwargs):
+        seen.append(api_name)
+        return {"mode": "unlocked", "secret": STORE_SECRET}
+
+    _install_key_store(monkeypatch, fake_read)
+
+    key, source = direct_tool_loop.resolve_hermes_provider_key("pib-cloud")
+    assert key == STORE_SECRET
+    assert source == "key-store"
+    assert seen == ["pib-cloud"]
+
+
+def _mock_credential_opener(payload: dict):
+    class Response:
+        def read(self):
+            return json.dumps(payload).encode()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    return lambda *args, **kwargs: Response()
+
+
+def test_store_client_unlocked_available_secret_yields_key_store(caplog):
+    from pib_api_client.key_store_client import read_provider_key
+
+    caplog.set_level(logging.INFO)
+    state = read_provider_key(
+        "pib-cloud",
+        opener=_mock_credential_opener(
+            {"mode": "unlocked", "available": True, "secret": STORE_SECRET}
+        ),
+    )
+    assert state == {"mode": "unlocked", "secret": STORE_SECRET}
+
+    key, source = direct_tool_loop.resolve_hermes_provider_key(
+        "pib-cloud",
+        fetch=lambda provider, api_name=None: state,
+    )
+    assert key == STORE_SECRET
+    assert source == "key-store"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"mode": "unlocked", "available": False},
+        {"mode": "unlocked", "available": True, "secret": ""},
+        {"mode": "unlocked", "available": True, "secret": "   "},
+    ],
+)
+def test_store_client_missing_secret_raises_for_hermes(monkeypatch, payload):
+    from pib_api_client.key_store_client import read_provider_key
+
+    state = read_provider_key("pib-cloud", opener=_mock_credential_opener(payload))
+    monkeypatch.setenv("PIB_CLOUD_API_KEY", ENV_SECRET)
+
+    with pytest.raises(DirectToolLoopError) as caught:
+        direct_tool_loop.resolve_hermes_provider_key(
+            "pib-cloud",
+            fetch=lambda provider, api_name=None: state,
+        )
+
+    assert str(caught.value) == "No keys are available for provider pib-cloud."
+
+
+def test_hermes_refuses_environment_when_store_is_unavailable(monkeypatch):
+    def fake_read(api_name, *args, **kwargs):
+        return {"mode": "unavailable", "secret": None}
+
+    _install_key_store(monkeypatch, fake_read)
+    monkeypatch.setenv("PIB_CLOUD_API_KEY", ENV_SECRET)
+
+    with pytest.raises(DirectToolLoopError) as caught:
+        direct_tool_loop.resolve_hermes_provider_key("pib-cloud")
+
+    assert str(caught.value) == "No keys are available for provider pib-cloud."
+
+
+def test_a_tool_call_is_reported_without_its_argument_values():
+    """PC-84: the caller learns name, outcome and duration - never a value."""
+    reported: list = []
+    seen: list = []
+
+    def complete(messages, tools):
+        seen.append((messages, tools))
+        if len(seen) == 1:
+            return {
+                "tool_calls": [
+                    {
+                        "name": "set_led",
+                        "arguments": {"color": "red", "api_key": "s3cr3t-value"},
+                    }
+                ]
+            }
+        return {"text": "Erledigt."}
+
+    answer = "".join(
+        run_direct_turn(
+            system_prompt="Du bist pib.",
+            user_text="Mach das Licht rot.",
+            history=[],
+            tool_calling=True,
+            allow_image=False,
+            declarations=[{"name": "set_led", "description": "led"}],
+            complete=complete,
+            execute_tool=lambda name, arguments: {"ok": True},
+            on_tool_call=reported.append,
+        )
+    )
+
+    assert answer == "Erledigt."
+    assert len(reported) == 1
+    record = reported[0]
+    assert record["name"] == "set_led"
+    assert record["ok"] is True
+    assert record["argNames"] == ["api_key", "color"]
+    assert isinstance(record["durationMs"], float)
+    assert "s3cr3t-value" not in json.dumps(reported)
+
+
+def test_a_failing_tool_is_reported_and_still_raises():
+    reported: list = []
+    seen: list = []
+
+    def complete(messages, tools):
+        seen.append(messages)
+        if len(seen) == 1:
+            return {"tool_calls": [{"name": "set_led", "arguments": {}}]}
+        return {"text": "nie"}
+
+    def broken_runner(name, arguments):
+        raise RuntimeError("hardware not ready")
+
+    with pytest.raises(RuntimeError):
+        list(
+            run_direct_turn(
+                system_prompt="Du bist pib.",
+                user_text="Mach das Licht an.",
+                history=[],
+                tool_calling=True,
+                allow_image=False,
+                declarations=[{"name": "set_led", "description": "led"}],
+                complete=complete,
+                execute_tool=broken_runner,
+                on_tool_call=reported.append,
+            )
+        )
+
+    assert len(reported) == 1
+    assert reported[0]["name"] == "set_led"
+    assert reported[0]["ok"] is False
+    assert reported[0]["error"] == "RuntimeError"
+    assert reported[0]["argNames"] == []
+
+
+def test_a_raising_reporter_does_not_break_the_turn():
+    def complete(messages, tools):
+        if len(messages) <= 1:
+            return {"tool_calls": [{"name": "set_led", "arguments": {}}]}
+        return {"text": "Erledigt."}
+
+    def exploding(record):
+        raise RuntimeError("reporter is broken")
+
+    answer = "".join(
+        run_direct_turn(
+            system_prompt="Du bist pib.",
+            user_text="Mach das Licht an.",
+            history=[],
+            tool_calling=True,
+            allow_image=False,
+            declarations=[{"name": "set_led", "description": "led"}],
+            complete=complete,
+            execute_tool=lambda name, arguments: {"ok": True},
+            on_tool_call=exploding,
+        )
+    )
+
+    assert answer == "Erledigt."

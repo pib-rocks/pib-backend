@@ -41,12 +41,23 @@ COPY ./ros_packages/voice_assistant/requirements.txt .
 # runtime dependencies of pib_mcp_server, installed below with --no-deps.
 # --ignore-installed stays because the apt-managed ROS Python packages (egg-info, no RECORD)
 # cannot be uninstalled by pip and must be shadowed instead.
+#
+# av is pinned because faster-whisper 1.2.1 decodes through
+# ``av.open(..., metadata_errors="ignore")``, and PyAV 19.0.0 REMOVED that keyword
+# (changelog 19.0.0: "Remove the metadata_encoding and metadata_errors arguments to
+# av.open()"). An unpinned av resolved to 19.0.1, so every local transcription raised
+# ``open() got an unexpected keyword argument 'metadata_errors'`` and produced an empty
+# text - the defect PC-35 fixes. 18.1.0 is the newest PyAV that still accepts the
+# keyword; it also satisfies faster-whisper's own ``av>=11`` requirement. Raise this
+# pin only together with a faster-whisper version that dropped the keyword.
 RUN pip install --break-system-packages --ignore-installed \
         requests==2.33.0 \
+        httpx==0.28.1 \
         pyaudio==0.2.14 \
         google-genai==2.28.0 \
         supertonic==1.3.1 \
         faster-whisper==1.2.1 \
+        av==18.1.0 \
         onnxruntime==1.30.0 \
         scipy==1.18.1 \
         soundfile==0.14.0 \
@@ -57,6 +68,11 @@ RUN pip install --break-system-packages --ignore-installed \
 ENV SUPERTONE_MODEL_PATH=/data/voice/models/supertone/
 ENV WHISPER_MODEL_SIZE=small
 ENV WHISPER_MODEL_PATH=/data/voice/models/whisper/
+# Language the local engine transcribes in. Pinned, because the engine's own
+# detection runs a pass over 99 languages on every turn and cost about half the
+# turn on the test robot (PC-39, 8 s recording: 37.0 s -> 19.2 s). Set
+# STT_LANGUAGE=auto to hand that decision back to the engine.
+ENV STT_LANGUAGE=de
 
 COPY ./pib_api/client ./client
 # Shared with the flask API so both resolve the same Hermes profiles dir.

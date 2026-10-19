@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import errno
+import importlib
 import json
 import logging
 import os
 import re
+import stat
 import sys
 import threading
 import time
@@ -221,6 +224,75 @@ def test_profile_endpoint_creates_complete_layout_idempotently(
     assert status["has_soul"] is True
 
 
+def _post_profile(server, personality_id: str, name: str = "Ada") -> dict:
+    """Provision (or repair) one profile through the daemon's own endpoint."""
+    host, port = server.server_address
+    body = json.dumps(
+        {
+            "personality_id": personality_id,
+            "personality_name": name,
+            "soul_text": "Sei neugierig.",
+        }
+    ).encode()
+    request = Request(
+        f"http://{host}:{port}/profile",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urlopen(request, timeout=2) as response:
+        return json.loads(response.read().decode())
+
+
+def test_profile_env_is_restricted_to_0600(daemon_server, monkeypatch):
+    """The guard must not quietly drop the mode change where it does apply."""
+    server, _ = daemon_server
+    monkeypatch.setenv("PIB_HERMES_PROFILE_FACTORY", "filesystem")
+
+    result = _post_profile(server, "cover-mode")
+
+    env_path = Path(result["profile_dir"]) / ".env"
+    assert env_path.is_file()
+    assert stat.S_IMODE(env_path.stat().st_mode) == 0o600
+
+
+def test_read_only_profile_env_cover_does_not_abort_provisioning(
+    daemon_server, monkeypatch
+):
+    """PC-45: the voice container's profile .env is a read-only credential cover.
+
+    Measured on .172 after the voice container was recreated with the filtered
+    Hermes view: ``os.chmod`` on the covered ``profiles/<id>/.env`` raises
+    EROFS, which aborted ``ensure_profile_home`` and made every Hermes-mediated
+    voice turn answer with the fallback reply. The cover is a blank placeholder,
+    so a refused chmod must not stop provisioning.
+    """
+    server, _ = daemon_server
+    monkeypatch.setenv("PIB_HERMES_PROFILE_FACTORY", "filesystem")
+
+    env_path = Path(_post_profile(server, "cover-readonly")["profile_dir"]) / ".env"
+    assert env_path.is_file()
+
+    real_chmod = hd.os.chmod
+
+    def read_only_cover(path, mode, *args, **kwargs):
+        if str(path) == str(env_path):
+            raise OSError(errno.EROFS, "Read-only file system", str(path))
+        return real_chmod(path, mode, *args, **kwargs)
+
+    monkeypatch.setattr(hd.os, "chmod", read_only_cover)
+
+    repaired = _post_profile(server, "cover-readonly")
+
+    # The turn path aborts on the exception, so the response and the layout are
+    # the contract: a repaired profile answers ok and holds its files.
+    assert repaired["ok"] is True
+    profile_dir = Path(repaired["profile_dir"])
+    assert (profile_dir / "config.yaml").is_file()
+    assert (profile_dir / "SOUL.md").is_file()
+    assert (profile_dir / "memories").is_dir()
+
+
 def test_profile_endpoint_persists_the_personalitys_model_and_route(
     daemon_server, monkeypatch
 ):
@@ -259,6 +331,91 @@ def test_profile_endpoint_persists_the_personalitys_model_and_route(
     assert cfg["providers"]["local"]["base_url"] == (
         "http://host.docker.internal:11434/v1"
     )
+
+
+def test_profile_endpoint_writes_reasoning_effort_into_the_agent_block(
+    daemon_server, monkeypatch
+):
+    """The level Hermes reads is agent.reasoning_effort, not a root key."""
+    server, _ = daemon_server
+    monkeypatch.setenv("PIB_HERMES_PROFILE_FACTORY", "filesystem")
+    host, port = server.server_address
+    body = json.dumps(
+        {"personality_id": "profile-effort", "reasoning_effort": "none"}
+    ).encode()
+    request = Request(
+        f"http://{host}:{port}/profile",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+    with urlopen(request, timeout=2) as response:
+        result = json.loads(response.read().decode())
+
+    import yaml
+
+    with open(Path(result["profile_dir"]) / "config.yaml", encoding="utf-8") as fh:
+        cfg = yaml.safe_load(fh)
+
+    assert cfg["agent"]["reasoning_effort"] == "none"
+    assert "reasoning_effort" not in cfg
+
+
+def test_profile_endpoint_leaves_reasoning_effort_alone_when_null(
+    daemon_server, monkeypatch
+):
+    server, _ = daemon_server
+    monkeypatch.setenv("PIB_HERMES_PROFILE_FACTORY", "filesystem")
+    from pib_hermes_config import profile_dir_for
+
+    pdir = Path(profile_dir_for("profile-unmanaged"))
+    pdir.mkdir(parents=True)
+    (pdir / "config.yaml").write_text(
+        "agent:\n  reasoning_effort: medium\n", encoding="utf-8"
+    )
+    host, port = server.server_address
+    body = json.dumps(
+        {"personality_id": "profile-unmanaged", "reasoning_effort": None}
+    ).encode()
+    request = Request(
+        f"http://{host}:{port}/profile",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+    with urlopen(request, timeout=2) as response:
+        assert json.loads(response.read().decode())["ok"] is True
+
+    import yaml
+
+    with open(pdir / "config.yaml", encoding="utf-8") as fh:
+        cfg = yaml.safe_load(fh)
+    assert cfg["agent"]["reasoning_effort"] == "medium"
+    assert "reasoning_effort" not in cfg
+
+
+def test_profile_endpoint_rejects_an_unknown_reasoning_effort(daemon_server):
+    from urllib.error import HTTPError
+
+    server, _ = daemon_server
+    host, port = server.server_address
+    request = Request(
+        f"http://{host}:{port}/profile",
+        data=b'{"personality_id":"p","reasoning_effort":"turbo"}',
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+    with pytest.raises(HTTPError) as exc_info:
+        urlopen(request, timeout=2)
+
+    assert exc_info.value.code == 400
+    detail = json.loads(exc_info.value.read().decode())
+    assert detail["ok"] is False
+    assert "none" in detail["error"]
+    assert "ultra" in detail["error"]
 
 
 def test_profile_endpoint_rejects_a_non_string_model(daemon_server):
@@ -335,7 +492,7 @@ def test_turn_accepts_payload_and_returns_reply(daemon_server):
         assert resp.status == 200
         payload = json.loads(resp.read().decode())
 
-    assert payload == {"reply": "daemon-says-hi"}
+    assert payload == {"reply": "daemon-says-hi", "toolsUsed": []}
     assert replies["last"] == {
         "text": "hallo",
         "chat_id": "c-1",
@@ -363,7 +520,7 @@ def test_streaming_turn_emits_deltas_and_final_reply(daemon_server):
         chunks = [json.loads(line) for line in resp if line.strip()]
 
     assert chunks[:-1] == [{"delta": "Hallo"}, {"delta": " Welt."}]
-    assert chunks[-1] == {"reply": "daemon-says-hi"}
+    assert chunks[-1] == {"reply": "daemon-says-hi", "toolsUsed": []}
 
 
 def test_turn_rejects_missing_fields(daemon_server):
@@ -985,6 +1142,76 @@ def test_run_turn_in_process_falls_back_to_subprocess_when_import_fails():
     )
 
 
+def test_tools_used_reads_the_answered_tool_messages():
+    """A tool message names the tool that answered; names only, no arguments."""
+    result = {
+        "final_response": "done",
+        "messages": [
+            {"role": "user", "content": "look"},
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {"function": {"name": "capture_image", "arguments": "{secret}"}}
+                ],
+            },
+            {"role": "tool", "name": "capture_image", "content": "{}"},
+            {"role": "assistant", "content": "fertig"},
+        ],
+    }
+
+    assert hd._tools_used(result) == [{"name": "capture_image", "ok": True}]
+    assert "secret" not in json.dumps(hd._tools_used(result))
+
+
+def test_tools_used_falls_back_to_the_requested_calls_and_ignores_other_shapes():
+    requested = {
+        "messages": [
+            {"role": "assistant", "tool_calls": [{"function": {"name": "set_led"}}]},
+            {"role": "assistant", "tool_calls": [{"name": "play_sound"}]},
+        ]
+    }
+    assert hd._tools_used(requested) == [
+        {"name": "set_led", "ok": True},
+        {"name": "play_sound", "ok": True},
+    ]
+    assert hd._tools_used(None) == []
+    assert hd._tools_used({"messages": "nope"}) == []
+    assert hd._tools_used("text") == []
+
+
+def test_a_turn_returns_the_tools_it_used():
+    """The daemon may return more than the text (decision PC-84)."""
+
+    def runner(**kwargs):
+        kwargs["on_tool_call"](
+            {"name": "capture_image", "ok": True, "durationMs": 12.5}
+        )
+        return "gesehen"
+
+    server = hd.create_server(port=0, turn_runner=runner)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    host, port = server.server_address
+    body = json.dumps({"text": "was siehst du?", "chat_id": "c-tool"}).encode()
+    req = Request(
+        f"http://{host}:{port}/turn",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urlopen(req, timeout=5) as resp:
+            payload = json.loads(resp.read().decode())
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    assert payload["reply"] == "gesehen"
+    assert payload["toolsUsed"] == [
+        {"name": "capture_image", "ok": True, "durationMs": 12.5}
+    ]
+
+
 def test_default_turn_runner_uses_in_process_path():
     """create_server default runner must be the in-process implementation."""
     with patch.object(
@@ -1006,6 +1233,7 @@ def test_default_turn_runner_uses_in_process_path():
         text="hi",
         chat_id="c1",
         personality_id="p1",
+        on_tool_call=None,
         toolsets=None,
         enabled_toolsets="mcp-pib,vision",
         max_turns=None,
@@ -1352,6 +1580,45 @@ def test_hermes_source_is_placed_in_front_of_sys_path(tmp_path, monkeypatch):
     assert hd.sys.path.count(str(venv)) == 1
 
 
+def test_foreign_hermes_modules_are_dropped_so_the_mounted_source_wins(
+    tmp_path, monkeypatch
+):
+    """A module imported before the path was prepared must not shadow the mounted source.
+
+    Live, provisioning imported ``hermes_cli`` from the mounted tree while
+    ``hermes_constants`` stayed cached from the container's older ``hermes-agent``. The
+    version mix raised ``ImportError: cannot import name 'LOCAL_RUNTIME_ROOT_DIRS' from
+    'hermes_constants'``, so no profile was provisioned and every newly created
+    personality answered with the fallback sentence.
+    """
+    agent_dir = tmp_path / "hermes-agent"
+    agent_dir.mkdir()
+    (agent_dir / "hermes_constants.py").write_text(
+        "LOCAL_RUNTIME_ROOT_DIRS = ('profiles',)\n"
+    )
+    foreign_dir = tmp_path / "dist-packages"
+    foreign_dir.mkdir()
+    (foreign_dir / "hermes_constants.py").write_text("OLD_VERSION = True\n")
+
+    monkeypatch.setattr(hd, "hermes_agent_dir", lambda: str(agent_dir))
+    monkeypatch.setattr(hd, "venv_site_packages", lambda _base: [])
+    monkeypatch.setattr(hd, "_HERMES_SOURCE_PREPARED", False)
+    monkeypatch.syspath_prepend(str(foreign_dir))
+    monkeypatch.delitem(sys.modules, "hermes_constants", raising=False)
+    try:
+        foreign = importlib.import_module("hermes_constants")
+        assert str(foreign_dir) in str(foreign.__file__ or "")
+        assert not hasattr(foreign, "LOCAL_RUNTIME_ROOT_DIRS")
+
+        hd.ensure_hermes_source_on_path()
+
+        reimported = importlib.import_module("hermes_constants")
+        assert str(reimported.__file__ or "").startswith(str(agent_dir))
+        assert reimported.LOCAL_RUNTIME_ROOT_DIRS == ("profiles",)
+    finally:
+        sys.modules.pop("hermes_constants", None)
+
+
 def test_provisioning_prepares_the_hermes_source_before_importing_the_factory(
     tmp_path, monkeypatch
 ):
@@ -1580,3 +1847,41 @@ def test_hermes_turn_fails_when_the_store_cannot_supply_the_key(
     assert STORE_SECRET not in visible
     assert ENV_SECRET not in visible
     assert OTHER_SECRET not in visible
+
+
+def test_agent_source_imports_here_probes_a_real_agent_tree(tmp_path, monkeypatch):
+    """A PM-managed install has no venv/lib inside the agent dir: the import decides."""
+    from public_api_client import hermes_daemon
+
+    (tmp_path / "hermes_constants.py").write_text("VALUE = 1\n")
+    (tmp_path / "hermes_bootstrap.py").write_text("READY = True\n")
+    monkeypatch.setattr(hermes_daemon, "_AGENT_IMPORT_PROBE", None)
+
+    assert hermes_daemon.agent_source_imports_here(str(tmp_path)) is True
+
+
+def test_agent_source_imports_here_reports_false_when_the_import_fails(
+    tmp_path, monkeypatch
+):
+    from public_api_client import hermes_daemon
+
+    monkeypatch.setattr(hermes_daemon, "_AGENT_IMPORT_PROBE", None)
+    # An empty directory: the probe cannot import hermes_constants.
+    assert hermes_daemon.agent_source_imports_here(str(tmp_path)) is False
+
+
+def test_agent_source_imports_here_caches_the_answer(tmp_path, monkeypatch):
+    from public_api_client import hermes_daemon
+
+    calls = []
+
+    def fake_run(*args, **kwargs):
+        calls.append(args)
+        return types.SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(hermes_daemon, "_AGENT_IMPORT_PROBE", None)
+    monkeypatch.setattr(hermes_daemon.subprocess, "run", fake_run)
+
+    assert hermes_daemon.agent_source_imports_here(str(tmp_path)) is True
+    assert hermes_daemon.agent_source_imports_here(str(tmp_path)) is True
+    assert len(calls) == 1

@@ -1,3 +1,4 @@
+import os
 import threading
 import time
 from collections import deque
@@ -28,13 +29,25 @@ from pib_hermes_config.turn_taking import (
     authored_filler,
     first_token_budget_ms,
     pause_threshold_now,
+    transcript_opens_turn,
 )
 from pib_hermes_config.visible_state import (
+    VOICE_STT_FAILURE_TOPIC,
     VOICE_USING_FALLBACK_TOPIC,
     answer_uses_fallback,
 )
 from public_api_client.hermes_agent_client import FALLBACK_REPLY
-from std_msgs.msg import Bool
+from std_msgs.msg import Bool, String
+from voice_assistant.turn_latency import (
+    TURN_TRACE_TOPIC,
+    TurnTrace,
+    append_record,
+    audio_event_belongs_to_turn,
+    default_log_path,
+    now_ms,
+    parse_event,
+    render_line,
+)
 from rclpy.action import ActionClient
 from rclpy.action.client import ClientGoalHandle
 from rclpy.client import Client
@@ -46,8 +59,36 @@ from rclpy.task import Future
 from voice_assistant import START_SIGNAL_FILE, STOP_SIGNAL_FILE
 from voice_assistant.audio_loop import GeminiAudioLoop
 from voice_assistant.degraded_chat import allows_cloud_chat, fetch_operating_mode
+from voice_assistant.stt_transcription import visible_failure_hint
 
 MAX_SILENT_SECONDS_BEFORE = 8.0
+
+
+def _turn_trace_max_seconds() -> float:
+    """How long an open turn may stay open before the watchdog closes it."""
+    raw = os.environ.get("PIB_TURN_TRACE_MAX_SECONDS", "120")
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return 120.0
+    if value <= 0:
+        return 120.0
+    return value
+
+
+def _answer_drain_max_seconds() -> float:
+    """How long queued answer audio may wait for a drain callback (PC-49)."""
+    raw = os.environ.get("PIB_ANSWER_DRAIN_MAX_SECONDS", "90")
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return 90.0
+    if value <= 0:
+        return 90.0
+    return value
+
+
+_CLEAR_PLAYBACK_ACK_LOG_SECONDS = 5.0
 
 
 class VoiceAssistantNode(Node):
@@ -75,6 +116,8 @@ class VoiceAssistantNode(Node):
         self.state.personality_name = ""
         self._answer_is_fallback = False
         self._engine_fallback = False
+        # technical cause of a failed local transcription, None while healthy
+        self._stt_failure_cause: Optional[str] = None
         # indicates if the voice_assistant is currently turning off
         self.turning_off = False
         # the personality associated with the active chat
@@ -101,6 +144,18 @@ class VoiceAssistantNode(Node):
         self._filler_lock = threading.Lock()
         self._first_token_seen = False
         self._turn_has_playback = False
+        # True while this turn's answer audio is queued or playing. A recording
+        # window must not open on top of it (PC-40).
+        self._answer_audio_pending = False
+        # Bumped on teardown/barge-in so stale drain callbacks cannot touch a new turn.
+        self._playback_epoch: int = 0
+        self._pending_drain_watchdog: Optional[threading.Timer] = None
+        self._answer_drain_max_seconds = _answer_drain_max_seconds()
+        self._turn_trace = TurnTrace()
+        self._pending_end_of_speech: Optional[dict] = None
+        self._orphan_dropped = 0
+        self._sentence_flushed = False
+        self._turn_trace_max_seconds = _turn_trace_max_seconds()
 
         # services ----------------------------------------------------------------------
 
@@ -145,6 +200,16 @@ class VoiceAssistantNode(Node):
             self._on_engine_fallback,
             10,
         )
+        # A failed local transcription is spoken, never passed off as silence.
+        self.create_subscription(
+            String,
+            VOICE_STT_FAILURE_TOPIC,
+            self._on_stt_failure,
+            10,
+        )
+        self._turn_trace_publisher = self.create_publisher(String, TURN_TRACE_TOPIC, 10)
+        self.create_subscription(String, TURN_TRACE_TOPIC, self._on_turn_trace, 10)
+        self.create_timer(1.0, self._turn_trace_watchdog)
 
         # clients -----------------------------------------------------------------------
 
@@ -155,6 +220,13 @@ class VoiceAssistantNode(Node):
             self, RecordAudio, "record_audio"
         )
         self.record_audio_client.wait_for_server()
+
+        # Which live voice path speaks. "gemini" is the speech-to-speech session
+        # that has always been here; "duplex" hands the answer and the synthesis to
+        # the pib.Cloud relay and keeps transcription local.
+        self.voice_backend = os.getenv("PIB_VOICE_BACKEND", "gemini").strip().lower()
+        if self.voice_backend == "duplex":
+            self.gemini_loop = self._build_duplex_loop()
 
         self.play_audio_from_file_client: Client = self.create_client(
             PlayAudioFromFile, "play_audio_from_file"
@@ -200,11 +272,93 @@ class VoiceAssistantNode(Node):
     def clear_playback_queue(
         self, on_playback_queue_cleared: Callable[[], None] = None
     ):
-
+        self.get_logger().debug(
+            "clear_playback_queue: submitting request (ACK is not proof the device stopped)"
+        )
+        ack_seen = threading.Event()
         future = self.clear_playback_queue_client.call_async(
             ClearPlaybackQueue.Request()
         )
-        future.add_done_callback(lambda _: on_playback_queue_cleared())
+
+        def on_service_done(_future: Future) -> None:
+            try:
+                if _future.cancelled() or _future.result() is None:
+                    raise RuntimeError("clear request did not return a response")
+            except Exception as exc:
+                self.get_logger().warning(
+                    f"clear_playback_queue: service failed ({type(exc).__name__}); no ACK"
+                )
+                return
+            ack_seen.set()
+            self.get_logger().debug("clear_playback_queue: service ACK received")
+            if on_playback_queue_cleared is not None:
+                on_playback_queue_cleared()
+
+        future.add_done_callback(on_service_done)
+
+        def log_missing_ack() -> None:
+            if not ack_seen.is_set():
+                self.get_logger().warning(
+                    "clear_playback_queue: no service ACK within "
+                    f"{_CLEAR_PLAYBACK_ACK_LOG_SECONDS:.0f}s"
+                )
+
+        timer = threading.Timer(_CLEAR_PLAYBACK_ACK_LOG_SECONDS, log_missing_ack)
+        timer.daemon = True
+        timer.start()
+
+    def _build_duplex_loop(self):
+        """Swap the Gemini live session for the relay, behind one env switch.
+
+        The loop keeps the interface the rest of this node already calls
+        (``is_listening``, ``start``, ``stop``, ``submit_typed_text``,
+        ``set_speaking_listener``, ``set_action_announcer``), so nothing else in
+        the node has to know which path is active.
+        """
+        from voice_assistant.ros_duplex import build_duplex_voice_loop
+
+        url = os.getenv("PIB_CLOUD_VOICE_URL", "wss://api.pib.rocks/v1/pib/stream")
+        try:
+            loop = build_duplex_voice_loop(
+                self,
+                url=url,
+                token=os.getenv("PIB_CLOUD_TOKEN") or None,
+                request_transcription=self._request_duplex_transcription,
+                mic_channels=int(os.getenv("PIB_MIC_CHANNELS", "1")),
+            )
+        except Exception:
+            self.get_logger().error(
+                "duplex voice backend unavailable; staying on the Gemini live path",
+                exc_info=True,
+            )
+            return self.gemini_loop
+        self.get_logger().info(f"voice backend: duplex relay at {url}")
+        return loop
+
+    def _request_duplex_transcription(self, on_text) -> None:
+        """One utterance from the existing recorder, then hand the text to the relay.
+
+        The pause threshold stays the personality's own, capped at 800 ms: 1.2 s of
+        dead air after every sentence is what makes a conversation feel switched off
+        rather than paused. The "before" window is how long pib waits for someone to
+        start speaking at all, so it stays as generous as the button path.
+        """
+        from voice_assistant.duplex_loop import (
+            DEFAULT_SILENCE_BEFORE_S,
+            silence_after_s,
+        )
+
+        override = os.getenv("PIB_DUPLEX_SILENCE_AFTER", "").strip()
+        self.record_audio(
+            max_silent_seconds_before=float(
+                os.getenv("PIB_DUPLEX_SILENCE_BEFORE", str(DEFAULT_SILENCE_BEFORE_S))
+            ),
+            max_silent_seconds_after=silence_after_s(
+                getattr(self.personality, "pause_threshold", None),
+                float(override) if override else None,
+            ),
+            on_transcribed_text_received=on_text,
+        )
 
     def record_audio(
         self,
@@ -314,7 +468,7 @@ class VoiceAssistantNode(Node):
         self.play_audio_from_speech(text, gender, language, done.set)
         if not done.wait(timeout=30.0):
             self.get_logger().warning(
-                "Live action announcement did not finish within 30s: %s", text
+                f"Live action announcement did not finish within 30s: {text}"
             )
 
     def play_audio_from_speech(
@@ -349,7 +503,7 @@ class VoiceAssistantNode(Node):
         try:
             ok, fresh = voice_assistant_client.get_personality(personality_id)
         except Exception as exc:
-            self.get_logger().warning("personality refresh failed: %s", exc)
+            self.get_logger().warning(f"personality refresh failed: {exc}")
             return
         if not ok or fresh is None:
             return
@@ -361,13 +515,18 @@ class VoiceAssistantNode(Node):
 
     def _start_spoken_turn(self) -> None:
         """Arm clause playback and, when the personality wrote one, a filler."""
+        # Every answer owns its callbacks, including consecutive turns in one
+        # ON-cycle. An old drain must never release the next answer.
+        self._invalidate_voice_async_work()
         self._cancel_filler_timer()
         self._streaming_speech = StreamingSpeech()
         self._turn_has_playback = False
+        self._answer_audio_pending = False
         with self._filler_lock:
             self._first_token_seen = False
         self._refresh_personality_turn_taking()
         self._arm_filler()
+        self._open_latency_turn()
 
     def _arm_filler(self) -> None:
         personality = self.personality
@@ -379,6 +538,8 @@ class VoiceAssistantNode(Node):
         budget_ms = first_token_budget_ms()
 
         def _fire() -> None:
+            if not self.state.turned_on or self.turning_off:
+                return
             with self._filler_lock:
                 phrase = authored_filler(
                     filler,
@@ -397,7 +558,10 @@ class VoiceAssistantNode(Node):
                 personality.language,
             )
 
-        timer = threading.Timer(budget_ms / 1000.0, _fire)
+        owned_fire = self.if_cycle_not_changed(_fire, require_voice_on=True)
+        timer = threading.Timer(
+            budget_ms / 1000.0, lambda: self._schedule_voice_callback(owned_fire)
+        )
         timer.daemon = True
         self._filler_timer = timer
         timer.start()
@@ -415,14 +579,20 @@ class VoiceAssistantNode(Node):
 
     def _finish_spoken_turn(self) -> None:
         """Restart listening after audio that was queued earlier in the turn."""
+        if not self.state.turned_on or self.turning_off:
+            return
         if self.personality is None:
             return
         if self._turn_has_playback:
+            self._answer_audio_pending = True
+            self._arm_pending_drain_watchdog()
             self.play_audio_from_speech(
                 "",
                 self.personality.gender,
                 self.personality.language,
-                self.if_cycle_not_changed(self.on_final_sentence_played),
+                self.if_cycle_not_changed(
+                    self.on_final_sentence_played, require_voice_on=True
+                ),
             )
             return
         self.on_final_sentence_played()
@@ -498,8 +668,8 @@ class VoiceAssistantNode(Node):
         if not self.get_is_listening(request.chat_id):
             return response
 
-        # if chat is active, jump to next stage of the va-cycle
-        elif request.chat_id == self.state.chat_id:
+        # Spoken barge-in only when voice is ON and this chat owns the channel.
+        elif request.chat_id == self.state.chat_id and self.state.turned_on:
             self.set_is_listening(request.chat_id, False)
             self.play_audio_from_file(STOP_SIGNAL_FILE)
             self.stop_recording()
@@ -509,11 +679,15 @@ class VoiceAssistantNode(Node):
                 request.content,
                 self.state.chat_id,
                 True,
-                self.if_cycle_not_changed(self.on_sentence_received),
-                self.if_cycle_not_changed(self.on_code_visual_received),
+                self.if_cycle_not_changed(
+                    self.on_sentence_received, require_voice_on=True
+                ),
+                self.if_cycle_not_changed(
+                    self.on_code_visual_received, require_voice_on=True
+                ),
             )
 
-        # if not active, create messages, without playing audio etc.
+        # Text-only: other chat, or same chat while voice is OFF.
         else:
             self.set_is_listening(request.chat_id, False)
 
@@ -538,15 +712,28 @@ class VoiceAssistantNode(Node):
         if self.gemini_loop.is_listening:
             return
 
+        if self._answer_audio_pending:
+            # PC-40: never open a recording window on top of answer audio.
+            # PC-49: do not poll with audible start tones; a bounded watchdog
+            # closes a lost drain instead of hanging or stacking turns.
+            self.get_logger().info(
+                "deferring recording until answer audio drains (pending playback)"
+            )
+            self._arm_pending_drain_watchdog()
+            return
+
         self._refresh_personality_turn_taking()
         self.record_audio(
             MAX_SILENT_SECONDS_BEFORE,
             self.personality.pause_threshold,
-            self.if_cycle_not_changed(self.on_stopped_recording),
-            self.if_cycle_not_changed(self.on_transcribed_text_received),
+            self.if_cycle_not_changed(self.on_stopped_recording, require_voice_on=True),
+            self.if_cycle_not_changed(
+                self.on_transcribed_text_received, require_voice_on=True
+            ),
         )
 
         self._answer_is_fallback = False
+        self._stt_failure_cause = None
         self.state.speaking = False
         self.state.using_fallback = self._engine_fallback
         self.set_is_listening(self.state.chat_id, True)
@@ -572,25 +759,61 @@ class VoiceAssistantNode(Node):
         if not self.waiting_for_transcribed_text:
             return
         self.waiting_for_transcribed_text = False
+        if self._stt_failure_cause:
+            # The recording was aborted because the engine failed; the hint
+            # naming the cause is already being spoken. An empty transcript
+            # here is not a user who said nothing.
+            return
+        if not transcript_opens_turn(transcribed_text):
+            # Nobody said anything in that window. Answering it makes the robot
+            # talk to itself: the model replies to an empty message with a
+            # filler sentence, that answer is spoken for 6.5-55 s, and the next
+            # window follows - measured on the test robot as seven
+            # self-triggered turns with empty transcripts in four minutes
+            # (PC-40). So: no chat turn, no speech, just listen again.
+            self.get_logger().info(
+                "nothing transcribed in this window; no chat turn, listening again"
+            )
+            self.play_audio_from_file(
+                START_SIGNAL_FILE,
+                self.if_cycle_not_changed(
+                    self.on_start_signal_played, require_voice_on=True
+                ),
+            )
+            return
         self._start_spoken_turn()
+        self._mark_text_received()
         self.chat(
             transcribed_text,
             self.state.chat_id,
             True,
-            self.if_cycle_not_changed(self.on_sentence_received),
-            self.if_cycle_not_changed(self.on_code_visual_received),
+            self.if_cycle_not_changed(self.on_sentence_received, require_voice_on=True),
+            self.if_cycle_not_changed(
+                self.on_code_visual_received, require_voice_on=True
+            ),
         )
 
     def on_sentence_received(self, sentence: str, is_final: bool) -> None:
+        if not self.state.turned_on or self.turning_off:
+            return
+        if is_final:
+            self.final_chat_response_received = True
         if self.gemini_loop.is_listening:
             return
 
         self._note_first_token()
         if not sentence:
-            self.update_state(False)
+            # Empty tail after streamed clauses: finalize playback, not voice OFF.
+            if is_final and not self.is_executing_program:
+                self._finish_spoken_turn()
             return
         clauses = self._streaming_speech.take(sentence, is_final)
         self.final_chat_response_received = is_final
+        if clauses:
+            # This is the handoff of the turn's first answer clause to the
+            # synthesiser. Marked here rather than in play_audio_from_speech so
+            # a thinking filler never becomes the answer's first sentence.
+            self._mark_first_sentence_flushed()
         if not clauses:
             if is_final and not self.is_executing_program:
                 self._finish_spoken_turn()
@@ -600,14 +823,21 @@ class VoiceAssistantNode(Node):
         for index, clause in enumerate(clauses):
             last = is_final and index == len(clauses) - 1
             on_stopped_playing = (
-                self.if_cycle_not_changed(self.on_final_sentence_played)
+                self.if_cycle_not_changed(
+                    self.on_final_sentence_played, require_voice_on=True
+                )
                 if last and not self.is_executing_program
                 else None
             )
             self._turn_has_playback = True
+            self._answer_audio_pending = True
+            if on_stopped_playing is not None:
+                self._arm_pending_drain_watchdog()
             self.play_audio_from_speech(clause, gender, language, on_stopped_playing)
 
     def on_code_visual_received(self, code_visual: str, is_final: bool) -> None:
+        if not self.state.turned_on or self.turning_off:
+            return
         self.final_chat_response_received = is_final
         if self.is_executing_program:
             self.code_visual_queue.append(code_visual)
@@ -619,6 +849,8 @@ class VoiceAssistantNode(Node):
         self.is_executing_program = True
 
     def on_stopped_executing_program(self) -> None:
+        if not self.state.turned_on or self.turning_off:
+            return
         if self.code_visual_queue:
             code_visual = self.code_visual_queue.pop()
             self.run_program(
@@ -628,25 +860,220 @@ class VoiceAssistantNode(Node):
         else:
             self.is_executing_program = False
             if self.final_chat_response_received:
-                self.play_audio_from_file(
-                    START_SIGNAL_FILE,
-                    self.if_cycle_not_changed(self.on_start_signal_played),
-                )
+                self._finish_spoken_turn()
 
     def on_final_sentence_played(self) -> None:
+        # The player has drained this turn's audio: a new recording window may
+        # open again (PC-40).
+        self._cancel_pending_drain_watchdog()
+        self._answer_audio_pending = False
+        self._playback_epoch += 1
+        self._close_latency_turn(incomplete=False)
+        if not self.state.turned_on or self.turning_off:
+            return
         self.play_audio_from_file(
-            START_SIGNAL_FILE, self.if_cycle_not_changed(self.on_start_signal_played)
+            START_SIGNAL_FILE,
+            self.if_cycle_not_changed(
+                self.on_start_signal_played, require_voice_on=True
+            ),
         )
 
     # helper functions ------------------------------------------------------------------
 
-    def if_cycle_not_changed(self, callback: Callable) -> Callable:
-        """a decorator. the decorated callback only executes, if the cycle has not changed after its creation"""
+    def _trace_source(self) -> str:
+        """Model id when the personality has one, otherwise a generic label."""
+        model = getattr(self.personality, "assistant_model", None)
+        api_name = getattr(model, "api_name", None)
+        if isinstance(api_name, str) and api_name.strip():
+            return api_name.strip()
+        return "voice"
+
+    def _open_latency_turn(self) -> None:
+        """Open the trace. An end_of_speech seen while idle becomes the origin."""
+        try:
+            pending = self._pending_end_of_speech
+            self._pending_end_of_speech = None
+            origin_ms = None
+            if isinstance(pending, dict):
+                try:
+                    stamp = float(pending["ts_ms"])
+                except (KeyError, TypeError, ValueError):
+                    pending = None
+                    self._orphan_dropped += 1
+                else:
+                    age_ms = now_ms() - stamp
+                    limit_ms = self._turn_trace_max_seconds * 1000.0
+                    if age_ms < 0 or age_ms > limit_ms:
+                        pending = None
+                        self._orphan_dropped += 1
+                    else:
+                        origin_ms = stamp
+            if self._turn_trace.is_open:
+                self._close_latency_turn(incomplete=True)
+            self._sentence_flushed = False
+            self._turn_trace.open(
+                self.state.chat_id or "",
+                self._trace_source(),
+                origin_ms=origin_ms,
+            )
+            if self._orphan_dropped:
+                self._turn_trace.dropped_events += self._orphan_dropped
+                self._orphan_dropped = 0
+            if pending is not None and origin_ms is not None:
+                self._turn_trace.observe(pending)
+        except Exception as exc:
+            self.get_logger().warning(f"turn trace open failed: {exc}")
+
+    def _mark_text_received(self) -> None:
+        try:
+            self._turn_trace.mark_local("text_received")
+        except Exception as exc:
+            self.get_logger().warning(f"turn trace text_received failed: {exc}")
+
+    def _mark_first_sentence_flushed(self) -> None:
+        """The turn's first answer clause handed to the synthesiser."""
+        try:
+            if not self._turn_trace.is_open or self._sentence_flushed:
+                return
+            self._sentence_flushed = True
+            self._turn_trace.mark_local("first_sentence_flushed")
+        except Exception as exc:
+            self.get_logger().warning(
+                f"turn trace first_sentence_flushed failed: {exc}"
+            )
+
+    def _close_latency_turn(self, *, incomplete: bool) -> None:
+        """Log the one line and append the JSON record. A closed turn is a no-op."""
+        try:
+            trace = self._turn_trace
+            if not trace.is_open:
+                return
+            if not incomplete:
+                # The audio player stamps last_audio when the burst's queue
+                # drains. Its event may still be in flight for a few
+                # milliseconds when the turn closes, so the completion of the
+                # last playback call - the same boundary, observed here - fills
+                # the gap. Never invented: it only applies to a turn whose
+                # first audio was already reported.
+                if (
+                    trace.elapsed("last_audio") is None
+                    and trace.elapsed("first_audio") is not None
+                ):
+                    trace.mark_local("last_audio")
+                trace.mark_local("turn_end")
+            record = trace.close(incomplete=incomplete)
+            if record is None:
+                return
+            self.get_logger().info(render_line(record))
+            append_record(default_log_path(), record)
+        except Exception as exc:
+            self.get_logger().warning(f"turn trace close failed: {exc}")
+
+    def _on_turn_trace(self, msg: String) -> None:
+        """Subscription callback. Parse and store; never block and never raise."""
+        try:
+            event = parse_event(getattr(msg, "data", "") or "")
+            if event is None:
+                if self._turn_trace.is_open:
+                    self._turn_trace.dropped_events += 1
+                else:
+                    self._orphan_dropped += 1
+                return
+            if self._turn_trace.is_open:
+                if not audio_event_belongs_to_turn(
+                    str(event.get("stage") or ""), self._sentence_flushed
+                ):
+                    # A signal file or a filler is not the answer's audio.
+                    self._turn_trace.dropped_events += 1
+                    return
+                self._turn_trace.observe(event)
+                return
+            if event.get("stage") == "end_of_speech":
+                self._pending_end_of_speech = event
+                return
+            self._orphan_dropped += 1
+        except Exception as exc:
+            self.get_logger().warning(f"turn trace event dropped: {exc}")
+
+    def _turn_trace_watchdog(self) -> None:
+        """Close a turn that outlived PIB_TURN_TRACE_MAX_SECONDS so it cannot leak."""
+        try:
+            trace = self._turn_trace
+            if not trace.is_open:
+                return
+            limit_ms = self._turn_trace_max_seconds * 1000.0
+            if now_ms() - trace.origin_ms < limit_ms:
+                return
+            self._close_latency_turn(incomplete=True)
+        except Exception as exc:
+            self.get_logger().warning(f"turn trace watchdog failed: {exc}")
+
+    def _schedule_voice_callback(self, callback: Callable) -> None:
+        """Timers admit work on the single ROS executor, never across teardown."""
+        executor = self.executor
+        if executor is not None:
+            executor.create_task(callback)
+
+    def _invalidate_voice_async_work(self) -> None:
+        """Drop stale playback/recording callbacks and release pending flags."""
+        self._playback_epoch += 1
+        self._answer_audio_pending = False
+        self._turn_has_playback = False
+        self._streaming_speech = StreamingSpeech()
+        self._cancel_filler_timer()
+        self._cancel_pending_drain_watchdog()
+        self.waiting_for_transcribed_text = False
+
+    def _cancel_pending_drain_watchdog(self) -> None:
+        timer = self._pending_drain_watchdog
+        self._pending_drain_watchdog = None
+        if timer is not None:
+            timer.cancel()
+
+    def _arm_pending_drain_watchdog(self) -> None:
+        if not self._answer_audio_pending:
+            return
+        if self._pending_drain_watchdog is not None:
+            return
+        armed_epoch = self._playback_epoch
+        timeout_s = self._answer_drain_max_seconds
+
+        def _on_timeout() -> None:
+            if not self._answer_audio_pending:
+                return
+            if self._playback_epoch != armed_epoch:
+                return
+            self._pending_drain_watchdog = None
+            self.get_logger().warning(
+                "answer audio drain timed out; forcing playback boundary (PC-49)"
+            )
+            # No drain acknowledgement: fail OFF and request cancellation.
+            # Never fabricate completion or open another recording window.
+            self.update_state(False)
+
+        owned_timeout = self.if_cycle_not_changed(_on_timeout, require_voice_on=True)
+        timer = threading.Timer(
+            timeout_s, lambda: self._schedule_voice_callback(owned_timeout)
+        )
+        timer.daemon = True
+        self._pending_drain_watchdog = timer
+        timer.start()
+
+    def if_cycle_not_changed(
+        self, callback: Callable, *, require_voice_on: bool = False
+    ) -> Callable:
+        """Run callback only if cycle, playback epoch, and optional ON still match."""
         current_cycle = self.cycle
+        playback_epoch = self._playback_epoch
 
         def decorated_callback(*args):
-            if self.cycle == current_cycle:
-                callback(*args)
+            if self.cycle != current_cycle:
+                return
+            if self._playback_epoch != playback_epoch:
+                return
+            if require_voice_on and not self.state.turned_on:
+                return
+            callback(*args)
 
         return decorated_callback
 
@@ -704,6 +1131,30 @@ class VoiceAssistantNode(Node):
         self.state.using_fallback = self._engine_fallback or self._answer_is_fallback
         self._publish_voice_state()
 
+    def _on_stt_failure(self, msg: String) -> None:
+        """The local engine could not transcribe. Name the cause out loud.
+
+        The recorder aborts that goal, so nothing continues with an empty
+        transcript; the technical cause is spoken instead of the canned
+        "could not hear you" line, which would hide a broken engine behind a
+        sentence about silence.
+        """
+        cause = (msg.data or "").strip()
+        self._stt_failure_cause = cause
+        self.waiting_for_transcribed_text = False
+        self._engine_fallback = True
+        self.state.using_fallback = True
+        self._publish_voice_state()
+        self.get_logger().error(f"STT engine failure: {cause}")
+        personality = self.personality
+        if personality is None:
+            return
+        self.play_audio_from_speech(
+            visible_failure_hint(cause),
+            getattr(personality, "gender", None) or "Female",
+            getattr(personality, "language", None) or "German",
+        )
+
     def _republish_visible_state(self) -> None:
         """Repeat the current holder so a display that joined late still sees it."""
         chat_id = self.state.chat_id
@@ -726,6 +1177,27 @@ class VoiceAssistantNode(Node):
         stop_chat = self.chat_id_to_stop_chat.get(chat_id)
         if stop_chat is not None:
             stop_chat()
+
+    def barge_in(self, chat_id: Optional[str] = None) -> bool:
+        """Interrupt active playback and stream cleanly so the next turn can start."""
+        effective_chat_id = chat_id or self.state.chat_id
+        if not effective_chat_id:
+            return False
+        self.cycle += 1
+        self._invalidate_voice_async_work()
+        self.stop_chat(effective_chat_id)
+        self.final_chat_response_received = False
+        self.state.speaking = False
+
+        def on_cleared():
+            if self.state.turned_on and effective_chat_id == self.state.chat_id:
+                self.on_start_signal_played()
+            else:
+                self.set_is_listening(effective_chat_id, True)
+
+        self.clear_playback_queue(on_cleared)
+        self._publish_voice_state()
+        return True
 
     def _sync_voice_state(self) -> None:
         """Fields both Cerebra windows read. The holder is backend state."""
@@ -765,7 +1237,7 @@ class VoiceAssistantNode(Node):
             # still uses the legacy cleanup below.
             if self.gemini_loop.is_listening:
                 self.gemini_loop.stop()
-                self.play_audio_from_file(STOP_SIGNAL_FILE)
+                self._invalidate_voice_async_work()
 
                 self.state.turned_on = False
                 # keep the current chat id if none was provided
@@ -785,9 +1257,10 @@ class VoiceAssistantNode(Node):
                     return True
 
                 self.cycle += 1
+                self._invalidate_voice_async_work()
                 self.turning_off = True
-                self.waiting_for_transcribed_text = False
-                self._cancel_filler_timer()
+                self.state.turned_on = False
+                self.state.chat_id = effective_chat_id
                 self.stop_recording()
                 self.stop_chat(effective_chat_id)
                 self.stop_program_execution()
@@ -797,10 +1270,13 @@ class VoiceAssistantNode(Node):
 
                 current_chat_id = self.state.chat_id
 
+                cleared_epoch = self._playback_epoch
+
                 def on_playback_queue_cleared():
+                    if self._playback_epoch != cleared_epoch:
+                        return
                     self.turning_off = False
                     self.set_is_listening(current_chat_id, True)
-                    self.play_audio_from_file(STOP_SIGNAL_FILE)
 
                 self.clear_playback_queue(on_playback_queue_cleared)
 
@@ -816,6 +1292,12 @@ class VoiceAssistantNode(Node):
                 return False
 
         # ---------- TURNING ON ----------
+        # No mode may bypass an unacknowledged cancellation.
+        if self.turning_off:
+            self.get_logger().warning(
+                "voice activation refused: playback clear not acknowledged"
+            )
+            return False
         # Turning ON requires a valid chat id
         if not effective_chat_id:
             self.get_logger().error("update_state: turning ON but no chat_id available")
@@ -836,9 +1318,8 @@ class VoiceAssistantNode(Node):
             self.state.turned_on, holder_id, pers.personality_id
         ):
             self.get_logger().info(
-                "voice channel is held by personality %s; refusing %s",
-                holder_id,
-                pers.personality_id,
+                f"voice channel is held by personality {holder_id}; "
+                f"refusing {pers.personality_id}"
             )
             return False
 
@@ -858,9 +1339,9 @@ class VoiceAssistantNode(Node):
             and self._cloud_session_allowed()
         )
         self.get_logger().debug(
-            "update_state: voice_start_mode=%s live_model=%s",
-            getattr(pers, "voice_start_mode", None),
-            getattr(pers, "live_model", None),
+            "update_state: voice_start_mode="
+            f"{getattr(pers, 'voice_start_mode', None)} "
+            f"live_model={getattr(pers, 'live_model', None)}"
         )
 
         # Live path: the provider row's pinned model, gated by the live flag
@@ -897,13 +1378,15 @@ class VoiceAssistantNode(Node):
 
             self.stop_chat(effective_chat_id)
             self.set_is_listening(effective_chat_id, False)
-            self.play_audio_from_file(
-                START_SIGNAL_FILE,
-                self.if_cycle_not_changed(self.on_start_signal_played),
-            )
-
             self.state.turned_on = True
             self.state.chat_id = effective_chat_id
+            self._invalidate_voice_async_work()
+            self.play_audio_from_file(
+                START_SIGNAL_FILE,
+                self.if_cycle_not_changed(
+                    self.on_start_signal_played, require_voice_on=True
+                ),
+            )
 
         except Exception as e:
             self.get_logger().error(

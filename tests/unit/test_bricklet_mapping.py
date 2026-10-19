@@ -180,6 +180,11 @@ def _import_bricklet_module(bricklet_dtos):
             "get_all_bricklets",
             mock.Mock(return_value=(True, bricklet_dtos)),
         ),
+        mock.patch.object(
+            bricklet_client,
+            "get_connected_bricklets",
+            mock.Mock(return_value=(True, {"bricklets": []})),
+        ),
     ):
         spec.loader.exec_module(module)
 

@@ -1,3 +1,20 @@
+import {pythonGenerator} from "blockly/python";
+
+/**
+ * Add module-level definitions (imports, helper functions) to the generated file.
+ *
+ * Blockly's own code generators collect these in ``definitions_``; the 13.x typings
+ * mark that field protected, so the access lives here once instead of being cast in
+ * every generator.
+ */
+export function addDefinitions(
+    generator: typeof pythonGenerator,
+    definitions: Record<string, string>,
+): void {
+    const target = generator as unknown as {definitions_: Record<string, string>};
+    Object.assign(target.definitions_, definitions);
+}
+
 // imports
 
 export const IMPORT_RCLPY = "import rclpy";

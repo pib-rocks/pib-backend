@@ -68,6 +68,14 @@ def test_pib_cloud_maps_to_a_user_defined_route():
     assert provider_needs_key(mapping.provider, mapping.env_vars[0]) is True
 
 
+def test_pib_cloud_without_a_registry_endpoint_defaults_to_pib_rocks(monkeypatch):
+    monkeypatch.delenv("PIB_CLOUD_BASE_URL", raising=False)
+    mapping = provider_for_profile("pib.Cloud", None)
+    assert mapping.provider == "pib-cloud"
+    assert mapping.env_vars == ("PIB_CLOUD_API_KEY",)
+    assert mapping.base_url == "https://api.pib.rocks/v1"
+
+
 def test_local_maps_to_a_keyless_openai_route():
     mapping = provider_for_profile("Local", "http://host.docker.internal:11434/v1")
     assert mapping.provider == "local"
@@ -208,26 +216,32 @@ def test_writer_seeds_speed_defaults_only_when_absent(tmp_path):
 
     _ensure_mcp_servers_pib(str(pdir), model="gemini-3.8-flash", provider="gemini")
     cfg = _load(str(pdir))
-    assert cfg["reasoning_effort"] == DEFAULT_REASONING_EFFORT
-    assert cfg["max_tokens"] == DEFAULT_MAX_TOKENS
-    assert cfg["temperature"] == DEFAULT_TEMPERATURE
+    assert cfg["agent"]["reasoning_effort"] == DEFAULT_REASONING_EFFORT
+    assert cfg["agent"]["max_tokens"] == DEFAULT_MAX_TOKENS
+    assert cfg["agent"]["temperature"] == DEFAULT_TEMPERATURE
+    assert "reasoning_effort" not in cfg
+    assert "max_tokens" not in cfg
+    assert "temperature" not in cfg
 
     with open(os.path.join(str(pdir), "config.yaml"), "w", encoding="utf-8") as fh:
         yaml.safe_dump(
             {
                 "model": "gemini-3.8-flash",
                 "provider": "gemini",
-                "reasoning_effort": "high",
-                "max_tokens": 8192,
-                "temperature": 1.0,
+                "agent": {
+                    "reasoning_effort": "high",
+                    "max_tokens": 8192,
+                    "temperature": 1.0,
+                },
             },
             fh,
         )
     _ensure_mcp_servers_pib(str(pdir), model="gemini-3.8-flash", provider="gemini")
     cfg = _load(str(pdir))
-    assert cfg["reasoning_effort"] == "high"
-    assert cfg["max_tokens"] == 8192
-    assert cfg["temperature"] == 1.0
+    assert cfg["agent"]["reasoning_effort"] == "high"
+    assert cfg["agent"]["max_tokens"] == 8192
+    assert cfg["agent"]["temperature"] == 1.0
+    assert "reasoning_effort" not in cfg
 
 
 # --- settings reader -------------------------------------------------------

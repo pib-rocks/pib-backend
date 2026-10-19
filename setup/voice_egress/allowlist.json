@@ -1,0 +1,120 @@
+{
+  "version": 1,
+  "table": "pib_voice_egress",
+  "subject": {
+    "compose_service": "ros-voice-assistant",
+    "container_name": "multirepo-ros-voice-assistant-1",
+    "mac_address": "02:50:49:42:00:45",
+    "network": "pib-network"
+  },
+  "notes": [
+    "The policy limits destinations (address and port), not URL paths on a host.",
+    "Docker embedded DNS at 127.0.0.11 is inside the container network namespace and is not filtered here. A name can still resolve; the connection to the resolved address is what this policy accepts or rejects.",
+    "IPv6 egress from the voice container is rejected so an AAAA answer is not an alternate route.",
+    "Direct, Smart, and native Live share generativelanguage.googleapis.com:443. Host and port filtering cannot separate those URL paths.",
+    "platform.tryb.ai stays disabled until a live connection is observed.",
+    "huggingface.co is the only TTS asset host measured on .172. Hugging Face serves large blobs through a CDN or Xet host; none was observed in the container log, and the three cdn-lfs.huggingface.co* names do not resolve at all. A cold-cache download of a large blob may therefore need another entry - measure the redirect target before relying on this list for weights."
+  ],
+  "entries": [
+    {
+      "id": "pib-cloud",
+      "enabled": true,
+      "modes": [
+        "common"
+      ],
+      "destination": "api.pib.rocks",
+      "port": 443,
+      "protocol": "tcp",
+      "resolve": "dns",
+      "hook": "forward",
+      "purpose": "pib.Cloud speech-to-text upload and streaming chat.",
+      "evidence": "Measured on .172 on 2026-10-18 (PC-75): GET https://api.pib.rocks/health 200, GET /ready 200 {ready:true, model:openai/gpt-oss-120b, provider:groq, upstream:warm}, GET /v1/models 401 with the same error contract as the retired LAN port, and POST /v1/voice-assistant/speech-to-text 400 (same multipart contract). The container resolves api.pib.rocks to 178.105.138.93 through Docker DNS, so resolve:dns has an address at apply time."
+    },
+    {
+      "id": "ollama",
+      "enabled": true,
+      "modes": [
+        "common"
+      ],
+      "destination": "host.docker.internal",
+      "port": 11434,
+      "protocol": "tcp",
+      "resolve": "bridge-gateway",
+      "hook": "input",
+      "purpose": "On-device model endpoint. Resolve host.docker.internal inside the container: Docker host-gateway need not equal the attached bridge gateway.",
+      "evidence": "Measured on .172 on 2026-10-15: host.docker.internal resolves to 172.17.0.1 while the attached bridge gateway is 172.18.0.1. TCP 11434 remains reachable with the corrected bridge-family policy applied."
+    },
+    {
+      "id": "pib-network",
+      "enabled": true,
+      "modes": [
+        "common"
+      ],
+      "destination": "pib-network",
+      "port": null,
+      "protocol": "any",
+      "resolve": "bridge-subnet",
+      "hook": "forward",
+      "purpose": "Intra-bridge peers: flask-app:5000, rosbridge-ws:9090, pib-blockly-server:2442, and ROS 2 DDS unicast. The bridge gateway address is excluded so this rule is not a full allow to every host port.",
+      "evidence": "Measured on .172 on 2026-10-15 (PC-45 plan): NetworkMode=multirepo_pib-network, container address 172.18.0.11, shared with the other robot containers. Compose environment names those peers. The subnet prefix was not recorded and is read from Docker at apply time."
+    },
+    {
+      "id": "ros-dds-multicast",
+      "enabled": true,
+      "modes": [
+        "common"
+      ],
+      "destination": "224.0.0.0/4",
+      "port": null,
+      "protocol": "any",
+      "resolve": "multicast",
+      "hook": "forward",
+      "purpose": "ROS 2 DDS multicast discovery, accepted only when it leaves via the pib-network bridge. It is not forwarded to the LAN.",
+      "evidence": "The voice service launches ROS 2 nodes (assistant, audio_player, audio_recorder, chat, token_service). On-wire multicast was not observed; this entry exists so discovery is not cut. Unproven until conntrack on .172 shows it."
+    },
+    {
+      "id": "gemini",
+      "enabled": true,
+      "modes": [
+        "direct",
+        "smart",
+        "live"
+      ],
+      "destination": "generativelanguage.googleapis.com",
+      "port": 443,
+      "protocol": "tcp",
+      "resolve": "dns",
+      "hook": "forward",
+      "purpose": "Direct generateContent, the Hermes daemon's gemini provider, and the native Live websocket. All three use this host on port 443. Addresses are resolved when the policy is applied.",
+      "evidence": "Measured on .172 on 2026-10-15 (PC-45 plan): HTTPS to generativelanguage.googleapis.com returned 404, so the host is reachable. Hermes provider is gemini. Code: direct_tool_loop.py PINNED_ENDPOINT and audio_loop.py client.aio.live.connect (google-genai). A live Direct, Smart, or Live flow was not captured in this session."
+    },
+    {
+      "id": "huggingface",
+      "enabled": true,
+      "modes": [
+        "common"
+      ],
+      "destination": "huggingface.co",
+      "port": 443,
+      "protocol": "tcp",
+      "resolve": "dns",
+      "hook": "forward",
+      "purpose": "TTS assets. audio_player loads the Supertone/supertonic-3 voice styles at container start; without this destination the player cannot load them and speech output breaks.",
+      "evidence": "Measured on .172 on 2026-10-15 in the recreated container's log: 54 requests to https://huggingface.co (HEAD resolve path 307, GET api/resolve-cache/... 200, 'Fetching 26 files'), and this was the only external host contacted besides the allowlisted ones. Re-measured after the privilege and mount reduction, not carried over from the plan."
+    },
+    {
+      "id": "tryb",
+      "enabled": false,
+      "modes": [
+        "legacy-tryb"
+      ],
+      "destination": "platform.tryb.ai",
+      "port": 443,
+      "protocol": "tcp",
+      "resolve": "dns",
+      "hook": "forward",
+      "purpose": "Legacy tryb_api speech route. Disabled because use was not observed. Enabling this entry is what adds the destination; the code path is unchanged.",
+      "evidence": "Unproven. TRYB_URL_PREFIX=https://platform.tryb.ai is set (PC-45 plan). No connection to platform.tryb.ai was observed from this session, and the legacy route was not exercised."
+    }
+  ]
+}

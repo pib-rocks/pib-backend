@@ -1,10 +1,57 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 import json
+from pathlib import Path
 
 import pytest
 
 from service import revision_service, update_service
+
+
+def test_release_helper_is_found_in_this_checkout(monkeypatch):
+    """The checkout layout keeps working, and the container path is among the candidates."""
+    monkeypatch.delenv(update_service.RELEASE_HELPER_ENV, raising=False)
+    monkeypatch.setattr(update_service, "_RELEASES_MODULE", None)
+    candidates = update_service._release_helper_candidates()
+    repo_root = Path(__file__).resolve().parents[2]
+    assert repo_root / "setup" / "update_releases.py" in candidates
+    assert update_service.RELEASE_HELPER_CONTAINER_PATH in candidates
+    # every parent of the module is tried, not a fixed index (the container layout is shallower)
+    assert len(candidates) >= len(Path(update_service.__file__).resolve().parents)
+    module = update_service._release_module()
+    assert callable(module.annotate_relations)
+
+
+def test_release_helper_missing_names_the_cause(monkeypatch, tmp_path):
+    """A layout without the helper names what was tried - not IndexError, which was a 500."""
+    monkeypatch.setattr(update_service, "_RELEASES_MODULE", None)
+    monkeypatch.setattr(
+        update_service,
+        "_release_helper_candidates",
+        lambda: [tmp_path / "setup" / "update_releases.py"],
+    )
+    with pytest.raises(update_service.UpdateHelperUnavailableError) as error:
+        update_service._release_module()
+    message = str(error.value)
+    assert "release pairing helper is not available" in message
+    assert str(tmp_path) in message
+
+
+def test_annotate_degrades_when_the_helper_is_unavailable(monkeypatch, tmp_path):
+    """The availability document is written by the host runner, so it stays usable without it."""
+    monkeypatch.setattr(update_service, "_RELEASES_MODULE", None)
+    monkeypatch.setattr(
+        update_service, "_release_helper_candidates", lambda: [tmp_path / "nope.py"]
+    )
+    document = {"state": "idle", "releases": [{"tag": "v1.0.0", "commitTargets": {}}]}
+    result = update_service.annotate_installed_release(document, {})
+    assert result["state"] == "idle"
+    assert result["releases"] == document["releases"]
+    assert "looked at" in result["annotationsUnavailable"]
+    # a pending document keeps its shape too
+    pending = {"state": "pending", "previous": {"releases": []}, "jobId": "job-1"}
+    assert update_service.annotate_installed_release(pending, {})["jobId"] == "job-1"
 
 
 def test_request_validation_and_building():
@@ -155,7 +202,7 @@ def test_enqueue_accepts_a_directory_with_the_installer_marker(tmp_path):
         confirmation="UPDATE",
         actor="127.0.0.1",
         job_id="job-1",
-        requested_at="2026-09-21T00:00:00+00:00",
+        requested_at=datetime.now(timezone.utc).isoformat(),
     )
 
     status = update_service.enqueue_update(document, directory)
@@ -190,3 +237,122 @@ def test_installed_revisions_reads_runner_files(tmp_path, monkeypatch):
 
 def test_program_running_hook_explicitly_has_no_signal():
     assert update_service.program_running_signal() is None
+
+
+def _marker(directory, **extra):
+    document = {
+        "schemaVersion": 1,
+        "updateCheck": True,
+        "runner": "/host/setup/update_runner.sh",
+    }
+    document.update(extra)
+    (directory / "service.json").write_text(json.dumps(document), encoding="utf-8")
+
+
+def test_old_queued_request_is_stale_until_a_new_one_is_accepted(tmp_path):
+    directory = tmp_path / "update"
+    directory.mkdir()
+    _marker(directory, units=list(update_service.HOST_UPDATE_UNITS))
+    requested_at = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    update_service.atomic_write_json(
+        directory / "request.json",
+        {
+            "schemaVersion": 1,
+            "jobId": "old-job",
+            "requestedAt": requested_at,
+            "channel": "release",
+        },
+    )
+
+    stale = update_service.get_status(directory)
+    assert stale["classification"] == "stale"
+    assert stale["blocksNewUpdate"] is False
+    assert update_service.is_active(stale, True) is False
+
+    fresh = update_service.build_request(
+        channel="release",
+        force=False,
+        confirmation="UPDATE",
+        actor="127.0.0.1",
+    )
+    accepted = update_service.enqueue_update(fresh, directory)
+    assert accepted["classification"] == "queued"
+    assert accepted["interruptedJob"]["jobId"] == "old-job"
+
+
+def test_active_job_with_a_fresh_heartbeat_stays_running(tmp_path):
+    directory = tmp_path / "update"
+    directory.mkdir()
+    _marker(directory)
+    now = datetime.now(timezone.utc)
+    update_service.atomic_write_json(
+        directory / "request.json",
+        {"jobId": "job-live", "requestedAt": now.isoformat(), "channel": "release"},
+    )
+    update_service.atomic_write_json(
+        directory / "status.json",
+        {"jobId": "job-live", "state": "building", "channel": "release"},
+    )
+    update_service.atomic_write_json(
+        directory / "executor.json",
+        {"jobId": "job-live", "updatedAt": now.isoformat(), "pid": 1},
+    )
+
+    status = update_service.get_status(directory, now=now)
+    assert status["classification"] == "running"
+    assert status["blocksNewUpdate"] is True
+
+
+def test_stopped_heartbeat_does_not_block_forever(tmp_path):
+    directory = tmp_path / "update"
+    directory.mkdir()
+    _marker(directory)
+    now = datetime.now(timezone.utc)
+    update_service.atomic_write_json(
+        directory / "request.json",
+        {"jobId": "job-dead", "requestedAt": now.isoformat(), "channel": "develop"},
+    )
+    update_service.atomic_write_json(
+        directory / "status.json",
+        {"jobId": "job-dead", "state": "building", "channel": "develop"},
+    )
+    update_service.atomic_write_json(
+        directory / "executor.json",
+        {
+            "jobId": "job-dead",
+            "updatedAt": (now - timedelta(minutes=10)).isoformat(),
+            "pid": 1,
+        },
+    )
+
+    status = update_service.get_status(directory, now=now)
+    assert status["classification"] == "stale"
+    assert "heartbeat" in status["staleReason"].lower()
+
+
+def test_readiness_requires_attested_units_and_does_not_treat_marker_as_liveness(
+    tmp_path,
+):
+    directory = tmp_path / "update"
+    directory.mkdir()
+    (directory / "service.json").write_text(
+        '{"schemaVersion":1,"updateCheck":true}', encoding="utf-8"
+    )
+
+    incomplete = update_service.evaluate_readiness(directory)
+    assert incomplete["ready"] is False
+    assert incomplete["serviceMarkerIsNotLiveness"] is True
+    missing = [
+        item["name"] for item in incomplete["checks"] if item["status"] == "missing"
+    ]
+    assert "host_units" in missing
+    assert any(
+        item.get("repair")
+        for item in incomplete["checks"]
+        if item["name"] == "host_units"
+    )
+
+    _marker(directory, units=list(update_service.HOST_UPDATE_UNITS))
+    ready = update_service.evaluate_readiness(directory)
+    assert ready["ready"] is True
+    assert any(item["status"] == "declared" for item in ready["checks"])

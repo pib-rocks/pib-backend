@@ -196,3 +196,76 @@ def hermes_turn_has_a_provider_key(monkeypatch: pytest.MonkeyPatch) -> None:
         "provider_key_for_turn",
         lambda: "fixture-hermes-key",
     )
+
+
+# A skip whose reason is not listed here fails the session. A missing camera
+# wheel or a missing model blob must run, not skip, once the unit job installs
+# the wheels and the model release asset.
+_ALLOWED_SKIP_REASONS = (
+    # test_setup_build_hygiene.py: two parametrized checks share this reason.
+    # A Dockerfile that never invokes pip has no pin and no root-user action
+    # to assert, so the skip is the check.
+    "image does not use pip",
+)
+
+_seen_skips: list[tuple[str, str]] = []
+
+
+def _skip_reason(report) -> str:
+    longrepr = getattr(report, "longrepr", None)
+    if isinstance(longrepr, tuple) and len(longrepr) >= 3:
+        text = str(longrepr[2])
+    else:
+        text = str(longrepr or "")
+    prefix = "Skipped: "
+    if text.startswith(prefix):
+        text = text[len(prefix) :]
+    return text.strip()
+
+
+def _record_skip(nodeid: str, reason: str) -> None:
+    item = (nodeid, reason)
+    if item not in _seen_skips:
+        _seen_skips.append(item)
+
+
+def _disallowed_skips() -> list[tuple[str, str]]:
+    return [
+        (nodeid, reason)
+        for nodeid, reason in _seen_skips
+        if reason not in _ALLOWED_SKIP_REASONS
+    ]
+
+
+def pytest_collectreport(report):
+    """Module-level pytest.skip is reported at collection, not as a test call."""
+    if getattr(report, "skipped", False):
+        _record_skip(getattr(report, "nodeid", ""), _skip_reason(report))
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    outcome = yield
+    report = outcome.get_result()
+    if report.skipped and report.when in ("setup", "call"):
+        _record_skip(report.nodeid, _skip_reason(report))
+
+
+def pytest_terminal_summary(terminalreporter, exitstatus, config):
+    if not _seen_skips:
+        return
+    terminalreporter.write_sep("=", "unit skip policy")
+    for nodeid, reason in _seen_skips:
+        mark = "ALLOW" if reason in _ALLOWED_SKIP_REASONS else "DENY"
+        terminalreporter.write_line(f"{mark} {nodeid}: {reason}")
+    disallowed = _disallowed_skips()
+    if disallowed:
+        terminalreporter.write_line(
+            f"{len(disallowed)} skip(s) outside the allowlist in tests/unit/conftest.py"
+        )
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_sessionfinish(session, exitstatus):
+    if _disallowed_skips() and session.exitstatus == 0:
+        session.exitstatus = pytest.ExitCode.TESTS_FAILED

@@ -14,6 +14,7 @@ CANCEL_FILE="$UPDATE_DIR/cancel.json"
 CHECK_FILE="$UPDATE_DIR/check.json"
 AVAILABLE_FILE="$UPDATE_DIR/available.json"
 CHECK_HELPER="$BACKEND_DIR/setup/update_check.py"
+RELEASE_HELPER="$BACKEND_DIR/setup/update_releases.py"
 if [ "${1:-}" = "--check" ]; then
     LOG_FILE="$UPDATE_DIR/check.log"
 else
@@ -64,6 +65,9 @@ PREDECESSOR_INTERRUPTED="false"
 PREDECESSOR_STATE="unknown"
 WATCHDOG_ORIGINAL_US=""
 WATCHDOG_RESTORE_NEEDED="false"
+# Set only when this update is about to change the model store, so a later
+# rollback can put the previous blobs back. Empty means the store was not touched.
+MODEL_STORE_SNAPSHOT=""
 
 mkdir -p "$UPDATE_DIR"
 touch "$LOG_FILE"
@@ -71,6 +75,19 @@ exec >>"$LOG_FILE" 2>&1
 
 log() {
     printf '[%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"
+}
+
+# installation_scripts/ollama_listen.sh reports with `print LEVEL message`.
+# This runner otherwise logs through log(); map print onto that so a sourced
+# helper stays in the update log.
+print() {
+    local level="$1"
+    local text="${2:-}"
+    if [ -z "$text" ]; then
+        text="$level"
+        level="INFO"
+    fi
+    log "${level}: ${text}"
 }
 
 read_remote_revision() {
@@ -124,11 +141,79 @@ run_check() {
     cerebra_target="$REMOTE_TARGET"
     cerebra_error="$REMOTE_ERROR"
 
-    python3 "$CHECK_HELPER" write "$AVAILABLE_FILE" \
-        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-        "pib-backend" "$backend_installed" "$backend_target" "$backend_error" \
-        "cerebra" "$cerebra_installed" "$cerebra_target" "$cerebra_error"
-    log "Update availability check completed for channel $CHANNEL"
+    local checked_at spec_file releases_file
+    checked_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    spec_file="$UPDATE_DIR/.check-spec.json"
+    releases_file="$UPDATE_DIR/.releases.json"
+    rm -f "$releases_file"
+    if [ "$CHANNEL" = "release" ]; then
+        if ! python3 "$RELEASE_HELPER" discover "$releases_file"; then
+            log "Release discovery could not write a result"
+        fi
+    fi
+    CHECK_ID="${CHECK_ID:-}" CHANNEL="$CHANNEL" CHECKED_AT="$checked_at" \
+        SPEC_FILE="$spec_file" AVAILABLE_FILE="$AVAILABLE_FILE" \
+        RELEASES_FILE="$releases_file" \
+        BACKEND_INSTALLED="$backend_installed" BACKEND_TARGET="$backend_target" \
+        BACKEND_ERROR="$backend_error" CEREBRA_INSTALLED="$cerebra_installed" \
+        CEREBRA_TARGET="$cerebra_target" CEREBRA_ERROR="$cerebra_error" \
+        python3 - <<'PY'
+import json
+import os
+from pathlib import Path
+
+previous = None
+available = Path(os.environ["AVAILABLE_FILE"])
+if available.is_file():
+    try:
+        loaded = json.loads(available.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        loaded = None
+    if isinstance(loaded, dict):
+        loaded.pop("previous", None)
+        previous = loaded
+releases = None
+releases_path = Path(os.environ.get("RELEASES_FILE", ""))
+if os.environ.get("CHANNEL") == "release" and releases_path.is_file():
+    try:
+        loaded_releases = json.loads(releases_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        loaded_releases = {
+            "releases": [],
+            "incomplete": [],
+            "excluded": [],
+            "latestInstallable": None,
+            "error": "Release discovery result could not be read",
+        }
+    if isinstance(loaded_releases, dict):
+        releases = loaded_releases
+spec = {
+    "checkedAt": os.environ["CHECKED_AT"],
+    "checkId": os.environ.get("CHECK_ID") or None,
+    "channel": os.environ["CHANNEL"],
+    "state": "completed",
+    "previous": previous,
+    "installed": {
+        "pib-backend": os.environ["BACKEND_INSTALLED"],
+        "cerebra": os.environ["CEREBRA_INSTALLED"],
+    },
+    "remote": {
+        "pib-backend": {
+            "target": os.environ["BACKEND_TARGET"],
+            "error": os.environ["BACKEND_ERROR"],
+        },
+        "cerebra": {
+            "target": os.environ["CEREBRA_TARGET"],
+            "error": os.environ["CEREBRA_ERROR"],
+        },
+    },
+    "releases": releases,
+}
+Path(os.environ["SPEC_FILE"]).write_text(json.dumps(spec), encoding="utf-8")
+PY
+    python3 "$CHECK_HELPER" commit "$spec_file" "$AVAILABLE_FILE"
+    rm -f "$spec_file" "$releases_file"
+    log "Update availability check completed for channel $CHANNEL check ${CHECK_ID:-unknown}"
 }
 
 if [ "${1:-}" = "--check" ]; then
@@ -205,6 +290,7 @@ load_request() {
     if ! parsed=$(REQUEST_FILE="$REQUEST_FILE" python3 - <<'PY'
 import json
 import os
+import re
 import shlex
 
 with open(os.environ["REQUEST_FILE"], encoding="utf-8") as source:
@@ -225,10 +311,32 @@ if request["channel"] not in {"release", "develop"}:
     raise ValueError("invalid request channel")
 if request["confirmation"] != "UPDATE":
     raise ValueError("invalid confirmation token")
+release = request.get("release", "")
+if release is None:
+    release = ""
+if not isinstance(release, str) or (
+    release and not re.fullmatch(r"v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)", release)
+):
+    raise ValueError("invalid request field: release")
+backend_pin = ""
+cerebra_pin = ""
+targets = request.get("targets")
+if targets is not None:
+    if not isinstance(targets, dict):
+        raise ValueError("invalid request field: targets")
+    for name in ("pib-backend", "cerebra"):
+        value = targets.get(name)
+        if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{40}", value):
+            raise ValueError(f"invalid request field: targets.{name}")
+    backend_pin = targets["pib-backend"]
+    cerebra_pin = targets["cerebra"]
 print("JOB_ID=" + shlex.quote(request["jobId"]))
 print("REQUESTED_AT=" + shlex.quote(request["requestedAt"]))
 print("CHANNEL=" + shlex.quote(request["channel"]))
 print("FORCE=" + ("true" if request["force"] else "false"))
+print("RELEASE_TAG=" + shlex.quote(release))
+print("BACKEND_PIN=" + shlex.quote(backend_pin))
+print("CEREBRA_PIN=" + shlex.quote(cerebra_pin))
 PY
     ); then
         fail "request.json is invalid"
@@ -295,6 +403,69 @@ restore_watchdog() {
     rm -f "$WATCHDOG_TARGET_FILE" || true
 }
 
+# executor.json is the liveness signal. service.json only records installation.
+# The parent writes it immediately; the child refreshes it during long builds.
+HEARTBEAT_PID=""
+write_executor_heartbeat() {
+    JOB_ID="$JOB_ID" UPDATE_DIR="$UPDATE_DIR" python3 - <<'PY'
+import json
+import os
+import tempfile
+from datetime import datetime, timezone
+
+directory = os.environ["UPDATE_DIR"]
+document = {
+    "schemaVersion": 1,
+    "jobId": os.environ["JOB_ID"],
+    "updatedAt": datetime.now(timezone.utc).isoformat(),
+    "pid": os.getppid(),
+}
+path = os.path.join(directory, "executor.json")
+descriptor, temporary = tempfile.mkstemp(prefix=".executor.json.", dir=directory)
+try:
+    with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+        json.dump(document, output, sort_keys=True)
+        output.write("\n")
+        output.flush()
+        os.fsync(output.fileno())
+    os.chmod(temporary, 0o660)
+    os.replace(temporary, path)
+except BaseException:
+    try:
+        os.unlink(temporary)
+    except FileNotFoundError:
+        pass
+    raise
+PY
+}
+
+start_heartbeat() {
+    write_executor_heartbeat
+    (
+        while true; do
+            sleep 30
+            write_executor_heartbeat || true
+        done
+    ) &
+    HEARTBEAT_PID=$!
+}
+
+stop_heartbeat() {
+    if [ -n "${HEARTBEAT_PID:-}" ]; then
+        kill "$HEARTBEAT_PID" 2>/dev/null || true
+        wait "$HEARTBEAT_PID" 2>/dev/null || true
+        HEARTBEAT_PID=""
+    fi
+}
+
+on_runner_exit() {
+    # A failing EXIT handler must not replace the terminal status via the ERR trap.
+    trap - ERR
+    stop_heartbeat || true
+    restore_watchdog || true
+    return 0
+}
+
 extend_watchdog_for_build() {
     local current_display original_us target_us
     current_display="$(systemctl show --property=RuntimeWatchdogUSec --value 2>/dev/null || true)"
@@ -331,7 +502,7 @@ extend_watchdog_for_build() {
     # target but before sudo returns, the EXIT trap still restores the original.
     WATCHDOG_ORIGINAL_US="$original_us"
     WATCHDOG_RESTORE_NEEDED="true"
-    trap restore_watchdog EXIT
+    trap on_runner_exit EXIT
     if sudo -n "$WATCHDOG_HELPER"; then
         log "Extended systemd watchdog timeout from ${original_us}us to ${target_us}us for the update build"
     else
@@ -445,6 +616,40 @@ resolve_app_version() {
     return 1
 }
 
+# 4 GiB images never install ollama (variant gate in setup-pib.sh). A missing
+# unit is success: the drop-in directory is not created, and this update
+# continues. The drop-in body, the installed-unit guard, and the idempotency
+# rule live in installation_scripts/ollama_listen.sh; this function only
+# decides when to apply them.
+#
+# This update restarts ollama when the drop-in file changes. The official unit
+# is already serving on loopback, and a file written without a restart is not
+# loaded until the next boot. build_backend_stack recreates flask-app
+# immediately afterwards, and that container probes Ollama as soon as it
+# starts, so the new bind has to be in effect first. The helper restarts only
+# when the file changed and the unit is active: a second update on an
+# already-configured device does not rewrite the drop-in or restart the
+# service, and a unit that is not active is not started.
+#
+# verify_result compares git revisions and the compose services snapshotted
+# before the update. ollama is a host systemd unit, not one of those services,
+# so this restart cannot fail that gate or the rollback that follows a failed
+# verification.
+ensure_ollama_for_update() {
+    local helper="${PIB_OLLAMA_LISTEN_HELPER:-$BACKEND_DIR/setup/installation_scripts/ollama_listen.sh}"
+    if [ ! -f "$helper" ]; then
+        print ERROR "ollama: listen helper not found at ${helper}"
+        return 1
+    fi
+    # shellcheck source=installation_scripts/ollama_listen.sh
+    source "$helper"
+    if ! ollama_unit_installed; then
+        print INFO "ollama: not installed; listen drop-in left unset"
+        return 0
+    fi
+    ensure_ollama_listen_dropin restart
+}
+
 # Documented injection is `docker compose build --build-arg APP_VERSION=<version>
 # flask-app` (docs/RELEASE.md). -f is required because this runner does not cd
 # into the checkout. APP_VERSION is also exported: the following
@@ -479,6 +684,27 @@ fetch_repository() {
         git -C "$directory" clean -fd
     fi
     git -C "$directory" reset --hard "origin/$branch"
+}
+
+# Install the commits recorded when the operator confirmed the job.
+# A later origin/main or origin/develop head is not the target.
+checkout_recorded_target() {
+    local directory="$1"
+    local branch="$2"
+    local pin="$3"
+    local head=""
+    git -C "$directory" fetch --prune --tags --force origin "$branch" || return 1
+    if [ -n "${RELEASE_TAG:-}" ]; then
+        git -C "$directory" fetch origin "refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}" || return 1
+    fi
+    git -C "$directory" fetch origin "$pin" || return 1
+    if [ "$FORCE" = "true" ]; then
+        git -C "$directory" reset --hard || return 1
+        git -C "$directory" clean -fd || return 1
+    fi
+    git -C "$directory" checkout --detach "$pin" || return 1
+    head="$(git -C "$directory" rev-parse HEAD)"
+    [ "$head" = "$pin" ] || fail "$(basename "$directory") is at ${head}, not the recorded target ${pin}"
 }
 
 wait_for_flask() {
@@ -632,11 +858,155 @@ except BaseException:
 PY
 }
 
+# setup-pib.sh defaults the blob cache to ${HOME}/app/.cache/pib-models.
+# This runner is started with elevated privileges, and HOME is then not
+# necessarily /home/pib, so an unset PIB_MODEL_CACHE is pinned to the pib
+# user's cache. A caller-supplied PIB_MODEL_CACHE is left alone. The store
+# path is not overridden: setup-pib.sh already defaults it to the absolute
+# /home/pib/app/pib-models (PIB_MODEL_STORE still wins when set).
+model_cache_dir() {
+    printf '%s\n' "${PIB_MODEL_CACHE:-/home/pib/app/.cache/pib-models}"
+}
+
+model_store_dir() {
+    printf '%s\n' "${PIB_MODEL_STORE:-/home/pib/app/pib-models}"
+}
+
+refuse_model_store_path() {
+    case "$1" in
+        "" | "/" | "." | ".." | "/home" | "/home/pib" | "/home/pib/app" | "/tmp" | "/var" | "/var/tmp")
+            return 0
+            ;;
+        /*)
+            return 1
+            ;;
+    esac
+    return 0
+}
+
+snapshot_model_store() {
+    local store="$1"
+    local destination
+    if refuse_model_store_path "$store"; then
+        log "refusing to snapshot model store path '${store}'"
+        return 1
+    fi
+    destination="$(mktemp -d "$UPDATE_DIR/model-store-snapshot.XXXXXX")"
+    if [ -d "$store" ] && [ -n "$(ls -A "$store")" ]; then
+        cp -a "$store"/. "$destination"/
+    fi
+    MODEL_STORE_SNAPSHOT="$destination"
+    log "Snapshotted model store ${store} before provisioning"
+}
+
+restore_model_store_snapshot() {
+    local store="$1"
+    if [ -z "$MODEL_STORE_SNAPSHOT" ] || [ ! -d "$MODEL_STORE_SNAPSHOT" ]; then
+        return 0
+    fi
+    if refuse_model_store_path "$store"; then
+        log "refusing to restore model store path '${store}'"
+        return 1
+    fi
+    log "Restoring model store ${store} from the pre-provision snapshot"
+    mkdir -p -- "$store"
+    find "$store" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+    if [ -n "$(ls -A "$MODEL_STORE_SNAPSHOT")" ]; then
+        cp -a "$MODEL_STORE_SNAPSHOT"/. "$store"/
+    fi
+    rm -rf "$MODEL_STORE_SNAPSHOT"
+    MODEL_STORE_SNAPSHOT=""
+}
+
+discard_model_store_snapshot() {
+    if [ -n "$MODEL_STORE_SNAPSHOT" ]; then
+        rm -rf "$MODEL_STORE_SNAPSHOT"
+        MODEL_STORE_SNAPSHOT=""
+    fi
+}
+
+# Last "Models summary: placed=N already current=N failed=N" line from --models.
+# Prints the failed count. Returns 1 when that OAK line is absent: a whisper
+# failure has no such line, and a crash before the summary must not look like success.
+oak_summary_failed_count() {
+    local output="$1"
+    local summary failed
+    summary="$(printf '%s\n' "$output" | grep -E 'Models summary: placed=[0-9]+ already current=[0-9]+ failed=[0-9]+' | tail -n 1 || true)"
+    [ -n "$summary" ] || return 1
+    failed="${summary##*failed=}"
+    failed="${failed%% *}"
+    case "$failed" in
+        '' | *[!0-9]*)
+            return 1
+            ;;
+    esac
+    printf '%s\n' "$failed"
+}
+
+# After the release checkout: compare the store with models/manifest.yaml.
+# --verify-models is offline. A match does no provisioning and no fetch.
+# A mismatch runs --models, which reads the cache and fetches the release asset
+# only when the cache does not match either. --models also provisions whisper
+# and exits 1 when that store is not writable; the OAK summary line is the
+# authority for model-store drift. failed=0 keeps the update, any other OAK
+# result restores the snapshot and fails. A real OAK failure is never ignored.
+sync_model_store() {
+    local setup cache store output status failed
+    setup="$BACKEND_DIR/setup/setup-pib.sh"
+    cache="$(model_cache_dir)"
+    store="$(model_store_dir)"
+
+    if [ ! -f "$setup" ]; then
+        log "Model store check failed: ${setup} is missing"
+        return 1
+    fi
+    if [ ! -f "$BACKEND_DIR/models/manifest.yaml" ]; then
+        log "Model store check failed: ${BACKEND_DIR}/models/manifest.yaml is missing"
+        return 1
+    fi
+
+    log "Comparing the model store with models/manifest.yaml (offline; cache ${cache})"
+    if PIB_MODEL_CACHE="$cache" bash "$setup" --verify-models; then
+        log "Model store matches models/manifest.yaml; skipping provisioning"
+        return 0
+    fi
+
+    log "Model store differs from models/manifest.yaml; provisioning changed blobs (cache ${cache})"
+    if ! snapshot_model_store "$store"; then
+        log "Model store check failed: could not snapshot ${store} before provisioning"
+        return 1
+    fi
+
+    status=0
+    output="$(PIB_MODEL_CACHE="$cache" bash "$setup" --models 2>&1)" || status=$?
+    printf '%s\n' "$output"
+
+    if ! failed="$(oak_summary_failed_count "$output")"; then
+        log "OAK model provisioning failed: no usable Models summary (setup-pib.sh --models exit ${status})"
+        restore_model_store_snapshot "$store" || log "WARNING: could not restore the model store snapshot"
+        return 1
+    fi
+    if [ "$failed" -ne 0 ]; then
+        log "OAK model provisioning failed: failed=${failed} (setup-pib.sh --models exit ${status})"
+        restore_model_store_snapshot "$store" || log "WARNING: could not restore the model store snapshot"
+        return 1
+    fi
+    if [ "$status" -ne 0 ]; then
+        log "WARNING: setup-pib.sh --models exited ${status} after the OAK store was provisioned (failed=0). A non-OAK step failed (whisper). This is not model-store drift."
+    else
+        log "OAK model store provisioned (failed=0)"
+    fi
+    return 0
+}
+
 rollback_once() {
     log "Verification failed; attempting one rollback build"
     git -C "$BACKEND_DIR" reset --hard "$BACKEND_BEFORE"
     git -C "$CEREBRA_DIR" reset --hard "$CEREBRA_BEFORE"
     git -C "$CEREBRA_DIR" submodule update --init --recursive
+    if ! restore_model_store_snapshot "$(model_store_dir)"; then
+        fail "Verification failed and the model store snapshot could not be restored"
+    fi
     if APP_VERSION="$(resolve_app_version "$BACKEND_DIR")"; then
         export APP_VERSION
         log "Rollback rebuild uses APP_VERSION=$APP_VERSION"
@@ -652,11 +1022,11 @@ rollback_once() {
     if wait_for_flask && verify_migration && verify_result; then
         write_revision "pib-backend" "$BACKEND_BEFORE" "unknown"
         write_revision "cerebra" "$CEREBRA_BEFORE" "unknown"
-        write_status "rolled_back" "Verification failed; previous revisions were rebuilt successfully"
+        write_status "rolled_back" "Verification failed. Previous revisions were rebuilt (pib-backend ${BACKEND_BEFORE}, cerebra ${CEREBRA_BEFORE}). The WAL-safe backup was kept and was not applied; user data was not rolled back."
         rm -f "$REQUEST_FILE" "$CANCEL_FILE"
         exit 1
     fi
-    fail "Verification failed and the single rollback attempt also failed"
+    fail "Verification failed and the single rollback attempt also failed. The WAL-safe backup was not applied. Do not assume the previous release is installed."
 }
 
 on_unexpected_error() {
@@ -666,9 +1036,18 @@ on_unexpected_error() {
     rm -f "$REQUEST_FILE"
     exit "$exit_code"
 }
+if [ "${1:-}" = "--sync-models" ]; then
+    if sync_model_store; then
+        exit 0
+    fi
+    exit 1
+fi
+
 trap on_unexpected_error ERR
 
 load_request
+start_heartbeat
+trap on_runner_exit EXIT
 load_predecessor_status
 enforce_retry_policy
 write_status "preflight" "Validating repositories, disk, watchdog ownership, and database backup (attempt ${ATTEMPT} of ${MAX_ATTEMPTS})"
@@ -693,15 +1072,34 @@ if [ "$CHANNEL" = "release" ]; then
 else
     BRANCH="develop"
 fi
-fetch_repository "$BACKEND_DIR" "$BRANCH" || fail "Failed to fetch pib-backend"
-fetch_repository "$CEREBRA_DIR" "$BRANCH" || fail "Failed to fetch cerebra"
+if [ -n "${BACKEND_PIN:-}" ] || [ -n "${CEREBRA_PIN:-}" ]; then
+    [ -n "${BACKEND_PIN:-}" ] && [ -n "${CEREBRA_PIN:-}" ] || fail "Pinned update is missing one repository target"
+    log "Installing recorded targets pib-backend=${BACKEND_PIN} cerebra=${CEREBRA_PIN} release=${RELEASE_TAG:-develop-pin}"
+    checkout_recorded_target "$BACKEND_DIR" "$BRANCH" "$BACKEND_PIN" || fail "Failed to check out recorded pib-backend target ${BACKEND_PIN}"
+    checkout_recorded_target "$CEREBRA_DIR" "$BRANCH" "$CEREBRA_PIN" || fail "Failed to check out recorded cerebra target ${CEREBRA_PIN}"
+    BACKEND_TARGET="$BACKEND_PIN"
+    CEREBRA_TARGET="$CEREBRA_PIN"
+else
+    log "Channel-only request: checking out the moving ${BRANCH} branch. This is the legacy request shape and is not a pinned release."
+    fetch_repository "$BACKEND_DIR" "$BRANCH" || fail "Failed to fetch pib-backend"
+    fetch_repository "$CEREBRA_DIR" "$BRANCH" || fail "Failed to fetch cerebra"
+    BACKEND_TARGET="$(git -C "$BACKEND_DIR" rev-parse HEAD)"
+    CEREBRA_TARGET="$(git -C "$CEREBRA_DIR" rev-parse HEAD)"
+fi
 git -C "$CEREBRA_DIR" submodule update --init --recursive || fail "Failed to update cerebra submodules"
-BACKEND_TARGET="$(git -C "$BACKEND_DIR" rev-parse HEAD)"
-CEREBRA_TARGET="$(git -C "$CEREBRA_DIR" rev-parse HEAD)"
 if ! APP_VERSION="$(resolve_app_version "$BACKEND_DIR")"; then
-    fail "Release checkout has no git tag on ${BACKEND_TARGET} (HEAD^2 or HEAD) after fetching branch ${BRANCH} with tags; refusing to build with the compose-file APP_VERSION fallback"
+    if [ -n "${RELEASE_TAG:-}" ]; then
+        APP_VERSION="$RELEASE_TAG"
+        log "Confirmed release ${RELEASE_TAG} is the APP_VERSION; tag lookup on HEAD^2/HEAD did not find a different tag"
+    else
+        fail "Release checkout has no git tag on ${BACKEND_TARGET} (HEAD^2 or HEAD) after fetching branch ${BRANCH} with tags; refusing to build with the compose-file APP_VERSION fallback"
+    fi
 fi
 log "Resolved APP_VERSION=${APP_VERSION} for pib-backend at ${BACKEND_TARGET}"
+
+check_cancel
+write_status "fetching" "Comparing the model store with models/manifest.yaml"
+sync_model_store || fail "OAK model store does not match models/manifest.yaml and provisioning failed"
 
 check_cancel
 extend_watchdog_for_build
@@ -710,6 +1108,10 @@ if [ "$FREE_KIB" -lt "$PRUNE_BELOW_KIB" ]; then
     log "Disk space is below prune threshold; pruning Docker build cache"
     docker builder prune -af
 fi
+# After the fetch, before either stack is recreated. The new flask-app probes
+# Ollama as soon as it starts; a drop-in written afterwards would miss that
+# probe. A missing ollama unit returns success.
+ensure_ollama_for_update || fail "ollama listen drop-in could not be applied"
 build_backend_stack || fail "Backend container build failed"
 docker compose -f "$CEREBRA_DIR/docker-compose.yaml" \
     up -d --build --force-recreate || fail "Cerebra container build failed"
@@ -730,7 +1132,8 @@ if ! verify_result; then
     rollback_once
 fi
 
+discard_model_store_snapshot
 write_revision "pib-backend" "$BACKEND_TARGET"
 write_revision "cerebra" "$CEREBRA_TARGET"
-write_status "done" "Update completed and verified"
+write_status "done" "Update completed and verified. Installed ${APP_VERSION}; pib-backend ${BACKEND_TARGET}; cerebra ${CEREBRA_TARGET}. The API answered and the database migration matches the Alembic head. The WAL-safe backup was kept; user data was not restored from it."
 rm -f "$REQUEST_FILE" "$CANCEL_FILE"

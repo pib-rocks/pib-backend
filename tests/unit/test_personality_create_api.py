@@ -42,10 +42,12 @@ def test_name_only_create_succeeds_with_the_documented_defaults(client, app_ctx)
     assert created["toolCalling"] is True
     assert created["voiceMode"] == "turn_based"
     assert created["liveIdleTimeout"] == 60
-    assert created["sttEngine"] == "local_whisper"
+    # 'default' resolves to pib.Cloud, whose STT default is cloud whisper.
+    assert created["sttEngine"] == "cloud_whisper"
     assert created["ttsEngine"] == "supertone"
     assert created["providerRef"] == "default"
     assert created["channel"] == "smart"
+    assert created["reasoningEffort"] == "none"
     assert created["thinkingFiller"] is None
     assert "Nur Name" in created["description"]
 

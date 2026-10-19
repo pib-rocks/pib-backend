@@ -1,6 +1,6 @@
 import {Block} from "blockly/core/block";
 import {Order, pythonGenerator} from "blockly/python";
-import {IMPORT_DATETIME, IMPORT_OS} from "./util/definitions";
+import {IMPORT_DATETIME, IMPORT_OS, addDefinitions} from "./util/definitions";
 import {
     PROGRAM_LOG_FUNCTION,
     PROGRAM_LOG_PATH_FUNCTION,
@@ -10,7 +10,7 @@ import {
 const VALID_LEVELS = new Set(["INFO", "WARNING", "ERROR", "DEBUG"]);
 
 function provideProgramLogPath(generator: typeof pythonGenerator) {
-    Object.assign(generator.definitions_, {
+    addDefinitions(generator, {
         IMPORT_OS,
         IMPORT_DATETIME,
     });
@@ -52,4 +52,3 @@ export function program_reset_log(
     return `${functionName}()\n`;
 }
 
-export {pythonGenerator};

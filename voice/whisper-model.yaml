@@ -3,7 +3,11 @@
 path: /data/voice/models/whisper/
 model_size: small
 compute_type: int8
-cpu_threads: 4
+# Three, not four: the decode does not get faster on the fourth core, and
+# holding all four starves the rest of the robot (rosbridge parameter reads
+# time out during a turn). Measured on the test robot, 8 s recording:
+# 4 threads 11.9 s, 3 threads 9.6 s, 2 threads 9.3 s. PC-39.
+cpu_threads: 3
 # The smallest shipped unit is the yardstick: a unit that declares itself
 # pib5edu and reports 4045 MB of RAM. medium is a permitted
 # WHISPER_MODEL_SIZE override. It is not the default.

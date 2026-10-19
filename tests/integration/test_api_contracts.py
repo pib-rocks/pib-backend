@@ -75,14 +75,14 @@ class TestProgramEndpoints:
         assert not (programs_dir / f"{pn}.py").exists()
 
     @patch("service.program_service.pib_blockly_client.code_visual_to_python")
-    def test_put_code_compilation_failure_500(self, mock_compile, client):
+    def test_put_code_compilation_failure_400(self, mock_compile, client):
         mock_compile.return_value = (False, None)
         pn = client.post("/program", json={"name": "compile_fail"}).get_json()[
             "programNumber"
         ]
         response = client.put(f"/program/{pn}/code", json={"codeVisual": "{}"})
-        assert response.status_code == 500
-        assert _error(response)["error"] == "an unknown error occured."
+        assert response.status_code == 400
+        assert _error(response)["error"] == "failed to generate python-code"
 
     def test_duplicate_program_name_400(self, client):
         client.post("/program", json={"name": "dup_name_test"})
@@ -126,10 +126,16 @@ class TestPoseEndpoints:
         assert body["name"] == STARTUP_POSE_NAME
         assert body["deletable"] is False
 
-    def test_delete_calibration_pose_500(self, client):
+    def test_delete_calibration_pose_409(self, client):
+        """A protected pose is a refusal, not a server error (PR-1974)."""
         poses = client.get("/pose").get_json()["poses"]
         cal_id = next(p["poseId"] for p in poses if p["name"] == CALIBRATION_POSE_NAME)
-        assert client.delete(f"/pose/{cal_id}").status_code == 500
+
+        response = client.delete(f"/pose/{cal_id}")
+
+        assert response.status_code == 409
+        assert "not deletable" in response.get_json()["error"]
+        assert CALIBRATION_POSE_NAME in response.get_json()["error"]
 
     def test_create_pose_201(self, client):
         name = f"pose_{uuid.uuid4().hex[:8]}"

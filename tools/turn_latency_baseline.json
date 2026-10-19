@@ -1,0 +1,126 @@
+{
+  "deltas": {
+    "audio": {
+      "count": 15,
+      "p50": 48215.41692200303,
+      "p95": 72005.3259619996,
+      "skipped": 0
+    },
+    "eos_to_text": {
+      "count": 0,
+      "p50": null,
+      "p95": null,
+      "skipped": 15
+    },
+    "eos_to_turn_end": {
+      "count": 0,
+      "p50": null,
+      "p95": null,
+      "skipped": 15
+    },
+    "first_token_to_sentence": {
+      "count": 15,
+      "p50": 24.58084799349308,
+      "p95": 37.80035500973463,
+      "skipped": 0
+    },
+    "headers_to_first_token": {
+      "count": 15,
+      "p50": 2.146124005317688,
+      "p95": 4.934005998075008,
+      "skipped": 0
+    },
+    "req_to_headers": {
+      "count": 15,
+      "p50": 498.8017570003867,
+      "p95": 1199.5138150006533,
+      "skipped": 0
+    },
+    "sentence_to_first_audio": {
+      "count": 15,
+      "p50": 2732.791914999485,
+      "p95": 6758.501722998917,
+      "skipped": 0
+    },
+    "text_to_req": {
+      "count": 0,
+      "p50": null,
+      "p95": null,
+      "skipped": 15
+    }
+  },
+  "measurement": {
+    "api": "http://192.168.1.252:8090/v1 (pib-cloud-api, provider groq, model openai/gpt-oss-120b)",
+    "chat": "b4f01552-0c09-401c-8fde-fda753fb0261 (personality Eva, assistant model pib.cloud)",
+    "harness": "tools/measure_turn_latency.py, 15 turns over the fixed utterance set",
+    "measured_on": "2026-10-14",
+    "note": "The fixed set mixes short questions with one long story request, so the audio and turn_end stages reflect answer length as well as the local chain.",
+    "percentiles": "nearest-rank",
+    "robot": "test robot 192.168.1.172, container multirepo-ros-voice-assistant-1",
+    "turn_kind": "typed-text turns through the same streaming/TTS/playback path; end_of_speech and text_received do not apply there",
+    "turns": 15
+  },
+  "method": "nearest-rank",
+  "stages": {
+    "end_of_speech": {
+      "count": 0,
+      "p50": null,
+      "p95": null,
+      "skipped": 15
+    },
+    "first_audio": {
+      "count": 15,
+      "p50": 3269.9292109906673,
+      "p95": 7169.236255005002,
+      "skipped": 0
+    },
+    "first_sentence_flushed": {
+      "count": 15,
+      "p50": 580.6005909964442,
+      "p95": 1283.817538999021,
+      "skipped": 0
+    },
+    "first_token": {
+      "count": 15,
+      "p50": 554.4853780046105,
+      "p95": 1262.424257002771,
+      "skipped": 0
+    },
+    "last_audio": {
+      "count": 15,
+      "p50": 51485.23727300018,
+      "p95": 76509.68367500603,
+      "skipped": 0
+    },
+    "request_sent": {
+      "count": 15,
+      "p50": 55.371740996837616,
+      "p95": 66.58748500049114,
+      "skipped": 0
+    },
+    "response_headers": {
+      "count": 15,
+      "p50": 552.5175120010972,
+      "p95": 1260.381188005209,
+      "skipped": 0
+    },
+    "stream_done": {
+      "count": 15,
+      "p50": 2379.1018119975924,
+      "p95": 11316.275820992887,
+      "skipped": 0
+    },
+    "text_received": {
+      "count": 0,
+      "p50": null,
+      "p95": null,
+      "skipped": 15
+    },
+    "turn_end": {
+      "count": 15,
+      "p50": 51486.7113250047,
+      "p95": 76511.86815100163,
+      "skipped": 0
+    }
+  }
+}

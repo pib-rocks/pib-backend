@@ -1,10 +1,11 @@
 """The on-device Ollama model, shared by the API and the voice assistant.
 
-Ollama answers on the host at ``127.0.0.1:11434``. The API and the voice
-assistant run in containers. Neither container has a host route today (the
-motors and programs services do, via ``host.docker.internal``). Set
-``PIB_OLLAMA_BASE_URL`` to that route once it exists. Until then the default
-below reaches Ollama only from a process on the host network.
+Ollama runs on the host. The API and the voice assistant run in containers
+and reach it through ``PIB_OLLAMA_BASE_URL`` (compose sets
+``http://host.docker.internal:11434``). That name is the host's bridge
+address, not ``127.0.0.1``, so the daemon has to bind a non-loopback
+address. The installer writes that bind into the ollama unit. The default
+below is only for a process that shares the host network.
 """
 
 from __future__ import annotations

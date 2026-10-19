@@ -18,18 +18,25 @@ _tinkerforge.bricklet_servo_v2 = MagicMock()
 _tinkerforge.bricklet_solid_state_relay_v2 = MagicMock()
 _tinkerforge.bricklet_rgb_led_button = MagicMock()
 _tinkerforge.ip_connection = _ip_connection
-for name, mod in [
-    ("tinkerforge", _tinkerforge),
-    ("tinkerforge.brick_hat", _tinkerforge.brick_hat),
-    ("tinkerforge.bricklet_servo_v2", _tinkerforge.bricklet_servo_v2),
-    (
-        "tinkerforge.bricklet_solid_state_relay_v2",
-        _tinkerforge.bricklet_solid_state_relay_v2,
+_TINKERFORGE_STUBS = {
+    "tinkerforge": _tinkerforge,
+    "tinkerforge.brick_hat": _tinkerforge.brick_hat,
+    "tinkerforge.bricklet_servo_v2": _tinkerforge.bricklet_servo_v2,
+    "tinkerforge.bricklet_solid_state_relay_v2": (
+        _tinkerforge.bricklet_solid_state_relay_v2
     ),
-    ("tinkerforge.bricklet_rgb_led_button", _tinkerforge.bricklet_rgb_led_button),
-    ("tinkerforge.ip_connection", _ip_connection),
-]:
-    sys.modules.setdefault(name, mod)
+    "tinkerforge.bricklet_rgb_led_button": _tinkerforge.bricklet_rgb_led_button,
+    "tinkerforge.ip_connection": _ip_connection,
+}
+
+
+@pytest.fixture()
+def stubbed_tinkerforge(monkeypatch):
+    """Install the stand-ins for one test only; monkeypatch restores sys.modules afterwards."""
+    for name, mod in _TINKERFORGE_STUBS.items():
+        monkeypatch.setitem(sys.modules, name, mod)
+    return _TINKERFORGE_STUBS
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 for path in (
@@ -41,7 +48,7 @@ for path in (
 
 
 @pytest.fixture()
-def motor_class():
+def motor_class(stubbed_tinkerforge):
     for name in list(sys.modules):
         if name.startswith("pib_motors"):
             sys.modules.pop(name, None)

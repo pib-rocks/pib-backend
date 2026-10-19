@@ -53,6 +53,28 @@ def handle_method_not_allowed_error(error):
     return response, 405
 
 
+def handle_conflict_error(error):
+    """A request the data model refuses - report the refusal, not a server fault.
+
+    The exception's own message is the answer on purpose: it names the entity that
+    cannot be changed in this state, which a generic "Bad request." would hide
+    (PR-1974).
+    """
+    app.logger.warning(error)
+    return jsonify({"error": str(error)}), 409
+
+
+def handle_invalid_request_error(error):
+    """The request does not describe a valid change - the reason is the answer.
+
+    Distinct from handle_bad_request_error's generic "Bad request." on purpose: a
+    caller sending a motor list that does not match the stored pose should learn which
+    part was wrong (PR-1974).
+    """
+    app.logger.warning(error)
+    return jsonify({"error": str(error)}), 400
+
+
 def handle_unknown_error(error):
     app.logger.error(traceback.format_exc())
     app.logger.error(error)

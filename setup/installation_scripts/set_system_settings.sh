@@ -9,6 +9,41 @@
 # regular file ''` while the step still reported success. The call sites now check their
 # inputs with require_nonempty (from setup-pib.sh) before any cp/grep/sed runs.
 
+# Raspberry Pi OS ships full KMS (vc4-kms-v3d) and its Wayland session (labwc) needs it.
+# Earlier versions of this step rewrote it to the legacy vc4-fkms-v3d on every run; on a
+# Raspberry Pi 5 the kernel then reported "No displays found", labwc found 0 GPUs and LightDM
+# stopped starting the session. Active vc4-fkms-v3d lines are turned back in place, so their
+# config.txt section and overlay options stay, after a backup next to the file. Comments are
+# not touched. The new overlay is loaded at the next boot.
+function ensure_full_kms_overlay() {
+    local config_file="$1"
+    local fkms='^[[:space:]]*dtoverlay=vc4-fkms-v3d([,[:space:]]|$)'
+    local kms='^[[:space:]]*dtoverlay=vc4-kms-v3d(-pi[0-9]+)?([,[:space:]]|$)'
+    local backup
+
+    require_nonempty config_file || return 1
+
+    if grep -Eq "$fkms" "$config_file"; then
+        backup="${config_file}.pib-backup-$(date +%Y%m%d%H%M%S)"
+        if [ -e "$backup" ]; then
+            backup="${backup}-$$"
+        fi
+        sudo cp "$config_file" "$backup" || return 1
+        sudo sed -i -E "s/${fkms}/dtoverlay=vc4-kms-v3d\\1/" "$config_file" || return 1
+        print WARN "Restored full KMS (dtoverlay=vc4-kms-v3d) in ${config_file}; previous file: ${backup}. Reboot pib to apply it"
+        return 0
+    fi
+
+    if ! grep -Eq "$kms" "$config_file"; then
+        # An unterminated last line would swallow the appended overlay.
+        if [ -s "$config_file" ] && [ -n "$(tail -c 1 "$config_file")" ]; then
+            printf '\n' | sudo tee -a "$config_file" > /dev/null || return 1
+        fi
+        echo "dtoverlay=vc4-kms-v3d" | sudo tee -a "$config_file" > /dev/null || return 1
+        print WARN "Added dtoverlay=vc4-kms-v3d to ${config_file}. Reboot pib to apply it"
+    fi
+}
+
 # PIB_BOOT_CONFIG lets the unit tests run this against a scratch file.
 function configure_display_settings() {
     local config_file="${PIB_BOOT_CONFIG:-/boot/firmware/config.txt}"
@@ -22,6 +57,11 @@ function configure_display_settings() {
         return 0
     fi
 
+    ensure_full_kms_overlay "$config_file" || return 1
+
+    # These firmware directives describe the 1024x600 HDMI panel. Under full KMS the kernel
+    # takes the mode from the panel's EDID (disable_fw_kms_setup=1 is the shipped default), so
+    # they are kept as they were and nothing here forces a mode or a connector.
     declare -A settingsMap=(
     ["hdmi_force_edid_audio"]="hdmi_force_edid_audio=1"
     ["max_usb_current"]="max_usb_current=1"
@@ -32,7 +72,6 @@ function configure_display_settings() {
     ["hdmi_drive"]="hdmi_drive=2"
     ["display_rotate"]="display_rotate=0"
     ["hdmi_cvt"]="hdmi_cvt 1024 600 60 6 0 0 0"
-    ["dtoverlay=vc4-kms-v3d"]="dtoverlay=vc4-fkms-v3d"
     )
     for setting in "${!settingsMap[@]}"
     do

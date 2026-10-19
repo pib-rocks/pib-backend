@@ -491,6 +491,7 @@ def test_ensure_profile_never_overwrites_an_operator_set_mcp_env_value(
     assert env["PIB_MCP_EXTRA"] == "keep-me"
     assert env["PIB_MCP_API_BASE_URL"] == defaults["PIB_MCP_API_BASE_URL"]
     assert env["PIB_MCP_ROSBRIDGE_URL"] == defaults["PIB_MCP_ROSBRIDGE_URL"]
+    assert env["PIB_MCP_ENABLE_ACTUATION"] == "true"
 
 
 def test_ensure_profile_keeps_an_existing_model_and_provider(

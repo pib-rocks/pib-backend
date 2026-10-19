@@ -12,20 +12,9 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 import base64
 
-import pytest
-
-# Installed by tests/requirements-camera.txt; skip instead of aborting collection on a
-# platform without the camera wheels. depthai_nodes is needed because the module under
-# test (ros_packages/camera/oak_d_lite/stereo.py) imports it at module level.
-pytest.importorskip(
-    "cv2", reason="opencv not installed (tests/requirements-camera.txt)"
-)
-pytest.importorskip(
-    "depthai_nodes",
-    reason="depthai-nodes not installed (tests/requirements-camera.txt)",
-)
-
+# stereo.py imports both at module level. A missing wheel fails collection.
 import cv2
+import depthai_nodes
 
 if not hasattr(cv2, "CascadeClassifier"):
     cv2.CascadeClassifier = MagicMock()
@@ -200,7 +189,9 @@ else:
 import numpy as np
 
 from ros_packages.camera.oak_d_lite import stereo as camera_stereo
+from ros_packages.camera.oak_d_lite.face_crop import FACE_DETECTOR_MODEL_ID
 from ros_packages.camera.oak_d_lite.hand_tracking import PalmRegion
+from ros_packages.camera.oak_d_lite.pipeline_manager import PipelineManager
 from ros_packages.camera.oak_d_lite.imu import (
     ClockOffsetEstimator,
     IMU_CLOCK_OFFSET_WINDOW,
@@ -244,6 +235,7 @@ from ros_packages.camera.oak_d_lite.stereo import (
     IMU_STALE_MISSED_PUBLICATIONS,
     MAX_HAND_MP_BUFFER,
     ParsingNeuralNetwork,
+    TOTAL_SHAVES,
 )
 
 
@@ -3154,6 +3146,7 @@ class TestPublishedFrameBranchAspect(unittest.TestCase):
                 "_build_face_crop_pipeline",
                 "_build_gaze_pipeline",
                 "_build_hand_mp_pipeline",
+                "_build_hand_fast_pipeline",
             },
         )
         node = _branch_aspect_node()
@@ -3161,3 +3154,453 @@ class TestPublishedFrameBranchAspect(unittest.TestCase):
             with self.assertRaises(ValueError):
                 node._request_camera_branch(refused_size)
         node.get_logger.return_value.error.assert_called()
+
+
+class _BranchGeometry:
+    """Delivered colour-branch image. Its pixel size is not the published field."""
+
+    def getSize(self):
+        return (COLOUR_BRANCH_WIDTH, COLOUR_BRANCH_HEIGHT)
+
+    def getSourceSize(self):
+        return (COLOUR_BRANCH_WIDTH, COLOUR_BRANCH_HEIGHT)
+
+    def getSrcCrops(self):
+        return []
+
+    def isValid(self):
+        return True
+
+
+class _PreviewGeometry:
+    """Preview that places the branch in an inset window on both axes.
+
+    The horizontal inset is the branch width. Object detection has to keep x
+    on the published width. The vertical inset is the window y has to use.
+    """
+
+    def getSize(self):
+        return (PUBLISHED_FRAME_WIDTH, PUBLISHED_FRAME_HEIGHT)
+
+    def getSourceSize(self):
+        return (PUBLISHED_FRAME_WIDTH, PUBLISHED_FRAME_HEIGHT)
+
+    def isValid(self):
+        return True
+
+    def remapPointFrom(self, source, point):
+        width, height = source.getSize()
+        fx = float(point.x) / float(width)
+        fy = float(point.y) / float(height)
+        horizontal_origin = (PUBLISHED_FRAME_WIDTH - COLOUR_BRANCH_WIDTH) / 2.0
+        vertical_origin = (PUBLISHED_FRAME_HEIGHT - COLOUR_BRANCH_HEIGHT) / 2.0
+        return types.SimpleNamespace(
+            x=horizontal_origin + fx * float(COLOUR_BRANCH_WIDTH),
+            y=vertical_origin + fy * float(COLOUR_BRANCH_HEIGHT),
+        )
+
+
+class TestObjectDetectionField(unittest.TestCase):
+    """A detection fraction maps through the branch field on both axes."""
+
+    def test_synthetic_detection_uses_each_axis_reference(self):
+        with patch.object(CameraNode, "__init__", lambda self: None):
+            node = CameraNode()
+        node.current_frame = np.zeros(
+            (PUBLISHED_FRAME_HEIGHT, PUBLISHED_FRAME_WIDTH, 3), dtype=np.uint8
+        )
+        node.preview_width = PUBLISHED_FRAME_WIDTH
+        node.preview_height = PUBLISHED_FRAME_HEIGHT
+        node._colour_branch_field = None
+        node._preview_packet = types.SimpleNamespace(
+            getTransformation=lambda: _PreviewGeometry()
+        )
+        node.last_detections = {}
+        node.detection_publishers = {}
+        node.get_clock = MagicMock()
+        node.get_clock.return_value.now.return_value.to_msg.return_value = object()
+        box = types.SimpleNamespace(
+            center=types.SimpleNamespace(x=0.5, y=0.5),
+            size=types.SimpleNamespace(width=1.0, height=0.9),
+        )
+        parsed = types.SimpleNamespace(
+            label=0,
+            labelName="bottle",
+            confidence=0.9,
+            getBoundingBox=lambda: box,
+            getKeypoints=lambda: [],
+            scalar_names=(),
+            scalar_values=(),
+        )
+        packet = types.SimpleNamespace(
+            detections=[parsed],
+            getTransformation=lambda: _BranchGeometry(),
+        )
+
+        node._publish_parsed_detections("yolov6n_coco_640x640", packet)
+
+        detection = node.last_detections["yolov6n_coco_640x640"].detections[0]
+        self.assertEqual(detection.label, "bottle")
+        self.assertEqual(
+            (detection.x_min, detection.y_min, detection.x_max, detection.y_max),
+            (0, 68, 1280, 651),
+        )
+
+
+class TestHandTrackingFast(unittest.TestCase):
+    def _artifacts(self):
+        return {
+            "palm_detection_sh4": types.SimpleNamespace(
+                input_width=128,
+                input_height=128,
+                blob_path="/palm_detection_sh4.blob",
+                shaves=4,
+            ),
+            "pd_postprocessing_top2_sh1": types.SimpleNamespace(
+                input_width=128,
+                input_height=128,
+                blob_path="/pd_postprocessing_top2_sh1.blob",
+                shaves=1,
+            ),
+            "hand_landmark_full_sh4": types.SimpleNamespace(
+                input_width=224,
+                input_height=224,
+                blob_path="/hand_landmark_full_sh4.blob",
+                shaves=4,
+            ),
+        }
+
+    def test_graph_keeps_frames_and_crop_configs_on_the_device(self):
+        import depthai as dai
+
+        with patch.object(CameraNode, "__init__", lambda self: None):
+            node = CameraNode()
+        node.preview_width = PUBLISHED_FRAME_WIDTH
+        node.preview_height = PUBLISHED_FRAME_HEIGHT
+        node.get_logger = MagicMock()
+        artifacts = self._artifacts()
+        node.model_registry = MagicMock()
+        node.model_registry.get.side_effect = artifacts.get
+        created = []
+
+        def _create(node_type):
+            made = MagicMock(name=getattr(node_type, "__name__", "node"))
+            made.node_type = node_type
+            created.append(made)
+            return made
+
+        node.pipeline = MagicMock()
+        node.pipeline.create.side_effect = _create
+        node.camRgb = MagicMock()
+        node.camRgb.requestOutput.return_value = MagicMock()
+
+        node._build_hand_fast_pipeline(
+            types.SimpleNamespace(artifact_ids=tuple(artifacts))
+        )
+
+        self.assertEqual(
+            [item.node_type for item in created],
+            [
+                dai.node.Script,
+                dai.node.ImageManip,
+                dai.node.NeuralNetwork,
+                dai.node.NeuralNetwork,
+                dai.node.ImageManip,
+                dai.node.NeuralNetwork,
+            ],
+        )
+        script, palm_manip, palm_nn, decoder_nn, landmark_manip, landmark_nn = created
+        self.assertEqual(node.hand_fast_source_size, (HAND_NN_WIDTH, HAND_NN_HEIGHT))
+        self.assertEqual(node.camRgb.requestOutput.call_args.args[0], (256, 144))
+        palm_nn.setNumShavesPerInferenceThread.assert_called_once_with(4)
+        decoder_nn.setNumShavesPerInferenceThread.assert_called_once_with(1)
+        landmark_nn.setNumShavesPerInferenceThread.assert_called_once_with(4)
+        script_text = script.setScript.call_args.args[0]
+        self.assertNotIn("HostNode", script_text)
+        self.assertNotIn("createInputQueue", script_text)
+        self.assertNotIn("XLink", script_text)
+        palm_manip.inputConfig.setWaitForMessage.assert_called_once_with(True)
+        landmark_manip.inputConfig.setWaitForMessage.assert_called_once_with(True)
+        for manip in (palm_manip, landmark_manip):
+            manip.out.createOutputQueue.assert_not_called()
+            manip.inputConfig.createInputQueue.assert_not_called()
+        for network in (palm_nn, decoder_nn, landmark_nn):
+            network.out.createOutputQueue.assert_not_called()
+        host_queues = [
+            call
+            for item in created
+            for call in item.mock_calls
+            if "createOutputQueue" in call[0]
+        ]
+        input_queues = [
+            call
+            for item in created
+            for call in item.mock_calls
+            if "createInputQueue" in call[0]
+        ]
+        self.assertEqual(input_queues, [])
+        self.assertEqual(len(host_queues), 1)
+        self.assertEqual(
+            [call.args[0] for call in script.outputs.__getitem__.call_args_list],
+            ["pre_pd_manip_cfg", "pre_lm_manip_cfg", "detections"],
+        )
+        self.assertEqual(
+            host_queues[0],
+            unittest.mock.call.outputs.__getitem__().createOutputQueue(
+                maxSize=1, blocking=False
+            ),
+        )
+
+    def test_detection_result_publishes_the_existing_message(self):
+        import marshal
+
+        with patch.object(CameraNode, "__init__", lambda self: None):
+            node = CameraNode()
+        node.current_frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+        node.hand_fast_source_size = (256, 144)
+        node._pending_hand_fast_packet = None
+        node.last_detections = {}
+        node.pipeline_manager = MagicMock()
+        node.get_logger = MagicMock()
+        node.get_clock = MagicMock()
+        publisher = MagicMock()
+        node.detection_publishers = {"hand_tracking_fast": publisher}
+        packet = MagicMock()
+        packet.getData.return_value = marshal.dumps(
+            {
+                "lm_score": [0.91],
+                "handedness": [0.2],
+                "palm_score": [0.8],
+                "rotation": [0.0],
+                "rect_center_x": [0.5],
+                "rect_center_y": [0.5],
+                "rect_size": [0.5],
+                "rrn_lms": [[112.0, 112.0, 22.4] * 21],
+            }
+        )
+        node.hand_fast_queue = MagicMock()
+        node.hand_fast_queue.tryGet.side_effect = [packet, None]
+
+        node._process_hand_tracking_fast()
+
+        message = node.last_detections["hand_tracking_fast"]
+        self.assertEqual(message.model_id, "hand_tracking_fast")
+        self.assertEqual((message.frame_width, message.frame_height), (1280, 720))
+        self.assertEqual(len(message.detections), 1)
+        detection = message.detections[0]
+        self.assertEqual(detection.label, "hand")
+        self.assertEqual(len(detection.keypoint_names), 21)
+        self.assertEqual(len(detection.keypoint_x), 21)
+        self.assertEqual(
+            detection.scalar_names,
+            ["handedness", "palm_score", "landmark_score", "z_source"],
+        )
+        publisher.publish.assert_called_once_with(message)
+        node.pipeline_manager.record_packet.assert_called_once_with(
+            "hand_tracking_fast"
+        )
+
+
+class TestListModelsShaveBudget(unittest.TestCase):
+    """`/list_models` reports the board SHAVE count the camera node owns."""
+
+    def test_list_models_callback_sets_total_shaves_from_the_board_constant(self):
+        with patch.object(CameraNode, "__init__", lambda self: None):
+            node = CameraNode()
+        model = types.SimpleNamespace(
+            model_id="demo",
+            task="test",
+            licence="Apache-2.0",
+            shaves=4,
+            size_bytes=4,
+            available=True,
+        )
+        node.model_registry = types.SimpleNamespace(selectable_models=lambda: [model])
+        node.pipeline_manager = types.SimpleNamespace(
+            statuses=lambda: {"demo": {"active": True}}
+        )
+        response = types.SimpleNamespace()
+
+        returned = node.list_models_callback(types.SimpleNamespace(), response)
+
+        self.assertIs(returned, response)
+        self.assertEqual(response.total_shaves, TOTAL_SHAVES)
+        self.assertEqual(len(response.models), 1)
+        self.assertEqual(response.models[0].model_id, "demo")
+        self.assertEqual(response.models[0].shaves, 4)
+        self.assertTrue(response.models[0].active)
+
+        node.model_registry = types.SimpleNamespace(selectable_models=lambda: [])
+        empty = types.SimpleNamespace()
+        node.list_models_callback(types.SimpleNamespace(), empty)
+        self.assertEqual(empty.models, [])
+        self.assertEqual(empty.total_shaves, TOTAL_SHAVES)
+
+
+def _selectable_record(model_id, shaves, artifact_ids=(), composite=False):
+    return types.SimpleNamespace(
+        model_id=model_id,
+        shaves=shaves,
+        available=True,
+        unavailable_reason="",
+        composite=composite,
+        artifact_ids=artifact_ids,
+        selectable=True,
+    )
+
+
+class TestRefusedRebuildReleasesTheDevice(unittest.TestCase):
+    """A refused face-crop start must not take the camera down with it."""
+
+    def _face_crop_registry(self):
+        emotion = _selectable_record(
+            "emotion_recognition_crop",
+            8,
+            artifact_ids=(
+                FACE_DETECTOR_MODEL_ID,
+                "emotion_recognition_lfw_64x64",
+            ),
+            composite=True,
+        )
+        head_pose = _selectable_record(
+            "head_pose_estimation_crop",
+            8,
+            artifact_ids=(
+                FACE_DETECTOR_MODEL_ID,
+                "head-pose-estimation-adas-0001",
+            ),
+            composite=True,
+        )
+        hand = _selectable_record(
+            "hand_tracking",
+            9,
+            artifact_ids=("palm_detection_128x128",),
+            composite=True,
+        )
+        records = (emotion, head_pose, hand)
+        by_id = {record.model_id: record for record in records}
+        registry = types.SimpleNamespace(
+            get=lambda model_id: by_id.get(model_id),
+            models=lambda: list(by_id.values()),
+            selectable_models=lambda: list(by_id.values()),
+        )
+        return registry
+
+    def _manager(self, registry):
+        rebuild = MagicMock(return_value=True)
+        manager = PipelineManager(
+            registry,
+            rebuild,
+            lambda timeout: True,
+            lambda: True,
+            sleep=lambda delay: None,
+        )
+        return manager, rebuild
+
+    def test_failed_build_clears_the_device_holder(self):
+        with patch.object(CameraNode, "__init__", lambda self: None):
+            node = CameraNode()
+        node._pipeline_lock = threading.RLock()
+        node.get_logger = MagicMock()
+        node.pipeline = None
+        CameraNode._device_owner = weakref.ref(node)
+
+        def fail_during_build(_include_stereo):
+            held = MagicMock()
+            held.isRunning.return_value = True
+            node.pipeline = held
+            raise RuntimeError("only one face-crop composite may run at a time")
+
+        node._build_pipeline = MagicMock(side_effect=fail_during_build)
+        try:
+            with (
+                patch.object(camera_stereo, "PIPELINE_STOP_TIMEOUT", 0),
+                patch("ros_packages.camera.oak_d_lite.stereo.time.sleep"),
+            ):
+                self.assertFalse(node._start_pipeline(include_stereo=False))
+            self.assertIsNone(node.pipeline)
+            self.assertIsNone(CameraNode._device_owner)
+            self.assertEqual(node._build_pipeline.call_count, 1)
+        finally:
+            CameraNode._device_owner = None
+
+    def test_second_face_crop_is_refused_before_rebuild(self):
+        registry = self._face_crop_registry()
+        manager, rebuild = self._manager(registry)
+
+        started, _message = manager.start("emotion_recognition_crop", 0, "ui")
+        self.assertTrue(started)
+        rebuild.reset_mock()
+
+        success, message = manager.start("head_pose_estimation_crop", 0, "ui")
+
+        self.assertFalse(success)
+        self.assertEqual(
+            message,
+            "Model head_pose_estimation_crop conflicts with the active "
+            "emotion_recognition_crop: only one face-crop composite may run "
+            "at a time",
+        )
+        rebuild.assert_not_called()
+        emotion = manager.status("emotion_recognition_crop")
+        self.assertEqual(emotion["state"], "running")
+        self.assertTrue(emotion["active"])
+        self.assertEqual(emotion["owners"], {"ui"})
+        refused = manager.status("head_pose_estimation_crop")
+        self.assertEqual(refused["state"], "idle")
+        self.assertEqual(refused["owners"], set())
+
+    def test_second_face_crop_is_refused_while_the_first_is_still_starting(self):
+        """A requested model is in the next rebuild even before it runs."""
+        registry = self._face_crop_registry()
+        manager, rebuild = self._manager(registry)
+        self.assertTrue(manager.start("emotion_recognition_crop", 0, "ui")[0])
+        # The window between "the start was accepted" and "the rebuild finished":
+        # the model is requested, its state is still "starting".
+        runtime = manager._runtime["emotion_recognition_crop"]
+        runtime.state = "starting"
+        runtime.active = False
+        rebuild.reset_mock()
+
+        success, message = manager.start("head_pose_estimation_crop", 0, "ui")
+
+        self.assertFalse(success)
+        self.assertIn("conflicts with the active emotion_recognition_crop", message)
+        rebuild.assert_not_called()
+
+    def test_models_status_keeps_publishing_the_running_model_after_refusal(self):
+        registry = self._face_crop_registry()
+        manager, _rebuild = self._manager(registry)
+        self.assertTrue(manager.start("emotion_recognition_crop", 0, "ui")[0])
+        success, _message = manager.start("head_pose_estimation_crop", 0, "ui")
+        self.assertFalse(success)
+
+        with patch.object(CameraNode, "__init__", lambda self: None):
+            node = CameraNode()
+        node.pipeline_manager = manager
+        node.model_registry = registry
+        node.models_status_publisher_ = MagicMock()
+        node.get_clock = MagicMock()
+        node.get_logger = MagicMock()
+
+        node.publish_model_statuses()
+
+        status_array = node.models_status_publisher_.publish.call_args.args[0]
+        listed = {status.model_id: status for status in status_array.models}
+        self.assertIn("emotion_recognition_crop", listed)
+        self.assertEqual(listed["emotion_recognition_crop"].state, "running")
+        self.assertTrue(listed["emotion_recognition_crop"].active)
+
+    def test_non_excluded_start_still_reaches_the_rebuild(self):
+        registry = self._face_crop_registry()
+        manager, rebuild = self._manager(registry)
+        self.assertTrue(manager.start("emotion_recognition_crop", 0, "ui")[0])
+        rebuild.reset_mock()
+
+        success, message = manager.start("hand_tracking", 0, "ui")
+
+        self.assertTrue(success)
+        self.assertEqual(message, "Model hand_tracking started")
+        rebuild.assert_called_once()
+        started = [active.model.model_id for active in rebuild.call_args.args[0]]
+        self.assertEqual(started, ["emotion_recognition_crop", "hand_tracking"])

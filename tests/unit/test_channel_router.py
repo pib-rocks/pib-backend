@@ -4,7 +4,9 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+from marshmallow import ValidationError
 
+from model.provider_model import RegistryModel
 from pib_hermes_config import profile_dir_for
 from pib_hermes_config import channel as channel_mod
 from pib_hermes_config.channel import (
@@ -14,7 +16,42 @@ from pib_hermes_config.channel import (
     effective_channel,
     smart_chats_enabled,
 )
-from service import personality_service, soul_service
+from pib_hermes_config.local_model import API_NAME, OFFLINE_CAPABILITY
+from provider_registry import has_capability
+from service import local_model_service, personality_service, soul_service
+
+#: Same tags document the catalogue test uses to create the local row.
+_QWEN_TAGS = {
+    "models": [
+        {"name": "llama3:latest", "model": "llama3:latest"},
+        {
+            "name": "qwen-fast:latest",
+            "model": "qwen-fast:latest",
+            "details": {"parent_model": "qwen2.5:1.5b"},
+        },
+        {"name": "qwen2.5:1.5b", "model": "qwen2.5:1.5b"},
+    ]
+}
+
+_OFFLINE_SMART_CHANNEL_ERROR = (
+    "Smart chats are not available for the on-device model "
+    "because it does not provide the context window the agent requires."
+)
+
+
+def _offer_on_device_model(monkeypatch) -> int:
+    """Insert the local catalogue row the way the catalogue tests do."""
+    monkeypatch.setattr(local_model_service, "fetch_tags", lambda: _QWEN_TAGS)
+    assert local_model_service.refresh_local_model() is True
+    return RegistryModel.query.filter_by(api_name=API_NAME).one().id
+
+
+def _cloud_model_id() -> int:
+    """A seeded model row that does not carry the offline capability."""
+    for row in RegistryModel.query.order_by(RegistryModel.id).all():
+        if not has_capability(row.capabilities, OFFLINE_CAPABILITY):
+            return row.id
+    raise AssertionError("seeded catalogue has no cloud model")
 
 
 def test_direct_system_prompt_is_the_soul_and_ignores_memory():
@@ -313,3 +350,55 @@ def test_personality_client_reads_channel_apart_from_the_model(monkeypatch):
     assert personality.effective_channel == "direct"
     assert personality.description == "soul text"
     assert personality.assistant_model.api_name == "gpt-6"
+
+
+def test_on_device_model_cannot_be_set_to_smart(app_ctx, make_personality, monkeypatch):
+    local_id = _offer_on_device_model(monkeypatch)
+
+    with pytest.raises(ValidationError) as caught:
+        personality_service.create_personality(
+            {
+                "name": "LocalSmart",
+                "assistant_model_id": local_id,
+                "channel": CHANNEL_SMART,
+            }
+        )
+    assert caught.value.messages == {"channel": [_OFFLINE_SMART_CHANNEL_ERROR]}
+    stored = personality_service.get_all_personalities()
+    assert all(personality.name != "LocalSmart" for personality in stored)
+
+    personality = make_personality(name="OnDevice", assistant_model_id=local_id)
+    switched = personality_service.update_personality(
+        personality.personality_id, {"channel": CHANNEL_DIRECT}
+    )
+    assert switched.channel == CHANNEL_DIRECT
+
+    with pytest.raises(ValidationError) as caught:
+        personality_service.update_personality(
+            personality.personality_id, {"channel": CHANNEL_SMART}
+        )
+    assert caught.value.messages == {"channel": [_OFFLINE_SMART_CHANNEL_ERROR]}
+    assert personality.channel == CHANNEL_DIRECT
+
+
+def test_cloud_model_can_still_be_set_to_smart(app_ctx, make_personality, monkeypatch):
+    _offer_on_device_model(monkeypatch)
+    cloud_id = _cloud_model_id()
+
+    created = personality_service.create_personality(
+        {
+            "name": "CloudSmart",
+            "assistant_model_id": cloud_id,
+            "channel": CHANNEL_SMART,
+        }
+    )
+    assert created.channel == CHANNEL_SMART
+
+    personality = make_personality(name="CloudUpdate", assistant_model_id=cloud_id)
+    personality_service.update_personality(
+        personality.personality_id, {"channel": CHANNEL_DIRECT}
+    )
+    restored = personality_service.update_personality(
+        personality.personality_id, {"channel": CHANNEL_SMART}
+    )
+    assert restored.channel == CHANNEL_SMART

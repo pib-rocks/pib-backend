@@ -1,3 +1,4 @@
+import json
 import os
 import re
 import time
@@ -5,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from queue import Empty, Queue
 from threading import Lock
-from typing import Optional
+from typing import Any, Optional
 
 import rclpy
 import datetime
@@ -34,16 +35,23 @@ from pib_hermes_config.local_model import (
     openai_base_url,
 )
 from pib_hermes_config import provider_for_profile
-from pib_hermes_config.turn_taking import unpublished_clauses
+from pib_hermes_config.turn_taking import next_speech_delta, speech_result_tail
 from pib_hermes_config.channel import (
     CHANNEL_DIRECT,
     CHANNEL_SMART,
     direct_system_prompt,
     turn_channel,
 )
-from provider_registry import DEFAULT_PROVIDER_API_NAME, provider_name_for
+from pib_hermes_config.retired_direct_text import (
+    RETIRED_DIRECT_TEXT_SENTENCE,
+    legacy_direct_text_selected,
+)
+from provider_registry import (
+    PIB_CLOUD_API_NAME,
+    provider_name_for,
+)
 from public_api_client import hermes_agent_client, public_voice_client
-from voice_assistant import direct_tool_loop
+from voice_assistant import direct_tool_loop, pib_cloud_stream
 from voice_assistant.degraded_chat import (
     MODE_UNLOCKED,
     fetch_operating_mode,
@@ -95,11 +103,14 @@ def _model_needs_provider_key(api_name: Optional[str]) -> bool:
 def _model_base_url(api_name: Optional[str]) -> Optional[str]:
     """The OpenAI-compatible base URL a custom route needs, or None.
 
-    The on-device model points at the Ollama endpoint; the backend writes the
-    same URL into the profile at provision time.
+    The on-device model points at the Ollama endpoint; pib.Cloud points at the
+    configured pib.Cloud endpoint; the backend writes the same URL into the
+    profile at provision time.
     """
     if api_name == LOCAL_MODEL_API_NAME:
         return openai_base_url()
+    if api_name == PIB_CLOUD_API_NAME:
+        return pib_cloud_stream.pib_cloud_base_url()
     return None
 
 
@@ -161,6 +172,7 @@ class ChatNode(Node):
         # Locks for shared clients (defensive: public voice client & PIB client)
         self.public_voice_client_lock = Lock()
         self.voice_assistant_client_lock = Lock()
+        self._turn_lock = Lock()
 
         # NEW: Lightweight service for external streamers to create/update + publish
         # a ChatMessage without duplicating persistence logic.
@@ -194,8 +206,184 @@ class ChatNode(Node):
         # Head turn and per-person preface. Sensors are optional: a missing
         # camera message must not stop the node from answering.
         self._attention = bind_attention(self)
+        self._reset_turn_meta()
+        self._install_turn_trace_emitter()
 
         self.get_logger().info("Now running CHAT")
+
+    def _install_turn_trace_emitter(self) -> None:
+        """Publish pib.Cloud stage events. A failure here must not stop the node."""
+        try:
+            from voice_assistant.turn_latency import TURN_TRACE_TOPIC
+
+            publisher = self.create_publisher(String, TURN_TRACE_TOPIC, 10)
+            self._turn_trace_publisher = publisher
+
+            def emit(raw: str) -> None:
+                # The same events a UI consumes also describe this turn in the
+                # stored answer (PC-82), so record them before publishing.
+                self._record_turn_trace(raw)
+                message = String()
+                message.data = raw
+                publisher.publish(message)
+
+            pib_cloud_stream.set_trace_emitter(emit)
+        except Exception as exc:
+            self.get_logger().warning(f"turn trace emitter was not installed: {exc}")
+
+    def _record_tool_call(self, record: dict) -> None:
+        """Keep one executed tool of this turn and publish it on the trace.
+
+        The record carries the tool name, its outcome, its duration and the names
+        of its arguments - never the values (PC-84).
+        """
+        calls = getattr(self, "_turn_tool_calls", None)
+        if not isinstance(calls, list):
+            calls = self._turn_tool_calls = []
+        calls.append(record)
+        publisher = getattr(self, "_turn_trace_publisher", None)
+        if publisher is None:
+            return
+        try:
+            from voice_assistant.turn_latency import format_event, now_ms
+
+            message = String()
+            message.data = format_event(
+                "tool_call",
+                ts_ms=now_ms(),
+                source=str(record.get("name") or "tool"),
+                detail={
+                    "ok": bool(record.get("ok", True)),
+                    "duration_ms": record.get("durationMs"),
+                    "arg_names": record.get("argNames") or [],
+                    "error": record.get("error"),
+                },
+            )
+            publisher.publish(message)
+        except Exception as exc:
+            self.get_logger().warning(f"tool call trace was not published: {exc}")
+
+    def _reset_turn_meta(self) -> None:
+        """A new turn forgets the previous turn's facts."""
+        self._turn_stages = {}
+        self._turn_started_ms = None
+        self._turn_fallback_reason = None
+        self._turn_stream_end = None
+        self._turn_path_token = ""
+        self._turn_model = ""
+        self._turn_tool_calls = []
+
+    def _record_turn_trace(self, raw: str) -> None:
+        """Keep stage timings and the fallback reason of the running turn."""
+        try:
+            event = json.loads(raw)
+        except (TypeError, ValueError):
+            return
+        stage = event.get("stage")
+        ts = event.get("ts_ms")
+        if stage == "end_of_speech":
+            self._turn_stages = {}
+            self._turn_started_ms = float(ts) if isinstance(ts, (int, float)) else None
+        elif stage == "stream_done":
+            self._turn_stream_end = "done"
+        reason = (event.get("detail") or {}).get("fallback_reason")
+        if isinstance(reason, str) and reason:
+            self._turn_fallback_reason = reason
+        started = getattr(self, "_turn_started_ms", None)
+        if started is not None and isinstance(ts, (int, float)):
+            stages = getattr(self, "_turn_stages", None)
+            if not isinstance(stages, dict):
+                stages = self._turn_stages = {}
+            stages[stage] = round(float(ts) - started, 1)
+
+    def _turn_meta(self) -> dict | None:
+        """Facts of this turn, stored with the answer (PC-82).
+
+        Empty for a turn without a transport announcement - a user message or a
+        turn that never reached a transport must not invent metadata.
+        """
+        meta: dict = {}
+        source = getattr(self, "_turn_path_token", "")
+        model = getattr(self, "_turn_model", "")
+        stages = getattr(self, "_turn_stages", None)
+        reason = getattr(self, "_turn_fallback_reason", None)
+        stream_end = getattr(self, "_turn_stream_end", None)
+        if source:
+            meta["source"] = source
+        if model:
+            meta["model"] = model
+        if isinstance(stages, dict) and stages:
+            meta["stagesMs"] = dict(stages)
+        if reason:
+            meta["fallbackReason"] = reason
+        if stream_end:
+            meta["streamEnd"] = stream_end
+        tool_calls = getattr(self, "_turn_tool_calls", None)
+        if isinstance(tool_calls, list) and tool_calls:
+            meta["toolCalls"] = list(tool_calls)
+        return meta or None
+
+    def _finalize_message_meta(self, chat_id: str) -> None:
+        """Write the completed turn facts onto the answer that was just stored."""
+        try:
+            meta = self._turn_meta()
+            message_id = getattr(self, "last_pib_message_id", None)
+            if not meta or not message_id:
+                return
+            with self.voice_assistant_client_lock:
+                successful, _ = voice_assistant_client.update_chat_message(
+                    chat_id,
+                    getattr(self, "message_content", ""),
+                    False,
+                    message_id,
+                    meta=meta,
+                )
+            if not successful:
+                self.get_logger().warning(
+                    f"turn metadata was not stored chat={chat_id}"
+                )
+        except Exception as exc:
+            self.get_logger().warning(f"turn metadata failed: {exc}")
+        finally:
+            # The next turn starts clean; a recorder end_of_speech sets its anchor.
+            self._reset_turn_meta()
+
+    #: Machine token per transport for the turn-path trace event. A UI reads this
+    #: to say which runtime answered; the human words above it stay for the log.
+    TURN_PATH_TOKENS = {
+        "Hermes": "hermes",
+        "pib.Cloud": "pib-cloud",
+        "the on-device model": "local",
+        "the direct tool loop": "direct-tool-loop",
+    }
+
+    def _emit_turn_path(self, *, chat_id: str, path: str, model: str | None) -> None:
+        """Announce the transport and model of this turn on the trace topic.
+
+        The trace already carries per-stage timings from the recorder, the player
+        and the cloud client. None of them names the model that answered, so a UI
+        could not tell pib.Cloud from the on-device fallback. This event closes
+        that gap; a failure here must not stop the turn.
+        """
+        publisher = getattr(self, "_turn_trace_publisher", None)
+        if publisher is None:
+            return
+        try:
+            from voice_assistant.turn_latency import format_event
+
+            self._turn_path_token = self.TURN_PATH_TOKENS.get(path, path)
+            self._turn_model = model or ""
+            detail = {"model": model} if model else None
+            message = String()
+            message.data = format_event(
+                "turn_path",
+                source=self.TURN_PATH_TOKENS.get(path, path),
+                chat_id=chat_id,
+                detail=detail,
+            )
+            publisher.publish(message)
+        except Exception as exc:
+            self.get_logger().warning(f"turn path trace was not published: {exc}")
 
     def _attention_plan(self):
         """The plan for this answer. Missing sensors leave the turn unchanged."""
@@ -210,6 +398,27 @@ class ChatNode(Node):
         """Operating mode of the key store. Unreadable means degraded."""
         return fetch_operating_mode()
 
+    def _finish_retired_direct_text(self, goal_handle, chat_id: str, api_name):
+        """Succeed the turn with the retired-path sentence. No network call.
+
+        The user line is already stored. This appends the assistant sentence
+        through the same chat-message path as any other spoken reply. Channel,
+        model and credentials are left as they are.
+        """
+        if goal_handle.is_cancel_requested:
+            goal_handle.canceled()
+            return Chat.Result()
+        sentence = RETIRED_DIRECT_TEXT_SENTENCE
+        self.create_chat_message(chat_id, sentence, False, False, True)
+        goal_handle.succeed()
+        result = Chat.Result()
+        result.text = sentence
+        result.text_type = Chat.Goal.TEXT_TYPE_SENTENCE
+        self.get_logger().info(
+            f"retired direct text transport chat={chat_id} model={api_name}"
+        )
+        return result
+
     def consolidate_memories(self) -> None:
         """Fold old MEMORY.md entries. Recent entries stay verbatim."""
         from voice_assistant.memory_consolidation import run_periodic_consolidation
@@ -217,13 +426,11 @@ class ChatNode(Node):
         try:
             results = run_periodic_consolidation()
         except Exception as exc:
-            self.get_logger().error("memory consolidation failed: %s", exc)
+            self.get_logger().error(f"memory consolidation failed: {exc}")
             return
         consolidated = sum(1 for status in results.values() if status == "consolidated")
         if consolidated:
-            self.get_logger().info(
-                "consolidated memory for %s profile(s)", consolidated
-            )
+            self.get_logger().info(f"consolidated memory for {consolidated} profile(s)")
 
     def destroy_node(self):
         # Abandoned hermes workers must not keep the process alive on shutdown.
@@ -356,7 +563,10 @@ class ChatNode(Node):
             else:
                 # CREATE path
                 successful, chat_message = voice_assistant_client.create_chat_message(
-                    chat_id, text, is_user
+                    chat_id,
+                    text,
+                    is_user,
+                    meta=None if is_user else self._turn_meta(),
                 )
                 if not successful or chat_message is None:
                     self.get_logger().error(
@@ -456,91 +666,13 @@ class ChatNode(Node):
             resp.response = "0"
             return resp
 
-        if self.token is None:
-            self.get_logger().error(
-                "VisionPrompt failed: public_api_token is not available."
-            )
-            resp.response = "0"
-            return resp
-
-        image_base64 = None
-
-        if not self.get_camera_image_client.service_is_ready():
-            self.get_logger().warn(
-                "VisionPrompt: get_camera_image service is not ready."
-            )
-            resp.response = "0"
-            return resp
-
-        try:
-            camera_request = GetCameraImage.Request()
-
-            tmp_node = rclpy.create_node("vision_prompt_camera_client")
-            try:
-                tmp_client = tmp_node.create_client(GetCameraImage, "get_camera_image")
-
-                if not tmp_client.wait_for_service(timeout_sec=5.0):
-                    self.get_logger().error(
-                        "VisionPrompt: get_camera_image service unavailable."
-                    )
-                    resp.response = "0"
-                    return resp
-
-                camera_future = tmp_client.call_async(camera_request)
-                rclpy.spin_until_future_complete(
-                    tmp_node,
-                    camera_future,
-                    timeout_sec=5.0,
-                )
-
-                if not camera_future.done():
-                    self.get_logger().error(
-                        "VisionPrompt: get_camera_image request timed out."
-                    )
-                    resp.response = "0"
-                    return resp
-
-                camera_response = camera_future.result()
-            finally:
-                tmp_node.destroy_node()
-
-            if camera_response is None or not camera_response.image_base64:
-                self.get_logger().warn("VisionPrompt: camera returned no image.")
-                resp.response = "0"
-                return resp
-
-            image_base64 = camera_response.image_base64
-
-        except Exception as exc:
-            self.get_logger().error(f"VisionPrompt camera request failed: {exc}")
-            resp.response = "0"
-            return resp
-
-        try:
-            with self.public_voice_client_lock:
-                tokens = public_voice_client.chat_completion(
-                    text=prompt,
-                    description=(
-                        "Du bist ein Vision-Erkennungsmodul fuer Blockly. "
-                        "Befolge das verlangte Antwortformat exakt."
-                    ),
-                    message_history=[],
-                    image_base64=image_base64,
-                    # Catalogue default. The public API's id is not confirmed
-                    # in this repository.
-                    model=DEFAULT_PROVIDER_API_NAME,  # TODO(confirm id)
-                    public_api_token=self.token,
-                )
-
-                response_text = "".join(tokens).strip()
-
-            resp.response = response_text
-            return resp
-
-        except Exception as exc:
-            self.get_logger().error(f"VisionPrompt public API request failed: {exc}")
-            resp.response = "0"
-            return resp
+        # Blockly vision used the retired text endpoint. It must not call it,
+        # and a missing token must not be the reason the caller sees.
+        self.get_logger().error(
+            "VisionPrompt refused: the tryb text endpoint is retired."
+        )
+        resp.response = "0"
+        return resp
 
     # ---------- Action server (unchanged) ----------
 
@@ -556,9 +688,10 @@ class ChatNode(Node):
 
         Returns (prev_text, prev_text_type, curr_text) so the caller can build Chat.Result.
 
-        For TTFT, the first non-empty token is published as Action feedback
-        immediately (before sentence buffering completes) so downstream TTS can
-        start without waiting for a terminator.
+        Speech feedback and Chat.Result use a delta-only contract: each payload
+        carries only speakable text not yet emitted on the wire (empty final is
+        valid). Persisted chat messages stay cumulative. For TTFT, the first
+        non-empty token is published immediately before a terminator arrives.
         """
         if t0 is None:
             t0 = time.monotonic()
@@ -578,6 +711,7 @@ class ChatNode(Node):
         prev_text_type = None
         bool_update_chat_message: bool = False  # controls create vs update
         first_chunk_emitted = False
+        first_sentence_flushed = False
         # Full answer as received, kept so a clause can be spoken before the
         # sentence that contains it has finished.
         raw_answer = ""
@@ -602,14 +736,15 @@ class ChatNode(Node):
                         f"elapsed_ms={elapsed_ms:.2f}"
                     )
 
-            # Publish previous completed chunk as feedback (Action protocol)
-            if prev_text is not None:
+            # Blockly code blocks still publish on the next token; speech does not.
+            if (
+                prev_text is not None
+                and prev_text_type == Chat.Goal.TEXT_TYPE_CODE_VISUAL
+            ):
                 feedback = Chat.Feedback()
                 feedback.text = prev_text
                 feedback.text_type = prev_text_type
                 goal_handle.publish_feedback(feedback)
-                if prev_text_type == Chat.Goal.TEXT_TYPE_SENTENCE:
-                    published_speech.append(prev_text)
                 prev_text = None
                 prev_text_type = None
 
@@ -656,6 +791,13 @@ class ChatNode(Node):
                     )
                     prev_text = sentence
                     prev_text_type = Chat.Goal.TEXT_TYPE_SENTENCE
+                    if not first_sentence_flushed:
+                        first_sentence_flushed = True
+                        elapsed_ms = (time.monotonic() - t0) * 1000.0
+                        self.get_logger().info(
+                            f"[PERF_TRACE] FIRST_SENTENCE_FLUSHED chat={chat_id} "
+                            f"elapsed_ms={elapsed_ms:.2f}"
+                        )
                     chat_message_text = sentence
                     self.create_chat_message(
                         chat_id,
@@ -674,7 +816,14 @@ class ChatNode(Node):
 
                 break
 
-            self._publish_ready_clauses(goal_handle, raw_answer, published_speech)
+            if self._publish_ready_clauses(
+                goal_handle,
+                raw_answer,
+                published_speech,
+                chat_id=chat_id,
+                t0=t0 if not first_sentence_flushed else None,
+            ):
+                first_sentence_flushed = True
 
         # A reply can end without a sentence terminator. That tail is part of
         # the answer, so it is persisted here instead of being dropped.
@@ -695,10 +844,18 @@ class ChatNode(Node):
                     f"[PERF_TRACE] FIRST_CHUNK_EMITTED chat={chat_id} "
                     f"elapsed_ms={elapsed_ms:.2f}"
                 )
-            self._publish_ready_clauses(goal_handle, raw_answer, published_speech)
-            if prev_text is not None:
-                # Hand the completed chunk over as feedback the way the next
-                # token would have, so the tail can travel in Chat.Result.
+            if self._publish_ready_clauses(
+                goal_handle,
+                raw_answer,
+                published_speech,
+                chat_id=chat_id,
+                t0=t0 if not first_sentence_flushed else None,
+            ):
+                first_sentence_flushed = True
+            if (
+                prev_text is not None
+                and prev_text_type == Chat.Goal.TEXT_TYPE_CODE_VISUAL
+            ):
                 feedback = Chat.Feedback()
                 feedback.text = prev_text
                 feedback.text_type = prev_text_type
@@ -706,7 +863,11 @@ class ChatNode(Node):
                 prev_text = None
                 prev_text_type = None
 
-        return prev_text, prev_text_type, curr_text
+        if prev_text_type == Chat.Goal.TEXT_TYPE_CODE_VISUAL:
+            return prev_text, prev_text_type, curr_text
+
+        speech_tail = speech_result_tail(raw_answer, published_speech)
+        return None, None, speech_tail
 
     def _remember_first_token_latency(self, chat_id: str, elapsed_ms: float) -> None:
         """Persist the measurement. A down API must not fail the turn."""
@@ -714,21 +875,36 @@ class ChatNode(Node):
             voice_assistant_client.record_first_token_latency(chat_id, elapsed_ms)
         except Exception as exc:
             self.get_logger().warning(
-                "first-token latency was not stored for chat %s: %s",
-                chat_id,
-                exc,
+                f"first-token latency was not stored for chat {chat_id}: {exc}"
             )
 
     def _publish_ready_clauses(
-        self, goal_handle, raw_answer: str, published_speech: list[str]
-    ) -> None:
-        """Publish each newly completed clause so speech can start on it."""
-        for clause in unpublished_clauses(raw_answer, published_speech):
+        self,
+        goal_handle,
+        raw_answer: str,
+        published_speech: list[str],
+        chat_id: str = "",
+        t0: Optional[float] = None,
+    ) -> bool:
+        """Publish the next incremental speech delta so TTS can start early."""
+        flushed_any = False
+        while True:
+            delta = next_speech_delta(raw_answer, published_speech)
+            if not delta:
+                break
             feedback = Chat.Feedback()
-            feedback.text = clause
+            feedback.text = delta
             feedback.text_type = Chat.Goal.TEXT_TYPE_SENTENCE
             goal_handle.publish_feedback(feedback)
-            published_speech.append(clause)
+            if not flushed_any and t0 is not None:
+                elapsed_ms = (time.monotonic() - t0) * 1000.0
+                self.get_logger().info(
+                    f"[PERF_TRACE] FIRST_SENTENCE_FLUSHED chat={chat_id} "
+                    f"elapsed_ms={elapsed_ms:.2f}"
+                )
+            flushed_any = True
+            published_speech.append(delta)
+        return flushed_any
 
     def _hermes_timeout(self) -> int:
         """Timeout for one hermes turn, read live so ops can tune it via env."""
@@ -749,6 +925,7 @@ class ChatNode(Node):
         model: Optional[str] = None,
         provider: Optional[str] = None,
         base_url: Optional[str] = None,
+        tool_calling: bool = True,
     ) -> str:
         """Run one hermes turn and return speakable text. Never raises.
 
@@ -786,13 +963,24 @@ class ChatNode(Node):
                         model=model,
                         provider=provider,
                         base_url=base_url,
+                        tool_calling=tool_calling,
                     )
+            disabled_toolsets = (
+                hermes_agent_client.DEFAULT_DISABLED_TOOLSETS
+                if tool_calling
+                else hermes_agent_client.disabled_toolsets_for_turn(False)
+            )
+            enabled_toolsets = (
+                hermes_agent_client.DEFAULT_ENABLED_TOOLSETS
+                if tool_calling
+                else hermes_agent_client.enabled_toolsets_for_turn(False)
+            )
             return hermes_agent_client.run_turn(
                 text=text,
                 chat_id=chat_id,
                 personality_id=personality_id,
-                toolsets=hermes_agent_client.DEFAULT_DISABLED_TOOLSETS,
-                enabled_toolsets=hermes_agent_client.DEFAULT_ENABLED_TOOLSETS,
+                toolsets=disabled_toolsets,
+                enabled_toolsets=enabled_toolsets,
                 timeout=timeout,
             )
 
@@ -837,6 +1025,7 @@ class ChatNode(Node):
         model: Optional[str] = None,
         provider: Optional[str] = None,
         base_url: Optional[str] = None,
+        tool_calling: bool = True,
     ):
         """Yield daemon deltas, retrying through the non-streaming path on error."""
         timeout = self._hermes_timeout()
@@ -857,17 +1046,41 @@ class ChatNode(Node):
                             model=model,
                             provider=provider,
                             base_url=base_url,
+                            tool_calling=tool_calling,
                         )
-                for delta in hermes_agent_client.stream_turn(
-                    text=text,
-                    chat_id=chat_id,
-                    personality_id=personality_id,
-                    toolsets=hermes_agent_client.DEFAULT_DISABLED_TOOLSETS,
-                    enabled_toolsets=hermes_agent_client.DEFAULT_ENABLED_TOOLSETS,
-                    timeout=timeout,
-                ):
-                    events.put(("delta", delta))
-                events.put(("done", None))
+                disabled_toolsets = (
+                    hermes_agent_client.DEFAULT_DISABLED_TOOLSETS
+                    if tool_calling
+                    else hermes_agent_client.disabled_toolsets_for_turn(False)
+                )
+                enabled_toolsets = (
+                    hermes_agent_client.DEFAULT_ENABLED_TOOLSETS
+                    if tool_calling
+                    else hermes_agent_client.enabled_toolsets_for_turn(False)
+                )
+                hermes_tools: list = []
+                try:
+                    for delta in hermes_agent_client.stream_turn(
+                        text=text,
+                        chat_id=chat_id,
+                        personality_id=personality_id,
+                        toolsets=disabled_toolsets,
+                        enabled_toolsets=enabled_toolsets,
+                        timeout=timeout,
+                        tool_sink=hermes_tools,
+                    ):
+                        events.put(("delta", delta))
+                    for record in hermes_tools:
+                        self._record_tool_call(
+                            {
+                                "name": str(record.get("name") or "tool"),
+                                "ok": bool(record.get("ok", True)),
+                                "argNames": [],
+                            }
+                        )
+                    events.put(("done", None))
+                except Exception as exc:
+                    events.put(("error", exc))
             except Exception as exc:
                 events.put(("error", exc))
 
@@ -910,6 +1123,7 @@ class ChatNode(Node):
                 model=model,
                 provider=provider,
                 base_url=base_url,
+                tool_calling=tool_calling,
             )
             if emitted and reply.startswith(emitted):
                 reply = reply[len(emitted) :]
@@ -935,14 +1149,87 @@ class ChatNode(Node):
             )
         return iter_reply(system_prompt, history, content)
 
+    def _get_turn_lock(self) -> Lock:
+        """Return the per-node turn serialization lock (created lazily for test doubles)."""
+        lock = getattr(self, "_turn_lock", None)
+        if lock is None:
+            lock = Lock()
+            self._turn_lock = lock
+        return lock
+
+    def _stream_pib_cloud_turn(
+        self,
+        *,
+        chat_id: str,
+        content: str,
+        personality: Any,
+        plan: Any,
+        generate_code: bool,
+        tool_calling: Optional[bool] = None,
+        goal_handle=None,
+    ):
+        """Stream SSE tokens from pib.Cloud (POST /v1/chat/completions, stream=true)."""
+        history: list[tuple[str, bool]] = []
+        try:
+            with self.voice_assistant_client_lock:
+                successful, chat_messages = voice_assistant_client.get_chat_history(
+                    chat_id, self.history_length
+                )
+            if successful and chat_messages:
+                history = [
+                    (message.content, message.is_user) for message in chat_messages
+                ]
+        except Exception as exc:
+            self.get_logger().warning(
+                f"pib.Cloud history could not be read for chat {chat_id}: {exc}"
+            )
+
+        system_prompt = direct_system_prompt(getattr(personality, "description", None))
+        if generate_code:
+            system_prompt = CODE_DESCRIPTION_PREFIX + system_prompt
+        system_prompt = plan.for_direct(system_prompt)
+        endpoint_base = getattr(
+            getattr(personality, "assistant_model", None), "endpoint_base", None
+        )
+        if tool_calling is None:
+            tool_calling = direct_tool_loop.tool_calling_enabled(personality)
+        allow_image = direct_tool_loop.image_tool_allowed(personality, tool_calling)
+        declarations = direct_tool_loop.mcp_tool_declarations() if tool_calling else []
+        tools = direct_tool_loop.tools_for_turn(
+            declarations,
+            tool_calling=tool_calling,
+            allow_image=allow_image,
+        )
+        return pib_cloud_stream.stream_pib_cloud_chat(
+            system_prompt=system_prompt,
+            user_text=content,
+            history=history,
+            chat_id=chat_id,
+            endpoint_base=endpoint_base,
+            tools=tools,
+            allow_image=allow_image,
+            on_tool_call=getattr(self, "_record_tool_call", None),
+            local_fallback=lambda: self._iter_local_tokens(
+                chat_id, content, system_prompt
+            ),
+            is_cancelled=lambda: bool(
+                goal_handle is not None and goal_handle.is_cancel_requested
+            ),
+        )
+
     async def chat(self, goal_handle: ServerGoalHandle):
         """
         Action server callback for 'chat':
+        - Serializes turns on one pib (OQ12: two turns never run concurrently).
         - Creates an initial user ChatMessage in PIB + publishes it on ROS.
-        - Fetches personality + history and streams tokens from public_api.
-        - Splits assistant output into sentences (and <pib-program> blocks),
-          publishing each chunk as an updated ChatMessage via create_chat_message().
+        - Fetches personality + history and streams tokens from pib.Cloud / Hermes / Direct.
+        - Splits assistant output into sentences/clauses (with N-token fallback),
+          publishing each chunk as feedback and updating the ChatMessage.
         """
+        with self._get_turn_lock():
+            return self._execute_chat_turn(goal_handle)
+
+    def _execute_chat_turn(self, goal_handle: ServerGoalHandle):
         t0 = time.monotonic()
         self.get_logger().info("start chat request")
 
@@ -1002,7 +1289,18 @@ class ChatNode(Node):
             getattr(personality, "assistant_model", None), "api_name", None
         )
         local_model = api_name == LOCAL_MODEL_API_NAME
+        pib_cloud_model = api_name == PIB_CLOUD_API_NAME
         model_provider_name = _model_provider_name(api_name)
+        tool_calling = direct_tool_loop.tool_calling_enabled(personality)
+        # Old Direct text selections stop here, before the key store. A locked
+        # or missing key must not hide the retirement reason, and the stored
+        # selection is not migrated.
+        if legacy_direct_text_selected(
+            channel=channel,
+            api_name=api_name,
+            voice_mode=getattr(personality, "voice_mode", None),
+        ):
+            return self._finish_retired_direct_text(goal_handle, chat_id, api_name)
         # Only a model whose provider needs a key is gated by the store. A
         # cloud model does; the on-device model does not, and still answers
         # while the store is locked.
@@ -1029,9 +1327,13 @@ class ChatNode(Node):
 
         try:
             if is_smart:
-                # The channel decides Hermes, the model decides what Hermes
-                # runs. Smart + the on-device model therefore still goes
-                # through Hermes, never through the direct local token loop.
+                turn_path = "Hermes"
+                # The channel decides the transport: Smart runs on Hermes, Direct
+                # never does. Tool calling says whether a turn offers MCP tools
+                # inside whichever runtime serves it - it is not a transport
+                # switch, so it must not move a Direct personality onto Hermes.
+                # Smart stays on Hermes even for the on-device model: the model
+                # decides what Hermes runs, never the transport.
                 if goal_handle.is_cancel_requested:
                     goal_handle.canceled()
                     return Chat.Result()
@@ -1043,9 +1345,28 @@ class ChatNode(Node):
                     model=api_name,
                     provider=model_provider_name,
                     base_url=_model_base_url(api_name),
+                    tool_calling=tool_calling,
+                    goal_handle=goal_handle,
+                )
+            elif pib_cloud_model:
+                turn_path = "pib.Cloud"
+                if goal_handle.is_cancel_requested:
+                    goal_handle.canceled()
+                    return Chat.Result()
+                self.get_logger().info(
+                    f"pib.Cloud streaming chat={chat_id} model={PIB_CLOUD_API_NAME}"
+                )
+                tokens = self._stream_pib_cloud_turn(
+                    chat_id=chat_id,
+                    content=content,
+                    personality=personality,
+                    plan=plan,
+                    generate_code=generate_code,
+                    tool_calling=tool_calling,
                     goal_handle=goal_handle,
                 )
             elif local_model:
+                turn_path = "the on-device model"
                 system_prompt = direct_system_prompt(personality.description)
                 if generate_code:
                     system_prompt = CODE_DESCRIPTION_PREFIX + system_prompt
@@ -1055,6 +1376,7 @@ class ChatNode(Node):
                 )
                 tokens = self._iter_local_tokens(chat_id, content, system_prompt)
             else:
+                turn_path = "the direct tool loop"
                 # Pull recent message history for context
                 with self.voice_assistant_client_lock:
                     successful, chat_messages = voice_assistant_client.get_chat_history(
@@ -1080,65 +1402,60 @@ class ChatNode(Node):
                 if generate_code:
                     system_prompt = CODE_DESCRIPTION_PREFIX + system_prompt
                 system_prompt = plan.for_direct(system_prompt)
-                tool_calling = direct_tool_loop.tool_calling_enabled(personality)
                 allow_image = direct_tool_loop.image_tool_allowed(
                     personality, tool_calling
                 )
                 api_name = personality.assistant_model.api_name
-                if tool_calling:
-                    if not direct_tool_loop.supports_tool_endpoint(api_name):
-                        raise direct_tool_loop.DirectToolLoopError(
-                            "Direct tool calling has no non-beta endpoint for "
-                            f"model {api_name!r}. The pinned model is "
-                            f"{direct_tool_loop.PINNED_MODEL} "
-                            f"({direct_tool_loop.PINNED_PROVIDER}), checked "
-                            f"{direct_tool_loop.PINNED_CHECKED_ON}."
-                        )
+                if not direct_tool_loop.supports_tool_endpoint(api_name):
+                    raise direct_tool_loop.DirectToolLoopError(
+                        "Direct tool calling has no non-beta endpoint for "
+                        f"model {api_name!r}. The pinned model is "
+                        f"{direct_tool_loop.PINNED_MODEL} "
+                        f"({direct_tool_loop.PINNED_PROVIDER}), checked "
+                        f"{direct_tool_loop.PINNED_CHECKED_ON}."
+                    )
+                self.get_logger().info(
+                    f"direct tool loop model={direct_tool_loop.PINNED_MODEL} "
+                    f"provider={direct_tool_loop.PINNED_PROVIDER} chat={chat_id}"
+                )
+
+                def report_key_source(source: str) -> None:
+                    # source is key-store or environment. The key itself
+                    # is not passed here, so it cannot land in the log.
                     self.get_logger().info(
-                        f"direct tool loop model={direct_tool_loop.PINNED_MODEL} "
-                        f"provider={direct_tool_loop.PINNED_PROVIDER} chat={chat_id}"
+                        f"direct provider key source={source} "
+                        f"provider={direct_tool_loop.PINNED_PROVIDER} "
+                        f"chat={chat_id}"
                     )
 
-                    def report_key_source(source: str) -> None:
-                        # source is key-store or environment. The key itself
-                        # is not passed here, so it cannot land in the log.
-                        self.get_logger().info(
-                            f"direct provider key source={source} "
-                            f"provider={direct_tool_loop.PINNED_PROVIDER} "
-                            f"chat={chat_id}"
-                        )
+                tokens = direct_tool_loop.run_direct_turn(
+                    system_prompt=system_prompt,
+                    user_text=content,
+                    history=[
+                        (message.content, message.is_user)
+                        for message in message_history
+                    ],
+                    tool_calling=tool_calling,
+                    allow_image=allow_image,
+                    report_key_source=report_key_source,
+                    on_tool_call=self._record_tool_call,
+                )
 
-                    tokens = direct_tool_loop.run_direct_turn(
-                        system_prompt=system_prompt,
-                        user_text=content,
-                        history=[
-                            (message.content, message.is_user)
-                            for message in message_history
-                        ],
-                        tool_calling=True,
-                        allow_image=allow_image,
-                        report_key_source=report_key_source,
-                    )
-                else:
-                    with self.public_voice_client_lock:
-                        tokens = public_voice_client.chat_completion(
-                            text=content,
-                            description=system_prompt,
-                            message_history=message_history,
-                            image_base64=None,
-                            model=api_name,
-                            public_api_token=self.token,
-                        )
-
+            # Which runtime serves this turn, before the first token is asked
+            # for: a UI needs it even when the transport fails afterwards.
+            self._emit_turn_path(chat_id=chat_id, path=turn_path, model=api_name)
             prev_text, prev_text_type, curr_text = self._stream_chunks_to_goal(
                 goal_handle, chat_id, tokens, t0=t0
             )
+            self._finalize_message_meta(chat_id)
             if goal_handle.is_cancel_requested:
                 return Chat.Result()
 
         except Exception as e:
-            backend = "smart" if is_smart else "direct"
-            self.get_logger().error(f"failed to send request to {backend}: {e}")
+            # Name the path the turn actually took: a pib.Cloud turn with tools
+            # enabled runs on Hermes, and a log that still says "direct" sends
+            # the next diagnosis to the wrong component.
+            self.get_logger().error(f"failed to send request to {turn_path}: {e}")
             goal_handle.abort()
             return Chat.Result()
 

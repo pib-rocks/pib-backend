@@ -1144,6 +1144,18 @@ components:
           examples:
             - smart
             - direct
+        reasoningEffort:
+          type: string
+          nullable: true
+          enum: [none, minimal, low, medium, high, xhigh, max, ultra]
+          description: >-
+            Hermes agent.reasoning_effort for this personality's profile.
+            Null means unmanaged: the profile's existing setting is left
+            unchanged. A new personality starts at none. Any other value
+            is rejected.
+          examples:
+            - none
+            - low
         assistantModelId:
           type: string
           deprecated: true
@@ -1238,6 +1250,18 @@ components:
           examples:
             - smart
             - direct
+        reasoningEffort:
+          type: string
+          nullable: true
+          enum: [none, minimal, low, medium, high, xhigh, max, ultra]
+          default: none
+          description: >-
+            Hermes agent.reasoning_effort written into this personality's
+            profile. Omitted means none. Null means unmanaged: the profile's
+            existing setting is left unchanged. Any other value is rejected.
+          examples:
+            - none
+            - low
       # A new personality needs a name only. Every other value comes from
       # the defaults and can be changed afterwards.
       required:

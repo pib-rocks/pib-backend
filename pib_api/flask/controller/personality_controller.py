@@ -1,4 +1,5 @@
 from flask import abort, jsonify, request, Blueprint
+from marshmallow import ValidationError
 from pib_hermes_config.live_interaction import personality_requests_actuation
 from service import personality_service
 from schema.personality_schema import (
@@ -9,6 +10,11 @@ from schema.personality_schema import (
 )
 
 bp = Blueprint("personality_controller", __name__)
+
+
+def _personality_validation_response(error: ValidationError):
+    """Field errors stay machine-readable. The generic error text stays too."""
+    return jsonify({"error": "Bad request.", "messages": error.messages}), 400
 
 
 def _reject_actuation_payload() -> None:
@@ -34,7 +40,10 @@ def get_personality(personality_id: str):
 def create_personality():
     _reject_actuation_payload()
     personality_dto = upload_personality_schema.load(request.json)
-    personality = personality_service.create_personality(personality_dto)
+    try:
+        personality = personality_service.create_personality(personality_dto)
+    except ValidationError as error:
+        return _personality_validation_response(error)
     return personality_schema.dump(personality), 201
 
 
@@ -42,9 +51,12 @@ def create_personality():
 def update_personality(personality_id: str):
     _reject_actuation_payload()
     personality_dto = update_personality_schema.load(request.json)
-    personality = personality_service.update_personality(
-        personality_id, personality_dto
-    )
+    try:
+        personality = personality_service.update_personality(
+            personality_id, personality_dto
+        )
+    except ValidationError as error:
+        return _personality_validation_response(error)
     return personality_schema.dump(personality)
 
 

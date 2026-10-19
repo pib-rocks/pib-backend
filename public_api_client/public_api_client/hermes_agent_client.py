@@ -24,6 +24,8 @@ import yaml
 from pib_hermes_config import (
     DEFAULT_SOUL,
     PROFILE_PREFIX,
+    REASONING_EFFORT_ERROR,
+    REASONING_EFFORTS,
     align_profile_ownership,
     build_default_soul_text,
     env_vars_for_provider,
@@ -45,6 +47,9 @@ DEFAULT_TIMEOUT_SECONDS = int(os.environ.get("PIB_HERMES_TIMEOUT", "120"))
 # Hermes print "Warning: Unknown toolsets: mcp-pib" on stdout, which lands in the
 # chat reply we hand back.
 DEFAULT_ENABLED_TOOLSETS = os.environ.get("PIB_HERMES_ENABLED_TOOLSETS", "pib,vision")
+DEFAULT_ENABLED_TOOLSETS_WITHOUT_MCP = os.environ.get(
+    "PIB_HERMES_ENABLED_TOOLSETS_WITHOUT_MCP", "vision"
+)
 DEFAULT_DISABLED_TOOLSETS = os.environ.get(
     "PIB_HERMES_DISABLED_TOOLSETS",
     "terminal,code_execution,file,memory,session_search",
@@ -59,10 +64,20 @@ ENV_FILE_MODE = 0o600
 # Hermes spawns it as a subprocess without forwarding this process' environment,
 # so without `env` pib_mcp_server resolves the REST base URL to its own
 # http://localhost:5000 default and every robot tool call fails in the container.
-# The single definition of that entry — setup/setup-pib.sh seeds the same one and
-# tests/unit/test_setup_hermes_model_pin.py fails if the two ever drift.
+# PIB_MCP_ENABLE_ACTUATION is written explicitly for the same reason: an omitted
+# value leaves the actuator gate closed. The shipped value is true, matching
+# docker-compose.yaml. The single definition of that entry — setup/setup-pib.sh
+# seeds the same one and tests/unit/test_setup_hermes_model_pin.py fails if the
+# two ever drift.
+# Interpreter that runs the MCP server. It must be the one the installers put pib_mcp_server AND its
+# runtime dependencies into (Dockerfile and setup-pib.sh both install into the system Python with
+# --break-system-packages). A bare "python3" resolves to the Hermes install venv when the CLI spawns
+# the server, and that venv carries pib_mcp_server without websocket-client - every tool that goes
+# through rosbridge then failed with an ImportError while the read tools kept working (PC-71).
+MCP_SERVER_PYTHON = os.getenv("PIB_MCP_PYTHON", "/usr/bin/python3")
+
 PIB_MCP_SERVER = {
-    "command": "python3",
+    "command": MCP_SERVER_PYTHON,
     "args": ["-m", "pib_mcp_server"],
     "env": {
         "FLASK_API_BASE_URL": os.getenv("FLASK_API_BASE_URL", "http://flask-app:5000"),
@@ -72,6 +87,7 @@ PIB_MCP_SERVER = {
         "PIB_MCP_ROSBRIDGE_URL": os.getenv(
             "PIB_MCP_ROSBRIDGE_URL", "ws://rosbridge-ws:9090"
         ),
+        "PIB_MCP_ENABLE_ACTUATION": "true",
     },
 }
 
@@ -81,7 +97,26 @@ DEFAULT_HERMES_MODEL = "gemini-3.8-flash"
 DEFAULT_HERMES_LITE_MODEL = "gemini-3.5-flash-lite"
 DEFAULT_HERMES_PROVIDER = "gemini"
 # High-speed defaults for Gemini Flash / Flash-Lite (PR-1524).
+# Written into the agent block. Hermes reads agent.reasoning_effort and
+# ignores the same keys at the config root.
 DEFAULT_REASONING_EFFORT = "low"
+
+# Provider name of the pib.Cloud route. The cloud decides the reasoning effort of its own upstream
+# call (Settings.reasoning_effort), so a value in the profile only travels with every request and
+# its API refuses the field - measured as a 400 on `reasoning_effort` (PC-69).
+PIB_CLOUD_PROVIDER = "pib-cloud"
+
+# The tools a robot personality may see (decision 2026-10-16, extended the same day): the MCP
+# server's tools, memory, and the Hermes skills, so a personality can read its own skills. Before this
+# the profile was cloned with the whole Hermes tool zoo, so the cloud model picked vision_analyze or
+# the generic tool dispatcher and narrated an answer instead of calling the robot tool (PC-70).
+ROBOT_TOOLSETS = ("pib", "memory", "skills")
+ROBOT_TOOLSETS_WITHOUT_MCP = ("memory", "skills")
+
+# The Hermes platform the robot's agent runs as (measured: the daemon's turn logs platform=cli), and
+# the config key that maps a platform to its toolsets.
+ROBOT_PLATFORM = "cli"
+PLATFORM_TOOLSETS_KEY = "platform_toolsets"
 DEFAULT_MAX_TOKENS = 1024
 DEFAULT_TEMPERATURE = 0.3
 
@@ -147,6 +182,53 @@ def profile_hermes_settings(
         base_url = None
     env_vars = env_vars_for_provider(provider, entry.get("key_env"))
     return model, provider, base_url, env_vars
+
+
+def profile_tool_calling_enabled(profile_dir: Optional[str] = None) -> bool:
+    """Whether MCP robot tools (``pib``) are enabled in the profile's config.yaml."""
+    directory = profile_dir or _current_hermes_home()
+    cfg = _load_config_mapping(os.path.join(directory, CONFIG_FILENAME))
+    servers = cfg.get("mcp_servers")
+    if isinstance(servers, dict):
+        pib_entry = servers.get("pib")
+        if isinstance(pib_entry, dict) and pib_entry.get("enabled") is False:
+            return False
+    toolsets = cfg.get(PLATFORM_TOOLSETS_KEY)
+    if isinstance(toolsets, dict):
+        cli_tools = toolsets.get(ROBOT_PLATFORM)
+        if isinstance(cli_tools, list) and "pib" not in cli_tools:
+            return False
+    return True
+
+
+def enabled_toolsets_for_turn(
+    tool_calling: bool = True,
+    enabled_toolsets: Optional[str] = None,
+) -> str:
+    """Resolve the comma-separated enabled toolsets for a voice turn."""
+    raw = enabled_toolsets or DEFAULT_ENABLED_TOOLSETS
+    if tool_calling:
+        return raw
+    items = [
+        item.strip()
+        for item in raw.split(",")
+        if item.strip() and item.strip() not in ("pib", "mcp-pib")
+    ]
+    return ",".join(items) or DEFAULT_ENABLED_TOOLSETS_WITHOUT_MCP
+
+
+def disabled_toolsets_for_turn(
+    tool_calling: bool = True,
+    toolsets: Optional[str] = None,
+) -> str:
+    """Resolve the comma-separated disabled toolsets for a voice turn."""
+    raw = DEFAULT_DISABLED_TOOLSETS if toolsets is None else toolsets
+    if tool_calling:
+        return raw
+    items = [item.strip() for item in raw.split(",") if item.strip()]
+    if "pib" not in items:
+        items.append("pib")
+    return ",".join(items)
 
 
 def hermes_bin() -> str:
@@ -270,6 +352,75 @@ def _merge_missing_mcp_env(entry: dict) -> bool:
         if key not in env:
             env[key] = value
             changed = True
+    # The interpreter is repaired too, but only where the shipped default is still in place: a bare
+    # "python3" resolves to the Hermes venv when the CLI spawns the server, and that venv carries
+    # pib_mcp_server without websocket-client (PC-71). A deliberate absolute path stays untouched.
+    shipped_args = entry.get("args") in (None, PIB_MCP_SERVER["args"])
+    if shipped_args and entry.get("command") in (None, "", "python3"):
+        if entry.get("command") != MCP_SERVER_PYTHON:
+            entry["command"] = MCP_SERVER_PYTHON
+            changed = True
+    return changed
+
+
+def _agent_block(cfg: dict) -> tuple[dict, bool]:
+    """The config's agent mapping, created when it is missing or not a mapping."""
+    agent = cfg.get("agent")
+    if isinstance(agent, dict):
+        return agent, False
+    agent = {}
+    cfg["agent"] = agent
+    return agent, True
+
+
+def _apply_agent_speed_defaults(
+    cfg: dict,
+    reasoning_effort: Optional[str] = None,
+    *,
+    personality_reasoning: bool = False,
+    provider: Optional[str] = None,
+) -> bool:
+    """Write speed settings into the agent block. Returns whether cfg changed.
+
+    Hermes reads ``agent.reasoning_effort`` (and the speed keys beside it).
+    The same keys at the config root are never read, so they are not written.
+
+    ``personality_reasoning`` means the personality column is the authority.
+    A string overwrites ``agent.reasoning_effort``. ``None`` is unmanaged and
+    leaves whatever the profile already has. Without that flag, a missing
+    agent key is seeded with the speed default and an existing value is kept.
+    ``max_tokens`` and ``temperature`` are seeded only when absent.
+    """
+    agent, changed = _agent_block(cfg)
+    if provider == PIB_CLOUD_PROVIDER:
+        # The cloud sets the effort itself; every value here is one more field the cloud refuses.
+        # Purging rather than skipping also repairs profiles that already carry it (PC-69).
+        if "reasoning_effort" in agent:
+            del agent["reasoning_effort"]
+            changed = True
+        if "max_tokens" not in agent:
+            agent["max_tokens"] = DEFAULT_MAX_TOKENS
+            changed = True
+        if "temperature" not in agent:
+            agent["temperature"] = DEFAULT_TEMPERATURE
+            changed = True
+        return changed
+    if personality_reasoning:
+        if reasoning_effort is not None:
+            if reasoning_effort not in REASONING_EFFORTS:
+                raise ValueError(REASONING_EFFORT_ERROR)
+            if agent.get("reasoning_effort") != reasoning_effort:
+                agent["reasoning_effort"] = reasoning_effort
+                changed = True
+    elif "reasoning_effort" not in agent:
+        agent["reasoning_effort"] = DEFAULT_REASONING_EFFORT
+        changed = True
+    if "max_tokens" not in agent:
+        agent["max_tokens"] = DEFAULT_MAX_TOKENS
+        changed = True
+    if "temperature" not in agent:
+        agent["temperature"] = DEFAULT_TEMPERATURE
+        changed = True
     return changed
 
 
@@ -279,6 +430,10 @@ def _ensure_mcp_servers_pib(
     provider: Optional[str] = None,
     base_url: Optional[str] = None,
     env_vars: tuple[str, ...] = (),
+    reasoning_effort: Optional[str] = None,
+    *,
+    personality_reasoning: bool = False,
+    tool_calling: Optional[bool] = None,
 ) -> None:
     """Seed the personality's model/provider and repair mcp_servers.pib.
 
@@ -293,8 +448,12 @@ def _ensure_mcp_servers_pib(
     ``base_url``) additionally gets a ``providers.<name>`` entry carrying its
     ``base_url`` and, when it needs a key, its ``key_env``.
 
-    Speed defaults (reasoning_effort, max_tokens, temperature) are written only
-    when the key is absent, so an operator's or a model's own value survives.
+    Speed defaults (reasoning_effort, max_tokens, temperature) are written into
+    the agent block, and only when that key is absent, so an operator's or a
+    model's own value survives. A personality reasoning level, when given,
+    overwrites agent.reasoning_effort. NULL (personality_reasoning with no
+    level) leaves the profile's existing level alone. Root-level copies of
+    these keys are not written: Hermes does not read them.
 
     Runs even when config.yaml already exists. An mcp_servers.pib entry that is
     already there keeps its command/args and only gets the env keys it is
@@ -334,15 +493,51 @@ def _ensure_mcp_servers_pib(
             cfg["provider"] = desired_provider
             changed = True
 
-    # Decision 5: speed defaults are a starting point, not a per-model override.
-    if "reasoning_effort" not in cfg:
-        cfg["reasoning_effort"] = DEFAULT_REASONING_EFFORT
+    existing_servers = cfg.get("mcp_servers")
+    existing_pib = (
+        existing_servers.get("pib") if isinstance(existing_servers, dict) else None
+    )
+    existing_enabled = (
+        existing_pib.get("enabled") if isinstance(existing_pib, dict) else None
+    )
+    existing_toolsets = cfg.get(PLATFORM_TOOLSETS_KEY)
+    existing_cli_tools = (
+        existing_toolsets.get(ROBOT_PLATFORM)
+        if isinstance(existing_toolsets, dict)
+        else None
+    )
+    if tool_calling is not None:
+        effective_tool_calling = bool(tool_calling)
+    elif existing_enabled is False or existing_cli_tools == list(
+        ROBOT_TOOLSETS_WITHOUT_MCP
+    ):
+        effective_tool_calling = False
+    else:
+        effective_tool_calling = True
+
+    # The robot tool surface: the MCP server's tools, memory, and skills when
+    # tool_calling is on; memory and skills (without pib) when tool_calling is off.
+    desired_toolsets = (
+        list(ROBOT_TOOLSETS)
+        if effective_tool_calling
+        else list(ROBOT_TOOLSETS_WITHOUT_MCP)
+    )
+    toolsets = cfg.get(PLATFORM_TOOLSETS_KEY)
+    if not isinstance(toolsets, dict):
+        toolsets = {}
+        cfg[PLATFORM_TOOLSETS_KEY] = toolsets
         changed = True
-    if "max_tokens" not in cfg:
-        cfg["max_tokens"] = DEFAULT_MAX_TOKENS
+    if toolsets.get(ROBOT_PLATFORM) != desired_toolsets:
+        toolsets[ROBOT_PLATFORM] = desired_toolsets
         changed = True
-    if "temperature" not in cfg:
-        cfg["temperature"] = DEFAULT_TEMPERATURE
+
+    # Decision 5, corrected: speed defaults live in the agent block.
+    if _apply_agent_speed_defaults(
+        cfg,
+        reasoning_effort,
+        personality_reasoning=personality_reasoning,
+        provider=desired_provider,
+    ):
         changed = True
 
     # A user-defined route is declared under providers.<name>. Built-in
@@ -376,9 +571,19 @@ def _ensure_mcp_servers_pib(
         changed = True
     entry = servers.get("pib")
     if not isinstance(entry, dict):
-        servers["pib"] = copy.deepcopy(PIB_MCP_SERVER)
+        entry = copy.deepcopy(PIB_MCP_SERVER)
+        servers["pib"] = entry
         changed = True
     elif _merge_missing_mcp_env(entry):
+        changed = True
+
+    if tool_calling is not None:
+        desired_enabled = bool(tool_calling)
+        if entry.get("enabled") is not desired_enabled:
+            entry["enabled"] = desired_enabled
+            changed = True
+    elif not effective_tool_calling and entry.get("enabled") is not False:
+        entry["enabled"] = False
         changed = True
 
     if not changed:
@@ -406,6 +611,10 @@ def ensure_profile(
     model: Optional[str] = None,
     provider: Optional[str] = None,
     base_url: Optional[str] = None,
+    reasoning_effort: Optional[str] = None,
+    *,
+    personality_reasoning: bool = False,
+    tool_calling: Optional[bool] = None,
 ) -> str:
     """Loud local repair path, executed only where Hermes is importable.
 
@@ -423,6 +632,9 @@ def ensure_profile(
         model=model,
         provider=provider,
         base_url=base_url,
+        reasoning_effort=reasoning_effort,
+        personality_reasoning=personality_reasoning,
+        tool_calling=tool_calling,
     )
     return result["profile_dir"]
 
@@ -485,6 +697,10 @@ def provision_profile(
     personality_name: Optional[str] = None,
     soul_text: Optional[str] = None,
     timeout: int = 60,
+    reasoning_effort: Optional[str] = None,
+    *,
+    personality_reasoning: bool = False,
+    tool_calling: Optional[bool] = None,
 ) -> dict:
     """Ask the Hermes daemon to create or repair a complete profile."""
     try:
@@ -494,11 +710,15 @@ def provision_profile(
             "requests is required for Hermes profile provisioning"
         ) from exc
 
-    payload = {"personality_id": personality_id}
+    payload: dict = {"personality_id": personality_id}
     if personality_name is not None:
         payload["personality_name"] = personality_name
     if soul_text is not None:
         payload["soul_text"] = soul_text
+    if personality_reasoning:
+        payload["reasoning_effort"] = reasoning_effort
+    if tool_calling is not None:
+        payload["tool_calling"] = bool(tool_calling)
 
     session = _get_daemon_session()
     post = session.post if session is not None else requests.post
@@ -608,6 +828,7 @@ def is_warm_daemon_active(timeout: float = 0.15) -> bool:
 
 
 def _try_daemon_turn(
+    tool_sink: Optional[list],
     text: str,
     chat_id: str,
     personality_id: Optional[str] = None,
@@ -692,6 +913,8 @@ def _try_daemon_turn(
         )
         return None
 
+    if isinstance(tool_sink, list) and isinstance(data.get("toolsUsed"), list):
+        tool_sink.extend(data["toolsUsed"])
     reply = data.get("reply") if isinstance(data, dict) else None
     if not isinstance(reply, str):
         logging.warning(
@@ -711,6 +934,7 @@ def stream_turn(
     max_turns: int = DEFAULT_MAX_TURNS,
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
     enabled_toolsets: Optional[str] = DEFAULT_ENABLED_TOOLSETS,
+    tool_sink: Optional[list] = None,
 ) -> Iterator[str]:
     """Yield daemon text deltas.
 
@@ -770,6 +994,10 @@ def stream_turn(
                 if delta:
                     assembled += delta
                     yield delta
+            if isinstance(tool_sink, list) and isinstance(data.get("toolsUsed"), list):
+                # The daemon reports the tools of this turn next to the text
+                # (decision PC-84); only names and outcomes travel.
+                tool_sink.extend(data["toolsUsed"])
             if "reply" in data:
                 final_reply = data["reply"]
                 if not isinstance(final_reply, str):
@@ -855,6 +1083,7 @@ def run_turn(
     max_turns: int = DEFAULT_MAX_TURNS,
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
     enabled_toolsets: Optional[str] = DEFAULT_ENABLED_TOOLSETS,
+    tool_sink: Optional[list] = None,
 ) -> str:
     """Run one conversational turn. Returns speakable text.
 
@@ -871,6 +1100,7 @@ def run_turn(
 
     # Try the warm daemon first — no filesystem binary/profile checks on this path.
     daemon_reply = _try_daemon_turn(
+        tool_sink,
         text,
         chat_id,
         personality_id,

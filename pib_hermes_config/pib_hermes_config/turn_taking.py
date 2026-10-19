@@ -14,11 +14,61 @@ import re
 from pathlib import Path
 
 DEFAULT_FIRST_TOKEN_BUDGET_MS = 700
+DEFAULT_FALLBACK_TOKEN_LIMIT = 25
 
-_CLAUSE_MARK = re.compile(r"[,;:.!?]")
+
+def transcript_opens_turn(text: object) -> bool:
+    """Whether a transcript may open a chat turn (PC-40).
+
+    A window nobody spoke into transcribes to an empty string. Sending that on
+    makes the robot answer itself: the model replies to an empty message with a
+    filler sentence and that answer is spoken - measured on the test robot as
+    seven self-triggered turns with empty transcripts in four minutes, each
+    answered with 6.5-55 s of audio. So only text opens a turn; anything that
+    is not a non-blank string is "nothing was said".
+    """
+    return isinstance(text, str) and bool(text.strip())
+
+
+_CLAUSE_MARK = re.compile(r"[,;:.!?\n]")
 _PROGRAM_BLOCK = re.compile(r"<pib-program>.*?</pib-program>", re.DOTALL)
 _OPEN_PROGRAM = re.compile(r"<pib-program>.*\Z", re.DOTALL)
 _WHITESPACE = re.compile(r"\s+")
+_WORD = re.compile(r"\S+")
+_ABBREVIATIONS = frozenset(
+    {
+        "dr",
+        "prof",
+        "mr",
+        "mrs",
+        "ms",
+        "nr",
+        "ca",
+        "bzw",
+        "etc",
+        "vs",
+        "st",
+        "z.b",
+        "d.h",
+        "u.a",
+        "b",
+        "h",
+        "a",
+    }
+)
+
+
+def fallback_token_limit() -> int:
+    """Maximum words before an unpunctuated clause flushes at the last space."""
+    override = os.environ.get("PIB_TTS_FALLBACK_TOKENS", "").strip()
+    if override:
+        try:
+            value = int(override)
+            if value > 0:
+                return value
+        except ValueError:
+            pass
+    return DEFAULT_FALLBACK_TOKEN_LIMIT
 
 
 def first_token_budget_ms() -> int:
@@ -81,12 +131,17 @@ def speakable_answer(text: str) -> str:
     return _OPEN_PROGRAM.sub(" ", without)
 
 
-def completed_clauses(text: str) -> tuple[list[str], str]:
-    """Clauses that end on punctuation, and the unfinished tail.
+def completed_clauses(
+    text: str, *, max_tokens: int | None = None
+) -> tuple[list[str], str]:
+    """Clauses that end on punctuation or token-limit fallback, and the unfinished tail.
 
-    A decimal point inside a number is not a boundary. An ellipsis stays
-    with the clause it closes.
+    A decimal point inside a number or an abbreviation period is not a boundary.
+    An ellipsis stays with the clause it closes. When an unpunctuated span exceeds
+    ``max_tokens`` words (default 25), it flushes at the whitespace after the
+    ``max_tokens``-th word so a long clause without punctuation cannot stall first audio.
     """
+    limit = fallback_token_limit() if max_tokens is None else int(max_tokens)
     clauses: list[str] = []
     start = 0
     for match in _CLAUSE_MARK.finditer(text):
@@ -96,31 +151,75 @@ def completed_clauses(text: str) -> tuple[list[str], str]:
             continue
         if mark == "." and index + 1 < len(text) and text[index + 1] == ".":
             continue
-        piece = text[start : match.end()].strip()
+        if mark == "." and _is_abbreviation(text, index):
+            continue
+        if mark == ":" and _is_non_boundary_colon(text, index):
+            continue
+        segment = text[start : match.end()]
+        if limit > 0:
+            prefix = text[start:index]
+            words = list(_WORD.finditer(prefix))
+            while len(words) > limit:
+                split_at = words[limit - 1].end()
+                piece = prefix[:split_at].strip()
+                if piece:
+                    clauses.append(piece)
+                prefix = prefix[split_at:]
+                words = list(_WORD.finditer(prefix))
+            segment = prefix + mark
+        piece = segment.strip()
         if piece:
             clauses.append(piece)
         start = match.end()
-    return clauses, text[start:]
+
+    rest = text[start:]
+    if limit > 0 and rest:
+        fallback_clauses, rest = _split_unpunctuated_fallback(rest, limit)
+        clauses.extend(fallback_clauses)
+    return clauses, rest
 
 
-def clauses_to_synthesize(text: str) -> list[str]:
+def _split_unpunctuated_fallback(text: str, limit: int) -> tuple[list[str], str]:
+    """Flush unpunctuated text at the whitespace boundary after ``limit`` words."""
+    clauses: list[str] = []
+    rest = text
+    while limit > 0 and rest:
+        words = list(_WORD.finditer(rest))
+        if len(words) < limit:
+            break
+        nth_end = words[limit - 1].end()
+        has_following_space = len(words) > limit or (
+            nth_end < len(rest) and rest[nth_end:].isspace()
+        )
+        if not has_following_space:
+            break
+        piece = rest[:nth_end].strip()
+        if piece:
+            clauses.append(piece)
+        rest = rest[nth_end:]
+    return clauses, rest
+
+
+def clauses_to_synthesize(text: str, *, max_tokens: int | None = None) -> list[str]:
     """Every piece of text to synthesize, first clause first.
 
     The unfinished tail is included so the end of an answer is not dropped.
     An empty string yields nothing.
     """
-    clauses, rest = completed_clauses(speakable_answer(text))
+    clauses, rest = completed_clauses(speakable_answer(text), max_tokens=max_tokens)
     tail = rest.strip()
     if tail:
         clauses.append(tail)
     return clauses
 
 
-def unpublished_clauses(answer: str, published: list[str]) -> list[str]:
+def unpublished_clauses(
+    answer: str, published: list[str], *, max_tokens: int | None = None
+) -> list[str]:
     """Clauses in answer whose text was not already published."""
-    covered = _covered_norms(published)
+    covered = _covered_norms(published, max_tokens=max_tokens)
     fresh: list[str] = []
-    for clause in completed_clauses(speakable_answer(answer))[0]:
+    for clause in completed_clauses(speakable_answer(answer), max_tokens=max_tokens)[0]:
         key = _norm(clause)
         if not key or key in covered:
             continue
@@ -129,54 +228,113 @@ def unpublished_clauses(answer: str, published: list[str]) -> list[str]:
     return fresh
 
 
+def _speech_emitted_prefix(published: list[str]) -> str:
+    return "".join(item for item in published if isinstance(item, str))
+
+
+def _clause_spans(
+    speakable: str, *, max_tokens: int | None = None
+) -> list[tuple[int, int]]:
+    clauses = clauses_to_synthesize(speakable, max_tokens=max_tokens)
+    spans: list[tuple[int, int]] = []
+    cursor = 0
+    for clause in clauses:
+        index = speakable.find(clause, cursor)
+        if index < 0:
+            index = cursor
+        spans.append((index, index + len(clause)))
+        cursor = index + len(clause)
+    return spans
+
+
+def next_speech_delta(
+    answer: str, published: list[str], *, max_tokens: int | None = None
+) -> str:
+    """Next speakable substring not yet present in published deltas."""
+    speakable = speakable_answer(answer)
+    if not speakable:
+        return ""
+    emitted = _speech_emitted_prefix(published)
+    if not speakable.startswith(emitted):
+        return ""
+    emitted_len = len(emitted)
+    if emitted_len >= len(speakable):
+        return ""
+    for _start, end in _clause_spans(speakable, max_tokens=max_tokens):
+        if end > emitted_len:
+            return speakable[emitted_len:end]
+    return speakable[emitted_len:]
+
+
+def speech_result_tail(
+    answer: str, published: list[str], *, max_tokens: int | None = None
+) -> str:
+    """Speakable text not yet sent as action feedback (Chat.Result delta)."""
+    speakable = speakable_answer(answer)
+    emitted = _speech_emitted_prefix(published)
+    if not speakable.startswith(emitted):
+        return ""
+    return speakable[len(emitted) :]
+
+
 class StreamingSpeech:
-    """Speak each clause once while later chunks of the same answer arrive."""
+    """Consume delta-only speech payloads for one assistant answer."""
 
-    def __init__(self) -> None:
-        self.pending = ""
-        self._spoken = ""
+    def __init__(self, *, max_tokens: int | None = None) -> None:
+        self._buffer = ""
+        self._emitted_clause_count = 0
+        self._finalized = False
+        self.max_tokens = (
+            fallback_token_limit() if max_tokens is None else int(max_tokens)
+        )
 
-    def take(self, chunk: str, is_final: bool) -> list[str]:
-        """Clauses to hand to the synthesizer for this chunk.
+    @property
+    def finalized(self) -> bool:
+        return self._finalized
 
-        A later chunk that repeats or extends text already seen does not
-        speak that text again. The final chunk also speaks an unfinished tail.
+    def take(self, delta: str, is_final: bool) -> list[str]:
+        """Clauses to synthesize from this delta-only payload.
+
+        Each call receives only text not yet emitted on the wire. Repeated
+        final delivery after finalization is ignored; intentional repeated
+        phrases in distinct deltas are spoken again.
         """
-        if not isinstance(chunk, str) or not chunk.strip():
+        if self._finalized:
             return []
-        merged = self._merge(chunk)
-        clauses, rest = completed_clauses(merged)
-        fresh: list[str] = []
-        consumed = ""
-        for clause in clauses:
-            candidate = (consumed + " " + clause).strip() if consumed else clause
-            consumed = candidate
-            if _already_spoken(self._spoken, candidate):
-                continue
-            fresh.append(clause)
-            self._spoken = _norm(candidate)
+        if not isinstance(delta, str):
+            delta = ""
+        if is_final:
+            self._finalized = True
+
+        # Buffer every delta, including whitespace-only separators: the wire
+        # splits one answer across payloads, and dropping a lone " " would glue
+        # the neighbouring words together in the synthesized text.
+        self._buffer += delta
+        if not self._buffer.strip():
+            return []
+
+        clauses, rest = completed_clauses(
+            speakable_answer(self._buffer), max_tokens=self.max_tokens
+        )
+        if (
+            not is_final
+            and self.max_tokens > 0
+            and rest.strip()
+            and len(_WORD.findall(rest)) == self.max_tokens
+            and len(_WORD.findall(delta)) >= self.max_tokens
+        ):
+            clauses = list(clauses)
+            clauses.append(rest.strip())
+            rest = ""
+
+        fresh = clauses[self._emitted_clause_count :]
+        self._emitted_clause_count = len(clauses)
         if is_final:
             tail = rest.strip()
-            whole = _norm(merged)
-            if tail and not _already_spoken(self._spoken, whole):
+            if tail:
+                fresh = list(fresh)
                 fresh.append(tail)
-                self._spoken = whole
-        return fresh
-
-    def _merge(self, chunk: str) -> str:
-        incoming = chunk.strip()
-        if not self.pending:
-            self.pending = incoming
-            return self.pending
-        pending = _norm(self.pending)
-        new = _norm(incoming)
-        if pending == new or _extends(pending, new):
-            return self.pending
-        if _extends(new, pending):
-            self.pending = incoming
-            return self.pending
-        self.pending = f"{self.pending.rstrip()} {incoming}".strip()
-        return self.pending
+        return list(fresh)
 
 
 def _whisper_model_yaml() -> Path:
@@ -190,6 +348,49 @@ def _is_decimal_point(text: str, index: int) -> bool:
         and text[index - 1].isdigit()
         and text[index + 1].isdigit()
     )
+
+
+def _is_abbreviation(text: str, index: int) -> bool:
+    """True when the period at ``index`` closes a known abbreviation (e.g. z.B., Dr.)."""
+    prefix = text[:index]
+    word_match = re.search(r"([A-Za-zÄÖÜäöüß]+(?:\.[A-Za-zÄÖÜäöüß]+)*)\Z", prefix)
+    if word_match is None:
+        return False
+    token = word_match.group(1).lower()
+    if token in _ABBREVIATIONS:
+        # Single-letter initials/abbreviations like 'z.B.' where the next char is 'B.'
+        if len(token) == 1 and token not in {"b", "h", "a"}:
+            return False
+        if len(token) == 1:
+            # Only treat single 'b'/'h'/'a' as abbreviation when preceded by 'z.'/'d.'/'u.'
+            prev = prefix[: word_match.start()].rstrip()
+            if not prev.endswith("."):
+                return False
+        return True
+    # Multi-part abbreviation whose second letter is immediately after this period (e.g. the 'z.' in 'z.B.')
+    if (
+        len(token) == 1
+        and token in {"z", "d", "u"}
+        and index + 2 < len(text)
+        and text[index + 1].isalpha()
+        and text[index + 2] == "."
+    ):
+        return True
+    return False
+
+
+def _is_non_boundary_colon(text: str, index: int) -> bool:
+    """True when the colon at ``index`` is inside a time (12:30) or URL (http://)."""
+    if (
+        index > 0
+        and index + 1 < len(text)
+        and text[index - 1].isdigit()
+        and text[index + 1].isdigit()
+    ):
+        return True
+    if index + 2 < len(text) and text[index + 1 : index + 3] == "//":
+        return True
+    return False
 
 
 def _norm(text: str) -> str:
@@ -215,13 +416,15 @@ def _already_spoken(spoken: str, candidate: str) -> bool:
     return norm == spoken or _extends(spoken, norm)
 
 
-def _covered_norms(published: list[str]) -> set[str]:
+def _covered_norms(published: list[str], *, max_tokens: int | None = None) -> set[str]:
     covered: set[str] = set()
     for item in published:
         if not isinstance(item, str):
             continue
         covered.add(_norm(item))
-        for clause in completed_clauses(speakable_answer(item))[0]:
+        for clause in completed_clauses(speakable_answer(item), max_tokens=max_tokens)[
+            0
+        ]:
             covered.add(_norm(clause))
     covered.discard("")
     return covered

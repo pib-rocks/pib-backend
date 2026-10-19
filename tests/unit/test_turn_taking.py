@@ -1,9 +1,12 @@
 """Section 6.1: pause threshold, clause speech, and authored filler."""
 
 from pib_hermes_config.turn_taking import (
+    DEFAULT_FALLBACK_TOKEN_LIMIT,
     StreamingSpeech,
     authored_filler,
     clauses_to_synthesize,
+    completed_clauses,
+    fallback_token_limit,
     first_token_budget_ms,
     normalize_thinking_filler,
     pause_threshold_now,
@@ -84,13 +87,14 @@ def test_decimal_point_is_not_a_clause_boundary():
 def test_streaming_speech_speaks_a_clause_once():
     speech = StreamingSpeech()
     assert speech.take("Sure, ", False) == ["Sure,"]
-    assert speech.take("Sure, I can help.", True) == ["I can help."]
+    assert speech.take(" I can help.", True) == ["I can help."]
 
 
 def test_streaming_speech_does_not_repeat_the_first_token():
     speech = StreamingSpeech()
     assert speech.take("Hallo Welt. ", False) == ["Hallo Welt."]
-    assert speech.take("Hallo Welt.", True) == []
+    assert speech.take("", True) == []
+    assert speech.finalized
 
 
 def test_streaming_speech_appends_the_next_sentence():
@@ -99,8 +103,47 @@ def test_streaming_speech_appends_the_next_sentence():
     assert speech.take("Zwei.", True) == ["Zwei."]
 
 
+def test_streaming_speech_repeats_intentional_duplicate_phrases():
+    speech = StreamingSpeech()
+    assert speech.take("Ja. ", False) == ["Ja."]
+    assert speech.take("Ja. ", False) == ["Ja."]
+    assert speech.take("", True) == []
+
+
+def test_streaming_speech_ignores_repeated_final_delivery():
+    speech = StreamingSpeech()
+    assert speech.take("Hallo.", True) == ["Hallo."]
+    assert speech.take("", True) == []
+    assert speech.take("Hallo.", True) == []
+
+
 def test_unpublished_clauses_skip_text_already_sent():
     fresh = unpublished_clauses("Sure, I can help.", ["Sure, I can help."])
     assert fresh == []
     fresh = unpublished_clauses("Sure, I can help.", ["Sure"])
     assert fresh == ["Sure,", "I can help."]
+
+
+def test_long_unpunctuated_clause_flushes_at_last_space_after_n_tokens():
+    assert fallback_token_limit() == DEFAULT_FALLBACK_TOKEN_LIMIT == 25
+    words = [f"wort{i}" for i in range(1, 31)]
+    text = " ".join(words)
+    clauses, rest = completed_clauses(text)
+    assert clauses == [" ".join(words[:25])]
+    assert rest.strip() == " ".join(words[25:])
+
+
+def test_streaming_speech_flushes_n_token_fallback_without_repeating_tail():
+    speech = StreamingSpeech(max_tokens=5)
+    # Feed 6 words without punctuation while stream is still open (is_final=False)
+    emitted_mid = speech.take("eins zwei drei vier fuenf sechs", False)
+    assert emitted_mid == ["eins zwei drei vier fuenf"]
+    # Feed the rest of the clause with punctuation at stream end (is_final=True)
+    emitted_end = speech.take(" sieben acht.", True)
+    assert emitted_end == ["sechs sieben acht."]
+
+
+def test_newline_acts_as_clause_boundary_while_abbreviations_do_not():
+    clauses, rest = completed_clauses("Dr. Mueller sagt z.B. hallo\nUnd geht weiter.")
+    assert clauses == ["Dr. Mueller sagt z.B. hallo", "Und geht weiter."]
+    assert rest == ""
