@@ -5,6 +5,7 @@ for the UI through rosbridge. No Flask process should open the USB device.
 """
 
 import os
+import threading
 
 import rclpy
 from rcl_interfaces.msg import SetParametersResult
@@ -27,6 +28,7 @@ from ros_audio_io.desired_state import (
     should_apply_revision,
 )
 from ros_audio_io.microphone_parameters import (
+    vad_publish_hz,
     LED_DEFAULTS,
     PARAMETER_SPECS,
     PRESETS,
@@ -75,6 +77,11 @@ class MicrophoneArrayNode(Node):
         self._using_fallback = False
         self._listening_by_chat = {}
         self._operating_mode = None
+        # The USB control transfers are not reentrant: the state cycle and the
+        # voice-activity cycle share one device, so they share one lock.
+        self._tuning_lock = threading.Lock()
+        self.vad_timer = None
+        self._vad_read_warning_active = False
 
         self._subscribe_visible_state()
         self.create_timer(2.0, self._refresh_operating_mode)
@@ -125,6 +132,13 @@ class MicrophoneArrayNode(Node):
             f"Publishing DOA, voice activity and speech detection at {publish_hz:g} Hz"
         )
         self.timer = self.create_timer(1.0 / publish_hz, self.publish_state)
+        # A separate cycle for the one register the barge-in path depends on: the
+        # state cycle reads three and cannot deliver a 60 ms trigger.
+        vad_hz = vad_publish_hz(os.getenv("MIC_ARRAY_VAD_HZ"))
+        self.vad_timer = self.create_timer(1.0 / vad_hz, self.publish_voice_activity)
+        self.get_logger().info(
+            f"Publishing voice activity at {vad_hz:g} Hz (MIC_ARRAY_VAD_HZ)"
+        )
 
     def retry_open_device(self):
         retry_timer = self.retry_timer
@@ -426,11 +440,37 @@ class MicrophoneArrayNode(Node):
         finally:
             self._syncing_parameters = False
 
-    def publish_state(self):
+    def publish_voice_activity(self):
+        """Publish only the VAD bit, and skip the cycle when the device is busy.
+
+        A blocking read here would queue up behind the state cycle and then fire a
+        burst of stale samples; skipping keeps the signal fresh and the node calm.
+        """
+        if not self._tuning_lock.acquire(blocking=False):
+            return
         try:
-            direction = int(self.tuning.read("DOAANGLE"))
             voice_activity = bool(self.tuning.read("VOICEACTIVITY"))
-            speech_detected = bool(self.tuning.read("SPEECHDETECTED"))
+        except Exception as exc:
+            if not self._vad_read_warning_active:
+                self.get_logger().warning(f"voice activity read failed: {exc}")
+                self._vad_read_warning_active = True
+            return
+        finally:
+            self._tuning_lock.release()
+        self._vad_read_warning_active = False
+        self.voice_publisher.publish(Bool(data=voice_activity))
+
+    def publish_state(self):
+        fast_vad = self.vad_timer is not None
+        try:
+            with self._tuning_lock:
+                direction = int(self.tuning.read("DOAANGLE"))
+                speech_detected = bool(self.tuning.read("SPEECHDETECTED"))
+                # With the fast cycle running the bit belongs to it alone, so a
+                # subscriber sees one rate instead of two interleaved ones.
+                voice_activity = (
+                    None if fast_vad else bool(self.tuning.read("VOICEACTIVITY"))
+                )
         except Exception as exc:
             if not self._read_warning_active:
                 self.get_logger().warning(
@@ -441,9 +481,11 @@ class MicrophoneArrayNode(Node):
 
         self._read_warning_active = False
         self.doa_publisher.publish(Int32(data=direction))
-        # Hardware VAD. The ring's vad_led mode, the face, and the turn-based
-        # recorder follow this. The live uplink does not.
-        self.voice_publisher.publish(Bool(data=voice_activity))
+        # Hardware VAD. The ring's vad_led mode, the face, the turn-based recorder
+        # and the relay's barge-in follow it. Published by the fast cycle unless
+        # that cycle is not running.
+        if voice_activity is not None:
+            self.voice_publisher.publish(Bool(data=voice_activity))
         self.speech_publisher.publish(Bool(data=speech_detected))
 
     def destroy_node(self):

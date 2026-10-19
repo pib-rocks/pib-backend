@@ -11,6 +11,8 @@ MICROPHONE_TUNING = {
     "HPFONOFF": 1,
     "STATNOISEONOFF_SR": 1,
     "NONSTATNOISEONOFF_SR": 1,
+    # firmware default; the motion guard raises it, a profile does not
+    "GAMMAVAD_SR": 3.5,
 }
 
 MICROPHONE_LED_RING = {
