@@ -45,6 +45,8 @@ from voice_assistant.pib_duplex import (
 )
 from voice_assistant.playback_clock import PlaybackClock
 from voice_assistant.speech_gate import STATE_SPEAKING, SpeechGate
+from voice_assistant.uplink_gate import UplinkGate
+from voice_assistant.fast_vad import MotionVadThresholdGuard
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +80,8 @@ class DuplexVoiceSession:
         on_state: Optional[Callable[[str], None]] = None,
         input_channels: int = 1,
         progress_interval_s: float = DEFAULT_PROGRESS_INTERVAL_S,
+        uplink_gate: Optional[UplinkGate] = None,
+        motion_vad_guard: Optional[MotionVadThresholdGuard] = None,
     ) -> None:
         self._sink = sink
         self._input_channels = input_channels
@@ -100,6 +104,8 @@ class DuplexVoiceSession:
         self._exclude_until = 0.0
         self._uplink_paused = False
         self._dropped_echo_chunks = 0
+        self._uplink_gate = uplink_gate
+        self._motion_vad_guard = motion_vad_guard
         self.client = DuplexClient(
             url,
             on_audio=self._on_audio,
@@ -203,6 +209,8 @@ class DuplexVoiceSession:
         Called from the microphone thread on every VAD edge. Only the rising edge
         acts: a held VAD must not send an event every frame.
         """
+        if self._uplink_gate is not None:
+            self._uplink_gate.set_speech(speech, time.monotonic())
         if speech:
             if not self._speaking or self._suspected:
                 return
@@ -260,10 +268,16 @@ class DuplexVoiceSession:
 
     def pause_uplink(self) -> None:
         """Stop sending audio while a robot action runs - the motors are the signal."""
+        guard = self._motion_vad_guard
+        if guard is not None:
+            guard.begin_motion()
         self._uplink_paused = True
 
     def resume_uplink(self) -> None:
         self._uplink_paused = False
+        guard = self._motion_vad_guard
+        if guard is not None:
+            guard.end_motion()
 
     def on_microphone(self, pcm: bytes) -> int:
         """Send microphone PCM upstream, taking channel 0 when the array is multichannel."""
@@ -279,7 +293,13 @@ class DuplexVoiceSession:
             samples = extract_channel(samples, self._input_channels, PROCESSED_CHANNEL)
         if samples.size == 0:
             return 0
-        return self.client.send_audio(samples.astype("<i2", copy=False).tobytes())
+        pcm = samples.astype("<i2", copy=False).tobytes()
+        gate = self._uplink_gate
+        if gate is not None and not self._accepting:
+            pcm = gate.feed(pcm, time.monotonic())
+            if not pcm:
+                return 0
+        return self.client.send_audio(pcm)
 
     def set_input_channels(self, channels: int) -> None:
         if channels < 1:
