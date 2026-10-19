@@ -641,6 +641,109 @@ def test_hermes_key_reads_the_store_for_the_personalitys_model(monkeypatch):
     assert seen == ["gpt-6"]
 
 
+def test_pib_cloud_credential_uses_the_provider_slug_not_a_pinned_model(monkeypatch):
+    """pib.Cloud keys live under the provider id, not gemini-3.8-flash."""
+    seen = []
+
+    def fake_read(api_name, *args, **kwargs):
+        seen.append(api_name)
+        return {"mode": "unlocked", "secret": STORE_SECRET}
+
+    _install_key_store(monkeypatch, fake_read)
+
+    key, source = direct_tool_loop.resolve_hermes_provider_key(
+        "pib-cloud", api_name=PINNED_MODEL
+    )
+    assert key == STORE_SECRET
+    assert source == "key-store"
+    assert seen == ["pib-cloud"]
+
+
+def test_pib_cloud_without_an_api_name_reads_the_provider_slug(monkeypatch):
+    seen = []
+
+    def fake_read(api_name, *args, **kwargs):
+        seen.append(api_name)
+        return {"mode": "unlocked", "secret": STORE_SECRET}
+
+    _install_key_store(monkeypatch, fake_read)
+
+    key, source = direct_tool_loop.resolve_hermes_provider_key("pib-cloud")
+    assert key == STORE_SECRET
+    assert source == "key-store"
+    assert seen == ["pib-cloud"]
+
+
+def _mock_credential_opener(payload: dict):
+    class Response:
+        def read(self):
+            return json.dumps(payload).encode()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    return lambda *args, **kwargs: Response()
+
+
+def test_store_client_unlocked_available_secret_yields_key_store(caplog):
+    from pib_api_client.key_store_client import read_provider_key
+
+    caplog.set_level(logging.INFO)
+    state = read_provider_key(
+        "pib-cloud",
+        opener=_mock_credential_opener(
+            {"mode": "unlocked", "available": True, "secret": STORE_SECRET}
+        ),
+    )
+    assert state == {"mode": "unlocked", "secret": STORE_SECRET}
+
+    key, source = direct_tool_loop.resolve_hermes_provider_key(
+        "pib-cloud",
+        fetch=lambda provider, api_name=None: state,
+    )
+    assert key == STORE_SECRET
+    assert source == "key-store"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"mode": "unlocked", "available": False},
+        {"mode": "unlocked", "available": True, "secret": ""},
+        {"mode": "unlocked", "available": True, "secret": "   "},
+    ],
+)
+def test_store_client_missing_secret_raises_for_hermes(monkeypatch, payload):
+    from pib_api_client.key_store_client import read_provider_key
+
+    state = read_provider_key("pib-cloud", opener=_mock_credential_opener(payload))
+    monkeypatch.setenv("PIB_CLOUD_API_KEY", ENV_SECRET)
+
+    with pytest.raises(DirectToolLoopError) as caught:
+        direct_tool_loop.resolve_hermes_provider_key(
+            "pib-cloud",
+            fetch=lambda provider, api_name=None: state,
+        )
+
+    assert str(caught.value) == "No keys are available for provider pib-cloud."
+
+
+def test_hermes_refuses_environment_when_store_is_unavailable(monkeypatch):
+    def fake_read(api_name, *args, **kwargs):
+        return {"mode": "unavailable", "secret": None}
+
+    _install_key_store(monkeypatch, fake_read)
+    monkeypatch.setenv("PIB_CLOUD_API_KEY", ENV_SECRET)
+
+    with pytest.raises(DirectToolLoopError) as caught:
+        direct_tool_loop.resolve_hermes_provider_key("pib-cloud")
+
+    assert str(caught.value) == "No keys are available for provider pib-cloud."
+
+
 def test_a_tool_call_is_reported_without_its_argument_values():
     """PC-84: the caller learns name, outcome and duration - never a value."""
     reported: list = []

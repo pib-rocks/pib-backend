@@ -124,6 +124,9 @@ PROVIDER_KEY_ENV_VARS = {
     "anthropic": ("ANTHROPIC_API_KEY",),
     "pib-cloud": ("PIB_CLOUD_API_KEY",),
 }
+# Built-in providers key per catalogue model id; custom routes (pib.Cloud) key
+# by provider slug, matching cloud_token and the credential HTTP route.
+_BUILTIN_KEYED_PROVIDERS = frozenset({"gemini", "openai", "anthropic"})
 
 
 def missing_key_message(provider: str) -> str:
@@ -157,16 +160,32 @@ def _log_key_source(source: str, provider: str, channel: str = "direct") -> None
     logger.info("%s provider key source=%s provider=%s", channel, source, provider)
 
 
+def _store_credential_id(provider: str, api_name: Optional[str] = None) -> str:
+    """Catalogue id passed to the credential route for this turn's provider.
+
+    Built-in providers (Gemini, OpenAI, Anthropic) store keys per model
+    ``api_name``. A custom route such as pib.Cloud is always addressed by its
+    provider slug, even when a stale profile still names a pinned Gemini model.
+    """
+    if provider not in _BUILTIN_KEYED_PROVIDERS:
+        return provider
+    if isinstance(api_name, str) and api_name.strip():
+        return api_name.strip()
+    if provider == PINNED_PROVIDER:
+        return PINNED_MODEL
+    return provider
+
+
 def _fetch_store_key(provider: str, api_name: Optional[str] = None) -> dict[str, Any]:
     """The unlocked secret for this provider/model, or the mode with no secret.
 
-    The store is addressed by the model's api_name, so the caller passes the
-    model the personality is set to (``api_name``). A provider this loop does
-    not key, and an unknown model, yield no secret.
+    The store is addressed by the model's api_name for built-in providers, or by
+    the provider slug for a custom keyed route. A provider this loop does not
+    key, and an unknown model, yield no secret.
     """
     if provider not in PROVIDER_KEY_ENV_VARS:
         return {"mode": "unlocked", "secret": None}
-    name = api_name if isinstance(api_name, str) and api_name.strip() else PINNED_MODEL
+    name = _store_credential_id(provider, api_name)
     try:
         from pib_api_client.key_store_client import read_provider_key
     except Exception:
