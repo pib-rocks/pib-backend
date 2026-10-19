@@ -242,6 +242,7 @@ def test_personalities_keep_their_model_and_a_gone_row_is_not_remapped(tmp_path)
         "live": False,
         "stt": False,
         "tts": False,
+        "reasoning": False,
     }
     assert json.loads(openai[3]) == json.loads(models["gpt-6"][3])
     assert json.loads(models["gpt-6"][3])["tools"] is True

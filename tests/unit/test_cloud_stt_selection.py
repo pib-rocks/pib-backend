@@ -116,9 +116,12 @@ def test_only_the_pib_cloud_catalogue_line_carries_stt():
     flagged = [entry.api_name for entry in CATALOGUE if entry.stt]
     assert flagged == [PIB_CLOUD_API_NAME]
     cloud = next(entry for entry in CATALOGUE if entry.api_name == PIB_CLOUD_API_NAME)
-    assert cloud.tts is False
+    assert cloud.tts is True
+    assert cloud.reasoning is False
     assert cloud.is_default is True
     assert capabilities_for(PIB_CLOUD_API_NAME, True)["stt"] is True
+    assert capabilities_for(PIB_CLOUD_API_NAME, True)["tts"] is True
+    assert capabilities_for(PIB_CLOUD_API_NAME, True)["reasoning"] is False
 
 
 def test_seeding_refreshes_the_flag_and_keeps_stored_engines(app):

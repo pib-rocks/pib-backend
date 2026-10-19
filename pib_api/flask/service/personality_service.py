@@ -43,6 +43,7 @@ from pib_hermes_config.memory import write_memory
 from pib_hermes_config.turn_taking import normalize_thinking_filler
 from pib_hermes_config.voice_backends import (
     CLOUD_STT_ID,
+    CLOUD_TTS_ID,
     LOCAL_STT_ID,
     LOCAL_TTS_ID,
     normalize_stt_choice,
@@ -398,14 +399,25 @@ def _default_stt_engine(personality: Personality, cloud_model_id) -> str:
     return LOCAL_STT_ID
 
 
+def _default_tts_engine(personality: Personality, cloud_model_id) -> str:
+    """Cloud speech when the chosen model is the pib.Cloud tts row, else local."""
+    if cloud_model_id is None:
+        return LOCAL_TTS_ID
+    ref = getattr(personality, "provider_ref", None)
+    model = provider_service.find_model(str(ref)) if ref else None
+    if model is not None and model.id == cloud_model_id:
+        return CLOUD_TTS_ID
+    return LOCAL_TTS_ID
+
+
 def _apply_voice_backends(
     personality: Personality, personality_dto: Any, *, creating: bool
 ) -> None:
-    """Local faster-whisper and Supertone, cloud whisper, or a capable provider.
+    """Local engines, cloud whisper and cloud speech, or a capable provider.
 
-    No STT choice (omitted on create, or blank) stores the default for the
-    chosen model. An explicit choice is stored as sent, and an update that
-    does not name sttEngine keeps the stored engine.
+    No choice (omitted on create, or blank) stores the default for the chosen
+    model. An explicit choice is stored as sent, and an update that does not
+    name an engine keeps the stored one.
     """
     if creating or "stt_engine" in personality_dto:
         cloud_model_id = provider_service.cloud_stt_model_id()
@@ -419,13 +431,14 @@ def _apply_voice_backends(
         except ValueError as exc:
             raise ValidationError({"sttEngine": [str(exc)]}) from exc
     if creating or "tts_engine" in personality_dto:
-        raw = (
-            personality_dto.get("tts_engine")
-            if "tts_engine" in personality_dto
-            else LOCAL_TTS_ID
-        )
+        cloud_tts_model_id = provider_service.cloud_tts_model_id()
         try:
-            personality.tts_engine = normalize_tts_choice(raw, _provider_has("tts"))
+            personality.tts_engine = normalize_tts_choice(
+                personality_dto.get("tts_engine"),
+                _provider_has("tts"),
+                cloud_tts_model_id,
+                default=_default_tts_engine(personality, cloud_tts_model_id),
+            )
         except ValueError as exc:
             raise ValidationError({"ttsEngine": [str(exc)]}) from exc
 

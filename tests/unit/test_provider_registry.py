@@ -64,6 +64,7 @@ def test_selection_offers_only_rows_with_images_capability(app):
         "live",
         "stt",
         "tts",
+        "reasoning",
     }
     offered = _listed_model_ids(client)
     assistant_offered = {
@@ -222,6 +223,7 @@ def test_one_provider_owns_many_models_and_the_personality_follows_the_model(
             "live": True,
             "stt": False,
             "tts": False,
+            "reasoning": False,
         },
         is_default=False,
     )

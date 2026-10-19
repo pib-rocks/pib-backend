@@ -25,6 +25,7 @@ try:
     import pyaudio
 except ImportError:
     pyaudio = None
+import requests
 import rclpy
 from datatypes.srv import PlayAudioFromFile, PlayAudioFromSpeech, ClearPlaybackQueue
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
@@ -37,8 +38,10 @@ from pib_hermes_config.visible_state import (
     VOICE_USING_FALLBACK_TOPIC,
     engine_is_fallback,
 )
-from pib_hermes_config.voice_backends import resolve_tts_route
+from pib_hermes_config.voice_backends import CLOUD_TTS_ROUTE, resolve_tts_route
 from public_api_client import public_voice_client
+from voice_assistant.cloud_token import CloudTokenError, resolve_cloud_token
+from voice_assistant.pib_cloud_stream import pib_cloud_base_url
 from voice_assistant.turn_latency import TURN_TRACE_TOPIC, format_event
 from . import util
 from .tts_synthesis import SupertoneTTSEngine
@@ -47,6 +50,48 @@ logger = logging.getLogger(__name__)
 
 # Join waits must not block forever; a timeout is not proof the device stopped.
 JOIN_WAIT_TIMEOUT_SECONDS = 120.0
+
+#: pib.Cloud speech endpoint. The base URL is the one the chat client uses,
+#: from ``PIB_CLOUD_BASE_URL``. The response is a WAV container, 16 kHz PCM16
+#: little-endian, mono, so the existing wave clause fragmenting applies.
+CLOUD_SPEECH_PATH = "/audio/speech"
+CLOUD_TTS_TIMEOUT_SECONDS = 30.0
+#: Statuses that mean the credential or the budget is done for this turn.
+_CLOUD_TTS_AUTH_STATUS_CODES = frozenset({401, 403})
+_CLOUD_TTS_BUDGET_STATUS_CODE = 402
+
+
+class CloudTTSError(Exception):
+    """pib.Cloud speech did not produce audio. ``reason`` is the fallback cause."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+def cloud_speech_url(endpoint_base: Optional[str] = None) -> str:
+    """Full URL for ``POST /v1/audio/speech``."""
+    base = pib_cloud_base_url(endpoint_base)
+    if base.endswith(CLOUD_SPEECH_PATH):
+        return base
+    if not base.endswith("/v1"):
+        base = base + "/v1"
+    return base + CLOUD_SPEECH_PATH
+
+
+def cloud_language_code(value: object) -> str:
+    """``de`` or ``en``. The endpoint accepts no third language."""
+    text = value.strip().lower() if isinstance(value, str) else ""
+    if text.startswith("en") or "engl" in text:
+        return "en"
+    return "de"
+
+
+def cloud_voice(value: object) -> str:
+    """``F1`` or ``M1``, from the personality's gender or a stored voice id."""
+    text = value.strip().lower() if isinstance(value, str) else ""
+    return "M1" if text.startswith("m") else "F1"
+
 
 # The audio thread is the only writer. The service thread only enqueues items.
 _trace_emitter = None
@@ -370,12 +415,17 @@ class AudioPlayerNode(Node):
             return response
 
         route = resolve_tts_route(getattr(request, "tts_engine", "") or "")
-        if route != "local":
+        if route not in ("local", CLOUD_TTS_ROUTE):
             self.get_logger().error(
                 f"tts backend {request.tts_engine} is not the local Supertone "
                 "engine and has no speech client"
             )
             return response
+
+        # A fallback is reported once, for the turn. The token is read once for
+        # the same reason: the key store is not consulted per clause.
+        self._cloud_tts_fallback_noted = False
+        self._cloud_tts_turn_token = None
 
         pieces = clauses_to_synthesize(speech)
         last_item = None
@@ -412,6 +462,25 @@ class AudioPlayerNode(Node):
         return response
 
     def _synthesize_clause(self, text: str, request: PlayAudioFromSpeech.Request):
+        """One clause of audio, from pib.Cloud when that engine is chosen.
+
+        A cloud failure never leaves the personality mute: the clause is
+        spoken by the local Supertone engine instead, after one logged reason
+        for the turn.
+        """
+        route = resolve_tts_route(getattr(request, "tts_engine", "") or "")
+        if route == CLOUD_TTS_ROUTE:
+            try:
+                data = self._synthesize_cloud_clause(text, request)
+                self._publish_engine_fallback("")
+            except CloudTTSError as exc:
+                self._note_cloud_tts_fallback(exc.reason)
+                data = self._synthesize_local_clause(text, request)
+        else:
+            data = self._synthesize_local_clause(text, request)
+        return self.adjust_data_granularity(data, BYTES_PER_CHUNK)
+
+    def _synthesize_local_clause(self, text: str, request: PlayAudioFromSpeech.Request):
         try:
             wav_bytes = self.tts_engine.synthesize(
                 text=text,
@@ -422,22 +491,98 @@ class AudioPlayerNode(Node):
             self._publish_engine_fallback(
                 getattr(self.tts_engine, "active_backend", "")
             )
-            buf = io.BytesIO(wav_bytes)
-            with wave.open(buf, "rb") as wf:
-                raw_pcm = wf.readframes(wf.getnframes())
-            data = [
-                raw_pcm[i : i + BYTES_PER_CHUNK]
-                for i in range(0, len(raw_pcm), BYTES_PER_CHUNK)
-            ]
+            return self._pcm_chunks(wav_bytes)
         except Exception as exc:
             self.get_logger().warning(
                 "Local Supertone TTS synthesis error, attempting public voice "
                 f"client: {exc}"
             )
-            data = public_voice_client.text_to_speech(
-                text, request.gender, request.language, self.token
+            return public_voice_client.text_to_speech(
+                text, request.gender, request.language, getattr(self, "token", None)
             )
-        return self.adjust_data_granularity(data, BYTES_PER_CHUNK)
+
+    def _synthesize_cloud_clause(
+        self, text: str, request: PlayAudioFromSpeech.Request
+    ) -> list[bytes]:
+        """WAV from ``POST /v1/audio/speech``, as PCM chunks ready to play.
+
+        The request carries the clause text, ``de``/``en`` and ``F1``/``M1``,
+        and the pib.Cloud bearer token from the key store: the same route the
+        chat client reads. Any failure raises ``CloudTTSError`` with a stable
+        reason, so the caller can fall back deterministically.
+        """
+        try:
+            token = self._cloud_tts_token()
+        except CloudTokenError:
+            raise CloudTTSError("cloud_token_unavailable") from None
+        body = {
+            "input": text,
+            "language": cloud_language_code(request.language),
+            "voice": cloud_voice(request.gender),
+        }
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "Accept": "audio/wav",
+        }
+        try:
+            response = requests.post(
+                cloud_speech_url(),
+                headers=headers,
+                json=body,
+                timeout=CLOUD_TTS_TIMEOUT_SECONDS,
+            )
+        except Exception as exc:
+            raise CloudTTSError("cloud_transport_error") from exc
+
+        status = getattr(response, "status_code", None)
+        if status in _CLOUD_TTS_AUTH_STATUS_CODES:
+            raise CloudTTSError(f"cloud_auth_rejected:{status}")
+        if status == _CLOUD_TTS_BUDGET_STATUS_CODE:
+            raise CloudTTSError(f"cloud_budget_exhausted:{status}")
+        if status != 200:
+            raise CloudTTSError(f"cloud_http_error:{status}")
+
+        wav_bytes = getattr(response, "content", None) or b""
+        if not wav_bytes:
+            raise CloudTTSError("cloud_empty_body")
+        try:
+            chunks = self._pcm_chunks(wav_bytes)
+        except Exception as exc:
+            raise CloudTTSError("cloud_invalid_wav") from exc
+        if not chunks:
+            raise CloudTTSError("cloud_empty_audio")
+        return chunks
+
+    def _cloud_tts_token(self) -> str:
+        """The key-store token, read once per turn and reused for its clauses."""
+        cached = getattr(self, "_cloud_tts_turn_token", None)
+        if cached:
+            return cached
+        token = resolve_cloud_token()
+        self._cloud_tts_turn_token = token
+        return token
+
+    def _note_cloud_tts_fallback(self, reason: str) -> None:
+        """Log why this turn left pib.Cloud speech, once per turn."""
+        if getattr(self, "_cloud_tts_fallback_noted", False):
+            return
+        self._cloud_tts_fallback_noted = True
+        self.get_logger().warning(
+            f"pib.Cloud speech backend failed ({reason}); falling back to the "
+            "local Supertone engine for this turn"
+        )
+
+    @staticmethod
+    def _pcm_chunks(wav_bytes: bytes) -> list[bytes]:
+        """PCM16 frames of a WAV container, split into player-sized chunks."""
+        buf = io.BytesIO(wav_bytes)
+        with wave.open(buf, "rb") as wf:
+            raw_pcm = wf.readframes(wf.getnframes())
+        return [
+            raw_pcm[i : i + BYTES_PER_CHUNK]
+            for i in range(0, len(raw_pcm), BYTES_PER_CHUNK)
+        ]
 
     def _fence_pcm_iterable(self, data: Iterable[bytes], order: int) -> Iterator[bytes]:
         """Stop yielding PCM if this admission generation was cancelled."""

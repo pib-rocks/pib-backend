@@ -55,8 +55,9 @@ class PersonalitySchemaSQLAutoWith(SQLAutoWithCamelCaseSchema):
         load_default=DEFAULT_MESSAGE_HISTORY,
         validate=validate.Range(min=0),
     )
-    # No load default: an omitted sttEngine is no choice, and the service
-    # stores the default for the chosen model (cloud whisper on pib.Cloud).
+    # No load default: an omitted sttEngine or ttsEngine is no choice, and the
+    # service stores the default for the chosen model (cloud whisper and cloud
+    # speech on pib.Cloud).
     stt_engine = fields.String(
         required=False,
         dump_default="local_whisper",
@@ -64,7 +65,6 @@ class PersonalitySchemaSQLAutoWith(SQLAutoWithCamelCaseSchema):
     tts_engine = fields.String(
         required=False,
         dump_default="supertone",
-        load_default="supertone",
     )
     local_voice_applies = fields.Method("get_local_voice_applies", dump_only=True)
     live_voice_note = fields.Method("get_live_voice_note", dump_only=True)

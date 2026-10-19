@@ -41,7 +41,8 @@ class Personality(db.Model):
         default="local_whisper",
         server_default="local_whisper",
     )
-    # Local Supertone, or the id of a provider row with the tts capability.
+    # Local Supertone, cloud speech on pib.Cloud, or the id of a provider row
+    # with the tts capability.
     tts_engine = db.Column(
         db.String(255),
         nullable=False,

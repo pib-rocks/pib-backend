@@ -29,8 +29,9 @@ _EMPTY_USER = "echo 'I could not hear you, please repeat your message.'"
 def model_capabilities() -> dict[str, bool]:
     """Flags stored on the local model row.
 
-    The five cloud flags stay off. ``offline`` is the extra marker and is
-    not one of the shared provider flags.
+    The cloud flags stay off, including reasoning: the model has no
+    per-personality effort the API can set. ``offline`` is the extra marker
+    and is not one of the shared provider flags.
     """
     return {
         "tools": False,
@@ -38,6 +39,7 @@ def model_capabilities() -> dict[str, bool]:
         "live": False,
         "stt": False,
         "tts": False,
+        "reasoning": False,
         OFFLINE_CAPABILITY: True,
     }
 
