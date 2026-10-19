@@ -336,10 +336,10 @@ def test_tools_on_with_the_pib_cloud_model_on_smart_routes_through_hermes(
     goal_handle.abort.assert_not_called()
 
 
-def test_a_direct_cloud_turn_with_tools_on_says_why_it_is_a_plain_chat(
+def test_a_direct_cloud_turn_with_tools_on_passes_tool_calling_to_cloud_stream(
     chat_module, chat_node
 ):
-    """No silent transport change: Direct stays Direct and the log says so."""
+    """Direct stays Direct and forwards tool_calling=True to the pib.Cloud stream."""
     logger = MagicMock()
     chat_node.get_logger = MagicMock(return_value=logger)
     personality = _personality(PIB_CLOUD_API_NAME, tool_calling=True)
@@ -351,14 +351,78 @@ def test_a_direct_cloud_turn_with_tools_on_says_why_it_is_a_plain_chat(
     hermes.assert_not_called()
     run_direct.assert_not_called()
     cloud.assert_called_once()
+    assert cloud.call_args.kwargs["tool_calling"] is True
     infos = [call[0][0] for call in logger.info.call_args_list]
-    assert any(
-        message.startswith(
-            "tools enabled: pib.Cloud has no direct tool transport; "
-            "Direct runs a plain cloud chat chat=chat-tools"
+    assert not any("no direct tool transport" in message for message in infos)
+
+
+def test_stream_pib_cloud_turn_sends_mcp_tools_only_when_tool_calling_enabled(
+    chat_module, chat_node
+):
+    """_stream_pib_cloud_turn passes MCP tools when tool_calling=True and [] when False."""
+    from pib_hermes_config.attention import AttentionPlan
+
+    declarations = [
+        {
+            "name": "list_poses",
+            "description": "List saved poses.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+        {
+            "name": "capture_image",
+            "description": "Take a camera frame.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    ]
+    personality_on = _personality(PIB_CLOUD_API_NAME, tool_calling=True)
+    personality_off = _personality(PIB_CLOUD_API_NAME, tool_calling=False)
+
+    with (
+        patch.object(
+            chat_module.voice_assistant_client,
+            "get_chat_history",
+            return_value=(True, []),
+        ),
+        patch.object(
+            chat_module.direct_tool_loop,
+            "mcp_tool_declarations",
+            return_value=declarations,
+        ) as mcp_decls,
+        patch.object(
+            chat_module.pib_cloud_stream,
+            "stream_pib_cloud_chat",
+            return_value=iter(["Antwort."]),
+        ) as stream_cloud,
+    ):
+        list(
+            chat_node._stream_pib_cloud_turn(
+                chat_id="chat-on",
+                content="Welche Posen gibt es?",
+                personality=personality_on,
+                plan=AttentionPlan(),
+                generate_code=False,
+                tool_calling=True,
+            )
         )
-        for message in infos
-    )
+        on_kwargs = stream_cloud.call_args.kwargs
+        assert [t["name"] for t in on_kwargs["tools"]] == ["list_poses"]
+        assert mcp_decls.call_count == 1
+
+        stream_cloud.reset_mock()
+        mcp_decls.reset_mock()
+        list(
+            chat_node._stream_pib_cloud_turn(
+                chat_id="chat-off",
+                content="Hallo",
+                personality=personality_off,
+                plan=AttentionPlan(),
+                generate_code=False,
+                tool_calling=False,
+            )
+        )
+        off_kwargs = stream_cloud.call_args.kwargs
+        assert off_kwargs["tools"] == []
+        mcp_decls.assert_not_called()
 
 
 def test_tools_off_with_the_pib_cloud_model_keeps_the_cloud_stream(

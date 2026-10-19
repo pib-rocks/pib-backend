@@ -47,6 +47,9 @@ DEFAULT_TIMEOUT_SECONDS = int(os.environ.get("PIB_HERMES_TIMEOUT", "120"))
 # Hermes print "Warning: Unknown toolsets: mcp-pib" on stdout, which lands in the
 # chat reply we hand back.
 DEFAULT_ENABLED_TOOLSETS = os.environ.get("PIB_HERMES_ENABLED_TOOLSETS", "pib,vision")
+DEFAULT_ENABLED_TOOLSETS_WITHOUT_MCP = os.environ.get(
+    "PIB_HERMES_ENABLED_TOOLSETS_WITHOUT_MCP", "vision"
+)
 DEFAULT_DISABLED_TOOLSETS = os.environ.get(
     "PIB_HERMES_DISABLED_TOOLSETS",
     "terminal,code_execution,file,memory,session_search",
@@ -108,6 +111,7 @@ PIB_CLOUD_PROVIDER = "pib-cloud"
 # the profile was cloned with the whole Hermes tool zoo, so the cloud model picked vision_analyze or
 # the generic tool dispatcher and narrated an answer instead of calling the robot tool (PC-70).
 ROBOT_TOOLSETS = ("pib", "memory", "skills")
+ROBOT_TOOLSETS_WITHOUT_MCP = ("memory", "skills")
 
 # The Hermes platform the robot's agent runs as (measured: the daemon's turn logs platform=cli), and
 # the config key that maps a platform to its toolsets.
@@ -178,6 +182,53 @@ def profile_hermes_settings(
         base_url = None
     env_vars = env_vars_for_provider(provider, entry.get("key_env"))
     return model, provider, base_url, env_vars
+
+
+def profile_tool_calling_enabled(profile_dir: Optional[str] = None) -> bool:
+    """Whether MCP robot tools (``pib``) are enabled in the profile's config.yaml."""
+    directory = profile_dir or _current_hermes_home()
+    cfg = _load_config_mapping(os.path.join(directory, CONFIG_FILENAME))
+    servers = cfg.get("mcp_servers")
+    if isinstance(servers, dict):
+        pib_entry = servers.get("pib")
+        if isinstance(pib_entry, dict) and pib_entry.get("enabled") is False:
+            return False
+    toolsets = cfg.get(PLATFORM_TOOLSETS_KEY)
+    if isinstance(toolsets, dict):
+        cli_tools = toolsets.get(ROBOT_PLATFORM)
+        if isinstance(cli_tools, list) and "pib" not in cli_tools:
+            return False
+    return True
+
+
+def enabled_toolsets_for_turn(
+    tool_calling: bool = True,
+    enabled_toolsets: Optional[str] = None,
+) -> str:
+    """Resolve the comma-separated enabled toolsets for a voice turn."""
+    raw = enabled_toolsets or DEFAULT_ENABLED_TOOLSETS
+    if tool_calling:
+        return raw
+    items = [
+        item.strip()
+        for item in raw.split(",")
+        if item.strip() and item.strip() not in ("pib", "mcp-pib")
+    ]
+    return ",".join(items) or DEFAULT_ENABLED_TOOLSETS_WITHOUT_MCP
+
+
+def disabled_toolsets_for_turn(
+    tool_calling: bool = True,
+    toolsets: Optional[str] = None,
+) -> str:
+    """Resolve the comma-separated disabled toolsets for a voice turn."""
+    raw = DEFAULT_DISABLED_TOOLSETS if toolsets is None else toolsets
+    if tool_calling:
+        return raw
+    items = [item.strip() for item in raw.split(",") if item.strip()]
+    if "pib" not in items:
+        items.append("pib")
+    return ",".join(items)
 
 
 def hermes_bin() -> str:
@@ -382,6 +433,7 @@ def _ensure_mcp_servers_pib(
     reasoning_effort: Optional[str] = None,
     *,
     personality_reasoning: bool = False,
+    tool_calling: Optional[bool] = None,
 ) -> None:
     """Seed the personality's model/provider and repair mcp_servers.pib.
 
@@ -441,18 +493,42 @@ def _ensure_mcp_servers_pib(
             cfg["provider"] = desired_provider
             changed = True
 
-    # The robot tool surface: the MCP server's tools and memory, nothing else. Written on every
-    # provisioning run so a profile cloned with the full Hermes configuration (browser, web, image
-    # generation, vision, terminal, the generic tool dispatcher) is narrowed as well - the cloud
-    # model with fifty choices picked the wrong ones and narrated an answer instead of calling the
-    # robot tool (PC-70).
+    existing_servers = cfg.get("mcp_servers")
+    existing_pib = (
+        existing_servers.get("pib") if isinstance(existing_servers, dict) else None
+    )
+    existing_enabled = (
+        existing_pib.get("enabled") if isinstance(existing_pib, dict) else None
+    )
+    existing_toolsets = cfg.get(PLATFORM_TOOLSETS_KEY)
+    existing_cli_tools = (
+        existing_toolsets.get(ROBOT_PLATFORM)
+        if isinstance(existing_toolsets, dict)
+        else None
+    )
+    if tool_calling is not None:
+        effective_tool_calling = bool(tool_calling)
+    elif existing_enabled is False or existing_cli_tools == list(
+        ROBOT_TOOLSETS_WITHOUT_MCP
+    ):
+        effective_tool_calling = False
+    else:
+        effective_tool_calling = True
+
+    # The robot tool surface: the MCP server's tools, memory, and skills when
+    # tool_calling is on; memory and skills (without pib) when tool_calling is off.
+    desired_toolsets = (
+        list(ROBOT_TOOLSETS)
+        if effective_tool_calling
+        else list(ROBOT_TOOLSETS_WITHOUT_MCP)
+    )
     toolsets = cfg.get(PLATFORM_TOOLSETS_KEY)
     if not isinstance(toolsets, dict):
         toolsets = {}
         cfg[PLATFORM_TOOLSETS_KEY] = toolsets
         changed = True
-    if toolsets.get(ROBOT_PLATFORM) != list(ROBOT_TOOLSETS):
-        toolsets[ROBOT_PLATFORM] = list(ROBOT_TOOLSETS)
+    if toolsets.get(ROBOT_PLATFORM) != desired_toolsets:
+        toolsets[ROBOT_PLATFORM] = desired_toolsets
         changed = True
 
     # Decision 5, corrected: speed defaults live in the agent block.
@@ -495,9 +571,19 @@ def _ensure_mcp_servers_pib(
         changed = True
     entry = servers.get("pib")
     if not isinstance(entry, dict):
-        servers["pib"] = copy.deepcopy(PIB_MCP_SERVER)
+        entry = copy.deepcopy(PIB_MCP_SERVER)
+        servers["pib"] = entry
         changed = True
     elif _merge_missing_mcp_env(entry):
+        changed = True
+
+    if tool_calling is not None:
+        desired_enabled = bool(tool_calling)
+        if entry.get("enabled") is not desired_enabled:
+            entry["enabled"] = desired_enabled
+            changed = True
+    elif not effective_tool_calling and entry.get("enabled") is not False:
+        entry["enabled"] = False
         changed = True
 
     if not changed:
@@ -528,6 +614,7 @@ def ensure_profile(
     reasoning_effort: Optional[str] = None,
     *,
     personality_reasoning: bool = False,
+    tool_calling: Optional[bool] = None,
 ) -> str:
     """Loud local repair path, executed only where Hermes is importable.
 
@@ -547,6 +634,7 @@ def ensure_profile(
         base_url=base_url,
         reasoning_effort=reasoning_effort,
         personality_reasoning=personality_reasoning,
+        tool_calling=tool_calling,
     )
     return result["profile_dir"]
 
@@ -612,6 +700,7 @@ def provision_profile(
     reasoning_effort: Optional[str] = None,
     *,
     personality_reasoning: bool = False,
+    tool_calling: Optional[bool] = None,
 ) -> dict:
     """Ask the Hermes daemon to create or repair a complete profile."""
     try:
@@ -621,13 +710,15 @@ def provision_profile(
             "requests is required for Hermes profile provisioning"
         ) from exc
 
-    payload = {"personality_id": personality_id}
+    payload: dict = {"personality_id": personality_id}
     if personality_name is not None:
         payload["personality_name"] = personality_name
     if soul_text is not None:
         payload["soul_text"] = soul_text
     if personality_reasoning:
         payload["reasoning_effort"] = reasoning_effort
+    if tool_calling is not None:
+        payload["tool_calling"] = bool(tool_calling)
 
     session = _get_daemon_session()
     post = session.post if session is not None else requests.post

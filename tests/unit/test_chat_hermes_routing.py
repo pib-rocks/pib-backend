@@ -1777,6 +1777,17 @@ def test_direct_channel_never_uses_hermes_even_with_a_tool_capable_cloud_model(
         ),
         patch.object(
             chat_module.direct_tool_loop,
+            "mcp_tool_declarations",
+            return_value=[
+                {
+                    "name": "set_led",
+                    "description": "LED setzen.",
+                    "parameters": {"type": "object", "properties": {}},
+                }
+            ],
+        ),
+        patch.object(
+            chat_module.direct_tool_loop,
             "run_direct_turn",
             return_value=iter(["Erledigt."]),
         ) as run_direct_turn,
@@ -1796,14 +1807,13 @@ def test_direct_channel_never_uses_hermes_even_with_a_tool_capable_cloud_model(
     ):
         result = drive_like_rclpy(chat_node.chat(goal_handle))
 
-    # Direct never uses Hermes. pib.Cloud has no direct tool transport, so the
-    # turn is the plain cloud stream - not the direct tool loop.
+    # Direct never uses Hermes. pib.Cloud runs on the Direct cloud SSE stream and
+    # receives the MCP tool declarations when tool_calling is True.
     hermes_stream.assert_not_called()
     run_direct_turn.assert_not_called()
     cloud.assert_called_once()
-    # Explicit, not silent: the operator sees why a tool-capable Direct turn is
-    # a plain chat.
-    assert any("no direct tool transport" in str(c) for c in logger.method_calls)
+    assert [t["name"] for t in cloud.call_args.kwargs["tools"]] == ["set_led"]
+    assert not any("no direct tool transport" in str(c) for c in logger.method_calls)
     assert result.text == "Erledigt."
 
 

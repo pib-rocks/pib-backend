@@ -925,6 +925,7 @@ class ChatNode(Node):
         model: Optional[str] = None,
         provider: Optional[str] = None,
         base_url: Optional[str] = None,
+        tool_calling: bool = True,
     ) -> str:
         """Run one hermes turn and return speakable text. Never raises.
 
@@ -962,13 +963,24 @@ class ChatNode(Node):
                         model=model,
                         provider=provider,
                         base_url=base_url,
+                        tool_calling=tool_calling,
                     )
+            disabled_toolsets = (
+                hermes_agent_client.DEFAULT_DISABLED_TOOLSETS
+                if tool_calling
+                else hermes_agent_client.disabled_toolsets_for_turn(False)
+            )
+            enabled_toolsets = (
+                hermes_agent_client.DEFAULT_ENABLED_TOOLSETS
+                if tool_calling
+                else hermes_agent_client.enabled_toolsets_for_turn(False)
+            )
             return hermes_agent_client.run_turn(
                 text=text,
                 chat_id=chat_id,
                 personality_id=personality_id,
-                toolsets=hermes_agent_client.DEFAULT_DISABLED_TOOLSETS,
-                enabled_toolsets=hermes_agent_client.DEFAULT_ENABLED_TOOLSETS,
+                toolsets=disabled_toolsets,
+                enabled_toolsets=enabled_toolsets,
                 timeout=timeout,
             )
 
@@ -1013,6 +1025,7 @@ class ChatNode(Node):
         model: Optional[str] = None,
         provider: Optional[str] = None,
         base_url: Optional[str] = None,
+        tool_calling: bool = True,
     ):
         """Yield daemon deltas, retrying through the non-streaming path on error."""
         timeout = self._hermes_timeout()
@@ -1033,15 +1046,26 @@ class ChatNode(Node):
                             model=model,
                             provider=provider,
                             base_url=base_url,
+                            tool_calling=tool_calling,
                         )
+                disabled_toolsets = (
+                    hermes_agent_client.DEFAULT_DISABLED_TOOLSETS
+                    if tool_calling
+                    else hermes_agent_client.disabled_toolsets_for_turn(False)
+                )
+                enabled_toolsets = (
+                    hermes_agent_client.DEFAULT_ENABLED_TOOLSETS
+                    if tool_calling
+                    else hermes_agent_client.enabled_toolsets_for_turn(False)
+                )
                 hermes_tools: list = []
                 try:
                     for delta in hermes_agent_client.stream_turn(
                         text=text,
                         chat_id=chat_id,
                         personality_id=personality_id,
-                        toolsets=hermes_agent_client.DEFAULT_DISABLED_TOOLSETS,
-                        enabled_toolsets=hermes_agent_client.DEFAULT_ENABLED_TOOLSETS,
+                        toolsets=disabled_toolsets,
+                        enabled_toolsets=enabled_toolsets,
                         timeout=timeout,
                         tool_sink=hermes_tools,
                     ):
@@ -1099,6 +1123,7 @@ class ChatNode(Node):
                 model=model,
                 provider=provider,
                 base_url=base_url,
+                tool_calling=tool_calling,
             )
             if emitted and reply.startswith(emitted):
                 reply = reply[len(emitted) :]
@@ -1140,6 +1165,7 @@ class ChatNode(Node):
         personality: Any,
         plan: Any,
         generate_code: bool,
+        tool_calling: Optional[bool] = None,
         goal_handle=None,
     ):
         """Stream SSE tokens from pib.Cloud (POST /v1/chat/completions, stream=true)."""
@@ -1165,12 +1191,24 @@ class ChatNode(Node):
         endpoint_base = getattr(
             getattr(personality, "assistant_model", None), "endpoint_base", None
         )
+        if tool_calling is None:
+            tool_calling = direct_tool_loop.tool_calling_enabled(personality)
+        allow_image = direct_tool_loop.image_tool_allowed(personality, tool_calling)
+        declarations = direct_tool_loop.mcp_tool_declarations() if tool_calling else []
+        tools = direct_tool_loop.tools_for_turn(
+            declarations,
+            tool_calling=tool_calling,
+            allow_image=allow_image,
+        )
         return pib_cloud_stream.stream_pib_cloud_chat(
             system_prompt=system_prompt,
             user_text=content,
             history=history,
             chat_id=chat_id,
             endpoint_base=endpoint_base,
+            tools=tools,
+            allow_image=allow_image,
+            on_tool_call=getattr(self, "_record_tool_call", None),
             local_fallback=lambda: self._iter_local_tokens(
                 chat_id, content, system_prompt
             ),
@@ -1307,19 +1345,11 @@ class ChatNode(Node):
                     model=api_name,
                     provider=model_provider_name,
                     base_url=_model_base_url(api_name),
+                    tool_calling=tool_calling,
                     goal_handle=goal_handle,
                 )
             elif pib_cloud_model:
                 turn_path = "pib.Cloud"
-                # Direct on pib.Cloud. The plain cloud stream carries no tools and
-                # the direct tool loop has no tool transport for this model, so a
-                # Direct turn on pib.Cloud is a plain chat. Say so instead of
-                # silently moving the turn to Hermes.
-                if tool_calling:
-                    self.get_logger().info(
-                        "tools enabled: pib.Cloud has no direct tool transport; "
-                        f"Direct runs a plain cloud chat chat={chat_id}"
-                    )
                 if goal_handle.is_cancel_requested:
                     goal_handle.canceled()
                     return Chat.Result()
@@ -1332,6 +1362,7 @@ class ChatNode(Node):
                     personality=personality,
                     plan=plan,
                     generate_code=generate_code,
+                    tool_calling=tool_calling,
                     goal_handle=goal_handle,
                 )
             elif local_model:

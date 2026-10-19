@@ -25,6 +25,7 @@ services:
       PIB_HERMES_DAEMON_HOST: 0.0.0.0
       PIB_HERMES_DAEMON_PORT: "8088"
       FLASK_API_BASE_URL: http://flask-app:5000
+      PIB_CLOUD_BASE_URL: ${PIB_CLOUD_BASE_URL:-https://api.pib.rocks/v1}
       TRYB_URL_PREFIX: https://platform.tryb.ai
       PIB_MCP_API_BASE_URL: http://flask-app:5000
       PIB_MCP_ROSBRIDGE_URL: ws://rosbridge-ws:9090
@@ -79,7 +80,7 @@ services:
       - PYTHON_CODE_DIR=/root/cerebra_programs
       - MARIMO_NOTEBOOKS_DIR=/home/pib/programs/notebooks
       - PIB_HERMES_PROFILES_DIR=/home/pib/.hermes/profiles
-      - PIB_HERMES_DAEMON_URL=http://ros-voice-assistant:8088
+      - PIB_HERMES_DAEMON_URL=${PIB_HERMES_DAEMON_URL:-http://hermes-daemon:8088}
       - PIB_HARDWARE_VARIANT=${PIB_HARDWARE_VARIANT:-}
       - PIB_UPDATE_DIR=/app/.update
       - PIB_KEY_STORE_PATH=/home/pib/app/secrets/provider_key_store.json

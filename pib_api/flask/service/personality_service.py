@@ -61,7 +61,7 @@ from service import provider_service, soul_service
 
 #: Path of the daemon endpoint that owns the Hermes profile factory.
 DAEMON_PROFILE_PATH = "/profile"
-DEFAULT_DAEMON_URL = "http://ros-voice-assistant:8088"
+DEFAULT_DAEMON_URL = "http://hermes-daemon:8088"
 # Sentinel: the caller did not name a reasoning level, so the payload omits it.
 _REASONING_OMITTED = object()
 
@@ -82,6 +82,7 @@ def _provision_profile(
     provider: Optional[str] = None,
     endpoint_base: Optional[str] = None,
     reasoning_effort: Any = _REASONING_OMITTED,
+    tool_calling: Optional[bool] = None,
     timeout: int = 60,
 ) -> dict:
     """Ask the Hermes daemon to create or repair a personality's Hermes profile.
@@ -118,6 +119,8 @@ def _provision_profile(
     # unmanaged and the profile's agent.reasoning_effort must stay as it is.
     if reasoning_effort is not _REASONING_OMITTED:
         payload["reasoning_effort"] = reasoning_effort
+    if tool_calling is not None:
+        payload["tool_calling"] = bool(tool_calling)
 
     url = _daemon_profile_url().rstrip("/") + DAEMON_PROFILE_PATH
     try:
@@ -663,6 +666,7 @@ def create_personality(personality_dto: Any) -> Personality:
             personality_name=personality.name,
             soul_text=custom or None,
             reasoning_effort=personality.reasoning_effort,
+            tool_calling=bool(personality.tool_calling),
             **_model_provisioning_fields(personality),
         )
         personality.profile_provisioned = True
@@ -701,8 +705,13 @@ def update_personality(personality_id: str, personality_dto: Any) -> Personality
     _apply_reasoning_effort(personality, personality_dto, creating=False)
     effort_changed = personality.reasoning_effort != previous_effort
     _apply_channel(personality, personality_dto, creating=False)
+    previous_tool_calling = bool(getattr(personality, "tool_calling", True))
     if "tool_calling" in personality_dto:
         personality.tool_calling = bool(personality_dto["tool_calling"])
+    tool_calling_changed = (
+        "tool_calling" in personality_dto
+        and bool(personality.tool_calling) != previous_tool_calling
+    )
     _reject_retired_direct_text(
         personality,
         personality_dto,
@@ -717,13 +726,14 @@ def update_personality(personality_id: str, personality_dto: Any) -> Personality
             personality.description,
             personality_name=personality.name,
         )
-    if name_changed or model_changed or effort_changed:
+    if name_changed or model_changed or effort_changed or tool_calling_changed:
         try:
             _provision_profile(
                 personality.personality_id,
                 personality_name=personality.name,
                 soul_text=personality.description,
                 reasoning_effort=personality.reasoning_effort,
+                tool_calling=bool(personality.tool_calling),
                 **_model_provisioning_fields(personality),
             )
             personality.profile_provisioned = True
