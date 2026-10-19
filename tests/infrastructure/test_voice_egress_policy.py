@@ -104,6 +104,8 @@ def test_rendered_tcp_allows_match_the_enabled_allowlist_exactly():
         ("203.0.113.20", "443"),
         ("203.0.113.21", "443"),
         ("172.18.0.1", "11434"),
+        # The Hermes turn daemon on the host's 3.14 runtime (PC-89).
+        ("172.18.0.1", "8088"),
     }
     assert "platform.tryb.ai" not in text
     assert "198.51.100.20" not in text
