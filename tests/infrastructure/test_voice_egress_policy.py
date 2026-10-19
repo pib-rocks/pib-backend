@@ -114,6 +114,14 @@ def test_rendered_tcp_allows_match_the_enabled_allowlist_exactly():
     assert mod.IPV6_NOTE in text
 
 
+def test_network_gateway_uses_the_bridge_gateway_not_docker0():
+    """host.docker.internal points at docker0; the container's own gateway is routable."""
+    allow = mod.load_allowlist(str(ALLOWLIST_PATH))
+    text = mod.render_ruleset(allow, _binding())
+    assert ("172.18.0.1", "8088") in _tcp_tokens(text)
+    assert ("172.17.0.1", "8088") not in _tcp_tokens(text)
+
+
 def test_enabling_tryb_adds_only_that_destination():
     raw = json.loads(ALLOWLIST_PATH.read_text(encoding="utf-8"))
     for entry in raw["entries"]:
