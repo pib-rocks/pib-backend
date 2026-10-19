@@ -175,6 +175,7 @@ def _entry_from_dict(item: object) -> Entry:
         "literal",
         "dns",
         "bridge-gateway",
+        "network-gateway",
         "bridge-subnet",
         "multicast",
     ):
@@ -388,9 +389,22 @@ def tcp_allows(
                             "refusing an over-broad allow"
                         )
         elif entry.resolve == "bridge-gateway":
+            # docker0 (what host.docker.internal resolves to), not this bridge's
+            # gateway - see the note in apply.sh.
             address = ipaddress.ip_address(binding.host_address)
             if not isinstance(address, ipaddress.IPv4Address):
                 raise PolicyError("host gateway must be IPv4")
+            addresses = (str(address),)
+        elif entry.resolve == "network-gateway":
+            # The gateway of the network the container actually sits in. A host
+            # service that the container must reach has to be addressed there:
+            # host.docker.internal points at docker0, a different network that a
+            # container on this bridge has no route to.
+            address = ipaddress.ip_address(binding.gateway)
+            if not isinstance(address, ipaddress.IPv4Address):
+                raise PolicyError("network gateway must be IPv4")
+            if address not in _binding_network(binding):
+                raise PolicyError("network gateway is not inside the bridge subnet")
             addresses = (str(address),)
         else:
             raise PolicyError(f"{entry.id}: tcp entry has no address")
