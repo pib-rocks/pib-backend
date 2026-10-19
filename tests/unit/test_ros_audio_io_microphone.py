@@ -34,6 +34,10 @@ from ros_audio_io.desired_state import (  # noqa: E402
     validate_desired_state,
 )
 from ros_audio_io.microphone_parameters import (  # noqa: E402
+    DEFAULT_VAD_PUBLISH_HZ,
+    MAX_VAD_PUBLISH_HZ,
+    MIN_VAD_PUBLISH_HZ,
+    vad_publish_hz,
     AGCTIME_BLOCK_RATE_HZ,
     AGCTIME_READBACK_EPSILON_SECONDS,
     DEFAULT_READBACK_TOLERANCE,
@@ -762,3 +766,55 @@ def test_apply_reports_a_failing_device_and_keeps_earlier_readbacks():
 
     assert readbacks == {"HPFONOFF": 2}
     assert failure == "Device write/read-back failed: usb timeout"
+
+
+# --- PC-102: the VAD bit on its own cycle, and its threshold on the control surface
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (None, DEFAULT_VAD_PUBLISH_HZ),
+        ("", DEFAULT_VAD_PUBLISH_HZ),
+        ("30", 30.0),
+        ("0", DEFAULT_VAD_PUBLISH_HZ),
+        ("-5", DEFAULT_VAD_PUBLISH_HZ),
+        ("nonsense", DEFAULT_VAD_PUBLISH_HZ),
+        ("1", MIN_VAD_PUBLISH_HZ),
+        ("500", MAX_VAD_PUBLISH_HZ),
+    ],
+)
+def test_the_vad_publish_rate_is_clamped_to_what_the_device_serves(
+    raw, expected
+) -> None:
+    assert vad_publish_hz(raw) == expected
+
+
+def test_the_default_vad_cycle_delivers_a_sample_inside_sixty_four_millis() -> None:
+    """PC-86 asks for a 60 ms trigger; the state cycle reads three registers and cannot."""
+    assert 1.0 / DEFAULT_VAD_PUBLISH_HZ <= 0.064
+
+
+def test_the_vad_threshold_is_part_of_the_control_surface() -> None:
+    from ros_audio_io.microphone_parameters import (
+        PARAMETER_SPECS,
+        TUNABLE_PARAMETERS,
+        validate_parameter,
+    )
+
+    assert "GAMMAVAD_SR" in TUNABLE_PARAMETERS
+    assert validate_parameter("GAMMAVAD_SR", 8.5) == 8.5
+    assert validate_parameter("GAMMAVAD_SR", 3.5) == 3.5
+    assert PARAMETER_SPECS["GAMMAVAD_SR"][3] == 3.5  # firmware default
+
+    for bad in (100.0, -50.0, True):
+        with pytest.raises(ValueError):
+            validate_parameter("GAMMAVAD_SR", bad)
+
+
+def test_every_preset_keeps_the_firmware_vad_threshold() -> None:
+    """A preset must not accidentally raise the threshold; only motion does."""
+    for name, values in PRESETS.items():
+        if name == "Custom":
+            continue
+        assert values["GAMMAVAD_SR"] == 3.5

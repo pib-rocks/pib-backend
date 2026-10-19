@@ -16,6 +16,10 @@ TUNABLE_PARAMETERS = (
     "HPFONOFF",
     "STATNOISEONOFF_SR",
     "NONSTATNOISEONOFF_SR",
+    # The VAD threshold belongs on the same control surface as the other
+    # registers: raising it while a motor runs is what keeps servo noise from
+    # tripping the detector, and doing that over ROS needs no second USB opener.
+    "GAMMAVAD_SR",
 )
 
 # name: (Python type, minimum, maximum, default)
@@ -30,7 +34,30 @@ PARAMETER_SPECS = {
     "HPFONOFF": (int, 0, 3, 1),
     "STATNOISEONOFF_SR": (int, 0, 1, 1),
     "NONSTATNOISEONOFF_SR": (int, 0, 1, 1),
+    # dB, [-inf .. 60]; the firmware default is 3.5 dB (20*log10(1.5)).
+    "GAMMAVAD_SR": (float, -10.0, 60.0, 3.5),
 }
+
+# How often the voice-activity bit is published on its own timer. The state
+# cycle reads three registers and therefore cannot be faster than ~10 Hz; the
+# barge-in path needs a fresh sample inside 64 ms.
+DEFAULT_VAD_PUBLISH_HZ = 20.0
+MIN_VAD_PUBLISH_HZ = 5.0
+MAX_VAD_PUBLISH_HZ = 50.0
+
+
+def vad_publish_hz(raw: Any) -> float:
+    """The VAD publish rate from an env value, clamped to what the device serves."""
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        return DEFAULT_VAD_PUBLISH_HZ
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_VAD_PUBLISH_HZ
+    if value <= 0:
+        return DEFAULT_VAD_PUBLISH_HZ
+    return max(MIN_VAD_PUBLISH_HZ, min(value, MAX_VAD_PUBLISH_HZ))
+
 
 # AGCTIME is a ramp time-constant in seconds, but the register does not hold
 # seconds: it holds the one-pole coefficient of that ramp at the processing
@@ -89,6 +116,9 @@ PRESETS: Dict[str, Dict[str, Any]] = {
         "HPFONOFF": 2,
         "STATNOISEONOFF_SR": 1,
         "NONSTATNOISEONOFF_SR": 1,
+        # Presets leave the VAD threshold at the firmware default; the motion
+        # guard is the only thing that raises it.
+        "GAMMAVAD_SR": 3.5,
     },
     "Loud Speaker Playback": {
         "AGCONOFF": 1,
@@ -101,6 +131,7 @@ PRESETS: Dict[str, Dict[str, Any]] = {
         "HPFONOFF": 1,
         "STATNOISEONOFF_SR": 0,
         "NONSTATNOISEONOFF_SR": 0,
+        "GAMMAVAD_SR": 3.5,
     },
     "Raw": {
         "AGCONOFF": 0,
@@ -113,6 +144,7 @@ PRESETS: Dict[str, Dict[str, Any]] = {
         "HPFONOFF": 0,
         "STATNOISEONOFF_SR": 0,
         "NONSTATNOISEONOFF_SR": 0,
+        "GAMMAVAD_SR": 3.5,
     },
     # Selecting Custom only labels the current individual register values.
     "Custom": {},
