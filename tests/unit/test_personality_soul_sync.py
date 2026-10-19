@@ -231,6 +231,7 @@ def test_api_creation_provisions_profile_immediately(client, app_ctx, monkeypatc
         personality_name="CreationBot",
         soul_text="Custom.",
         reasoning_effort="none",
+        tool_calling=True,
         model=model.api_name,
         provider=provider_name_for(model.api_name),
     )

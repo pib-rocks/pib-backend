@@ -311,6 +311,7 @@ def ensure_profile_home(
     reasoning_effort: Optional[str] = None,
     *,
     personality_reasoning: bool = False,
+    tool_calling: Optional[bool] = None,
 ) -> dict:
     """Create or repair one complete Hermes home with the canonical factory.
 
@@ -448,6 +449,7 @@ def ensure_profile_home(
         env_vars=mapping.env_vars if mapping else (),
         reasoning_effort=reasoning_effort,
         personality_reasoning=personality_reasoning,
+        tool_calling=tool_calling,
     )
     align_profile_ownership(profile_dir)
     os.chmod(profile_dir, 0o700)
@@ -662,10 +664,27 @@ def _agent_for_chat(
     personality is set to. They are part of the cache key, so changing the
     model rebuilds the agent instead of reusing the pinned one.
     """
-    from public_api_client.hermes_agent_client import profile_hermes_settings
+    from public_api_client.hermes_agent_client import (
+        disabled_toolsets_for_turn,
+        enabled_toolsets_for_turn,
+        profile_hermes_settings,
+        profile_tool_calling_enabled,
+    )
 
     model, provider, base_url, env_vars = profile_hermes_settings()
-    settings = (enabled_toolsets, toolsets, max_turns, model, provider, base_url)
+    tool_calling = profile_tool_calling_enabled()
+    if not tool_calling:
+        enabled_toolsets = enabled_toolsets_for_turn(False, enabled_toolsets)
+        toolsets = disabled_toolsets_for_turn(False, toolsets)
+    settings = (
+        enabled_toolsets,
+        toolsets,
+        max_turns,
+        model,
+        provider,
+        base_url,
+        tool_calling,
+    )
     key = (_current_home_key(), chat_id)
     with _agent_cache_lock:
         cached = _agent_cache.get(key)
@@ -972,11 +991,17 @@ def _run_turn_in_home(
         DEFAULT_ENABLED_TOOLSETS,
         DEFAULT_MAX_TURNS,
         FALLBACK_REPLY,
+        disabled_toolsets_for_turn,
+        enabled_toolsets_for_turn,
+        profile_tool_calling_enabled,
         run_turn_subprocess,
     )
 
-    effective_toolsets = DEFAULT_DISABLED_TOOLSETS if toolsets is None else toolsets
-    effective_enabled_toolsets = enabled_toolsets or DEFAULT_ENABLED_TOOLSETS
+    tool_calling = profile_tool_calling_enabled()
+    effective_toolsets = disabled_toolsets_for_turn(tool_calling, toolsets)
+    effective_enabled_toolsets = enabled_toolsets_for_turn(
+        tool_calling, enabled_toolsets
+    )
     effective_max_turns = DEFAULT_MAX_TURNS if max_turns is None else max_turns
 
     def _subprocess_reply() -> str:
@@ -1034,7 +1059,10 @@ def _run_turn_in_home(
 
     try:
         if agent_cls is not None:
-            _ensure_mcp_tools_discovered()
+            if tool_calling and "pib" in (
+                _toolset_list(effective_enabled_toolsets) or []
+            ):
+                _ensure_mcp_tools_discovered()
             cached = _agent_for_chat(
                 chat_id,
                 effective_enabled_toolsets,
@@ -1319,6 +1347,12 @@ class HermesDaemonHandler(BaseHTTPRequestHandler):
                 ):
                     self._send_json(400, {"ok": False, "error": REASONING_EFFORT_ERROR})
                     return
+            tool_calling = data.get("tool_calling")
+            if tool_calling is not None and not isinstance(tool_calling, bool):
+                self._send_json(
+                    400, {"ok": False, "error": "tool_calling must be a boolean"}
+                )
+                return
             try:
                 result = ensure_profile_home(
                     personality_id,
@@ -1329,6 +1363,7 @@ class HermesDaemonHandler(BaseHTTPRequestHandler):
                     base_url=endpoint_base,
                     reasoning_effort=reasoning_effort,
                     personality_reasoning=personality_reasoning,
+                    tool_calling=tool_calling,
                 )
             except Exception as exc:
                 logging.exception("hermes-daemon /profile failed: %s", exc)

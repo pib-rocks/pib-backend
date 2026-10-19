@@ -139,6 +139,10 @@ def provider_for_profile(
     if name in (PIB_PROVIDER_ANTHROPIC, HERMES_PROVIDER_ANTHROPIC):
         return ProviderMapping(HERMES_PROVIDER_ANTHROPIC, ANTHROPIC_KEY_ENV_VARS, None)
     if name == PIB_PROVIDER_PIB_CLOUD:
+        if base is None:
+            base = _clean_base_url(
+                os.environ.get("PIB_CLOUD_BASE_URL") or "https://api.pib.rocks/v1"
+            )
         return ProviderMapping(HERMES_PROVIDER_PIB_CLOUD, PIB_CLOUD_KEY_ENV_VARS, base)
     if name == PIB_PROVIDER_LOCAL:
         if base is None:

@@ -141,3 +141,158 @@ def test_the_mcp_server_runs_on_the_interpreter_that_has_its_dependencies():
     assert MCP_SERVER_PYTHON == "/usr/bin/python3"
     assert PIB_MCP_SERVER["command"] == MCP_SERVER_PYTHON
     assert PIB_MCP_SERVER["args"] == ["-m", "pib_mcp_server"]
+
+
+def test_tool_calling_switch_controls_profile_mcp_server_and_cli_toolsets(tmp_path):
+    """PC-101: tool_calling=False disables mcp_servers.pib and removes pib from platform_toolsets.cli."""
+    from public_api_client.hermes_agent_client import (
+        ROBOT_TOOLSETS_WITHOUT_MCP,
+        profile_tool_calling_enabled,
+    )
+
+    pdir = tmp_path / "pib_tools_toggle"
+    _write_profile(pdir, {"model": "pib-cloud", "provider": "pib-cloud"})
+
+    _ensure_mcp_servers_pib(
+        str(pdir),
+        model="pib-cloud",
+        provider="pib-cloud",
+        tool_calling=False,
+    )
+    cfg = _read_profile(pdir)
+    assert cfg["mcp_servers"]["pib"]["enabled"] is False
+    assert cfg["platform_toolsets"]["cli"] == list(ROBOT_TOOLSETS_WITHOUT_MCP)
+    assert profile_tool_calling_enabled(str(pdir)) is False
+
+    # Chat-time ensure_profile repair (tool_calling=None) must preserve tool_calling=False.
+    _ensure_mcp_servers_pib(str(pdir))
+    cfg = _read_profile(pdir)
+    assert cfg["mcp_servers"]["pib"]["enabled"] is False
+    assert cfg["platform_toolsets"]["cli"] == list(ROBOT_TOOLSETS_WITHOUT_MCP)
+    assert profile_tool_calling_enabled(str(pdir)) is False
+
+    # Re-enabling tool_calling=True restores mcp_servers.pib.enabled=True and ROBOT_TOOLSETS.
+    _ensure_mcp_servers_pib(
+        str(pdir),
+        model="pib-cloud",
+        provider="pib-cloud",
+        tool_calling=True,
+    )
+    cfg = _read_profile(pdir)
+    assert cfg["mcp_servers"]["pib"]["enabled"] is True
+    assert cfg["platform_toolsets"]["cli"] == list(ROBOT_TOOLSETS)
+    assert profile_tool_calling_enabled(str(pdir)) is True
+
+
+def test_hermes_daemon_rebuilds_cached_agent_when_tool_calling_changes(
+    tmp_path, monkeypatch
+):
+    """PC-101: Toggling tool_calling in the profile evicts the cached AIAgent and updates turn toolsets."""
+    from public_api_client import hermes_daemon as hd
+
+    pdir = tmp_path / "pib_agent_cache"
+    _write_profile(pdir, {"model": "pib-cloud", "provider": "pib-cloud"})
+    _ensure_mcp_servers_pib(
+        str(pdir),
+        model="pib-cloud",
+        provider="pib-cloud",
+        base_url="https://api.pib.rocks/v1",
+        env_vars=("PIB_CLOUD_API_KEY",),
+        tool_calling=True,
+    )
+    monkeypatch.setattr(hd, "_current_home_key", lambda: str(pdir))
+    monkeypatch.setattr(
+        "public_api_client.hermes_agent_client._current_hermes_home",
+        lambda: str(pdir),
+    )
+    monkeypatch.setattr(hd, "_shared_session_db", lambda: None)
+    hd.clear_agent_cache()
+
+    constructed: list[dict] = []
+
+    class _FakeAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.closed = False
+            constructed.append(kwargs)
+
+        def close(self):
+            self.closed = True
+
+    try:
+        cached_on = hd._agent_for_chat(
+            "chat-1",
+            "pib,vision",
+            "terminal,code_execution,file,memory,session_search",
+            4,
+            _FakeAgent,
+            "key-1",
+        )
+        assert len(constructed) == 1
+        assert constructed[0]["enabled_toolsets"] == ["pib", "vision"]
+        assert "pib" not in constructed[0]["disabled_toolsets"]
+
+        # Flip tool_calling to False in the profile config.
+        _ensure_mcp_servers_pib(
+            str(pdir),
+            model="pib-cloud",
+            provider="pib-cloud",
+            tool_calling=False,
+        )
+        cached_off = hd._agent_for_chat(
+            "chat-1",
+            "pib,vision",
+            "terminal,code_execution,file,memory,session_search",
+            4,
+            _FakeAgent,
+            "key-1",
+        )
+        assert cached_off is not cached_on
+        assert cached_on.agent.closed is True
+        assert len(constructed) == 2
+        assert constructed[1]["enabled_toolsets"] == ["vision"]
+        assert "pib" in constructed[1]["disabled_toolsets"]
+    finally:
+        hd.clear_agent_cache()
+
+
+def test_update_personality_reprovisions_profile_when_tool_calling_changes(
+    app_ctx, monkeypatch
+):
+    """PC-101: Toggling tool_calling on a personality triggers _provision_profile with the new boolean."""
+    from service import personality_service
+
+    calls: list[dict] = []
+
+    def fake_provision(personality_id, **kwargs):
+        calls.append({"personality_id": personality_id, **kwargs})
+        return {"ok": True}
+
+    monkeypatch.setattr(personality_service, "_provision_profile", fake_provision)
+
+    personality = personality_service.create_personality(
+        {"name": "SmartTools", "tool_calling": True}
+    )
+    assert len(calls) == 1
+    assert calls[0]["tool_calling"] is True
+    calls.clear()
+
+    # Updating with the same tool_calling value does not reprovision.
+    personality_service.update_personality(
+        personality.personality_id, {"tool_calling": True}
+    )
+    assert calls == []
+
+    # Toggling tool_calling to False reprovisions the Hermes profile.
+    personality_service.update_personality(
+        personality.personality_id, {"tool_calling": False}
+    )
+    assert len(calls) == 1
+    assert calls[0]["tool_calling"] is False
+
+    # Toggling tool_calling back to True reprovisions again.
+    personality_service.update_personality(
+        personality.personality_id, {"tool_calling": True}
+    )
+    assert len(calls) == 2
+    assert calls[1]["tool_calling"] is True

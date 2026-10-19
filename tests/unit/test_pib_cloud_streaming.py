@@ -354,3 +354,153 @@ def test_barge_in_closes_http_stream_immediately():
     )
     assert tokens == ["Satz eins."]
     assert response.closed is True
+
+
+def _sse_tool_call_delta(
+    index: int = 0,
+    *,
+    call_id: str | None = None,
+    name: str | None = None,
+    arguments: str | None = None,
+) -> str:
+    tc: dict = {"index": index, "type": "function"}
+    if call_id is not None:
+        tc["id"] = call_id
+    fn: dict = {}
+    if name is not None:
+        fn["name"] = name
+    if arguments is not None:
+        fn["arguments"] = arguments
+    if fn:
+        tc["function"] = fn
+    return "data: " + json.dumps(
+        {"id": "chatcmpl-tc", "choices": [{"delta": {"tool_calls": [tc]}}]}
+    )
+
+
+def test_direct_pib_cloud_tool_calling_on_sends_tools_executes_mcp_and_streams_final_answer():
+    """PC-101: When tools are provided, stream_pib_cloud_chat sends OpenAI tools, executes delta.tool_calls, reports on_tool_call, and streams the follow-up answer."""
+    requests_sent: list[dict] = []
+    executed_tools: list[tuple[str, dict]] = []
+    reported_tools: list[dict] = []
+
+    round1_lines = [
+        _sse_tool_call_delta(
+            0, call_id="call_led_1", name="set_led", arguments='{"button":'
+        ),
+        _sse_tool_call_delta(0, arguments='1,"r":0,"g":255,"b":0}'),
+        "data: [DONE]",
+    ]
+    round2_lines = [
+        _sse_delta("Ich habe "),
+        _sse_delta("die LED grün geschaltet."),
+        "data: [DONE]",
+    ]
+    responses = [
+        _FakeSSEResponse(round1_lines, status_code=200),
+        _FakeSSEResponse(round2_lines, status_code=200),
+    ]
+
+    def fake_post(url, headers=None, json=None, stream=None, timeout=None):
+        del url, headers, stream, timeout
+        requests_sent.append(json)
+        return responses[len(requests_sent) - 1]
+
+    def fake_execute(name: str, args: dict):
+        executed_tools.append((name, args))
+        return {"ok": True, "status": "applied"}
+
+    declarations = [
+        {
+            "name": "set_led",
+            "description": "Set button RGB LED.",
+            "parameters": {
+                "type": "object",
+                "properties": {"button": {"type": "integer"}},
+            },
+        }
+    ]
+
+    tokens = list(
+        stream_pib_cloud_chat(
+            system_prompt="Du bist pib.",
+            user_text="Mach das Licht grün.",
+            token_fetcher=lambda: {"mode": "unlocked", "secret": "tok-1"},
+            http_post=fake_post,
+            tools=declarations,
+            execute_tool=fake_execute,
+            on_tool_call=reported_tools.append,
+        )
+    )
+
+    assert "".join(tokens) == "Ich habe die LED grün geschaltet."
+    assert len(requests_sent) == 2
+
+    first_body = requests_sent[0]
+    assert first_body["tools"] == [
+        {
+            "type": "function",
+            "function": {
+                "name": "set_led",
+                "description": "Set button RGB LED.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"button": {"type": "integer"}},
+                },
+            },
+        }
+    ]
+    assert executed_tools == [("set_led", {"button": 1, "r": 0, "g": 255, "b": 0})]
+    assert len(reported_tools) == 1
+    assert reported_tools[0]["name"] == "set_led"
+    assert reported_tools[0]["ok"] is True
+    assert reported_tools[0]["argNames"] == ["b", "button", "g", "r"]
+
+    second_messages = requests_sent[1]["messages"]
+    assistant_msg = second_messages[-2]
+    tool_msg = second_messages[-1]
+    assert assistant_msg == {
+        "role": "assistant",
+        "content": None,
+        "tool_calls": [
+            {
+                "id": "call_led_1",
+                "type": "function",
+                "function": {
+                    "name": "set_led",
+                    "arguments": '{"button":1,"r":0,"g":255,"b":0}',
+                },
+            }
+        ],
+    }
+    # pib.Cloud strict validator allows only {"role", "content", "tool_calls", "tool_call_id"}.
+    assert set(tool_msg.keys()) == {"role", "tool_call_id", "content"}
+    assert tool_msg["role"] == "tool"
+    assert tool_msg["tool_call_id"] == "call_led_1"
+    assert json.loads(tool_msg["content"]) == {"ok": True, "status": "applied"}
+
+
+def test_direct_pib_cloud_tool_calling_off_omits_tools_from_request():
+    """PC-101: When tools is empty or None (tool_calling=False), no tools field is sent."""
+    requests_sent: list[dict] = []
+
+    def fake_post(url, headers=None, json=None, stream=None, timeout=None):
+        del url, headers, stream, timeout
+        requests_sent.append(json)
+        return _FakeSSEResponse(
+            [_sse_delta("Nur Text."), "data: [DONE]"], status_code=200
+        )
+
+    tokens = list(
+        stream_pib_cloud_chat(
+            system_prompt="Du bist pib.",
+            user_text="Erzähl mir einen Witz.",
+            token_fetcher=lambda: {"mode": "unlocked", "secret": "tok-1"},
+            http_post=fake_post,
+            tools=[],
+        )
+    )
+
+    assert tokens == ["Nur Text."]
+    assert len(requests_sent) == 1
+    assert "tools" not in requests_sent[0]

@@ -20,7 +20,12 @@ from typing import Any, Callable, Iterable, Iterator, Mapping, Optional, Sequenc
 import requests
 
 from pib_hermes_config.local_model import API_NAME as LOCAL_FALLBACK_MODEL_NAME
+from pib_hermes_config.visible_state import (
+    ANSWER_GESTURE_TOOLS,
+    issue_answer_gesture,
+)
 
+from voice_assistant import direct_tool_loop
 from voice_assistant.cloud_token import CloudTokenError, resolve_cloud_token
 from voice_assistant.turn_latency import format_event
 
@@ -298,9 +303,9 @@ def build_chat_messages(
     system_prompt: str,
     history: Sequence[tuple[str, bool]],
     user_text: str,
-) -> list[dict[str, str]]:
+) -> list[dict[str, Any]]:
     """Build OpenAI-format messages without sending a model name."""
-    messages: list[dict[str, str]] = []
+    messages: list[dict[str, Any]] = []
     if isinstance(system_prompt, str) and system_prompt.strip():
         messages.append({"role": "system", "content": system_prompt.strip()})
 
@@ -319,6 +324,85 @@ def build_chat_messages(
         spoken = _EMPTY_USER_FALLBACK
     messages.append({"role": "user", "content": spoken})
     return messages
+
+
+def build_openai_tools(
+    tools: Optional[Sequence[Mapping[str, Any]]],
+) -> list[dict[str, Any]]:
+    """Convert MCP tool declarations into OpenAI chat-completions tool schemas."""
+    if not tools:
+        return []
+    openai_tools: list[dict[str, Any]] = []
+    for item in tools:
+        if not isinstance(item, Mapping):
+            continue
+        if item.get("type") == "function" and isinstance(item.get("function"), Mapping):
+            openai_tools.append(dict(item))
+            continue
+        name = item.get("name")
+        if not isinstance(name, str) or not name.strip():
+            continue
+        params = item.get("parameters")
+        if not (isinstance(params, dict) and params.get("type") == "object"):
+            params = {"type": "object", "properties": {}}
+        openai_tools.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": name.strip(),
+                    "description": str(item.get("description") or ""),
+                    "parameters": params,
+                },
+            }
+        )
+    return openai_tools
+
+
+def _accumulate_tool_call_deltas(
+    frame: Mapping[str, Any],
+    pending: dict[int, dict[str, str]],
+) -> None:
+    """Accumulate streamed ``choices[0].delta.tool_calls`` chunks by index."""
+    choices = frame.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return
+    first = choices[0]
+    if not isinstance(first, Mapping):
+        return
+    delta = first.get("delta")
+    if not isinstance(delta, Mapping):
+        return
+    raw_calls = delta.get("tool_calls")
+    if not isinstance(raw_calls, list):
+        return
+    for raw_idx, tc in enumerate(raw_calls):
+        if not isinstance(tc, Mapping):
+            continue
+        idx_val = tc.get("index")
+        idx = (
+            idx_val
+            if isinstance(idx_val, int) and not isinstance(idx_val, bool)
+            else raw_idx
+        )
+        entry = pending.setdefault(
+            idx,
+            {"id": "", "name": "", "arguments": ""},
+        )
+        tc_id = tc.get("id")
+        if isinstance(tc_id, str) and tc_id:
+            entry["id"] = tc_id
+        fn = tc.get("function")
+        if isinstance(fn, Mapping):
+            fn_name = fn.get("name")
+            if isinstance(fn_name, str) and fn_name:
+                if not entry["name"]:
+                    entry["name"] = fn_name
+            fn_args = fn.get("arguments")
+            if isinstance(fn_args, str) and fn_args:
+                entry["arguments"] += fn_args
+        elif isinstance(tc.get("name"), str) and tc.get("name"):
+            if not entry["name"]:
+                entry["name"] = str(tc["name"])
 
 
 def extract_visible_delta(frame: Mapping[str, Any]) -> Optional[str]:
@@ -464,13 +548,21 @@ def stream_pib_cloud_chat(
     retry_delay_s: float = DEFAULT_RETRY_DELAY_SECONDS,
     sleep_fn: Callable[[float], None] = time.sleep,
     max_tokens: Optional[int] = None,
+    tools: Optional[Sequence[Mapping[str, Any]]] = None,
+    execute_tool: Optional[Callable[[str, dict[str, Any]], Any]] = None,
+    on_tool_call: Optional[Callable[[dict], None]] = None,
+    allow_image: bool = False,
+    max_tool_rounds: int = direct_tool_loop.MAX_TOOL_ROUNDS,
 ) -> Iterator[str]:
     """Stream visible content tokens from ``POST /v1/chat/completions``.
 
     - Reads the key-store row 4 (``pib.Cloud``) bearer token via
-      ``resolve_cloud_token`` and sends ``Authorization: Bearer <token>``.
+      ``resolve_cloud_token`` and sends ``Authorization: Bearer ***
     - Yields each visible ``delta.content`` string as soon as its SSE frame
       arrives, ignoring ``delta.reasoning`` and empty/usage frames.
+    - When ``tools`` are provided, sends OpenAI-format ``tools`` in the request,
+      accumulates streamed ``delta.tool_calls``, executes MCP tools locally,
+      and continues the conversation until a final answer is streamed.
     - Closes the stream immediately on cancellation (barge-in).
     - Handles 401/403, 402 budget_exhausted, 429, 502/504, and mid-stream
       errors deterministically per Confluence guide 1171390467.
@@ -512,15 +604,15 @@ def stream_pib_cloud_chat(
         "Accept": "text/event-stream",
         "User-Agent": "pib-voice-assistant/1.0",
     }
-    body: dict[str, Any] = {
-        "messages": build_chat_messages(system_prompt, history, user_text),
-        "stream": True,
-    }
-    if max_tokens is not None:
-        body["max_tokens"] = int(max_tokens)
+    messages: list[dict[str, Any]] = build_chat_messages(
+        system_prompt, history, user_text
+    )
+    openai_tools = build_openai_tools(tools)
+    runner = execute_tool or direct_tool_loop.execute_mcp_tool
 
     post = http_post or _get_http_session().post
     emitted_content = False
+    first_token_logged = False
     stream_outcome_sent = False
 
     def _trace_stream_end(outcome: str) -> None:
@@ -534,310 +626,418 @@ def stream_pib_cloud_chat(
             detail={"stream_end": outcome},
         )
 
-    for attempt in range(2):
-        if cancelled():
-            return
+    rounds = max(1, int(max_tool_rounds)) if openai_tools else 1
+    for _tool_round in range(rounds):
+        body: dict[str, Any] = {
+            "messages": list(messages),
+            "stream": True,
+        }
+        if max_tokens is not None:
+            body["max_tokens"] = int(max_tokens)
+        if openai_tools:
+            body["tools"] = openai_tools
 
-        req_t0 = time.monotonic()
-        logger.info(
-            "[PERF_TRACE] PIB_CLOUD_REQ_SENT chat=%s attempt=%d elapsed_ms=0.00",
-            chat_id,
-            attempt + 1,
-        )
-        trace_emit("request_sent", chat_id=chat_id)
-        response = None
-        try:
-            response = post(
-                url,
-                headers=headers,
-                json=body,
-                stream=True,
-                timeout=timeout,
-            )
-            status = getattr(response, "status_code", 200)
-            trace_emit(
-                "response_headers",
-                chat_id=chat_id,
-                detail=_response_header_detail(response),
-            )
+        round_tool_calls: list[dict[str, Any]] = []
+        round_content_parts: list[str] = []
 
-            if status in _AUTH_ERROR_STATUS_CODES:
-                _mark_token_revoked(token)
-                logger.error(
-                    "pib.Cloud rejected bearer token with HTTP %s (chat=%s); "
-                    "disabling cloud for this token and falling back locally",
-                    status,
-                    chat_id,
-                )
-                _trace_stream_end("error")
-                yield from _yield_local_or_notice(
-                    local_fallback,
-                    CLOUD_AUTH_FAILED_NOTICE,
-                    chat_id=chat_id,
-                    cloud_failure=_cloud_failure_detail(
-                        response,
-                        reason="cloud_auth_rejected",
-                        http_status=status,
-                    ),
-                )
+        for attempt in range(2):
+            if cancelled():
                 return
 
-            if status == 402:
-                logger.warning(
-                    "pib.Cloud budget exhausted (HTTP 402, chat=%s); "
-                    "switching turn to local model",
-                    chat_id,
+            req_t0 = time.monotonic()
+            logger.info(
+                "[PERF_TRACE] PIB_CLOUD_REQ_SENT chat=%s attempt=%d elapsed_ms=0.00",
+                chat_id,
+                attempt + 1,
+            )
+            trace_emit("request_sent", chat_id=chat_id)
+            response = None
+            try:
+                response = post(
+                    url,
+                    headers=headers,
+                    json=body,
+                    stream=True,
+                    timeout=timeout,
                 )
-                _trace_stream_end("error")
-                yield from _yield_local_or_notice(
-                    local_fallback,
-                    BUDGET_EXHAUSTED_NOTICE,
+                status = getattr(response, "status_code", 200)
+                trace_emit(
+                    "response_headers",
                     chat_id=chat_id,
-                    cloud_failure=_cloud_failure_detail(
-                        response,
-                        reason="cloud_budget_exhausted",
-                        http_status=status,
-                    ),
+                    detail=_response_header_detail(response),
                 )
-                return
 
-            if status in _RETRYABLE_STATUS_CODES:
-                if attempt == 0 and not emitted_content:
-                    logger.warning(
-                        "pib.Cloud returned HTTP %s (chat=%s); retrying once after %.2fs",
+                if status in _AUTH_ERROR_STATUS_CODES:
+                    _mark_token_revoked(token)
+                    logger.error(
+                        "pib.Cloud rejected bearer token with HTTP %s (chat=%s); "
+                        "disabling cloud for this token and falling back locally",
                         status,
                         chat_id,
+                    )
+                    _trace_stream_end("error")
+                    yield from _yield_local_or_notice(
+                        local_fallback,
+                        CLOUD_AUTH_FAILED_NOTICE,
+                        chat_id=chat_id,
+                        cloud_failure=_cloud_failure_detail(
+                            response,
+                            reason="cloud_auth_rejected",
+                            http_status=status,
+                        ),
+                    )
+                    return
+
+                if status == 402:
+                    logger.warning(
+                        "pib.Cloud budget exhausted (HTTP 402, chat=%s); "
+                        "switching turn to local model",
+                        chat_id,
+                    )
+                    _trace_stream_end("error")
+                    yield from _yield_local_or_notice(
+                        local_fallback,
+                        BUDGET_EXHAUSTED_NOTICE,
+                        chat_id=chat_id,
+                        cloud_failure=_cloud_failure_detail(
+                            response,
+                            reason="cloud_budget_exhausted",
+                            http_status=status,
+                        ),
+                    )
+                    return
+
+                if status in _RETRYABLE_STATUS_CODES:
+                    if attempt == 0 and not emitted_content:
+                        logger.warning(
+                            "pib.Cloud returned HTTP %s (chat=%s); retrying once after %.2fs",
+                            status,
+                            chat_id,
+                            retry_delay_s,
+                        )
+                        if retry_delay_s > 0:
+                            sleep_fn(retry_delay_s)
+                        continue
+                    logger.error(
+                        "pib.Cloud HTTP %s persisted after retry (chat=%s); "
+                        "falling back locally",
+                        status,
+                        chat_id,
+                    )
+                    _trace_stream_end("error")
+                    yield from _yield_local_or_notice(
+                        local_fallback,
+                        CLOUD_UNAVAILABLE_NOTICE,
+                        chat_id=chat_id,
+                        cloud_failure=_cloud_failure_detail(
+                            response,
+                            reason="cloud_http_retry_exhausted",
+                            http_status=status,
+                        ),
+                    )
+                    return
+
+                if status >= 400:
+                    logger.error(
+                        "pib.Cloud returned unexpected HTTP %s (chat=%s); "
+                        "falling back locally",
+                        status,
+                        chat_id,
+                    )
+                    _trace_stream_end("error")
+                    yield from _yield_local_or_notice(
+                        local_fallback,
+                        CLOUD_UNAVAILABLE_NOTICE,
+                        chat_id=chat_id,
+                        cloud_failure=_cloud_failure_detail(
+                            response,
+                            reason="cloud_http_error",
+                            http_status=status,
+                        ),
+                    )
+                    return
+
+                saw_done = False
+                event_type: Optional[str] = None
+                pending_tool_calls: dict[int, dict[str, str]] = {}
+                round_content_parts = []
+
+                for raw_line in _iter_sse_lines(response):
+                    if cancelled():
+                        logger.info(
+                            "pib.Cloud stream cancelled by barge-in (chat=%s)",
+                            chat_id,
+                        )
+                        return
+
+                    line = raw_line.strip()
+                    if not line:
+                        event_type = None
+                        continue
+                    if line.startswith(":"):
+                        continue
+                    if line.startswith("event:"):
+                        event_type = line[6:].strip().lower()
+                        continue
+                    if not line.startswith("data:"):
+                        continue
+
+                    data_str = line[5:].strip()
+                    if not data_str:
+                        continue
+                    if data_str == "[DONE]":
+                        saw_done = True
+                        logger.info(
+                            "[PERF_TRACE] PIB_CLOUD_STREAM_DONE chat=%s elapsed_ms=%.2f",
+                            chat_id,
+                            (time.monotonic() - req_t0) * 1000.0,
+                        )
+                        break
+
+                    try:
+                        frame = json.loads(data_str)
+                    except json.JSONDecodeError as exc:
+                        raise _SSEStreamError(
+                            f"malformed SSE JSON frame: {exc}"
+                        ) from exc
+
+                    if not isinstance(frame, Mapping):
+                        raise _SSEStreamError("SSE frame is not a JSON object")
+
+                    if event_type == "error" or frame.get("error"):
+                        msg, code, err_status = _extract_error_details(frame)
+                        raise _SSEStreamError(msg, code=code, status=err_status)
+
+                    usage_detail = _stream_usage_detail(frame)
+                    if usage_detail is not None:
+                        trace_emit("usage", chat_id=chat_id, detail=usage_detail)
+
+                    event_type = None
+                    if openai_tools:
+                        _accumulate_tool_call_deltas(frame, pending_tool_calls)
+
+                    piece = extract_visible_delta(frame)
+                    if piece is not None:
+                        if not first_token_logged:
+                            first_token_logged = True
+                            logger.info(
+                                "[PERF_TRACE] PIB_CLOUD_FIRST_TOKEN chat=%s elapsed_ms=%.2f",
+                                chat_id,
+                                (time.monotonic() - req_t0) * 1000.0,
+                            )
+                            trace_emit("first_token", chat_id=chat_id)
+                        emitted_content = True
+                        round_content_parts.append(piece)
+                        yield piece
+
+                if not saw_done:
+                    raise _SSEStreamError("pib.Cloud SSE stream closed before [DONE]")
+
+                round_tool_calls = [
+                    {
+                        "id": entry["id"] or f"{entry['name']}-{idx}",
+                        "type": "function",
+                        "function": {
+                            "name": entry["name"],
+                            "arguments": entry["arguments"] or "{}",
+                        },
+                    }
+                    for idx, entry in sorted(pending_tool_calls.items())
+                    if entry.get("name")
+                ]
+
+                if round_tool_calls and openai_tools:
+                    break
+
+                _trace_stream_end("done")
+                if not emitted_content:
+                    logger.warning(
+                        "pib.Cloud stream finished with [DONE] but yielded no visible "
+                        "content (reasoning-only response, chat=%s)",
+                        chat_id,
+                    )
+                    yield EMPTY_CONTENT_NOTICE
+                return
+
+            except _SSEStreamError as exc:
+                if emitted_content:
+                    logger.warning(
+                        "pib.Cloud stream interrupted mid-answer (chat=%s): %s; "
+                        "appending cutoff notice",
+                        chat_id,
+                        exc,
+                    )
+                    _trace_stream_end("error")
+                    yield f" {STREAM_CUTOFF_NOTICE}"
+                    return
+                if exc.code == "budget_exhausted" or exc.status == 402:
+                    logger.warning(
+                        "pib.Cloud SSE budget_exhausted before content (chat=%s); "
+                        "switching turn to local model",
+                        chat_id,
+                    )
+                    _trace_stream_end("error")
+                    yield from _yield_local_or_notice(
+                        local_fallback,
+                        BUDGET_EXHAUSTED_NOTICE,
+                        chat_id=chat_id,
+                        cloud_failure={
+                            "fallback_reason": "cloud_sse_budget_exhausted",
+                            "cloud_http_status": 402,
+                        },
+                    )
+                    return
+                if exc.status in _AUTH_ERROR_STATUS_CODES or exc.code in (
+                    "invalid_token",
+                    "token_revoked",
+                ):
+                    _mark_token_revoked(token)
+                    logger.error(
+                        "pib.Cloud SSE auth error (chat=%s): %s; falling back locally",
+                        chat_id,
+                        exc,
+                    )
+                    _trace_stream_end("error")
+                    yield from _yield_local_or_notice(
+                        local_fallback,
+                        CLOUD_AUTH_FAILED_NOTICE,
+                        chat_id=chat_id,
+                        cloud_failure={
+                            "fallback_reason": "cloud_sse_auth_rejected",
+                            "cloud_http_status": exc.status,
+                        },
+                    )
+                    return
+                logger.warning(
+                    "pib.Cloud SSE failed before content (chat=%s): %s; "
+                    "falling back locally",
+                    chat_id,
+                    exc,
+                )
+                _trace_stream_end("error")
+                yield from _yield_local_or_notice(
+                    local_fallback,
+                    CLOUD_UNAVAILABLE_NOTICE,
+                    chat_id=chat_id,
+                    cloud_failure={"fallback_reason": "cloud_sse_pre_content"},
+                )
+                return
+
+            except requests.RequestException as exc:
+                if emitted_content:
+                    logger.warning(
+                        "pib.Cloud transport dropped mid-answer (chat=%s): %s; "
+                        "appending cutoff notice",
+                        chat_id,
+                        exc,
+                    )
+                    _trace_stream_end("error")
+                    yield f" {STREAM_CUTOFF_NOTICE}"
+                    return
+                if attempt == 0:
+                    logger.warning(
+                        "pib.Cloud connection error on attempt 1 (chat=%s): %s; "
+                        "retrying once after %.2fs",
+                        chat_id,
+                        exc,
                         retry_delay_s,
                     )
                     if retry_delay_s > 0:
                         sleep_fn(retry_delay_s)
                     continue
+                transport_reason = (
+                    "cloud_transport_timeout"
+                    if isinstance(exc, requests.Timeout)
+                    else "cloud_transport_retry_exhausted"
+                )
                 logger.error(
-                    "pib.Cloud HTTP %s persisted after retry (chat=%s); "
+                    "pib.Cloud unreachable after retry (chat=%s): %s; "
                     "falling back locally",
-                    status,
                     chat_id,
+                    exc,
                 )
                 _trace_stream_end("error")
                 yield from _yield_local_or_notice(
                     local_fallback,
                     CLOUD_UNAVAILABLE_NOTICE,
                     chat_id=chat_id,
-                    cloud_failure=_cloud_failure_detail(
-                        response,
-                        reason="cloud_http_retry_exhausted",
-                        http_status=status,
-                    ),
+                    cloud_failure={"fallback_reason": transport_reason},
                 )
                 return
 
-            if status >= 400:
-                logger.error(
-                    "pib.Cloud returned unexpected HTTP %s (chat=%s); "
-                    "falling back locally",
-                    status,
-                    chat_id,
+            finally:
+                if response is not None:
+                    try:
+                        response.close()
+                    except Exception:
+                        pass
+
+        if not round_tool_calls or not openai_tools:
+            break
+
+        messages.append(
+            {
+                "role": "assistant",
+                "content": (
+                    "".join(round_content_parts) if round_content_parts else None
+                ),
+                "tool_calls": round_tool_calls,
+            }
+        )
+        for tc in round_tool_calls:
+            fn = tc["function"]
+            name = fn["name"]
+            raw_args = fn.get("arguments") or "{}"
+            try:
+                parsed_args = (
+                    json.loads(raw_args)
+                    if isinstance(raw_args, str) and raw_args.strip()
+                    else {}
                 )
-                _trace_stream_end("error")
-                yield from _yield_local_or_notice(
-                    local_fallback,
-                    CLOUD_UNAVAILABLE_NOTICE,
-                    chat_id=chat_id,
-                    cloud_failure=_cloud_failure_detail(
-                        response,
-                        reason="cloud_http_error",
-                        http_status=status,
-                    ),
+            except json.JSONDecodeError:
+                parsed_args = {}
+            if not isinstance(parsed_args, dict):
+                parsed_args = {}
+
+            if name == direct_tool_loop.IMAGE_TOOL and not allow_image:
+                raise direct_tool_loop.DirectToolLoopError(
+                    "image tool is not available on this turn"
                 )
-                return
 
-            saw_done = False
-            first_token_logged = False
-            event_type: Optional[str] = None
-
-            for raw_line in _iter_sse_lines(response):
-                if cancelled():
-                    logger.info(
-                        "pib.Cloud stream cancelled by barge-in (chat=%s)", chat_id
-                    )
-                    return
-
-                line = raw_line.strip()
-                if not line:
-                    event_type = None
-                    continue
-                if line.startswith(":"):
-                    continue
-                if line.startswith("event:"):
-                    event_type = line[6:].strip().lower()
-                    continue
-                if not line.startswith("data:"):
-                    continue
-
-                data_str = line[5:].strip()
-                if not data_str:
-                    continue
-                if data_str == "[DONE]":
-                    saw_done = True
-                    logger.info(
-                        "[PERF_TRACE] PIB_CLOUD_STREAM_DONE chat=%s elapsed_ms=%.2f",
-                        chat_id,
-                        (time.monotonic() - req_t0) * 1000.0,
-                    )
-                    _trace_stream_end("done")
-                    break
-
-                try:
-                    frame = json.loads(data_str)
-                except json.JSONDecodeError as exc:
-                    raise _SSEStreamError(f"malformed SSE JSON frame: {exc}") from exc
-
-                if not isinstance(frame, Mapping):
-                    raise _SSEStreamError("SSE frame is not a JSON object")
-
-                if event_type == "error" or frame.get("error"):
-                    msg, code, err_status = _extract_error_details(frame)
-                    raise _SSEStreamError(msg, code=code, status=err_status)
-
-                usage_detail = _stream_usage_detail(frame)
-                if usage_detail is not None:
-                    trace_emit("usage", chat_id=chat_id, detail=usage_detail)
-
-                event_type = None
-                piece = extract_visible_delta(frame)
-                if piece is not None:
-                    if not first_token_logged:
-                        first_token_logged = True
-                        logger.info(
-                            "[PERF_TRACE] PIB_CLOUD_FIRST_TOKEN chat=%s elapsed_ms=%.2f",
-                            chat_id,
-                            (time.monotonic() - req_t0) * 1000.0,
-                        )
-                        trace_emit("first_token", chat_id=chat_id)
-                    emitted_content = True
-                    yield piece
-
-            if not saw_done:
-                raise _SSEStreamError("pib.Cloud SSE stream closed before [DONE]")
-
-            if not emitted_content:
-                logger.warning(
-                    "pib.Cloud stream finished with [DONE] but yielded no visible "
-                    "content (reasoning-only response, chat=%s)",
-                    chat_id,
+            logger.info("pib.Cloud direct tool call name=%s chat=%s", name, chat_id)
+            started = time.monotonic()
+            try:
+                if name in ANSWER_GESTURE_TOOLS:
+                    output = issue_answer_gesture(name, parsed_args, runner)
+                else:
+                    output = runner(name, parsed_args)
+            except Exception as exc:
+                direct_tool_loop._report_tool_call(
+                    on_tool_call,
+                    name=name,
+                    arguments=parsed_args,
+                    started=started,
+                    ok=False,
+                    error=type(exc).__name__,
                 )
-                yield EMPTY_CONTENT_NOTICE
-            return
-
-        except _SSEStreamError as exc:
-            if emitted_content:
-                logger.warning(
-                    "pib.Cloud stream interrupted mid-answer (chat=%s): %s; "
-                    "appending cutoff notice",
-                    chat_id,
-                    exc,
-                )
-                _trace_stream_end("error")
-                yield f" {STREAM_CUTOFF_NOTICE}"
-                return
-            if exc.code == "budget_exhausted" or exc.status == 402:
-                logger.warning(
-                    "pib.Cloud SSE budget_exhausted before content (chat=%s); "
-                    "switching turn to local model",
-                    chat_id,
-                )
-                _trace_stream_end("error")
-                yield from _yield_local_or_notice(
-                    local_fallback,
-                    BUDGET_EXHAUSTED_NOTICE,
-                    chat_id=chat_id,
-                    cloud_failure={
-                        "fallback_reason": "cloud_sse_budget_exhausted",
-                        "cloud_http_status": 402,
-                    },
-                )
-                return
-            if exc.status in _AUTH_ERROR_STATUS_CODES or exc.code in (
-                "invalid_token",
-                "token_revoked",
-            ):
-                _mark_token_revoked(token)
-                logger.error(
-                    "pib.Cloud SSE auth error (chat=%s): %s; falling back locally",
-                    chat_id,
-                    exc,
-                )
-                _trace_stream_end("error")
-                yield from _yield_local_or_notice(
-                    local_fallback,
-                    CLOUD_AUTH_FAILED_NOTICE,
-                    chat_id=chat_id,
-                    cloud_failure={
-                        "fallback_reason": "cloud_sse_auth_rejected",
-                        "cloud_http_status": exc.status,
-                    },
-                )
-                return
-            logger.warning(
-                "pib.Cloud SSE failed before content (chat=%s): %s; "
-                "falling back locally",
-                chat_id,
-                exc,
+                raise
+            direct_tool_loop._report_tool_call(
+                on_tool_call,
+                name=name,
+                arguments=parsed_args,
+                started=started,
+                ok=True,
+                error="",
             )
-            _trace_stream_end("error")
-            yield from _yield_local_or_notice(
-                local_fallback,
-                CLOUD_UNAVAILABLE_NOTICE,
-                chat_id=chat_id,
-                cloud_failure={"fallback_reason": "cloud_sse_pre_content"},
+            tool_payload = output if isinstance(output, dict) else {"result": output}
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tc["id"],
+                    "content": json.dumps(tool_payload),
+                }
             )
-            return
 
-        except requests.RequestException as exc:
-            if emitted_content:
-                logger.warning(
-                    "pib.Cloud transport dropped mid-answer (chat=%s): %s; "
-                    "appending cutoff notice",
-                    chat_id,
-                    exc,
-                )
-                _trace_stream_end("error")
-                yield f" {STREAM_CUTOFF_NOTICE}"
-                return
-            if attempt == 0:
-                logger.warning(
-                    "pib.Cloud connection error on attempt 1 (chat=%s): %s; "
-                    "retrying once after %.2fs",
-                    chat_id,
-                    exc,
-                    retry_delay_s,
-                )
-                if retry_delay_s > 0:
-                    sleep_fn(retry_delay_s)
-                continue
-            transport_reason = (
-                "cloud_transport_timeout"
-                if isinstance(exc, requests.Timeout)
-                else "cloud_transport_retry_exhausted"
-            )
-            logger.error(
-                "pib.Cloud unreachable after retry (chat=%s): %s; "
-                "falling back locally",
-                chat_id,
-                exc,
-            )
-            _trace_stream_end("error")
-            yield from _yield_local_or_notice(
-                local_fallback,
-                CLOUD_UNAVAILABLE_NOTICE,
-                chat_id=chat_id,
-                cloud_failure={"fallback_reason": transport_reason},
-            )
-            return
-
-        finally:
-            if response is not None:
-                try:
-                    response.close()
-                except Exception:
-                    pass
+    _trace_stream_end("done")
+    if not emitted_content:
+        yield EMPTY_CONTENT_NOTICE

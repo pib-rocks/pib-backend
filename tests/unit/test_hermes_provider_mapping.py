@@ -68,6 +68,14 @@ def test_pib_cloud_maps_to_a_user_defined_route():
     assert provider_needs_key(mapping.provider, mapping.env_vars[0]) is True
 
 
+def test_pib_cloud_without_a_registry_endpoint_defaults_to_pib_rocks(monkeypatch):
+    monkeypatch.delenv("PIB_CLOUD_BASE_URL", raising=False)
+    mapping = provider_for_profile("pib.Cloud", None)
+    assert mapping.provider == "pib-cloud"
+    assert mapping.env_vars == ("PIB_CLOUD_API_KEY",)
+    assert mapping.base_url == "https://api.pib.rocks/v1"
+
+
 def test_local_maps_to_a_keyless_openai_route():
     mapping = provider_for_profile("Local", "http://host.docker.internal:11434/v1")
     assert mapping.provider == "local"
