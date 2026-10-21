@@ -86,10 +86,13 @@ ANTHROPIC_KEY_ENV_VARS = ("ANTHROPIC_API_KEY",)
 PIB_CLOUD_KEY_ENV_VARS = ("PIB_CLOUD_API_KEY",)
 
 #: Built-in providers Hermes already understands; no ``providers:`` entry needed.
+#: User-defined routes that still have a fixed key env (pib.Cloud) are listed
+#: here too so ``env_vars_for_provider`` resolves them without a config entry.
 BUILTIN_KEY_ENV_VARS: dict[str, tuple[str, ...]] = {
     HERMES_PROVIDER_GEMINI: GEMINI_KEY_ENV_VARS,
     HERMES_PROVIDER_OPENAI: OPENAI_KEY_ENV_VARS,
     HERMES_PROVIDER_ANTHROPIC: ANTHROPIC_KEY_ENV_VARS,
+    HERMES_PROVIDER_PIB_CLOUD: PIB_CLOUD_KEY_ENV_VARS,
 }
 
 

@@ -26,8 +26,10 @@ from public_api_client.hermes_agent_client import (
     DEFAULT_REASONING_EFFORT,
     DEFAULT_TEMPERATURE,
     PIB_MCP_SERVER,
+    _child_environment,
     _ensure_mcp_servers_pib,
     profile_hermes_settings,
+    provider_key_for_turn,
 )
 
 
@@ -104,12 +106,15 @@ def test_unknown_provider_with_a_route_becomes_its_own_entry():
     assert mapping.env_vars == ()
 
 
-def test_env_vars_for_provider_adds_the_custom_key_env():
+def test_env_vars_for_provider_builtin_and_custom_key_env_table():
     assert env_vars_for_provider("local") == ()
+    assert env_vars_for_provider("pib-cloud") == ("PIB_CLOUD_API_KEY",)
     assert env_vars_for_provider("pib-cloud", "PIB_CLOUD_API_KEY") == (
         "PIB_CLOUD_API_KEY",
     )
     assert env_vars_for_provider("gemini") == ("GOOGLE_API_KEY", "GEMINI_API_KEY")
+    assert env_vars_for_provider("openai") == ("OPENAI_API_KEY",)
+    assert env_vars_for_provider("anthropic") == ("ANTHROPIC_API_KEY",)
 
 
 # --- config.yaml writer ----------------------------------------------------
@@ -247,6 +252,27 @@ def test_writer_seeds_speed_defaults_only_when_absent(tmp_path):
 # --- settings reader -------------------------------------------------------
 
 
+def test_profile_settings_resolve_pib_cloud_env_vars_without_yaml_key_env(tmp_path):
+    """PC-114: keyed routes must resolve from the builtin table alone."""
+    pdir = tmp_path / "pib_read"
+    pdir.mkdir()
+    with open(os.path.join(str(pdir), "config.yaml"), "w", encoding="utf-8") as fh:
+        yaml.safe_dump(
+            {
+                "model": "pib-cloud",
+                "provider": "pib-cloud",
+                "providers": {
+                    "pib-cloud": {"base_url": "https://api.pib.rocks/v1"},
+                },
+            },
+            fh,
+        )
+
+    _model, provider, _base_url, env_vars = profile_hermes_settings(str(pdir))
+    assert provider == "pib-cloud"
+    assert env_vars == ("PIB_CLOUD_API_KEY",)
+
+
 def test_profile_settings_read_back_the_written_model_and_key_env(tmp_path):
     pdir = tmp_path / "pib_read"
     pdir.mkdir()
@@ -278,3 +304,154 @@ def test_config_module_exposes_the_mapping_table():
     assert cfg.HERMES_PROVIDER_LOCAL == "local"
     assert cfg.PIB_PROVIDER_LOCAL == "Local"
     assert cfg.provider_for_profile("Local").provider == "local"
+
+
+# --- PC-114: pib-cloud key resolution on the Smart / Hermes path -------------
+
+
+def _write_pib_cloud_profile(pdir: str) -> None:
+    _ensure_mcp_servers_pib(
+        pdir,
+        model="pib-cloud",
+        provider="pib-cloud",
+        base_url="https://api.pib.rocks/v1",
+        env_vars=("PIB_CLOUD_API_KEY",),
+    )
+
+
+def test_smart_pib_cloud_turn_fetches_pib_cloud_key_and_sets_turn_env(
+    tmp_path, monkeypatch, sandboxed_hermes_home
+):
+    """A pib-cloud profile asks the store for pib-cloud, not gemini."""
+    import sys
+    from pathlib import Path
+
+    from public_api_client import hermes_agent_client as hac
+    from voice_assistant import direct_tool_loop
+
+    voice = Path(__file__).resolve().parents[2] / "ros_packages" / "voice_assistant"
+    if str(voice) not in sys.path:
+        sys.path.insert(0, str(voice))
+
+    pdir = tmp_path / "pib_j1"
+    pdir.mkdir()
+    _write_pib_cloud_profile(str(pdir))
+
+    seen: list[str] = []
+
+    def fetch(provider, api_name=None):
+        seen.append(provider)
+        return {"mode": "unlocked", "secret": "cloud-store-secret"}
+
+    monkeypatch.setattr(direct_tool_loop, "_fetch_store_key", fetch)
+    monkeypatch.setattr(
+        hac,
+        "profile_hermes_settings",
+        lambda profile_dir=None: profile_hermes_settings(str(pdir)),
+    )
+
+    key = provider_key_for_turn()
+    _model, provider, _base_url, env_vars = profile_hermes_settings(str(pdir))
+    child_env = _child_environment(key, env_vars)
+
+    assert seen == ["pib-cloud"]
+    assert key == "cloud-store-secret"
+    assert child_env is not None
+    assert child_env["PIB_CLOUD_API_KEY"] == "cloud-store-secret"
+    assert provider == "pib-cloud"
+
+
+def test_missing_pib_cloud_key_error_names_pib_cloud_not_gemini(
+    tmp_path, monkeypatch, sandboxed_hermes_home
+):
+    import sys
+    from pathlib import Path
+
+    import pytest
+
+    from public_api_client import hermes_agent_client as hac
+    from voice_assistant import direct_tool_loop
+    from voice_assistant.direct_tool_loop import DirectToolLoopError
+
+    voice = Path(__file__).resolve().parents[2] / "ros_packages" / "voice_assistant"
+    if str(voice) not in sys.path:
+        sys.path.insert(0, str(voice))
+
+    pdir = tmp_path / "pib_j1"
+    pdir.mkdir()
+    _write_pib_cloud_profile(str(pdir))
+
+    monkeypatch.setattr(
+        direct_tool_loop,
+        "_fetch_store_key",
+        lambda provider, api_name=None: {"mode": "unlocked", "secret": None},
+    )
+    monkeypatch.setattr(
+        hac,
+        "profile_hermes_settings",
+        lambda profile_dir=None: profile_hermes_settings(str(pdir)),
+    )
+
+    with pytest.raises(DirectToolLoopError) as caught:
+        provider_key_for_turn()
+
+    message = str(caught.value)
+    assert "pib-cloud" in message
+    assert "gemini" not in message.lower()
+
+
+def test_catalogue_pib_cloud_maps_through_profile_key_resolution(
+    tmp_path, monkeypatch, sandboxed_hermes_home
+):
+    """Flask catalogue values -> provider_for_profile -> provider_key_for_turn."""
+    import sys
+    from pathlib import Path
+
+    flask_root = Path(__file__).resolve().parents[2] / "pib_api" / "flask"
+    if str(flask_root) not in sys.path:
+        sys.path.insert(0, str(flask_root))
+
+    from provider_registry import PIB_CLOUD_API_NAME, provider_name_for
+
+    from public_api_client import hermes_agent_client as hac
+    from voice_assistant import direct_tool_loop
+
+    voice = Path(__file__).resolve().parents[2] / "ros_packages" / "voice_assistant"
+    if str(voice) not in sys.path:
+        sys.path.insert(0, str(voice))
+
+    api_name = PIB_CLOUD_API_NAME
+    registry_provider = provider_name_for(api_name)
+    mapping = provider_for_profile(registry_provider)
+    assert api_name == "pib-cloud"
+    assert registry_provider == "pib.Cloud"
+    assert mapping.provider == "pib-cloud"
+    assert mapping.env_vars == ("PIB_CLOUD_API_KEY",)
+
+    pdir = tmp_path / "pib_catalogue"
+    pdir.mkdir()
+    _ensure_mcp_servers_pib(
+        str(pdir),
+        model=api_name,
+        provider=mapping.provider,
+        base_url=mapping.base_url,
+        env_vars=mapping.env_vars,
+    )
+
+    seen: list[str] = []
+
+    def fetch(provider, api_name=None):
+        seen.append(provider)
+        return {"mode": "unlocked", "secret": "catalogue-key"}
+
+    monkeypatch.setattr(direct_tool_loop, "_fetch_store_key", fetch)
+    monkeypatch.setattr(
+        hac,
+        "profile_hermes_settings",
+        lambda profile_dir=None: profile_hermes_settings(str(pdir)),
+    )
+
+    key = provider_key_for_turn()
+
+    assert seen == ["pib-cloud"]
+    assert key == "catalogue-key"
