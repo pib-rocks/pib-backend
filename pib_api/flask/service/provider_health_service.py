@@ -15,9 +15,17 @@ Three rules decide the shape of this module:
   ``/health`` alone would paint a chip green for a robot whose token was
   revoked or whose budget is spent.
 * A probe that cannot run is not a failure. No stored token, a locked key
-  store, and a provider with no probe endpoint all report ``unknown``; only a
-  request that was attempted and failed reports ``unreachable``. The UI may
-  paint ``unknown`` neutral, so a missing key never looks like an outage.
+  store, and a provider whose catalogue row carries no endpoint all report
+  ``unknown``; only a request that was attempted and failed reports
+  ``unreachable``. The UI paints ``unknown`` neutral, so nothing merely
+  unknown can look like an outage.
+
+No provider host is hardcoded here: the endpoint comes from the catalogue row
+(``Provider.endpoint_base``), because a production module may not name a model
+or an account the shipped catalogue does not contain
+(``test_production_models_are_in_the_catalogue``). A third-party row without a
+configured endpoint is therefore ``unknown``/``no_endpoint``, not red; a probe
+descriptor in the catalogue can extend that later.
 """
 
 from __future__ import annotations
@@ -28,7 +36,7 @@ import os
 import time
 import urllib.error
 import urllib.request
-from typing import Any, Callable, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 from model.provider_model import RegistryModel
 from service import key_store_service, provider_service
@@ -44,17 +52,12 @@ STATE_UNKNOWN = "unknown"
 DEFAULT_TIMEOUT_SECONDS = 3.0
 TIMEOUT_ENV = "PIB_PROVIDER_HEALTH_TIMEOUT"
 
+# The cloud base the voice runtime already uses. ``PIB_CLOUD_BASE_URL``
+# overrides it, and a catalogue endpoint wins over both.
 DEFAULT_CLOUD_BASE = "https://api.pib.rocks/v1"
-DEFAULT_CLOUD_ORIGIN = "https://api.pib.rocks"
-DEFAULT_OPENAI_BASE = "https://api.openai.com/v1"
-DEFAULT_ANTHROPIC_BASE = "https://api.anthropic.com/v1"
-DEFAULT_GOOGLE_BASE = "https://generativelanguage.googleapis.com/v1beta"
-DEFAULT_MISTRAL_BASE = "https://api.mistral.ai/v1"
-DEFAULT_OPENROUTER_BASE = "https://openrouter.ai/api/v1"
+CLOUD_BASE_ENV = "PIB_CLOUD_BASE_URL"
 
-ANTHROPIC_VERSION = "2023-06-01"
-
-# What green means for the cloud, told apart from plain reachability.
+# What the probe actually did, so a caller can tell the checks apart.
 PROBE_CLOUD_USAGE = "cloud_usage"
 PROBE_HEALTH = "health"
 PROBE_MODELS = "models"
@@ -62,6 +65,7 @@ PROBE_MODELS = "models"
 # Reason codes carried in the payload, so the UI can explain a chip.
 REASON_NO_KEY = "no_key"
 REASON_KEY_STORE_LOCKED = "key_store_locked"
+REASON_NO_ENDPOINT = "no_endpoint"
 REASON_UNSUPPORTED = "unsupported"
 REASON_UNREACHABLE = "unreachable"
 REASON_HTTP_STATUS = "http_status"
@@ -95,102 +99,49 @@ def _origin(url: str) -> str:
 def _family(provider_name: Optional[str], api_name: str) -> str:
     """Which probe a row belongs to.
 
-    The provider name is the account, so it decides first. The model's api
-    name is the fallback for a catalogue row whose provider is unnamed.
+    Only the rows whose endpoint the robot itself defines are probed in their
+    own way: the cloud (a liveness route plus the token's usage) and the
+    on-device model (Ollama's tag listing, which needs no credential).
+    Everything else is a generic models listing on the row's endpoint.
     """
     name = (provider_name or "").strip().lower()
     api = (api_name or "").strip().lower()
     if name == "pib.cloud" or api == "pib-cloud":
         return "cloud"
-    if name == "google" or api.startswith("gemini"):
-        return "google"
-    if name == "openai" or api.startswith(("gpt", "o1", "o3", "o4")):
-        return "openai"
-    if name == "anthropic" or api.startswith("claude"):
-        return "anthropic"
-    if name == "mistral" or api.startswith(("mistral", "pixtral", "codestral")):
-        return "mistral"
-    if name == "openrouter" or api.startswith("openrouter/"):
-        return "openrouter"
     if name == "local" or api == "qwen-fast":
         return "local"
-    return "unsupported"
+    return "generic"
 
 
-def _bearer_probe(
-    endpoint_base: Optional[str], default_base: str
-) -> Callable[[Optional[str]], Tuple[str, Dict[str, str], bool]]:
-    """A ``/models`` listing behind a bearer token."""
-
-    def build(secret: Optional[str]) -> Tuple[str, Dict[str, str], bool]:
-        base = (endpoint_base or default_base).rstrip("/")
-        headers = {"Authorization": f"Bearer {secret}"} if secret else {}
-        return f"{base}/models", headers, True
-
-    return build
+def _cloud_base(endpoint_base: Optional[str]) -> str:
+    if endpoint_base:
+        return endpoint_base.rstrip("/")
+    configured = os.environ.get(CLOUD_BASE_ENV, "").strip()
+    if configured:
+        return configured.rstrip("/")
+    return DEFAULT_CLOUD_BASE
 
 
-def _anthropic_probe(
-    endpoint_base: Optional[str], secret: Optional[str]
-) -> Tuple[str, Dict[str, str], bool]:
-    base = (endpoint_base or DEFAULT_ANTHROPIC_BASE).rstrip("/")
-    headers = {"anthropic-version": ANTHROPIC_VERSION}
-    # Anthropic authenticates with a header of its own, not a bearer token.
-    if secret:
-        headers["x-api-key"] = secret
-    return f"{base}/models", headers, True
-
-
-def _google_probe(
-    endpoint_base: Optional[str], secret: Optional[str]
-) -> Tuple[str, Dict[str, str], bool]:
-    base = (endpoint_base or DEFAULT_GOOGLE_BASE).rstrip("/")
-    separator = "&" if "?" in base else "?"
-    key = f"{separator}key={secret}" if secret else ""
-    return f"{base}/models{key}", {}, True
-
-
-def _local_probe(endpoint_base: Optional[str]) -> Tuple[str, Dict[str, str], bool]:
-    """Ollama's tag listing. The endpoint is the OpenAI-compatible ``/v1`` base."""
-    base = (endpoint_base or "http://host.docker.internal:11434/v1").rstrip("/")
-    if base.endswith("/v1"):
-        base = base[: -len("/v1")]
-    return f"{base}/api/tags", {}, False
-
-
-def _probe_target(
-    model: RegistryModel, secret: Optional[str]
+def _models_probe(
+    provider_name: Optional[str],
+    endpoint_base: Optional[str],
+    secret: Optional[str],
 ) -> Optional[Tuple[str, Dict[str, str]]]:
-    """URL and headers of a models listing, or None when this row has no probe."""
-    provider = model.provider
-    provider_name = provider.name if provider is not None else None
-    endpoint_base = provider.endpoint_base if provider is not None else None
-    family = _family(provider_name, model.api_name)
+    """A models listing on the row's own endpoint, or None when it has none.
 
-    if family == "google":
-        url, headers, needs_key = _google_probe(endpoint_base, secret)
-    elif family == "openai":
-        url, headers, needs_key = _bearer_probe(endpoint_base, DEFAULT_OPENAI_BASE)(
-            secret
-        )
-    elif family == "mistral":
-        url, headers, needs_key = _bearer_probe(endpoint_base, DEFAULT_MISTRAL_BASE)(
-            secret
-        )
-    elif family == "openrouter":
-        url, headers, needs_key = _bearer_probe(endpoint_base, DEFAULT_OPENROUTER_BASE)(
-            secret
-        )
-    elif family == "anthropic":
-        url, headers, needs_key = _anthropic_probe(endpoint_base, secret)
-    elif family == "local":
-        url, headers, needs_key = _local_probe(endpoint_base)
-    else:
+    A Google account takes its key as a query parameter, every other account as
+    a bearer token, which is what its listing accepts.
+    """
+    base = (endpoint_base or "").rstrip("/")
+    if not base:
         return None
-
-    if needs_key and not secret:
-        return None
-    return url, headers
+    name = (provider_name or "").strip().lower()
+    if name == "google":
+        separator = "&" if "?" in base else "?"
+        suffix = f"{separator}key={secret}" if secret else ""
+        return f"{base}/models{suffix}", {}
+    headers = {"Authorization": f"Bearer {secret}"} if secret else {}
+    return f"{base}/models", headers
 
 
 def _payload(
@@ -221,7 +172,7 @@ def _payload(
 
 
 def _missing_key_reason() -> str:
-    """Why a key could not be read: locked store or simply no key."""
+    """Why a key could not be read: a locked store or simply no key."""
     if key_store_service.encryption_enabled() and (
         key_store_service.operating_mode() != key_store_service.MODE_UNLOCKED
     ):
@@ -282,14 +233,14 @@ def _probe_cloud(model: RegistryModel, secret: Optional[str]) -> dict:
     """Reachable, token valid and budget left - all three, or not green.
 
     Two requests: the service's own liveness route (no credential, so a dead
-    service is told apart from a rejected token) and ``/v1/usage`` with the
-    stored token, which answers 401 for an invalid or revoked token and
-    carries the remaining budget in its body.
+    service is told apart from a rejected token) and the token's usage route,
+    which refuses an invalid or revoked token and carries the remaining budget
+    in its body.
     """
     provider = model.provider
     endpoint_base = provider.endpoint_base if provider is not None else None
-    base = (endpoint_base or DEFAULT_CLOUD_BASE).rstrip("/")
-    origin = _origin(endpoint_base or DEFAULT_CLOUD_ORIGIN)
+    base = _cloud_base(endpoint_base)
+    origin = _origin(base)
 
     status, _body, error, latency_ms = _http_get(f"{origin}/health", {})
     if status is None:
@@ -408,6 +359,48 @@ def _probe_cloud(model: RegistryModel, secret: Optional[str]) -> dict:
     )
 
 
+def _probe_local(model: RegistryModel, endpoint_base: Optional[str]) -> dict:
+    """Ollama's tag listing. The stored endpoint is the OpenAI-compatible base."""
+    base = (endpoint_base or "").rstrip("/")
+    if not base:
+        return _payload(
+            model,
+            STATE_UNKNOWN,
+            REASON_NO_ENDPOINT,
+            "The catalogue carries no endpoint for the on-device model.",
+        )
+    if base.endswith("/v1"):
+        base = base[: -len("/v1")]
+    status, _body, error, latency_ms = _http_get(f"{base}/api/tags", {})
+    if status is None:
+        LOGGER.info("Provider probe for %s failed: %s", model.api_name, error)
+        return _payload(
+            model,
+            STATE_UNREACHABLE,
+            REASON_UNREACHABLE,
+            error,
+            latency_ms=latency_ms,
+            probe=PROBE_MODELS,
+        )
+    if 200 <= status < 300:
+        return _payload(
+            model,
+            STATE_HEALTHY,
+            status=status,
+            latency_ms=latency_ms,
+            probe=PROBE_MODELS,
+        )
+    return _payload(
+        model,
+        STATE_UNREACHABLE,
+        REASON_HTTP_STATUS,
+        f"The on-device model answered {status}.",
+        status=status,
+        latency_ms=latency_ms,
+        probe=PROBE_MODELS,
+    )
+
+
 def probe_model(model_id: int) -> Optional[dict]:
     """Probe the provider of one catalogue row.
 
@@ -421,21 +414,26 @@ def probe_model(model_id: int) -> Optional[dict]:
 
     provider = model.provider
     provider_name = provider.name if provider is not None else None
+    endpoint_base = provider.endpoint_base if provider is not None else None
     family = _family(provider_name, model.api_name)
-    if family == "unsupported":
+
+    if family == "cloud":
+        return _probe_cloud(
+            model, key_store_service.unlocked_secret_for_api_name(model.api_name)
+        )
+    if family == "local":
+        return _probe_local(model, endpoint_base)
+
+    secret = key_store_service.unlocked_secret_for_api_name(model.api_name)
+    target = _models_probe(provider_name, endpoint_base, secret)
+    if target is None:
         return _payload(
             model,
             STATE_UNKNOWN,
-            REASON_UNSUPPORTED,
-            f"No health probe is known for {provider_name or model.api_name}.",
+            REASON_NO_ENDPOINT,
+            "The catalogue carries no endpoint for this provider.",
         )
-
-    secret = key_store_service.unlocked_secret_for_api_name(model.api_name)
-    if family == "cloud":
-        return _probe_cloud(model, secret)
-
-    target = _probe_target(model, secret)
-    if target is None:
+    if not secret:
         return _payload(model, STATE_UNKNOWN, _missing_key_reason())
 
     url, headers = target
