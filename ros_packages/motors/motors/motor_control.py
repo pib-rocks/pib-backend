@@ -223,7 +223,7 @@ class MotorControl(Node):
 
             motors_for_joint = name_to_motors[joint_name]
             motor = motors_for_joint[0]
-            response.position = motor.get_position()
+            response.position = int(round(motor.get_position()))
 
         except Exception as e:
             response.successful = False

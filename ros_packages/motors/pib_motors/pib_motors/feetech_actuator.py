@@ -7,10 +7,12 @@ Tinkerforge stack.
 
 from __future__ import annotations
 
+import fcntl
 import logging
 import threading
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 from pib_motors.stservo_sdk.port_handler import PortHandler
 from pib_motors.stservo_sdk.sts import (
@@ -37,6 +39,32 @@ SERIAL_BY_ID_DIR = Path("/dev/serial/by-id")
 # on the same Waveshare adapter share the serial port safely.
 _port_cache: dict[str, tuple[PortHandler, sts, threading.Lock]] = {}
 _cache_lock = threading.Lock()
+
+
+class _BusAccess:
+    """Serializes bus transactions across threads and OS processes (motor_control + motor_current)."""
+
+    def __init__(self, ph: PortHandler, lock: threading.Lock) -> None:
+        self._ph = ph
+        self._lock = lock
+
+    def __enter__(self) -> None:
+        self._lock.acquire()
+        ser = getattr(self._ph, "ser", None)
+        if ser is not None and hasattr(ser, "fileno"):
+            try:
+                fcntl.flock(ser.fileno(), fcntl.LOCK_EX)
+            except Exception:
+                pass
+
+    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        ser = getattr(self._ph, "ser", None)
+        if ser is not None and hasattr(ser, "fileno"):
+            try:
+                fcntl.flock(ser.fileno(), fcntl.LOCK_UN)
+            except Exception:
+                pass
+        self._lock.release()
 
 
 def resolve_serial_device(address: str, by_id_dir: Path = SERIAL_BY_ID_DIR) -> str:
@@ -138,11 +166,17 @@ class FeetechStSerialActuator:
     def __str__(self) -> str:
         return f"STS-PIN[ id: {self.pin}, device: {self.uid} ]"
 
+    @contextmanager
+    def _bus(self) -> Iterator[None]:
+        assert self._ph is not None and self._lock is not None
+        with _BusAccess(self._ph, self._lock):
+            yield
+
     def check_connection(self) -> bool:
         """Open the serial port if needed and probe this servo ID once."""
         try:
             self._ph, self._pk, self._lock = _get_or_open_port(self.uid, self._baudrate)
-            with self._lock:
+            with self._bus():
                 _, _, res, _err = self._pk.ReadPosSpeed(self.pin)
             self._connected = res == COMM_SUCCESS
         except Exception:
@@ -174,7 +208,7 @@ class FeetechStSerialActuator:
         if "turnedOn" in settings_dto:
             try:
                 enable_val = 1 if settings_dto["turnedOn"] else 0
-                with self._lock:
+                with self._bus():
                     self._pk.write1ByteTxRx(self.pin, STS_TORQUE_ENABLE, enable_val)
             except Exception as error:
                 logging.error(
@@ -190,7 +224,7 @@ class FeetechStSerialActuator:
         if not self.is_connected() or self._pk is None or self._lock is None:
             return self.NO_CURRENT
         try:
-            with self._lock:
+            with self._bus():
                 sts_present_current, res, _err = self._pk.ReadCurrent(self.pin)
             if res != COMM_SUCCESS:
                 return self.NO_CURRENT
@@ -202,6 +236,7 @@ class FeetechStSerialActuator:
         if not self.is_connected() or self._pk is None or self._lock is None:
             return False
 
+        position = int(round(position))
         centideg = -position if self.invert else position
         ticks = centideg_to_ticks(float(centideg))
         if self.pin in STS3095_SERVO_IDS:
@@ -210,7 +245,7 @@ class FeetechStSerialActuator:
             speed, acc = FINGER_SPEED, FINGER_ACCEL
 
         try:
-            with self._lock:
+            with self._bus():
                 res, err = self._pk.WritePosEx(self.pin, ticks, speed, acc)
             if res != COMM_SUCCESS:
                 logging.error(
@@ -232,19 +267,21 @@ class FeetechStSerialActuator:
 
     def get_position(self) -> int:
         if self._target_position is not None:
-            return -self._target_position if self.invert else self._target_position
+            return int(
+                round(-self._target_position if self.invert else self._target_position)
+            )
         return self.get_current_position()
 
     def get_current_position(self) -> int:
         if not self.is_connected() or self._pk is None or self._lock is None:
             return 0
         try:
-            with self._lock:
+            with self._bus():
                 ticks, _spd, res, _err = self._pk.ReadPosSpeed(self.pin)
             if res != COMM_SUCCESS:
                 return 0
             centideg = ticks_to_centideg(int(ticks))
-            return -centideg if self.invert else centideg
+            return int(round(-centideg if self.invert else centideg))
         except Exception:
             return 0
 
@@ -252,7 +289,7 @@ class FeetechStSerialActuator:
         if not self.is_connected() or self._pk is None or self._lock is None:
             return None
         try:
-            with self._lock:
+            with self._bus():
                 temp, res, _err = self._pk.read1ByteTxRx(
                     self.pin, STS_PRESENT_TEMPERATURE
                 )
