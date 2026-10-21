@@ -35,13 +35,24 @@ from ros_stubs import drop_ros_stubs, install_ros_stubs
 def _stubbed_ros_modules():
     """The stubs live only as long as this module.
 
-    A stub module has no ``__file__``, so a later test module that needs the real
-    package fails with "unknown location" - the same reason the routing tests put
-    their fake clients back.
+    Two things are put back afterwards, because this module imports the runtime
+    against stubs:
+
+    * the stubs themselves - a later module that needs the real package fails
+      with "unknown location" otherwise;
+    * the original ``voice_assistant`` package entry. Dropping it from
+      ``sys.modules`` detaches the submodule attributes from the package object
+      other tests hold, and ``voice_assistant.direct_tool_loop`` reads as missing.
     """
+    saved = {
+        name: module
+        for name, module in sys.modules.items()
+        if name == "voice_assistant" or name.startswith("voice_assistant.")
+    }
     install_ros_stubs()
     yield
     drop_ros_stubs()
+    sys.modules.update(saved)
 
 
 # --- a stand-in for the parts of Pillow this code uses ---------------------
