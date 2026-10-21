@@ -261,3 +261,72 @@ def test_feetech_actuator_applies_torque_enable_setting(monkeypatch):
     assert pk_instance.byte_writes == [(51, 40, 0)]
     assert actuator.get_settings()["turnedOn"] is False
     assert actuator.get_settings()["velocity"] == 12000
+
+
+def test_feetech_actuator_calibrate_zero_writes_torque_128_and_resets_target(
+    monkeypatch,
+):
+    ft_mod, act_mod = _load_modules()
+    pk_instance = None
+
+    def fake_sts(ph):
+        nonlocal pk_instance
+        pk_instance = FakeStsPacketHandler(ph)
+        return pk_instance
+
+    monkeypatch.setattr(ft_mod, "PortHandler", FakePortHandler)
+    monkeypatch.setattr(ft_mod, "sts", fake_sts)
+    ft_mod._port_cache.clear()
+
+    actuator = act_mod.create_actuator("feetech_st_serial", 51, "WS-HEAD", False)
+    actuator._target_position = 1200
+    assert actuator.calibrate_zero() is True
+    assert pk_instance.byte_writes == [(51, 40, 128)]
+    assert actuator._target_position == 0
+    assert actuator.apply_settings({"calibrateZero": True}) is True
+    assert pk_instance.byte_writes == [(51, 40, 128), (51, 40, 128)]
+
+
+def test_feetech_actuator_invert_preserves_sign_in_get_and_set(monkeypatch):
+    ft_mod, act_mod = _load_modules()
+    pk_instance = None
+
+    def fake_sts(ph):
+        nonlocal pk_instance
+        pk_instance = FakeStsPacketHandler(ph)
+        return pk_instance
+
+    monkeypatch.setattr(ft_mod, "PortHandler", FakePortHandler)
+    monkeypatch.setattr(ft_mod, "sts", fake_sts)
+    ft_mod._port_cache.clear()
+
+    inverted = act_mod.create_actuator("feetech_st_serial", 18, "WS-ARM", True)
+    normal = act_mod.create_actuator("feetech_st_serial", 11, "WS-ARM", False)
+    pk_instance = inverted._pk
+
+    assert inverted.set_position(1000) is True
+    assert normal.set_position(1000) is True
+    assert inverted.get_position() == 1000
+    assert normal.get_position() == 1000
+    assert pk_instance.writes[0][1] != pk_instance.writes[1][1]
+
+
+def test_feetech_actuator_custom_velocity_and_acceleration_in_write_pos_ex(
+    monkeypatch,
+):
+    ft_mod, act_mod = _load_modules()
+    pk_instance = None
+
+    def fake_sts(ph):
+        nonlocal pk_instance
+        pk_instance = FakeStsPacketHandler(ph)
+        return pk_instance
+
+    monkeypatch.setattr(ft_mod, "PortHandler", FakePortHandler)
+    monkeypatch.setattr(ft_mod, "sts", fake_sts)
+    ft_mod._port_cache.clear()
+
+    actuator = act_mod.create_actuator("feetech_st_serial", 18, "WS-ARM", False)
+    assert actuator.apply_settings({"velocity": 1200, "acceleration": 45}) is True
+    assert actuator.set_position(0) is True
+    assert pk_instance.writes[-1] == (18, 2000, 1200, 45)

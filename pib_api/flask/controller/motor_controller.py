@@ -58,3 +58,9 @@ def update_motor_controller(name: str):
         name, payload["controller"], payload["channel"]
     )
     return motor_controller_schema.dump(motor)
+
+
+@bp.route("/<string:name>/calibrate-zero", methods=["POST"])
+def calibrate_motor_zero(name: str):
+    motor_service.get_motor_by_name(name)
+    return jsonify(motor_service.calibrate_motor_zero(name))

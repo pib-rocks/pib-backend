@@ -39,17 +39,18 @@ voice_channel_bp = Blueprint("voice_assistant_channel", __name__)
 
 # This describes the API's observable/configurable surface. The motor node's
 # actuator registry remains authoritative for actually driving each kind.
-COMMON_SETTINGS = [
-    "pulse_width",
-    "rotation_range",
-    "velocity",
-    "acceleration",
-    "period",
-]
 CONTROLLER_CAPABILITIES = {
     TINKERFORGE_BRICKLET: {
         "feedback": ["current", "target_position"],
-        "meaningfulSettings": COMMON_SETTINGS,
+        "meaningfulSettings": [
+            "pulse_width",
+            "rotation_range",
+            "velocity",
+            "acceleration",
+            "deceleration",
+            "period",
+            "invert",
+        ],
     },
     FEETECH_ST_SERIAL: {
         "feedback": [
@@ -58,7 +59,15 @@ CONTROLLER_CAPABILITIES = {
             "actual_position",
             "temperature",
         ],
-        "meaningfulSettings": COMMON_SETTINGS + ["current_limit", "torque_limit"],
+        "meaningfulSettings": [
+            "rotation_range",
+            "velocity",
+            "acceleration",
+            "invert",
+            "zero_calibration",
+            "current_limit",
+            "torque_limit",
+        ],
     },
     ROBSTRIDE_CAN: {
         "feedback": [
@@ -67,7 +76,15 @@ CONTROLLER_CAPABILITIES = {
             "actual_position",
             "temperature",
         ],
-        "meaningfulSettings": COMMON_SETTINGS + ["current_limit", "torque_limit"],
+        "meaningfulSettings": [
+            "rotation_range",
+            "velocity",
+            "acceleration",
+            "invert",
+            "zero_calibration",
+            "current_limit",
+            "torque_limit",
+        ],
     },
 }
 

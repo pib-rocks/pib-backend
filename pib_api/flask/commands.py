@@ -726,6 +726,30 @@ def _backfill_motors_for_motorless_seed() -> None:
                         motor.controller = target_ctrl
                         motor.channel = channel
                         changed = True
+
+            _LEGACY_STARTUP_SHOULDER_POSITIONS = {-6800, 8900, -7000, -9000}
+            startup_pose = Pose.query.filter_by(name=STARTUP_POSE_NAME).one_or_none()
+            calibration_pose = Pose.query.filter_by(
+                name=CALIBRATION_POSE_NAME
+            ).one_or_none()
+            if startup_pose is not None and calibration_pose is not None:
+                calibration_by_motor = {
+                    motor_name: position
+                    for motor_name, position in db.session.query(
+                        MotorPosition.motor_name, MotorPosition.position
+                    ).filter_by(pose_id=calibration_pose.id)
+                }
+                for startup_mp in MotorPosition.query.filter_by(
+                    pose_id=startup_pose.id
+                ):
+                    cal_pos = calibration_by_motor.get(startup_mp.motor_name)
+                    if (
+                        cal_pos == 0
+                        and startup_mp.position in _LEGACY_STARTUP_SHOULDER_POSITIONS
+                    ):
+                        startup_mp.position = cal_pos
+                        changed = True
+
             if changed:
                 db.session.commit()
         return
