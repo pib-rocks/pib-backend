@@ -5,7 +5,7 @@ import {addDefinitions} from "./util/definitions";
 const IMPORT_SMART_HOME_CLIENT =
     "from pib_api_client import smart_home_client";
 
-const SMARTHOME_SET_DEVICE_FUNCTION = (generator: typeof pythonGenerator) => `
+const SMARTHOME_SET_DEVICE_FUNCTION = (_generator: typeof pythonGenerator) => `
 def smarthome_set_device(device, action, value_text):
     value = None
     if value_text:
@@ -22,7 +22,7 @@ def smarthome_set_device(device, action, value_text):
     return result
 `;
 
-const SMARTHOME_GET_STATE_FUNCTION = (generator: typeof pythonGenerator) => `
+const SMARTHOME_GET_STATE_FUNCTION = (_generator: typeof pythonGenerator) => `
 def smarthome_get_state(device):
     ok, state = smart_home_client.get_device_state(device)
     if not ok or not state:
