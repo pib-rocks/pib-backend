@@ -276,6 +276,7 @@ def run_direct_turn(
     complete: Optional[Complete] = None,
     execute_tool: Optional[ExecuteTool] = None,
     on_tool_call: Optional[Callable[[dict], None]] = None,
+    on_tool_image: Optional[Callable[[dict], None]] = None,
     max_rounds: int = MAX_TOOL_ROUNDS,
     api_key: Optional[str] = None,
     report_key_source: Optional[Callable[[str], None]] = None,
@@ -284,6 +285,11 @@ def run_direct_turn(
 
     ``history`` entries are ``(content, is_user)``. The user message is text
     only: nothing in this function attaches an image.
+
+    A tool can return a picture (the camera tool answers ``imageBase64`` and
+    ``mimeType``). It is handed to ``on_tool_image`` instead of the tool record,
+    because the record of a tool call travels to the chat and carries no values:
+    only a dedicated image channel can carry one without carrying arguments too.
     """
     if not tool_calling:
         allow_image = False
@@ -374,12 +380,13 @@ def run_direct_turn(
                 ok=ok_call,
                 error=error_name,
             )
+            _report_tool_image(on_tool_image, name, output)
             messages.append(
                 {
                     "role": "tool",
                     "name": name,
                     "tool_call_id": call.get("id") or name,
-                    "content": _json_object(output),
+                    "content": _tool_result_for_model(output),
                 }
             )
     raise DirectToolLoopError("tool loop ended without a final answer")
@@ -416,11 +423,56 @@ def _report_tool_call(
         logger.warning("tool call reporter failed name=%s", name, exc_info=True)
 
 
+def _report_tool_image(
+    reporter: Optional[Callable[[dict], None]], name: str, output: Any
+) -> None:
+    """Hand a captured picture to the image channel, and only the picture.
+
+    A tool result is a mapping; the camera tool puts ``imageBase64`` and
+    ``mimeType`` in it. Anything else - a motor position, a program list, an error
+    - is not an image and never reaches this channel, so the chat cannot
+    accidentally display a tool's other output.
+    """
+    if reporter is None or not isinstance(output, Mapping):
+        return
+    image = output.get("imageBase64")
+    if not isinstance(image, str) or not image.strip():
+        return
+    mime_type = output.get("mimeType")
+    reporter(
+        {
+            "tool": name,
+            "mimeType": mime_type if isinstance(mime_type, str) else "image/jpeg",
+            "imageBase64": image,
+        }
+    )
+
+
 def _json_object(value: Any) -> dict[str, Any]:
     """Gemini function responses have to be objects."""
     if isinstance(value, dict):
         return value
     return {"result": value}
+
+
+def _tool_result_for_model(output: Any) -> dict[str, Any]:
+    """What the model is told after a tool ran, without a picture's bytes.
+
+    A camera tool answers with a base64 frame - measured around 100 000 characters
+    for one 640x480 capture. Echoing that back as the function response made the
+    request after a capture fail (``model request failed``), and the model gains
+    nothing from it: it asked for the frame and has already described it. The
+    picture reaches the chat through ``on_tool_image``; what travels back here is a
+    note that it exists.
+    """
+    result = _json_object(output)
+    image = result.get("imageBase64")
+    if not isinstance(image, str) or not image.strip():
+        return result
+    compact = {key: value for key, value in result.items() if key != "imageBase64"}
+    compact["imageCaptured"] = True
+    compact["imageEncodedLength"] = len(image)
+    return compact
 
 
 def build_gemini_request(

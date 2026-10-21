@@ -1942,6 +1942,7 @@ run_step "Put ~/.local/bin on PATH" install_local_bin_path || print ERROR "faile
 run_step "Install Hermes CLI" install_hermes_cli || print ERROR "failed to install Hermes CLI"
 # The legacy ~/imitation host script is retired. ros_packages/imitation consumes
 # the camera owner's typed topic and must never run beside another OAK device owner.
+run_step "Install Luxonis udev rules" install_depthai_udev_rules || print WARN "failed to install Luxonis udev rules"
 if is_supported_raspbian && [ "$DIST_VERSION" = "trixie" ]; then
   run_step "Install ROS 2 Jazzy" source "$SETUP_INSTALLATION_DIR/ros_jazzy_install.sh" || abort_setup "failed to install ROS 2 Jazzy"
 fi

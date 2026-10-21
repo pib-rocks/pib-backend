@@ -1,7 +1,11 @@
-from model.motor_model import Motor
-from model.controller_model import Controller
 from typing import Any, List
+
 from app.app import db
+from default_pose_constants import CALIBRATION_POSE_NAME, STARTUP_POSE_NAME
+from model.controller_model import Controller
+from model.motor_model import Motor
+from model.motor_position_model import MotorPosition
+from model.pose_model import Pose
 
 
 class MotorValidationError(Exception):
@@ -56,3 +60,18 @@ def set_motor_controller(motor_name: str, controller_dto: Any, channel: int):
     motor.channel = channel
     db.session.flush()
     return motor
+
+
+def calibrate_motor_zero(motor_name: str) -> dict[str, Any]:
+    motor = get_motor_by_name(motor_name)
+    for pose_name in (STARTUP_POSE_NAME, CALIBRATION_POSE_NAME):
+        pose = Pose.query.filter_by(name=pose_name).one_or_none()
+        if pose is None:
+            continue
+        motor_position = MotorPosition.query.filter_by(
+            pose_id=pose.id, motor_name=motor_name
+        ).one_or_none()
+        if motor_position is not None:
+            motor_position.position = 0
+    db.session.flush()
+    return {"name": motor.name, "calibrated": True}

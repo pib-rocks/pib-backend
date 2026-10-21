@@ -223,3 +223,30 @@ def test_pib_mcp_server_is_built_with_pep_660_metadata():
     assert (
         'pip install --break-system-packages -e "$BACKEND_DIR/pib_mcp_server"' in setup
     )
+
+
+def test_every_function_defined_in_setup_scripts_is_called():
+    """Guard against orphaned installer functions (such as install_depthai_udev_rules
+    after install_imitation was retired in PR-1701).
+    """
+    scripts = (
+        list(INSTALLER_SCRIPTS)
+        + sorted((SETUP_DIR / "installation_scripts").glob("*.sh"))
+        + [SETUP_DIR / "update-pib.sh", SETUP_DIR / "update_runner.sh"]
+    )
+    seen = {}
+    for path in scripts:
+        seen[path] = path.read_text(encoding="utf-8")
+    combined = "\n".join(seen.values())
+
+    setup_text = seen[SETUP_DIR / "setup-pib.sh"]
+    assert (
+        'run_step "Install Luxonis udev rules" install_depthai_udev_rules' in setup_text
+    )
+
+    for path, text in seen.items():
+        for fn in re.findall(
+            r"^\s*(?:function\s+)?([a-zA-Z0-9_]+)\s*\(\)\s*\{", text, flags=re.M
+        ):
+            occurrences = len(re.findall(rf"\b{re.escape(fn)}\b", combined))
+            assert occurrences >= 2, f"{path.name}: function {fn}() is never called"

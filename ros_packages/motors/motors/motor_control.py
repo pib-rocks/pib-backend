@@ -151,6 +151,33 @@ class MotorControl(Node):
 
         try:
             motors = name_to_motors[request.motor_settings.motor_name]
+            if (
+                motor_settings_ros.pulse_width_min == -1
+                and motor_settings_ros.pulse_width_max == -1
+            ):
+                for motor in motors:
+                    applied = motor.calibrate_zero()
+                    response.settings_applied &= applied
+                    if applied:
+                        self.joint_trajectory_publisher.publish(
+                            as_joint_trajectory(motor.name, 0)
+                        )
+                        stored = motor.get_settings()
+                        motor_settings_dto["pulseWidthMin"] = stored["pulseWidthMin"]
+                        motor_settings_dto["pulseWidthMax"] = stored["pulseWidthMax"]
+                        motor_settings_ros.pulse_width_min = stored["pulseWidthMin"]
+                        motor_settings_ros.pulse_width_max = stored["pulseWidthMax"]
+                        if applied or self.dev:
+                            persisted, _ = motor_client.update_motor_settings(
+                                motor.name, motor_settings_dto
+                            )
+                            response.settings_persisted &= persisted
+                            self.motor_settings_publisher.publish(motor_settings_ros)
+                        self.get_logger().info(
+                            f"calibrated zero on motor: {str(motor)}"
+                        )
+                return response
+
             for motor in motors:
                 motor_settings_dto["name"] = motor.name
                 motor_settings_ros.motor_name = motor.name
@@ -223,7 +250,7 @@ class MotorControl(Node):
 
             motors_for_joint = name_to_motors[joint_name]
             motor = motors_for_joint[0]
-            response.position = motor.get_position()
+            response.position = int(round(motor.get_position()))
 
         except Exception as e:
             response.successful = False

@@ -1,7 +1,7 @@
-from flask import Blueprint, abort
+from flask import Blueprint, abort, jsonify
 
 from schema.provider_schema import provider_accounts_schema, provider_schema
-from service import provider_service
+from service import provider_health_service, provider_service
 
 bp = Blueprint("provider_controller", __name__)
 
@@ -44,3 +44,18 @@ def get_provider(provider_id: int):
     if model is None:
         abort(404)
     return provider_schema.dump(model)
+
+
+@bp.route("/<int:provider_id>/health", methods=["GET"])
+def get_provider_health(provider_id: int):
+    """Whether this model's provider answers right now (PC-115).
+
+    The probe runs here, not in Cerebra: the provider credentials live in the
+    robot key store and the cloud endpoint refuses a browser preflight. A
+    provider that cannot be probed answers ``state: unknown`` with 200, so a
+    missing key never has to look like an outage in the status strip.
+    """
+    health = provider_health_service.probe_model(provider_id)
+    if health is None:
+        abort(404)
+    return jsonify(health)

@@ -99,6 +99,13 @@ class Motor:
             actuator.is_connected() for actuator in self.actuators
         )
 
+    def calibrate_zero(self) -> bool:
+        return bool(self.actuators) and all(
+            actuator.calibrate_zero()
+            for actuator in self.actuators
+            if hasattr(actuator, "calibrate_zero")
+        )
+
     def _validate_position(self, position: int) -> int:
         """Check if position is within range, set it to the min/max value if not."""
         position = min(max(position, self.rotation_range_min), self.rotation_range_max)

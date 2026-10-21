@@ -27,7 +27,7 @@ RUN curl -sSL https://download.tinkerforge.com/apt/$(. /etc/os-release; echo $ID
     && rm -rf /var/lib/apt/lists/*
 
 # PEP 668: Jazzy (Ubuntu 24.04, Python 3.12) requires --break-system-packages
-RUN pip install --break-system-packages requests==2.32.3
+RUN pip install --break-system-packages requests==2.32.3 pyserial==3.5
 
 COPY ./pib_api/client ./client
 COPY ./ros_packages/motors/pib_motors ./motors/pib_motors

@@ -54,6 +54,22 @@ def _cloud_model_id() -> int:
     raise AssertionError("seeded catalogue has no cloud model")
 
 
+def test_direct_system_prompt_tells_the_model_what_happens_to_a_captured_picture():
+    """The chat surface is invisible to the model, so it is told (PC-120).
+
+    Without this sentence a personality whose tool had just captured a frame
+    answered that the interface is text-only and offered no picture.
+    """
+    from pib_hermes_config.channel import CAPTURED_IMAGE_SENTENCE
+
+    with_capability = direct_system_prompt("Du bist Eva.", images_shown=True)
+
+    assert with_capability.startswith("Du bist Eva.")
+    assert CAPTURED_IMAGE_SENTENCE in with_capability
+    # The default stays the bare identity text.
+    assert direct_system_prompt("Du bist Eva.") == "Du bist Eva."
+
+
 def test_direct_system_prompt_is_the_soul_and_ignores_memory():
     assert direct_system_prompt("  Du bist Eva.  ") == "Du bist Eva."
     assert direct_system_prompt("") == direct_system_prompt(None)

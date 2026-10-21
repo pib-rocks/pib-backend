@@ -29,6 +29,23 @@ def get_message(message_id: str) -> ChatMessage:
     return ChatMessage.query.filter(ChatMessage.message_id == message_id).one()
 
 
+def get_message_of_chat(chat_id: str, message_id: str) -> ChatMessage:
+    """The message, if it belongs to this chat. Answers 404 for anything else.
+
+    An image is attached to a message through the message id, so the pair has to
+    be checked: an id from another chat would otherwise attach a picture to a
+    conversation nobody opens, and it would never be deleted with its chat.
+    """
+    from flask import abort
+
+    message = ChatMessage.query.filter(
+        ChatMessage.message_id == message_id, ChatMessage.chat_id == chat_id
+    ).one_or_none()
+    if message is None:
+        abort(404)
+    return message
+
+
 def get_message_history(chat_id: str, length: int) -> ChatMessage:
     return (
         ChatMessage.query.filter(ChatMessage.chat_id == chat_id)
@@ -66,6 +83,10 @@ def record_first_token_latency(chat_id: str, latency_ms: float) -> Chat:
 
 
 def delete_chat(chat_id: str) -> None:
+    # Images belong to messages, so they go with the chat - row and file.
+    from service import chat_image_service
+
+    chat_image_service.delete_for_chat(chat_id)
     db.session.delete(get_chat(chat_id))
     db.session.flush()
     try:
@@ -122,5 +143,8 @@ def update_chat_message(
 
 
 def delete_message(chat_id: str, message_id: str) -> None:
+    from service import chat_image_service
+
+    chat_image_service.delete_for_message(message_id)
     db.session.delete(get_message(message_id))
     db.session.flush()

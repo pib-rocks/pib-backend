@@ -70,13 +70,32 @@ def turn_channel(personality: object) -> str:
     return effective_channel(chosen)
 
 
-def direct_system_prompt(soul_text: str | None) -> str:
+#: A picture a tool captured is shown as an attachment under the answer (PC-119).
+#: The chat surface is the one thing a model cannot see, so without this sentence
+#: it answers that the interface is text-only and offers no picture at all - the
+#: measured answer of a personality whose tool had just captured one.
+CAPTURED_IMAGE_SENTENCE = (
+    "A picture you capture with your camera is attached to your answer in the chat "
+    "automatically. Do not claim that the chat is text-only or that it cannot show "
+    "pictures, and do not ask for the picture again: describe the frame you just "
+    "captured."
+)
+
+
+def direct_system_prompt(soul_text: str | None, *, images_shown: bool = False) -> str:
     """The personality's one identity text, used as the Direct system prompt.
 
     MEMORY.md is a Hermes file. This function does not read it.
+
+    ``images_shown`` adds what the chat does with a captured picture: the model
+    cannot look at the chat, so it is told rather than asked to guess.
     """
     if isinstance(soul_text, str) and soul_text.strip():
-        return soul_text.strip()
-    from pib_hermes_config import DEFAULT_SOUL
+        prompt = soul_text.strip()
+    else:
+        from pib_hermes_config import DEFAULT_SOUL
 
-    return DEFAULT_SOUL
+        prompt = DEFAULT_SOUL
+    if images_shown:
+        return f"{prompt}\n\n{CAPTURED_IMAGE_SENTENCE}"
+    return prompt

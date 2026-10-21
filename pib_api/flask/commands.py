@@ -24,6 +24,7 @@ from provider_registry import (
     active_entries,
     capabilities_for,
 )
+from provider_probes import probe_for
 from service.provider_service import attach_registry_models, sync_shared_capabilities
 from model.controller_model import Controller
 from model.camera_settings_model import CameraSettings
@@ -70,6 +71,7 @@ def seed_db() -> None:
     if not _is_empty_db():
         _unbind_legacy_cerebra_toggle_program()
         _reconcile_model_catalogue()
+        _backfill_motors_for_motorless_seed()
         print("Seeding database failed - database already contains data.")
         return
     variant, source = resolve_variant_and_source()
@@ -273,9 +275,14 @@ def _upsert_motors(
         motor.controller = controllers[controller_number]
         motor.channel = channel
 
-    obsolete_motors = Motor.query.filter(
-        ~Motor.name.in_(tuple(profile.motor_mapping))
-    ).all()
+    # A profile that declares no motors (a variant whose bus channels are not
+    # known yet) must not read as "delete every motor": `~Motor.name.in_(())`
+    # matches all of them.
+    obsolete_motors = (
+        Motor.query.filter(~Motor.name.in_(tuple(profile.motor_mapping))).all()
+        if profile.motor_mapping
+        else []
+    )
     obsolete_names = [motor.name for motor in obsolete_motors]
     if obsolete_names:
         referenced_names = [
@@ -369,6 +376,7 @@ def _reconcile_model_catalogue() -> None:
     _align_existing_catalogue_rows()
     for provider in Provider.query.all():
         sync_shared_capabilities(provider)
+        _refresh_probe_wiring(provider)
     db.session.flush()
 
     default_row = RegistryModel.query.filter_by(
@@ -395,6 +403,21 @@ def _reconcile_model_catalogue() -> None:
             + ", ".join(model.api_name for model in added)
             + "."
         )
+
+
+def _refresh_probe_wiring(provider: Provider) -> None:
+    """Keep the stored probe wiring in step with this build's catalogue (PC-116).
+
+    Runs on every start of an already seeded database, next to
+    ``sync_shared_capabilities``. A stored probe is rewritten from
+    ``provider_probes`` when this build knows the account, so an installation
+    that was seeded by an older image gains the wiring without a manual step. A
+    provider this build knows nothing about keeps whatever it had: an empty
+    value is reported as unknown by the health probe, never as red.
+    """
+    wiring = probe_for(provider.name)
+    if wiring:
+        provider.probe = wiring
 
 
 def _align_existing_catalogue_rows() -> None:
@@ -661,6 +684,100 @@ def _create_chat_data_and_assistant() -> None:
     )
     db.session.add_all([m1, m2])
     db.session.flush()
+
+
+def _backfill_motors_for_motorless_seed() -> None:
+    """Populate motors and default pose positions for an earlier motorless seed (PC-125).
+
+    ``pib5advanced`` originally seeded with an empty ``motor_mapping`` (PC-121).
+    When such a database starts on a build whose profile declares motors, create
+    the motor rows and missing default pose positions once without touching any
+    stored controller addresses, and align existing ``pib5advanced`` motor
+    controller/channel pairs with the profile.
+    """
+    stored = get_property(HARDWARE_VARIANT_KEY)
+    variant = stored.value if stored is not None else resolve_variant_and_source()[0]
+    try:
+        profile = get_profile(variant)
+    except UnknownHardwareVariantError:
+        return
+    if not profile.motor_mapping:
+        return
+
+    if Motor.query.count() > 0:
+        if variant == "pib5advanced":
+            controllers = {
+                c.number: c
+                for c in Controller.query.filter(
+                    Controller.number.in_(
+                        {num for num, _ch in profile.motor_mapping.values()}
+                    )
+                ).all()
+            }
+            changed = False
+            for motor_name, (ctrl_num, channel) in profile.motor_mapping.items():
+                motor = Motor.query.filter_by(name=motor_name).one_or_none()
+                target_ctrl = controllers.get(ctrl_num)
+                if motor is not None and target_ctrl is not None:
+                    if (
+                        motor.controller_id != target_ctrl.id
+                        or motor.channel != channel
+                    ):
+                        motor.controller = target_ctrl
+                        motor.channel = channel
+                        changed = True
+
+            _LEGACY_STARTUP_SHOULDER_POSITIONS = {-6800, 8900, -7000, -9000}
+            startup_pose = Pose.query.filter_by(name=STARTUP_POSE_NAME).one_or_none()
+            calibration_pose = Pose.query.filter_by(
+                name=CALIBRATION_POSE_NAME
+            ).one_or_none()
+            if startup_pose is not None and calibration_pose is not None:
+                calibration_by_motor = {
+                    motor_name: position
+                    for motor_name, position in db.session.query(
+                        MotorPosition.motor_name, MotorPosition.position
+                    ).filter_by(pose_id=calibration_pose.id)
+                }
+                for startup_mp in MotorPosition.query.filter_by(
+                    pose_id=startup_pose.id
+                ):
+                    cal_pos = calibration_by_motor.get(startup_mp.motor_name)
+                    if (
+                        cal_pos == 0
+                        and startup_mp.position in _LEGACY_STARTUP_SHOULDER_POSITIONS
+                    ):
+                        startup_mp.position = cal_pos
+                        changed = True
+
+            if changed:
+                db.session.commit()
+        return
+
+    _upsert_motors(profile)
+    for pose_name, defaults in (
+        (STARTUP_POSE_NAME, STARTUP_POSITIONS),
+        (CALIBRATION_POSE_NAME, CALIBRATION_POSITIONS),
+    ):
+        pose = Pose.query.filter_by(name=pose_name).first()
+        if pose is None:
+            continue
+        existing = {
+            name
+            for (name,) in db.session.query(MotorPosition.motor_name).filter_by(
+                pose_id=pose.id
+            )
+        }
+        for motor_name in profile.motor_mapping:
+            if motor_name not in existing:
+                db.session.add(
+                    MotorPosition(
+                        position=defaults.get(motor_name, 0),
+                        motor_name=motor_name,
+                        pose_id=pose.id,
+                    )
+                )
+    db.session.commit()
 
 
 def _create_default_poses(profile: HardwareProfile) -> None:
