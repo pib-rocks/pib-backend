@@ -16,6 +16,7 @@ the re-encode without a decoder.
 from __future__ import annotations
 
 import base64
+import json
 import sys
 import types
 from pathlib import Path
@@ -315,6 +316,57 @@ def test_a_failing_upload_does_not_fail_the_turn(
     chat_node._turn_path_token = "direct-tool-loop"
 
     assert chat_node._turn_meta() == {"source": "direct-tool-loop"}
+
+
+# --- the model is not handed the picture's bytes --------------------------
+
+
+def test_the_tool_result_the_model_sees_has_no_base64(tool_loop_module):
+    """Echoing the frame back made the request after a capture fail (PC-120)."""
+    output = {"imageBase64": "A" * 5000, "mimeType": "image/jpeg"}
+
+    compact = tool_loop_module._tool_result_for_model(output)
+
+    assert "imageBase64" not in compact
+    assert compact["imageCaptured"] is True
+    assert compact["imageEncodedLength"] == 5000
+    assert compact["mimeType"] == "image/jpeg"
+
+
+def test_a_tool_result_without_a_picture_is_untouched(tool_loop_module):
+    output = {"motorName": "elbow_right", "position": 10}
+
+    assert tool_loop_module._tool_result_for_model(output) == output
+
+
+def test_the_gemini_request_carries_no_frame_bytes(tool_loop_module):
+    """The function response is what the follow-up request sends back."""
+    messages = [
+        {"role": "user", "content": "mach ein foto"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {"id": "capture_image-0", "name": "capture_image", "arguments": {}}
+            ],
+        },
+        {
+            "role": "tool",
+            "name": "capture_image",
+            "tool_call_id": "capture_image-0",
+            "content": tool_loop_module._tool_result_for_model(
+                {"imageBase64": "B" * 4000, "mimeType": "image/jpeg"}
+            ),
+        },
+    ]
+
+    _url, _headers, body = tool_loop_module.build_gemini_request(
+        messages, None, "test-key"
+    )
+    serialised = json.dumps(body)
+
+    assert "BBBB" not in serialised
+    assert "imageCaptured" in serialised
 
 
 # --- fixtures -------------------------------------------------------------
