@@ -8,8 +8,11 @@ from typing import Any, Mapping
 class ControllerProfile:
     number: int
     kind: str
-    device_type: str
+    #: The Tinkerforge bricklet type, or None for every other controller kind -
+    #: ``Controller`` rejects a device type on a serial or CAN controller.
+    device_type: str | None
     supply_voltage: float | None
+    #: Bricklet UID or serial interface; None means "not read and entered yet".
     address: str | None = None
 
 
