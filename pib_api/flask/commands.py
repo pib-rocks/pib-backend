@@ -274,9 +274,14 @@ def _upsert_motors(
         motor.controller = controllers[controller_number]
         motor.channel = channel
 
-    obsolete_motors = Motor.query.filter(
-        ~Motor.name.in_(tuple(profile.motor_mapping))
-    ).all()
+    # A profile that declares no motors (a variant whose bus channels are not
+    # known yet) must not read as "delete every motor": `~Motor.name.in_(())`
+    # matches all of them.
+    obsolete_motors = (
+        Motor.query.filter(~Motor.name.in_(tuple(profile.motor_mapping))).all()
+        if profile.motor_mapping
+        else []
+    )
     obsolete_names = [motor.name for motor in obsolete_motors]
     if obsolete_names:
         referenced_names = [
