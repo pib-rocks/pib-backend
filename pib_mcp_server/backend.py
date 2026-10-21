@@ -261,6 +261,92 @@ class PibBackend:
             raise BackendError("relay_failed", "solid-state relay was not changed")
         return {"turnedOn": turned_on}
 
+    def _smarthome_devices_path(
+        self,
+        *,
+        room: str | None = None,
+        domain: str | None = None,
+        voice_only: bool = False,
+    ) -> str:
+        query: list[str] = []
+        if voice_only:
+            query.append("voiceOnly=true")
+        if room:
+            query.append(f"room={quote(room, safe='')}")
+        if domain:
+            query.append(f"domain={quote(domain, safe='')}")
+        suffix = "?" + "&".join(query) if query else ""
+        return "/smart-home/devices" + suffix
+
+    @staticmethod
+    def _resolve_smarthome_device(
+        target: str, devices: list[dict[str, Any]]
+    ) -> dict[str, Any] | None:
+        stripped = target.strip()
+        if not stripped:
+            return None
+        lowered = stripped.casefold()
+        for device in devices:
+            entity_id = device.get("entityId", "")
+            friendly = device.get("friendlyName", "")
+            if entity_id == stripped or friendly == stripped:
+                return device
+            if friendly.casefold() == lowered:
+                return device
+
+        matches = [
+            item
+            for item in devices
+            if lowered in item.get("entityId", "").casefold()
+            or lowered in item.get("friendlyName", "").casefold()
+            or lowered
+            in f"{item.get('room', '')} {item.get('friendlyName', '')}".casefold()
+        ]
+        if len(matches) == 1:
+            return matches[0]
+        return None
+
+    def list_smarthome_devices(
+        self, room: str | None = None, domain: str | None = None
+    ) -> dict[str, Any]:
+        path = self._smarthome_devices_path(
+            room=(room or None), domain=(domain or None), voice_only=True
+        )
+        payload = self._http("GET", path)
+        return {"devices": list(payload.get("devices", []))}
+
+    def get_smarthome_state(self, target: str) -> dict[str, Any]:
+        devices = self.list_smarthome_devices()["devices"]
+        device = self._resolve_smarthome_device(target, devices)
+        if device is None:
+            raise BackendError(
+                "device_not_found", f"unknown SmartHome device {target!r}"
+            )
+        return device
+
+    def control_smarthome_device(
+        self, target: str, action: str, value: Any = None
+    ) -> dict[str, Any]:
+        all_devices = list(self._http("GET", "/smart-home/devices").get("devices", []))
+        resolved = self._resolve_smarthome_device(target, all_devices)
+        if resolved is not None and not resolved.get("exposeToVoice", False):
+            raise BackendError(
+                "voice_access_denied",
+                f"SmartHome device {target!r} is not enabled for voice control",
+            )
+        entity_id = resolved.get("entityId", target) if resolved is not None else target
+        body: dict[str, Any] = {"action": action}
+        if value is not None:
+            body["value"] = value
+        return self._http(
+            "POST",
+            f"/smart-home/devices/{quote(entity_id, safe='')}/action",
+            body,
+        )
+
+    def trigger_smarthome_scene(self, scene_name: str) -> dict[str, Any]:
+        return self.control_smarthome_device(scene_name, "activate")
+
     def soul_append(self, personality_id: str, lesson: str) -> dict[str, Any]:
         personality = self._http(
             "POST",

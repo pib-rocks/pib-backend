@@ -1,0 +1,14 @@
+# Resource-minimal Home Assistant configuration for pib SmartHome & Matter hub.
+# Intentionally omits default_config, history, logbook, energy, media_source,
+# cloud, mobile_app, map, ssdp, and usb to minimize RAM and eliminate SD wear.
+http:
+  server_port: 8123
+api:
+websocket_api:
+matter:
+logger:
+  default: warning
+recorder:
+  db_url: "sqlite:///:memory:"
+  purge_keep_days: 1
+  commit_interval: 3600

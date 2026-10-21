@@ -23,6 +23,8 @@ ACTUATING_TOOLS = {
     "run_program",
     "set_led",
     "set_relay",
+    "control_smarthome_device",
+    "trigger_smarthome_scene",
 }
 MAX_SOUL_LESSON_CHARS = 500
 
@@ -51,6 +53,18 @@ def _error(code: str, message: str, details: Any = None) -> dict[str, Any]:
     if details is not None:
         error["details"] = details
     return {"ok": False, "error": error}
+
+
+def _parse_smarthome_value(value: str) -> Any:
+    text = (value or "").strip()
+    if not text:
+        return None
+    try:
+        if "." in text:
+            return float(text)
+        return int(text)
+    except ValueError:
+        return text
 
 
 def _invoke(operation: Callable[..., Any], *args: Any) -> dict[str, Any]:
@@ -219,6 +233,49 @@ def create_server(
         if disabled:
             return disabled
         return _invoke(robot.set_relay, turned_on)
+
+    @server.tool(annotations=read_annotations, structured_output=True)
+    def list_smarthome_devices(room: str = "", domain: str = "") -> dict[str, Any]:
+        """List voice-exposed SmartHome devices, optionally filtered by room or domain."""
+
+        return _invoke(
+            robot.list_smarthome_devices,
+            room.strip() or None,
+            domain.strip() or None,
+        )
+
+    @server.tool(annotations=read_annotations, structured_output=True)
+    def get_smarthome_state(device: NonEmptyString) -> dict[str, Any]:
+        """Read the current state of one voice-exposed SmartHome device."""
+
+        return _invoke(robot.get_smarthome_state, device.strip())
+
+    @server.tool(annotations=actuation_annotations, structured_output=True)
+    def control_smarthome_device(
+        device: NonEmptyString,
+        action: NonEmptyString,
+        value: str = "",
+    ) -> dict[str, Any]:
+        """Run a SmartHome action on one voice-exposed device."""
+
+        disabled = require_actuation("control_smarthome_device")
+        if disabled:
+            return disabled
+        return _invoke(
+            robot.control_smarthome_device,
+            device.strip(),
+            action.strip(),
+            _parse_smarthome_value(value),
+        )
+
+    @server.tool(annotations=actuation_annotations, structured_output=True)
+    def trigger_smarthome_scene(scene: NonEmptyString) -> dict[str, Any]:
+        """Activate a SmartHome scene by name."""
+
+        disabled = require_actuation("trigger_smarthome_scene")
+        if disabled:
+            return disabled
+        return _invoke(robot.trigger_smarthome_scene, scene.strip())
 
     @server.tool(annotations=write_annotations, structured_output=True)
     def soul_append(

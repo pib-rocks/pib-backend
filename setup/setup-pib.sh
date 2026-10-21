@@ -533,6 +533,18 @@ function install_depthai_udev_rules() {
     || print WARN "could not reload udev rules; a reboot/replug may be required"
 }
 
+function seed_homeassistant_minimal_config() {
+  sudo -u pib mkdir -p /home/pib/app/homeassistant /home/pib/app/matter-server
+  local dest="/home/pib/app/homeassistant/configuration.yaml"
+  if [ -f "$dest" ]; then
+    print INFO "Home Assistant configuration.yaml already present"
+    return 0
+  fi
+  sudo cp "$BACKEND_DIR/setup/setup_files/homeassistant_configuration.yaml" "$dest"
+  sudo chown pib:pib "$dest"
+  print SUCCESS "Seeded minimal Home Assistant configuration at $dest"
+}
+
 # Install pib-sdk and pib_mcp_server into system Python so Marimo notebooks,
 # Hermes MCP, and host scripts can import them without sys.path hacks.
 function install_pib_python_packages() {
@@ -1943,6 +1955,7 @@ run_step "Install Hermes CLI" install_hermes_cli || print ERROR "failed to insta
 # The legacy ~/imitation host script is retired. ros_packages/imitation consumes
 # the camera owner's typed topic and must never run beside another OAK device owner.
 run_step "Install Luxonis udev rules" install_depthai_udev_rules || print WARN "failed to install Luxonis udev rules"
+run_step "Seed minimal Home Assistant config" seed_homeassistant_minimal_config || print WARN "failed to seed Home Assistant config"
 if is_supported_raspbian && [ "$DIST_VERSION" = "trixie" ]; then
   run_step "Install ROS 2 Jazzy" source "$SETUP_INSTALLATION_DIR/ros_jazzy_install.sh" || abort_setup "failed to install ROS 2 Jazzy"
 fi

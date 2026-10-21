@@ -173,8 +173,8 @@ def test_edu_profiles_share_motor_parameters():
         assert pib5_deviations[name] is deviation
 
 
-@pytest.mark.parametrize("variant", ["pib4advanced", "pib5museum"])
-def test_unimplemented_variant_error_lists_implemented_profiles(variant: str):
+def test_unimplemented_variant_error_lists_implemented_profiles():
+    variant = "pib3unknown"
     with pytest.raises(UnknownHardwareVariantError) as error:
         get_profile(variant)
 

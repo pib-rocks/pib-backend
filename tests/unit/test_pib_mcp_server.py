@@ -4,6 +4,7 @@ import asyncio
 
 import pytest
 
+from pib_mcp_server.backend import BackendError, PibBackend
 from pib_mcp_server.server import ACTUATING_TOOLS, create_server
 
 
@@ -64,6 +65,54 @@ class FakeBackend:
     def soul_append(self, personality_id, lesson):
         self.calls.append(("soul_append", personality_id, lesson))
         return {"appended": True}
+
+    def list_smarthome_devices(self, room=None, domain=None):
+        self.calls.append(("list_smarthome_devices", room, domain))
+        devices = [
+            {
+                "entityId": "light.living_room",
+                "friendlyName": "Living Room",
+                "room": "Living Room",
+                "domain": "light",
+                "state": "on",
+                "exposeToVoice": True,
+            },
+            {
+                "entityId": "switch.hidden",
+                "friendlyName": "Hidden Switch",
+                "room": "Utility",
+                "domain": "switch",
+                "state": "off",
+                "exposeToVoice": False,
+            },
+        ]
+        filtered = devices
+        if room:
+            filtered = [d for d in filtered if d.get("room") == room]
+        if domain:
+            filtered = [d for d in filtered if d.get("domain") == domain]
+        return {"devices": filtered}
+
+    def get_smarthome_state(self, target):
+        self.calls.append(("get_smarthome_state", target))
+        for device in self.list_smarthome_devices()["devices"]:
+            if device["entityId"] == target or device["friendlyName"] == target:
+                return device
+        raise Exception("device_not_found")
+
+    def control_smarthome_device(self, target, action, value=None):
+        self.calls.append(("control_smarthome_device", target, action, value))
+        if target == "Hidden Switch":
+            raise Exception("voice_access_denied")
+        return {
+            "entityId": "light.living_room",
+            "state": "off" if action == "turn_off" else "on",
+            "action": action,
+        }
+
+    def trigger_smarthome_scene(self, scene_name):
+        self.calls.append(("trigger_smarthome_scene", scene_name))
+        return self.control_smarthome_device(scene_name, "activate")
 
 
 def _tools(server):
@@ -130,6 +179,10 @@ def test_tool_discovery_exposes_complete_declared_surface():
         "run_program",
         "set_led",
         "set_relay",
+        "list_smarthome_devices",
+        "get_smarthome_state",
+        "control_smarthome_device",
+        "trigger_smarthome_scene",
         "soul_append",
     }
 
@@ -218,6 +271,125 @@ def test_soul_append_accepts_exactly_500_characters():
 
     assert result["ok"] is True
     assert backend.calls == [("soul_append", "personality-1", "x" * 500)]
+
+
+def test_list_smarthome_devices_returns_voice_devices():
+    backend = FakeBackend()
+    result = _call(create_server(backend), "list_smarthome_devices", {})
+    assert result["ok"] is True
+    assert result["result"]["devices"][0]["entityId"] == "light.living_room"
+    assert ("list_smarthome_devices", None, None) in backend.calls
+
+
+def test_get_smarthome_state_resolves_device():
+    backend = FakeBackend()
+    result = _call(
+        create_server(backend),
+        "get_smarthome_state",
+        {"device": "Living Room"},
+    )
+    assert result["ok"] is True
+    assert result["result"]["friendlyName"] == "Living Room"
+
+
+def test_control_smarthome_device_parses_numeric_value_and_requires_actuation():
+    backend = FakeBackend()
+    disabled = _call(
+        create_server(backend),
+        "control_smarthome_device",
+        {"device": "Living Room", "action": "set_brightness", "value": "50"},
+    )
+    assert disabled["error"]["code"] == "actuation_disabled"
+
+    result = _call(
+        create_server(backend, actuating_enabled=True),
+        "control_smarthome_device",
+        {"device": "Living Room", "action": "set_brightness", "value": "50"},
+    )
+    assert result["ok"] is True
+    assert (
+        "control_smarthome_device",
+        "Living Room",
+        "set_brightness",
+        50,
+    ) in backend.calls
+
+
+def test_pib_backend_get_smarthome_state_resolves_friendly_name():
+    backend = PibBackend()
+    devices = [
+        {
+            "entityId": "light.kitchen",
+            "friendlyName": "Kitchen Light",
+            "room": "Kitchen",
+            "exposeToVoice": True,
+            "state": "on",
+        }
+    ]
+    backend._http = lambda method, path, payload=None: {"devices": devices}
+    device = backend.get_smarthome_state("kitchen light")
+    assert device["entityId"] == "light.kitchen"
+
+
+def test_pib_backend_get_smarthome_state_raises_when_missing():
+    backend = PibBackend()
+    backend._http = lambda method, path, payload=None: {"devices": []}
+    with pytest.raises(BackendError) as exc:
+        backend.get_smarthome_state("missing")
+    assert exc.value.code == "device_not_found"
+
+
+def test_pib_backend_control_smarthome_device_denies_non_voice_device():
+    backend = PibBackend()
+    backend._http = lambda method, path, payload=None: {
+        "devices": [
+            {
+                "entityId": "switch.secret",
+                "friendlyName": "Secret",
+                "exposeToVoice": False,
+            }
+        ]
+    }
+    with pytest.raises(BackendError) as exc:
+        backend.control_smarthome_device("Secret", "turn_on")
+    assert exc.value.code == "voice_access_denied"
+
+
+def test_pib_backend_control_smarthome_device_posts_resolved_entity():
+    backend = PibBackend()
+    calls = []
+
+    def fake_http(method, path, payload=None):
+        calls.append((method, path, payload))
+        if method == "GET":
+            return {
+                "devices": [
+                    {
+                        "entityId": "light.living_room",
+                        "friendlyName": "Living Room",
+                        "exposeToVoice": True,
+                    }
+                ]
+            }
+        return {"entityId": "light.living_room", "state": "on", "applied": True}
+
+    backend._http = fake_http
+    result = backend.control_smarthome_device("Living Room", "turn_on")
+    assert result["state"] == "on"
+    assert calls[-1][0] == "POST"
+    assert calls[-1][1] == "/smart-home/devices/light.living_room/action"
+    assert calls[-1][2] == {"action": "turn_on"}
+
+
+def test_trigger_smarthome_scene_activates_scene_when_enabled():
+    backend = FakeBackend()
+    result = _call(
+        create_server(backend, actuating_enabled=True),
+        "trigger_smarthome_scene",
+        {"scene": "Movie Night"},
+    )
+    assert result["ok"] is True
+    assert ("trigger_smarthome_scene", "Movie Night") in backend.calls
 
 
 def test_soul_append_rejects_oversized_lesson_before_backend():

@@ -1,0 +1,7 @@
+string target
+string action
+string value_json
+---
+bool successful
+string message
+SmartHomeEntity entity

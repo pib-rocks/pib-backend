@@ -3,18 +3,22 @@
 import os
 from pathlib import Path
 
+from seed_profiles.pib4advanced import PROFILE as PIB4ADVANCED_PROFILE
 from seed_profiles.pib4edu import PROFILE as PIB4EDU_PROFILE
 from seed_profiles.pib5advanced import PROFILE as PIB5ADVANCED_PROFILE
 from seed_profiles.pib5edu import PROFILE as PIB5EDU_PROFILE
+from seed_profiles.pib5museum import PROFILE as PIB5MUSEUM_PROFILE
 from seed_profiles.profile import ControllerProfile, HardwareProfile
 
 DEFAULT_HARDWARE_VARIANT = "pib5edu"
 HARDWARE_VARIANT_FILE = Path("/etc/pib_hardware_variant")
 
 PROFILES = {
+    PIB4ADVANCED_PROFILE.variant: PIB4ADVANCED_PROFILE,
     PIB4EDU_PROFILE.variant: PIB4EDU_PROFILE,
     PIB5ADVANCED_PROFILE.variant: PIB5ADVANCED_PROFILE,
     PIB5EDU_PROFILE.variant: PIB5EDU_PROFILE,
+    PIB5MUSEUM_PROFILE.variant: PIB5MUSEUM_PROFILE,
 }
 
 

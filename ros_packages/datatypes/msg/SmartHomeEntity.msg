@@ -1,0 +1,9 @@
+string entity_id
+string domain
+string friendly_name
+string room
+string state
+string attributes_json
+bool expose_to_voice
+bool expose_to_programs
+bool online
