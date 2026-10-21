@@ -186,10 +186,10 @@ def test_seed_hardware_unimplemented_variant_changes_nothing(app):
         before = _hardware_state()
         backups_before = set(_backup_paths(app))
 
-        result = _invoke("pib5museum")
+        result = _invoke("pib3unknown")
 
         assert result.exit_code != 0
-        assert "pib5museum" in result.output
+        assert "pib3unknown" in result.output
         assert "pib4edu" in result.output
         assert "pib5edu" in result.output
         assert _hardware_state() == before

@@ -26,7 +26,13 @@ def test_hardware_variant_shape_and_v1_mirror(client):
         "variant": "pib5edu",
         "source": "environment",
         "supported": list(ALLOWED_HARDWARE_VARIANTS),
-        "implementedVariants": ["pib4edu", "pib5advanced", "pib5edu"],
+        "implementedVariants": [
+            "pib4advanced",
+            "pib4edu",
+            "pib5advanced",
+            "pib5edu",
+            "pib5museum",
+        ],
         "seedProfileImplemented": True,
     }
 

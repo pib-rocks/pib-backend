@@ -56,6 +56,7 @@ from default_pose_constants import (
     CALIBRATION_POSE_NAME,
 )
 from model.button_program_model import ButtonProgram
+from model.smart_home_device_model import SmartHomeDevice  # noqa: F401
 from service.microphone_array_service import seed_desired_state
 
 logger = logging.getLogger(__name__)

@@ -6,6 +6,7 @@ from werkzeug.exceptions import MethodNotAllowed, UnprocessableEntity
 from app.app import app, db
 from controller import error_handler
 from service import motor_service, pose_service, program_service
+from service.smart_home_service import SmartHomeValidationError
 
 app.register_error_handler(ValidationError, error_handler.handle_bad_request_error)
 app.register_error_handler(NoResultFound, error_handler.handle_not_found_error)
@@ -34,6 +35,9 @@ app.register_error_handler(
 )
 app.register_error_handler(
     motor_service.MotorValidationError, error_handler.handle_invalid_request_error
+)
+app.register_error_handler(
+    SmartHomeValidationError, error_handler.handle_invalid_request_error
 )
 
 
