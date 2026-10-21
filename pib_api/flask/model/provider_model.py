@@ -13,6 +13,11 @@ class Provider(db.Model):
     endpoint_base = db.Column(db.String(1024), nullable=True)
     capabilities = db.Column(db.JSON, nullable=False)
     credential_ref = db.Column(db.String(255), nullable=True)
+    # How this account is reached and status-checked (PC-116). Data from
+    # provider_probes, so the health probe never carries a host or an auth
+    # header itself. Null means this build knows no wiring for the row, and
+    # the probe reports it as unknown rather than red.
+    probe = db.Column(db.JSON, nullable=True)
     models = db.relationship(
         "RegistryModel",
         back_populates="provider",

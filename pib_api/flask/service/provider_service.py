@@ -21,6 +21,7 @@ from provider_registry import (
     is_registry_default,
     provider_name_for,
 )
+from provider_probes import probe_for
 
 
 def sync_shared_capabilities(provider: Provider) -> None:
@@ -33,12 +34,15 @@ def _provider_for(api_name: str, visual_name: str) -> Provider:
     name = provider_name_for(api_name, visual_name)
     provider = Provider.query.filter_by(name=name).one_or_none()
     if provider is not None:
+        if provider.probe is None:
+            provider.probe = probe_for(name) or None
         return provider
     provider = Provider(
         name=name,
         endpoint_base=None,
         credential_ref=None,
         capabilities=capabilities_held_by_all(()),
+        probe=probe_for(name) or None,
     )
     from app.app import db
 

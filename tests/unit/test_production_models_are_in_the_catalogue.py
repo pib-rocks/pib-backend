@@ -22,6 +22,13 @@ HISTORICAL_MIGRATIONS = (
     "259579f4fe12_change_assistant_model.py",
 )
 
+# Provider wiring is data about accounts, not a catalogue model: it carries each
+# provider's API URL, its auth header name and its vendor status feed. The model
+# id regex reads "api.anthropic.com" and "anthropic-version" as catalogue rows
+# because they share a provider prefix, so the module is exempt as a whole - the
+# same way the historical migrations are.
+PROVIDER_WIRING_MODULES = ("pib_api/flask/provider_probes.py",)
+
 # Local Hermes labels name the model served on the device, not a Google or
 # OpenAI catalogue id. They need a measurement before they can change, so
 # this pass leaves them. pib_hermes_config carries the same pin as
@@ -138,6 +145,8 @@ def _offenders() -> list[str]:
             if path.name in HISTORICAL_MIGRATIONS:
                 continue
             relative = path.relative_to(REPO_ROOT).as_posix()
+            if relative in PROVIDER_WIRING_MODULES:
+                continue
             source = path.read_text(encoding="utf-8")
             pieces = (
                 _python_strings(source) if path.suffix == ".py" else _text_lines(source)

@@ -1,4 +1,4 @@
-"""Reachability probe for the provider a personality is pointed at (PC-115).
+"""Reachability probe for the provider a personality is pointed at (PC-115/116).
 
 The voice-assistant status strip names the provider that will answer a turn.
 Before the first turn nothing in the browser knows whether that provider is
@@ -15,17 +15,22 @@ Three rules decide the shape of this module:
   ``/health`` alone would paint a chip green for a robot whose token was
   revoked or whose budget is spent.
 * A probe that cannot run is not a failure. No stored token, a locked key
-  store, and a provider whose catalogue row carries no endpoint all report
+  store, and a provider whose catalogue row carries no wiring all report
   ``unknown``; only a request that was attempted and failed reports
   ``unreachable``. The UI paints ``unknown`` neutral, so nothing merely
   unknown can look like an outage.
 
-No provider host is hardcoded here: the endpoint comes from the catalogue row
-(``Provider.endpoint_base``), because a production module may not name a model
-or an account the shipped catalogue does not contain
-(``test_production_models_are_in_the_catalogue``). A third-party row without a
-configured endpoint is therefore ``unknown``/``no_endpoint``, not red; a probe
-descriptor in the catalogue can extend that later.
+Nothing about a provider is hardcoded here. ``provider_probes`` holds each
+account's probe URL, its auth style and its vendor status feed, and the row's
+stored ``Provider.probe`` decides how it is read: a production module may not
+carry a host or an auth header that looks like a catalogue model id
+(``test_production_models_are_in_the_catalogue``).
+
+The vendor status feed is the second stage (PC-116). It needs no key, so it
+answers "does the provider report a fault?" even for an account this robot has
+no credential for. It never turns a working key red: an account whose own
+listing answered stays usable, and the vendor's state is reported beside it in
+``vendorStatus``/``vendorDetail`` so the strip can explain a partial outage.
 """
 
 from __future__ import annotations
@@ -38,7 +43,15 @@ import urllib.error
 import urllib.request
 from typing import Any, Dict, Optional, Tuple
 
-from model.provider_model import RegistryModel
+from model.provider_model import Provider, RegistryModel
+from provider_probes import (
+    KIND_CLOUD,
+    KIND_MODELS,
+    KIND_TAGS,
+    STATUS_FORMAT_GCP_INCIDENTS,
+    STATUS_FORMAT_STATUSPAGE,
+    probe_for,
+)
 from service import key_store_service, provider_service
 
 LOGGER = logging.getLogger(__name__)
@@ -46,6 +59,11 @@ LOGGER = logging.getLogger(__name__)
 STATE_HEALTHY = "healthy"
 STATE_UNREACHABLE = "unreachable"
 STATE_UNKNOWN = "unknown"
+
+# The vendor's own view, told apart from what this robot could observe.
+VENDOR_OPERATIONAL = "operational"
+VENDOR_DEGRADED = "degraded"
+VENDOR_UNKNOWN = "unknown"
 
 # A status strip is not worth a long wait; a provider that answers slower than
 # this is reported unreachable rather than blocking the page.
@@ -61,6 +79,7 @@ CLOUD_BASE_ENV = "PIB_CLOUD_BASE_URL"
 PROBE_CLOUD_USAGE = "cloud_usage"
 PROBE_HEALTH = "health"
 PROBE_MODELS = "models"
+PROBE_TAGS = "tags"
 
 # Reason codes carried in the payload, so the UI can explain a chip.
 REASON_NO_KEY = "no_key"
@@ -72,6 +91,10 @@ REASON_HTTP_STATUS = "http_status"
 REASON_KEY_REJECTED = "key_rejected"
 REASON_TOKEN_INVALID = "token_invalid"
 REASON_BUDGET_EXHAUSTED = "budget_exhausted"
+REASON_PROVIDER_OUTAGE = "provider_outage"
+
+# Statuspage indicators that mean "the vendor reports a fault".
+_STATUSPAGE_FAULTS = frozenset({"minor", "major", "critical"})
 
 
 def _timeout_seconds() -> float:
@@ -96,52 +119,18 @@ def _origin(url: str) -> str:
     return f"{scheme}://{host}"
 
 
-def _family(provider_name: Optional[str], api_name: str) -> str:
-    """Which probe a row belongs to.
+def _wiring(provider: Optional[Provider]) -> Dict[str, Any]:
+    """The stored probe wiring of a provider row, falling back to this build's.
 
-    Only the rows whose endpoint the robot itself defines are probed in their
-    own way: the cloud (a liveness route plus the token's usage) and the
-    on-device model (Ollama's tag listing, which needs no credential).
-    Everything else is a generic models listing on the row's endpoint.
+    A row seeded by an older image has no ``probe`` yet; the catalogue default
+    keeps the probe working until the next start reconciles it.
     """
-    name = (provider_name or "").strip().lower()
-    api = (api_name or "").strip().lower()
-    if name == "pib.cloud" or api == "pib-cloud":
-        return "cloud"
-    if name == "local" or api == "qwen-fast":
-        return "local"
-    return "generic"
-
-
-def _cloud_base(endpoint_base: Optional[str]) -> str:
-    if endpoint_base:
-        return endpoint_base.rstrip("/")
-    configured = os.environ.get(CLOUD_BASE_ENV, "").strip()
-    if configured:
-        return configured.rstrip("/")
-    return DEFAULT_CLOUD_BASE
-
-
-def _models_probe(
-    provider_name: Optional[str],
-    endpoint_base: Optional[str],
-    secret: Optional[str],
-) -> Optional[Tuple[str, Dict[str, str]]]:
-    """A models listing on the row's own endpoint, or None when it has none.
-
-    A Google account takes its key as a query parameter, every other account as
-    a bearer token, which is what its listing accepts.
-    """
-    base = (endpoint_base or "").rstrip("/")
-    if not base:
-        return None
-    name = (provider_name or "").strip().lower()
-    if name == "google":
-        separator = "&" if "?" in base else "?"
-        suffix = f"{separator}key={secret}" if secret else ""
-        return f"{base}/models{suffix}", {}
-    headers = {"Authorization": f"Bearer {secret}"} if secret else {}
-    return f"{base}/models", headers
+    if provider is None:
+        return {}
+    stored = provider.probe
+    if isinstance(stored, dict) and stored:
+        return dict(stored)
+    return probe_for(provider.name)
 
 
 def _payload(
@@ -154,6 +143,8 @@ def _payload(
     probe: Optional[str] = None,
     budget_remaining: Optional[float] = None,
     budget_known: bool = False,
+    vendor_state: str = VENDOR_UNKNOWN,
+    vendor_detail: str = "",
 ) -> dict:
     provider = model.provider
     return {
@@ -168,6 +159,8 @@ def _payload(
         "latencyMs": latency_ms,
         "budgetRemaining": budget_remaining,
         "budgetKnown": budget_known,
+        "vendorStatus": vendor_state,
+        "vendorDetail": vendor_detail,
     }
 
 
@@ -229,6 +222,111 @@ def _budget_state(payload: Any) -> Tuple[Optional[float], bool]:
     return float(remaining), True
 
 
+def _statuspage_state(body: Any) -> Tuple[str, str]:
+    """Read a Statuspage v2 document: ``indicator`` says how the vendor is doing."""
+    if not isinstance(body, dict):
+        return VENDOR_UNKNOWN, ""
+    status = body.get("status")
+    if not isinstance(status, dict):
+        return VENDOR_UNKNOWN, ""
+    indicator = str(status.get("indicator") or "").strip().lower()
+    description = str(status.get("description") or "").strip()
+    if not indicator:
+        return VENDOR_UNKNOWN, description
+    if indicator in _STATUSPAGE_FAULTS:
+        return VENDOR_DEGRADED, description or indicator
+    return VENDOR_OPERATIONAL, description or indicator
+
+
+def _gcp_incidents_state(body: Any, product: Optional[str]) -> Tuple[str, str]:
+    """Read Google's incident feed: an open incident on this product is a fault.
+
+    The feed lists incidents with ``end`` unset while they are open and names
+    the affected products by title. Without a product name the feed cannot be
+    attributed, so it stays unknown rather than guessing.
+    """
+    if not isinstance(body, list) or not product:
+        return VENDOR_UNKNOWN, ""
+    wanted = product.strip().lower()
+    for incident in body:
+        if not isinstance(incident, dict):
+            continue
+        if incident.get("end"):
+            continue
+        products = incident.get("affected_products")
+        if not isinstance(products, list):
+            continue
+        titles = {
+            str(item.get("title") or "").strip().lower()
+            for item in products
+            if isinstance(item, dict)
+        }
+        if wanted in titles:
+            text = str(
+                incident.get("external_desc") or incident.get("status_impact") or ""
+            )
+            return VENDOR_DEGRADED, text.strip() or "open incident"
+    return VENDOR_OPERATIONAL, ""
+
+
+def _vendor_status(wiring: Dict[str, Any]) -> Tuple[str, str]:
+    """Ask the vendor's public status feed. Never raises, never blocks long."""
+    url = wiring.get("status_url")
+    if not isinstance(url, str) or not url.strip():
+        return VENDOR_UNKNOWN, ""
+    status, body, error, _latency = _http_get(url.strip(), {})
+    if status is None or not 200 <= status < 300:
+        # A status feed that cannot be read is not a provider outage: it says
+        # nothing about the account this robot talks to.
+        LOGGER.info("Vendor status feed %s unreadable: %s", url, error or status)
+        return VENDOR_UNKNOWN, ""
+    fmt = wiring.get("status_format")
+    if fmt == STATUS_FORMAT_STATUSPAGE:
+        return _statuspage_state(body)
+    if fmt == STATUS_FORMAT_GCP_INCIDENTS:
+        product = wiring.get("status_product")
+        return _gcp_incidents_state(body, product if isinstance(product, str) else None)
+    return VENDOR_UNKNOWN, ""
+
+
+def _cloud_base(wiring: Dict[str, Any], endpoint_base: Optional[str]) -> str:
+    if endpoint_base:
+        return endpoint_base.rstrip("/")
+    configured = os.environ.get(CLOUD_BASE_ENV, "").strip()
+    if configured:
+        return configured.rstrip("/")
+    url = wiring.get("url")
+    if isinstance(url, str) and url.strip():
+        return url.strip().rstrip("/")
+    return DEFAULT_CLOUD_BASE
+
+
+def _auth_applied(
+    wiring: Dict[str, Any], url: str, secret: Optional[str]
+) -> Tuple[str, Dict[str, str]]:
+    """Attach the stored secret the way this account expects it."""
+    auth = str(wiring.get("auth") or "bearer").strip().lower()
+    if not secret:
+        return url, {}
+    if auth == "query":
+        param = str(wiring.get("auth_param") or "key")
+        separator = "&" if "?" in url else "?"
+        return f"{url}{separator}{param}={secret}", {}
+    headers: Dict[str, str] = {}
+    extra = wiring.get("extra_headers")
+    if isinstance(extra, dict):
+        for name, value in extra.items():
+            if isinstance(name, str) and isinstance(value, str):
+                headers[name] = value
+    if auth == "header":
+        header = wiring.get("auth_header")
+        if isinstance(header, str) and header.strip():
+            headers[header.strip()] = secret
+            return url, headers
+    headers["Authorization"] = f"Bearer {secret}"
+    return url, headers
+
+
 def _probe_cloud(model: RegistryModel, secret: Optional[str]) -> dict:
     """Reachable, token valid and budget left - all three, or not green.
 
@@ -238,8 +336,9 @@ def _probe_cloud(model: RegistryModel, secret: Optional[str]) -> dict:
     in its body.
     """
     provider = model.provider
+    wiring = _wiring(provider)
     endpoint_base = provider.endpoint_base if provider is not None else None
-    base = _cloud_base(endpoint_base)
+    base = _cloud_base(wiring, endpoint_base)
     origin = _origin(base)
 
     status, _body, error, latency_ms = _http_get(f"{origin}/health", {})
@@ -359,46 +458,17 @@ def _probe_cloud(model: RegistryModel, secret: Optional[str]) -> dict:
     )
 
 
-def _probe_local(model: RegistryModel, endpoint_base: Optional[str]) -> dict:
+def _probe_tags(
+    model: RegistryModel, endpoint_base: Optional[str]
+) -> Tuple[Optional[int], str, int]:
     """Ollama's tag listing. The stored endpoint is the OpenAI-compatible base."""
     base = (endpoint_base or "").rstrip("/")
     if not base:
-        return _payload(
-            model,
-            STATE_UNKNOWN,
-            REASON_NO_ENDPOINT,
-            "The catalogue carries no endpoint for the on-device model.",
-        )
+        return None, "", 0
     if base.endswith("/v1"):
         base = base[: -len("/v1")]
     status, _body, error, latency_ms = _http_get(f"{base}/api/tags", {})
-    if status is None:
-        LOGGER.info("Provider probe for %s failed: %s", model.api_name, error)
-        return _payload(
-            model,
-            STATE_UNREACHABLE,
-            REASON_UNREACHABLE,
-            error,
-            latency_ms=latency_ms,
-            probe=PROBE_MODELS,
-        )
-    if 200 <= status < 300:
-        return _payload(
-            model,
-            STATE_HEALTHY,
-            status=status,
-            latency_ms=latency_ms,
-            probe=PROBE_MODELS,
-        )
-    return _payload(
-        model,
-        STATE_UNREACHABLE,
-        REASON_HTTP_STATUS,
-        f"The on-device model answered {status}.",
-        status=status,
-        latency_ms=latency_ms,
-        probe=PROBE_MODELS,
-    )
+    return status, error, latency_ms
 
 
 def probe_model(model_id: int) -> Optional[dict]:
@@ -413,68 +483,147 @@ def probe_model(model_id: int) -> Optional[dict]:
         return None
 
     provider = model.provider
-    provider_name = provider.name if provider is not None else None
+    wiring = _wiring(provider)
+    kind = str(wiring.get("kind") or "").strip().lower()
     endpoint_base = provider.endpoint_base if provider is not None else None
-    family = _family(provider_name, model.api_name)
-
-    if family == "cloud":
-        return _probe_cloud(
-            model, key_store_service.unlocked_secret_for_api_name(model.api_name)
-        )
-    if family == "local":
-        return _probe_local(model, endpoint_base)
-
     secret = key_store_service.unlocked_secret_for_api_name(model.api_name)
-    target = _models_probe(provider_name, endpoint_base, secret)
-    if target is None:
-        return _payload(
-            model,
-            STATE_UNKNOWN,
-            REASON_NO_ENDPOINT,
-            "The catalogue carries no endpoint for this provider.",
-        )
-    if not secret:
-        return _payload(model, STATE_UNKNOWN, _missing_key_reason())
 
-    url, headers = target
-    status, _body, error, latency_ms = _http_get(url, headers)
-    if status is None:
-        LOGGER.info("Provider probe for %s failed: %s", model.api_name, error)
+    if kind == KIND_CLOUD:
+        return _probe_cloud(model, secret)
+
+    vendor_state, vendor_detail = _vendor_status(wiring)
+
+    if kind == KIND_TAGS:
+        status, error, latency_ms = _probe_tags(model, endpoint_base)
+        if not (endpoint_base or "").strip():
+            return _payload(
+                model,
+                STATE_UNKNOWN,
+                REASON_NO_ENDPOINT,
+                "The catalogue carries no endpoint for the on-device model.",
+                vendor_state=vendor_state,
+                vendor_detail=vendor_detail,
+            )
+        if status is None:
+            LOGGER.info("Provider probe for %s failed: %s", model.api_name, error)
+            return _payload(
+                model,
+                STATE_UNREACHABLE,
+                REASON_UNREACHABLE,
+                error,
+                latency_ms=latency_ms,
+                probe=PROBE_TAGS,
+                vendor_state=vendor_state,
+                vendor_detail=vendor_detail,
+            )
+        if 200 <= status < 300:
+            return _payload(
+                model,
+                STATE_HEALTHY,
+                status=status,
+                latency_ms=latency_ms,
+                probe=PROBE_TAGS,
+                vendor_state=vendor_state,
+                vendor_detail=vendor_detail,
+            )
         return _payload(
             model,
             STATE_UNREACHABLE,
-            REASON_UNREACHABLE,
-            error,
+            REASON_HTTP_STATUS,
+            f"The on-device model answered {status}.",
+            status=status,
             latency_ms=latency_ms,
-            probe=PROBE_MODELS,
+            probe=PROBE_TAGS,
+            vendor_state=vendor_state,
+            vendor_detail=vendor_detail,
         )
-    # A keyed listing answers 401/403 when the stored key is wrong: the
-    # provider is reachable, but this personality cannot use it, so the chip
-    # is red with a reason of its own.
-    if status in (401, 403):
+
+    if kind == KIND_MODELS:
+        url = wiring.get("url")
+        if not isinstance(url, str) or not url.strip():
+            return _payload(
+                model,
+                STATE_UNKNOWN,
+                REASON_NO_ENDPOINT,
+                "The catalogue carries no probe for this provider.",
+                vendor_state=vendor_state,
+                vendor_detail=vendor_detail,
+            )
+        if not secret:
+            # No key on this robot: the vendor feed is all that can be said, so
+            # the chip stays neutral instead of claiming the account works.
+            return _payload(
+                model,
+                STATE_UNKNOWN,
+                _missing_key_reason(),
+                vendor_state=vendor_state,
+                vendor_detail=vendor_detail,
+            )
+
+        request_url, headers = _auth_applied(wiring, url.strip(), secret)
+        status, _body, error, latency_ms = _http_get(request_url, headers)
+        if status is None:
+            LOGGER.info("Provider probe for %s failed: %s", model.api_name, error)
+            return _payload(
+                model,
+                STATE_UNREACHABLE,
+                (
+                    REASON_PROVIDER_OUTAGE
+                    if vendor_state == VENDOR_DEGRADED
+                    else REASON_UNREACHABLE
+                ),
+                error,
+                latency_ms=latency_ms,
+                probe=PROBE_MODELS,
+                vendor_state=vendor_state,
+                vendor_detail=vendor_detail,
+            )
+        # A keyed listing answers 401/403 when the stored key is wrong: the
+        # provider is reachable, but this personality cannot use it, so the chip
+        # is red with a reason of its own.
+        if status in (401, 403):
+            return _payload(
+                model,
+                STATE_UNREACHABLE,
+                REASON_KEY_REJECTED,
+                f"The provider answered {status}; the stored key was rejected.",
+                status=status,
+                latency_ms=latency_ms,
+                probe=PROBE_MODELS,
+                vendor_state=vendor_state,
+                vendor_detail=vendor_detail,
+            )
+        if 200 <= status < 300:
+            return _payload(
+                model,
+                STATE_HEALTHY,
+                status=status,
+                latency_ms=latency_ms,
+                probe=PROBE_MODELS,
+                vendor_state=vendor_state,
+                vendor_detail=vendor_detail,
+            )
         return _payload(
             model,
             STATE_UNREACHABLE,
-            REASON_KEY_REJECTED,
-            f"The provider answered {status}; the stored key was rejected.",
+            (
+                REASON_PROVIDER_OUTAGE
+                if vendor_state == VENDOR_DEGRADED
+                else REASON_HTTP_STATUS
+            ),
+            f"The provider answered {status}.",
             status=status,
             latency_ms=latency_ms,
             probe=PROBE_MODELS,
+            vendor_state=vendor_state,
+            vendor_detail=vendor_detail,
         )
-    if 200 <= status < 300:
-        return _payload(
-            model,
-            STATE_HEALTHY,
-            status=status,
-            latency_ms=latency_ms,
-            probe=PROBE_MODELS,
-        )
+
     return _payload(
         model,
-        STATE_UNREACHABLE,
-        REASON_HTTP_STATUS,
-        f"The provider answered {status}.",
-        status=status,
-        latency_ms=latency_ms,
-        probe=PROBE_MODELS,
+        STATE_UNKNOWN,
+        REASON_UNSUPPORTED,
+        "This build knows no probe for the provider.",
+        vendor_state=vendor_state,
+        vendor_detail=vendor_detail,
     )

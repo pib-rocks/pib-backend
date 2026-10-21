@@ -24,6 +24,7 @@ from provider_registry import (
     active_entries,
     capabilities_for,
 )
+from provider_probes import probe_for
 from service.provider_service import attach_registry_models, sync_shared_capabilities
 from model.controller_model import Controller
 from model.camera_settings_model import CameraSettings
@@ -369,6 +370,7 @@ def _reconcile_model_catalogue() -> None:
     _align_existing_catalogue_rows()
     for provider in Provider.query.all():
         sync_shared_capabilities(provider)
+        _refresh_probe_wiring(provider)
     db.session.flush()
 
     default_row = RegistryModel.query.filter_by(
@@ -395,6 +397,21 @@ def _reconcile_model_catalogue() -> None:
             + ", ".join(model.api_name for model in added)
             + "."
         )
+
+
+def _refresh_probe_wiring(provider: Provider) -> None:
+    """Keep the stored probe wiring in step with this build's catalogue (PC-116).
+
+    Runs on every start of an already seeded database, next to
+    ``sync_shared_capabilities``. A stored probe is rewritten from
+    ``provider_probes`` when this build knows the account, so an installation
+    that was seeded by an older image gains the wiring without a manual step. A
+    provider this build knows nothing about keeps whatever it had: an empty
+    value is reported as unknown by the health probe, never as red.
+    """
+    wiring = probe_for(provider.name)
+    if wiring:
+        provider.probe = wiring
 
 
 def _align_existing_catalogue_rows() -> None:
