@@ -17,6 +17,7 @@ import * as programLog from "./program-log-generator";
 import * as setVolume from "./set-volume-generator";
 import * as getSoundDirection from "./sound-direction-generator";
 import * as modelBlocks from "./model-generators";
+import * as smartHome from "./smart-home-generators";
 
 export * from "blockly/python";
 
@@ -39,6 +40,7 @@ const generators: typeof pythonGenerator.forBlock = {
     ...setVolume,
     ...getSoundDirection,
     ...modelBlocks,
+    ...smartHome,
 };
 
 for (const name in generators) {

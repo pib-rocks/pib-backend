@@ -16,6 +16,7 @@ import {programLogBlocks} from "./program-log-blocks";
 import {setVolume} from "./set-volume-block";
 import {getSoundDirection} from "./sound-direction-block";
 import {modelBlocks} from "./model-blocks";
+import {smartHomeBlocks} from "./smart-home-blocks";
 
 export function customBlockDefinition() {
     Blockly.common.defineBlocks(displayBlocks);
@@ -35,4 +36,5 @@ export function customBlockDefinition() {
     Blockly.common.defineBlocks(setVolume);
     Blockly.common.defineBlocks(getSoundDirection);
     Blockly.common.defineBlocks(modelBlocks);
+    Blockly.common.defineBlocks(smartHomeBlocks);
 }
