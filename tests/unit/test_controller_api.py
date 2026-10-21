@@ -19,13 +19,14 @@ def test_controller_endpoint_uses_generic_schema(app):
 
 
 def test_controller_address_update(app):
+    # A Bricklet UID is Base58, max six characters ('0' is not a valid character).
     with app.test_client() as client:
-        response = client.put("/controller/1", json={"address": "NEW001"})
+        response = client.put("/controller/1", json={"address": "NEW"})
 
     assert response.status_code == 200
-    assert response.get_json()["address"] == "NEW001"
+    assert response.get_json()["address"] == "NEW"
     with app.app_context():
-        assert Controller.query.filter_by(number=1).one().address == "NEW001"
+        assert Controller.query.filter_by(number=1).one().address == "NEW"
 
 
 def test_bricklet_alias_keeps_legacy_response(app):
@@ -102,3 +103,99 @@ def test_motor_endpoint_uses_controller_and_channel(app):
 
     assert response.status_code == 200
     assert response.get_json()["currentLimit"] == 1.5
+
+
+# --- the identifier of a serial adapter (PC-124) ----------------------------
+
+
+def _serial_controller(number: int = 9):
+    """A serial controller row, the way a pib5advanced profile creates them."""
+    controller = Controller(
+        id=number,
+        number=number,
+        kind="feetech_st_serial",
+        device_type=None,
+        address=None,
+    )
+    db.session.add(controller)
+    db.session.flush()
+    return controller
+
+
+def test_a_serial_address_is_a_free_string(app):
+    """The Waveshare identifier is read off the module; no format to check."""
+    with app.app_context():
+        _serial_controller()
+        db.session.commit()
+
+    with app.test_client() as client:
+        response = client.put("/controller/9", json={"address": "  WS-4A2F-01  "})
+
+    assert response.status_code == 200
+    assert response.get_json()["address"] == "WS-4A2F-01"
+    with app.app_context():
+        assert Controller.query.filter_by(number=9).one().address == "WS-4A2F-01"
+
+
+def test_a_serial_address_may_look_like_a_path(app):
+    with app.app_context():
+        _serial_controller()
+        db.session.commit()
+
+    with app.test_client() as client:
+        response = client.put("/controller/9", json={"address": "/dev/ttyUSB0"})
+
+    assert response.status_code == 200
+    assert response.get_json()["address"] == "/dev/ttyUSB0"
+
+
+def test_an_empty_serial_address_clears_it(app):
+    with app.app_context():
+        controller = _serial_controller()
+        controller.address = "WS-4A2F-01"
+        db.session.commit()
+
+    with app.test_client() as client:
+        response = client.put("/controller/9", json={"address": "   "})
+
+    assert response.status_code == 200
+    assert response.get_json()["address"] is None
+
+
+def test_an_over_long_serial_address_is_refused(app):
+    with app.app_context():
+        _serial_controller()
+        db.session.commit()
+
+    with app.test_client() as client:
+        response = client.put("/controller/9", json={"address": "x" * 256})
+
+    # The schema's length rule refuses it before the service sees it; the global
+    # handler answers a plain "Bad request." and logs the field detail.
+    assert response.status_code == 400
+    assert response.get_json()["error"] == "Bad request."
+    with app.app_context():
+        assert Controller.query.filter_by(number=9).one().address is None
+
+
+def test_a_tinkerforge_controller_keeps_the_bricklet_uid_rule(app):
+    with app.test_client() as client:
+        accepted = client.put("/controller/1", json={"address": "SRV111"})
+        refused = client.put("/controller/1", json={"address": "not a uid"})
+
+    assert accepted.status_code == 200
+    assert accepted.get_json()["address"] == "SRV111"
+    assert refused.status_code == 400
+    with app.app_context():
+        assert Controller.query.filter_by(number=1).one().address == "SRV111"
+
+
+def test_a_non_string_address_is_refused(app):
+    with app.app_context():
+        _serial_controller()
+        db.session.commit()
+
+    with app.test_client() as client:
+        response = client.put("/controller/9", json={"address": 42})
+
+    assert response.status_code == 400

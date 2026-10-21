@@ -20,5 +20,9 @@ def get_controller(controller_number: int):
 @bp.route("/<int:controller_number>", methods=["PUT"])
 def update_controller(controller_number: int):
     payload = controller_schema.load(request.get_json() or {}, partial=True)
-    controller = controller_service.update_controller(controller_number, payload)
+    try:
+        controller = controller_service.update_controller(controller_number, payload)
+    except ValueError as error:
+        # A refused identifier is the caller's mistake, not a server fault.
+        return jsonify({"error": str(error)}), 400
     return controller_schema.dump(controller)
