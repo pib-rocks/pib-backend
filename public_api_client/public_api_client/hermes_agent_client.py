@@ -29,6 +29,7 @@ from pib_hermes_config import (
     align_profile_ownership,
     build_default_soul_text,
     env_vars_for_provider,
+    provider_needs_key,
     profile_dir_for,
     profile_name_for,
     profiles_dir,
@@ -771,7 +772,7 @@ def provider_key_for_turn() -> Optional[str]:
     is not logged.
     """
     model, provider, _base_url, env_vars = profile_hermes_settings()
-    if not env_vars:
+    if not env_vars and not provider_needs_key(provider):
         return None
     from voice_assistant.direct_tool_loop import resolve_hermes_provider_key
 
