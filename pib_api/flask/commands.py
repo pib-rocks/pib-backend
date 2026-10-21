@@ -692,10 +692,9 @@ def _backfill_motors_for_motorless_seed() -> None:
     ``pib5advanced`` originally seeded with an empty ``motor_mapping`` (PC-121).
     When such a database starts on a build whose profile declares motors, create
     the motor rows and missing default pose positions once without touching any
-    stored controller addresses.
+    stored controller addresses, and align existing ``pib5advanced`` motor
+    controller/channel pairs with the profile.
     """
-    if Motor.query.count() > 0:
-        return
     stored = get_property(HARDWARE_VARIANT_KEY)
     variant = stored.value if stored is not None else resolve_variant_and_source()[0]
     try:
@@ -703,6 +702,32 @@ def _backfill_motors_for_motorless_seed() -> None:
     except UnknownHardwareVariantError:
         return
     if not profile.motor_mapping:
+        return
+
+    if Motor.query.count() > 0:
+        if variant == "pib5advanced":
+            controllers = {
+                c.number: c
+                for c in Controller.query.filter(
+                    Controller.number.in_(
+                        {num for num, _ch in profile.motor_mapping.values()}
+                    )
+                ).all()
+            }
+            changed = False
+            for motor_name, (ctrl_num, channel) in profile.motor_mapping.items():
+                motor = Motor.query.filter_by(name=motor_name).one_or_none()
+                target_ctrl = controllers.get(ctrl_num)
+                if motor is not None and target_ctrl is not None:
+                    if (
+                        motor.controller_id != target_ctrl.id
+                        or motor.channel != channel
+                    ):
+                        motor.controller = target_ctrl
+                        motor.channel = channel
+                        changed = True
+            if changed:
+                db.session.commit()
         return
 
     _upsert_motors(profile)
