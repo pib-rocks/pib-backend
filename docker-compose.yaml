@@ -85,6 +85,9 @@ services:
       - PIB_UPDATE_DIR=/app/.update
       - PIB_KEY_STORE_PATH=/home/pib/app/secrets/provider_key_store.json
       - PIB_OLLAMA_BASE_URL=http://host.docker.internal:11434
+      # Pictures a tool captured are stored here, not in the source bind mount
+      # above: a chat message keeps a reference, the bytes live in this volume.
+      - PIB_CHAT_IMAGE_DIR=/app/chat_images
       - HOST_IP_FILE=/etc/pib_host_ip
       # Empty means read /etc/pib_smart_chats. 0 disables the Hermes channel.
       - PIB_SMART_CHATS=${PIB_SMART_CHATS:-}
@@ -95,6 +98,10 @@ services:
       # Hermes profiles directory (SOUL.md / MEMORY.md live there).
       - /home/pib/app/secrets:/home/pib/app/secrets
       - /home/pib/app/.update:/app/.update
+      # A chat image belongs beside its message, not in the flask source tree,
+      # which this file mounts as /app. A named volume survives the recreate of
+      # the service and the update of the image.
+      - chat_images:/app/chat_images
       # The release pairing helper lives in the repository's setup directory, which the flask bind
       # mount above hides: /app *is* pib_api/flask, so nothing inside the container reaches the
       # repository root. Without this mount GET /system/update/available cannot annotate releases.
@@ -226,6 +233,8 @@ services:
       - VOICE_ASSISTANT_DIR=/app/ros2_ws/voice_assistant
       - PIB_MCP_ROSBRIDGE_URL=ws://rosbridge-ws:9090
       - PIB_OLLAMA_BASE_URL=http://host.docker.internal:11434
+      # Pictures a tool captured are stored here, not in the source bind mount
+      # above: a chat message keeps a reference, the bytes live in this volume.
       # Server-side gate for hardware-changing MCP calls. Open by default, so
       # a freshly installed robot is drivable without a further manual step.
       - PIB_MCP_ENABLE_ACTUATION=true
@@ -340,6 +349,9 @@ services:
       - ${XDG_RUNTIME_DIR:-/run/user/1000}:/run/user/1000
       - /dev/dri:/dev/dri
       - /home/pib/app/.update:/app/.update
+      # A chat image belongs beside its message, not in the flask source tree,
+      # which this file mounts as /app. A named volume survives the recreate of
+      # the service and the update of the image.
     environment:
       - STATIC_IMAGE_DIR=/app/ros2_ws/display/static_images
       - PIB_EXPRESSION_DIR=/app/pib-expression-faces
@@ -397,6 +409,7 @@ services:
 
 volumes:
   programs:
+  chat_images:
 
 networks:
   pib-network:

@@ -8,6 +8,8 @@ from queue import Empty, Queue
 from threading import Lock
 from typing import Any, Optional
 
+import logging
+
 import rclpy
 import datetime
 from datatypes.action import Chat
@@ -27,6 +29,8 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.publisher import Publisher
 from rclpy.service import Service
+
+logger = logging.getLogger(__name__)
 from std_msgs.msg import String
 
 from pib_hermes_config.local_model import (
@@ -75,6 +79,60 @@ HERMES_WAIT_GRACE_SECONDS = 15
 # it stays short; a failed probe only downgrades hermes personalities to the
 # fallback reply and must never keep the node from starting.
 HERMES_PROBE_TIMEOUT_SECONDS = 5
+
+
+#: A camera frame is far too large for a chat attachment, so an image a tool
+#: captured is scaled down once, here, before it leaves the robot.
+CHAT_IMAGE_MAX_EDGE = 1024
+CHAT_IMAGE_QUALITY = 80
+
+
+def prepare_tool_image(
+    image_base64: str,
+    mime_type: str = "image/jpeg",
+    *,
+    max_edge: int = CHAT_IMAGE_MAX_EDGE,
+    quality: int = CHAT_IMAGE_QUALITY,
+) -> Optional[dict]:
+    """Scale one captured picture down and re-encode it as JPEG.
+
+    Answers ``{imageBase64, mimeType, width, height}``, or ``None`` when the
+    payload cannot be read: a tool that returned something undecodable must not
+    take the turn down, the answer is simply stored without a picture.
+
+    Pillow is imported here, not at module level, so a runtime image without it
+    still speaks - it just cannot attach pictures.
+    """
+    try:
+        import base64 as _base64
+        import io as _io
+
+        from PIL import Image
+    except Exception:  # noqa: BLE001 - the voice is more important than pictures
+        return None
+    try:
+        raw = _base64.b64decode((image_base64 or "").strip(), validate=False)
+        with Image.open(_io.BytesIO(raw)) as image:
+            image = image.convert("RGB")
+            if max_edge > 0 and max(image.size) > max_edge:
+                scale = max_edge / float(max(image.size))
+                size = (
+                    max(1, int(round(image.width * scale))),
+                    max(1, int(round(image.height * scale))),
+                )
+                image = image.resize(size, Image.LANCZOS)
+            buffer = _io.BytesIO()
+            image.save(buffer, format="JPEG", quality=quality)
+            encoded = _base64.b64encode(buffer.getvalue()).decode("ascii")
+            return {
+                "imageBase64": encoded,
+                "mimeType": "image/jpeg",
+                "width": image.width,
+                "height": image.height,
+            }
+    except Exception as exc:  # noqa: BLE001 - a broken picture is not a broken turn
+        logger.warning(f"captured image was not prepared: {exc}")
+        return None
 
 
 def _model_provider_name(api_name: Optional[str]) -> Optional[str]:
@@ -263,6 +321,26 @@ class ChatNode(Node):
         except Exception as exc:
             self.get_logger().warning(f"tool call trace was not published: {exc}")
 
+    def _record_tool_image(self, record: dict) -> None:
+        """Keep one picture a tool captured this turn, scaled down.
+
+        Only the camera tool produces one, and only the direct tool loop reports
+        it: the Hermes daemon runs its tools itself, so an image captured there
+        never reaches this runtime.
+        """
+        prepared = prepare_tool_image(
+            str(record.get("imageBase64") or ""),
+            str(record.get("mimeType") or "image/jpeg"),
+        )
+        if prepared is None:
+            return
+        images = getattr(self, "_turn_images", None)
+        if not isinstance(images, list):
+            images = self._turn_images = []
+        tool = record.get("tool")
+        prepared["tool"] = tool if isinstance(tool, str) else ""
+        images.append(prepared)
+
     def _reset_turn_meta(self) -> None:
         """A new turn forgets the previous turn's facts."""
         self._turn_stages = {}
@@ -272,6 +350,8 @@ class ChatNode(Node):
         self._turn_path_token = ""
         self._turn_model = ""
         self._turn_tool_calls = []
+        self._turn_images = []
+        self._turn_image_references = []
 
     def _record_turn_trace(self, raw: str) -> None:
         """Keep stage timings and the fallback reason of the running turn."""
@@ -321,11 +401,21 @@ class ChatNode(Node):
         tool_calls = getattr(self, "_turn_tool_calls", None)
         if isinstance(tool_calls, list) and tool_calls:
             meta["toolCalls"] = list(tool_calls)
+        images = getattr(self, "_turn_image_references", None)
+        if isinstance(images, list) and images:
+            meta["images"] = list(images)
         return meta or None
 
     def _finalize_message_meta(self, chat_id: str) -> None:
-        """Write the completed turn facts onto the answer that was just stored."""
+        """Write the completed turn facts onto the answer that was just stored.
+
+        Pictures a tool captured are uploaded here rather than before the answer
+        exists: an image is attached to a message id, and the id only exists once
+        the answer was stored. What the message carries is the reference the API
+        answers, never the bytes (PC-119).
+        """
         try:
+            self._attach_turn_images(chat_id)
             meta = self._turn_meta()
             message_id = getattr(self, "last_pib_message_id", None)
             if not meta or not message_id:
@@ -347,6 +437,33 @@ class ChatNode(Node):
         finally:
             # The next turn starts clean; a recorder end_of_speech sets its anchor.
             self._reset_turn_meta()
+
+    def _attach_turn_images(self, chat_id: str) -> None:
+        """Upload the pictures of this turn and add their references to the meta."""
+        images = getattr(self, "_turn_images", None)
+        message_id = getattr(self, "last_pib_message_id", None)
+        if not isinstance(images, list) or not images or not message_id:
+            return
+        references = []
+        for image in images:
+            try:
+                with self.voice_assistant_client_lock:
+                    reference = voice_assistant_client.add_chat_message_image(
+                        chat_id, message_id, image["imageBase64"]
+                    )
+            except (
+                Exception
+            ) as exc:  # noqa: BLE001 - the answer stands without a picture
+                self.get_logger().warning(f"captured image was not stored: {exc}")
+                continue
+            if not reference:
+                self.get_logger().warning(
+                    f"captured image was refused chat={chat_id} tool={image.get('tool')}"
+                )
+                continue
+            references.append(reference)
+        if references:
+            self._turn_image_references = references
 
     #: Machine token per transport for the turn-path trace event. A UI reads this
     #: to say which runtime answered; the human words above it stay for the log.
@@ -1439,6 +1556,7 @@ class ChatNode(Node):
                     allow_image=allow_image,
                     report_key_source=report_key_source,
                     on_tool_call=self._record_tool_call,
+                    on_tool_image=self._record_tool_image,
                 )
 
             # Which runtime serves this turn, before the first token is asked
