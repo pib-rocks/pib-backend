@@ -90,8 +90,10 @@ def test_the_profile_maps_all_26_motors_onto_the_four_serial_controllers():
     assert controller_numbers == {1, 2, 3, 4}
     assert profile.motor_mapping["turn_head_motor"] == (1, 51)
     assert profile.motor_mapping["elbow_right"] == (2, 18)
+    assert profile.motor_mapping["wrist_right"] == (2, 16)
     assert profile.motor_mapping["tilt_forward_motor"] == (3, 50)
     assert profile.motor_mapping["elbow_left"] == (4, 38)
+    assert profile.motor_mapping["wrist_left"] == (4, 36)
 
 
 def test_seeding_the_advanced_variant_brings_the_robot_up(seeded_as_pib5advanced):

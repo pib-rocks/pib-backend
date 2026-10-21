@@ -65,8 +65,8 @@ MOTOR_MAPPING = {
     "middle_left_stretch": (3, 33),
     "ring_left_stretch": (3, 34),
     "pinky_left_stretch": (3, 35),
-    "wrist_left": (3, 36),
-    "wrist_right": (1, 16),
+    "wrist_left": (4, 36),
+    "wrist_right": (2, 16),
 }
 
 MOTOR_PARAMETER_DEVIATIONS = {
