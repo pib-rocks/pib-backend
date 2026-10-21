@@ -173,7 +173,7 @@ def test_edu_profiles_share_motor_parameters():
         assert pib5_deviations[name] is deviation
 
 
-@pytest.mark.parametrize("variant", ["pib4advanced", "pib5advanced", "pib5museum"])
+@pytest.mark.parametrize("variant", ["pib4advanced", "pib5museum"])
 def test_unimplemented_variant_error_lists_implemented_profiles(variant: str):
     with pytest.raises(UnknownHardwareVariantError) as error:
         get_profile(variant)
@@ -230,13 +230,35 @@ def test_profile_literals_match_the_controller_model(app):
         TINKERFORGE_BRICKLET,
     )
 
+    from model.controller_model import (
+        FEETECH_ST_SERIAL,
+        SUPPORTED_CONTROLLER_KINDS,
+        TINKERFORGE_DEVICE_TYPES,
+    )
+
+    assert FEETECH_ST_SERIAL in SUPPORTED_CONTROLLER_KINDS
+
     for variant in PROFILES:
+        profile = get_profile(variant)
+        # Every literal a profile carries has to be one the model accepts.
+        assert {controller.kind for controller in profile.controllers} <= (
+            SUPPORTED_CONTROLLER_KINDS
+        )
+        for controller in profile.controllers:
+            if controller.kind == TINKERFORGE_BRICKLET:
+                assert controller.device_type in (
+                    SERVO_BRICKLET,
+                    SOLID_STATE_RELAY_BRICKLET,
+                    RGB_LED_BUTTON_BRICKLET,
+                ), (variant, controller.number)
+                assert controller.device_type in TINKERFORGE_DEVICE_TYPES
+            else:
+                # A serial or CAN controller carries no bricklet type.
+                assert controller.device_type is None, (variant, controller.number)
+
+    # The educational profiles are still Tinkerforge only.
+    for variant in ("pib4edu", "pib5edu"):
         profile = get_profile(variant)
         assert {controller.kind for controller in profile.controllers} == {
             TINKERFORGE_BRICKLET
-        }
-        assert {controller.device_type for controller in profile.controllers} == {
-            SERVO_BRICKLET,
-            SOLID_STATE_RELAY_BRICKLET,
-            RGB_LED_BUTTON_BRICKLET,
         }
