@@ -413,4 +413,5 @@ volumes:
 
 networks:
   pib-network:
-    driver: bridge
+      name: pib-network
+      driver: bridge
