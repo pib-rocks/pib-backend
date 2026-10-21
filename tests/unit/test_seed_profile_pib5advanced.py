@@ -1,4 +1,4 @@
-"""PC-121: the pib5advanced variant has a seed profile, so its robot can start.
+"""PC-121 & PC-125: the pib5advanced variant has a seed profile and serial motor mapping.
 
 The container runs ``flask db upgrade && flask seed_db && …``. A variant without
 a profile raised in ``get_profile`` and the flask container restart-looped, which
@@ -6,11 +6,11 @@ is why its System/Hardware-IDs page showed nothing at all - not even the
 Tinkerforge parts.
 
 This variant is wired differently from the educational robots: four serial
-controllers carry the motors, and the Tinkerforge HAT carries only the relay and
-up to three RGB LED buttons. The identifiers of the serial adapters are read
-separately, so the profile ships without any address and every controller row is
-created without one. What is entered later has to survive the next start, and a
-profile without a motor mapping must not read as "delete every motor".
+controllers carry the 26 Feetech STS motors, and the Tinkerforge HAT carries only
+the relay and up to three RGB LED buttons. The identifiers of the serial adapters
+are read separately, so the profile ships without any address and every controller
+row is created without one. What is entered later has to survive the next start,
+and an earlier motorless database is backfilled with the 26 motors on startup.
 """
 
 from __future__ import annotations
@@ -23,6 +23,7 @@ from commands import _upsert_controllers, _upsert_motors, seed_db
 from model.button_program_model import ButtonProgram
 from model.controller_model import FEETECH_ST_SERIAL, Controller
 from model.motor_model import Motor
+from model.motor_position_model import MotorPosition
 from model.pose_model import Pose
 from seed_profiles import PROFILES, get_profile
 from service.system_property_service import HARDWARE_VARIANT_KEY, get_property_value
@@ -79,9 +80,18 @@ def test_every_controller_starts_without_an_identifier():
     assert all(controller.address is None for controller in profile.controllers)
 
 
-def test_the_profile_declares_no_motors_yet():
-    """Which motor sits on which channel follows the identifiers, not a guess."""
-    assert get_profile("pib5advanced").motor_mapping == {}
+def test_the_profile_maps_all_26_motors_onto_the_four_serial_controllers():
+    """Each of the 26 joints maps to one of controllers 1..4 and its STS bus ID."""
+    profile = get_profile("pib5advanced")
+
+    assert len(profile.motor_mapping) == 26
+    assert set(profile.motor_mapping) == set(get_profile("pib5edu").motor_mapping)
+    controller_numbers = {num for num, _channel in profile.motor_mapping.values()}
+    assert controller_numbers == {1, 2, 3, 4}
+    assert profile.motor_mapping["turn_head_motor"] == (1, 51)
+    assert profile.motor_mapping["elbow_right"] == (2, 18)
+    assert profile.motor_mapping["tilt_forward_motor"] == (3, 50)
+    assert profile.motor_mapping["elbow_left"] == (4, 38)
 
 
 def test_seeding_the_advanced_variant_brings_the_robot_up(seeded_as_pib5advanced):
@@ -100,9 +110,32 @@ def test_seeding_the_advanced_variant_brings_the_robot_up(seeded_as_pib5advanced
     assert ButtonProgram.query.count() == 3
     # The System page reports the variant that was seeded.
     assert get_property_value(HARDWARE_VARIANT_KEY) == "pib5advanced"
-    # No joint is invented: no motors, and therefore empty start poses.
-    assert Motor.query.count() == 0
+    assert Motor.query.count() == 26
     assert Pose.query.count() == 2
+    assert MotorPosition.query.count() == 52
+
+
+def test_backfills_motors_when_an_earlier_motorless_advanced_db_starts(
+    seeded_as_pib5advanced, monkeypatch
+):
+    """A DB seeded under PC-121 (0 motors, stored adapter IDs) gets its 26 motors on start."""
+    controller = Controller.query.filter_by(number=1).one()
+    controller.address = "5B3D042723"
+    MotorPosition.query.delete()
+    Motor.query.delete()
+    db.session.commit()
+    assert Motor.query.count() == 0
+
+    monkeypatch.setattr("commands._reconcile_model_catalogue", lambda: None)
+    result = CliRunner().invoke(seed_db)
+    assert result.exit_code == 0, result.output
+
+    assert Motor.query.count() == 26
+    assert Controller.query.filter_by(number=1).one().address == "5B3D042723"
+    head = Motor.query.filter_by(name="turn_head_motor").one()
+    assert head.controller.number == 1
+    assert head.channel == 51
+    assert MotorPosition.query.count() == 52
 
 
 def test_an_identifier_entered_later_survives_the_next_start(seeded_as_pib5advanced):

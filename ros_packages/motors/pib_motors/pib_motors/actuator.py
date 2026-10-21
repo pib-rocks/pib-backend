@@ -3,6 +3,7 @@ from enum import Enum
 from typing import Any, Protocol, runtime_checkable
 
 from pib_motors.bricklet import uid_to_servo_bricklet
+from pib_motors.feetech_actuator import FeetechStSerialActuator
 from tinkerforge.bricklet_servo_v2 import BrickletServoV2
 from tinkerforge.ip_connection import Error
 
@@ -184,6 +185,15 @@ class ServoBrickletActuator:
             return 0
 
 
+FeetechStSerialActuator.CAPABILITIES = frozenset(
+    {
+        Capability.CURRENT,
+        Capability.TARGET_POSITION,
+        Capability.ACTUAL_POSITION,
+        Capability.TEMPERATURE,
+    }
+)
+
 # the actuator kinds this build knows how to talk to.
 # The keys are the controller.kind values from the database. "tinkerforge_servo" is the name this
 # build used before the DTO vocabulary became authoritative and stays accepted as an alias, so the
@@ -191,6 +201,7 @@ class ServoBrickletActuator:
 KIND_TO_ACTUATOR_CLASS: dict[str, type[Actuator]] = {
     ServoBrickletActuator.kind: ServoBrickletActuator,
     "tinkerforge_servo": ServoBrickletActuator,
+    FeetechStSerialActuator.kind: FeetechStSerialActuator,
 }
 
 

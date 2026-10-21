@@ -327,7 +327,7 @@ def test_motor_dto_kind_decides_which_actuator_family_is_built():
 def test_motor_with_a_kind_this_build_cannot_drive_is_left_without_an_actuator(caplog):
     actuator_module = _load_actuator_module({SERVO_UID: FakeServoBricklet()})
     dto = _motor_dto(
-        kind="feetech_st_serial", address="/dev/ttyUSB0", name="shoulder_vertical_left"
+        kind="robstride_can", address="can0", name="shoulder_vertical_left"
     )
 
     with (
@@ -338,15 +338,13 @@ def test_motor_with_a_kind_this_build_cannot_drive_is_left_without_an_actuator(c
     ):
         module = _load_motor_module(actuator_module, [dto])
 
-    create_actuator.assert_called_once_with(
-        "feetech_st_serial", 8, "/dev/ttyUSB0", True
-    )
+    create_actuator.assert_called_once_with("robstride_can", 8, "can0", True)
     # the node keeps running, the motor simply commands nothing
     assert module.motors[0].name == "shoulder_vertical_left"
     assert module.motors[0].actuators == []
     assert module.motors[0].set_position(1000) is False
     assert "shoulder_vertical_left" in caplog.text
-    assert "feetech_st_serial" in caplog.text
+    assert "robstride_can" in caplog.text
 
 
 @pytest.mark.parametrize(
