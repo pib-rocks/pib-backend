@@ -143,7 +143,7 @@ def test_seed_db_fails_for_variant_without_profile(
     app,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    monkeypatch.setenv("PIB_HARDWARE_VARIANT", "pib5advanced")
+    monkeypatch.setenv("PIB_HARDWARE_VARIANT", "pib5museum")
 
     with app.app_context():
         db.session.remove()
@@ -153,7 +153,7 @@ def test_seed_db_fails_for_variant_without_profile(
         result = CliRunner().invoke(seed_db, [])
 
         assert result.exit_code != 0
-        assert "pib5advanced" in str(result.exception)
+        assert "pib5museum" in str(result.exception)
         assert "pib4edu" in str(result.exception)
         assert "pib5edu" in str(result.exception)
         assert Controller.query.count() == 0

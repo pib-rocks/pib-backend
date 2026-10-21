@@ -71,6 +71,7 @@ def seed_db() -> None:
     if not _is_empty_db():
         _unbind_legacy_cerebra_toggle_program()
         _reconcile_model_catalogue()
+        _backfill_motors_for_motorless_seed()
         print("Seeding database failed - database already contains data.")
         return
     variant, source = resolve_variant_and_source()
@@ -683,6 +684,51 @@ def _create_chat_data_and_assistant() -> None:
     )
     db.session.add_all([m1, m2])
     db.session.flush()
+
+
+def _backfill_motors_for_motorless_seed() -> None:
+    """Populate motors and default pose positions for an earlier motorless seed (PC-125).
+
+    ``pib5advanced`` originally seeded with an empty ``motor_mapping`` (PC-121).
+    When such a database starts on a build whose profile declares motors, create
+    the motor rows and missing default pose positions once without touching any
+    stored controller addresses.
+    """
+    if Motor.query.count() > 0:
+        return
+    stored = get_property(HARDWARE_VARIANT_KEY)
+    variant = stored.value if stored is not None else resolve_variant_and_source()[0]
+    try:
+        profile = get_profile(variant)
+    except UnknownHardwareVariantError:
+        return
+    if not profile.motor_mapping:
+        return
+
+    _upsert_motors(profile)
+    for pose_name, defaults in (
+        (STARTUP_POSE_NAME, STARTUP_POSITIONS),
+        (CALIBRATION_POSE_NAME, CALIBRATION_POSITIONS),
+    ):
+        pose = Pose.query.filter_by(name=pose_name).first()
+        if pose is None:
+            continue
+        existing = {
+            name
+            for (name,) in db.session.query(MotorPosition.motor_name).filter_by(
+                pose_id=pose.id
+            )
+        }
+        for motor_name in profile.motor_mapping:
+            if motor_name not in existing:
+                db.session.add(
+                    MotorPosition(
+                        position=defaults.get(motor_name, 0),
+                        motor_name=motor_name,
+                        pose_id=pose.id,
+                    )
+                )
+    db.session.commit()
 
 
 def _create_default_poses(profile: HardwareProfile) -> None:

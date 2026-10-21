@@ -166,6 +166,11 @@ services:
     profiles:
       - all
       - motors
+    volumes:
+      - /dev/:/dev/
+    device_cgroup_rules:
+      - "c 166:* rmw"
+      - "c 188:* rmw"
     networks:
       - pib-network
     extra_hosts:
