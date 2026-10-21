@@ -28,9 +28,20 @@ VOICE_ASSISTANT_PKG = REPO_ROOT / "ros_packages" / "voice_assistant"
 if str(VOICE_ASSISTANT_PKG) not in sys.path:
     sys.path.insert(0, str(VOICE_ASSISTANT_PKG))
 
-from ros_stubs import install_ros_stubs
+from ros_stubs import drop_ros_stubs, install_ros_stubs
 
-install_ros_stubs()
+
+@pytest.fixture(scope="module", autouse=True)
+def _stubbed_ros_modules():
+    """The stubs live only as long as this module.
+
+    A stub module has no ``__file__``, so a later test module that needs the real
+    package fails with "unknown location" - the same reason the routing tests put
+    their fake clients back.
+    """
+    install_ros_stubs()
+    yield
+    drop_ros_stubs()
 
 
 # --- a stand-in for the parts of Pillow this code uses ---------------------

@@ -26,6 +26,9 @@ def install_ros_stubs():
             if not isinstance(mod, MagicMock):
                 return mod
         mod = types.ModuleType(name)
+        # Only what is marked here is dropped again: another test module installs
+        # its own stubs at collection time, and those have to survive this one.
+        mod.__created_by_ros_stubs__ = True
         sys.modules[name] = mod
         return mod
 
@@ -175,3 +178,29 @@ def install_ros_stubs():
 
         pvc.PublicApiChatMessage = PublicApiChatMessage
         pvc.chat_completion = MagicMock()
+
+
+#: Modules this module replaces. Anything a stub installs has no ``__file__``,
+#: which is how a later test module tells a stub from the real package: leaving
+#: one behind makes a real import fail with "unknown location".
+_STUBBED_PREFIXES = (
+    "rclpy",
+    "std_msgs",
+    "datatypes",
+    "pib_api_client",
+    "public_api_client.public_voice_client",
+    "voice_assistant",
+)
+
+
+def drop_ros_stubs() -> None:
+    """Remove the stubs again, so the next test module imports the real packages."""
+    for name in list(sys.modules):
+        if not any(
+            name == prefix or name.startswith(prefix + ".")
+            for prefix in _STUBBED_PREFIXES
+        ):
+            continue
+        module = sys.modules[name]
+        if getattr(module, "__created_by_ros_stubs__", False) is True:
+            sys.modules.pop(name, None)
