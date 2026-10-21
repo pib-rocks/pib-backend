@@ -16,6 +16,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from pib_hermes_config.channel import CAPTURED_IMAGE_SENTENCE
 from pib_hermes_config.turn_taking import speakable_answer
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -785,9 +786,11 @@ def test_direct_turn_puts_the_person_on_the_system_prompt(
         drive_like_rclpy(chat_node.chat(goal_handle))
 
     assert run_direct_turn.call_args.kwargs["user_text"] == "Hi"
-    assert run_direct_turn.call_args.kwargs["system_prompt"] == (
-        "Ein Soul, eine Identitaet.\n\n" + preface
-    )
+    system_prompt = run_direct_turn.call_args.kwargs["system_prompt"]
+    assert system_prompt.startswith("Ein Soul, eine Identitaet.")
+    assert preface in system_prompt
+    # The chat tells the model that a captured picture is attached (PC-120).
+    assert CAPTURED_IMAGE_SENTENCE in system_prompt
 
 
 def test_chat_routes_hermes_without_replaying_history(chat_module, chat_node):
@@ -1910,10 +1913,9 @@ def test_disabled_hermes_channel_routes_a_smart_personality_direct(
     completion.assert_not_called()
     chat_node.get_camera_image_client.call_async.assert_not_called()
     run_direct_turn.assert_called_once()
-    assert (
-        run_direct_turn.call_args.kwargs["system_prompt"]
-        == "Ein Soul, eine Identitaet."
-    )
+    direct_prompt = run_direct_turn.call_args.kwargs["system_prompt"]
+    assert direct_prompt.startswith("Ein Soul, eine Identitaet.")
+    assert CAPTURED_IMAGE_SENTENCE in direct_prompt
     assert run_direct_turn.call_args.kwargs["tool_calling"] is True
     assert run_direct_turn.call_args.kwargs["allow_image"] is False
     stream.assert_called_once()

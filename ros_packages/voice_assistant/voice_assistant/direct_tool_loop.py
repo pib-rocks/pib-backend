@@ -386,7 +386,7 @@ def run_direct_turn(
                     "role": "tool",
                     "name": name,
                     "tool_call_id": call.get("id") or name,
-                    "content": _json_object(output),
+                    "content": _tool_result_for_model(output),
                 }
             )
     raise DirectToolLoopError("tool loop ended without a final answer")
@@ -453,6 +453,26 @@ def _json_object(value: Any) -> dict[str, Any]:
     if isinstance(value, dict):
         return value
     return {"result": value}
+
+
+def _tool_result_for_model(output: Any) -> dict[str, Any]:
+    """What the model is told after a tool ran, without a picture's bytes.
+
+    A camera tool answers with a base64 frame - measured around 100 000 characters
+    for one 640x480 capture. Echoing that back as the function response made the
+    request after a capture fail (``model request failed``), and the model gains
+    nothing from it: it asked for the frame and has already described it. The
+    picture reaches the chat through ``on_tool_image``; what travels back here is a
+    note that it exists.
+    """
+    result = _json_object(output)
+    image = result.get("imageBase64")
+    if not isinstance(image, str) or not image.strip():
+        return result
+    compact = {key: value for key, value in result.items() if key != "imageBase64"}
+    compact["imageCaptured"] = True
+    compact["imageEncodedLength"] = len(image)
+    return compact
 
 
 def build_gemini_request(

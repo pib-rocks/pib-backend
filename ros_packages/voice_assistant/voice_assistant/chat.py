@@ -1301,7 +1301,9 @@ class ChatNode(Node):
                 f"pib.Cloud history could not be read for chat {chat_id}: {exc}"
             )
 
-        system_prompt = direct_system_prompt(getattr(personality, "description", None))
+        system_prompt = direct_system_prompt(
+            getattr(personality, "description", None), images_shown=True
+        )
         if generate_code:
             system_prompt = CODE_DESCRIPTION_PREFIX + system_prompt
         system_prompt = plan.for_direct(system_prompt)
@@ -1484,7 +1486,9 @@ class ChatNode(Node):
                 )
             elif local_model:
                 turn_path = "the on-device model"
-                system_prompt = direct_system_prompt(personality.description)
+                system_prompt = direct_system_prompt(
+                    personality.description, images_shown=True
+                )
                 if generate_code:
                     system_prompt = CODE_DESCRIPTION_PREFIX + system_prompt
                 system_prompt = plan.for_direct(system_prompt)
@@ -1515,7 +1519,9 @@ class ChatNode(Node):
                 # A camera frame is never attached here. It arrives only when
                 # the model calls capture_image, and that tool is absent while
                 # tool calling is off.
-                system_prompt = direct_system_prompt(personality.description)
+                system_prompt = direct_system_prompt(
+                    personality.description, images_shown=True
+                )
                 if generate_code:
                     system_prompt = CODE_DESCRIPTION_PREFIX + system_prompt
                 system_prompt = plan.for_direct(system_prompt)
