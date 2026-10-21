@@ -153,3 +153,29 @@ def test_publish_motor_current_publishes_diagnostic_status():
     assert message.level == module.DiagnosticStatus.OK
     assert message.values[0].key == "head_motor"
     assert message.values[0].value == "500"
+
+
+def test_publish_motor_current_includes_actual_position_and_temperature_for_serial_actuator():
+    serial_actuator = types.SimpleNamespace(
+        is_connected=lambda: True,
+        get_temperature=lambda: 34,
+    )
+    motor = types.SimpleNamespace(
+        name="turn_head_motor",
+        actuators=[serial_actuator],
+        get_current=MagicMock(return_value=120),
+        get_current_position=MagicMock(return_value=-215),
+    )
+    module = _load_motor_current([motor])
+    node = module.MotorCurrent()
+
+    node.publish_motor_current()
+
+    node.motor_current_publisher.publish.assert_called_once()
+    message = node.motor_current_publisher.publish.call_args.args[0]
+    kv = {entry.key: entry.value for entry in message.values}
+    assert kv == {
+        "turn_head_motor": "120",
+        "actual_position": "-2.1 °",
+        "temperature": "34 °C",
+    }

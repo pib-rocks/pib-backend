@@ -182,7 +182,15 @@ class protocol_packet_handler(object):
                     # re-calculate the exact length of the rx packet
                     if wait_length != (rxpacket[PKT_LENGTH] + PKT_LENGTH + 1):
                         wait_length = rxpacket[PKT_LENGTH] + PKT_LENGTH + 1
-                        continue
+                        if rx_length < wait_length:
+                            if self.portHandler.isPacketTimeout():
+                                result = (
+                                    COMM_RX_TIMEOUT
+                                    if rx_length == 0
+                                    else COMM_RX_CORRUPT
+                                )
+                                break
+                            continue
 
                     if rx_length < wait_length:
                         # check timeout

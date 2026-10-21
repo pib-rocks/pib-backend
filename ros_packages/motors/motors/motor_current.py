@@ -79,9 +79,37 @@ class MotorCurrent(Node):
             current = motor.get_current()
             if current == Motor.NO_CURRENT:
                 continue
-            self.publish_diagnostic_status(motor.name, current)
+            extra = self._actuator_feedback(motor)
+            self.publish_diagnostic_status(motor.name, current, extra)
 
-    def publish_diagnostic_status(self, motor_name: str, current: int) -> None:
+    def _actuator_feedback(self, motor) -> dict[str, str]:
+        actuators = getattr(motor, "actuators", None) or []
+        if not actuators:
+            return {}
+        actuator = actuators[0]
+        get_temp = getattr(actuator, "get_temperature", None)
+        if not callable(get_temp):
+            return {}
+        extra: dict[str, str] = {}
+        try:
+            pos = motor.get_current_position()
+            extra["actual_position"] = f"{pos / 100.0:.1f} °"
+        except Exception:
+            pass
+        try:
+            temp = get_temp()
+            if temp is not None:
+                extra["temperature"] = f"{temp} °C"
+        except Exception:
+            pass
+        return extra
+
+    def publish_diagnostic_status(
+        self,
+        motor_name: str,
+        current: int,
+        extra: dict[str, str] | None = None,
+    ) -> None:
         if current == Motor.NO_CURRENT:
             return
         msg = DiagnosticStatus()
@@ -90,7 +118,14 @@ class MotorCurrent(Node):
         keyvalue = KeyValue()
         keyvalue.key = motor_name
         keyvalue.value = str(current)
-        msg.values = [keyvalue]
+        values = [keyvalue]
+        if extra:
+            for k, v in extra.items():
+                kv = KeyValue()
+                kv.key = k
+                kv.value = v
+                values.append(kv)
+        msg.values = values
         self.motor_current_publisher.publish(msg)
 
 
