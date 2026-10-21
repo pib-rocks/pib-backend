@@ -189,7 +189,50 @@ class FeetechStSerialActuator:
             return self.check_connection()
         return bool(self._connected)
 
+    def _resolve_speed_and_acc(self) -> tuple[int, int]:
+        if self.pin in STS3095_SERVO_IDS:
+            default_speed, default_acc = STS3095_SPEED, STS3095_ACCEL
+        else:
+            default_speed, default_acc = FINGER_SPEED, FINGER_ACCEL
+
+        velocity = self._settings.get("velocity")
+        if velocity is None or velocity <= 0:
+            speed = default_speed
+        elif velocity in (DEFAULT_SPEED, 10000, 16000, 100000):
+            speed = default_speed
+        elif 1 <= velocity <= 3400:
+            speed = int(velocity)
+        else:
+            speed = max(50, min(3400, int(round(velocity * 3400 / 500000))))
+
+        acceleration = self._settings.get("acceleration")
+        if acceleration in (None, 0, DEFAULT_ACCEL, 10000, 50000):
+            acc = default_acc
+        elif 1 <= acceleration <= 254:
+            acc = int(acceleration)
+        else:
+            acc = max(1, min(254, int(round(acceleration * 254 / 500000))))
+
+        return speed, acc
+
+    def calibrate_zero(self) -> bool:
+        if not self.is_connected() or self._pk is None or self._lock is None:
+            return False
+        try:
+            with self._bus():
+                res, _err = self._pk.write1ByteTxRx(self.pin, STS_TORQUE_ENABLE, 128)
+            if res != COMM_SUCCESS:
+                return False
+            self._target_position = 0
+            return True
+        except Exception as error:
+            logging.error(f"Error during STS zero calibration on {self.pin}: {error}")
+            return False
+
     def apply_settings(self, settings_dto: dict[str, Any]) -> bool:
+        if settings_dto.get("calibrateZero") is True:
+            return self.calibrate_zero()
+
         for key in (
             "velocity",
             "acceleration",
@@ -239,10 +282,7 @@ class FeetechStSerialActuator:
         position = int(round(position))
         centideg = -position if self.invert else position
         ticks = centideg_to_ticks(float(centideg))
-        if self.pin in STS3095_SERVO_IDS:
-            speed, acc = STS3095_SPEED, STS3095_ACCEL
-        else:
-            speed, acc = FINGER_SPEED, FINGER_ACCEL
+        speed, acc = self._resolve_speed_and_acc()
 
         try:
             with self._bus():

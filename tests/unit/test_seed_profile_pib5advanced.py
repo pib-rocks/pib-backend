@@ -20,6 +20,12 @@ from click.testing import CliRunner
 
 from app.app import db
 from commands import _upsert_controllers, _upsert_motors, seed_db
+from default_pose_constants import (
+    CALIBRATION_POSE_NAME,
+    CALIBRATION_POSITIONS,
+    STARTUP_POSE_NAME,
+    STARTUP_POSITIONS,
+)
 from model.button_program_model import ButtonProgram
 from model.controller_model import FEETECH_ST_SERIAL, Controller
 from model.motor_model import Motor
@@ -94,6 +100,20 @@ def test_the_profile_maps_all_26_motors_onto_the_four_serial_controllers():
     assert profile.motor_mapping["tilt_forward_motor"] == (3, 50)
     assert profile.motor_mapping["elbow_left"] == (4, 38)
     assert profile.motor_mapping["wrist_left"] == (4, 36)
+
+
+def test_startup_and_calibration_default_positions_match(seeded_as_pib5advanced):
+    assert STARTUP_POSITIONS == CALIBRATION_POSITIONS
+
+    def positions_for(pose_name: str) -> dict[str, int]:
+        pose = Pose.query.filter_by(name=pose_name).one()
+        return {
+            mp.motor_name: mp.position
+            for mp in MotorPosition.query.filter_by(pose_id=pose.id)
+        }
+
+    assert positions_for(STARTUP_POSE_NAME) == positions_for(CALIBRATION_POSE_NAME)
+    assert len(positions_for(STARTUP_POSE_NAME)) == 26
 
 
 def test_seeding_the_advanced_variant_brings_the_robot_up(seeded_as_pib5advanced):

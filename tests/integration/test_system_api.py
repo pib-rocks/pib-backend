@@ -53,8 +53,21 @@ def test_hardware_capabilities_shape_and_v1_mirror(client):
         "current",
         "target_position",
     ]
-    assert "current_limit" not in by_kind[TINKERFORGE_BRICKLET]["meaningfulSettings"]
-    assert "current_limit" in by_kind[FEETECH_ST_SERIAL]["meaningfulSettings"]
+    tf_settings = by_kind[TINKERFORGE_BRICKLET]["meaningfulSettings"]
+    feetech_settings = by_kind[FEETECH_ST_SERIAL]["meaningfulSettings"]
+    assert "pulse_width" in tf_settings
+    assert "period" in tf_settings
+    assert "deceleration" in tf_settings
+    assert "pulse_width" not in feetech_settings
+    assert "period" not in feetech_settings
+    assert "deceleration" not in feetech_settings
+    assert "zero_calibration" in feetech_settings
+    assert "velocity" in feetech_settings
+    assert "acceleration" in feetech_settings
+    assert "rotation_range" in feetech_settings
+    assert "invert" in feetech_settings
+    assert "current_limit" not in tf_settings
+    assert "current_limit" in feetech_settings
     assert "torque_limit" in by_kind[ROBSTRIDE_CAN]["meaningfulSettings"]
 
 

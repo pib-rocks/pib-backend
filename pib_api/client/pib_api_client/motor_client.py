@@ -5,6 +5,7 @@ import json
 
 ALL_MOTORS_URL = URL_PREFIX + "/motor"
 MOTOR_SETTINGS_URL = URL_PREFIX + "/motor/%s/settings"
+CALIBRATE_ZERO_URL = URL_PREFIX + "/motor/%s/calibrate-zero"
 
 
 def get_all_motors() -> (bool, dict[str, Any]):
@@ -24,4 +25,9 @@ def update_motor_settings(motor_name, motor_settings_dto) -> (bool, dict[str, An
         headers={"Content-Type": "application/json"},
         data=json.dumps(motor_settings_dto).encode("UTF-8"),
     )
+    return send_request(request)
+
+
+def calibrate_motor_zero(motor_name) -> (bool, dict[str, Any]):
+    request = Request(CALIBRATE_ZERO_URL % motor_name, method="POST")
     return send_request(request)
