@@ -1,4 +1,4 @@
-from flask import abort, jsonify, request, Blueprint
+from flask import abort, jsonify, request, Blueprint, Response
 from schema.chat_message_schema import (
     chat_message_post_schema,
     chat_message_schema,
@@ -10,7 +10,7 @@ from schema.chat_schema import (
     upload_chat_schema,
     chat_messages_only_schema,
 )
-from service import chat_service
+from service import chat_image_service, chat_service
 
 bp = Blueprint("chat_controller", __name__)
 
@@ -91,7 +91,9 @@ def get_limited_amount_of_messages_by_chat(chat_id: str, message_history: int):
 
 @bp.route("/<string:chat_id>/messages/<string:message_id>", methods=["DELETE"])
 def delete_message(chat_id: str, message_id: str):
-    chat_service.delete_message(message_id)
+    # The service takes the chat as well: it scopes the message and deletes the
+    # images captured during that turn with it (PC-119).
+    chat_service.delete_message(chat_id, message_id)
     return "", 204
 
 
@@ -109,3 +111,60 @@ def get_message_by_chat_id_and_message_id(chat_id: str, message_id: str):
         return chat_message_schema.dump(message)
     except Exception:
         abort(500)
+
+
+# --- images captured by a tool during a turn (PC-119) -----------------------
+
+
+@bp.route("/<string:chat_id>/messages/<string:message_id>/images", methods=["POST"])
+def create_message_image(chat_id: str, message_id: str):
+    """Store one captured image for one message.
+
+    The message has to exist in this chat: an image that belongs to nothing would
+    never be shown and never be deleted. The bytes live in a file, the answer is
+    the reference the message meta carries.
+    """
+    chat_service.get_message_of_chat(chat_id, message_id)
+    payload = request.json or {}
+    try:
+        image = chat_image_service.store(message_id, payload.get("imageBase64"))
+    except chat_image_service.UnsupportedImage as error:
+        return jsonify({"error": str(error)}), 400
+    index = _image_index(message_id, image.id)
+    reference = chat_image_service.public_reference(image, index)
+    reference["url"] = _image_url(chat_id, message_id, index)
+    return jsonify(reference), 201
+
+
+@bp.route(
+    "/<string:chat_id>/messages/<string:message_id>/images/<int:index>", methods=["GET"]
+)
+def get_message_image(chat_id: str, message_id: str, index: int):
+    """Serve one stored image. Immutable: the id of an image never changes content."""
+    image = chat_image_service.image_of(message_id, index)
+    if image is None:
+        abort(404)
+    body = chat_image_service.read_bytes(image)
+    if body is None:
+        abort(404)
+    response = Response(body, mimetype=image.mime_type)
+    response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    response.headers["ETag"] = image.id
+    return response
+
+
+def _image_index(message_id: str, image_id: str) -> int:
+    """Position of one image among its message's images, oldest first."""
+    position = 0
+    while True:
+        candidate = chat_image_service.image_of(message_id, position)
+        if candidate is None:
+            return 0
+        if candidate.id == image_id:
+            return position
+        position += 1
+
+
+def _image_url(chat_id: str, message_id: str, index: int) -> str:
+    """Server-relative URL; the chat prefixes its own API base."""
+    return f"/voice-assistant/chat/{chat_id}/messages/{message_id}/images/{index}"

@@ -12,6 +12,8 @@
   <exec_depend>datatypes</exec_depend>
 
   <exec_depend>openai</exec_depend>
+  <!-- A picture a tool captured is scaled down before it is uploaded (PC-119). -->
+  <exec_depend>pillow</exec_depend>
   <exec_depend>google-cloud-speech</exec_depend>
   <exec_depend>google-cloud-texttospeech</exec_depend>
   <exec_depend>pyaudio</exec_depend>

@@ -9,6 +9,7 @@ PROVIDER_DEFAULT_URL = URL_PREFIX + "/provider/default"
 PERSONALITY_URL = URL_PREFIX + "/voice-assistant/personality/%s"
 CHAT_URL = URL_PREFIX + "/voice-assistant/chat/%s"
 CHAT_MESSAGES_URL = URL_PREFIX + "/voice-assistant/chat/%s/messages"
+CHAT_MESSAGE_IMAGES_URL = CHAT_MESSAGES_URL + "/%s/images"
 
 
 class AssistantModel:
@@ -203,6 +204,30 @@ def update_chat_message(
     )
     successful, chat_message_dto = send_request(request)
     return successful, ChatMessage(chat_message_dto)
+
+
+def add_chat_message_image(
+    chat_id: str,
+    message_id: str,
+    image_base64: str,
+) -> Optional[dict]:
+    """Attach one captured image to a stored message (PC-119).
+
+    Answers the reference the message meta carries - id, mime type, size, and the
+    server-relative URL - or None when the API refused it. A refused image is not
+    an error to the caller: the answer stays readable without the picture.
+    """
+    payload = json.dumps({"imageBase64": image_base64}).encode("UTF-8")
+    request = Request(
+        CHAT_MESSAGE_IMAGES_URL % (chat_id, message_id),
+        method="POST",
+        headers={"Content-Type": "application/json"},
+        data=payload,
+    )
+    successful, reference = send_request(request)
+    if not successful or not isinstance(reference, dict):
+        return None
+    return reference
 
 
 def get_all_chat_messages(chat_id: str) -> List[ChatMessage]:
