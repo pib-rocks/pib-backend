@@ -131,6 +131,11 @@ def create_server(
         return _invoke(robot.get_state)
 
     @server.tool(annotations=read_annotations, structured_output=True)
+    def get_motion_model() -> dict[str, Any]:
+        """Return the robot's joints with axes, degree limits and named postures."""
+        return _invoke(robot.get_motion_model)
+
+    @server.tool(annotations=read_annotations, structured_output=True)
     def list_poses() -> dict[str, Any]:
         """List stored robot poses."""
 

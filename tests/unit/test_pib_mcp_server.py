@@ -170,6 +170,7 @@ def test_tool_discovery_exposes_complete_declared_surface():
 
     assert names == {
         "list_motors",
+        "get_motion_model",
         "get_state",
         "list_poses",
         "list_programs",
