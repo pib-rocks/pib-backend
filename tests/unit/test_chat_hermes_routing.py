@@ -2403,3 +2403,111 @@ def test_chat_node_routes_pib_cloud_and_flushes_first_sentence(chat_module, chat
     assert result.text == ""
     info_logs = [call[0][0] for call in logger.info.call_args_list]
     assert any("FIRST_SENTENCE_FLUSHED" in line for line in info_logs)
+
+
+def test_failed_user_message_create_warns_and_the_turn_continues(
+    chat_module, chat_node
+):
+    """A refused user-line POST must not abort the chat action."""
+    from pib_hermes_config.attention import AttentionPlan
+
+    Chat = chat_module.Chat
+    node = chat_node
+    node.create_chat_message = types.MethodType(
+        chat_module.ChatNode.create_chat_message, node
+    )
+    logger = MagicMock()
+    node.get_logger = MagicMock(return_value=logger)
+    node._attention = MagicMock()
+    node._attention.before_answer.return_value = AttentionPlan(preface="")
+
+    personality = MagicMock()
+    personality.message_history = 5
+    personality.description = "Du bist pib."
+    personality.personality_id = "pers-1"
+    personality.channel = "smart"
+    personality.assistant_model.api_name = "hermes-agent"
+    personality.assistant_model.has_image_support = True
+    personality.assistant_model.endpoint_base = None
+
+    goal_handle = MagicMock()
+    goal_handle.is_cancel_requested = False
+    goal_handle.request = Chat.Goal()
+    goal_handle.request.chat_id = "chat-fail-user"
+    goal_handle.request.text = "Hi"
+    goal_handle.request.generate_code = False
+
+    stored_assistant = MagicMock()
+    stored_assistant.message_id = "asst-1"
+
+    def _stream(**_kwargs):
+        return ["Antwort."]
+
+    with (
+        patch.object(
+            chat_module.voice_assistant_client,
+            "create_chat_message",
+            side_effect=[
+                (False, None),
+                (True, stored_assistant),
+            ],
+        ),
+        patch.object(
+            chat_module.voice_assistant_client,
+            "get_personality_from_chat",
+            return_value=(True, personality),
+        ),
+        patch.object(node, "_stream_hermes_turn", side_effect=_stream),
+        patch.object(
+            node,
+            "_stream_chunks_to_goal",
+            return_value=(None, None, "Antwort."),
+        ),
+        patch.object(node, "_publish_chat_message") as publish,
+    ):
+        drive_like_rclpy(node.chat(goal_handle))
+
+    goal_handle.succeed.assert_called_once()
+    warning_messages = [call[0][0] for call in logger.warning.call_args_list]
+    assert any(
+        "chat-fail-user" in msg and "not persisted" in msg for msg in warning_messages
+    )
+    publish.assert_any_call(
+        chat_id="chat-fail-user",
+        content="Hi",
+        is_user=True,
+        message_id=None,
+    )
+
+
+def test_update_skips_pib_when_no_message_id_was_stored(chat_module, chat_node):
+    node = chat_node
+    node.get_logger = MagicMock(return_value=MagicMock())
+    node.create_chat_message = types.MethodType(
+        chat_module.ChatNode.create_chat_message, node
+    )
+    node.last_pib_message_id = None
+    node.message_content = "Antwort"
+
+    with (
+        patch.object(
+            chat_module.voice_assistant_client,
+            "update_chat_message",
+        ) as update,
+        patch.object(node, "_publish_chat_message") as publish,
+    ):
+        node.create_chat_message(
+            "chat-skip-update",
+            " mehr.",
+            False,
+            True,
+            True,
+        )
+
+    update.assert_not_called()
+    publish.assert_called_once_with(
+        chat_id="chat-skip-update",
+        content="Antwort  mehr.",
+        is_user=False,
+        message_id=None,
+    )

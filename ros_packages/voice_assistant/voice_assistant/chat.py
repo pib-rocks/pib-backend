@@ -663,17 +663,18 @@ class ChatNode(Node):
                 if update_database:
                     # concatenate locally AND persist to PIB
                     self.message_content = f"{self.message_content} {text}"
-                    successful, _ = voice_assistant_client.update_chat_message(
-                        chat_id,
-                        self.message_content,
-                        is_user,
-                        self.last_pib_message_id,
-                    )
-                    if not successful:
-                        self.get_logger().error(
-                            f"unable to create chat message: {(chat_id, text, is_user, update_message, update_database)}"
+                    if self.last_pib_message_id is not None:
+                        successful, _ = voice_assistant_client.update_chat_message(
+                            chat_id,
+                            self.message_content,
+                            is_user,
+                            self.last_pib_message_id,
                         )
-                        return
+                        if not successful:
+                            self.get_logger().error(
+                                f"unable to create chat message: {(chat_id, text, is_user, update_message, update_database)}"
+                            )
+                            return
                 else:
                     # concatenate locally ONLY
                     self.message_content = f"{self.message_content} {text}"
@@ -689,9 +690,17 @@ class ChatNode(Node):
                     self.get_logger().error(
                         f"unable to create chat message: {(chat_id, text, is_user, update_message, update_database)}"
                     )
-                    return
-                self.last_pib_message_id = chat_message.message_id
-                self.message_content = text
+                    if is_user:
+                        self.get_logger().warning(
+                            f"user line was not persisted for chat {chat_id}"
+                        )
+                        self.last_pib_message_id = None
+                        self.message_content = text
+                    else:
+                        return
+                else:
+                    self.last_pib_message_id = chat_message.message_id
+                    self.message_content = text
 
         # Publish to ROS so UIs/loggers see it immediately.
         self._publish_chat_message(

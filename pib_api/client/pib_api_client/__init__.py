@@ -21,17 +21,19 @@ def send_request(request: Request) -> (bool, dict[str, Any]):
         return True, response_json
 
     except HTTPError as error:
+        response_body = error.fp.read().decode()
+        payload_bytes = len(request.data) if request.data is not None else 0
+        response_snippet = response_body[:300]
 
         logging.error(
             f"Error sending HTTP-Request, received following response from server: \n"
             + f"\tstatus: {error.code},\n"
             + f"\treason: {error.reason},\n"
-            + f"\tresponse-body: {error.fp.read().decode()}"
+            + f"\tresponse-body: {response_snippet}\n"
             + f"Request that caused the error:\n"
             + f"\turl: {request.full_url},\n"
             + f"\tmethod: {request.method},\n"
-            + f"\tbody: {request.data},\n"
-            + f"\theaders: {request.header_items()}"
+            + f"\tpayload-bytes: {payload_bytes},\n"
         )
 
     except Exception as error:
