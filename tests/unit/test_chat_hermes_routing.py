@@ -2540,3 +2540,33 @@ def test_failed_user_message_log_omits_the_message_text(chat_module, chat_node):
     assert any(f"chars={len(huge)}" in msg for msg in error_messages)
     assert every_line
     assert all(marker not in msg for msg in every_line)
+
+
+def test_publish_uses_an_empty_id_when_the_line_was_not_persisted(
+    chat_module, chat_node
+):
+    """A line the API refused has no id; the ROS string field must not get None.
+
+    The generated datatypes converter aborts the process on None
+    (`PyUnicode_Check(field)` assertion), which killed the chat node after PR-2022
+    started letting the turn continue.
+    """
+    node = chat_node
+    node.chat_message_publisher = MagicMock()
+
+    chat_module.ChatNode._publish_chat_message(node, "chat-none", "Hallo", True, None)
+
+    published = node.chat_message_publisher.publish.call_args[0][0]
+    assert published.message_id == ""
+    assert published.content == "Hallo"
+    assert published.is_user is True
+
+
+def test_publish_keeps_a_real_message_id(chat_module, chat_node):
+    node = chat_node
+    node.chat_message_publisher = MagicMock()
+
+    chat_module.ChatNode._publish_chat_message(node, "chat-id", "Hallo", False, "msg-9")
+
+    published = node.chat_message_publisher.publish.call_args[0][0]
+    assert published.message_id == "msg-9"
