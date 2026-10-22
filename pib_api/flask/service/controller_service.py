@@ -9,15 +9,87 @@ and an empty value means "not entered yet", which is a legitimate state for a
 robot that is being wired.
 """
 
+import os
+import re
+import time
+from pathlib import Path
 from typing import List, Optional
 
 from app.app import db
 from model.controller_model import TINKERFORGE_BRICKLET, Controller
+from service import diagnostics_service
+
+SERIAL_BY_ID_DIR = Path("/dev/serial/by-id")
 
 #: Width of ``Controller.address``; a longer value would be truncated silently.
 ADDRESS_MAX_LENGTH = 255
 
 ADDRESS_FIELDS = ("kind", "device_type", "address", "number", "supply_voltage")
+
+
+def extract_serial_from_by_id_name(entry_name: str) -> str:
+    """Pull the Waveshare USB serial token from a ``/dev/serial/by-id`` symlink name."""
+    name = re.sub(r"-port\d+.*$", "", entry_name)
+    name = re.sub(r"-if\d+.*$", "", name)
+    if "_" not in name:
+        return name
+    return name.rsplit("_", 1)[-1]
+
+
+def _serial_port_from_by_id_entry(entry: Path) -> str:
+    try:
+        resolved = os.path.realpath(str(entry))
+        port = Path(resolved).name
+    except OSError:
+        port = entry.name
+    else:
+        if not port.startswith("tty"):
+            try:
+                port = Path(os.readlink(entry)).name
+            except OSError:
+                port = entry.name
+    if port.startswith("tty"):
+        return port
+    return entry.name
+
+
+def get_connected_serial_controllers(serial_dir: Path | None = None) -> List[dict]:
+    """USB-serial motor controllers visible on the host, keyed by module serial."""
+    target_dir = serial_dir or SERIAL_BY_ID_DIR
+    by_serial: dict[str, dict] = {}
+
+    if target_dir.is_dir():
+        for entry in sorted(target_dir.iterdir(), key=lambda p: p.name):
+            serial = extract_serial_from_by_id_name(entry.name)
+            if serial in by_serial:
+                continue
+            port = _serial_port_from_by_id_entry(entry)
+            by_serial[serial] = {
+                "serial": serial,
+                "uid": serial,
+                "port": port,
+                "kind": "feetech_st_serial",
+                "name": "Waveshare Serial Controller",
+            }
+
+    if serial_dir is None:
+        now = time.time()
+        ttl = diagnostics_service._SERIAL_PIN_TELEMETRY_TTL_SEC
+        for (uid, _pin), stored in diagnostics_service._serial_pin_telemetry.items():
+            if (now - stored["updated_at"]) > ttl:
+                continue
+            if uid not in by_serial:
+                by_serial[uid] = {
+                    "serial": uid,
+                    "uid": uid,
+                    "port": "",
+                    "kind": "feetech_st_serial",
+                    "name": "Waveshare Serial Controller",
+                }
+
+    results = list(by_serial.values())
+    results.sort(key=lambda item: (item["port"], item["serial"]))
+    return results
 
 
 def get_all_controllers() -> List[Controller]:

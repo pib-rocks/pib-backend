@@ -119,6 +119,7 @@ services:
       # externally reachable API has no reason to see.
       - /home/pib/.hermes/profiles:/home/pib/.hermes/profiles
       - /var/run/docker.sock:/var/run/docker.sock
+      - /dev/serial/by-id:/dev/serial/by-id:ro
     restart: always
     depends_on:
       - pib-blockly-server

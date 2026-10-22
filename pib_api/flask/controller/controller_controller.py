@@ -12,6 +12,12 @@ def get_all_controllers():
     return jsonify({"controllers": controllers_schema.dump(controllers)})
 
 
+@bp.route("/connected", methods=["GET"])
+def get_connected_controllers():
+    controllers = controller_service.get_connected_serial_controllers()
+    return jsonify({"controllers": controllers}), 200
+
+
 @bp.route("/<int:controller_number>", methods=["GET"])
 def get_controller(controller_number: int):
     return controller_schema.dump(controller_service.get_controller(controller_number))
