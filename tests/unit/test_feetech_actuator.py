@@ -53,6 +53,8 @@ class FakeStsPacketHandler:
         return self.comm_result, 0
 
     def read1ByteTxRx(self, servo_id: int, address: int):
+        if address == 62:
+            return getattr(self, "voltage_raw", 118), self.comm_result, 0
         return self.temperature, self.comm_result, 0
 
 
@@ -215,6 +217,24 @@ def test_feetech_actuator_uses_sts3095_and_finger_speed_classes_and_inversion(
     assert thumb.get_position() == 4500
     assert thumb.get_current() == 150  # 15 * 10 mA
     assert thumb.get_temperature() == 34
+
+
+def test_feetech_actuator_get_voltage_reads_present_voltage_register(monkeypatch):
+    ft_mod, act_mod = _load_modules()
+    pk_instance = None
+
+    def fake_sts(ph):
+        nonlocal pk_instance
+        pk_instance = FakeStsPacketHandler(ph)
+        pk_instance.voltage_raw = 118
+        return pk_instance
+
+    monkeypatch.setattr(ft_mod, "PortHandler", FakePortHandler)
+    monkeypatch.setattr(ft_mod, "sts", fake_sts)
+    ft_mod._port_cache.clear()
+
+    actuator = act_mod.create_actuator("feetech_st_serial", 51, "WS-HEAD", False)
+    assert actuator.get_voltage() == 11.8
 
 
 def test_feetech_actuator_reconnects_lazily_when_ssr_powers_bus(monkeypatch):

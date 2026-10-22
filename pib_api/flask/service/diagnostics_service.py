@@ -164,6 +164,51 @@ def _query_docker_containers() -> List[Dict[str, Any]]:
 
 _tf_ipcon = None
 
+_SERIAL_PIN_TELEMETRY_TTL_SEC = 30.0
+_serial_pin_telemetry: Dict[Tuple[str, int], Dict[str, float]] = {}
+
+
+def update_controller_pin_telemetry(entries: List[Dict[str, Any]]) -> int:
+    """Store live voltage/current readings from ros-motors (keyed by controller uid + pin)."""
+    now = time.time()
+    updated = 0
+    for entry in entries:
+        uid = str(entry.get("uid", ""))
+        pin = int(entry["pin"])
+        _serial_pin_telemetry[(uid, pin)] = {
+            "voltage": float(entry.get("voltage", 0.0)),
+            "current": float(entry.get("current", 0.0)),
+            "updated_at": now,
+        }
+        updated += 1
+    return updated
+
+
+def _apply_serial_pin_telemetry(
+    controller_address: Optional[str], pins_data: List[Dict[str, Any]]
+) -> Tuple[float, float]:
+    """Merge cached serial-bus telemetry into pin entries; return aggregate voltage/current."""
+    now = time.time()
+    uid = str(controller_address or "")
+    voltages_positive: List[float] = []
+    for pin_entry in pins_data:
+        key = (uid, int(pin_entry["pin"]))
+        stored = _serial_pin_telemetry.get(key)
+        if stored is None:
+            continue
+        if (now - stored["updated_at"]) > _SERIAL_PIN_TELEMETRY_TTL_SEC:
+            continue
+        pin_entry["voltage"] = stored["voltage"]
+        pin_entry["current"] = stored["current"]
+        if stored["voltage"] > 0:
+            voltages_positive.append(stored["voltage"])
+    if voltages_positive:
+        voltage = round(sum(voltages_positive) / len(voltages_positive), 2)
+    else:
+        voltage = 0.0
+    current = round(sum(p["current"] for p in pins_data), 1)
+    return voltage, current
+
 
 def _get_tf_ipcon():
     global _tf_ipcon
@@ -254,7 +299,7 @@ def get_controllers_telemetry() -> List[Dict[str, Any]]:
 
         # Query live Tinkerforge hardware if possible
         legacy_type = _legacy_tinkerforge_type(
-            controller.number, controller.device_type
+            controller.number, controller.device_type, controller.kind
         )
         if controller.kind == TINKERFORGE_BRICKLET and controller.address and ipcon:
             try:
@@ -301,6 +346,10 @@ def get_controllers_telemetry() -> List[Dict[str, Any]]:
                     relay_state = ssr.get_state()
             except Exception:
                 status = "warning"
+        elif controller.kind != TINKERFORGE_BRICKLET:
+            voltage, current = _apply_serial_pin_telemetry(
+                controller.address, pins_data
+            )
 
         telemetry.append(
             {
@@ -327,7 +376,14 @@ def get_bricklets_telemetry() -> List[Dict[str, Any]]:
     return get_controllers_telemetry()
 
 
-def _legacy_tinkerforge_type(number: int, device_type: Optional[str] = None) -> str:
+def _legacy_tinkerforge_type(
+    number: int,
+    device_type: Optional[str] = None,
+    kind: Optional[str] = None,
+) -> str:
+    if kind is not None and kind != TINKERFORGE_BRICKLET:
+        return "Servo Bricklet"
+
     if device_type is not None:
         return device_type
 
@@ -423,11 +479,6 @@ def get_system_telemetry() -> Dict[str, Any]:
 def get_summary() -> Dict[str, Any]:
     system = get_system_telemetry()
     controllers = get_controllers_telemetry()
-    bricklets = [
-        controller
-        for controller in controllers
-        if controller["kind"] == TINKERFORGE_BRICKLET
-    ]
 
     cpu_temp = system["cpuTemperature"]
     if cpu_temp < 75.0:
@@ -474,9 +525,14 @@ def get_summary() -> Dict[str, Any]:
     else:
         overall_status = "ok"
 
+    try:
+        hardware_variant = get_variant()
+    except Exception:
+        hardware_variant = "pib4edu"
+
     return {
         "overallStatus": overall_status,
-        "hardwareVariant": get_variant(),
+        "hardwareVariant": hardware_variant,
         "cpuTemperature": cpu_temp,
         "cpuStatus": cpu_status,
         "cpuUsagePercent": system["cpuUsagePercent"],
@@ -489,7 +545,7 @@ def get_summary() -> Dict[str, Any]:
         "controllersStatus": controllers_status,
         "healthyContainersCount": len(containers) - len(unhealthy_containers),
         "totalContainersCount": len(containers),
-        "totalBrickletsCount": len(bricklets),
+        "totalBrickletsCount": len(controllers),
         "totalControllersCount": len(controllers),
         "controllerCounts": _count_controllers_by_kind(controllers),
     }

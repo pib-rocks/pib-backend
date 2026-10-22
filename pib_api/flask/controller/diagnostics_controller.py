@@ -1,4 +1,4 @@
-from flask import Blueprint, jsonify
+from flask import Blueprint, jsonify, request
 from service import diagnostics_service
 
 bp = Blueprint("diagnostics_controller", __name__)
@@ -20,3 +20,16 @@ def get_diagnostics_bricklets():
 def get_diagnostics_system():
     system_info = diagnostics_service.get_system_telemetry()
     return jsonify(system_info), 200
+
+
+@bp.route("/telemetry", methods=["POST"])
+def post_diagnostics_telemetry():
+    payload = request.get_json(silent=True)
+    if isinstance(payload, list):
+        pins = payload
+    elif isinstance(payload, dict):
+        pins = payload.get("pins") or []
+    else:
+        pins = []
+    updated = diagnostics_service.update_controller_pin_telemetry(pins)
+    return jsonify({"updated": updated}), 200
