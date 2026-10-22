@@ -165,8 +165,10 @@ class MotorControl(Node):
                         stored = motor.get_settings()
                         motor_settings_dto["pulseWidthMin"] = stored["pulseWidthMin"]
                         motor_settings_dto["pulseWidthMax"] = stored["pulseWidthMax"]
+                        motor_settings_dto["turnedOn"] = True
                         motor_settings_ros.pulse_width_min = stored["pulseWidthMin"]
                         motor_settings_ros.pulse_width_max = stored["pulseWidthMax"]
+                        motor_settings_ros.turned_on = True
                         if applied or self.dev:
                             persisted, _ = motor_client.update_motor_settings(
                                 motor.name, motor_settings_dto

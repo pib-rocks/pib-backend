@@ -280,11 +280,20 @@ def test_feetech_actuator_calibrate_zero_writes_torque_128_and_resets_target(
 
     actuator = act_mod.create_actuator("feetech_st_serial", 51, "WS-HEAD", False)
     actuator._target_position = 1200
+    actuator._settings["turnedOn"] = False
     assert actuator.calibrate_zero() is True
-    assert pk_instance.byte_writes == [(51, 40, 128)]
+    assert pk_instance.byte_writes == [(51, 40, 128), (51, 40, 1)]
+    assert pk_instance.writes == [(51, 2048, 700, 30)]
     assert actuator._target_position == 0
+    assert actuator.get_settings()["turnedOn"] is True
     assert actuator.apply_settings({"calibrateZero": True}) is True
-    assert pk_instance.byte_writes == [(51, 40, 128), (51, 40, 128)]
+    assert pk_instance.byte_writes == [
+        (51, 40, 128),
+        (51, 40, 1),
+        (51, 40, 128),
+        (51, 40, 1),
+    ]
+    assert pk_instance.writes == [(51, 2048, 700, 30), (51, 2048, 700, 30)]
 
 
 def test_feetech_actuator_invert_preserves_sign_in_get_and_set(monkeypatch):

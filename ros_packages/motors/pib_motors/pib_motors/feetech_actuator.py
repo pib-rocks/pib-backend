@@ -10,6 +10,7 @@ from __future__ import annotations
 import fcntl
 import logging
 import threading
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
@@ -32,6 +33,8 @@ STS3095_SPEED = 700
 STS3095_ACCEL = 30
 FINGER_SPEED = 3000
 FINGER_ACCEL = 100
+ZERO_CALIBRATION_SETTLE_SEC = 0.02
+STS_CALIBRATED_CENTER_TICKS = 2048
 
 SERIAL_BY_ID_DIR = Path("/dev/serial/by-id")
 
@@ -218,11 +221,24 @@ class FeetechStSerialActuator:
     def calibrate_zero(self) -> bool:
         if not self.is_connected() or self._pk is None or self._lock is None:
             return False
+        speed, acc = self._resolve_speed_and_acc()
         try:
             with self._bus():
                 res, _err = self._pk.write1ByteTxRx(self.pin, STS_TORQUE_ENABLE, 128)
             if res != COMM_SUCCESS:
                 return False
+            if ZERO_CALIBRATION_SETTLE_SEC > 0:
+                time.sleep(ZERO_CALIBRATION_SETTLE_SEC)
+            with self._bus():
+                res_pos, _err_pos = self._pk.WritePosEx(
+                    self.pin, STS_CALIBRATED_CENTER_TICKS, speed, acc
+                )
+                res_en, _err_en = self._pk.write1ByteTxRx(
+                    self.pin, STS_TORQUE_ENABLE, 1
+                )
+            if res_pos != COMM_SUCCESS or res_en != COMM_SUCCESS:
+                return False
+            self._settings["turnedOn"] = True
             self._target_position = 0
             return True
         except Exception as error:
