@@ -18,6 +18,16 @@ def get_connected_controllers():
     return jsonify({"controllers": controllers}), 200
 
 
+@bp.route("/detected-assignments", methods=["POST"])
+def post_detected_assignments():
+    payload = request.get_json(silent=True) or {}
+    assignments = payload.get("assignments")
+    if not isinstance(assignments, list):
+        return jsonify({"error": "assignments must be a list"}), 400
+    updated = controller_service.update_detected_assignments(assignments)
+    return jsonify({"updated": updated}), 200
+
+
 @bp.route("/<int:controller_number>", methods=["GET"])
 def get_controller(controller_number: int):
     return controller_schema.dump(controller_service.get_controller(controller_number))
