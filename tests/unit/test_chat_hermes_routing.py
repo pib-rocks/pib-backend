@@ -2511,3 +2511,32 @@ def test_update_skips_pib_when_no_message_id_was_stored(chat_module, chat_node):
         is_user=False,
         message_id=None,
     )
+
+
+def test_failed_user_message_log_omits_the_message_text(chat_module, chat_node):
+    """A 313k character line must not be copied into the log by the failure path."""
+    node = chat_node
+    logger = MagicMock()
+    node.get_logger = MagicMock(return_value=logger)
+    node.create_chat_message = types.MethodType(
+        chat_module.ChatNode.create_chat_message, node
+    )
+    marker = "PR2022_BODY_MUST_NOT_BE_LOGGED"
+    huge = marker * 5000
+
+    with (
+        patch.object(
+            chat_module.voice_assistant_client,
+            "create_chat_message",
+            return_value=(False, None),
+        ),
+        patch.object(node, "_publish_chat_message"),
+    ):
+        node.create_chat_message("chat-log", huge, True, False, True)
+
+    error_messages = [call[0][0] for call in logger.error.call_args_list]
+    warning_messages = [call[0][0] for call in logger.warning.call_args_list]
+    every_line = error_messages + warning_messages
+    assert any(f"chars={len(huge)}" in msg for msg in error_messages)
+    assert every_line
+    assert all(marker not in msg for msg in every_line)

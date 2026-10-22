@@ -21,7 +21,7 @@ def send_request(request: Request) -> (bool, dict[str, Any]):
         return True, response_json
 
     except HTTPError as error:
-        response_body = error.fp.read().decode()
+        response_body = error.fp.read().decode() if error.fp is not None else ""
         payload_bytes = len(request.data) if request.data is not None else 0
         response_snippet = response_body[:300]
 

@@ -672,7 +672,9 @@ class ChatNode(Node):
                         )
                         if not successful:
                             self.get_logger().error(
-                                f"unable to create chat message: {(chat_id, text, is_user, update_message, update_database)}"
+                                "unable to update chat message: "
+                                f"chat={chat_id} chars={len(text)} "
+                                f"message_id={self.last_pib_message_id} user={is_user}"
                             )
                             return
                 else:
@@ -688,7 +690,9 @@ class ChatNode(Node):
                 )
                 if not successful or chat_message is None:
                     self.get_logger().error(
-                        f"unable to create chat message: {(chat_id, text, is_user, update_message, update_database)}"
+                        "unable to create chat message: "
+                        f"chat={chat_id} chars={len(text)} "
+                        f"update={update_message} persist={update_database} user={is_user}"
                     )
                     if is_user:
                         self.get_logger().warning(
