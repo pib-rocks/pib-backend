@@ -125,9 +125,19 @@ if rclpy is not None:
     class ControllerScan(Node):
         def __init__(self) -> None:
             super().__init__("controller_scan")
-            self.create_timer(_STARTUP_SCAN_DELAY_SEC, self._scan)
+            # A timer in ROS 2 repeats. The startup scan therefore gets its own
+            # one-shot timer that destroys itself; keeping the 1 s timer alive
+            # scanned the whole serial bus every few seconds and stole time from
+            # the motor bus (measured: a scan every ~4 s instead of every 30 s).
+            self._startup_timer = self.create_timer(
+                _STARTUP_SCAN_DELAY_SEC, self._startup_scan
+            )
             self.create_timer(SCAN_INTERVAL_SEC, self._scan)
             self.get_logger().info("Now Running CONTROLLER SCAN")
+
+        def _startup_scan(self) -> None:
+            self.destroy_timer(self._startup_timer)
+            self._scan()
 
         def _scan(self) -> None:
             expected = _expected_servo_ids()
