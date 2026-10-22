@@ -21,6 +21,9 @@ from service import diagnostics_service
 
 SERIAL_BY_ID_DIR = Path("/dev/serial/by-id")
 
+DETECTED_ASSIGNMENTS_TTL_SEC = 120.0
+_detected_assignments: dict[str, dict] = {}
+
 #: Width of ``Controller.address``; a longer value would be truncated silently.
 ADDRESS_MAX_LENGTH = 255
 
@@ -89,7 +92,55 @@ def get_connected_serial_controllers(serial_dir: Path | None = None) -> List[dic
 
     results = list(by_serial.values())
     results.sort(key=lambda item: (item["port"], item["serial"]))
-    return results
+    return [_apply_detected_assignment(item) for item in results]
+
+
+def update_detected_assignments(assignments: list[dict]) -> int:
+    """Store a scan result. Returns how many entries were accepted."""
+    accepted = 0
+    for entry in assignments:
+        if not isinstance(entry, dict):
+            continue
+        serial = entry.get("serial")
+        if not isinstance(serial, str) or not serial.strip():
+            continue
+        serial = serial.strip()
+        controller_number = entry.get("controllerNumber")
+        if controller_number is not None and not isinstance(controller_number, int):
+            continue
+        match_count = entry.get("matchCount", 0)
+        if not isinstance(match_count, int):
+            continue
+        expected_count = entry.get("expectedCount", 0)
+        if not isinstance(expected_count, int):
+            continue
+        _detected_assignments[serial] = {
+            "controllerNumber": controller_number,
+            "matchCount": match_count,
+            "expectedCount": expected_count,
+            "updated_at": time.time(),
+        }
+        accepted += 1
+    return accepted
+
+
+def _apply_detected_assignment(item: dict) -> dict:
+    item["assignedControllerNumber"] = None
+    item["matchCount"] = 0
+    item["expectedCount"] = 0
+    serial = item.get("serial")
+    if not serial:
+        return item
+    stored = _detected_assignments.get(serial)
+    if stored is None:
+        return item
+    if (time.time() - stored["updated_at"]) > DETECTED_ASSIGNMENTS_TTL_SEC:
+        del _detected_assignments[serial]
+        return item
+    item["assignedControllerNumber"] = stored["controllerNumber"]
+    item["matchCount"] = stored["matchCount"]
+    item["expectedCount"] = stored["expectedCount"]
+    return item
 
 
 def get_all_controllers() -> List[Controller]:
