@@ -1,4 +1,6 @@
 from flask import abort, jsonify, request, Blueprint, Response
+from controller.error_handler import ChatMessageContentTooLongError
+from model.chat_message_model import ChatMessage
 from schema.chat_message_schema import (
     chat_message_post_schema,
     chat_message_schema,
@@ -63,9 +65,29 @@ def delete_chat(chat_id: str):
     return "", 204
 
 
+def _chat_message_content_max_length() -> int:
+    return ChatMessage.__table__.columns["content"].type.length
+
+
+def _reject_oversized_chat_message_content(payload) -> None:
+    if not isinstance(payload, dict):
+        return
+    content = payload.get("content")
+    if not isinstance(content, str):
+        return
+    limit = _chat_message_content_max_length()
+    received_length = len(content)
+    if received_length > limit:
+        raise ChatMessageContentTooLongError(
+            field="content", limit=limit, received_length=received_length
+        )
+
+
 @bp.route("/<string:chat_id>/messages", methods=["POST"])
 def create_message(chat_id: str):
-    chat_message_dto = chat_message_post_schema.load(request.json)
+    payload = request.json
+    _reject_oversized_chat_message_content(payload)
+    chat_message_dto = chat_message_post_schema.load(payload)
     chat_message = chat_service.create_chat_message(chat_id, chat_message_dto)
     return chat_message_schema.dump(chat_message), 201
 

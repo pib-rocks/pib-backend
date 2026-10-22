@@ -4,6 +4,18 @@ from app.app import app
 from flask import jsonify
 
 
+class ChatMessageContentTooLongError(Exception):
+    """POST body content exceeds the chat message column limit (PR-2021)."""
+
+    def __init__(self, field: str, limit: int, received_length: int):
+        self.field = field
+        self.limit = limit
+        self.received_length = received_length
+        super().__init__(
+            f"Message content exceeds the maximum length of {limit} characters."
+        )
+
+
 def handle_not_found_error(error):
     app.logger.error(error)
     return (
@@ -37,6 +49,21 @@ def handle_not_implemented_error(error):
 def handle_bad_request_error(error):
     app.logger.error(error)
     return jsonify({"error": "Bad request."}), 400
+
+
+def handle_chat_message_content_too_long_error(error):
+    app.logger.warning(error)
+    return (
+        jsonify(
+            {
+                "error": str(error),
+                "field": error.field,
+                "limit": error.limit,
+                "receivedLength": error.received_length,
+            }
+        ),
+        413,
+    )
 
 
 def handle_unprocessable_entity_error(error):
