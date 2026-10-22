@@ -182,7 +182,9 @@ def create_chat_message(
         data=data,
     )
     successful, chat_message_dto = send_request(request)
-    return successful, ChatMessage(chat_message_dto)
+    if not successful or not isinstance(chat_message_dto, dict):
+        return False, None
+    return True, ChatMessage(chat_message_dto)
 
 
 def update_chat_message(
@@ -203,7 +205,9 @@ def update_chat_message(
         data=data,
     )
     successful, chat_message_dto = send_request(request)
-    return successful, ChatMessage(chat_message_dto)
+    if not successful or not isinstance(chat_message_dto, dict):
+        return False, None
+    return True, ChatMessage(chat_message_dto)
 
 
 def add_chat_message_image(
