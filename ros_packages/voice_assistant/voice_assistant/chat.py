@@ -622,17 +622,22 @@ class ChatNode(Node):
     # ---------- common helpers used by Action and Service ----------
 
     def _publish_chat_message(
-        self, chat_id: str, content: str, is_user: bool, message_id: str
+        self, chat_id: str, content: str, is_user: bool, message_id: str | None
     ):
         """
         Build and publish a datatypes/ChatMessage with current timestamp.
         Used by both the action path (create_chat_message) and the service path.
+
+        ``message_id`` is None when the line could not be persisted (the API
+        refused it). The ROS field is a string, and the generated converter
+        aborts the process on None (``PyUnicode_Check`` assertion), so an
+        unpersisted line is published with an empty id.
         """
         msg = ChatMessage()
         msg.chat_id = chat_id
         msg.content = content
         msg.is_user = is_user
-        msg.message_id = message_id
+        msg.message_id = message_id or ""
         msg.timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self.chat_message_publisher.publish(msg)
 
