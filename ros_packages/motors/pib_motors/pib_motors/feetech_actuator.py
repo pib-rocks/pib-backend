@@ -18,6 +18,7 @@ from typing import Any, Iterator
 from pib_motors.stservo_sdk.port_handler import PortHandler
 from pib_motors.stservo_sdk.sts import (
     STS_PRESENT_TEMPERATURE,
+    STS_PRESENT_VOLTAGE,
     STS_TORQUE_ENABLE,
     sts,
 )
@@ -352,5 +353,17 @@ class FeetechStSerialActuator:
             if res != COMM_SUCCESS:
                 return None
             return int(temp)
+        except Exception:
+            return None
+
+    def get_voltage(self) -> float | None:
+        if not self.is_connected() or self._pk is None or self._lock is None:
+            return None
+        try:
+            with self._bus():
+                raw_v, res, _err = self._pk.read1ByteTxRx(self.pin, STS_PRESENT_VOLTAGE)
+            if res != COMM_SUCCESS:
+                return None
+            return round(int(raw_v) / 10.0, 2)
         except Exception:
             return None

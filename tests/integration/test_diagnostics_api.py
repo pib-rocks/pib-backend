@@ -34,6 +34,45 @@ def test_get_diagnostics_bricklets(client):
     assert isinstance(data["bricklets"], list)
 
 
+def test_post_diagnostics_telemetry_updates_bricklets_readings(client):
+    from service import diagnostics_service
+
+    diagnostics_service._serial_pin_telemetry.clear()
+    mock_controller = MagicMock()
+    mock_controller.number = 4
+    mock_controller.address = "5B3D042723"
+    mock_controller.kind = "feetech_st_serial"
+    mock_controller.device_type = None
+    mock_controller.motors = [MagicMock(channel=20)]
+
+    payload = {
+        "pins": [
+            {"uid": "5B3D042723", "pin": 20, "voltage": 11.8, "current": 20.0},
+        ]
+    }
+
+    with patch(
+        "service.controller_service.get_all_controllers",
+        return_value=[mock_controller],
+    ):
+        post = client.post("/api/v1/diagnostics/telemetry", json=payload)
+        assert post.status_code == 200
+        assert post.get_json()["updated"] == 1
+
+        get_resp = client.get("/api/v1/diagnostics/bricklets")
+        bricklets = get_resp.get_json()["bricklets"]
+        assert bricklets[0]["type"] == "Servo Bricklet"
+        assert bricklets[0]["voltage"] == 11.8
+        assert bricklets[0]["current"] == 20.0
+        assert bricklets[0]["pins"][0]["voltage"] == 11.8
+        assert bricklets[0]["pins"][0]["current"] == 20.0
+
+        alt_post = client.post("/diagnostics/telemetry", json=payload)
+        assert alt_post.status_code == 200
+
+    diagnostics_service._serial_pin_telemetry.clear()
+
+
 def test_get_diagnostics_system(client):
     response = client.get("/api/v1/diagnostics/system")
     assert response.status_code == 200
