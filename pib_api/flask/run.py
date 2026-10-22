@@ -9,6 +9,10 @@ from service import motor_service, pose_service, program_service
 from service.smart_home_service import SmartHomeValidationError
 
 app.register_error_handler(ValidationError, error_handler.handle_bad_request_error)
+app.register_error_handler(
+    error_handler.ChatMessageContentTooLongError,
+    error_handler.handle_chat_message_content_too_long_error,
+)
 app.register_error_handler(NoResultFound, error_handler.handle_not_found_error)
 app.register_error_handler(400, error_handler.handle_bad_request_error)
 app.register_error_handler(404, error_handler.handle_not_found_error)
