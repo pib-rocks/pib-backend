@@ -16,6 +16,11 @@ invent identifiers or payload fields. Prefer a read tool before a write.
 
 - Inspect with `pib_list_motors`, `pib_get_state`, `pib_list_poses`, and
   `pib_list_programs`.
+- Ask `pib_get_motion_model` for the robot's joints with their axes, degree
+  limits and named postures before planning a movement. Use that answer instead
+  of asking for a URDF, a CAD file or another document: the model is already
+  installed. It takes no arguments and returns the rendered model plus a joint
+  table, so read the limits from it rather than guessing a range.
 - Capture a camera frame with `pib_capture_image`.
 - Actuate only on explicit request with `pib_move_motor`, `pib_apply_pose`,
   `pib_run_program`, `pib_set_led`, or `pib_set_relay`. The actuator gate is

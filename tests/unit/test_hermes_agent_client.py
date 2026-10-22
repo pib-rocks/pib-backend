@@ -22,6 +22,7 @@ from unittest.mock import patch
 # generated SOUL any more; they are asserted against the removed section below.
 EXPECTED_MCP_TOOLS = (
     "mcp__pib__list_motors",
+    "mcp__pib__get_motion_model",
     "mcp__pib__get_state",
     "mcp__pib__list_poses",
     "mcp__pib__list_programs",

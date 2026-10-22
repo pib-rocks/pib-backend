@@ -88,12 +88,24 @@ see:
 sudo -u pib -H env HERMES_HOME="$PROFILE" hermes mcp configure pib
 ```
 
-For a read-only profile, leave only `pib_list_motors`, `pib_get_state`,
-`pib_list_poses`, `pib_list_programs`, and `pib_capture_image` selected.
+For a read-only profile, leave only `pib_list_motors`, `pib_get_motion_model`,
+`pib_get_state`, `pib_list_poses`, `pib_list_programs`, and `pib_capture_image` selected.
 That hides actuator tools from that profile. It does not close the gate, and
 it is not a per-personality actuation setting. The gate stays the installation
 variable `PIB_MCP_ENABLE_ACTUATION`, which defaults to `true` for every
 registration.
+
+## Motion model
+
+`get_motion_model` serves the 14 commandable joints (two head, six per arm) with
+axes, degree limits and the named postures, rendered from
+`pib_mcp_server/data/motion_model.json`. That file is generated from pib-sdk and
+checked in, so the container needs no pinocchio or numpy. After a pib-sdk release:
+
+```bash
+python tools/build_mcp_motion_model.py          # refresh the artifact
+python tools/build_mcp_motion_model.py --check  # fails when it drifted
+```
 
 ## Deregister
 

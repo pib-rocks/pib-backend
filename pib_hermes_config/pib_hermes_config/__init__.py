@@ -280,6 +280,11 @@ MCP_TOOLS = (
         "get_state",
         "Liefert den aktuellen Gelenkzustand, Diagnosen und Roboter-Telemetrie.",
     ),
+    (
+        "get_motion_model",
+        "Liefert das Bewegungsmodell: Gelenke, Achsen, Grenzen in Grad und benannte "
+        "Stellungen; nutze es, statt eine URDF zu verlangen.",
+    ),
     ("list_poses", "Listet gespeicherte Posen."),
     ("list_programs", "Listet gespeicherte Blockly-/Python-Programme."),
     ("capture_image", "Nimmt ein Kamerabild als base64-kodiertes JPEG auf."),
