@@ -2154,10 +2154,16 @@ def test_direct_turn_logs_the_store_key_source_and_does_not_print_the_secret(
     captured = {}
 
     class Response:
-        def read(self):
-            return json.dumps(
+        # The Direct path streams SSE chunks, so the fake transport must yield
+        # data lines instead of one JSON body.
+        def __iter__(self):
+            chunk = json.dumps(
                 {"candidates": [{"content": {"parts": [{"text": "pong"}]}}]}
-            ).encode()
+            )
+            return iter([f"data: {chunk}\n".encode(), b"\n"])
+
+        def read(self):
+            return b"".join(self)
 
         def __enter__(self):
             return self

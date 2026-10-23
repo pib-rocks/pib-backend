@@ -1471,6 +1471,7 @@ class ChatNode(Node):
             )
             return result
 
+        direct_turn_meta: dict[str, Any] | None = None
         try:
             if is_smart:
                 turn_path = "Hermes"
@@ -1572,6 +1573,17 @@ class ChatNode(Node):
                     f"direct tool loop model={direct_tool_loop.PINNED_MODEL} "
                     f"provider={direct_tool_loop.PINNED_PROVIDER} chat={chat_id}"
                 )
+                personality_name = getattr(personality, "name", "") or ""
+                direct_turn_meta = {
+                    "started": time.monotonic(),
+                    "tool_rounds": 0,
+                }
+                self.get_logger().info(
+                    f"direct turn started personality={personality_name} model={api_name}"
+                )
+
+                def count_direct_tool_round() -> None:
+                    direct_turn_meta["tool_rounds"] += 1
 
                 def report_key_source(source: str) -> None:
                     # source is key-store or environment. The key itself
@@ -1594,6 +1606,7 @@ class ChatNode(Node):
                     report_key_source=report_key_source,
                     on_tool_call=self._record_tool_call,
                     on_tool_image=self._record_tool_image,
+                    on_tool_round=count_direct_tool_round,
                 )
 
             # Which runtime serves this turn, before the first token is asked
@@ -1602,6 +1615,15 @@ class ChatNode(Node):
             prev_text, prev_text_type, curr_text = self._stream_chunks_to_goal(
                 goal_handle, chat_id, tokens, t0=t0
             )
+            if direct_turn_meta is not None:
+                try:
+                    elapsed = time.monotonic() - direct_turn_meta["started"]
+                    self.get_logger().info(
+                        f"direct turn finished in {elapsed:.1f} s, "
+                        f"{direct_turn_meta['tool_rounds']} tool rounds"
+                    )
+                except Exception:
+                    pass
             self._finalize_message_meta(chat_id)
             if goal_handle.is_cancel_requested:
                 return Chat.Result()
