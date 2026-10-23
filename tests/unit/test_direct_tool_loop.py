@@ -329,9 +329,7 @@ def test_parse_gemini_response_reads_a_function_call_and_skips_thoughts():
         }
     )
     assert parsed["text"] == ""
-    assert parsed["tool_calls"] == [
-        {"id": "list_poses-1", "name": "list_poses", "arguments": {}}
-    ]
+    assert parsed["tool_calls"] == [{"name": "list_poses", "arguments": {}}]
     assert parsed["raw_parts"][1]["functionCall"]["name"] == "list_poses"
 
 
@@ -1028,9 +1026,7 @@ def test_sse_function_call_yields_tool_calls_and_empty_text():
     )
     parsed = parse_gemini_sse_stream(_sse_body(payload))
     assert parsed["text"] == ""
-    assert parsed["tool_calls"] == [
-        {"id": "list_poses-0", "name": "list_poses", "arguments": {}}
-    ]
+    assert parsed["tool_calls"] == [{"name": "list_poses", "arguments": {}}]
 
 
 def test_streaming_request_uses_the_sse_endpoint(monkeypatch):
@@ -1204,3 +1200,65 @@ def test_output_ceiling_holds_a_full_answer():
         [{"role": "user", "content": "ping"}], None, "key"
     )
     assert body["generationConfig"]["maxOutputTokens"] == 2048
+
+
+def test_repeated_calls_of_one_tool_get_distinct_ids():
+    """PR-2042: Gemini gives no id; the per-turn counter must supply one.
+
+    Six move_motor calls in one turn used to share the id `move_motor-0`, and the
+    chat window left five of them "running" forever because it pairs start and
+    finish by id.
+    """
+    rounds = {"n": 0}
+
+    def complete(messages, tools, api_key=None):
+        rounds["n"] += 1
+        if rounds["n"] <= 3:
+            return {
+                "text": "",
+                "tool_calls": [{"name": "list_poses", "arguments": {}}],
+                "raw_parts": [{"functionCall": {"name": "list_poses", "args": {}}}],
+            }
+        return {"text": "fertig", "tool_calls": [], "raw_parts": []}
+
+    records = []
+
+    def record(rec):
+        records.append(rec)
+
+    text = "".join(
+        run_direct_turn(
+            system_prompt="Du bist pib.",
+            user_text="Posen?",
+            history=[],
+            tool_calling=True,
+            allow_image=False,
+            declarations=[{"name": "list_poses", "description": "poses"}],
+            complete=complete,
+            execute_tool=lambda name, arguments: {"ok": True},
+            on_tool_call=record,
+            max_rounds=5,
+        )
+    )
+
+    assert text == "fertig"
+    ids = [record_["callId"] for record_ in records]
+    assert len(ids) == 3
+    assert len(set(ids)) == 3, ids
+    assert ids == ["list_poses-0", "list_poses-1", "list_poses-2"]
+
+
+def test_a_gemini_function_call_carries_no_invented_id():
+    from voice_assistant.direct_tool_loop import _result_from_parts
+
+    result = _result_from_parts(
+        [
+            {"functionCall": {"name": "move_motor", "args": {"motor_name": "x"}}},
+            {"functionCall": {"name": "move_motor", "args": {"motor_name": "y"}}},
+        ]
+    )
+    assert [call["name"] for call in result["tool_calls"]] == [
+        "move_motor",
+        "move_motor",
+    ]
+    assert all("id" not in call for call in result["tool_calls"])

@@ -672,7 +672,7 @@ def _result_from_parts(parts: Sequence[Any]) -> dict[str, Any]:
     texts: list[str] = []
     calls: list[dict[str, Any]] = []
     raw_parts: list[Any] = []
-    for index, part in enumerate(parts):
+    for part in parts:
         if not isinstance(part, dict):
             continue
         raw_parts.append(part)
@@ -686,7 +686,12 @@ def _result_from_parts(parts: Sequence[Any]) -> dict[str, Any]:
             name = str(function_call["name"])
             calls.append(
                 {
-                    "id": f"{name}-{index}",
+                    # Gemini gives a function call no id. Inventing one from the
+                    # part index made every repeated call of the same tool in one
+                    # turn share an id (`move_motor-0` six times), and the chat
+                    # window pairs start and finish by id, so only the first of
+                    # them was ever closed (PR-2042). Leave it out: run_direct_turn
+                    # assigns the per-turn counter in _tool_call_id.
                     "name": name,
                     "arguments": arguments,
                 }
