@@ -132,7 +132,12 @@ def create_server(
 
     @server.tool(annotations=read_annotations, structured_output=True)
     def get_motion_model() -> dict[str, Any]:
-        """Return the robot's joints with axes, degree limits and named postures."""
+        """Return the live motion model from the robot database.
+
+        Includes kinematic chains, centidegree joint limits, which bound is the
+        named upper end, and named postures. Reflects motor-setting edits
+        immediately without redeploying the MCP server.
+        """
         return _invoke(robot.get_motion_model)
 
     @server.tool(annotations=read_annotations, structured_output=True)
