@@ -18,6 +18,7 @@ import logging
 import os
 import time
 from typing import Any, Callable, Iterator, Mapping, Optional, Sequence
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from pib_hermes_config.retired_direct_text import DIRECT_TEXT_MODEL_API_NAME
@@ -630,8 +631,26 @@ def _post_json(url: str, headers: Mapping[str, str], body: Mapping[str, Any]) ->
     try:
         with urlopen(request, timeout=90) as response:
             raw = response.read().decode("utf-8")
+    except HTTPError as exc:
+        # The provider's answer is the only way to tell a quota refusal from a bad
+        # request shape or an expired key. Keep a short snippet, never the key or
+        # the request body.
+        body = ""
+        try:
+            body = exc.read().decode("utf-8", "replace")[:300]
+        except Exception:  # pragma: no cover - a body that cannot be read
+            body = "<unreadable>"
+        logger.error(
+            "model request failed: HTTP %s %s body=%s", exc.code, exc.reason, body
+        )
+        raise DirectToolLoopError(
+            f"model request failed: HTTP {exc.code} {exc.reason}"
+        ) from exc
     except Exception as exc:
-        raise DirectToolLoopError("model request failed") from exc
+        logger.error("model request failed: %s: %s", type(exc).__name__, str(exc)[:300])
+        raise DirectToolLoopError(
+            f"model request failed: {type(exc).__name__}: {str(exc)[:200]}"
+        ) from exc
     try:
         loaded = json.loads(raw)
     except json.JSONDecodeError as exc:

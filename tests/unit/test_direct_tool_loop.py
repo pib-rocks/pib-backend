@@ -845,3 +845,72 @@ def test_a_raising_reporter_does_not_break_the_turn():
     )
 
     assert answer == "Erledigt."
+
+
+def _http_error(code: int, reason: str, body: bytes):
+    import io
+    from urllib.error import HTTPError
+
+    return HTTPError(
+        url=PINNED_ENDPOINT, code=code, msg=reason, hdrs={}, fp=io.BytesIO(body)
+    )
+
+
+def test_provider_http_error_carries_status_reason_and_a_short_body(
+    monkeypatch, caplog
+):
+    """A quota refusal has to be readable in the log, not just "model request failed"."""
+
+    def fake_urlopen(request, timeout=None):
+        raise _http_error(
+            429,
+            "Too Many Requests",
+            b'{"error": {"code": 429, "status": "RESOURCE_EXHAUSTED"}}',
+        )
+
+    monkeypatch.setattr(direct_tool_loop, "urlopen", fake_urlopen)
+
+    with caplog.at_level(logging.ERROR):
+        with pytest.raises(DirectToolLoopError) as excinfo:
+            gemini_complete(
+                [{"role": "user", "content": "ping"}], None, api_key="secret-key-value"
+            )
+
+    message = str(excinfo.value)
+    assert "429" in message
+    assert "Too Many Requests" in message
+    logged = "\n".join(record.getMessage() for record in caplog.records)
+    assert "RESOURCE_EXHAUSTED" in logged
+    assert "secret-key-value" not in logged
+    assert "secret-key-value" not in message
+
+
+def test_provider_http_body_in_the_log_is_truncated(monkeypatch, caplog):
+    body = b"x" * 5000
+
+    def fake_urlopen(request, timeout=None):
+        raise _http_error(500, "Server Error", body)
+
+    monkeypatch.setattr(direct_tool_loop, "urlopen", fake_urlopen)
+
+    with caplog.at_level(logging.ERROR):
+        with pytest.raises(DirectToolLoopError):
+            gemini_complete([{"role": "user", "content": "ping"}], None, api_key="k")
+
+    logged = "\n".join(record.getMessage() for record in caplog.records)
+    assert "x" * 300 in logged
+    assert "x" * 301 not in logged
+
+
+def test_transport_failure_names_the_exception_type(monkeypatch, caplog):
+    def fake_urlopen(request, timeout=None):
+        raise TimeoutError("timed out after 90 s")
+
+    monkeypatch.setattr(direct_tool_loop, "urlopen", fake_urlopen)
+
+    with caplog.at_level(logging.ERROR):
+        with pytest.raises(DirectToolLoopError) as excinfo:
+            gemini_complete([{"role": "user", "content": "ping"}], None, api_key="k")
+
+    assert "TimeoutError" in str(excinfo.value)
+    assert "timed out" in str(excinfo.value)
