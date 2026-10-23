@@ -60,7 +60,7 @@ def _hardware_state() -> tuple:
             item.period,
             item.turned_on,
             item.visible,
-            item.invert,
+            item.upper_endpoint,
             item.current_limit,
             item.torque_limit,
         )

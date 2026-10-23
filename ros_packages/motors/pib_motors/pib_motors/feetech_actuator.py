@@ -145,10 +145,11 @@ class FeetechStSerialActuator:
     NO_CURRENT: int = -1
     POSITION_TOLERANCE: int = 200
 
-    def __init__(self, pin: int, uid: str, invert: bool) -> None:
+    def __init__(self, pin: int, uid: str, upper_endpoint: str) -> None:
         self.pin: int = int(pin)
         self.uid: str = uid
-        self.invert: bool = invert
+        self.upper_endpoint: str = upper_endpoint
+        self.direction_sign: int = -1 if upper_endpoint == "min" else 1
         self._baudrate: int = DEFAULT_BAUDRATE
         self._connected: bool | None = None
         self._target_position: int | None = None
@@ -250,6 +251,15 @@ class FeetechStSerialActuator:
         if settings_dto.get("calibrateZero") is True:
             return self.calibrate_zero()
 
+        upper_endpoint = settings_dto.get(
+            "upperEndpoint", settings_dto.get("upper_endpoint")
+        )
+        if upper_endpoint is not None:
+            if upper_endpoint not in ("min", "max"):
+                raise ValueError("upper_endpoint must be 'min' or 'max'")
+            self.upper_endpoint = upper_endpoint
+            self.direction_sign = -1 if upper_endpoint == "min" else 1
+
         for key in (
             "velocity",
             "acceleration",
@@ -297,7 +307,7 @@ class FeetechStSerialActuator:
             return False
 
         position = int(round(position))
-        centideg = -position if self.invert else position
+        centideg = position * self.direction_sign
         ticks = centideg_to_ticks(float(centideg))
         speed, acc = self._resolve_speed_and_acc()
 
@@ -324,9 +334,7 @@ class FeetechStSerialActuator:
 
     def get_position(self) -> int:
         if self._target_position is not None:
-            return int(
-                round(-self._target_position if self.invert else self._target_position)
-            )
+            return int(round(self._target_position * self.direction_sign))
         return self.get_current_position()
 
     def get_current_position(self) -> int:
@@ -338,7 +346,7 @@ class FeetechStSerialActuator:
             if res != COMM_SUCCESS:
                 return 0
             centideg = ticks_to_centideg(int(ticks))
-            return int(round(-centideg if self.invert else centideg))
+            return int(round(centideg * self.direction_sign))
         except Exception:
             return 0
 

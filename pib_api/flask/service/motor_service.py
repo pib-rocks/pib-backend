@@ -36,7 +36,7 @@ def set_motor_settings(motor_name: str, motor_settings_dto: Any):
     motor.period = motor_settings_dto["period"]
     motor.turned_on = motor_settings_dto["turned_on"]
     motor.visible = motor_settings_dto["visible"]
-    motor.invert = motor_settings_dto["invert"]
+    motor.upper_endpoint = motor_settings_dto["upper_endpoint"]
     if "current_limit" in motor_settings_dto:
         motor.current_limit = motor_settings_dto["current_limit"]
     if "torque_limit" in motor_settings_dto:

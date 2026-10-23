@@ -11,7 +11,7 @@ MOTOR_PARAMETER_DEFAULTS = {
     "period": 19500,
     "turned_on": True,
     "visible": True,
-    "invert": False,
+    "upper_endpoint": "max",
 }
 
 FINGER_MOTOR_PARAMETERS = {
@@ -42,15 +42,15 @@ MOTOR_PARAMETER_DEVIATIONS = {
     "pinky_left_stretch": FINGER_MOTOR_PARAMETERS,
 }
 
-# Six finger motors are inverted on pib5edu. This is a separate dict: writing
-# invert into FINGER_MOTOR_PARAMETERS would also flip the six fingers that stay
-# non-inverted, because those twelve motors share that one object.
-INVERTED_FINGER_MOTOR_PARAMETERS = {**FINGER_MOTOR_PARAMETERS, "invert": True}
+# Six finger motors map upper to min on pib5edu. This is a separate dict: writing
+# upper_endpoint into FINGER_MOTOR_PARAMETERS would also flip the six fingers
+# that stay on max, because those twelve motors share that one object.
+INVERTED_FINGER_MOTOR_PARAMETERS = {**FINGER_MOTOR_PARAMETERS, "upper_endpoint": "min"}
 
 PIB5EDU_MOTOR_PARAMETER_DEVIATIONS = {
     **MOTOR_PARAMETER_DEVIATIONS,
-    "elbow_left": {"invert": True},
-    "shoulder_vertical_left": {"invert": True},
+    "elbow_left": {"upper_endpoint": "min"},
+    "shoulder_vertical_left": {"upper_endpoint": "min"},
     "index_right_stretch": INVERTED_FINGER_MOTOR_PARAMETERS,
     "ring_right_stretch": INVERTED_FINGER_MOTOR_PARAMETERS,
     "pinky_right_stretch": INVERTED_FINGER_MOTOR_PARAMETERS,

@@ -72,7 +72,7 @@ def connected_motor(motor_class):
     pin.set_position.return_value = True
     pin.get_position.return_value = 0
     pin.get_settings.return_value = {}
-    return motor_class("tilt_forward_motor", [pin], invert=False)
+    return motor_class("tilt_forward_motor", [pin], "max")
 
 
 class TestMotorPositionClamping:
@@ -90,8 +90,8 @@ class TestMotorPositionClamping:
         [(12000, 9000), (-12000, -9000)],
     )
     def test_global_envelope(self, motor_class, requested, expected):
-        motor = motor_class("turn_head_motor", [], invert=False)
+        motor = motor_class("turn_head_motor", [], "max")
         assert motor._validate_position(requested) == expected
 
     def test_no_pins_returns_false(self, motor_class):
-        assert motor_class("orphan", [], invert=False).set_position(100) is False
+        assert motor_class("orphan", [], "max").set_position(100) is False
