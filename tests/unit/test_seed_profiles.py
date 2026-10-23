@@ -156,7 +156,7 @@ def test_edu_profiles_share_motor_parameters():
     assert extra_keys | replaced_keys == inverted_motors
 
     for name in extra_keys:
-        assert pib5_deviations[name] == {"invert": True}
+        assert pib5_deviations[name] == {"upper_endpoint": "min"}
     for name in replaced_keys:
         assert pib5_deviations[name] is INVERTED_FINGER_MOTOR_PARAMETERS
         assert shared_deviations[name] is FINGER_MOTOR_PARAMETERS
@@ -165,12 +165,25 @@ def test_edu_profiles_share_motor_parameters():
     for name in non_inverted_fingers:
         assert shared_deviations[name] is FINGER_MOTOR_PARAMETERS
         assert pib5_deviations[name] is FINGER_MOTOR_PARAMETERS
-        assert "invert" not in pib5_deviations[name]
+        assert "upper_endpoint" not in pib5_deviations[name]
     for name, deviation in shared_deviations.items():
         if name in replaced_keys:
-            assert "invert" not in deviation
+            assert "upper_endpoint" not in deviation
             continue
         assert pib5_deviations[name] is deviation
+
+
+def test_seed_profiles_use_upper_endpoint_not_invert():
+    valid_endpoints = {"min", "max"}
+    for variant in PROFILES:
+        profile = get_profile(variant)
+        defaults = profile.motor_parameter_defaults
+        assert "invert" not in defaults
+        assert defaults["upper_endpoint"] in valid_endpoints
+        for deviation in profile.motor_parameter_deviations.values():
+            assert "invert" not in deviation
+            if "upper_endpoint" in deviation:
+                assert deviation["upper_endpoint"] in valid_endpoints
 
 
 def test_unimplemented_variant_error_lists_implemented_profiles():

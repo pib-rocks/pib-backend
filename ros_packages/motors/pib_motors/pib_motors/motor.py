@@ -4,6 +4,11 @@ from pib_motors.actuator import Actuator, ServoBrickletActuator, create_actuator
 from pib_api_client import motor_client
 
 
+def _sync_upper_endpoint(actuator: Actuator, upper_endpoint: str) -> None:
+    actuator.upper_endpoint = upper_endpoint
+    actuator.direction_sign = -1 if upper_endpoint == "min" else 1
+
+
 class Motor:
 
     MIN_ROTATION: int = -9000
@@ -11,13 +16,13 @@ class Motor:
 
     NO_CURRENT: int = ServoBrickletActuator.NO_CURRENT
 
-    def __init__(self, name: str, actuators: list[Actuator], invert: bool):
+    def __init__(self, name: str, actuators: list[Actuator], upper_endpoint: str):
         self.name: str = name
         self.visible: bool = True
         self.actuators: list[Actuator] = actuators
-        self.invert: bool = invert
+        self.upper_endpoint: str = upper_endpoint
         for actuator in self.actuators:
-            actuator.invert = invert
+            _sync_upper_endpoint(actuator, upper_endpoint)
         self.rotation_range_min: int = Motor.MIN_ROTATION
         self.rotation_range_max: int = Motor.MAX_ROTATION
 
@@ -32,9 +37,9 @@ class Motor:
     def apply_settings(self, settings_dto: dict[str, Any]) -> bool:
         """apply provided settings to the motor"""
         self.visible = settings_dto["visible"]
-        self.invert = settings_dto["invert"]
+        self.upper_endpoint = settings_dto["upperEndpoint"]
         for actuator in self.actuators:
-            actuator.invert = self.invert
+            _sync_upper_endpoint(actuator, self.upper_endpoint)
         self.rotation_range_min = settings_dto["rotationRangeMin"]
         self.rotation_range_max = settings_dto["rotationRangeMax"]
 
@@ -53,7 +58,7 @@ class Motor:
         settings = {
             "visible": self.visible,
             "name": self.name,
-            "invert": self.invert,
+            "upperEndpoint": self.upper_endpoint,
             "rotationRangeMin": self.rotation_range_min,
             "rotationRangeMax": self.rotation_range_max,
         }
@@ -121,6 +126,7 @@ if not successful:
 motors: list[Motor] = []
 for motor_dto in response["motors"]:
     controller_dto = motor_dto.get("controller")
+    upper_endpoint = motor_dto.get("upperEndpoint", "max")
     actuators: list[Actuator] = []
     if controller_dto and controller_dto["address"]:
         kind = controller_dto["kind"]
@@ -130,7 +136,7 @@ for motor_dto in response["motors"]:
                     kind,
                     motor_dto["channel"],
                     controller_dto["address"],
-                    motor_dto["invert"],
+                    upper_endpoint,
                 )
             )
         except ValueError as error:
@@ -140,7 +146,7 @@ for motor_dto in response["motors"]:
                 f"motor '{motor_dto['name']}' uses controller kind '{kind}', which is "
                 f"not supported in this build - motor stays without actuator: {error}"
             )
-    motors.append(Motor(motor_dto["name"], actuators, motor_dto["invert"]))
+    motors.append(Motor(motor_dto["name"], actuators, upper_endpoint))
 
 # maps the name of a (multi-)motor to its associated motor objects
 name_to_motors: dict[str, Motor] = {motor.name: [motor] for motor in motors}

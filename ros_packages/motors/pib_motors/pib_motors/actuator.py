@@ -8,6 +8,12 @@ from tinkerforge.bricklet_servo_v2 import BrickletServoV2
 from tinkerforge.ip_connection import Error
 
 
+def direction_sign_for(upper_endpoint: str) -> int:
+    if upper_endpoint not in ("min", "max"):
+        raise ValueError("upper_endpoint must be 'min' or 'max'")
+    return -1 if upper_endpoint == "min" else 1
+
+
 class Capability(Enum):
     """a piece of hardware behaviour that an actuator family may or may not offer"""
 
@@ -21,7 +27,8 @@ class Capability(Enum):
 class Actuator(Protocol):
     """the one axis of hardware that a motor commands"""
 
-    invert: bool
+    upper_endpoint: str
+    direction_sign: int
 
     def set_position(self, position: int) -> bool:
         """sets the position of the actuator and returns 'True' if this was successful"""
@@ -61,11 +68,12 @@ class ServoBrickletActuator:
         20  # Allowed deviation for motor target position, in 1/100° units
     )
 
-    def __init__(self, pin: int, uid: str, invert: bool) -> None:
+    def __init__(self, pin: int, uid: str, upper_endpoint: str) -> None:
         self.pin: int = pin
         self.uid: str = uid
         self.bricklet: BrickletServoV2 | None = uid_to_servo_bricklet.get(uid)
-        self.invert: bool = invert
+        self.upper_endpoint: str = upper_endpoint
+        self.direction_sign: int = direction_sign_for(upper_endpoint)
         self._connected: bool | None = None
         self._target_position: int | None = None
 
@@ -147,8 +155,7 @@ class ServoBrickletActuator:
         """sets the position of the bricklet-pin and returns 'True' if this was successful"""
         if not self.is_connected():
             return False
-        if self.invert:
-            position *= -1
+        position *= self.direction_sign
         try:
             self._target_position = position
             self.bricklet.set_position(self.pin, position)
@@ -220,6 +227,6 @@ def capabilities_for(kind: str) -> frozenset[Capability]:
     return _actuator_class_for(kind).CAPABILITIES
 
 
-def create_actuator(kind: str, pin: int, uid: str, invert: bool) -> Actuator:
+def create_actuator(kind: str, pin: int, uid: str, upper_endpoint: str) -> Actuator:
     """creates the actuator of the given kind for one pin of one controller"""
-    return _actuator_class_for(kind)(pin, uid, invert)
+    return _actuator_class_for(kind)(pin, uid, upper_endpoint)

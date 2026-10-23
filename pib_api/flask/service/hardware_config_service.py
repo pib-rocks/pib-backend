@@ -35,7 +35,7 @@ MOTOR_SETTING_KEYS = (
     "period",
     "turned_on",
     "visible",
-    "invert",
+    "upper_endpoint",
     "current_limit",
     "torque_limit",
 )
@@ -162,7 +162,7 @@ def _serialize_motor(motor: Motor) -> Dict[str, Any]:
         "period": motor.period,
         "turnedOn": motor.turned_on,
         "visible": motor.visible,
-        "invert": motor.invert,
+        "upperEndpoint": motor.upper_endpoint,
         "controllerNumber": motor.controller.number if motor.controller else None,
         "channel": motor.channel,
     }
@@ -250,6 +250,7 @@ def _validate_motor_entry(entry: Any, index: int, *, version: int) -> Dict[str, 
         "turnedOn": "turned_on",
         "currentLimit": "current_limit",
         "torqueLimit": "torque_limit",
+        "upperEndpoint": "upper_endpoint",
     }
     for key in MOTOR_SETTING_KEYS:
         camel = next((c for c, snake in aliases.items() if snake == key), key)
@@ -283,9 +284,14 @@ def _validate_motor_entry(entry: Any, index: int, *, version: int) -> Dict[str, 
 
 def _validate_motor_settings(settings: Dict[str, Any], index: int) -> None:
     for key, value in settings.items():
-        if key in ("turned_on", "visible", "invert"):
+        if key in ("turned_on", "visible"):
             if not isinstance(value, bool):
                 raise ValueError(f"motors[{index}].{key} must be a boolean")
+        elif key == "upper_endpoint":
+            if value not in ("min", "max"):
+                raise ValueError(
+                    f"motors[{index}].upperEndpoint must be 'min' or 'max'"
+                )
         elif key in ("current_limit", "torque_limit"):
             if value is not None and (
                 not isinstance(value, (int, float)) or isinstance(value, bool)

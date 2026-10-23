@@ -164,7 +164,7 @@ def test_create_actuator_builds_feetech_serial_and_registers_capabilities(monkey
     monkeypatch.setattr(ft_mod, "sts", fake_sts)
     ft_mod._port_cache.clear()
 
-    actuator = act_mod.create_actuator("feetech_st_serial", 51, "5B3D042723", False)
+    actuator = act_mod.create_actuator("feetech_st_serial", 51, "5B3D042723", "max")
     assert isinstance(actuator, ft_mod.FeetechStSerialActuator)
     assert isinstance(actuator, act_mod.Actuator)
     assert actuator.is_connected() is True
@@ -196,9 +196,9 @@ def test_feetech_actuator_uses_sts3095_and_finger_speed_classes_and_inversion(
     ft_mod._port_cache.clear()
 
     # Pin 18 is elbow_right (STS3095 heavy servo, inverted)
-    elbow = act_mod.create_actuator("feetech_st_serial", 18, "WS-ARM", True)
+    elbow = act_mod.create_actuator("feetech_st_serial", 18, "WS-ARM", "min")
     # Pin 11 is thumb_right_stretch (finger servo, non-inverted)
-    thumb = act_mod.create_actuator("feetech_st_serial", 11, "WS-ARM", False)
+    thumb = act_mod.create_actuator("feetech_st_serial", 11, "WS-ARM", "max")
 
     # Both share the same cached port handler on 'WS-ARM'
     assert elbow._pk is thumb._pk
@@ -233,7 +233,7 @@ def test_feetech_actuator_get_voltage_reads_present_voltage_register(monkeypatch
     monkeypatch.setattr(ft_mod, "sts", fake_sts)
     ft_mod._port_cache.clear()
 
-    actuator = act_mod.create_actuator("feetech_st_serial", 51, "WS-HEAD", False)
+    actuator = act_mod.create_actuator("feetech_st_serial", 51, "WS-HEAD", "max")
     assert actuator.get_voltage() == 11.8
 
 
@@ -252,7 +252,7 @@ def test_feetech_actuator_reconnects_lazily_when_ssr_powers_bus(monkeypatch):
     monkeypatch.setattr(ft_mod, "sts", fake_sts)
     ft_mod._port_cache.clear()
 
-    actuator = act_mod.create_actuator("feetech_st_serial", 51, "WS-HEAD", False)
+    actuator = act_mod.create_actuator("feetech_st_serial", 51, "WS-HEAD", "max")
     assert actuator._connected is False
     assert actuator.set_position(1000) is False
 
@@ -276,7 +276,7 @@ def test_feetech_actuator_applies_torque_enable_setting(monkeypatch):
     monkeypatch.setattr(ft_mod, "sts", fake_sts)
     ft_mod._port_cache.clear()
 
-    actuator = act_mod.create_actuator("feetech_st_serial", 51, "WS-HEAD", False)
+    actuator = act_mod.create_actuator("feetech_st_serial", 51, "WS-HEAD", "max")
     assert actuator.apply_settings({"turnedOn": False, "velocity": 12000}) is True
     assert pk_instance.byte_writes == [(51, 40, 0)]
     assert actuator.get_settings()["turnedOn"] is False
@@ -298,7 +298,7 @@ def test_feetech_actuator_calibrate_zero_writes_torque_128_and_resets_target(
     monkeypatch.setattr(ft_mod, "sts", fake_sts)
     ft_mod._port_cache.clear()
 
-    actuator = act_mod.create_actuator("feetech_st_serial", 51, "WS-HEAD", False)
+    actuator = act_mod.create_actuator("feetech_st_serial", 51, "WS-HEAD", "max")
     actuator._target_position = 1200
     actuator._settings["turnedOn"] = False
     assert actuator.calibrate_zero() is True
@@ -329,8 +329,8 @@ def test_feetech_actuator_invert_preserves_sign_in_get_and_set(monkeypatch):
     monkeypatch.setattr(ft_mod, "sts", fake_sts)
     ft_mod._port_cache.clear()
 
-    inverted = act_mod.create_actuator("feetech_st_serial", 18, "WS-ARM", True)
-    normal = act_mod.create_actuator("feetech_st_serial", 11, "WS-ARM", False)
+    inverted = act_mod.create_actuator("feetech_st_serial", 18, "WS-ARM", "min")
+    normal = act_mod.create_actuator("feetech_st_serial", 11, "WS-ARM", "max")
     pk_instance = inverted._pk
 
     assert inverted.set_position(1000) is True
@@ -338,6 +338,34 @@ def test_feetech_actuator_invert_preserves_sign_in_get_and_set(monkeypatch):
     assert inverted.get_position() == 1000
     assert normal.get_position() == 1000
     assert pk_instance.writes[0][1] != pk_instance.writes[1][1]
+
+
+@pytest.mark.parametrize(
+    ("upper_endpoint", "expected_tick_sign"),
+    [
+        ("max", 1),
+        ("min", -1),
+    ],
+)
+def test_feetech_drive_sign_matches_legacy_invert(
+    monkeypatch, upper_endpoint, expected_tick_sign
+):
+    ft_mod, act_mod = _load_modules()
+    from pib_motors.feetech_actuator import centideg_to_ticks
+
+    def fake_sts(ph):
+        return FakeStsPacketHandler(ph)
+
+    monkeypatch.setattr(ft_mod, "PortHandler", FakePortHandler)
+    monkeypatch.setattr(ft_mod, "sts", fake_sts)
+    ft_mod._port_cache.clear()
+
+    actuator = act_mod.create_actuator(
+        "feetech_st_serial", 18, "WS-ARM", upper_endpoint
+    )
+    assert actuator.set_position(1000) is True
+    expected_ticks = centideg_to_ticks(1000 * expected_tick_sign)
+    assert actuator._pk.writes[-1][1] == expected_ticks
 
 
 def test_feetech_actuator_custom_velocity_and_acceleration_in_write_pos_ex(
@@ -355,7 +383,7 @@ def test_feetech_actuator_custom_velocity_and_acceleration_in_write_pos_ex(
     monkeypatch.setattr(ft_mod, "sts", fake_sts)
     ft_mod._port_cache.clear()
 
-    actuator = act_mod.create_actuator("feetech_st_serial", 18, "WS-ARM", False)
+    actuator = act_mod.create_actuator("feetech_st_serial", 18, "WS-ARM", "max")
     assert actuator.apply_settings({"velocity": 1200, "acceleration": 45}) is True
     assert actuator.set_position(0) is True
     assert pk_instance.writes[-1] == (18, 2000, 1200, 45)

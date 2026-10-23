@@ -1,3 +1,5 @@
+from sqlalchemy.orm import validates
+
 from app.app import db
 
 
@@ -16,10 +18,16 @@ class Motor(db.Model):
     period = db.Column(db.Integer, nullable=False)
     turned_on = db.Column(db.Boolean, nullable=False)
     visible = db.Column(db.Boolean, nullable=False)
-    invert = db.Column(db.Boolean, nullable=False)
+    upper_endpoint = db.Column(db.String(4), nullable=False, default="max")
     controller_id = db.Column(db.Integer, db.ForeignKey("controller.id"), nullable=True)
     channel = db.Column(db.Integer, nullable=True)
     current_limit = db.Column(db.Float, nullable=True)
     torque_limit = db.Column(db.Float, nullable=True)
 
     controller = db.relationship("Controller", back_populates="motors", lazy="joined")
+
+    @validates("upper_endpoint")
+    def validate_upper_endpoint(self, _key, value: str) -> str:
+        if value not in ("min", "max"):
+            raise ValueError("upper_endpoint must be 'min' or 'max'")
+        return value

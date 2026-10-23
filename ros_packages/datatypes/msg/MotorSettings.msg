@@ -9,4 +9,5 @@ int64 acceleration
 int64 deceleration
 int64 period
 bool visible
-bool invert
+# Which bound of the rotation range is the physically first-named ("upper") end: "min" or "max".
+string upper_endpoint

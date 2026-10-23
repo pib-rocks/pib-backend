@@ -63,7 +63,7 @@ class FakeMotor:
         self._settings = {
             "name": name,
             "visible": True,
-            "invert": False,
+            "upperEndpoint": "max",
             "rotationRangeMin": -9000,
             "rotationRangeMax": 9000,
             "turnedOn": True,
