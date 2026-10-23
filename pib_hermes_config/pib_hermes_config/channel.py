@@ -82,6 +82,19 @@ CAPTURED_IMAGE_SENTENCE = (
 )
 
 
+#: Appended after the robot body description. The model already receives every motor
+#: range in that block; a direct turn for "open your left hand" still spent five
+#: requests calling list_motors, get_motion_model, list_poses and get_state, each a
+#: full model round of 2-10 s. The sentence tells it when a tool is actually needed
+#: and warns against reading a state out of the sign of a number.
+ROBOT_CONTEXT_INSTRUCTION = (
+    "These ranges come from the robot's own motor configuration. Plan a movement with "
+    "them and call get_motion_model or list_motors only when you need live positions or "
+    "settings, not to look up a limit. A larger number is not 'more open': use the named "
+    "state where the model gives one, and ask instead of guessing an unlabelled end."
+)
+
+
 def direct_system_prompt(
     soul_text: str | None,
     *,
@@ -106,5 +119,5 @@ def direct_system_prompt(
     if images_shown:
         prompt = f"{prompt}\n\n{CAPTURED_IMAGE_SENTENCE}"
     if isinstance(robot_context, str) and robot_context.strip():
-        prompt = f"{prompt}\n\n{robot_context.strip()}"
+        prompt = f"{prompt}\n\n{ROBOT_CONTEXT_INSTRUCTION}\n\n{robot_context.strip()}"
     return prompt
