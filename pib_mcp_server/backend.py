@@ -162,10 +162,7 @@ class PibBackend:
         return state
 
     def get_motion_model(self) -> dict[str, Any]:
-        """Return the bundled robot motion model (joints, axes, limits, postures)."""
-        from .motion_model import motion_model_payload
-
-        return motion_model_payload()
+        return self._http("GET", "/system/motion-model")
 
     def list_poses(self) -> list[dict[str, Any]]:
         return list(self._http("GET", "/pose").get("poses", []))
