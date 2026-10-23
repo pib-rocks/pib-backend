@@ -765,6 +765,64 @@ def test_hermes_refuses_environment_when_store_is_unavailable(monkeypatch):
     assert str(caught.value) == "No keys are available for provider pib-cloud."
 
 
+def test_tool_start_is_reported_before_the_runner_and_finished_after():
+    """PR-2038: start/end trace hooks bracket the tool body with the same call id."""
+    order: list[str] = []
+    started: list[dict] = []
+    finished: list[dict] = []
+
+    def complete(messages, tools):
+        if len(order) == 0:
+            return {
+                "tool_calls": [
+                    {
+                        "id": "call-abc",
+                        "name": "set_led",
+                        "arguments": {"color": "red"},
+                    }
+                ]
+            }
+        return {"text": "ok"}
+
+    def runner(name, arguments):
+        order.append("runner")
+        return {"ok": True}
+
+    def on_start(record):
+        order.append("start")
+        started.append(record)
+
+    def on_end(record):
+        order.append("end")
+        finished.append(record)
+
+    answer = "".join(
+        run_direct_turn(
+            system_prompt="Du bist pib.",
+            user_text="Licht.",
+            history=[],
+            tool_calling=True,
+            allow_image=False,
+            declarations=[{"name": "set_led", "description": "led"}],
+            complete=complete,
+            execute_tool=runner,
+            on_tool_start=on_start,
+            on_tool_call=on_end,
+        )
+    )
+
+    assert answer == "ok"
+    assert order == ["start", "runner", "end"]
+    assert started[0]["callId"] == "call-abc"
+    assert finished[0]["callId"] == "call-abc"
+    assert started[0]["argNames"] == ["color"]
+    assert finished[0]["argNames"] == ["color"]
+    assert finished[0]["ok"] is True
+    assert isinstance(finished[0]["durationMs"], float)
+    assert finished[0]["durationMs"] >= 0
+    assert "red" not in json.dumps(started + finished)
+
+
 def test_a_tool_call_is_reported_without_its_argument_values():
     """PC-84: the caller learns name, outcome and duration - never a value."""
     reported: list = []
@@ -1137,3 +1195,12 @@ def test_live_connect_config_carries_the_zero_thinking_budget():
         if isinstance(key, ast.Constant) and key.value == "thinking_config":
             assert isinstance(value, ast.Call)
             assert getattr(value.func, "id", "") == "live_thinking_config"
+
+
+def test_output_ceiling_holds_a_full_answer():
+    """PR-2040: 1024 could be consumed by thinking, leaving an empty answer."""
+    assert direct_tool_loop.DIRECT_MAX_OUTPUT_TOKENS == 2048
+    _url, _headers, body = build_gemini_request(
+        [{"role": "user", "content": "ping"}], None, "key"
+    )
+    assert body["generationConfig"]["maxOutputTokens"] == 2048

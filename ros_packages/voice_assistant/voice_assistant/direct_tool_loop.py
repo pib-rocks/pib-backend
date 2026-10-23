@@ -47,7 +47,10 @@ DIRECT_STREAM_PATH = PINNED_ENDPOINT.replace(
 )
 DIRECT_REQUEST_TIMEOUT_SEC = 180
 DIRECT_RETRY_DELAY_SEC = 2
-DIRECT_MAX_OUTPUT_TOKENS = 1024
+# The answer ceiling. Measured: with thinking on, one request spent 982 thought tokens
+# against a ceiling of 1024 and the answer came back empty. Thinking is off by default
+# since PR-2039; the ceiling still has to hold an answer plus a later re-enable.
+DIRECT_MAX_OUTPUT_TOKENS = 2048
 # The allowlist is the pinned catalogue model. Hermes is a channel, not a row.
 GEMINI_API_NAMES = frozenset({PINNED_MODEL})
 IMAGE_TOOL = "capture_image"
@@ -285,6 +288,7 @@ def run_direct_turn(
     complete: Optional[Complete] = None,
     execute_tool: Optional[ExecuteTool] = None,
     on_tool_call: Optional[Callable[[dict], None]] = None,
+    on_tool_start: Optional[Callable[[dict], None]] = None,
     on_tool_image: Optional[Callable[[dict], None]] = None,
     on_tool_round: Optional[Callable[[], None]] = None,
     max_rounds: int = MAX_TOOL_ROUNDS,
@@ -343,6 +347,8 @@ def run_direct_turn(
         )
     messages.append({"role": "user", "content": user_text})
 
+    tool_call_counter = 0
+
     for _round in range(max_rounds):
         result = caller(messages, tools if tool_calling else None)
         calls = result.get("tool_calls") or []
@@ -371,7 +377,15 @@ def run_direct_turn(
             arguments = call.get("arguments") or {}
             if not isinstance(arguments, dict):
                 arguments = {}
+            call_id = _tool_call_id(call, name, tool_call_counter)
+            tool_call_counter += 1
             logger.info("direct tool call name=%s", name)
+            _report_tool_start(
+                on_tool_start,
+                name=name,
+                call_id=call_id,
+                arguments=arguments,
+            )
             started = time.monotonic()
             ok_call = True
             error_name = ""
@@ -386,6 +400,7 @@ def run_direct_turn(
                 _report_tool_call(
                     on_tool_call,
                     name=name,
+                    call_id=call_id,
                     arguments=arguments,
                     started=started,
                     ok=False,
@@ -395,6 +410,7 @@ def run_direct_turn(
             _report_tool_call(
                 on_tool_call,
                 name=name,
+                call_id=call_id,
                 arguments=arguments,
                 started=started,
                 ok=ok_call,
@@ -417,10 +433,40 @@ def run_direct_turn(
     yield result.get("text") or ""
 
 
+def _tool_call_id(call: Mapping[str, Any], name: str, index: int) -> str:
+    """Stable id for pairing start and end trace events on one tool invocation."""
+    raw = call.get("id")
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip()
+    return f"{name}-{index}"
+
+
+def _report_tool_start(
+    reporter: Optional[Callable[[dict], None]],
+    *,
+    name: str,
+    call_id: str,
+    arguments: Mapping[str, Any],
+) -> None:
+    """Tell the caller a tool is about to run, without argument values."""
+    if reporter is None:
+        return
+    record: dict = {
+        "name": name,
+        "callId": call_id,
+        "argNames": sorted(str(key) for key in (arguments or {})),
+    }
+    try:
+        reporter(record)
+    except Exception:  # noqa: BLE001 - reporting must never fail a turn
+        logger.warning("tool start reporter failed name=%s", name, exc_info=True)
+
+
 def _report_tool_call(
     reporter: Optional[Callable[[dict], None]],
     *,
     name: str,
+    call_id: str,
     arguments: Mapping[str, Any],
     started: float,
     ok: bool,
@@ -436,6 +482,7 @@ def _report_tool_call(
         return
     record: dict = {
         "name": name,
+        "callId": call_id,
         "ok": ok,
         "durationMs": round((time.monotonic() - started) * 1000.0, 1),
         "argNames": sorted(str(key) for key in (arguments or {})),

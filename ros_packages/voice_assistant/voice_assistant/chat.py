@@ -289,8 +289,37 @@ class ChatNode(Node):
         except Exception as exc:
             self.get_logger().warning(f"turn trace emitter was not installed: {exc}")
 
-    def _record_tool_call(self, record: dict) -> None:
-        """Keep one executed tool of this turn and publish it on the trace.
+    def _turn_trace_chat_id(self) -> str:
+        chat_id = getattr(self, "_turn_chat_id", None)
+        return chat_id if isinstance(chat_id, str) else ""
+
+    def _record_tool_started(self, record: dict) -> None:
+        """Publish that a tool invocation has begun (no argument values)."""
+        publisher = getattr(self, "_turn_trace_publisher", None)
+        if publisher is None:
+            return
+        try:
+            from voice_assistant.turn_latency import format_event, now_ms
+
+            name = str(record.get("name") or "tool")
+            call_id = record.get("callId") or record.get("call_id") or ""
+            message = String()
+            message.data = format_event(
+                "tool_call_started",
+                ts_ms=now_ms(),
+                source=name,
+                chat_id=self._turn_trace_chat_id(),
+                detail={
+                    "call_id": call_id,
+                    "arg_names": record.get("argNames") or [],
+                },
+            )
+            publisher.publish(message)
+        except Exception as exc:
+            self.get_logger().warning(f"tool start trace was not published: {exc}")
+
+    def _record_tool_finished(self, record: dict) -> None:
+        """Keep one executed tool of this turn and publish finished trace events.
 
         The record carries the tool name, its outcome, its duration and the names
         of its arguments - never the values (PC-84).
@@ -305,21 +334,39 @@ class ChatNode(Node):
         try:
             from voice_assistant.turn_latency import format_event, now_ms
 
+            name = str(record.get("name") or "tool")
+            call_id = record.get("callId") or record.get("call_id") or ""
+            detail = {
+                "call_id": call_id,
+                "ok": bool(record.get("ok", True)),
+                "duration_ms": record.get("durationMs"),
+                "arg_names": record.get("argNames") or [],
+                "error": record.get("error"),
+            }
             message = String()
             message.data = format_event(
-                "tool_call",
+                "tool_call_finished",
                 ts_ms=now_ms(),
-                source=str(record.get("name") or "tool"),
-                detail={
-                    "ok": bool(record.get("ok", True)),
-                    "duration_ms": record.get("durationMs"),
-                    "arg_names": record.get("argNames") or [],
-                    "error": record.get("error"),
-                },
+                source=name,
+                chat_id=self._turn_trace_chat_id(),
+                detail=detail,
             )
             publisher.publish(message)
+            legacy = String()
+            legacy.data = format_event(
+                "tool_call",
+                ts_ms=now_ms(),
+                source=name,
+                chat_id=self._turn_trace_chat_id(),
+                detail=detail,
+            )
+            publisher.publish(legacy)
         except Exception as exc:
             self.get_logger().warning(f"tool call trace was not published: {exc}")
+
+    def _record_tool_call(self, record: dict) -> None:
+        """Hermes and other paths that only report after execution."""
+        self._record_tool_finished(record)
 
     def _record_tool_image(self, record: dict) -> None:
         """Keep one picture a tool captured this turn, scaled down.
@@ -352,6 +399,7 @@ class ChatNode(Node):
         self._turn_tool_calls = []
         self._turn_images = []
         self._turn_image_references = []
+        self._turn_chat_id = ""
 
     def _record_turn_trace(self, raw: str) -> None:
         """Keep stage timings and the fallback reason of the running turn."""
@@ -1354,7 +1402,8 @@ class ChatNode(Node):
             endpoint_base=endpoint_base,
             tools=tools,
             allow_image=allow_image,
-            on_tool_call=getattr(self, "_record_tool_call", None),
+            on_tool_call=getattr(self, "_record_tool_finished", None),
+            on_tool_start=getattr(self, "_record_tool_started", None),
             local_fallback=lambda: self._iter_local_tokens(
                 chat_id, content, system_prompt
             ),
@@ -1384,6 +1433,7 @@ class ChatNode(Node):
         chat_id: str = request.chat_id
         content: str = request.text
         generate_code: bool = request.generate_code
+        self._turn_chat_id = chat_id
 
         self.get_logger().info(
             f"[PERF_TRACE] ROS_SERVICE_RECV chat={chat_id} elapsed_ms=0.00"
@@ -1604,7 +1654,8 @@ class ChatNode(Node):
                     tool_calling=tool_calling,
                     allow_image=allow_image,
                     report_key_source=report_key_source,
-                    on_tool_call=self._record_tool_call,
+                    on_tool_call=self._record_tool_finished,
+                    on_tool_start=self._record_tool_started,
                     on_tool_image=self._record_tool_image,
                     on_tool_round=count_direct_tool_round,
                 )
