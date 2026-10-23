@@ -55,7 +55,7 @@ from provider_registry import (
     provider_name_for,
 )
 from public_api_client import hermes_agent_client, public_voice_client
-from voice_assistant import direct_tool_loop, pib_cloud_stream
+from voice_assistant import direct_tool_loop, pib_cloud_stream, robot_context
 from voice_assistant.degraded_chat import (
     MODE_UNLOCKED,
     fetch_operating_mode,
@@ -1266,6 +1266,13 @@ class ChatNode(Node):
                 yield reply
             return
 
+    def _robot_context(self) -> str:
+        """The body description for this turn, empty when the API cannot be asked."""
+        try:
+            return robot_context.get_robot_context()
+        except Exception:
+            return ""
+
     def _iter_local_tokens(self, chat_id: str, content: str, system_prompt: str):
         """Tokens from the on-device model. No provider key is read."""
         history: list[tuple[str, bool]] = []
@@ -1320,7 +1327,9 @@ class ChatNode(Node):
             )
 
         system_prompt = direct_system_prompt(
-            getattr(personality, "description", None), images_shown=True
+            getattr(personality, "description", None),
+            images_shown=True,
+            robot_context=self._robot_context(),
         )
         if generate_code:
             system_prompt = CODE_DESCRIPTION_PREFIX + system_prompt
@@ -1505,7 +1514,9 @@ class ChatNode(Node):
             elif local_model:
                 turn_path = "the on-device model"
                 system_prompt = direct_system_prompt(
-                    personality.description, images_shown=True
+                    personality.description,
+                    images_shown=True,
+                    robot_context=self._robot_context(),
                 )
                 if generate_code:
                     system_prompt = CODE_DESCRIPTION_PREFIX + system_prompt
@@ -1538,7 +1549,9 @@ class ChatNode(Node):
                 # the model calls capture_image, and that tool is absent while
                 # tool calling is off.
                 system_prompt = direct_system_prompt(
-                    personality.description, images_shown=True
+                    personality.description,
+                    images_shown=True,
+                    robot_context=self._robot_context(),
                 )
                 if generate_code:
                     system_prompt = CODE_DESCRIPTION_PREFIX + system_prompt
