@@ -19,6 +19,8 @@ if str(VOICE_ASSISTANT_PKG) not in sys.path:
 
 from voice_assistant import direct_tool_loop  # noqa: E402
 from voice_assistant.direct_tool_loop import (  # noqa: E402
+    DIRECT_MAX_OUTPUT_TOKENS,
+    DIRECT_STREAM_PATH,
     IMAGE_TOOL,
     PINNED_CHECKED_ON,
     PINNED_ENDPOINT,
@@ -28,13 +30,50 @@ from voice_assistant.direct_tool_loop import (  # noqa: E402
     assert_stable_url,
     build_gemini_request,
     gemini_complete,
+    gemini_complete_stream,
     image_tool_allowed,
     parse_gemini_response,
+    parse_gemini_sse_stream,
     run_direct_turn,
     supports_tool_endpoint,
     tool_calling_enabled,
     tools_for_turn,
 )
+
+
+def _gemini_json_payload(parts):
+    return {"candidates": [{"content": {"parts": parts}}]}
+
+
+def _sse_body(*chunks):
+    lines = []
+    for chunk in chunks:
+        lines.append(f"data: {json.dumps(chunk)}")
+    lines.append("")
+    return "\n".join(lines)
+
+
+class _UrlopenResponse:
+    def __init__(self, *, json_payload=None, sse_text=None):
+        self._json_payload = json_payload
+        self._sse_text = sse_text
+
+    def read(self):
+        if self._json_payload is not None:
+            return json.dumps(self._json_payload).encode()
+        raise AssertionError("read() called on an SSE-only response")
+
+    def __iter__(self):
+        if self._sse_text is None:
+            raise AssertionError("iteration called on a JSON-only response")
+        for line in self._sse_text.splitlines(keepends=True):
+            yield line.encode("utf-8")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
 
 
 def test_mcp_declarations_include_the_image_tool():
@@ -172,8 +211,10 @@ def test_tool_calling_off_makes_one_request_without_tools_or_an_image():
     assert answer == "Nur Text zurueck."
 
 
-def test_loop_stops_when_the_model_never_answers():
+def test_loop_forces_a_final_answer_when_tool_rounds_are_exhausted():
     def complete(messages, tools):
+        if tools is None:
+            return {"text": "Genug.", "tool_calls": []}
         return {
             "text": "",
             "tool_calls": [
@@ -181,42 +222,30 @@ def test_loop_stops_when_the_model_never_answers():
             ],
         }
 
-    with pytest.raises(DirectToolLoopError, match="final answer"):
-        list(
-            run_direct_turn(
-                system_prompt="Du bist pib.",
-                user_text="Hi",
-                history=[],
-                tool_calling=True,
-                allow_image=False,
-                declarations=[{"name": "list_poses", "description": "poses"}],
-                complete=complete,
-                execute_tool=lambda name, arguments: {"ok": True},
-                max_rounds=2,
-            )
+    answer = "".join(
+        run_direct_turn(
+            system_prompt="Du bist pib.",
+            user_text="Hi",
+            history=[],
+            tool_calling=True,
+            allow_image=False,
+            declarations=[{"name": "list_poses", "description": "poses"}],
+            complete=complete,
+            execute_tool=lambda name, arguments: {"ok": True},
+            max_rounds=2,
         )
+    )
+    assert answer == "Genug."
 
 
 def test_gemini_request_uses_the_pinned_url_and_omits_tools_when_absent(monkeypatch):
     captured = {}
 
-    class Response:
-        def read(self):
-            return json.dumps(
-                {"candidates": [{"content": {"parts": [{"text": "pong"}]}}]}
-            ).encode()
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *args):
-            return False
-
     def fake_urlopen(request, timeout=None):
         captured["url"] = request.full_url
         captured["header"] = request.get_header("X-goog-api-key")
         captured["body"] = json.loads(request.data.decode())
-        return Response()
+        return _UrlopenResponse(json_payload=_gemini_json_payload([{"text": "pong"}]))
 
     monkeypatch.setattr(direct_tool_loop, "urlopen", fake_urlopen)
     monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
@@ -240,6 +269,10 @@ def test_gemini_request_uses_the_pinned_url_and_omits_tools_when_absent(monkeypa
     assert captured["body"]["contents"] == [
         {"role": "user", "parts": [{"text": "ping"}]}
     ]
+    assert (
+        captured["body"]["generationConfig"]["maxOutputTokens"]
+        == DIRECT_MAX_OUTPUT_TOKENS
+    )
     encoded = json.dumps(captured["body"])
     assert "inlineData" not in encoded
     assert "image" not in encoded
@@ -369,19 +402,6 @@ ENV_SECRET = "env-provider-key"
 OTHER_SECRET = "other-provider-key"
 
 
-class _GeminiResponse:
-    def read(self):
-        return json.dumps(
-            {"candidates": [{"content": {"parts": [{"text": "pong"}]}}]}
-        ).encode()
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *args):
-        return False
-
-
 def _install_store_fetch(monkeypatch, fetch) -> None:
     """Point the store read at ``fetch`` once the production hook exists."""
     if hasattr(direct_tool_loop, "_fetch_store_key"):
@@ -394,7 +414,8 @@ def _direct_request(monkeypatch, sources: list[str]):
     def fake_urlopen(request, timeout=None):
         captured["header"] = request.get_header("X-goog-api-key")
         captured["url"] = request.full_url
-        return _GeminiResponse()
+        sse = _sse_body(_gemini_json_payload([{"text": "pong"}]))
+        return _UrlopenResponse(sse_text=sse)
 
     monkeypatch.setattr(direct_tool_loop, "urlopen", fake_urlopen)
     kwargs = dict(
@@ -903,14 +924,171 @@ def test_provider_http_body_in_the_log_is_truncated(monkeypatch, caplog):
 
 
 def test_transport_failure_names_the_exception_type(monkeypatch, caplog):
+    calls = 0
+
     def fake_urlopen(request, timeout=None):
+        nonlocal calls
+        calls += 1
         raise TimeoutError("timed out after 90 s")
 
     monkeypatch.setattr(direct_tool_loop, "urlopen", fake_urlopen)
 
-    with caplog.at_level(logging.ERROR):
+    with caplog.at_level(logging.INFO):
         with pytest.raises(DirectToolLoopError) as excinfo:
             gemini_complete([{"role": "user", "content": "ping"}], None, api_key="k")
 
+    assert calls == 2
     assert "TimeoutError" in str(excinfo.value)
     assert "timed out" in str(excinfo.value)
+    assert "model request retried after" in caplog.text
+
+
+def test_sse_reassembly_matches_a_single_response_and_reports_deltas():
+    parts = [{"text": "Hel"}, {"text": "lo"}]
+    streamed = parse_gemini_sse_stream(
+        _sse_body(
+            _gemini_json_payload([parts[0]]),
+            _gemini_json_payload([parts[1]]),
+        )
+    )
+    single = parse_gemini_response(_gemini_json_payload(parts))
+    assert streamed == single
+    deltas: list[str] = []
+    parse_gemini_sse_stream(
+        _sse_body(
+            _gemini_json_payload([parts[0]]),
+            _gemini_json_payload([parts[1]]),
+        ),
+        on_delta=deltas.append,
+    )
+    assert deltas == ["Hel", "lo"]
+
+
+def test_sse_function_call_yields_tool_calls_and_empty_text():
+    payload = _gemini_json_payload(
+        [{"functionCall": {"name": "list_poses", "args": {}}}]
+    )
+    parsed = parse_gemini_sse_stream(_sse_body(payload))
+    assert parsed["text"] == ""
+    assert parsed["tool_calls"] == [
+        {"id": "list_poses-0", "name": "list_poses", "arguments": {}}
+    ]
+
+
+def test_streaming_request_uses_the_sse_endpoint(monkeypatch):
+    captured = {}
+
+    def fake_urlopen(request, timeout=None):
+        captured["url"] = request.full_url
+        captured["body"] = json.loads(request.data.decode())
+        return _UrlopenResponse(
+            sse_text=_sse_body(_gemini_json_payload([{"text": "ok"}]))
+        )
+
+    monkeypatch.setattr(direct_tool_loop, "urlopen", fake_urlopen)
+    result = gemini_complete_stream(
+        [{"role": "user", "content": "ping"}], None, api_key="k"
+    )
+    assert result["text"] == "ok"
+    assert captured["url"] == DIRECT_STREAM_PATH
+    assert "streamGenerateContent" in captured["url"]
+    assert "alt=sse" in captured["url"]
+
+
+def test_transport_retry_succeeds_on_the_second_attempt(monkeypatch, caplog):
+    calls = 0
+
+    def fake_urlopen(request, timeout=None):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise TimeoutError("read timed out")
+        return _UrlopenResponse(
+            sse_text=_sse_body(_gemini_json_payload([{"text": "ok"}]))
+        )
+
+    monkeypatch.setattr(direct_tool_loop, "urlopen", fake_urlopen)
+    caplog.set_level(logging.INFO)
+    result = gemini_complete_stream(
+        [{"role": "user", "content": "ping"}], None, api_key="k"
+    )
+    assert result["text"] == "ok"
+    assert calls == 2
+    assert "model request retried after" in caplog.text
+
+
+def test_http_error_is_not_retried(monkeypatch):
+    calls = 0
+
+    def fake_urlopen(request, timeout=None):
+        nonlocal calls
+        calls += 1
+        raise _http_error(429, "Too Many Requests", b"{}")
+
+    monkeypatch.setattr(direct_tool_loop, "urlopen", fake_urlopen)
+    with pytest.raises(DirectToolLoopError):
+        gemini_complete_stream([{"role": "user", "content": "ping"}], None, api_key="k")
+    assert calls == 1
+
+
+def test_forced_final_answer_request_disables_function_calling():
+    _, _, body = build_gemini_request(
+        [{"role": "user", "content": "ping"}],
+        [{"name": "list_poses", "description": "poses", "parameters": {}}],
+        "k",
+        force_no_tools=True,
+    )
+    assert body["toolConfig"]["functionCallingConfig"]["mode"] == "NONE"
+    assert "tools" not in body
+
+
+def test_normal_request_does_not_disable_function_calling():
+    _, _, body = build_gemini_request(
+        [{"role": "user", "content": "ping"}],
+        [{"name": "list_poses", "description": "poses", "parameters": {}}],
+        "k",
+    )
+    assert "toolConfig" not in body
+    assert body["tools"][0]["functionDeclarations"][0]["name"] == "list_poses"
+
+
+def test_round_cap_uses_forced_final_answer_with_stubbed_network(monkeypatch):
+    calls = []
+
+    def fake_urlopen(request, timeout=None):
+        body = json.loads(request.data.decode())
+        calls.append(body)
+        if body.get("toolConfig", {}).get("functionCallingConfig", {}).get("mode") == (
+            "NONE"
+        ):
+            sse = _sse_body(_gemini_json_payload([{"text": "Fertig."}]))
+        else:
+            sse = _sse_body(
+                _gemini_json_payload(
+                    [{"functionCall": {"name": "list_poses", "args": {}}}]
+                )
+            )
+        return _UrlopenResponse(sse_text=sse)
+
+    monkeypatch.setattr(direct_tool_loop, "urlopen", fake_urlopen)
+    monkeypatch.setattr(
+        direct_tool_loop,
+        "resolve_provider_key",
+        lambda *args, **kwargs: ("k", "environment"),
+    )
+
+    answer = "".join(
+        run_direct_turn(
+            system_prompt="Du bist pib.",
+            user_text="Hi",
+            history=[],
+            tool_calling=True,
+            allow_image=False,
+            declarations=[{"name": "list_poses", "description": "poses"}],
+            execute_tool=lambda name, arguments: {"ok": True},
+            max_rounds=1,
+        )
+    )
+    assert answer == "Fertig."
+    assert calls[-1]["toolConfig"]["functionCallingConfig"]["mode"] == "NONE"
+    assert len(calls) == 2

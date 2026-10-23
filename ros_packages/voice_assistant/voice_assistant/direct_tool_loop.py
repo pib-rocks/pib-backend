@@ -16,9 +16,10 @@ from __future__ import annotations
 import json
 import logging
 import os
+import socket
 import time
 from typing import Any, Callable, Iterator, Mapping, Optional, Sequence
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from pib_hermes_config.retired_direct_text import DIRECT_TEXT_MODEL_API_NAME
@@ -40,6 +41,12 @@ PINNED_ENDPOINT = (
     "https://generativelanguage.googleapis.com/v1/models/"
     f"{PINNED_MODEL}:generateContent"
 )
+DIRECT_STREAM_PATH = PINNED_ENDPOINT.replace(
+    ":generateContent", ":streamGenerateContent?alt=sse"
+)
+DIRECT_REQUEST_TIMEOUT_SEC = 180
+DIRECT_RETRY_DELAY_SEC = 2
+DIRECT_MAX_OUTPUT_TOKENS = 1024
 # The allowlist is the pinned catalogue model. Hermes is a channel, not a row.
 GEMINI_API_NAMES = frozenset({PINNED_MODEL})
 IMAGE_TOOL = "capture_image"
@@ -278,6 +285,7 @@ def run_direct_turn(
     execute_tool: Optional[ExecuteTool] = None,
     on_tool_call: Optional[Callable[[dict], None]] = None,
     on_tool_image: Optional[Callable[[dict], None]] = None,
+    on_tool_round: Optional[Callable[[], None]] = None,
     max_rounds: int = MAX_TOOL_ROUNDS,
     api_key: Optional[str] = None,
     report_key_source: Optional[Callable[[str], None]] = None,
@@ -312,8 +320,13 @@ def run_direct_turn(
             if report_key_source is not None:
                 report_key_source(source)
 
-        def caller(messages, tools, _key=api_key):
-            return gemini_complete(messages, tools, api_key=_key)
+        def caller(messages, tools, _key=api_key, _force=False):
+            return gemini_complete_stream(
+                messages,
+                tools,
+                api_key=_key,
+                force_no_tools=_force,
+            )
 
     runner = execute_tool or execute_mcp_tool
 
@@ -335,6 +348,11 @@ def run_direct_turn(
         if not tool_calling or not calls:
             yield result.get("text") or ""
             return
+        if on_tool_round is not None:
+            try:
+                on_tool_round()
+            except Exception:  # noqa: BLE001 - reporting must never fail a turn
+                logger.warning("tool round reporter failed", exc_info=True)
         messages.append(
             {
                 "role": "assistant",
@@ -390,7 +408,12 @@ def run_direct_turn(
                     "content": _tool_result_for_model(output),
                 }
             )
-    raise DirectToolLoopError("tool loop ended without a final answer")
+    logger.info("direct tool rounds exhausted, forcing a final answer")
+    if complete is not None:
+        result = complete(messages, None)
+    else:
+        result = caller(messages, tools if tool_calling else None, _force=True)
+    yield result.get("text") or ""
 
 
 def _report_tool_call(
@@ -480,9 +503,12 @@ def build_gemini_request(
     messages: Sequence[Mapping[str, Any]],
     tools: Optional[Sequence[Mapping[str, Any]]],
     api_key: str,
+    *,
+    stream: bool = False,
+    force_no_tools: bool = False,
 ) -> tuple[str, dict[str, str], dict[str, Any]]:
     """Stable generateContent request. The key travels in a header, not the URL."""
-    url = assert_stable_url(PINNED_ENDPOINT)
+    url = assert_stable_url(DIRECT_STREAM_PATH if stream else PINNED_ENDPOINT)
     if not api_key:
         raise DirectToolLoopError(missing_key_message(PINNED_PROVIDER))
     headers = {
@@ -534,10 +560,15 @@ def build_gemini_request(
         )
     flush_responses()
 
-    body: dict[str, Any] = {"contents": contents}
+    body: dict[str, Any] = {
+        "contents": contents,
+        "generationConfig": {"maxOutputTokens": DIRECT_MAX_OUTPUT_TOKENS},
+    }
     if system_parts:
         body["systemInstruction"] = {"parts": [{"text": "\n".join(system_parts)}]}
-    if tools:
+    if force_no_tools:
+        body["toolConfig"] = {"functionCallingConfig": {"mode": "NONE"}}
+    elif tools:
         body["tools"] = [
             {
                 "functionDeclarations": [
@@ -578,20 +609,23 @@ def _parameters(schema: Any) -> dict[str, Any]:
     return {"type": "object", "properties": {}}
 
 
-def parse_gemini_response(payload: Mapping[str, Any]) -> dict[str, Any]:
-    candidates = payload.get("candidates") or []
-    if not candidates:
-        raise DirectToolLoopError("model returned no candidates")
-    content = candidates[0].get("content") or {}
-    parts = content.get("parts") or []
+def _part_is_answer_text(part: Mapping[str, Any]) -> bool:
+    if part.get("thought") is True:
+        return False
+    if "thoughtSignature" in part:
+        return False
+    return isinstance(part.get("text"), str)
+
+
+def _result_from_parts(parts: Sequence[Any]) -> dict[str, Any]:
     texts: list[str] = []
     calls: list[dict[str, Any]] = []
+    raw_parts: list[Any] = []
     for index, part in enumerate(parts):
         if not isinstance(part, dict):
             continue
-        if part.get("thought") is True:
-            continue
-        if "text" in part and isinstance(part["text"], str):
+        raw_parts.append(part)
+        if _part_is_answer_text(part):
             texts.append(part["text"])
         function_call = part.get("functionCall")
         if isinstance(function_call, dict) and function_call.get("name"):
@@ -606,7 +640,82 @@ def parse_gemini_response(payload: Mapping[str, Any]) -> dict[str, Any]:
                     "arguments": arguments,
                 }
             )
-    return {"text": "".join(texts), "tool_calls": calls, "raw_parts": parts}
+    return {"text": "".join(texts), "tool_calls": calls, "raw_parts": raw_parts}
+
+
+def parse_gemini_response(payload: Mapping[str, Any]) -> dict[str, Any]:
+    candidates = payload.get("candidates") or []
+    if not candidates:
+        raise DirectToolLoopError("model returned no candidates")
+    content = candidates[0].get("content") or {}
+    parts = content.get("parts") or []
+    return _result_from_parts(parts)
+
+
+def _accumulate_sse_chunk(
+    accumulated: list[dict[str, Any]],
+    payload: Mapping[str, Any],
+    on_delta: Optional[Callable[[str], None]] = None,
+) -> None:
+    candidates = payload.get("candidates") or []
+    if not candidates:
+        return
+    content = candidates[0].get("content") or {}
+    for part in content.get("parts") or []:
+        if not isinstance(part, dict):
+            continue
+        accumulated.append(part)
+        if on_delta is not None and _part_is_answer_text(part):
+            on_delta(part["text"])
+
+
+def parse_gemini_sse_stream(
+    raw_stream: str,
+    on_delta: Optional[Callable[[str], None]] = None,
+) -> dict[str, Any]:
+    """Reassemble a Gemini ``alt=sse`` body into the same shape as ``parse_gemini_response``."""
+    parts: list[dict[str, Any]] = []
+    for line in raw_stream.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("data:"):
+            continue
+        payload_text = stripped[len("data:") :].strip()
+        if not payload_text or payload_text == "[DONE]":
+            continue
+        try:
+            chunk = json.loads(payload_text)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(chunk, dict):
+            _accumulate_sse_chunk(parts, chunk, on_delta=on_delta)
+    return _result_from_parts(parts)
+
+
+def _read_sse_response(
+    response: Any,
+    on_delta: Optional[Callable[[str], None]] = None,
+) -> dict[str, Any]:
+    parts: list[dict[str, Any]] = []
+    for raw_line in response:
+        if isinstance(raw_line, bytes):
+            line = raw_line.decode("utf-8", errors="replace")
+        else:
+            line = str(raw_line)
+        stripped = line.strip()
+        if not stripped.startswith("data:"):
+            continue
+        payload_text = stripped[len("data:") :].strip()
+        if not payload_text or payload_text == "[DONE]":
+            continue
+        try:
+            chunk = json.loads(payload_text)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(chunk, dict):
+            _accumulate_sse_chunk(parts, chunk, on_delta=on_delta)
+    if not parts:
+        raise DirectToolLoopError("model returned no candidates")
+    return _result_from_parts(parts)
 
 
 def gemini_complete(
@@ -620,44 +729,142 @@ def gemini_complete(
     return parse_gemini_response(payload)
 
 
+def gemini_complete_stream(
+    messages: Sequence[Mapping[str, Any]],
+    tools: Optional[Sequence[Mapping[str, Any]]],
+    api_key: Optional[str] = None,
+    on_delta: Optional[Callable[[str], None]] = None,
+    *,
+    force_no_tools: bool = False,
+) -> dict[str, Any]:
+    key = gemini_api_key() if api_key is None else api_key
+    url, headers, body = build_gemini_request(
+        messages,
+        tools,
+        key,
+        stream=True,
+        force_no_tools=force_no_tools,
+    )
+    return _post_sse(url, headers, body, on_delta=on_delta)
+
+
+def _transport_retry_reason(exc: BaseException) -> Optional[str]:
+    if isinstance(exc, (TimeoutError, socket.timeout)):
+        return f"{type(exc).__name__}: {str(exc)[:200]}"
+    if isinstance(exc, URLError) and not isinstance(exc.reason, HTTPError):
+        reason = exc.reason
+        return f"{type(exc).__name__}: {str(reason)[:200]}"
+    return None
+
+
+def _with_transport_retry(operation: Callable[[], Any]) -> Any:
+    last_exc: Optional[BaseException] = None
+    reason = ""
+    for attempt in range(2):
+        try:
+            return operation()
+        except HTTPError:
+            raise
+        except Exception as exc:
+            retry_reason = _transport_retry_reason(exc)
+            if retry_reason is None:
+                raise
+            last_exc = exc
+            reason = retry_reason
+            if attempt == 0:
+                logger.info("model request retried after %s", reason)
+                time.sleep(DIRECT_RETRY_DELAY_SEC)
+                continue
+            break
+    assert last_exc is not None
+    logger.error(
+        "model request failed: %s: %s", type(last_exc).__name__, str(last_exc)[:300]
+    )
+    raise DirectToolLoopError(
+        f"model request failed: {type(last_exc).__name__}: {str(last_exc)[:200]}"
+    ) from last_exc
+
+
+def _raise_http_error(exc: HTTPError) -> None:
+    body = ""
+    try:
+        body = exc.read().decode("utf-8", "replace")[:300]
+    except Exception:  # pragma: no cover - a body that cannot be read
+        body = "<unreadable>"
+    logger.error("model request failed: HTTP %s %s body=%s", exc.code, exc.reason, body)
+    raise DirectToolLoopError(
+        f"model request failed: HTTP {exc.code} {exc.reason}"
+    ) from exc
+
+
 def _post_json(url: str, headers: Mapping[str, str], body: Mapping[str, Any]) -> dict:
     assert_stable_url(url)
-    request = Request(
-        url,
-        data=json.dumps(body).encode("utf-8"),
-        headers=dict(headers),
-        method="POST",
-    )
-    try:
-        with urlopen(request, timeout=90) as response:
-            raw = response.read().decode("utf-8")
-    except HTTPError as exc:
-        # The provider's answer is the only way to tell a quota refusal from a bad
-        # request shape or an expired key. Keep a short snippet, never the key or
-        # the request body.
-        body = ""
-        try:
-            body = exc.read().decode("utf-8", "replace")[:300]
-        except Exception:  # pragma: no cover - a body that cannot be read
-            body = "<unreadable>"
-        logger.error(
-            "model request failed: HTTP %s %s body=%s", exc.code, exc.reason, body
+
+    def operation() -> dict:
+        request = Request(
+            url,
+            data=json.dumps(body).encode("utf-8"),
+            headers=dict(headers),
+            method="POST",
         )
-        raise DirectToolLoopError(
-            f"model request failed: HTTP {exc.code} {exc.reason}"
-        ) from exc
-    except Exception as exc:
-        logger.error("model request failed: %s: %s", type(exc).__name__, str(exc)[:300])
-        raise DirectToolLoopError(
-            f"model request failed: {type(exc).__name__}: {str(exc)[:200]}"
-        ) from exc
-    try:
-        loaded = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise DirectToolLoopError("model returned invalid JSON") from exc
-    if not isinstance(loaded, dict):
-        raise DirectToolLoopError("model returned an unexpected payload")
-    return loaded
+        try:
+            with urlopen(request, timeout=DIRECT_REQUEST_TIMEOUT_SEC) as response:
+                raw = response.read().decode("utf-8")
+        except HTTPError as exc:
+            _raise_http_error(exc)
+        except Exception as exc:
+            retry_reason = _transport_retry_reason(exc)
+            if retry_reason is not None:
+                raise
+            logger.error(
+                "model request failed: %s: %s", type(exc).__name__, str(exc)[:300]
+            )
+            raise DirectToolLoopError(
+                f"model request failed: {type(exc).__name__}: {str(exc)[:200]}"
+            ) from exc
+        try:
+            loaded = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise DirectToolLoopError("model returned invalid JSON") from exc
+        if not isinstance(loaded, dict):
+            raise DirectToolLoopError("model returned an unexpected payload")
+        return loaded
+
+    return _with_transport_retry(operation)
+
+
+def _post_sse(
+    url: str,
+    headers: Mapping[str, str],
+    body: Mapping[str, Any],
+    on_delta: Optional[Callable[[str], None]] = None,
+) -> dict[str, Any]:
+    assert_stable_url(url)
+
+    def operation() -> dict[str, Any]:
+        request = Request(
+            url,
+            data=json.dumps(body).encode("utf-8"),
+            headers=dict(headers),
+            method="POST",
+        )
+        try:
+            with urlopen(request, timeout=DIRECT_REQUEST_TIMEOUT_SEC) as response:
+                return _read_sse_response(response, on_delta=on_delta)
+        except HTTPError as exc:
+            _raise_http_error(exc)
+        except Exception as exc:
+            retry_reason = _transport_retry_reason(exc)
+            if retry_reason is not None:
+                raise
+            logger.error(
+                "model request failed: %s: %s", type(exc).__name__, str(exc)[:300]
+            )
+            raise DirectToolLoopError(
+                f"model request failed: {type(exc).__name__}: {str(exc)[:200]}"
+            ) from exc
+
+    return _with_transport_retry(operation)
 
 
 def mcp_tool_declarations() -> list[dict[str, Any]]:
