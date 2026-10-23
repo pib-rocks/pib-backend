@@ -82,13 +82,20 @@ CAPTURED_IMAGE_SENTENCE = (
 )
 
 
-def direct_system_prompt(soul_text: str | None, *, images_shown: bool = False) -> str:
+def direct_system_prompt(
+    soul_text: str | None,
+    *,
+    images_shown: bool = False,
+    robot_context: str | None = None,
+) -> str:
     """The personality's one identity text, used as the Direct system prompt.
 
     MEMORY.md is a Hermes file. This function does not read it.
 
     ``images_shown`` adds what the chat does with a captured picture: the model
     cannot look at the chat, so it is told rather than asked to guess.
+
+    ``robot_context`` appends the robot body description from the motion model API.
     """
     if isinstance(soul_text, str) and soul_text.strip():
         prompt = soul_text.strip()
@@ -97,5 +104,7 @@ def direct_system_prompt(soul_text: str | None, *, images_shown: bool = False) -
 
         prompt = DEFAULT_SOUL
     if images_shown:
-        return f"{prompt}\n\n{CAPTURED_IMAGE_SENTENCE}"
+        prompt = f"{prompt}\n\n{CAPTURED_IMAGE_SENTENCE}"
+    if isinstance(robot_context, str) and robot_context.strip():
+        prompt = f"{prompt}\n\n{robot_context.strip()}"
     return prompt

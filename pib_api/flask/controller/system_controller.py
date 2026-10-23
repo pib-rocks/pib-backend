@@ -23,6 +23,7 @@ from service import (
     revision_service,
     update_service,
 )
+from service.motion_model_service import get_motion_model
 from service.system_property_service import (
     ALLOWED_HARDWARE_VARIANTS,
     HARDWARE_VARIANT_KEY,
@@ -113,6 +114,12 @@ def chat_channels_document() -> dict:
 def get_chat_channels():
     """Channels the UI may offer. Smart is omitted when the installer disabled it."""
     return jsonify(chat_channels_document())
+
+
+@bp.route("/motion-model", methods=["GET"])
+def get_motion_model_route():
+    """Motor limits and named poses for Direct LLM body context."""
+    return jsonify(get_motion_model()), 200
 
 
 @bp.route("/smart-connect", methods=["POST"])
