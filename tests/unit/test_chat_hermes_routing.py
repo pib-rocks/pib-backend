@@ -1823,6 +1823,7 @@ def test_a_reported_tool_call_reaches_the_metadata_and_the_trace(
     node.get_logger = MagicMock(return_value=MagicMock())
     node._turn_trace_publisher = MagicMock()
     node._reset_turn_meta()
+    node._turn_chat_id = "chat-tools"
     node._emit_turn_path(chat_id="chat-tools", path="Hermes", model="gemini-3.8-flash")
 
     node._record_tool_call(
@@ -1850,11 +1851,57 @@ def test_a_reported_tool_call_reaches_the_metadata_and_the_trace(
     ]
     tool_events = [event for event in published if event["stage"] == "tool_call"]
     assert [event["source"] for event in tool_events] == ["capture_image", "set_led"]
+    assert all(event["chat_id"] == "chat-tools" for event in tool_events)
     assert tool_events[1]["detail"]["ok"] is False
     assert tool_events[1]["detail"]["error"] == "RuntimeError"
+    finished = [event for event in published if event["stage"] == "tool_call_finished"]
+    assert len(finished) == 2
+    assert finished[0]["detail"]["arg_names"] == ["hint"]
     # Argument *names* travel, values never do - the record has no value field.
     assert tool_events[0]["detail"]["arg_names"] == ["hint"]
     assert set(meta["toolCalls"][0]) == {"name", "ok", "durationMs", "argNames"}
+
+
+def test_tool_start_and_finish_trace_events_share_call_id_and_chat_id(
+    chat_module, chat_node
+):
+    node = chat_node
+    node.get_logger = MagicMock(return_value=MagicMock())
+    node._turn_trace_publisher = MagicMock()
+    node._reset_turn_meta()
+    node._turn_chat_id = "chat-trace-1"
+
+    node._record_tool_started(
+        {"name": "set_led", "callId": "set_led-0", "argNames": ["color"]}
+    )
+    node._record_tool_finished(
+        {
+            "name": "set_led",
+            "callId": "set_led-0",
+            "ok": True,
+            "durationMs": 3.0,
+            "argNames": ["color"],
+        }
+    )
+
+    published = [
+        json.loads(call.args[0].data)
+        for call in node._turn_trace_publisher.publish.call_args_list
+    ]
+    started = [e for e in published if e["stage"] == "tool_call_started"]
+    finished = [e for e in published if e["stage"] == "tool_call_finished"]
+    legacy = [e for e in published if e["stage"] == "tool_call"]
+    assert len(started) == 1
+    assert len(finished) == 1
+    assert len(legacy) == 1
+    assert started[0]["chat_id"] == "chat-trace-1"
+    assert finished[0]["chat_id"] == "chat-trace-1"
+    assert started[0]["detail"]["call_id"] == "set_led-0"
+    assert finished[0]["detail"]["call_id"] == "set_led-0"
+    assert finished[0]["detail"]["duration_ms"] == 3.0
+    assert finished[0]["detail"]["duration_ms"] >= 0
+    assert "color" in started[0]["detail"]["arg_names"]
+    assert "red" not in json.dumps(published)
 
 
 def test_disabled_hermes_channel_routes_a_smart_personality_direct(
