@@ -23,6 +23,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from pib_hermes_config.retired_direct_text import DIRECT_TEXT_MODEL_API_NAME
+from voice_assistant.llm_defaults import gemini_thinking_config
 from pib_hermes_config.visible_state import (
     ANSWER_GESTURE_TOOLS,
     issue_answer_gesture,
@@ -562,7 +563,10 @@ def build_gemini_request(
 
     body: dict[str, Any] = {
         "contents": contents,
-        "generationConfig": {"maxOutputTokens": DIRECT_MAX_OUTPUT_TOKENS},
+        "generationConfig": {
+            "maxOutputTokens": DIRECT_MAX_OUTPUT_TOKENS,
+            "thinkingConfig": gemini_thinking_config(),
+        },
     }
     if system_parts:
         body["systemInstruction"] = {"parts": [{"text": "\n".join(system_parts)}]}

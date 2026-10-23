@@ -32,7 +32,9 @@ DEFAULT_HERMES_PROVIDER = "gemini"
 # Seeded into agent.reasoning_effort only when that key is absent and no
 # personality value is being applied. Hermes reads the agent block; a
 # root-level reasoning_effort is ignored.
-DEFAULT_REASONING_EFFORT = "low"
+# Thinking off by default (PR-2039): Gemini Flash spent 300-1000 thought tokens per
+# request in a tool loop, which dominated the turn latency on the robot.
+DEFAULT_REASONING_EFFORT = "none"
 DEFAULT_MAX_TOKENS = 1024
 DEFAULT_TEMPERATURE = 0.3
 # Closed set Hermes accepts for agent.reasoning_effort.

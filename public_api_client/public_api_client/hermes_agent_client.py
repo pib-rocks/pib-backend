@@ -100,7 +100,8 @@ DEFAULT_HERMES_PROVIDER = "gemini"
 # High-speed defaults for Gemini Flash / Flash-Lite (PR-1524).
 # Written into the agent block. Hermes reads agent.reasoning_effort and
 # ignores the same keys at the config root.
-DEFAULT_REASONING_EFFORT = "low"
+# Thinking off by default (PR-2039), see pib_hermes_config.DEFAULT_REASONING_EFFORT.
+DEFAULT_REASONING_EFFORT = "none"
 
 # Provider name of the pib.Cloud route. The cloud decides the reasoning effort of its own upstream
 # call (Settings.reasoning_effort), so a value in the profile only travels with every request and
