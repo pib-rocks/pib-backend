@@ -1195,3 +1195,12 @@ def test_live_connect_config_carries_the_zero_thinking_budget():
         if isinstance(key, ast.Constant) and key.value == "thinking_config":
             assert isinstance(value, ast.Call)
             assert getattr(value.func, "id", "") == "live_thinking_config"
+
+
+def test_output_ceiling_holds_a_full_answer():
+    """PR-2040: 1024 could be consumed by thinking, leaving an empty answer."""
+    assert direct_tool_loop.DIRECT_MAX_OUTPUT_TOKENS == 2048
+    _url, _headers, body = build_gemini_request(
+        [{"role": "user", "content": "ping"}], None, "key"
+    )
+    assert body["generationConfig"]["maxOutputTokens"] == 2048
