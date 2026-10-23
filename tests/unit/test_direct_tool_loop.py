@@ -1092,3 +1092,48 @@ def test_round_cap_uses_forced_final_answer_with_stubbed_network(monkeypatch):
     assert answer == "Fertig."
     assert calls[-1]["toolConfig"]["functionCallingConfig"]["mode"] == "NONE"
     assert len(calls) == 2
+
+
+def test_thinking_is_off_on_every_gemini_request():
+    """PR-2039: thinking is off by default. Measured 3.39 s -> 1.66 s per request."""
+    from voice_assistant.llm_defaults import (
+        THINKING_BUDGET,
+        gemini_thinking_config,
+        live_thinking_config,
+    )
+
+    assert THINKING_BUDGET == 0
+    assert gemini_thinking_config() == {"thinkingBudget": 0}
+    assert live_thinking_config() == {"thinking_budget": 0}
+
+
+def test_generate_content_request_carries_the_zero_thinking_budget():
+    url, _headers, body = build_gemini_request(
+        [{"role": "user", "content": "ping"}], None, "key"
+    )
+    assert url == PINNED_ENDPOINT
+    assert body["generationConfig"]["thinkingConfig"] == {"thinkingBudget": 0}
+
+
+def test_live_connect_config_carries_the_zero_thinking_budget():
+    """The Live config is built at import time, so read it without importing rclpy."""
+    import ast
+
+    source = (
+        Path(direct_tool_loop.__file__).resolve().parent / "audio_loop.py"
+    ).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    config = None
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == "CONFIG"
+            for target in node.targets
+        ):
+            config = node.value
+    assert isinstance(config, ast.Dict), "CONFIG dict not found in audio_loop.py"
+    keys = [key.value for key in config.keys if isinstance(key, ast.Constant)]
+    assert "thinking_config" in keys
+    for key, value in zip(config.keys, config.values):
+        if isinstance(key, ast.Constant) and key.value == "thinking_config":
+            assert isinstance(value, ast.Call)
+            assert getattr(value.func, "id", "") == "live_thinking_config"
