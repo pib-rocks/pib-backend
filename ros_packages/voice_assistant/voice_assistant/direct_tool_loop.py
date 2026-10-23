@@ -47,7 +47,10 @@ DIRECT_STREAM_PATH = PINNED_ENDPOINT.replace(
 )
 DIRECT_REQUEST_TIMEOUT_SEC = 180
 DIRECT_RETRY_DELAY_SEC = 2
-DIRECT_MAX_OUTPUT_TOKENS = 1024
+# The answer ceiling. Measured: with thinking on, one request spent 982 thought tokens
+# against a ceiling of 1024 and the answer came back empty. Thinking is off by default
+# since PR-2039; the ceiling still has to hold an answer plus a later re-enable.
+DIRECT_MAX_OUTPUT_TOKENS = 2048
 # The allowlist is the pinned catalogue model. Hermes is a channel, not a row.
 GEMINI_API_NAMES = frozenset({PINNED_MODEL})
 IMAGE_TOOL = "capture_image"
