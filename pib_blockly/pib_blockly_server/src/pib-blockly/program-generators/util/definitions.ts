@@ -32,7 +32,7 @@ export const IMPORT_PIB_SDK = "import pib_sdk";
 export const IMPORT_PIB_SDK_IK =
     "from pib_sdk import ik_deg, Write, right_arm, left_arm";
 export const IMPORT_PIB_SDK_REP103 =
-    "from pib_sdk import from_rep103, to_rep103";
+    "from pib_sdk.kinematics import from_rep103, to_rep103";
 export const IMPORT_PIB_SDK_POSES =
     "from pib_sdk.features.poses import save_current_pose, list_poses, get_pose";
 export const IMPORT_PIB_SDK_PLAY_POSE_SEQUENCE_TIMED =
