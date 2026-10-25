@@ -192,18 +192,18 @@ def test_seed_profiles_use_upper_endpoint_not_invert():
 #: same way, so the seed and this list must not drift apart: change one only
 #: together with a new measurement on the hardware.
 PIB5ADVANCED_MEASURED_MIN_ENDPOINTS = {
-    "elbow_left",
     "lower_arm_left_rotation",
     "middle_left_stretch",
     "middle_right_stretch",
     "ring_right_stretch",
     "shoulder_horizontal_left",
-    "shoulder_horizontal_right",
     "shoulder_vertical_right",
     "thumb_left_opposition",
     "thumb_right_stretch",
     "tilt_forward_motor",
     "upper_arm_left_rotation",
+    "wrist_left",
+    "elbow_right",
 }
 
 

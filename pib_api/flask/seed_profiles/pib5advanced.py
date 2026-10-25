@@ -70,10 +70,23 @@ MOTOR_MAPPING = {
 }
 
 #: The ``upper_endpoint`` values below mirror the measured configuration of the
-#: reference pib5advanced robot (192.168.10.217, 2026-10-23): twelve motors drive
-#: their positive end towards the rotation-range minimum. A fresh install of this
-#: variant must therefore move in the same direction as that robot - keep the two
-#: in sync, and change them only together with a measurement on the hardware.
+#: reference pib5advanced robot: twelve motors drive their positive end towards the
+#: rotation-range minimum. A fresh install of this variant must therefore move in the
+#: same direction as that robot - keep the two in sync, and change them only together
+#: with a measurement on the hardware.
+#:
+#: ``upper_endpoint`` is also the drive sign (``direction_sign = -1`` for ``"min"``,
+#: ``feetech_actuator.py``), applied when commanding and when reading. Four motors had
+#: it set against the mechanics, which made the kinematics model and the robot disagree
+#: about the direction of rotation - measured joint by joint on 192.168.178.164 by
+#: commanding +15 degrees and letting the operator report the motion:
+#:   shoulder_horizontal_right  min -> max   (model wanted the opposite)
+#:   elbow_left                 min -> max
+#:   elbow_right                max -> min
+#:   wrist_left                 max -> min
+#: The other joints were confirmed correct in the same audit: shoulder_vertical (both),
+#: shoulder_horizontal_left, upper_arm_rotation (both), lower_arm_rotation (both) and
+#: wrist_right.
 MOTOR_PARAMETER_DEVIATIONS = {
     "tilt_forward_motor": {
         "rotation_range_min": -2000,
@@ -85,7 +98,7 @@ MOTOR_PARAMETER_DEVIATIONS = {
         "rotation_range_min": -4500,
         "rotation_range_max": 9000,
         "velocity": 10000,
-        "upper_endpoint": "min",
+        "upper_endpoint": "max",
     },
     "lower_arm_left_rotation": {"velocity": 10000, "upper_endpoint": "min"},
     "shoulder_horizontal_left": {"velocity": 10000, "upper_endpoint": "min"},
@@ -94,11 +107,12 @@ MOTOR_PARAMETER_DEVIATIONS = {
         "rotation_range_min": -4500,
         "rotation_range_max": 9000,
         "velocity": 10000,
+        "upper_endpoint": "min",
     },
     "lower_arm_right_rotation": {"velocity": 10000},
     "shoulder_vertical_right": {"velocity": 10000, "upper_endpoint": "min"},
-    "shoulder_horizontal_right": {"velocity": 10000, "upper_endpoint": "min"},
-    "wrist_left": {"velocity": 10000, "visible": False},
+    "shoulder_horizontal_right": {"velocity": 10000, "upper_endpoint": "max"},
+    "wrist_left": {"velocity": 10000, "visible": False, "upper_endpoint": "min"},
     "wrist_right": {"velocity": 10000},
     "thumb_right_opposition": FINGER_MOTOR_PARAMETERS,
     "thumb_right_stretch": INVERTED_FINGER_MOTOR_PARAMETERS,
