@@ -597,3 +597,17 @@ def test_recorded_refusal_omits_reasoning_effort_on_the_next_profile_write(tmp_p
         "gemini", None, "gemini-3.8-flash", "reasoning_effort"
     )
     clear_provider_refused_fields_cache()
+
+
+def test_pib_cloud_refusals_are_known_before_the_first_request():
+    """PR-2055: the guarded route must not be probed with a 400 after every start.
+
+    Measured on .164 on 2026-10-25: the first chat after a daemon start waited
+    8.2 s for its first token (agent 2.5 s + a rejected reasoning_effort and
+    stream_options), while the next chat answered in 815 ms.
+    """
+    for field in ("reasoning_effort", "stream_options", "response_format"):
+        assert provider_refuses_field("pib-cloud", None, "pib-cloud", field)
+    assert not provider_refuses_field(
+        "gemini", None, "gemini-3.8-flash", "reasoning_effort"
+    )
