@@ -1,14 +1,22 @@
 from public_api_client.hermes_agent_client import (
+    DEFAULT_REASONING_EFFORT,
     FALLBACK_REPLY,
+    PIB_CLOUD_PROVIDER,
+    _ensure_mcp_servers_pib,
+    apply_provider_capability_cache_to_cfg,
     build_default_soul_text,
+    clear_provider_refused_fields_cache,
     ensure_profile,
+    record_provider_refused_fields,
     session_name_for,
     build_command,
     hermes_binary_available,
     profile_name_for,
+    provider_refuses_field,
     run_turn,
     uses_hermes_backend,
 )
+import yaml
 from pib_hermes_config import (
     MCP_TOOLS,
     MCP_TOOLS_SOUL_SECTION,
@@ -448,3 +456,59 @@ def test_ensure_profile_writes_the_supplied_model_and_provider(tmp_path, monkeyp
     assert cfg["providers"]["local"]["base_url"] == (
         "http://host.docker.internal:11434/v1"
     )
+
+
+def test_pib_cloud_profile_written_without_reasoning_effort(tmp_path):
+    """pib.Cloud refuses reasoning_effort on the wire; the profile must not carry it."""
+    pdir = tmp_path / "cloud"
+    pdir.mkdir()
+    with open(pdir / "config.yaml", "w", encoding="utf-8") as fh:
+        yaml.safe_dump(
+            {
+                "model": "pib-cloud",
+                "provider": PIB_CLOUD_PROVIDER,
+                "agent": {"reasoning_effort": "medium"},
+            },
+            fh,
+        )
+
+    _ensure_mcp_servers_pib(str(pdir), model="pib-cloud", provider=PIB_CLOUD_PROVIDER)
+
+    with open(pdir / "config.yaml", encoding="utf-8") as fh:
+        cfg = yaml.safe_load(fh)
+    assert "reasoning_effort" not in cfg["agent"]
+
+
+def test_gemini_profile_keeps_default_reasoning_effort(tmp_path):
+    pdir = tmp_path / "gemini"
+    pdir.mkdir()
+    with open(pdir / "config.yaml", "w", encoding="utf-8") as fh:
+        yaml.safe_dump({"model": "gemini-3.8-flash", "provider": "gemini"}, fh)
+
+    _ensure_mcp_servers_pib(str(pdir), model="gemini-3.8-flash", provider="gemini")
+
+    with open(pdir / "config.yaml", encoding="utf-8") as fh:
+        cfg = yaml.safe_load(fh)
+    assert cfg["agent"]["reasoning_effort"] == DEFAULT_REASONING_EFFORT
+
+
+def test_recorded_refusal_omits_reasoning_effort_on_the_next_profile_write(tmp_path):
+    clear_provider_refused_fields_cache()
+    record_provider_refused_fields(
+        "gemini", None, "gemini-3.8-flash", "reasoning_effort"
+    )
+
+    pdir = tmp_path / "gemini_refused"
+    pdir.mkdir()
+    with open(pdir / "config.yaml", "w", encoding="utf-8") as fh:
+        yaml.safe_dump({"model": "gemini-3.8-flash", "provider": "gemini"}, fh)
+
+    _ensure_mcp_servers_pib(str(pdir), model="gemini-3.8-flash", provider="gemini")
+
+    with open(pdir / "config.yaml", encoding="utf-8") as fh:
+        cfg = yaml.safe_load(fh)
+    assert "reasoning_effort" not in cfg["agent"]
+    assert provider_refuses_field(
+        "gemini", None, "gemini-3.8-flash", "reasoning_effort"
+    )
+    clear_provider_refused_fields_cache()
