@@ -113,4 +113,33 @@ assert(
     "relative move_motor must convert ROS centidegrees only in get_joint_position helper",
 );
 
+const handWorkspace = new Blockly.Workspace();
+Blockly.Events.disable();
+try {
+    const setHandBlock = handWorkspace.newBlock("set_hand_position_xyz");
+    const setTooltip = String(setHandBlock.tooltip ?? "").toLowerCase();
+    assert(
+        setTooltip.includes("rep-103") &&
+            setTooltip.includes("forward") &&
+            setTooltip.includes("left") &&
+            setTooltip.includes("up"),
+        "set_hand_position_xyz tooltip must describe REP-103 forward/left/up",
+    );
+
+    for (const blockType of ["get_hand_x", "get_hand_y", "get_hand_z"]) {
+        const getBlock = handWorkspace.newBlock(blockType);
+        const tooltip = String(getBlock.tooltip ?? "").toLowerCase();
+        assert(
+            tooltip.includes("rep-103") &&
+                tooltip.includes("forward") &&
+                tooltip.includes("left") &&
+                tooltip.includes("up"),
+            `${blockType} tooltip must describe REP-103 forward/left/up`,
+        );
+    }
+} finally {
+    handWorkspace.dispose();
+    Blockly.Events.enable();
+}
+
 console.log("motor block tests passed");

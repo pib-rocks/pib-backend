@@ -78,9 +78,14 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(side: str, mode: str, x, y, z) -> No
 
     if mode == "RELATIVE":
         current = get_hand_position_xyz(side)
-        target = [current[0] + x, current[1] + y, current[2] + z]
+        offset = list(from_rep103([x, y, z]))
+        target = [
+            current[0] + offset[0],
+            current[1] + offset[1],
+            current[2] + offset[2],
+        ]
     else:
-        target = [x, y, z]
+        target = list(from_rep103([x, y, z]))
 
     logging.info(f"setting {side} hand position to xyz={target}.")
     q_deg = ik(side, xyz=target)
