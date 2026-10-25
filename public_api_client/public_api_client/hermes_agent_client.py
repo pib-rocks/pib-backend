@@ -610,6 +610,29 @@ def _apply_profile_tool_search_defaults(cfg: dict) -> bool:
     return changed
 
 
+def _apply_profile_auxiliary_defaults(cfg: dict) -> bool:
+    """Keep the derived chat title instead of paying a model call for it (PR-2058).
+
+    Hermes upgrades the instantly derived title with an auxiliary model call. On a
+    route that refuses ``reasoning_effort`` and ``response_format`` (pib.Cloud, PC-69)
+    that call is rejected twice per new chat - measured 2026-10-25 18:11 in the
+    daemon log - before the title is given up. The derived title is enough for the
+    chat list, so the upgrade is pinned off in every personality profile.
+    """
+    auxiliary = cfg.get("auxiliary")
+    if not isinstance(auxiliary, dict):
+        auxiliary = {}
+        cfg["auxiliary"] = auxiliary
+    title_generation = auxiliary.get("title_generation")
+    if not isinstance(title_generation, dict):
+        title_generation = {}
+        auxiliary["title_generation"] = title_generation
+    if title_generation.get("model_upgrade_enabled") is False:
+        return False
+    title_generation["model_upgrade_enabled"] = False
+    return True
+
+
 def _ensure_mcp_servers_pib(
     pdir: str,
     model: Optional[str] = None,
@@ -727,6 +750,9 @@ def _ensure_mcp_servers_pib(
         changed = True
 
     if _apply_profile_tool_search_defaults(cfg):
+        changed = True
+
+    if _apply_profile_auxiliary_defaults(cfg):
         changed = True
 
     route_base_url = base_url or _route_base_url_from_cfg(cfg, desired_provider)

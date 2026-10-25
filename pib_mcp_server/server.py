@@ -119,10 +119,10 @@ def create_server(
         )
 
     @server.tool(annotations=read_annotations, structured_output=True)
-    def list_motors() -> dict[str, Any]:
-        """List configured motors and bricklets, including live motor positions."""
+    def list_motors(detail: bool = False) -> dict[str, Any]:
+        """List motors with live positions; pass detail=true for full config and bricklets."""
 
-        return _invoke(robot.list_motors)
+        return _invoke(robot.list_motors, detail)
 
     @server.tool(annotations=read_annotations, structured_output=True)
     def get_state() -> dict[str, Any]:
