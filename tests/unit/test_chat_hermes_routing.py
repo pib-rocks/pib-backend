@@ -2623,3 +2623,42 @@ def test_publish_keeps_a_real_message_id(chat_module, chat_node):
 
     published = node.chat_message_publisher.publish.call_args[0][0]
     assert published.message_id == "msg-9"
+
+
+def test_chat_turn_aborts_cleanly_when_chat_cannot_be_resolved(
+    chat_module, chat_node, caplog
+):
+    """PR-2046: an unknown chat id must not crash the node with TypeError."""
+    import logging
+
+    Chat = chat_module.Chat
+    logger = MagicMock()
+    chat_node.get_logger = MagicMock(return_value=logger)
+    chat_node._attention = MagicMock()
+    chat_node._attention.before_answer.return_value = MagicMock()
+
+    goal_handle = MagicMock()
+    goal_handle.is_cancel_requested = False
+    goal_handle.request = Chat.Goal()
+    goal_handle.request.chat_id = "unknown-chat-2046"
+    goal_handle.request.text = "Hi"
+    goal_handle.request.generate_code = False
+
+    with (
+        patch.object(
+            chat_module.voice_assistant_client,
+            "get_personality_from_chat",
+            return_value=(False, None),
+        ),
+        patch.object(chat_node, "_stream_hermes_turn") as hermes_stream,
+    ):
+        with caplog.at_level(logging.ERROR):
+            result = drive_like_rclpy(chat_node.chat(goal_handle))
+
+    hermes_stream.assert_not_called()
+    goal_handle.abort.assert_called_once()
+    goal_handle.succeed.assert_not_called()
+    assert result.text == ""
+    error_messages = [call[0][0] for call in logger.error.call_args_list]
+    assert any("unknown-chat-2046" in msg for msg in error_messages)
+    assert not any("TypeError" in record.message for record in caplog.records)

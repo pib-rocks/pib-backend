@@ -87,6 +87,33 @@ def test_send_request_logs_payload_length_not_body_on_http_error(monkeypatch, ca
     assert "server said no" in message
 
 
+def test_get_chat_returns_false_none_when_send_request_fails(monkeypatch):
+    monkeypatch.setattr(vac, "send_request", lambda _req: (False, None))
+
+    successful, chat = vac.get_chat("missing-chat-id")
+
+    assert successful is False
+    assert chat is None
+
+
+def test_get_chat_returns_false_none_when_payload_is_not_a_dict(monkeypatch):
+    monkeypatch.setattr(vac, "send_request", lambda _req: (True, None))
+
+    successful, chat = vac.get_chat("chat-1")
+
+    assert successful is False
+    assert chat is None
+
+
+def test_get_personality_from_chat_returns_false_none_for_unknown_chat(monkeypatch):
+    monkeypatch.setattr(vac, "send_request", lambda _req: (False, None))
+
+    successful, personality = vac.get_personality_from_chat("unknown-chat")
+
+    assert successful is False
+    assert personality is None
+
+
 def test_send_request_truncates_long_response_body_in_log(monkeypatch, caplog):
     long_body = "x" * 500
 
