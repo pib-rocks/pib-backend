@@ -1,6 +1,6 @@
 import {Block} from "blockly/core/block";
 import {Order, pythonGenerator} from "blockly/python";
-import {CONFIGURE_LOGGING, IMPORT_GET_JOINT_POSITION, IMPORT_LOGGING, IMPORT_OS, IMPORT_PIB_SDK, IMPORT_PIB_SDK_IK, IMPORT_PIB_SDK_TELEMETRY, IMPORT_RCLPY, IMPORT_SYS, INIT_GET_JOINT_POSITION_CLIENT, INIT_ROS, addDefinitions} from "./util/definitions";
+import {CONFIGURE_LOGGING, IMPORT_GET_JOINT_POSITION, IMPORT_LOGGING, IMPORT_OS, IMPORT_PIB_SDK, IMPORT_PIB_SDK_IK, IMPORT_PIB_SDK_REP103, IMPORT_PIB_SDK_TELEMETRY, IMPORT_RCLPY, IMPORT_SYS, INIT_GET_JOINT_POSITION_CLIENT, INIT_ROS, addDefinitions} from "./util/definitions";
 import {
     APPLY_JOINT_TRAJECTORY_FUNCTION,
     CENTIDEGREES_TO_DEGREES_FUNCTION,
@@ -151,6 +151,7 @@ export function set_hand_position_xyz(
         IMPORT_LOGGING,
         IMPORT_PIB_SDK_IK,
         IMPORT_PIB_SDK_GET_HAND_POSITION_XYZ,
+        IMPORT_PIB_SDK_REP103,
         CONFIGURE_LOGGING,
         INIT_ROS,
     });
@@ -180,9 +181,13 @@ function getHandPositionComponent(
 
     addDefinitions(generator, {
         IMPORT_PIB_SDK_GET_HAND_POSITION_XYZ,
+        IMPORT_PIB_SDK_REP103,
     });
 
-    return [`get_hand_position_xyz("${side}")[${index}]`, Order.MEMBER];
+    return [
+        `to_rep103(get_hand_position_xyz("${side}"))[${index}]`,
+        Order.MEMBER,
+    ];
 }
 
 export function get_hand_x(block: Block, generator: typeof pythonGenerator) {

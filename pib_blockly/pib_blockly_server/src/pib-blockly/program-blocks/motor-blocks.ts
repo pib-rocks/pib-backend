@@ -41,7 +41,7 @@ const MOTOR_NAME_DROPDOWN_OPTIONS = [
 ];
 
 const handPositionTooltip = (axis: string) =>
-    `Returns the ${axis} coordinate of the selected hand in millimeters. The value is the position the hand was last commanded to move to, not live encoder feedback. Left/right is from pib's own perspective: imagine standing in front of pib and looking at him (the same binding used across pib part numbering e.g. C35R/C35L).`;
+    `Returns the ${axis} coordinate of the selected hand in millimeters. X is forward, Y is to pib's own left, Z is up, in millimetres (REP-103). The value is the position the hand was last commanded to move to, not live encoder feedback. Left/right is from pib's own perspective: imagine standing in front of pib and looking at him (the same binding used across pib part numbering e.g. C35R/C35L).`;
 
 export const motor_blocks = Blockly.common.createBlockDefinitionsFromJsonArray([
     {
@@ -146,7 +146,7 @@ export const motor_blocks = Blockly.common.createBlockDefinitionsFromJsonArray([
         nextStatement: null,
         colour: 355,
         tooltip:
-            "Moves the selected hand to a target XYZ position in millimeters using inverse kinematics. Absolute mode uses workspace coordinates; relative mode offsets the current commanded hand position. Left/right is from pib's own perspective: imagine standing in front of pib and looking at him (the same binding used across pib part numbering e.g. C35R/C35L).",
+            "Moves the selected hand to a target XYZ position in millimeters using inverse kinematics. X is forward, Y is to pib's own left, Z is up, in millimetres (REP-103). Absolute mode sets that workspace position; relative mode offsets the current commanded hand position along those axes. Left/right is from pib's own perspective: imagine standing in front of pib and looking at him (the same binding used across pib part numbering e.g. C35R/C35L).",
         helpUrl: "",
     },
     {

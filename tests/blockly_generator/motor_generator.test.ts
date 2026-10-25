@@ -153,7 +153,8 @@ describe("set_hand_position_xyz generator", () => {
     );
     const defs = Object.values(generator.definitions_).join("\n");
     expect(defs).toContain("from pib_sdk import ik, Write, right_arm, left_arm");
-    expect(defs).toContain("target = [x, y, z]");
+    expect(defs).toContain("from pib_sdk import from_rep103, to_rep103");
+    expect(defs).toContain("target = list(from_rep103([x, y, z]))");
     expect(defs).toContain("q_deg = ik(side, xyz=target)");
     expect(defs).toContain("pib.move(arm, *q_deg)");
     expect(defs).toContain('os.getenv("ROSBRIDGE_HOST", "rosbridge-ws")');
@@ -171,10 +172,10 @@ describe("set_hand_position_xyz generator", () => {
     );
     const defs = Object.values(generator.definitions_).join("\n");
     expect(defs).toContain("from pib_sdk import get_hand_position_xyz");
+    expect(defs).toContain("from pib_sdk import from_rep103, to_rep103");
     expect(defs).toContain("current = get_hand_position_xyz(side)");
-    expect(defs).toContain(
-      "target = [current[0] + x, current[1] + y, current[2] + z]",
-    );
+    expect(defs).toContain("offset = list(from_rep103([x, y, z]))");
+    expect(defs).toContain("current[0] + offset[0]");
 
     // the inline forward-kinematics helper was replaced by the sdk call
     expect(defs).not.toContain("get_current_hand_position");
@@ -205,11 +206,13 @@ describe("get_hand_x/y/z generators", () => {
 
       const [code, order] = blockGenerator(block, generator) as [string, Order];
 
-      expect(code).toBe(`get_hand_position_xyz("left")[${index}]`);
-      expect(order).toBe(Order.MEMBER);
-      expect(Object.values(generator.definitions_).join("\n")).toContain(
-        "from pib_sdk import get_hand_position_xyz",
+      expect(code).toBe(
+        `to_rep103(get_hand_position_xyz("left"))[${index}]`,
       );
+      expect(order).toBe(Order.MEMBER);
+      const defs = Object.values(generator.definitions_).join("\n");
+      expect(defs).toContain("from pib_sdk import get_hand_position_xyz");
+      expect(defs).toContain("from pib_sdk import from_rep103, to_rep103");
     },
   );
 
@@ -221,7 +224,7 @@ describe("get_hand_x/y/z generators", () => {
 
     const [code] = get_hand_y(block, generator) as [string, Order];
 
-    expect(code).toBe('get_hand_position_xyz("right")[1]');
+    expect(code).toBe('to_rep103(get_hand_position_xyz("right"))[1]');
   });
 
   it("rejects an invalid side", () => {
