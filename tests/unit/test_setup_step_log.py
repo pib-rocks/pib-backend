@@ -163,7 +163,15 @@ def test_the_installer_wraps_every_step_and_ends_with_the_summary():
         assert bare not in main, bare
     # `return 1` at the top level of the script is not an exit; fatal steps abort.
     assert "return 1; }" not in main
-    assert main.count("abort_setup ") >= 4
+    assert main.count("abort_setup ") >= 5
+    assert re.search(
+        r'run_step "Provision curated OAK models" provision_curated_models provision \|\|\s*\n\s*abort_setup',
+        main,
+    )
+    assert re.search(
+        r'run_step "Provision supertone model" provision_supertone_model \|\|\s*\n\s*abort_setup',
+        main,
+    )
     assert main.index("print_step_summary") < main.index('"Installation completed"')
     assert "Installation completed with ${STEP_FAILURES} failed step(s)" in main
 
