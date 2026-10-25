@@ -74,12 +74,12 @@ def solve_arm_target(
     return solution
 
 
-def degrees_to_hundredths(joint_degrees: Sequence[float]) -> tuple[float, ...]:
-    """Convert finite joint degrees to the motor controller's internal unit."""
+def degrees_to_radians(joint_degrees: Sequence[float]) -> tuple[float, ...]:
+    """Convert finite joint degrees to radians for ``/apply_joint_trajectory``."""
     values = tuple(float(value) for value in joint_degrees)
     if not values or not all(map(math.isfinite, values)):
         raise ValueError("joint target must contain finite values")
-    return tuple(float(round(value * 100.0)) for value in values)
+    return tuple(math.radians(value) for value in values)
 
 
 def build_timed_trajectory(
@@ -91,8 +91,8 @@ def build_timed_trajectory(
 ) -> TimedTrajectory:
     """Build two full-joint waypoints consumed by TrajectoryExecutor."""
     names = tuple(str(name) for name in motor_names)
-    previous = degrees_to_hundredths(previous_degrees)
-    target = degrees_to_hundredths(target_degrees)
+    previous = degrees_to_radians(previous_degrees)
+    target = degrees_to_radians(target_degrees)
     if not names or len(set(names)) != len(names):
         raise ValueError("motor names must be non-empty and unique")
     if len(names) != len(previous) or len(names) != len(target):

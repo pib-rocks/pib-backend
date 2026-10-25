@@ -1,4 +1,5 @@
-from typing import Iterable, Tuple
+from typing import Iterable, Mapping, Sequence, Tuple
+import math
 import rclpy
 from datatypes.msg import MotorSettings, SolidStateRelayState
 from datatypes.srv import ApplyMotorSettings, ApplyJointTrajectory, GetJointPosition
@@ -7,7 +8,9 @@ from pib_motors.bricklet import ipcon, connected_enumerate, solid_state_relay_br
 from pib_motors.motor import name_to_motors, motors
 from rclpy.node import Node
 from pib_motors.startup_pose_executor import StartupPoseExecutor
+from pib_motors.motor import Motor
 from pib_motors.trajectory_executor import TrajectoryExecutor, is_software_trajectory
+from pib_motors.units import centideg_to_rad, rad_to_centideg
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 
@@ -36,14 +39,91 @@ def as_motor_positions(jt: JointTrajectory) -> Iterable[Tuple[str, int]]:
     return zip(motor_names, positions)
 
 
-def as_joint_trajectory(motor_name: str, position: int) -> JointTrajectory:
-    """converts a motorname and position into a simple jt-message"""
+def as_joint_trajectory(motor_name: str, position_centideg: int) -> JointTrajectory:
+    """Build a single-joint ``/joint_trajectory`` message (positions in radians)."""
     jt = JointTrajectory()
     jt.joint_names = [motor_name]
     point = JointTrajectoryPoint()
-    point.positions.append(position)
+    point.positions.append(centideg_to_rad(position_centideg))
     jt.points = [point]
     return jt
+
+
+def joint_trajectory_radians_to_centidegrees(
+    jt: JointTrajectory,
+    name_to_motors: Mapping[str, Sequence[Motor]],
+) -> JointTrajectory:
+    """Validate ROS radians and return a trajectory for internal centidegree control."""
+    converted = JointTrajectory()
+    converted.joint_names = list(jt.joint_names)
+    names = converted.joint_names
+    points = list(jt.points)
+    if not names or not points:
+        return converted
+
+    legacy_zip = (
+        len(names) > 1
+        and len(points) == len(names)
+        and all(len(point.positions) <= 1 for point in points)
+    )
+
+    if legacy_zip:
+        for joint_name, point in zip(names, points):
+            positions = list(point.positions)
+            if not positions:
+                raise ValueError(
+                    f"trajectory point for joint '{joint_name}' has no position"
+                )
+            new_point = JointTrajectoryPoint()
+            new_point.time_from_start = point.time_from_start
+            new_point.positions.append(
+                _rad_to_centideg_for_joint(
+                    joint_name, float(positions[0]), name_to_motors
+                )
+            )
+            converted.points.append(new_point)
+        return converted
+
+    for point in points:
+        positions = list(point.positions)
+        if len(positions) < len(names):
+            raise ValueError(
+                f"trajectory point has {len(positions)} positions for "
+                f"{len(names)} joint names"
+            )
+        new_point = JointTrajectoryPoint()
+        new_point.time_from_start = point.time_from_start
+        new_point.velocities = list(point.velocities)
+        new_point.accelerations = list(point.accelerations)
+        new_point.effort = list(point.effort)
+        for joint_name, rad in zip(names, positions):
+            new_point.positions.append(
+                _rad_to_centideg_for_joint(joint_name, float(rad), name_to_motors)
+            )
+        converted.points.append(new_point)
+
+    return converted
+
+
+def _rad_to_centideg_for_joint(
+    joint_name: str,
+    radians: float,
+    name_to_motors: Mapping[str, Sequence[Motor]],
+) -> float:
+    if joint_name not in name_to_motors:
+        raise ValueError(f"unknown joint name '{joint_name}'")
+    if not math.isfinite(radians):
+        raise ValueError(f"joint '{joint_name}' position must be finite, got {radians}")
+    centideg = rad_to_centideg(radians)
+    motor = name_to_motors[joint_name][0]
+    min_pos = motor.rotation_range_min
+    max_pos = motor.rotation_range_max
+    if centideg < min_pos or centideg > max_pos:
+        raise ValueError(
+            f"joint '{joint_name}' position {radians} rad ({centideg} centideg) "
+            f"is outside allowed range [{min_pos}, {max_pos}] centidegrees"
+        )
+    return float(centideg)
 
 
 class MotorControl(Node):
@@ -207,9 +287,16 @@ class MotorControl(Node):
         request: ApplyJointTrajectory.Request,
         response: ApplyJointTrajectory.Response,
     ) -> ApplyJointTrajectory.Response:
-        jt = request.joint_trajectory
+        """Apply a ``trajectory_msgs/JointTrajectory`` whose positions are in radians.
+
+        Positions are converted once at entry to integer centidegrees for motors and
+        ``TrajectoryExecutor``. Non-finite values and out-of-range targets are rejected.
+        """
         response.successful = True
         try:
+            jt = joint_trajectory_radians_to_centidegrees(
+                request.joint_trajectory, name_to_motors
+            )
             if is_software_trajectory(jt):
                 response.successful = self.trajectory_executor.execute(jt)
                 if response.successful:
