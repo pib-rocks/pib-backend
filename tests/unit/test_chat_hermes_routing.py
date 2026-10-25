@@ -401,7 +401,9 @@ def test_warm_daemon_turn_uses_in_process_runner(chat_module, chat_node, monkeyp
 
     assert reply == "in-process-via-daemon"
     fake_agent_cls.assert_called_once()
-    assert fake_agent_cls.call_args.kwargs["session_id"] == "pib_chat_chat-ip"
+    # PR-2052: one warm agent per personality; the chat's session is bound per turn
+    # instead of at construction.
+    assert fake_agent.session_id == "pib_chat_chat-ip"
     assert fake_agent_cls.call_args.kwargs["max_iterations"] == 4
     assert fake_agent_cls.call_args.kwargs["disabled_toolsets"] == [
         "terminal",
