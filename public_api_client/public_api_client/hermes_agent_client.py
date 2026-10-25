@@ -24,6 +24,7 @@ import yaml
 from pib_hermes_config import (
     DEFAULT_SOUL,
     PROFILE_PREFIX,
+    PROFILE_TOOL_SEARCH_CONFIG,
     REASONING_EFFORT_ERROR,
     REASONING_EFFORTS,
     align_profile_ownership,
@@ -426,6 +427,30 @@ def _apply_agent_speed_defaults(
     return changed
 
 
+def _apply_profile_tool_search_defaults(cfg: dict) -> bool:
+    """Keep robot MCP tools eager (PR-2053): pin ``tools.tool_search.enabled`` off.
+
+    Hermes defaults defer MCP/plugin tools behind the tool_search bridge; each
+    deferred tool costs an extra model round trip. The backend repairs this on
+    every provisioning pass so rewrites cannot drift.
+    """
+    desired = PROFILE_TOOL_SEARCH_CONFIG
+    tools = cfg.get("tools")
+    if not isinstance(tools, dict):
+        tools = {}
+        cfg["tools"] = tools
+    tool_search = tools.get("tool_search")
+    if not isinstance(tool_search, dict):
+        tool_search = {}
+        tools["tool_search"] = tool_search
+    changed = False
+    for key, value in desired["tool_search"].items():
+        if tool_search.get(key) != value:
+            tool_search[key] = value
+            changed = True
+    return changed
+
+
 def _ensure_mcp_servers_pib(
     pdir: str,
     model: Optional[str] = None,
@@ -540,6 +565,9 @@ def _ensure_mcp_servers_pib(
         personality_reasoning=personality_reasoning,
         provider=desired_provider,
     ):
+        changed = True
+
+    if _apply_profile_tool_search_defaults(cfg):
         changed = True
 
     # A user-defined route is declared under providers.<name>. Built-in

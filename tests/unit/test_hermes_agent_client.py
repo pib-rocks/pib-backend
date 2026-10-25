@@ -10,10 +10,15 @@ from public_api_client.hermes_agent_client import (
     uses_hermes_backend,
 )
 from pib_hermes_config import (
+    HERMES_VISION_ANALYZE_MEASURED_OUTPUT_TOKENS,
+    HERMES_VISION_ANALYZE_PROMPT_PREFIX,
+    HERMES_VISION_TOOLS_MODULE,
     MCP_TOOLS,
     MCP_TOOLS_SOUL_SECTION,
+    PROFILE_TOOL_SEARCH_CONFIG,
     strip_mcp_tools_soul_section,
 )
+from public_api_client.hermes_agent_client import _ensure_mcp_servers_pib
 import os
 import subprocess
 from unittest.mock import patch
@@ -447,4 +452,84 @@ def test_ensure_profile_writes_the_supplied_model_and_provider(tmp_path, monkeyp
     assert cfg["provider"] == "local"
     assert cfg["providers"]["local"]["base_url"] == (
         "http://host.docker.internal:11434/v1"
+    )
+
+
+def _assert_profile_keeps_robot_tools_eager(cfg):
+    """PR-2053: MCP tools must not sit behind tool_search (extra model round trip)."""
+    assert cfg["tools"]["tool_search"] == PROFILE_TOOL_SEARCH_CONFIG["tool_search"]
+
+
+def test_profile_config_disables_tool_search_for_tool_calling(tmp_path, monkeypatch):
+    """PR-2053: tool_calling=True keeps the robot MCP tools eager in config.yaml."""
+    monkeypatch.setenv("PIB_HERMES_PROFILES_DIR", str(tmp_path / "profiles"))
+    monkeypatch.setenv("PIB_HERMES_PROFILE_FACTORY", "filesystem")
+    monkeypatch.setenv("PIB_HERMES_BIN", str(tmp_path / "not-installed" / "hermes"))
+
+    import yaml
+
+    pdir = ensure_profile(
+        "p-tools-on",
+        soul_text="Du bist pib.",
+        model="gemini-3.8-flash",
+        provider="gemini",
+        tool_calling=True,
+    )
+    with open(os.path.join(pdir, "config.yaml"), encoding="utf-8") as fh:
+        cfg = yaml.safe_load(fh)
+    _assert_profile_keeps_robot_tools_eager(cfg)
+
+
+def test_profile_config_disables_tool_search_when_tool_calling_is_off(
+    tmp_path, monkeypatch
+):
+    """PR-2053: tool_calling=False still writes the same eager-tools knob.
+
+    Without MCP the profile exposes memory and skills only, but Hermes would
+    still defer plugin tools when tool_search stays on auto; the backend pins
+    the setting for every personality it provisions.
+    """
+    monkeypatch.setenv("PIB_HERMES_PROFILES_DIR", str(tmp_path / "profiles"))
+    monkeypatch.setenv("PIB_HERMES_PROFILE_FACTORY", "filesystem")
+    monkeypatch.setenv("PIB_HERMES_BIN", str(tmp_path / "not-installed" / "hermes"))
+
+    import yaml
+
+    pdir = ensure_profile(
+        "p-tools-off",
+        soul_text="Du bist pib.",
+        model="gemini-3.8-flash",
+        provider="gemini",
+        tool_calling=False,
+    )
+    with open(os.path.join(pdir, "config.yaml"), encoding="utf-8") as fh:
+        cfg = yaml.safe_load(fh)
+    _assert_profile_keeps_robot_tools_eager(cfg)
+    assert cfg["mcp_servers"]["pib"]["enabled"] is False
+
+
+def test_reprovisioning_keeps_tool_search_disabled(tmp_path):
+    """PR-2053: a second _ensure_mcp_servers_pib pass must not drop the setting."""
+    import yaml
+
+    pdir = tmp_path / "pib_reprovision"
+    pdir.mkdir()
+    (pdir / "config.yaml").write_text(
+        "model: gemini-3.8-flash\nprovider: gemini\n", encoding="utf-8"
+    )
+    for _ in range(2):
+        _ensure_mcp_servers_pib(
+            str(pdir), model="gemini-3.8-flash", provider="gemini", tool_calling=True
+        )
+    with open(pdir / "config.yaml", encoding="utf-8") as fh:
+        cfg = yaml.safe_load(fh)
+    _assert_profile_keeps_robot_tools_eager(cfg)
+
+
+def test_vision_analyze_limitation_is_documented_in_pib_hermes_config():
+    """PR-2053: upstream vision wrapper cost is recorded with its package path."""
+    assert HERMES_VISION_TOOLS_MODULE == "tools/vision_tools.py"
+    assert HERMES_VISION_ANALYZE_MEASURED_OUTPUT_TOKENS == 1444
+    assert "Fully describe and explain everything about this image" in (
+        HERMES_VISION_ANALYZE_PROMPT_PREFIX
     )
