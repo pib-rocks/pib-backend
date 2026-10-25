@@ -39,6 +39,8 @@ from pib_hermes_config.visible_state import (
 from public_api_client.hermes_agent_client import FALLBACK_REPLY
 from std_msgs.msg import Bool, String
 from voice_assistant.turn_latency import (
+    format_perf_trace_tts_first_audio,
+    tts_first_audio_elapsed_ms,
     TURN_TRACE_TOPIC,
     TurnTrace,
     append_record,
@@ -911,6 +913,7 @@ class VoiceAssistantNode(Node):
             if self._turn_trace.is_open:
                 self._close_latency_turn(incomplete=True)
             self._sentence_flushed = False
+            self._tts_first_audio_logged = False
             self._turn_trace.open(
                 self.state.chat_id or "",
                 self._trace_source(),
@@ -987,6 +990,17 @@ class VoiceAssistantNode(Node):
                     self._turn_trace.dropped_events += 1
                     return
                 self._turn_trace.observe(event)
+                if event.get("stage") == "first_audio" and not getattr(
+                    self, "_tts_first_audio_logged", False
+                ):
+                    elapsed = tts_first_audio_elapsed_ms(self._turn_trace)
+                    if elapsed is not None:
+                        self._tts_first_audio_logged = True
+                        self.get_logger().info(
+                            format_perf_trace_tts_first_audio(
+                                self._turn_trace.chat_id, elapsed
+                            )
+                        )
                 return
             if event.get("stage") == "end_of_speech":
                 self._pending_end_of_speech = event

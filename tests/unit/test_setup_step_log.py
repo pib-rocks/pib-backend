@@ -138,6 +138,7 @@ def test_the_installer_wraps_every_step_and_ends_with_the_summary():
         ("Clone repositories", "clone_repositories"),
         ("Provision curated OAK models", "provision_curated_models provision"),
         ("Provision whisper model", "provision_whisper_model"),
+        ("Provision supertone model", "provision_supertone_model"),
         ("Install pib Python packages", "install_pib_python_packages"),
         ("Put ~/.local/bin on PATH", "install_local_bin_path"),
         ("Install Hermes CLI", "install_hermes_cli"),

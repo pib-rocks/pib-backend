@@ -13,6 +13,11 @@ renders as ``0.00``. Stamps older than the origin are dropped: they belong to
 a previous turn.
 
 Nothing here blocks, retries, or speaks. A bad event is counted and ignored.
+
+``[PERF_TRACE] TTS_FIRST_AUDIO`` is the gap from ``first_sentence_flushed`` to
+``first_audio`` for one spoken turn (milliseconds, one line per turn, includes
+``chat=<id>``). The voice-assistant node logs it when the audio player reports
+the first answer PCM chunk.
 """
 
 from __future__ import annotations
@@ -107,6 +112,20 @@ def audio_event_belongs_to_turn(stage: str, sentence_flushed: bool) -> bool:
 def now_ms() -> float:
     """Monotonic milliseconds. Comparable across processes on one machine."""
     return time.monotonic() * 1000.0
+
+
+def tts_first_audio_elapsed_ms(trace: TurnTrace) -> Optional[float]:
+    """Milliseconds from first_sentence_flushed to first_audio, if both exist."""
+    return trace.delta("first_sentence_flushed", "first_audio")
+
+
+def format_perf_trace_tts_first_audio(chat_id: str, elapsed_ms: float) -> str:
+    """One ``[PERF_TRACE]`` line for TTS time-to-first-sample."""
+    safe_id = chat_id or ""
+    return (
+        f"[PERF_TRACE] TTS_FIRST_AUDIO chat={safe_id} "
+        f"elapsed_ms={float(elapsed_ms):.2f}"
+    )
 
 
 def default_log_path() -> str:

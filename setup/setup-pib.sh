@@ -1503,6 +1503,54 @@ function provision_whisper_model() {
   return 0
 }
 
+# Place Supertone supertonic-3 into /data/voice/models/supertone/ with the self-contained
+# installation_scripts/provision_supertone_model.py: vendored voice/supertone/ tree first,
+# else the pinned files from voice/supertone-model.yaml.
+function provision_supertone_model() {
+  local repo_root dest helper output result
+  repo_root="$(whisper_repo_root)"
+  dest="${SUPERTONE_MODEL_PATH:-/data/voice/models/supertone}"
+  helper="$repo_root/setup/installation_scripts/provision_supertone_model.py"
+
+  if [ ! -f "$repo_root/voice/supertone-model.yaml" ]; then
+    print WARN "supertone model: ${repo_root}/voice/supertone-model.yaml not found; nothing to place"
+    return 0
+  fi
+  if [ ! -f "$helper" ]; then
+    print ERROR "supertone model: ${helper} is missing"
+    return 1
+  fi
+  if ! command_exists python3; then
+    print ERROR "supertone model: python3 is missing"
+    return 1
+  fi
+  if ! ensure_model_store_directory "$dest"; then
+    print ERROR "supertone model: store directory ${dest} is not writable"
+    return 1
+  fi
+
+  print INFO "supertone model: store ${dest}"
+  output="$(python3 "$helper" --repo-root "$repo_root" --destination "$dest")"
+  result="${output##*result=}"
+  case "$result" in
+    placed)
+      print SUCCESS "supertone model: placed into ${dest}"
+      ;;
+    already_current)
+      print INFO "supertone model: already current in ${dest}"
+      ;;
+    *)
+      print ERROR "supertone model: provisioning failed (${result:-no result}); see the lines above"
+      return 1
+      ;;
+  esac
+  if [ ! -f "$dest/onnx/tts.json" ]; then
+    print ERROR "supertone model: no onnx/tts.json under ${dest} after provisioning"
+    return 1
+  fi
+  return 0
+}
+
 # Local Ollama with a CPU-tuned qwen2.5:1.5b named qwen-fast. The official installer
 # (https://ollama.com/install.sh) creates a systemd service that runs as its own user
 # and owns the model store. This step installs only when the binary is missing, starts
@@ -1857,6 +1905,7 @@ if [ "$MODELS_ONLY" = true ]; then
   provision_curated_models provision
   models_status=$?
   provision_whisper_model || models_status=1
+  provision_supertone_model || models_status=1
   exit "$models_status"
 fi
 
@@ -1941,6 +1990,7 @@ run_step "Clone repositories" clone_repositories || abort_setup "failed to clone
 run_step "Provision curated OAK models" provision_curated_models provision ||
   abort_setup "Model provisioning must succeed before containers are started"
 run_step "Provision whisper model" provision_whisper_model || print ERROR "failed to provision the whisper model"
+run_step "Provision supertone model" provision_supertone_model || print ERROR "failed to provision the supertone model"
 # After the clone: the Modelfile is setup/ollama/Modelfile in the backend checkout.
 # A failure is recorded in the summary and setup continues; nothing else is pointed
 # at this model yet. A skipped variant returns success, so this step stays in the

@@ -1,8 +1,17 @@
 """
 Supertone supertonic-3 local expressive Text-to-Speech (TTS) synthesis engine.
 
-Provides 100% offline synthesis for pib-backend with configurable model paths,
+Provides offline synthesis for pib-backend with configurable model paths,
 expressive parameters, robust fallback mechanisms, and audio quality validation.
+
+Weights are read from ``/data/voice/models/supertone/`` (see
+``voice/supertone-model.yaml``). Setup places them there; the container does
+not download from Hugging Face when the tree is complete. A missing store logs
+a warning and may fall back to the SDK cache when ``auto_download`` is allowed.
+
+Turn latency: ``[PERF_TRACE] TTS_FIRST_AUDIO`` (see ``turn_latency``) measures
+milliseconds from the first answer clause handed to synthesis to the first PCM
+chunk written for that turn.
 """
 
 from __future__ import annotations
@@ -22,6 +31,23 @@ DEFAULT_MODEL_PATH = "/data/voice/models/supertone/"
 DEFAULT_SAMPLE_RATE = 44100
 DEFAULT_CHANNELS = 1
 DEFAULT_SAMPLE_WIDTH = 2  # 16-bit PCM
+
+_ONNX_MARKER = Path("onnx") / "tts.json"
+_REQUIRED_ONNX = (
+    Path("onnx") / "duration_predictor.onnx",
+    Path("onnx") / "text_encoder.onnx",
+    Path("onnx") / "vector_estimator.onnx",
+    Path("onnx") / "vocoder.onnx",
+)
+
+
+def provisioned_supertonic_dir(path: Path) -> bool:
+    """True when the setup-time tree is present and complete enough to load."""
+    if not path.is_dir():
+        return False
+    if not (path / _ONNX_MARKER).is_file():
+        return False
+    return all((path / name).is_file() for name in _REQUIRED_ONNX)
 
 
 class SupertoneTTSEngine:
@@ -63,15 +89,23 @@ class SupertoneTTSEngine:
             try:
                 from supertonic import TTS  # type: ignore
 
-                model_dir = (
-                    str(self.model_path)
-                    if self.model_path.exists() and self.model_path.is_dir()
-                    else None
-                )
+                if provisioned_supertonic_dir(self.model_path):
+                    model_dir = str(self.model_path)
+                    auto_download = False
+                else:
+                    model_dir = None
+                    auto_download = True
+                    logger.warning(
+                        "Supertone supertonic-3 is not provisioned under %s; "
+                        "the SDK may download from Hugging Face. Run setup "
+                        "provision_supertone_model or place weights under %s.",
+                        self.model_path,
+                        self.model_path,
+                    )
                 self._supertonic_tts = TTS(
                     model="supertonic-3",
                     model_dir=model_dir,
-                    auto_download=True,
+                    auto_download=auto_download,
                     intra_op_num_threads=4,
                     inter_op_num_threads=2,
                 )
