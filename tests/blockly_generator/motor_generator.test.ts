@@ -207,7 +207,7 @@ describe("get_hand_x/y/z generators", () => {
       const [code, order] = blockGenerator(block, generator) as [string, Order];
 
       expect(code).toBe(
-        `to_rep103(get_hand_position_xyz("left"))[${index}]`,
+        `get_hand_position_rep103("left")[${index}]`,
       );
       expect(order).toBe(Order.MEMBER);
       const defs = Object.values(generator.definitions_).join("\n");
@@ -224,7 +224,7 @@ describe("get_hand_x/y/z generators", () => {
 
     const [code] = get_hand_y(block, generator) as [string, Order];
 
-    expect(code).toBe('to_rep103(get_hand_position_xyz("right"))[1]');
+    expect(code).toBe('get_hand_position_rep103("right")[1]');
   });
 
   it("rejects an invalid side", () => {
