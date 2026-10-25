@@ -35,7 +35,14 @@ STS3095_ACCEL = 30
 FINGER_SPEED = 3000
 FINGER_ACCEL = 100
 ZERO_CALIBRATION_SETTLE_SEC = 0.02
-STS_CALIBRATED_CENTER_TICKS = 2048
+
+# STS position encoding: 4096 ticks per full revolution; joint zero aligns with tick 2048.
+TICKS_PER_REVOLUTION = 4096
+TICKS_AT_JOINT_ZERO = 2048
+CENTIDEG_PER_REVOLUTION = 36000
+
+_DEFAULT_ROTATION_RANGE_MIN = -9000
+_DEFAULT_ROTATION_RANGE_MAX = 9000
 
 SERIAL_BY_ID_DIR = Path("/dev/serial/by-id")
 
@@ -123,18 +130,60 @@ def _get_or_open_port(
         return entry
 
 
-def centideg_to_ticks(centideg: float) -> int:
-    """Map pib centidegrees [-9000..9000] to STS ticks [1000..3000] (center 2000)."""
-    if centideg < 0:
-        ticks = int(round(1000 + (centideg + 9000) * (1000 / 9000)))
-    else:
-        ticks = int(round(2000 + centideg * (1050 / 9000)))
-    return max(1000, min(3000, ticks))
+def centideg_to_ticks(
+    centideg: float,
+    rotation_range_min: int | None = None,
+    rotation_range_max: int | None = None,
+) -> int:
+    """Map pib centidegrees to STS position ticks.
+
+    Geometry: ``TICKS_PER_REVOLUTION`` (4096) ticks per revolution; joint zero is
+    ``TICKS_AT_JOINT_ZERO`` (2048). Conversion uses ``round()`` toward the nearest
+    integer tick. Values outside the allowed centidegree range raise ``ValueError``
+    instead of clamping.
+
+    When ``rotation_range_min`` / ``rotation_range_max`` are omitted, the legal
+    range is ±90° (±9000 centidegrees).
+    """
+    range_min = (
+        rotation_range_min
+        if rotation_range_min is not None
+        else _DEFAULT_ROTATION_RANGE_MIN
+    )
+    range_max = (
+        rotation_range_max
+        if rotation_range_max is not None
+        else _DEFAULT_ROTATION_RANGE_MAX
+    )
+    if centideg < range_min or centideg > range_max:
+        raise ValueError(
+            f"centidegree {centideg} outside allowed range [{range_min}, {range_max}]"
+        )
+    return int(
+        round(
+            TICKS_AT_JOINT_ZERO
+            + centideg * TICKS_PER_REVOLUTION / CENTIDEG_PER_REVOLUTION
+        )
+    )
 
 
 def ticks_to_centideg(ticks: int) -> int:
-    """Map STS ticks [0..4095] back to pib centidegrees."""
-    return int(round(float(ticks * 18000 / 4096) - 9000))
+    """Map raw STS position ticks back to pib centidegrees.
+
+    Uses the same 4096-ticks-per-revolution geometry with zero at tick 2048 as
+    :func:`centideg_to_ticks` (exact inverse aside from rounding). Raw ticks below 0
+    or above 4095 are converted without error; callers decide if the value is valid.
+
+    Reported actual positions from hardware change when this mapping is corrected
+    (previously roughly half-scale with an offset).
+    """
+    return int(
+        round(
+            (ticks - TICKS_AT_JOINT_ZERO)
+            * CENTIDEG_PER_REVOLUTION
+            / TICKS_PER_REVOLUTION
+        )
+    )
 
 
 class FeetechStSerialActuator:
@@ -233,7 +282,7 @@ class FeetechStSerialActuator:
                 time.sleep(ZERO_CALIBRATION_SETTLE_SEC)
             with self._bus():
                 res_pos, _err_pos = self._pk.WritePosEx(
-                    self.pin, STS_CALIBRATED_CENTER_TICKS, speed, acc
+                    self.pin, TICKS_AT_JOINT_ZERO, speed, acc
                 )
                 res_en, _err_en = self._pk.write1ByteTxRx(
                     self.pin, STS_TORQUE_ENABLE, 1
