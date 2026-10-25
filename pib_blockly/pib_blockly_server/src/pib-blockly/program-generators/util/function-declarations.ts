@@ -99,6 +99,16 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(side: str, mode: str, x, y, z) -> No
             pib.move(arm, *q_deg)
 `;
 
+export const GET_HAND_POSITION_REP103_FUNCTION = (generator: typeof pythonGenerator) => `
+def ${generator.FUNCTION_NAME_PLACEHOLDER_}(side: str):
+
+    rosbridge_host = os.getenv("ROSBRIDGE_HOST", "rosbridge-ws")
+    try:
+        return to_rep103(get_hand_position_xyz(side, telemetry_host=rosbridge_host))
+    except Exception:
+        return to_rep103(get_hand_position_xyz(side, telemetry_host="localhost"))
+`;
+
 export const APPLY_JOINT_TRAJECTORY_FUNCTION = (generator: typeof pythonGenerator) => `
 def ${generator.FUNCTION_NAME_PLACEHOLDER_}(motor_name: str, position) -> None:
 
