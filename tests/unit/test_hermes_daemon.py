@@ -959,20 +959,22 @@ def test_personality_home_override_is_reset_after_success_and_exception(
     assert fake_hermes_home_override.get() == base_home
 
 
-def test_mcp_discovery_uses_hermes_noninteractive_startup_path():
+def _fake_mcp_startup_module(**startup_attrs):
     hermes_cli = types.ModuleType("hermes_cli")
     hermes_cli.__path__ = []
     startup = types.ModuleType("hermes_cli.mcp_startup")
     startup.ensure_mcp_discovery_before_agent_build = MagicMock()
     startup.mcp_discovery_in_flight = MagicMock(return_value=False)
+    startup.join_mcp_discovery = MagicMock(return_value=True)
+    for name, value in startup_attrs.items():
+        setattr(startup, name, value)
+    return {"hermes_cli": hermes_cli, "hermes_cli.mcp_startup": startup}, startup
 
-    with patch.dict(
-        sys.modules,
-        {
-            "hermes_cli": hermes_cli,
-            "hermes_cli.mcp_startup": startup,
-        },
-    ):
+
+def test_mcp_discovery_uses_hermes_noninteractive_startup_path():
+    modules, startup = _fake_mcp_startup_module()
+
+    with patch.dict(sys.modules, modules):
         _REAL_DISCOVER_MCP_TOOLS()
 
     startup.ensure_mcp_discovery_before_agent_build.assert_called_once()
@@ -980,6 +982,132 @@ def test_mcp_discovery_uses_hermes_noninteractive_startup_path():
         startup.ensure_mcp_discovery_before_agent_build.call_args.kwargs["thread_name"]
         == "pib-hermes-daemon-mcp"
     )
+    startup.join_mcp_discovery.assert_not_called()
+
+
+def test_mcp_discovery_joins_when_still_in_flight_after_ensure():
+    modules, startup = _fake_mcp_startup_module(
+        mcp_discovery_in_flight=MagicMock(return_value=True),
+    )
+
+    with patch.dict(sys.modules, modules):
+        _REAL_DISCOVER_MCP_TOOLS()
+
+    startup.join_mcp_discovery.assert_called_once_with(
+        timeout=hd._DAEMON_MCP_DISCOVERY_EXTRA_WAIT_S
+    )
+
+
+def test_agent_construction_reports_registered_mcp_tools_after_discovery(
+    monkeypatch, caplog
+):
+    """PR-2059: the warm agent is built only after discovery registers tools."""
+    discovery_state = {"done": False, "tools": 0}
+
+    def _finish_discovery(**_kwargs):
+        discovery_state["done"] = True
+        discovery_state["tools"] = 20
+
+    modules, _startup = _fake_mcp_startup_module(
+        ensure_mcp_discovery_before_agent_build=MagicMock(
+            side_effect=_finish_discovery
+        ),
+        mcp_discovery_in_flight=MagicMock(
+            side_effect=lambda: not discovery_state["done"]
+        ),
+    )
+    monkeypatch.setattr(hd, "_discover_mcp_tools", _REAL_DISCOVER_MCP_TOOLS)
+    monkeypatch.setattr(
+        hd,
+        "_registered_mcp_tool_count",
+        lambda: discovery_state["tools"],
+    )
+
+    fake_module = _fake_agent_module([], reply="ok")
+    hd.clear_agent_cache()
+
+    with (
+        patch.dict(sys.modules, {**modules, "run_agent": fake_module}),
+        caplog.at_level(logging.INFO),
+    ):
+        assert hd.run_turn_in_process("one", "mcp-ready-chat") == "ok"
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert not any("constructing without MCP tools" in message for message in messages)
+    assert any(
+        "[PERF_TRACE] HERMES_AGENT_CONSTRUCTED" in message and "mcp_tools=20" in message
+        for message in messages
+    )
+
+
+def test_agent_construction_waits_for_in_flight_discovery_to_finish(
+    monkeypatch, caplog
+):
+    """PR-2059: a bounded extra join runs when Hermes' first wait times out."""
+    discovery_state = {"in_flight": True, "tools": 0}
+
+    def _join(timeout=None):
+        discovery_state["in_flight"] = False
+        discovery_state["tools"] = 20
+        return True
+
+    modules, startup = _fake_mcp_startup_module(
+        mcp_discovery_in_flight=MagicMock(
+            side_effect=lambda: discovery_state["in_flight"]
+        ),
+        join_mcp_discovery=MagicMock(side_effect=_join),
+    )
+    monkeypatch.setattr(hd, "_discover_mcp_tools", _REAL_DISCOVER_MCP_TOOLS)
+    monkeypatch.setattr(
+        hd,
+        "_registered_mcp_tool_count",
+        lambda: discovery_state["tools"],
+    )
+
+    fake_module = _fake_agent_module([], reply="ok")
+    hd.clear_agent_cache()
+
+    with (
+        patch.dict(sys.modules, {**modules, "run_agent": fake_module}),
+        caplog.at_level(logging.INFO),
+    ):
+        assert hd.run_turn_in_process("one", "mcp-join-chat") == "ok"
+
+    startup.join_mcp_discovery.assert_called_once()
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("mcp_tools=20" in message for message in messages)
+
+
+def test_mcp_discovery_failure_logs_once_and_turn_continues(monkeypatch, caplog):
+    """PR-2059: one explicit line when discovery cannot register tools; turns still run."""
+    modules, _startup = _fake_mcp_startup_module(
+        mcp_discovery_in_flight=MagicMock(return_value=True),
+        join_mcp_discovery=MagicMock(return_value=False),
+    )
+    monkeypatch.setattr(hd, "_discover_mcp_tools", _REAL_DISCOVER_MCP_TOOLS)
+    monkeypatch.setattr(hd, "_registered_mcp_tool_count", MagicMock(return_value=0))
+
+    fake_module = _fake_agent_module([], reply="ok despite missing mcp")
+    hd.clear_agent_cache()
+
+    with (
+        patch.dict(sys.modules, {**modules, "run_agent": fake_module}),
+        caplog.at_level(logging.WARNING),
+    ):
+        assert (
+            hd.run_turn_in_process("one", "mcp-fail-chat") == "ok despite missing mcp"
+        )
+        assert (
+            hd.run_turn_in_process("two", "mcp-fail-chat") == "ok despite missing mcp"
+        )
+
+    failure_lines = [
+        record.getMessage()
+        for record in caplog.records
+        if "constructing without MCP tools" in record.getMessage()
+    ]
+    assert len(failure_lines) == 1
+    assert "still in flight" in failure_lines[0]
 
 
 @pytest.mark.parametrize("failure", [RuntimeError("failed"), TimeoutError("timed out")])

@@ -172,6 +172,9 @@ _agent_cache: OrderedDict[tuple, _CachedAgent] = OrderedDict()
 _agent_cache_lock = threading.Lock()
 _mcp_discovery_attempted: set[str] = set()
 _mcp_discovery_lock = threading.Lock()
+# Bounded extra wait after Hermes' default ``mcp_discovery_timeout`` (1.5s) on cold start.
+_DAEMON_MCP_DISCOVERY_EXTRA_WAIT_S = 1.0
+_mcp_agent_build_without_tools_cause: Optional[str] = None
 
 # Last planned provider wire fields per turn (tests assert on this, not timing).
 _provider_field_attempts: list[frozenset[str]] = []
@@ -780,20 +783,28 @@ def clear_agent_cache() -> None:
 
 def _discover_mcp_tools() -> None:
     """Run Hermes' bounded, non-interactive MCP startup path."""
+    global _mcp_agent_build_without_tools_cause
     from hermes_cli.mcp_startup import (
         ensure_mcp_discovery_before_agent_build,
+        join_mcp_discovery,
         mcp_discovery_in_flight,
     )
 
+    _mcp_agent_build_without_tools_cause = None
+    logger = logging.getLogger(__name__)
     ensure_mcp_discovery_before_agent_build(
-        logger=logging.getLogger(__name__),
+        logger=logger,
         thread_name="pib-hermes-daemon-mcp",
     )
     if mcp_discovery_in_flight():
-        logging.warning(
-            "Hermes MCP discovery timed out before agent construction; "
-            "continuing without waiting"
+        join_mcp_discovery(timeout=_DAEMON_MCP_DISCOVERY_EXTRA_WAIT_S)
+    if mcp_discovery_in_flight():
+        _mcp_agent_build_without_tools_cause = (
+            "MCP discovery still in flight after bounded wait "
+            f"(+{_DAEMON_MCP_DISCOVERY_EXTRA_WAIT_S:.1f}s)"
         )
+    elif _registered_mcp_tool_count() == 0:
+        _mcp_agent_build_without_tools_cause = "no MCP tools registered after discovery"
 
 
 def _ensure_mcp_tools_discovered() -> None:
@@ -900,13 +911,17 @@ def _agent_for_chat(
                 platform="cli",
                 skip_memory=True,
             )
+        mcp_tools = _registered_mcp_tool_count()
+        cause = _mcp_agent_build_without_tools_cause
+        if mcp_tools == 0 and cause:
+            logging.warning("constructing without MCP tools: %s", cause)
         logging.info(
             "[PERF_TRACE] HERMES_AGENT_CONSTRUCTED home=%s model=%s "
             "elapsed_ms=%.2f mcp_tools=%d",
             _current_home_key(),
             model,
             (time.monotonic() - construction_started) * 1000.0,
-            _registered_mcp_tool_count(),
+            mcp_tools,
         )
         cached = _CachedAgent(agent, settings, provider_key or "")
         _agent_cache[key] = cached
