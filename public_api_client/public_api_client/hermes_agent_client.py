@@ -163,12 +163,30 @@ def record_provider_refused_fields(
         prime_auxiliary_response_format_rejection(provider, base_url, model)
 
 
+#: Fields a route refuses by contract, known before the first request. pib.Cloud
+#: rejects all three (PC-69), and probing them costs a 400 plus a retry on the
+#: first turn of every daemon start (measured 2026-10-25: 8.2 s first token
+#: versus 815 ms on the next chat).
+KNOWN_PROVIDER_REFUSALS = {
+    PIB_CLOUD_PROVIDER: frozenset(
+        {
+            REFUSED_REQUEST_FIELD_REASONING_EFFORT,
+            REFUSED_REQUEST_FIELD_STREAM_OPTIONS,
+            REFUSED_REQUEST_FIELD_RESPONSE_FORMAT,
+        }
+    )
+}
+
+
 def provider_refuses_field(
     provider: str,
     base_url: Optional[str],
     model: str,
     field: str,
 ) -> bool:
+    known = KNOWN_PROVIDER_REFUSALS.get((provider or "").strip(), frozenset())
+    if field in known:
+        return True
     key = provider_capability_key(provider, base_url, model)
     with _provider_refused_fields_lock:
         return field in _provider_refused_fields.get(key, set())
