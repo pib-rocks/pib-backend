@@ -27,11 +27,29 @@ class FakeBackend:
         self.calls.append(("get_motors",))
         return self.motors
 
-    def list_motors(self):
-        return {"motors": self.motors, "bricklets": []}
+    def list_motors(self, detail=False):
+        if detail:
+            return {"motors": self.motors, "bricklets": []}
+        return {
+            "motors": [
+                {
+                    "id": motor["name"],
+                    "name": motor["name"],
+                    "position": motor.get("currentPosition"),
+                    "limits": {
+                        "min": motor.get("rotationRangeMin"),
+                        "max": motor.get("rotationRangeMax"),
+                    },
+                    "unit": "centidegree",
+                }
+                for motor in self.motors
+            ]
+        }
 
     def get_state(self):
-        return {"motors": self.motors, "diagnostics": {}}
+        state = self.list_motors(detail=True)
+        state["diagnostics"] = {}
+        return state
 
     def list_poses(self):
         return self.poses
