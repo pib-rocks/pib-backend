@@ -188,6 +188,107 @@ def _run_wrapper(tmp_path: Path, backend_dir: Path, store: Path, **env_overrides
     )
 
 
+def test_models_only_path_aborts_when_supertone_provisioning_fails():
+    text = SETUP_PIB.read_text(encoding="utf-8")
+    match = re.search(
+        r'if \[ "\$MODELS_ONLY" = true \]; then\n(.*?\n)  exit "\$models_status"\nfi',
+        text,
+        re.DOTALL,
+    )
+    assert match, "MODELS_ONLY block not found"
+    block = match.group(1)
+    assert re.search(r"provision_supertone_model \|\|\s*\n\s*abort_setup", block)
+
+
+def _load_step_log_module():
+    path = REPO_ROOT / "tests" / "unit" / "test_setup_step_log.py"
+    spec = importlib.util.spec_from_file_location("test_setup_step_log", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _abort_harness_script(body: str) -> str:
+    step_log = _load_step_log_module()
+    return (
+        step_log.PRELUDE
+        + step_log._step_runner()
+        + _extract_bash_function(SETUP_PIB, "ensure_model_store_directory")
+        + _extract_bash_function(SETUP_PIB, "whisper_repo_root")
+        + _extract_bash_function(SETUP_PIB, "provision_supertone_model")
+        + body
+    )
+
+
+def test_failed_provisioning_aborts_setup_before_later_steps(tmp_path):
+    backend = tmp_path / "pib-backend"
+    (backend / "setup" / "installation_scripts").mkdir(parents=True)
+    helper = backend / "setup" / "installation_scripts" / "provision_supertone_model.py"
+    helper.write_text(
+        "#!/usr/bin/env python3\nimport sys\nprint('result=failed', file=sys.stderr)\n"
+        "print('result=failed')\n",
+        encoding="utf-8",
+    )
+    _write_config(backend)
+    store = tmp_path / "store"
+    store.mkdir()
+    script = _abort_harness_script(f"""
+BACKEND_DIR="{backend}"
+export SUPERTONE_MODEL_PATH="{store}"
+run_step "Provision supertone model" provision_supertone_model || \\
+  abort_setup "Model provisioning must succeed before containers are started"
+echo "later_step_reached=yes"
+""")
+    result = subprocess.run(
+        ["bash", "-c", script],
+        capture_output=True,
+        check=False,
+        text=True,
+        cwd=str(tmp_path),
+    )
+
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert (
+        "Model provisioning must succeed before containers are started" in result.stdout
+    )
+    assert "Provision supertone model: FAILED" in result.stdout
+    assert "later_step_reached" not in result.stdout
+
+
+def test_complete_store_reports_already_current_without_download(
+    tmp_path, monkeypatch, capsys
+):
+    module = _load_helper()
+    repo = tmp_path / "repo"
+    _write_config(repo)
+    store = tmp_path / "store"
+    requested = []
+    _serve(monkeypatch, module, FILES, requested)
+    assert module.main(["--repo-root", str(repo), "--destination", str(store)]) == 0
+    capsys.readouterr()
+    requested.clear()
+
+    backend = tmp_path / "pib-backend"
+    (backend / "setup" / "installation_scripts").mkdir(parents=True)
+    (
+        backend / "setup" / "installation_scripts" / "provision_supertone_model.py"
+    ).write_bytes(HELPER.read_bytes())
+    import shutil
+
+    shutil.copytree(repo / "voice", backend / "voice", dirs_exist_ok=True)
+
+    def fail_if_downloaded(request, timeout):
+        requested.append(request.full_url)
+        raise module.urllib.error.URLError("download must not run")
+
+    monkeypatch.setattr(module.urllib.request, "urlopen", fail_if_downloaded)
+
+    result = _run_wrapper(tmp_path, backend, store, PIB_SUPERTONE_DOWNLOAD="1")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "already current" in result.stdout
+    assert requested == []
+
+
 def test_wrapper_places_vendored_weights(tmp_path):
     backend = tmp_path / "pib-backend"
     (backend / "setup" / "installation_scripts").mkdir(parents=True)

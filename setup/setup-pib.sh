@@ -1905,7 +1905,8 @@ if [ "$MODELS_ONLY" = true ]; then
   provision_curated_models provision
   models_status=$?
   provision_whisper_model || models_status=1
-  provision_supertone_model || models_status=1
+  provision_supertone_model ||
+    abort_setup "Model provisioning must succeed before containers are started"
   exit "$models_status"
 fi
 
@@ -1990,7 +1991,8 @@ run_step "Clone repositories" clone_repositories || abort_setup "failed to clone
 run_step "Provision curated OAK models" provision_curated_models provision ||
   abort_setup "Model provisioning must succeed before containers are started"
 run_step "Provision whisper model" provision_whisper_model || print ERROR "failed to provision the whisper model"
-run_step "Provision supertone model" provision_supertone_model || print ERROR "failed to provision the supertone model"
+run_step "Provision supertone model" provision_supertone_model ||
+  abort_setup "Model provisioning must succeed before containers are started"
 # After the clone: the Modelfile is setup/ollama/Modelfile in the backend checkout.
 # A failure is recorded in the summary and setup continues; nothing else is pointed
 # at this model yet. A skipped variant returns success, so this step stays in the
