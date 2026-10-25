@@ -611,3 +611,52 @@ def test_pib_cloud_refusals_are_known_before_the_first_request():
     assert not provider_refuses_field(
         "gemini", None, "gemini-3.8-flash", "reasoning_effort"
     )
+
+
+def test_profile_keeps_the_derived_title_without_a_model_call(tmp_path):
+    """PR-2058: no auxiliary title request, so no rejected fields per new chat.
+
+    Measured on .164 on 2026-10-25: every new chat logged two 400s from title
+    generation (reasoning_effort, response_format) after the answer was delivered.
+    """
+    pdir = tmp_path / "titles"
+    pdir.mkdir()
+    (pdir / "config.yaml").write_text(
+        "model: pib-cloud\nprovider: pib-cloud\n", encoding="utf-8"
+    )
+
+    _ensure_mcp_servers_pib(str(pdir), model="pib-cloud", provider="pib-cloud")
+
+    import yaml
+
+    with open(pdir / "config.yaml", encoding="utf-8") as fh:
+        cfg = yaml.safe_load(fh)
+    assert cfg["auxiliary"]["title_generation"]["model_upgrade_enabled"] is False
+
+
+def test_provisioning_overrides_an_explicit_title_upgrade_setting(tmp_path):
+    """Provisioning forces the derived title even when a profile says otherwise.
+
+    The upgrade costs a rejected request per new chat on pib.Cloud and buys only a
+    prettier title, so the profile writer owns this key (PR-2058).
+    """
+    import yaml
+
+    pdir = tmp_path / "titles-kept"
+    pdir.mkdir()
+    (pdir / "config.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "model": "pib-cloud",
+                "provider": "pib-cloud",
+                "auxiliary": {"title_generation": {"model_upgrade_enabled": True}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    _ensure_mcp_servers_pib(str(pdir), model="pib-cloud", provider="pib-cloud")
+
+    with open(pdir / "config.yaml", encoding="utf-8") as fh:
+        cfg = yaml.safe_load(fh)
+    assert cfg["auxiliary"]["title_generation"]["model_upgrade_enabled"] is False
