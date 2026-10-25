@@ -60,7 +60,9 @@ def _engine(monkeypatch, tmp_path: Path, model: _Model) -> FasterWhisperSTTEngin
     fake = types.ModuleType("faster_whisper")
     fake.WhisperModel = lambda *args, **kwargs: model
     monkeypatch.setitem(sys.modules, "faster_whisper", fake)
-    return FasterWhisperSTTEngine(model_path=str(tmp_path))
+    engine = FasterWhisperSTTEngine(model_path=str(tmp_path))
+    engine.run_self_check()
+    return engine
 
 
 def test_language_codes_accept_codes_and_spelled_names():

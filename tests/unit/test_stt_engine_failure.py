@@ -98,7 +98,9 @@ def _build_engine(monkeypatch, tmp_path: Path, model: _ScriptedModel):
     fake.WhisperModel = lambda *args, **kwargs: model
     monkeypatch.setitem(sys.modules, "faster_whisper", fake)
     monkeypatch.setenv("WHISPER_SELF_CHECK_SAMPLE", str(SAMPLE))
-    return FasterWhisperSTTEngine(model_path=str(tmp_path))
+    engine = FasterWhisperSTTEngine(model_path=str(tmp_path))
+    engine.run_self_check()
+    return engine
 
 
 def test_the_bundled_sample_exists_and_is_16khz_mono():
