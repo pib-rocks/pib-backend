@@ -17,6 +17,7 @@ import logging
 import os
 import re
 import subprocess
+import threading
 import time
 from typing import Iterator, Optional
 
@@ -108,6 +109,146 @@ DEFAULT_REASONING_EFFORT = "none"
 # call (Settings.reasoning_effort), so a value in the profile only travels with every request and
 # its API refuses the field - measured as a 400 on `reasoning_effort` (PC-69).
 PIB_CLOUD_PROVIDER = "pib-cloud"
+
+# Request fields a provider may refuse on the wire (measured on pib.Cloud, PC-69).
+REFUSED_REQUEST_FIELD_REASONING_EFFORT = "reasoning_effort"
+REFUSED_REQUEST_FIELD_STREAM_OPTIONS = "stream_options"
+REFUSED_REQUEST_FIELD_RESPONSE_FORMAT = "response_format"
+REFUSED_REQUEST_FIELDS = frozenset(
+    {
+        REFUSED_REQUEST_FIELD_REASONING_EFFORT,
+        REFUSED_REQUEST_FIELD_STREAM_OPTIONS,
+        REFUSED_REQUEST_FIELD_RESPONSE_FORMAT,
+    }
+)
+
+_provider_refused_fields: dict[tuple[str, str, str], set[str]] = {}
+_provider_refused_fields_lock = threading.Lock()
+
+
+def provider_capability_key(
+    provider: str,
+    base_url: Optional[str],
+    model: str,
+) -> tuple[str, str, str]:
+    """Process-local cache key for what a route accepts."""
+    normalized_provider = (provider or "").strip()
+    normalized_model = (model or "").strip()
+    normalized_base = (base_url or "").strip().rstrip("/")
+    return (normalized_provider, normalized_base, normalized_model)
+
+
+def clear_provider_refused_fields_cache() -> None:
+    """Drop cached refusals (tests and daemon shutdown)."""
+    with _provider_refused_fields_lock:
+        _provider_refused_fields.clear()
+
+
+def record_provider_refused_fields(
+    provider: str,
+    base_url: Optional[str],
+    model: str,
+    *fields: str,
+) -> None:
+    """Remember fields this route already refused once in this process."""
+    if not fields:
+        return
+    key = provider_capability_key(provider, base_url, model)
+    with _provider_refused_fields_lock:
+        bucket = _provider_refused_fields.setdefault(key, set())
+        for field in fields:
+            if field in REFUSED_REQUEST_FIELDS:
+                bucket.add(field)
+    if REFUSED_REQUEST_FIELD_RESPONSE_FORMAT in fields:
+        prime_auxiliary_response_format_rejection(provider, base_url, model)
+
+
+def provider_refuses_field(
+    provider: str,
+    base_url: Optional[str],
+    model: str,
+    field: str,
+) -> bool:
+    key = provider_capability_key(provider, base_url, model)
+    with _provider_refused_fields_lock:
+        return field in _provider_refused_fields.get(key, set())
+
+
+def _route_base_url_from_cfg(cfg: dict, provider: str) -> Optional[str]:
+    providers = cfg.get(PROVIDERS_CONFIG_KEY)
+    if not isinstance(providers, dict):
+        return None
+    entry = providers.get(provider)
+    if not isinstance(entry, dict):
+        return None
+    base_url = entry.get("base_url")
+    if isinstance(base_url, str) and base_url.strip():
+        return base_url.strip().rstrip("/")
+    return None
+
+
+def apply_provider_capability_cache_to_cfg(
+    cfg: dict,
+    *,
+    provider: Optional[str] = None,
+    base_url: Optional[str] = None,
+    model: Optional[str] = None,
+) -> bool:
+    """Strip refused fields from the profile mapping. Returns whether cfg changed."""
+    resolved_provider = provider or cfg.get("provider") or ""
+    resolved_model = model or cfg.get("model") or ""
+    resolved_base = base_url or _route_base_url_from_cfg(cfg, resolved_provider)
+    agent = cfg.get("agent")
+    if not isinstance(agent, dict):
+        return False
+    changed = False
+    if provider_refuses_field(
+        resolved_provider,
+        resolved_base,
+        resolved_model,
+        REFUSED_REQUEST_FIELD_REASONING_EFFORT,
+    ):
+        if REFUSED_REQUEST_FIELD_REASONING_EFFORT in agent:
+            del agent[REFUSED_REQUEST_FIELD_REASONING_EFFORT]
+            changed = True
+    return changed
+
+
+def prime_auxiliary_response_format_rejection(
+    provider: str,
+    base_url: Optional[str],
+    model: str,
+    format_type: str = "json_schema",
+) -> None:
+    """Tell Hermes' auxiliary client not to send this response_format type again."""
+    try:
+        from agent.auxiliary_structured_output import _REJECTED_ROUTES, _route_key
+    except ImportError:
+        return
+    _REJECTED_ROUTES.add(
+        (_route_key(provider, base_url), str(model or ""), format_type)
+    )
+
+
+def title_generation_extra_body(
+    provider: str,
+    base_url: Optional[str],
+    model: str,
+    extra_body: dict,
+) -> dict:
+    """Extra body for a title call, minus response_format when the route refused it."""
+    if not provider_refuses_field(
+        provider, base_url, model, REFUSED_REQUEST_FIELD_RESPONSE_FORMAT
+    ):
+        return extra_body
+    if REFUSED_REQUEST_FIELD_RESPONSE_FORMAT not in extra_body:
+        return extra_body
+    return {
+        key: value
+        for key, value in extra_body.items()
+        if key != REFUSED_REQUEST_FIELD_RESPONSE_FORMAT
+    }
+
 
 # The tools a robot personality may see (decision 2026-10-16, extended the same day): the MCP
 # server's tools, memory, and the Hermes skills, so a personality can read its own skills. Before this
@@ -568,6 +709,15 @@ def _ensure_mcp_servers_pib(
         changed = True
 
     if _apply_profile_tool_search_defaults(cfg):
+        changed = True
+
+    route_base_url = base_url or _route_base_url_from_cfg(cfg, desired_provider)
+    if apply_provider_capability_cache_to_cfg(
+        cfg,
+        provider=desired_provider,
+        base_url=route_base_url,
+        model=desired_model,
+    ):
         changed = True
 
     # A user-defined route is declared under providers.<name>. Built-in

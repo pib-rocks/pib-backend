@@ -31,7 +31,13 @@ function createMockGenerator(): MockGenerator {
   const generator = Object.create(pythonGenerator) as MockGenerator;
   generator.definitions_ = definitions;
   generator.provideFunction_ = (name: string, code: string) => {
-    definitions[`FN_${name}`] = code;
+    // Real Blockly substitutes its function-name placeholder before storing the
+    // definition; the mock has to do the same or an assertion on "def <name>"
+    // can never match.
+    const resolved = code
+      .split(generator.FUNCTION_NAME_PLACEHOLDER_)
+      .join(name);
+    definitions[`FN_${name}`] = resolved;
     return name;
   };
   return generator;
@@ -54,7 +60,10 @@ describe("moveToPoseGenerator", () => {
     const defs = Object.values(generator.definitions_).join("\n");
     expect(defs).toContain("from pib_api_client import pose_client");
     expect(defs).toContain("import pib_sdk");
-    expect(defs).toContain('motor_position["position"] / 100.0');
+    expect(defs).toContain("def centidegrees_to_degrees");
+    expect(defs).toContain(
+      "centidegrees_to_degrees(motor_position[\"position\"])",
+    );
     expect(defs).toContain("with pib_sdk.Write(host=rosbridge_host, port=9090) as writer:");
     expect(defs).toContain("writer.move(*args)");
     expect(defs).not.toContain('.move(motor_name, position)');

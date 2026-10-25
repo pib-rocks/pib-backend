@@ -14,7 +14,9 @@ export const moveToPose = {
             this.setColour(355);
             this.setPreviousStatement(true, null);
             this.setNextStatement(true, null);
-            this.setTooltip("moves to selected pose");
+            this.setTooltip(
+                "Moves all motors to the saved pose. Joint targets are applied in degrees.",
+            );
             this.setHelpUrl("");
         },
 
@@ -40,7 +42,7 @@ export const poseBlocks = Blockly.common.createBlockDefinitionsFromJsonArray([
         nextStatement: null,
         colour: 355,
         tooltip:
-            "Records the current pose and saves it to the pose list. The name comes from the string or variable connected on the right.",
+            "Records the current motor angles in degrees and saves them to the pose list. The name comes from the string or variable connected on the right.",
         helpUrl: "",
     },
     {
@@ -57,7 +59,7 @@ export const poseBlocks = Blockly.common.createBlockDefinitionsFromJsonArray([
         nextStatement: null,
         colour: 355,
         tooltip:
-            "Saves the robot's current detected motor positions through the existing pose list. The name may be a string variable.",
+            "Saves the robot's current motor angles in degrees through the existing pose list. The name may be a string variable.",
         helpUrl: "",
     },
     {
@@ -70,7 +72,7 @@ export const poseBlocks = Blockly.common.createBlockDefinitionsFromJsonArray([
     },
     {
         type: "get_pose_joints",
-        message0: "get joints of pose %1",
+        message0: "get joints of pose %1 (degrees)",
         args0: [
             {
                 type: "field_input",
@@ -120,7 +122,7 @@ export const poseBlocks = Blockly.common.createBlockDefinitionsFromJsonArray([
         nextStatement: null,
         colour: 355,
         tooltip:
-            "Plays a list of [pose name, seconds] waypoints as one timed trajectory with smooth blending.",
+            "Plays a list of [pose name, seconds] waypoints as one timed trajectory with smooth blending. Each pose applies joint angles in degrees.",
         helpUrl: "",
     },
 ]);

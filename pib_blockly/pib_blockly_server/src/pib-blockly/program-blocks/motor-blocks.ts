@@ -46,7 +46,8 @@ const handPositionTooltip = (axis: string) =>
 export const motor_blocks = Blockly.common.createBlockDefinitionsFromJsonArray([
     {
         type: "move_motor",
-        message0: "move motor(s)  %1 %2 to %3 position from input %4",
+        message0:
+            "move motor(s) %1 %2 to %3 position in degrees from input %4",
         args0: [
             {
                 type: "field_dropdown",
@@ -74,7 +75,8 @@ export const motor_blocks = Blockly.common.createBlockDefinitionsFromJsonArray([
         previousStatement: null,
         nextStatement: null,
         colour: 355,
-        tooltip: "",
+        tooltip:
+            "Moves the selected motor to a target angle in degrees. Absolute mode sets the joint to that angle; relative mode adds the value to the current angle. Typical limits are about ±90° per joint (see motor configuration). Values are passed to the robot in degrees.",
         helpUrl: "",
     },
     {
@@ -95,7 +97,8 @@ export const motor_blocks = Blockly.common.createBlockDefinitionsFromJsonArray([
     },
     {
         type: "set_hand_position_xyz",
-        message0: "Set Hand Position at XYZ %1 %2 %3 X %4 Y %5 Z %6",
+        message0:
+            "Set Hand Position at XYZ %1 %2 %3 X (mm) %4 Y (mm) %5 Z (mm) %6",
         args0: [
             {
                 type: "field_dropdown",
@@ -143,12 +146,12 @@ export const motor_blocks = Blockly.common.createBlockDefinitionsFromJsonArray([
         nextStatement: null,
         colour: 355,
         tooltip:
-            "Moves the selected hand to a target XYZ position using inverse kinematics. Left/right is from pib's own perspective: imagine standing in front of pib and looking at him (the same binding used across pib part numbering e.g. C35R/C35L).",
+            "Moves the selected hand to a target XYZ position in millimeters using inverse kinematics. Absolute mode uses workspace coordinates; relative mode offsets the current commanded hand position. Left/right is from pib's own perspective: imagine standing in front of pib and looking at him (the same binding used across pib part numbering e.g. C35R/C35L).",
         helpUrl: "",
     },
     {
         type: "get_hand_x",
-        message0: "Get hand position X of %1",
+        message0: "Get hand position X (mm) of %1",
         args0: [SIDE_DROPDOWN],
         output: "Number",
         colour: 355,
@@ -157,7 +160,7 @@ export const motor_blocks = Blockly.common.createBlockDefinitionsFromJsonArray([
     },
     {
         type: "get_hand_y",
-        message0: "Get hand position Y of %1",
+        message0: "Get hand position Y (mm) of %1",
         args0: [SIDE_DROPDOWN],
         output: "Number",
         colour: 355,
@@ -166,7 +169,7 @@ export const motor_blocks = Blockly.common.createBlockDefinitionsFromJsonArray([
     },
     {
         type: "get_hand_z",
-        message0: "Get hand position Z of %1",
+        message0: "Get hand position Z (mm) of %1",
         args0: [SIDE_DROPDOWN],
         output: "Number",
         colour: 355,

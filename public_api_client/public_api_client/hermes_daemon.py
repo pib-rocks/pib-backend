@@ -171,6 +171,10 @@ _agent_cache_lock = threading.Lock()
 _mcp_discovery_attempted: set[str] = set()
 _mcp_discovery_lock = threading.Lock()
 
+# Last planned provider wire fields per turn (tests assert on this, not timing).
+_provider_field_attempts: list[frozenset[str]] = []
+_AUXILIARY_CALL_LLM_PATCHED = False
+
 # One SQLite session store per personality home.
 _session_dbs: dict[str, object] = {}
 _session_db_attempted: set[str] = set()
@@ -264,7 +268,161 @@ def ensure_hermes_source_on_path() -> str:
             "hermes source on sys.path: %s",
             [entry for entry in entries if os.path.exists(entry)],
         )
+    _install_auxiliary_capability_guard()
     return agent_dir
+
+
+def _install_auxiliary_capability_guard() -> None:
+    """Strip refused auxiliary fields (e.g. title response_format) before the wire."""
+    global _AUXILIARY_CALL_LLM_PATCHED
+    if _AUXILIARY_CALL_LLM_PATCHED:
+        return
+    try:
+        import agent.auxiliary_client as auxiliary_client
+    except ImportError:
+        return
+    original = auxiliary_client.call_llm
+
+    def call_llm_with_provider_capabilities(*args, **kwargs):
+        from public_api_client.hermes_agent_client import title_generation_extra_body
+
+        task = kwargs.get("task")
+        if task == "title_generation":
+            extra_body = kwargs.get("extra_body")
+            if isinstance(extra_body, dict):
+                runtime = kwargs.get("main_runtime")
+                if isinstance(runtime, dict):
+                    kwargs["extra_body"] = title_generation_extra_body(
+                        str(runtime.get("provider") or ""),
+                        runtime.get("base_url"),
+                        str(runtime.get("model") or ""),
+                        extra_body,
+                    )
+        return original(*args, **kwargs)
+
+    auxiliary_client.call_llm = call_llm_with_provider_capabilities
+    _AUXILIARY_CALL_LLM_PATCHED = True
+
+
+def _would_send_stream_options(agent, base_url: Optional[str]) -> bool:
+    try:
+        from agent.chat_completion_helpers import is_native_gemini_base_url
+    except ImportError:
+        is_native_gemini_base_url = lambda _url: False  # noqa: E731
+    effective_base = (
+        base_url
+        or getattr(agent, "base_url", None)
+        or getattr(agent, "_base_url", None)
+    )
+    if is_native_gemini_base_url(effective_base):
+        return False
+    return not getattr(agent, "_stream_options_unsupported", False)
+
+
+def _profile_carries_reasoning_effort() -> bool:
+    from public_api_client.hermes_agent_client import (
+        CONFIG_FILENAME,
+        _load_config_mapping,
+    )
+
+    cfg = _load_config_mapping(os.path.join(_current_home_key(), CONFIG_FILENAME))
+    agent = cfg.get("agent")
+    return isinstance(agent, dict) and "reasoning_effort" in agent
+
+
+def planned_provider_request_fields(
+    agent,
+    provider: str,
+    base_url: Optional[str],
+    model: str,
+) -> frozenset[str]:
+    """Fields the next main chat request is expected to carry."""
+    from public_api_client.hermes_agent_client import (
+        REFUSED_REQUEST_FIELD_REASONING_EFFORT,
+        REFUSED_REQUEST_FIELD_STREAM_OPTIONS,
+        provider_refuses_field,
+    )
+
+    fields: set[str] = set()
+    if (
+        _profile_carries_reasoning_effort()
+        and not provider_refuses_field(
+            provider, base_url, model, REFUSED_REQUEST_FIELD_REASONING_EFFORT
+        )
+        and not getattr(agent, "_reasoning_effort_rejected", False)
+    ):
+        fields.add(REFUSED_REQUEST_FIELD_REASONING_EFFORT)
+    if _would_send_stream_options(agent, base_url) and not provider_refuses_field(
+        provider, base_url, model, REFUSED_REQUEST_FIELD_STREAM_OPTIONS
+    ):
+        fields.add(REFUSED_REQUEST_FIELD_STREAM_OPTIONS)
+    return frozenset(fields)
+
+
+def _sync_provider_capabilities_to_agent(
+    agent,
+    provider: str,
+    base_url: Optional[str],
+    model: str,
+) -> None:
+    from public_api_client.hermes_agent_client import (
+        REFUSED_REQUEST_FIELD_REASONING_EFFORT,
+        REFUSED_REQUEST_FIELD_RESPONSE_FORMAT,
+        REFUSED_REQUEST_FIELD_STREAM_OPTIONS,
+        prime_auxiliary_response_format_rejection,
+        provider_refuses_field,
+    )
+
+    if provider_refuses_field(
+        provider, base_url, model, REFUSED_REQUEST_FIELD_REASONING_EFFORT
+    ):
+        agent._reasoning_effort_rejected = True
+    if provider_refuses_field(
+        provider, base_url, model, REFUSED_REQUEST_FIELD_STREAM_OPTIONS
+    ):
+        agent._stream_options_unsupported = True
+    if provider_refuses_field(
+        provider, base_url, model, REFUSED_REQUEST_FIELD_RESPONSE_FORMAT
+    ):
+        prime_auxiliary_response_format_rejection(provider, base_url, model)
+
+
+def _harvest_provider_refusals_from_agent(
+    agent,
+    provider: str,
+    base_url: Optional[str],
+    model: str,
+) -> None:
+    from public_api_client.hermes_agent_client import (
+        REFUSED_REQUEST_FIELD_REASONING_EFFORT,
+        REFUSED_REQUEST_FIELD_STREAM_OPTIONS,
+        record_provider_refused_fields,
+    )
+
+    refused: list[str] = []
+    if getattr(agent, "_reasoning_effort_rejected", False):
+        refused.append(REFUSED_REQUEST_FIELD_REASONING_EFFORT)
+    if getattr(agent, "_stream_options_unsupported", False):
+        refused.append(REFUSED_REQUEST_FIELD_STREAM_OPTIONS)
+    if not refused:
+        return
+    record_provider_refused_fields(provider, base_url, model, *refused)
+    _repair_profile_for_provider_capabilities()
+
+
+def _repair_profile_for_provider_capabilities() -> None:
+    from public_api_client.hermes_agent_client import (
+        _ensure_mcp_servers_pib,
+        profile_hermes_settings,
+    )
+
+    model, provider, base_url, _env = profile_hermes_settings()
+    _ensure_mcp_servers_pib(
+        _current_home_key(),
+        model=model,
+        provider=provider,
+        base_url=base_url,
+    )
 
 
 def _profile_dirs_are_complete(profile_dir: str) -> bool:
@@ -1087,10 +1245,41 @@ def _run_turn_in_home(
                     chat_id,
                     len(history),
                 )
+                from public_api_client.hermes_agent_client import (
+                    profile_hermes_settings,
+                )
+
+                route_model, route_provider, route_base_url, _route_env = (
+                    profile_hermes_settings()
+                )
+                _sync_provider_capabilities_to_agent(
+                    cached.agent,
+                    route_provider,
+                    route_base_url,
+                    route_model,
+                )
+                attempted = planned_provider_request_fields(
+                    cached.agent,
+                    route_provider,
+                    route_base_url,
+                    route_model,
+                )
+                _provider_field_attempts.append(attempted)
+                logging.info(
+                    "PIB provider request fields planned chat=%s fields=%s",
+                    chat_id,
+                    sorted(attempted),
+                )
                 turn_result = cached.agent.run_conversation(
                     user_message=text,
                     conversation_history=history or None,
                     stream_callback=capture_delta,
+                )
+                _harvest_provider_refusals_from_agent(
+                    cached.agent,
+                    route_provider,
+                    route_base_url,
+                    route_model,
                 )
                 reply = _coerce_reply(turn_result)
                 if on_tool_call is not None:
