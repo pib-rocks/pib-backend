@@ -152,10 +152,10 @@ describe("set_hand_position_xyz generator", () => {
       'set_hand_position_xyz("left", "ABSOLUTE", 0.2, 0.1, 0.3)\n',
     );
     const defs = Object.values(generator.definitions_).join("\n");
-    expect(defs).toContain("from pib_sdk import ik, Write, right_arm, left_arm");
+    expect(defs).toContain("from pib_sdk import ik_deg, Write, right_arm, left_arm");
     expect(defs).toContain("from pib_sdk import from_rep103, to_rep103");
     expect(defs).toContain("target = list(from_rep103([x, y, z]))");
-    expect(defs).toContain("q_deg = ik(side, xyz=target)");
+    expect(defs).toContain("q_deg = ik_deg(side, xyz=target)");
     expect(defs).toContain("pib.move(arm, *q_deg)");
     expect(defs).toContain('os.getenv("ROSBRIDGE_HOST", "rosbridge-ws")');
     expect(defs).not.toContain("get_joint_position_client.call_async");
