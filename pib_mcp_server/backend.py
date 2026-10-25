@@ -11,6 +11,22 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
+MOTOR_POSITION_UNIT = "centidegree"
+
+
+def _compact_motor(motor: dict[str, Any]) -> dict[str, Any]:
+    name = motor.get("name")
+    return {
+        "id": name,
+        "name": name,
+        "position": motor.get("currentPosition"),
+        "limits": {
+            "min": motor.get("rotationRangeMin", motor.get("rotation_range_min")),
+            "max": motor.get("rotationRangeMax", motor.get("rotation_range_max")),
+        },
+        "unit": MOTOR_POSITION_UNIT,
+    }
+
 
 class BackendError(RuntimeError):
     """An operational failure that can be safely returned to an MCP client."""
@@ -133,7 +149,7 @@ class PibBackend:
         payload = self._http("GET", "/motor")
         return list(payload.get("motors", []))
 
-    def list_motors(self) -> dict[str, Any]:
+    def _motors_with_live_positions(self) -> list[dict[str, Any]]:
         motors = self.get_motors()
         for motor in motors:
             name = motor.get("name")
@@ -153,11 +169,17 @@ class PibBackend:
             except BackendError as exc:
                 motor["currentPosition"] = None
                 motor["positionError"] = exc.message
-        bricklets = self._http("GET", "/bricklet").get("bricklets", [])
-        return {"motors": motors, "bricklets": bricklets}
+        return motors
+
+    def list_motors(self, detail: bool = False) -> dict[str, Any]:
+        motors = self._motors_with_live_positions()
+        if detail:
+            bricklets = self._http("GET", "/bricklet").get("bricklets", [])
+            return {"motors": motors, "bricklets": bricklets}
+        return {"motors": [_compact_motor(motor) for motor in motors]}
 
     def get_state(self) -> dict[str, Any]:
-        state = self.list_motors()
+        state = self.list_motors(detail=True)
         state["diagnostics"] = self._http("GET", "/diagnostics/summary")
         return state
 
