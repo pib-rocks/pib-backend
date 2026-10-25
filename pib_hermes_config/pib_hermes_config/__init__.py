@@ -37,6 +37,27 @@ DEFAULT_HERMES_PROVIDER = "gemini"
 DEFAULT_REASONING_EFFORT = "none"
 DEFAULT_MAX_TOKENS = 1024
 DEFAULT_TEMPERATURE = 0.3
+
+# PR-2053: Hermes tool_search (tier 1) hides MCP/plugin tools behind tool_search /
+# tool_describe / tool_call. Measured on the test robot 2026-10-25: 20 tools deferred
+# (~1534 prompt tokens saved) but every tool use then costs an extra model round trip
+# (0.6-2.3 s each). Personality profiles therefore pin tool_search off so robot
+# tools stay eager; the trade-off is ~1.5k more prompt tokens per turn.
+PROFILE_TOOL_SEARCH_ENABLED = "off"
+PROFILE_TOOL_SEARCH_CONFIG = {
+    "tool_search": {"enabled": PROFILE_TOOL_SEARCH_ENABLED},
+}
+
+# Upstream vision wrapper in the pinned Hermes package (not patched from this repo).
+# tools/vision_tools.py opens its image prompt with the prefix below; a sky-colour
+# question that used the camera measured 1,444 output tokens in 4.2 s and the turn
+# hit max_iterations_reached(4/4) after 19.5 s on the test robot 2026-10-25.
+HERMES_VISION_TOOLS_MODULE = "tools/vision_tools.py"
+HERMES_VISION_ANALYZE_PROMPT_PREFIX = (
+    "Fully describe and explain everything about this image"
+)
+HERMES_VISION_ANALYZE_MEASURED_OUTPUT_TOKENS = 1444
+
 # Closed set Hermes accepts for agent.reasoning_effort.
 REASONING_EFFORTS = (
     "none",
