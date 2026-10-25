@@ -1885,3 +1885,59 @@ def test_agent_source_imports_here_caches_the_answer(tmp_path, monkeypatch):
     assert hermes_daemon.agent_source_imports_here(str(tmp_path)) is True
     assert hermes_daemon.agent_source_imports_here(str(tmp_path)) is True
     assert len(calls) == 1
+
+
+def test_second_turn_does_not_attempt_a_refused_stream_options_field(
+    tmp_path, monkeypatch
+):
+    """After one refusal is recorded, the next turn must not plan stream_options."""
+    from public_api_client.hermes_agent_client import (
+        clear_provider_refused_fields_cache,
+    )
+
+    clear_provider_refused_fields_cache()
+    monkeypatch.setenv("PIB_HERMES_PROFILES_DIR", str(tmp_path / "profiles"))
+    created = []
+
+    class FakeAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self._stream_options_unsupported = False
+
+        def run_conversation(
+            self, user_message, conversation_history=None, stream_callback=None
+        ):
+            self._stream_options_unsupported = True
+            return {"final_response": "OK."}
+
+    fake_module = types.ModuleType("run_agent")
+    fake_module.AIAgent = FakeAgent
+    hd.clear_agent_cache()
+
+    with (
+        patch.dict(sys.modules, {"run_agent": fake_module}),
+        patch(
+            "public_api_client.hermes_agent_client.ensure_profile",
+            return_value=str(tmp_path / "profiles" / "pib_pers-1"),
+        ),
+        patch(
+            "public_api_client.hermes_agent_client.profile_hermes_settings",
+            return_value=(
+                "pib-cloud",
+                "pib-cloud",
+                "https://api.pib.rocks/v1",
+                ("OPENAI_API_KEY",),
+            ),
+        ),
+        patch(
+            "public_api_client.hermes_agent_client.profile_tool_calling_enabled",
+            return_value=True,
+        ),
+    ):
+        hd.run_turn_in_process("Hallo", "chat-a", personality_id="pers-1")
+        hd._provider_field_attempts.clear()
+        hd.run_turn_in_process("Nochmal", "chat-a", personality_id="pers-1")
+
+    assert "stream_options" not in hd._provider_field_attempts[-1]
+    clear_provider_refused_fields_cache()
+    hd.clear_agent_cache()
