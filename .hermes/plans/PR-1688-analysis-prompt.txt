@@ -1,0 +1,44 @@
+READ-ONLY ANALYSIS TASK. Do NOT modify, create or delete any tracked file. Do NOT run git commands that change
+state. Do NOT run builds or tests. Only read code and report.
+
+QUESTION: Why do depthai 2.x artifacts still exist in this repository although the camera was migrated to
+depthai 3.x - and do they originate from the pib-sdk?
+
+CONTEXT
+- This repo is pib-backend (ROS2 + Flask, built as several Docker images under ros_packages/).
+- The camera stack was migrated to depthai 3.x. Known landmarks:
+  * ros_packages/camera/requirements.txt pins depthai==3.8.0
+  * ros_packages/camera/Dockerfile says "depthai upgraded to 3.8.0: migrated from v2 Pipeline API to v3 Node API"
+  * ros_packages/camera/oak_d_lite/stereo.py is (believed to be) the ONLY python file importing depthai
+  * ros_packages/programs/Dockerfile installs "depthai<3" (i.e. 2.x) next to pib-sdk
+  * ros_packages/requirements.txt pins depthai==2.25.1.0
+- The sibling SDK repo is at ../pib-sdk (read it if you can reach it; the SDK is expected to have NO depthai
+  dependency at all - its declared dependencies are only pin, numpy and roslibpy). If you cannot read outside
+  this working directory, say so explicitly and skip that part.
+
+WHAT TO DO
+1. Enumerate EVERY occurrence of depthai in this repo: requirements files, Dockerfiles, python, yaml, docs,
+   build config. Quote the exact file path AND line number for each one.
+2. For each occurrence state: which Docker image/service it belongs to (follow the COPY/RUN chain in each
+   Dockerfile), and whether it installs/uses 2.x or 3.x.
+3. Determine whether ros_packages/requirements.txt is actually referenced by any Dockerfile or script, or
+   whether it is an orphaned file. Show the grep evidence.
+4. Determine whether anything in the programs image (or any generated Blockly program) actually IMPORTS or
+   needs depthai at runtime. List the python imports you found, with file:line.
+5. Determine whether blobconverter (installed in the programs Dockerfile) is used anywhere, and whether it
+   requires depthai<3. Show the evidence for your answer, and clearly separate facts from assumptions.
+6. Check whether any code path still uses the depthai v2 Pipeline API (as opposed to the v3 Node API) - look at
+   oak_d_lite/stereo.py and any other camera code. Quote what you find.
+7. State, as a one-line verdict: does the remaining depthai 2.x usage originate from the pib-sdk? YES / NO /
+   PARTLY, with the evidence.
+8. List the concrete risks of leaving 2.x in place, and of removing it, and give a prioritised list of
+   recommended follow-up tickets (suggested titles only - do NOT create anything).
+
+REQUIREMENTS
+1. Report ONLY what you actually found - do not guess or invent file names, versions or dependencies.
+2. Quote the exact file path and line number as evidence for every claim.
+3. Do NOT modify any file. Do NOT run the test suite. Do NOT build anything.
+4. Write the report in ENGLISH as markdown.
+5. WRITE THE REPORT TO: .hermes/plans/PR-1688-analysis.md   (this one file is the only thing you may create;
+   leave it untracked, do NOT git add or commit anything)
+6. In the final answer, print the report in full as well.

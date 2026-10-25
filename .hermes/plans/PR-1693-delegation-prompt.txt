@@ -1,0 +1,44 @@
+Implement PR-1693 (S1): vendor the 12 curated model artefacts and the registry manifest.
+
+Ticket: https://pib-rocks.atlassian.net/browse/PR-1693
+Repo: pib-backend - /home/pib/opencode/pib-backend, branch `PR-1693` (from develop `67b60dee`).
+Do NOT touch camera code, do NOT change setup/setup-pib.sh (that is story S2), do NOT push or merge, do NOT commit .hermes/.
+
+REVISED LICENCE POLICY (decision D1, 15 Sep 2026) - licences are RECORDED, not gating:
+every entry records licence state plus provenance. Where upstream states no licence, keep the licence field EMPTY (or "unknown - see source") and record the upstream project and artefact URL. This does NOT block vendoring. All 12 models below are therefore unblocked.
+
+STEP 1 - MANDATORY SOURCE PROBE (report raw evidence, do not skip)
+Determine which artefact source actually works TODAY, before producing anything:
+  a) `python3 -m venv /tmp/bcvenv && /tmp/bcvenv/bin/pip install blobconverter` then try in python:
+     `import blobconverter; print(blobconverter.zoo_list())` and
+     `blobconverter.from_zoo(name="hand_landmark_224x224", zoo_type="depthai", shaves=4)`
+     (the depthai model zoo repository is deprecated - the service may or may not still answer)
+  b) the new hub models.luxonis.com: is there a direct download / API for these artefacts?
+  c) the artefact URLs in the old zoo's model.yml files (github raw + robothub CDN) - fetchable?
+Report for each route: works / does not work, with the real command output.
+If NO route works, STOP and report exactly what was tried - do NOT fabricate artefacts, never create empty or placeholder .blob files.
+
+STEP 2 - PRODUCE AND VENDOR (only for routes that worked)
+Vendor layout in the repository:
+  models/<model_id>/<file>.blob          (one directory per model)
+  models/manifest.yaml                   (the registry)
+  models/README.md                        (short: where the artefacts come from, how they were produced, how to regenerate)
+manifest.yaml entry per model with: model_id, task, source_upstream (project), source_url (artefact), licence (explicit text/URL, or "unknown - see source"), sha256, size_bytes, shaves, input_width, input_height, format, preprocessing/decode notes.
+Use these 12 curated models (decision D3):
+  1 palm_detection_128x128_decoding   2 hand_landmark_224x224            3 face_detection_yunet_160x120
+  4 facemesh_192x192                  5 facial_landmarks_68_160x160      6 face-recognition-arcface-112x112
+  7 emotion_recognition_lfw_64x64     8 gaze-estimation-adas-0002        9 head-pose-estimation-adas-0001
+ 10 yolov6n_coco_640x640             11 qr_code_detection_384x384       12 person-reidentification-retail-0031_96x48
+Models 8, 9 and 12 are NOT in the depthai zoo (they come from the OpenVINO Open Model Zoo) and need development-time compilation - use the compile route that worked in step 1. Models 1, 2 and 7 have no upstream licence: record them as "unknown - see source" per the revised policy.
+
+STEP 3 - MINIMAL CHECK
+models/verify_models.py: reads manifest.yaml, checks that every listed file exists and its sha256 matches, prints a clear per-model OK/FAIL summary and exits non-zero on mismatch. Run it and report the real output.
+Report the total vendored size and state whether Git LFS is needed (threshold: mention it if > 100 MB).
+
+CONSTRAINTS
+- Real artefacts only. If a model cannot be obtained, leave it OUT of the manifest and report it explicitly as missing with the reason - a manifest entry without a real file is a failure.
+- Keep it reproducible: the README must state the exact commands that produced the artefacts.
+- No changes outside models/ (plus nothing in .hermes/).
+
+REPORT
+Print: the commit hash, the file list with sizes, the total size, and the raw output of verify_models.py.

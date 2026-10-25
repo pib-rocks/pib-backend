@@ -1,0 +1,62 @@
+Implement PR-1208 in the `pib-backend` repository: a Blockly block "Set Hand Position at XYZ" that moves a hand to a target XYZ position, using **pib-sdk** for both the inverse kinematics and the motor control.
+
+Ticket: https://pib-rocks.atlassian.net/browse/PR-1208
+Branch: create/use `PR-1208` off `develop`. Commit your work on it. Do NOT push, do NOT merge to develop.
+
+## SCOPE — ONLY these tasks
+1. Add a new Blockly block definition (e.g. type `set_hand_position_xyz`) in
+   `pib_blockly/pib_blockly_server/src/pib-blockly/program-blocks/` (follow the existing
+   `motor-blocks.ts` convention: `Blockly.common.createBlockDefinitionsFromJsonArray([...])`).
+2. Add the matching Python generator function for that block type (exported alongside the
+   other generators in the same file / index).
+3. Wire the block into the Cerebra Blockly toolbox so it is usable end-to-end.
+
+## KEY DESIGN REQUIREMENT — coordinates on the RIGHT edge, NOT inside the block
+- The block exposes THREE value sockets on its RIGHT edge: X, Y, Z (one per axis).
+- Each socket is `input_value` with `check: "Number"` and `extensions: "number_validation"`.
+- Do NOT render the coordinates as inline fields buried inside the block body
+  (no `input_dummy` + `field_number` combos inside the block). They must be pluggable
+  value sockets on the right side so a builder can attach number/variable blocks.
+
+## HARD CONSTRAINT — use pib-sdk for IK and motor control (verified API)
+The generated code MUST use pib-sdk for BOTH the inverse kinematics and the motor actuation.
+Do NOT reimplement IK in the generator and do NOT bypass the SDK with raw joint trajectories.
+
+Verified pib-sdk API (from the installed package, do not invent signatures):
+```python
+from pib_sdk import ik, Write, right_arm, left_arm
+
+# 1) Inverse kinematics: XYZ hand position -> joint angles in DEGREES
+q_deg = ik("left", xyz=[x, y, z])          # side: "left"/"right" or ArmSide; returns np.ndarray of degrees
+#    optional: rpy_deg=[...], and solver opts (initial_guess_deg, tolerance, max_iterations, mask, restarts, respect_limits)
+
+# 2) Motor control: move the arm to those joint angles
+with Write(host=rosbridge_host, port=9090) as pib:
+    pib.move(right_arm, *q_deg)            # angles in degrees, range [-90, 90]
+```
+- `ik(side, *, xyz=[...], rpy_deg=None, **solver_options)` -> np.ndarray (degrees)
+- `Write(host=...)` context manager; `Write.move(*args)` moves motors (uniform or vector mode; a lone hand-action token like `open_left_hand` performs that action).
+- `right_arm` / `left_arm` are the arm group tokens; `ArmSide` enum also available.
+- The block should let the user choose the arm side (left/right) — add a `field_dropdown` for the side.
+
+## Implementation notes
+- The generator must resolve the three right-side X/Y/Z inputs to numbers, call `ik(...)` for the chosen side, then `Write(...).move(arm, *q_deg)`.
+- `rosbridge_host` resolution: follow the existing pattern in the repo (e.g. `os.getenv("ROSBRIDGE_HOST", "rosbridge-ws")`).
+- Keep the generated Python consistent with the other block generators (imports, rclpy/ROS setup as the other blocks do).
+- Verify the block appears in the toolbox and that `npm run build` (or the pib_blockly build) passes.
+
+## Do NOT
+- Do NOT push / merge to develop.
+- Do NOT invent a pib-sdk method that does not exist — use exactly `ik(...)` and `Write(...).move(...)` as verified above.
+- Do NOT add custom IK math or raw `ApplyJointTrajectory` calls in the generator.
+- Do NOT reformat unrelated files.
+
+## Self-check before you finish
+- `npm run build` (or the pib_blockly build) succeeds.
+- The block definition has three right-side `input_value` sockets (X, Y, Z) and a side dropdown.
+- The generator emits code that imports `ik, Write` from pib_sdk and calls them.
+
+## Report back (real)
+- Files changed, the block JSON definition, the generator function, and the toolbox wiring.
+- The exact generated Python snippet for a sample X/Y/Z.
+- Real build result. Do NOT claim a number you did not observe.

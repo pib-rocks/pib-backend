@@ -1,0 +1,84 @@
+Implement PR-1689 per the verified facts below.
+
+Ticket: https://pib-rocks.atlassian.net/browse/PR-1689
+Repo: pib-backend — /home/pib/opencode/pib-backend, branch `PR-1689` (from develop `a84e8ef8`).
+
+## Goal
+Remove the leftover depthai 2.x references in this repo: DELETE them where they are unused, MIGRATE the
+remaining ones to depthai 3.x where they are still needed.
+
+## Verified context (do not re-derive; this is the result of the PR-1688 analysis)
+- The camera image is fully migrated: ros_packages/camera installs depthai==3.8.0 and
+  ros_packages/camera/oak_d_lite/stereo.py uses the v3 Node API only (dai.node.Camera,
+  dai.node.StereoDepth, requestIspOutput(), pipeline.start()). No v2 Pipeline API surface remains.
+- The leftover 2.x usage is NOT SDK-driven: pib-sdk declares only pin/numpy/roslibpy and reaches the camera
+  over rosbridge; a repo-wide search of pib-sdk for depthai/blobconverter/luxonis finds nothing.
+- Nothing in this repo imports depthai except the camera node (the unit test does importorskip).
+  The four python modules of the programs package import rclpy, datatypes, threading/queue/subprocess, uuid
+  and pib_blockly_client — no depthai, no blobconverter.
+- ALREADY CONFIRMED for you (checked on the live robot): under PROGRAM_DIR there is exactly ONE user-authored
+  program and it does NOT import depthai or blobconverter. So removing them from the programs image is safe —
+  do not leave them in "just in case".
+
+## Work items
+
+### A. Delete dead/unused references
+1. `ros_packages/programs/Dockerfile` lines ~32-33: remove BOTH `"depthai<3"` and `blobconverter` from the pip
+   install line. Nothing in that image imports either. Keep the rest of the pip list and the surrounding
+   structure untouched.
+2. `pib_blockly/pib_blockly_server/src/pib-blockly/program-generators/util/definitions.ts` lines 6-7: remove
+   the unused `IMPORT_DEPTHAI` and `IMPORT_BLOBCONVERTER` constants. FIRST grep the whole
+   `pib_blockly/pib_blockly_server/src` tree to prove no other file references them; if something does,
+   leave that one and say so in your report.
+3. `pib_blockly/.../util/reserved-words.ts` lines 8 and 14: remove the reserved words `"dai"` and
+   `"blobconverter"` — first verify nothing else relies on them.
+4. Rebuild the pib-blockly-server bundle the same way the repo normally does (look for the existing build
+   script/npm script in that package; do NOT invent a new toolchain), then re-run the Blockly generator tests:
+   `cd tests/blockly_generator && node node_modules/jest/bin/jest.js --config jest.config.js`
+   They must stay green. If the build step cannot run in this environment, say so explicitly and do NOT claim
+   it ran.
+
+### B. Retire or align files that are not part of any build
+5. `ros_packages/requirements.txt`: this file is ORPHANED — no Dockerfile copies or pip-installs it — and
+   carries the stale `depthai==2.25.1.0` (line 6) plus `blobconverter==1.4.2` (line 8). Preferred: delete the
+   file if nothing references it (grep the whole repo first, including docs and scripts). If you decide to keep
+   it, rewrite it so it matches what is actually built and add a header comment stating it is NOT part of the
+   image builds. State your choice and the grep evidence in the report.
+6. `docs/test-basis/pib_sdk_integration.md` lines 67-70: correct the stale statement that
+   `ros_packages/requirements.txt` is part of the ros-programs build configuration. It should name
+   `ros_packages/programs/Dockerfile`.
+7. `ros_packages/camera/requirements.txt` line 18 (`blobconverter==1.4.3`): the camera Dockerfile never
+   pip-installs this file. Either remove the entry or add a clear header comment that the file is an
+   environment freeze, not an install list. Do not change the working `depthai==3.8.0` entry.
+
+### C. Migrate the legacy install path off depthai 2.x
+8. `setup/installation_scripts/local_install.sh`: line 154 installs an UNPINNED depthai; lines 155-160 clone
+   `luxonis/depthai-python` and `depthai_hand_tracker`; line 191 installs `depthai==2.24.0.0` into the programs
+   venv. This path is only sourced when INSTALL_METHOD=legacy. Bring it in line with the 3.x Docker setup:
+   MIGRATE what is still needed to depthai 3.x (>=3.8.0, matching the camera image) and REMOVE what is dead.
+   If a step must stay for legacy reasons, keep it but annotate it clearly as legacy-only — no 2.x pin may
+   remain installable. Explain each decision briefly in the report.
+
+### D. Remove the misleading verification
+9. `setup/dev_tools/health-check-pib.sh` line 119: the host `pip show` list still expects a package `depthai`,
+   which is misleading now that the camera runs in its own container. Scope the depthai check to the camera
+   container (or drop it) so the health check matches reality. Keep the rest of the list working.
+
+## Constraints
+- Stay on branch `PR-1689`. Do NOT push or merge (the orchestrator opens the PR). You MAY commit.
+- Only pib-backend. Do NOT touch pib-sdk, cerebra, or the robot deployment.
+- Do NOT change ros_packages/camera's working depthai==3.8.0 setup, and do NOT touch oak_d_lite/stereo.py.
+- Do NOT change any other dependency's version.
+- Do NOT commit `.hermes/plans/**`.
+- Work only from evidence you can grep: state in the report the exact grep you ran before each deletion.
+
+## Verify
+- `grep -rniE "depthai" --include=requirements*.txt --include=Dockerfile* --include=*.sh .` → must show 3.x
+  pins only (camera 3.8.0), plus at most clearly-marked legacy annotations. No 2.x pin anywhere.
+- Blockly: jest suite green (report the real numbers).
+- `bash -n` on every shell script you edited.
+- `git diff --name-only origin/develop...HEAD` — list only the intended files.
+
+FINAL REPORT: per item (A1..D9) what you changed and the grep/verification that proved it was safe; the real
+jest output; which build step you could/could not run; the remaining `depthai` grep result; confirmation you
+did not push/merge and did not touch pib-sdk/cerebra/stereo.py; and the commit hash.

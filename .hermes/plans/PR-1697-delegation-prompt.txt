@@ -1,0 +1,4 @@
+Implement PR-1697 (S5): the hand pair as the first detector end-to-end in the camera container.
+
+Ticket: https://pib-rocks.atlassian.net/browse/PR-1697
+Concept: https:...[truncated]

@@ -1,0 +1,59 @@
+Implement PR-1680 per the verified facts below.
+
+Ticket: https://pib-rocks.atlassian.net/browse/PR-1680
+Repo: pib-backend — /home/pib/opencode/pib-backend, branch `PR-1680` (from develop `abc7354c`).
+
+## Goal
+Add two Blockly logging blocks for a program-based, persistent log:
+1. A 'log' statement block with a Loglevel dropdown (default INFO) that appends a string (from a variable/input)
+   as a new line with a TIMESTAMP + SEVERITY prefix to the program's persistent log.
+2. A 'reset log' statement block that clears the program's log.
+
+## Persistence / path (confirmed design)
+- The log is persistent in a file inside the `programs` container (volume-mounted, survives restarts).
+- Program python files are written as `{PROGRAM_DIR}/{program_number}.py` (verified `ROS2 programs/program.py:110`,
+  `PROGRAM_DIR = os.getenv("PROGRAM_DIR", "/home/pib/cerebra_programs")`; compose sets `/ros2_ws/cerebra_programs`).
+- Therefore the log path (by program) is: `{PROGRAM_DIR}/program-logs/{program_number}.log`
+  (e.g. `/ros2_ws/cerebra_programs/program-logs/5.log`). Unless reset, the file persists; new runs append.
+
+## Blockly design
+Add to pib-backend Blockly (follow motor_current / pose / camera_depth block+generator+test pattern;
+blocks registered via DefineJSON -> custom-blocks, generators via spread -> custom-generators, Python logging
+helpers in function-declarations/definitions):
+
+### Block 1 - type e.g. `program_log`
+- message: "log %1" with a Loglevel dropdown (name LEVEL) options [INFO,WARNING,ERROR,DEBUG] default INFO
+  AND a string input (value input, e.g. input_value TEXT) for the message text.
+- Emits Python that appends one line to the program log:
+  - Path derived at runtime from PROGRAM_DIR env + current program number. The generated program runs standalone
+    (saved as {PROGRAM_DIR}/{program_number}.py), so program_number can be derived from `__file__` basename
+    (e.g. `os.path.splitext(os.path.basename(__file__))[0]`) OR use an env var if cleaner. Log dir:
+    `os.path.join(os.getenv("PROGRAM_DIR", ...), "program-logs", "<program_number>.log")`. Ensure the
+    `program-logs` directory is created (`os.makedirs(..., exist_ok=True)`).
+  - Append (mode "a", utf-8) a line `[{datetime}] {LEVEL} {text}` (timestamp + severity prefix).
+- Dropdown severity -> expand to the level string in the emitted line.
+
+### Block 2 - type e.g. `program_reset_log`
+- statement block "reset log": clears the program's log file (same path as above): ensure dir exists, then
+  truncate/delete (write empty) so a fresh run starts empty.
+
+## Verified existing patterns (this repo, Blockly)
+- value-block generator pattern in motor-generators.ts / camera-generators.ts: read inputs via
+  block.getFieldValue / generator.valueToCode(block,"TEXT",Order.NONE), add imports via generator.definitions_,
+  use generator.provideFunction_ for a helper, return statement line / [code, Order]. Registration via module
+  spread into custom-generators.ts -> pythonGenerator.forBlock[name].
+- definitions.ts: IMPORT_LOGGING/IMPORT_PIB_SDK_* constants; function-declarations.ts helper builders.
+- Use `os.getenv`, `os.makedirs`, `datetime` in the helper (add needed imports in definitions).
+
+## Constraints
+- Stay on branch `PR-1680`. Do NOT merge/push develop (orchestrator opens PR). You MAY commit (`feat: PR-1680 ...`).
+- Only add the two blocks + generator + tests in pib-backend Blockly. Do NOT change existing generators.
+- Do NOT commit `.hermes/plans/**`. Do NOT commit if tests fail.
+- Report REAL results.
+
+## Verify (orchestrator)
+- `cd /home/pib/opencode/pib-backend/tests/blockly_generator && node node_modules/jest/bin/jest.js --config jest.config.js` -> all pass incl new cases.
+- `git diff --name-only origin/develop...HEAD` shows blocks + generator + test.
+
+FINAL REPORT: files changed, the two block defs + emitted Python, real jest pass count, confirmation you did not
+merge/push, commit hash if committed.

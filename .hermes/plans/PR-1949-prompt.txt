@@ -1,0 +1,50 @@
+Task: PR-1949 - a run of setup-pib.sh on a clean Pi OS must produce a COMPLETE system.
+
+Repository: pib-backend. Branch: PR-1949, created from origin/develop. Ticket: PR-1949.
+
+=== What was measured after a real fresh install (192.168.1.172, Pi 5, 8 GiB, wiped device, 2026-10-08) ===
+All four defects below appeared although their install step reported "ok".
+
+1) Hermes CLI unusable. `hermes --version` answers: "hermes: no dependency environment is committed for
+   this install; run `hermes pm repair`". Inside the flask container `import hermes_cli` and
+   `import hermes_constants` both fail with ModuleNotFoundError. Consequences: three voice-assistant E2E
+   tests fail and so does tests/unit/test_chat_hermes_routing.py::test_warm_daemon_turn_uses_in_process_runner.
+
+2) Host IP missing. No file under /etc or /run, `GET /host-ip` answers HTTP 500. Consequences: both
+   microphone-array E2E tests fail and so does the Robot test E2E-BDD-SAF-005.
+
+3) marimo does not start. `systemctl is-active pib-marimo` says "activating" (it is enabled), not "active".
+   Consequences: three programs_component E2E tests fail.
+
+4) Qwen is installed and reachable but NOT offered in Cerebra. Measured: ollama active+enabled, 0.40.1,
+   `ollama list` shows qwen-fast:latest and qwen2.5:1.5b (986 MB each), http://127.0.0.1:11434/api/tags
+   returns both, and the install step ran (setup-pib.sh:1379 gates on pib5edu|pib5advanced|pib5museum).
+   The list Cerebra offers is built elsewhere - start at pib_api/flask/service/local_model_service.py.
+   This is a wiring/visibility defect, not an installation defect.
+
+5) Undetermined: two on-device-model E2E tests fail (model lifecycle; blockly detection to a named pose).
+   The model store is complete (16 blobs, all model directories), so provisioning is NOT the cause.
+   Find the cause; do not guess it.
+
+=== What to change ===
+Fix the script and the services so a single run on a clean Pi OS yields all of the above working. The
+pattern matters as much as the four defects: where the script can verify a result cheaply (a version
+call, a systemd unit state, an HTTP status), it must do so and fail loudly - reporting "ok" for a
+missing result is what made this install look complete.
+
+=== Hard constraints ===
+- Work only on branch PR-1949. Make the changes and run the tests, but do NOT commit and do NOT push:
+  leave the changes in the working tree.
+- NO device access. A fresh-Pi verification is the operator's job and is explicitly not part of this
+  task. Do not claim device-verified results; state clearly what only a clean run can prove.
+- Do not weaken or remove existing behaviour: the variant gate for the Ollama step
+  (pib5edu|pib5advanced|pib5museum, setup-pib.sh:1379), the idempotency of every step (a second run must
+  stay a no-op), the DB migration and the health checks must all keep working.
+- Product-neutral shipped code: no IPs, no host names, no device-specific values.
+- Tests: the existing unit and integration suites must keep passing (pytest from tests/ , plus black as
+  the CI runs it). Add tests where a defect can be covered without a device - for example that the
+  host-IP file is written by the step that owns it, or that a step's verification fails when the result
+  is absent. Report the exact commands and their output.
+- If the run cannot cover all four defects, fix what it can and report precisely which defect is
+  untouched and why. A partial delivery with an honest report is worth more than a broad, unverified one.
+- Report what you ran, what you did not run, and anything left unverified.

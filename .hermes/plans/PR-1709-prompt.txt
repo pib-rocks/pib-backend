@@ -1,0 +1,11 @@
+Implement PR-1709 (branch PR-1709 is checked out). Fetch the ticket for the full context:
+  GET https://pib-rocks.atlassian.net/rest/api/3/issue/PR-1709?fields=description
+  Credentials: ~/.hermes/.env -> ATLASSIAN_EMAIL, ATLASSIAN_TOKEN (base64 basic auth).
+
+Core: start_model hand_tracking reports success and status running, but fps 0.0 and no DetectionArray
+on /detections/hand_tracking. Add a per-stage packet counter and log where the chain stops:
+  colour ISP -> palm detector NN -> decoding NN -> ImageManip ROI -> hand landmark NN -> post-processing -> publish
+Then fix that stage so fps > 0 and DetectionArray is published. Report the raw stage counters as evidence.
+
+Rules: pytest + py_compile + bash -n must pass; keep the colour-only camera healthy; no push/merge;
+do not commit .hermes/; state what needs live verification on the robot.

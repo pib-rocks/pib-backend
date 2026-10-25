@@ -1,0 +1,18 @@
+Fix PR-1705 and PR-1706 in one branch (PR-1705 is already checked out).
+
+Get the full evidence and the expected outcome from both Jira tickets via the REST API:
+  GET https://pib-rocks.atlassian.net/rest/api/3/issue/PR-1705?fields=description,summary
+  GET https://pib-rocks.atlassian.net/rest/api/3/issue/PR-1706?fields=description,summary
+Credentials: ~/.hermes/.env -> ATLASSIAN_EMAIL and ATLASSIAN_TOKEN, base64 basic auth.
+
+Possible fix direction (choose one and justify it):
+  - request a smaller colour/ISP output for the NN branch (e.g. requestOutput((640,360)) / (1280,720))
+  - and/or stage the scaling so the ImageManip warp params are valid.
+Keep the coordinate mapping in hand_tracking.py correct for the new branch input size,
+keep the colour-only fallback (PIB_CAMERA_STEREO) intact, and do not change the datatypes contract.
+
+PR-1706 (provisioning): (a) manifest.yaml is not placed into the store, but the registry reads
+/models/manifest.yaml; (b) the store dir is created root-owned by Docker (bind mount), so all 13
+placements failed while the script still exited 0. Fix both, make failures exit non-zero with an
+actionable message, keep idempotency, and mention the install order (provision before containers).
+

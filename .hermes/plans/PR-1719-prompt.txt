@@ -1,0 +1,18 @@
+Implement PR-1719 (branch PR-1719 is checked out). Fetch the ticket for the full task and evidence:
+  GET https://pib-rocks.atlassian.net/rest/api/3/issue/PR-1719?fields=description
+  auth: ATLASSIAN_EMAIL / ATLASSIAN_TOKEN from ~/.hermes/.env (basic auth)
+
+A PROVEN REFERENCE IMPLEMENTATION EXISTS on the robot: /home/pib/hand_pipeline_reference.py (also local:
+~/.hermes/plans/hand_pipeline_reference.py). It runs the complete chain on the device:
+  small camera output (640x480) -> ImageManip(128x128, BGR888p) -> palm detector -> decoding head (10,8)
+  -> per-frame ImageManipConfig (outputSize 224 + BGR888p + addCropRotatedRect) -> ImageManip
+  -> landmark net -> 63 landmark values + getTransformation() for mapping back.
+Read that file first and mirror it in the ROS node. The ticket lists the seven measured findings.
+
+Key: the current node taps the FULL-RES ISP for the hand branch, so the ImageManip warp fails
+(WARP_SWCH_ERR_CACHE_TO_SMALL) and every frame is skipped - hence the counters colour_isp=1 palm=1
+decoding=1 then all zeros. Fix that plus process the decoder result and send the config per frame.
+
+Keep unchanged: one pipeline, colour-only fallback, detections contract, per-network shaves,
+PIB_CAMERA_STEREO=off. Run real commands and report raw output (pytest, py_compile).
+Do not push or merge. Do not commit .hermes/.

@@ -1,0 +1,29 @@
+Implement PR-1660 per the plan at `/home/pib/opencode/pib-backend/.hermes/plans/PR-1660-plan.md`. READ THE PLAN FIRST — verified facts, design, file locations, hard constraints.
+
+SCOPE:
+1. Create `ros_packages/motors/pib_motors/pib_motors/trajectory_executor.py` — a `TrajectoryExecutor` implementing a fixed-rate software trajectory controller: given a multi-point `trajectory_msgs/JointTrajectory` with `time_from_start`, interpolate each motor at the current time (linear or monotone cubic for via-point continuity/blend), run at ~100 Hz, sharpening the motor motion-config before and restoring it after (finally), and falling back to single-point behavior for a one-point message.
+2. Modify `ros_packages/motors/motors/motor_control.py` `apply_joint_trajectory` to delegate to the TrajectoryExecutor when the request is a real multi-point trajectory (has >1 point or time_from_start), while keeping the EXISTING single-point path (as_motor_positions + set_position) unchanged for backward compatibility.
+3. Add `tests/unit/test_trajectory_executor.py` (pytest, offline) using a fake/mock Motor that records set_position/apply_settings; cover multi-point interpolation, sharp/restore, single-point backward-compat, via-point blend.
+
+VERIFIED API (pib-backend, this repo):
+- ApplyJointTrajectory.srv = trajectory_msgs/JointTrajectory / bool successful.
+- motor_control.py: as_motor_positions(jt) reads joint_names + points[0].positions[0]; apply_joint_trajectory loops and calls motor.set_position(position).
+- motor.py: set_position(position), get_position(), has_reached_position(), check_if_motor_is_connected(), apply_settings(settings_dto).
+- startup_pose_executor.py: settings backup/reduce/restore pattern (_backup_motor_settings, _reduce_motor_speeds with velocity reduced + turnedOn False, _restore_settings in finally). REUSE this pattern.
+- Bricklet speed only via set_motion_configuration(velocity, acceleration, deceleration) (via motor.apply_settings).
+
+HARD CONSTRAINTS:
+- Stay on branch `PR-1660`. Do NOT merge or push to develop (orchestrator opens the PR for the user). You MAY commit (`feat: PR-1660 ...`, `refactor:` for motor_control). Do NOT push.
+- Do NOT change the ApplyJointTrajectory.srv schema, do NOT break startup_pose_executor.py, do NOT change existing single-point behavior.
+- Keep readable, add docstrings + type hints. Reuse the settings-backup/restore pattern (don't invent a parallel one).
+- Do NOT commit `.hermes/plans/**`. Do NOT commit if tests fail (unless a genuinely-unrelated pre-existing failure; say so).
+- Report REAL results.
+
+TEST RUNNER NOTE: the repo has no ROS-node pytest infrastructure; ros runtime imports (rclpy, trajectory_msgs) may or may not be installed locally. Design `TrajectoryExecutor` to be importable for tests WITHOUT a live ROS graph where possible, and write the test to skip cleanly (`pytest.skip`) if a hard ROS import is unavailable — do NOT claim the test ran if it skipped. If rclpy is not installed, prefer structuring the executor so the core interpolation/interoperation logic is testable with plain Python (e.g. a method that takes points + time and returns target positions, independent of the ROS graph), and unit-test THAT.
+
+SELF-CHECK (report real output):
+- `cd /home/pib/opencode/pib-backend && python3 -m pytest tests/unit/test_trajectory_executor.py -q -v` → pass (or honest skip-with-reason if ROS unavailable; then ALSO verify import/logic via a lightweight path).
+- `git diff --stat origin/develop...HEAD` shows the 3 expected files.
+- `grep -n "time_from_start" ros_packages/motors/pib_motors/pib_motors/trajectory_executor.py` → present.
+
+FINAL REPORT: files added/changed, the executor design (loop mechanism, interpolation method, blend approach, sharp/restore), the real pytest result (pass count OR skip reason + how you verified logic offline), confirmation of backward-compat single-point path, and commit hash if you committed. Do not push.

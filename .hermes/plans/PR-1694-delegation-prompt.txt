@@ -1,0 +1,38 @@
+Implement PR-1694 (S2): provision the curated model store from setup-pib.sh.
+
+Ticket: https://pib-rocks.atlassian.net/browse/PR-1694
+Repo: pib-backend - /home/pib/opencode/pib-backend, branch `PR-1694` (from develop 47d8649b).
+
+CONTEXT (concept decisions D1/D3/3.2): the 13 curated OAK model artefacts are vendored in `models/` with
+`models/manifest.yaml` (fields: model_id, file, sha256, size_bytes, shaves, ...). The robot must get them into a
+PERSISTENT MODEL STORE at install time and then be fully OFFLINE. The robot never downloads or compiles models.
+The store is a directory (Docker bind mount), NOT baked into the image.
+
+TASK
+1. setup/setup-pib.sh - add model provisioning:
+   - store path: ${PIB_MODEL_STORE:-/home/pib/app/pib-models} (create with mkdir -p)
+   - for every entry in models/manifest.yaml: verify the vendored file sha256, then place it into the store.
+     Idempotent: if the stored copy already matches the manifest sha256, skip it (log "already current").
+   - NON-FATAL: any failure only logs a WARN; the installation must never abort because of models.
+   - new flag `--verify-models`: only verify the store against the manifest (sha256) and report; exit non-zero
+     ONLY in this explicit mode when something mismatches.
+   - new flag `--models` (a.k.a. models update): only refresh the store and exit; no full install.
+   - run provisioning as part of the normal install as well (after the repo checkout, before containers start).
+   - move/verify logic must be reusable by both the normal install and the two flags (one function).
+   - concise summary at the end: placed / already current / failed counts, plus the store path.
+2. docker-compose.yaml - mount the store read-only into the `ros-camera` service:
+   `${PIB_MODEL_STORE:-/home/pib/app/pib-models}:/models:ro`. Keep the existing `profiles` entries and all other
+   settings exactly as they are (the ROS services are profile-gated - do not change that).
+3. Do NOT use the network at runtime and do NOT install anything new.
+
+CONSTRAINTS: don't change camera code or models/ contents; no push/merge; don't commit .hermes.
+
+VERIFICATION (paste real output):
+- `bash -n setup/setup-pib.sh`
+- run the provisioning twice into a TEMP store to prove idempotency, e.g.:
+  `PIB_MODEL_STORE=/tmp/mstore bash setup/setup-pib.sh --models` (or the equivalent function call)
+  Run 1 must place 13 files, run 2 must report all 13 "already current".
+- `PIB_MODEL_STORE=/tmp/mstore bash setup/setup-pib.sh --verify-models` must exit 0
+- corrupt one file in the temp store, re-run --verify-models, show that it fails (exit != 0), then restore.
+
+REPORT: commit hash, `git show --stat`, and the real command outputs above.

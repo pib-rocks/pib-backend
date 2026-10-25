@@ -1,0 +1,33 @@
+ROLE: Implement Jira ticket PR-1922 in the pib-backend repository.
+Repo /home/pib/opencode/pib-backend, branch PR-1922 (created, no commit yet).
+Fetch the full specification from the ticket - it carries the measured hardware baseline, the exact Modelfile
+contents and all acceptance criteria:
+  GET https://pib-rocks.atlassian.net/rest/api/3/issue/PR-1922?fields=description,summary
+  Credentials from /home/pib/.hermes/.env: ATLASSIAN_EMAIL and ATLASSIAN_TOKEN (base64 basic auth).
+  Use ATLASSIAN_TOKEN exactly - ATLASSIAN_API_TOKEN does not exist and yields 401.
+
+YOUR SCOPE
+1) setup/setup-pib.sh - one new step that: installs ollama when the binary is missing (official installer);
+   ensures the service is running and enabled; pulls qwen2.5:1.5b; creates qwen-fast from the Modelfile; logs the
+   installed ollama version; warns when the available RAM is below what the model needs; and is idempotent (second
+   run re-downloads nothing and does not fail on the existing model). Use the script's existing step runner and log
+   style - run_step (line 114), print, print_step_summary.
+2) setup/ollama/Modelfile with exactly the parameters from the ticket: FROM qwen2.5:1.5b, PARAMETER num_thread 4,
+   PARAMETER num_ctx 2048, PARAMETER num_predict 256, PARAMETER temperature 0.5, PARAMETER top_p 0.9, plus a German
+   system prompt that demands extremely concise, direct answers without filler or pleasantries.
+3) tests/unit/test_setup_ollama.py in the style of tests/unit/test_setup_whisper_provisioning.py: stub the external
+   commands, require no ollama on the machine, and assert the decisions (install only when missing, pull once,
+   create once, the RAM warning, and the Modelfile parameters).
+
+RULES
+- Stay on branch PR-1922. Do NOT merge into develop. Do NOT create a pull request.
+- You MAY commit on this branch. If `git push` fails for lack of GitHub credentials that is expected: stop, say so
+  plainly, and leave the commit on the branch. Never claim a push you did not make.
+- DO NOT install ollama and DO NOT pull any model in this development environment. It is not a Raspberry Pi;
+  installing here proves nothing about the device and a roughly 1 GB download is not wanted. Do not claim you ran
+  the setup script, the service or the model. State explicitly in your report which acceptance criteria therefore
+  remain unverified on a device.
+- Run what is runnable: `bash -n setup/setup-pib.sh` for shell syntax, the new unit test, and the repository's
+  formatter/lint gate for the files you touched. Name exactly what you ran.
+- Report the exact files and lines changed, the exact commands run, and the real observed output. Do not report a
+  number or a result you did not see. Answer in English.

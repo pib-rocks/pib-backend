@@ -1,0 +1,33 @@
+Implement PR-1697 (S5): the hand pair end-to-end in the camera container.
+
+Ticket: https://pib-rocks.atlassian.net/browse/PR-1697
+Concept: https://pib-rocks.atlassian.net/wiki/spaces/PM/pages/1101922305 (sections 3.7, 3.8)
+Repo: pib-backend - /home/pib/opencode/pib-backend, branch PR-1697 (from develop 1b5c0e15).
+
+CONTEXT
+- S4 (merged) added model_registry.py + pipeline_manager.py in ros_packages/camera/oak_d_lite/ with
+  rebuild-on-demand, owner-referenced start/stop, models_status (ModelStatusArray, 1 Hz) and the
+  colour-only fallback (PIB_CAMERA_STEREO). Read those files first and build on them - do not redesign them.
+- S1 (merged) vendored 13 artefacts in models/ with models/manifest.yaml (provenance, sha256, shaves, size).
+- The hand path uses THREE artefacts (already vendored):
+    palm_detection_128x128            <- the palm DETECTOR (input 128x128)
+    palm_detection_128x128_decoding   <- decoding head ONLY ("decodes the palm_detection_128x128,
+                                         returns the TOP 10 most confident results") - not a detector
+    hand_landmark_224x224             <- 21 hand landmarks from a hand crop (input 224x224)
+  The decoding blob's upstream is geaxgx/depthai_hand_tracker - use that project as the reference
+  for the decoding output format and the landmark handling. Inspect it (network is available) and
+  document what you found (tensor shape, anchors, which values are score/bbox/landmarks) in the README
+  or the module docstring.
+
+TASK 1 - composite model entry
+The pipeline manager starts one model_id, but the hand path is a chain. Add a composite entry so the
+hand path can be started as ONE model:
+  - extend models/manifest.yaml with a composite entry, e.g.
+      - model_id: hand_tracking
+        task: hand_tracking
+        composite: true
+        artifacts: [palm_detection_128x128, palm_detection_128x128_decoding, hand_landmark_224x224]
+        publish_topic: detections/hand_tracking
+    (keep every existing entry and its hashes untouched; the vendored .blob files must not change)
+  - model_registry.py must resolve it: a composite model is available only if ALL its artefacts exist
+    and verify, and it reports the summed size/shaves. Single-artefact models keep working exactly as before.

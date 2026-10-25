@@ -1,0 +1,63 @@
+READ-ONLY REVIEW. Do NOT modify, create, delete, or run any command that changes state
+(no git push/fetch that rewrites, no commit, no checkout that loses work, no rm, no
+filter-repo). Only read and inspect, then report.
+
+REPOSITORY: /home/pib/opencode/pib-backend  (currently on local branch `main`, clean
+working tree except untracked .hermes/plans/* which are intentional and must stay).
+
+CONTEXT — recent security action to verify:
+- A real Google/Gemini API key (pattern AIza...) was previously committed in
+  docker-compose.yaml. We ran `git filter-repo` to scrub it from history, then
+  force-pushed develop and main. A backup bundle exists at
+  /tmp/pib-backend-pre-sec-fix.bundle.
+- Goal of your check: prove (with evidence) whether the API key is REALLY gone from
+  (a) the working tree and all tracked files, (b) the full git history of EVERY local
+  branch AND every tag, and (c) there are no secret remnants. Also assess repo health
+  after the rewrite.
+
+## Task 1 — SECURITY verification
+1. Grep the working tree for the key pattern and generic secrets:
+   - Search for the exact prefix `AIza` (Google API keys) and generic
+     `sk-`, `api_key`, `secret`, `password=` in tracked files. List any hits.
+   - Specifically confirm docker-compose.yaml currently has ONLY
+     `GEMINI_API_KEY=${GEMINI_API_KEY}` and `GOOGLE_API_KEY=${GOOGLE_API_KEY}`
+     (no fallback, no hardcoded value).
+2. Search the FULL git history for the key:
+   - `git log --all --oneline -S '<the full AIza... key>'` across all branches+tags.
+   - `git grep` at every ref if needed. Report the exact command you ran and its output
+     (empty = the key is scrubbed; non-empty = list every commit/ref that still has it).
+3. Tags: `git for-each-ref refs/tags` and check whether ANY tag points into history
+   that still contains the key. Note we did NOT force-push tags — check if old tags
+   (v0.5.0, v0.6.0, v0.6.1, v0.6.2) now point to rewritten or to pre-rewrite commits.
+4. Report whether the key string appears anywhere in reachable history of
+   develop + main + all local branches + all tags. Give the exact commands + output.
+
+## Task 2 — Repository health after the rewrite
+1. Branch/tag/remote consistency:
+   - List local branches and remote branches; flag branches that exist only locally
+     (orphaned by the rewrite) or only remotely.
+   - Confirm origin remote exists and its URL is correct (https).
+   - Confirm local main/develop point at the SAME commit as origin/main & origin/develop.
+2. Was any commit lost/incorrectly rewritten? The rewrite SHOULD have kept the
+   equivalent of the security removal commit. Compare:
+   - `git log --oneline -3 main` and `git log --oneline -3 develop` — do they look
+     coherent (e.g. contain a security-related commit)?
+3. Backup integrity: does the bundle /tmp/pib-backend-pre-sec-fix.bundle contain the
+   pre-rewrite refs you expect? Use `git bundle list-heads` and report which refs it
+   holds (do NOT restore anything).
+4. Working tree / untracked:
+   - Confirm the only untracked files are .hermes/plans/*.md/*.txt (these are
+     intentional scratch, do NOT call them a problem).
+   - Confirm `git status` is otherwise clean on main.
+5. Flag anything suspicious: dangling objects, wrong remotes, inconsistent tags, a
+   commit tree that no longer contains work that was on main before.
+
+## Requirements
+- READ-ONLY, do not mutate the repo.
+- Quote the EXACT command for every claim, and paste the real output (or state
+  "empty output").
+- Do NOT delete or restore from the bundle. Do NOT push.
+- Mark explicitly anything you could NOT verify (e.g. a ref you cannot inspect
+  read-only).
+- Answer in English. Two sections: "Security findings" and "Repo health findings",
+  each with bullet evidence, then a short verdict (PASS / items to check).

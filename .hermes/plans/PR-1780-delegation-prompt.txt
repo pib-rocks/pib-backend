@@ -1,0 +1,61 @@
+You are implementing Jira ticket PR-1780 in the repository /home/pib/opencode/pib-backend.
+
+FIRST: read /home/pib/opencode/pib-backend/.hermes/plans/PR-1780-plan.md in full. It contains the
+verified root cause, the exact file:line facts and the fix shape. Ground everything in that plan.
+
+WORKING BRANCH (hard constraint)
+- You are on branch PR-1780, created from the real origin/develop. Stay on it.
+- Do NOT merge, do NOT push, do NOT rebase, do NOT create a PR. Commit your work on PR-1780 only.
+
+SCOPE (hard constraint — touch nothing else)
+- setup/setup-pib.sh
+- setup/installation_scripts/docker_install.sh
+- ONE new test module under tests/unit/ (suggested: tests/unit/test_setup_docker_cleaner_service.py)
+Do not reformat unrelated lines, do not rename anything, do not touch the unit template
+setup/setup_files/docker_cleaner.service unless you choose the documented alternative.
+
+THE TASK
+Defect 1 — ordering: on a fresh install, docker_cleaner.service is started (from
+setup_docker_cleaner_service() at setup/installation_scripts/docker_install.sh:72, invoked at line
+107) while `pib` is not yet a member of the `docker` group. The group is only granted afterwards at
+setup/setup-pib.sh:985 (`sudo usermod -aG docker pib`). The unit runs `User=pib`, so its first start
+always fails with "permission denied while trying to connect to the docker API at
+unix:///var/run/docker.sock".
+Fix: grant the docker group membership after the engine is installed (the group must exist) and
+BEFORE the cleaner service is started — i.e. inside setup/installation_scripts/docker_install.sh
+between `install_docker_engine` (line 104) and `setup_docker_cleaner_service` (line 107) — and
+remove the now-redundant usermod statement at setup/setup-pib.sh:985. Keep the existing
+error handling style (`|| { print ERROR "..."; return 1; }`).
+
+Defect 2 — swallowed failure: setup_docker_cleaner_service() does not check the `systemctl start`
+result and always prints
+  print SUCCESS "Docker container cleanup service installed and started"
+even when the start failed. Fix: check the exit status of the start (capture and print the
+systemctl output/reason on failure), print ERROR and `return 1`; print the SUCCESS line only when
+the start actually succeeded. Do not add blank try/except-style noise; keep it readable shell.
+
+TESTS (required)
+Add the test module described in the plan. It must EXECUTE the real script code with stub
+executables on PATH (a fake `sudo`/`systemctl` that records argv to a log and exits with a
+configurable status). Required assertions:
+  1. sequencing: the recorder log shows `usermod -aG docker pib` BEFORE
+     `systemctl start docker_cleaner.service`;
+  2. failure: with the fake `systemctl start` exiting non-zero, the function returns non-zero and
+     the SUCCESS text was NOT printed.
+Do NOT write tests that read the script's source text and assert on its shape, and do not write
+change-detectors. Model the style on tests/unit/test_setup_hardware_variant.py and
+tests/unit/test_setup_hermes_model_pin.py.
+
+VERIFICATION YOU MUST RUN AND REPORT VERBATIM (real output, no summaries)
+  bash -n setup/setup-pib.sh
+  bash -n setup/installation_scripts/docker_install.sh
+  python3 -m pytest tests/unit/test_setup_docker_cleaner_service.py -q
+  python3 -m pytest tests/unit/test_setup_hardware_variant.py tests/unit/test_model_provisioning.py tests/unit/test_system_property_service.py -q
+  git diff --stat
+NEVER run the real setup-pib.sh (it writes /etc/sudoers.d/$USER, installs packages and builds
+Docker images).
+
+REPORT
+Report: the files changed, the exact diff of the two scripts, the verbatim test output, and any
+point where you deviated from the plan plus why. If something could not be verified, say so
+explicitly instead of claiming success. English only.

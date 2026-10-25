@@ -1,0 +1,16 @@
+Implement PR-1716 - the ticket was CORRECTED, fetch it again for the current text:
+  GET https://pib-rocks.atlassian.net/rest/api/3/issue/PR-1716?fields=description
+  auth: ATLASSIAN_EMAIL / ATLASSIAN_TOKEN from ~/.hermes/.env (basic auth)
+
+SUMMARY: the standard pattern is already implemented (hand_tap -> ImageManip, inputConfig queue).
+The real stall: landmark_manip.inputConfig.setWaitForMessage(True) blocks the ROI ImageManip until a
+per-frame ImageManipConfig arrives, and the live counters showed only 1 packet for palm/decoding then
+nothing (image_manip_roi=0) - consistent with the config never being sent.
+
+TASK: (1) add counters at the config-send site and at the decoding-result processing so the stall is visible;
+(2) fix the cause so a config is sent per frame and the ROI emits; (3) rebuild the standalone probe so it
+mirrors the REAL node path (camera branch -> ImageManip with waitForMessage), starting from
+/tmp/chain_probe.py on the robot, and use it to verify on the device.
+
+Keep unchanged: colour-only fallback, detections contract, per-network shaves, PIB_CAMERA_STEREO=off.
+Run real commands and report raw output. Do not push or merge. Do not commit .hermes/.

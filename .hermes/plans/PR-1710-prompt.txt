@@ -1,0 +1,12 @@
+Implement PR-1710 (branch PR-1710 is checked out). Fetch the ticket for the full context:
+  GET https://pib-rocks.atlassian.net/rest/api/3/issue/PR-1710?fields=description
+  Credentials: ~/.hermes/.env -> ATLASSIAN_EMAIL, ATLASSIAN_TOKEN (base64 basic auth).
+
+Measured live with the PR-1709 stage counters:
+  colour_isp=0 palm_detector_nn=0 decoding_nn=0 image_manip_roi=0 hand_landmark_nn=0 post_processing=0 publish=0
+while /camera_topic publishes at ~10 Hz. So the hand branch receives NO frames from the colour output.
+Fix the branch tap / queue creation on the camera output in the pipeline build (stereo.py) so the branch is fed.
+Prove it with the stage counters (colour_isp > 0 and onward).
+
+Rules: pytest + py_compile + bash -n must pass; the colour-only camera path and PIB_CAMERA_STEREO=off default
+must stay intact; no push/merge; do not commit .hermes/; state what needs live verification on the robot.

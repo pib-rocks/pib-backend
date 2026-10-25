@@ -1,0 +1,106 @@
+Implement TWO tickets in ONE branch, per the verified facts below.
+
+Tickets:
+- PR-1627: https://pib-rocks.atlassian.net/browse/PR-1627  (install-time: default output volume 100% via wpctl)
+- PR-1628: https://pib-rocks.atlassian.net/browse/PR-1628  (Blockly: Set Volume block in the Audio category)
+
+Repo: pib-backend — /home/pib/opencode/pib-backend, branch `PR-1627-1628` (from develop `eeb9c4dd`).
+Do NOT touch the cerebra repo (the palette entry for the new block is handled separately by the orchestrator).
+Do NOT modify pib-sdk.
+
+=====================================================================
+PART 1 — PR-1627: set default output volume to 100% at install (wpctl)
+=====================================================================
+
+Verified on the live Pi: `wpctl` comes from the `wireplumber` package (/usr/bin/wpctl), PipeWire +
+WirePlumber are running, and the default sink currently sits at `Volume: 0.40`.
+
+- Add a new function in `setup/setup-pib.sh` (functions are declared at the top; the main flow runs at the
+  bottom of the file) named e.g. `set_default_output_volume()`.
+- The function must:
+  * set the volume to 100% with:  `wpctl set-volume @DEFAULT_AUDIO_SINK@ 1.0`
+  * use the PipeWire alias `@DEFAULT_AUDIO_SINK@` (NOT a device name) so it works on any hardware.
+  * be IDEMPOTENT (re-running the installer must not change anything / must not fail).
+  * verify and log the result with `wpctl get-volume @DEFAULT_AUDIO_SINK@` (expect `Volume: 1.00`).
+  * degrade gracefully: if `wpctl` is missing or PipeWire is not up yet, print a WARNING and do NOT fail the
+    whole install (the ticket is an install-time default, not a hard dependency).
+- CRITICAL PITFALL: `wpctl` talks to the *user's* PipeWire/WirePlumber session. The installer runs parts of its
+  work as root (see `sudo usermod -aG docker pib`). The volume step MUST run as the `pib` user with the runtime
+  dir set, e.g.:
+      sudo -u pib XDG_RUNTIME_DIR=/run/user/1000 wpctl set-volume @DEFAULT_AUDIO_SINK@ 1.0
+  Do NOT run wpctl as root (root has no session bus / sinks -> it would silently do nothing).
+- Call `set_default_output_volume || print WARN "failed to set default output volume"` from the main install
+  flow, near the other system settings (`source "$SETUP_INSTALLATION_DIR/set_system_settings.sh"`) and before
+  `cleanup`.
+- Keep the existing script style (print INFO/WARN/ERROR helpers).
+
+=====================================================================
+PART 2 — PR-1628: Blockly Set Volume block + volume service (ros-audio-io)
+=====================================================================
+
+DECIDED APPROACH (do not deviate): the runtime volume capability is implemented INSIDE the ros-audio-io
+container (that image already has `pactl` and the Pulse socket mounted with PULSE_SERVER set), and the Blockly
+block calls it over the existing ROS2/rosbridge service path. Do NOT try to call wpctl from the programs
+container.
+
+Verified context:
+- `ros_packages/datatypes/CMakeLists.txt` lists every srv explicitly under `rosidl_generate_interfaces`
+  (see `srv/PlayAudioFromFile.srv`, `srv/GetDepthFrame.srv`, ...). A new srv MUST be added there.
+- `ros_packages/ros_audio_io/`: Dockerfile (installs `pulseaudio` -> provides `pactl`), `setup.py`
+  (entry_points console_scripts: `audio_streamer`, `doa_publisher`), `launch/launch.py` (starts those nodes).
+  The container has `PULSE_SERVER=unix:/run/user/1000/pulse/native` and the socket + cookie are mounted
+  (see docker-compose.yaml, service `ros-audio-io`).
+- Blockly service-call template to copy EXACTLY: `program-generators/play-wav-generator.ts` +
+  `play-audio-from-speech-generator.ts` together with
+  `program-generators/util/definitions.ts` (`IMPORT_PLAY_AUDIO_FROM_FILE = "from datatypes.srv import
+  PlayAudioFromFile"`, `INIT_PLAY_AUDIO_FROM_FILE_CLIENT` = `node.create_client(...)` + wait-until-available)
+  and `program-generators/util/function-declarations.ts` (`PLAY_AUDIO_FROM_FILE_FUNCTION` builds the Request,
+  sets fields, `call_async`, `rclpy.spin_until_future_complete`).
+
+2a) New service interface
+- Add `ros_packages/datatypes/srv/SetVolume.srv`:
+      int32 percent
+      ---
+      bool successful
+  (`percent` is 0-100; the implementation clamps it.)
+- Register it in `ros_packages/datatypes/CMakeLists.txt`.
+
+2b) Implement the service in ros-audio-io
+- Add a service node, e.g. `ros_packages/ros_audio_io/ros_audio_io/volume_service.py`, that:
+  * creates a ROS2 service `set_volume` of type `datatypes/srv/SetVolume`;
+  * on request: clamp `percent` to 0..100 and run
+        pactl set-sink-volume @DEFAULT_SINK@ <percent>%
+    via `subprocess` (pactl is available in this image and PULSE_SERVER is set);
+  * sets `successful` from the exit status and logs the result.
+- Wire it up: add the console_script entry point in `setup.py` and start it from `launch/launch.py`
+  (follow the existing `audio_streamer` / `doa_publisher` pattern; add the dependency in `package.xml` if
+  the existing nodes declare one).
+
+2c) Blockly block (pib-backend is the single source of truth; it syncs to cerebra after merge)
+- Add a statement block `set_volume` (Audio area, colour 260 to match the existing audio blocks):
+  message e.g. `set volume to %1 %`, with a numeric value input (expected range 0-100).
+- Add `program-blocks/set-volume-block.ts` and `program-generators/set-volume-generator.ts`, mirroring the
+  play-wav pattern: add `IMPORT_SET_VOLUME = "from datatypes.srv import SetVolume"` and
+  `INIT_SET_VOLUME_CLIENT` (create_client(SetVolume, 'set_volume') + wait-until-available) to definitions.ts,
+  a `SET_VOLUME_FUNCTION` helper to function-declarations.ts (Request -> `request.percent = int(<value>)`,
+  call_async, spin_until_future_complete), and register both in `custom-blocks.ts` / `custom-generators.ts`
+  plus a `reserved-words.ts` entry.
+- Add a jest generator test (in `tests/blockly_generator/`) asserting the emitted code initialises the
+  `set_volume` client and calls it with the value read from the input.
+- Do NOT edit the cerebra toolbox/palette here.
+
+=====================================================================
+Constraints & verification
+=====================================================================
+- Stay on branch `PR-1627-1628`. Do NOT push/merge (the orchestrator opens the PR(s)). You MAY commit
+  (`feat: PR-1627 PR-1628 ...`).
+- Only pib-backend. Do NOT commit `.hermes/plans/**`. Do NOT commit if tests fail. Report REAL results.
+- Verify:
+  * `cd /home/pib/opencode/pib-backend/tests/blockly_generator && node node_modules/jest/bin/jest.js --config jest.config.js` -> all pass incl. the new case.
+  * Python syntax check of every new/changed .py (`python3 -m py_compile <files>`).
+  * `git diff --name-only origin/develop...HEAD` lists only the intended files.
+
+FINAL REPORT: files changed; the exact wpctl invocation added and how it avoids running as root; the new
+service (srv fields, pactl command, where it is launched); the new block type + the emitted Python; real jest
+results and py_compile results; confirmation you did not push/merge and did not touch cerebra or pib-sdk;
+commit hash if committed.

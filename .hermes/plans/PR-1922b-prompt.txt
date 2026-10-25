@@ -1,0 +1,44 @@
+Task: PR-1922 - raise num_ctx from 2048 to 8192 in the local model definition (owner decision, 2026-10-09).
+
+Repository: pib-backend. Ticket: PR-1922 (Jira). Make the change on a branch named PR-1922, created from origin/develop.
+
+=== Why ===
+The 2048 cap was justified as protection for the 4 GiB rig, but the 4 GiB variants never install the local
+model: setup-pib.sh installs Ollama only for pib5edu, pib5advanced and pib5museum and logs a skip line and
+returns success for everything else (see the case statement around line 1488). So num_ctx only ever applies
+on 8 GiB devices.
+
+Measured on 192.168.1.172 (8 GiB Pi 5), identical 863-token prompt, derived test models, removed afterwards:
+
+    num_ctx   prefill   total    eval_count   loaded size
+    2048      0.2 s     7.7 s    30           ~1.0 GB
+    4096      0.3 s     5.7 s    22           1.30 GB
+    8192      0.3 s     6.2 s    23           1.49 GB
+    16384     0.2 s     6.1 s    24           1.73 GB
+
+Prefill does not depend on num_ctx - it depends on the actual prompt length (~0.35 s per 1000 prompt tokens).
+Memory grows ~55 MB per 1024 tokens. The device has 4.4 GB free, so 8192 is comfortable. This is evidence from
+the ticket (comments 15149 and the decision comment); do not re-measure on a device.
+
+=== The exact change (five places, nothing else) ===
+1. setup/ollama/Modelfile line 3: `PARAMETER num_ctx 2048` -> `PARAMETER num_ctx 8192`.
+2. setup/setup-pib.sh around line 1473: the comment says the Q4 weights are "about 1.0-1.1 GiB plus the KV
+   cache for num_ctx 2048". Update the KV-cache reference to the new value.
+3. setup/setup-pib.sh around line 1624: the warning text ends with "(Q4 weights plus the 2048-token KV cache)".
+   Update it consistently.
+4. setup/setup-pib.sh around line 1620: the RAM threshold that warning compares against must follow, because
+   it accounts for the KV cache. At 8192 the measured load is about 1.49 GB; derive the new threshold from
+   that measurement and keep the same safety margin the current value uses.
+5. tests/unit/test_setup_ollama.py: the assertion that pins `PARAMETER num_ctx 2048\n` (around line 314) and the
+   one that pins the warning wording "(Q4 weights plus the 2048-token KV cache)" (around line 395), plus the
+   fixture Modelfile text at line 35 if it is meant to mirror the shipped file.
+
+=== Hard constraints ===
+- Do NOT add variant-aware logic. The value is a single constant; the variant gate already exists and is not
+  part of this change.
+- Do NOT change num_predict (stays 256), num_thread, temperature or top_p, and do not touch the SYSTEM prompt.
+- Do NOT change anything about the ollama listen drop-in or the update path.
+- Work only on branch PR-1922, and do NOT commit and do NOT push: leave the changes in the working tree.
+- Run the unit suite for the affected file and black as the CI does, and report the real observed numbers.
+- Product-neutral shipped code: no IPs, no host names, no device-specific values in comments.
+- Report exactly which lines you changed, what you ran, and anything left unverified.

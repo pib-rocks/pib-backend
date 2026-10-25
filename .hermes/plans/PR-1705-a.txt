@@ -1,0 +1,6 @@
+Fix PR-1705: the hand chain produces no detections on the robot.
+
+Ticket: https://pib-rocks.atlassian.net/browse/PR-1705
+Repo: pib-backend, branch PR-1705.
+
+MEASURED SYN...[truncated]

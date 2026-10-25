@@ -1,0 +1,48 @@
+You are working in the pib-backend repository. Current branch: PR-1929 (created from develop d6f959c6).
+
+TICKET: PR-1929 - get the full evidence, the measurements, the acceptance criteria and the pointers from Jira:
+  GET https://pib-rocks.atlassian.net/rest/api/3/issue/PR-1929?fields=description,summary
+Also read the ticket it follows up: PR-1925 (merged).
+Credentials: /home/pib/.hermes/.env -> ATLASSIAN_EMAIL and ATLASSIAN_TOKEN (base64 basic auth).
+
+CONTEXT: ros_packages/camera/oak_d_lite/stereo.py. PR-1925 (already merged) made every model colour branch
+carry the published frame's aspect, so the camera no longer crops and the detections are no longer distorted
+horizontally. Verified on hardware: x is right. But y is over-extended by roughly 1.8x - measured on a PC tower
+labelled "tv": the box is 45x97 while the object is about 62x54, with the box's top ~21 px and its bottom ~64 px
+too low.
+
+THE HYPOTHESIS TO VERIFY (not to assume): both axes use one formula at stereo.py:801-802
+(scale_x = frame_width / source_width, scale_y = frame_height / source_height), so an asymmetry between x and y
+can only come from the REFERENCE SIZE handed in for y. The file already carries the knowledge this needs:
+_branch_output_size (stereo.py:1807-1824) exists because "the camera can hand back a stream whose size differs
+from the request", and it is applied to the hand branch only (hand_source_size). The parsed/single-network paths
+do not use it.
+
+TASK, in this order:
+STEP 1 - DIAGNOSE AND REPORT BEFORE CHANGING ANYTHING. Trace how a detection's normalised/pixel coordinates from
+the parser become frame pixels for the parse-based models (yolov6n, qr, face detection, person re-identification),
+name the exact file:line where the y reference size enters, and state which size it is (requested branch size,
+delivered branch size, or model input size). Compare it with what the hand chain does, which apparently gets it
+right. If you cannot establish the root cause with evidence, STOP and report that instead of guessing.
+
+STEP 2 - FIX IT. Requirements:
+1. Stay on branch PR-1929. You MAY commit. Do NOT merge to develop, do NOT push - I handle that.
+2. Derive the mapping from the geometry the branch REALLY delivers (the existing _branch_output_size helper is the
+   established way to learn it), applied consistently to BOTH axes and to every affected model path.
+3. Do NOT change any branch size or aspect - PR-1925's horizontal results must stand.
+4. Keep the hand chain's existing behaviour (it is the reference implementation here).
+5. Comment constants product-neutral: no internal IPs, host names, measurement dates, lab paths.
+6. Do NOT install anything, do NOT start a camera, do NOT touch any device. Hardware acceptance happens separately.
+
+STEP 3 - TEST IT, per axis:
+7. Extend the existing camera unit test module (find it; do not create a new one). A test must map a synthetic
+   detection through the real code and assert BOTH axes within a tolerance, and it must also cover an object near
+   the top and near the bottom of the frame.
+8. Mutation proof for both axes: scale one axis with the wrong reference size, observe the test FAIL, restore, and
+   report both observations. A test that stays green under either mutation is not evidence.
+9. Do NOT run the whole suite. Run the camera test module with python3 -m pytest and the repository's own black
+   invocation on the files you changed.
+
+REPORT: the root cause with file:line from step 1, every file and line you changed, the final mapping code, the
+REAL observed test numbers (never a number you did not see), and which acceptance criteria remain unverified on
+hardware.
