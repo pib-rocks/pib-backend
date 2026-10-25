@@ -24,7 +24,13 @@ function createMockGenerator(positionCode = "1000"): MockGenerator {
   const generator = Object.create(pythonGenerator) as MockGenerator;
   generator.definitions_ = definitions;
   generator.provideFunction_ = (name: string, code: string) => {
-    definitions[`FN_${name}`] = code;
+    // Real Blockly substitutes its function-name placeholder before storing the
+    // definition; the mock has to do the same or an assertion on "def <name>"
+    // can never match.
+    const resolved = code
+      .split(generator.FUNCTION_NAME_PLACEHOLDER_)
+      .join(name);
+    definitions[`FN_${name}`] = resolved;
     return name;
   };
   generator.valueToCode = () => positionCode;
@@ -78,9 +84,9 @@ describe("move_motor generator", () => {
     expect(code).toBe(
       'apply_joint_trajectory("turn_head_motor", get_joint_position(\'turn_head_motor\') + 250)\n',
     );
-    expect(Object.values(generator.definitions_).join("\n")).toContain(
-      "get_joint_position_client.call_async",
-    );
+    const defs = Object.values(generator.definitions_).join("\n");
+    expect(defs).toContain("get_joint_position_client.call_async");
+    expect(defs).toContain("return centidegrees_to_degrees(response.position)");
   });
 
   it("maps TILT_FORWARD_HEAD to tilt_forward_motor", () => {

@@ -48,8 +48,16 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(percent: int) -> None:
 
 // motor
 
+/** ROS GetJointPosition and pose HTTP APIs store angles as centidegrees; Blockly uses degrees. */
+export const CENTIDEGREES_TO_DEGREES_FUNCTION = (
+    generator: typeof pythonGenerator,
+) => `
+def ${generator.FUNCTION_NAME_PLACEHOLDER_}(position_centidegrees: int) -> float:
+    return position_centidegrees / 100.0
+`;
+
 export const GET_JOINT_POSITION_FUNCTION = (generator: typeof pythonGenerator) => `
-def ${generator.FUNCTION_NAME_PLACEHOLDER_}(motor_name: str) -> int:
+def ${generator.FUNCTION_NAME_PLACEHOLDER_}(motor_name: str) -> float:
 
     request = GetJointPosition.Request()
     request.joint_name = motor_name
@@ -59,10 +67,10 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(motor_name: str) -> int:
 
     response: GetJointPosition.Response = future.result()
     if response.successful:
-        return response.position
+        return centidegrees_to_degrees(response.position)
     else:
         logging.error(f"getting position of '{motor_name}' failed.")
-        return 0
+        return 0.0
 `;
 
 export const SET_HAND_POSITION_XYZ_FUNCTION = (generator: typeof pythonGenerator) => `
@@ -87,9 +95,9 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(side: str, mode: str, x, y, z) -> No
 `;
 
 export const APPLY_JOINT_TRAJECTORY_FUNCTION = (generator: typeof pythonGenerator) => `
-def ${generator.FUNCTION_NAME_PLACEHOLDER_}(motor_name: str, position: int) -> None:
+def ${generator.FUNCTION_NAME_PLACEHOLDER_}(motor_name: str, position) -> None:
 
-    logging.info(f"setting position of '{motor_name}' to {position}.")
+    logging.info(f"setting position of '{motor_name}' to {position} degrees.")
     rosbridge_host = os.getenv("ROSBRIDGE_HOST", "rosbridge-ws")
     try:
         pib_sdk.Write(host=rosbridge_host, port=9090).move(motor_name, position)
@@ -241,7 +249,7 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(poseId: str) -> None:
         args.extend(
             (
                 motor_position["motorName"],
-                motor_position["position"] / 100.0,
+                centidegrees_to_degrees(motor_position["position"]),
             )
         )
     if not args:

@@ -3,6 +3,7 @@ import {Order, pythonGenerator} from "blockly/python";
 import {CONFIGURE_LOGGING, IMPORT_GET_JOINT_POSITION, IMPORT_LOGGING, IMPORT_OS, IMPORT_PIB_SDK, IMPORT_PIB_SDK_IK, IMPORT_PIB_SDK_TELEMETRY, IMPORT_RCLPY, IMPORT_SYS, INIT_GET_JOINT_POSITION_CLIENT, INIT_ROS, addDefinitions} from "./util/definitions";
 import {
     APPLY_JOINT_TRAJECTORY_FUNCTION,
+    CENTIDEGREES_TO_DEGREES_FUNCTION,
     GET_JOINT_POSITION_FUNCTION,
     GET_MOTOR_CURRENT_MA_FUNCTION,
     SET_HAND_POSITION_XYZ_FUNCTION,
@@ -71,6 +72,10 @@ export function move_motor(block: Block, generator: typeof pythonGenerator) {
             IMPORT_GET_JOINT_POSITION,
             INIT_GET_JOINT_POSITION_CLIENT,
         });
+        generator.provideFunction_(
+            "centidegrees_to_degrees",
+            CENTIDEGREES_TO_DEGREES_FUNCTION(generator),
+        );
     }
 
     // declare the 'apply_joint_trajectory'-function

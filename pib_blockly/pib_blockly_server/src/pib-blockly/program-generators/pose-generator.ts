@@ -3,6 +3,7 @@ import {Order, pythonGenerator} from "blockly/python";
 import {CONFIGURE_LOGGING, IMPORT_LOGGING, IMPORT_OS, IMPORT_PIB_SDK, IMPORT_PIB_SDK_BACKEND, IMPORT_PIB_SDK_PLAY_POSE_SEQUENCE_TIMED, IMPORT_PIB_SDK_POSES, IMPORT_PIB_SDK_POSE_CONTROL, IMPORT_PIB_SDK_TELEMETRY, IMPORT_POSE_CLIENT, IMPORT_RCLPY, IMPORT_SYS, IMPORT_URLPARSE, INIT_PIB_SDK_POSE_BACKEND, INIT_ROS, addDefinitions} from "./util/definitions";
 import {
     APPLY_POSE_FUNCTION,
+    CENTIDEGREES_TO_DEGREES_FUNCTION,
     PLAY_POSE_SEQUENCE_TIMED_FUNCTION,
     SAVE_CURRENT_POSE_FUNCTION,
 } from "./util/function-declarations";
@@ -25,6 +26,11 @@ export function moveToPoseGenerator(
         CONFIGURE_LOGGING,
         INIT_ROS,
     });
+
+    generator.provideFunction_(
+        "centidegrees_to_degrees",
+        CENTIDEGREES_TO_DEGREES_FUNCTION(generator),
+    );
 
     // declare the 'apply_pose'-function
     const functionName = generator.provideFunction_(
