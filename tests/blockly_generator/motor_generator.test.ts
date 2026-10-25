@@ -153,7 +153,7 @@ describe("set_hand_position_xyz generator", () => {
     );
     const defs = Object.values(generator.definitions_).join("\n");
     expect(defs).toContain("from pib_sdk import ik_deg, Write, right_arm, left_arm");
-    expect(defs).toContain("from pib_sdk import from_rep103, to_rep103");
+    expect(defs).toContain("from pib_sdk.kinematics import from_rep103, to_rep103");
     expect(defs).toContain("target = list(from_rep103([x, y, z]))");
     expect(defs).toContain("q_deg = ik_deg(side, xyz=target)");
     expect(defs).toContain("pib.move(arm, *q_deg)");
@@ -172,7 +172,7 @@ describe("set_hand_position_xyz generator", () => {
     );
     const defs = Object.values(generator.definitions_).join("\n");
     expect(defs).toContain("from pib_sdk import get_hand_position_xyz");
-    expect(defs).toContain("from pib_sdk import from_rep103, to_rep103");
+    expect(defs).toContain("from pib_sdk.kinematics import from_rep103, to_rep103");
     expect(defs).toContain("current = get_hand_position_xyz(side)");
     expect(defs).toContain("offset = list(from_rep103([x, y, z]))");
     expect(defs).toContain("current[0] + offset[0]");
@@ -212,7 +212,7 @@ describe("get_hand_x/y/z generators", () => {
       expect(order).toBe(Order.MEMBER);
       const defs = Object.values(generator.definitions_).join("\n");
       expect(defs).toContain("from pib_sdk import get_hand_position_xyz");
-      expect(defs).toContain("from pib_sdk import from_rep103, to_rep103");
+      expect(defs).toContain("from pib_sdk.kinematics import from_rep103, to_rep103");
     },
   );
 
