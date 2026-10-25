@@ -83,7 +83,8 @@ CLONE_CONFIG_FILES = ("config.yaml", ".env", "SOUL.md")
 CLONE_SUBDIR_FILES = ("memories/MEMORY.md", "memories/USER.md")
 _filesystem_factory_warned = False
 
-# Every chat gets its own Hermes session, so history never crosses chats.
+# Each chat maps to its own Hermes session id; one warm agent per personality
+# runtime binds the session per turn so history never crosses chats.
 SESSION_ID_PREFIX = "pib_chat_"
 
 # Hermes install layout used to import the agent in-process.
@@ -166,7 +167,8 @@ def _missing_provider_key(exc: BaseException) -> bool:
     return type(exc).__name__ == "DirectToolLoopError"
 
 
-_agent_cache: OrderedDict[tuple[str, str], _CachedAgent] = OrderedDict()
+# One warm agent per (home, runtime settings, store key); chats bind a session per turn.
+_agent_cache: OrderedDict[tuple, _CachedAgent] = OrderedDict()
 _agent_cache_lock = threading.Lock()
 _mcp_discovery_attempted: set[str] = set()
 _mcp_discovery_lock = threading.Lock()
@@ -730,6 +732,23 @@ def _toolset_list(toolsets: Optional[str]) -> Optional[list[str]]:
     return values or None
 
 
+def _bind_agent_session_for_turn(agent, chat_id: str) -> None:
+    """Point a shared warm agent at one chat's Hermes session for this turn.
+
+    ``AIAgent`` persists turns under ``session_id``. Reusing one agent across chats
+    requires rebinding before ``run_conversation`` and clearing session-scoped state
+    when the chat changes (``reset_session_state`` in Hermes).
+    """
+    session_id = session_id_for_chat(chat_id)
+    previous = getattr(agent, "session_id", None)
+    if previous == session_id:
+        return
+    reset = getattr(agent, "reset_session_state", None)
+    agent.session_id = session_id
+    if callable(reset):
+        reset(previous_messages=None, old_session_id=previous)
+
+
 def _close_agent(agent) -> None:
     close = getattr(agent, "close", None)
     if callable(close):
@@ -815,12 +834,14 @@ def _agent_for_chat(
     agent_cls,
     provider_key: Optional[str],
 ):
-    """Return the sole cached agent for a chat, evicting least-recently-used chats.
+    """Return the cached agent for this personality runtime, evicting LRU entries.
 
     The model, provider and base URL come from the personality's config.yaml
     (written by the backend at provision time), so a turn runs the model the
     personality is set to. They are part of the cache key, so changing the
-    model rebuilds the agent instead of reusing the pinned one.
+    model rebuilds the agent instead of reusing the pinned one. Chats of the
+    same personality share one warm agent; ``_bind_agent_session_for_turn``
+    isolates their Hermes sessions per turn.
     """
     from public_api_client.hermes_agent_client import (
         disabled_toolsets_for_turn,
@@ -843,19 +864,17 @@ def _agent_for_chat(
         base_url,
         tool_calling,
     )
-    key = (_current_home_key(), chat_id)
+    home = _current_home_key()
+    key = (home, settings, provider_key or "")
     with _agent_cache_lock:
         cached = _agent_cache.get(key)
-        if (
-            cached is not None
-            and cached.settings == settings
-            and cached.key_token == (provider_key or "")
-        ):
+        if cached is not None:
             _agent_cache.move_to_end(key)
             return cached
-        if cached is not None:
-            _agent_cache.pop(key)
-            _close_agent(cached.agent)
+        for existing_key, existing in list(_agent_cache.items()):
+            if existing_key[0] == home:
+                _agent_cache.pop(existing_key)
+                _close_agent(existing.agent)
 
         construction_started = time.monotonic()
         # The key is in the environment only for this constructor: that is
@@ -874,7 +893,7 @@ def _agent_for_chat(
                 base_url=base_url,
                 api_key=provider_key,
                 session_db=_shared_session_db(),
-                session_id=session_id_for_chat(chat_id),
+                session_id=None,
                 enabled_toolsets=_toolset_list(enabled_toolsets),
                 disabled_toolsets=_toolset_list(toolsets),
                 max_iterations=max_turns,
@@ -882,9 +901,10 @@ def _agent_for_chat(
                 skip_memory=True,
             )
         logging.info(
-            "[PERF_TRACE] HERMES_AGENT_CONSTRUCTED chat=%s "
+            "[PERF_TRACE] HERMES_AGENT_CONSTRUCTED home=%s model=%s "
             "elapsed_ms=%.2f mcp_tools=%d",
-            chat_id,
+            _current_home_key(),
+            model,
             (time.monotonic() - construction_started) * 1000.0,
             _registered_mcp_tool_count(),
         )
@@ -1238,6 +1258,7 @@ def _run_turn_in_home(
                         stream_callback(delta)
 
             with cached.lock:
+                _bind_agent_session_for_turn(cached.agent, chat_id)
                 session_id = session_id_for_chat(chat_id)
                 history = _load_conversation_history(_shared_session_db(), session_id)
                 logging.info(
