@@ -18,12 +18,14 @@ ENV PIP_ROOT_USER_ACTION=ignore \
 
 # PEP 668: Jazzy (Ubuntu 24.04, Python 3.12) requires --break-system-packages
 # --ignore-installed: avoid conflict with system numpy (installed by ros:jazzy-ros-core)
-# Third-party packages first, in one resolve. Everything is pinned except pib-sdk, which
-# takes the newest release (>= keeps it from resolving to one that predates the shared
-# rosbridge client of PR-1882). opencv-python-headless stays below 5 for the same reason as
-# in camera/Dockerfile (5.x dropped cv2 APIs user programs rely on).
+# Third-party packages first, in one resolve. pib-sdk has a lower bound that is high enough
+# for the API the generated programmes use: 0.7.3 is where the kinematics is radian-canonical
+# (ik() returns radians, ik_deg() keeps the degree boundary Write.move expects) and where
+# from_rep103/to_rep103 exist for the hand-position blocks. A lower pin silently installs an
+# SDK whose ik() answers in degrees. opencv-python-headless stays below 5 for the same reason
+# as in camera/Dockerfile (5.x dropped cv2 APIs user programs rely on).
 RUN pip install --break-system-packages --ignore-installed \
-        pib-sdk>=0.5.5 \
+        pib-sdk>=0.7.3 \
         requests==2.32.3 \
         paramiko==3.5.1 \
         tinkerforge==2.1.32 \

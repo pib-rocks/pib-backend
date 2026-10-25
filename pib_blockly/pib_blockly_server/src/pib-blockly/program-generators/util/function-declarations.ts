@@ -88,7 +88,7 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(side: str, mode: str, x, y, z) -> No
         target = list(from_rep103([x, y, z]))
 
     logging.info(f"setting {side} hand position to xyz={target}.")
-    q_deg = ik(side, xyz=target)
+    q_deg = ik_deg(side, xyz=target)
     arm = left_arm if side == "left" else right_arm
     rosbridge_host = os.getenv("ROSBRIDGE_HOST", "rosbridge-ws")
     try:

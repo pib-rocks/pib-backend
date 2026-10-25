@@ -30,7 +30,7 @@ export const IMPORT_SIGNAL = "import signal";
 export const IMPORT_PARAMIKO = "import paramiko";
 export const IMPORT_PIB_SDK = "import pib_sdk";
 export const IMPORT_PIB_SDK_IK =
-    "from pib_sdk import ik, Write, right_arm, left_arm";
+    "from pib_sdk import ik_deg, Write, right_arm, left_arm";
 export const IMPORT_PIB_SDK_REP103 =
     "from pib_sdk import from_rep103, to_rep103";
 export const IMPORT_PIB_SDK_POSES =
