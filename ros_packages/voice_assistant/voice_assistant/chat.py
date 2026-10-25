@@ -1453,11 +1453,18 @@ class ChatNode(Node):
             successful, personality = voice_assistant_client.get_personality_from_chat(
                 chat_id
             )
-            self.history_length = personality.message_history
-        if not successful:
-            self.get_logger().error(f"no personality found for id {chat_id}")
+        if not successful or personality is None:
+            personality_id = getattr(personality, "personality_id", None)
+            if personality_id:
+                self.get_logger().error(
+                    f"chat could not be resolved chat={chat_id} "
+                    f"personality={personality_id}"
+                )
+            else:
+                self.get_logger().error(f"chat could not be resolved chat={chat_id}")
             goal_handle.abort()
             return Chat.Result()
+        self.history_length = personality.message_history
         description = (
             personality.description
             if personality.description is not None

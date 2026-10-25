@@ -152,15 +152,17 @@ def record_first_token_latency(chat_id: str, latency_ms: float) -> bool:
         return False
 
 
-def get_chat(chat_id: str) -> Tuple[bool, Chat]:
+def get_chat(chat_id: str) -> Tuple[bool, Optional[Chat]]:
     request = Request(CHAT_URL % chat_id, method="GET")
     successful, chat_dto = send_request(request)
-    return successful, Chat(chat_dto)
+    if not successful or not isinstance(chat_dto, dict):
+        return False, None
+    return True, Chat(chat_dto)
 
 
-def get_personality_from_chat(chat_id: str) -> Tuple[bool, Personality]:
+def get_personality_from_chat(chat_id: str) -> Tuple[bool, Optional[Personality]]:
     successful, chat = get_chat(chat_id)
-    if not successful:
+    if not successful or chat is None:
         return False, None
     return get_personality(chat.personality_id)
 
