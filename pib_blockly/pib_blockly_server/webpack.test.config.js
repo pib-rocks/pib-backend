@@ -11,6 +11,7 @@ module.exports = {
   externals: [nodeExternals()],
   entry: {
     "model-blocks.test": "./test/model-blocks.test.ts",
+    "motor-blocks.test": "./test/motor-blocks.test.ts",
     "smart-home-blocks.test": "./test/smart-home-blocks.test.ts",
   },
   output: {
