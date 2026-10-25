@@ -1,0 +1,34 @@
+Implement Scope 1 (camera container ROS2 interfaces) of PR-1674. Ticket: https://pib-rocks.atlassian.net/browse/PR-1674
+Repo: pib-backend — /home/pib/opencode/pib-backend, branch `PR-1674-backend` (from develop `53206fd5`).
+This is the FIRST of two scopes; the pib_sdk side (Scope 2) is delegated separately. Stay in this repo.
+
+## Goal
+Add depth/stereo ROS2 interfaces to the pib camera node, following the verified persistent-pipeline pattern.
+Depth data must come from the SAME one pipeline (per the OAK-D-Lite 1-pipeline constraint in the ticket/Confluence).
+
+## Verified baseline (this repo)
+- `ros_packages/camera/oak_d_lite/stereo.py`: CameraNode.init_pipeline() calls dai.Pipeline.start() once at node init (persistent connection). A 10 Hz timer_callback polls queue.tryGet() -> self.current_frame; get_camera_image reads cached frame on demand (no per-call connection). Publishing gated by get_subscription_count(). Pattern: persistent pipeline + cache + on-demand read.
+- `ros_packages/datatypes/srv/GetCameraImage.srv` is `---\nstring image_base64` (empty request).
+
+## Scope for THIS delegation (camera backend)
+1. Extend the depthai pipeline to also produce Stereo/Depth outputs (ONE pipeline start, Color + Stereo outputs). Follow depthai v3 API conventions used in stereo.py (dai.node.Camera, requestIspOutput/createOutputQueue).
+2. Cache current_depth alongside current_frame in the pipeline timer path.
+3. Add new SRV type(s) under ros_packages/datatypes/srv:
+   - GetDepthFrame.srv (return depth in a sensible encodable form, e.g. metadata + base64/numpy-compatible buffer), and
+   - GetDistanceAtPx.srv (request int32 x, int32 y -> float32 distance_mm), and optionally
+   - a publisher topic for depth (stereo_depth) gated on subscriber count like camera_topic.
+4. Register the new services in CameraNode (create_service for get_depth_frame + get_distance_at_px).
+5. Keep persistent connection: do NOT open a new pipeline per request; services read the cached current_depth.
+
+## Constraints
+- Stay on branch `PR-1674-backend`. Do NOT merge/push develop (orchestrator opens PR). You MAY commit (`feat: PR-1674 ...`).
+- Do NOT touch pib_sdk here (separate repo/delegation). Only camera node + datatypes in pib-backend.
+- Follow the existing depthai v3 / stereo.py style; do not regress get_camera_image / camera_topic.
+- Do NOT commit `.hermes/plans/**`. Report REAL results.
+- You likely cannot run the live Oak-D from this machine; report what you validated (py_compile / import / offline) honestly.
+
+## Self-check
+- `python3 -X import-time` or at least syntax compile the changed camera + srv python (if buildable without device).
+- `git diff --name-only origin/develop...PR-1674-backend` shows camera oak + datatypes srv.
+
+FINAL REPORT: files changed, the new srv schemas, how services read cached current_depth (no reconnect), real validation done, confirmation you did not merge/push or touch pib_sdk, commit hash if committed.

@@ -1,0 +1,49 @@
+Implement PR-1663 per the plan at `/home/pib/opencode/pib-backend/.hermes/plans/PR-1663-plan.md`. READ THE PLAN FIRST — verified facts, design, file locations, hard constraints.
+
+SCOPE: add a standalone value Blockly block `motor_current` (Motor current of %1) with a motor dropdown,
+Number output, backed by `pib_sdk.telemetry.Telemetry.get_current_ma(motor_name)`, so a user can assign a
+motor's current draw (milliamps) to a variable.
+
+Concretely:
+1. Block def in `pib_blockly/pib_blockly_server/src/pib-blockly/program-blocks/motor-blocks.ts`: add a block
+   of type `motor_current`, message "Motor current of %1", one `field_dropdown MOTORNAME` REUSING the exact
+   same motor option list as `move_motor` (all thumb/index/middle/ring/pinky fingers left+right, arm limbs,
+   head, etc. — copy the existing options array), `output: "Number"`, colour 355, tooltip documenting that it
+   returns the motor's electrical current in milliamps (from the servo bricklet; may be 0 / timeout for a motor
+   without a connected bricklet).
+2. Generator in `pib_blockly/pib_blockly_server/src/pib-blockly/program-generators/motor-generators.ts` (or a
+   new current generator module that is spread into custom-generators.ts `const generators = {...}`; ensure the
+   new block name is registered in `pythonGenerator.forBlock`):
+   - read `MOTORNAME`, map via the existing `motorOptionToMotorName` map to the pib motor-name (e.g.
+     `SHOULDER_VERTICAL_LEFT` -> `shoulder_vertical_left`); if unknown throw a clear error.
+   - add to `generator.definitions_`: `IMPORT_PIB_SDK_TELEMETRY` (`from pib_sdk.telemetry import Telemetry`),
+     plus `IMPORT_OS` and a helper function that opens `Telemetry(host=rosbridge_host, port=9090)` with
+     `rosbridge_host = os.getenv("ROSBRIDGE_HOST", "rosbridge-ws")`, calls `get_current_ma(motor_name)`, and
+     returns the int mA, with a `localhost` fallback on exception (mirroring the existing Write/Telemetry
+     host-fallback pattern in function-declarations.ts).
+   - return `[<helper>(motor_name), Order.FUNCTION_CALL]`. The helper must be provided via
+     `generator.provideFunction_` (same pattern as existing generators).
+3. Tests: add a discriminating case in `tests/blockly_generator/` (motor_generator.test.ts or a new
+   motor_current test) asserting the emitted code contains the motor-name via the mapping and a
+   `get_current_ma(` call. Keep all existing tests green.
+
+VERIFIED patterns (copy them):
+- Motor option list + `motorOptionToMotorName` map: motor-blocks.ts / motor-generators.ts (reuse, don't diverge).
+- Value-generator registration: pose-generator.ts functions are auto-registered because the module is spread
+  into `custom-generators.ts` `const generators = { ...moveToPose, ... }` -> `pythonGenerator.forBlock[name]`.
+  If you add a new module for the current generator, spread it into that object too and match the block `type`.
+- `definitions.ts` already has `IMPORT_PIB_SDK_TELEMETRY` and `IMPORT_OS`; add any needed new IMPORT constant
+  there (e.g. a telemetry-open helper) if the existing ones don't cover it.
+
+HARD CONSTRAINTS:
+- Stay on branch `PR-1663`. Do NOT merge or push (orchestrator creates the PR after verifying). You MAY commit
+  (`feat: PR-1663 ...`).
+- Reuse the existing motor dropdown + mapping. Do NOT change move_motor / pose behavior. Do NOT modify pib-sdk
+  source. Do NOT commit `.hermes/plans/**`. Do NOT commit if tests fail.
+- Report REAL test results.
+
+SELF-CHECK (from /home/pib/opencode/pib-backend):
+- `cd tests/blockly_generator && node node_modules/jest/bin/jest.js --config jest.config.js` -> all pass incl new case.
+
+FINAL REPORT: files added/changed, the block def + generator you added, the REAL jest pass count, the motor
+dropdown choice, and confirmation you did not merge/push or modify pib-sdk source. Include the commit hash if you committed.

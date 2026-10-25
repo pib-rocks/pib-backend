@@ -1,0 +1,42 @@
+Task: PR-1952 - the actuator gate must be enabled by default so the voice assistant can drive the robot.
+
+Repository: pib-backend. Branch: PR-1952, created from origin/develop. Ticket: PR-1952 (Jira).
+Read the ticket first - it carries the full description, the measured current state and the acceptance criteria:
+  GET https://pib-rocks.atlassian.net/rest/api/3/issue/PR-1952?fields=description,summary
+  Credentials: ~/.hermes/.env -> ATLASSIAN_EMAIL and ATLASSIAN_TOKEN, HTTP basic auth, base64 encoded.
+  The env key is ATLASSIAN_TOKEN (not ATLASSIAN_API_TOKEN).
+
+=== The decision (owner, 2026-10-09) ===
+PIB_MCP_ENABLE_ACTUATION defaults to true. Goal: a freshly installed robot is drivable by the voice assistant
+without a manual step.
+
+=== Verified current state ===
+  docker-compose.yaml:153        - PIB_MCP_ENABLE_ACTUATION=false
+                                 (comment: hardware-changing MCP calls remain blocked unless explicitly enabled)
+  setup-pib.sh:536               seed_hermes_mcp_config() registers the pib MCP server per Hermes profile
+  setup-pib.sh:553-555           the seeded entry carries PIB_MCP_API_BASE_URL and PIB_MCP_ROSBRIDGE_URL
+  docs/runbooks/pib-mcp-server.md  table row ~32, the `hermes mcp add pib` recipe ~line 50 and the safety
+                                 section ~line 15 all state false or tell the reader to enable it manually
+  pib_mcp_server/server.py:72    _env_enabled("PIB_MCP_ENABLE_ACTUATION"), unset means DISABLED
+
+=== What to change ===
+1. docker-compose.yaml: the value true, and rewrite the comment so it still explains what the gate does and
+   states that it is now open by default.
+2. setup-pib.sh seed_hermes_mcp_config(): the seeded per-profile registration must carry the same value, so a
+   profile registered by the installer behaves like the container default. If the seeded entry omits the
+   variable today, make it explicit rather than relying on inheritance.
+3. docs/runbooks/pib-mcp-server.md: the table row, the add-recipe and the safety section must describe the
+   enabled default honestly. In the safety section, state plainly that after this change every personality
+   with the pib tools registered can move hardware, because the gate is global by design and a personality
+   payload cannot carry it (see personality_service._reject_actuation_request and
+   pib_hermes_config/live_interaction.py). Do NOT invent a per-personality switch - explicitly out of scope.
+4. Tests: update whatever pins the compose value, the seeded entry or the runbook wording.
+
+=== Hard constraints ===
+- Work only on branch PR-1952. Do NOT commit and do NOT push: leave the changes in the working tree.
+- NO device access and no docker run. Device verification is the operator's step; do not claim device results.
+- Do not change the gate logic in pib_mcp_server/server.py, do not touch the read-only tool annotations, and do
+  not add per-personality actuation settings.
+- Product-neutral shipped code: no IPs, no host names, no device-specific values in comments.
+- Run the affected unit tests and black as the CI runs it, and report the real observed numbers.
+- Report exactly which lines changed, what you ran, and anything left unverified.

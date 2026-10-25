@@ -1,0 +1,31 @@
+Implement PR-1665 per the plan at `/home/pib/opencode/pib-backend/.hermes/plans/PR-1665-plan.md`. READ THE PLAN FIRST — it has the verified root cause and options.
+
+SCOPE: fix the Jest `blockly` resolution so ALL 5 Blockly suites pass when running via `tests/run_all_tests.sh`
+(which runs Jest inside a `node:18-bookworm` Docker container). The repo block/generator code is already correct
+(host jest is green); the issue is the Docker-test-runner path.
+
+VERIFIED:
+- Host green: `cd tests/blockly_generator && node node_modules/jest/bin/jest.js --config jest.config.js` passes (pose 8/8, all suites).
+- Failing only via `tests/run_all_tests.sh` `run_jest()`: it does
+  `docker run --rm -v "${REPO_ROOT}:/work" -w "/work/tests/blockly_generator" node:18-bookworm node node_modules/jest/bin/jest.js ...`
+  -> `Cannot find module 'blockly'` from `program-blocks/pose-block.ts`.
+- `jest.config.js` has `moduleNameMapper { "^blockly/(.*)$": "<rootDir>/node_modules/blockly/$1" }` but top-level
+  `import * as Blockly from "blockly"` is not resolved in the container.
+
+Choose & implement the robust, deterministic fix (plan lists options — e.g. install deps in the container before
+jest, and/or add `moduleDirectories` to jest.config so top-level `blockly` resolves regardless of cwd). Ensure the
+change keeps the host jest green AND (if possible) the docker path resolving `blockly`.
+
+CONSTRAINTS:
+- Stay on branch `PR-1665`. Do NOT merge/push develop. You MAY commit (`fix: PR-1665 ...`). Do NOT change the
+  block/generator sources. Do NOT commit `.hermes/plans/**`. Do NOT commit if not verified.
+- Report REAL results.
+
+SELF-CHECK (real):
+- `cd tests/blockly_generator && node node_modules/jest/bin/jest.js --config jest.config.js` -> all suites pass.
+- If Docker available/deliberate, confirm `tests/run_all_tests.sh` blockly part resolves `blockly`; if the host-only
+  fix is chosen, say why it also covers the docker path (or that the docker runner should be updated to install deps).
+- `git diff --stat origin/develop...HEAD` shows tests/run_all_tests.sh and/or jest.config.js only.
+
+FINAL REPORT: what you changed (files + why), the real test results, confirmation you did not merge/push or touch
+sources, commit hash if committed.

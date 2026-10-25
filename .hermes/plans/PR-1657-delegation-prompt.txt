@@ -1,0 +1,32 @@
+Implement PR-1657 per the plan at `/home/pib/opencode/pib-backend/.hermes/plans/PR-1657-plan.md`. READ THE PLAN FIRST — it has verified facts, exact file/line locations, the runtime note about pib-sdk version, and hard constraints.
+
+Scope (both A and B; do A first, then B, then C):
+A. In `pib_blockly/pib_blockly_server/src/pib-blockly/program-generators/motor-generators.ts`, refactor `set_hand_position_xyz` RELATIVE mode to call `pib-sdk`'s `get_hand_position_xyz(side)` instead of the inline get-positions+fk helper. Concretely:
+   - In the RELATIVE branch, stop emitting IMPORT_GET_JOINT_POSITION / INIT_GET_JOINT_POSITION_CLIENT / and the GET_JOINT_POSITION_FUNCTION + GET_CURRENT_HAND_POSITION_FUNCTION wiring; instead have the emitted program `from pib_sdk import get_hand_position_xyz` (and keep the ICSDK imports it already uses).
+   - `SET_HAND_POSITION_XYZ_FUNCTION` should keep its current structure but obtain `current` via `get_hand_position_xyz(side)` for RELATIVE. ABSOLUTE unchanged (target = [x,y,z]).
+   - Remove the now-unused `GET_CURRENT_HAND_POSITION_FUNCTION` (and its now-dead `IMPORT_GET_JOINT_POSITION`, `GET_JOINT_POSITION_FUNCTION`, `INIT_GET_JOINT_POSITION_CLIENT`) from `.../util/function-declarations.ts` IF they become unused — verify no other generator still references them; if still used elsewhere, leave them and only stop set_hand_position_xyz from using them.
+
+B. Add a new standalone Blockly block "Get hand position":
+   - Block def in `.../program-blocks/motor-blocks.ts`: type `get_hand_position_xyz`, message "Get hand position of %1", one SIDE field_dropdown (left/right). Expose X/Y/Z. Blockly has no native multiple-output; CHOOSE the approach that best fits this codebase and implement it consistently with the tests — either (i) three separate output blocks `get_hand_x`/`get_hand_y`/`get_hand_z` that each call `get_hand_position_xyz(side)` and index the returned tuple, or (ii) one block producing the triple. Prefer (i) with three small blocks since that gives real Number outputs a user can wire individually. colour 355.
+   - Generator(s): emit `from pib_sdk import get_hand_position_xyz` and a call; for the index approach return `[0]`, `[1]`, `[2]` for x/y/z.
+   - tooltip/helpUrl document that the returned position is the last COMMANDED position (not live encoder feedback).
+
+C. Tests in `tests/blockly_generator/` (add to motor_generator.test.ts or a new hand_position test file, using the existing mock-generator pattern):
+   - (A) A RELATIVE set_hand_position_xyz case asserts emitted code contains `get_hand_position_xyz(` and does NOT contain the old inline get_current_hand_position/fk wiring.
+   - (B) New block cases assert emitted code contains `get_hand_position_xyz(` and correct indexing/return for x, y, z.
+   - Keep all existing tests green.
+
+RUNTIME/DEPENDENCY (part of the ticket): in `ros_packages/requirements.txt` line 11, change `pib-sdk` to `pib-sdk>=0.5.0` so the runtime guarantees the method exists.
+
+HARD CONSTRAINTS:
+- Stay on branch `PR-1657`. The orchestrator will merge to develop ON SUCCESS after verifying — you may commit (`feat: PR-1657 ...` / `refactor:` for A) but do NOT merge or push.
+- Do NOT modify pib-sdk source, motor-control logic, routes, or anything outside: motor-blocks.ts, motor-generators.ts, function-declarations.ts, the test file(s), ros_packages/requirements.txt.
+- Do NOT commit `.hermes/plans/**`. Do NOT commit if tests fail.
+- Report REAL test counts and real diffs; do not fabricate.
+
+SELF-CHECK (run and observe REAL output, from `/home/pib/opencode/pib-backend`):
+- `cd tests/blockly_generator && npx jest 2>&1 | tail -25` → all pass, including your new discriminating cases
+- Confirm `grep -rn "get_hand_position_xyz" pib_blockly/pib_blockly_server/src/pib-blockly/` shows the generator import + the new blocks
+- Confirm the relative mode no longer emits `get_current_hand_position` inline wiring.
+
+FINAL REPORT: exact files changed (paths), the block approach you chose for B (three blocks vs one), paste the key generator additions, the REAL jest pass count, the ros_packages/requiremnts.txt line after edit, and confirmation you did not merge/push or modify pib-sdk source. If you commit, give the real commit hash.

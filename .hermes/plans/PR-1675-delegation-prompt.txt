@@ -1,0 +1,50 @@
+Implement PR-1675 per the verified facts below.
+
+Ticket: https://pib-rocks.atlassian.net/browse/PR-1675
+Repo: pib-backend — /home/pib/opencode/pib-backend, branch `PR-1675` (from develop `022cc800`).
+
+## Goal
+Add two Blockly blocks that access camera depth via the pib_sdk Camera depth API (added in PR-1674, published in
+pib-sdk 0.5.0):
+1. A 'get depth image' block -> calls `Camera.get_depth_frame()` and yields the depth image.
+2. A 'depth at (x, y)' block -> takes two number inputs x, y -> calls `Camera.get_distance_at_px(x, y)` and
+   returns the distance in millimetres.
+
+## Verified pib_sdk API (pib-sdk 0.5.0, src/pib_sdk/features/camera.py)
+- `Camera(host="...", port=9090)` (rosbridge); constructor opens a rosbridge connection; `close()` / context manager.
+- `get_depth_frame(timeout=10.0) -> np.ndarray | None` (uint16 mm (H,W); None on no data/error).
+- `get_distance_at_px(x:int, y:int, timeout=10.0) -> float` (distance_mm; 0.0 on no cache/OOB/invalid).
+- `save_depth(path, ...)`.
+
+## Existing Blockly pattern to follow (this repo)
+- `motor-generators.ts` shows the value-block generator pattern: read inputs via `block.getFieldValue` /
+  `generator.valueToCode(block, "NAME", Order.ATOMIC)`, add imports to `generator.definitions_` (e.g.
+  `IMPORT_PIB_SDK_...`), use `generator.provideFunction_` for a helper, return `[code, Order.FUNCTION_CALL]`.
+  Registration is via the module being spread into `custom-generators.ts` -> `pythonGenerator.forBlock[name]`.
+- `definitions.ts` has IMPORT_* constants; `function-declarations.ts` has helper-function builders. Add a
+  CAMERA import + a `with Camera(host=rosbridge_host, port=9090) as cam:` helper (rosbridge host pattern:
+  `rosbridge_host = os.getenv("ROSBRIDGE_HOST", "rosbridge-ws")`), mirroring existing Write/Telemetry helpers.
+
+## Blocks to add (new; do not change existing)
+1. Block A type e.g. `camera_get_depth_frame`: message "get camera depth frame", NO inputs (or minimal),
+   returns the depth image (a reporter / value block). Emits code that opens Camera and calls get_depth_frame().
+2. Block B type e.g. `camera_get_distance_at_px`: message "depth at x %1 y %2", two number inputs x, y,
+   returns Number (distance in mm). Emits `cam.get_distance_at_px(x, y)` where x/y are the (converted) input values.
+
+Generator for each: add the pib_sdk Camera import, provide the helper that opens Camera(rosbridge) and returns
+depth/distance; emit the call. Add generator tests (camera_depth_generator.test.ts or similar) asserting the
+emitted Python calls get_depth_frame / get_distance_at_px with correct inputs.
+
+## Constraints
+- Stay on branch `PR-1675`. Do NOT merge/push develop (orchestrator opens PR). You MAY commit (`feat: PR-1675 ...`).
+- Do NOT modify pib_sdk. Only add block + generator + test in pib-backend.
+- Reuse the existing block/generator registration + rosbridge-helpers pattern.
+- Do NOT commit `.hermes/plans/**`. Do NOT commit if tests fail.
+- Report REAL results.
+
+## Verify (orchestrator)
+- `cd /home/pib/opencode/pib-backend/tests/blockly_generator && node node_modules/jest/bin/jest.js --config jest.config.js` -> all pass incl new case(s).
+- `git diff --name-only origin/develop...HEAD` shows the block, generator, test.
+
+FINAL REPORT: files added/changed, the two block defs + generator emissions, real jest pass count, confirmation
+you did not merge/push or modify pib_sdk, commit hash if committed.

@@ -1,0 +1,47 @@
+You are implementing Jira ticket PR-1786 in the repository /home/pib/opencode/pib-backend.
+
+FIRST: read /home/pib/opencode/pib-backend/.hermes/plans/PR-1786-plan.md in full. It contains the
+measured facts and the exact required change.
+
+WORKING BRANCH (hard constraint)
+- You are on branch PR-1786, created from origin/develop. Stay on it.
+- Do NOT merge, push, rebase, or open a PR. Commit on PR-1786 only.
+
+SCOPE (hard constraint)
+- .gitignore
+- tests/run_all_tests.sh   (function run_jest)
+- adding the previously ignored vendored files under tests/blockly_generator/node_modules/
+Nothing else. No reformatting, no unrelated cleanups, and do NOT delete the vendored tree.
+
+THE TASK
+tests/run_all_tests.sh fails its Jest step on every fresh clone: the vendored
+tests/blockly_generator/node_modules tree is committed incompletely because the bare `build/` rule
+in .gitignore (lines 13 and 35) matches directory names at ANY depth - every jest package's
+compiled output under node_modules is therefore not tracked (4436 of 7387 files; ~8 MiB missing).
+Jest cannot start from a clone, while a long-lived working copy passes.
+
+1. .gitignore: scope the build rule so the vendored test tree can be complete - add negations for
+   tests/blockly_generator/node_modules/**/build/ and .../dist/. Every other rule must keep its
+   effect (pib_blockly/pib_blockly_server/node_modules/** and .../dist/** stay ignored, top-level
+   build/ stays ignored). Verify with `git check-ignore -v` - do not assume the negation works.
+2. Commit the missing files that are present on disk so a fresh clone has a usable Jest.
+3. Harden the guard in tests/run_all_tests.sh, run_jest(): replace
+   `if [ ! -f node_modules/jest/bin/jest.js ]` with a FUNCTIONAL check that Jest really starts
+   (`node node_modules/jest/bin/jest.js --version`), falling back to `npm install` when it does not.
+   Keep everything else in the function unchanged.
+
+VERIFICATION YOU MUST RUN AND REPORT VERBATIM (real output, no summaries)
+  bash -n tests/run_all_tests.sh
+  git check-ignore -v tests/blockly_generator/node_modules/jest-cli/build/index.js     # expect no rule
+  git ls-files tests/blockly_generator/node_modules | wc -l                            # expect ~7387
+  # decisive: a FRESH CLONE of your branch must be able to run Jest
+  rm -rf /tmp/jest-freshclone && git clone --quiet --branch PR-1786 "$PWD" /tmp/jest-freshclone
+  cd /tmp/jest-freshclone/tests/blockly_generator && node node_modules/jest/bin/jest.js --config jest.config.js
+  # expect: 12 suites, 64 tests passed
+  # then break that clone on purpose (move jest-cli/build aside) and show the new guard repairs it
+  git diff --stat
+Also report the red/green contrast: what the same fresh clone does on origin/develop's state.
+
+REPORT
+Files changed, the exact diff (for .gitignore and run_all_tests.sh), the verbatim outputs above,
+and any deviation. If a step cannot be verified, say so instead of claiming success. English only.

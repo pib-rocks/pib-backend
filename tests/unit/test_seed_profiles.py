@@ -186,6 +186,43 @@ def test_seed_profiles_use_upper_endpoint_not_invert():
                 assert deviation["upper_endpoint"] in valid_endpoints
 
 
+#: Direction of the twelve motors that drive their positive end towards the
+#: rotation-range minimum, measured on the reference pib5advanced robot
+#: (192.168.10.217, 2026-10-23 via GET /motor). A fresh install has to drive the
+#: same way, so the seed and this list must not drift apart: change one only
+#: together with a new measurement on the hardware.
+PIB5ADVANCED_MEASURED_MIN_ENDPOINTS = {
+    "elbow_left",
+    "lower_arm_left_rotation",
+    "middle_left_stretch",
+    "middle_right_stretch",
+    "ring_right_stretch",
+    "shoulder_horizontal_left",
+    "shoulder_horizontal_right",
+    "shoulder_vertical_right",
+    "thumb_left_opposition",
+    "thumb_right_stretch",
+    "tilt_forward_motor",
+    "upper_arm_left_rotation",
+}
+
+
+def test_pib5advanced_seed_matches_the_measured_drive_directions():
+    from seed_profiles import pib5advanced
+
+    profile = get_profile("pib5advanced")
+    defaults = profile.motor_parameter_defaults
+    resolved = {
+        name: profile.motor_parameter_deviations.get(name, defaults).get(
+            "upper_endpoint", defaults["upper_endpoint"]
+        )
+        for name in pib5advanced.MOTOR_MAPPING
+    }
+    assert len(resolved) == 26
+    driven_to_min = {name for name, value in resolved.items() if value == "min"}
+    assert driven_to_min == PIB5ADVANCED_MEASURED_MIN_ENDPOINTS
+
+
 def test_unimplemented_variant_error_lists_implemented_profiles():
     variant = "pib3unknown"
     with pytest.raises(UnknownHardwareVariantError) as error:

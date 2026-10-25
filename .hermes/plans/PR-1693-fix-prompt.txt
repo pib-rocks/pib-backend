@@ -1,0 +1,29 @@
+Implement an incremental fix on the existing PR-1693 branch.
+
+Ticket: https://pib-rocks.atlassian.net/browse/PR-1693
+Repo: pib-backend - /home/pib/opencode/pib-backend, branch `PR-1693` (already contains commit d063339a with models/).
+
+PROBLEM: the curated set is missing one artefact. `palm_detection_128x128_decoding` is ONLY the decoding head - its
+upstream README says: "This model decodes the palm_detection_128x128, so everything can run on the edge. It returns only
+the TOP 10 most confident results." (verified: 38,920 byte .xml, 32,440 byte .bin). Without the detector there is no
+palm detection at all. The hand path needs THREE artefacts, not two.
+
+TASK:
+1. Produce and vendor the detector artefact `palm_detection_128x128` alongside the existing files:
+   - source: https://github.com/luxonis/depthai-model-zoo/tree/main/models/palm_detection_128x128
+   - place it as models/palm_detection_128x128/palm_detection_128x128.blob (same layout/compile flow you used before)
+2. Add its manifest entry in models/manifest.yaml with the same fields as the others (model_id, task, source_upstream,
+   source_url, licence, file, sha256, size_bytes, shaves, input_width, input_height, format, openvino_version, notes).
+   - record the licence EXACTLY as the upstream model.yml states it (per the revised policy: if upstream has none,
+     licence stays "unknown - see source" - never invent one)
+   - in notes make the dependency explicit: "palm detector - required together with palm_detection_128x128_decoding"
+3. Update models/README.md so the hand path is described as three artefacts (detector + decoding + landmark).
+4. Extend the manifest/README of `palm_detection_128x128_decoding` with a note that it is the decoding head and
+   requires the detector.
+5. Re-run models/verify_models.py and report its full output (must show 13/13).
+
+CONSTRAINTS: do not touch other packages, do not change camera code or setup-pib.sh, no push/merge, do not commit
+.hermes. If the artefact cannot be produced, STOP and report exactly what failed - do not create placeholder or
+zero-byte files.
+
+REPORT: commit hash, git show --stat, the total size of models/, and the real verify_models.py output.

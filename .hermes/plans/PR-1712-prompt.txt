@@ -1,0 +1,17 @@
+Implement PR-1712 (branch PR-1712 is checked out). Fetch the ticket for the full context:
+  GET https://pib-rocks.atlassian.net/rest/api/3/issue/PR-1712?fields=description
+  auth: ATLASSIAN_EMAIL / ATLASSIAN_TOKEN from ~/.hermes/.env (basic auth)
+
+Key facts already measured live (stage counters from the PR-1709 instrumentation):
+  colour_isp=1 palm_detector_nn=1 decoding_nn=1 image_manip_roi=0 hand_landmark_nn=0 post_processing=0
+=> the branch receives frames and both earlier NNs run; the chain stops at the ROI crop,
+   i.e. the ImageManip for the hand ROI emits no packets, so the landmark NN is never fed.
+
+Task: configure the hand-ROI ImageManip from the palm/decoder result (ImageManipConfig:
+crop rect, rotation, letterbox/aspect handling) so it actually emits, and feed the landmark NN
+with it. Then post-processing and publish must follow. Keep the colour-only path and the
+detections contract unchanged. Investigate the X_LINK_DEVICE_IN_USE contention seen during a
+rebuild (device used by another process) and make sure only one holder ever exists.
+
+Rules: run the real commands and report raw output (pytest, py_compile). Do not push or merge.
+Do not commit .hermes/. State clearly what needs live verification on the robot.

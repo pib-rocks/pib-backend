@@ -1,0 +1,41 @@
+You are working in the pib-backend repository. Current branch: PR-1925 (created from develop, the sha is in the log).
+
+TICKET: PR-1925 - get the full evidence, the decision and the acceptance criteria from Jira:
+  GET https://pib-rocks.atlassian.net/rest/api/3/issue/PR-1925?fields=description,summary
+Credentials: /home/pib/.hermes/.env -> ATLASSIAN_EMAIL and ATLASSIAN_TOKEN (base64 basic auth).
+
+CONTEXT: ros_packages/camera/oak_d_lite/stereo.py (~3450 lines) is the OAK-D Lite camera node.
+The defect, measured: model branches are requested with (model.input_width, model.input_height) - square for
+yolov6n_coco_640x640, see stereo.py:1773 - on a 16:9 sensor. The camera therefore delivers a centred crop,
+while the code maps the detections back with a pure per-axis scale (stereo.py:801-802). Result: correct in the
+centre, boxes too far out at the left and right edges, e.g. the dining table box overshoots by ~276 px.
+The same file already solved this class for the imitation branch: a 16:9 source
+(IMITATION_SOURCE_WIDTH/HEIGHT = 1152x648, stereo.py:113-114) plus an ImageManip with ResizeMode.STRETCH,
+documented in the comment at stereo.py:104-115 ("a pure per-axis scale, so that error cannot occur by construction").
+
+TASK: implement the "decision" section of the ticket - one owner for the branch aspect, enforcement, and every
+affected branch migrated.
+
+REQUIREMENTS - all hard:
+1. Stay on branch PR-1925. You MAY commit on this branch. Do NOT merge to develop and do NOT push - I handle that.
+2. ONE helper owns branch requests. It requests the colour branch in the PUBLISHED FRAME'S ASPECT
+   (preview_width/preview_height = 1280x720) at a chosen size, and it refuses (raises) a request whose aspect does not
+   match. Every model path must go through it: _build_single_network_pipeline, the hand branch (stereo.py:1995), the
+   face detector, the composites, and imitation.
+3. The conversion to each model's own input size happens in an ImageManip with
+   dai.ImageManipConfig.ResizeMode.STRETCH - exactly the pattern already used at stereo.py:2088, 2196, 2289, 2431.
+   Nowhere may the camera be asked for a non-16:9 branch any more.
+4. Do NOT touch: the hand ROI/warp logic, the parsers, the DetectionArray contract, the depth pipeline, the model
+   registry. This is an input-side geometry change, not a rewrite. Change as few lines as the fix needs and keep the
+   existing structure recognisable.
+5. Enforcement so the class cannot return: a test asserts that every registered model's branch aspect equals the
+   published aspect, and a second asserts that no call site requests a size whose aspect differs from it. Both tests
+   must FAIL when the rule is removed - do the mutation, observe the failure, restore, and report BOTH observations.
+6. Extend the existing camera unit test module (find it before creating any new file) rather than starting a new one.
+7. Comments and constants must be product-neutral: no internal IPs, no host names, no measurement dates, no lab paths.
+8. Do NOT install anything, do NOT start a camera, do NOT touch any device. The hardware acceptance happens separately.
+9. Do NOT run the whole test suite. Run: the camera test module with python3 -m pytest, bash -n on any shell file you
+   change, and the repository's own black invocation on the files you changed (find the pinned invocation first).
+10. REPORT the REAL observed numbers - do not claim a number you did not see. List every file and line you changed,
+    paste the helper and one migrated call site, and state explicitly which acceptance criteria remain unverified on
+    hardware. If something in this task looks wrong to you, say so instead of guessing.

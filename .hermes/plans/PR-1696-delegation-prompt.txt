@@ -1,0 +1,58 @@
+Implement PR-1696 (S4): model registry + pipeline manager in the camera container.
+
+Ticket: https://pib-rocks.atlassian.net/browse/PR-1696
+Repo: pib-backend - /home/pib/opencode/pib-backend, branch `PR-1696` (from develop bb55a070).
+
+CONTEXT (concept decisions D1/D2/D3/D4/D5). Verified facts you must build on:
+- the OAK device is exclusive: exactly ONE pipeline, owned by the camera node (`ros_packages/camera/oak_d_lite/stereo.py`)
+- depthai 3.8 is in use; a colour-only pipeline works (measured 26-27 FPS at 2104x1560); the mono/stereo path is
+  currently broken on this hardware and the node already falls back to colour-only (PR-1703, flag PIB_CAMERA_STEREO,
+  auto|on|off). THIS FALLBACK MUST KEEP WORKING.
+- the 13 curated artefacts are vendored in `models/` with `models/manifest.yaml` (fields: model_id, task, licence,
+  file, sha256, size_bytes, shaves, input_width, input_height, format, openvino_version, notes)
+- the model store is mounted read-only at `/models` in the camera container (S2)
+- the typed interfaces from S3 exist in datatypes: Detection, DetectionArray, ModelStatus, ModelStatusArray, ModelInfo,
+  ListModels, StartModel, StopModel, GetDetections
+
+DECISION D2 = "rebuild-on-demand": starting/stopping a model rebuilds and restarts the single pipeline (~2-4 s camera
+interruption, measured). Fixed NN slots were rejected.
+
+TASK
+1. `ros_packages/camera/oak_d_lite/model_registry.py`
+   - read `/models/manifest.yaml` (path overridable via PIB_MODEL_STORE) and expose the curated models with their
+     metadata (model_id, task, licence, shaves, size_bytes, blob path, available)
+   - missing/partial store must be handled gracefully: WARN once, empty registry, never raise
+2. `ros_packages/camera/oak_d_lite/pipeline_manager.py`
+   - owns the single pipeline together with the existing camera node code; colour-only base stays the foundation
+   - `start(model_id, shaves, owner)` / `stop(model_id, owner)`: serialised via a lock (no rebuild storms), debounced,
+     rebuild the pipeline with the model's NN node (blob from the store) and restart it
+   - after a start, verify frames actually flow (reuse the existing frame-based check) and keep a bounded retry with
+     backoff; on failure revert to the colour-only pipeline, log exactly one WARN and report state "failed"
+     - NEVER leave the node in a crash loop; the camera image must survive any model failure
+   - REFERENCE COUNTING per owner: several owners (UI, Blockly program) may start the same model; the model is only
+     removed from the pipeline when the last owner stops it. Owners that disappear are not auto-released in this story.
+   - without depth (current hardware) the colour-only path must still support model nodes
+3. Extend the two services minimally (justified by D2; nothing consumes them yet, so do it now):
+   - `StartModel.srv`: add `string owner`  -> request: model_id, shaves, owner
+   - `StopModel.srv`:  add `string owner`  -> request: model_id, owner
+   Keep the existing fields in place (append, do not reorder or rename).
+4. Wire it into the camera node:
+   - implement the services: ListModels (registry state incl. active), StartModel, StopModel, GetDetections
+     (last DetectionArray per model; empty detections until a model's decoding is wired in S5 - that is expected and
+     must simply return an empty array, not an error)
+   - publish `models_status` (ModelStatusArray) on every change and at ~1 Hz: model_id, active, fps, shaves, state
+     (idle|starting|running|failed), message
+   - existing behaviour must be untouched: camera_topic, preview/quality settings, depth SRVs + depth_available,
+     face_center, and the PIB_CAMERA_STEREO fallback
+5. Unit tests (no device) for: registry parsing (incl. missing manifest), refcount logic, and the pipeline-manager
+   state machine (start/stop/revert decisions).
+
+OUT OF SCOPE: per-model detection decoding (S5 wires the hand pair + Z), the Cerebra UI (S6/S7), the Blockly blocks (S8).
+Detections content may be empty in S4 - the lifecycle and status are what this story proves.
+
+CONSTRAINTS: no push/merge; do not commit .hermes; do not touch other packages; keep the single-device-owner invariant.
+
+VERIFICATION (paste real output): `python3 -m py_compile` for the new/changed files, the unit tests, and a clear list of
+what still needs live verification on the robot (the orchestrator will run that).
+
+REPORT: commit hash, `git show --stat`, the real test output.

@@ -1,0 +1,39 @@
+Implement PR-1668 per the verified facts below.
+
+Ticket: https://pib-rocks.atlassian.net/browse/PR-1668
+Repo: pib-backend — /home/pib/opencode/pib-backend, branch `PR-1668`.
+
+## Problem (verified on Pi)
+`GET /api/version` returns {"version":"unknown"} (and :5000/version too). Frontend footer shows v0.6.2 (after
+PR-1664), so the single-source footer==backend check fails (2 version-footer E2E tests red).
+
+## Root cause (verified)
+- `pib_api/flask/Dockerfile`: `ARG APP_VERSION` then `RUN printf '%s\n' "$APP_VERSION" > /etc/pib_version`.
+- `pib_api/flask/controller/version_controller.py` reads `/etc/pib_version` (then /app/version.py) and returns
+  'unknown' when empty.
+- `docker-compose.yaml` flask-app `build.args` does NOT set APP_VERSION (only a comment hint:
+  `docker compose build --build-arg APP_VERSION="$(git tag --points-at HEAD^2)" flask-app`). So the deployed
+  image has an empty baked /etc/pib_version -> API reports 'unknown'.
+
+## Fix
+Make the flask image carry a real version:
+1. In `docker-compose.yaml`, add `APP_VERSION` to flask-app `build.args` (e.g. `APP_VERSION: ${APP_VERSION:-v0.6.2}`)
+   so the bake yields a non-empty version by default. Keep the existing /etc/pib_version bake mechanism.
+   Do not break the documented `--build-arg APP_VERSION=...` usage.
+2. (Optional) In pib_api/flask/Dockerfile, guard empty APP_VERSION (fallback e.g. `unknown`-> but aim non-empty;
+   prefer a `dev` fallback). Keep /etc/pib_version as the source of truth that survives the /app volume mount.
+3. Do NOT change version_controller logic beyond if strictly needed. Do NOT touch the frontend or other services.
+
+## Hard constraints
+- Stay on branch `PR-1668`. Do NOT merge/push develop (orchestrator opens PR). You MAY commit (`fix: PR-1668 ...`).
+- Single build-time version source; do not introduce a second hand-maintained version.
+- Do NOT commit `.hermes/plans/**`. Do NOT commit if unverified.
+- Report REAL results.
+
+## Self-check
+- `grep -n "APP_VERSION" docker-compose.yaml` -> present in flask-app build.args with default.
+- `grep -n "APP_VERSION" pib_api/flask/Dockerfile` -> present (and guard if added).
+- If feasible and docker present, a build sanity; else report skipped honestly.
+
+FINAL REPORT: exact changes, the chosen default version, real grep output, confirmation you did not merge/push or
+change version_controller unnecessarily. Commit hash if committed.

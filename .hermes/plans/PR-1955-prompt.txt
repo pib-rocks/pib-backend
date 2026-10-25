@@ -1,0 +1,63 @@
+Ticket: PR-1955 - "Thinking per personality: a reasoning-level select in the voice-assistant dialog,
+applied to the personality's Hermes profile".
+You are implementing STEP 1 ONLY: the backend (pib-backend). The Cerebra dialog is a separate step and
+must NOT be touched in this run.
+
+Read the ticket first for the full context, the measured evidence and the acceptance criteria.
+
+## Background you need
+
+Each personality owns a Hermes profile, and Hermes takes the reasoning level from the AGENT BLOCK of that
+profile's config.yaml:
+
+    agent:
+      reasoning_effort: medium
+
+Accepted values (hermes-agent/batch_runner.py:913): "none", "minimal", "low", "medium", "high",
+"xhigh", "max", "ultra". Hermes' own default is "medium", which is what every personality runs at today
+and what makes a turn slow.
+
+## The defect that is part of this ticket
+
+public_api_client/public_api_client/hermes_agent_client.py writes its speed defaults to the ROOT of the
+config file:
+
+    :88   DEFAULT_REASONING_EFFORT = "low"
+    :342  if "reasoning_effort" not in cfg:
+    :343      cfg["reasoning_effort"] = DEFAULT_REASONING_EFFORT
+    :393  yaml.safe_dump(cfg, ...)      # cfg is the config root
+
+The agent reads agent.reasoning_effort (hermes_constants.py:1129), so nothing ever reads those root-level
+keys. Proof: a profile provisioned by the current code carries agent.reasoning_effort: medium - the Hermes
+default - not the "low" the client believes it set. Fix the write position for reasoning_effort, max_tokens
+and temperature as part of this step, and say so in the PR description.
+
+## What to implement (backend only)
+
+1. A nullable per-personality column reasoning_effort on the personality model, with an Alembic migration.
+   NULL means "unmanaged": the profile is left as it is. This is what keeps the existing personalities
+   untouched (owner decision D3) - do not backfill them and do not rewrite their profile configs.
+2. A new personality is created with "none" (owner decision D2).
+3. The value must be accepted in the create and update DTOs and returned in the personality read, i.e. it
+   round-trips through the API. Validate it against the eight accepted values and reject anything else with
+   a clear error.
+4. When a profile is provisioned or re-provisioned for a personality whose value is not NULL, write
+   agent.reasoning_effort into the AGENT BLOCK of that profile's config.yaml - not the root. A personality
+   whose value is NULL must leave the profile's existing setting alone.
+5. Unit tests: the default for a new personality, the round-trip, the rejection of an unknown level, and -
+   most importantly - a test that fails if the value is written to the root instead of the agent block.
+
+## Constraints
+
+- Standard library and the dependencies the repository already uses. No new dependencies for this.
+- No environment-specific values in tracked files (no IPs, no measurements of our hardware).
+- Follow the existing code style; German is not used in tracked content - everything in English.
+- Do NOT touch the Cerebra repository, the dialog markup, or any UI code.
+- Do NOT change the personalities' existing profile files by hand.
+
+## Definition of done
+
+- Branch PR-1955 in pib-backend, changes committed there.
+- Tests and the linter pass; state the exact commands you ran and their results.
+- Report: files changed per area, the exact command output for tests and lint, and anything you could not
+  verify. Name honestly what a reviewer still has to check on a device.

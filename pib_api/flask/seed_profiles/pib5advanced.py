@@ -69,6 +69,11 @@ MOTOR_MAPPING = {
     "wrist_right": (2, 16),
 }
 
+#: The ``upper_endpoint`` values below mirror the measured configuration of the
+#: reference pib5advanced robot (192.168.10.217, 2026-10-23): twelve motors drive
+#: their positive end towards the rotation-range minimum. A fresh install of this
+#: variant must therefore move in the same direction as that robot - keep the two
+#: in sync, and change them only together with a measurement on the hardware.
 MOTOR_PARAMETER_DEVIATIONS = {
     "tilt_forward_motor": {
         "rotation_range_min": -2000,
@@ -80,29 +85,29 @@ MOTOR_PARAMETER_DEVIATIONS = {
         "rotation_range_min": -4500,
         "rotation_range_max": 9000,
         "velocity": 10000,
+        "upper_endpoint": "min",
     },
     "lower_arm_left_rotation": {"velocity": 10000, "upper_endpoint": "min"},
-    "shoulder_horizontal_left": {"velocity": 10000},
+    "shoulder_horizontal_left": {"velocity": 10000, "upper_endpoint": "min"},
     "upper_arm_right_rotation": {"velocity": 10000},
     "elbow_right": {
         "rotation_range_min": -4500,
         "rotation_range_max": 9000,
         "velocity": 10000,
-        "upper_endpoint": "min",
     },
     "lower_arm_right_rotation": {"velocity": 10000},
     "shoulder_vertical_right": {"velocity": 10000, "upper_endpoint": "min"},
     "shoulder_horizontal_right": {"velocity": 10000, "upper_endpoint": "min"},
     "wrist_left": {"velocity": 10000, "visible": False},
     "wrist_right": {"velocity": 10000},
-    "thumb_right_opposition": INVERTED_FINGER_MOTOR_PARAMETERS,
-    "thumb_right_stretch": FINGER_MOTOR_PARAMETERS,
+    "thumb_right_opposition": FINGER_MOTOR_PARAMETERS,
+    "thumb_right_stretch": INVERTED_FINGER_MOTOR_PARAMETERS,
     "index_right_stretch": FINGER_MOTOR_PARAMETERS,
     "middle_right_stretch": INVERTED_FINGER_MOTOR_PARAMETERS,
-    "ring_right_stretch": FINGER_MOTOR_PARAMETERS,
-    "pinky_right_stretch": INVERTED_FINGER_MOTOR_PARAMETERS,
+    "ring_right_stretch": INVERTED_FINGER_MOTOR_PARAMETERS,
+    "pinky_right_stretch": FINGER_MOTOR_PARAMETERS,
     "thumb_left_opposition": INVERTED_FINGER_MOTOR_PARAMETERS,
-    "thumb_left_stretch": INVERTED_FINGER_MOTOR_PARAMETERS,
+    "thumb_left_stretch": FINGER_MOTOR_PARAMETERS,
     "index_left_stretch": FINGER_MOTOR_PARAMETERS,
     "middle_left_stretch": INVERTED_FINGER_MOTOR_PARAMETERS,
     "ring_left_stretch": FINGER_MOTOR_PARAMETERS,

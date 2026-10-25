@@ -1,0 +1,29 @@
+You are working in the pib-backend repository. Current branch: PR-1923 (created from develop 4c4aaf90).
+
+TICKET: PR-1923 - get the full evidence, the scope and the acceptance criteria from Jira:
+  GET https://pib-rocks.atlassian.net/rest/api/3/issue/PR-1923?fields=description,summary
+Credentials: /home/pib/.hermes/.env -> ATLASSIAN_EMAIL and ATLASSIAN_TOKEN (base64 basic auth).
+
+IMPORTANT: the ticket text is in the middle of being corrected by the owner. Where it still says that
+pib5museum skips, IGNORE that: the owner confirmed that pib5museum MUST get the model as well. The
+authoritative rule is requirement 3 below.
+
+CONTEXT YOU MUST BUILD ON (already merged as develop 4c4aaf90):
+- setup/setup-pib.sh contains the Ollama step (added by PR-1922) with a fixed RAM warning threshold of 1200 MiB.
+- setup/ollama/Modelfile contains the qwen-fast model definition.
+- tests/unit/test_setup_ollama.py has 11 tests covering that step, all green on develop.
+
+TASK: gate the Ollama step on the resolved hardware variant, exactly as described here.
+
+REQUIREMENTS - all of these are hard:
+1. Stay on branch PR-1923. You MAY commit on this branch. Do NOT merge to develop and do NOT push - I handle that myself.
+2. Reuse the variant value the setup already resolves: PIB_HARDWARE_VARIANT, exported by setup-pib.sh around line 1417-1426. Do not invent a new detection mechanism, do not read /proc/meminfo for this decision, and do not read the device-tree model - the variant is the decision input.
+3. THE RULE: install the local Ollama for the three generation-5 variants pib5edu, pib5advanced and pib5museum. Skip it for the two generation-4 variants pib4edu and pib4advanced, with one clear log line naming the variant and the 8 GiB requirement, and still exit 0 - a skip is not an error. Write the three installing variants as an explicit list plus a comment saying they are the generation-5 (8 GiB) variants; do NOT derive them from a name prefix, and do not add any other variant name.
+4. Keep the existing RAM warning as a safety net for the variants that do install, and keep the whole step idempotent (the second run must still change nothing).
+5. Extend tests/unit/test_setup_ollama.py so ALL FIVE variants are covered: pib5edu, pib5advanced and pib5museum take the installation path; pib4edu and pib4advanced skip and perform no installer call, no pull and no create. Follow the style of the existing tests in that file.
+6. Comments and constants must be product-neutral: no internal IPs, no host names, no measurement dates, no paths from our lab, no "rig". Measured evidence belongs on the Jira ticket, not in the code.
+7. Do NOT install Ollama and do NOT pull any model on this machine. This is not the target hardware, installing here proves nothing about the device, and the download is unwanted.
+8. Do NOT run the whole test suite. Run exactly: bash -n setup/setup-pib.sh, then python3 -m pytest tests/unit/test_setup_ollama.py -q, then the repository's own black check on the files you touched (find the pinned invocation in the repo before guessing one).
+9. Self-check the gate before reporting: temporarily remove your variant gate, run the tests, confirm they FAIL, then restore the gate and confirm they pass again. Report both observations.
+
+REPORT: name every file and line you changed and why, paste the final gate code, and state the REAL observed test numbers - do not claim a number you did not see. If a criterion could not be verified here, say so explicitly instead of guessing.

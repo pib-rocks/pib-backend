@@ -1,0 +1,76 @@
+Implement PR-1161 per the verified facts below.
+
+Ticket: https://pib-rocks.atlassian.net/browse/PR-1161
+Repo: pib-backend — /home/pib/opencode/pib-backend, branch `PR-1161` (from develop `b934dc6d`).
+
+## Goal
+Add a Blockly block that plays a movement SEQUENCE OF POSES with SMOOTH TRANSITIONS (blending through the
+waypoints), by calling the new pib-sdk timed trajectory API. This is the smooth variant — NOT the naive
+"move to pose, stop, move to next" player.
+
+## The pib-sdk API this block must call (added by PR-1685 in pib-sdk, PR #5)
+`pib_sdk.features.poses.play_pose_sequence_timed(writer, backend, schedule, *, by="name") -> None`
+- `schedule = [(pose_identifier, seconds_for_this_leg), ...]` — per-LEG duration (seconds to reach that pose
+  from the previous waypoint; first entry from trajectory start). It accumulates these into absolute
+  `time_from_start` internally.
+- It builds ONE timed standard-layout JointTrajectory (one point per pose, positions for all joints, real
+  time_from_start) and sends it, so the pib-backend software trajectory controller (PR-1660, merged:
+  trajectory_executor.py, PCHIP interpolation at 100 Hz) BLENDS through the via-points instead of stopping.
+- `by` is `"name"` (default) or `"pose_id"`.
+- Import it as: `from pib_sdk.features.poses import play_pose_sequence_timed`
+- Also available (do not change): `set_pose`, `get_pose`, `apply_pose`, `save_current_pose`, and the naive
+  `play_pose_sequence` (simple mode; NOT what this block uses).
+
+## Existing Blockly pose implementation to extend (this repo, verified)
+- Blocks: `pib_blockly/pib_blockly_server/src/pib-blockly/program-blocks/pose-block.ts`
+  -> `moveToPose` (type `move_to_pose`) and `poseBlocks` (types `save_current_pose`, `get_all_poses`,
+     `get_pose_joints`, `has_pose`, `pose_count`).
+- Generators: `.../program-generators/pose-generator.ts`
+  -> `moveToPoseGenerator`, `save_current_pose`, `get_all_poses`, `get_pose_joints`, `has_pose`, `pose_count`.
+- Registration: `program-blocks/custom-blocks.ts` (`Blockly.common.defineBlocks(...)`) and
+  `program-generators/custom-generators.ts` (spread + `pythonGenerator.forBlock["<type>"] = generators["<fn>"]`).
+- Helpers/imports: `program-generators/util/definitions.ts` (IMPORT_* constants, `rosbridge_host =
+  os.getenv("ROSBRIDGE_HOST", "rosbridge-ws")`, CONFIGURE_LOGGING) and
+  `program-generators/util/function-declarations.ts` (helper builders that construct `Write`/`BackendClient`/
+  `Telemetry` over rosbridge). Follow these exactly.
+- Reserved words: `program-generators/util/reserved-words.ts`.
+
+## Scope — the new block (v1, one block)
+Type `play_pose_sequence`, statement block:
+- message: "play pose sequence %1" with a value input `SEQUENCE`.
+- `SEQUENCE` expects a Blockly **list of pairs** `[[poseName, secondsPerLeg], ...]`, built with Blockly's native
+  list blocks (no custom mutator needed).
+- Generator: read the input with `generator.valueToCode(block, "SEQUENCE", Order.NONE)`, and emit a call to a
+  provided helper that:
+  * coerces each entry to `(str(name), float(leg_seconds))`,
+  * opens `Write`/`BackendClient` over rosbridge using the SAME helper pattern as pose-generator.ts/function-declarations.ts,
+  * calls `play_pose_sequence_timed(writer, backend, steps)`.
+- Add the `play_pose_sequence_timed` import via definitions.ts.
+- Register the block and generator following the existing pose registration pattern.
+- Add jest generator tests asserting the emitted Python calls `play_pose_sequence_timed` with the correct
+  coerced sequence literal.
+
+## Scope decision (respect; do NOT add extras)
+- Implement ONLY the smooth/timed play block. Do NOT add a stop/cancel block (needs cancellation support that
+  does not exist yet — separate follow-up) and do NOT add a second "simple/naive" block.
+- Do NOT change existing pose blocks/generators' behaviour.
+
+## Runtime dependency (note only, do not act on it)
+At runtime the programs container needs a pib-sdk release that includes PR-1685 installed; the block's generated
+code imports `play_pose_sequence_timed`. Note this in your report; do NOT try to install/upgrade pib-sdk.
+
+## Constraints
+- Stay on branch `PR-1161`. Do NOT merge/push develop (the orchestrator opens the PR). You MAY commit
+  (`feat: PR-1161 ...`).
+- Do NOT modify pib-sdk or any other repo. Only Blockly block + generator + test (+ registration/helpers).
+- Do NOT commit `.hermes/plans/**`. Do NOT commit if tests fail. Report REAL results.
+
+## Verify (orchestrator will re-run)
+- `cd /home/pib/opencode/pib-backend/tests/blockly_generator && node node_modules/jest/bin/jest.js --config jest.config.js`
+  -> all pass including the new case(s).
+- `git diff --name-only origin/develop...HEAD` shows pose-block.ts, pose-generator.ts, the test, and the
+  registration/helper files.
+
+FINAL REPORT: files changed, the block definition, the emitted Python (helper + play_pose_sequence_timed call),
+real jest pass count, the runtime pib-sdk dependency note, confirmation you did not merge/push or touch pib-sdk,
+and the commit hash if committed.

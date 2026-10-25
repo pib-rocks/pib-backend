@@ -1,0 +1,45 @@
+You are implementing Jira story PR-1799 (facemesh overlay) across two repositories.
+
+Backend worktree: /home/pib/opencode/pib-backend-PR-1799  (branch PR-1799, based on develop 64b9b5b0)
+Cerebra worktree: /home/pib/opencode/cerebra-PR-1799     (branch PR-1799, based on develop 6a79edf5)
+
+Read /home/pib/opencode/pib-backend-PR-1799/.hermes/plans/PR-1799-plan.md FIRST. It is the
+authoritative specification: it contains the blob facts, the tesselation source with the
+numbers already validated, the generalisation this story must carry, and the constraints.
+Also read the merged PR-1809 chain in the same tree (ros_packages/camera/oak_d_lite/stereo.py,
+face_crop.py, task_archives.py) - this story extends it and inherits all of its traps.
+
+Key facts you must not re-derive by guessing:
+* facemesh_192x192.blob: shaves 4, input 'input_1' [192,192,3,1], outputs 'conv2d_31' [1,1,1,1]
+  and 'conv2d_210' [1404,1,1,1] - 1404 = 468 points x 3 (x,y,z).
+* The tesselation: mediapipe/python/solutions/face_mesh_connections.py, FACEMESH_TESSELATION,
+  2556 index pairs as triangles, maximum index 467. Interior edges appear TWICE - deduplicate.
+* The chain is currently hard-wired to emotion in three places (the required artifact set, the
+  classifier lookup, and _publish_face_crop_detection's translate_emotion + model_id). Generalise
+  those so the classifier artifact, its translation and the published model id/topic come from
+  the composite/manifest entry. Four later stories depend on that generalisation.
+* The emotion behaviour must not change: every existing test stays green and the published
+  message for emotion_recognition_crop stays identical.
+
+Cerebra: the file is src/app/camera/detection-topology.ts (hyphen, not underscore). It already
+has topologyConnections/modelDrawsSkeleton per model id from PR #190. Add the mesh segments
+(deduplicated) for the new model id, plus a unit test that the segment list has no duplicate
+edges and no index >= 468.
+
+Verify what must be established empirically and report the numbers you measured:
+* Are the 1404 values normalised 0..1 or pixels of the 192x192 crop? If pixels, divide by 192.
+* Whether the z values need scaling too.
+
+Hard constraints:
+* No robot access. The Pi is shared and running a user-facing model; do not deploy, do not
+  restart containers, do not run anything against 192.168.1.92.
+* Do not change the camera rate, the shave budgets, the stereo rule, or the crop input bound (4).
+* Do not make the frame verification wait for a keypoint result: the facemesh only answers when a
+  face is present. The detector stage proves the chain, exactly as for emotion.
+* No device-side Script node (measured as not viable on this board).
+* Grey existing code paths are fine to refactor, but nothing else may regress.
+* Run and report verbatim: python3 -m pytest tests/unit -q and
+  python3 -m black --check --include '\.py$' . in the backend tree, plus your Cerebra test
+  command (and ng build if it completes quickly).
+* Stay on the branches. Commit your work with clear messages, but do NOT push.
+* Report real command output. Never report a summary of what you intended to run.

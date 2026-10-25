@@ -1,0 +1,5 @@
+PR-1705 (device-level): device log shows
+  [ImageManip(1)] [error] Not possible to create warp params. Error: WARP_SWCH_ERR_CACHE_TO_SMALL
+  [ImageManip(1)] [error] Invalid configuration or input image - skipping frame
+=> 0 detections, fps 0.0, while start_model succeeds and status reaches running.
+

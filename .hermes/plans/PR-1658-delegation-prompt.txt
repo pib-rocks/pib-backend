@@ -1,0 +1,38 @@
+Implement PR-1658 per the plan at `/home/pib/opencode/pib-backend/.hermes/plans/PR-1658-plan.md`. READ THE PLAN FIRST — verified facts, exact file/line locations, the SDK design decision (pib_sdk.features.poses path vs existing pose_client), and hard constraints.
+
+Scope (C1 + B/D):
+C1 — new statement block 'Save current pose as': captures ALL motor positions INCLUDING the head (via pib-sdk All/_all_motor_names expansion), single NAME input, NO arm/range dropdown. Generated code calls save_current_pose with the full motor set.
+B/D — value/utility blocks:
+  - 'get_all_poses' (value/list)  -> list_poses(backend)
+  - 'get_pose_joints' (value/map) -> get_pose(backend, name=...).motor_angles_deg
+  - 'has_pose' (boolean)          -> true/false if pose exists
+  - 'pose_count' (number)         -> len(list_poses(backend))
+
+Key files (verify current state, adapt):
+- Block defs: pib_blockly/pib_blockly_server/src/pib-blockly/program-blocks/pose-block.ts (existing move_to_pose; Blockly.Blocks["move_to_pose"], CustomFieldDropdown). Add the new blocks there or a sibling file imported+registered the same way.
+- Registration: pib_blockly/pib_blockly_server/src/pib-blockly/program-blocks/custom-blocks.ts -> Blockly.common.defineBlocks(...). Register new blocks here too.
+- Generators: pib_blockly/pib_blockly_server/src/pib-blockly/program-generators/pose-generator.ts (existing moveToPoseGenerator + custom-generators.ts maps pythonGenerator.forBlock["move_to_pose"]). Add new generator fns for the new blocks and register them similarly.
+- util/definitions.ts has IMPORT_* constants; util/function-declarations.ts has APPLY_POSE_FUNCTION (uses pib_api_client.pose_client + pib_sdk.Write). NOTE: keep existing move_to_pose path intact; for the NEW blocks use pib_sdk.features.poses (save_current_pose, list_poses, get_pose) + pib_sdk.control All / Telemetry / BackendClient as specified in the plan.
+- Tests: tests/blockly_generator/pose_generator.test.ts — mock generator (definitions_, provideFunction_). Add new discriminating tests there or a new pose-blocks test file.
+
+SDK API (verified, use exact symbols):
+- from pib_sdk.features.poses import save_current_pose, list_poses, get_pose
+  - save_current_pose(telemetry, backend, name, motor_names) -> Pose  (reads telemetry.get_positions_deg, backend.create_pose)
+  - list_poses(backend) -> list[PoseSummary(pose_id,name,deletable)]
+  - get_pose(backend, *, name=None, pose_id=None) -> Pose(..., motor_angles_deg={motor:deg})
+- from pib_sdk.control import All  # expands to union of every motor group incl RIGHT_ARM+LEFT_ARM+HEAD (turn_head_motor, tilt_forward_motor)
+- from pib_sdk.telemetry import Telemetry ; from pib_sdk.backend import BackendClient
+
+C1 must NOT have an arm/range selector — the whole robot (all motors incl head) is saved by default.
+
+HARD CONSTRAINTS:
+- Stay on branch `PR-1658`. Do NOT direct-push to develop (merge via GitHub PR by the orchestrator). You MAY commit on PR-1658 (`feat: PR-1658 ...`).
+- Do NOT modify pib-sdk source, motor logic, routes, or break existing move_to_pose behavior/tests.
+- Do NOT commit `.hermes/plans/**`. Do NOT commit if tests fail.
+- Report REAL results.
+
+SELF-CHECK (from /home/pib/opencode/pib-backend):
+- `cd tests/blockly_generator && node node_modules/jest/bin/jest.js --config jest.config.js` -> all pass incl your new cases (note: npx jest may be non-executable; use node jest/bin/jest.js).
+- Confirm the save_current_pose block def has NO arm/range dropdown and the emitted motor set includes head motors.
+
+FINAL REPORT: files changed (paths), the block approach, pasted key generator additions (esp. C1 save_current_pose + motor_names incl head), the real jest pass count, confirmation you did not add a range selector / modify pib-sdk / break move_to_pose, and the commit hash if you committed.
