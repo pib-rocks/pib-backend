@@ -44,6 +44,7 @@ from pib_hermes_config.channel import (
     CHANNEL_DIRECT,
     CHANNEL_SMART,
     direct_system_prompt,
+    personality_system_prompt,
     turn_channel,
 )
 from pib_hermes_config.retired_direct_text import (
@@ -62,11 +63,6 @@ from voice_assistant.degraded_chat import (
     refusal_sentence,
 )
 from voice_assistant.memory_consolidation import schedule_memory_consolidation
-
-# In future, this code will be prepended to the description in a chat-request
-# if it is specified that code should be generated. The text will contain
-# instruction for the LLM on how to generate the code. For now, it is left blank.
-CODE_DESCRIPTION_PREFIX = ""
 
 # How often the hermes turn is interrupted to notice a cancel request.
 HERMES_CANCEL_POLL_SECONDS = 0.2
@@ -1378,9 +1374,8 @@ class ChatNode(Node):
             getattr(personality, "description", None),
             images_shown=True,
             robot_context=self._robot_context(),
+            code_generation=generate_code,
         )
-        if generate_code:
-            system_prompt = CODE_DESCRIPTION_PREFIX + system_prompt
         system_prompt = plan.for_direct(system_prompt)
         endpoint_base = getattr(
             getattr(personality, "assistant_model", None), "endpoint_base", None
@@ -1465,13 +1460,11 @@ class ChatNode(Node):
             goal_handle.abort()
             return Chat.Result()
         self.history_length = personality.message_history
-        description = (
-            personality.description
-            if personality.description is not None
-            else "Du bist pib, ein humanoider Roboter."
+        description = personality_system_prompt(
+            soul_text=getattr(personality, "description", None),
+            robot_context=self._robot_context(),
+            code_generation=generate_code,
         )
-        if generate_code:
-            description = CODE_DESCRIPTION_PREFIX + description
 
         # Channel is a personality setting, not the provider's api name.
         channel = turn_channel(personality)
@@ -1575,9 +1568,8 @@ class ChatNode(Node):
                     personality.description,
                     images_shown=True,
                     robot_context=self._robot_context(),
+                    code_generation=generate_code,
                 )
-                if generate_code:
-                    system_prompt = CODE_DESCRIPTION_PREFIX + system_prompt
                 system_prompt = plan.for_direct(system_prompt)
                 self.get_logger().info(
                     f"local model chat={chat_id} model={LOCAL_MODEL_API_NAME}"
@@ -1610,9 +1602,8 @@ class ChatNode(Node):
                     personality.description,
                     images_shown=True,
                     robot_context=self._robot_context(),
+                    code_generation=generate_code,
                 )
-                if generate_code:
-                    system_prompt = CODE_DESCRIPTION_PREFIX + system_prompt
                 system_prompt = plan.for_direct(system_prompt)
                 allow_image = direct_tool_loop.image_tool_allowed(
                     personality, tool_calling

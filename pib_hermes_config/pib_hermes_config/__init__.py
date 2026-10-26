@@ -440,9 +440,24 @@ def strip_mcp_tools_soul_section(text: str) -> str:
     return "\n".join(lines[:start] + lines[end:])
 
 
+def _soul_identity_text(
+    personality_name: str,
+    custom_description: str | None = None,
+) -> str:
+    """Identity block only: robot line plus optional custom description."""
+    name = (personality_name or "").strip() or "pib"
+    parts = [f"Du bist der humanoide Roboter {name}."]
+    custom = strip_mcp_tools_soul_section(custom_description or "").strip()
+    if custom:
+        parts.append("")
+        parts.append(custom)
+    return "\n".join(parts) + "\n"
+
+
 def build_default_soul_text(
     personality_name: str,
     custom_description: str | None = None,
+    robot_context: str | None = None,
 ) -> str:
     """Build the standard SOUL.md: robot identity plus an optional custom text.
 
@@ -456,11 +471,15 @@ def build_default_soul_text(
     caller folds its text in here, including the daemon that rebuilds SOUL.md
     from a personality's stored description, so a stored block cannot come
     back through a path this package does not own.
+
+    When ``robot_context`` is set, the compact motion model is appended the same
+    way as on a Direct turn (PR-2067).
     """
-    name = (personality_name or "").strip() or "pib"
-    parts = [f"Du bist der humanoide Roboter {name}."]
-    custom = strip_mcp_tools_soul_section(custom_description or "").strip()
-    if custom:
-        parts.append("")
-        parts.append(custom)
-    return "\n".join(parts) + "\n"
+    from pib_hermes_config.channel import personality_system_prompt
+
+    return personality_system_prompt(
+        personality_name=personality_name,
+        custom_description=custom_description,
+        robot_context=robot_context,
+        trailing_newline=True,
+    )
