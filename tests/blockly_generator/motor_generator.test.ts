@@ -6,6 +6,7 @@ import {
   get_hand_z,
   motor_current,
   move_motor,
+  move_motors,
   set_hand_position_xyz,
 } from "../../pib_blockly/pib_blockly_server/src/pib-blockly/program-generators/motor-generators";
 
@@ -48,6 +49,33 @@ function createMotorBlock(
       throw new Error(`unexpected field ${field}`);
     },
   } as unknown as Block;
+}
+
+type MoveMotorsRow = { motor: string; angle: string };
+
+function createMoveMotorsBlock(rows: MoveMotorsRow[]): Block {
+  return {
+    getMotorRowCount: () => rows.length,
+    getFieldValue: (field: string) => {
+      const match = /^MOTOR_(\d+)$/.exec(field);
+      if (match) {
+        return rows[Number(match[1])].motor;
+      }
+      throw new Error(`unexpected field ${field}`);
+    },
+  } as unknown as Block;
+}
+
+function createMoveMotorsGenerator(rows: MoveMotorsRow[]): MockGenerator {
+  const generator = createMockGenerator();
+  generator.valueToCode = (_block, name) => {
+    const match = /^ANGLE_(\d+)$/.exec(name);
+    if (match) {
+      return rows[Number(match[1])].angle;
+    }
+    throw new Error(`unexpected input ${name}`);
+  };
+  return generator;
 }
 
 function createHandPositionBlock(
@@ -94,6 +122,44 @@ describe("move_motor generator", () => {
     const block = createMotorBlock("TILT_FORWARD_HEAD", "ABSOLUTE");
     const code = move_motor(block, generator);
     expect(code).toContain('"tilt_forward_motor"');
+  });
+});
+
+describe("move_motors generator", () => {
+  it("emits one vector move call for two motors in block order", () => {
+    const rows = [
+      { motor: "ELBOW_LEFT", angle: "12.5" },
+      { motor: "WRIST_LEFT", angle: "-3" },
+    ];
+    const generator = createMoveMotorsGenerator(rows);
+    const code = move_motors(createMoveMotorsBlock(rows), generator);
+    const defs = Object.values(generator.definitions_).join("\n");
+
+    expect(code).toBe(
+      'move_motors("elbow_left", 12.5, "wrist_left", -3)\n',
+    );
+    expect(code.match(/move_motors\(/g)?.length ?? 0).toBe(1);
+    expect(defs).toContain("write.move(*args)");
+    expect(defs).not.toContain("apply_joint_trajectory");
+    expect(defs).not.toContain("get_joint_position_client");
+  });
+
+  it("emits one vector move call for three motors", () => {
+    const rows = [
+      { motor: "TURN_HEAD", angle: "0" },
+      { motor: "TILT_FORWARD_HEAD", angle: "5" },
+      { motor: "ELBOW_RIGHT", angle: "90" },
+    ];
+    const generator = createMoveMotorsGenerator(rows);
+    const code = move_motors(createMoveMotorsBlock(rows), generator);
+    const defs = Object.values(generator.definitions_).join("\n");
+
+    expect(code).toBe(
+      'move_motors("turn_head_motor", 0, "tilt_forward_motor", 5, "elbow_right", 90)\n',
+    );
+    expect(code.match(/move_motors\(/g)?.length ?? 0).toBe(1);
+    expect(defs).toContain("write.move(*args)");
+    expect(defs).not.toContain("apply_joint_trajectory");
   });
 });
 

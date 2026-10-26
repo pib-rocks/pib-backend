@@ -1,8 +1,12 @@
 import * as Blockly from "blockly";
 import {Block} from "blockly/core/block";
 import {Order, pythonGenerator} from "blockly/python";
+import {
+    MOTOR_CATEGORY_TOOLBOX_BLOCK_TYPES,
+} from "../src/pib-blockly/program-blocks/motor-category-toolbox";
 import {motor_blocks} from "../src/pib-blockly/program-blocks/motor-blocks";
-import {move_motor} from "../src/pib-blockly/program-generators/motor-generators";
+import {moveMotorsBlocks} from "../src/pib-blockly/program-blocks/move-motors-block";
+import {move_motor, move_motors} from "../src/pib-blockly/program-generators/motor-generators";
 
 function assert(condition: unknown, message: string): asserts condition {
     if (!condition) {
@@ -18,6 +22,7 @@ function assertEqual(actual: unknown, expected: unknown, message: string): void 
 }
 
 Blockly.common.defineBlocks(motor_blocks);
+Blockly.common.defineBlocks(moveMotorsBlocks);
 
 const workspace = new Blockly.Workspace();
 Blockly.Events.disable();
@@ -42,6 +47,38 @@ try {
     );
 } finally {
     workspace.dispose();
+    Blockly.Events.enable();
+}
+
+assert(
+    MOTOR_CATEGORY_TOOLBOX_BLOCK_TYPES.includes("move_motors"),
+    "motor category toolbox must list move_motors after move_motor",
+);
+assertEqual(
+    MOTOR_CATEGORY_TOOLBOX_BLOCK_TYPES.indexOf("move_motors"),
+    MOTOR_CATEGORY_TOOLBOX_BLOCK_TYPES.indexOf("move_motor") + 1,
+    "move_motors must appear directly after move_motor in the motor palette",
+);
+
+const moveMotorsWorkspace = new Blockly.Workspace();
+Blockly.Events.disable();
+try {
+    const moveMotorsBlock = moveMotorsWorkspace.newBlock("move_motors");
+    const moveMotorsText = moveMotorsBlock
+        .inputList.flatMap((input) => input.fieldRow)
+        .map((field) => field.getText())
+        .join(" ");
+    assert(
+        moveMotorsText.toLowerCase().includes("degree"),
+        "move_motors block label must name degrees",
+    );
+    const moveMotorsTooltip = String(moveMotorsBlock.tooltip ?? "");
+    assert(
+        moveMotorsTooltip.toLowerCase().includes("degree"),
+        "move_motors tooltip must name degrees",
+    );
+} finally {
+    moveMotorsWorkspace.dispose();
     Blockly.Events.enable();
 }
 
@@ -111,6 +148,47 @@ assert(
     relativeDefs.includes("def centidegrees_to_degrees") &&
         relativeDefs.includes("return centidegrees_to_degrees(response.position)"),
     "relative move_motor must convert ROS centidegrees only in get_joint_position helper",
+);
+
+const moveMotorsGenerator = generatorWithDefinitions("30");
+moveMotorsGenerator.valueToCode = (_block: Block, name: string, order: Order) => {
+    assertEqual(order, Order.ATOMIC, "ANGLE inputs must use atomic order");
+    if (name === "ANGLE_0") {
+        return "30";
+    }
+    if (name === "ANGLE_1") {
+        return "15";
+    }
+    throw new Error(`unexpected input ${name}`);
+};
+const moveMotorsCode = move_motors(
+    {
+        getMotorRowCount: () => 2,
+        getFieldValue: (field: string) => {
+            if (field === "MOTOR_0") {
+                return "ELBOW_LEFT";
+            }
+            if (field === "MOTOR_1") {
+                return "WRIST_LEFT";
+            }
+            throw new Error(`unexpected field ${field}`);
+        },
+    } as unknown as Block,
+    moveMotorsGenerator,
+);
+assertEqual(
+    moveMotorsCode,
+    'move_motors("elbow_left", 30, "wrist_left", 15)\n',
+    "move_motors must emit one vector move call in degrees",
+);
+const moveMotorsDefs = Object.values(moveMotorsGenerator.definitions_).join("\n");
+assert(
+    moveMotorsDefs.includes("write.move(*args)"),
+    "move_motors helper must call pib_sdk.Write.move once with all motor pairs",
+);
+assert(
+    !moveMotorsCode.includes("apply_joint_trajectory"),
+    "move_motors must not use per-motor apply_joint_trajectory",
 );
 
 const handWorkspace = new Blockly.Workspace();
