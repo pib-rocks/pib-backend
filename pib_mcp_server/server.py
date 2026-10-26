@@ -16,6 +16,13 @@ from mcp.types import ToolAnnotations
 from pydantic import Field
 
 from .backend import BackendError, PibBackend
+from .tool_budgets import DEFAULT_TOOL_PAYLOAD_BUDGET_BYTES, TOOL_PAYLOAD_BUDGET_BYTES
+
+# UTF-8 JSON byte budgets for default (compact) tool results; see tool_budgets.py.
+TOOL_PAYLOAD_BUDGETS = {
+    **TOOL_PAYLOAD_BUDGET_BYTES,
+    "default": DEFAULT_TOOL_PAYLOAD_BUDGET_BYTES,
+}
 
 ACTUATING_TOOLS = {
     "move_motor",
@@ -125,38 +132,37 @@ def create_server(
         return _invoke(robot.list_motors, detail)
 
     @server.tool(annotations=read_annotations, structured_output=True)
-    def get_state() -> dict[str, Any]:
-        """Return current joint state, diagnostics, and robot telemetry."""
+    def get_state(detail: bool = False) -> dict[str, Any]:
+        """Return joint state and diagnostics; pass detail=true for full motor config."""
 
-        return _invoke(robot.get_state)
+        return _invoke(robot.get_state, detail)
 
     @server.tool(annotations=read_annotations, structured_output=True)
-    def get_motion_model() -> dict[str, Any]:
+    def get_motion_model(detail: bool = False) -> dict[str, Any]:
         """Return the live motion model from the robot database.
 
-        Includes kinematic chains, centidegree joint limits, which bound is the
-        named upper end, and named postures. Reflects motor-setting edits
-        immediately without redeploying the MCP server.
+        Default is the rendered prompt and units; pass detail=true for kinematic
+        chains, joint limits, and named postures.
         """
-        return _invoke(robot.get_motion_model)
+        return _invoke(robot.get_motion_model, detail)
 
     @server.tool(annotations=read_annotations, structured_output=True)
-    def list_poses() -> dict[str, Any]:
-        """List stored robot poses."""
+    def list_poses(detail: bool = False) -> dict[str, Any]:
+        """List stored robot poses; pass detail=true for motor positions."""
 
-        return _invoke(robot.list_poses)
-
-    @server.tool(annotations=read_annotations, structured_output=True)
-    def list_programs() -> dict[str, Any]:
-        """List stored Blockly/Python programs."""
-
-        return _invoke(robot.list_programs)
+        return _invoke(robot.list_poses, detail)
 
     @server.tool(annotations=read_annotations, structured_output=True)
-    def capture_image() -> dict[str, Any]:
-        """Capture one camera frame as a base64-encoded JPEG."""
+    def list_programs(detail: bool = False) -> dict[str, Any]:
+        """List stored Blockly/Python programs; pass detail=true for Blockly code."""
 
-        return _invoke(robot.capture_image)
+        return _invoke(robot.list_programs, detail)
+
+    @server.tool(annotations=read_annotations, structured_output=True)
+    def capture_image(detail: bool = False) -> dict[str, Any]:
+        """Capture one camera frame; default is a reference and metadata only."""
+
+        return _invoke(robot.capture_image, detail)
 
     @server.tool(annotations=actuation_annotations, structured_output=True)
     def move_motor(
@@ -245,20 +251,25 @@ def create_server(
         return _invoke(robot.set_relay, turned_on)
 
     @server.tool(annotations=read_annotations, structured_output=True)
-    def list_smarthome_devices(room: str = "", domain: str = "") -> dict[str, Any]:
+    def list_smarthome_devices(
+        room: str = "", domain: str = "", detail: bool = False
+    ) -> dict[str, Any]:
         """List voice-exposed SmartHome devices, optionally filtered by room or domain."""
 
         return _invoke(
             robot.list_smarthome_devices,
             room.strip() or None,
             domain.strip() or None,
+            detail,
         )
 
     @server.tool(annotations=read_annotations, structured_output=True)
-    def get_smarthome_state(device: NonEmptyString) -> dict[str, Any]:
+    def get_smarthome_state(
+        device: NonEmptyString, detail: bool = False
+    ) -> dict[str, Any]:
         """Read the current state of one voice-exposed SmartHome device."""
 
-        return _invoke(robot.get_smarthome_state, device.strip())
+        return _invoke(robot.get_smarthome_state, device.strip(), detail)
 
     @server.tool(annotations=actuation_annotations, structured_output=True)
     def control_smarthome_device(
@@ -289,7 +300,9 @@ def create_server(
 
     @server.tool(annotations=write_annotations, structured_output=True)
     def soul_append(
-        personality_id: NonEmptyString, lesson: SoulLesson
+        personality_id: NonEmptyString,
+        lesson: SoulLesson,
+        detail: bool = False,
     ) -> dict[str, Any]:
         """Append one durable lesson to a personality SOUL; never replace it."""
 
@@ -308,7 +321,7 @@ def create_server(
                     "actual": len(lesson),
                 },
             )
-        return _invoke(robot.soul_append, personality_id, lesson)
+        return _invoke(robot.soul_append, personality_id, lesson, detail)
 
     return server
 
