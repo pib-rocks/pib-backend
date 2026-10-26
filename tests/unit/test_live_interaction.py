@@ -239,7 +239,7 @@ def test_personality_dialog_cannot_reach_the_actuation_gate(app, monkeypatch):
     monkeypatch.delenv("PIB_MCP_ENABLE_ACTUATION", raising=False)
     assert "personality" not in inspect.signature(create_server).parameters
     server = create_server()
-    blocked = _call(server, "move_motor", {"motor_name": "head", "position": 0})
+    blocked = _call(server, "move_motor", {"motor_name": "head", "position_degrees": 0})
     assert blocked["error"]["code"] == "actuation_disabled"
 
     client = app.test_client()

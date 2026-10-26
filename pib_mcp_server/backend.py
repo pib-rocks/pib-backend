@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import time
 import uuid
@@ -12,16 +13,39 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
-MOTOR_POSITION_UNIT = "centidegree"
+MOTOR_POSITION_UNIT = "degree"
+
+
+def _centidegrees_to_degrees(value: int | float | None) -> float | None:
+    if value is None:
+        return None
+    return float(value) / 100.0
+
+
+def _degrees_to_radians(degrees: float) -> float:
+    return math.radians(degrees)
+
+
+def _duration_from_seconds(seconds: float) -> dict[str, int]:
+    whole_seconds = int(seconds)
+    nanoseconds = int(round((seconds - whole_seconds) * 1_000_000_000))
+    if nanoseconds >= 1_000_000_000:
+        whole_seconds += 1
+        nanoseconds -= 1_000_000_000
+    return {"sec": whole_seconds, "nanosec": nanoseconds}
 
 
 def _compact_motor(motor: dict[str, Any]) -> dict[str, Any]:
+    name = motor.get("name")
+    minimum = motor.get("rotationRangeMin", motor.get("rotation_range_min"))
+    maximum = motor.get("rotationRangeMax", motor.get("rotation_range_max"))
     return {
-        "name": motor.get("name"),
-        "position": motor.get("currentPosition"),
+        "id": name,
+        "name": name,
+        "position": _centidegrees_to_degrees(motor.get("currentPosition")),
         "limits": {
-            "min": motor.get("rotationRangeMin", motor.get("rotation_range_min")),
-            "max": motor.get("rotationRangeMax", motor.get("rotation_range_max")),
+            "min": _centidegrees_to_degrees(minimum),
+            "max": _centidegrees_to_degrees(maximum),
         },
         "unit": MOTOR_POSITION_UNIT,
     }
@@ -218,8 +242,13 @@ class PibBackend:
                     "datatypes/srv/GetJointPosition",
                     {"joint_name": name},
                 )
-                motor["currentPosition"] = (
+                raw_position = (
                     position.get("position") if position.get("successful") else None
+                )
+                motor["currentPosition"] = (
+                    _centidegrees_to_degrees(raw_position)
+                    if raw_position is not None
+                    else None
                 )
                 if not position.get("successful"):
                     motor["positionError"] = position.get("message", "unavailable")
@@ -300,20 +329,145 @@ class PibBackend:
             "sha256": digest,
         }
 
-    def move_motor(self, motor_name: str, position: int) -> dict[str, Any]:
+    def _motor_result_rows(
+        self,
+        response: dict[str, Any],
+        joint_names: list[str],
+        position_degrees: list[float],
+    ) -> list[dict[str, Any]]:
+        raw_results = response.get("results")
+        if isinstance(raw_results, list) and raw_results:
+            rows: list[dict[str, Any]] = []
+            for item in raw_results:
+                motor_name = item.get("motor_name", item.get("motorName", ""))
+                matching_degree = next(
+                    (
+                        deg
+                        for name, deg in zip(joint_names, position_degrees)
+                        if name == motor_name
+                    ),
+                    None,
+                )
+                rows.append(
+                    {
+                        "motorName": motor_name,
+                        "positionDegrees": matching_degree,
+                        "successful": bool(item.get("successful")),
+                        "errorCode": item.get("error_code", item.get("errorCode", "")),
+                        "detail": item.get("detail", ""),
+                    }
+                )
+            return rows
+
+        overall = bool(response.get("successful"))
+        return [
+            {
+                "motorName": name,
+                "positionDegrees": degree,
+                "successful": overall,
+                "errorCode": "" if overall else "motion_failed",
+                "detail": "" if overall else "joint trajectory was not applied",
+            }
+            for name, degree in zip(joint_names, position_degrees)
+        ]
+
+    def _apply_joint_trajectory_degrees(
+        self,
+        joint_names: list[str],
+        points_degrees: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        if not joint_names:
+            raise BackendError("invalid_trajectory", "joint_names must not be empty")
+        if not points_degrees:
+            raise BackendError(
+                "invalid_trajectory", "trajectory must have at least one point"
+            )
+
+        ros_points: list[dict[str, Any]] = []
+        for point in points_degrees:
+            positions_degrees = list(point.get("positions_degrees", []))
+            if len(positions_degrees) != len(joint_names):
+                raise BackendError(
+                    "invalid_trajectory",
+                    (
+                        f"trajectory point has {len(positions_degrees)} positions for "
+                        f"{len(joint_names)} joint names"
+                    ),
+                )
+            ros_point: dict[str, Any] = {
+                "positions": [
+                    _degrees_to_radians(float(value)) for value in positions_degrees
+                ],
+            }
+            time_from_start_sec = point.get("time_from_start_sec")
+            if time_from_start_sec is not None:
+                ros_point["time_from_start"] = _duration_from_seconds(
+                    float(time_from_start_sec)
+                )
+            ros_points.append(ros_point)
+
         response = self._ros_service(
             "/apply_joint_trajectory",
             "datatypes/srv/ApplyJointTrajectory",
             {
                 "joint_trajectory": {
-                    "joint_names": [motor_name],
-                    "points": [{"positions": [position]}],
+                    "joint_names": joint_names,
+                    "points": ros_points,
                 }
             },
         )
-        if not response.get("successful"):
-            raise BackendError("motion_failed", f"motor {motor_name} did not move")
-        return {"motorName": motor_name, "position": position}
+        target_degrees = list(points_degrees[-1]["positions_degrees"])
+        results = self._motor_result_rows(response, joint_names, target_degrees)
+        return {
+            "successful": bool(response.get("successful")),
+            "results": results,
+        }
+
+    def move_motors(self, moves: list[dict[str, Any]]) -> dict[str, Any]:
+        if not moves:
+            raise BackendError("invalid_parameter", "moves must not be empty")
+        joint_names = [move["motor"] for move in moves]
+        position_degrees = [float(move["position_degrees"]) for move in moves]
+        outcome = self._apply_joint_trajectory_degrees(
+            joint_names,
+            [{"positions_degrees": position_degrees}],
+        )
+        if not outcome["successful"]:
+            failed = [row for row in outcome["results"] if not row["successful"]]
+            raise BackendError(
+                "motion_failed",
+                "one or more motors did not move",
+                {"results": failed},
+            )
+        return {"results": outcome["results"]}
+
+    def apply_joint_trajectory(
+        self,
+        joint_names: list[str],
+        points: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        outcome = self._apply_joint_trajectory_degrees(joint_names, points)
+        if not outcome["successful"]:
+            failed = [row for row in outcome["results"] if not row["successful"]]
+            raise BackendError(
+                "trajectory_failed",
+                "joint trajectory was not fully applied",
+                {"results": failed},
+            )
+        return outcome
+
+    def move_motor(self, motor_name: str, position_degrees: float) -> dict[str, Any]:
+        outcome = self.move_motors(
+            [{"motor": motor_name, "position_degrees": position_degrees}]
+        )
+        row = outcome["results"][0]
+        return {
+            "motorName": row["motorName"],
+            "positionDegrees": row["positionDegrees"],
+            "successful": row["successful"],
+            "errorCode": row["errorCode"],
+            "detail": row["detail"],
+        }
 
     def apply_pose(self, pose_name: str) -> dict[str, Any]:
         pose = self._http("GET", f"/pose/by-name/{quote(pose_name, safe='')}")
@@ -325,20 +479,31 @@ class PibBackend:
         names = [
             item.get("motorName", item.get("motor_name")) for item in motor_positions
         ]
-        positions = [item.get("position") for item in motor_positions]
-        response = self._ros_service(
-            "/apply_joint_trajectory",
-            "datatypes/srv/ApplyJointTrajectory",
-            {
-                "joint_trajectory": {
-                    "joint_names": names,
-                    "points": [{"positions": [position]} for position in positions],
-                }
-            },
+        positions_degrees: list[float] = []
+        for item in motor_positions:
+            position = _centidegrees_to_degrees(item.get("position"))
+            if position is None:
+                raise BackendError(
+                    "pose_invalid",
+                    f"pose {pose_name!r} has missing motor position values",
+                )
+            positions_degrees.append(position)
+        outcome = self._apply_joint_trajectory_degrees(
+            names,
+            [{"positions_degrees": positions_degrees}],
         )
-        if not response.get("successful"):
-            raise BackendError("pose_failed", f"pose {pose_name!r} was not applied")
-        return {"poseName": pose_name, "motorCount": len(names)}
+        if not outcome["successful"]:
+            failed = [row for row in outcome["results"] if not row["successful"]]
+            raise BackendError(
+                "pose_failed",
+                f"pose {pose_name!r} was not fully applied",
+                {"results": failed},
+            )
+        return {
+            "poseName": pose_name,
+            "motorCount": len(names),
+            "results": outcome["results"],
+        }
 
     def run_program(self, program_id: str) -> dict[str, Any]:
         response = self._ros_service(

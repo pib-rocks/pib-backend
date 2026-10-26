@@ -8,7 +8,7 @@ from pib_mcp_server.backend import PibBackend
 from pib_mcp_server.server import create_server
 from pib_mcp_payload_assertions import assert_tool_payload_within_budget
 
-COMPACT_MOTOR_KEYS = frozenset({"name", "position", "limits", "unit"})
+COMPACT_MOTOR_KEYS = frozenset({"id", "name", "position", "limits", "unit"})
 COMPACT_BYTE_BUDGET = 6000
 MOTOR_COUNT = 24
 
@@ -128,9 +128,10 @@ def test_list_motors_default_is_compact_under_byte_budget():
 
     for motor in motors:
         assert set(motor) == COMPACT_MOTOR_KEYS
-        assert motor["unit"] == "centidegree"
-        assert motor["limits"] == {"min": -4500, "max": 4500}
-        assert isinstance(motor["position"], int)
+        assert motor["id"] == motor["name"]
+        assert motor["unit"] == "degree"
+        assert motor["limits"] == {"min": -45.0, "max": 45.0}
+        assert isinstance(motor["position"], float)
 
     assert_tool_payload_within_budget("list_motors", payload)
     encoded = json.dumps(payload, separators=(",", ":"))
@@ -152,7 +153,7 @@ def test_list_motors_detail_returns_full_motor_dict():
         for key in source:
             assert key in motor
             assert motor[key] == source[key]
-        assert motor["currentPosition"] == 120 * (index + 1)
+        assert motor["currentPosition"] == (120 * (index + 1)) / 100.0
 
 
 def test_get_state_default_is_compact_under_budget():

@@ -39,7 +39,7 @@ class FakeBackend:
                         "min": motor.get("rotationRangeMin"),
                         "max": motor.get("rotationRangeMax"),
                     },
-                    "unit": "centidegree",
+                    "unit": "degree",
                 }
                 for motor in self.motors
             ]
@@ -80,9 +80,30 @@ class FakeBackend:
             "sha256": "0" * 64,
         }
 
-    def move_motor(self, motor_name, position):
-        self.calls.append(("move_motor", motor_name, position))
-        return {"motorName": motor_name, "position": position}
+    def move_motors(self, moves):
+        self.calls.append(("move_motors", moves))
+        return {
+            "results": [
+                {
+                    "motorName": move["motor"],
+                    "positionDegrees": move["position_degrees"],
+                    "successful": True,
+                    "errorCode": "",
+                    "detail": "",
+                }
+                for move in moves
+            ]
+        }
+
+    def move_motor(self, motor_name, position_degrees):
+        self.calls.append(("move_motor", motor_name, position_degrees))
+        return {
+            "motorName": motor_name,
+            "positionDegrees": position_degrees,
+            "successful": True,
+            "errorCode": "",
+            "detail": "",
+        }
 
     def apply_pose(self, pose_name):
         self.calls.append(("apply_pose", pose_name))
@@ -235,6 +256,8 @@ def test_tool_discovery_exposes_complete_declared_surface():
         "list_programs",
         "capture_image",
         "move_motor",
+        "move_motors",
+        "apply_joint_trajectory",
         "apply_pose",
         "run_program",
         "set_led",
@@ -258,8 +281,8 @@ def test_schema_declares_required_parameters_and_constraints():
     tools = {tool.name: tool for tool in _tools(create_server(FakeBackend()))}
     move = _get_schema(tools["move_motor"])
     assert "motor_name" in move["properties"]
-    assert "position" in move["properties"]
-    assert move["properties"]["position"]["type"] == "integer"
+    assert "position_degrees" in move["properties"]
+    assert move["properties"]["position_degrees"]["type"] == "number"
 
     led = _get_schema(tools["set_led"])["properties"]
     assert led["button_id"]["minimum"] == 1
@@ -282,13 +305,13 @@ def test_invalid_schema_rejection_happens_before_backend():
     assert backend.calls == []
 
 
-@pytest.mark.parametrize("position", [-9001, 9001])
-def test_motor_position_range_is_rejected_before_hardware(position):
+@pytest.mark.parametrize("position_degrees", [-90.1, 90.1])
+def test_motor_position_range_is_rejected_before_hardware(position_degrees):
     backend = FakeBackend()
     result = _call(
         create_server(backend, actuating_enabled=True),
         "move_motor",
-        {"motor_name": "head", "position": position},
+        {"motor_name": "head", "position_degrees": position_degrees},
     )
 
     assert result["ok"] is False
@@ -296,17 +319,17 @@ def test_motor_position_range_is_rejected_before_hardware(position):
     assert not any(call[0] == "move_motor" for call in backend.calls)
 
 
-@pytest.mark.parametrize("position", [-9000, 9000])
-def test_motor_position_at_configured_boundary_is_allowed(position):
+@pytest.mark.parametrize("position_degrees", [-90.0, 90.0])
+def test_motor_position_at_configured_boundary_is_allowed(position_degrees):
     backend = FakeBackend()
     result = _call(
         create_server(backend, actuating_enabled=True),
         "move_motor",
-        {"motor_name": "head", "position": position},
+        {"motor_name": "head", "position_degrees": position_degrees},
     )
 
     assert result["ok"] is True
-    assert ("move_motor", "head", position) in backend.calls
+    assert ("move_motor", "head", position_degrees) in backend.calls
 
 
 def test_actuating_tools_are_disabled_by_default(monkeypatch):
@@ -314,7 +337,7 @@ def test_actuating_tools_are_disabled_by_default(monkeypatch):
     backend = FakeBackend()
     server = create_server(backend)
 
-    result = _call(server, "move_motor", {"motor_name": "head", "position": 0})
+    result = _call(server, "move_motor", {"motor_name": "head", "position_degrees": 0})
 
     assert ACTUATING_TOOLS
     assert result["error"]["code"] == "actuation_disabled"
