@@ -249,6 +249,16 @@ function run_logged_compose() {
 }
 
 # Prints the release tag of a checkout (HEAD^2 on a --no-ff release merge, else HEAD).
+# Profiles passed to docker compose for the backend stack. Hermes services
+# (hermes-daemon, host view) are omitted when PIB_SMART_CHATS=0 (--direct-llm).
+function backend_compose_profiles() {
+    local -a profiles=(all)
+    if [ "${PIB_SMART_CHATS:-1}" != "0" ]; then
+        profiles+=(hermes)
+    fi
+    printf '%s\n' "${profiles[@]}"
+}
+
 function release_tag_at() {
     local directory="$1"
     local tag
@@ -277,9 +287,16 @@ function start_container() {
         print INFO "cerebra APP_VERSION=${frontend_version}"
         frontend_env+=("APP_VERSION=$frontend_version")
     fi
+    local profile
+    local -a compose_profiles=()
+    while IFS= read -r profile; do
+        [ -n "$profile" ] || continue
+        compose_profiles+=(--profile "$profile")
+    done < <(backend_compose_profiles)
+
     run_logged_compose "pib-backend image build" \
       sudo "${backend_env[@]}" \
-      docker compose -f "$BACKEND_DIR/docker-compose.yaml" --profile all up -d --build \
+      docker compose -f "$BACKEND_DIR/docker-compose.yaml" "${compose_profiles[@]}" up -d --build \
       || return 1
     print SUCCESS "Started pib-backend container"
     run_logged_compose "cerebra container start" \
@@ -303,7 +320,9 @@ run_step "Install Docker Engine" install_docker_engine || print ERROR "failed to
 # before that unit is started.
 run_step "Add user pib to the docker group" add_pib_to_docker_group || { print ERROR "failed to add user 'pib' to docker group"; return 1; }
 run_step "Verify vendored pib-blockly" verify_vendored_blockly || print ERROR "failed to verify vendored pib-blockly sources"
-run_step "Set up Hermes view service" setup_hermes_view_service || print ERROR "failed to setup hermes view service"
+if [ "${PIB_SMART_CHATS:-1}" != "0" ]; then
+  run_step "Set up Hermes view service" setup_hermes_view_service || print ERROR "failed to setup hermes view service"
+fi
 run_step "Build and start containers" start_container || print ERROR "failed to start containers"
 run_step "Set up Docker cleaner service" setup_docker_cleaner_service || print ERROR "failed to setup docker cleaner service"
 run_step "Set up update watchdog helper" setup_update_watchdog_helper || print ERROR "failed to setup update watchdog helper"

@@ -1,11 +1,10 @@
-"""Installer flag --no-smart-chats writes the marker the runtime reads."""
+"""Legacy smart-chats marker helper (runtime reads /etc/pib_smart_chats)."""
 
 import subprocess
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 HELPER = REPO_ROOT / "setup" / "installation_scripts" / "smart_chats.sh"
-SETUP = REPO_ROOT / "setup" / "setup-pib.sh"
 
 
 def marker(enabled: str) -> str:
@@ -29,10 +28,3 @@ def marker(enabled: str) -> str:
 def test_marker_text():
     assert marker("1") == "enabled\n"
     assert marker("0") == "disabled\n"
-
-
-def test_setup_script_records_the_flag():
-    text = SETUP.read_text(encoding="utf-8")
-    assert "--no-smart-chats)" in text
-    assert "/etc/pib_smart_chats" in text
-    assert "PIB_SMART_CHATS" in text
