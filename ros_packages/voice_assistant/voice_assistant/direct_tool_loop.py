@@ -298,6 +298,7 @@ def run_direct_turn(
     api_key: Optional[str] = None,
     report_key_source: Optional[Callable[[str], None]] = None,
     session: Optional[Any] = None,
+    session_identity: Optional[str] = None,
 ) -> Iterator[str]:
     """Yield the model's final answer. Tool results are not spoken.
 
@@ -312,7 +313,7 @@ def run_direct_turn(
     if session is not None:
         stable_prompt = getattr(session, "stable_system_prompt", None)
         if callable(stable_prompt):
-            system_prompt = stable_prompt(system_prompt)
+            system_prompt = stable_prompt(system_prompt, session_identity)
 
     if not tool_calling:
         allow_image = False
@@ -921,7 +922,9 @@ class _GeminiKeepAliveTransport:
             _gemini_connections_opened += 1
         return self._conn
 
-    def post_json(self, url: str, headers: Mapping[str, str], body: Mapping[str, Any]) -> dict:
+    def post_json(
+        self, url: str, headers: Mapping[str, str], body: Mapping[str, Any]
+    ) -> dict:
         parsed = urlparse(url)
         payload = json.dumps(body).encode("utf-8")
         request_headers = dict(headers)
@@ -1036,9 +1039,7 @@ def _post_json_urlopen(
         retry_reason = _transport_retry_reason(exc)
         if retry_reason is not None:
             raise
-        logger.error(
-            "model request failed: %s: %s", type(exc).__name__, str(exc)[:300]
-        )
+        logger.error("model request failed: %s: %s", type(exc).__name__, str(exc)[:300])
         raise DirectToolLoopError(
             f"model request failed: {type(exc).__name__}: {str(exc)[:200]}"
         ) from exc
@@ -1072,9 +1073,7 @@ def _post_sse_urlopen(
         retry_reason = _transport_retry_reason(exc)
         if retry_reason is not None:
             raise
-        logger.error(
-            "model request failed: %s: %s", type(exc).__name__, str(exc)[:300]
-        )
+        logger.error("model request failed: %s: %s", type(exc).__name__, str(exc)[:300])
         raise DirectToolLoopError(
             f"model request failed: {type(exc).__name__}: {str(exc)[:200]}"
         ) from exc

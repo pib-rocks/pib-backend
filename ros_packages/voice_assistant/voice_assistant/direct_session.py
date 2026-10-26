@@ -26,11 +26,24 @@ class DirectSession:
         self._api_key: Optional[str] = None
         self._key_source: Optional[str] = None
         self._stable_system_prompt: Optional[str] = None
+        self._prompt_fingerprint: Optional[str] = None
 
-    def stable_system_prompt(self, computed: str) -> str:
-        """Return the first system prompt for this session; later turns reuse it."""
-        if self._stable_system_prompt is None:
+    def stable_system_prompt(
+        self, computed: str, fingerprint: str | None = None
+    ) -> str:
+        """Keep the prompt bytes stable per session, but follow an edited personality.
+
+        A frozen prompt is what lets the provider cache hit. It must not survive a
+        change of the personality's identity though (SOUL/description edit), so the
+        caller passes a fingerprint of those inputs: a new fingerprint replaces the
+        frozen text on the next turn (PR-2075 review).
+        """
+        if (
+            self._stable_system_prompt is None
+            or fingerprint != self._prompt_fingerprint
+        ):
             self._stable_system_prompt = computed
+            self._prompt_fingerprint = fingerprint
         return self._stable_system_prompt
 
     def resolve_api_key(

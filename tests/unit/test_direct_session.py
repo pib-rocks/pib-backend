@@ -169,7 +169,9 @@ def test_http_client_reused_across_two_turns(monkeypatch):
             return None
 
     _FakeConnection.instances = []
-    monkeypatch.setattr(direct_tool_loop.http.client, "HTTPSConnection", _FakeConnection)
+    monkeypatch.setattr(
+        direct_tool_loop.http.client, "HTTPSConnection", _FakeConnection
+    )
 
     for user_text in ("a", "b"):
         "".join(
@@ -203,3 +205,15 @@ def test_system_prompt_bytes_identical_across_two_turns():
         "k",
     )
     assert body_one["systemInstruction"] == body_two["systemInstruction"]
+
+
+def test_identity_change_replaces_the_frozen_prompt():
+    """A personality edit must not keep the old identity (PR-2075 review)."""
+    session = DirectSession("p-edit")
+
+    first = session.stable_system_prompt("Du bist Eva.", "eva-v1")
+    assert session.stable_system_prompt("Du bist Eva.", "eva-v1") == first
+    assert first == "Du bist Eva."
+
+    edited = session.stable_system_prompt("Du bist Eva, jetzt knapp.", "eva-v2")
+    assert edited == "Du bist Eva, jetzt knapp."

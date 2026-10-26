@@ -560,6 +560,19 @@ class ChatNode(Node):
         """Operating mode of the key store. Unreadable means degraded."""
         return fetch_operating_mode()
 
+    def _direct_identity_fingerprint(self, personality: Any) -> str:
+        """Changes only when the personality's own text changes (PR-2075 review)."""
+        description = str(getattr(personality, "description", "") or "")
+        name = str(getattr(personality, "name", "") or "")
+        soul_path = str(getattr(personality, "soul_path", "") or "")
+        soul_stamp = ""
+        if soul_path:
+            try:
+                soul_stamp = str(os.stat(soul_path).st_mtime_ns)
+            except OSError:
+                soul_stamp = ""
+        return f"{name}\x00{description}\x00{soul_path}\x00{soul_stamp}"
+
     def _direct_session(self, personality: Any) -> DirectSession:
         """Cached Direct transport state for one personality."""
         personality_id = str(getattr(personality, "personality_id", None) or "")
@@ -1677,6 +1690,8 @@ class ChatNode(Node):
                     on_tool_image=self._record_tool_image,
                     on_tool_round=count_direct_tool_round,
                     session=self._direct_session(personality),
+                    # Identity edits (description/SOUL) must replace the frozen prompt.
+                    session_identity=self._direct_identity_fingerprint(personality),
                 )
 
             # Which runtime serves this turn, before the first token is asked
