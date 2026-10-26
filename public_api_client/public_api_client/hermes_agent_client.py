@@ -1167,6 +1167,7 @@ def _try_daemon_turn(
     max_turns: int = DEFAULT_MAX_TURNS,
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
     enabled_toolsets: Optional[str] = DEFAULT_ENABLED_TOOLSETS,
+    message_history: Optional[int] = None,
 ) -> Optional[str]:
     """POST /turn to the warm daemon. None means unreachable or non-200."""
     try:
@@ -1186,6 +1187,8 @@ def _try_daemon_turn(
         payload["toolsets"] = toolsets
     if enabled_toolsets is not None:
         payload["enabled_toolsets"] = enabled_toolsets
+    if message_history is not None:
+        payload["message_history"] = message_history
 
     http_start = time.monotonic()
     logging.info(
@@ -1266,6 +1269,7 @@ def stream_turn(
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
     enabled_toolsets: Optional[str] = DEFAULT_ENABLED_TOOLSETS,
     tool_sink: Optional[list] = None,
+    message_history: Optional[int] = None,
 ) -> Iterator[str]:
     """Yield daemon text deltas.
 
@@ -1292,6 +1296,8 @@ def stream_turn(
         payload["toolsets"] = toolsets
     if enabled_toolsets is not None:
         payload["enabled_toolsets"] = enabled_toolsets
+    if message_history is not None:
+        payload["message_history"] = message_history
 
     session = _get_daemon_session()
     post = session.post if session is not None else requests.post
@@ -1415,6 +1421,7 @@ def run_turn(
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
     enabled_toolsets: Optional[str] = DEFAULT_ENABLED_TOOLSETS,
     tool_sink: Optional[list] = None,
+    message_history: Optional[int] = None,
 ) -> str:
     """Run one conversational turn. Returns speakable text.
 
@@ -1439,6 +1446,7 @@ def run_turn(
         max_turns,
         timeout=timeout,
         enabled_toolsets=enabled_toolsets,
+        message_history=message_history,
     )
     if daemon_reply is not None:
         logging.info(
@@ -1464,6 +1472,11 @@ def run_turn(
         )
         return FALLBACK_REPLY
 
+    from public_api_client.hermes_daemon import seed_flask_conversation_for_chat
+
+    seed_flask_conversation_for_chat(
+        chat_id, message_history, personality_id=personality_id
+    )
     reply = run_turn_subprocess(
         text,
         chat_id,

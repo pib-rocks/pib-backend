@@ -1105,6 +1105,7 @@ class ChatNode(Node):
         provider: Optional[str] = None,
         base_url: Optional[str] = None,
         tool_calling: bool = True,
+        message_history: Optional[int] = None,
     ) -> str:
         """Run one hermes turn and return speakable text. Never raises.
 
@@ -1121,9 +1122,9 @@ class ChatNode(Node):
             timeout = self._hermes_timeout()
 
         def _turn() -> str:
-            # Hermes keeps its own durable memory per chat, so no history is
-            # replayed: persona comes from the profile (-p), memory from the
-            # named session (-c).
+            # Smart turns seed the Hermes session from flask chat messages (the
+            # record the user saw) before the agent runs; persona still comes
+            # from the profile (-p).
             # When the warm daemon is already up, skip filesystem profile
             # re-validation — profiles were provisioned at personality create
             # time / prior cold starts and re-writing SOUL.md adds multi-second
@@ -1161,6 +1162,7 @@ class ChatNode(Node):
                 toolsets=disabled_toolsets,
                 enabled_toolsets=enabled_toolsets,
                 timeout=timeout,
+                message_history=message_history,
             )
 
         future = self._hermes_executor.submit(_turn)
@@ -1205,6 +1207,7 @@ class ChatNode(Node):
         provider: Optional[str] = None,
         base_url: Optional[str] = None,
         tool_calling: bool = True,
+        message_history: Optional[int] = None,
     ):
         """Yield daemon deltas, retrying through the non-streaming path on error."""
         timeout = self._hermes_timeout()
@@ -1247,6 +1250,7 @@ class ChatNode(Node):
                         enabled_toolsets=enabled_toolsets,
                         timeout=timeout,
                         tool_sink=hermes_tools,
+                        message_history=message_history,
                     ):
                         events.put(("delta", delta))
                     for record in hermes_tools:
@@ -1303,6 +1307,7 @@ class ChatNode(Node):
                 provider=provider,
                 base_url=base_url,
                 tool_calling=tool_calling,
+                message_history=message_history,
             )
             if emitted and reply.startswith(emitted):
                 reply = reply[len(emitted) :]
@@ -1544,6 +1549,7 @@ class ChatNode(Node):
                     base_url=_model_base_url(api_name),
                     tool_calling=tool_calling,
                     goal_handle=goal_handle,
+                    message_history=self.history_length,
                 )
             elif pib_cloud_model:
                 turn_path = "pib.Cloud"

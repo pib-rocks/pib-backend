@@ -70,6 +70,8 @@ class _FakeSessionDB:
         self.resume_calls: list[str] = []
         self.reopened: list[str] = []
         self.closed = 0
+        self.ensure_calls: list[tuple[str, str]] = []
+        self.batch_appends: list[tuple[str, list[dict]]] = []
 
     def append_turn(self, session_id, user_message, reply):
         self.transcripts.setdefault(session_id, []).extend(
@@ -86,8 +88,29 @@ class _FakeSessionDB:
     def reopen_session(self, session_id):
         self.reopened.append(session_id)
 
+    def ensure_session(self, session_id, source="unknown", **kwargs):
+        self.ensure_calls.append((session_id, source))
+        self.transcripts.setdefault(session_id, [])
+
+    def append_messages_batch(self, session_id, messages, **kwargs):
+        rows = self.transcripts.setdefault(session_id, [])
+        inserted = 0
+        for message in messages:
+            rows.append(dict(message))
+            inserted += 1
+        self.batch_appends.append((session_id, list(messages)))
+        return inserted
+
     def close(self):
         self.closed += 1
+
+
+def _flask_message(message_id, content, is_user=True):
+    message = MagicMock()
+    message.message_id = message_id
+    message.content = content
+    message.is_user = is_user
+    return message
 
 
 def _fake_agent_module(created, *, store_turns=False, reply="OK."):
@@ -1497,6 +1520,7 @@ def test_default_turn_runner_uses_in_process_path():
         max_turns=None,
         timeout=10,
         stream_callback=None,
+        message_history=None,
     )
 
 

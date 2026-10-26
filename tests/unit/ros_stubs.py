@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import sys
 import types
+from pathlib import Path
 from unittest.mock import MagicMock
 
 TEXT_TYPE_SENTENCE = 0
@@ -159,7 +160,14 @@ def install_ros_stubs():
 
     # --- pib / public api clients (if not already importable) ---
     if "pib_api_client" not in sys.modules:
-        ensure("pib_api_client")
+        repo_root = Path(__file__).resolve().parents[2]
+        api_client_dir = repo_root / "pib_api" / "client"
+        if str(api_client_dir) not in sys.path:
+            sys.path.insert(0, str(api_client_dir))
+        try:
+            import pib_api_client  # noqa: F401
+        except ImportError:
+            ensure("pib_api_client")
     if "pib_api_client.voice_assistant_client" not in sys.modules:
         vac = ensure("pib_api_client.voice_assistant_client")
         vac.get_personality_from_chat = MagicMock()

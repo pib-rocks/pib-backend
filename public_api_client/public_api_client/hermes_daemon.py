@@ -86,6 +86,8 @@ _filesystem_factory_warned = False
 # Each chat maps to its own Hermes session id; one warm agent per personality
 # runtime binds the session per turn so history never crosses chats.
 SESSION_ID_PREFIX = "pib_chat_"
+PIB_FLASK_MESSAGE_ID_KEY = "pib_message_id"
+PIB_FLASK_SEED_SOURCE = "pib_voice"
 
 # Hermes install layout used to import the agent in-process.
 DEFAULT_HERMES_HOME = "/home/pib/.hermes"
@@ -812,6 +814,192 @@ def _load_conversation_history(session_db, session_id: str) -> list:
     ]
 
 
+def _fetch_flask_chat_history(chat_id: str, history_length: int):
+    """Last *history_length* flask rows for one chat (one HTTP round trip)."""
+    try:
+        from pib_api_client.voice_assistant_client import get_chat_history
+    except ImportError:
+        return False, None
+    try:
+        return get_chat_history(chat_id, history_length)
+    except Exception:
+        logging.debug(
+            "could not read flask chat history for chat %s", chat_id, exc_info=True
+        )
+        return False, None
+
+
+def _flask_messages_chronological(messages) -> list:
+    """Flask returns newest-first; Hermes and Direct use oldest-first."""
+    if not messages:
+        return []
+    return list(reversed(list(messages)))
+
+
+def _display_metadata_dict(message: dict) -> dict:
+    raw = message.get("display_metadata")
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str) and raw.strip():
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
+
+
+def _pib_message_id_from_row(message: dict) -> Optional[str]:
+    value = _display_metadata_dict(message).get(PIB_FLASK_MESSAGE_ID_KEY)
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _flask_messages_missing_for_seed(flask_messages, session_messages) -> list:
+    """Flask rows not yet represented in the Hermes session (idempotent seeding)."""
+    conversation = [
+        message
+        for message in session_messages or []
+        if isinstance(message, dict) and message.get("role") in ("user", "assistant")
+    ]
+    missing = []
+    session_index = 0
+    for flask_message in flask_messages:
+        role = "user" if getattr(flask_message, "is_user", False) else "assistant"
+        content = getattr(flask_message, "content", "")
+        message_id = getattr(flask_message, "message_id", None)
+        if session_index < len(conversation):
+            row = conversation[session_index]
+            row_id = _pib_message_id_from_row(row)
+            if (message_id and row_id == message_id) or (
+                row.get("role") == role and row.get("content") == content
+            ):
+                session_index += 1
+                continue
+        missing.append(flask_message)
+    return missing
+
+
+def _flask_row_to_hermes_message(flask_message) -> dict:
+    return {
+        "role": "user" if flask_message.is_user else "assistant",
+        "content": flask_message.content,
+        "display_metadata": {PIB_FLASK_MESSAGE_ID_KEY: flask_message.message_id},
+    }
+
+
+def _hermes_history_from_flask_messages(
+    flask_messages, current_user_text: str
+) -> list[dict]:
+    """Model history from the flask window, without duplicating this turn's user line."""
+    rows = [
+        {
+            "role": "user" if message.is_user else "assistant",
+            "content": message.content,
+        }
+        for message in flask_messages
+    ]
+    if rows and rows[-1]["role"] == "user" and rows[-1]["content"] == current_user_text:
+        return rows[:-1]
+    return rows
+
+
+def _seed_hermes_session_from_flask_messages(
+    session_db,
+    session_id: str,
+    chat_id: str,
+    flask_messages,
+) -> None:
+    if session_db is None or not flask_messages:
+        return
+    try:
+        restored, _display = session_db.get_resume_conversations(session_id)
+    except Exception:
+        logging.debug(
+            "could not read Hermes history while seeding session %s",
+            session_id,
+            exc_info=True,
+        )
+        restored = []
+    missing = _flask_messages_missing_for_seed(flask_messages, restored or [])
+    if not missing:
+        return
+    ensure = getattr(session_db, "ensure_session", None)
+    if callable(ensure):
+        try:
+            ensure(session_id, PIB_FLASK_SEED_SOURCE)
+        except Exception:
+            logging.debug(
+                "could not ensure Hermes session %s before seeding",
+                session_id,
+                exc_info=True,
+            )
+    append_batch = getattr(session_db, "append_messages_batch", None)
+    if not callable(append_batch):
+        return
+    rows = [_flask_row_to_hermes_message(message) for message in missing]
+    try:
+        append_batch(session_id, rows)
+    except Exception:
+        logging.debug(
+            "could not seed Hermes session %s from flask chat %s",
+            session_id,
+            chat_id,
+            exc_info=True,
+        )
+
+
+def seed_flask_conversation_for_chat(
+    chat_id: str,
+    message_history: Optional[int],
+    personality_id: Optional[str] = None,
+) -> None:
+    """Best-effort idempotent seed before a CLI subprocess turn."""
+    if not message_history or message_history < 1:
+        return
+    scope = contextlib.nullcontext()
+    if personality_id:
+        from pib_hermes_config import profile_dir_for
+
+        scope = hermes_home_scope(profile_dir_for(personality_id))
+    with scope:
+        session_id = session_id_for_chat(chat_id)
+        session_db = _shared_session_db()
+        successful, raw_messages = _fetch_flask_chat_history(chat_id, message_history)
+        if not successful:
+            return
+        flask_messages = _flask_messages_chronological(raw_messages or [])
+        _seed_hermes_session_from_flask_messages(
+            session_db, session_id, chat_id, flask_messages
+        )
+
+
+def _conversation_history_for_smart_turn(
+    session_db,
+    session_id: str,
+    chat_id: str,
+    history_length: int,
+    current_user_text: str,
+) -> list:
+    """Seed missing flask rows, then return the personality history window for the model."""
+    if history_length < 1:
+        return []
+    successful, raw_messages = _fetch_flask_chat_history(chat_id, history_length)
+    if not successful:
+        logging.info(
+            "flask history unavailable for chat %s; smart turn runs without seeded context",
+            chat_id,
+        )
+        return []
+    flask_messages = _flask_messages_chronological(raw_messages or [])
+    _seed_hermes_session_from_flask_messages(
+        session_db, session_id, chat_id, flask_messages
+    )
+    return _hermes_history_from_flask_messages(flask_messages, current_user_text)
+
+
 def _toolset_list(toolsets: Optional[str]) -> Optional[list[str]]:
     if not toolsets:
         return None
@@ -1257,6 +1445,7 @@ def _run_turn_in_home(
     enabled_toolsets: Optional[str] = None,
     provider_key: str = "",
     on_tool_call: Optional[Callable[[dict], None]] = None,
+    message_history: Optional[int] = None,
 ) -> str:
     """Execute one turn after its Hermes home scope has been installed.
 
@@ -1359,7 +1548,26 @@ def _run_turn_in_home(
             with cached.lock:
                 _bind_agent_session_for_turn(cached.agent, chat_id)
                 session_id = session_id_for_chat(chat_id)
-                history = _load_conversation_history(_shared_session_db(), session_id)
+                session_db = _shared_session_db()
+                if message_history and message_history > 0:
+                    history = _conversation_history_for_smart_turn(
+                        session_db,
+                        session_id,
+                        chat_id,
+                        message_history,
+                        text,
+                    )
+                    try:
+                        if session_db is not None:
+                            session_db.reopen_session(session_id)
+                    except Exception:
+                        logging.debug(
+                            "could not reopen session %s after flask seed",
+                            session_id,
+                            exc_info=True,
+                        )
+                else:
+                    history = _load_conversation_history(session_db, session_id)
                 logging.info(
                     "[PERF_TRACE] HERMES_TURN_HISTORY chat=%s messages=%d",
                     chat_id,
@@ -1468,6 +1676,7 @@ def run_turn_in_process(
     stream_callback: Optional[Callable[[str], None]] = None,
     enabled_toolsets: Optional[str] = None,
     on_tool_call: Optional[Callable[[dict], None]] = None,
+    message_history: Optional[int] = None,
 ) -> str:
     """Execute a turn inside the personality's context-local Hermes home."""
     scope = contextlib.nullcontext()
@@ -1517,6 +1726,7 @@ def run_turn_in_process(
             enabled_toolsets=enabled_toolsets,
             provider_key=provider_key or "",
             on_tool_call=on_tool_call,
+            message_history=message_history,
         )
 
 
@@ -1530,6 +1740,7 @@ def _default_turn_runner(
     stream_callback: Optional[Callable[[str], None]] = None,
     enabled_toolsets: Optional[str] = None,
     on_tool_call: Optional[Callable[[dict], None]] = None,
+    message_history: Optional[int] = None,
 ) -> str:
     """Execute one turn in-process via Hermes Agent (subprocess fallback)."""
     return run_turn_in_process(
@@ -1542,6 +1753,7 @@ def _default_turn_runner(
         max_turns=max_turns,
         timeout=timeout,
         stream_callback=stream_callback,
+        message_history=message_history,
     )
 
 
@@ -1697,6 +1909,7 @@ class HermesDaemonHandler(BaseHTTPRequestHandler):
         enabled_toolsets = data.get("enabled_toolsets")
         max_turns = data.get("max_turns")
         timeout = data.get("timeout")
+        message_history = data.get("message_history")
         stream = data.get("stream", False)
         if personality_id is not None and not isinstance(personality_id, str):
             self._send_json(400, {"error": "personality_id must be a string"})
@@ -1716,6 +1929,15 @@ class HermesDaemonHandler(BaseHTTPRequestHandler):
             return
         if timeout is not None and not isinstance(timeout, (int, float)):
             self._send_json(400, {"error": "timeout must be a number"})
+            return
+        if message_history is not None and (
+            not isinstance(message_history, int)
+            or isinstance(message_history, bool)
+            or message_history < 0
+        ):
+            self._send_json(
+                400, {"error": "message_history must be a non-negative integer"}
+            )
             return
         if not isinstance(stream, bool):
             self._send_json(400, {"error": "stream must be a boolean"})
@@ -1757,6 +1979,8 @@ class HermesDaemonHandler(BaseHTTPRequestHandler):
         }
         if max_turns is not None:
             runner_kwargs["max_turns"] = max_turns
+        if message_history is not None:
+            runner_kwargs["message_history"] = message_history
         if _runner_reports_tool_calls(runner):
             runner_kwargs["on_tool_call"] = tools_used.append
         if stream:
