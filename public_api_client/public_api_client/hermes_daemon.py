@@ -430,6 +430,56 @@ def _repair_profile_for_provider_capabilities() -> None:
     )
 
 
+def _repair_stale_profile_config_if_needed() -> None:
+    """Rewrite config.yaml when its ``config_version`` lags the profile writer."""
+    from pib_hermes_config import PROFILE_CONFIG_VERSION_KEY
+    from public_api_client.hermes_agent_client import (
+        _ensure_mcp_servers_pib,
+        profile_config_version_is_current,
+        profile_hermes_settings,
+        read_profile_config_version,
+    )
+
+    profile_dir = _current_home_key()
+    if profile_config_version_is_current(profile_dir):
+        return
+    old_version = read_profile_config_version(profile_dir)
+    model, provider, base_url, _env = profile_hermes_settings(profile_dir)
+    _ensure_mcp_servers_pib(
+        profile_dir,
+        model=model,
+        provider=provider,
+        base_url=base_url,
+    )
+    new_version = read_profile_config_version(profile_dir)
+    logging.info(
+        "repaired profile %s %s %s -> %s",
+        PROFILE_CONFIG_VERSION_KEY,
+        profile_dir,
+        old_version,
+        new_version,
+    )
+
+
+def run_profile_config_check(profiles_root: Optional[str] = None) -> int:
+    """Report profile config drift without writing; exit 0 when every profile is current."""
+    from public_api_client.hermes_agent_client import (
+        iter_personality_profile_dirs,
+        profile_config_drift,
+    )
+
+    issues: list[str] = []
+    for personality_id, profile_dir in iter_personality_profile_dirs(profiles_root):
+        drift = profile_config_drift(profile_dir)
+        for line in drift:
+            issues.append(f"{personality_id}: {line}")
+    if issues:
+        for line in issues:
+            print(line, file=sys.stderr)
+        return 1
+    return 0
+
+
 def _profile_dirs_are_complete(profile_dir: str) -> bool:
     return all(
         os.path.isdir(os.path.join(profile_dir, dirname)) for dirname in PROFILE_DIRS
@@ -604,16 +654,28 @@ def ensure_profile_home(
     soul_path = os.path.join(profile_dir, "SOUL.md")
     with open(soul_path, "w", encoding="utf-8") as fh:
         fh.write(soul)
-    _ensure_mcp_servers_pib(
-        profile_dir,
-        model=model,
-        provider=mapping.provider if mapping else None,
-        base_url=mapping.base_url if mapping else None,
-        env_vars=mapping.env_vars if mapping else (),
-        reasoning_effort=reasoning_effort,
-        personality_reasoning=personality_reasoning,
-        tool_calling=tool_calling,
+    explicit_model_settings = any(
+        value is not None
+        for value in (model, provider, base_url, reasoning_effort, tool_calling)
     )
+    from public_api_client.hermes_agent_client import profile_config_version_is_current
+
+    if (
+        not complete
+        or explicit_model_settings
+        or personality_reasoning
+        or not profile_config_version_is_current(profile_dir)
+    ):
+        _ensure_mcp_servers_pib(
+            profile_dir,
+            model=model,
+            provider=mapping.provider if mapping else None,
+            base_url=mapping.base_url if mapping else None,
+            env_vars=mapping.env_vars if mapping else (),
+            reasoning_effort=reasoning_effort,
+            personality_reasoning=personality_reasoning,
+            tool_calling=tool_calling,
+        )
     align_profile_ownership(profile_dir)
     os.chmod(profile_dir, 0o700)
     os.chmod(soul_path, 0o644)
@@ -1420,6 +1482,8 @@ def run_turn_in_process(
             clear_agent_cache()
             raise
 
+        _repair_stale_profile_config_if_needed()
+
         return _run_turn_in_home(
             text=text,
             chat_id=chat_id,
@@ -1847,4 +1911,6 @@ if __name__ == "__main__":
         level=logging.INFO,
         format="%(asctime)s %(levelname)s hermes-daemon: %(message)s",
     )
+    if "--check" in sys.argv:
+        raise SystemExit(run_profile_config_check())
     serve_forever()

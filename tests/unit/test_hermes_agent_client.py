@@ -660,3 +660,73 @@ def test_provisioning_overrides_an_explicit_title_upgrade_setting(tmp_path):
     with open(pdir / "config.yaml", encoding="utf-8") as fh:
         cfg = yaml.safe_load(fh)
     assert cfg["auxiliary"]["title_generation"]["model_upgrade_enabled"] is False
+
+
+def test_provisioning_writes_profile_config_version(tmp_path):
+    """PR-2071: every profile rewrite stamps the current config_version."""
+    from pib_hermes_config import PROFILE_CONFIG_VERSION, PROFILE_CONFIG_VERSION_KEY
+
+    pdir = tmp_path / "versioned"
+    pdir.mkdir()
+    (pdir / "config.yaml").write_text(
+        "model: gemini-3.8-flash\nprovider: gemini\n", encoding="utf-8"
+    )
+
+    _ensure_mcp_servers_pib(str(pdir), model="gemini-3.8-flash", provider="gemini")
+
+    with open(pdir / "config.yaml", encoding="utf-8") as fh:
+        cfg = yaml.safe_load(fh)
+    assert cfg[PROFILE_CONFIG_VERSION_KEY] == PROFILE_CONFIG_VERSION
+
+
+def test_stale_config_version_is_repaired_once(tmp_path):
+    from pib_hermes_config import PROFILE_CONFIG_VERSION, PROFILE_CONFIG_VERSION_KEY
+    from public_api_client.hermes_agent_client import (
+        profile_config_version_is_current,
+        read_profile_config_version,
+    )
+
+    pdir = tmp_path / "stale"
+    pdir.mkdir()
+    (pdir / "config.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "model": "gemini-3.8-flash",
+                "provider": "gemini",
+                PROFILE_CONFIG_VERSION_KEY: PROFILE_CONFIG_VERSION - 1,
+                "tools": PROFILE_TOOL_SEARCH_CONFIG,
+                "auxiliary": {
+                    "title_generation": {"model_upgrade_enabled": False},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert not profile_config_version_is_current(str(pdir))
+    _ensure_mcp_servers_pib(str(pdir), model="gemini-3.8-flash", provider="gemini")
+    assert read_profile_config_version(str(pdir)) == PROFILE_CONFIG_VERSION
+
+    with patch("yaml.safe_dump") as dump:
+        _ensure_mcp_servers_pib(str(pdir), model="gemini-3.8-flash", provider="gemini")
+        dump.assert_not_called()
+
+
+def test_profile_config_check_reports_drift_and_exits_nonzero(tmp_path, capsys):
+    from pib_hermes_config import PROFILE_CONFIG_VERSION_KEY, PROFILE_PREFIX
+    from public_api_client.hermes_daemon import run_profile_config_check
+
+    profiles_root = tmp_path / "profiles"
+    profile_dir = profiles_root / f"{PROFILE_PREFIX}drift-me"
+    profile_dir.mkdir(parents=True)
+    (profile_dir / "config.yaml").write_text(
+        "model: gemini-3.8-flash\nprovider: gemini\n", encoding="utf-8"
+    )
+
+    assert run_profile_config_check(str(profiles_root)) == 1
+    err = capsys.readouterr().err
+    assert PROFILE_CONFIG_VERSION_KEY in err
+    assert "drift-me" in err
+
+    _ensure_mcp_servers_pib(str(profile_dir), model="gemini-3.8-flash", provider="gemini")
+    assert run_profile_config_check(str(profiles_root)) == 0

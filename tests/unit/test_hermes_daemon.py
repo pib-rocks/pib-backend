@@ -2009,6 +2009,9 @@ def test_unlocked_store_supplies_the_hermes_key(monkeypatch, caplog, capsys, tmp
     (profile / "config.yaml").write_text(
         "model: gemini-3.8-flash\nprovider: gemini\n", encoding="utf-8"
     )
+    from public_api_client.hermes_agent_client import _ensure_mcp_servers_pib
+
+    _ensure_mcp_servers_pib(str(profile), model="gemini-3.8-flash", provider="gemini")
     before = {
         path.name: path.read_bytes() for path in profile.iterdir() if path.is_file()
     }
@@ -2199,3 +2202,118 @@ def test_second_turn_does_not_attempt_a_refused_stream_options_field(
     assert "stream_options" not in hd._provider_field_attempts[-1]
     clear_provider_refused_fields_cache()
     hd.clear_agent_cache()
+
+
+def test_run_turn_repairs_stale_profile_config_before_the_model(tmp_path, monkeypatch):
+    """PR-2071: an old config_version is repaired on the daemon path without a model call."""
+    from pib_hermes_config import PROFILE_CONFIG_VERSION, PROFILE_CONFIG_VERSION_KEY
+    from pib_hermes_config import profile_dir_for
+
+    import yaml
+
+    monkeypatch.setenv("PIB_HERMES_PROFILES_DIR", str(tmp_path / "profiles"))
+    monkeypatch.setenv("PIB_HERMES_PROFILE_FACTORY", "filesystem")
+    profile_dir = Path(profile_dir_for("stale"))
+    profile_dir.mkdir(parents=True)
+    for dirname in hd.PROFILE_DIRS:
+        (profile_dir / dirname).mkdir()
+    (profile_dir / ".env").write_text("# secrets\n", encoding="utf-8")
+    (profile_dir / "config.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "model": "gemini-3.8-flash",
+                "provider": "gemini",
+                PROFILE_CONFIG_VERSION_KEY: PROFILE_CONFIG_VERSION - 1,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (profile_dir / "SOUL.md").write_text("Du bist pib.\n", encoding="utf-8")
+
+    def read_version():
+        with open(profile_dir / "config.yaml", encoding="utf-8") as fh:
+            return yaml.safe_load(fh)[PROFILE_CONFIG_VERSION_KEY]
+
+    fake_module = _fake_agent_module([])
+    hd.clear_agent_cache()
+
+    with (
+        patch.dict(sys.modules, {"run_agent": fake_module}),
+        patch(
+            "public_api_client.hermes_agent_client.profile_hermes_settings",
+            return_value=("gemini-3.8-flash", "gemini", None, ()),
+        ),
+        patch(
+            "public_api_client.hermes_agent_client.profile_tool_calling_enabled",
+            return_value=True,
+        ),
+        patch(
+            "public_api_client.hermes_agent_client.provider_key_for_turn",
+            return_value="",
+        ),
+    ):
+        assert read_version() == PROFILE_CONFIG_VERSION - 1
+        hd.run_turn_in_process("Hallo", "chat-stale", personality_id="stale")
+        assert read_version() == PROFILE_CONFIG_VERSION
+        with patch("yaml.safe_dump") as dump:
+            hd.run_turn_in_process("Nochmal", "chat-stale", personality_id="stale")
+            dump.assert_not_called()
+
+
+def test_warm_turn_skips_profile_writer_when_config_version_is_current(
+    tmp_path, monkeypatch
+):
+    from pib_hermes_config import PROFILE_CONFIG_VERSION, PROFILE_CONFIG_VERSION_KEY
+    from pib_hermes_config import profile_dir_for
+
+    import yaml
+
+    monkeypatch.setenv("PIB_HERMES_PROFILES_DIR", str(tmp_path / "profiles"))
+    monkeypatch.setenv("PIB_HERMES_PROFILE_FACTORY", "filesystem")
+    profile_dir = Path(profile_dir_for("warm"))
+    profile_dir.mkdir(parents=True)
+    for dirname in hd.PROFILE_DIRS:
+        (profile_dir / dirname).mkdir()
+    (profile_dir / ".env").write_text("# secrets\n", encoding="utf-8")
+    (profile_dir / "SOUL.md").write_text("Du bist pib.\n", encoding="utf-8")
+
+    from public_api_client.hermes_agent_client import _ensure_mcp_servers_pib
+
+    _ensure_mcp_servers_pib(str(profile_dir), model="gemini-3.8-flash", provider="gemini")
+    with open(profile_dir / "config.yaml", encoding="utf-8") as fh:
+        cfg = yaml.safe_load(fh)
+    assert cfg[PROFILE_CONFIG_VERSION_KEY] == PROFILE_CONFIG_VERSION
+
+    ensure_calls = {"count": 0}
+    real_ensure = _ensure_mcp_servers_pib
+
+    def counting_ensure(*args, **kwargs):
+        ensure_calls["count"] += 1
+        return real_ensure(*args, **kwargs)
+
+    fake_module = _fake_agent_module([])
+    hd.clear_agent_cache()
+
+    with (
+        patch.dict(sys.modules, {"run_agent": fake_module}),
+        patch(
+            "public_api_client.hermes_agent_client._ensure_mcp_servers_pib",
+            side_effect=counting_ensure,
+        ),
+        patch(
+            "public_api_client.hermes_agent_client.profile_hermes_settings",
+            return_value=("gemini-3.8-flash", "gemini", None, ()),
+        ),
+        patch(
+            "public_api_client.hermes_agent_client.profile_tool_calling_enabled",
+            return_value=True,
+        ),
+        patch(
+            "public_api_client.hermes_agent_client.provider_key_for_turn",
+            return_value="",
+        ),
+    ):
+        hd.run_turn_in_process("warm", "chat-warm", personality_id="warm")
+        hd.run_turn_in_process("again", "chat-warm", personality_id="warm")
+
+    assert ensure_calls["count"] == 0
