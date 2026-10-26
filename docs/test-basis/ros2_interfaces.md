@@ -108,7 +108,8 @@ flowchart TB
 | `set_voice_assistant_state` | `datatypes/SetVoiceAssistantState` | `assistant` | — |
 | `get_voice_assistant_state` | `datatypes/GetVoiceAssistantState` | `assistant` | — |
 | `get_chat_is_listening` | `datatypes/GetChatIsListening` | `assistant` | — |
-| `send_chat_message` | `datatypes/SendChatMessage` | `assistant` | — |
+| `send_chat_message` | `datatypes/SendChatMessage` | `assistant` | `chat_id`, `content` → `successful`, `turn_id`, `status_reason` |
+| `cancel_chat_turn` | `datatypes/CancelChatTurn` | `assistant` | `turn_id` → `successful`, `status_reason` |
 | `play_audio_from_speech` | `datatypes/PlayAudioFromSpeech` | `audio_player` | — |
 | `play_audio_from_file` | `datatypes/PlayAudioFromFile` | `audio_player` | — |
 | `clear_playback_queue` | `datatypes/ClearPlaybackQueue` | `audio_player` | — |

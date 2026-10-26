@@ -189,6 +189,16 @@ def create_chat_message(
     return True, ChatMessage(chat_message_dto)
 
 
+def delete_chat_message(chat_id: str, message_id: str) -> bool:
+    """Remove one message row. Used when a cancelled turn must leave no assistant line."""
+    request = Request(
+        CHAT_MESSAGES_URL % chat_id + "/" + message_id,
+        method="DELETE",
+    )
+    successful, _ = send_request(request)
+    return bool(successful)
+
+
 def update_chat_message(
     chat_id: str,
     message_content: str,

@@ -41,6 +41,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
 	"srv/SetVoiceAssistantState.srv"
 	"srv/GetChatIsListening.srv"
 	"srv/SendChatMessage.srv"
+	"srv/CancelChatTurn.srv"
 	"srv/ProxyRunProgramStart.srv"
 	"srv/ProxyRunProgramStop.srv"
 	"srv/ClearPlaybackQueue.srv"
