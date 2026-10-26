@@ -318,7 +318,15 @@ MCP_TOOLS = (
     ("capture_image", "Nimmt ein Kamerabild als base64-kodiertes JPEG auf."),
     (
         "move_motor",
-        "Bewegt einen Motor innerhalb seiner konfigurierten Rotationsgrenzen.",
+        "Bewegt einen Motor in Grad innerhalb seiner konfigurierten Rotationsgrenzen.",
+    ),
+    (
+        "move_motors",
+        "Bewegt mehrere Motoren in einem Aufruf (Zielwinkel in Grad pro Motor).",
+    ),
+    (
+        "apply_joint_trajectory",
+        "Führt eine zeitgesteuerte Gelenk-Trajektorie aus (Grad an der Tool-Grenze, Radiant auf ROS).",
     ),
     ("apply_pose", "Wendet eine gespeicherte Pose anhand ihres genauen Namens an."),
     ("run_program", "Startet ein gespeichertes Programm anhand seiner Program-ID."),

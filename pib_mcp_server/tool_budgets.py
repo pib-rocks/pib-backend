@@ -13,6 +13,8 @@ TOOL_PAYLOAD_BUDGET_BYTES: dict[str, int] = {
     "list_programs": 4 * 1024,
     "list_poses": 4 * 1024,
     "capture_image": 1 * 1024,
+    "move_motors": 8 * 1024,
+    "apply_joint_trajectory": 8 * 1024,
 }
 
 

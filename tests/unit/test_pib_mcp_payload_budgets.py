@@ -189,7 +189,7 @@ class BudgetBackend(PibBackend):
         ("get_motion_model", {}),
         ("list_smarthome_devices", {}),
         ("get_smarthome_state", {"device": "Room 0 Light"}),
-        ("move_motor", {"motor_name": "turn_head_motor", "position": 0}),
+        ("move_motor", {"motor_name": "turn_head_motor", "position_degrees": 0}),
         ("apply_pose", {"pose_name": "Pose 02"}),
         ("run_program", {"program_id": "prog-0001"}),
         ("set_led", {"button_id": 1, "red": 0, "green": 0, "blue": 0}),
