@@ -795,6 +795,50 @@ def test_direct_turn_puts_the_person_on_the_system_prompt(
     assert CAPTURED_IMAGE_SENTENCE in system_prompt
 
 
+def test_smart_turn_passes_message_history_to_hermes(chat_module, chat_node):
+    """PR-2068: Smart seeds from flask; the node passes the personality window."""
+    from public_api_client import hermes_agent_client
+
+    Chat = chat_module.Chat
+
+    personality = MagicMock()
+    personality.message_history = 7
+    personality.description = "Du bist pib."
+    personality.personality_id = "pers-1"
+    personality.assistant_model.api_name = "hermes-agent"
+    personality.assistant_model.has_image_support = True
+    personality.channel = "smart"
+    personality.effective_channel = "smart"
+
+    goal_handle = MagicMock()
+    goal_handle.is_cancel_requested = False
+    goal_handle.request = Chat.Goal()
+    goal_handle.request.chat_id = "chat-2068"
+    goal_handle.request.text = "Hi"
+    goal_handle.request.generate_code = False
+
+    with (
+        patch.object(
+            chat_module.voice_assistant_client,
+            "get_personality_from_chat",
+            return_value=(True, personality),
+        ),
+        patch.object(
+            chat_node,
+            "_stream_hermes_turn",
+            return_value=["Antwort vom Agent."],
+        ) as hermes_stream,
+        patch.object(
+            chat_node,
+            "_stream_chunks_to_goal",
+            return_value=(None, None, "Antwort vom Agent."),
+        ),
+    ):
+        drive_like_rclpy(chat_node.chat(goal_handle))
+
+    assert hermes_stream.call_args.kwargs["message_history"] == 7
+
+
 def test_chat_routes_hermes_without_replaying_history(chat_module, chat_node):
     import os
 
@@ -848,6 +892,7 @@ def test_chat_routes_hermes_without_replaying_history(chat_module, chat_node):
     get_history.assert_not_called()
     chat_completion.assert_not_called()
     hermes_stream.assert_called_once()
+    assert hermes_stream.call_args.kwargs.get("message_history") == 5
     assert hermes_stream.call_args.kwargs["text"] == "Hi"
     assert hermes_stream.call_args.kwargs["chat_id"] == "chat-9"
     assert hermes_stream.call_args.kwargs["personality_id"] == "pers-1"
