@@ -2279,7 +2279,9 @@ def test_warm_turn_skips_profile_writer_when_config_version_is_current(
 
     from public_api_client.hermes_agent_client import _ensure_mcp_servers_pib
 
-    _ensure_mcp_servers_pib(str(profile_dir), model="gemini-3.8-flash", provider="gemini")
+    _ensure_mcp_servers_pib(
+        str(profile_dir), model="gemini-3.8-flash", provider="gemini"
+    )
     with open(profile_dir / "config.yaml", encoding="utf-8") as fh:
         cfg = yaml.safe_load(fh)
     assert cfg[PROFILE_CONFIG_VERSION_KEY] == PROFILE_CONFIG_VERSION

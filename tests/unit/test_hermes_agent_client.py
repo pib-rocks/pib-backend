@@ -728,5 +728,7 @@ def test_profile_config_check_reports_drift_and_exits_nonzero(tmp_path, capsys):
     assert PROFILE_CONFIG_VERSION_KEY in err
     assert "drift-me" in err
 
-    _ensure_mcp_servers_pib(str(profile_dir), model="gemini-3.8-flash", provider="gemini")
+    _ensure_mcp_servers_pib(
+        str(profile_dir), model="gemini-3.8-flash", provider="gemini"
+    )
     assert run_profile_config_check(str(profiles_root)) == 0

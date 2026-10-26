@@ -355,11 +355,7 @@ def profile_config_drift_messages(cfg: dict) -> list[str]:
         )
 
     tools = cfg.get("tools")
-    tool_search = (
-        tools.get("tool_search")
-        if isinstance(tools, dict)
-        else None
-    )
+    tool_search = tools.get("tool_search") if isinstance(tools, dict) else None
     if not isinstance(tool_search, dict):
         tool_search = {}
     desired_enabled = PROFILE_TOOL_SEARCH_CONFIG["tool_search"]["enabled"]
@@ -371,9 +367,7 @@ def profile_config_drift_messages(cfg: dict) -> list[str]:
 
     auxiliary = cfg.get("auxiliary")
     title_generation = (
-        auxiliary.get("title_generation")
-        if isinstance(auxiliary, dict)
-        else None
+        auxiliary.get("title_generation") if isinstance(auxiliary, dict) else None
     )
     if not isinstance(title_generation, dict):
         title_generation = {}
