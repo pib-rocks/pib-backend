@@ -24,6 +24,8 @@ from typing import Iterator, Optional
 import yaml
 from pib_hermes_config import (
     DEFAULT_SOUL,
+    PROFILE_CONFIG_VERSION,
+    PROFILE_CONFIG_VERSION_KEY,
     PROFILE_PREFIX,
     PROFILE_TOOL_SEARCH_CONFIG,
     REASONING_EFFORT_ERROR,
@@ -319,6 +321,90 @@ def _load_config_mapping(path: str) -> dict:
     except (OSError, yaml.YAMLError):
         return {}
     return loaded if isinstance(loaded, dict) else {}
+
+
+def _coerce_profile_config_version(value: object) -> Optional[int]:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.isdigit():
+        return int(value)
+    return None
+
+
+def read_profile_config_version(profile_dir: str) -> Optional[int]:
+    """The ``config_version`` a profile's config.yaml declares, if any."""
+    cfg = _load_config_mapping(os.path.join(profile_dir, CONFIG_FILENAME))
+    return _coerce_profile_config_version(cfg.get(PROFILE_CONFIG_VERSION_KEY))
+
+
+def profile_config_version_is_current(profile_dir: str) -> bool:
+    """True when the on-disk version matches what the profile writer would emit."""
+    version = read_profile_config_version(profile_dir)
+    return version == PROFILE_CONFIG_VERSION
+
+
+def profile_config_drift_messages(cfg: dict) -> list[str]:
+    """Human-readable drift lines for ``--check`` without rewriting the file."""
+    messages: list[str] = []
+    version = _coerce_profile_config_version(cfg.get(PROFILE_CONFIG_VERSION_KEY))
+    if version != PROFILE_CONFIG_VERSION:
+        messages.append(
+            f"{PROFILE_CONFIG_VERSION_KEY}: {version!r} (expected {PROFILE_CONFIG_VERSION})"
+        )
+
+    tools = cfg.get("tools")
+    tool_search = tools.get("tool_search") if isinstance(tools, dict) else None
+    if not isinstance(tool_search, dict):
+        tool_search = {}
+    desired_enabled = PROFILE_TOOL_SEARCH_CONFIG["tool_search"]["enabled"]
+    if tool_search.get("enabled") != desired_enabled:
+        messages.append(
+            "tools.tool_search.enabled: "
+            f"{tool_search.get('enabled')!r} (expected {desired_enabled!r})"
+        )
+
+    auxiliary = cfg.get("auxiliary")
+    title_generation = (
+        auxiliary.get("title_generation") if isinstance(auxiliary, dict) else None
+    )
+    if not isinstance(title_generation, dict):
+        title_generation = {}
+    if title_generation.get("model_upgrade_enabled") is not False:
+        messages.append(
+            "auxiliary.title_generation.model_upgrade_enabled: "
+            f"{title_generation.get('model_upgrade_enabled')!r} (expected False)"
+        )
+    return messages
+
+
+def profile_config_drift(profile_dir: str) -> list[str]:
+    """Drift messages for one profile directory."""
+    cfg = _load_config_mapping(os.path.join(profile_dir, CONFIG_FILENAME))
+    return profile_config_drift_messages(cfg)
+
+
+def iter_personality_profile_dirs(
+    profiles_root: Optional[str] = None,
+) -> list[tuple[str, str]]:
+    """``(personality_id, profile_dir)`` for each ``pib_*`` profile on disk."""
+    root = profiles_root or profiles_dir()
+    if not os.path.isdir(root):
+        return []
+    discovered: list[tuple[str, str]] = []
+    prefix = PROFILE_PREFIX
+    for entry in sorted(os.listdir(root)):
+        if not entry.startswith(prefix):
+            continue
+        profile_dir = os.path.join(root, entry)
+        if not os.path.isdir(profile_dir):
+            continue
+        personality_id = entry[len(prefix) :]
+        if not personality_id:
+            continue
+        discovered.append((personality_id, profile_dir))
+    return discovered
 
 
 def profile_hermes_settings(
@@ -808,6 +894,10 @@ def _ensure_mcp_servers_pib(
             changed = True
     elif not effective_tool_calling and entry.get("enabled") is not False:
         entry["enabled"] = False
+        changed = True
+
+    if cfg.get(PROFILE_CONFIG_VERSION_KEY) != PROFILE_CONFIG_VERSION:
+        cfg[PROFILE_CONFIG_VERSION_KEY] = PROFILE_CONFIG_VERSION
         changed = True
 
     if not changed:

@@ -48,6 +48,11 @@ PROFILE_TOOL_SEARCH_CONFIG = {
     "tool_search": {"enabled": PROFILE_TOOL_SEARCH_ENABLED},
 }
 
+# PR-2071: bump when the profile writer (_ensure_mcp_servers_pib) changes shape.
+# Warm turns compare this integer before deciding whether to rewrite config.yaml.
+PROFILE_CONFIG_VERSION_KEY = "config_version"
+PROFILE_CONFIG_VERSION = 1
+
 # Upstream vision wrapper in the pinned Hermes package (not patched from this repo).
 # tools/vision_tools.py opens its image prompt with the prefix below; a sky-colour
 # question that used the camera measured 1,444 output tokens in 4.2 s and the turn
