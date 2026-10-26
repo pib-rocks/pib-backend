@@ -12,6 +12,7 @@ find_package(std_msgs REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
 	"msg/MotorSettings.msg"
+	"msg/MotorResult.msg"
 	"msg/ChatMessage.msg"
 	"msg/VoiceAssistantState.msg"
 	"msg/ProgramOutputLine.msg"

@@ -144,8 +144,13 @@ def test_via_point_mid_segment_is_interpolated_not_clamped() -> None:
     assert 0 < targets["elbow"] < 100
 
 
-def test_is_software_trajectory_ignores_legacy_zip_pose() -> None:
-    """N motors / N single-position points / no time → existing as_motor_positions path."""
+def test_is_software_trajectory_single_point_command_is_not_software() -> None:
+    jt = FakeJointTrajectory(["a", "b"], [FakePoint([10.0, 20.0])])
+    assert is_software_trajectory(jt) is False
+
+
+def test_is_software_trajectory_legacy_zip_shape_is_not_software() -> None:
+    """Retired N×single-position layout is rejected upstream; not a software trajectory."""
     jt = FakeJointTrajectory(
         ["a", "b"],
         [FakePoint([10]), FakePoint([20])],
@@ -153,17 +158,12 @@ def test_is_software_trajectory_ignores_legacy_zip_pose() -> None:
     assert is_software_trajectory(jt) is False
 
 
-def test_is_software_trajectory_ignores_pib_sdk_write_move_zip_pose() -> None:
-    """pib_sdk.Write.move sends N single-position points with a constant 1 ms time_from_start."""
+def test_is_software_trajectory_multi_point_full_positions() -> None:
     jt = FakeJointTrajectory(
-        ["tilt_forward_motor", "shoulder_vertical_left", "turn_head_motor"],
-        [
-            FakePoint([1800.0], 0.001),
-            FakePoint([-6800.0], 0.001),
-            FakePoint([0.0], 0.001),
-        ],
+        ["a", "b"],
+        [FakePoint([0.0, 10.0], 0.0), FakePoint([5.0, 15.0], 1.0)],
     )
-    assert is_software_trajectory(jt) is False
+    assert is_software_trajectory(jt) is True
 
 
 def test_is_software_trajectory_detects_time_from_start() -> None:
@@ -219,6 +219,24 @@ def test_single_point_is_one_set_position_without_sharp_restore() -> None:
     assert executor.execute(jt) is True
     assert motor.positions == [42]
     assert motor.settings_calls == []
+
+
+def test_single_point_multi_joint_sets_every_motor() -> None:
+    motors = {
+        "a": [FakeMotor("a")],
+        "b": [FakeMotor("b")],
+        "c": [FakeMotor("c")],
+    }
+    executor = _executor(motors)
+    jt = FakeJointTrajectory(
+        ["a", "b", "c"],
+        [FakePoint([10, 20, 30])],
+    )
+
+    assert executor.execute(jt) is True
+    assert motors["a"][0].positions == [10]
+    assert motors["b"][0].positions == [20]
+    assert motors["c"][0].positions == [30]
 
 
 def test_via_point_blend_does_not_dwell_at_via_point() -> None:

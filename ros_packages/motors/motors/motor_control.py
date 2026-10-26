@@ -1,7 +1,7 @@
 from typing import Iterable, Mapping, Sequence, Tuple
 import math
 import rclpy
-from datatypes.msg import MotorSettings, SolidStateRelayState
+from datatypes.msg import MotorResult, MotorSettings, SolidStateRelayState
 from datatypes.srv import ApplyMotorSettings, ApplyJointTrajectory, GetJointPosition
 from pib_api_client import motor_client
 from pib_motors.bricklet import ipcon, connected_enumerate, solid_state_relay_bricklet
@@ -9,6 +9,14 @@ from pib_motors.motor import name_to_motors, motors
 from rclpy.node import Node
 from pib_motors.startup_pose_executor import StartupPoseExecutor
 from pib_motors.motor import Motor
+from pib_motors.joint_trajectory_command import (
+    MotorOutcome,
+    is_legacy_zip_shape,
+    iter_single_point_centideg_targets,
+    legacy_zip_outcomes,
+    outcomes_to_success,
+    validate_radians_trajectory,
+)
 from pib_motors.trajectory_executor import TrajectoryExecutor, is_software_trajectory
 from pib_motors.units import centideg_to_rad, rad_to_centideg
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
@@ -32,11 +40,20 @@ def motor_settings_ros_to_dto(ms: MotorSettings):
 
 
 def as_motor_positions(jt: JointTrajectory) -> Iterable[Tuple[str, int]]:
-    """unpacks a jt-message into an iterable of motorname-position-pairs"""
-    motor_names = jt.joint_names
-    points: list[JointTrajectoryPoint] = jt.points
-    positions = (point.positions[0] for point in points)
-    return zip(motor_names, positions)
+    """Unpack a single-point trajectory into ``(motor_name, centidegree)`` pairs."""
+    return iter_single_point_centideg_targets(jt)
+
+
+def motor_outcomes_to_ros(outcomes: Sequence[MotorOutcome]) -> list[MotorResult]:
+    results: list[MotorResult] = []
+    for motor_name, successful, error_code, detail in outcomes:
+        result = MotorResult()
+        result.motor_name = motor_name
+        result.successful = successful
+        result.error_code = error_code
+        result.detail = detail
+        results.append(result)
+    return results
 
 
 def as_joint_trajectory(motor_name: str, position_centideg: int) -> JointTrajectory:
@@ -59,29 +76,6 @@ def joint_trajectory_radians_to_centidegrees(
     names = converted.joint_names
     points = list(jt.points)
     if not names or not points:
-        return converted
-
-    legacy_zip = (
-        len(names) > 1
-        and len(points) == len(names)
-        and all(len(point.positions) <= 1 for point in points)
-    )
-
-    if legacy_zip:
-        for joint_name, point in zip(names, points):
-            positions = list(point.positions)
-            if not positions:
-                raise ValueError(
-                    f"trajectory point for joint '{joint_name}' has no position"
-                )
-            new_point = JointTrajectoryPoint()
-            new_point.time_from_start = point.time_from_start
-            new_point.positions.append(
-                _rad_to_centideg_for_joint(
-                    joint_name, float(positions[0]), name_to_motors
-                )
-            )
-            converted.points.append(new_point)
         return converted
 
     for point in points:
@@ -290,23 +284,50 @@ class MotorControl(Node):
         """Apply a ``trajectory_msgs/JointTrajectory`` whose positions are in radians.
 
         Positions are converted once at entry to integer centidegrees for motors and
-        ``TrajectoryExecutor``. Non-finite values and out-of-range targets are rejected.
+        ``TrajectoryExecutor``. The full command is validated before any motor write.
         """
-        response.successful = True
+        raw = request.joint_trajectory
+        joint_names = list(raw.joint_names)
+        response.results = []
+
+        if is_legacy_zip_shape(raw):
+            outcomes = legacy_zip_outcomes(joint_names)
+            response.successful = False
+            response.results = motor_outcomes_to_ros(outcomes)
+            return response
+
+        validation_errors, validation_outcomes = validate_radians_trajectory(
+            raw, name_to_motors, _rad_to_centideg_for_joint
+        )
+        if validation_errors is not None:
+            response.successful = False
+            response.results = motor_outcomes_to_ros(validation_outcomes)
+            return response
+
         try:
-            jt = joint_trajectory_radians_to_centidegrees(
-                request.joint_trajectory, name_to_motors
-            )
+            jt = joint_trajectory_radians_to_centidegrees(raw, name_to_motors)
             if is_software_trajectory(jt):
-                response.successful = self.trajectory_executor.execute(jt)
-                if response.successful:
+                trajectory_ok = self.trajectory_executor.execute(jt)
+                if trajectory_ok:
+                    outcomes = [(name, True, "", "") for name in joint_names]
                     for motor_name in jt.joint_names:
                         for motor in name_to_motors[motor_name]:
                             self.joint_trajectory_publisher.publish(
                                 as_joint_trajectory(motor.name, motor.get_position())
                             )
+                else:
+                    outcomes = [
+                        (name, False, "write_failed", "trajectory execution failed")
+                        for name in joint_names
+                    ]
+                response.successful = outcomes_to_success(outcomes)
+                response.results = motor_outcomes_to_ros(outcomes)
                 return response
+
+            apply_outcomes: list[MotorOutcome] = []
             for motor_name, position in as_motor_positions(jt):
+                motor_ok = True
+                detail = ""
                 for motor in name_to_motors[motor_name]:
                     self.get_logger().info(
                         f"setting position of {motor.name} to {position}"
@@ -315,12 +336,24 @@ class MotorControl(Node):
                     self.get_logger().info(
                         f"setting position {'succeeded' if successful else 'failed'}."
                     )
-                    response.successful &= successful
-                    self.joint_trajectory_publisher.publish(
-                        as_joint_trajectory(motor.name, position)
-                    )
+                    motor_ok &= successful
+                    if successful:
+                        self.joint_trajectory_publisher.publish(
+                            as_joint_trajectory(motor.name, position)
+                        )
+                    else:
+                        detail = f"failed to write position for motor '{motor.name}'"
+                if motor_ok:
+                    apply_outcomes.append((motor_name, True, "", ""))
+                else:
+                    apply_outcomes.append((motor_name, False, "write_failed", detail))
+            response.successful = outcomes_to_success(apply_outcomes)
+            response.results = motor_outcomes_to_ros(apply_outcomes)
         except Exception as e:
             response.successful = False
+            response.results = motor_outcomes_to_ros(
+                [(name, False, "out_of_range", str(e)) for name in joint_names]
+            )
             self.get_logger().error(f"error while applying joint-trajectory: {str(e)}")
         return response
 
