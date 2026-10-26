@@ -65,31 +65,18 @@ def duration_to_seconds(time_from_start: Any) -> float:
 
 
 def is_software_trajectory(jt: Any) -> bool:
-    """True when ``jt`` is a timed / waypoint trajectory, not a legacy zip pose.
+    """True when ``jt`` is a multi-point timed trajectory, not a single-point command.
 
-    Existing pib callers (poses, Blockly, MCP ``apply_pose``, ``pib_sdk.Write.move``)
-    send one JointTrajectoryPoint per motor, each with a single position (and
-    in ``pib_sdk.Write._trajectory_point`` a constant 1 ms ``time_from_start``).
-    That shape must keep using ``as_motor_positions``.
-
-    A software trajectory is:
-    - more than one waypoint in the standard JointTrajectory layout
-      (each point carries a position per joint), with or without
-      ``time_from_start`` values.
+    One trajectory point (with one position per joint) is an immediate target command.
+    More than one point — each carrying a full position vector — is executed by software
+    interpolation over ``time_from_start``.
     """
     points = list(getattr(jt, "points", []) or [])
-    if not points:
+    if len(points) <= 1:
         return False
     names = list(getattr(jt, "joint_names", []) or [])
     n_joints = len(names)
-    if len(points) <= 1 or n_joints == 0:
-        return False
-    # Legacy zip: N names (N > 1), N points, each point has a single position.
-    if (
-        n_joints > 1
-        and len(points) == n_joints
-        and all(len(getattr(p, "positions", []) or []) <= 1 for p in points)
-    ):
+    if n_joints == 0:
         return False
     if any(
         duration_to_seconds(getattr(p, "time_from_start", None)) > 0.0 for p in points
@@ -251,14 +238,20 @@ class TrajectoryExecutor:
     def _execute_single_point(
         self, names: Sequence[str], points: Sequence[Any]
     ) -> bool:
-        """Backward-compatible one-shot ``set_position`` (no motion-config change)."""
+        """One-shot ``set_position`` for a single trajectory point (no motion-config change)."""
+        if not points:
+            return False
+        point = points[0]
+        positions = list(getattr(point, "positions", []) or [])
+        if len(positions) < len(names):
+            self._log_error(
+                f"trajectory point has {len(positions)} positions for "
+                f"{len(names)} joint names"
+            )
+            return False
         success = True
-        for name, point in zip(names, points):
-            positions = list(getattr(point, "positions", []) or [])
-            if not positions:
-                success = False
-                continue
-            position = int(round(float(positions[0])))
+        for index, name in enumerate(names):
+            position = int(round(float(positions[index])))
             for motor in self.motor_lookup[name]:
                 success &= bool(motor.set_position(position))
         return success
