@@ -108,7 +108,11 @@ def run(argv: list[str] | None = None) -> int:
     parser.add_argument("--timeout", type=float, default=120.0)
     args = parser.parse_args(argv)
 
-    direct_ids = args.direct_chat_ids or ["DIRECT-CHAT-1", "DIRECT-CHAT-2", "DIRECT-CHAT-3"]
+    direct_ids = args.direct_chat_ids or [
+        "DIRECT-CHAT-1",
+        "DIRECT-CHAT-2",
+        "DIRECT-CHAT-3",
+    ]
     smart_ids = args.smart_chat_ids or ["SMART-CHAT-1", "SMART-CHAT-2", "SMART-CHAT-3"]
     if len(direct_ids) != len(smart_ids):
         print(
