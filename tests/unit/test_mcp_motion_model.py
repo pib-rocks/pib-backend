@@ -37,16 +37,34 @@ def test_get_motion_model_fetches_from_api():
         return api_payload
 
     backend._http = fake_http
-    assert backend.get_motion_model() == api_payload
-    assert calls == [("GET", "/system/motion-model")]
+    assert backend.get_motion_model(detail=True) == api_payload
+    assert backend.get_motion_model() == {
+        "schemaVersion": 1,
+        "prompt": "Body (centidegrees: ...)",
+    }
+    assert calls == [("GET", "/system/motion-model"), ("GET", "/system/motion-model")]
 
 
-def test_get_motion_model_tool_returns_api_payload():
+def test_get_motion_model_tool_returns_compact_payload_by_default():
     backend = PibBackend()
-    api_payload = {"schemaVersion": 1, "prompt": "live model"}
+    api_payload = {
+        "schemaVersion": 1,
+        "prompt": "live model",
+        "chains": {"head": {"joints": []}},
+    }
     backend._http = lambda method, path, payload=None: api_payload
     server = create_server(backend, actuating_enabled=False)
     response = _call(server, "get_motion_model", {})
+    assert response["ok"] is True
+    assert response["result"] == {"schemaVersion": 1, "prompt": "live model"}
+
+
+def test_get_motion_model_detail_returns_api_payload():
+    backend = PibBackend()
+    api_payload = {"schemaVersion": 1, "prompt": "live model", "chains": {}}
+    backend._http = lambda method, path, payload=None: api_payload
+    server = create_server(backend, actuating_enabled=False)
+    response = _call(server, "get_motion_model", {"detail": True})
     assert response["ok"] is True
     assert response["result"] == api_payload
 

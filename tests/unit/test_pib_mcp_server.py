@@ -33,7 +33,6 @@ class FakeBackend:
         return {
             "motors": [
                 {
-                    "id": motor["name"],
                     "name": motor["name"],
                     "position": motor.get("currentPosition"),
                     "limits": {
@@ -46,19 +45,40 @@ class FakeBackend:
             ]
         }
 
-    def get_state(self):
-        state = self.list_motors(detail=True)
-        state["diagnostics"] = {}
-        return state
+    def get_state(self, detail=False):
+        if detail:
+            state = self.list_motors(detail=True)
+            state["diagnostics"] = {}
+            return state
+        return {"motors": self.list_motors()["motors"], "diagnostics": {}}
 
-    def list_poses(self):
-        return self.poses
+    def list_poses(self, detail=False):
+        if detail:
+            return self.poses
+        return [
+            {
+                "poseId": pose.get("poseId", pose.get("pose_id")),
+                "name": pose["name"],
+                "deletable": pose.get("deletable"),
+            }
+            for pose in self.poses
+        ]
 
-    def list_programs(self):
-        return [{"programNumber": "7", "name": "Wave"}]
+    def list_programs(self, detail=False):
+        programs = [{"programNumber": "7", "name": "Wave"}]
+        if detail:
+            return [{**programs[0], "codeVisual": "{}"}]
+        return programs
 
-    def capture_image(self):
-        return {"imageBase64": "aGVsbG8=", "mimeType": "image/jpeg"}
+    def capture_image(self, detail=False):
+        if detail:
+            return {"imageBase64": "aGVsbG8=", "mimeType": "image/jpeg"}
+        return {
+            "imageRef": "abcd",
+            "mimeType": "image/jpeg",
+            "byteLength": 5,
+            "sha256": "0" * 64,
+        }
 
     def move_motor(self, motor_name, position):
         self.calls.append(("move_motor", motor_name, position))
@@ -80,12 +100,15 @@ class FakeBackend:
         self.calls.append(("set_relay", turned_on))
         return {"turnedOn": turned_on}
 
-    def soul_append(self, personality_id, lesson):
-        self.calls.append(("soul_append", personality_id, lesson))
-        return {"appended": True}
+    def soul_append(self, personality_id, lesson, detail=False):
+        self.calls.append(("soul_append", personality_id, lesson, detail))
+        result = {"personalityId": personality_id, "appended": True}
+        if detail:
+            result["personality"] = {"id": personality_id}
+        return result
 
-    def list_smarthome_devices(self, room=None, domain=None):
-        self.calls.append(("list_smarthome_devices", room, domain))
+    def list_smarthome_devices(self, room=None, domain=None, detail=False):
+        self.calls.append(("list_smarthome_devices", room, domain, detail))
         devices = [
             {
                 "entityId": "light.living_room",
@@ -109,10 +132,29 @@ class FakeBackend:
             filtered = [d for d in filtered if d.get("room") == room]
         if domain:
             filtered = [d for d in filtered if d.get("domain") == domain]
-        return {"devices": filtered}
+        devices_out = (
+            filtered
+            if detail
+            else [
+                {
+                    key: device[key]
+                    for key in (
+                        "entityId",
+                        "friendlyName",
+                        "room",
+                        "domain",
+                        "state",
+                        "exposeToVoice",
+                    )
+                    if key in device
+                }
+                for device in filtered
+            ]
+        )
+        return {"devices": devices_out}
 
-    def get_smarthome_state(self, target):
-        self.calls.append(("get_smarthome_state", target))
+    def get_smarthome_state(self, target, detail=False):
+        self.calls.append(("get_smarthome_state", target, detail))
         for device in self.list_smarthome_devices()["devices"]:
             if device["entityId"] == target or device["friendlyName"] == target:
                 return device
@@ -171,10 +213,9 @@ def _call(server, name, arguments):
 def test_list_poses_returns_default_poses():
     backend = FakeBackend()
     backend.poses = [
-        {"name": "Startup/Resting", "deletable": False},
-        {"name": "Calibration", "deletable": False},
+        {"poseId": 1, "name": "Startup/Resting", "deletable": False},
+        {"poseId": 2, "name": "Calibration", "deletable": False},
     ]
-    backend.list_poses = lambda: backend.poses
     server = create_server(backend)
     res = _call(server, "list_poses", {})
     assert res["ok"] is True
@@ -289,7 +330,7 @@ def test_soul_append_accepts_exactly_500_characters():
     )
 
     assert result["ok"] is True
-    assert backend.calls == [("soul_append", "personality-1", "x" * 500)]
+    assert backend.calls == [("soul_append", "personality-1", "x" * 500, False)]
 
 
 def test_list_smarthome_devices_returns_voice_devices():
@@ -297,7 +338,7 @@ def test_list_smarthome_devices_returns_voice_devices():
     result = _call(create_server(backend), "list_smarthome_devices", {})
     assert result["ok"] is True
     assert result["result"]["devices"][0]["entityId"] == "light.living_room"
-    assert ("list_smarthome_devices", None, None) in backend.calls
+    assert ("list_smarthome_devices", None, None, False) in backend.calls
 
 
 def test_get_smarthome_state_resolves_device():

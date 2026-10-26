@@ -1,12 +1,14 @@
-"""PR-2060: default list_motors payload stays small; detail=true keeps full config."""
+"""PR-2060/2073: compact MCP payloads, detail=true for full config."""
 
 import asyncio
 import json
+import time
 
 from pib_mcp_server.backend import PibBackend
 from pib_mcp_server.server import create_server
+from pib_mcp_payload_assertions import assert_tool_payload_within_budget
 
-COMPACT_MOTOR_KEYS = frozenset({"id", "name", "position", "limits", "unit"})
+COMPACT_MOTOR_KEYS = frozenset({"name", "position", "limits", "unit"})
 COMPACT_BYTE_BUDGET = 6000
 MOTOR_COUNT = 24
 
@@ -126,11 +128,11 @@ def test_list_motors_default_is_compact_under_byte_budget():
 
     for motor in motors:
         assert set(motor) == COMPACT_MOTOR_KEYS
-        assert motor["id"] == motor["name"]
         assert motor["unit"] == "centidegree"
         assert motor["limits"] == {"min": -4500, "max": 4500}
         assert isinstance(motor["position"], int)
 
+    assert_tool_payload_within_budget("list_motors", payload)
     encoded = json.dumps(payload, separators=(",", ":"))
     assert len(encoded.encode("utf-8")) <= COMPACT_BYTE_BUDGET
 
@@ -153,7 +155,7 @@ def test_list_motors_detail_returns_full_motor_dict():
         assert motor["currentPosition"] == 120 * (index + 1)
 
 
-def test_get_state_returns_full_motors_and_diagnostics():
+def test_get_state_default_is_compact_under_budget():
     backend = RecordingBackend(full_motor_fixture())
     server = create_server(backend)
 
@@ -161,9 +163,32 @@ def test_get_state_returns_full_motors_and_diagnostics():
     assert response["ok"] is True
     payload = response["result"]
     assert payload["diagnostics"] == {"status": "ok", "motorsOnline": MOTOR_COUNT}
+    assert set(payload["motors"][0]) == COMPACT_MOTOR_KEYS
+    assert "bricklets" not in payload
+    assert_tool_payload_within_budget("get_state", payload)
+
+
+def test_get_state_detail_returns_full_motors_and_diagnostics():
+    backend = RecordingBackend(full_motor_fixture())
+    server = create_server(backend)
+
+    response = _call(server, "get_state", {"detail": True})
+    assert response["ok"] is True
+    payload = response["result"]
+    assert payload["diagnostics"] == {"status": "ok", "motorsOnline": MOTOR_COUNT}
     assert "bricklets" in payload
     assert "velocity" in payload["motors"][0]
     assert "currentPosition" in payload["motors"][0]
+
+
+def test_list_motors_tool_call_latency_under_two_seconds():
+    backend = RecordingBackend(full_motor_fixture())
+    server = create_server(backend)
+    started = time.monotonic()
+    response = _call(server, "list_motors", {})
+    elapsed = time.monotonic() - started
+    assert response["ok"] is True
+    assert elapsed <= 2.0
 
 
 def test_pib_backend_list_motors_detail_false_omits_bricklets():

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import time
@@ -15,16 +16,72 @@ MOTOR_POSITION_UNIT = "centidegree"
 
 
 def _compact_motor(motor: dict[str, Any]) -> dict[str, Any]:
-    name = motor.get("name")
     return {
-        "id": name,
-        "name": name,
+        "name": motor.get("name"),
         "position": motor.get("currentPosition"),
         "limits": {
             "min": motor.get("rotationRangeMin", motor.get("rotation_range_min")),
             "max": motor.get("rotationRangeMax", motor.get("rotation_range_max")),
         },
         "unit": MOTOR_POSITION_UNIT,
+    }
+
+
+def _compact_diagnostics(summary: dict[str, Any]) -> dict[str, Any]:
+    keys = (
+        "overallStatus",
+        "status",
+        "hardwareVariant",
+        "cpuStatus",
+        "memoryStatus",
+        "diskStatus",
+        "containersStatus",
+        "brickletsStatus",
+        "controllersStatus",
+        "cpuTemperature",
+        "motorsOnline",
+        "healthyContainersCount",
+        "totalContainersCount",
+    )
+    return {key: summary[key] for key in keys if key in summary}
+
+
+def _compact_pose(pose: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "poseId": pose.get("poseId", pose.get("pose_id")),
+        "name": pose.get("name"),
+        "deletable": pose.get("deletable"),
+    }
+
+
+def _compact_program(program: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "name": program.get("name"),
+        "programNumber": program.get("programNumber", program.get("program_number")),
+    }
+
+
+def _compact_motion_model(model: dict[str, Any]) -> dict[str, Any]:
+    compact: dict[str, Any] = {"schemaVersion": model.get("schemaVersion", 1)}
+    if "units" in model:
+        compact["units"] = model["units"]
+    if "prompt" in model:
+        compact["prompt"] = model["prompt"]
+    return compact
+
+
+def _compact_smarthome_device(device: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: device[key]
+        for key in (
+            "entityId",
+            "friendlyName",
+            "room",
+            "domain",
+            "state",
+            "exposeToVoice",
+        )
+        if key in device
     }
 
 
@@ -178,28 +235,70 @@ class PibBackend:
             return {"motors": motors, "bricklets": bricklets}
         return {"motors": [_compact_motor(motor) for motor in motors]}
 
-    def get_state(self) -> dict[str, Any]:
-        state = self.list_motors(detail=True)
-        state["diagnostics"] = self._http("GET", "/diagnostics/summary")
-        return state
+    def get_state(self, detail: bool = False) -> dict[str, Any]:
+        diagnostics = self._http("GET", "/diagnostics/summary")
+        if detail:
+            state = self.list_motors(detail=True)
+            state["diagnostics"] = diagnostics
+            return state
+        return {
+            "motors": [
+                _compact_motor(motor) for motor in self._motors_with_live_positions()
+            ],
+            "diagnostics": _compact_diagnostics(diagnostics),
+        }
 
-    def get_motion_model(self) -> dict[str, Any]:
-        return self._http("GET", "/system/motion-model")
+    def get_motion_model(self, detail: bool = False) -> dict[str, Any]:
+        model = self._http("GET", "/system/motion-model")
+        if detail:
+            return model
+        return _compact_motion_model(model)
 
-    def list_poses(self) -> list[dict[str, Any]]:
-        return list(self._http("GET", "/pose").get("poses", []))
+    def list_poses(self, detail: bool = False) -> list[dict[str, Any]]:
+        poses = list(self._http("GET", "/pose").get("poses", []))
+        if detail:
+            detailed: list[dict[str, Any]] = []
+            for pose in poses:
+                name = pose.get("name")
+                if not name:
+                    detailed.append(pose)
+                    continue
+                detailed.append(
+                    self._http("GET", f"/pose/by-name/{quote(name, safe='')}")
+                )
+            return detailed
+        return [_compact_pose(pose) for pose in poses]
 
-    def list_programs(self) -> list[dict[str, Any]]:
-        return list(self._http("GET", "/program").get("programs", []))
+    def list_programs(self, detail: bool = False) -> list[dict[str, Any]]:
+        programs = list(self._http("GET", "/program").get("programs", []))
+        if not detail:
+            return [_compact_program(program) for program in programs]
+        detailed: list[dict[str, Any]] = []
+        for program in programs:
+            number = program.get("programNumber", program.get("program_number"))
+            if not number:
+                detailed.append(program)
+                continue
+            code = self._http("GET", f"/program/{quote(str(number), safe='')}/code")
+            detailed.append({**program, **code})
+        return detailed
 
-    def capture_image(self) -> dict[str, Any]:
+    def capture_image(self, detail: bool = False) -> dict[str, Any]:
         response = self._ros_service(
             "/get_camera_image", "datatypes/srv/GetCameraImage", {}
         )
         image = response.get("image_base64", response.get("imageBase64", ""))
         if not image:
             raise BackendError("camera_empty", "camera returned no image")
-        return {"imageBase64": image, "mimeType": "image/jpeg"}
+        if detail:
+            return {"imageBase64": image, "mimeType": "image/jpeg"}
+        digest = hashlib.sha256(image.encode("utf-8")).hexdigest()
+        return {
+            "imageRef": digest[:16],
+            "mimeType": "image/jpeg",
+            "byteLength": len(image.encode("utf-8")),
+            "sha256": digest,
+        }
 
     def move_motor(self, motor_name: str, position: int) -> dict[str, Any]:
         response = self._ros_service(
@@ -332,22 +431,30 @@ class PibBackend:
         return None
 
     def list_smarthome_devices(
-        self, room: str | None = None, domain: str | None = None
+        self,
+        room: str | None = None,
+        domain: str | None = None,
+        detail: bool = False,
     ) -> dict[str, Any]:
         path = self._smarthome_devices_path(
             room=(room or None), domain=(domain or None), voice_only=True
         )
         payload = self._http("GET", path)
-        return {"devices": list(payload.get("devices", []))}
+        devices = list(payload.get("devices", []))
+        if detail:
+            return {"devices": devices}
+        return {"devices": [_compact_smarthome_device(device) for device in devices]}
 
-    def get_smarthome_state(self, target: str) -> dict[str, Any]:
-        devices = self.list_smarthome_devices()["devices"]
+    def get_smarthome_state(self, target: str, detail: bool = False) -> dict[str, Any]:
+        devices = self.list_smarthome_devices(detail=True)["devices"]
         device = self._resolve_smarthome_device(target, devices)
         if device is None:
             raise BackendError(
                 "device_not_found", f"unknown SmartHome device {target!r}"
             )
-        return device
+        if detail:
+            return device
+        return _compact_smarthome_device(device)
 
     def control_smarthome_device(
         self, target: str, action: str, value: Any = None
@@ -372,14 +479,18 @@ class PibBackend:
     def trigger_smarthome_scene(self, scene_name: str) -> dict[str, Any]:
         return self.control_smarthome_device(scene_name, "activate")
 
-    def soul_append(self, personality_id: str, lesson: str) -> dict[str, Any]:
+    def soul_append(
+        self, personality_id: str, lesson: str, detail: bool = False
+    ) -> dict[str, Any]:
         personality = self._http(
             "POST",
             f"/voice-assistant/personality/{quote(personality_id, safe='')}/soul/append",
             {"lesson": lesson},
         )
-        return {
+        result: dict[str, Any] = {
             "personalityId": personality_id,
             "appended": True,
-            "personality": personality,
         }
+        if detail:
+            result["personality"] = personality
+        return result
