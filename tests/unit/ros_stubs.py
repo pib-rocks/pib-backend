@@ -105,6 +105,7 @@ def install_ros_stubs():
             self.chat_id = ""
             self.text = ""
             self.generate_code = False
+            self.turn_id = ""
 
     class _Feedback:
         def __init__(self):
@@ -175,6 +176,7 @@ def install_ros_stubs():
         vac.create_chat_message = MagicMock()
         vac.update_chat_message = MagicMock()
         vac.record_first_token_latency = MagicMock(return_value=False)
+        vac.delete_chat_message = MagicMock(return_value=True)
 
     if "public_api_client.public_voice_client" not in sys.modules:
         pvc = ensure("public_api_client.public_voice_client")

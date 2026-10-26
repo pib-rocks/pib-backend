@@ -64,6 +64,12 @@ from voice_assistant.degraded_chat import (
     refusal_sentence,
 )
 from voice_assistant.memory_consolidation import schedule_memory_consolidation
+from voice_assistant.chat_turn import (
+    STATE_CANCELLED,
+    STATE_COMPLETED,
+    STATE_RUNNING,
+    turn_state_event,
+)
 
 # How often the hermes turn is interrupted to notice a cancel request.
 HERMES_CANCEL_POLL_SECONDS = 0.2
@@ -397,6 +403,52 @@ class ChatNode(Node):
         self._turn_images = []
         self._turn_image_references = []
         self._turn_chat_id = ""
+        self._turn_assistant_message_id = ""
+        self._turn_trace_turn_id = ""
+
+    def _emit_turn_state(
+        self, turn_id: str, state: str, chat_id: str, *, reason: str = ""
+    ) -> None:
+        """Publish running / cancelled / completed for one explicit turn id."""
+        if not turn_id:
+            return
+        publisher = getattr(self, "_turn_trace_publisher", None)
+        if publisher is None:
+            return
+        try:
+            message = String()
+            message.data = turn_state_event(
+                turn_id, state, chat_id=chat_id, reason=reason
+            )
+            publisher.publish(message)
+        except Exception as exc:
+            self.get_logger().warning(f"turn state trace was not published: {exc}")
+
+    def _discard_assistant_reply(self, chat_id: str) -> None:
+        """Drop a partial assistant message after cancel (PR-2069)."""
+        message_id = getattr(self, "_turn_assistant_message_id", None)
+        if not message_id:
+            return
+        self._turn_assistant_message_id = ""
+        try:
+            with self.voice_assistant_client_lock:
+                voice_assistant_client.delete_chat_message(chat_id, message_id)
+        except Exception as exc:
+            self.get_logger().warning(
+                f"cancelled assistant message was not deleted chat={chat_id}: {exc}"
+            )
+        if getattr(self, "last_pib_message_id", None) == message_id:
+            self.last_pib_message_id = None
+            self.message_content = None
+
+    def _finish_cancelled_turn(self, chat_id: str, goal_handle) -> None:
+        """Stop the action, remove partial assistant text, and trace cancelled."""
+        self._discard_assistant_reply(chat_id)
+        if goal_handle.is_cancel_requested:
+            goal_handle.canceled()
+        turn_id = getattr(self, "_turn_trace_turn_id", "") or ""
+        if turn_id:
+            self._emit_turn_state(turn_id, STATE_CANCELLED, chat_id)
 
     def _record_turn_trace(self, raw: str) -> None:
         """Keep stage timings and the fallback reason of the running turn."""
@@ -594,7 +646,7 @@ class ChatNode(Node):
         model and credentials are left as they are.
         """
         if goal_handle.is_cancel_requested:
-            goal_handle.canceled()
+            self._finish_cancelled_turn(chat_id, goal_handle)
             return Chat.Result()
         sentence = RETIRED_DIRECT_TEXT_SENTENCE
         self.create_chat_message(chat_id, sentence, False, False, True)
@@ -781,6 +833,8 @@ class ChatNode(Node):
                 else:
                     self.last_pib_message_id = chat_message.message_id
                     self.message_content = text
+                    if not is_user and not update_message:
+                        self._turn_assistant_message_id = chat_message.message_id
 
         # Publish to ROS so UIs/loggers see it immediately.
         self._publish_chat_message(
@@ -1460,7 +1514,11 @@ class ChatNode(Node):
         chat_id: str = request.chat_id
         content: str = request.text
         generate_code: bool = request.generate_code
+        turn_id = getattr(request, "turn_id", "") or ""
         self._turn_chat_id = chat_id
+        self._turn_trace_turn_id = turn_id
+        if turn_id:
+            self._emit_turn_state(turn_id, STATE_RUNNING, chat_id)
 
         self.get_logger().info(
             f"[PERF_TRACE] ROS_SERVICE_RECV chat={chat_id} elapsed_ms=0.00"
@@ -1540,7 +1598,7 @@ class ChatNode(Node):
             # speaking: the assistant plays it with this personality's gender
             # and language on local Supertone. The goal succeeds.
             if goal_handle.is_cancel_requested:
-                goal_handle.canceled()
+                self._finish_cancelled_turn(chat_id, goal_handle)
                 return Chat.Result()
             sentence = refusal_sentence(channel)
             self.create_chat_message(chat_id, sentence, False, False, True)
@@ -1564,7 +1622,7 @@ class ChatNode(Node):
                 # Smart stays on Hermes even for the on-device model: the model
                 # decides what Hermes runs, never the transport.
                 if goal_handle.is_cancel_requested:
-                    goal_handle.canceled()
+                    self._finish_cancelled_turn(chat_id, goal_handle)
                     return Chat.Result()
                 tokens = self._stream_hermes_turn(
                     text=plan.for_hermes(content),
@@ -1581,7 +1639,7 @@ class ChatNode(Node):
             elif pib_cloud_model:
                 turn_path = "pib.Cloud"
                 if goal_handle.is_cancel_requested:
-                    goal_handle.canceled()
+                    self._finish_cancelled_turn(chat_id, goal_handle)
                     return Chat.Result()
                 self.get_logger().info(
                     f"pib.Cloud streaming chat={chat_id} model={PIB_CLOUD_API_NAME}"
@@ -1709,9 +1767,12 @@ class ChatNode(Node):
                     )
                 except Exception:
                     pass
-            self._finalize_message_meta(chat_id)
             if goal_handle.is_cancel_requested:
+                self._finish_cancelled_turn(chat_id, goal_handle)
                 return Chat.Result()
+            self._finalize_message_meta(chat_id)
+            if turn_id:
+                self._emit_turn_state(turn_id, STATE_COMPLETED, chat_id)
 
         except Exception as e:
             # Name the path the turn actually took: a pib.Cloud turn with tools
