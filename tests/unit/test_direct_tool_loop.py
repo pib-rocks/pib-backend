@@ -41,6 +41,12 @@ from voice_assistant.direct_tool_loop import (  # noqa: E402
 )
 
 
+@pytest.fixture(autouse=True)
+def _direct_http_keepalive_off(monkeypatch):
+    monkeypatch.setenv("DIRECT_HTTP_KEEPALIVE", "0")
+    direct_tool_loop.reset_gemini_http_transport()
+
+
 def _gemini_json_payload(parts):
     return {"candidates": [{"content": {"parts": parts}}]}
 

@@ -2275,6 +2275,9 @@ def test_direct_turn_logs_the_store_key_source_and_does_not_print_the_secret(
 
     if hasattr(chat_module.direct_tool_loop, "_fetch_store_key"):
         monkeypatch.setattr(chat_module.direct_tool_loop, "_fetch_store_key", fetch)
+    # PR-2075 added a keep-alive transport; this test exercises the urlopen
+    # fallback, which must keep the same header and logging behaviour.
+    monkeypatch.setenv("DIRECT_HTTP_KEEPALIVE", "0")
     monkeypatch.setattr(chat_module.direct_tool_loop, "urlopen", fake_urlopen)
     monkeypatch.setattr(
         chat_module.direct_tool_loop, "mcp_tool_declarations", lambda: []

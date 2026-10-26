@@ -409,7 +409,9 @@ def test_status_reports_encryption_on_before_any_key(app):
         "encryptKeyStorage": True,
         "credentialRefs": [],
         "mode": "degraded",
+        "keyEpoch": body["keyEpoch"],
     }
+    assert isinstance(body["keyEpoch"], int)
 
 
 def _settings_file(key_store_path):
@@ -768,7 +770,7 @@ def test_status_reports_the_encryption_setting(app, key_store_path):
     assert body["encryptKeyStorage"] is False
     assert body["mode"] == "unlocked"
     assert body["credentialRefs"] == []
-    assert set(body) == {"encryptKeyStorage", "credentialRefs", "mode"}
+    assert set(body) == {"encryptKeyStorage", "credentialRefs", "mode", "keyEpoch"}
     assert SECRET not in client.get("/system/key-store").get_data(as_text=True)
 
 

@@ -13,13 +13,16 @@ calls, and the id it replaced is not in the catalogue. The endpoint is
 
 from __future__ import annotations
 
+import http.client
 import json
 import logging
 import os
 import socket
 import time
+from threading import Lock
 from typing import Any, Callable, Iterator, Mapping, Optional, Sequence
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 from pib_hermes_config.retired_direct_text import DIRECT_TEXT_MODEL_API_NAME
@@ -294,6 +297,8 @@ def run_direct_turn(
     max_rounds: int = MAX_TOOL_ROUNDS,
     api_key: Optional[str] = None,
     report_key_source: Optional[Callable[[str], None]] = None,
+    session: Optional[Any] = None,
+    session_identity: Optional[str] = None,
 ) -> Iterator[str]:
     """Yield the model's final answer. Tool results are not spoken.
 
@@ -305,6 +310,11 @@ def run_direct_turn(
     because the record of a tool call travels to the chat and carries no values:
     only a dedicated image channel can carry one without carrying arguments too.
     """
+    if session is not None:
+        stable_prompt = getattr(session, "stable_system_prompt", None)
+        if callable(stable_prompt):
+            system_prompt = stable_prompt(system_prompt, session_identity)
+
     if not tool_calling:
         allow_image = False
         declarations = []
@@ -321,7 +331,14 @@ def run_direct_turn(
         caller = complete
     else:
         if api_key is None:
-            api_key, source = resolve_provider_key(PINNED_PROVIDER)
+            if session is not None:
+                resolve = getattr(session, "resolve_api_key", None)
+                if callable(resolve):
+                    api_key, source = resolve(PINNED_PROVIDER)
+                else:
+                    api_key, source = resolve_provider_key(PINNED_PROVIDER)
+            else:
+                api_key, source = resolve_provider_key(PINNED_PROVIDER)
             if report_key_source is not None:
                 report_key_source(source)
 
@@ -853,22 +870,83 @@ def _raise_http_error(exc: HTTPError) -> None:
     ) from exc
 
 
-def _post_json(url: str, headers: Mapping[str, str], body: Mapping[str, Any]) -> dict:
-    assert_stable_url(url)
+_gemini_transport_lock = Lock()
+_gemini_keepalive_transport: Optional["_GeminiKeepAliveTransport"] = None
+_gemini_connections_opened = 0
 
-    def operation() -> dict:
-        request = Request(
-            url,
-            data=json.dumps(body).encode("utf-8"),
-            headers=dict(headers),
-            method="POST",
-        )
+
+def reset_gemini_http_transport() -> None:
+    """Drop the shared Gemini HTTP connection (tests and key rotation)."""
+    global _gemini_keepalive_transport, _gemini_connections_opened
+    with _gemini_transport_lock:
+        if _gemini_keepalive_transport is not None:
+            _gemini_keepalive_transport.close()
+            _gemini_keepalive_transport = None
+        _gemini_connections_opened = 0
+
+
+def gemini_http_connections_opened() -> int:
+    """How many TLS connections the keep-alive transport has opened."""
+    with _gemini_transport_lock:
+        return _gemini_connections_opened
+
+
+def _keepalive_enabled() -> bool:
+    return os.environ.get("DIRECT_HTTP_KEEPALIVE", "1") != "0"
+
+
+class _GeminiKeepAliveTransport:
+    """One HTTPS connection to generativelanguage.googleapis.com per process."""
+
+    def __init__(self) -> None:
+        self._host: Optional[str] = None
+        self._conn: Optional[http.client.HTTPSConnection] = None
+
+    def close(self) -> None:
+        if self._conn is not None:
+            try:
+                self._conn.close()
+            except Exception:  # noqa: BLE001 - best-effort close
+                pass
+        self._conn = None
+        self._host = None
+
+    def _ensure_connection(self, host: str) -> http.client.HTTPSConnection:
+        global _gemini_connections_opened
+        if self._conn is None or self._host != host:
+            self.close()
+            self._host = host
+            self._conn = http.client.HTTPSConnection(
+                host, timeout=DIRECT_REQUEST_TIMEOUT_SEC
+            )
+            _gemini_connections_opened += 1
+        return self._conn
+
+    def post_json(
+        self, url: str, headers: Mapping[str, str], body: Mapping[str, Any]
+    ) -> dict:
+        parsed = urlparse(url)
+        payload = json.dumps(body).encode("utf-8")
+        request_headers = dict(headers)
+        request_headers.setdefault("Connection", "keep-alive")
+        conn = self._ensure_connection(parsed.netloc)
         try:
-            with urlopen(request, timeout=DIRECT_REQUEST_TIMEOUT_SEC) as response:
-                raw = response.read().decode("utf-8")
-        except HTTPError as exc:
-            _raise_http_error(exc)
+            conn.request(
+                "POST",
+                parsed.path + (f"?{parsed.query}" if parsed.query else ""),
+                body=payload,
+                headers=request_headers,
+            )
+            response = conn.getresponse()
+            raw = response.read().decode("utf-8")
+            if response.status >= 400:
+                raise DirectToolLoopError(
+                    f"model request failed: HTTP {response.status} {response.reason}"
+                )
+        except DirectToolLoopError:
+            raise
         except Exception as exc:
+            self.close()
             retry_reason = _transport_retry_reason(exc)
             if retry_reason is not None:
                 raise
@@ -886,6 +964,129 @@ def _post_json(url: str, headers: Mapping[str, str], body: Mapping[str, Any]) ->
             raise DirectToolLoopError("model returned an unexpected payload")
         return loaded
 
+    def post_sse(
+        self,
+        url: str,
+        headers: Mapping[str, str],
+        body: Mapping[str, Any],
+        on_delta: Optional[Callable[[str], None]] = None,
+    ) -> dict[str, Any]:
+        parsed = urlparse(url)
+        payload = json.dumps(body).encode("utf-8")
+        request_headers = dict(headers)
+        request_headers.setdefault("Connection", "keep-alive")
+        conn = self._ensure_connection(parsed.netloc)
+        try:
+            conn.request(
+                "POST",
+                parsed.path + (f"?{parsed.query}" if parsed.query else ""),
+                body=payload,
+                headers=request_headers,
+            )
+            response = conn.getresponse()
+            if response.status >= 400:
+                body_preview = response.read(300).decode("utf-8", errors="replace")
+                logger.error(
+                    "model request failed: HTTP %s %s body=%s",
+                    response.status,
+                    response.reason,
+                    body_preview,
+                )
+                raise DirectToolLoopError(
+                    f"model request failed: HTTP {response.status} {response.reason}"
+                )
+            return _read_sse_response(response, on_delta=on_delta)
+        except HTTPError as exc:
+            _raise_http_error(exc)
+        except DirectToolLoopError:
+            raise
+        except Exception as exc:
+            self.close()
+            retry_reason = _transport_retry_reason(exc)
+            if retry_reason is not None:
+                raise
+            logger.error(
+                "model request failed: %s: %s", type(exc).__name__, str(exc)[:300]
+            )
+            raise DirectToolLoopError(
+                f"model request failed: {type(exc).__name__}: {str(exc)[:200]}"
+            ) from exc
+
+
+def _get_gemini_keepalive_transport() -> _GeminiKeepAliveTransport:
+    global _gemini_keepalive_transport
+    with _gemini_transport_lock:
+        if _gemini_keepalive_transport is None:
+            _gemini_keepalive_transport = _GeminiKeepAliveTransport()
+        return _gemini_keepalive_transport
+
+
+def _post_json_urlopen(
+    url: str, headers: Mapping[str, str], body: Mapping[str, Any]
+) -> dict:
+    request = Request(
+        url,
+        data=json.dumps(body).encode("utf-8"),
+        headers=dict(headers),
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=DIRECT_REQUEST_TIMEOUT_SEC) as response:
+            raw = response.read().decode("utf-8")
+    except HTTPError as exc:
+        _raise_http_error(exc)
+    except Exception as exc:
+        retry_reason = _transport_retry_reason(exc)
+        if retry_reason is not None:
+            raise
+        logger.error("model request failed: %s: %s", type(exc).__name__, str(exc)[:300])
+        raise DirectToolLoopError(
+            f"model request failed: {type(exc).__name__}: {str(exc)[:200]}"
+        ) from exc
+    try:
+        loaded = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise DirectToolLoopError("model returned invalid JSON") from exc
+    if not isinstance(loaded, dict):
+        raise DirectToolLoopError("model returned an unexpected payload")
+    return loaded
+
+
+def _post_sse_urlopen(
+    url: str,
+    headers: Mapping[str, str],
+    body: Mapping[str, Any],
+    on_delta: Optional[Callable[[str], None]] = None,
+) -> dict[str, Any]:
+    request = Request(
+        url,
+        data=json.dumps(body).encode("utf-8"),
+        headers=dict(headers),
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=DIRECT_REQUEST_TIMEOUT_SEC) as response:
+            return _read_sse_response(response, on_delta=on_delta)
+    except HTTPError as exc:
+        _raise_http_error(exc)
+    except Exception as exc:
+        retry_reason = _transport_retry_reason(exc)
+        if retry_reason is not None:
+            raise
+        logger.error("model request failed: %s: %s", type(exc).__name__, str(exc)[:300])
+        raise DirectToolLoopError(
+            f"model request failed: {type(exc).__name__}: {str(exc)[:200]}"
+        ) from exc
+
+
+def _post_json(url: str, headers: Mapping[str, str], body: Mapping[str, Any]) -> dict:
+    assert_stable_url(url)
+
+    def operation() -> dict:
+        if _keepalive_enabled():
+            return _get_gemini_keepalive_transport().post_json(url, headers, body)
+        return _post_json_urlopen(url, headers, body)
+
     return _with_transport_retry(operation)
 
 
@@ -898,27 +1099,11 @@ def _post_sse(
     assert_stable_url(url)
 
     def operation() -> dict[str, Any]:
-        request = Request(
-            url,
-            data=json.dumps(body).encode("utf-8"),
-            headers=dict(headers),
-            method="POST",
-        )
-        try:
-            with urlopen(request, timeout=DIRECT_REQUEST_TIMEOUT_SEC) as response:
-                return _read_sse_response(response, on_delta=on_delta)
-        except HTTPError as exc:
-            _raise_http_error(exc)
-        except Exception as exc:
-            retry_reason = _transport_retry_reason(exc)
-            if retry_reason is not None:
-                raise
-            logger.error(
-                "model request failed: %s: %s", type(exc).__name__, str(exc)[:300]
+        if _keepalive_enabled():
+            return _get_gemini_keepalive_transport().post_sse(
+                url, headers, body, on_delta=on_delta
             )
-            raise DirectToolLoopError(
-                f"model request failed: {type(exc).__name__}: {str(exc)[:200]}"
-            ) from exc
+        return _post_sse_urlopen(url, headers, body, on_delta=on_delta)
 
     return _with_transport_retry(operation)
 
