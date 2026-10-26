@@ -2319,3 +2319,46 @@ def test_warm_turn_skips_profile_writer_when_config_version_is_current(
         hd.run_turn_in_process("again", "chat-warm", personality_id="warm")
 
     assert ensure_calls["count"] == 0
+
+
+def _reset_prewarm_state():
+    hd._prewarm_completed = False
+
+
+def test_prewarm_skipped_when_smart_chats_disabled(monkeypatch, caplog):
+    _reset_prewarm_state()
+    monkeypatch.setenv("PIB_SMART_CHATS", "0")
+    warmed = MagicMock()
+    monkeypatch.setattr(hd, "_construct_warm_agent_for_personality", warmed)
+
+    assert hd.prewarm_default_agent_at_start() is True
+    assert hd.prewarm_default_agent_at_start() is False
+    warmed.assert_not_called()
+    assert any("smart chats disabled" in rec.getMessage() for rec in caplog.records)
+
+
+def test_prewarm_warms_explicit_personality_once(monkeypatch):
+    _reset_prewarm_state()
+    monkeypatch.delenv("PIB_SMART_CHATS", raising=False)
+    monkeypatch.setenv(hd.PREWARM_PERSONALITY_ENV, "pers-warm")
+    construct = MagicMock()
+    monkeypatch.setattr(hd, "_construct_warm_agent_for_personality", construct)
+
+    assert hd.prewarm_default_agent_at_start() is True
+    assert hd.prewarm_default_agent_at_start() is False
+    construct.assert_called_once_with("pers-warm")
+
+
+def test_prewarm_skips_direct_only_personality_list(monkeypatch, caplog):
+    _reset_prewarm_state()
+    monkeypatch.delenv("PIB_SMART_CHATS", raising=False)
+    monkeypatch.delenv(hd.PREWARM_PERSONALITY_ENV, raising=False)
+    construct = MagicMock()
+    monkeypatch.setattr(hd, "_construct_warm_agent_for_personality", construct)
+
+    def personalities():
+        return [{"personalityId": "p1", "channel": "direct"}]
+
+    hd.prewarm_default_agent_at_start(fetch_personalities=personalities)
+    construct.assert_not_called()
+    assert any("no smart personality" in rec.getMessage() for rec in caplog.records)

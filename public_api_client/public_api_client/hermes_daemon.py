@@ -1773,6 +1773,156 @@ class HermesDaemonHandler(BaseHTTPRequestHandler):
             self._send_json(200, payload)
 
 
+PREWARM_PERSONALITY_ENV = "PIB_HERMES_PREWARM_PERSONALITY_ID"
+PREWARM_CHAT_ID = "__daemon_prewarm__"
+
+_prewarm_lock = threading.Lock()
+_prewarm_completed = False
+
+
+def _fetch_personalities_from_api() -> list[dict]:
+    """Read personalities from the flask API (best-effort)."""
+    base = os.environ.get("FLASK_API_BASE_URL", "http://flask-app:5000").rstrip("/")
+    req = Request(f"{base}/voice-assistant/personality", method="GET")
+    with urlopen(req, timeout=5) as resp:
+        payload = json.loads(resp.read().decode())
+    items = payload.get("voiceAssistantPersonalities")
+    return items if isinstance(items, list) else []
+
+
+def resolve_prewarm_personality_id(
+    *,
+    fetch_personalities: Optional[Callable[[], list[dict]]] = None,
+) -> Optional[str]:
+    """Personality whose agent is constructed at daemon start."""
+    explicit = os.environ.get(PREWARM_PERSONALITY_ENV, "").strip()
+    if explicit:
+        return explicit
+    loader = fetch_personalities or _fetch_personalities_from_api
+    try:
+        personalities = loader()
+    except (URLError, OSError, TimeoutError, ValueError, json.JSONDecodeError) as exc:
+        logging.info("hermes pre-warm: could not list personalities (%s)", exc)
+        return None
+    for row in personalities:
+        if not isinstance(row, dict):
+            continue
+        personality_id = row.get("personalityId") or row.get("personality_id")
+        channel = row.get("effectiveChannel") or row.get("channel") or "smart"
+        if channel == "direct":
+            continue
+        if personality_id:
+            return str(personality_id)
+    return None
+
+
+def _construct_warm_agent_for_personality(personality_id: str) -> None:
+    """Build the cached in-process agent without running a user turn."""
+    from pib_hermes_config import profile_dir_for
+    from public_api_client.hermes_agent_client import (
+        DEFAULT_DISABLED_TOOLSETS,
+        DEFAULT_ENABLED_TOOLSETS,
+        DEFAULT_MAX_TURNS,
+        ensure_profile,
+        provider_key_for_turn,
+    )
+
+    profile_dir = profile_dir_for(personality_id)
+    with hermes_home_scope(profile_dir):
+        ensure_profile(personality_id)
+        try:
+            provider_key = provider_key_for_turn()
+        except Exception as exc:
+            if _missing_provider_key(exc):
+                logging.warning("hermes pre-warm skipped: %s", exc)
+                return
+            raise
+        _repair_stale_profile_config_if_needed()
+
+        if not in_process_available():
+            logging.info(
+                "hermes pre-warm skipped: in-process agent unavailable "
+                "(personality=%s)",
+                personality_id,
+            )
+            return
+
+        ensure_hermes_source_on_path()
+        agent_module = None
+        for module_name in ("run_agent", "hermes.run_agent"):
+            try:
+                agent_module = importlib.import_module(module_name)
+                break
+            except ImportError:
+                continue
+        agent_cls = getattr(agent_module, "AIAgent", None) if agent_module else None
+        if agent_cls is None:
+            logging.info(
+                "hermes pre-warm skipped: AIAgent import unavailable (personality=%s)",
+                personality_id,
+            )
+            return
+
+        if "pib" in (_toolset_list(DEFAULT_ENABLED_TOOLSETS) or []):
+            _ensure_mcp_tools_discovered()
+        _agent_for_chat(
+            PREWARM_CHAT_ID,
+            DEFAULT_ENABLED_TOOLSETS,
+            DEFAULT_DISABLED_TOOLSETS,
+            DEFAULT_MAX_TURNS,
+            agent_cls,
+            provider_key or "",
+        )
+
+
+def prewarm_default_agent_at_start(
+    *,
+    fetch_personalities: Optional[Callable[[], list[dict]]] = None,
+) -> bool:
+    """Construct the default personality's agent once when smart chats are enabled.
+
+    Returns True when a pre-warm attempt ran (even if it no-opped internally).
+    """
+    global _prewarm_completed
+
+    from pib_hermes_config.channel import smart_chats_enabled
+
+    with _prewarm_lock:
+        if _prewarm_completed:
+            return False
+        _prewarm_completed = True
+
+    if not smart_chats_enabled():
+        logging.info("hermes pre-warm skipped: smart chats disabled")
+        return True
+
+    personality_id = resolve_prewarm_personality_id(
+        fetch_personalities=fetch_personalities
+    )
+    if not personality_id:
+        logging.info("hermes pre-warm skipped: no smart personality to warm")
+        return True
+
+    started = time.monotonic()
+    try:
+        _construct_warm_agent_for_personality(personality_id)
+    except Exception as exc:
+        logging.warning(
+            "hermes pre-warm failed for personality=%s: %s",
+            personality_id,
+            exc,
+            exc_info=True,
+        )
+        return True
+
+    logging.info(
+        "[PERF_TRACE] HERMES_PREWARM_DONE personality=%s elapsed_ms=%.2f",
+        personality_id,
+        (time.monotonic() - started) * 1000.0,
+    )
+    return True
+
+
 def create_server(
     host: Optional[str] = None,
     port: Optional[int] = None,
@@ -1799,6 +1949,7 @@ def serve_forever(
         server.server_address[0],
         server.server_address[1],
     )
+    prewarm_default_agent_at_start()
     try:
         server.serve_forever()
     finally:
@@ -1851,6 +2002,11 @@ def start_daemon(
             server.server_address[0],
             server.server_address[1],
         )
+        threading.Thread(
+            target=prewarm_default_agent_at_start,
+            name="hermes-prewarm",
+            daemon=True,
+        ).start()
         return server
 
 
