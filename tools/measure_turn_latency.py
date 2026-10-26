@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -40,6 +41,9 @@ DEFAULT_LOG = "/data/voice/turn-latency/turns.jsonl"
 
 
 def _utterance(index: int) -> str:
+    override = os.environ.get("MEASURE_TURN_LATENCY_UTTERANCE")
+    if isinstance(override, str) and override.strip():
+        return override.strip()
     return FIXED_UTTERANCES[index % len(FIXED_UTTERANCES)]
 
 

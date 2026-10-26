@@ -13,7 +13,35 @@ from typing import Optional
 from urllib.parse import quote
 from urllib.request import urlopen
 
+_STATUS_PATH = "/system/key-store"
 _CREDENTIAL_PATH = "/system/key-store/credential/"
+
+
+def read_key_store_epoch(
+    opener=None,
+    base_url: Optional[str] = None,
+    timeout: float = 2.0,
+) -> int:
+    """Generation counter from the key store. Unreadable stores yield 0."""
+    if opener is None:
+        opener = urlopen
+    base = (
+        base_url
+        if base_url is not None
+        else os.environ.get("FLASK_API_BASE_URL", "http://127.0.0.1:5000")
+    ).rstrip("/")
+    try:
+        with opener(base + _STATUS_PATH, timeout=timeout) as response:
+            payload = response.read().decode("utf-8")
+        body = json.loads(payload)
+    except Exception:
+        return 0
+    if not isinstance(body, dict):
+        return 0
+    epoch = body.get("keyEpoch")
+    if isinstance(epoch, int) and epoch >= 0:
+        return epoch
+    return 0
 
 
 def read_provider_key(

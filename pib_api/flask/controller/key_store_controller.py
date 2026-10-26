@@ -78,6 +78,7 @@ def get_key_store():
             "encryptKeyStorage": state["encrypt_key_storage"],
             "credentialRefs": state["credential_refs"],
             "mode": key_store_service.operating_mode(),
+            "keyEpoch": key_store_service.key_epoch(),
         }
     )
 

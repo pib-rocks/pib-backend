@@ -57,6 +57,7 @@ from provider_registry import (
 )
 from public_api_client import hermes_agent_client, public_voice_client
 from voice_assistant import direct_tool_loop, pib_cloud_stream, robot_context
+from voice_assistant.direct_session import DirectSession
 from voice_assistant.degraded_chat import (
     MODE_UNLOCKED,
     fetch_operating_mode,
@@ -558,6 +559,19 @@ class ChatNode(Node):
     def _key_store_mode(self) -> str:
         """Operating mode of the key store. Unreadable means degraded."""
         return fetch_operating_mode()
+
+    def _direct_session(self, personality: Any) -> DirectSession:
+        """Cached Direct transport state for one personality."""
+        personality_id = str(getattr(personality, "personality_id", None) or "")
+        sessions = getattr(self, "_direct_sessions", None)
+        if sessions is None:
+            sessions = {}
+            self._direct_sessions = sessions
+        session = sessions.get(personality_id)
+        if session is None:
+            session = DirectSession(personality_id)
+            sessions[personality_id] = session
+        return session
 
     def _finish_retired_direct_text(self, goal_handle, chat_id: str, api_name):
         """Succeed the turn with the retired-path sentence. No network call.
@@ -1662,6 +1676,7 @@ class ChatNode(Node):
                     on_tool_start=self._record_tool_started,
                     on_tool_image=self._record_tool_image,
                     on_tool_round=count_direct_tool_round,
+                    session=self._direct_session(personality),
                 )
 
             # Which runtime serves this turn, before the first token is asked
