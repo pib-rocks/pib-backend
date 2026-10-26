@@ -94,12 +94,96 @@ ROBOT_CONTEXT_INSTRUCTION = (
     "state where the model gives one, and ask instead of guessing an unlabelled end."
 )
 
+#: Compact motion-model text appended to every personality system prompt (Smart and Direct).
+ROBOT_CONTEXT_MAX_CHARS = 2000
+
+#: Prepended when a turn should emit Blockly/Python (see voice_assistant.chat).
+CODE_GENERATION_DESCRIPTION_PREFIX = ""
+
+
+def _normalize_robot_context(robot_context: str | None) -> str:
+    if not isinstance(robot_context, str) or not robot_context.strip():
+        return ""
+    body = robot_context.strip()
+    if len(body) > ROBOT_CONTEXT_MAX_CHARS:
+        body = body[:ROBOT_CONTEXT_MAX_CHARS].rstrip()
+    return body
+
+
+def _resolve_soul_text(
+    *,
+    soul_text: str | None = None,
+    personality_name: str | None = None,
+    custom_description: str | None = None,
+) -> str:
+    if isinstance(soul_text, str) and soul_text.strip():
+        return soul_text.strip()
+    if personality_name is not None or custom_description is not None:
+        from pib_hermes_config import _soul_identity_text
+
+        return _soul_identity_text(
+            personality_name or "pib", custom_description
+        ).rstrip("\n")
+    from pib_hermes_config import DEFAULT_SOUL
+
+    return DEFAULT_SOUL
+
+
+def _assemble_system_prompt(
+    identity: str,
+    *,
+    robot_context: str | None = None,
+    code_generation: bool = False,
+    images_shown: bool = False,
+    trailing_newline: bool = False,
+) -> str:
+    parts = [identity]
+    if images_shown:
+        parts.append(CAPTURED_IMAGE_SENTENCE)
+    body = _normalize_robot_context(robot_context)
+    if body:
+        parts.extend([ROBOT_CONTEXT_INSTRUCTION, body])
+    prompt = "\n\n".join(parts)
+    if code_generation and CODE_GENERATION_DESCRIPTION_PREFIX:
+        prompt = CODE_GENERATION_DESCRIPTION_PREFIX + prompt
+    if trailing_newline and not prompt.endswith("\n"):
+        prompt += "\n"
+    return prompt
+
+
+def personality_system_prompt(
+    *,
+    soul_text: str | None = None,
+    personality_name: str | None = None,
+    custom_description: str | None = None,
+    robot_context: str | None = None,
+    code_generation: bool = False,
+    trailing_newline: bool = False,
+) -> str:
+    """Render the complete system prompt for one personality.
+
+    Smart stores the result in ``SOUL.md``; Direct uses the same text and may add
+    transport-only sentences (captured images) via ``direct_system_prompt``.
+    """
+    identity = _resolve_soul_text(
+        soul_text=soul_text,
+        personality_name=personality_name,
+        custom_description=custom_description,
+    )
+    return _assemble_system_prompt(
+        identity,
+        robot_context=robot_context,
+        code_generation=code_generation,
+        trailing_newline=trailing_newline,
+    )
+
 
 def direct_system_prompt(
     soul_text: str | None,
     *,
     images_shown: bool = False,
     robot_context: str | None = None,
+    code_generation: bool = False,
 ) -> str:
     """The personality's one identity text, used as the Direct system prompt.
 
@@ -110,14 +194,10 @@ def direct_system_prompt(
 
     ``robot_context`` appends the robot body description from the motion model API.
     """
-    if isinstance(soul_text, str) and soul_text.strip():
-        prompt = soul_text.strip()
-    else:
-        from pib_hermes_config import DEFAULT_SOUL
-
-        prompt = DEFAULT_SOUL
-    if images_shown:
-        prompt = f"{prompt}\n\n{CAPTURED_IMAGE_SENTENCE}"
-    if isinstance(robot_context, str) and robot_context.strip():
-        prompt = f"{prompt}\n\n{ROBOT_CONTEXT_INSTRUCTION}\n\n{robot_context.strip()}"
-    return prompt
+    identity = _resolve_soul_text(soul_text=soul_text)
+    return _assemble_system_prompt(
+        identity,
+        robot_context=robot_context,
+        code_generation=code_generation,
+        images_shown=images_shown,
+    )

@@ -40,6 +40,23 @@ from pib_hermes_config import (
     soul_path_for,
 )
 
+
+def motion_model_prompt_for_profile() -> str:
+    """Compact motion-model text for profile prompts, or '' when unavailable."""
+    try:
+        from pib_api_client import motion_model_client
+
+        successful, payload = motion_model_client.get_motion_model()
+    except Exception:
+        return ""
+    if not successful or not isinstance(payload, dict):
+        return ""
+    prompt = payload.get("prompt")
+    if not isinstance(prompt, str) or not prompt.strip():
+        return ""
+    return prompt.strip()
+
+
 DEFAULT_HERMES_BIN = "/home/pib/.local/bin/hermes"
 DEFAULT_HERMES_HOME = "/home/pib/.hermes"
 SESSION_PREFIX = "pib_chat_"

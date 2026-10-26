@@ -538,11 +538,13 @@ def ensure_profile_home(
     """
     from pib_hermes_config import (
         align_profile_ownership,
-        build_default_soul_text,
         profile_dir_for,
         profile_name_for,
         provider_for_profile,
+        strip_mcp_tools_soul_section,
     )
+    from pib_hermes_config.channel import personality_system_prompt
+    from public_api_client.hermes_agent_client import motion_model_prompt_for_profile
     from public_api_client.hermes_agent_client import _ensure_mcp_servers_pib
 
     if not isinstance(personality_id, str) or not personality_id:
@@ -648,9 +650,29 @@ def ensure_profile_home(
                 shutil.rmtree(backup)
             created = True
 
-    soul = build_default_soul_text(
-        personality_name or "pib", custom_description=soul_text or None
-    )
+    robot_context = motion_model_prompt_for_profile()
+    custom = strip_mcp_tools_soul_section(soul_text or "").strip()
+    if custom.startswith("Du bist der humanoide Roboter") or custom.startswith(
+        "Du bist pib,"
+    ):
+        soul = personality_system_prompt(
+            soul_text=custom,
+            robot_context=robot_context,
+            trailing_newline=True,
+        )
+    elif custom:
+        soul = personality_system_prompt(
+            personality_name=personality_name or "pib",
+            custom_description=custom,
+            robot_context=robot_context,
+            trailing_newline=True,
+        )
+    else:
+        soul = personality_system_prompt(
+            personality_name=personality_name or "pib",
+            robot_context=robot_context,
+            trailing_newline=True,
+        )
     soul_path = os.path.join(profile_dir, "SOUL.md")
     with open(soul_path, "w", encoding="utf-8") as fh:
         fh.write(soul)
