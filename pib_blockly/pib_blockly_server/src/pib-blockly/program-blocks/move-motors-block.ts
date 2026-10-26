@@ -20,7 +20,12 @@ function updateMoveMotorsShape(block: MoveMotorsBlock) {
             .appendDummyInput(`ROW_${i}`)
             .appendField(i === 0 ? "move motors" : "and motor")
             .appendField(
-                new Blockly.FieldDropdown(MOTOR_NAME_DROPDOWN_OPTIONS),
+                // FieldDropdown is Field<string>, but Block.appendField takes Field<any>;
+                // the generic is invariant, so the cast is required (cerebra's Angular build
+                // rejects the bare instance with TS2345).
+                new Blockly.FieldDropdown(
+                    MOTOR_NAME_DROPDOWN_OPTIONS,
+                ) as unknown as Blockly.Field,
                 `MOTOR_${i}`,
             )
             .appendField("to position in degrees");
