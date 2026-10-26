@@ -1814,7 +1814,7 @@ show_help()
 	echo -e "--models fetch the OAK release asset into \$HOME/app/.cache/pib-models when the cache does not match models/manifest.yaml (override with PIB_MODEL_CACHE, PIB_MODEL_ASSET_URL, PIB_MODEL_ASSET_TAG, PIB_MODEL_ASSET_NAME, PIB_MODEL_ASSET_SHA256), refresh the persistent OAK model store from that cache, place the whisper weights (fetched once if voice/whisper/ is empty; PIB_WHISPER_DOWNLOAD=0 forbids that) and exit"
 	echo -e "--verify-models check the model store against models/manifest.yaml offline and exit non-zero on mismatch"
 	echo -e "--repair-display restore the full KMS display driver in /boot/firmware/config.txt on an installed pib (backup next to the file, reboot afterwards) and exit"
-	echo -e "--no-smart-chats install without the Hermes channel; Direct is the only chat path"
+	echo -e "--direct-llm install without Hermes (no CLI, daemon, or profiles); Direct LLM only"
 	echo -e "--pib4edu select the pib 4 educational hardware variant"
 	echo -e "--pib4advanced select the pib 4 advanced hardware variant"
 	echo -e "--pib5advanced select the pib 5 advanced hardware variant"
@@ -1868,7 +1868,7 @@ while [ $# -gt 0 ]; do
     --repair-display)
       REPAIR_DISPLAY_ONLY=true
       ;;
-    --no-smart-chats)
+    --direct-llm)
       SMART_CHATS_ENABLED=0
       ;;
     --pib4edu | --pib4advanced | --pib5advanced | --pib5museum | --pib*)
@@ -1949,7 +1949,7 @@ printf '%s\n' "$PIB_HARDWARE_VARIANT" |
   sudo tee /etc/pib_hardware_variant >/dev/null
 print INFO "Selected hardware variant: ${PIB_HARDWARE_VARIANT}"
 
-# Durable record of --no-smart-chats. Personality rows are not rewritten:
+# Durable record of --direct-llm. Personality rows are not rewritten:
 # clearing the marker restores Smart for personalities that stored it.
 if [ -f "$SETUP_SCRIPT_DIR/installation_scripts/smart_chats.sh" ]; then
   # shellcheck source=/dev/null
@@ -1966,7 +1966,11 @@ if [ "$SMART_CHATS_ENABLED" = "0" ]; then
 else
   export PIB_SMART_CHATS=1
 fi
-print INFO "Hermes channel: ${SMART_CHATS_MARKER}"
+if [ "$SMART_CHATS_ENABLED" = "0" ]; then
+  print INFO "Direct LLM install (Hermes skipped): ${SMART_CHATS_MARKER}"
+else
+  print INFO "Hermes channel: ${SMART_CHATS_MARKER}"
+fi
 
 DISTRIBUTION=$(get_distribution) # e.g., 'ubuntu'
 export DISTRIBUTION
@@ -2003,7 +2007,10 @@ run_step "Install pib Python packages" install_pib_python_packages || print ERRO
 run_step "Put ~/.local/bin on PATH" install_local_bin_path || print ERROR "failed to put ~/.local/bin on PATH"
 # Before docker-compose starts: hermes must exist on the host so the
 # ros-voice-assistant / flask-app bind mounts resolve to real paths.
-run_step "Install Hermes CLI" install_hermes_cli || print ERROR "failed to install Hermes CLI"
+# --direct-llm skips the CLI, the hermes-daemon container, and profile dirs.
+if [ "${PIB_SMART_CHATS:-1}" != "0" ]; then
+  run_step "Install Hermes CLI" install_hermes_cli || print ERROR "failed to install Hermes CLI"
+fi
 # The legacy ~/imitation host script is retired. ros_packages/imitation consumes
 # the camera owner's typed topic and must never run beside another OAK device owner.
 run_step "Install Luxonis udev rules" install_depthai_udev_rules || print WARN "failed to install Luxonis udev rules"

@@ -1,7 +1,7 @@
 """Per-personality chat channel: Smart (Hermes) or Direct.
 
 The channel is independent of the provider. Smart is the default. When the
-installer recorded ``--no-smart-chats``, Smart is absent: every turn is Direct
+installer recorded ``--direct-llm``, Smart is absent: every turn is Direct
 and the stored channel is left untouched, so removing the marker restores it.
 
 ``PIB_SMART_CHATS`` overrides the marker file. An empty value means "read the

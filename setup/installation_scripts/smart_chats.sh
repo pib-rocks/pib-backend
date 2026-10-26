@@ -1,5 +1,5 @@
 #!/bin/bash
-# Marker body for the installer flag --no-smart-chats.
+# Marker body for the installer flag --direct-llm (and the legacy disabled state).
 # $1 is 0 when Hermes chats are disabled, anything else leaves Smart available.
 # The runtime reads this text from /etc/pib_smart_chats.
 

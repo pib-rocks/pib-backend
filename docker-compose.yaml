@@ -41,6 +41,8 @@ services:
           create_host_path: false
     networks:
       - pib-network
+    profiles:
+      - hermes
     security_opt:
       - no-new-privileges:true
 
