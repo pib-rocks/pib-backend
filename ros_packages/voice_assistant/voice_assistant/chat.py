@@ -405,6 +405,44 @@ class ChatNode(Node):
         self._turn_chat_id = ""
         self._turn_assistant_message_id = ""
         self._turn_trace_turn_id = ""
+        self._turn_trace_cancelled = False
+        self._turn_direct_tool_rounds = None
+
+    def _ensure_turn_trace_anchor(self, t0: float) -> None:
+        """Typed turns anchor at service recv when capture never sent end_of_speech."""
+        if getattr(self, "_turn_started_ms", None) is None:
+            self._turn_started_ms = float(t0) * 1000.0
+        stages = getattr(self, "_turn_stages", None)
+        if not isinstance(stages, dict):
+            stages = self._turn_stages = {}
+        if "ros_service_recv" not in stages:
+            stages["ros_service_recv"] = 0.0
+
+    def _record_local_turn_stage(self, stage: str, t0: float) -> None:
+        """Record a stage the chat node observes locally (PR-2072)."""
+        self._ensure_turn_trace_anchor(t0)
+        started = getattr(self, "_turn_started_ms", None)
+        if started is None:
+            return
+        stages = getattr(self, "_turn_stages", None)
+        if not isinstance(stages, dict):
+            stages = self._turn_stages = {}
+        if stage in stages:
+            return
+        stages[stage] = round(time.monotonic() * 1000.0 - started, 1)
+
+    def _freeze_turn_done_stage(self) -> None:
+        if "turn_end" in getattr(self, "_turn_stages", {}) or "stream_done" in getattr(
+            self, "_turn_stages", {}
+        ):
+            return
+        started = getattr(self, "_turn_started_ms", None)
+        if started is None:
+            return
+        stages = getattr(self, "_turn_stages", None)
+        if not isinstance(stages, dict):
+            stages = self._turn_stages = {}
+        stages["turn_end"] = round(time.monotonic() * 1000.0 - started, 1)
 
     def _emit_turn_state(
         self, turn_id: str, state: str, chat_id: str, *, reason: str = ""
@@ -443,6 +481,8 @@ class ChatNode(Node):
 
     def _finish_cancelled_turn(self, chat_id: str, goal_handle) -> None:
         """Stop the action, remove partial assistant text, and trace cancelled."""
+        self._turn_trace_cancelled = True
+        self._freeze_turn_done_stage()
         self._discard_assistant_reply(chat_id)
         if goal_handle.is_cancel_requested:
             goal_handle.canceled()
@@ -501,6 +541,17 @@ class ChatNode(Node):
         images = getattr(self, "_turn_image_references", None)
         if isinstance(images, list) and images:
             meta["images"] = list(images)
+        if isinstance(stages, dict) and stages:
+            from voice_assistant.turn_latency import message_turn_trace
+
+            trace = message_turn_trace(
+                stages,
+                cancelled=bool(getattr(self, "_turn_trace_cancelled", False)),
+                tool_rounds=getattr(self, "_turn_direct_tool_rounds", None),
+                tool_calls=tool_calls if isinstance(tool_calls, list) else None,
+            )
+            if trace:
+                meta["turnTrace"] = trace
         return meta or None
 
     def _finalize_message_meta(self, chat_id: str) -> None:
@@ -512,6 +563,7 @@ class ChatNode(Node):
         answers, never the bytes (PC-119).
         """
         try:
+            self._freeze_turn_done_stage()
             self._attach_turn_images(chat_id)
             meta = self._turn_meta()
             message_id = getattr(self, "last_pib_message_id", None)
@@ -991,6 +1043,7 @@ class ChatNode(Node):
                     published_speech.append(immediate)
                     elapsed_ms = (time.monotonic() - t0) * 1000.0
                     self._remember_first_token_latency(chat_id, elapsed_ms)
+                    self._record_local_turn_stage("first_token", t0)
                     self.get_logger().info(
                         f"[PERF_TRACE] FIRST_CHUNK_EMITTED chat={chat_id} "
                         f"elapsed_ms={elapsed_ms:.2f}"
@@ -1054,6 +1107,7 @@ class ChatNode(Node):
                     if not first_sentence_flushed:
                         first_sentence_flushed = True
                         elapsed_ms = (time.monotonic() - t0) * 1000.0
+                        self._record_local_turn_stage("first_sentence_flushed", t0)
                         self.get_logger().info(
                             f"[PERF_TRACE] FIRST_SENTENCE_FLUSHED chat={chat_id} "
                             f"elapsed_ms={elapsed_ms:.2f}"
@@ -1100,6 +1154,7 @@ class ChatNode(Node):
                 first_chunk_emitted = True
                 elapsed_ms = (time.monotonic() - t0) * 1000.0
                 self._remember_first_token_latency(chat_id, elapsed_ms)
+                self._record_local_turn_stage("first_token", t0)
                 self.get_logger().info(
                     f"[PERF_TRACE] FIRST_CHUNK_EMITTED chat={chat_id} "
                     f"elapsed_ms={elapsed_ms:.2f}"
@@ -1158,6 +1213,7 @@ class ChatNode(Node):
             goal_handle.publish_feedback(feedback)
             if not flushed_any and t0 is not None:
                 elapsed_ms = (time.monotonic() - t0) * 1000.0
+                self._record_local_turn_stage("first_sentence_flushed", t0)
                 self.get_logger().info(
                     f"[PERF_TRACE] FIRST_SENTENCE_FLUSHED chat={chat_id} "
                     f"elapsed_ms={elapsed_ms:.2f}"
@@ -1507,6 +1563,7 @@ class ChatNode(Node):
 
     def _execute_chat_turn(self, goal_handle: ServerGoalHandle):
         t0 = time.monotonic()
+        self._ensure_turn_trace_anchor(t0)
         self.get_logger().info("start chat request")
 
         # Unpack request data
@@ -1717,12 +1774,14 @@ class ChatNode(Node):
                     "started": time.monotonic(),
                     "tool_rounds": 0,
                 }
+                self._turn_direct_tool_rounds = 0
                 self.get_logger().info(
                     f"direct turn started personality={personality_name} model={api_name}"
                 )
 
                 def count_direct_tool_round() -> None:
                     direct_turn_meta["tool_rounds"] += 1
+                    self._turn_direct_tool_rounds = direct_turn_meta["tool_rounds"]
 
                 def report_key_source(source: str) -> None:
                     # source is key-store or environment. The key itself
