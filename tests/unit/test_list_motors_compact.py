@@ -4,15 +4,18 @@ import asyncio
 import json
 import time
 
-from pib_mcp_server.backend import PibBackend
+from pib_mcp_server.backend import (
+    GET_ALL_JOINT_POSITIONS_SERVICE,
+    PibBackend,
+)
 from pib_mcp_server.server import create_server
 from pib_mcp_payload_assertions import assert_tool_payload_within_budget
 
 COMPACT_MOTOR_KEYS = frozenset({"id", "name", "position"})
 COMPACT_MOTOR_OPTIONAL_KEYS = frozenset(
-    {"positionError", "positionSource", "positionAgeSec"}
+    {"positionError", "positionSource", "positionAgeSec", "positionFallbackReason"}
 )
-COMPACT_BYTE_BUDGET = 3500
+COMPACT_BYTE_BUDGET = 3650
 MOTOR_COUNT = 24
 
 FULL_MOTOR_TEMPLATE = {
@@ -114,6 +117,38 @@ class RecordingBackend(PibBackend):
         raise AssertionError(f"unexpected HTTP {method} {path}")
 
     def _ros_service(self, service, service_type, arguments):
+        if service == GET_ALL_JOINT_POSITIONS_SERVICE or "joint_names" in arguments:
+            now = time.time()
+            results = []
+            positions = []
+            requested = list(arguments.get("joint_names") or [])
+            for index, motor in enumerate(self._motors):
+                name = motor.get("name")
+                if not name:
+                    continue
+                if requested and name not in requested:
+                    continue
+                results.append(
+                    {
+                        "motor_name": name,
+                        "successful": True,
+                        "error_code": "",
+                        "detail": "",
+                    }
+                )
+                positions.append(120 * (index + 1))
+            return {
+                "successful": True,
+                "header": {
+                    "stamp": {
+                        "sec": int(now),
+                        "nanosec": int((now % 1) * 1e9),
+                    }
+                },
+                "results": results,
+                "positions": positions,
+                "message": "",
+            }
         joint_name = arguments["joint_name"]
         self.ros_calls.append(joint_name)
         index = next(

@@ -1,0 +1,9 @@
+# Measured present positions from one Feetech bus sweep (PR-2113).
+# Empty joint_names returns every joint known to motor_control.
+string[] joint_names
+---
+bool successful
+std_msgs/Header header
+MotorResult[] results
+int32[] positions
+string message

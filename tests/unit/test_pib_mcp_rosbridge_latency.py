@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import queue
 import threading
 import time
@@ -10,7 +11,7 @@ from typing import Any
 
 import pytest
 
-from pib_mcp_server.backend import PibBackend, _compact_motor
+from pib_mcp_server.backend import JOINT_STATES_TOPIC, PibBackend, _compact_motor
 from pib_mcp_server.tool_budgets import payload_utf8_byte_length
 from test_list_motors_compact import MOTOR_COUNT, full_motor_fixture
 
@@ -27,6 +28,26 @@ class _FakeRosbridgeSocket:
 
     def send(self, payload: str) -> None:
         request = json.loads(payload)
+        if request.get("op") == "subscribe":
+            if request.get("topic") == JOINT_STATES_TOPIC:
+                self._enqueue_joint_states_publish()
+            return
+
+        service = request.get("service", "")
+        joint_names = request.get("args", {}).get("joint_names")
+        if service.endswith("get_all_joint_positions") or joint_names is not None:
+            delay = self._batch_delay
+            if delay:
+
+                def _respond() -> None:
+                    time.sleep(delay)
+                    self._enqueue_service_response(request)
+
+                threading.Thread(target=_respond, daemon=True).start()
+            else:
+                self._enqueue_service_response(request)
+            return
+
         joint_name = request.get("args", {}).get("joint_name")
         delay = self._delays.get(joint_name, 0.0) if joint_name else 0.0
         if delay:
@@ -39,6 +60,34 @@ class _FakeRosbridgeSocket:
         else:
             self._enqueue_service_response(request)
 
+    def _enqueue_joint_states_publish(self) -> None:
+        motors = full_motor_fixture()
+        now = time.time()
+        names = []
+        positions = []
+        for index, motor in enumerate(motors):
+            name = motor["name"]
+            if name in self._failures:
+                continue
+            names.append(name)
+            centideg = self._positions.get(name, 120 * (index + 1))
+            positions.append(math.radians(centideg / 100.0))
+        message = {
+            "op": "publish",
+            "topic": JOINT_STATES_TOPIC,
+            "msg": {
+                "header": {
+                    "stamp": {
+                        "sec": int(now),
+                        "nanosec": int((now % 1) * 1e9),
+                    }
+                },
+                "name": names,
+                "position": positions,
+            },
+        }
+        self._outbound.put(json.dumps(message))
+
     def _enqueue_service_response(self, request: dict[str, Any]) -> None:
         response = {
             "op": "service_response",
@@ -49,6 +98,46 @@ class _FakeRosbridgeSocket:
         self._outbound.put(json.dumps(response))
 
     def _values_for_request(self, request: dict[str, Any]) -> dict[str, Any]:
+        joint_names = request.get("args", {}).get("joint_names")
+        if joint_names is not None:
+            results = []
+            positions = []
+            for name in joint_names:
+                if name in self._failures:
+                    results.append(
+                        {
+                            "motor_name": name,
+                            "successful": False,
+                            "error_code": "position_unavailable",
+                            "detail": self._failures[name],
+                        }
+                    )
+                    positions.append(0)
+                    continue
+                position = self._positions.get(name, 0)
+                results.append(
+                    {
+                        "motor_name": name,
+                        "successful": True,
+                        "error_code": "",
+                        "detail": "",
+                    }
+                )
+                positions.append(position)
+            now = time.time()
+            return {
+                "successful": True,
+                "header": {
+                    "stamp": {
+                        "sec": int(now),
+                        "nanosec": int((now % 1) * 1e9),
+                    }
+                },
+                "results": results,
+                "positions": positions,
+                "message": "",
+            }
+
         joint_name = request.get("args", {}).get("joint_name")
         if joint_name and joint_name in self._failures:
             return {"successful": False, "message": self._failures[joint_name]}
@@ -63,6 +152,7 @@ class _FakeRosbridgeSocket:
         pass
 
     _delays: dict[str, float] = {}
+    _batch_delay: float = 0.0
     _failures: dict[str, str] = {}
     _positions: dict[str, int] = {}
 
@@ -70,6 +160,7 @@ class _FakeRosbridgeSocket:
     def reset(cls) -> None:
         cls.instances = []
         cls._delays = {}
+        cls._batch_delay = 0.0
         cls._failures = {}
         cls._positions = {}
 
@@ -90,6 +181,7 @@ def test_rosbridge_reuses_one_websocket_for_all_joint_reads(fake_rosbridge):
     motors = [{"name": "motor_a"}, {"name": "motor_b"}, {"name": "motor_c"}]
     backend = PibBackend(timeout=5.0)
     backend.get_motors = lambda: list(motors)
+    backend._get_all_joint_positions_available = False
 
     backend._motors_with_live_positions()
 
@@ -104,6 +196,7 @@ def test_slow_joint_does_not_serialise_other_motor_reads(fake_rosbridge):
 
     backend = PibBackend(timeout=10.0)
     backend.get_motors = full_motor_fixture
+    backend._get_all_joint_positions_available = False
 
     started = time.monotonic()
     backend._motors_with_live_positions()
@@ -120,6 +213,7 @@ def test_failed_joint_sets_position_error_without_failing_tool(fake_rosbridge):
 
     backend = PibBackend(timeout=5.0)
     backend.get_motors = lambda: list(motors)
+    backend._get_all_joint_positions_available = False
 
     enriched = backend._motors_with_live_positions()
     by_name = {motor["name"]: motor for motor in enriched}
