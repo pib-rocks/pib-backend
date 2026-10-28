@@ -37,7 +37,12 @@ RUN apt-get update --fix-missing && \
     && rm -rf /var/lib/apt/lists/*
 
 # PR-2085: Ubuntu's libportaudio has no Pulse host API; PyAudio links it dynamically.
-RUN git clone --depth 1 https://github.com/PortAudio/portaudio.git /tmp/portaudio \
+# Pinned to PortAudio v19.7.0 (147dd7225483): the pa_front.c patch below is checked
+# against that file, and an upstream change must fail the build, not ship silently.
+RUN git init -q /tmp/portaudio \
+    && git -C /tmp/portaudio remote add origin https://github.com/PortAudio/portaudio.git \
+    && git -C /tmp/portaudio fetch -q --depth 1 origin 147dd722548358763a8b649b3e4b41dfffbcfbb6 \
+    && git -C /tmp/portaudio checkout -q FETCH_HEAD \
     && python3 -c "from pathlib import Path; p=Path('/tmp/portaudio/src/common/pa_front.c'); t=p.read_text(); o='        result = paHostApiInitializers[i]( &hostApis_[hostApisCount_], hostApisCount_ );\\n        if( result != paNoError )\\n            goto error;'; n='        result = paHostApiInitializers[i]( &hostApis_[hostApisCount_], hostApisCount_ );\\n        if( result != paNoError )\\n        {\\n            hostApis_[hostApisCount_] = NULL;\\n            result = paNoError;\\n            continue;\\n        }'; assert o in t, 'PortAudio pa_front.c changed upstream'; p.write_text(t.replace(o,n,1))" \
     && cmake -S /tmp/portaudio -B /tmp/portaudio/build \
         -DCMAKE_BUILD_TYPE=Release \

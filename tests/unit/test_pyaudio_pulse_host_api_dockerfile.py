@@ -23,6 +23,7 @@ AUDIO_DOCKERFILES = (
 PYAUDIO_PULSE_HOST_API_GUARD = "assert any('pulse' in n.lower() for n in apis)"
 PORTAUDIO_PULSE_CMAKE_FLAG = "PA_USE_PULSEAUDIO=ON"
 PORTAUDIO_OPTIONAL_PULSE_PATCH = "hostApis_[hostApisCount_] = NULL"
+PORTAUDIO_PINNED_REVISION = "147dd722548358763a8b649b3e4b41dfffbcfbb6"
 
 
 @pytest.mark.parametrize("relative", AUDIO_DOCKERFILES)
@@ -33,6 +34,17 @@ def test_libpulse_dev_is_installed_before_pyaudio(relative: str) -> None:
     assert PORTAUDIO_OPTIONAL_PULSE_PATCH in text, relative
     assert text.index("libpulse-dev") < text.index("pyaudio=="), relative
     assert text.index(PORTAUDIO_PULSE_CMAKE_FLAG) < text.index("pyaudio=="), relative
+
+
+@pytest.mark.parametrize("relative", AUDIO_DOCKERFILES)
+def test_portaudio_source_is_pinned_to_a_revision(relative: str) -> None:
+    """A moving master would change the patched file under us."""
+
+    text = (REPO_ROOT / relative).read_text(encoding="utf-8")
+    assert PORTAUDIO_PINNED_REVISION in text, relative
+    assert (
+        "git clone --depth 1 https://github.com/PortAudio/portaudio.git" not in text
+    ), relative
 
 
 @pytest.mark.parametrize("relative", AUDIO_DOCKERFILES)
