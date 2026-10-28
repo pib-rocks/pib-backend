@@ -1,6 +1,6 @@
 """Hand tracking stages extracted from CameraNode."""
 
-from ros_packages.camera.oak_d_lite import stereo as stereo
+from . import stereo as stereo
 
 from datatypes.msg import Detection, DetectionArray
 
