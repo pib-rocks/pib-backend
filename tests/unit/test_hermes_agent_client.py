@@ -803,3 +803,32 @@ def test_existing_profile_with_a_lan_cloud_url_is_repaired(tmp_path, monkeypatch
 
     written = yaml.safe_load((profile / "config.yaml").read_text(encoding="utf-8"))
     assert written["providers"]["pib-cloud"]["base_url"] == "https://api.pib.rocks/v1"
+
+
+def test_profile_settings_guard_a_lan_cloud_url_at_read_time(tmp_path, monkeypatch):
+    """The turn must reach api.pib.rocks even before the file is repaired."""
+
+    import yaml
+
+    from public_api_client import hermes_agent_client as client
+
+    monkeypatch.setenv("PIB_CLOUD_BASE_URL", "https://api.pib.rocks/v1")
+    (tmp_path / "config.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "model": "pib-cloud",
+                "provider": "pib-cloud",
+                "providers": {
+                    "pib-cloud": {
+                        "name": "pib-cloud",
+                        "base_url": "http://192.168.1.252:8090/v1",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    _model, _provider, base_url, _env = client.profile_hermes_settings(str(tmp_path))
+
+    assert base_url == "https://api.pib.rocks/v1"
