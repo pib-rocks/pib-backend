@@ -150,6 +150,41 @@ REFUSED_REQUEST_FIELDS = frozenset(
 _provider_refused_fields: dict[tuple[str, str, str], set[str]] = {}
 _provider_refused_fields_lock = threading.Lock()
 
+# Process-local provider key cache (PR-2102). Invalidated by key-store epoch and
+# by profile route changes so a rotated key is picked up without a daemon restart.
+_provider_key_cache_lock = threading.Lock()
+_provider_key_cache: Optional[tuple[tuple, Optional[str]]] = None
+
+
+def clear_provider_key_cache() -> None:
+    """Drop cached turn keys (daemon shutdown, agent cache clear, tests)."""
+    global _provider_key_cache
+    with _provider_key_cache_lock:
+        _provider_key_cache = None
+
+
+def _cached_provider_key_for_current_profile() -> Optional[str]:
+    """Resolve and cache the store key for the active profile route."""
+    global _provider_key_cache
+    from pib_api_client.key_store_client import read_key_store_epoch
+
+    model, provider, _base_url, env_vars = profile_hermes_settings()
+    if not env_vars and not provider_needs_key(provider):
+        return None
+    home = _current_hermes_home()
+    epoch = read_key_store_epoch()
+    cache_key = (epoch, home, model, provider, env_vars)
+    with _provider_key_cache_lock:
+        cached = _provider_key_cache
+        if cached is not None and cached[0] == cache_key:
+            return cached[1]
+    from voice_assistant.direct_tool_loop import resolve_hermes_provider_key
+
+    key, _source = resolve_hermes_provider_key(provider, api_name=model)
+    with _provider_key_cache_lock:
+        _provider_key_cache = (cache_key, key)
+    return key
+
 
 def provider_capability_key(
     provider: str,
@@ -1205,14 +1240,12 @@ def provider_key_for_turn() -> Optional[str]:
     on-device model) returns None instead of a key. A locked, empty or
     mismatched store raises; the environment is not a fallback, and the value
     is not logged.
-    """
-    model, provider, _base_url, env_vars = profile_hermes_settings()
-    if not env_vars and not provider_needs_key(provider):
-        return None
-    from voice_assistant.direct_tool_loop import resolve_hermes_provider_key
 
-    key, _source = resolve_hermes_provider_key(provider, api_name=model)
-    return key
+    The resolved key is cached for the current key-store ``keyEpoch`` and
+    profile route (model, provider, Hermes home) so warm turns do not repeat
+    the HTTP credential read every time.
+    """
+    return _cached_provider_key_for_current_profile()
 
 
 def _provider_key_was_refused(payload: object) -> bool:

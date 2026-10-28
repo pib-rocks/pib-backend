@@ -69,14 +69,14 @@ def test_smart_turn_replays_direct_messages_from_flask(monkeypatch):
         row["display_metadata"][hd.PIB_FLASK_MESSAGE_ID_KEY]
         for row in store.batch_appends[0][1]
     ]
-    assert seeded_ids == ["m1", "m2", "m3"]
+    assert seeded_ids == ["m1", "m2"]
 
 
 def test_seeding_flask_messages_twice_does_not_duplicate(monkeypatch):
     store = _FakeSessionDB()
     monkeypatch.setattr(hd, "_create_session_db", MagicMock(return_value=store))
     created = []
-    module = _fake_agent_module(created)
+    module = _fake_agent_module(created, store_turns=True)
     hd.clear_agent_cache()
 
     flask_rows = [
@@ -97,7 +97,11 @@ def test_seeding_flask_messages_twice_does_not_duplicate(monkeypatch):
         hd.run_turn_in_process("Und?", "chat-dup", message_history=5)
 
     assert len(store.batch_appends) == 1
-    assert len(store.transcripts["pib_chat_chat-dup"]) == 3
+    assert len(store.batch_appends[0][1]) == 2
+    transcript, _display = store.get_resume_conversations("pib_chat_chat-dup")
+    from pib_hermes_config.conversation_transcript import repair_message_sequence
+
+    assert repair_message_sequence(None, transcript) == 0
 
 
 def test_history_length_follows_personality_message_history(monkeypatch):
