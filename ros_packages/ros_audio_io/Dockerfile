@@ -29,6 +29,8 @@ RUN apt-get update --fix-missing && \
         build-essential \
         python3-colcon-mixin \
         pulseaudio \
+        libasound2-plugins \
+        libpulse0 \
         libusb-1.0-0-dev \
     && rm -rf /var/lib/apt/lists/*
 
@@ -40,6 +42,15 @@ RUN pip install --break-system-packages --ignore-installed \
         numpy==2.5.3 \
         scipy==1.18.1 \
         taskgroup==0.2.2
+
+
+# PR-2085: the ALSA Pulse plugin is what lets PortAudio's ALSA backend reach PipeWire.
+# Ubuntu's libportaudio has no Pulse host API and upstream v19.7.0 has none either
+# (only unreleased master does), so the supported path is the ALSA plugin.
+RUN set -eu; \
+    module="$(ls /usr/lib/*/alsa-lib/libasound_module_pcm_pulse.so 2>/dev/null | head -1)"; \
+    if [ -z "$module" ]; then echo "ALSA Pulse plugin missing: PortAudio could not reach PipeWire" >&2; exit 1; fi; \
+    echo "ALSA Pulse plugin: $module"
 
 COPY ./pib_api/client ./client
 COPY ./pib_hermes_config /tmp/pib_hermes_config

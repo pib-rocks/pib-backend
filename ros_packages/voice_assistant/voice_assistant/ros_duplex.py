@@ -116,6 +116,24 @@ def build_motion_vad_guard(
     )
 
 
+def _pulse_plugin_device_index(audio) -> Optional[int]:
+    """The ALSA device the Pulse plugin adds, when a server is configured.
+
+    PortAudio exposes no Pulse host API on Ubuntu or on upstream v19.7.0, so the
+    route to PipeWire is ALSA's pulse plugin (libasound2-plugins). Selecting that
+    device keeps 16 kHz mono away from an HDMI default that only does 44.1/48 kHz.
+    """
+    if not os.getenv("PULSE_SERVER", "").strip():
+        return None
+    for index in range(audio.get_device_count()):
+        info = audio.get_device_info_by_index(index)
+        if int(info.get("maxOutputChannels", 0)) < 1:
+            continue
+        if str(info.get("name", "")).strip().lower() == "pulse":
+            return index
+    return None
+
+
 def _pulse_host_api_index(audio) -> Optional[int]:
     for index in range(audio.get_host_api_count()):
         name = str(audio.get_host_api_info_by_index(index).get("name", "")).lower()
@@ -175,7 +193,19 @@ def open_speaker(
         frames_per_buffer=320,
     )
 
-    if pulse_api is not None:
+    plugin_index = _pulse_plugin_device_index(audio) if pulse_api is None else None
+    if plugin_index is not None:
+        try:
+            stream = audio.open(output_device_index=plugin_index, **open_kwargs)
+            device_name = str(
+                audio.get_device_info_by_index(plugin_index).get("name", "pulse")
+            )
+            backend = "alsa-pulse-plugin"
+        except OSError as exc:
+            reason = _audio_error_reason(exc)
+            log.warning("pulse plugin playback open failed: %s; trying ALSA", reason)
+
+    if pulse_api is not None and stream is None:
         try:
             device_index, device_name = _output_device_on_host_api(audio, pulse_api)
             stream = audio.open(output_device_index=device_index, **open_kwargs)

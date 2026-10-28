@@ -1063,3 +1063,59 @@ def test_every_preset_keeps_the_firmware_vad_threshold() -> None:
         if name == "Custom":
             continue
         assert values["GAMMAVAD_SR"] == 3.5
+
+
+def test_pulse_plugin_device_is_used_when_a_server_is_configured(monkeypatch):
+    """With PipeWire owning the array, opening hw:2,0 is the 'device busy' bug."""
+
+    from ros_audio_io.device_retry import pulse_plugin_device_index
+
+    infos = [
+        {
+            "index": 0,
+            "name": "ReSpeaker 4 Mic Array (UAC1.0): USB Audio (hw:2,0)",
+            "maxInputChannels": 6,
+            "defaultSampleRate": 16000.0,
+        },
+        {
+            "index": 1,
+            "name": "pulse",
+            "maxInputChannels": 2,
+            "defaultSampleRate": 48000.0,
+        },
+        {
+            "index": 2,
+            "name": "vc4-hdmi-0",
+            "maxInputChannels": 0,
+            "defaultSampleRate": 44100.0,
+        },
+    ]
+
+    assert (
+        pulse_plugin_device_index(
+            infos, pulse_server="unix:/run/user/1000/pulse/native"
+        )
+        == 1
+    )
+
+
+def test_pulse_plugin_device_is_ignored_without_a_server():
+    from ros_audio_io.device_retry import pulse_plugin_device_index
+
+    infos = [{"index": 1, "name": "pulse", "maxInputChannels": 2}]
+
+    assert pulse_plugin_device_index(infos, pulse_server="") is None
+    assert pulse_plugin_device_index(infos, pulse_server=None) is None
+
+
+def test_pulse_plugin_device_needs_capture_channels():
+    from ros_audio_io.device_retry import pulse_plugin_device_index
+
+    infos = [{"index": 1, "name": "pulse", "maxInputChannels": 0}]
+
+    assert (
+        pulse_plugin_device_index(
+            infos, pulse_server="unix:/run/user/1000/pulse/native"
+        )
+        is None
+    )

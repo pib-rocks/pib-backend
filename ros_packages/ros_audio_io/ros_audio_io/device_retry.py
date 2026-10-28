@@ -1,3 +1,5 @@
+import os
+
 """Pure retry and status helpers for microphone device connections.
 
 Retry backoff in seconds: 1, 2, 4, 8, 16, then 30 capped for every later attempt.
@@ -20,6 +22,26 @@ def next_retry_delay(attempt):
     if attempt >= 6:
         return MAX_RETRY_DELAY_SECONDS
     return float(2 ** (attempt - 1))
+
+
+def pulse_plugin_device_index(device_infos, *, pulse_server=None):
+    """Index of the ALSA device the Pulse plugin adds, when a server is configured.
+
+    Ubuntu's libportaudio has no Pulse host API (upstream v19.7.0 has none either),
+    so ALSA's pulse plugin is the route to PipeWire. Opening the raw hw: device
+    while PipeWire owns it is the "device busy" failure measured on the robot.
+    """
+
+    if pulse_server is None:
+        pulse_server = os.getenv("PULSE_SERVER", "")
+    if not str(pulse_server).strip():
+        return None
+    for info in device_infos:
+        if int(info.get("maxInputChannels", 0)) < 1:
+            continue
+        if str(info.get("name", "")).strip().lower() == "pulse":
+            return int(info["index"])
+    return None
 
 
 def describe_open_failure(exc):
