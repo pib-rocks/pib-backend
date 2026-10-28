@@ -115,13 +115,20 @@ def test_pc50_persistence_incremental_updates(chat_node):
         goal_handle, "chat-pc50", ["Eins. ", "Zwei. ", "Drei."]
     )
     calls = chat_node.create_chat_message.call_args_list
-    assert len(calls) == 3
+    # PC-50 asks for a message that becomes visible while the answer is still being
+    # generated - one row, updated as the text grows. Since PR-2101 the write is
+    # throttled (~8/s) and carries the accumulated text instead of one sentence, so
+    # the NUMBER of writes is timing-dependent and each text is a prefix of the next.
     updates = [call[0][3] for call in calls]
-    assert updates == [False, True, True]
+    assert updates[0] is False
+    assert all(update is True for update in updates[1:])
+    assert len(calls) >= 2
     texts = [call[0][1] for call in calls]
-    assert texts == ["Eins.", "Zwei.", "Drei."]
-    # Action path: one CREATE then UPDATEs that concatenate into the full answer.
-    assert " ".join(texts) == "Eins. Zwei. Drei."
+    assert texts == sorted(texts, key=len), texts
+    assert all(
+        later.startswith(earlier.strip()) for earlier, later in zip(texts, texts[1:])
+    ), texts
+    assert texts[-1] == "Eins. Zwei. Drei."
 
 
 def test_pc50_clause_stream_partitions(chat_node):
