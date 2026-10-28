@@ -18,9 +18,15 @@ sys.path.insert(0, str(ROS_AUDIO_PACKAGE))
 from ros_audio_io.levels import calculate_levels  # noqa: E402
 from ros_audio_io.device_retry import (  # noqa: E402
     DeviceNotFoundError,
+    INPUT_FORMAT_S16LE,
+    audio_device_log_line,
     describe_open_failure,
     device_status_payload,
+    format_input_capabilities,
+    format_microphone_open_failure_log,
+    microphone_recovery_log,
     next_retry_delay,
+    open_failure_signature,
 )
 from ros_audio_io.desired_state import (  # noqa: E402
     DEFAULT_FLASK_API_BASE_URL,
@@ -132,12 +138,79 @@ def test_retry_delay_is_monotonic_and_bounded():
     ("error", "reason"),
     [
         (OSError(-9999, "Unanticipated host error"), "device busy"),
+        (OSError(-9994, "Sample format not supported"), "sample format not supported"),
         (DeviceNotFoundError("no default input"), "no matching input device"),
         (RuntimeError("PortAudio failed"), "device open failure"),
     ],
 )
 def test_open_failure_wording(error, reason):
     assert describe_open_failure(error) == reason
+
+
+def test_audio_device_log_line_names_device_rate_channels_and_format():
+    line = audio_device_log_line("alsa", "ReSpeaker 4 Mic Array", 16000, 6)
+
+    assert line == (
+        "audio_device=alsa device=ReSpeaker 4 Mic Array "
+        "rate=16000 channels=6 format=S16_LE"
+    )
+    assert INPUT_FORMAT_S16LE == "S16_LE"
+
+
+def test_format_input_capabilities_uses_portaudio_device_info():
+    capabilities = format_input_capabilities(
+        {
+            "name": "ReSpeaker 4 Mic Array (UAC1.0): USB Audio (hw:2,0)",
+            "maxInputChannels": 6,
+            "defaultSampleRate": 16000.0,
+        }
+    )
+
+    assert "maxInputChannels=6" in capabilities
+    assert "defaultSampleRate=16000" in capabilities
+    assert "format=S16_LE" in capabilities
+    assert "ReSpeaker" in capabilities
+
+
+def test_open_failure_log_helpers_deduplicate_by_signature():
+    signature_a = open_failure_signature(
+        device_index=0,
+        device_name="ReSpeaker",
+        reason="device busy",
+        detail="[Errno -9999] Unanticipated host error",
+    )
+    signature_b = open_failure_signature(
+        device_index=0,
+        device_name="ReSpeaker",
+        reason="device busy",
+        detail="[Errno -9999] Unanticipated host error",
+    )
+    signature_c = open_failure_signature(
+        device_index=0,
+        device_name="ReSpeaker",
+        reason="sample format not supported",
+        detail="[Errno -9994] Sample format not supported",
+    )
+
+    assert signature_a == signature_b
+    assert signature_a != signature_c
+
+    failure_line = format_microphone_open_failure_log(
+        reason="device busy",
+        detail="[Errno -9999] Unanticipated host error",
+        device_name="ReSpeaker",
+        capabilities=format_input_capabilities(
+            {"name": "ReSpeaker", "maxInputChannels": 6, "defaultSampleRate": 16000}
+        ),
+        attempt=1,
+        delay=1.0,
+    )
+    assert "advertised=" in failure_line
+    assert "reason=device busy" in failure_line
+
+    recovery = microphone_recovery_log("ReSpeaker", 16000, 6)
+    assert recovery.count("Microphone input recovered:") == 1
+    assert "audio_device=alsa" in recovery
 
 
 def test_desired_state_url_uses_house_default_and_environment_override():
@@ -261,11 +334,15 @@ def test_audio_streamer_survives_open_failure_and_recovers(monkeypatch):
             self.cancelled = True
 
     class FakeLogger:
+        def __init__(self):
+            self.infos = []
+            self.warnings = []
+
         def info(self, message):
-            pass
+            self.infos.append(message)
 
         def warning(self, message):
-            pass
+            self.warnings.append(message)
 
         def error(self, message):
             pass
@@ -389,6 +466,174 @@ def test_audio_streamer_survives_open_failure_and_recovers(monkeypatch):
         "processedChannel": 0,
         "owner": "ros-audio-io",
     }
+    failure_logs = [
+        message
+        for message in node.logger.warnings
+        if message.startswith("Microphone open failed:")
+    ]
+    assert len(failure_logs) == 1
+    assert "advertised=" in failure_logs[0]
+    assert "device busy" in failure_logs[0]
+    recovery_logs = [
+        message
+        for message in node.logger.infos
+        if "Microphone input recovered:" in message
+    ]
+    assert len(recovery_logs) == 1
+    assert "audio_device=alsa" in recovery_logs[0]
+    start_logs = [
+        message for message in node.logger.infos if message.startswith("audio_device=")
+    ]
+    assert len(start_logs) == 1
+    assert "rate=16000" in start_logs[0]
+    assert "channels=6" in start_logs[0]
+    assert "format=S16_LE" in start_logs[0]
+    sys.modules.pop("ros_audio_io.audio_streamer", None)
+
+
+def test_audio_streamer_repeated_open_failure_logs_once_and_backoffs(monkeypatch):
+    class FakeMessage:
+        def __init__(self):
+            self.data = None
+
+    class FakePublisher:
+        def __init__(self):
+            self.messages = []
+
+        def publish(self, message):
+            self.messages.append(message)
+
+    class FakeTimer:
+        def __init__(self, delay, callback):
+            self.delay = delay
+            self.callback = callback
+            self.cancelled = False
+
+        def cancel(self):
+            self.cancelled = True
+
+    class FakeLogger:
+        def __init__(self):
+            self.warnings = []
+
+        def info(self, message):
+            pass
+
+        def warning(self, message):
+            self.warnings.append(message)
+
+        def error(self, message):
+            pass
+
+    class FakeNode:
+        def __init__(self, name):
+            self.publishers = {}
+            self.timers = []
+            self.logger = FakeLogger()
+
+        def create_publisher(self, message_type, topic, depth):
+            publisher = FakePublisher()
+            self.publishers[topic] = publisher
+            return publisher
+
+        def create_service(self, service_type, name, callback):
+            return object()
+
+        def create_timer(self, delay, callback):
+            timer = FakeTimer(delay, callback)
+            self.timers.append(timer)
+            return timer
+
+        def destroy_timer(self, timer):
+            self.timers.remove(timer)
+
+        def get_logger(self):
+            return self.logger
+
+        def destroy_node(self):
+            pass
+
+    class FakePyAudio:
+        def get_host_api_count(self):
+            return 1
+
+        def get_host_api_info_by_index(self, index):
+            return {"index": index, "name": "ALSA"}
+
+        def get_device_count(self):
+            return 1
+
+        def get_device_info_by_index(self, index):
+            return {
+                "name": "ReSpeaker 4 Mic Array (UAC1.0): USB Audio (hw:2,0)",
+                "maxInputChannels": 6,
+                "defaultSampleRate": 16000,
+                "hostApi": 0,
+            }
+
+        def open(self, **kwargs):
+            raise OSError(-9999, "Unanticipated host error")
+
+        def terminate(self):
+            pass
+
+    pyaudio = types.ModuleType("pyaudio")
+    pyaudio.paInt16 = 8
+    pyaudio.PyAudio = FakePyAudio
+    rclpy = types.ModuleType("rclpy")
+    rclpy.init = lambda args=None: None
+    rclpy.spin = lambda node: None
+    rclpy.shutdown = lambda: None
+    rclpy_node = types.ModuleType("rclpy.node")
+    rclpy_node.Node = FakeNode
+    std_msgs = types.ModuleType("std_msgs")
+    std_msgs_msg = types.ModuleType("std_msgs.msg")
+    std_msgs_msg.Float32MultiArray = FakeMessage
+    std_msgs_msg.Int16MultiArray = FakeMessage
+    std_msgs_msg.String = FakeMessage
+    datatypes = types.ModuleType("datatypes")
+    datatypes_srv = types.ModuleType("datatypes.srv")
+    datatypes_srv.GetMicConfiguration = object
+
+    for name, module in {
+        "pyaudio": pyaudio,
+        "rclpy": rclpy,
+        "rclpy.node": rclpy_node,
+        "std_msgs": std_msgs,
+        "std_msgs.msg": std_msgs_msg,
+        "datatypes": datatypes,
+        "datatypes.srv": datatypes_srv,
+    }.items():
+        monkeypatch.setitem(sys.modules, name, module)
+    monkeypatch.setenv("MIC_DEVICE", "respeaker")
+    monkeypatch.delitem(sys.modules, "ros_audio_io.audio_streamer", raising=False)
+
+    audio_streamer = importlib.import_module("ros_audio_io.audio_streamer")
+    node = audio_streamer.AudioStreamer()
+
+    failure_logs = [
+        message
+        for message in node.logger.warnings
+        if message.startswith("Microphone open failed:")
+    ]
+    assert len(failure_logs) == 1
+    assert node.retry_timer.delay == 1.0
+
+    node.retry_open_device()
+    assert (
+        len(
+            [
+                message
+                for message in node.logger.warnings
+                if message.startswith("Microphone open failed:")
+            ]
+        )
+        == 1
+    )
+    assert node.retry_timer.delay == 2.0
+
+    node.retry_open_device()
+    assert node.retry_timer.delay == 4.0
     sys.modules.pop("ros_audio_io.audio_streamer", None)
 
 
