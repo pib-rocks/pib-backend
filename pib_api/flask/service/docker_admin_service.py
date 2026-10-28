@@ -2,6 +2,7 @@ import os
 import socket
 import json
 import logging
+from urllib.parse import quote
 from typing import Dict, Any, List, Tuple, Optional
 
 DOCKER_SOCK = "/var/run/docker.sock"
@@ -264,34 +265,63 @@ def clear_container_logs(name: str) -> Tuple[int, Dict[str, Any]]:
         return 500, {"status": "error", "message": str(e)}
 
 
-def purge_docker() -> Tuple[int, Dict[str, Any]]:
-    results = {}
-    errors = []
+def _human_bytes(value: int) -> str:
+    size = float(max(value, 0))
+    for unit in ("B", "kB", "MB", "GB", "TB"):
+        if size < 1000 or unit == "TB":
+            return f"{size:.1f} {unit}"
+        size /= 1000
+    return f"{size:.1f} TB"
 
+
+def purge_docker() -> Tuple[int, Dict[str, Any]]:
+    """Prune everything the device no longer needs, and report what that freed.
+
+    Two Engine defaults made the old purge a no-op on an installed robot (PR-2099):
+    ``POST /images/prune`` without a filter removes only *untagged* images, so the
+    tagged leftovers of test runs stayed, and ``POST /build/prune`` prunes the
+    legacy builder, not the BuildKit cache this installation actually fills.
+    """
+    results: Dict[str, Any] = {}
+    errors: List[str] = []
+    reclaimed = 0
+
+    # filters must be the URL-encoded JSON the Engine expects.
+    image_filters = quote(json.dumps({"dangling": ["false"]}))
     endpoints = [
-        ("containers", "POST", "/containers/prune"),
-        ("images", "POST", "/images/prune"),
-        ("volumes", "POST", "/volumes/prune"),
-        ("networks", "POST", "/networks/prune"),
-        ("build", "POST", "/build/prune"),
+        ("containers", "/containers/prune"),
+        ("images", f"/images/prune?filters={image_filters}"),
+        ("volumes", "/volumes/prune"),
+        ("networks", "/networks/prune"),
+        ("build", "/build/prune?all=true"),
     ]
 
-    for key, method, path in endpoints:
+    for key, path in endpoints:
         try:
-            code, body = _docker_request(method, path)
+            code, body = _docker_request("POST", path)
             if code in (200, 204):
                 try:
-                    results[key] = json.loads(body.decode("utf-8"))
+                    parsed = json.loads(body.decode("utf-8"))
                 except Exception:
-                    results[key] = "cleared"
+                    parsed = "cleared"
+                results[key] = parsed
+                if isinstance(parsed, dict):
+                    space = parsed.get("SpaceReclaimed")
+                    if isinstance(space, (int, float)):
+                        reclaimed += int(space)
             else:
                 errors.append(f"{key}: {code}")
         except Exception as e:
             errors.append(f"{key}: {str(e)}")
 
+    message = f"Docker purge completed: {_human_bytes(reclaimed)} freed."
+    if errors:
+        message += f" {len(errors)} step(s) failed."
     return 200, {
-        "status": "success",
-        "message": "Docker system purge operation completed.",
+        "status": "success" if not errors else "partial",
+        "message": message,
+        "reclaimedBytes": reclaimed,
+        "reclaimedHuman": _human_bytes(reclaimed),
         "details": results,
         "errors": errors if errors else None,
     }
