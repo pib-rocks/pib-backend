@@ -1,0 +1,193 @@
+name: Docker service images (arm64)
+
+# Publishes per-service ghcr.io images for robot updates. See docs/RELEASE.md.
+on:
+  push:
+    branches:
+      - develop
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref to build (branch or tag, e.g. develop or v0.6.4)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-push:
+    name: "${{ matrix.service }}"
+    runs-on: ubuntu-24.04-arm
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - service: hermes-daemon
+            context: .
+            dockerfile: public_api_client/Dockerfile
+            needs_hermes_context: true
+          - service: pib-blockly-server
+            context: pib_blockly/pib_blockly_server
+            dockerfile: pib_blockly/pib_blockly_server/Dockerfile
+            needs_hermes_context: false
+          - service: flask-app
+            context: .
+            dockerfile: pib_api/flask/Dockerfile
+            needs_hermes_context: false
+          - service: rosbridge-ws
+            context: ros_packages
+            dockerfile: ros_packages/rosbridge/Dockerfile
+            needs_hermes_context: false
+          - service: ros-camera
+            context: ros_packages
+            dockerfile: ros_packages/camera/Dockerfile
+            needs_hermes_context: false
+          - service: ros-motors
+            context: .
+            dockerfile: ros_packages/motors/Dockerfile
+            needs_hermes_context: false
+          - service: ros-voice-assistant
+            context: .
+            dockerfile: ros_packages/voice_assistant/Dockerfile
+            needs_hermes_context: false
+          - service: ros-programs
+            context: .
+            dockerfile: ros_packages/programs/Dockerfile
+            needs_hermes_context: false
+          - service: ros-display
+            context: .
+            dockerfile: ros_packages/display/Dockerfile
+            needs_hermes_context: false
+          - service: ros-audio-io
+            context: .
+            dockerfile: ros_packages/ros_audio_io/Dockerfile
+            needs_hermes_context: false
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.ref }}
+
+      - name: Resolve image tags
+        id: tags
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          INPUT_REF: ${{ inputs.ref }}
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "release" ]; then
+            VERSION="$RELEASE_TAG"
+            CHANNEL=""
+          elif [ "$EVENT_NAME" = "push" ]; then
+            VERSION="$GITHUB_SHA"
+            CHANNEL="develop"
+          else
+            REF="$INPUT_REF"
+            if git rev-parse --verify --quiet "refs/tags/${REF}^{commit}" >/dev/null; then
+              VERSION="$REF"
+              CHANNEL=""
+            elif git rev-parse --verify --quiet "refs/heads/${REF}^{commit}" >/dev/null; then
+              VERSION="$GITHUB_SHA"
+              if [ "$REF" = "develop" ]; then
+                CHANNEL="develop"
+              else
+                CHANNEL=""
+              fi
+            else
+              echo "::error::Ref ${REF} is not a branch or tag in this repository."
+              exit 1
+            fi
+          fi
+
+          if [ "$EVENT_NAME" = "push" ] || { [ "$EVENT_NAME" = "workflow_dispatch" ] && [ "${CHANNEL:-}" = "develop" ]; }; then
+            if [ "$EVENT_NAME" = "push" ] && [ "$GITHUB_REF_NAME" != "develop" ]; then
+              echo "::error::develop-channel tags are only published from the develop branch."
+              exit 1
+            fi
+          fi
+
+          if [ -n "${CHANNEL:-}" ] && [ "$CHANNEL" = "develop" ]; then
+            APP_VERSION="develop"
+          else
+            APP_VERSION="$VERSION"
+          fi
+
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "channel=${CHANNEL}" >> "$GITHUB_OUTPUT"
+          echo "app_version=${APP_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Resolved version=${VERSION} channel=${CHANNEL:-none} app_version=${APP_VERSION}"
+
+      - name: Read pib-sdk pin
+        id: pib_sdk
+        run: |
+          set -euo pipefail
+          pin="$(tr -d '[:space:]' < pib_sdk_version.txt)"
+          [ -n "$pin" ] || { echo "::error::pib_sdk_version.txt is empty"; exit 1; }
+          echo "version=${pin}" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare Hermes agent build context
+        if: matrix.needs_hermes_context
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/NousResearch/hermes-agent.git "${RUNNER_TEMP}/hermes-agent"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Login to ghcr.io
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute push tags
+        id: push_tags
+        env:
+          SERVICE: ${{ matrix.service }}
+          VERSION: ${{ steps.tags.outputs.version }}
+          CHANNEL: ${{ steps.tags.outputs.channel }}
+        run: |
+          set -euo pipefail
+          list="ghcr.io/pib-rocks/pib-backend-${SERVICE}:${VERSION}"
+          if [ -n "${CHANNEL}" ]; then
+            list="${list},ghcr.io/pib-rocks/pib-backend-${SERVICE}:${CHANNEL}"
+          fi
+          echo "list=${list}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push (hermes-daemon)
+        if: matrix.needs_hermes_context
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/arm64
+          push: true
+          build-contexts: hermes=${{ runner.temp }}/hermes-agent
+          tags: ${{ steps.push_tags.outputs.list }}
+          cache-from: type=registry,ref=ghcr.io/pib-rocks/pib-backend-${{ matrix.service }}-cache:buildcache
+          cache-to: type=registry,ref=ghcr.io/pib-rocks/pib-backend-${{ matrix.service }}-cache:buildcache,mode=max
+
+      - name: Build and push
+        if: ${{ !matrix.needs_hermes_context }}
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/arm64
+          push: true
+          build-args: |
+            ${{ matrix.service == 'ros-programs' && format('PIB_SDK_VERSION={0}', steps.pib_sdk.outputs.version) || '' }}
+            ${{ matrix.service == 'flask-app' && format('APP_VERSION={0}', steps.tags.outputs.app_version) || '' }}
+          tags: ${{ steps.push_tags.outputs.list }}
+          cache-from: type=registry,ref=ghcr.io/pib-rocks/pib-backend-${{ matrix.service }}-cache:buildcache
+          cache-to: type=registry,ref=ghcr.io/pib-rocks/pib-backend-${{ matrix.service }}-cache:buildcache,mode=max

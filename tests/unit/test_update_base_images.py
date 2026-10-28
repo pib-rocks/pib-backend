@@ -228,6 +228,7 @@ def _run(
         STUB_PIB_SDK_EXEC_FAIL="1" if pib_sdk_exec_fail else "0",
         STUB_PULL_BUILD_FAIL="1" if pull_build_fail else "0",
         STUB_PLAIN_PROFILE_BUILD_FAIL="1" if plain_profile_build_fail else "0",
+        PIB_USE_REGISTRY_IMAGES="0",
     )
 
     result = subprocess.run(
@@ -258,6 +259,7 @@ def _profile_build_kinds(profile_build_log: Path) -> list[str]:
 
 def test_rollback_once_skips_base_image_refresh() -> None:
     text = RUNNER.read_text(encoding="utf-8")
+    assert "recreate_backend_from_registry" in text
     rollback = text.split("rollback_once() {", 1)[1].split(
         "\non_unexpected_error() {", 1
     )[0]

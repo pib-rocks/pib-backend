@@ -4,7 +4,7 @@ services:
   # The Hermes turn daemon, on the Python version the agent requires (3.14).
   # The voice container reaches it by service name; see PIB_HERMES_DAEMON_URL.
   hermes-daemon:
-    image: pib-hermes-daemon
+    image: ${PIB_IMAGE_PREFIX:-ghcr.io/pib-rocks/pib-backend}-hermes-daemon:${PIB_IMAGE_TAG:-develop}
     build:
       context: .
       dockerfile: ./public_api_client/Dockerfile
@@ -47,7 +47,7 @@ services:
       - no-new-privileges:true
 
   pib-blockly-server:
-    image: pib-blockly-server
+    image: ${PIB_IMAGE_PREFIX:-ghcr.io/pib-rocks/pib-backend}-pib-blockly-server:${PIB_IMAGE_TAG:-develop}
     build:
       context: ./pib_blockly/pib_blockly_server
       dockerfile: ./Dockerfile
@@ -59,7 +59,7 @@ services:
     restart: always
 
   flask-app:
-    image: flask_api
+    image: ${PIB_IMAGE_PREFIX:-ghcr.io/pib-rocks/pib-backend}-flask-app:${PIB_IMAGE_TAG:-develop}
     build:
       context: .
       dockerfile: ./pib_api/flask/Dockerfile
@@ -130,6 +130,7 @@ services:
     extra_hosts:
       - host.docker.internal:host-gateway
   rosbridge-ws:
+    image: ${PIB_IMAGE_PREFIX:-ghcr.io/pib-rocks/pib-backend}-rosbridge-ws:${PIB_IMAGE_TAG:-develop}
     build:
       context: ./ros_packages
       dockerfile: ./rosbridge/Dockerfile
@@ -141,7 +142,7 @@ services:
       - "9090:9090"
 
   ros-camera:
-    image: ros-camera
+    image: ${PIB_IMAGE_PREFIX:-ghcr.io/pib-rocks/pib-backend}-ros-camera:${PIB_IMAGE_TAG:-develop}
     privileged: true
     build:
       context: ./ros_packages
@@ -164,7 +165,7 @@ services:
       - rosbridge-ws
 
   ros-motors:
-    image: ros_motors
+    image: ${PIB_IMAGE_PREFIX:-ghcr.io/pib-rocks/pib-backend}-ros-motors:${PIB_IMAGE_TAG:-develop}
     build:
       context: .
       dockerfile: ./ros_packages/motors/Dockerfile
@@ -196,7 +197,7 @@ services:
     mac_address: "02:50:49:42:00:45"
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    image: ros_voice_assistant
+    image: ${PIB_IMAGE_PREFIX:-ghcr.io/pib-rocks/pib-backend}-ros-voice-assistant:${PIB_IMAGE_TAG:-develop}
     build:
       context: .
       dockerfile: ./ros_packages/voice_assistant/Dockerfile
@@ -306,7 +307,7 @@ services:
       - ros-audio-io
 
   ros-programs:
-    image: ros_programs
+    image: ${PIB_IMAGE_PREFIX:-ghcr.io/pib-rocks/pib-backend}-ros-programs:${PIB_IMAGE_TAG:-develop}
     build:
       context: .
       dockerfile: ./ros_packages/programs/Dockerfile
@@ -350,7 +351,7 @@ services:
       - flask-app
 
   ros-display:
-    image: ros-display
+    image: ${PIB_IMAGE_PREFIX:-ghcr.io/pib-rocks/pib-backend}-ros-display:${PIB_IMAGE_TAG:-develop}
     privileged: true
     build:
       context: .
@@ -390,7 +391,7 @@ services:
       - pib-network
 
   ros-audio-io:
-    image: ros-audio-io
+    image: ${PIB_IMAGE_PREFIX:-ghcr.io/pib-rocks/pib-backend}-ros-audio-io:${PIB_IMAGE_TAG:-develop}
     build:
       context: .
       dockerfile: ./ros_packages/ros_audio_io/Dockerfile
