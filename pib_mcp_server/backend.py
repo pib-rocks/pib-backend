@@ -35,6 +35,22 @@ def _degrees_to_radians(degrees: float) -> float:
 
 MOTOR_POSITION_FETCH_WORKERS = 8
 
+# What a reported position actually IS, per actuator family (PR-2114). The
+# tinkerforge Servo Bricklet has no position feedback: its get_position() returns the
+# last commanded pulse setting, so a payload that calls it a measurement is a lie -
+# measured on a pib5edu, where all 26 motors are tinkerforge_bricklet.
+POSITION_KIND_MEASURED = "measured"
+POSITION_KIND_COMMANDED_TARGET = "commanded_target"
+POSITION_KIND_UNKNOWN = "unknown"
+POSITION_KIND_BY_CONTROLLER = {
+    "feetech_st_serial": POSITION_KIND_MEASURED,
+    "tinkerforge_bricklet": POSITION_KIND_COMMANDED_TARGET,
+}
+POSITION_KIND_NOTE = {
+    POSITION_KIND_COMMANDED_TARGET: "commanded target, not measured",
+}
+
+
 JOINT_STATES_TOPIC = "/joint_states"
 JOINT_STATE_MESSAGE_TYPE = "sensor_msgs/JointState"
 GET_ALL_JOINT_POSITIONS_SERVICE = "/get_all_joint_positions"
@@ -54,6 +70,35 @@ def _duration_from_seconds(seconds: float) -> dict[str, int]:
     return {"sec": whole_seconds, "nanosec": nanoseconds}
 
 
+def _controller_kind(motor: dict[str, Any]) -> str:
+    controller = motor.get("controller")
+    if isinstance(controller, dict):
+        kind = controller.get("kind")
+        if isinstance(kind, str) and kind.strip():
+            return kind.strip()
+    return ""
+
+
+def _position_kind_for_motor(motor: dict[str, Any]) -> str:
+    """What the reported position of this motor is: measured, commanded or unknown."""
+    return POSITION_KIND_BY_CONTROLLER.get(
+        _controller_kind(motor), POSITION_KIND_UNKNOWN
+    )
+
+
+def _position_kind_summary(motors: list[dict[str, Any]]) -> dict[str, Any]:
+    """Response-level kind when every motor agrees, so the compact payload stays small."""
+    kinds = {_position_kind_for_motor(motor) for motor in motors}
+    if len(kinds) != 1:
+        return {}
+    kind = kinds.pop()
+    summary: dict[str, Any] = {"positionKind": kind}
+    note = POSITION_KIND_NOTE.get(kind)
+    if note:
+        summary["positionNote"] = note
+    return summary
+
+
 def _compact_motor(motor: dict[str, Any]) -> dict[str, Any]:
     name = motor.get("name")
     compact: dict[str, Any] = {
@@ -63,6 +108,8 @@ def _compact_motor(motor: dict[str, Any]) -> dict[str, Any]:
     }
     if "positionError" in motor:
         compact["positionError"] = motor["positionError"]
+    if "positionKind" in motor:
+        compact["positionKind"] = motor["positionKind"]
     if "positionSource" in motor:
         compact["positionSource"] = motor["positionSource"]
     if "positionAgeSec" in motor:
@@ -609,8 +656,19 @@ class PibBackend:
             )
         return True, header_age
 
+    def _stamp_position_kinds(self, motors: list[dict[str, Any]]) -> None:
+        """Per-motor kind, only for a robot that mixes actuator families."""
+        kinds = {_position_kind_for_motor(motor) for motor in motors}
+        if len(kinds) <= 1:
+            return
+        for motor in motors:
+            motor["positionKind"] = _position_kind_for_motor(motor)
+
     def _motors_with_live_positions(self) -> list[dict[str, Any]]:
         motors = self.get_motors()
+        # Stamp what a position IS before any read path runs: the topic and batch
+        # paths return early, and the label has to hold however the values arrived.
+        self._stamp_position_kinds(motors)
         named_motors = [motor for motor in motors if motor.get("name")]
         if not named_motors:
             return motors
@@ -688,7 +746,10 @@ class PibBackend:
         if detail:
             bricklets = self._http("GET", "/bricklet").get("bricklets", [])
             return {"motors": motors, "bricklets": bricklets}
-        return {"motors": [_compact_motor(motor) for motor in motors]}
+        return {
+            "motors": [_compact_motor(motor) for motor in motors],
+            **_position_kind_summary(motors),
+        }
 
     def get_state(self, detail: bool = False) -> dict[str, Any]:
         diagnostics = self._http("GET", "/diagnostics/summary")
@@ -696,11 +757,11 @@ class PibBackend:
             state = self.list_motors(detail=True)
             state["diagnostics"] = diagnostics
             return state
+        live_motors = self._motors_with_live_positions()
         return {
-            "motors": [
-                _compact_motor(motor) for motor in self._motors_with_live_positions()
-            ],
+            "motors": [_compact_motor(motor) for motor in live_motors],
             "diagnostics": _compact_diagnostics(diagnostics),
+            **_position_kind_summary(live_motors),
         }
 
     def get_motion_model(self, detail: bool = False) -> dict[str, Any]:
