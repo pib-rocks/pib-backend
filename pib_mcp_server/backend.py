@@ -15,6 +15,12 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
+from .perf_trace import (
+    format_perf_trace_motion_cmd,
+    log_perf_trace,
+    perf_trace_chat_id,
+)
+
 
 def _centidegrees_to_degrees(value: int | float | None) -> float | None:
     if value is None:
@@ -494,6 +500,8 @@ class PibBackend:
         self,
         joint_names: list[str],
         points_degrees: list[dict[str, Any]],
+        *,
+        trace_tool: str | None = None,
     ) -> dict[str, Any]:
         if not joint_names:
             raise BackendError("invalid_trajectory", "joint_names must not be empty")
@@ -525,16 +533,28 @@ class PibBackend:
                 )
             ros_points.append(ros_point)
 
-        response = self._ros_service(
-            "/apply_joint_trajectory",
-            "datatypes/srv/ApplyJointTrajectory",
-            {
-                "joint_trajectory": {
-                    "joint_names": joint_names,
-                    "points": ros_points,
-                }
-            },
-        )
+        started = time.monotonic()
+        ok = False
+        try:
+            response = self._ros_service(
+                "/apply_joint_trajectory",
+                "datatypes/srv/ApplyJointTrajectory",
+                {
+                    "joint_trajectory": {
+                        "joint_names": joint_names,
+                        "points": ros_points,
+                    }
+                },
+            )
+            ok = bool(response.get("successful"))
+        finally:
+            if trace_tool:
+                elapsed_ms = (time.monotonic() - started) * 1000.0
+                log_perf_trace(
+                    format_perf_trace_motion_cmd(
+                        perf_trace_chat_id(), trace_tool, elapsed_ms, ok
+                    )
+                )
         target_degrees = list(points_degrees[-1]["positions_degrees"])
         results = self._motor_result_rows(response, joint_names, target_degrees)
         return {
@@ -550,6 +570,7 @@ class PibBackend:
         outcome = self._apply_joint_trajectory_degrees(
             joint_names,
             [{"positions_degrees": position_degrees}],
+            trace_tool="move_motors",
         )
         if not outcome["successful"]:
             failed = [row for row in outcome["results"] if not row["successful"]]
@@ -565,7 +586,9 @@ class PibBackend:
         joint_names: list[str],
         points: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        outcome = self._apply_joint_trajectory_degrees(joint_names, points)
+        outcome = self._apply_joint_trajectory_degrees(
+            joint_names, points, trace_tool="apply_joint_trajectory"
+        )
         if not outcome["successful"]:
             failed = [row for row in outcome["results"] if not row["successful"]]
             raise BackendError(
@@ -576,9 +599,18 @@ class PibBackend:
         return outcome
 
     def move_motor(self, motor_name: str, position_degrees: float) -> dict[str, Any]:
-        outcome = self.move_motors(
-            [{"motor": motor_name, "position_degrees": position_degrees}]
+        outcome = self._apply_joint_trajectory_degrees(
+            [motor_name],
+            [{"positions_degrees": [float(position_degrees)]}],
+            trace_tool="move_motor",
         )
+        if not outcome["successful"]:
+            row = outcome["results"][0]
+            raise BackendError(
+                "motion_failed",
+                "one or more motors did not move",
+                {"results": [row]},
+            )
         row = outcome["results"][0]
         return {
             "motorName": row["motorName"],
@@ -610,6 +642,7 @@ class PibBackend:
         outcome = self._apply_joint_trajectory_degrees(
             names,
             [{"positions_degrees": positions_degrees}],
+            trace_tool="apply_pose",
         )
         if not outcome["successful"]:
             failed = [row for row in outcome["results"] if not row["successful"]]
