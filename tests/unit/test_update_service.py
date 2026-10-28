@@ -357,6 +357,7 @@ def test_readiness_requires_attested_units_and_does_not_treat_marker_as_liveness
     assert ready["ready"] is True
     assert any(item["status"] == "declared" for item in ready["checks"])
 
+
 def test_rolling_back_is_reported_as_running() -> None:
     """The rollback rebuild lasts tens of minutes; a terminal class would lie."""
     from service.update_service import classify_state

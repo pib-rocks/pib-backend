@@ -58,7 +58,15 @@ RUNNER_STATES = (
     "rolled_back",
 )
 ACTIVE_STATES = frozenset(
-    {"preflight", "fetching", "building", "restarting", "migrating", "verifying", "rolling_back"}
+    {
+        "preflight",
+        "fetching",
+        "building",
+        "restarting",
+        "migrating",
+        "verifying",
+        "rolling_back",
+    }
 )
 TERMINAL_STATES = frozenset({"done", "failed", "rolled_back"})
 

@@ -390,7 +390,9 @@ def test_rollback_writes_running_status_before_rebuild(tmp_path: Path) -> None:
 
     assert result.returncode != 0, log
     rolled_back_line = next(
-        line for line in log.splitlines() if line.startswith("[") and "rolling_back:" in line
+        line
+        for line in log.splitlines()
+        if line.startswith("[") and "rolling_back:" in line
     )
     rebuild_line = next(
         line
@@ -420,7 +422,11 @@ def test_post_success_cleanup_keeps_current_and_previous_tags(tmp_path: Path) ->
     assert "Post-update image cleanup" in log
     assert "ghcr.io/pib-rocks/pib-backend-flask-app:v0.7.2" in docker_log
     assert "image rm -f ghcr.io/pib-rocks/pib-backend-flask-app:v0.7.2" in docker_log
-    assert "image rm -f ghcr.io/pib-rocks/pib-backend-flask-app:v0.7.3" not in docker_log
-    assert "image rm -f ghcr.io/pib-rocks/pib-backend-flask-app:v0.7.4" not in docker_log
+    assert (
+        "image rm -f ghcr.io/pib-rocks/pib-backend-flask-app:v0.7.3" not in docker_log
+    )
+    assert (
+        "image rm -f ghcr.io/pib-rocks/pib-backend-flask-app:v0.7.4" not in docker_log
+    )
     status = json.loads((update_dir / "status.json").read_text(encoding="utf-8"))
     assert status["state"] == "done"
