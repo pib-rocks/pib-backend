@@ -453,14 +453,21 @@ def get_system_telemetry() -> Dict[str, Any]:
         used_gb = round(used / (1024**3), 1)
         free_gb = round(free / (1024**3), 1)
         percent_used = round((used / total) * 100, 1) if total > 0 else 0.0
+        # `free` is the space available to this user, `total - used` is the block
+        # share: on ext4 the reserved blocks make the two differ. The free
+        # percentage therefore comes from the same `free` value the UI prints, so
+        # bytes and percentage cannot contradict each other (PR-2115).
+        percent_free = round((free / total) * 100, 1) if total > 0 else 0.0
     except Exception:
         total_gb, used_gb, free_gb, percent_used = 64.0, 22.4, 41.6, 35.0
+        percent_free = round((41.6 / 64.0) * 100, 1)
 
     disk_space = {
         "total": f"{total_gb} GB",
         "used": f"{used_gb} GB",
         "free": f"{free_gb} GB",
         "percentUsed": percent_used,
+        "percentFree": percent_free,
     }
 
     containers = _query_docker_containers()
