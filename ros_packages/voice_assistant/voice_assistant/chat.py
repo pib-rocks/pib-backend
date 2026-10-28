@@ -1060,6 +1060,13 @@ class ChatNode(Node):
         # sentence that contains it has finished.
         raw_answer = ""
         published_speech: list[str] = []
+        # A chat message is one row that the UI re-reads, so pushing it on every
+        # token is pure load: a 500-token answer would mean 500 API writes plus 500
+        # UI updates for a screen that cannot show more than a few per second.
+        # ~8 writes per second keep the text visibly growing at a fraction of the cost.
+        persist_interval_s = 0.12
+        last_persist_s = 0.0
+        last_persisted_text = ""
 
         for token in tokens:
             # TTFT fast-path: emit the first generated token immediately, before
@@ -1149,13 +1156,27 @@ class ChatNode(Node):
             ):
                 first_sentence_flushed = True
 
-            if raw_answer:
-                self._persist_streaming_assistant_text(
-                    chat_id,
-                    raw_answer,
-                    bool_update_chat_message,
-                )
-                bool_update_chat_message = True
+            if raw_answer and raw_answer != last_persisted_text:
+                now_s = time.monotonic()
+                if now_s - last_persist_s >= persist_interval_s:
+                    self._persist_streaming_assistant_text(
+                        chat_id,
+                        raw_answer,
+                        bool_update_chat_message,
+                    )
+                    bool_update_chat_message = True
+                    last_persisted_text = raw_answer
+                    last_persist_s = now_s
+
+        # The throttle may have swallowed the final chunk (and a reply can end
+        # without a terminator at all), so the last state is always written once.
+        if raw_answer and raw_answer != last_persisted_text:
+            self._persist_streaming_assistant_text(
+                chat_id,
+                raw_answer,
+                bool_update_chat_message,
+            )
+            last_persisted_text = raw_answer
 
         # A reply can end without a sentence terminator. That tail is part of
         # the answer, so it is persisted here instead of being dropped.
