@@ -48,6 +48,12 @@ def install_ros_stubs():
     action_server = ensure("rclpy.action.server")
     action_server.ServerGoalHandle = object
 
+    action_client = ensure("rclpy.action.client")
+    action_client.ClientGoalHandle = object
+
+    task_mod = ensure("rclpy.task")
+    task_mod.Future = object
+
     cb_groups = ensure("rclpy.callback_groups")
     cb_groups.ReentrantCallbackGroup = MagicMock()
 
@@ -93,6 +99,12 @@ def install_ros_stubs():
 
     std_msgs_msg.String = _String
 
+    class _Bool:
+        def __init__(self):
+            self.data = False
+
+    std_msgs_msg.Bool = _Bool
+
     # --- datatypes ---
     ensure("datatypes")
     action = ensure("datatypes.action")
@@ -130,6 +142,11 @@ def install_ros_stubs():
         pass
 
     msg.ChatMessage = _ChatMessage
+
+    class _ChatIsListening:
+        pass
+
+    msg.ChatIsListening = _ChatIsListening
 
     srv = ensure("datatypes.srv")
 

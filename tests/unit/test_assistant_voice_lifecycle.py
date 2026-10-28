@@ -11,12 +11,16 @@ import ast
 import collections
 import concurrent.futures
 import importlib.util
+import sys
 import threading
+import types
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+
+from ros_stubs import install_ros_stubs
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / "ros_packages/voice_assistant/voice_assistant/assistant.py"
@@ -88,6 +92,8 @@ def assistant_node(monkeypatch):
         def cancel(self, turn_id: str):
             return False, ""
 
+    install_ros_stubs()
+
     ns = {
         "__name__": "_pc49_actual_assistant",
         "Node": object,
@@ -115,6 +121,28 @@ def assistant_node(monkeypatch):
         "channel_turn_on_allowed": lambda *args: True,
         "live_session_ends_on_handover": lambda *args: False,
     }
+    assistant_stub = types.ModuleType("voice_assistant.assistant")
+    for key in (
+        "threading",
+        "StreamingSpeech",
+        "MAX_SILENT_SECONDS_BEFORE",
+        "START_SIGNAL_FILE",
+        "STOP_SIGNAL_FILE",
+        "FALLBACK_REPLY",
+        "_CLEAR_PLAYBACK_ACK_LOG_SECONDS",
+    ):
+        setattr(assistant_stub, key, ns[key])
+    assistant_stub.voice_assistant_client = SimpleNamespace()
+    monkeypatch.setitem(sys.modules, "voice_assistant.assistant", assistant_stub)
+
+    from voice_assistant.assistant_latency_mixin import AssistantLatencyMixin
+    from voice_assistant.assistant_turn_callbacks_mixin import (
+        AssistantTurnCallbacksMixin,
+    )
+
+    ns["AssistantLatencyMixin"] = AssistantLatencyMixin
+    ns["AssistantTurnCallbacksMixin"] = AssistantTurnCallbacksMixin
+
     tree = ast.parse(SOURCE.read_text())
     cls = next(
         n
@@ -153,6 +181,7 @@ def assistant_node(monkeypatch):
     ns["voice_assistant_client"] = SimpleNamespace(
         get_personality_from_chat=lambda chat: (True, personality)
     )
+    assistant_stub.voice_assistant_client = ns["voice_assistant_client"]
     node.cycle = 0
     node.turning_off = False
     node.chat_id_to_is_listening = {"chat-a": True, "chat-b": True}
