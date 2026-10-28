@@ -7,6 +7,8 @@ import sys
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import logging
+
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -104,3 +106,56 @@ def test_mcp_perf_trace_logger_never_raises(monkeypatch):
 
     monkeypatch.setattr(perf_trace.logger, "info", boom)
     log_perf_trace(format_perf_trace_motion_cmd("", "move_motors", 1.0, False))
+
+
+def test_motion_trace_falls_back_to_stderr_when_no_logger_is_configured(
+    capfd, monkeypatch
+):
+    """The MCP server configures no logging, so logger.info would be dropped.
+
+    Measured on the robot: the tool ran, no MOTION_CMD line appeared. The line has to
+    land on stderr (stdout is the MCP protocol channel) when nobody set up a handler.
+    """
+    from pib_mcp_server import perf_trace
+
+    class Handlerless:
+        """Stands in for a logger with no handler anywhere up the chain."""
+
+        def hasHandlers(self):
+            return False
+
+        def info(self, line):
+            raise AssertionError("a handlerless logger must not be used")
+
+    monkeypatch.setattr(perf_trace, "logger", Handlerless())
+
+    perf_trace.log_perf_trace("[PERF_TRACE] MOTION_CMD chat= probe")
+
+    captured = capfd.readouterr()
+    assert "MOTION_CMD chat= probe" in captured.err
+    assert captured.out == ""
+
+
+def test_motion_trace_uses_a_configured_logger(caplog):
+    """With a handler in place the line goes through the logger, not around it."""
+    from pib_mcp_server import perf_trace
+
+    with caplog.at_level(logging.INFO, logger=perf_trace.__name__):
+        perf_trace.log_perf_trace("[PERF_TRACE] MOTION_CMD chat= configured")
+
+    assert any(
+        "MOTION_CMD chat= configured" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+def test_motion_trace_survives_a_broken_logger(monkeypatch):
+    """A logger that raises must not break the tool that emits the line."""
+    from pib_mcp_server import perf_trace
+
+    class Exploding:
+        def hasHandlers(self):
+            raise RuntimeError("logger is on fire")
+
+    monkeypatch.setattr(perf_trace, "logger", Exploding())
+    perf_trace.log_perf_trace("[PERF_TRACE] MOTION_CMD chat= broken")
