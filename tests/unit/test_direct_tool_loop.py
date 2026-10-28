@@ -1268,3 +1268,91 @@ def test_a_gemini_function_call_carries_no_invented_id():
         "move_motor",
     ]
     assert all("id" not in call for call in result["tool_calls"])
+
+
+def test_tool_schema_drops_keys_gemini_rejects(monkeypatch):
+    """additionalProperties killed every direct turn with HTTP 400 on .172."""
+
+    tools = [
+        {
+            "name": "move_motor",
+            "description": "move",
+            "parameters": {
+                "type": "object",
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "additionalProperties": False,
+                "properties": {
+                    "motor": {"type": "string", "title": "Motor"},
+                    "options": {
+                        "type": "object",
+                        "additionalProperties": True,
+                        "properties": {"speed": {"type": ["integer", "null"]}},
+                    },
+                    "ids": {
+                        "type": "array",
+                        "items": {"type": "string", "additionalProperties": False},
+                    },
+                },
+                "required": ["motor"],
+            },
+        }
+    ]
+
+    _url, _headers, body = build_gemini_request(
+        [{"role": "user", "content": "hi"}],
+        tools,
+        "key",
+    )
+    schema = body["tools"][0]["functionDeclarations"][0]["parameters"]
+
+    encoded = json.dumps(schema)
+    assert "additionalProperties" not in encoded
+    assert "$schema" not in encoded
+    assert "title" not in encoded
+    assert schema["required"] == ["motor"]
+    assert schema["properties"]["options"]["properties"]["speed"]["nullable"] is True
+    assert schema["properties"]["ids"]["items"] == {"type": "string"}
+
+
+def test_error_response_closes_the_keepalive_connection(monkeypatch):
+    """A half-read 400 leaves the socket mid-request: the next turn must reconnect."""
+
+    monkeypatch.setenv("DIRECT_HTTP_KEEPALIVE", "1")
+
+    class _Response:
+        status = 400
+        reason = "Bad Request"
+
+        def read(self, *_args):
+            return b'{"error": {"code": 400}}'
+
+    class _Conn:
+        def __init__(self):
+            self.closed = False
+
+        def request(self, *_a, **_k):
+            return None
+
+        def getresponse(self):
+            return _Response()
+
+        def close(self):
+            self.closed = True
+
+    transport = direct_tool_loop._GeminiKeepAliveTransport()
+    conn = _Conn()
+
+    def _ensure(host):
+        transport._conn = conn
+        return conn
+
+    monkeypatch.setattr(transport, "_ensure_connection", _ensure)
+
+    with pytest.raises(DirectToolLoopError):
+        transport.post_json(
+            "https://generativelanguage.googleapis.com/v1beta/models/x:generateContent",
+            {},
+            {"contents": []},
+        )
+
+    assert conn.closed is True

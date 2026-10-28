@@ -101,6 +101,7 @@ def assistant_node(monkeypatch):
         "threading": SimpleNamespace(Timer=ManualTimer, Event=threading.Event),
         "StreamingSpeech": helper.StreamingSpeech,
         "authored_filler": helper.authored_filler,
+        "subprocess_fallback_phrase": helper.subprocess_fallback_phrase,
         "first_token_budget_ms": helper.first_token_budget_ms,
         "transcript_opens_turn": helper.transcript_opens_turn,
         "answer_uses_fallback": lambda text: False,
@@ -164,6 +165,7 @@ def assistant_node(monkeypatch):
     node._filler_timer = None
     node._filler_lock = threading.Lock()
     node._first_token_seen = False
+    node._subprocess_fallback_spoken = False
     node._turn_has_playback = False
     node._answer_audio_pending = False
     node._playback_epoch = 0
@@ -401,3 +403,47 @@ def test_clear_only_reports_a_real_service_ack(assistant_node, outcome):
     else:
         future.set_result(None)
     assert callback.called is (outcome == "success")
+
+
+def test_subprocess_fallback_notice_speaks_builtin_german(assistant_node):
+    node = assistant_node
+    node.state.turned_on = True
+    node._speak_subprocess_fallback_notice()
+    node.executor.run()
+    node.play_audio_from_speech.assert_called_once()
+    assert "Einen Moment" in node.play_audio_from_speech.call_args.args[0]
+
+
+def test_subprocess_fallback_notice_uses_authored_filler(assistant_node):
+    node = assistant_node
+    node.state.turned_on = True
+    node.personality.thinking_filler = "Custom cue."
+    node._speak_subprocess_fallback_notice()
+    node.executor.run()
+    assert node.play_audio_from_speech.call_args.args[0] == "Custom cue."
+
+
+def test_subprocess_fallback_notice_skipped_when_off(assistant_node):
+    node = assistant_node
+    node.state.turned_on = False
+    node._speak_subprocess_fallback_notice()
+    node.executor.run()
+    node.play_audio_from_speech.assert_not_called()
+
+
+def test_subprocess_fallback_notice_skipped_when_turning_off(assistant_node):
+    node = assistant_node
+    node.state.turned_on = True
+    node.turning_off = True
+    node._speak_subprocess_fallback_notice()
+    node.executor.run()
+    node.play_audio_from_speech.assert_not_called()
+
+
+def test_subprocess_fallback_notice_only_once(assistant_node):
+    node = assistant_node
+    node.state.turned_on = True
+    node._speak_subprocess_fallback_notice()
+    node._speak_subprocess_fallback_notice()
+    node.executor.run()
+    node.play_audio_from_speech.assert_called_once()

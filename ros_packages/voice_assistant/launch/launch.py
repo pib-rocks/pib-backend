@@ -5,6 +5,13 @@ from launch.actions import LogInfo, RegisterEventHandler, TimerAction
 from launch.event_handlers import OnProcessExit
 import os
 
+# The launch file is installed into share/voice_assistant/launch and executed from
+# there; that directory is not on sys.path in the launch context, so the sibling
+# module is imported explicitly (deploy failure on .172, PR-2085).
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 from node_supervision import (
     HEALTH_GAVE_UP,
     RespawnPolicy,

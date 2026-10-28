@@ -21,13 +21,18 @@ ENV PIP_ROOT_USER_ACTION=ignore \
 # Third-party packages first, in one resolve. pib-sdk has a lower bound that is high enough
 # for the API the generated programmes use: 0.7.3 is where the kinematics is radian-canonical
 # (ik() returns radians, ik_deg() keeps the degree boundary Write.move expects) and where
-# from_rep103/to_rep103 exist for the hand-position blocks. A lower pin silently installs an
-# SDK whose ik() answers in degrees. The requirement MUST stay quoted: unquoted the shell reads
-# ">=0.7.3" as a redirection, writes a file named "=0.7.3" and installs whatever pib-sdk PyPI
-# happens to serve - which is how the pin went unnoticed before. opencv-python-headless stays below 5 for the same reason
-# as in camera/Dockerfile (5.x dropped cv2 APIs user programs rely on).
+# from_rep103/to_rep103 exist for the hand-position blocks; 0.7.4 adds the multi-motor
+# JointTrajectory layout the motors node expects. The floor lives in repo-root
+# pib_sdk_version.txt and is passed as PIB_SDK_VERSION below so a bump invalidates exactly
+# this pip layer. Keep ARG PIB_SDK_VERSION above the COPY steps, or code changes would
+# reuse a cached install with an old SDK. The requirement MUST stay quoted: unquoted the
+# shell reads ">=…" as a redirection, writes a file named "=…" and installs whatever pib-sdk
+# PyPI happens to serve - which is how the pin went unnoticed before. opencv-python-headless
+# stays below 5 for the same reason as in camera/Dockerfile (5.x dropped cv2 APIs user
+# programs rely on).
+ARG PIB_SDK_VERSION=0.7.4
 RUN pip install --break-system-packages --ignore-installed \
-        "pib-sdk>=0.7.3" \
+        "pib-sdk>=${PIB_SDK_VERSION}" \
         requests==2.32.3 \
         paramiko==3.5.1 \
         tinkerforge==2.1.32 \

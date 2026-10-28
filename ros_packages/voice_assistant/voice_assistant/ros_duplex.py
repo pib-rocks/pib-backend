@@ -116,21 +116,129 @@ def build_motion_vad_guard(
     )
 
 
-def open_speaker(rate: int = OUTPUT_RATE, channels: int = OUTPUT_CHANNELS):
+def _pulse_plugin_device_index(audio) -> Optional[int]:
+    """The ALSA device the Pulse plugin adds, when a server is configured.
+
+    PortAudio exposes no Pulse host API on Ubuntu or on upstream v19.7.0, so the
+    route to PipeWire is ALSA's pulse plugin (libasound2-plugins). Selecting that
+    device keeps 16 kHz mono away from an HDMI default that only does 44.1/48 kHz.
+    """
+    if not os.getenv("PULSE_SERVER", "").strip():
+        return None
+    for index in range(audio.get_device_count()):
+        info = audio.get_device_info_by_index(index)
+        if int(info.get("maxOutputChannels", 0)) < 1:
+            continue
+        if str(info.get("name", "")).strip().lower() == "pulse":
+            return index
+    return None
+
+
+def _pulse_host_api_index(audio) -> Optional[int]:
+    for index in range(audio.get_host_api_count()):
+        name = str(audio.get_host_api_info_by_index(index).get("name", "")).lower()
+        if "pulse" in name:
+            return index
+    return None
+
+
+def _output_device_on_host_api(audio, host_api_index: int) -> tuple[int, str]:
+    for index in range(audio.get_device_count()):
+        info = audio.get_device_info_by_index(index)
+        if info.get("hostApi") != host_api_index:
+            continue
+        if info.get("maxOutputChannels", 0) < 1:
+            continue
+        return int(info["index"]), str(info.get("name", ""))
+    raise OSError(-9999, "no pulse sink")
+
+
+def _audio_error_reason(exc: BaseException) -> str:
+    if isinstance(exc, OSError) and len(exc.args) >= 2 and exc.args[1]:
+        return str(exc.args[1])
+    return str(exc)
+
+
+def open_speaker(
+    rate: int = OUTPUT_RATE,
+    channels: int = OUTPUT_CHANNELS,
+    *,
+    log: Optional[logging.Logger] = None,
+):
     """Open the playback stream in the relay's format.
 
     No resampling, no conversion: the cloud already speaks 16 kHz mono s16le, and a
     resample in the middle would only add latency and a second clock.
+
+    When ``PULSE_SERVER`` is set and PortAudio exposes Pulse, playback goes through
+    the host PipeWire/Pulse stack so 16 kHz mono is not forced onto the ALSA HDMI
+    default. A failed Pulse open falls back to ALSA once; if both fail the node can
+    still start without a speaker.
     """
     import pyaudio  # type: ignore[import-not-found]
 
+    log = log or logger
+    pulse_server = os.getenv("PULSE_SERVER", "").strip()
     audio = pyaudio.PyAudio()
-    stream = audio.open(
+    pulse_api = _pulse_host_api_index(audio) if pulse_server else None
+    stream = None
+    backend = ""
+    device_name = ""
+
+    open_kwargs = dict(
         format=pyaudio.paInt16,
         channels=channels,
         rate=rate,
         output=True,
         frames_per_buffer=320,
+    )
+
+    plugin_index = _pulse_plugin_device_index(audio) if pulse_api is None else None
+    if plugin_index is not None:
+        try:
+            stream = audio.open(output_device_index=plugin_index, **open_kwargs)
+            device_name = str(
+                audio.get_device_info_by_index(plugin_index).get("name", "pulse")
+            )
+            backend = "alsa-pulse-plugin"
+        except OSError as exc:
+            reason = _audio_error_reason(exc)
+            log.warning("pulse plugin playback open failed: %s; trying ALSA", reason)
+
+    if pulse_api is not None and stream is None:
+        try:
+            device_index, device_name = _output_device_on_host_api(audio, pulse_api)
+            stream = audio.open(output_device_index=device_index, **open_kwargs)
+            backend = "pulse"
+        except OSError as exc:
+            reason = _audio_error_reason(exc)
+            log.warning(
+                "pulse playback open failed: %s; trying ALSA",
+                reason,
+            )
+
+    if stream is None:
+        try:
+            stream = audio.open(**open_kwargs)
+            if not device_name:
+                try:
+                    info = audio.get_default_output_device_info()
+                    device_name = str(info.get("name", ""))
+                except OSError:
+                    device_name = "default"
+            backend = "alsa"
+        except OSError as exc:
+            reason = _audio_error_reason(exc)
+            log.error("audio playback unavailable: %s", reason)
+            audio.terminate()
+            return None, None
+
+    log.info(
+        "audio_output=%s device=%s rate=%s channels=%s",
+        backend,
+        device_name,
+        rate,
+        channels,
     )
     return audio, stream
 
@@ -189,7 +297,13 @@ def build_duplex_voice_loop(
     audio = stream = None
     if sink is None:
         audio, stream = open_speaker()
-        sink = stream.write
+        if stream is not None:
+            sink = stream.write
+        else:
+            logger.warning("duplex playback disabled: speaker unavailable")
+
+            def sink(_data: bytes) -> None:
+                return None
 
     holder: dict = {}
 

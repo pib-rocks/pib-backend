@@ -136,6 +136,7 @@ class CatalogueEntry(NamedTuple):
 # fmt: off
 _CATALOGUE_ROWS = (
     ("Google", "gemini-3.8-flash", "Gemini 3.8 Flash", True, True, False, False, False, True, STATUS_ACTIVE, False),
+    ("Google", "gemini-3.5-flash-lite", "Gemini 3.5 Flash-Lite", True, True, False, False, False, True, STATUS_ACTIVE, False),
     ("Google", "gemini-3.8-live", "Gemini 3.8 Live", True, False, True, False, False, False, STATUS_ACTIVE, False),
     ("OpenAI", "gpt-6", "GPT-6", True, True, False, False, False, True, STATUS_ACTIVE, False),
     ("Anthropic", "claude-sonnet-5-5", "Claude Sonnet 5.5", True, True, False, False, False, True, STATUS_ACTIVE, False),

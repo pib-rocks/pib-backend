@@ -513,6 +513,29 @@ class ChatNode(Node):
                 stages = self._turn_stages = {}
             stages[stage] = round(float(ts) - started, 1)
 
+    def _emit_hermes_subprocess_fallback_notice(self, reason: str) -> None:
+        """Tell the voice layer to speak before the oneshot subprocess runs."""
+        publisher = getattr(self, "_turn_trace_publisher", None)
+        if publisher is None:
+            return
+        try:
+            from voice_assistant.turn_latency import format_event, now_ms
+
+            raw = format_event(
+                "hermes_subprocess_fallback",
+                ts_ms=now_ms(),
+                chat_id=self._turn_trace_chat_id(),
+                detail={"fallback_reason": reason},
+            )
+            self._record_turn_trace(raw)
+            message = String()
+            message.data = raw
+            publisher.publish(message)
+        except Exception as exc:
+            self.get_logger().warning(
+                f"hermes subprocess fallback notice was not published: {exc}"
+            )
+
     def _turn_meta(self) -> dict | None:
         """Facts of this turn, stored with the answer (PC-82).
 
@@ -553,6 +576,16 @@ class ChatNode(Node):
             if trace:
                 meta["turnTrace"] = trace
         return meta or None
+
+    @staticmethod
+    def _provider_base_url(api_name: str) -> str:
+        """Host a chat turn talks to, so a provider error can be located.
+
+        Falls back to the documented cloud default when nothing is configured:
+        the operator needs the host more than a pretty log line.
+        """
+        route = (os.getenv("PIB_CLOUD_BASE_URL") or "").strip().rstrip("/")
+        return route or "default"
 
     def _finalize_message_meta(self, chat_id: str) -> None:
         """Write the completed turn facts onto the answer that was just stored.
@@ -825,6 +858,8 @@ class ChatNode(Node):
         is_user: bool,
         update_message: bool,
         update_database: bool,
+        *,
+        accumulated: bool = False,
     ) -> None:
         """
         Writes a new chat-message (or updates the last one) to PIB DB,
@@ -833,6 +868,7 @@ class ChatNode(Node):
         - When update_message=False → CREATE new message in PIB (records message_id)
         - When update_message=True  → UPDATE existing PIB message_id with concatenated content
         - update_database controls whether we hit PIB on updates or only update local content
+        - accumulated=True → ``text`` is the full assistant answer so far (streaming turns)
         """
         if text == "":
             return
@@ -842,7 +878,10 @@ class ChatNode(Node):
                 # UPDATE path
                 if update_database:
                     # concatenate locally AND persist to PIB
-                    self.message_content = f"{self.message_content} {text}"
+                    if accumulated:
+                        self.message_content = text
+                    else:
+                        self.message_content = f"{self.message_content} {text}"
                     if self.last_pib_message_id is not None:
                         successful, _ = voice_assistant_client.update_chat_message(
                             chat_id,
@@ -859,7 +898,10 @@ class ChatNode(Node):
                             return
                 else:
                     # concatenate locally ONLY
-                    self.message_content = f"{self.message_content} {text}"
+                    if accumulated:
+                        self.message_content = text
+                    else:
+                        self.message_content = f"{self.message_content} {text}"
             else:
                 # CREATE path
                 successful, chat_message = voice_assistant_client.create_chat_message(
@@ -993,6 +1035,19 @@ class ChatNode(Node):
         token = msg.data
         self.token = token
 
+    def _persist_streaming_assistant_text(
+        self, chat_id: str, content: str, update_message: bool
+    ) -> None:
+        """Write the assistant answer accumulated so far (one message_id, many updates)."""
+        self.create_chat_message(
+            chat_id,
+            content,
+            False,
+            update_message,
+            True,
+            accumulated=True,
+        )
+
     def _stream_chunks_to_goal(
         self, goal_handle, chat_id: str, tokens, t0: Optional[float] = None
     ) -> tuple[Optional[str], Optional[int], str]:
@@ -1028,6 +1083,13 @@ class ChatNode(Node):
         # sentence that contains it has finished.
         raw_answer = ""
         published_speech: list[str] = []
+        # A chat message is one row that the UI re-reads, so pushing it on every
+        # token is pure load: a 500-token answer would mean 500 API writes plus 500
+        # UI updates for a screen that cannot show more than a few per second.
+        # ~8 writes per second keep the text visibly growing at a fraction of the cost.
+        persist_interval_s = 0.12
+        last_persist_s = 0.0
+        last_persisted_text = ""
 
         for token in tokens:
             # TTFT fast-path: emit the first generated token immediately, before
@@ -1078,19 +1140,6 @@ class ChatNode(Node):
                     code_visual = code_visual_match.group(1)
                     prev_text = code_visual
                     prev_text_type = Chat.Goal.TEXT_TYPE_CODE_VISUAL
-                    chat_message_text = code_visual_match.group(0)
-                    # Written inline instead of as an executor task: an UPDATE
-                    # may only run once the preceding CREATE has recorded the
-                    # message id it targets, otherwise the concurrent writes
-                    # race and the rest of the reply lands on the wrong row.
-                    self.create_chat_message(
-                        chat_id,
-                        chat_message_text,
-                        False,
-                        bool_update_chat_message,
-                        True,
-                    )
-                    bool_update_chat_message = True
                     curr_text = curr_text[code_visual_match.end() :].rstrip()
                     continue
 
@@ -1112,15 +1161,6 @@ class ChatNode(Node):
                             f"[PERF_TRACE] FIRST_SENTENCE_FLUSHED chat={chat_id} "
                             f"elapsed_ms={elapsed_ms:.2f}"
                         )
-                    chat_message_text = sentence
-                    self.create_chat_message(
-                        chat_id,
-                        chat_message_text,
-                        False,
-                        bool_update_chat_message,
-                        True,
-                    )
-                    bool_update_chat_message = True
                     curr_text = curr_text[
                         sentence_match.end(
                             3 if sentence_match.group(3) is not None else 1
@@ -1139,17 +1179,32 @@ class ChatNode(Node):
             ):
                 first_sentence_flushed = True
 
+            if raw_answer and raw_answer != last_persisted_text:
+                now_s = time.monotonic()
+                if now_s - last_persist_s >= persist_interval_s:
+                    self._persist_streaming_assistant_text(
+                        chat_id,
+                        raw_answer,
+                        bool_update_chat_message,
+                    )
+                    bool_update_chat_message = True
+                    last_persisted_text = raw_answer
+                    last_persist_s = now_s
+
+        # The throttle may have swallowed the final chunk (and a reply can end
+        # without a terminator at all), so the last state is always written once.
+        if raw_answer and raw_answer != last_persisted_text:
+            self._persist_streaming_assistant_text(
+                chat_id,
+                raw_answer,
+                bool_update_chat_message,
+            )
+            last_persisted_text = raw_answer
+
         # A reply can end without a sentence terminator. That tail is part of
         # the answer, so it is persisted here instead of being dropped.
         leftover = curr_text.strip()
         if leftover:
-            self.create_chat_message(
-                chat_id,
-                leftover,
-                False,
-                bool_update_chat_message,
-                True,
-            )
             if not first_chunk_emitted:
                 first_chunk_emitted = True
                 elapsed_ms = (time.monotonic() - t0) * 1000.0
@@ -1292,6 +1347,10 @@ class ChatNode(Node):
                 if tool_calling
                 else hermes_agent_client.enabled_toolsets_for_turn(False)
             )
+
+            def _on_subprocess_fallback(reason: str) -> None:
+                self._emit_hermes_subprocess_fallback_notice(reason)
+
             return hermes_agent_client.run_turn(
                 text=text,
                 chat_id=chat_id,
@@ -1300,6 +1359,7 @@ class ChatNode(Node):
                 enabled_toolsets=enabled_toolsets,
                 timeout=timeout,
                 message_history=message_history,
+                on_subprocess_fallback=_on_subprocess_fallback,
             )
 
         future = self._hermes_executor.submit(_turn)
@@ -1837,7 +1897,13 @@ class ChatNode(Node):
             # Name the path the turn actually took: a pib.Cloud turn with tools
             # enabled runs on Hermes, and a log that still says "direct" sends
             # the next diagnosis to the wrong component.
-            self.get_logger().error(f"failed to send request to {turn_path}: {e}")
+            # A 401 from a route the operator did not expect is unreadable without
+            # the host: on .172 the pib.Cloud key looked broken while the profile
+            # pointed at a LAN dev proxy (PR-2096).
+            self.get_logger().error(
+                f"failed to send request to {turn_path} "
+                f"(chat={chat_id} model={api_name} provider_base_url={self._provider_base_url(api_name)}): {e}"
+            )
             goal_handle.abort()
             return Chat.Result()
 

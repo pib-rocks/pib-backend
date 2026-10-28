@@ -33,6 +33,8 @@ case "$RETRY_DELAY_SECONDS" in
     '' | *[!0-9]*) RETRY_DELAY_SECONDS=300 ;;
 esac
 HEALTHCHECK="$BACKEND_DIR/setup/update_healthcheck.py"
+PIB_SDK_VERIFY="$BACKEND_DIR/setup/pib_sdk_verify.py"
+BACKEND_IMAGES_HELPER="$BACKEND_DIR/setup/update_backend_images.py"
 WATCHDOG_DECIDER="$BACKEND_DIR/setup/update_watchdog.py"
 STATUS_READER="$BACKEND_DIR/setup/update_status_reader.py"
 WATCHDOG_HELPER="/usr/local/sbin/pib-update-watchdog"
@@ -650,18 +652,103 @@ ensure_ollama_for_update() {
     ensure_ollama_listen_dropin restart
 }
 
+# Refreshes Dockerfile base images (ros, python, node, ...) before recreating
+# services when registry pulls did not supply the stack. Service image names
+# point at ghcr.io; `docker compose pull` is tried first in build_backend_stack.
+# Offline: a failed pull build retries without --pull.
+refresh_backend_base_images() {
+    local compose=(docker compose -f "$BACKEND_DIR/docker-compose.yaml" --profile all)
+    local pull_log pull_status plain_log plain_status
+    pull_log="$(mktemp "$UPDATE_DIR/base-build-pull.XXXXXX")"
+    plain_log="$(mktemp "$UPDATE_DIR/base-build-plain.XXXXXX")"
+    "${compose[@]}" build --pull >"$pull_log" 2>&1
+    pull_status=$?
+    if [ "$pull_status" -eq 0 ]; then
+        cat "$pull_log"
+        rm -f "$pull_log" "$plain_log"
+        log "Backend base images: refreshed from registry (--pull build succeeded)"
+        return 0
+    fi
+    log "WARNING: pull-enabled backend build failed (exit ${pull_status}): $(tr '\n' ' ' <"$pull_log" | sed 's/  */ /g')"
+    cat "$pull_log"
+    "${compose[@]}" build >"$plain_log" 2>&1
+    plain_status=$?
+    if [ "$plain_status" -eq 0 ]; then
+        cat "$plain_log"
+        rm -f "$pull_log" "$plain_log"
+        log "Backend base images: served from local cache (pull failed, plain build succeeded)"
+        return 0
+    fi
+    cat "$plain_log"
+    rm -f "$pull_log" "$plain_log"
+    log "Backend base image build failed after pull and plain attempts (plain exit ${plain_status})"
+    return 1
+}
+
+# Tries ghcr.io service images (compose pull) before the local build path.
+# Returns 0 when pull + recreate succeeded; 1 to fall back to compose build.
+recreate_backend_from_registry() {
+    local enabled pull_log pull_status strategy compose
+    enabled="$(python3 "$BACKEND_IMAGES_HELPER" registry-enabled 2>/dev/null || printf false)"
+    if [ "$enabled" != "true" ]; then
+        strategy="build"
+        log "$(python3 "$BACKEND_IMAGES_HELPER" log-summary "$strategy")"
+        return 1
+    fi
+    export PIB_IMAGE_TAG
+    PIB_IMAGE_TAG="$(python3 "$BACKEND_IMAGES_HELPER" resolve-tag "${APP_VERSION:-}")"
+    # The build path exports APP_VERSION before touching compose; the pull path has to do the same,
+    # otherwise compose interpolation falls back to the file default and the update reports the wrong
+    # version even though the image itself is correct.
+    if [ -n "${APP_VERSION:-}" ]; then
+        export APP_VERSION
+    fi
+    log "Attempting registry pull for backend services (PIB_IMAGE_TAG=${PIB_IMAGE_TAG} APP_VERSION=${APP_VERSION:-unset})"
+    compose=(docker compose -f "$BACKEND_DIR/docker-compose.yaml" --profile all)
+    pull_log="$(mktemp "$UPDATE_DIR/service-pull.XXXXXX")"
+    if "${compose[@]}" pull >"$pull_log" 2>&1; then
+        cat "$pull_log"
+        rm -f "$pull_log"
+        if "${compose[@]}" up -d --no-build --force-recreate; then
+            strategy="pull"
+            log "$(python3 "$BACKEND_IMAGES_HELPER" log-summary "$strategy")"
+            return 0
+        fi
+        log "WARNING: registry images pulled but recreate with --no-build failed"
+    else
+        pull_status=$?
+        log "WARNING: registry pull failed (exit ${pull_status}): $(tr '\n' ' ' <"$pull_log" | sed 's/  */ /g')"
+        cat "$pull_log"
+    fi
+    rm -f "$pull_log"
+    strategy="build_after_pull_failed"
+    log "$(python3 "$BACKEND_IMAGES_HELPER" log-summary "$strategy")"
+    return 1
+}
+
 # Documented injection is `docker compose build --build-arg APP_VERSION=<version>
 # flask-app` (docs/RELEASE.md). -f is required because this runner does not cd
 # into the checkout. APP_VERSION is also exported: the following
 # `up -d --build` rebuilds from compose interpolation
 # (`${APP_VERSION:-...}`) and would otherwise overwrite that image with the
 # fallback. Callers leave APP_VERSION unset only for an untagged rollback.
+# Second argument `skip_base_refresh`: when non-empty, skips `build --pull` (rollback).
 build_backend_stack() {
+    local skip_base_refresh="${1:-}"
+    if [ -z "$skip_base_refresh" ]; then
+        if recreate_backend_from_registry; then
+            return 0
+        fi
+        refresh_backend_base_images || return 1
+    fi
     if [ -n "${APP_VERSION:-}" ]; then
         export APP_VERSION
-        log "Building flask-app with --build-arg APP_VERSION=${APP_VERSION}"
+        log "Building flask-app with --build-arg APP_VERSION=${APP_VERSION} PIB_SDK_VERSION=${PIB_SDK_VERSION}"
         docker compose -f "$BACKEND_DIR/docker-compose.yaml" \
-            build --build-arg "APP_VERSION=${APP_VERSION}" flask-app || return 1
+            build \
+            --build-arg "APP_VERSION=${APP_VERSION}" \
+            --build-arg "PIB_SDK_VERSION=${PIB_SDK_VERSION}" \
+            flask-app || return 1
     else
         log "WARNING: APP_VERSION is unset; backend rebuild will use the compose-file fallback"
     fi
@@ -731,6 +818,30 @@ verify_migration() {
         log "Alembic mismatch: current=${current:-unknown}, head=${heads:-unknown}"
         return 1
     }
+}
+
+read_pib_sdk_version() {
+    local file="$BACKEND_DIR/pib_sdk_version.txt"
+    if [ ! -f "$file" ]; then
+        log "Missing pib_sdk_version.txt at $file"
+        return 1
+    fi
+    tr -d '[:space:]' <"$file"
+}
+
+verify_pib_sdk() {
+    local required installed output
+    required="$(read_pib_sdk_version)" || return 1
+    if ! installed="$(docker compose -f "$BACKEND_DIR/docker-compose.yaml" exec -T ros-programs \
+        python3 -c "import pib_sdk, sys; sys.stdout.write(pib_sdk.__version__)" 2>&1)"; then
+        log "pib-sdk verification failed: ros-programs did not answer (${installed})"
+        return 1
+    fi
+    if ! output="$(python3 "$PIB_SDK_VERIFY" "$installed" "$required" 2>&1)"; then
+        log "pib-sdk mismatch: ${output} (installed=${installed}, required>=${required})"
+        return 1
+    fi
+    log "pib-sdk verification passed: installed=${installed}, required>=${required}"
 }
 
 snapshot_running_services() {
@@ -1014,12 +1125,19 @@ rollback_once() {
         log "WARNING: rolled-back checkout has no release tag; backend rebuild will use the compose-file fallback"
         unset APP_VERSION
     fi
-    build_backend_stack
+    if PIB_SDK_VERSION="$(read_pib_sdk_version)"; then
+        export PIB_SDK_VERSION
+        log "Rollback rebuild uses PIB_SDK_VERSION=$PIB_SDK_VERSION"
+    else
+        log "WARNING: rolled-back checkout has no pib_sdk_version.txt; compose-file PIB_SDK_VERSION fallback applies"
+        unset PIB_SDK_VERSION
+    fi
+    build_backend_stack rollback
     docker compose -f "$CEREBRA_DIR/docker-compose.yaml" \
         up -d --build --force-recreate
     BACKEND_TARGET="$BACKEND_BEFORE"
     CEREBRA_TARGET="$CEREBRA_BEFORE"
-    if wait_for_flask && verify_migration && verify_result; then
+    if wait_for_flask && verify_migration && verify_pib_sdk && verify_result; then
         write_revision "pib-backend" "$BACKEND_BEFORE" "unknown"
         write_revision "cerebra" "$CEREBRA_BEFORE" "unknown"
         write_status "rolled_back" "Verification failed. Previous revisions were rebuilt (pib-backend ${BACKEND_BEFORE}, cerebra ${CEREBRA_BEFORE}). The WAL-safe backup was kept and was not applied; user data was not rolled back."
@@ -1096,6 +1214,9 @@ if ! APP_VERSION="$(resolve_app_version "$BACKEND_DIR")"; then
     fi
 fi
 log "Resolved APP_VERSION=${APP_VERSION} for pib-backend at ${BACKEND_TARGET}"
+PIB_SDK_VERSION="$(read_pib_sdk_version)" || fail "pib_sdk_version.txt is missing or empty"
+export PIB_SDK_VERSION
+log "Resolved PIB_SDK_VERSION=${PIB_SDK_VERSION} for container builds"
 
 check_cancel
 write_status "fetching" "Comparing the model store with models/manifest.yaml"
@@ -1123,6 +1244,12 @@ wait_for_flask || fail "flask-app did not become ready"
 check_cancel
 write_status "migrating" "Verifying the startup migration reached the Alembic head"
 if ! verify_migration; then
+    rollback_once
+fi
+
+check_cancel
+write_status "verifying" "Verifying ros-programs carries the required pib-sdk"
+if ! verify_pib_sdk; then
     rollback_once
 fi
 

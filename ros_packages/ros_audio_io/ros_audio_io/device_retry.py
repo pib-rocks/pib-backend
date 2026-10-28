@@ -1,7 +1,13 @@
-"""Pure retry and status helpers for microphone device connections."""
+import os
+
+"""Pure retry and status helpers for microphone device connections.
+
+Retry backoff in seconds: 1, 2, 4, 8, 16, then 30 capped for every later attempt.
+"""
 
 MAX_RETRY_DELAY_SECONDS = 30.0
 STATUS_OWNER = "ros-audio-io"
+INPUT_FORMAT_S16LE = "S16_LE"
 
 
 class DeviceNotFoundError(Exception):
@@ -18,6 +24,26 @@ def next_retry_delay(attempt):
     return float(2 ** (attempt - 1))
 
 
+def pulse_plugin_device_index(device_infos, *, pulse_server=None):
+    """Index of the ALSA device the Pulse plugin adds, when a server is configured.
+
+    Ubuntu's libportaudio has no Pulse host API (upstream v19.7.0 has none either),
+    so ALSA's pulse plugin is the route to PipeWire. Opening the raw hw: device
+    while PipeWire owns it is the "device busy" failure measured on the robot.
+    """
+
+    if pulse_server is None:
+        pulse_server = os.getenv("PULSE_SERVER", "")
+    if not str(pulse_server).strip():
+        return None
+    for info in device_infos:
+        if int(info.get("maxInputChannels", 0)) < 1:
+            continue
+        if str(info.get("name", "")).strip().lower() == "pulse":
+            return int(info["index"])
+    return None
+
+
 def describe_open_failure(exc):
     """Return the stable operator-facing reason for a device-open failure."""
 
@@ -25,7 +51,72 @@ def describe_open_failure(exc):
         return "no matching input device"
     if getattr(exc, "errno", None) == -9999 or "[Errno -9999]" in str(exc):
         return "device busy"
+    if getattr(exc, "errno", None) == -9994 or "[Errno -9994]" in str(exc):
+        return "sample format not supported"
     return "device open failure"
+
+
+def capture_backend_name(host_api_name):
+    """Map a PortAudio host API label to the short backend name used in logs."""
+
+    label = str(host_api_name).lower()
+    if "pulse" in label:
+        return "pulse"
+    return "alsa"
+
+
+def format_input_capabilities(device_info, *, audio_format=INPUT_FORMAT_S16LE):
+    """Summarize PortAudio input facts for operator-facing failure logs."""
+
+    name = str(device_info.get("name", ""))
+    max_in = int(device_info.get("maxInputChannels", 0))
+    default_rate = int(float(device_info.get("defaultSampleRate", 0)))
+    return (
+        f"maxInputChannels={max_in} defaultSampleRate={default_rate} "
+        f"format={audio_format} name={name!r}"
+    )
+
+
+def audio_device_log_line(
+    backend, device_name, rate, channels, audio_format=INPUT_FORMAT_S16LE
+):
+    """Structured start-up line aligned with voice_assistant open_speaker logging."""
+
+    return (
+        f"audio_device={backend} device={device_name} "
+        f"rate={rate} channels={channels} format={audio_format}"
+    )
+
+
+def open_failure_signature(*, device_index, device_name, reason, detail):
+    """Key for deduplicating identical open failures across retries."""
+
+    return (device_index, device_name, reason, detail)
+
+
+def format_microphone_open_failure_log(
+    *,
+    reason,
+    detail,
+    device_name,
+    capabilities,
+    attempt,
+    delay,
+):
+    """One readable operator line when the microphone cannot be opened."""
+
+    return (
+        f"Microphone open failed: reason={reason}; detail={detail}; "
+        f"device={device_name}; advertised={capabilities}; "
+        f"attempt={attempt}; next attempt in {delay:g}s"
+    )
+
+
+def microphone_recovery_log(device_name, rate, channels, backend="alsa"):
+    """Log line when capture becomes available after a prior failure."""
+
+    configured = audio_device_log_line(backend, device_name, rate, channels)
+    return f"Microphone input recovered: {configured}"
 
 
 def device_status_payload(

@@ -1,14 +1,20 @@
 name: Release Pairing Guard
 
 # pib-backend and cerebra share ONE version number and are released as a pair.
+# pib-sdk is released independently; the required version is pinned in
+# pib_sdk_version.txt at the repository root.
 #
-# Release order is fixed: pib-backend FIRST, cerebra second.
+# Release order: pib-sdk FIRST, then pib-backend, then cerebra.
 #
-# Because pib-backend goes first it cannot verify cerebra up front - at that
-# moment cerebra legitimately has no release yet. So this guard runs the other
-# way round: after a pib-backend release is published it checks that cerebra
-# follows, reporting PENDING during a grace period and failing only if cerebra
-# never catches up.
+# After a pib-backend release is published this guard checks that the pinned
+# pib-sdk release exists and that cerebra follows with the same tag. Missing
+# counterparts report PENDING during a grace period and fail only if they never
+# catch up. Draft or prerelease pib-sdk releases fail immediately (no
+# installable tag).
+#
+# pib-backend can verify the SDK up front (it must already be published), but
+# cannot verify cerebra up front - at backend release time cerebra legitimately
+# has no release yet.
 #
 # The hard, build-blocking guard lives on the cerebra side
 # (.github/workflows/docker-build.yml): it refuses to publish a Docker image
@@ -31,7 +37,7 @@ permissions:
 
 jobs:
   verify-pairing:
-    name: Verify cerebra has the same release
+    name: Verify pib-sdk pin and cerebra pairing
     runs-on: ubuntu-latest
 
     steps:
@@ -65,12 +71,12 @@ jobs:
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Verify the cerebra counterpart
+      - name: Verify pib-sdk pin and cerebra counterpart
         if: steps.tag.outputs.skip == 'false'
         env:
           # Optional: raises the API rate limit from 60/h to 5000/h.
           # Both repos are public, so the check also works without it.
           GH_TOKEN: ${{ secrets.RELEASE_GUARD_TOKEN }}
         run: |
-          python3 .github/scripts/verify_release_pairing.py \
+          python3 setup/release_pairing_guard.py verify \
             "${{ steps.tag.outputs.tag }}" --grace-minutes 120

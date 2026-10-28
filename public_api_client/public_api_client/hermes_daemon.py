@@ -13,6 +13,7 @@ Endpoints:
 from __future__ import annotations
 
 import contextlib
+import errno
 import glob
 import importlib
 import inspect
@@ -704,21 +705,19 @@ def ensure_profile_home(
     os.chmod(profile_dir, 0o700)
     os.chmod(soul_path, 0o644)
     env_path = os.path.join(profile_dir, ".env")
-    if os.path.exists(env_path):
+    if os.path.exists(env_path) and os.access(env_path, os.W_OK):
         try:
             os.chmod(env_path, 0o600)
         except OSError as exc:
-            # PC-45: the voice container sees a filtered view of the Hermes home
-            # in which credential files are replaced by read-only, blank covers.
-            # Such a placeholder carries no secret, so failing to restrict it is
-            # not fatal - aborting here made every Hermes turn answer with the
-            # fallback reply inside the recreated voice container. The runtime
-            # provider key comes from the key store, never from this file.
-            logging.warning(
-                "could not restrict %s to 0600 (%s); continuing without it",
-                env_path,
-                exc,
-            )
+            # PC-45 / PR-2102: the voice container's profile .env is often a
+            # read-only credential cover. Restricting it is best-effort only;
+            # EROFS is expected there and must not warn every turn.
+            if exc.errno not in (errno.EROFS, errno.EPERM):
+                logging.warning(
+                    "could not restrict %s to 0600 (%s); continuing without it",
+                    env_path,
+                    exc,
+                )
 
     return {
         "ok": True,
@@ -911,8 +910,16 @@ def _seed_hermes_session_from_flask_messages(
     session_id: str,
     chat_id: str,
     flask_messages,
+    current_user_text: Optional[str] = None,
 ) -> None:
     if session_db is None or not flask_messages:
+        return
+    from pib_hermes_config.conversation_transcript import (
+        flask_messages_for_session_seed,
+    )
+
+    flask_messages = flask_messages_for_session_seed(flask_messages, current_user_text)
+    if not flask_messages:
         return
     try:
         restored, _display = session_db.get_resume_conversations(session_id)
@@ -995,7 +1002,11 @@ def _conversation_history_for_smart_turn(
         return []
     flask_messages = _flask_messages_chronological(raw_messages or [])
     _seed_hermes_session_from_flask_messages(
-        session_db, session_id, chat_id, flask_messages
+        session_db,
+        session_id,
+        chat_id,
+        flask_messages,
+        current_user_text=current_user_text,
     )
     return _hermes_history_from_flask_messages(flask_messages, current_user_text)
 
@@ -1051,6 +1062,10 @@ def clear_agent_cache() -> None:
             store.close()
         except Exception:
             logging.debug("could not close the Hermes session store", exc_info=True)
+
+    from public_api_client.hermes_agent_client import clear_provider_key_cache
+
+    clear_provider_key_cache()
 
 
 def _discover_mcp_tools() -> None:
@@ -1434,6 +1449,25 @@ def in_process_available() -> bool:
     return bool(venv_site_packages()) or agent_source_imports_here()
 
 
+@contextlib.contextmanager
+def _agent_streaming_scope(agent, stream_callback: Optional[Callable[[str], None]]):
+    """Turn provider streaming on for daemon NDJSON turns that forward deltas.
+
+    Robot profiles may carry ``model.streaming: false`` (or legacy equivalents).
+    The warm daemon still streams when the client asked for ``stream=true``; the
+    prior session flag is restored afterward so non-stream turns stay unchanged.
+    """
+    if stream_callback is None:
+        yield
+        return
+    previous = bool(getattr(agent, "_disable_streaming", False))
+    agent._disable_streaming = False
+    try:
+        yield
+    finally:
+        agent._disable_streaming = previous
+
+
 def _run_turn_in_home(
     text: str,
     chat_id: str,
@@ -1577,7 +1611,7 @@ def _run_turn_in_home(
                     profile_hermes_settings,
                 )
 
-                route_model, route_provider, route_base_url, _route_env = (
+                route_model, route_provider, route_base_url, route_env_vars = (
                     profile_hermes_settings()
                 )
                 _sync_provider_capabilities_to_agent(
@@ -1598,11 +1632,19 @@ def _run_turn_in_home(
                     chat_id,
                     sorted(attempted),
                 )
-                turn_result = cached.agent.run_conversation(
-                    user_message=text,
-                    conversation_history=history or None,
-                    stream_callback=capture_delta,
+                # PR-2102 scopes the cached provider key to the turn, PR-2101 turns
+                # provider streaming on for it: both wrap the same call, nested.
+                key_scope = (
+                    _provider_key_in_environment(route_env_vars, provider_key)
+                    if provider_key and route_env_vars
+                    else contextlib.nullcontext()
                 )
+                with key_scope, _agent_streaming_scope(cached.agent, stream_callback):
+                    turn_result = cached.agent.run_conversation(
+                        user_message=text,
+                        conversation_history=history or None,
+                        stream_callback=capture_delta,
+                    )
                 _harvest_provider_refusals_from_agent(
                     cached.agent,
                     route_provider,
@@ -1689,9 +1731,13 @@ def run_turn_in_process(
 
     with scope:
         if personality_id:
-            from public_api_client.hermes_agent_client import ensure_profile
+            from pib_hermes_config import profile_dir_for
 
-            profile_dir = ensure_profile(personality_id)
+            profile_dir = profile_dir_for(personality_id)
+            if not _profile_is_complete(profile_dir):
+                from public_api_client.hermes_agent_client import ensure_profile
+
+                profile_dir = ensure_profile(personality_id)
             logging.info(
                 "HERMES_TURN_HOME personality=%s home=%s memory_dir=%s session_db=%s",
                 personality_id,

@@ -4,7 +4,7 @@ services:
   # The Hermes turn daemon, on the Python version the agent requires (3.14).
   # The voice container reaches it by service name; see PIB_HERMES_DAEMON_URL.
   hermes-daemon:
-    image: pib-hermes-daemon
+    image: ${PIB_IMAGE_PREFIX:-ghcr.io/pib-rocks/pib-backend}-hermes-daemon:${PIB_IMAGE_TAG:-develop}
     build:
       context: .
       dockerfile: ./public_api_client/Dockerfile
@@ -47,7 +47,7 @@ services:
       - no-new-privileges:true
 
   pib-blockly-server:
-    image: pib-blockly-server
+    image: ${PIB_IMAGE_PREFIX:-ghcr.io/pib-rocks/pib-backend}-pib-blockly-server:${PIB_IMAGE_TAG:-develop}
     build:
       context: ./pib_blockly/pib_blockly_server
       dockerfile: ./Dockerfile
@@ -59,7 +59,7 @@ services:
     restart: always
 
   flask-app:
-    image: flask_api
+    image: ${PIB_IMAGE_PREFIX:-ghcr.io/pib-rocks/pib-backend}-flask-app:${PIB_IMAGE_TAG:-develop}
     build:
       context: .
       dockerfile: ./pib_api/flask/Dockerfile
@@ -71,6 +71,7 @@ services:
         # This default applies only when that argument and the environment are
         # both absent.
         APP_VERSION: ${APP_VERSION:-v0.6.2}
+        PIB_SDK_VERSION: ${PIB_SDK_VERSION:-0.7.4}
     command: "bash -c 'flask --app run db upgrade && flask --app run seed_db && flask --app run reconcile_system_properties && flask --app run run --host 0.0.0.0'"
     networks:
       - pib-network
@@ -129,6 +130,7 @@ services:
     extra_hosts:
       - host.docker.internal:host-gateway
   rosbridge-ws:
+    image: ${PIB_IMAGE_PREFIX:-ghcr.io/pib-rocks/pib-backend}-rosbridge-ws:${PIB_IMAGE_TAG:-develop}
     build:
       context: ./ros_packages
       dockerfile: ./rosbridge/Dockerfile
@@ -140,7 +142,7 @@ services:
       - "9090:9090"
 
   ros-camera:
-    image: ros-camera
+    image: ${PIB_IMAGE_PREFIX:-ghcr.io/pib-rocks/pib-backend}-ros-camera:${PIB_IMAGE_TAG:-develop}
     privileged: true
     build:
       context: ./ros_packages
@@ -163,7 +165,7 @@ services:
       - rosbridge-ws
 
   ros-motors:
-    image: ros_motors
+    image: ${PIB_IMAGE_PREFIX:-ghcr.io/pib-rocks/pib-backend}-ros-motors:${PIB_IMAGE_TAG:-develop}
     build:
       context: .
       dockerfile: ./ros_packages/motors/Dockerfile
@@ -195,7 +197,7 @@ services:
     mac_address: "02:50:49:42:00:45"
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    image: ros_voice_assistant
+    image: ${PIB_IMAGE_PREFIX:-ghcr.io/pib-rocks/pib-backend}-ros-voice-assistant:${PIB_IMAGE_TAG:-develop}
     build:
       context: .
       dockerfile: ./ros_packages/voice_assistant/Dockerfile
@@ -271,10 +273,14 @@ services:
       # itself is not mounted raw: profiles/*/.env and ~/.hermes/.env would
       # come with it. prepare-view publishes a filtered view and covers those
       # files. The cloud-operator key is not on this robot.
+      - XDG_RUNTIME_DIR=/run/user/1000
+      - PULSE_SERVER=unix:${XDG_RUNTIME_DIR:-/run/user/1000}/pulse/native
     volumes:
       - ${PIB_VOICE_DATA_DIR:-/data/voice}:/data/voice
       - /dev/snd:/dev/snd
       - /dev/dsp:/dev/dsp
+      - ${XDG_RUNTIME_DIR:-/run/user/1000}:/run/user/1000
+      - ${XDG_RUNTIME_DIR:-/run/user/1000}/pulse/native:${XDG_RUNTIME_DIR:-/run/user/1000}/pulse/native
       - /etc/machine-id:/etc/machine-id
       - /etc/pib_smart_chats:/etc/pib_smart_chats:ro
       - type: bind
@@ -305,10 +311,12 @@ services:
       - ros-audio-io
 
   ros-programs:
-    image: ros_programs
+    image: ${PIB_IMAGE_PREFIX:-ghcr.io/pib-rocks/pib-backend}-ros-programs:${PIB_IMAGE_TAG:-develop}
     build:
       context: .
       dockerfile: ./ros_packages/programs/Dockerfile
+      args:
+        PIB_SDK_VERSION: ${PIB_SDK_VERSION:-0.7.4}
     command: >
       bash -lc "
         source /opt/ros/jazzy/setup.bash &&
@@ -347,7 +355,7 @@ services:
       - flask-app
 
   ros-display:
-    image: ros-display
+    image: ${PIB_IMAGE_PREFIX:-ghcr.io/pib-rocks/pib-backend}-ros-display:${PIB_IMAGE_TAG:-develop}
     privileged: true
     build:
       context: .
@@ -387,7 +395,7 @@ services:
       - pib-network
 
   ros-audio-io:
-    image: ros-audio-io
+    image: ${PIB_IMAGE_PREFIX:-ghcr.io/pib-rocks/pib-backend}-ros-audio-io:${PIB_IMAGE_TAG:-develop}
     build:
       context: .
       dockerfile: ./ros_packages/ros_audio_io/Dockerfile

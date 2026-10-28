@@ -310,13 +310,89 @@ def test_run_turn_prefers_daemon_reply_over_subprocess(
 
     with patch(
         "public_api_client.hermes_agent_client._try_daemon_turn",
-        return_value="from-daemon",
+        return_value=("from-daemon", None),
     ) as daemon:
         with patch("public_api_client.hermes_agent_client.subprocess.run") as run:
             assert run_turn("hi", "c1", personality_id="p-1") == "from-daemon"
 
     daemon.assert_called_once()
     run.assert_not_called()
+
+
+def test_run_turn_retries_daemon_before_subprocess(
+    installed_hermes_bin, monkeypatch, caplog
+):
+    """PR-2105: a briefly unavailable daemon is retried without subprocess."""
+    import logging
+
+    monkeypatch.setenv("PIB_HERMES_DAEMON_URL", "http://127.0.0.1:8088")
+    completed = subprocess.CompletedProcess(
+        args=[], returncode=0, stdout="via-subprocess\n", stderr=""
+    )
+    attempts = iter([(None, "ConnectionError"), ("from-retry", None)])
+
+    with patch(
+        "public_api_client.hermes_agent_client._try_daemon_turn",
+        side_effect=lambda *args, **kwargs: next(attempts),
+    ) as daemon:
+        with patch("subprocess.run", return_value=completed) as run:
+            with patch("public_api_client.hermes_agent_client.time.sleep") as slept:
+                with caplog.at_level(logging.INFO):
+                    assert run_turn("hi", "c1") == "from-retry"
+
+    assert daemon.call_count == 2
+    run.assert_not_called()
+    slept.assert_called_once()
+    assert any(
+        "DAEMON_ATTEMPT chat=c1 attempt=1 reason=ConnectionError" in record.message
+        for record in caplog.records
+    )
+
+
+def test_run_turn_does_not_sleep_when_daemon_answers_first_try(
+    installed_hermes_bin, monkeypatch
+):
+    monkeypatch.setenv("PIB_HERMES_DAEMON_URL", "http://127.0.0.1:8088")
+    with patch(
+        "public_api_client.hermes_agent_client._try_daemon_turn",
+        return_value=("fast", None),
+    ) as daemon:
+        with patch("public_api_client.hermes_agent_client.time.sleep") as slept:
+            assert run_turn("hi", "c1") == "fast"
+
+    daemon.assert_called_once()
+    slept.assert_not_called()
+
+
+def test_run_turn_notifies_voice_before_subprocess(
+    installed_hermes_bin, monkeypatch, caplog
+):
+    import logging
+
+    monkeypatch.setenv("PIB_HERMES_DAEMON_URL", "http://127.0.0.1:1")
+    completed = subprocess.CompletedProcess(
+        args=[], returncode=0, stdout="via-subprocess\n", stderr=""
+    )
+    notices: list[str] = []
+
+    with patch(
+        "public_api_client.hermes_agent_client._try_daemon_turn",
+        return_value=(None, "ConnectionError"),
+    ):
+        with patch("subprocess.run", return_value=completed):
+            with patch("public_api_client.hermes_agent_client.time.sleep"):
+                with caplog.at_level(logging.WARNING):
+                    run_turn(
+                        "hi",
+                        "c1",
+                        on_subprocess_fallback=notices.append,
+                    )
+
+    assert notices == ["ConnectionError"] * 1
+    assert any(
+        "falling back to oneshot subprocess (chat=c1): ConnectionError" in r.message
+        for r in caplog.records
+    )
 
 
 def test_run_turn_falls_back_to_subprocess_when_daemon_unreachable(
@@ -327,7 +403,8 @@ def test_run_turn_falls_back_to_subprocess_when_daemon_unreachable(
         args=[], returncode=0, stdout="via-subprocess\n", stderr=""
     )
     with patch("subprocess.run", return_value=completed) as run:
-        assert run_turn("hi", "c1") == "via-subprocess"
+        with patch("public_api_client.hermes_agent_client.time.sleep"):
+            assert run_turn("hi", "c1") == "via-subprocess"
     run.assert_called_once()
 
 
@@ -347,7 +424,8 @@ def test_run_turn_falls_back_when_daemon_returns_non_200(
             args=[], returncode=0, stdout="fallback-ok\n", stderr=""
         )
         with patch("subprocess.run", return_value=completed):
-            assert run_turn("hi", "c1") == "fallback-ok"
+            with patch("public_api_client.hermes_agent_client.time.sleep"):
+                assert run_turn("hi", "c1") == "fallback-ok"
 
 
 def test_hermes_binary_available_reflects_the_configured_path(
@@ -662,6 +740,28 @@ def test_provisioning_overrides_an_explicit_title_upgrade_setting(tmp_path):
     assert cfg["auxiliary"]["title_generation"]["model_upgrade_enabled"] is False
 
 
+def test_provisioning_disables_mcp_resource_and_prompt_utilities(tmp_path):
+    """PR-2103: chat turns must not register MCP resource/prompt wrapper tools."""
+    import yaml
+
+    from public_api_client.hermes_agent_client import (
+        PIB_MCP_SERVER,
+        _ensure_mcp_servers_pib,
+    )
+
+    pdir = tmp_path / "pib_chat"
+    pdir.mkdir()
+    (pdir / "config.yaml").write_text(
+        "model: gemini-3.8-flash\nprovider: gemini\n", encoding="utf-8"
+    )
+
+    _ensure_mcp_servers_pib(str(pdir), model="gemini-3.8-flash", provider="gemini")
+
+    with open(pdir / "config.yaml", encoding="utf-8") as fh:
+        cfg = yaml.safe_load(fh)
+    assert cfg["mcp_servers"]["pib"]["tools"] == PIB_MCP_SERVER["tools"]
+
+
 def test_provisioning_writes_profile_config_version(tmp_path):
     """PR-2071: every profile rewrite stamps the current config_version."""
     from pib_hermes_config import PROFILE_CONFIG_VERSION, PROFILE_CONFIG_VERSION_KEY
@@ -732,3 +832,103 @@ def test_profile_config_check_reports_drift_and_exits_nonzero(tmp_path, capsys):
         str(profile_dir), model="gemini-3.8-flash", provider="gemini"
     )
     assert run_profile_config_check(str(profiles_root)) == 0
+
+
+def test_cloud_route_on_a_lan_address_is_replaced(caplog, monkeypatch):
+    """A device provisioned against a dev proxy must not keep that URL (PR-2096)."""
+
+    from public_api_client import hermes_agent_client as client
+
+    monkeypatch.delenv("PIB_PIB_CLOUD_BASE_URL", raising=False)
+    monkeypatch.setenv("PIB_CLOUD_BASE_URL", "https://api.pib.rocks/v1")
+    with caplog.at_level("WARNING"):
+        resolved = client._guard_cloud_route_base_url(
+            "pib-cloud", "http://192.168.1.252:8090/v1"
+        )
+
+    assert resolved == "https://api.pib.rocks/v1"
+    assert any("LAN address" in record.message for record in caplog.records)
+
+
+def test_cloud_route_keeps_a_public_url(monkeypatch):
+    from public_api_client import hermes_agent_client as client
+
+    monkeypatch.setenv("PIB_CLOUD_BASE_URL", "https://api.pib.rocks/v1")
+    assert (
+        client._guard_cloud_route_base_url("pib-cloud", "https://api.pib.rocks/v1")
+        == "https://api.pib.rocks/v1"
+    )
+
+
+def test_local_route_keeps_its_private_url(monkeypatch):
+    """ollama lives on the LAN on purpose; the guard must not touch it."""
+
+    from public_api_client import hermes_agent_client as client
+
+    monkeypatch.setenv("PIB_CLOUD_BASE_URL", "https://api.pib.rocks/v1")
+    assert (
+        client._guard_cloud_route_base_url("ollama", "http://192.168.1.30:11434/v1")
+        == "http://192.168.1.30:11434/v1"
+    )
+
+
+def test_existing_profile_with_a_lan_cloud_url_is_repaired(tmp_path, monkeypatch):
+    """The repair path must fix a profile that already points at the dev proxy."""
+
+    import yaml
+
+    from public_api_client import hermes_agent_client as client
+
+    monkeypatch.setenv("PIB_CLOUD_BASE_URL", "https://api.pib.rocks/v1")
+    profile = tmp_path / "pib_profile"
+    profile.mkdir()
+    (profile / "config.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "model": "pib-cloud",
+                "provider": "pib-cloud",
+                "providers": {
+                    "pib-cloud": {
+                        "name": "pib-cloud",
+                        "base_url": "http://192.168.1.252:8090/v1",
+                        "key_env": "PIB_CLOUD_API_KEY",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    client._ensure_mcp_servers_pib(str(profile))
+
+    written = yaml.safe_load((profile / "config.yaml").read_text(encoding="utf-8"))
+    assert written["providers"]["pib-cloud"]["base_url"] == "https://api.pib.rocks/v1"
+
+
+def test_profile_settings_guard_a_lan_cloud_url_at_read_time(tmp_path, monkeypatch):
+    """The turn must reach api.pib.rocks even before the file is repaired."""
+
+    import yaml
+
+    from public_api_client import hermes_agent_client as client
+
+    monkeypatch.setenv("PIB_CLOUD_BASE_URL", "https://api.pib.rocks/v1")
+    (tmp_path / "config.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "model": "pib-cloud",
+                "provider": "pib-cloud",
+                "providers": {
+                    "pib-cloud": {
+                        "name": "pib-cloud",
+                        "base_url": "http://192.168.1.252:8090/v1",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    _model, _provider, base_url, _env = client.profile_hermes_settings(str(tmp_path))
+
+    assert base_url == "https://api.pib.rocks/v1"

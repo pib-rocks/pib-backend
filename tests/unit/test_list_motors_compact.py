@@ -8,8 +8,8 @@ from pib_mcp_server.backend import PibBackend
 from pib_mcp_server.server import create_server
 from pib_mcp_payload_assertions import assert_tool_payload_within_budget
 
-COMPACT_MOTOR_KEYS = frozenset({"id", "name", "position", "limits", "unit"})
-COMPACT_BYTE_BUDGET = 6000
+COMPACT_MOTOR_KEYS = frozenset({"id", "name", "position"})
+COMPACT_BYTE_BUDGET = 3500
 MOTOR_COUNT = 24
 
 FULL_MOTOR_TEMPLATE = {
@@ -111,8 +111,12 @@ class RecordingBackend(PibBackend):
         raise AssertionError(f"unexpected HTTP {method} {path}")
 
     def _ros_service(self, service, service_type, arguments):
-        self.ros_calls.append(arguments["joint_name"])
-        return {"successful": True, "position": 120 * len(self.ros_calls)}
+        joint_name = arguments["joint_name"]
+        self.ros_calls.append(joint_name)
+        index = next(
+            i for i, motor in enumerate(self._motors) if motor.get("name") == joint_name
+        )
+        return {"successful": True, "position": 120 * (index + 1)}
 
 
 def test_list_motors_default_is_compact_under_byte_budget():
@@ -127,11 +131,9 @@ def test_list_motors_default_is_compact_under_byte_budget():
     assert len(motors) == MOTOR_COUNT
 
     for motor in motors:
-        assert set(motor) == COMPACT_MOTOR_KEYS
+        assert set(motor) <= COMPACT_MOTOR_KEYS | {"positionError"}
         assert motor["id"] == motor["name"]
-        assert motor["unit"] == "degree"
-        assert motor["limits"] == {"min": -45.0, "max": 45.0}
-        assert isinstance(motor["position"], float)
+        assert isinstance(motor["position"], (float, type(None)))
 
     assert_tool_payload_within_budget("list_motors", payload)
     encoded = json.dumps(payload, separators=(",", ":"))

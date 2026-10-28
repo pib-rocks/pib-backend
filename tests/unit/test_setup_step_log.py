@@ -147,6 +147,10 @@ def test_the_installer_wraps_every_step_and_ends_with_the_summary():
         ("Install Tinkerforge", "install_tinkerforge"),
         ("Set up IP dispatcher", "setup_ip_dispatcher"),
         ("Install wireplumber volume drop-in", "install_wireplumber_volume_defaults"),
+        (
+            "Install wireplumber ReSpeaker mic array drop-in",
+            "install_wireplumber_respeaker_mic_array",
+        ),
         ("Set default output volume", "set_default_output_volume"),
         ("Clean up", "cleanup"),
     ):

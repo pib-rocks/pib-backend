@@ -19,7 +19,7 @@ import re
 import subprocess
 import threading
 import time
-from typing import Iterator, Optional
+from typing import Callable, Iterator, Optional
 
 import yaml
 from pib_hermes_config import (
@@ -111,6 +111,12 @@ PIB_MCP_SERVER = {
         ),
         "PIB_MCP_ENABLE_ACTUATION": "true",
     },
+    # PR-2103: voice/chat never uses MCP resource or prompt utilities; Hermes registers
+    # list_resources/read_resource/list_prompts/get_prompt per server by default.
+    "tools": {
+        "resources": False,
+        "prompts": False,
+    },
 }
 
 # Permanent Hermes LLM pin. Kept in sync with setup/setup-pib.sh
@@ -143,6 +149,41 @@ REFUSED_REQUEST_FIELDS = frozenset(
 
 _provider_refused_fields: dict[tuple[str, str, str], set[str]] = {}
 _provider_refused_fields_lock = threading.Lock()
+
+# Process-local provider key cache (PR-2102). Invalidated by key-store epoch and
+# by profile route changes so a rotated key is picked up without a daemon restart.
+_provider_key_cache_lock = threading.Lock()
+_provider_key_cache: Optional[tuple[tuple, Optional[str]]] = None
+
+
+def clear_provider_key_cache() -> None:
+    """Drop cached turn keys (daemon shutdown, agent cache clear, tests)."""
+    global _provider_key_cache
+    with _provider_key_cache_lock:
+        _provider_key_cache = None
+
+
+def _cached_provider_key_for_current_profile() -> Optional[str]:
+    """Resolve and cache the store key for the active profile route."""
+    global _provider_key_cache
+    from pib_api_client.key_store_client import read_key_store_epoch
+
+    model, provider, _base_url, env_vars = profile_hermes_settings()
+    if not env_vars and not provider_needs_key(provider):
+        return None
+    home = _current_hermes_home()
+    epoch = read_key_store_epoch()
+    cache_key = (epoch, home, model, provider, env_vars)
+    with _provider_key_cache_lock:
+        cached = _provider_key_cache
+        if cached is not None and cached[0] == cache_key:
+            return cached[1]
+    from voice_assistant.direct_tool_loop import resolve_hermes_provider_key
+
+    key, _source = resolve_hermes_provider_key(provider, api_name=model)
+    with _provider_key_cache_lock:
+        _provider_key_cache = (cache_key, key)
+    return key
 
 
 def provider_capability_key(
@@ -209,6 +250,72 @@ def provider_refuses_field(
     key = provider_capability_key(provider, base_url, model)
     with _provider_refused_fields_lock:
         return field in _provider_refused_fields.get(key, set())
+
+
+CLOUD_ROUTE_DEFAULT_BASE_URLS = {
+    "pib-cloud": "https://api.pib.rocks/v1",
+}
+"""Cloud routes may not live on the LAN (PR-2096).
+
+A profile provisioned once against a local dev proxy kept that URL forever,
+because the provider entry is only rewritten when a caller passes a base_url.
+On .172 that made every smart turn answer "pib-cloud rejected your API key"
+while the key store and the provider health were fine.
+"""
+
+
+def _is_private_base_url(value: str) -> bool:
+    """True for loopback, link-local or RFC1918 hosts (a LAN address)."""
+
+    import ipaddress
+    from urllib.parse import urlparse
+
+    host = (urlparse(value).hostname or "").strip().lower()
+    if not host:
+        return False
+    if host in {"localhost", "localhost.localdomain"}:
+        return True
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return bool(address.is_private or address.is_loopback or address.is_link_local)
+
+
+def _authoritative_cloud_base_url(provider: str) -> Optional[str]:
+    """Where a cloud route must point, from the environment or the documented default."""
+
+    default = CLOUD_ROUTE_DEFAULT_BASE_URLS.get(provider)
+    if default is None:
+        return None
+    env_value = os.getenv(
+        f"PIB_{provider.replace('-', '_').upper()}_BASE_URL", ""
+    ).strip()
+    return env_value.rstrip("/") or default
+
+
+def _guard_cloud_route_base_url(
+    provider: str, base_url: Optional[str]
+) -> Optional[str]:
+    """Replace a LAN address on a cloud route with the authoritative URL."""
+
+    if not base_url:
+        return base_url
+    authoritative = _authoritative_cloud_base_url(provider)
+    if authoritative is None:
+        return base_url
+    if not _is_private_base_url(base_url):
+        return base_url
+    if base_url.rstrip("/") == authoritative:
+        return base_url
+    logging.warning(
+        "provider %s pointed at a LAN address (%s); using %s instead "
+        "(a device must not talk to a dev proxy)",
+        provider,
+        base_url,
+        authoritative,
+    )
+    return authoritative
 
 
 def _route_base_url_from_cfg(cfg: dict, provider: str) -> Optional[str]:
@@ -445,6 +552,10 @@ def profile_hermes_settings(
     base_url = entry.get("base_url")
     if not (isinstance(base_url, str) and base_url.strip()):
         base_url = None
+    # A device that already carries a dev-proxy URL in its profile must still
+    # reach the provider: guard at read time, not only when the file is rewritten
+    # (measured on .172, PR-2096).
+    base_url = _guard_cloud_route_base_url(provider, base_url)
     env_vars = env_vars_for_provider(provider, entry.get("key_env"))
     return model, provider, base_url, env_vars
 
@@ -624,6 +735,24 @@ def _merge_missing_mcp_env(entry: dict) -> bool:
     if shipped_args and entry.get("command") in (None, "", "python3"):
         if entry.get("command") != MCP_SERVER_PYTHON:
             entry["command"] = MCP_SERVER_PYTHON
+            changed = True
+    return changed
+
+
+def _merge_pib_mcp_chat_tools_policy(entry: dict) -> bool:
+    """Ensure the pib MCP entry disables resource/prompt utility tools for chat."""
+    desired = PIB_MCP_SERVER.get("tools")
+    if not isinstance(desired, dict):
+        return False
+    tools = entry.get("tools")
+    changed = False
+    if not isinstance(tools, dict):
+        tools = {}
+        entry["tools"] = tools
+        changed = True
+    for key, value in desired.items():
+        if tools.get(key) != value:
+            tools[key] = value
             changed = True
     return changed
 
@@ -858,7 +987,16 @@ def _ensure_mcp_servers_pib(
     if _apply_profile_auxiliary_defaults(cfg):
         changed = True
 
-    route_base_url = base_url or _route_base_url_from_cfg(cfg, desired_provider)
+    guarded_base_url = _guard_cloud_route_base_url(
+        desired_provider, base_url or _route_base_url_from_cfg(cfg, desired_provider)
+    )
+    if (
+        guarded_base_url
+        and base_url is None
+        and _route_base_url_from_cfg(cfg, desired_provider) != guarded_base_url
+    ):
+        base_url = guarded_base_url
+    route_base_url = guarded_base_url
     if apply_provider_capability_cache_to_cfg(
         cfg,
         provider=desired_provider,
@@ -902,6 +1040,8 @@ def _ensure_mcp_servers_pib(
         servers["pib"] = entry
         changed = True
     elif _merge_missing_mcp_env(entry):
+        changed = True
+    if _merge_pib_mcp_chat_tools_policy(entry):
         changed = True
 
     if tool_calling is not None:
@@ -1100,14 +1240,12 @@ def provider_key_for_turn() -> Optional[str]:
     on-device model) returns None instead of a key. A locked, empty or
     mismatched store raises; the environment is not a fallback, and the value
     is not logged.
-    """
-    model, provider, _base_url, env_vars = profile_hermes_settings()
-    if not env_vars and not provider_needs_key(provider):
-        return None
-    from voice_assistant.direct_tool_loop import resolve_hermes_provider_key
 
-    key, _source = resolve_hermes_provider_key(provider, api_name=model)
-    return key
+    The resolved key is cached for the current key-store ``keyEpoch`` and
+    profile route (model, provider, Hermes home) so warm turns do not repeat
+    the HTTP credential read every time.
+    """
+    return _cached_provider_key_for_current_profile()
 
 
 def _provider_key_was_refused(payload: object) -> bool:
@@ -1142,6 +1280,11 @@ def _child_environment(
     return env
 
 
+# Bounded warm-daemon retries before the oneshot subprocess path (PR-2105).
+_DAEMON_TURN_ATTEMPTS = 3
+_DAEMON_RETRY_BACKOFF_SECONDS = (0.15, 0.35)
+
+
 def is_warm_daemon_active(timeout: float = 0.15) -> bool:
     """True when the warm Hermes daemon answers GET /health quickly.
 
@@ -1168,12 +1311,16 @@ def _try_daemon_turn(
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
     enabled_toolsets: Optional[str] = DEFAULT_ENABLED_TOOLSETS,
     message_history: Optional[int] = None,
-) -> Optional[str]:
-    """POST /turn to the warm daemon. None means unreachable or non-200."""
+) -> tuple[Optional[str], Optional[str]]:
+    """POST /turn to the warm daemon.
+
+    Returns ``(reply, failure_reason)``. ``failure_reason`` is set when the
+    daemon did not yield a speakable reply.
+    """
     try:
         import requests
     except ImportError:
-        return None
+        return None, "requests_unavailable"
 
     payload = {
         "text": text,
@@ -1211,7 +1358,7 @@ def _try_daemon_turn(
             chat_id,
             exc,
         )
-        return None
+        return None, type(exc).__name__
 
     ttft_ms = _perf_ms(http_start)
     logging.info(
@@ -1236,7 +1383,7 @@ def _try_daemon_turn(
             response.status_code,
             chat_id,
         )
-        return None
+        return None, f"http_{response.status_code}"
 
     try:
         data = response.json()
@@ -1245,7 +1392,7 @@ def _try_daemon_turn(
             "hermes daemon returned non-json body (chat=%s); falling back",
             chat_id,
         )
-        return None
+        return None, "invalid_json"
 
     if isinstance(tool_sink, list) and isinstance(data.get("toolsUsed"), list):
         tool_sink.extend(data["toolsUsed"])
@@ -1255,9 +1402,9 @@ def _try_daemon_turn(
             "hermes daemon response missing reply string (chat=%s); falling back",
             chat_id,
         )
-        return None
+        return None, "missing_reply"
 
-    return reply.strip() or FALLBACK_REPLY
+    return (reply.strip() or FALLBACK_REPLY), None
 
 
 def stream_turn(
@@ -1422,6 +1569,7 @@ def run_turn(
     enabled_toolsets: Optional[str] = DEFAULT_ENABLED_TOOLSETS,
     tool_sink: Optional[list] = None,
     message_history: Optional[int] = None,
+    on_subprocess_fallback: Optional[Callable[[str], None]] = None,
 ) -> str:
     """Run one conversational turn. Returns speakable text.
 
@@ -1437,24 +1585,36 @@ def run_turn(
     provider_key = provider_key_for_turn()
 
     # Try the warm daemon first — no filesystem binary/profile checks on this path.
-    daemon_reply = _try_daemon_turn(
-        tool_sink,
-        text,
-        chat_id,
-        personality_id,
-        toolsets,
-        max_turns,
-        timeout=timeout,
-        enabled_toolsets=enabled_toolsets,
-        message_history=message_history,
-    )
-    if daemon_reply is not None:
-        logging.info(
-            "[PERF_TRACE] HERMES_CLIENT_DONE chat=%s via=daemon elapsed_ms=%.2f",
+    fallback_reason = "unreachable"
+    for attempt in range(1, _DAEMON_TURN_ATTEMPTS + 1):
+        daemon_reply, failure_reason = _try_daemon_turn(
+            tool_sink,
+            text,
             chat_id,
+            personality_id,
+            toolsets,
+            max_turns,
+            timeout=timeout,
+            enabled_toolsets=enabled_toolsets,
+            message_history=message_history,
+        )
+        if daemon_reply is not None:
+            logging.info(
+                "[PERF_TRACE] HERMES_CLIENT_DONE chat=%s via=daemon elapsed_ms=%.2f",
+                chat_id,
+                _perf_ms(t0),
+            )
+            return daemon_reply
+        fallback_reason = failure_reason or "unreachable"
+        logging.info(
+            "[PERF_TRACE] DAEMON_ATTEMPT chat=%s attempt=%d reason=%s elapsed_ms=%.2f",
+            chat_id,
+            attempt,
+            fallback_reason,
             _perf_ms(t0),
         )
-        return daemon_reply
+        if attempt < _DAEMON_TURN_ATTEMPTS:
+            time.sleep(_DAEMON_RETRY_BACKOFF_SECONDS[attempt - 1])
 
     if not hermes_binary_available():
         # Distinct from a timeout: the agent was never started at all.
@@ -1472,6 +1632,19 @@ def run_turn(
         )
         return FALLBACK_REPLY
 
+    logging.warning(
+        "hermes turn falling back to oneshot subprocess (chat=%s): %s",
+        chat_id,
+        fallback_reason,
+    )
+    if on_subprocess_fallback is not None:
+        try:
+            on_subprocess_fallback(fallback_reason)
+        except Exception as exc:
+            logging.debug(
+                "subprocess fallback notifier failed (chat=%s): %s", chat_id, exc
+            )
+
     from public_api_client.hermes_daemon import seed_flask_conversation_for_chat
 
     seed_flask_conversation_for_chat(
@@ -1487,8 +1660,9 @@ def run_turn(
         provider_key=provider_key,
     )
     logging.info(
-        "[PERF_TRACE] HERMES_CLIENT_DONE chat=%s via=subprocess elapsed_ms=%.2f",
+        "[PERF_TRACE] HERMES_CLIENT_DONE chat=%s via=subprocess reason=%s elapsed_ms=%.2f",
         chat_id,
+        fallback_reason,
         _perf_ms(t0),
     )
     return reply
