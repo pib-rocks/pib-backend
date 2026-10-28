@@ -32,7 +32,7 @@ jobs:
             needs_hermes_context: true
           - service: pib-blockly-server
             context: pib_blockly/pib_blockly_server
-            dockerfile: Dockerfile
+            dockerfile: pib_blockly/pib_blockly_server/Dockerfile
             needs_hermes_context: false
           - service: flask-app
             context: .
@@ -40,11 +40,11 @@ jobs:
             needs_hermes_context: false
           - service: rosbridge-ws
             context: ros_packages
-            dockerfile: rosbridge/Dockerfile
+            dockerfile: ros_packages/rosbridge/Dockerfile
             needs_hermes_context: false
           - service: ros-camera
             context: ros_packages
-            dockerfile: camera/Dockerfile
+            dockerfile: ros_packages/camera/Dockerfile
             needs_hermes_context: false
           - service: ros-motors
             context: .

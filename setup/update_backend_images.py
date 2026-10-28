@@ -38,6 +38,20 @@ BACKEND_IMAGE_BUILD_SPECS: Final[tuple[tuple[str, str, str], ...]] = (
     ("ros-audio-io", ".", "ros_packages/ros_audio_io/Dockerfile"),
 )
 
+
+def workspace_dockerfile(context: str, dockerfile: str) -> str:
+    """Path buildx needs for ``file:`` - always relative to the workspace root.
+
+    Compose resolves ``build.dockerfile`` relative to ``build.context``; ``docker/build-push-action``
+    resolves ``file`` relative to the checked-out workspace. For a context that is not the repository
+    root the two differ, and handing buildx the context-relative path fails with
+    "failed to read dockerfile: open Dockerfile: no such file or directory".
+    """
+    if context in (".", ""):
+        return dockerfile.lstrip("./")
+    return f"{context.rstrip('/')}/{dockerfile.lstrip('./')}"
+
+
 DEFAULT_IMAGE_PREFIX: Final[str] = "ghcr.io/pib-rocks/pib-backend"
 DEFAULT_IMAGE_TAG: Final[str] = "develop"
 

@@ -87,7 +87,21 @@ def test_workflow_matrix_matches_compose_build_specs():
     for service, context, dockerfile in helper.BACKEND_IMAGE_BUILD_SPECS:
         entry = workflow_services[service]
         assert entry["context"] == context
-        assert entry["dockerfile"] == dockerfile
+        # buildx resolves `file` against the workspace, not against the build context.
+        assert entry["dockerfile"] == helper.workspace_dockerfile(context, dockerfile)
+
+
+def test_workflow_dockerfiles_exist_for_buildx_resolution():
+    """A context-relative path here fails only in CI, with a 404 on the Dockerfile."""
+    yaml = pytest.importorskip("yaml")
+    workflow = yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8"))
+    matrix = workflow["jobs"]["build-and-push"]["strategy"]["matrix"]["include"]
+    root = WORKFLOW_PATH.parents[2]
+    for entry in matrix:
+        path = root / entry["dockerfile"]
+        assert (
+            path.is_file()
+        ), f"{entry['service']}: {entry['dockerfile']} does not exist"
 
 
 def test_workflow_yaml_parses():
