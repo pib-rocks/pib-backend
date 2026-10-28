@@ -1449,6 +1449,25 @@ def in_process_available() -> bool:
     return bool(venv_site_packages()) or agent_source_imports_here()
 
 
+@contextlib.contextmanager
+def _agent_streaming_scope(agent, stream_callback: Optional[Callable[[str], None]]):
+    """Turn provider streaming on for daemon NDJSON turns that forward deltas.
+
+    Robot profiles may carry ``model.streaming: false`` (or legacy equivalents).
+    The warm daemon still streams when the client asked for ``stream=true``; the
+    prior session flag is restored afterward so non-stream turns stay unchanged.
+    """
+    if stream_callback is None:
+        yield
+        return
+    previous = bool(getattr(agent, "_disable_streaming", False))
+    agent._disable_streaming = False
+    try:
+        yield
+    finally:
+        agent._disable_streaming = previous
+
+
 def _run_turn_in_home(
     text: str,
     chat_id: str,
@@ -1613,12 +1632,14 @@ def _run_turn_in_home(
                     chat_id,
                     sorted(attempted),
                 )
+                # PR-2102 scopes the cached provider key to the turn, PR-2101 turns
+                # provider streaming on for it: both wrap the same call, nested.
                 key_scope = (
                     _provider_key_in_environment(route_env_vars, provider_key)
                     if provider_key and route_env_vars
                     else contextlib.nullcontext()
                 )
-                with key_scope:
+                with key_scope, _agent_streaming_scope(cached.agent, stream_callback):
                     turn_result = cached.agent.run_conversation(
                         user_message=text,
                         conversation_history=history or None,

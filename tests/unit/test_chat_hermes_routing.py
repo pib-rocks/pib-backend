@@ -498,6 +498,34 @@ def test_warm_daemon_falls_back_to_subprocess_when_run_agent_missing(
     assert subprocess_runner.call_args.kwargs["chat_id"] == "chat-fb"
 
 
+def test_stream_chunks_persist_first_delta_before_later_tokens(chat_module, chat_node):
+    """Streaming must update the stored message on the first delta, not at EOF."""
+    import time
+
+    goal_handle = MagicMock()
+    goal_handle.is_cancel_requested = False
+    timestamps: list[float] = []
+
+    def _record(*args, **kwargs):
+        timestamps.append(time.monotonic())
+        return None
+
+    chat_node.create_chat_message = MagicMock(side_effect=_record)
+
+    def _tokens():
+        yield "Al"
+        time.sleep(0.12)
+        yield "pha"
+
+    chat_node._stream_chunks_to_goal(goal_handle, "chat-stream-persist", _tokens())
+
+    assert len(timestamps) >= 2
+    assert timestamps[1] - timestamps[0] >= 0.08
+    first_call = chat_node.create_chat_message.call_args_list[0]
+    assert first_call.kwargs.get("accumulated") is True
+    assert first_call[0][1] == "Al"
+
+
 def test_stream_chunks_to_goal_splits_sentences(chat_module, chat_node):
     goal_handle = MagicMock()
     goal_handle.is_cancel_requested = False
@@ -545,7 +573,8 @@ def test_stream_chunks_to_goal_persists_text_without_terminator(chat_module, cha
     )
 
     texts = [call[0][1] for call in chat_node.create_chat_message.call_args_list]
-    assert texts == ["Eins.", "Zwei ohne Punkt"]
+    assert texts[-1] == "Eins. Zwei ohne Punkt"
+    assert texts[0] == "Eins. "
     # Every speakable piece travelled as a feedback delta, so the Result
     # carries no second copy of the tail (measured: text is empty).
     assert prev is None
@@ -568,7 +597,12 @@ def test_stream_chunks_to_goal_creates_when_only_unterminated_text_arrives(
     )
 
     chat_node.create_chat_message.assert_called_once_with(
-        "chat-1", "Antwort ohne Satzzeichen", False, False, True
+        "chat-1",
+        "Antwort ohne Satzzeichen",
+        False,
+        False,
+        True,
+        accumulated=True,
     )
     assert prev is None
     assert curr == ""
