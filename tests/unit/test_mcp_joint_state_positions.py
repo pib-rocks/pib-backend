@@ -189,3 +189,87 @@ def test_batch_service_reports_per_joint_errors_without_failing_others(monkeypat
     assert enriched[0].get("positionSource") == "get_all_joint_positions"
     assert enriched[1]["currentPosition"] is None
     assert enriched[1]["positionError"] == "no measurement in bus sweep"
+
+
+def _backend_with_motors(monkeypatch, motors):
+    from pib_mcp_server import backend as backend_module
+
+    monkeypatch.setattr(backend_module.PibBackend, "get_motors", lambda self: motors)
+    monkeypatch.setattr(
+        backend_module.PibBackend,
+        "_try_apply_joint_state_positions",
+        lambda self, named: (False, None),
+    )
+    return backend_module.PibBackend(), backend_module
+
+
+def test_all_unsuccessful_batch_falls_back_to_the_per_joint_reads(monkeypatch):
+    """A pib5edu answers the batch service with no usable value at all.
+
+    Measured on the robot: the bricklets have no position feedback, so every entry is
+    unsuccessful. Treating that as 'applied' skipped the per-joint path and left every
+    position null - the tool reported less than before stage 2.
+    """
+    motors = [
+        {"name": "turn_head_motor", "controller": {"kind": "tinkerforge_bricklet"}}
+    ]
+    backend, backend_module = _backend_with_motors(monkeypatch, motors)
+
+    monkeypatch.setattr(
+        backend_module.PibBackend,
+        "_ros_service",
+        lambda self, service, service_type, arguments: {
+            "successful": False,
+            "message": "no sweepable actuator family on this robot",
+            "results": [
+                {
+                    "motor_name": "turn_head_motor",
+                    "successful": False,
+                    "error_code": "bus_unavailable",
+                    "detail": "no sweepable actuator family on this robot",
+                }
+            ],
+            "positions": [0],
+        },
+    )
+
+    def fake_per_joint(self, motor):
+        motor["currentPosition"] = 1234
+        motor["positionSource"] = "get_joint_position"
+
+    monkeypatch.setattr(
+        backend_module.PibBackend, "_apply_live_joint_position", fake_per_joint
+    )
+
+    out = backend.list_motors()
+
+    assert out["motors"][0]["position"] is not None
+    assert out["motors"][0]["positionSource"] == "get_joint_position"
+
+
+def test_usable_batch_values_are_applied_without_the_fallback(monkeypatch):
+    motors = [{"name": "elbow_right", "controller": {"kind": "feetech_st_serial"}}]
+    backend, backend_module = _backend_with_motors(monkeypatch, motors)
+
+    monkeypatch.setattr(
+        backend_module.PibBackend,
+        "_ros_service",
+        lambda self, service, service_type, arguments: {
+            "successful": True,
+            "message": "",
+            "results": [{"motor_name": "elbow_right", "successful": True}],
+            "positions": [2500],
+        },
+    )
+    monkeypatch.setattr(
+        backend_module.PibBackend,
+        "_apply_live_joint_position",
+        lambda self, motor: pytest.fail(
+            "the fallback must not run when the batch answered"
+        ),
+    )
+
+    out = backend.list_motors()
+
+    assert out["motors"][0]["position"] is not None
+    assert out["motors"][0]["positionSource"] == "get_all_joint_positions"
