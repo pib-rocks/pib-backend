@@ -273,10 +273,14 @@ services:
       # itself is not mounted raw: profiles/*/.env and ~/.hermes/.env would
       # come with it. prepare-view publishes a filtered view and covers those
       # files. The cloud-operator key is not on this robot.
+      - XDG_RUNTIME_DIR=/run/user/1000
+      - PULSE_SERVER=unix:${XDG_RUNTIME_DIR:-/run/user/1000}/pulse/native
     volumes:
       - ${PIB_VOICE_DATA_DIR:-/data/voice}:/data/voice
       - /dev/snd:/dev/snd
       - /dev/dsp:/dev/dsp
+      - ${XDG_RUNTIME_DIR:-/run/user/1000}:/run/user/1000
+      - ${XDG_RUNTIME_DIR:-/run/user/1000}/pulse/native:${XDG_RUNTIME_DIR:-/run/user/1000}/pulse/native
       - /etc/machine-id:/etc/machine-id
       - /etc/pib_smart_chats:/etc/pib_smart_chats:ro
       - type: bind
