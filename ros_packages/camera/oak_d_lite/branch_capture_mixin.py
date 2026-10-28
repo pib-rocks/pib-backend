@@ -1,6 +1,6 @@
 """Colour branch field capture extracted from CameraNode."""
 
-from ros_packages.camera.oak_d_lite import stereo as stereo
+from . import stereo as stereo
 
 from .parsed_detections import published_field
 

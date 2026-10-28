@@ -170,3 +170,13 @@ def test_camera_node_keeps_expected_methods():
     defined = _method_names_in_sources(STEREO_PATH, *MIXIN_PATHS)
     missing = EXPECTED_CAMERA_NODE_METHODS - defined
     assert not missing, f"CameraNode surface missing methods: {sorted(missing)}"
+
+
+def test_oak_d_lite_modules_never_import_via_repo_root_ros_packages_prefix() -> None:
+    """Installed colcon packages live at site-packages/oak_d_lite, where 'ros_packages' does not exist."""
+    oak_dir = REPO_ROOT / "ros_packages" / "camera" / "oak_d_lite"
+    for py_file in sorted(oak_dir.glob("*.py")):
+        source = py_file.read_text(encoding="utf-8")
+        assert (
+            "ros_packages." not in source
+        ), f"{py_file.name} imports 'ros_packages.*', which fails with ModuleNotFoundError inside the colcon container"
