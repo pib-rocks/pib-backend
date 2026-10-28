@@ -231,7 +231,12 @@ def test_the_recorder_reports_the_failure_and_aborts_the_goal():
 
 
 def test_the_assistant_speaks_the_cause_instead_of_the_canned_line():
-    source = ASSISTANT.read_text(encoding="utf-8")
+    callbacks = VOICE_ROOT / "voice_assistant" / "assistant_turn_callbacks_mixin.py"
+    source = (
+        ASSISTANT.read_text(encoding="utf-8")
+        + "\n"
+        + (callbacks.read_text(encoding="utf-8") if callbacks.is_file() else "")
+    )
 
     assert "VOICE_STT_FAILURE_TOPIC" in source
     assert "_on_stt_failure" in source
