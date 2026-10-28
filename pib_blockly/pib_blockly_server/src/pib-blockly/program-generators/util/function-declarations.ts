@@ -48,8 +48,16 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(percent: int) -> None:
 
 // motor
 
+/** ROS GetJointPosition and pose HTTP APIs store angles as centidegrees; Blockly uses degrees. */
+export const CENTIDEGREES_TO_DEGREES_FUNCTION = (
+    generator: typeof pythonGenerator,
+) => `
+def ${generator.FUNCTION_NAME_PLACEHOLDER_}(position_centidegrees: int) -> float:
+    return position_centidegrees / 100.0
+`;
+
 export const GET_JOINT_POSITION_FUNCTION = (generator: typeof pythonGenerator) => `
-def ${generator.FUNCTION_NAME_PLACEHOLDER_}(motor_name: str) -> int:
+def ${generator.FUNCTION_NAME_PLACEHOLDER_}(motor_name: str) -> float:
 
     request = GetJointPosition.Request()
     request.joint_name = motor_name
@@ -59,10 +67,10 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(motor_name: str) -> int:
 
     response: GetJointPosition.Response = future.result()
     if response.successful:
-        return response.position
+        return centidegrees_to_degrees(response.position)
     else:
         logging.error(f"getting position of '{motor_name}' failed.")
-        return 0
+        return 0.0
 `;
 
 export const SET_HAND_POSITION_XYZ_FUNCTION = (generator: typeof pythonGenerator) => `
@@ -70,12 +78,17 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(side: str, mode: str, x, y, z) -> No
 
     if mode == "RELATIVE":
         current = get_hand_position_xyz(side)
-        target = [current[0] + x, current[1] + y, current[2] + z]
+        offset = list(from_rep103([x, y, z]))
+        target = [
+            current[0] + offset[0],
+            current[1] + offset[1],
+            current[2] + offset[2],
+        ]
     else:
-        target = [x, y, z]
+        target = list(from_rep103([x, y, z]))
 
     logging.info(f"setting {side} hand position to xyz={target}.")
-    q_deg = ik(side, xyz=target)
+    q_deg = ik_deg(side, xyz=target)
     arm = left_arm if side == "left" else right_arm
     rosbridge_host = os.getenv("ROSBRIDGE_HOST", "rosbridge-ws")
     try:
@@ -86,15 +99,41 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(side: str, mode: str, x, y, z) -> No
             pib.move(arm, *q_deg)
 `;
 
-export const APPLY_JOINT_TRAJECTORY_FUNCTION = (generator: typeof pythonGenerator) => `
-def ${generator.FUNCTION_NAME_PLACEHOLDER_}(motor_name: str, position: int) -> None:
+export const GET_HAND_POSITION_REP103_FUNCTION = (generator: typeof pythonGenerator) => `
+def ${generator.FUNCTION_NAME_PLACEHOLDER_}(side: str):
 
-    logging.info(f"setting position of '{motor_name}' to {position}.")
+    rosbridge_host = os.getenv("ROSBRIDGE_HOST", "rosbridge-ws")
+    try:
+        return to_rep103(get_hand_position_xyz(side, telemetry_host=rosbridge_host))
+    except Exception:
+        return to_rep103(get_hand_position_xyz(side, telemetry_host="localhost"))
+`;
+
+export const APPLY_JOINT_TRAJECTORY_FUNCTION = (generator: typeof pythonGenerator) => `
+def ${generator.FUNCTION_NAME_PLACEHOLDER_}(motor_name: str, position) -> None:
+
+    logging.info(f"setting position of '{motor_name}' to {position} degrees.")
     rosbridge_host = os.getenv("ROSBRIDGE_HOST", "rosbridge-ws")
     try:
         pib_sdk.Write(host=rosbridge_host, port=9090).move(motor_name, position)
     except Exception:
         pib_sdk.Write(host="localhost", port=9090).move(motor_name, position)
+`;
+
+export const MOVE_MOTORS_FUNCTION = (generator: typeof pythonGenerator) => `
+def ${generator.FUNCTION_NAME_PLACEHOLDER_}(*args) -> None:
+
+    if not args:
+        return
+
+    logging.info(f"moving motors in one joint trajectory: {args}.")
+    rosbridge_host = os.getenv("ROSBRIDGE_HOST", "rosbridge-ws")
+    try:
+        with pib_sdk.Write(host=rosbridge_host, port=9090) as write:
+            write.move(*args)
+    except Exception:
+        with pib_sdk.Write(host="localhost", port=9090) as write:
+            write.move(*args)
 `;
 
 export const GET_MOTOR_CURRENT_MA_FUNCTION = (generator: typeof pythonGenerator) => `
@@ -241,7 +280,7 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(poseId: str) -> None:
         args.extend(
             (
                 motor_position["motorName"],
-                motor_position["position"] / 100.0,
+                centidegrees_to_degrees(motor_position["position"]),
             )
         )
     if not args:

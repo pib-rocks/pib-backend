@@ -1,6 +1,7 @@
 import rclpy
 from rclpy.node import Node
 from diagnostic_msgs.msg import DiagnosticStatus, KeyValue
+from pib_api_client import motor_client
 from pib_motors.motor import motors, Motor
 from tinkerforge.bricklet_servo_v2 import BrickletServoV2
 
@@ -75,12 +76,39 @@ class MotorCurrent(Node):
         return callback
 
     def publish_motor_current(self):
+        telemetry_batch: list[dict] = []
         for motor in motors:
             current = motor.get_current()
-            if current == Motor.NO_CURRENT:
-                continue
-            extra = self._actuator_feedback(motor)
-            self.publish_diagnostic_status(motor.name, current, extra)
+            if current != Motor.NO_CURRENT:
+                extra = self._actuator_feedback(motor)
+                self.publish_diagnostic_status(motor.name, current, extra)
+            for actuator in getattr(motor, "actuators", None) or []:
+                if getattr(actuator, "bricklet", None) is not None:
+                    continue
+                if not actuator.is_connected():
+                    continue
+                uid = getattr(actuator, "uid", None)
+                get_voltage = getattr(actuator, "get_voltage", None)
+                if not uid or not callable(get_voltage):
+                    continue
+                act_current = actuator.get_current()
+                no_current = getattr(actuator, "NO_CURRENT", Motor.NO_CURRENT)
+                if act_current == no_current:
+                    continue
+                voltage = get_voltage()
+                telemetry_batch.append(
+                    {
+                        "uid": str(uid),
+                        "pin": int(actuator.pin),
+                        "voltage": float(voltage or 0.0),
+                        "current": float(max(0, act_current)),
+                    }
+                )
+        if telemetry_batch:
+            try:
+                motor_client.report_diagnostics_telemetry(telemetry_batch)
+            except Exception:
+                pass
 
     def _actuator_feedback(self, motor) -> dict[str, str]:
         actuators = getattr(motor, "actuators", None) or []
@@ -102,6 +130,14 @@ class MotorCurrent(Node):
                 extra["temperature"] = f"{temp} °C"
         except Exception:
             pass
+        get_voltage = getattr(actuator, "get_voltage", None)
+        if callable(get_voltage):
+            try:
+                voltage = get_voltage()
+                if voltage is not None:
+                    extra["voltage"] = f"{voltage:.1f} V"
+            except Exception:
+                pass
         return extra
 
     def publish_diagnostic_status(

@@ -1,0 +1,96 @@
+Implement PR-1695 (S3): typed detection/model interfaces in the `datatypes` package.
+
+Ticket: https://pib-rocks.atlassian.net/browse/PR-1695
+Repo: pib-backend - /home/pib/opencode/pib-backend, branch `PR-1695` (from develop 38bf32a3).
+
+CONTEXT: decision D4 (concept page) is "typed messages from the start" - the schema is the contract shared by the
+camera container, Cerebra, Blockly and the SDK. Design rules that MUST be respected:
+- coordinates are PIXELS relative to the published camera frame, and the frame size travels with the array
+- keypoint depth is MILLIMETRES with 0 = invalid/unavailable (same convention as get_distance_at_px)
+- inhomogeneous payloads (21 hand keypoints, 468 face-mesh points, emotion label, gaze/head-pose angles, QR corners)
+  are expressed as parallel name/value arrays, so ADDING A MODEL NEVER CHANGES THE SCHEMA
+- std_msgs/Header gives a timestamp for latency measurement
+
+TASK 1 - new messages in ros_packages/datatypes/msg/ (create these files verbatim, plus header comments):
+
+Detection.msg:
+  string label            # e.g. "person", "hand", "happy"
+  float32 score           # confidence 0..1
+  int32 x_min             # bounding box in pixels of the frame described by DetectionArray
+  int32 y_min
+  int32 x_max
+  int32 y_max
+  string[] keypoint_names # e.g. ["wrist","thumb_tip",...] / ["landmark_0",...]; empty for bbox-only detectors
+  float32[] keypoint_x    # pixels
+  float32[] keypoint_y    # pixels
+  float32[] keypoint_z    # millimetres, 0 = invalid / unavailable
+  string[] scalar_names   # e.g. ["yaw_deg","pitch_deg","roll_deg"]; empty if none
+  float32[] scalar_values
+
+DetectionArray.msg:
+  std_msgs/Header header
+  string model_id         # e.g. "hand_landmark_224x224"
+  uint32 frame_width      # pixel size of the frame the coordinates refer to
+  uint32 frame_height
+  Detection[] detections
+
+ModelStatus.msg:
+  string model_id
+  bool active
+  float32 fps
+  int32 shaves
+  string state            # idle | starting | running | failed
+  string message
+
+ModelStatusArray.msg:
+  std_msgs/Header header
+  ModelStatus[] models
+
+ModelInfo.msg:
+  string model_id
+  string task
+  string licence          # may be "unknown - see source" (registry policy)
+  int32 shaves
+  uint32 size_bytes
+  bool available          # present in the model store
+  bool active
+
+TASK 2 - new services in ros_packages/datatypes/srv/:
+
+ListModels.srv:
+  ---                     # empty request
+  ModelInfo[] models
+
+StartModel.srv:
+  string model_id
+  int32 shaves            # 0 = use the registry default
+  ---
+  bool success
+  string message
+
+StopModel.srv:
+  string model_id
+  ---
+  bool success
+  string message
+
+GetDetections.srv:
+  string model_id
+  ---
+  DetectionArray detections
+
+TASK 3 - register them: update ros_packages/datatypes/CMakeLists.txt (rosidl_generate_interfaces: add the 5 msg and
+4 srv files, DEPENDENCIES std_msgs) and ros_packages/datatypes/package.xml (add the std_msgs dependency).
+
+CONSTRAINTS
+- Do NOT modify any existing message/service and do NOT touch camera code, setup-pib.sh, models/ or other packages.
+- No push/merge. Do not commit .hermes.
+- Keep the interfaces generic: no per-model message types.
+
+VERIFICATION (paste real output)
+- Try a real build: `colcon build --packages-select datatypes` (source ROS first). If ROS is not installed in this
+  environment, say so explicitly and instead verify structurally that every new file is listed in CMakeLists.txt and
+  that package.xml declares std_msgs - do not claim a build you did not run.
+- `ros2 interface show datatypes/msg/DetectionArray` (and the other 4 messages) if available.
+
+REPORT: commit hash, `git show --stat`, and the real outputs above.

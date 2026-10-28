@@ -11,13 +11,15 @@ Services (names and fields taken from the voice assistant node):
   (``GetVoiceAssistantState`` / ``SetVoiceAssistantState``; the state message
   carries ``turned_on`` and ``chat_id``)
 * ``get_chat_is_listening`` (``GetChatIsListening``: ``chat_id`` -> ``listening``)
-* ``send_chat_message`` (``SendChatMessage``: ``chat_id``, ``content`` -> ``successful``)
+* ``send_chat_message`` (``SendChatMessage``: ``chat_id``, ``content`` -> ``successful``, ``turn_id``, ``status_reason``)
+* ``cancel_chat_turn`` (``CancelChatTurn``: ``turn_id`` -> ``successful``, ``status_reason``)
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -40,6 +42,9 @@ DEFAULT_LOG = "/data/voice/turn-latency/turns.jsonl"
 
 
 def _utterance(index: int) -> str:
+    override = os.environ.get("MEASURE_TURN_LATENCY_UTTERANCE")
+    if isinstance(override, str) and override.strip():
+        return override.strip()
     return FIXED_UTTERANCES[index % len(FIXED_UTTERANCES)]
 
 

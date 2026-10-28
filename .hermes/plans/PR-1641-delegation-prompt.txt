@@ -1,0 +1,69 @@
+Implement PR-1641 per the verified facts below.
+
+Ticket: https://pib-rocks.atlassian.net/browse/PR-1641  (Blockly: read sound-source direction from microphone array (DOA))
+Repo: pib-backend — /home/pib/opencode/pib-backend, branch `PR-1641` (from develop `a84e8ef8`).
+
+## Goal
+Add ONE Blockly VALUE block that returns the current sound-source direction (DOA) of the microphone array, in
+degrees, so a program can react (e.g. turn the head toward the speaker).
+
+## Verified data source
+- `ros_packages/ros_audio_io/ros_audio_io/doa_publisher.py` publishes the direction on the ROS topic
+  **`/doa_angle`** with message type **`std_msgs/Int32`** (`self.create_publisher(Int32, "doa_angle", 10)`),
+  every `DOA_PUBLISH_INTERVAL` seconds (default **2.0 s**). So the value is at most ~2 s old and the node must
+  WAIT for a message.
+- Angle convention (consolidated from the duplicate ticket PR-982): **0 degrees = directly in front of the
+  head**, sign distinguishes right/left. Keep the value as published (do NOT re-map it) and document the
+  convention in the block tooltip.
+
+## Category (decided)
+The block belongs in the EXISTING Blockly category **"Audio skills"**. Do NOT create a new category. The
+palette/toolbox entry lives in the cerebra repo and is added separately by the orchestrator — do NOT touch
+cerebra.
+
+## TEMPLATE to copy exactly (this repo, verified)
+`get_solid_state_relay` is the same shape (a value block that reads one topic value):
+- block def: `program-blocks/solid-state-relay-block.ts` (value block, `type: "get_solid_state_relay"`)
+- generator: `program-generators/solid-state-relay-generator.ts` (`provideFunction_` + helper)
+- helper: `GET_SOLID_STATE_RELAY_FUNCTION` in `program-generators/util/function-declarations.ts`, which does
+  `create_subscription(...)` -> `logging.info("waiting for ...")` -> `while <not received>: rclpy.spin_once(node)`
+  -> `node.destroy_subscription(subscription)` -> return the value.
+Mirror that structure for the new block.
+
+## Deliverables
+1. New block definition, type e.g. **`get_sound_direction`**, as a VALUE block:
+   - `message0: "get sound direction"`, `output: "Number"`, no inputs, colour **260** (matches the audio
+     blocks), tooltip: returns the sound-source direction in degrees with 0 = directly in front of the head.
+   - Put it in a new file `program-blocks/sound-direction-block.ts` following the relay block's export style,
+     and register it in `program-blocks/custom-blocks.ts` (`Blockly.common.defineBlocks(...)`).
+2. New generator `program-generators/sound-direction-generator.ts` exporting a function named exactly
+   `get_sound_direction` (auto-registration relies on the exported name matching the block type once the module
+   is spread into `custom-generators.ts`). It must:
+   - add the needed definitions (`IMPORT_RCLPY`, `IMPORT_SYS`, `IMPORT_LOGGING`, `CONFIGURE_LOGGING`, `INIT_ROS`,
+     and a NEW import constant `from std_msgs.msg import Int32` — that constant does NOT exist yet, add it to
+     `util/definitions.ts`),
+   - `generator.provideFunction_("get_sound_direction", GET_SOUND_DIRECTION_FUNCTION(generator))`,
+   - return `[<call>, Order.FUNCTION_CALL]`.
+3. New helper `GET_SOUND_DIRECTION_FUNCTION` in `util/function-declarations.ts`:
+   - subscribes to `/doa_angle` (`Int32`, queue 10), `rclpy.spin_once(node)` until a message arrives,
+     `node.destroy_subscription(subscription)`, then returns `int(msg.data)`.
+   - MUST be bounded: use a deadline (e.g. up to ~5 s; the publisher fires every 2 s) and if nothing arrives,
+     log a warning and return 0 so a program never hangs forever. Make the bound explicit in the code.
+   - Add a `reserved-words.ts` entry if the helper/block name needs one.
+4. Jest test in `tests/blockly_generator/` asserting: the emitted code calls the `get_sound_direction` helper,
+   and the generated helper subscribes to `/doa_angle` (assert on the emitted Python text).
+
+## Constraints
+- Stay on branch `PR-1641`. Do NOT push/merge (the orchestrator opens the PR). You MAY commit (`feat: PR-1641 ...`).
+- Only pib-backend Blockly files + test. Do NOT modify pib-sdk, cerebra, or the ROS packages.
+- Do NOT change the existing relay/tf-button/pose blocks.
+- Do NOT commit `.hermes/plans/**`. Do NOT commit if tests fail. Report REAL results.
+
+## Verify
+- `cd /home/pib/opencode/pib-backend/tests/blockly_generator && node node_modules/jest/bin/jest.js --config jest.config.js` -> all pass incl. the new case(s).
+- `git diff --name-only origin/develop...HEAD` lists only the block, generator, definitions, function-declarations,
+  custom-blocks, custom-generators, (reserved-words) and the test.
+
+FINAL REPORT: files changed, the block definition, the emitted Python (helper + the `/doa_angle` subscription),
+the bounded-wait behaviour, real jest results, confirmation you did not push/merge and did not touch
+pib-sdk/cerebra, and the commit hash if committed.

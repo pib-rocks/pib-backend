@@ -14,9 +14,11 @@ download: the engine does not load by model name.
 
 A broken engine is never reported as an empty transcript. ``transcribe``
 raises ``STTTranscriptionError`` carrying the technical cause, and a start-up
-self-check transcribes a bundled sample so a mismatched dependency pair
-(faster-whisper against its PyAV audio backend) shows up at node start
-instead of at the user's first sentence.
+optional start-up self-check (``PIB_STT_SELF_CHECK=1``) transcribes a bundled
+sample so a mismatched dependency pair (faster-whisper against its PyAV audio
+backend) shows up early instead of at the user's first sentence. Production
+images leave the check off and run it in a background thread from the recorder
+so mic capture is not blocked.
 """
 
 from __future__ import annotations
@@ -24,6 +26,7 @@ from __future__ import annotations
 import io
 import logging
 import os
+import threading
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, Union
 
@@ -53,6 +56,7 @@ SELF_CHECK_SAMPLE_NAME = "stt_self_check.wav"
 #: language probability 1.0. Punctuation differences do not fail the check.
 SELF_CHECK_EXPECTED_TEXT = "Hallo, ich bin ein Roboter und ich kann sprechen."
 SELF_CHECK_SAMPLE_ENV = "WHISPER_SELF_CHECK_SAMPLE"
+STT_SELF_CHECK_ENV = "PIB_STT_SELF_CHECK"
 
 
 class STTTranscriptionError(RuntimeError):
@@ -106,6 +110,11 @@ def resolve_self_check_sample() -> Optional[Path]:
         if candidate.is_file():
             return candidate
     return None
+
+
+def stt_self_check_enabled() -> bool:
+    """Whether the bundled sample decode should run once per process."""
+    return os.getenv(STT_SELF_CHECK_ENV, "0") not in ("0", "false", "no", "")
 
 
 def self_check_matches(text: str, expected: str = SELF_CHECK_EXPECTED_TEXT) -> bool:
@@ -232,7 +241,19 @@ class FasterWhisperSTTEngine:
         self.active_backend = f"faster-whisper-{self.model_size}"
         self.engine_failure = None
         logger.info(f"Loaded faster-whisper model '{self.model_size}' successfully.")
-        return self.run_self_check()
+        return True
+
+    def start_self_check_in_background(self) -> Optional[threading.Thread]:
+        """Run the bundled sample check without blocking the caller."""
+        if not stt_self_check_enabled():
+            return None
+
+        def _run() -> None:
+            self.run_self_check()
+
+        thread = threading.Thread(target=_run, name="stt-self-check", daemon=True)
+        thread.start()
+        return thread
 
     def _mark_failed(self, cause: str) -> None:
         """The engine cannot transcribe. Remember why, and say so."""

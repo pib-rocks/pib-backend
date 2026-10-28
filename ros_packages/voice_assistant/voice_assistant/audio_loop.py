@@ -19,6 +19,7 @@ from rclpy.node import Node
 from rclpy.executors import SingleThreadedExecutor
 from std_msgs.msg import Int16MultiArray
 from pib_api_client import voice_assistant_client
+from voice_assistant.llm_defaults import live_thinking_config
 from pib_hermes_config.live_interaction import (
     admit_live_uplink,
     gemini_function_declarations,
@@ -73,6 +74,9 @@ CONFIG = {
     "response_modalities": ["AUDIO"],  # request synthesized speech back
     "input_audio_transcription": {},  # get user (input) transcript stream
     "output_audio_transcription": {},  # get assistant (output) transcript stream
+    # Thinking off by default (PR-2039): the Live session has no tool loop to reward
+    # it, and it delays the first spoken sentence.
+    "thinking_config": live_thinking_config(),
 }
 ROS_AUDIO_TOPIC = os.getenv("ROS_AUDIO_TOPIC", "audio_stream")
 

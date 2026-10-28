@@ -156,7 +156,7 @@ def test_edu_profiles_share_motor_parameters():
     assert extra_keys | replaced_keys == inverted_motors
 
     for name in extra_keys:
-        assert pib5_deviations[name] == {"invert": True}
+        assert pib5_deviations[name] == {"upper_endpoint": "min"}
     for name in replaced_keys:
         assert pib5_deviations[name] is INVERTED_FINGER_MOTOR_PARAMETERS
         assert shared_deviations[name] is FINGER_MOTOR_PARAMETERS
@@ -165,16 +165,66 @@ def test_edu_profiles_share_motor_parameters():
     for name in non_inverted_fingers:
         assert shared_deviations[name] is FINGER_MOTOR_PARAMETERS
         assert pib5_deviations[name] is FINGER_MOTOR_PARAMETERS
-        assert "invert" not in pib5_deviations[name]
+        assert "upper_endpoint" not in pib5_deviations[name]
     for name, deviation in shared_deviations.items():
         if name in replaced_keys:
-            assert "invert" not in deviation
+            assert "upper_endpoint" not in deviation
             continue
         assert pib5_deviations[name] is deviation
 
 
-@pytest.mark.parametrize("variant", ["pib4advanced", "pib5museum"])
-def test_unimplemented_variant_error_lists_implemented_profiles(variant: str):
+def test_seed_profiles_use_upper_endpoint_not_invert():
+    valid_endpoints = {"min", "max"}
+    for variant in PROFILES:
+        profile = get_profile(variant)
+        defaults = profile.motor_parameter_defaults
+        assert "invert" not in defaults
+        assert defaults["upper_endpoint"] in valid_endpoints
+        for deviation in profile.motor_parameter_deviations.values():
+            assert "invert" not in deviation
+            if "upper_endpoint" in deviation:
+                assert deviation["upper_endpoint"] in valid_endpoints
+
+
+#: Direction of the twelve motors that drive their positive end towards the
+#: rotation-range minimum, measured on the reference pib5advanced robot
+#: (192.168.10.217, 2026-10-23 via GET /motor). A fresh install has to drive the
+#: same way, so the seed and this list must not drift apart: change one only
+#: together with a new measurement on the hardware.
+PIB5ADVANCED_MEASURED_MIN_ENDPOINTS = {
+    "lower_arm_left_rotation",
+    "middle_left_stretch",
+    "middle_right_stretch",
+    "ring_right_stretch",
+    "shoulder_horizontal_left",
+    "shoulder_vertical_right",
+    "thumb_left_opposition",
+    "thumb_right_stretch",
+    "tilt_forward_motor",
+    "upper_arm_left_rotation",
+    "wrist_left",
+    "elbow_right",
+}
+
+
+def test_pib5advanced_seed_matches_the_measured_drive_directions():
+    from seed_profiles import pib5advanced
+
+    profile = get_profile("pib5advanced")
+    defaults = profile.motor_parameter_defaults
+    resolved = {
+        name: profile.motor_parameter_deviations.get(name, defaults).get(
+            "upper_endpoint", defaults["upper_endpoint"]
+        )
+        for name in pib5advanced.MOTOR_MAPPING
+    }
+    assert len(resolved) == 26
+    driven_to_min = {name for name, value in resolved.items() if value == "min"}
+    assert driven_to_min == PIB5ADVANCED_MEASURED_MIN_ENDPOINTS
+
+
+def test_unimplemented_variant_error_lists_implemented_profiles():
+    variant = "pib3unknown"
     with pytest.raises(UnknownHardwareVariantError) as error:
         get_profile(variant)
 

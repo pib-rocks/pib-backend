@@ -88,6 +88,7 @@ class AudioRecorderNode(Node):
 
         self.token: Optional[str] = None
         self.stt_engine = FasterWhisperSTTEngine()
+        self.stt_engine.start_self_check_in_background()
         # Pinned once at start-up, not per turn: the engine's own language
         # detection costs about half a turn (PC-39). "" leaves it on detect.
         self.stt_language = configured_stt_language()

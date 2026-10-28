@@ -138,9 +138,9 @@ def test_the_installer_wraps_every_step_and_ends_with_the_summary():
         ("Clone repositories", "clone_repositories"),
         ("Provision curated OAK models", "provision_curated_models provision"),
         ("Provision whisper model", "provision_whisper_model"),
+        ("Provision supertone model", "provision_supertone_model"),
         ("Install pib Python packages", "install_pib_python_packages"),
         ("Put ~/.local/bin on PATH", "install_local_bin_path"),
-        ("Install Hermes CLI", "install_hermes_cli"),
         ("Install setup files", "move_setup_files"),
         ("Set up pib Marimo service", "setup_pib_marimo_service"),
         ("Install DB browser", "install_DBbrowser"),
@@ -151,6 +151,11 @@ def test_the_installer_wraps_every_step_and_ends_with_the_summary():
         ("Clean up", "cleanup"),
     ):
         assert f'run_step "{label}" {command}' in main, label
+    assert re.search(
+        r'if \[ "\$\{PIB_SMART_CHATS:-1\}" != "0" \]; then\s*\n'
+        r'\s*run_step "Install Hermes CLI" install_hermes_cli',
+        main,
+    )
     assert 'run_step "Install ROS 2 Jazzy" source' in main
     assert 'run_step "Adjust system settings" source' in main
     # No step runs bare at the top level any more.
@@ -162,7 +167,15 @@ def test_the_installer_wraps_every_step_and_ends_with_the_summary():
         assert bare not in main, bare
     # `return 1` at the top level of the script is not an exit; fatal steps abort.
     assert "return 1; }" not in main
-    assert main.count("abort_setup ") >= 4
+    assert main.count("abort_setup ") >= 5
+    assert re.search(
+        r'run_step "Provision curated OAK models" provision_curated_models provision \|\|\s*\n\s*abort_setup',
+        main,
+    )
+    assert re.search(
+        r'run_step "Provision supertone model" provision_supertone_model \|\|\s*\n\s*abort_setup',
+        main,
+    )
     assert main.index("print_step_summary") < main.index('"Installation completed"')
     assert "Installation completed with ${STEP_FAILURES} failed step(s)" in main
 

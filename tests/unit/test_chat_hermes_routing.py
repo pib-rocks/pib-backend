@@ -401,7 +401,9 @@ def test_warm_daemon_turn_uses_in_process_runner(chat_module, chat_node, monkeyp
 
     assert reply == "in-process-via-daemon"
     fake_agent_cls.assert_called_once()
-    assert fake_agent_cls.call_args.kwargs["session_id"] == "pib_chat_chat-ip"
+    # PR-2052: one warm agent per personality; the chat's session is bound per turn
+    # instead of at construction.
+    assert fake_agent.session_id == "pib_chat_chat-ip"
     assert fake_agent_cls.call_args.kwargs["max_iterations"] == 4
     assert fake_agent_cls.call_args.kwargs["disabled_toolsets"] == [
         "terminal",
@@ -793,6 +795,50 @@ def test_direct_turn_puts_the_person_on_the_system_prompt(
     assert CAPTURED_IMAGE_SENTENCE in system_prompt
 
 
+def test_smart_turn_passes_message_history_to_hermes(chat_module, chat_node):
+    """PR-2068: Smart seeds from flask; the node passes the personality window."""
+    from public_api_client import hermes_agent_client
+
+    Chat = chat_module.Chat
+
+    personality = MagicMock()
+    personality.message_history = 7
+    personality.description = "Du bist pib."
+    personality.personality_id = "pers-1"
+    personality.assistant_model.api_name = "hermes-agent"
+    personality.assistant_model.has_image_support = True
+    personality.channel = "smart"
+    personality.effective_channel = "smart"
+
+    goal_handle = MagicMock()
+    goal_handle.is_cancel_requested = False
+    goal_handle.request = Chat.Goal()
+    goal_handle.request.chat_id = "chat-2068"
+    goal_handle.request.text = "Hi"
+    goal_handle.request.generate_code = False
+
+    with (
+        patch.object(
+            chat_module.voice_assistant_client,
+            "get_personality_from_chat",
+            return_value=(True, personality),
+        ),
+        patch.object(
+            chat_node,
+            "_stream_hermes_turn",
+            return_value=["Antwort vom Agent."],
+        ) as hermes_stream,
+        patch.object(
+            chat_node,
+            "_stream_chunks_to_goal",
+            return_value=(None, None, "Antwort vom Agent."),
+        ),
+    ):
+        drive_like_rclpy(chat_node.chat(goal_handle))
+
+    assert hermes_stream.call_args.kwargs["message_history"] == 7
+
+
 def test_chat_routes_hermes_without_replaying_history(chat_module, chat_node):
     import os
 
@@ -846,6 +892,7 @@ def test_chat_routes_hermes_without_replaying_history(chat_module, chat_node):
     get_history.assert_not_called()
     chat_completion.assert_not_called()
     hermes_stream.assert_called_once()
+    assert hermes_stream.call_args.kwargs.get("message_history") == 5
     assert hermes_stream.call_args.kwargs["text"] == "Hi"
     assert hermes_stream.call_args.kwargs["chat_id"] == "chat-9"
     assert hermes_stream.call_args.kwargs["personality_id"] == "pers-1"
@@ -1823,6 +1870,7 @@ def test_a_reported_tool_call_reaches_the_metadata_and_the_trace(
     node.get_logger = MagicMock(return_value=MagicMock())
     node._turn_trace_publisher = MagicMock()
     node._reset_turn_meta()
+    node._turn_chat_id = "chat-tools"
     node._emit_turn_path(chat_id="chat-tools", path="Hermes", model="gemini-3.8-flash")
 
     node._record_tool_call(
@@ -1850,11 +1898,57 @@ def test_a_reported_tool_call_reaches_the_metadata_and_the_trace(
     ]
     tool_events = [event for event in published if event["stage"] == "tool_call"]
     assert [event["source"] for event in tool_events] == ["capture_image", "set_led"]
+    assert all(event["chat_id"] == "chat-tools" for event in tool_events)
     assert tool_events[1]["detail"]["ok"] is False
     assert tool_events[1]["detail"]["error"] == "RuntimeError"
+    finished = [event for event in published if event["stage"] == "tool_call_finished"]
+    assert len(finished) == 2
+    assert finished[0]["detail"]["arg_names"] == ["hint"]
     # Argument *names* travel, values never do - the record has no value field.
     assert tool_events[0]["detail"]["arg_names"] == ["hint"]
     assert set(meta["toolCalls"][0]) == {"name", "ok", "durationMs", "argNames"}
+
+
+def test_tool_start_and_finish_trace_events_share_call_id_and_chat_id(
+    chat_module, chat_node
+):
+    node = chat_node
+    node.get_logger = MagicMock(return_value=MagicMock())
+    node._turn_trace_publisher = MagicMock()
+    node._reset_turn_meta()
+    node._turn_chat_id = "chat-trace-1"
+
+    node._record_tool_started(
+        {"name": "set_led", "callId": "set_led-0", "argNames": ["color"]}
+    )
+    node._record_tool_finished(
+        {
+            "name": "set_led",
+            "callId": "set_led-0",
+            "ok": True,
+            "durationMs": 3.0,
+            "argNames": ["color"],
+        }
+    )
+
+    published = [
+        json.loads(call.args[0].data)
+        for call in node._turn_trace_publisher.publish.call_args_list
+    ]
+    started = [e for e in published if e["stage"] == "tool_call_started"]
+    finished = [e for e in published if e["stage"] == "tool_call_finished"]
+    legacy = [e for e in published if e["stage"] == "tool_call"]
+    assert len(started) == 1
+    assert len(finished) == 1
+    assert len(legacy) == 1
+    assert started[0]["chat_id"] == "chat-trace-1"
+    assert finished[0]["chat_id"] == "chat-trace-1"
+    assert started[0]["detail"]["call_id"] == "set_led-0"
+    assert finished[0]["detail"]["call_id"] == "set_led-0"
+    assert finished[0]["detail"]["duration_ms"] == 3.0
+    assert finished[0]["detail"]["duration_ms"] >= 0
+    assert "color" in started[0]["detail"]["arg_names"]
+    assert "red" not in json.dumps(published)
 
 
 def test_disabled_hermes_channel_routes_a_smart_personality_direct(
@@ -2154,10 +2248,16 @@ def test_direct_turn_logs_the_store_key_source_and_does_not_print_the_secret(
     captured = {}
 
     class Response:
-        def read(self):
-            return json.dumps(
+        # The Direct path streams SSE chunks, so the fake transport must yield
+        # data lines instead of one JSON body.
+        def __iter__(self):
+            chunk = json.dumps(
                 {"candidates": [{"content": {"parts": [{"text": "pong"}]}}]}
-            ).encode()
+            )
+            return iter([f"data: {chunk}\n".encode(), b"\n"])
+
+        def read(self):
+            return b"".join(self)
 
         def __enter__(self):
             return self
@@ -2175,6 +2275,9 @@ def test_direct_turn_logs_the_store_key_source_and_does_not_print_the_secret(
 
     if hasattr(chat_module.direct_tool_loop, "_fetch_store_key"):
         monkeypatch.setattr(chat_module.direct_tool_loop, "_fetch_store_key", fetch)
+    # PR-2075 added a keep-alive transport; this test exercises the urlopen
+    # fallback, which must keep the same header and logging behaviour.
+    monkeypatch.setenv("DIRECT_HTTP_KEEPALIVE", "0")
     monkeypatch.setattr(chat_module.direct_tool_loop, "urlopen", fake_urlopen)
     monkeypatch.setattr(
         chat_module.direct_tool_loop, "mcp_tool_declarations", lambda: []
@@ -2403,3 +2506,209 @@ def test_chat_node_routes_pib_cloud_and_flushes_first_sentence(chat_module, chat
     assert result.text == ""
     info_logs = [call[0][0] for call in logger.info.call_args_list]
     assert any("FIRST_SENTENCE_FLUSHED" in line for line in info_logs)
+
+
+def test_failed_user_message_create_warns_and_the_turn_continues(
+    chat_module, chat_node
+):
+    """A refused user-line POST must not abort the chat action."""
+    from pib_hermes_config.attention import AttentionPlan
+
+    Chat = chat_module.Chat
+    node = chat_node
+    node.create_chat_message = types.MethodType(
+        chat_module.ChatNode.create_chat_message, node
+    )
+    logger = MagicMock()
+    node.get_logger = MagicMock(return_value=logger)
+    node._attention = MagicMock()
+    node._attention.before_answer.return_value = AttentionPlan(preface="")
+
+    personality = MagicMock()
+    personality.message_history = 5
+    personality.description = "Du bist pib."
+    personality.personality_id = "pers-1"
+    personality.channel = "smart"
+    personality.assistant_model.api_name = "hermes-agent"
+    personality.assistant_model.has_image_support = True
+    personality.assistant_model.endpoint_base = None
+
+    goal_handle = MagicMock()
+    goal_handle.is_cancel_requested = False
+    goal_handle.request = Chat.Goal()
+    goal_handle.request.chat_id = "chat-fail-user"
+    goal_handle.request.text = "Hi"
+    goal_handle.request.generate_code = False
+
+    stored_assistant = MagicMock()
+    stored_assistant.message_id = "asst-1"
+
+    def _stream(**_kwargs):
+        return ["Antwort."]
+
+    with (
+        patch.object(
+            chat_module.voice_assistant_client,
+            "create_chat_message",
+            side_effect=[
+                (False, None),
+                (True, stored_assistant),
+            ],
+        ),
+        patch.object(
+            chat_module.voice_assistant_client,
+            "get_personality_from_chat",
+            return_value=(True, personality),
+        ),
+        patch.object(node, "_stream_hermes_turn", side_effect=_stream),
+        patch.object(
+            node,
+            "_stream_chunks_to_goal",
+            return_value=(None, None, "Antwort."),
+        ),
+        patch.object(node, "_publish_chat_message") as publish,
+    ):
+        drive_like_rclpy(node.chat(goal_handle))
+
+    goal_handle.succeed.assert_called_once()
+    warning_messages = [call[0][0] for call in logger.warning.call_args_list]
+    assert any(
+        "chat-fail-user" in msg and "not persisted" in msg for msg in warning_messages
+    )
+    publish.assert_any_call(
+        chat_id="chat-fail-user",
+        content="Hi",
+        is_user=True,
+        message_id=None,
+    )
+
+
+def test_update_skips_pib_when_no_message_id_was_stored(chat_module, chat_node):
+    node = chat_node
+    node.get_logger = MagicMock(return_value=MagicMock())
+    node.create_chat_message = types.MethodType(
+        chat_module.ChatNode.create_chat_message, node
+    )
+    node.last_pib_message_id = None
+    node.message_content = "Antwort"
+
+    with (
+        patch.object(
+            chat_module.voice_assistant_client,
+            "update_chat_message",
+        ) as update,
+        patch.object(node, "_publish_chat_message") as publish,
+    ):
+        node.create_chat_message(
+            "chat-skip-update",
+            " mehr.",
+            False,
+            True,
+            True,
+        )
+
+    update.assert_not_called()
+    publish.assert_called_once_with(
+        chat_id="chat-skip-update",
+        content="Antwort  mehr.",
+        is_user=False,
+        message_id=None,
+    )
+
+
+def test_failed_user_message_log_omits_the_message_text(chat_module, chat_node):
+    """A 313k character line must not be copied into the log by the failure path."""
+    node = chat_node
+    logger = MagicMock()
+    node.get_logger = MagicMock(return_value=logger)
+    node.create_chat_message = types.MethodType(
+        chat_module.ChatNode.create_chat_message, node
+    )
+    marker = "PR2022_BODY_MUST_NOT_BE_LOGGED"
+    huge = marker * 5000
+
+    with (
+        patch.object(
+            chat_module.voice_assistant_client,
+            "create_chat_message",
+            return_value=(False, None),
+        ),
+        patch.object(node, "_publish_chat_message"),
+    ):
+        node.create_chat_message("chat-log", huge, True, False, True)
+
+    error_messages = [call[0][0] for call in logger.error.call_args_list]
+    warning_messages = [call[0][0] for call in logger.warning.call_args_list]
+    every_line = error_messages + warning_messages
+    assert any(f"chars={len(huge)}" in msg for msg in error_messages)
+    assert every_line
+    assert all(marker not in msg for msg in every_line)
+
+
+def test_publish_uses_an_empty_id_when_the_line_was_not_persisted(
+    chat_module, chat_node
+):
+    """A line the API refused has no id; the ROS string field must not get None.
+
+    The generated datatypes converter aborts the process on None
+    (`PyUnicode_Check(field)` assertion), which killed the chat node after PR-2022
+    started letting the turn continue.
+    """
+    node = chat_node
+    node.chat_message_publisher = MagicMock()
+
+    chat_module.ChatNode._publish_chat_message(node, "chat-none", "Hallo", True, None)
+
+    published = node.chat_message_publisher.publish.call_args[0][0]
+    assert published.message_id == ""
+    assert published.content == "Hallo"
+    assert published.is_user is True
+
+
+def test_publish_keeps_a_real_message_id(chat_module, chat_node):
+    node = chat_node
+    node.chat_message_publisher = MagicMock()
+
+    chat_module.ChatNode._publish_chat_message(node, "chat-id", "Hallo", False, "msg-9")
+
+    published = node.chat_message_publisher.publish.call_args[0][0]
+    assert published.message_id == "msg-9"
+
+
+def test_chat_turn_aborts_cleanly_when_chat_cannot_be_resolved(
+    chat_module, chat_node, caplog
+):
+    """PR-2046: an unknown chat id must not crash the node with TypeError."""
+    import logging
+
+    Chat = chat_module.Chat
+    logger = MagicMock()
+    chat_node.get_logger = MagicMock(return_value=logger)
+    chat_node._attention = MagicMock()
+    chat_node._attention.before_answer.return_value = MagicMock()
+
+    goal_handle = MagicMock()
+    goal_handle.is_cancel_requested = False
+    goal_handle.request = Chat.Goal()
+    goal_handle.request.chat_id = "unknown-chat-2046"
+    goal_handle.request.text = "Hi"
+    goal_handle.request.generate_code = False
+
+    with (
+        patch.object(
+            chat_module.voice_assistant_client,
+            "get_personality_from_chat",
+            return_value=(False, None),
+        ),
+        patch.object(chat_node, "_stream_hermes_turn") as hermes_stream,
+    ):
+        with caplog.at_level(logging.ERROR):
+            result = drive_like_rclpy(chat_node.chat(goal_handle))
+
+    hermes_stream.assert_not_called()
+    goal_handle.abort.assert_called_once()
+    goal_handle.succeed.assert_not_called()
+    assert result.text == ""
+    error_messages = [call[0][0] for call in logger.error.call_args_list]
+    assert any("unknown-chat-2046" in msg for msg in error_messages)
+    assert not any("TypeError" in record.message for record in caplog.records)

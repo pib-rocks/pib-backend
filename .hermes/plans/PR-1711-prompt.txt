@@ -1,0 +1,12 @@
+Implement PR-1711 (branch PR-1711 is checked out). Fetch the ticket for the full context:
+  GET https://pib-rocks.atlassian.net/rest/api/3/issue/PR-1711?fields=description
+  Credentials: ~/.hermes/.env -> ATLASSIAN_EMAIL, ATLASSIAN_TOKEN (base64 basic auth).
+
+Core: a failed hand-chain build is swallowed - start_model returns success and the model reports
+running/active with fps 0.0, while the effective pipeline is colour-only (all stage counters 0).
+Fix: (1) fail loudly - start_model must return success=False and the model must not be active;
+(2) models_status must reflect reality (running only when the chain is really in the pipeline,
+verify via the stage counters); (3) the chain must then actually run and publish detections.
+
+Rules: pytest + py_compile + bash -n must pass; the colour-only camera path and PIB_CAMERA_STEREO=off
+must stay intact; no push/merge; do not commit .hermes/; state what needs live verification on the robot.

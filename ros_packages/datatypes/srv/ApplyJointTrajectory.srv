@@ -1,3 +1,6 @@
+# joint_trajectory.points[].positions[] are radians (REP-103 / trajectory_msgs).
+# motor_control converts to centidegrees internally; hardware uses driver ticks.
 trajectory_msgs/JointTrajectory joint_trajectory
 ---
 bool successful
+MotorResult[] results

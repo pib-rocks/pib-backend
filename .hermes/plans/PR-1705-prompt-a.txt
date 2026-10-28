@@ -1,0 +1,6 @@
+Fix PR-1705 in the hand chain (device rejects the ImageManip warp).
+
+Ticket: https://pib-rocks.atlassian.net/browse/PR-1705
+Repo: pib-backend - /home/pib/opencode/pib-backend, branch `PR-1705`.
+
+MEASURED...[truncated]

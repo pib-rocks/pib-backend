@@ -2,3 +2,5 @@ string chat_id
 string content
 ---
 bool successful
+string turn_id
+string status_reason

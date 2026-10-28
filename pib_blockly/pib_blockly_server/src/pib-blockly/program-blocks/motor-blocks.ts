@@ -1,4 +1,5 @@
 import * as Blockly from "blockly";
+import {MOTOR_NAME_DROPDOWN_OPTIONS} from "./motor-motor-options";
 
 const SIDE_DROPDOWN = {
     type: "field_dropdown",
@@ -9,44 +10,14 @@ const SIDE_DROPDOWN = {
     ],
 };
 
-const MOTOR_NAME_DROPDOWN_OPTIONS = [
-    ["thumb left opposition", "THUMB_LEFT_OPPOSITION"],
-    ["thumb left stretch", "THUMB_LEFT_STRETCH"],
-    ["index finger left stretch", "INDEX_LEFT_STRETCH"],
-    ["middle finger left stretch", "MIDDLE_LEFT_STRETCH"],
-    ["ring finger left stretch", "RING_LEFT_STRETCH"],
-    ["pinky finger left stretch", "PINKY_LEFT_STRETCH"],
-    ["all fingers left", "ALL_FINGERS_LEFT_STRETCH"],
-    ["thumb right opposition", "THUMB_RIGHT_OPPOSITION"],
-    ["thumb right stretch", "THUMB_RIGHT_STRETCH"],
-    ["index finger right stretch", "INDEX_RIGHT_STRETCH"],
-    ["middle finger right stretch", "MIDDLE_RIGHT_STRETCH"],
-    ["ring finger right stretch", "RING_RIGHT_STRETCH"],
-    ["pinky finger right stretch", "PINKY_RIGHT_STRETCH"],
-    ["all fingers right", "ALL_FINGERS_RIGHT_STRETCH"],
-    ["upper left arm rotation", "UPPER_ARM_LEFT_ROTATION"],
-    ["elbow left", "ELBOW_LEFT"],
-    ["lower left arm rotation", "LOWER_ARM_LEFT_ROTATION"],
-    ["wrist left", "WRIST_LEFT"],
-    ["left shoulder vertical", "SHOULDER_VERTICAL_LEFT"],
-    ["left shoulder horizontal", "SHOULDER_HORIZONTAL_LEFT"],
-    ["upper right arm rotation", "UPPER_ARM_RIGHT_ROTATION"],
-    ["elbow right", "ELBOW_RIGHT"],
-    ["lower right arm rotation", "LOWER_ARM_RIGHT_ROTATION"],
-    ["wrist right", "WRIST_RIGHT"],
-    ["right shoulder vertical", "SHOULDER_VERTICAL_RIGHT"],
-    ["right shoulder horizontal", "SHOULDER_HORIZONTAL_RIGHT"],
-    ["tilt head forward", "TILT_FORWARD_HEAD"],
-    ["turn head", "TURN_HEAD"],
-];
-
 const handPositionTooltip = (axis: string) =>
-    `Returns the ${axis} coordinate of the selected hand in millimeters. The value is the position the hand was last commanded to move to, not live encoder feedback. Left/right is from pib's own perspective: imagine standing in front of pib and looking at him (the same binding used across pib part numbering e.g. C35R/C35L).`;
+    `Returns the ${axis} coordinate of the selected hand in millimeters. X is forward, Y is to pib's own left, Z is up, in millimetres (REP-103). The value is the position the hand was last commanded to move to, not live encoder feedback. Left/right is from pib's own perspective: imagine standing in front of pib and looking at him (the same binding used across pib part numbering e.g. C35R/C35L).`;
 
 export const motor_blocks = Blockly.common.createBlockDefinitionsFromJsonArray([
     {
         type: "move_motor",
-        message0: "move motor(s)  %1 %2 to %3 position from input %4",
+        message0:
+            "move motor(s) %1 %2 to %3 position in degrees from input %4",
         args0: [
             {
                 type: "field_dropdown",
@@ -74,7 +45,8 @@ export const motor_blocks = Blockly.common.createBlockDefinitionsFromJsonArray([
         previousStatement: null,
         nextStatement: null,
         colour: 355,
-        tooltip: "",
+        tooltip:
+            "Moves the selected motor to a target angle in degrees. Absolute mode sets the joint to that angle; relative mode adds the value to the current angle. Typical limits are about ±90° per joint (see motor configuration). Values are passed to the robot in degrees.",
         helpUrl: "",
     },
     {
@@ -95,7 +67,8 @@ export const motor_blocks = Blockly.common.createBlockDefinitionsFromJsonArray([
     },
     {
         type: "set_hand_position_xyz",
-        message0: "Set Hand Position at XYZ %1 %2 %3 X %4 Y %5 Z %6",
+        message0:
+            "Set Hand Position at XYZ %1 %2 %3 X (mm) %4 Y (mm) %5 Z (mm) %6",
         args0: [
             {
                 type: "field_dropdown",
@@ -143,12 +116,12 @@ export const motor_blocks = Blockly.common.createBlockDefinitionsFromJsonArray([
         nextStatement: null,
         colour: 355,
         tooltip:
-            "Moves the selected hand to a target XYZ position using inverse kinematics. Left/right is from pib's own perspective: imagine standing in front of pib and looking at him (the same binding used across pib part numbering e.g. C35R/C35L).",
+            "Moves the selected hand to a target XYZ position in millimeters using inverse kinematics. X is forward, Y is to pib's own left, Z is up, in millimetres (REP-103). Absolute mode sets that workspace position; relative mode offsets the current commanded hand position along those axes. Left/right is from pib's own perspective: imagine standing in front of pib and looking at him (the same binding used across pib part numbering e.g. C35R/C35L).",
         helpUrl: "",
     },
     {
         type: "get_hand_x",
-        message0: "Get hand position X of %1",
+        message0: "Get hand position X (mm) of %1",
         args0: [SIDE_DROPDOWN],
         output: "Number",
         colour: 355,
@@ -157,7 +130,7 @@ export const motor_blocks = Blockly.common.createBlockDefinitionsFromJsonArray([
     },
     {
         type: "get_hand_y",
-        message0: "Get hand position Y of %1",
+        message0: "Get hand position Y (mm) of %1",
         args0: [SIDE_DROPDOWN],
         output: "Number",
         colour: 355,
@@ -166,7 +139,7 @@ export const motor_blocks = Blockly.common.createBlockDefinitionsFromJsonArray([
     },
     {
         type: "get_hand_z",
-        message0: "Get hand position Z of %1",
+        message0: "Get hand position Z (mm) of %1",
         args0: [SIDE_DROPDOWN],
         output: "Number",
         colour: 355,

@@ -1,0 +1,46 @@
+Task: PR-1950 follow-up - the DEVICE updater must apply the Ollama listen drop-in.
+(The previous change covered setup/update-pib.sh, which turned out not to be the script that runs.)
+
+Repository: pib-backend. Branch: PR-1950b, created from origin/develop. Ticket: PR-1950.
+
+=== Why this follow-up exists ===
+A first change (merged as 8b213cbf) extracted the listen logic into setup/installation_scripts/ollama_listen.sh
+and applied it in setup/update-pib.sh. That script is SOURCED by setup-pib.sh and called by nobody else, so it
+is not the update path a device executes. Measured, from three independent places and from the device:
+
+- setup/setup_files/pib-update.service, line 14:  ExecStart=/home/pib/app/pib-backend/setup/update_runner.sh
+- setup/setup_files/pib-update-check.service:     ExecStart=.../setup/update_runner.sh --check
+- setup/installation_scripts/docker_install.sh, line 160, writes that runner path into the service marker
+- on 192.168.1.172: `systemctl cat pib-update.service` shows ExecStart=.../update_runner.sh and
+  /home/pib/app/.update/service.json carries "runner":"/root/app/pib-backend/setup/update_runner.sh"
+
+setup/update_runner.sh is a second, host-side updater. It refreshes both repositories, syncs the OAK and
+whisper stores and rebuilds the stacks - and it does NOT call setup/update-pib.sh. It therefore still sets no
+OLLAMA_HOST, and an updated device keeps the loopback bind, so the local model stays unreachable from the
+containers even though the update reports success.
+
+=== What to change ===
+Call the existing shared helper from setup/update_runner.sh. Do NOT reimplement it:
+- setup/installation_scripts/ollama_listen.sh already provides the drop-in logic, ollama_unit_installed() and
+  the restart decision; reuse them exactly as setup/update-pib.sh does in its ensure_ollama_for_update().
+- Place the call so the drop-in is in effect BEFORE the containers are recreated: the newly built flask
+  container probes Ollama as soon as it starts, and a drop-in written after that changes nothing for it.
+- Decide deliberately whether the runner restarts ollama (an update window may restart it) or defers;
+  the helper supports both. State the choice and the reason in a comment. Note that the runner's own
+  verification compares revisions and container health, so a restart of ollama must not break it.
+
+=== Hard constraints ===
+- Work only on branch PR-1950b. Make the changes and run the tests, but do NOT commit and do NOT push:
+  leave the changes in the working tree.
+- NO device access. Device verification is the operator's step; do not claim device-verified results.
+- A device WITHOUT ollama must not fail the update: the 4 GiB variants never install it (variant gate in
+  setup-pib.sh). ollama_unit_installed() is the guard - a missing unit means success, not an error.
+- Idempotency: a second update on an already-configured device must not rewrite the drop-in or restart
+  anything unnecessarily.
+- Do not change the runner's health-check or rollback behaviour, and do not touch update-pib.sh beyond what
+  is already there.
+- Product-neutral shipped code: no IPs, no host names, no device-specific values.
+- Tests: extend the existing pattern in tests/unit/test_update_ollama_listen.py, which cuts the function out
+  of the script and runs it in bash - do the same for the runner's function. The unit and integration suites
+  and black must stay as they are.
+- Report what you ran, what you did not run, and anything left unverified.

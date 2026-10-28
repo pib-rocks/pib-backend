@@ -9,9 +9,13 @@ module.exports = {
   // resolves its own asset files through `__dirname`, which a bundled copy breaks
   // ("ENOENT ... default-stylesheet.css").
   externals: [nodeExternals()],
-  entry: "./test/model-blocks.test.ts",
+  entry: {
+    "model-blocks.test": "./test/model-blocks.test.ts",
+    "motor-blocks.test": "./test/motor-blocks.test.ts",
+    "smart-home-blocks.test": "./test/smart-home-blocks.test.ts",
+  },
   output: {
-    filename: "model-blocks.test.js",
+    filename: "[name].js",
     path: path.resolve(__dirname, "dist-test"),
     clean: true,
   },

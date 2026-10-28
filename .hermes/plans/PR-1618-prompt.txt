@@ -1,0 +1,41 @@
+Implement PR-1618 (pib-backend repo-wide black reformat + pin black). READ THE PLAN FILE FIRST — it lives at `.hermes/plans/PR-1618-plan.md` and contains the full procedure, the measured baseline, and the exact file/phase breakdown. Follow it exactly.
+
+You are in the `pib-backend` repository on branch `PR-1618`. Your job is to make the `Lint` workflow green and prevent it from drifting red again.
+
+## SCOPE — ONLY these tasks (one phase per commit)
+
+Commit 1 (config): create `pyproject.toml` at the repo root with a `[tool.black]` section, and modify `.github/workflows/black.yml` to pin an EXACT black version instead of `psf/black@stable`.
+
+Commit 2 (reformat): run `python3 -m black .`, verify the diff is pure formatting, and commit ALL reformatted files as ONE conventional commit.
+
+## Do NOT
+
+- Do NOT push. Do NOT merge to develop. Do NOT commit anything except the two commits described above.
+- Do NOT change any non-whitespace code. No refactoring, no imports, no bug fixes, no string changes, no dependency changes.
+- Do NOT run the full backend test suite (`tests/run_all_tests.sh`) — not needed for pure formatting and it is costly. It is verified separately.
+- Do NOT add an `exclude` to `[tool.black]` unless you find a file that is genuinely build-generated AND black cannot handle it — and if so, comment the justification. Alembic migrations under `pib_api/flask/migrations/versions/` MUST be reformatted, not excluded.
+
+## Facts (verified, do not re-derive)
+
+- `python3 -m black --check .` currently reports 58 files "would be reformatted".
+- Local `black` version is 26.5.1 — use `black==26.5.1` in the workflow pin unless you have a concrete reason for a different version, in which case say so.
+- The repo has no `pyproject.toml`, `setup.cfg`, `tox.ini`, or `.flake8`. `python3` / `python` in this environment is your interpreter.
+- `.github/workflows/black.yml` currently: `on: [push]`, `jobs.lint` runs `actions/checkout@v3` then `psf/black@stable`. Keep `on: [push]`, and make the job fail on a real `black --check` failure (the step should exit non-zero when black reports reformatting needed).
+
+Target `line-length = 88` (black default) in `[tool.black]`. For `target-version`, use what the code actually targets — check `setup.py` / a `python_requires` or the runtime Python on this project; if unsure, note the assumption rather than guessing silently.
+
+## Self-check before you finish
+
+1. `python3 -m black --check .` exits 0.
+2. `git show --stat <reformat-commit>` shows only `.py` files (and the diff contains no string/logic changes — spot check).
+3. `.github/workflows/black.yml` still triggers on push and fails on non-zero.
+4. Both commits are on branch `PR-1618`, nothing pushed, working tree clean except the untracked `.hermes/plans/` file (leave that untracked — do NOT commit it).
+
+## Report back (exact, real numbers)
+
+- The exact `python3 -m black --check .` final output (file counts / "All done" line), verbatim.
+- The two commit SHAs and their one-line messages.
+- How many .py files were reformatted.
+- The exact `black==` version you pinned and why.
+- Any file black could not parse (report it, do not drop it silently).
+- Do NOT claim a number you did not observe. Report real observed output.

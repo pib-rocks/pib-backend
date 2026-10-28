@@ -4,6 +4,7 @@ from rclpy.node import Node
 from pib_motors.motor import Motor
 from datatypes.srv import ApplyJointTrajectory
 from pib_api_client import motor_client, pose_client
+from pib_motors.units import centideg_to_rad
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 
@@ -98,7 +99,7 @@ class StartupPoseExecutor:
             jt = JointTrajectory()
             jt.joint_names = [motor_name]
             point = JointTrajectoryPoint()
-            point.positions.append(position)
+            point.positions.append(centideg_to_rad(int(position)))
             jt.points.append(point)
 
             req = ApplyJointTrajectory.Request()

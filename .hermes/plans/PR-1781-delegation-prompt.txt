@@ -1,0 +1,67 @@
+You are implementing Jira ticket PR-1781 in the repository /home/pib/opencode/pib-backend.
+
+FIRST: read /home/pib/opencode/pib-backend/.hermes/plans/PR-1781-plan.md in full. It contains the
+verified code facts, the measured evidence and the required change shape.
+
+WORKING BRANCH (hard constraint)
+- You are on branch PR-1781, created from origin/develop (bf0d7d28). Stay on it.
+- Do NOT merge, do NOT push, do NOT rebase, do NOT create a PR. Commit on PR-1781 only.
+
+SCOPE (hard constraint)
+- setup/setup-pib.sh           (function disable_power_notification)
+- tests/run_all_tests.sh       (function ensure_venv)
+- ONE new test module under tests/unit/
+Nothing else. No reformatting, no renames, no unrelated cleanups.
+
+THE TASK (three defects, all detailed in the plan)
+A+B. setup/setup-pib.sh, disable_power_notification():
+  A1. The function installs and starts the `watchdog` daemon although systemd already owns the
+      hardware watchdog on current Raspberry Pi OS (RuntimeWatchdogUSec=1min, /dev/watchdog0
+      state=active timeout=60, kernel cmdline reboot=w). A documented fresh install got an UNCLEAN
+      board reset during `docker compose up -d --build` (no shutdown sequence, log ends mid build).
+      Implement ONE explicit watchdog policy and state it in the commit message and in a code
+      comment. Recommended: do not create a second owner - drop `systemctl enable/start watchdog`
+      (keep or drop the package, but justify it). Make sure the effective deadline cannot fire
+      during a 40+ minute build at high load; document the value you rely on.
+  A2. `sudo sed -i 's/#reboot=1/reboot=0/' /etc/watchdog.conf` matches nothing in the shipped
+      config - a silent no-op. `kernel.panic = 0` does not prevent a watchdog reset. Either
+      implement these steps correctly or delete them with a one-line comment explaining why. A log
+      line claiming a change that does not happen is the defect.
+  B.  `echo "avoid_warnings=2" | sudo tee -a` and `echo "force_turbo=1" | sudo tee -a` append on
+      EVERY run (the pib5edu currently has each directive twice: config.txt lines 55-58). Make the
+      writes idempotent: append only when the directive is not already present. Both directives
+      must still be present after a run on a fresh image, and the rest of the file must be
+      untouched.
+C.  tests/run_all_tests.sh, ensure_venv(): the guard is `if [[ ! -d "${VENV_DIR}" ]]`, so a venv
+    directory that exists without bin/ is treated as ready and the script dies with
+    `${VENV_DIR}/bin/activate: No such file or directory`. Detect a USABLE venv (bin/python exists
+    and runs) and rebuild it when it is not, then continue. Reproduce the failure first with a
+    scratch directory, then fix it.
+
+TESTS (required)
+Add the test module described in the plan. It must EXECUTE the real script code with stub
+executables on PATH - no source-text assertions, no change-detectors:
+  - call the config.txt helper twice against a temp file and assert exactly one force_turbo=1 and
+    one avoid_warnings=2 line;
+  - assert the watchdog policy you implemented actually happens (e.g. the stub records that
+    `systemctl enable/start watchdog` is NOT called, or - if you deliberately keep the daemon -
+    that the intended configuration is applied and nothing is a silent no-op);
+  - create a directory that looks like a venv but has no bin/, and assert the ensure_venv path
+    rebuilds it and continues.
+Model the style on tests/unit/test_setup_hardware_variant.py and the existing
+tests/unit/test_setup_docker_cleaner_service.py.
+
+VERIFICATION YOU MUST RUN AND REPORT VERBATIM (real output, no summaries)
+  bash -n setup/setup-pib.sh
+  bash -n tests/run_all_tests.sh
+  python3 -m pytest tests/unit/test_setup_power_and_watchdog.py -q          (your new module)
+  python3 -m pytest tests/unit/test_setup_hardware_variant.py tests/unit/test_model_provisioning.py tests/unit/test_system_property_service.py tests/unit/test_setup_docker_cleaner_service.py -q
+  git diff --stat
+NEVER run the real setup-pib.sh (it writes /etc/sudoers.d/$USER, installs packages, appends to
+/boot/firmware/config.txt and builds Docker images) and never touch /boot/firmware/config.txt on
+this machine.
+
+REPORT
+Report: files changed, the exact diff, the verbatim test output, the watchdog policy you chose and
+why, and any deviation from the plan. If something could not be verified, say so instead of
+claiming success. English only.

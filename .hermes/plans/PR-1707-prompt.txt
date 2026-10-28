@@ -1,0 +1,13 @@
+Implement PR-1707 and PR-1708 in one branch (PR-1707 is checked out). Fetch both tickets for full context:
+  GET https://pib-rocks.atlassian.net/rest/api/3/issue/PR-1707?fields=description
+  GET https://pib-rocks.atlassian.net/rest/api/3/issue/PR-1708?fields=description
+Credentials: ~/.hermes/.env -> ATLASSIAN_EMAIL, ATLASSIAN_TOKEN (base64 basic auth).
+
+PR-1707: per-network shave budget from the registry/manifest (empirical: palm 4, decoding 1, landmark 4);
+use those values when building the NN nodes instead of the group value 12. Add/extend unit tests.
+
+PR-1708: depth off by default (PIB_CAMERA_STEREO default "off" in code and in docker-compose.yaml environment);
+auto/on stay available as explicit opt-in. The camera must never abort: with mode=off no stereo attempt happens.
+
+Rules: pytest + py_compile + bash -n must pass; report raw output; no push/merge; do not commit .hermes/;
+state clearly what needs live verification on the robot.

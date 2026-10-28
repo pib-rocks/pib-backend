@@ -1,0 +1,58 @@
+Implement PR-1645: add an absolute/relative MODE dropdown to the existing Blockly "Set Hand Position at XYZ" block, consistent with the existing `move_motor` block. The work must land in BOTH repositories (single-source: pib-backend owns the pib-blockly code, cerebra mirrors it), and on success you MUST merge to develop in both.
+
+Ticket: https://pib-rocks.atlassian.net/browse/PR-1645
+
+## Repositories & branches (already created and pushed; both based on develop)
+1. `pib-backend` — branch `PR-1645` (already contains the perspective tooltip commit). PRIMARY source.
+2. `cerebra` — branch `PR-1645` (already contains the mirrored tooltip commit). UI mirror.
+
+## What to implement
+Extend the `set_hand_position_xyz` block so a user can choose between ABSOLUTE and RELATIVE target XYZ, using a single `MODE` dropdown — NOT a second block. This mirrors how `move_motor` already offers a `MODE` dropdown (absolute/relative).
+
+### Block definition (`program-blocks/motor-blocks.ts`)
+- Add a `field_dropdown` named `MODE` with options `["absolute","ABSOLUTE"]` / `["relative","RELATIVE"]` to the `set_hand_position_xyz` block's `args0` (e.g. as the first field, next to the existing `SIDE` dropdown).
+- Keep the three right-side `input_value` sockets X/Y/Z (`check:"Number"`, `inputsInline:false`).
+
+### Generator (`program-generators/motor-generators.ts`) + helper (`program-generators/util/function-declarations.ts`)
+- Read `MODE` from the block. Emit code that:
+  - ABSOLUTE: uses the X/Y/Z values directly as the target (current behavior).
+  - RELATIVE: reads the CURRENT hand position of the chosen arm, adds the XYZ delta, then runs pib-sdk IK to the new target.
+- Keep using pib-sdk `ik()` + `Write().move()` (do not change the pib-sdk usage — already merged from PR-1208).
+- Use the standard robotics axis convention (x forward, y left, z up) for both modes — this matches the ongoing PR-1639 alignment; do not introduce a flip.
+
+Sketched generated Python helper (adapt to the existing style in `function-declarations.ts`):
+```python
+def set_hand_position_xyz(side: str, mode: str, x, y, z):
+    if mode == "RELATIVE":
+        current = get_current_hand_position(side)   # resolve from pib/sdk
+        target = [current[0]+x, current[1]+y, current[2]+z]
+    else:
+        target = [x, y, z]
+    q_deg = ik(side, xyz=target)
+    arm = left_arm if side == "left" else right_arm
+    with Write(host=rosbridge_host, port=9090) as pib:
+        pib.move(arm, *q_deg)
+```
+Use the actual current-position access that the codebase provides (see how `get_joint_position` / pose utilities work in the generator files) — do NOT invent a pib-sdk method that does not exist. If there is no existing current-hand-position helper, resolve a sensible approach and note it.
+
+## Files to change (in BOTH repos, same content)
+- `pib_blockly/.../program-blocks/motor-blocks.ts` (backend) / `src/app/program/pib-blockly/program-blocks/motor-blocks.ts` (cerebra)
+- `.../program-generators/motor-generators.ts` + `.../program-generators/util/function-declarations.ts` (backend) / their cerebra mirrors
+- Keep the existing tests passing and add/extend a discriminating test (see `tests/blockly_generator/motor_generator.test.ts`) for BOTH modes.
+
+## Constraints
+- Do NOT push the branches yourself unless you are ready to merge; you ARE authorized to merge to develop on success. Merge pib-backend develop (squash) and cerebra develop (regular `--no-ff` or squash consistent with repo history). Push the develop merge AND delete the remote `PR-1645` branch after merging.
+- Do NOT reformat unrelated files.
+- Do NOT invent pib-sdk API. Reuse what exists.
+- Single source: pib-backend is authoritative; cerebra must mirror the exact same block/generator changes (plus its flyout already lists the block).
+
+## Verify before/with the merge
+- `pib_blockly/pib_blockly_server`: `npm run build` succeeds.
+- `tests/blockly_generator`: `npm test` passes (all suites), including your new discriminant test for absolute AND relative modes.
+- Report the real build/test output numbers.
+
+## Report back (real)
+- Files changed in each repo and the exact generated Python snippet for both modes.
+- The pib-sdk primitives used for relative mode (how current position is obtained).
+- Real build/test results.
+- The develop merge SHAs and confirmation the PR-1645 branches were deleted remotely.

@@ -4,7 +4,7 @@ export const getSoundDirection =
     Blockly.common.createBlockDefinitionsFromJsonArray([
         {
             type: "get_sound_direction",
-            message0: "get sound direction",
+            message0: "get sound direction (degrees)",
             output: "Number",
             colour: 260,
             tooltip:

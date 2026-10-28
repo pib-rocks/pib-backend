@@ -551,6 +551,7 @@ def stream_pib_cloud_chat(
     tools: Optional[Sequence[Mapping[str, Any]]] = None,
     execute_tool: Optional[Callable[[str, dict[str, Any]], Any]] = None,
     on_tool_call: Optional[Callable[[dict], None]] = None,
+    on_tool_start: Optional[Callable[[dict], None]] = None,
     allow_image: bool = False,
     max_tool_rounds: int = direct_tool_loop.MAX_TOOL_ROUNDS,
 ) -> Iterator[str]:
@@ -627,6 +628,7 @@ def stream_pib_cloud_chat(
         )
 
     rounds = max(1, int(max_tool_rounds)) if openai_tools else 1
+    tool_call_counter = 0
     for _tool_round in range(rounds):
         body: dict[str, Any] = {
             "messages": list(messages),
@@ -1004,7 +1006,15 @@ def stream_pib_cloud_chat(
                     "image tool is not available on this turn"
                 )
 
+            call_id = direct_tool_loop._tool_call_id(tc, name, tool_call_counter)
+            tool_call_counter += 1
             logger.info("pib.Cloud direct tool call name=%s chat=%s", name, chat_id)
+            direct_tool_loop._report_tool_start(
+                on_tool_start,
+                name=name,
+                call_id=call_id,
+                arguments=parsed_args,
+            )
             started = time.monotonic()
             try:
                 if name in ANSWER_GESTURE_TOOLS:
@@ -1015,6 +1025,7 @@ def stream_pib_cloud_chat(
                 direct_tool_loop._report_tool_call(
                     on_tool_call,
                     name=name,
+                    call_id=call_id,
                     arguments=parsed_args,
                     started=started,
                     ok=False,
@@ -1024,6 +1035,7 @@ def stream_pib_cloud_chat(
             direct_tool_loop._report_tool_call(
                 on_tool_call,
                 name=name,
+                call_id=call_id,
                 arguments=parsed_args,
                 started=started,
                 ok=True,

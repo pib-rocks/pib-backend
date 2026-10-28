@@ -1,4 +1,3 @@
-import math
 from typing import Iterable, Tuple
 import rclpy
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
@@ -87,9 +86,9 @@ class PibDriver:
                 )
         return device_list
 
-    def convert_position(self, position: float) -> float:
-        """Converts degree to radian and adjust for cerebras offset (multiplying degree by 100)."""
-        return math.radians(position / 100.0)
+    def convert_position(self, position_rad: float) -> float:
+        """``/joint_trajectory`` positions are radians (REP-103); Webots expects radians."""
+        return float(position_rad)
 
     def extract_motor_name_position_pairs(
         self, jt: JointTrajectory

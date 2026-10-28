@@ -1,0 +1,46 @@
+TASK 2 - the pipeline chain (one pipeline, per D2/D5)
+Colour-only base first (as today), then when hand_tracking is active add in this order:
+  colour ISP -> palm detector NN (128x128) -> decoding NN -> ROI/crop via ImageManip -> landmark NN (224x224)
+Notes:
+  - The NN nodes DO NOT resize their input (measured in S0: "Input image (2104x1560) does not match NN
+    (224x224)"). So an ImageManip must scale/crop for each NN. Get the input size from the manifest.
+  - Coordinates must be mapped back to the FULL frame that camera_topic publishes (2104x1560 currently);
+    the overlay (S6) draws on that image. Take the frame size from the actual received frame, not a constant.
+  - Keep the existing frame-based success check and the colour-only fallback: if the hand chain fails to
+    produce frames, revert to colour-only, WARN once, state=failed. Never crash-loop.
+
+TASK 3 - detections on the bus
+Publish datatypes/DetectionArray on detections/hand_tracking (the topic from the manifest entry):
+  - model_id: "hand_tracking"
+  - frame_width / frame_height: the size of the frame the coordinates refer to (full camera frame)
+  - one Detection per detected hand:
+      label: "hand"
+      score: palm detection confidence
+      bbox: x_min/y_min/x_max/y_max in pixels of the full frame
+      keypoint_names: the 21 landmark names (wrist, thumb_cmc ... pinky_tip) mapped to landmark_x/y
+      keypoint_x / keypoint_y: pixel coordinates in the full frame
+      keypoint_z: 0.0 for every keypoint - depth is UNAVAILABLE in colour-only mode (0 = invalid per D6)
+      scalar_names: ["z_source"], scalar_values: [0.0]   # 0 = unavailable, 1 = stereo, 2 = monocular
+  - no hand present: publish an empty detections array (still at the model rate, so the UI/status stay live)
+  - GetDetections must return the last array for hand_tracking.
+Also keep models_status accurate for the composite model (state, fps, shaves, message).
+
+TASK 4 - tests (no device available)
+Unit tests for: the composite resolution in the registry (all-present / one-missing), the landmark
+post-processing with synthetic tensors (mapping, scaling to the full frame, empty case, wrong shape),
+and the owner-refcount interaction with a composite model. Use tiny synthetic arrays - no blobs needed.
+
+HARD CONSTRAINTS
+- Do NOT modify models/*.blob or any existing manifest entry/hash.
+- Do NOT change the datatypes interfaces (S3/S4 types are frozen; DetectionArray stays as is).
+- Keep camera_topic, stereo_depth, face_center, the preview/quality settings and the depth SRVs working.
+- Only the camera package (+ models/manifest.yaml + tests) may change. No push, no merge, do not commit .hermes.
+- If the decoding output format cannot be established from the reference project, STOP and report exactly
+  what is missing and what you inspected - do not guess shapes or invent post-processing.
+
+REPORT (paste real output, never a summary of intent)
+- commit hash, git show --stat
+- the real `python3 -m pytest tests/unit -q` summary line
+- `python3 -m py_compile` result for the camera package
+- the decoding-format evidence you found (file/URL + the tensor layout you concluded)
+- anything you could not verify locally (the orchestrator verifies on the robot)

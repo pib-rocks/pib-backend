@@ -76,6 +76,24 @@ def test_direct_system_prompt_is_the_soul_and_ignores_memory():
     assert "Roboter" in direct_system_prompt(None)
 
 
+def test_direct_system_prompt_appends_robot_context_after_the_soul():
+    body = "Head: turn_head_motor -9000..9000 (upper end 9000)."
+    from pib_hermes_config.channel import ROBOT_CONTEXT_INSTRUCTION
+
+    prompt = direct_system_prompt("Du bist Eva.", robot_context=body)
+    assert prompt == (f"Du bist Eva.\n\n{ROBOT_CONTEXT_INSTRUCTION}\n\n{body}")
+
+
+def test_direct_system_prompt_puts_robot_context_after_captured_image_sentence():
+    from pib_hermes_config.channel import CAPTURED_IMAGE_SENTENCE
+
+    body = "Body (centidegrees: 1 = 0.01 degree)."
+    prompt = direct_system_prompt("Du bist Eva.", images_shown=True, robot_context=body)
+    assert prompt.startswith("Du bist Eva.\n\n")
+    assert CAPTURED_IMAGE_SENTENCE in prompt
+    assert prompt.endswith(body)
+
+
 def test_missing_marker_keeps_smart_available(monkeypatch, tmp_path):
     monkeypatch.delenv("PIB_SMART_CHATS", raising=False)
     monkeypatch.setattr(channel_mod, "SMART_CHATS_FILE", str(tmp_path / "missing"))
@@ -418,3 +436,16 @@ def test_cloud_model_can_still_be_set_to_smart(app_ctx, make_personality, monkey
         personality.personality_id, {"channel": CHANNEL_SMART}
     )
     assert restored.channel == CHANNEL_SMART
+
+
+def test_robot_context_carries_the_planning_instruction():
+    """PR-2041: the model already has the ranges; it must not tour the tools for them."""
+    from pib_hermes_config.channel import ROBOT_CONTEXT_INSTRUCTION
+
+    body = "Head: turn_head_motor -9000..9000 (upper end 9000)."
+    prompt = direct_system_prompt("Du bist QI.", robot_context=body)
+
+    assert body in prompt
+    assert ROBOT_CONTEXT_INSTRUCTION in prompt
+    assert prompt.index(ROBOT_CONTEXT_INSTRUCTION) < prompt.index(body)
+    assert ROBOT_CONTEXT_INSTRUCTION not in direct_system_prompt("Du bist QI.")

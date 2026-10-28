@@ -17,13 +17,17 @@ import logging
 import os
 import re
 import subprocess
+import threading
 import time
 from typing import Iterator, Optional
 
 import yaml
 from pib_hermes_config import (
     DEFAULT_SOUL,
+    PROFILE_CONFIG_VERSION,
+    PROFILE_CONFIG_VERSION_KEY,
     PROFILE_PREFIX,
+    PROFILE_TOOL_SEARCH_CONFIG,
     REASONING_EFFORT_ERROR,
     REASONING_EFFORTS,
     align_profile_ownership,
@@ -35,6 +39,23 @@ from pib_hermes_config import (
     profiles_dir,
     soul_path_for,
 )
+
+
+def motion_model_prompt_for_profile() -> str:
+    """Compact motion-model text for profile prompts, or '' when unavailable."""
+    try:
+        from pib_api_client import motion_model_client
+
+        successful, payload = motion_model_client.get_motion_model()
+    except Exception:
+        return ""
+    if not successful or not isinstance(payload, dict):
+        return ""
+    prompt = payload.get("prompt")
+    if not isinstance(prompt, str) or not prompt.strip():
+        return ""
+    return prompt.strip()
+
 
 DEFAULT_HERMES_BIN = "/home/pib/.local/bin/hermes"
 DEFAULT_HERMES_HOME = "/home/pib/.hermes"
@@ -100,12 +121,171 @@ DEFAULT_HERMES_PROVIDER = "gemini"
 # High-speed defaults for Gemini Flash / Flash-Lite (PR-1524).
 # Written into the agent block. Hermes reads agent.reasoning_effort and
 # ignores the same keys at the config root.
-DEFAULT_REASONING_EFFORT = "low"
+# Thinking off by default (PR-2039), see pib_hermes_config.DEFAULT_REASONING_EFFORT.
+DEFAULT_REASONING_EFFORT = "none"
 
 # Provider name of the pib.Cloud route. The cloud decides the reasoning effort of its own upstream
 # call (Settings.reasoning_effort), so a value in the profile only travels with every request and
 # its API refuses the field - measured as a 400 on `reasoning_effort` (PC-69).
 PIB_CLOUD_PROVIDER = "pib-cloud"
+
+# Request fields a provider may refuse on the wire (measured on pib.Cloud, PC-69).
+REFUSED_REQUEST_FIELD_REASONING_EFFORT = "reasoning_effort"
+REFUSED_REQUEST_FIELD_STREAM_OPTIONS = "stream_options"
+REFUSED_REQUEST_FIELD_RESPONSE_FORMAT = "response_format"
+REFUSED_REQUEST_FIELDS = frozenset(
+    {
+        REFUSED_REQUEST_FIELD_REASONING_EFFORT,
+        REFUSED_REQUEST_FIELD_STREAM_OPTIONS,
+        REFUSED_REQUEST_FIELD_RESPONSE_FORMAT,
+    }
+)
+
+_provider_refused_fields: dict[tuple[str, str, str], set[str]] = {}
+_provider_refused_fields_lock = threading.Lock()
+
+
+def provider_capability_key(
+    provider: str,
+    base_url: Optional[str],
+    model: str,
+) -> tuple[str, str, str]:
+    """Process-local cache key for what a route accepts."""
+    normalized_provider = (provider or "").strip()
+    normalized_model = (model or "").strip()
+    normalized_base = (base_url or "").strip().rstrip("/")
+    return (normalized_provider, normalized_base, normalized_model)
+
+
+def clear_provider_refused_fields_cache() -> None:
+    """Drop cached refusals (tests and daemon shutdown)."""
+    with _provider_refused_fields_lock:
+        _provider_refused_fields.clear()
+
+
+def record_provider_refused_fields(
+    provider: str,
+    base_url: Optional[str],
+    model: str,
+    *fields: str,
+) -> None:
+    """Remember fields this route already refused once in this process."""
+    if not fields:
+        return
+    key = provider_capability_key(provider, base_url, model)
+    with _provider_refused_fields_lock:
+        bucket = _provider_refused_fields.setdefault(key, set())
+        for field in fields:
+            if field in REFUSED_REQUEST_FIELDS:
+                bucket.add(field)
+    if REFUSED_REQUEST_FIELD_RESPONSE_FORMAT in fields:
+        prime_auxiliary_response_format_rejection(provider, base_url, model)
+
+
+#: Fields a route refuses by contract, known before the first request. pib.Cloud
+#: rejects all three (PC-69), and probing them costs a 400 plus a retry on the
+#: first turn of every daemon start (measured 2026-10-25: 8.2 s first token
+#: versus 815 ms on the next chat).
+KNOWN_PROVIDER_REFUSALS = {
+    PIB_CLOUD_PROVIDER: frozenset(
+        {
+            REFUSED_REQUEST_FIELD_REASONING_EFFORT,
+            REFUSED_REQUEST_FIELD_STREAM_OPTIONS,
+            REFUSED_REQUEST_FIELD_RESPONSE_FORMAT,
+        }
+    )
+}
+
+
+def provider_refuses_field(
+    provider: str,
+    base_url: Optional[str],
+    model: str,
+    field: str,
+) -> bool:
+    known = KNOWN_PROVIDER_REFUSALS.get((provider or "").strip(), frozenset())
+    if field in known:
+        return True
+    key = provider_capability_key(provider, base_url, model)
+    with _provider_refused_fields_lock:
+        return field in _provider_refused_fields.get(key, set())
+
+
+def _route_base_url_from_cfg(cfg: dict, provider: str) -> Optional[str]:
+    providers = cfg.get(PROVIDERS_CONFIG_KEY)
+    if not isinstance(providers, dict):
+        return None
+    entry = providers.get(provider)
+    if not isinstance(entry, dict):
+        return None
+    base_url = entry.get("base_url")
+    if isinstance(base_url, str) and base_url.strip():
+        return base_url.strip().rstrip("/")
+    return None
+
+
+def apply_provider_capability_cache_to_cfg(
+    cfg: dict,
+    *,
+    provider: Optional[str] = None,
+    base_url: Optional[str] = None,
+    model: Optional[str] = None,
+) -> bool:
+    """Strip refused fields from the profile mapping. Returns whether cfg changed."""
+    resolved_provider = provider or cfg.get("provider") or ""
+    resolved_model = model or cfg.get("model") or ""
+    resolved_base = base_url or _route_base_url_from_cfg(cfg, resolved_provider)
+    agent = cfg.get("agent")
+    if not isinstance(agent, dict):
+        return False
+    changed = False
+    if provider_refuses_field(
+        resolved_provider,
+        resolved_base,
+        resolved_model,
+        REFUSED_REQUEST_FIELD_REASONING_EFFORT,
+    ):
+        if REFUSED_REQUEST_FIELD_REASONING_EFFORT in agent:
+            del agent[REFUSED_REQUEST_FIELD_REASONING_EFFORT]
+            changed = True
+    return changed
+
+
+def prime_auxiliary_response_format_rejection(
+    provider: str,
+    base_url: Optional[str],
+    model: str,
+    format_type: str = "json_schema",
+) -> None:
+    """Tell Hermes' auxiliary client not to send this response_format type again."""
+    try:
+        from agent.auxiliary_structured_output import _REJECTED_ROUTES, _route_key
+    except ImportError:
+        return
+    _REJECTED_ROUTES.add(
+        (_route_key(provider, base_url), str(model or ""), format_type)
+    )
+
+
+def title_generation_extra_body(
+    provider: str,
+    base_url: Optional[str],
+    model: str,
+    extra_body: dict,
+) -> dict:
+    """Extra body for a title call, minus response_format when the route refused it."""
+    if not provider_refuses_field(
+        provider, base_url, model, REFUSED_REQUEST_FIELD_RESPONSE_FORMAT
+    ):
+        return extra_body
+    if REFUSED_REQUEST_FIELD_RESPONSE_FORMAT not in extra_body:
+        return extra_body
+    return {
+        key: value
+        for key, value in extra_body.items()
+        if key != REFUSED_REQUEST_FIELD_RESPONSE_FORMAT
+    }
+
 
 # The tools a robot personality may see (decision 2026-10-16, extended the same day): the MCP
 # server's tools, memory, and the Hermes skills, so a personality can read its own skills. Before this
@@ -158,6 +338,90 @@ def _load_config_mapping(path: str) -> dict:
     except (OSError, yaml.YAMLError):
         return {}
     return loaded if isinstance(loaded, dict) else {}
+
+
+def _coerce_profile_config_version(value: object) -> Optional[int]:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.isdigit():
+        return int(value)
+    return None
+
+
+def read_profile_config_version(profile_dir: str) -> Optional[int]:
+    """The ``config_version`` a profile's config.yaml declares, if any."""
+    cfg = _load_config_mapping(os.path.join(profile_dir, CONFIG_FILENAME))
+    return _coerce_profile_config_version(cfg.get(PROFILE_CONFIG_VERSION_KEY))
+
+
+def profile_config_version_is_current(profile_dir: str) -> bool:
+    """True when the on-disk version matches what the profile writer would emit."""
+    version = read_profile_config_version(profile_dir)
+    return version == PROFILE_CONFIG_VERSION
+
+
+def profile_config_drift_messages(cfg: dict) -> list[str]:
+    """Human-readable drift lines for ``--check`` without rewriting the file."""
+    messages: list[str] = []
+    version = _coerce_profile_config_version(cfg.get(PROFILE_CONFIG_VERSION_KEY))
+    if version != PROFILE_CONFIG_VERSION:
+        messages.append(
+            f"{PROFILE_CONFIG_VERSION_KEY}: {version!r} (expected {PROFILE_CONFIG_VERSION})"
+        )
+
+    tools = cfg.get("tools")
+    tool_search = tools.get("tool_search") if isinstance(tools, dict) else None
+    if not isinstance(tool_search, dict):
+        tool_search = {}
+    desired_enabled = PROFILE_TOOL_SEARCH_CONFIG["tool_search"]["enabled"]
+    if tool_search.get("enabled") != desired_enabled:
+        messages.append(
+            "tools.tool_search.enabled: "
+            f"{tool_search.get('enabled')!r} (expected {desired_enabled!r})"
+        )
+
+    auxiliary = cfg.get("auxiliary")
+    title_generation = (
+        auxiliary.get("title_generation") if isinstance(auxiliary, dict) else None
+    )
+    if not isinstance(title_generation, dict):
+        title_generation = {}
+    if title_generation.get("model_upgrade_enabled") is not False:
+        messages.append(
+            "auxiliary.title_generation.model_upgrade_enabled: "
+            f"{title_generation.get('model_upgrade_enabled')!r} (expected False)"
+        )
+    return messages
+
+
+def profile_config_drift(profile_dir: str) -> list[str]:
+    """Drift messages for one profile directory."""
+    cfg = _load_config_mapping(os.path.join(profile_dir, CONFIG_FILENAME))
+    return profile_config_drift_messages(cfg)
+
+
+def iter_personality_profile_dirs(
+    profiles_root: Optional[str] = None,
+) -> list[tuple[str, str]]:
+    """``(personality_id, profile_dir)`` for each ``pib_*`` profile on disk."""
+    root = profiles_root or profiles_dir()
+    if not os.path.isdir(root):
+        return []
+    discovered: list[tuple[str, str]] = []
+    prefix = PROFILE_PREFIX
+    for entry in sorted(os.listdir(root)):
+        if not entry.startswith(prefix):
+            continue
+        profile_dir = os.path.join(root, entry)
+        if not os.path.isdir(profile_dir):
+            continue
+        personality_id = entry[len(prefix) :]
+        if not personality_id:
+            continue
+        discovered.append((personality_id, profile_dir))
+    return discovered
 
 
 def profile_hermes_settings(
@@ -425,6 +689,53 @@ def _apply_agent_speed_defaults(
     return changed
 
 
+def _apply_profile_tool_search_defaults(cfg: dict) -> bool:
+    """Keep robot MCP tools eager (PR-2053): pin ``tools.tool_search.enabled`` off.
+
+    Hermes defaults defer MCP/plugin tools behind the tool_search bridge; each
+    deferred tool costs an extra model round trip. The backend repairs this on
+    every provisioning pass so rewrites cannot drift.
+    """
+    desired = PROFILE_TOOL_SEARCH_CONFIG
+    tools = cfg.get("tools")
+    if not isinstance(tools, dict):
+        tools = {}
+        cfg["tools"] = tools
+    tool_search = tools.get("tool_search")
+    if not isinstance(tool_search, dict):
+        tool_search = {}
+        tools["tool_search"] = tool_search
+    changed = False
+    for key, value in desired["tool_search"].items():
+        if tool_search.get(key) != value:
+            tool_search[key] = value
+            changed = True
+    return changed
+
+
+def _apply_profile_auxiliary_defaults(cfg: dict) -> bool:
+    """Keep the derived chat title instead of paying a model call for it (PR-2058).
+
+    Hermes upgrades the instantly derived title with an auxiliary model call. On a
+    route that refuses ``reasoning_effort`` and ``response_format`` (pib.Cloud, PC-69)
+    that call is rejected twice per new chat - measured 2026-10-25 18:11 in the
+    daemon log - before the title is given up. The derived title is enough for the
+    chat list, so the upgrade is pinned off in every personality profile.
+    """
+    auxiliary = cfg.get("auxiliary")
+    if not isinstance(auxiliary, dict):
+        auxiliary = {}
+        cfg["auxiliary"] = auxiliary
+    title_generation = auxiliary.get("title_generation")
+    if not isinstance(title_generation, dict):
+        title_generation = {}
+        auxiliary["title_generation"] = title_generation
+    if title_generation.get("model_upgrade_enabled") is False:
+        return False
+    title_generation["model_upgrade_enabled"] = False
+    return True
+
+
 def _ensure_mcp_servers_pib(
     pdir: str,
     model: Optional[str] = None,
@@ -541,6 +852,21 @@ def _ensure_mcp_servers_pib(
     ):
         changed = True
 
+    if _apply_profile_tool_search_defaults(cfg):
+        changed = True
+
+    if _apply_profile_auxiliary_defaults(cfg):
+        changed = True
+
+    route_base_url = base_url or _route_base_url_from_cfg(cfg, desired_provider)
+    if apply_provider_capability_cache_to_cfg(
+        cfg,
+        provider=desired_provider,
+        base_url=route_base_url,
+        model=desired_model,
+    ):
+        changed = True
+
     # A user-defined route is declared under providers.<name>. Built-in
     # providers (gemini/openai/anthropic) need no entry.
     if base_url:
@@ -585,6 +911,10 @@ def _ensure_mcp_servers_pib(
             changed = True
     elif not effective_tool_calling and entry.get("enabled") is not False:
         entry["enabled"] = False
+        changed = True
+
+    if cfg.get(PROFILE_CONFIG_VERSION_KEY) != PROFILE_CONFIG_VERSION:
+        cfg[PROFILE_CONFIG_VERSION_KEY] = PROFILE_CONFIG_VERSION
         changed = True
 
     if not changed:
@@ -837,6 +1167,7 @@ def _try_daemon_turn(
     max_turns: int = DEFAULT_MAX_TURNS,
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
     enabled_toolsets: Optional[str] = DEFAULT_ENABLED_TOOLSETS,
+    message_history: Optional[int] = None,
 ) -> Optional[str]:
     """POST /turn to the warm daemon. None means unreachable or non-200."""
     try:
@@ -856,6 +1187,8 @@ def _try_daemon_turn(
         payload["toolsets"] = toolsets
     if enabled_toolsets is not None:
         payload["enabled_toolsets"] = enabled_toolsets
+    if message_history is not None:
+        payload["message_history"] = message_history
 
     http_start = time.monotonic()
     logging.info(
@@ -936,6 +1269,7 @@ def stream_turn(
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
     enabled_toolsets: Optional[str] = DEFAULT_ENABLED_TOOLSETS,
     tool_sink: Optional[list] = None,
+    message_history: Optional[int] = None,
 ) -> Iterator[str]:
     """Yield daemon text deltas.
 
@@ -962,6 +1296,8 @@ def stream_turn(
         payload["toolsets"] = toolsets
     if enabled_toolsets is not None:
         payload["enabled_toolsets"] = enabled_toolsets
+    if message_history is not None:
+        payload["message_history"] = message_history
 
     session = _get_daemon_session()
     post = session.post if session is not None else requests.post
@@ -1085,6 +1421,7 @@ def run_turn(
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
     enabled_toolsets: Optional[str] = DEFAULT_ENABLED_TOOLSETS,
     tool_sink: Optional[list] = None,
+    message_history: Optional[int] = None,
 ) -> str:
     """Run one conversational turn. Returns speakable text.
 
@@ -1109,6 +1446,7 @@ def run_turn(
         max_turns,
         timeout=timeout,
         enabled_toolsets=enabled_toolsets,
+        message_history=message_history,
     )
     if daemon_reply is not None:
         logging.info(
@@ -1134,6 +1472,11 @@ def run_turn(
         )
         return FALLBACK_REPLY
 
+    from public_api_client.hermes_daemon import seed_flask_conversation_for_chat
+
+    seed_flask_conversation_for_chat(
+        chat_id, message_history, personality_id=personality_id
+    )
     reply = run_turn_subprocess(
         text,
         chat_id,

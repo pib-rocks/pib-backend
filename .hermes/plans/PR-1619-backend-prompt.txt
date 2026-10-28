@@ -1,0 +1,32 @@
+Implement the BACKEND phase of PR-1619 in the `pib-backend` repository. READ THE PLAN FILE FIRST: `.hermes/plans/PR-1619-backend-plan.md` — it contains the verified facts, exact file paths, the blueprint pattern to copy, and the hard constraints. Follow it exactly.
+
+You are on branch `PR-1619` (or create it off develop if not present).
+
+## SCOPE — ONLY these tasks
+1. Add `ARG APP_VERSION` + a bake to `./pib_api/flask/Dockerfile` that writes `/app/version.py`.
+2. Add `pib_api/flask/controller/version_controller.py` exposing `GET ""` on a Blueprint returning `{"version": ...}`.
+3. Register it in `pib_api/flask/app/__init__.py` with `url_prefix="/version"` (reachable at `/api/version` via the existing nginx `/api` rewrite — no nginx change).
+4. Robust local/dev fallback: missing or empty version -> `{"version": "unknown"}`, never a 500.
+5. If `docs/RELEASE.md` exists, add the on-Pi build command line documenting the `--build-arg APP_VERSION` usage.
+
+## Do NOT
+- Do NOT add any GHCR / docker-build workflow to pib-backend (the ticket explicitly keeps GHCR out of scope for the endpoint).
+- Do NOT bump package.json / setup.py versions, do NOT reformat unrelated files, no new dependencies, no behavioural change beyond the new endpoint.
+- Do NOT push. Do NOT merge to develop.
+
+## Verified facts (copy these, don't reinvent)
+- Dockerfile: `.//pib_api/flask/Dockerfile`, `FROM python:3.10-slim`, `WORKDIR /app`, flask source copied into `/app`, `CMD ["flask","--app","run","run"]`. Build-time db upgrade/seed stay untouched.
+- Blueprint pattern: `ip_controller.py` = `bp = Blueprint("ip_controller", __name__)`, `@bp.route("", methods=["GET"])` returning `jsonify(...)`, registered in `app/__init__.py` as `app.register_blueprint(ip_controller.bp, url_prefix="/host-ip", name="host-ip")`. Copy this shape for `/version`.
+- `/app/version.py` is a top-level module in the image; import it robustly (e.g. `import version` then `version.APP_VERSION`, or a safe file read). Verify the import path against how `app.app` is imported; choose the robust option, never a fragile one.
+- nginx (in the cerebra repo, not here) proxies `location /api` and strips `/api`, so `/api/version` reaches the `/version` blueprint.
+
+## Self-check before you finish
+- `python3 -m py_compile` on all edited/new .py files.
+- Confirm `/app/__init__.py` registration is syntactically valid and the blueprint is referenced (`grep register_blueprint /app/../app/__init__.py`).
+
+## Report back (real numbers & code)
+- The exact files changed and the final `version_controller.py` code.
+- The Dockerfile ARG/bake snippet.
+- Which import approach you used for `/app/version.py` and WHY.
+- The exact release build command for the Pi.
+- Real `py_compile` output. Do NOT claim a value you did not observe.

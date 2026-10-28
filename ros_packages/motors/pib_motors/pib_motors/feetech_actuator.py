@@ -10,6 +10,7 @@ from __future__ import annotations
 import fcntl
 import logging
 import threading
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
@@ -17,6 +18,7 @@ from typing import Any, Iterator
 from pib_motors.stservo_sdk.port_handler import PortHandler
 from pib_motors.stservo_sdk.sts import (
     STS_PRESENT_TEMPERATURE,
+    STS_PRESENT_VOLTAGE,
     STS_TORQUE_ENABLE,
     sts,
 )
@@ -32,6 +34,15 @@ STS3095_SPEED = 700
 STS3095_ACCEL = 30
 FINGER_SPEED = 3000
 FINGER_ACCEL = 100
+ZERO_CALIBRATION_SETTLE_SEC = 0.02
+
+# STS position encoding: 4096 ticks per full revolution; joint zero aligns with tick 2048.
+TICKS_PER_REVOLUTION = 4096
+TICKS_AT_JOINT_ZERO = 2048
+CENTIDEG_PER_REVOLUTION = 36000
+
+_DEFAULT_ROTATION_RANGE_MIN = -9000
+_DEFAULT_ROTATION_RANGE_MAX = 9000
 
 SERIAL_BY_ID_DIR = Path("/dev/serial/by-id")
 
@@ -119,18 +130,60 @@ def _get_or_open_port(
         return entry
 
 
-def centideg_to_ticks(centideg: float) -> int:
-    """Map pib centidegrees [-9000..9000] to STS ticks [1000..3000] (center 2000)."""
-    if centideg < 0:
-        ticks = int(round(1000 + (centideg + 9000) * (1000 / 9000)))
-    else:
-        ticks = int(round(2000 + centideg * (1050 / 9000)))
-    return max(1000, min(3000, ticks))
+def centideg_to_ticks(
+    centideg: float,
+    rotation_range_min: int | None = None,
+    rotation_range_max: int | None = None,
+) -> int:
+    """Map pib centidegrees to STS position ticks.
+
+    Geometry: ``TICKS_PER_REVOLUTION`` (4096) ticks per revolution; joint zero is
+    ``TICKS_AT_JOINT_ZERO`` (2048). Conversion uses ``round()`` toward the nearest
+    integer tick. Values outside the allowed centidegree range raise ``ValueError``
+    instead of clamping.
+
+    When ``rotation_range_min`` / ``rotation_range_max`` are omitted, the legal
+    range is ±90° (±9000 centidegrees).
+    """
+    range_min = (
+        rotation_range_min
+        if rotation_range_min is not None
+        else _DEFAULT_ROTATION_RANGE_MIN
+    )
+    range_max = (
+        rotation_range_max
+        if rotation_range_max is not None
+        else _DEFAULT_ROTATION_RANGE_MAX
+    )
+    if centideg < range_min or centideg > range_max:
+        raise ValueError(
+            f"centidegree {centideg} outside allowed range [{range_min}, {range_max}]"
+        )
+    return int(
+        round(
+            TICKS_AT_JOINT_ZERO
+            + centideg * TICKS_PER_REVOLUTION / CENTIDEG_PER_REVOLUTION
+        )
+    )
 
 
 def ticks_to_centideg(ticks: int) -> int:
-    """Map STS ticks [0..4095] back to pib centidegrees."""
-    return int(round(float(ticks * 18000 / 4096) - 9000))
+    """Map raw STS position ticks back to pib centidegrees.
+
+    Uses the same 4096-ticks-per-revolution geometry with zero at tick 2048 as
+    :func:`centideg_to_ticks` (exact inverse aside from rounding). Raw ticks below 0
+    or above 4095 are converted without error; callers decide if the value is valid.
+
+    Reported actual positions from hardware change when this mapping is corrected
+    (previously roughly half-scale with an offset).
+    """
+    return int(
+        round(
+            (ticks - TICKS_AT_JOINT_ZERO)
+            * CENTIDEG_PER_REVOLUTION
+            / TICKS_PER_REVOLUTION
+        )
+    )
 
 
 class FeetechStSerialActuator:
@@ -141,10 +194,11 @@ class FeetechStSerialActuator:
     NO_CURRENT: int = -1
     POSITION_TOLERANCE: int = 200
 
-    def __init__(self, pin: int, uid: str, invert: bool) -> None:
+    def __init__(self, pin: int, uid: str, upper_endpoint: str) -> None:
         self.pin: int = int(pin)
         self.uid: str = uid
-        self.invert: bool = invert
+        self.upper_endpoint: str = upper_endpoint
+        self.direction_sign: int = -1 if upper_endpoint == "min" else 1
         self._baudrate: int = DEFAULT_BAUDRATE
         self._connected: bool | None = None
         self._target_position: int | None = None
@@ -218,11 +272,24 @@ class FeetechStSerialActuator:
     def calibrate_zero(self) -> bool:
         if not self.is_connected() or self._pk is None or self._lock is None:
             return False
+        speed, acc = self._resolve_speed_and_acc()
         try:
             with self._bus():
                 res, _err = self._pk.write1ByteTxRx(self.pin, STS_TORQUE_ENABLE, 128)
             if res != COMM_SUCCESS:
                 return False
+            if ZERO_CALIBRATION_SETTLE_SEC > 0:
+                time.sleep(ZERO_CALIBRATION_SETTLE_SEC)
+            with self._bus():
+                res_pos, _err_pos = self._pk.WritePosEx(
+                    self.pin, TICKS_AT_JOINT_ZERO, speed, acc
+                )
+                res_en, _err_en = self._pk.write1ByteTxRx(
+                    self.pin, STS_TORQUE_ENABLE, 1
+                )
+            if res_pos != COMM_SUCCESS or res_en != COMM_SUCCESS:
+                return False
+            self._settings["turnedOn"] = True
             self._target_position = 0
             return True
         except Exception as error:
@@ -232,6 +299,15 @@ class FeetechStSerialActuator:
     def apply_settings(self, settings_dto: dict[str, Any]) -> bool:
         if settings_dto.get("calibrateZero") is True:
             return self.calibrate_zero()
+
+        upper_endpoint = settings_dto.get(
+            "upperEndpoint", settings_dto.get("upper_endpoint")
+        )
+        if upper_endpoint is not None:
+            if upper_endpoint not in ("min", "max"):
+                raise ValueError("upper_endpoint must be 'min' or 'max'")
+            self.upper_endpoint = upper_endpoint
+            self.direction_sign = -1 if upper_endpoint == "min" else 1
 
         for key in (
             "velocity",
@@ -280,7 +356,7 @@ class FeetechStSerialActuator:
             return False
 
         position = int(round(position))
-        centideg = -position if self.invert else position
+        centideg = position * self.direction_sign
         ticks = centideg_to_ticks(float(centideg))
         speed, acc = self._resolve_speed_and_acc()
 
@@ -307,9 +383,7 @@ class FeetechStSerialActuator:
 
     def get_position(self) -> int:
         if self._target_position is not None:
-            return int(
-                round(-self._target_position if self.invert else self._target_position)
-            )
+            return int(round(self._target_position * self.direction_sign))
         return self.get_current_position()
 
     def get_current_position(self) -> int:
@@ -321,7 +395,7 @@ class FeetechStSerialActuator:
             if res != COMM_SUCCESS:
                 return 0
             centideg = ticks_to_centideg(int(ticks))
-            return int(round(-centideg if self.invert else centideg))
+            return int(round(centideg * self.direction_sign))
         except Exception:
             return 0
 
@@ -336,5 +410,17 @@ class FeetechStSerialActuator:
             if res != COMM_SUCCESS:
                 return None
             return int(temp)
+        except Exception:
+            return None
+
+    def get_voltage(self) -> float | None:
+        if not self.is_connected() or self._pk is None or self._lock is None:
+            return None
+        try:
+            with self._bus():
+                raw_v, res, _err = self._pk.read1ByteTxRx(self.pin, STS_PRESENT_VOLTAGE)
+            if res != COMM_SUCCESS:
+                return None
+            return round(int(raw_v) / 10.0, 2)
         except Exception:
             return None

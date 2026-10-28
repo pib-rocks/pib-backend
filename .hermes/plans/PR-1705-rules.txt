@@ -1,0 +1,3 @@
+Rules: run the real commands and report raw output (pytest, bash -n, the provisioning runs twice to
+prove idempotency, and a corrupted-file check). Do not push or merge. Do not commit .hermes/.
+State clearly what still needs live verification on the robot.

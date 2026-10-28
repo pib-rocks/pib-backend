@@ -1,0 +1,53 @@
+Implement PR-1671 per the verified facts below.
+
+Ticket: https://pib-rocks.atlassian.net/browse/PR-1671
+Repo: pib-backend — /home/pib/opencode/pib-backend, branch `PR-1671` (from origin/develop `93e30715`).
+
+## Goal
+Add a Blockly statement block to set a pib 3-LED button's color from a Colour VARIABLE, with the color variable
+on the RIGHT-HAND side of the block (unlike the existing tf_button_set_color which uses a fixed inline colour field).
+
+## Verified existing pattern (this repo)
+- `program-blocks/tf-button-block.ts`:
+  - `tf_button_set_color` = message0 "button %1 set color %2", BUTTON_ID dropdown (1/2/3), then a `field_colour`
+    named COLOR (fixed). previousStatement/nextStatement null.
+  - `tf_button_taster_to_variable` uses a `field_variable` (name VAR).
+- `program-generators/tf-button-generator.ts`:
+  - `tf_button_set_color` reads BUTTON_ID + fixed COLOR (field_colour) -> hexToRgb -> emits
+    `blockly_client.set_button_color(<id>, r, g, b)`.
+  - `hexToRgb(hex)` helper exists; `configureGenerator(generator)` wires IMPORT_* / INIT_*.
+
+## Desired new block (add, do not change existing)
+Add a new statement block (e.g. type `tf_button_set_color_from_var`):
+- message0: "button %1 set color from variable %2"   (color variable on the RIGHT-hand side)
+- BUTTON_ID dropdown 1/2/3 (same as existing).
+- The color comes from an INPUT that accepts a Blockly Colour VARIABLE (right-hand side). In blockly terms this is
+  either a `field_variable` typed to colours, or — better — a value-input `input_value` named COLOR that accepts a
+  colour variable / colour expression block. Use the colour variable approach so a stored colour variable can be
+  applied at runtime.
+- previousStatement/nextStatement null, colour ~20, tooltip explaining it sets the RGB LED of the button from a
+  colour variable.
+
+Generator: new export function (auto-registered via the spread in custom-generators if you add it there, or add to
+the same module's registration; match the block type). It should:
+- read BUTTON_ID.
+- read the colour from the variable/input (e.g. `generator.valueToCode(block, "COLOR", Order.NONE)` for an
+  input_value, OR resolve a field_variable name).
+- Emit the same `blockly_client.set_button_color(<id>, <R>, <G>, <B>)` call, where R/G/B come from the variable —
+  i.e. the variable holds a colour; derive r/g/b from it at runtime (pass the resolved r/g/b expressions, not a
+  static hex). Keep it consistent with the existing runtime function signature.
+
+Do NOT change tf_button_set_color / the existing blocks' behaviour.
+
+## Constraints
+- Stay on branch `PR-1671`. Do NOT merge/push develop (orchestrator opens the PR). You MAY commit (`feat: PR-1671 ...`).
+- Only add the new block + its generator + a test. Do NOT modify existing tf-button block/generator behaviour.
+- Do NOT commit `.hermes/plans/**`. Do NOT commit if tests fail.
+- Report REAL results.
+
+## Verify (orchestrator)
+- `cd /home/pib/opencode/pib-backend/tests/blockly_generator && node node_modules/jest/bin/jest.js --config jest.config.js` -> all pass incl new case.
+- `git diff --name-only origin/develop...HEAD` shows the block, generator, test files.
+
+FINAL REPORT: files added/changed, the block def + generator emission, real jest pass count, confirmation you did
+not merge/push or change existing tf-button blocks, commit hash if committed.

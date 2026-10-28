@@ -66,6 +66,8 @@ RUN pip install --break-system-packages --ignore-installed \
         websocket-client==1.9.2
 
 ENV SUPERTONE_MODEL_PATH=/data/voice/models/supertone/
+# Bundled STT decode self-check: on in CI (PIB_STT_SELF_CHECK=1), off at robot start.
+ENV PIB_STT_SELF_CHECK=0
 ENV WHISPER_MODEL_SIZE=small
 ENV WHISPER_MODEL_PATH=/data/voice/models/whisper/
 # Language the local engine transcribes in. Pinned, because the engine's own

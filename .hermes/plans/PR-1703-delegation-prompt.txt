@@ -1,0 +1,38 @@
+Implement PR-1703: make the camera's stereo depth path optional and add a colour-only fallback.
+
+Ticket: https://pib-rocks.atlassian.net/browse/PR-1703
+Repo: pib-backend - /home/pib/opencode/pib-backend, branch `PR-1703` (from develop `9ed1a9a2`).
+Only touch ros_packages/camera/** and tests/unit/** for this package. Do NOT touch other packages, do NOT change message/service definitions, do NOT push or merge.
+
+WHY (verified on hardware, 15 Sep 2026)
+The camera node currently crash-loops and Cerebra shows no image. Cause: PR-1674 (commit 92346e18) added the mono cameras (CAM_B/CAM_C, OV7251) plus StereoDepth to the SAME pipeline. On the OAK-D Lite that mono path delivers ZERO frames and the device crashes at firmware level (PlgSrcMipi assertion, "Invalid config steps", RTEMS_FATAL_SOURCE_INVALID_HEAP_FREE). Because everything is one pipeline, the mono failure kills the colour stream too.
+The existing guard cannot help: stereo.py lines 188-205 call `_init_stereo_depth()` inside try/except and then call `pipeline.start()` unconditionally; the failure is device-level, not a Python exception during graph construction.
+Measured: colour-only pipeline works (26.6-27.5 FPS, 2104x1560, CAM_A/IMX214). Mono: 0 frames in every variant (Camera node full-res/640x400/GRAY8, MonoCamera node 400p, with/without left-right check or depth align), on TWO different OAK-D Lite devices.
+
+WHAT TO IMPLEMENT
+1. Setting `PIB_CAMERA_STEREO` (read from the environment in the camera node), values:
+   - `auto` (default): try the full pipeline (colour + stereo); if it does not produce colour frames within a bounded timeout, fall back to colour-only.
+   - `on`: build the full pipeline (colour + stereo), no fallback (used for depth debugging).
+   - `off`: build colour-only immediately, no attempt at stereo (fast mitigation switch).
+2. In `auto`, the decision must be based on MEASURED frames, not on exceptions:
+   - build the full pipeline, start it, and wait up to `PIB_CAMERA_STEREO_TIMEOUT` (seconds, default 5.0) for the first colour frame;
+   - if no colour frame arrives in that window: stop the pipeline, rebuild COLOUR-ONLY, start it, log exactly one clear WARN (e.g. "Stereo depth unavailable - falling back to colour-only pipeline (depth disabled)"), and mark depth as unavailable;
+   - if frames arrive, keep the full pipeline and log depth as available (one INFO line).
+3. Depth availability must be a first-class state:
+   - keep a flag (e.g. `self.depth_available`) and expose it;
+   - `GetDepthFrame` and `GetDistanceAtPx` must answer with their existing failure representation (success=False and a clear message such as "depth unavailable: stereo path disabled or unavailable") instead of raising, blocking or timing out;
+   - see how those services are implemented today and preserve their response contract exactly.
+4. Robustness: bounded retry with backoff for pipeline start (e.g. max 3 attempts, growing delay). The node must never end up in a crash loop and must never take the live image down because of the stereo path.
+5. Colour-only is a normal operating state: camera_topic, preview size, quality factor, timer period, face detection and all camera settings must behave exactly as in the colour case. Depth is the only feature that is reported unavailable.
+6. Logging: exactly one line when entering colour-only mode (so it is greppable in `docker logs`), no per-frame or per-retry spam.
+
+CONSTRAINTS
+- Keep the existing public behaviour of the node for consumers (topics, services, parameters) unchanged apart from the documented depth-unavailable case.
+- Do not weaken or delete the depth code path: with a working stereo device (`PIB_CAMERA_STEREO=on` or a healthy `auto`) the pipeline must still include stereo exactly as today.
+- Add/extend unit tests under tests/unit/ for the decision logic (mode off -> colour only; mode auto + no frames -> fallback taken; mode auto + frames -> stereo kept). Mock/inject the frame-waiting so the tests need no device.
+- Run: python3 -m py_compile on every changed file, and the unit tests you added/extended. Report the real output.
+- Do NOT commit .hermes/ or any plan/prompt file.
+- The final live verification on hardware is done by the requester, so make the mode state visible in the logs.
+
+REPORT
+At the end print: the commit hash, the changed files, and the exact test command with its real output.

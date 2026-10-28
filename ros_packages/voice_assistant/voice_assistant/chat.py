@@ -44,6 +44,7 @@ from pib_hermes_config.channel import (
     CHANNEL_DIRECT,
     CHANNEL_SMART,
     direct_system_prompt,
+    personality_system_prompt,
     turn_channel,
 )
 from pib_hermes_config.retired_direct_text import (
@@ -55,18 +56,20 @@ from provider_registry import (
     provider_name_for,
 )
 from public_api_client import hermes_agent_client, public_voice_client
-from voice_assistant import direct_tool_loop, pib_cloud_stream
+from voice_assistant import direct_tool_loop, pib_cloud_stream, robot_context
+from voice_assistant.direct_session import DirectSession
 from voice_assistant.degraded_chat import (
     MODE_UNLOCKED,
     fetch_operating_mode,
     refusal_sentence,
 )
 from voice_assistant.memory_consolidation import schedule_memory_consolidation
-
-# In future, this code will be prepended to the description in a chat-request
-# if it is specified that code should be generated. The text will contain
-# instruction for the LLM on how to generate the code. For now, it is left blank.
-CODE_DESCRIPTION_PREFIX = ""
+from voice_assistant.chat_turn import (
+    STATE_CANCELLED,
+    STATE_COMPLETED,
+    STATE_RUNNING,
+    turn_state_event,
+)
 
 # How often the hermes turn is interrupted to notice a cancel request.
 HERMES_CANCEL_POLL_SECONDS = 0.2
@@ -289,8 +292,37 @@ class ChatNode(Node):
         except Exception as exc:
             self.get_logger().warning(f"turn trace emitter was not installed: {exc}")
 
-    def _record_tool_call(self, record: dict) -> None:
-        """Keep one executed tool of this turn and publish it on the trace.
+    def _turn_trace_chat_id(self) -> str:
+        chat_id = getattr(self, "_turn_chat_id", None)
+        return chat_id if isinstance(chat_id, str) else ""
+
+    def _record_tool_started(self, record: dict) -> None:
+        """Publish that a tool invocation has begun (no argument values)."""
+        publisher = getattr(self, "_turn_trace_publisher", None)
+        if publisher is None:
+            return
+        try:
+            from voice_assistant.turn_latency import format_event, now_ms
+
+            name = str(record.get("name") or "tool")
+            call_id = record.get("callId") or record.get("call_id") or ""
+            message = String()
+            message.data = format_event(
+                "tool_call_started",
+                ts_ms=now_ms(),
+                source=name,
+                chat_id=self._turn_trace_chat_id(),
+                detail={
+                    "call_id": call_id,
+                    "arg_names": record.get("argNames") or [],
+                },
+            )
+            publisher.publish(message)
+        except Exception as exc:
+            self.get_logger().warning(f"tool start trace was not published: {exc}")
+
+    def _record_tool_finished(self, record: dict) -> None:
+        """Keep one executed tool of this turn and publish finished trace events.
 
         The record carries the tool name, its outcome, its duration and the names
         of its arguments - never the values (PC-84).
@@ -305,21 +337,39 @@ class ChatNode(Node):
         try:
             from voice_assistant.turn_latency import format_event, now_ms
 
+            name = str(record.get("name") or "tool")
+            call_id = record.get("callId") or record.get("call_id") or ""
+            detail = {
+                "call_id": call_id,
+                "ok": bool(record.get("ok", True)),
+                "duration_ms": record.get("durationMs"),
+                "arg_names": record.get("argNames") or [],
+                "error": record.get("error"),
+            }
             message = String()
             message.data = format_event(
-                "tool_call",
+                "tool_call_finished",
                 ts_ms=now_ms(),
-                source=str(record.get("name") or "tool"),
-                detail={
-                    "ok": bool(record.get("ok", True)),
-                    "duration_ms": record.get("durationMs"),
-                    "arg_names": record.get("argNames") or [],
-                    "error": record.get("error"),
-                },
+                source=name,
+                chat_id=self._turn_trace_chat_id(),
+                detail=detail,
             )
             publisher.publish(message)
+            legacy = String()
+            legacy.data = format_event(
+                "tool_call",
+                ts_ms=now_ms(),
+                source=name,
+                chat_id=self._turn_trace_chat_id(),
+                detail=detail,
+            )
+            publisher.publish(legacy)
         except Exception as exc:
             self.get_logger().warning(f"tool call trace was not published: {exc}")
+
+    def _record_tool_call(self, record: dict) -> None:
+        """Hermes and other paths that only report after execution."""
+        self._record_tool_finished(record)
 
     def _record_tool_image(self, record: dict) -> None:
         """Keep one picture a tool captured this turn, scaled down.
@@ -352,6 +402,93 @@ class ChatNode(Node):
         self._turn_tool_calls = []
         self._turn_images = []
         self._turn_image_references = []
+        self._turn_chat_id = ""
+        self._turn_assistant_message_id = ""
+        self._turn_trace_turn_id = ""
+        self._turn_trace_cancelled = False
+        self._turn_direct_tool_rounds = None
+
+    def _ensure_turn_trace_anchor(self, t0: float) -> None:
+        """Typed turns anchor at service recv when capture never sent end_of_speech."""
+        if getattr(self, "_turn_started_ms", None) is None:
+            self._turn_started_ms = float(t0) * 1000.0
+        stages = getattr(self, "_turn_stages", None)
+        if not isinstance(stages, dict):
+            stages = self._turn_stages = {}
+        if "ros_service_recv" not in stages:
+            stages["ros_service_recv"] = 0.0
+
+    def _record_local_turn_stage(self, stage: str, t0: float) -> None:
+        """Record a stage the chat node observes locally (PR-2072)."""
+        self._ensure_turn_trace_anchor(t0)
+        started = getattr(self, "_turn_started_ms", None)
+        if started is None:
+            return
+        stages = getattr(self, "_turn_stages", None)
+        if not isinstance(stages, dict):
+            stages = self._turn_stages = {}
+        if stage in stages:
+            return
+        stages[stage] = round(time.monotonic() * 1000.0 - started, 1)
+
+    def _freeze_turn_done_stage(self) -> None:
+        if "turn_end" in getattr(self, "_turn_stages", {}) or "stream_done" in getattr(
+            self, "_turn_stages", {}
+        ):
+            return
+        started = getattr(self, "_turn_started_ms", None)
+        if started is None:
+            return
+        stages = getattr(self, "_turn_stages", None)
+        if not isinstance(stages, dict):
+            stages = self._turn_stages = {}
+        stages["turn_end"] = round(time.monotonic() * 1000.0 - started, 1)
+
+    def _emit_turn_state(
+        self, turn_id: str, state: str, chat_id: str, *, reason: str = ""
+    ) -> None:
+        """Publish running / cancelled / completed for one explicit turn id."""
+        if not turn_id:
+            return
+        publisher = getattr(self, "_turn_trace_publisher", None)
+        if publisher is None:
+            return
+        try:
+            message = String()
+            message.data = turn_state_event(
+                turn_id, state, chat_id=chat_id, reason=reason
+            )
+            publisher.publish(message)
+        except Exception as exc:
+            self.get_logger().warning(f"turn state trace was not published: {exc}")
+
+    def _discard_assistant_reply(self, chat_id: str) -> None:
+        """Drop a partial assistant message after cancel (PR-2069)."""
+        message_id = getattr(self, "_turn_assistant_message_id", None)
+        if not message_id:
+            return
+        self._turn_assistant_message_id = ""
+        try:
+            with self.voice_assistant_client_lock:
+                voice_assistant_client.delete_chat_message(chat_id, message_id)
+        except Exception as exc:
+            self.get_logger().warning(
+                f"cancelled assistant message was not deleted chat={chat_id}: {exc}"
+            )
+        if getattr(self, "last_pib_message_id", None) == message_id:
+            self.last_pib_message_id = None
+            self.message_content = None
+
+    def _finish_cancelled_turn(self, chat_id: str, goal_handle) -> None:
+        """Stop the action, remove partial assistant text, and trace cancelled."""
+        self._turn_trace_cancelled = True
+        self._freeze_turn_done_stage()
+        self._discard_assistant_reply(chat_id)
+        if goal_handle.is_cancel_requested:
+            goal_handle.canceled()
+        turn_id = getattr(self, "_turn_trace_turn_id", "") or ""
+        if turn_id:
+            self._emit_turn_state(turn_id, STATE_CANCELLED, chat_id)
 
     def _record_turn_trace(self, raw: str) -> None:
         """Keep stage timings and the fallback reason of the running turn."""
@@ -404,6 +541,17 @@ class ChatNode(Node):
         images = getattr(self, "_turn_image_references", None)
         if isinstance(images, list) and images:
             meta["images"] = list(images)
+        if isinstance(stages, dict) and stages:
+            from voice_assistant.turn_latency import message_turn_trace
+
+            trace = message_turn_trace(
+                stages,
+                cancelled=bool(getattr(self, "_turn_trace_cancelled", False)),
+                tool_rounds=getattr(self, "_turn_direct_tool_rounds", None),
+                tool_calls=tool_calls if isinstance(tool_calls, list) else None,
+            )
+            if trace:
+                meta["turnTrace"] = trace
         return meta or None
 
     def _finalize_message_meta(self, chat_id: str) -> None:
@@ -415,6 +563,7 @@ class ChatNode(Node):
         answers, never the bytes (PC-119).
         """
         try:
+            self._freeze_turn_done_stage()
             self._attach_turn_images(chat_id)
             meta = self._turn_meta()
             message_id = getattr(self, "last_pib_message_id", None)
@@ -515,6 +664,32 @@ class ChatNode(Node):
         """Operating mode of the key store. Unreadable means degraded."""
         return fetch_operating_mode()
 
+    def _direct_identity_fingerprint(self, personality: Any) -> str:
+        """Changes only when the personality's own text changes (PR-2075 review)."""
+        description = str(getattr(personality, "description", "") or "")
+        name = str(getattr(personality, "name", "") or "")
+        soul_path = str(getattr(personality, "soul_path", "") or "")
+        soul_stamp = ""
+        if soul_path:
+            try:
+                soul_stamp = str(os.stat(soul_path).st_mtime_ns)
+            except OSError:
+                soul_stamp = ""
+        return f"{name}\x00{description}\x00{soul_path}\x00{soul_stamp}"
+
+    def _direct_session(self, personality: Any) -> DirectSession:
+        """Cached Direct transport state for one personality."""
+        personality_id = str(getattr(personality, "personality_id", None) or "")
+        sessions = getattr(self, "_direct_sessions", None)
+        if sessions is None:
+            sessions = {}
+            self._direct_sessions = sessions
+        session = sessions.get(personality_id)
+        if session is None:
+            session = DirectSession(personality_id)
+            sessions[personality_id] = session
+        return session
+
     def _finish_retired_direct_text(self, goal_handle, chat_id: str, api_name):
         """Succeed the turn with the retired-path sentence. No network call.
 
@@ -523,7 +698,7 @@ class ChatNode(Node):
         model and credentials are left as they are.
         """
         if goal_handle.is_cancel_requested:
-            goal_handle.canceled()
+            self._finish_cancelled_turn(chat_id, goal_handle)
             return Chat.Result()
         sentence = RETIRED_DIRECT_TEXT_SENTENCE
         self.create_chat_message(chat_id, sentence, False, False, True)
@@ -622,17 +797,22 @@ class ChatNode(Node):
     # ---------- common helpers used by Action and Service ----------
 
     def _publish_chat_message(
-        self, chat_id: str, content: str, is_user: bool, message_id: str
+        self, chat_id: str, content: str, is_user: bool, message_id: str | None
     ):
         """
         Build and publish a datatypes/ChatMessage with current timestamp.
         Used by both the action path (create_chat_message) and the service path.
+
+        ``message_id`` is None when the line could not be persisted (the API
+        refused it). The ROS field is a string, and the generated converter
+        aborts the process on None (``PyUnicode_Check`` assertion), so an
+        unpersisted line is published with an empty id.
         """
         msg = ChatMessage()
         msg.chat_id = chat_id
         msg.content = content
         msg.is_user = is_user
-        msg.message_id = message_id
+        msg.message_id = message_id or ""
         msg.timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self.chat_message_publisher.publish(msg)
 
@@ -663,17 +843,20 @@ class ChatNode(Node):
                 if update_database:
                     # concatenate locally AND persist to PIB
                     self.message_content = f"{self.message_content} {text}"
-                    successful, _ = voice_assistant_client.update_chat_message(
-                        chat_id,
-                        self.message_content,
-                        is_user,
-                        self.last_pib_message_id,
-                    )
-                    if not successful:
-                        self.get_logger().error(
-                            f"unable to create chat message: {(chat_id, text, is_user, update_message, update_database)}"
+                    if self.last_pib_message_id is not None:
+                        successful, _ = voice_assistant_client.update_chat_message(
+                            chat_id,
+                            self.message_content,
+                            is_user,
+                            self.last_pib_message_id,
                         )
-                        return
+                        if not successful:
+                            self.get_logger().error(
+                                "unable to update chat message: "
+                                f"chat={chat_id} chars={len(text)} "
+                                f"message_id={self.last_pib_message_id} user={is_user}"
+                            )
+                            return
                 else:
                     # concatenate locally ONLY
                     self.message_content = f"{self.message_content} {text}"
@@ -687,11 +870,23 @@ class ChatNode(Node):
                 )
                 if not successful or chat_message is None:
                     self.get_logger().error(
-                        f"unable to create chat message: {(chat_id, text, is_user, update_message, update_database)}"
+                        "unable to create chat message: "
+                        f"chat={chat_id} chars={len(text)} "
+                        f"update={update_message} persist={update_database} user={is_user}"
                     )
-                    return
-                self.last_pib_message_id = chat_message.message_id
-                self.message_content = text
+                    if is_user:
+                        self.get_logger().warning(
+                            f"user line was not persisted for chat {chat_id}"
+                        )
+                        self.last_pib_message_id = None
+                        self.message_content = text
+                    else:
+                        return
+                else:
+                    self.last_pib_message_id = chat_message.message_id
+                    self.message_content = text
+                    if not is_user and not update_message:
+                        self._turn_assistant_message_id = chat_message.message_id
 
         # Publish to ROS so UIs/loggers see it immediately.
         self._publish_chat_message(
@@ -848,6 +1043,7 @@ class ChatNode(Node):
                     published_speech.append(immediate)
                     elapsed_ms = (time.monotonic() - t0) * 1000.0
                     self._remember_first_token_latency(chat_id, elapsed_ms)
+                    self._record_local_turn_stage("first_token", t0)
                     self.get_logger().info(
                         f"[PERF_TRACE] FIRST_CHUNK_EMITTED chat={chat_id} "
                         f"elapsed_ms={elapsed_ms:.2f}"
@@ -911,6 +1107,7 @@ class ChatNode(Node):
                     if not first_sentence_flushed:
                         first_sentence_flushed = True
                         elapsed_ms = (time.monotonic() - t0) * 1000.0
+                        self._record_local_turn_stage("first_sentence_flushed", t0)
                         self.get_logger().info(
                             f"[PERF_TRACE] FIRST_SENTENCE_FLUSHED chat={chat_id} "
                             f"elapsed_ms={elapsed_ms:.2f}"
@@ -957,6 +1154,7 @@ class ChatNode(Node):
                 first_chunk_emitted = True
                 elapsed_ms = (time.monotonic() - t0) * 1000.0
                 self._remember_first_token_latency(chat_id, elapsed_ms)
+                self._record_local_turn_stage("first_token", t0)
                 self.get_logger().info(
                     f"[PERF_TRACE] FIRST_CHUNK_EMITTED chat={chat_id} "
                     f"elapsed_ms={elapsed_ms:.2f}"
@@ -1015,6 +1213,7 @@ class ChatNode(Node):
             goal_handle.publish_feedback(feedback)
             if not flushed_any and t0 is not None:
                 elapsed_ms = (time.monotonic() - t0) * 1000.0
+                self._record_local_turn_stage("first_sentence_flushed", t0)
                 self.get_logger().info(
                     f"[PERF_TRACE] FIRST_SENTENCE_FLUSHED chat={chat_id} "
                     f"elapsed_ms={elapsed_ms:.2f}"
@@ -1043,6 +1242,7 @@ class ChatNode(Node):
         provider: Optional[str] = None,
         base_url: Optional[str] = None,
         tool_calling: bool = True,
+        message_history: Optional[int] = None,
     ) -> str:
         """Run one hermes turn and return speakable text. Never raises.
 
@@ -1059,9 +1259,9 @@ class ChatNode(Node):
             timeout = self._hermes_timeout()
 
         def _turn() -> str:
-            # Hermes keeps its own durable memory per chat, so no history is
-            # replayed: persona comes from the profile (-p), memory from the
-            # named session (-c).
+            # Smart turns seed the Hermes session from flask chat messages (the
+            # record the user saw) before the agent runs; persona still comes
+            # from the profile (-p).
             # When the warm daemon is already up, skip filesystem profile
             # re-validation — profiles were provisioned at personality create
             # time / prior cold starts and re-writing SOUL.md adds multi-second
@@ -1099,6 +1299,7 @@ class ChatNode(Node):
                 toolsets=disabled_toolsets,
                 enabled_toolsets=enabled_toolsets,
                 timeout=timeout,
+                message_history=message_history,
             )
 
         future = self._hermes_executor.submit(_turn)
@@ -1143,6 +1344,7 @@ class ChatNode(Node):
         provider: Optional[str] = None,
         base_url: Optional[str] = None,
         tool_calling: bool = True,
+        message_history: Optional[int] = None,
     ):
         """Yield daemon deltas, retrying through the non-streaming path on error."""
         timeout = self._hermes_timeout()
@@ -1185,6 +1387,7 @@ class ChatNode(Node):
                         enabled_toolsets=enabled_toolsets,
                         timeout=timeout,
                         tool_sink=hermes_tools,
+                        message_history=message_history,
                     ):
                         events.put(("delta", delta))
                     for record in hermes_tools:
@@ -1241,12 +1444,20 @@ class ChatNode(Node):
                 provider=provider,
                 base_url=base_url,
                 tool_calling=tool_calling,
+                message_history=message_history,
             )
             if emitted and reply.startswith(emitted):
                 reply = reply[len(emitted) :]
             if reply:
                 yield reply
             return
+
+    def _robot_context(self) -> str:
+        """The body description for this turn, empty when the API cannot be asked."""
+        try:
+            return robot_context.get_robot_context()
+        except Exception:
+            return ""
 
     def _iter_local_tokens(self, chat_id: str, content: str, system_prompt: str):
         """Tokens from the on-device model. No provider key is read."""
@@ -1302,10 +1513,11 @@ class ChatNode(Node):
             )
 
         system_prompt = direct_system_prompt(
-            getattr(personality, "description", None), images_shown=True
+            getattr(personality, "description", None),
+            images_shown=True,
+            robot_context=self._robot_context(),
+            code_generation=generate_code,
         )
-        if generate_code:
-            system_prompt = CODE_DESCRIPTION_PREFIX + system_prompt
         system_prompt = plan.for_direct(system_prompt)
         endpoint_base = getattr(
             getattr(personality, "assistant_model", None), "endpoint_base", None
@@ -1327,7 +1539,8 @@ class ChatNode(Node):
             endpoint_base=endpoint_base,
             tools=tools,
             allow_image=allow_image,
-            on_tool_call=getattr(self, "_record_tool_call", None),
+            on_tool_call=getattr(self, "_record_tool_finished", None),
+            on_tool_start=getattr(self, "_record_tool_started", None),
             local_fallback=lambda: self._iter_local_tokens(
                 chat_id, content, system_prompt
             ),
@@ -1350,6 +1563,7 @@ class ChatNode(Node):
 
     def _execute_chat_turn(self, goal_handle: ServerGoalHandle):
         t0 = time.monotonic()
+        self._ensure_turn_trace_anchor(t0)
         self.get_logger().info("start chat request")
 
         # Unpack request data
@@ -1357,6 +1571,11 @@ class ChatNode(Node):
         chat_id: str = request.chat_id
         content: str = request.text
         generate_code: bool = request.generate_code
+        turn_id = getattr(request, "turn_id", "") or ""
+        self._turn_chat_id = chat_id
+        self._turn_trace_turn_id = turn_id
+        if turn_id:
+            self._emit_turn_state(turn_id, STATE_RUNNING, chat_id)
 
         self.get_logger().info(
             f"[PERF_TRACE] ROS_SERVICE_RECV chat={chat_id} elapsed_ms=0.00"
@@ -1376,18 +1595,23 @@ class ChatNode(Node):
             successful, personality = voice_assistant_client.get_personality_from_chat(
                 chat_id
             )
-            self.history_length = personality.message_history
-        if not successful:
-            self.get_logger().error(f"no personality found for id {chat_id}")
+        if not successful or personality is None:
+            personality_id = getattr(personality, "personality_id", None)
+            if personality_id:
+                self.get_logger().error(
+                    f"chat could not be resolved chat={chat_id} "
+                    f"personality={personality_id}"
+                )
+            else:
+                self.get_logger().error(f"chat could not be resolved chat={chat_id}")
             goal_handle.abort()
             return Chat.Result()
-        description = (
-            personality.description
-            if personality.description is not None
-            else "Du bist pib, ein humanoider Roboter."
+        self.history_length = personality.message_history
+        description = personality_system_prompt(
+            soul_text=getattr(personality, "description", None),
+            robot_context=self._robot_context(),
+            code_generation=generate_code,
         )
-        if generate_code:
-            description = CODE_DESCRIPTION_PREFIX + description
 
         # Channel is a personality setting, not the provider's api name.
         channel = turn_channel(personality)
@@ -1431,7 +1655,7 @@ class ChatNode(Node):
             # speaking: the assistant plays it with this personality's gender
             # and language on local Supertone. The goal succeeds.
             if goal_handle.is_cancel_requested:
-                goal_handle.canceled()
+                self._finish_cancelled_turn(chat_id, goal_handle)
                 return Chat.Result()
             sentence = refusal_sentence(channel)
             self.create_chat_message(chat_id, sentence, False, False, True)
@@ -1444,6 +1668,7 @@ class ChatNode(Node):
             )
             return result
 
+        direct_turn_meta: dict[str, Any] | None = None
         try:
             if is_smart:
                 turn_path = "Hermes"
@@ -1454,7 +1679,7 @@ class ChatNode(Node):
                 # Smart stays on Hermes even for the on-device model: the model
                 # decides what Hermes runs, never the transport.
                 if goal_handle.is_cancel_requested:
-                    goal_handle.canceled()
+                    self._finish_cancelled_turn(chat_id, goal_handle)
                     return Chat.Result()
                 tokens = self._stream_hermes_turn(
                     text=plan.for_hermes(content),
@@ -1466,11 +1691,12 @@ class ChatNode(Node):
                     base_url=_model_base_url(api_name),
                     tool_calling=tool_calling,
                     goal_handle=goal_handle,
+                    message_history=self.history_length,
                 )
             elif pib_cloud_model:
                 turn_path = "pib.Cloud"
                 if goal_handle.is_cancel_requested:
-                    goal_handle.canceled()
+                    self._finish_cancelled_turn(chat_id, goal_handle)
                     return Chat.Result()
                 self.get_logger().info(
                     f"pib.Cloud streaming chat={chat_id} model={PIB_CLOUD_API_NAME}"
@@ -1487,10 +1713,11 @@ class ChatNode(Node):
             elif local_model:
                 turn_path = "the on-device model"
                 system_prompt = direct_system_prompt(
-                    personality.description, images_shown=True
+                    personality.description,
+                    images_shown=True,
+                    robot_context=self._robot_context(),
+                    code_generation=generate_code,
                 )
-                if generate_code:
-                    system_prompt = CODE_DESCRIPTION_PREFIX + system_prompt
                 system_prompt = plan.for_direct(system_prompt)
                 self.get_logger().info(
                     f"local model chat={chat_id} model={LOCAL_MODEL_API_NAME}"
@@ -1520,10 +1747,11 @@ class ChatNode(Node):
                 # the model calls capture_image, and that tool is absent while
                 # tool calling is off.
                 system_prompt = direct_system_prompt(
-                    personality.description, images_shown=True
+                    personality.description,
+                    images_shown=True,
+                    robot_context=self._robot_context(),
+                    code_generation=generate_code,
                 )
-                if generate_code:
-                    system_prompt = CODE_DESCRIPTION_PREFIX + system_prompt
                 system_prompt = plan.for_direct(system_prompt)
                 allow_image = direct_tool_loop.image_tool_allowed(
                     personality, tool_calling
@@ -1541,6 +1769,19 @@ class ChatNode(Node):
                     f"direct tool loop model={direct_tool_loop.PINNED_MODEL} "
                     f"provider={direct_tool_loop.PINNED_PROVIDER} chat={chat_id}"
                 )
+                personality_name = getattr(personality, "name", "") or ""
+                direct_turn_meta = {
+                    "started": time.monotonic(),
+                    "tool_rounds": 0,
+                }
+                self._turn_direct_tool_rounds = 0
+                self.get_logger().info(
+                    f"direct turn started personality={personality_name} model={api_name}"
+                )
+
+                def count_direct_tool_round() -> None:
+                    direct_turn_meta["tool_rounds"] += 1
+                    self._turn_direct_tool_rounds = direct_turn_meta["tool_rounds"]
 
                 def report_key_source(source: str) -> None:
                     # source is key-store or environment. The key itself
@@ -1561,8 +1802,13 @@ class ChatNode(Node):
                     tool_calling=tool_calling,
                     allow_image=allow_image,
                     report_key_source=report_key_source,
-                    on_tool_call=self._record_tool_call,
+                    on_tool_call=self._record_tool_finished,
+                    on_tool_start=self._record_tool_started,
                     on_tool_image=self._record_tool_image,
+                    on_tool_round=count_direct_tool_round,
+                    session=self._direct_session(personality),
+                    # Identity edits (description/SOUL) must replace the frozen prompt.
+                    session_identity=self._direct_identity_fingerprint(personality),
                 )
 
             # Which runtime serves this turn, before the first token is asked
@@ -1571,9 +1817,21 @@ class ChatNode(Node):
             prev_text, prev_text_type, curr_text = self._stream_chunks_to_goal(
                 goal_handle, chat_id, tokens, t0=t0
             )
-            self._finalize_message_meta(chat_id)
+            if direct_turn_meta is not None:
+                try:
+                    elapsed = time.monotonic() - direct_turn_meta["started"]
+                    self.get_logger().info(
+                        f"direct turn finished in {elapsed:.1f} s, "
+                        f"{direct_turn_meta['tool_rounds']} tool rounds"
+                    )
+                except Exception:
+                    pass
             if goal_handle.is_cancel_requested:
+                self._finish_cancelled_turn(chat_id, goal_handle)
                 return Chat.Result()
+            self._finalize_message_meta(chat_id)
+            if turn_id:
+                self._emit_turn_state(turn_id, STATE_COMPLETED, chat_id)
 
         except Exception as e:
             # Name the path the turn actually took: a pib.Cloud turn with tools

@@ -43,7 +43,7 @@ def test_speed_constants_in_hermes_agent_client():
     assert DEFAULT_HERMES_MODEL == "gemini-3.8-flash"
     assert DEFAULT_HERMES_LITE_MODEL == "gemini-3.5-flash-lite"
     assert DEFAULT_HERMES_PROVIDER == "gemini"
-    assert DEFAULT_REASONING_EFFORT == "low"
+    assert DEFAULT_REASONING_EFFORT == "none"  # PR-2039: thinking off by default
     assert DEFAULT_MAX_TOKENS == 1024
     assert DEFAULT_TEMPERATURE == 0.3
 
@@ -52,7 +52,7 @@ def test_speed_constants_in_pib_hermes_config():
     assert hermes_cfg.DEFAULT_HERMES_MODEL == "gemini-3.8-flash"
     assert hermes_cfg.DEFAULT_HERMES_LITE_MODEL == "gemini-3.5-flash-lite"
     assert hermes_cfg.DEFAULT_HERMES_PROVIDER == "gemini"
-    assert hermes_cfg.DEFAULT_REASONING_EFFORT == "low"
+    assert hermes_cfg.DEFAULT_REASONING_EFFORT == "none"  # PR-2039
     assert hermes_cfg.DEFAULT_MAX_TOKENS == 1024
     assert hermes_cfg.DEFAULT_TEMPERATURE == 0.3
 

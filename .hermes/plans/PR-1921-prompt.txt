@@ -1,0 +1,34 @@
+ROLE: Implement Jira ticket PR-1921 in the pib-backend repository.
+Repo /home/pib/opencode/pib-backend, branch PR-1921 (already created, one commit on it).
+Fetch the full specification, evidence and acceptance criteria from the ticket:
+  GET https://pib-rocks.atlassian.net/rest/api/3/issue/PR-1921?fields=description,summary
+  Credentials from /home/pib/.hermes/.env: ATLASSIAN_EMAIL and ATLASSIAN_TOKEN (base64 basic auth).
+  Use ATLASSIAN_TOKEN exactly - ATLASSIAN_API_TOKEN does not exist and yields 401.
+
+WHAT ALREADY EXISTS ON THIS BRANCH (do not redo, do not revert)
+- Commit a94dc72c adds `selectable: false` to models/manifest.yaml for face-recognition-arcface-112x112.
+
+YOUR SCOPE - ONLY these three:
+1) The guard. Add an automated check that FAILS if the deactivation is undone. Preferred place:
+   models/verify_models.py. Acceptable alternative: a unit test under tests/unit/ next to
+   test_model_provisioning.py. It must assert BOTH conditions: face-recognition-arcface-112x112 is
+   NOT selectable, and face_detection_yunet_160x120 IS selectable. Read the manifest the way the
+   runtime does: ros_packages/camera/oak_d_lite/model_registry.py, field `selectable` defaults to True.
+2) The documentation. One line in models/README.md (or docs/on-device-models.md) recording that face
+   recognition is deliberately not offered, with the date 2026-10-06, the enforcement point (`selectable`
+   in the manifest), and the note that ros-camera must be restarted for a manifest change to take effect
+   while /list_models is the acceptance read.
+3) Tests for the new guard: write them, run them, paste the real command and the real observed output.
+
+RULES
+- Stay on branch PR-1921. Do NOT merge into develop. Do NOT create a pull request.
+- You MAY commit on this branch. If `git push` fails because you have no GitHub credentials, that is
+  expected: stop, say so plainly, and leave the commit on the branch. Never claim a push you did not make.
+- THERE IS NO ROBOT DEVICE HERE. You cannot run setup-pib.sh --models against a real store and you cannot
+  query /list_models on hardware. Do NOT claim you did either. State explicitly in your report which
+  acceptance criteria therefore remain unverified on a device.
+- Run the repository's own checks for the files you touch (relevant unit tests plus the formatter/lint the
+  CI runs). Do not run slow suites needlessly; name what you ran.
+- Report the exact files and lines changed, the exact commands run, and the real observed output.
+  Do not report a number or a result you did not actually see.
+- Answer in English.

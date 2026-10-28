@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import sys
 import types
+from pathlib import Path
 from unittest.mock import MagicMock
 
 TEXT_TYPE_SENTENCE = 0
@@ -104,6 +105,7 @@ def install_ros_stubs():
             self.chat_id = ""
             self.text = ""
             self.generate_code = False
+            self.turn_id = ""
 
     class _Feedback:
         def __init__(self):
@@ -159,7 +161,14 @@ def install_ros_stubs():
 
     # --- pib / public api clients (if not already importable) ---
     if "pib_api_client" not in sys.modules:
-        ensure("pib_api_client")
+        repo_root = Path(__file__).resolve().parents[2]
+        api_client_dir = repo_root / "pib_api" / "client"
+        if str(api_client_dir) not in sys.path:
+            sys.path.insert(0, str(api_client_dir))
+        try:
+            import pib_api_client  # noqa: F401
+        except ImportError:
+            ensure("pib_api_client")
     if "pib_api_client.voice_assistant_client" not in sys.modules:
         vac = ensure("pib_api_client.voice_assistant_client")
         vac.get_personality_from_chat = MagicMock()
@@ -167,6 +176,7 @@ def install_ros_stubs():
         vac.create_chat_message = MagicMock()
         vac.update_chat_message = MagicMock()
         vac.record_first_token_latency = MagicMock(return_value=False)
+        vac.delete_chat_message = MagicMock(return_value=True)
 
     if "public_api_client.public_voice_client" not in sys.modules:
         pvc = ensure("public_api_client.public_voice_client")

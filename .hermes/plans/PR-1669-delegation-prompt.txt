@@ -1,0 +1,45 @@
+Stabilize two flaky live E2E tests per ticket https://pib-rocks.atlassian.net/browse/PR-1669.
+
+Repo: pib-backend — /home/pib/opencode/pib-backend, branch `PR-1669`.
+
+## Problem (verified on Pi)
+On the Pi full suite (run_all_tests.sh, develop 67e495a5) two live-DOM E2E tests intermittently fail on
+UI-step waits (timeouts / visibility), NOT on business-logic assertions:
+1. tests/e2e/test_hardware_ids_e2e.py :: TestHardwareIDsE2E.test_hardware_ids_export_import_full_lifecycle
+2. tests/e2e/test_voice_assistant_hermes_e2e.py :: test_voice_assistant_hermes_persists_reply_and_recalls_prior_fact
+
+These are live Playwright tests against the deployed UI. Failure points are element-visibility/step-timeout waits.
+They sometimes pass, sometimes fail (intermittent) — timing flakiness, not a code regression.
+
+## Goal
+Make these two tests robust/reliable on the Pi WITHOUT weakening behavioral assertions (do not remove or soften
+assertions of actual behavior/logic).
+
+## Approach (apply where sensible)
+- Replace hard/raw `page.wait_for_timeout(...)` sleeps with robust explicit waits (e.g. `page.wait_for_selector('[data-test=...]', state='visible', timeout=...)`) where a selector is available.
+- Add small retry/`expect(...).to_be_visible(timeout=...)` with reasonable bumped/parameterized timeouts where the
+  step is genuinely slow on Pi (e.g. behavior-driven: first make it deterministic, then bump timeout if the step
+  is legitimately slow under load).
+- Keep selectors stable / fix any that look stale (trust the existing [data-test] ids; only change if clearly broken).
+- Do NOT weaken any `expect` of the exported/imported content, the persisted-reply value, the chat id, or the
+  personality/assistant-model assertions — those are the real behavior; keep them strong.
+
+## Files
+- tests/e2e/test_hardware_ids_e2e.py (export/import lifecycle: bricklet UID input, export button+response,
+  import modal/chooser)
+- tests/e2e/test_voice_assistant_hermes_e2e.py (persist-reply-and-recall: chat flow, personality add,
+  assistant-model, p-link, chat-item visibility)
+
+## Constraints
+- Stay on branch `PR-1669`. Do NOT merge/push develop (orchestrator opens PR). You MAY commit (`fix: PR-1669 ...`).
+- Only touch these two E2E test files (or shared test helpers if needed). Do NOT change product/non-test code.
+- Do NOT commit `.hermes/plans/**`. Report REAL results.
+- IMPORTANT: you likely cannot run the live Pi E2E from this machine; focus on making the tests robust and
+  deterministic by code review. Clearly state what you changed and what remains to verify on the Pi.
+
+## Self-check
+- `python3 -m py_compile tests/e2e/test_hardware_ids_e2e.py tests/e2e/test_voice_assistant_hermes_e2e.py` -> ok.
+- `git diff --stat origin/develop...HEAD` shows only the two e2e files (plus helpers if added).
+
+FINAL REPORT: what you changed per test, why it addresses the flake, the real diff-stat, confirmation you did not
+merge/push or alter product code, and which Pi-verification steps are still needed. Commit hash if committed.

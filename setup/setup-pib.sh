@@ -533,6 +533,18 @@ function install_depthai_udev_rules() {
     || print WARN "could not reload udev rules; a reboot/replug may be required"
 }
 
+function seed_homeassistant_minimal_config() {
+  sudo -u pib mkdir -p /home/pib/app/homeassistant /home/pib/app/matter-server
+  local dest="/home/pib/app/homeassistant/configuration.yaml"
+  if [ -f "$dest" ]; then
+    print INFO "Home Assistant configuration.yaml already present"
+    return 0
+  fi
+  sudo cp "$BACKEND_DIR/setup/setup_files/homeassistant_configuration.yaml" "$dest"
+  sudo chown pib:pib "$dest"
+  print SUCCESS "Seeded minimal Home Assistant configuration at $dest"
+}
+
 # Install pib-sdk and pib_mcp_server into system Python so Marimo notebooks,
 # Hermes MCP, and host scripts can import them without sys.path hacks.
 function install_pib_python_packages() {
@@ -1491,6 +1503,54 @@ function provision_whisper_model() {
   return 0
 }
 
+# Place Supertone supertonic-3 into /data/voice/models/supertone/ with the self-contained
+# installation_scripts/provision_supertone_model.py: vendored voice/supertone/ tree first,
+# else the pinned files from voice/supertone-model.yaml.
+function provision_supertone_model() {
+  local repo_root dest helper output result
+  repo_root="$(whisper_repo_root)"
+  dest="${SUPERTONE_MODEL_PATH:-/data/voice/models/supertone}"
+  helper="$repo_root/setup/installation_scripts/provision_supertone_model.py"
+
+  if [ ! -f "$repo_root/voice/supertone-model.yaml" ]; then
+    print WARN "supertone model: ${repo_root}/voice/supertone-model.yaml not found; nothing to place"
+    return 0
+  fi
+  if [ ! -f "$helper" ]; then
+    print ERROR "supertone model: ${helper} is missing"
+    return 1
+  fi
+  if ! command_exists python3; then
+    print ERROR "supertone model: python3 is missing"
+    return 1
+  fi
+  if ! ensure_model_store_directory "$dest"; then
+    print ERROR "supertone model: store directory ${dest} is not writable"
+    return 1
+  fi
+
+  print INFO "supertone model: store ${dest}"
+  output="$(python3 "$helper" --repo-root "$repo_root" --destination "$dest")"
+  result="${output##*result=}"
+  case "$result" in
+    placed)
+      print SUCCESS "supertone model: placed into ${dest}"
+      ;;
+    already_current)
+      print INFO "supertone model: already current in ${dest}"
+      ;;
+    *)
+      print ERROR "supertone model: provisioning failed (${result:-no result}); see the lines above"
+      return 1
+      ;;
+  esac
+  if [ ! -f "$dest/onnx/tts.json" ]; then
+    print ERROR "supertone model: no onnx/tts.json under ${dest} after provisioning"
+    return 1
+  fi
+  return 0
+}
+
 # Local Ollama with a CPU-tuned qwen2.5:1.5b named qwen-fast. The official installer
 # (https://ollama.com/install.sh) creates a systemd service that runs as its own user
 # and owns the model store. This step installs only when the binary is missing, starts
@@ -1754,7 +1814,7 @@ show_help()
 	echo -e "--models fetch the OAK release asset into \$HOME/app/.cache/pib-models when the cache does not match models/manifest.yaml (override with PIB_MODEL_CACHE, PIB_MODEL_ASSET_URL, PIB_MODEL_ASSET_TAG, PIB_MODEL_ASSET_NAME, PIB_MODEL_ASSET_SHA256), refresh the persistent OAK model store from that cache, place the whisper weights (fetched once if voice/whisper/ is empty; PIB_WHISPER_DOWNLOAD=0 forbids that) and exit"
 	echo -e "--verify-models check the model store against models/manifest.yaml offline and exit non-zero on mismatch"
 	echo -e "--repair-display restore the full KMS display driver in /boot/firmware/config.txt on an installed pib (backup next to the file, reboot afterwards) and exit"
-	echo -e "--no-smart-chats install without the Hermes channel; Direct is the only chat path"
+	echo -e "--direct-llm install without Hermes (no CLI, daemon, or profiles); Direct LLM only"
 	echo -e "--pib4edu select the pib 4 educational hardware variant"
 	echo -e "--pib4advanced select the pib 4 advanced hardware variant"
 	echo -e "--pib5advanced select the pib 5 advanced hardware variant"
@@ -1808,7 +1868,7 @@ while [ $# -gt 0 ]; do
     --repair-display)
       REPAIR_DISPLAY_ONLY=true
       ;;
-    --no-smart-chats)
+    --direct-llm)
       SMART_CHATS_ENABLED=0
       ;;
     --pib4edu | --pib4advanced | --pib5advanced | --pib5museum | --pib*)
@@ -1845,6 +1905,8 @@ if [ "$MODELS_ONLY" = true ]; then
   provision_curated_models provision
   models_status=$?
   provision_whisper_model || models_status=1
+  provision_supertone_model ||
+    abort_setup "Model provisioning must succeed before containers are started"
   exit "$models_status"
 fi
 
@@ -1887,7 +1949,7 @@ printf '%s\n' "$PIB_HARDWARE_VARIANT" |
   sudo tee /etc/pib_hardware_variant >/dev/null
 print INFO "Selected hardware variant: ${PIB_HARDWARE_VARIANT}"
 
-# Durable record of --no-smart-chats. Personality rows are not rewritten:
+# Durable record of --direct-llm. Personality rows are not rewritten:
 # clearing the marker restores Smart for personalities that stored it.
 if [ -f "$SETUP_SCRIPT_DIR/installation_scripts/smart_chats.sh" ]; then
   # shellcheck source=/dev/null
@@ -1904,7 +1966,11 @@ if [ "$SMART_CHATS_ENABLED" = "0" ]; then
 else
   export PIB_SMART_CHATS=1
 fi
-print INFO "Hermes channel: ${SMART_CHATS_MARKER}"
+if [ "$SMART_CHATS_ENABLED" = "0" ]; then
+  print INFO "Direct LLM install (Hermes skipped): ${SMART_CHATS_MARKER}"
+else
+  print INFO "Hermes channel: ${SMART_CHATS_MARKER}"
+fi
 
 DISTRIBUTION=$(get_distribution) # e.g., 'ubuntu'
 export DISTRIBUTION
@@ -1929,6 +1995,8 @@ run_step "Clone repositories" clone_repositories || abort_setup "failed to clone
 run_step "Provision curated OAK models" provision_curated_models provision ||
   abort_setup "Model provisioning must succeed before containers are started"
 run_step "Provision whisper model" provision_whisper_model || print ERROR "failed to provision the whisper model"
+run_step "Provision supertone model" provision_supertone_model ||
+  abort_setup "Model provisioning must succeed before containers are started"
 # After the clone: the Modelfile is setup/ollama/Modelfile in the backend checkout.
 # A failure is recorded in the summary and setup continues; nothing else is pointed
 # at this model yet. A skipped variant returns success, so this step stays in the
@@ -1939,10 +2007,14 @@ run_step "Install pib Python packages" install_pib_python_packages || print ERRO
 run_step "Put ~/.local/bin on PATH" install_local_bin_path || print ERROR "failed to put ~/.local/bin on PATH"
 # Before docker-compose starts: hermes must exist on the host so the
 # ros-voice-assistant / flask-app bind mounts resolve to real paths.
-run_step "Install Hermes CLI" install_hermes_cli || print ERROR "failed to install Hermes CLI"
+# --direct-llm skips the CLI, the hermes-daemon container, and profile dirs.
+if [ "${PIB_SMART_CHATS:-1}" != "0" ]; then
+  run_step "Install Hermes CLI" install_hermes_cli || print ERROR "failed to install Hermes CLI"
+fi
 # The legacy ~/imitation host script is retired. ros_packages/imitation consumes
 # the camera owner's typed topic and must never run beside another OAK device owner.
 run_step "Install Luxonis udev rules" install_depthai_udev_rules || print WARN "failed to install Luxonis udev rules"
+run_step "Seed minimal Home Assistant config" seed_homeassistant_minimal_config || print WARN "failed to seed Home Assistant config"
 if is_supported_raspbian && [ "$DIST_VERSION" = "trixie" ]; then
   run_step "Install ROS 2 Jazzy" source "$SETUP_INSTALLATION_DIR/ros_jazzy_install.sh" || abort_setup "failed to install ROS 2 Jazzy"
 fi

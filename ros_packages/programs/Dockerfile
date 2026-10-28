@@ -18,12 +18,16 @@ ENV PIP_ROOT_USER_ACTION=ignore \
 
 # PEP 668: Jazzy (Ubuntu 24.04, Python 3.12) requires --break-system-packages
 # --ignore-installed: avoid conflict with system numpy (installed by ros:jazzy-ros-core)
-# Third-party packages first, in one resolve. Everything is pinned except pib-sdk, which
-# takes the newest release (>= keeps it from resolving to one that predates the shared
-# rosbridge client of PR-1882). opencv-python-headless stays below 5 for the same reason as
-# in camera/Dockerfile (5.x dropped cv2 APIs user programs rely on).
+# Third-party packages first, in one resolve. pib-sdk has a lower bound that is high enough
+# for the API the generated programmes use: 0.7.3 is where the kinematics is radian-canonical
+# (ik() returns radians, ik_deg() keeps the degree boundary Write.move expects) and where
+# from_rep103/to_rep103 exist for the hand-position blocks. A lower pin silently installs an
+# SDK whose ik() answers in degrees. The requirement MUST stay quoted: unquoted the shell reads
+# ">=0.7.3" as a redirection, writes a file named "=0.7.3" and installs whatever pib-sdk PyPI
+# happens to serve - which is how the pin went unnoticed before. opencv-python-headless stays below 5 for the same reason
+# as in camera/Dockerfile (5.x dropped cv2 APIs user programs rely on).
 RUN pip install --break-system-packages --ignore-installed \
-        pib-sdk>=0.5.5 \
+        "pib-sdk>=0.7.3" \
         requests==2.32.3 \
         paramiko==3.5.1 \
         tinkerforge==2.1.32 \
@@ -35,6 +39,7 @@ COPY ./ros_packages/motors/pib_motors /tmp/pib_motors
 COPY ./ros_packages/datatypes ros2_ws/datatypes
 COPY ./ros_packages/programs ros2_ws/programs
 COPY ./ros_packages/button_service ros2_ws/button_service
+COPY ./ros_packages/smart_home ros2_ws/smart_home
 
 # In-repo packages without dependencies; --no-deps keeps pip from re-resolving the environment.
 RUN pip install --break-system-packages --no-deps \

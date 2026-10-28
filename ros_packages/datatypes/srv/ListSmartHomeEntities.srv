@@ -1,0 +1,7 @@
+string room
+string domain
+bool voice_only
+---
+bool successful
+string message
+SmartHomeEntity[] entities

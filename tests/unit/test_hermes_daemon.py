@@ -70,6 +70,8 @@ class _FakeSessionDB:
         self.resume_calls: list[str] = []
         self.reopened: list[str] = []
         self.closed = 0
+        self.ensure_calls: list[tuple[str, str]] = []
+        self.batch_appends: list[tuple[str, list[dict]]] = []
 
     def append_turn(self, session_id, user_message, reply):
         self.transcripts.setdefault(session_id, []).extend(
@@ -86,8 +88,29 @@ class _FakeSessionDB:
     def reopen_session(self, session_id):
         self.reopened.append(session_id)
 
+    def ensure_session(self, session_id, source="unknown", **kwargs):
+        self.ensure_calls.append((session_id, source))
+        self.transcripts.setdefault(session_id, [])
+
+    def append_messages_batch(self, session_id, messages, **kwargs):
+        rows = self.transcripts.setdefault(session_id, [])
+        inserted = 0
+        for message in messages:
+            rows.append(dict(message))
+            inserted += 1
+        self.batch_appends.append((session_id, list(messages)))
+        return inserted
+
     def close(self):
         self.closed += 1
+
+
+def _flask_message(message_id, content, is_user=True):
+    message = MagicMock()
+    message.message_id = message_id
+    message.content = content
+    message.is_user = is_user
+    return message
 
 
 def _fake_agent_module(created, *, store_turns=False, reply="OK."):
@@ -100,8 +123,12 @@ def _fake_agent_module(created, *, store_turns=False, reply="OK."):
     class FakeAgent:
         def __init__(self, **kwargs):
             self.kwargs = kwargs
+            self.session_id = kwargs.get("session_id")
             self.histories = []
             created.append(self)
+
+        def reset_session_state(self, **kwargs):
+            pass
 
         def run_conversation(
             self, user_message, conversation_history=None, stream_callback=None
@@ -109,7 +136,8 @@ def _fake_agent_module(created, *, store_turns=False, reply="OK."):
             self.histories.append(conversation_history)
             store = self.kwargs.get("session_db")
             if store_turns and store is not None:
-                store.append_turn(self.kwargs["session_id"], user_message, reply)
+                sid = getattr(self, "session_id", None) or self.kwargs.get("session_id")
+                store.append_turn(sid, user_message, reply)
             return {"final_response": reply}
 
     module = types.ModuleType("run_agent")
@@ -662,10 +690,14 @@ def test_run_turn_in_process_constructs_and_reuses_one_agent_per_chat(
     class FakeAgent:
         def __init__(self, **kwargs):
             self.kwargs = kwargs
+            self.session_id = kwargs.get("session_id")
             self.run_conversation = MagicMock(
                 return_value={"final_response": "  in-process-reply  "}
             )
             created.append(self)
+
+        def reset_session_state(self, **kwargs):
+            pass
 
     fake_module = types.ModuleType("run_agent")
     fake_module.AIAgent = FakeAgent
@@ -704,7 +736,8 @@ def test_run_turn_in_process_constructs_and_reuses_one_agent_per_chat(
 
     assert first == second == "in-process-reply"
     assert len(created) == 1
-    assert created[0].kwargs["session_id"] == "pib_chat_chat-42"
+    assert created[0].kwargs["session_id"] is None
+    assert created[0].session_id == "pib_chat_chat-42"
     assert created[0].kwargs["enabled_toolsets"] == ["mcp-pib", "vision"]
     assert created[0].kwargs["disabled_toolsets"] == ["terminal", "file"]
     assert created[0].kwargs["max_iterations"] == 7
@@ -735,7 +768,7 @@ def test_empty_enabled_toolsets_falls_back_to_voice_default(monkeypatch):
 def test_cached_agent_is_built_with_the_shared_store_and_the_chat_session_id(
     monkeypatch,
 ):
-    """The store is opened once per process and every chat agent gets that handle."""
+    """The store is opened once per personality; session_id is bound per turn (PR-2052)."""
     store = _FakeSessionDB()
     creator = MagicMock(return_value=store)
     monkeypatch.setattr(hd, "_create_session_db", creator)
@@ -747,11 +780,9 @@ def test_cached_agent_is_built_with_the_shared_store_and_the_chat_session_id(
         hd.run_turn_in_process("zwei", "chat-store")
         hd.run_turn_in_process("drei", "chat-other-store")
 
-    assert [agent.kwargs["session_db"] for agent in created] == [store, store]
-    assert [agent.kwargs["session_id"] for agent in created] == [
-        "pib_chat_chat-store",
-        "pib_chat_chat-other-store",
-    ]
+    assert len(created) == 1
+    assert created[0].kwargs["session_db"] is store
+    assert created[0].kwargs["session_id"] is None
     assert created[0].kwargs["skip_memory"] is True
     assert creator.call_count == 1
 
@@ -951,20 +982,22 @@ def test_personality_home_override_is_reset_after_success_and_exception(
     assert fake_hermes_home_override.get() == base_home
 
 
-def test_mcp_discovery_uses_hermes_noninteractive_startup_path():
+def _fake_mcp_startup_module(**startup_attrs):
     hermes_cli = types.ModuleType("hermes_cli")
     hermes_cli.__path__ = []
     startup = types.ModuleType("hermes_cli.mcp_startup")
     startup.ensure_mcp_discovery_before_agent_build = MagicMock()
     startup.mcp_discovery_in_flight = MagicMock(return_value=False)
+    startup.join_mcp_discovery = MagicMock(return_value=True)
+    for name, value in startup_attrs.items():
+        setattr(startup, name, value)
+    return {"hermes_cli": hermes_cli, "hermes_cli.mcp_startup": startup}, startup
 
-    with patch.dict(
-        sys.modules,
-        {
-            "hermes_cli": hermes_cli,
-            "hermes_cli.mcp_startup": startup,
-        },
-    ):
+
+def test_mcp_discovery_uses_hermes_noninteractive_startup_path():
+    modules, startup = _fake_mcp_startup_module()
+
+    with patch.dict(sys.modules, modules):
         _REAL_DISCOVER_MCP_TOOLS()
 
     startup.ensure_mcp_discovery_before_agent_build.assert_called_once()
@@ -972,6 +1005,132 @@ def test_mcp_discovery_uses_hermes_noninteractive_startup_path():
         startup.ensure_mcp_discovery_before_agent_build.call_args.kwargs["thread_name"]
         == "pib-hermes-daemon-mcp"
     )
+    startup.join_mcp_discovery.assert_not_called()
+
+
+def test_mcp_discovery_joins_when_still_in_flight_after_ensure():
+    modules, startup = _fake_mcp_startup_module(
+        mcp_discovery_in_flight=MagicMock(return_value=True),
+    )
+
+    with patch.dict(sys.modules, modules):
+        _REAL_DISCOVER_MCP_TOOLS()
+
+    startup.join_mcp_discovery.assert_called_once_with(
+        timeout=hd._DAEMON_MCP_DISCOVERY_EXTRA_WAIT_S
+    )
+
+
+def test_agent_construction_reports_registered_mcp_tools_after_discovery(
+    monkeypatch, caplog
+):
+    """PR-2059: the warm agent is built only after discovery registers tools."""
+    discovery_state = {"done": False, "tools": 0}
+
+    def _finish_discovery(**_kwargs):
+        discovery_state["done"] = True
+        discovery_state["tools"] = 20
+
+    modules, _startup = _fake_mcp_startup_module(
+        ensure_mcp_discovery_before_agent_build=MagicMock(
+            side_effect=_finish_discovery
+        ),
+        mcp_discovery_in_flight=MagicMock(
+            side_effect=lambda: not discovery_state["done"]
+        ),
+    )
+    monkeypatch.setattr(hd, "_discover_mcp_tools", _REAL_DISCOVER_MCP_TOOLS)
+    monkeypatch.setattr(
+        hd,
+        "_registered_mcp_tool_count",
+        lambda: discovery_state["tools"],
+    )
+
+    fake_module = _fake_agent_module([], reply="ok")
+    hd.clear_agent_cache()
+
+    with (
+        patch.dict(sys.modules, {**modules, "run_agent": fake_module}),
+        caplog.at_level(logging.INFO),
+    ):
+        assert hd.run_turn_in_process("one", "mcp-ready-chat") == "ok"
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert not any("constructing without MCP tools" in message for message in messages)
+    assert any(
+        "[PERF_TRACE] HERMES_AGENT_CONSTRUCTED" in message and "mcp_tools=20" in message
+        for message in messages
+    )
+
+
+def test_agent_construction_waits_for_in_flight_discovery_to_finish(
+    monkeypatch, caplog
+):
+    """PR-2059: a bounded extra join runs when Hermes' first wait times out."""
+    discovery_state = {"in_flight": True, "tools": 0}
+
+    def _join(timeout=None):
+        discovery_state["in_flight"] = False
+        discovery_state["tools"] = 20
+        return True
+
+    modules, startup = _fake_mcp_startup_module(
+        mcp_discovery_in_flight=MagicMock(
+            side_effect=lambda: discovery_state["in_flight"]
+        ),
+        join_mcp_discovery=MagicMock(side_effect=_join),
+    )
+    monkeypatch.setattr(hd, "_discover_mcp_tools", _REAL_DISCOVER_MCP_TOOLS)
+    monkeypatch.setattr(
+        hd,
+        "_registered_mcp_tool_count",
+        lambda: discovery_state["tools"],
+    )
+
+    fake_module = _fake_agent_module([], reply="ok")
+    hd.clear_agent_cache()
+
+    with (
+        patch.dict(sys.modules, {**modules, "run_agent": fake_module}),
+        caplog.at_level(logging.INFO),
+    ):
+        assert hd.run_turn_in_process("one", "mcp-join-chat") == "ok"
+
+    startup.join_mcp_discovery.assert_called_once()
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("mcp_tools=20" in message for message in messages)
+
+
+def test_mcp_discovery_failure_logs_once_and_turn_continues(monkeypatch, caplog):
+    """PR-2059: one explicit line when discovery cannot register tools; turns still run."""
+    modules, _startup = _fake_mcp_startup_module(
+        mcp_discovery_in_flight=MagicMock(return_value=True),
+        join_mcp_discovery=MagicMock(return_value=False),
+    )
+    monkeypatch.setattr(hd, "_discover_mcp_tools", _REAL_DISCOVER_MCP_TOOLS)
+    monkeypatch.setattr(hd, "_registered_mcp_tool_count", MagicMock(return_value=0))
+
+    fake_module = _fake_agent_module([], reply="ok despite missing mcp")
+    hd.clear_agent_cache()
+
+    with (
+        patch.dict(sys.modules, {**modules, "run_agent": fake_module}),
+        caplog.at_level(logging.WARNING),
+    ):
+        assert (
+            hd.run_turn_in_process("one", "mcp-fail-chat") == "ok despite missing mcp"
+        )
+        assert (
+            hd.run_turn_in_process("two", "mcp-fail-chat") == "ok despite missing mcp"
+        )
+
+    failure_lines = [
+        record.getMessage()
+        for record in caplog.records
+        if "constructing without MCP tools" in record.getMessage()
+    ]
+    assert len(failure_lines) == 1
+    assert "still in flight" in failure_lines[0]
 
 
 @pytest.mark.parametrize("failure", [RuntimeError("failed"), TimeoutError("timed out")])
@@ -1010,13 +1169,18 @@ def test_agent_construction_logs_duration_and_registered_mcp_tool_count(
     )
 
 
-def test_run_turn_in_process_never_shares_agents_between_chat_ids(monkeypatch):
+def test_run_turn_in_process_reuses_one_agent_across_chat_ids(monkeypatch):
+    """PR-2052: one warm agent per personality; session_id is bound per turn."""
     created = []
 
     class FakeAgent:
         def __init__(self, **kwargs):
-            self.session_id = kwargs["session_id"]
+            self.kwargs = kwargs
+            self.session_id = kwargs.get("session_id")
             created.append(self)
+
+        def reset_session_state(self, **kwargs):
+            pass
 
         def run_conversation(
             self, user_message, conversation_history=None, stream_callback=None
@@ -1032,20 +1196,128 @@ def test_run_turn_in_process_never_shares_agents_between_chat_ids(monkeypatch):
         second = hd.run_turn_in_process("two", "chat-b")
         again = hd.run_turn_in_process("three", "chat-a")
 
-    assert len(created) == 2
+    assert len(created) == 1
     assert first == again == "pib_chat_chat-a"
     assert second == "pib_chat_chat-b"
-    assert created[0] is not created[1]
+    assert created[0].kwargs.get("session_id") is None
 
 
-def test_agent_cache_evicts_the_least_recently_used_chat(monkeypatch):
+def test_two_chats_of_one_personality_construct_the_agent_once(monkeypatch, caplog):
+    """PR-2052: the second chat must not pay agent construction again."""
+    import logging
+
+    store = _FakeSessionDB()
+    monkeypatch.setattr(hd, "_create_session_db", MagicMock(return_value=store))
     created = []
+    module = _fake_agent_module(created, store_turns=True, reply="Antwort")
+    hd.clear_agent_cache()
+
+    with (
+        patch.dict(sys.modules, {"run_agent": module}),
+        caplog.at_level(logging.INFO),
+    ):
+        hd.run_turn_in_process("Codewort BLAU.", "chat-one")
+        hd.run_turn_in_process("Was war das Codewort?", "chat-one")
+        hd.run_turn_in_process("Eine andere Frage.", "chat-two")
+
+    assert len(created) == 1
+    construction_logs = [
+        m for m in caplog.records if "HERMES_AGENT_CONSTRUCTED" in m.getMessage()
+    ]
+    assert len(construction_logs) == 1
+
+    agent = created[0]
+    assert agent.histories[0] is None
+    assert [m["content"] for m in agent.histories[1]] == [
+        "Codewort BLAU.",
+        "Antwort",
+    ]
+    assert agent.histories[2] is None
+    assert store.resume_calls == [
+        "pib_chat_chat-one",
+        "pib_chat_chat-one",
+        "pib_chat_chat-two",
+    ]
+
+
+def test_model_change_between_turns_rebuilds_the_cached_agent(monkeypatch):
+    """Changing the profile model still evicts and reconstructs the warm agent."""
+    from public_api_client.hermes_agent_client import DEFAULT_MAX_TURNS
+
+    settings_reads = [
+        (
+            "gemini-a",
+            "gemini",
+            None,
+            hd._GEMINI_KEY_NAMES,
+        ),
+        (
+            "gemini-b",
+            "gemini",
+            None,
+            hd._GEMINI_KEY_NAMES,
+        ),
+    ]
 
     class FakeAgent:
         def __init__(self, **kwargs):
-            self.session_id = kwargs["session_id"]
+            self.kwargs = kwargs
+            self.model = kwargs.get("model")
+            self.session_id = kwargs.get("session_id")
+            created.append(self)
+
+        def reset_session_state(self, **kwargs):
+            pass
+
+        def run_conversation(
+            self, user_message, conversation_history=None, stream_callback=None
+        ):
+            return {"final_response": self.model}
+
+    created = []
+    fake_module = types.ModuleType("run_agent")
+    fake_module.AIAgent = FakeAgent
+    hd.clear_agent_cache()
+
+    with patch.dict(sys.modules, {"run_agent": fake_module}):
+        with patch(
+            "public_api_client.hermes_agent_client.profile_hermes_settings",
+            return_value=settings_reads[0],
+        ):
+            first = hd.run_turn_in_process(
+                "one", "chat-model", max_turns=DEFAULT_MAX_TURNS
+            )
+        with patch(
+            "public_api_client.hermes_agent_client.profile_hermes_settings",
+            return_value=settings_reads[1],
+        ):
+            second = hd.run_turn_in_process(
+                "two", "chat-model", max_turns=DEFAULT_MAX_TURNS
+            )
+
+    assert first == "gemini-a"
+    assert second == "gemini-b"
+    assert len(created) == 2
+    assert created[0].kwargs["model"] == "gemini-a"
+    assert created[1].kwargs["model"] == "gemini-b"
+
+
+def test_agent_cache_evicts_the_least_recently_used_profile(monkeypatch, tmp_path):
+    """LRU is over personality/runtime keys, not individual chat ids (PR-2052)."""
+    created = []
+    homes = {
+        "one": str(tmp_path / "pib_one"),
+        "two": str(tmp_path / "pib_two"),
+        "three": str(tmp_path / "pib_three"),
+    }
+
+    class FakeAgent:
+        def __init__(self, **kwargs):
             self.close = MagicMock()
             created.append(self)
+
+        def reset_session_state(self, **kwargs):
+            pass
 
         def run_conversation(
             self, user_message, conversation_history=None, stream_callback=None
@@ -1057,14 +1329,23 @@ def test_agent_cache_evicts_the_least_recently_used_chat(monkeypatch):
     monkeypatch.setattr(hd, "DEFAULT_AGENT_CACHE_SIZE", 2)
     hd.clear_agent_cache()
 
-    with patch.dict(sys.modules, {"run_agent": fake_module}):
-        hd.run_turn_in_process("one", "chat-a")
-        hd.run_turn_in_process("two", "chat-b")
-        hd.run_turn_in_process("three", "chat-a")
-        hd.run_turn_in_process("four", "chat-c")
+    with (
+        patch.dict(sys.modules, {"run_agent": fake_module}),
+        patch(
+            "public_api_client.hermes_agent_client.ensure_profile",
+            side_effect=lambda personality_id: homes[personality_id],
+        ),
+    ):
+        hd.run_turn_in_process("one", "chat-a", personality_id="one")
+        hd.run_turn_in_process("two", "chat-b", personality_id="two")
+        hd.run_turn_in_process("three", "chat-a", personality_id="one")
+        hd.run_turn_in_process("four", "chat-c", personality_id="three")
 
     assert len(hd._agent_cache) == 2
-    assert [key[1] for key in hd._agent_cache] == ["chat-a", "chat-c"]
+    cached_homes = [key[0] for key in hd._agent_cache]
+    assert sum("pib_one" in home for home in cached_homes) == 1
+    assert sum("pib_three" in home for home in cached_homes) == 1
+    assert not any("pib_two" in home for home in cached_homes)
     created[1].close.assert_called_once()
 
 
@@ -1239,6 +1520,7 @@ def test_default_turn_runner_uses_in_process_path():
         max_turns=None,
         timeout=10,
         stream_callback=None,
+        message_history=None,
     )
 
 
@@ -1751,6 +2033,9 @@ def test_unlocked_store_supplies_the_hermes_key(monkeypatch, caplog, capsys, tmp
     (profile / "config.yaml").write_text(
         "model: gemini-3.8-flash\nprovider: gemini\n", encoding="utf-8"
     )
+    from public_api_client.hermes_agent_client import _ensure_mcp_servers_pib
+
+    _ensure_mcp_servers_pib(str(profile), model="gemini-3.8-flash", provider="gemini")
     before = {
         path.name: path.read_bytes() for path in profile.iterdir() if path.is_file()
     }
@@ -1885,3 +2170,219 @@ def test_agent_source_imports_here_caches_the_answer(tmp_path, monkeypatch):
     assert hermes_daemon.agent_source_imports_here(str(tmp_path)) is True
     assert hermes_daemon.agent_source_imports_here(str(tmp_path)) is True
     assert len(calls) == 1
+
+
+def test_second_turn_does_not_attempt_a_refused_stream_options_field(
+    tmp_path, monkeypatch
+):
+    """After one refusal is recorded, the next turn must not plan stream_options."""
+    from public_api_client.hermes_agent_client import (
+        clear_provider_refused_fields_cache,
+    )
+
+    clear_provider_refused_fields_cache()
+    monkeypatch.setenv("PIB_HERMES_PROFILES_DIR", str(tmp_path / "profiles"))
+    created = []
+
+    class FakeAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self._stream_options_unsupported = False
+
+        def run_conversation(
+            self, user_message, conversation_history=None, stream_callback=None
+        ):
+            self._stream_options_unsupported = True
+            return {"final_response": "OK."}
+
+    fake_module = types.ModuleType("run_agent")
+    fake_module.AIAgent = FakeAgent
+    hd.clear_agent_cache()
+
+    with (
+        patch.dict(sys.modules, {"run_agent": fake_module}),
+        patch(
+            "public_api_client.hermes_agent_client.ensure_profile",
+            return_value=str(tmp_path / "profiles" / "pib_pers-1"),
+        ),
+        patch(
+            "public_api_client.hermes_agent_client.profile_hermes_settings",
+            return_value=(
+                "pib-cloud",
+                "pib-cloud",
+                "https://api.pib.rocks/v1",
+                ("OPENAI_API_KEY",),
+            ),
+        ),
+        patch(
+            "public_api_client.hermes_agent_client.profile_tool_calling_enabled",
+            return_value=True,
+        ),
+    ):
+        hd.run_turn_in_process("Hallo", "chat-a", personality_id="pers-1")
+        hd._provider_field_attempts.clear()
+        hd.run_turn_in_process("Nochmal", "chat-a", personality_id="pers-1")
+
+    assert "stream_options" not in hd._provider_field_attempts[-1]
+    clear_provider_refused_fields_cache()
+    hd.clear_agent_cache()
+
+
+def test_run_turn_repairs_stale_profile_config_before_the_model(tmp_path, monkeypatch):
+    """PR-2071: an old config_version is repaired on the daemon path without a model call."""
+    from pib_hermes_config import PROFILE_CONFIG_VERSION, PROFILE_CONFIG_VERSION_KEY
+    from pib_hermes_config import profile_dir_for
+
+    import yaml
+
+    monkeypatch.setenv("PIB_HERMES_PROFILES_DIR", str(tmp_path / "profiles"))
+    monkeypatch.setenv("PIB_HERMES_PROFILE_FACTORY", "filesystem")
+    profile_dir = Path(profile_dir_for("stale"))
+    profile_dir.mkdir(parents=True)
+    for dirname in hd.PROFILE_DIRS:
+        (profile_dir / dirname).mkdir()
+    (profile_dir / ".env").write_text("# secrets\n", encoding="utf-8")
+    (profile_dir / "config.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "model": "gemini-3.8-flash",
+                "provider": "gemini",
+                PROFILE_CONFIG_VERSION_KEY: PROFILE_CONFIG_VERSION - 1,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (profile_dir / "SOUL.md").write_text("Du bist pib.\n", encoding="utf-8")
+
+    def read_version():
+        with open(profile_dir / "config.yaml", encoding="utf-8") as fh:
+            return yaml.safe_load(fh)[PROFILE_CONFIG_VERSION_KEY]
+
+    fake_module = _fake_agent_module([])
+    hd.clear_agent_cache()
+
+    with (
+        patch.dict(sys.modules, {"run_agent": fake_module}),
+        patch(
+            "public_api_client.hermes_agent_client.profile_hermes_settings",
+            return_value=("gemini-3.8-flash", "gemini", None, ()),
+        ),
+        patch(
+            "public_api_client.hermes_agent_client.profile_tool_calling_enabled",
+            return_value=True,
+        ),
+        patch(
+            "public_api_client.hermes_agent_client.provider_key_for_turn",
+            return_value="",
+        ),
+    ):
+        assert read_version() == PROFILE_CONFIG_VERSION - 1
+        hd.run_turn_in_process("Hallo", "chat-stale", personality_id="stale")
+        assert read_version() == PROFILE_CONFIG_VERSION
+        with patch("yaml.safe_dump") as dump:
+            hd.run_turn_in_process("Nochmal", "chat-stale", personality_id="stale")
+            dump.assert_not_called()
+
+
+def test_warm_turn_skips_profile_writer_when_config_version_is_current(
+    tmp_path, monkeypatch
+):
+    from pib_hermes_config import PROFILE_CONFIG_VERSION, PROFILE_CONFIG_VERSION_KEY
+    from pib_hermes_config import profile_dir_for
+
+    import yaml
+
+    monkeypatch.setenv("PIB_HERMES_PROFILES_DIR", str(tmp_path / "profiles"))
+    monkeypatch.setenv("PIB_HERMES_PROFILE_FACTORY", "filesystem")
+    profile_dir = Path(profile_dir_for("warm"))
+    profile_dir.mkdir(parents=True)
+    for dirname in hd.PROFILE_DIRS:
+        (profile_dir / dirname).mkdir()
+    (profile_dir / ".env").write_text("# secrets\n", encoding="utf-8")
+    (profile_dir / "SOUL.md").write_text("Du bist pib.\n", encoding="utf-8")
+
+    from public_api_client.hermes_agent_client import _ensure_mcp_servers_pib
+
+    _ensure_mcp_servers_pib(
+        str(profile_dir), model="gemini-3.8-flash", provider="gemini"
+    )
+    with open(profile_dir / "config.yaml", encoding="utf-8") as fh:
+        cfg = yaml.safe_load(fh)
+    assert cfg[PROFILE_CONFIG_VERSION_KEY] == PROFILE_CONFIG_VERSION
+
+    ensure_calls = {"count": 0}
+    real_ensure = _ensure_mcp_servers_pib
+
+    def counting_ensure(*args, **kwargs):
+        ensure_calls["count"] += 1
+        return real_ensure(*args, **kwargs)
+
+    fake_module = _fake_agent_module([])
+    hd.clear_agent_cache()
+
+    with (
+        patch.dict(sys.modules, {"run_agent": fake_module}),
+        patch(
+            "public_api_client.hermes_agent_client._ensure_mcp_servers_pib",
+            side_effect=counting_ensure,
+        ),
+        patch(
+            "public_api_client.hermes_agent_client.profile_hermes_settings",
+            return_value=("gemini-3.8-flash", "gemini", None, ()),
+        ),
+        patch(
+            "public_api_client.hermes_agent_client.profile_tool_calling_enabled",
+            return_value=True,
+        ),
+        patch(
+            "public_api_client.hermes_agent_client.provider_key_for_turn",
+            return_value="",
+        ),
+    ):
+        hd.run_turn_in_process("warm", "chat-warm", personality_id="warm")
+        hd.run_turn_in_process("again", "chat-warm", personality_id="warm")
+
+    assert ensure_calls["count"] == 0
+
+
+def _reset_prewarm_state():
+    hd._prewarm_completed = False
+
+
+def test_prewarm_skipped_when_smart_chats_disabled(monkeypatch, caplog):
+    _reset_prewarm_state()
+    monkeypatch.setenv("PIB_SMART_CHATS", "0")
+    warmed = MagicMock()
+    monkeypatch.setattr(hd, "_construct_warm_agent_for_personality", warmed)
+
+    assert hd.prewarm_default_agent_at_start() is True
+    assert hd.prewarm_default_agent_at_start() is False
+    warmed.assert_not_called()
+    assert any("smart chats disabled" in rec.getMessage() for rec in caplog.records)
+
+
+def test_prewarm_warms_explicit_personality_once(monkeypatch):
+    _reset_prewarm_state()
+    monkeypatch.delenv("PIB_SMART_CHATS", raising=False)
+    monkeypatch.setenv(hd.PREWARM_PERSONALITY_ENV, "pers-warm")
+    construct = MagicMock()
+    monkeypatch.setattr(hd, "_construct_warm_agent_for_personality", construct)
+
+    assert hd.prewarm_default_agent_at_start() is True
+    assert hd.prewarm_default_agent_at_start() is False
+    construct.assert_called_once_with("pers-warm")
+
+
+def test_prewarm_skips_direct_only_personality_list(monkeypatch, caplog):
+    _reset_prewarm_state()
+    monkeypatch.delenv("PIB_SMART_CHATS", raising=False)
+    monkeypatch.delenv(hd.PREWARM_PERSONALITY_ENV, raising=False)
+    construct = MagicMock()
+    monkeypatch.setattr(hd, "_construct_warm_agent_for_personality", construct)
+
+    def personalities():
+        return [{"personalityId": "p1", "channel": "direct"}]
+
+    hd.prewarm_default_agent_at_start(fetch_personalities=personalities)
+    construct.assert_not_called()
+    assert any("no smart personality" in rec.getMessage() for rec in caplog.records)

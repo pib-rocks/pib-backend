@@ -41,6 +41,8 @@ services:
           create_host_path: false
     networks:
       - pib-network
+    profiles:
+      - hermes
     security_opt:
       - no-new-privileges:true
 
@@ -91,6 +93,8 @@ services:
       - HOST_IP_FILE=/etc/pib_host_ip
       # Empty means read /etc/pib_smart_chats. 0 disables the Hermes channel.
       - PIB_SMART_CHATS=${PIB_SMART_CHATS:-}
+      - HOMEASSISTANT_URL=${HOMEASSISTANT_URL:-http://homeassistant:8123}
+      - MATTER_SERVER_URL=${MATTER_SERVER_URL:-ws://host.docker.internal:5580/ws}
     volumes:
       - ./pib_api/flask/:/app
       - /home/pib/app/pib-backend/pib_hermes_config/pib_hermes_config:/app/pib_hermes_config
@@ -117,6 +121,7 @@ services:
       # externally reachable API has no reason to see.
       - /home/pib/.hermes/profiles:/home/pib/.hermes/profiles
       - /var/run/docker.sock:/var/run/docker.sock
+      - /dev/serial/by-id:/dev/serial/by-id:ro
     restart: always
     depends_on:
       - pib-blockly-server
@@ -309,6 +314,7 @@ services:
         source /opt/ros/jazzy/setup.bash &&
         source /app/ros2_ws/install/setup.bash &&
         ros2 run button_service button_service_node &
+        ros2 run smart_home smart_home_node &
         ros2 launch programs launch.py
       "
     profiles:
@@ -411,6 +417,40 @@ services:
     restart: always
     depends_on:
       - rosbridge-ws
+
+  matter-server:
+    image: ghcr.io/home-assistant-libs/python-matter-server:stable
+    profiles:
+      - all
+      - smarthome
+    network_mode: host
+    mem_limit: 192m
+    security_opt:
+      - apparmor=unconfined
+    volumes:
+      - /home/pib/app/matter-server:/data
+      - /run/dbus:/run/dbus:ro
+    restart: always
+
+  homeassistant:
+    image: ghcr.io/home-assistant/home-assistant:stable
+    profiles:
+      - all
+      - smarthome
+    mem_limit: 384m
+    ports:
+      - "8123:8123"
+    environment:
+      - TZ=Europe/Berlin
+    volumes:
+      - /home/pib/app/homeassistant:/config
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - pib-network
+    depends_on:
+      - matter-server
+    restart: always
 
 volumes:
   programs:

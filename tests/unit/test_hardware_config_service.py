@@ -62,7 +62,7 @@ def test_v1_import_updates_tinkerforge_addresses_and_motor_mapping(seeded):
             {
                 "name": "elbow_left",
                 "velocity": 12345,
-                "invert": True,
+                "upperEndpoint": "min",
                 "brickletPins": [{"brickletNumber": 1, "pin": 6, "invert": False}],
             }
         ],
@@ -80,7 +80,7 @@ def test_v1_import_updates_tinkerforge_addresses_and_motor_mapping(seeded):
     assert elbow.controller.number == 1
     assert elbow.channel == 6
     assert elbow.velocity == 12345
-    assert elbow.invert is True
+    assert elbow.upper_endpoint == "min"
 
 
 def test_import_swaps_controller_addresses_without_unique_conflict(seeded):

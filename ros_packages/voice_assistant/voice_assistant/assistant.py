@@ -15,6 +15,14 @@ from datatypes.srv import (
     PlayAudioFromSpeech,
     GetChatIsListening,
     SendChatMessage,
+    CancelChatTurn,
+)
+from voice_assistant.chat_turn import (
+    STATE_CANCELLED,
+    STATE_RUNNING,
+    TextTurnRegistry,
+    TurnBusy,
+    turn_state_event,
 )
 from pib_api_client import voice_assistant_client
 from pib_api_client.voice_assistant_client import Personality
@@ -39,6 +47,8 @@ from pib_hermes_config.visible_state import (
 from public_api_client.hermes_agent_client import FALLBACK_REPLY
 from std_msgs.msg import Bool, String
 from voice_assistant.turn_latency import (
+    format_perf_trace_tts_first_audio,
+    tts_first_audio_elapsed_ms,
     TURN_TRACE_TOPIC,
     TurnTrace,
     append_record,
@@ -156,6 +166,7 @@ class VoiceAssistantNode(Node):
         self._orphan_dropped = 0
         self._sentence_flushed = False
         self._turn_trace_max_seconds = _turn_trace_max_seconds()
+        self._text_turn_registry = TextTurnRegistry()
 
         # services ----------------------------------------------------------------------
 
@@ -181,6 +192,9 @@ class VoiceAssistantNode(Node):
         # Service that allows clients to send chat messages
         self.send_chat_message: Service = self.create_service(
             SendChatMessage, "send_chat_message", self.send_chat_message
+        )
+        self.cancel_chat_turn: Service = self.create_service(
+            CancelChatTurn, "cancel_chat_turn", self.cancel_chat_turn
         )
 
         # publishers --------------------------------------------------------------------
@@ -394,12 +408,14 @@ class VoiceAssistantNode(Node):
         generate_code: bool,
         on_sentence_received: Callable[[str, bool], None] = lambda _1, _2: None,
         on_code_visual_received: Callable[[str, bool], None] = lambda _1, _2: None,
+        turn_id: str = "",
     ) -> None:
 
         goal = Chat.Goal()
         goal.text = text
         goal.chat_id = chat_id
         goal.generate_code = generate_code
+        goal.turn_id = turn_id
 
         def feedback_callback(msg) -> None:
             feedback: Chat.Feedback = msg.feedback
@@ -645,10 +661,49 @@ class VoiceAssistantNode(Node):
         )
         return response
 
+    def _publish_text_turn_state(
+        self, turn_id: str, state: str, chat_id: str, *, reason: str = ""
+    ) -> None:
+        if not turn_id:
+            return
+        try:
+            message = String()
+            message.data = turn_state_event(
+                turn_id,
+                state,
+                chat_id=chat_id,
+                reason=reason,
+                source="voice_assistant",
+            )
+            self._turn_trace_publisher.publish(message)
+        except Exception as exc:
+            self.get_logger().warning(f"text turn state was not published: {exc}")
+
+    def _stop_active_chat_goal(self, chat_id: str) -> None:
+        stop = self.chat_id_to_stop_chat.get(chat_id)
+        if stop is not None:
+            stop()
+
+    def cancel_chat_turn(
+        self, request: CancelChatTurn.Request, response: CancelChatTurn.Response
+    ) -> CancelChatTurn.Response:
+        """Cancel one text turn started through ``send_chat_message``."""
+        turn_id = (request.turn_id or "").strip()
+        record = self._text_turn_registry.get(turn_id)
+        chat_id = record.chat_id if record is not None else ""
+        successful, reason = self._text_turn_registry.cancel(turn_id)
+        response.successful = successful
+        response.status_reason = reason
+        if successful:
+            self._publish_text_turn_state(turn_id, STATE_CANCELLED, chat_id)
+        return response
+
     def send_chat_message(
         self, request: SendChatMessage.Request, response: SendChatMessage.Response
     ) -> SendChatMessage.Response:
         """callback function for 'send_chat_message' service"""
+        response.turn_id = ""
+        response.status_reason = ""
 
         # A typed line for the open live chat joins that session. It does not
         # start a second turn, and it does not close the session.
@@ -689,15 +744,32 @@ class VoiceAssistantNode(Node):
 
         # Text-only: other chat, or same chat while voice is OFF.
         else:
+            try:
+                turn_id = self._text_turn_registry.start(
+                    request.chat_id,
+                    stop=lambda: self._stop_active_chat_goal(request.chat_id),
+                )
+            except TurnBusy as busy:
+                response.successful = False
+                response.status_reason = busy.reason
+                return response
+
             self.set_is_listening(request.chat_id, False)
+            self._publish_text_turn_state(turn_id, STATE_RUNNING, request.chat_id)
 
             def on_sentence_received(sentence: str, is_final: bool):
                 if is_final:
                     self.set_is_listening(request.chat_id, True)
+                    self._text_turn_registry.finish(turn_id)
 
             self.chat(  # TODO : there is a race condition here, that could lead to the va falsely starting to listen, when activating this chat
-                request.content, request.chat_id, False, on_sentence_received
+                request.content,
+                request.chat_id,
+                False,
+                on_sentence_received,
+                turn_id=turn_id,
             )
+            response.turn_id = turn_id
 
         response.successful = True
         return response
@@ -911,6 +983,7 @@ class VoiceAssistantNode(Node):
             if self._turn_trace.is_open:
                 self._close_latency_turn(incomplete=True)
             self._sentence_flushed = False
+            self._tts_first_audio_logged = False
             self._turn_trace.open(
                 self.state.chat_id or "",
                 self._trace_source(),
@@ -987,6 +1060,17 @@ class VoiceAssistantNode(Node):
                     self._turn_trace.dropped_events += 1
                     return
                 self._turn_trace.observe(event)
+                if event.get("stage") == "first_audio" and not getattr(
+                    self, "_tts_first_audio_logged", False
+                ):
+                    elapsed = tts_first_audio_elapsed_ms(self._turn_trace)
+                    if elapsed is not None:
+                        self._tts_first_audio_logged = True
+                        self.get_logger().info(
+                            format_perf_trace_tts_first_audio(
+                                self._turn_trace.chat_id, elapsed
+                            )
+                        )
                 return
             if event.get("stage") == "end_of_speech":
                 self._pending_end_of_speech = event

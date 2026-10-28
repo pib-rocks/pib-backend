@@ -12,6 +12,7 @@ from ros_packages.imitation.imitation.landmark_mapping import (
 from ros_packages.imitation.imitation.trajectory import (
     TeleopController,
     build_timed_trajectory,
+    degrees_to_radians,
 )
 from ros_packages.motors.pib_motors.pib_motors.trajectory_executor import (
     is_software_trajectory,
@@ -154,8 +155,8 @@ def test_ik_limits_timed_conversion_and_non_overlapping_requests():
     kinematics.solution = (11.0, -19.0)
     trajectory = controller.prepare((2.0, 3.0, 4.0), (0.0, 0.0, 0.0, 1.0))
     assert trajectory.joint_names == kinematics.motor_names
-    assert trajectory.waypoints[0].positions == (1012.0, -2012.0)
-    assert trajectory.waypoints[1].positions == (1100.0, -1900.0)
+    assert trajectory.waypoints[0].positions == degrees_to_radians((10.125, -20.125))
+    assert trajectory.waypoints[1].positions == degrees_to_radians((11.0, -19.0))
     assert [point.time_from_start for point in trajectory.waypoints] == [0.0, 0.2]
 
     future = controller.submit(trajectory)
@@ -195,4 +196,14 @@ def test_timed_layout_is_compatible_with_trajectory_executor():
     names, times, series = parse_joint_trajectory(message)
     assert names == ["joint_a", "joint_b"]
     assert times == [0.0, 0.25]
-    assert series == {"joint_a": [100.0, 300.0], "joint_b": [200.0, 400.0]}
+    assert series == {
+        "joint_a": [degrees_to_radians((1.0,))[0], degrees_to_radians((3.0,))[0]],
+        "joint_b": [degrees_to_radians((2.0,))[0], degrees_to_radians((4.0,))[0]],
+    }
+
+
+def test_timed_trajectory_builder_produces_radian_positions_for_service():
+    trajectory = build_timed_trajectory(
+        ("joint_a",), (45.0,), (90.0,), duration_sec=0.1
+    )
+    assert trajectory.waypoints[1].positions == degrees_to_radians((90.0,))

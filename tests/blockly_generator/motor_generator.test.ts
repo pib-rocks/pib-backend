@@ -6,6 +6,7 @@ import {
   get_hand_z,
   motor_current,
   move_motor,
+  move_motors,
   set_hand_position_xyz,
 } from "../../pib_blockly/pib_blockly_server/src/pib-blockly/program-generators/motor-generators";
 
@@ -24,7 +25,13 @@ function createMockGenerator(positionCode = "1000"): MockGenerator {
   const generator = Object.create(pythonGenerator) as MockGenerator;
   generator.definitions_ = definitions;
   generator.provideFunction_ = (name: string, code: string) => {
-    definitions[`FN_${name}`] = code;
+    // Real Blockly substitutes its function-name placeholder before storing the
+    // definition; the mock has to do the same or an assertion on "def <name>"
+    // can never match.
+    const resolved = code
+      .split(generator.FUNCTION_NAME_PLACEHOLDER_)
+      .join(name);
+    definitions[`FN_${name}`] = resolved;
     return name;
   };
   generator.valueToCode = () => positionCode;
@@ -42,6 +49,33 @@ function createMotorBlock(
       throw new Error(`unexpected field ${field}`);
     },
   } as unknown as Block;
+}
+
+type MoveMotorsRow = { motor: string; angle: string };
+
+function createMoveMotorsBlock(rows: MoveMotorsRow[]): Block {
+  return {
+    getMotorRowCount: () => rows.length,
+    getFieldValue: (field: string) => {
+      const match = /^MOTOR_(\d+)$/.exec(field);
+      if (match) {
+        return rows[Number(match[1])].motor;
+      }
+      throw new Error(`unexpected field ${field}`);
+    },
+  } as unknown as Block;
+}
+
+function createMoveMotorsGenerator(rows: MoveMotorsRow[]): MockGenerator {
+  const generator = createMockGenerator();
+  generator.valueToCode = (_block, name) => {
+    const match = /^ANGLE_(\d+)$/.exec(name);
+    if (match) {
+      return rows[Number(match[1])].angle;
+    }
+    throw new Error(`unexpected input ${name}`);
+  };
+  return generator;
 }
 
 function createHandPositionBlock(
@@ -78,9 +112,9 @@ describe("move_motor generator", () => {
     expect(code).toBe(
       'apply_joint_trajectory("turn_head_motor", get_joint_position(\'turn_head_motor\') + 250)\n',
     );
-    expect(Object.values(generator.definitions_).join("\n")).toContain(
-      "get_joint_position_client.call_async",
-    );
+    const defs = Object.values(generator.definitions_).join("\n");
+    expect(defs).toContain("get_joint_position_client.call_async");
+    expect(defs).toContain("return centidegrees_to_degrees(response.position)");
   });
 
   it("maps TILT_FORWARD_HEAD to tilt_forward_motor", () => {
@@ -88,6 +122,44 @@ describe("move_motor generator", () => {
     const block = createMotorBlock("TILT_FORWARD_HEAD", "ABSOLUTE");
     const code = move_motor(block, generator);
     expect(code).toContain('"tilt_forward_motor"');
+  });
+});
+
+describe("move_motors generator", () => {
+  it("emits one vector move call for two motors in block order", () => {
+    const rows = [
+      { motor: "ELBOW_LEFT", angle: "12.5" },
+      { motor: "WRIST_LEFT", angle: "-3" },
+    ];
+    const generator = createMoveMotorsGenerator(rows);
+    const code = move_motors(createMoveMotorsBlock(rows), generator);
+    const defs = Object.values(generator.definitions_).join("\n");
+
+    expect(code).toBe(
+      'move_motors("elbow_left", 12.5, "wrist_left", -3)\n',
+    );
+    expect(code.match(/move_motors\(/g)?.length ?? 0).toBe(1);
+    expect(defs).toContain("write.move(*args)");
+    expect(defs).not.toContain("apply_joint_trajectory");
+    expect(defs).not.toContain("get_joint_position_client");
+  });
+
+  it("emits one vector move call for three motors", () => {
+    const rows = [
+      { motor: "TURN_HEAD", angle: "0" },
+      { motor: "TILT_FORWARD_HEAD", angle: "5" },
+      { motor: "ELBOW_RIGHT", angle: "90" },
+    ];
+    const generator = createMoveMotorsGenerator(rows);
+    const code = move_motors(createMoveMotorsBlock(rows), generator);
+    const defs = Object.values(generator.definitions_).join("\n");
+
+    expect(code).toBe(
+      'move_motors("turn_head_motor", 0, "tilt_forward_motor", 5, "elbow_right", 90)\n',
+    );
+    expect(code.match(/move_motors\(/g)?.length ?? 0).toBe(1);
+    expect(defs).toContain("write.move(*args)");
+    expect(defs).not.toContain("apply_joint_trajectory");
   });
 });
 
@@ -146,9 +218,10 @@ describe("set_hand_position_xyz generator", () => {
       'set_hand_position_xyz("left", "ABSOLUTE", 0.2, 0.1, 0.3)\n',
     );
     const defs = Object.values(generator.definitions_).join("\n");
-    expect(defs).toContain("from pib_sdk import ik, Write, right_arm, left_arm");
-    expect(defs).toContain("target = [x, y, z]");
-    expect(defs).toContain("q_deg = ik(side, xyz=target)");
+    expect(defs).toContain("from pib_sdk import ik_deg, Write, right_arm, left_arm");
+    expect(defs).toContain("from pib_sdk.kinematics import from_rep103, to_rep103");
+    expect(defs).toContain("target = list(from_rep103([x, y, z]))");
+    expect(defs).toContain("q_deg = ik_deg(side, xyz=target)");
     expect(defs).toContain("pib.move(arm, *q_deg)");
     expect(defs).toContain('os.getenv("ROSBRIDGE_HOST", "rosbridge-ws")');
     expect(defs).not.toContain("get_joint_position_client.call_async");
@@ -165,10 +238,10 @@ describe("set_hand_position_xyz generator", () => {
     );
     const defs = Object.values(generator.definitions_).join("\n");
     expect(defs).toContain("from pib_sdk import get_hand_position_xyz");
+    expect(defs).toContain("from pib_sdk.kinematics import from_rep103, to_rep103");
     expect(defs).toContain("current = get_hand_position_xyz(side)");
-    expect(defs).toContain(
-      "target = [current[0] + x, current[1] + y, current[2] + z]",
-    );
+    expect(defs).toContain("offset = list(from_rep103([x, y, z]))");
+    expect(defs).toContain("current[0] + offset[0]");
 
     // the inline forward-kinematics helper was replaced by the sdk call
     expect(defs).not.toContain("get_current_hand_position");
@@ -199,11 +272,13 @@ describe("get_hand_x/y/z generators", () => {
 
       const [code, order] = blockGenerator(block, generator) as [string, Order];
 
-      expect(code).toBe(`get_hand_position_xyz("left")[${index}]`);
-      expect(order).toBe(Order.MEMBER);
-      expect(Object.values(generator.definitions_).join("\n")).toContain(
-        "from pib_sdk import get_hand_position_xyz",
+      expect(code).toBe(
+        `get_hand_position_rep103("left")[${index}]`,
       );
+      expect(order).toBe(Order.MEMBER);
+      const defs = Object.values(generator.definitions_).join("\n");
+      expect(defs).toContain("from pib_sdk import get_hand_position_xyz");
+      expect(defs).toContain("from pib_sdk.kinematics import from_rep103, to_rep103");
     },
   );
 
@@ -215,7 +290,7 @@ describe("get_hand_x/y/z generators", () => {
 
     const [code] = get_hand_y(block, generator) as [string, Order];
 
-    expect(code).toBe('get_hand_position_xyz("right")[1]');
+    expect(code).toBe('get_hand_position_rep103("right")[1]');
   });
 
   it("rejects an invalid side", () => {

@@ -20,6 +20,7 @@ from service import personality_service, soul_service
 # The tool names that used to be documented in the SOUL and must not come back.
 EXPECTED_MCP_TOOLS = (
     "mcp__pib__list_motors",
+    "mcp__pib__get_motion_model",
     "mcp__pib__get_state",
     "mcp__pib__list_poses",
     "mcp__pib__list_programs",

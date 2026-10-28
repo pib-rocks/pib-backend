@@ -1,0 +1,58 @@
+Task: PR-1950 - the update path must set OLLAMA_HOST, so an updated device (not just a freshly installed one)
+can reach the local model.
+
+Repository: pib-backend. Branch: PR-1950, created from origin/develop. Ticket: PR-1950.
+
+=== The defect, measured ===
+A device that is UPDATED instead of reinstalled never receives the Ollama listen drop-in. PR-1949 (merged as
+5797077c) added it to the install path only:
+
+- setup-pib.sh, function ensure_ollama_listen_dropin, writes
+  /etc/systemd/system/ollama.service.d/override.conf with
+      [Service]
+      Environment="OLLAMA_HOST=0.0.0.0:11434"
+  It is idempotent (compares the staged file with the existing one and returns early on equality) and it
+  warns when the unit is already active ("applies on the next start"). A unit test covers it
+  (test_the_listen_dropin_is_written_before_the_first_start).
+- grep for OLLAMA_HOST, ollama.service.d or dropin in setup/update-pib.sh returns NOTHING. PR-1949's changes
+  in that file are about the host IP, not Ollama.
+- Test device 192.168.1.172, installed from the pre-fix develop: `ss -tlnp` shows 127.0.0.1:11434, no
+  /etc/systemd/system/ollama.service.d/ directory, zero OLLAMA_HOST lines in `systemctl cat ollama`.
+
+Why it matters: an update run rebuilds the flask image, so the 2.0 s lookup timeout from PR-1949 arrives,
+but the unit keeps the loopback bind. BOTH halves are needed for Cerebra to offer the model, so an update
+currently delivers half a fix and no visible change.
+
+=== What to change ===
+Make the update path apply the same listen configuration. Preferred shape: extract the logic into one shared
+helper (for example under setup/installation_scripts/, which the update path can source) and call it from
+BOTH setup-pib.sh and setup/update-pib.sh, instead of copying the function. If you decide to duplicate it
+instead, say why in the code comment.
+
+Decide deliberately whether the update restarts ollama so the new bind takes effect:
+- writing the drop-in without a restart changes nothing until the next reboot, so an update would still
+  appear not to work;
+- restarting it makes the update deliver the fix, at the cost of a short unavailability of the local model
+  during a maintenance window.
+Choose one, implement it, and state the reason in the comment.
+
+=== Hard constraints ===
+- Work only on branch PR-1950. Make the changes and run the tests, but do NOT commit and do NOT push:
+  leave the changes in the working tree.
+- NO device access. The device-side verification (ss -tlnp on a real device, a tags request from inside the
+  flask container) is the operator's step. Do not claim device-verified results.
+- The update path must keep working on a device WITHOUT ollama at all: the 4 GiB variants never install it
+  (see the variant gate in setup-pib.sh around line 1516). Do not let the new step fail the update there.
+- Idempotency: a second run on an already-configured device must not rewrite or restart anything
+  unnecessarily.
+- Product-neutral shipped code: no IPs, no host names, no device-specific values.
+- Tests: the existing unit and integration suites must keep passing, and black must stay clean as the CI
+  runs it. Add a test for the update path writing the drop-in, and for a device without ollama staying
+  untouched.
+- Report what you ran, what you did not run, and anything left unverified.
+
+=== Also report, do not silently fix ===
+This is one instance of a general question: which OTHER install-time steps have no counterpart on the update
+path? PR-1949 had to add the host-IP step to setup/update-pib.sh for exactly that reason. List the install
+steps and name the ones without an update counterpart in your report - do not fix unrelated ones in this
+change.

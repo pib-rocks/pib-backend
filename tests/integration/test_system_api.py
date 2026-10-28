@@ -26,7 +26,13 @@ def test_hardware_variant_shape_and_v1_mirror(client):
         "variant": "pib5edu",
         "source": "environment",
         "supported": list(ALLOWED_HARDWARE_VARIANTS),
-        "implementedVariants": ["pib4edu", "pib5advanced", "pib5edu"],
+        "implementedVariants": [
+            "pib4advanced",
+            "pib4edu",
+            "pib5advanced",
+            "pib5edu",
+            "pib5museum",
+        ],
         "seedProfileImplemented": True,
     }
 
@@ -65,7 +71,7 @@ def test_hardware_capabilities_shape_and_v1_mirror(client):
     assert "velocity" in feetech_settings
     assert "acceleration" in feetech_settings
     assert "rotation_range" in feetech_settings
-    assert "invert" in feetech_settings
+    assert "endpoint_mapping" in feetech_settings
     assert "current_limit" not in tf_settings
     assert "current_limit" in feetech_settings
     assert "torque_limit" in by_kind[ROBSTRIDE_CAN]["meaningfulSettings"]

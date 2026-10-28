@@ -152,15 +152,17 @@ def record_first_token_latency(chat_id: str, latency_ms: float) -> bool:
         return False
 
 
-def get_chat(chat_id: str) -> Tuple[bool, Chat]:
+def get_chat(chat_id: str) -> Tuple[bool, Optional[Chat]]:
     request = Request(CHAT_URL % chat_id, method="GET")
     successful, chat_dto = send_request(request)
-    return successful, Chat(chat_dto)
+    if not successful or not isinstance(chat_dto, dict):
+        return False, None
+    return True, Chat(chat_dto)
 
 
-def get_personality_from_chat(chat_id: str) -> Tuple[bool, Personality]:
+def get_personality_from_chat(chat_id: str) -> Tuple[bool, Optional[Personality]]:
     successful, chat = get_chat(chat_id)
-    if not successful:
+    if not successful or chat is None:
         return False, None
     return get_personality(chat.personality_id)
 
@@ -182,7 +184,19 @@ def create_chat_message(
         data=data,
     )
     successful, chat_message_dto = send_request(request)
-    return successful, ChatMessage(chat_message_dto)
+    if not successful or not isinstance(chat_message_dto, dict):
+        return False, None
+    return True, ChatMessage(chat_message_dto)
+
+
+def delete_chat_message(chat_id: str, message_id: str) -> bool:
+    """Remove one message row. Used when a cancelled turn must leave no assistant line."""
+    request = Request(
+        CHAT_MESSAGES_URL % chat_id + "/" + message_id,
+        method="DELETE",
+    )
+    successful, _ = send_request(request)
+    return bool(successful)
 
 
 def update_chat_message(
@@ -203,7 +217,9 @@ def update_chat_message(
         data=data,
     )
     successful, chat_message_dto = send_request(request)
-    return successful, ChatMessage(chat_message_dto)
+    if not successful or not isinstance(chat_message_dto, dict):
+        return False, None
+    return True, ChatMessage(chat_message_dto)
 
 
 def add_chat_message_image(

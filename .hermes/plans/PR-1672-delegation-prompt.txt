@@ -1,0 +1,59 @@
+Stabilize/fix the two failing live E2E voice-assistant tests per ticket https://pib-rocks.atlassian.net/browse/PR-1672.
+
+Repo: pib-backend — /home/pib/opencode/pib-backend, branch `PR-1672` (from develop `b749915f`).
+
+## Problem (verified on Pi, develop b749915f)
+On the Pi full suite (run_all_tests.sh), two live E2E tests in tests/e2e/test_voice_assistant_hermes_e2e.py fail:
+1. test_voice_assistant_hermes_persists_reply_and_recalls_prior_fact
+2. test_chat_send_button_activation_with_smartconnect
+
+- persist-recall (the primary): `assert token in recalled_reply["content"]` fails because the assistant replies
+  "Entschuldige, das hat gerade einen Moment zu lange gedauert. Frag mich bitte später noch einmal." — i.e. the
+  Hermes Agent LLM turn for the recall question exceeds the wait budget. This is a REAL backend/LLM-timing issue on
+  the Pi (two Hermes turns too slow / turn budget too short), NOT a trivial wait/flake.
+- chat-send+smartconnect: the SmartConnect token/password setup ('12345678') + chatbot persona chat send-button flow
+  does not complete reliably on the live Pi.
+
+Rest of the suite is green (pytest 316+6, Jest 6/6, Robot 17/17) — this is voice-assistant-specific.
+
+## Already-done context (PR-1669, do NOT regress)
+The rosbridge receive loops were made to honor per-recv deadlines (per-recv socket timeout derived from remaining
+budget); SERVICE_ACK_TIMEOUT (60s) was separated; TURN_TIMEOUT went 180s -> 300s; message polling tolerates transient
+5xx/dropped connections; teardown turns off listening. Behavior assertions are strong (case-sensitive token recall).
+
+## Goal
+Make both tests pass reliably on the Pi WITHOUT weakening behavioral assertions (the recall must actually return the
+stored fact; the chat-send must actually send via SmartConnect). Fix real timing/setup root causes where possible.
+
+## Approach
+Investigate (do not just bump blindly):
+- For persist-recall: determine WHY the Hermes turn takes > the budget on the Pi. Legit causes: model latency,
+  two sequential turns, cold LLM state. Adjust the turn budget / per-recv timeout adequately for the Pi (two
+  turns), keep the assertion strong (assistant must answer with the token). If the real issue is that the assistant
+  needs the fact from the FIRST turn to survive the SECOND call, verify the recall actually reads prior context; fix
+  any message/window handling that drops the stored fact rather than weakening the token check.
+- For chat-send+smartconnect: make SmartConnect readiness deterministic (wait for websocket/token setup, e.g.
+  '12345678' password ready) before the send-button activation check; ensure the UI send-button condition (input
+  length / connection) is met robustly. Keep the assertions of actual send behavior.
+- Use robust explicit waits over raw sleeps where a selector exists; do not weaken expects of behavior.
+
+## Files
+- tests/e2e/test_voice_assistant_hermes_e2e.py (primary)
+- possibly tests/e2e/ helpers used by SmartConnect setup.
+
+## Constraints
+- Stay on branch `PR-1672`. Do NOT merge/push develop (orchestrator opens PR). You MAY commit (`fix: PR-1672 ...`).
+- Do NOT change product/non-test code unless it is clearly a bug in message window/recall that drops the fact —
+  if you do, scope it tightly and say so.
+- Do NOT weaken the recall/chat behavioral assertions.
+- Do NOT commit `.hermes/plans/**`. Report REAL results.
+- You likely cannot run the live Pi E2E here; focus on correct, bounded changes and py_compile. State what remains
+  to verify on the Pi.
+
+## Self-check
+- `python3 -m py_compile tests/e2e/test_voice_assistant_hermes_e2e.py` -> ok.
+- `git diff --stat origin/develop...HEAD` shows the intended file(s).
+
+FINAL REPORT: the real root cause you found (esp. for persist-recall timeout), what you changed, whether you touched
+non-test code and why, the real diff-stat, confirmation you did not merge/push or weaken assertions, and the Pi
+verification steps still needed. Commit hash if committed.

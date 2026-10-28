@@ -109,21 +109,24 @@ def _ros_command(node):
 
     client = node.create_client(ApplyJointTrajectory, "apply_joint_trajectory")
 
-    def command(motor, position) -> None:
+    def command(motor, position_centideg) -> None:
         ready = getattr(client, "service_is_ready", None)
         if ready is None or not ready():
             return
+        from pib_motors.units import centideg_to_rad
         from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
         request = ApplyJointTrajectory.Request()
         trajectory = JointTrajectory()
         trajectory.joint_names = [str(motor)]
         point = JointTrajectoryPoint()
-        point.positions = [float(position)]
+        point.positions = [centideg_to_rad(int(position_centideg))]
         trajectory.points = [point]
         request.joint_trajectory = trajectory
         client.call_async(request)
-        node.get_logger().info(f"turning {motor} to {int(position)} before answering")
+        node.get_logger().info(
+            f"turning {motor} to {int(position_centideg)} centideg before answering"
+        )
 
     return command
 

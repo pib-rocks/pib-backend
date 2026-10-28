@@ -70,10 +70,34 @@ def assistant_node(monkeypatch):
     live = importlib.util.module_from_spec(live_spec)
     monkeypatch.setitem(__import__("sys").modules, live_spec.name, live)
     live_spec.loader.exec_module(live)
+
+    class _TurnBusy(Exception):
+        def __init__(self, reason: str) -> None:
+            self.reason = reason
+
+    class _TextTurnRegistry:
+        def start(self, chat_id: str, stop) -> str:
+            return "abcd1234"
+
+        def finish(self, turn_id: str) -> None:
+            return None
+
+        def get(self, turn_id: str):
+            return None
+
+        def cancel(self, turn_id: str):
+            return False, ""
+
     ns = {
         "__name__": "_pc49_actual_assistant",
         "Node": object,
         "typed_text_joins_live": live.typed_text_joins_live,
+        "TextTurnRegistry": _TextTurnRegistry,
+        "TurnBusy": _TurnBusy,
+        "STATE_RUNNING": "running",
+        "STATE_CANCELLED": "cancelled",
+        "turn_state_event": lambda *args, **kwargs: "{}",
+        "CancelChatTurn": SimpleNamespace,
         "threading": SimpleNamespace(Timer=ManualTimer, Event=threading.Event),
         "StreamingSpeech": helper.StreamingSpeech,
         "authored_filler": helper.authored_filler,
@@ -145,6 +169,10 @@ def assistant_node(monkeypatch):
     node._playback_epoch = 0
     node._pending_drain_watchdog = None
     node._answer_drain_max_seconds = 90.0
+    node._text_turn_registry = _TextTurnRegistry()
+    node._turn_trace_publisher = MagicMock()
+    node._stop_active_chat_goal = MagicMock()
+    node._publish_text_turn_state = MagicMock()
     for name in (
         "play_audio_from_file",
         "play_audio_from_speech",

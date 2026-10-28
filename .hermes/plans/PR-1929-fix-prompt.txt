@@ -1,0 +1,38 @@
+Task: PR-1929 - make detection boxes match the object in the vertical axis.
+
+Repository: pib-backend. Branch: PR-1929, created from origin/develop. Ticket: PR-1929.
+
+=== Evidence already on the ticket (measured on the test device with the published frame, 1280x720) ===
+- A bottle standing on the table at a true y of about 606 is reported at y 643.
+- A bottle held high, tip at about y 85, is reported at y 65.
+- Both are displaced AWAY from the centre by the same factor 720/648 = 1.111, i.e. +11.1 %.
+- x is correct: the same bottle stands at x 402-452 and is reported at 402-454. A centred crop would have shifted x as well; it did not.
+- The colour branch that feeds the models is 1152x648. stereo.py:100 documents it as "nine tenths of the preview", and 1152/1280 = 648/720 = 0.9 exactly.
+- Working conclusion: the branch covers only the central nine tenths of the published frame vertically, while the inverse mapping treats the detection fractions as fractions of the FULL published frame.
+
+=== Refuted - do not implement ===
+A previous read-only pass refuted the idea that swapping in the "requested branch size" could fix this: an ImageManip stretch preserves per-axis fractions, so a fraction of the branch is the same fraction of the network input and maps back correctly. What is missing is the field the branch REALLY DELIVERS, not the size that was requested. Do not re-implement that approach.
+
+=== Step 1: diagnostic, mandatory before the fix ===
+Make the colour branch's real delivery observable on the device, so the delivered field can be compared against a simultaneous preview capture. Requirements:
+- No change to default behaviour; must be off unless explicitly enabled.
+- No device-owner conflict: the running camera node itself has to produce it.
+- It must be runnable by the operator with one documented command. Describe that command in your final report.
+- DepthAI is 3.6.1. Node.Output exposes no size getter there, which is why _branch_output_size falls back to the requested size - do not rely on that helper. The hand chain reads the live size from the packet (_note_hand_branch_size); if an equivalent source exists for the colour branch, use it.
+
+=== Step 2: the fix ===
+In the object-detection path, derive the inverse mapping from the branch's real field (origin plus size) instead of the full published frame: a fraction f must map to origin + f * size.
+Hard constraints:
+- Do NOT change the horizontal behaviour. x is measured correct and must stay correct.
+- Keep _require_published_aspect: a branch in another aspect must still be refused.
+- Do not touch the display overlay, the class labels, the model registry, or the PR-1925 acceptance behaviour (an object at the left or right edge must still be boxed at the border).
+
+=== Step 3: tests ===
+Add a unit test that maps a synthetic detection in BOTH axes and fails when either axis is scaled with the wrong reference size. Prove it by mutation: temporarily scale one axis with the wrong reference, show the test fails, restore, show it passes. Report both runs verbatim, including the assertion line.
+
+=== Working rules ===
+- Work only on branch PR-1929. Make the changes and run the tests, but do NOT commit and do NOT push; leave the changes in the working tree.
+- No device access from your side; the device acceptance is done separately by the reviewer.
+- Product-neutral shipped code: no IPs, no host names, no device-specific numbers. Measurements belong on the ticket, never in the code.
+- Run the camera module's unit tests and the repository's black check. Report the exact commands and their output.
+- Report honestly what you ran, what you did not run, and anything left unverified.

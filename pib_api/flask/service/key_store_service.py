@@ -104,6 +104,9 @@ MODE_UNLOCKED = "unlocked"
 # Decrypted credential_ref -> secret. None means this process is locked.
 # Encryption off does not use the lock; the cleartext file is the source.
 _unlocked: Optional[dict[str, str]] = None
+# Bumped on lock/unlock and whenever stored secrets change. Voice Direct mode
+# uses it to drop cached provider keys without re-reading every turn.
+_key_epoch: int = 0
 # Operator password for this process, and only while the store is unlocked.
 # Encryption off leaves it None. It is not logged and not written.
 _operator_password: Optional[str] = None
@@ -117,11 +120,22 @@ class KeyStoreError(Exception):
         self.status_code = status_code
 
 
+def key_epoch() -> int:
+    """Opaque generation counter. Increments when unlock state or secrets change."""
+    return _key_epoch
+
+
+def _bump_key_epoch() -> None:
+    global _key_epoch
+    _key_epoch += 1
+
+
 def lock() -> None:
     """Drop decrypted keys. The password is not kept."""
     global _operator_password, _unlocked
     _unlocked = None
     _operator_password = None
+    _bump_key_epoch()
 
 
 def _keep_password(password: str) -> None:
@@ -287,6 +301,7 @@ def put_secret(provider_id: int, password: str, secret: str) -> str:
     _remember(mapping)
     _keep_password(password)
     _pin_live_models()
+    _bump_key_epoch()
     return ref
 
 
@@ -307,6 +322,7 @@ def delete_secret(provider_id: int, password: str = "") -> None:
     db.session.flush()
     _remember(mapping)
     _keep_password(password)
+    _bump_key_epoch()
 
 
 def put_cloud_token(token: str) -> str:
@@ -357,6 +373,7 @@ def unlock(password: str = "") -> dict[str, str]:
     _remember(mapping)
     _keep_password(password)
     _pin_live_models()
+    _bump_key_epoch()
     return dict(mapping)
 
 
@@ -377,6 +394,7 @@ def change_password(
     _write_encrypted(mapping, new_password)
     _remember(mapping)
     _keep_password(new_password)
+    _bump_key_epoch()
 
 
 def set_encryption(enabled: bool, password: str = "") -> None:
@@ -423,6 +441,7 @@ def _commit_encryption_off(mapping: dict[str, str]) -> None:
         raise
     _remember(mapping)
     _keep_password("")
+    _bump_key_epoch()
     logger.info("Key store encryption is now off")
 
 
@@ -439,6 +458,7 @@ def _turn_encryption_on(password: str) -> None:
         raise
     _remember(mapping)
     _keep_password(password)
+    _bump_key_epoch()
     logger.info("Key store encryption is now on")
 
 

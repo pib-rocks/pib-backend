@@ -8,6 +8,7 @@ def generate_launch_description():
         [
             Node(package="motors", executable="motor_control"),
             Node(package="motors", executable="motor_current"),
+            Node(package="motors", executable="controller_scan"),
             Node(package="motors", executable="relay_control"),
             Node(package="motors", executable="rgb_button_control"),
         ]

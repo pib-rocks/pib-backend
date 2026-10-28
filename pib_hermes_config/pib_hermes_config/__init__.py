@@ -32,9 +32,37 @@ DEFAULT_HERMES_PROVIDER = "gemini"
 # Seeded into agent.reasoning_effort only when that key is absent and no
 # personality value is being applied. Hermes reads the agent block; a
 # root-level reasoning_effort is ignored.
-DEFAULT_REASONING_EFFORT = "low"
+# Thinking off by default (PR-2039): Gemini Flash spent 300-1000 thought tokens per
+# request in a tool loop, which dominated the turn latency on the robot.
+DEFAULT_REASONING_EFFORT = "none"
 DEFAULT_MAX_TOKENS = 1024
 DEFAULT_TEMPERATURE = 0.3
+
+# PR-2053: Hermes tool_search (tier 1) hides MCP/plugin tools behind tool_search /
+# tool_describe / tool_call. Measured on the test robot 2026-10-25: 20 tools deferred
+# (~1534 prompt tokens saved) but every tool use then costs an extra model round trip
+# (0.6-2.3 s each). Personality profiles therefore pin tool_search off so robot
+# tools stay eager; the trade-off is ~1.5k more prompt tokens per turn.
+PROFILE_TOOL_SEARCH_ENABLED = "off"
+PROFILE_TOOL_SEARCH_CONFIG = {
+    "tool_search": {"enabled": PROFILE_TOOL_SEARCH_ENABLED},
+}
+
+# PR-2071: bump when the profile writer (_ensure_mcp_servers_pib) changes shape.
+# Warm turns compare this integer before deciding whether to rewrite config.yaml.
+PROFILE_CONFIG_VERSION_KEY = "config_version"
+PROFILE_CONFIG_VERSION = 1
+
+# Upstream vision wrapper in the pinned Hermes package (not patched from this repo).
+# tools/vision_tools.py opens its image prompt with the prefix below; a sky-colour
+# question that used the camera measured 1,444 output tokens in 4.2 s and the turn
+# hit max_iterations_reached(4/4) after 19.5 s on the test robot 2026-10-25.
+HERMES_VISION_TOOLS_MODULE = "tools/vision_tools.py"
+HERMES_VISION_ANALYZE_PROMPT_PREFIX = (
+    "Fully describe and explain everything about this image"
+)
+HERMES_VISION_ANALYZE_MEASURED_OUTPUT_TOKENS = 1444
+
 # Closed set Hermes accepts for agent.reasoning_effort.
 REASONING_EFFORTS = (
     "none",
@@ -280,12 +308,25 @@ MCP_TOOLS = (
         "get_state",
         "Liefert den aktuellen Gelenkzustand, Diagnosen und Roboter-Telemetrie.",
     ),
+    (
+        "get_motion_model",
+        "Liefert das Bewegungsmodell: Gelenke, Achsen, Grenzen in Grad und benannte "
+        "Stellungen; nutze es, statt eine URDF zu verlangen.",
+    ),
     ("list_poses", "Listet gespeicherte Posen."),
     ("list_programs", "Listet gespeicherte Blockly-/Python-Programme."),
     ("capture_image", "Nimmt ein Kamerabild als base64-kodiertes JPEG auf."),
     (
         "move_motor",
-        "Bewegt einen Motor innerhalb seiner konfigurierten Rotationsgrenzen.",
+        "Bewegt einen Motor in Grad innerhalb seiner konfigurierten Rotationsgrenzen.",
+    ),
+    (
+        "move_motors",
+        "Bewegt mehrere Motoren in einem Aufruf (Zielwinkel in Grad pro Motor).",
+    ),
+    (
+        "apply_joint_trajectory",
+        "Führt eine zeitgesteuerte Gelenk-Trajektorie aus (Grad an der Tool-Grenze, Radiant auf ROS).",
     ),
     ("apply_pose", "Wendet eine gespeicherte Pose anhand ihres genauen Namens an."),
     ("run_program", "Startet ein gespeichertes Programm anhand seiner Program-ID."),
@@ -407,9 +448,24 @@ def strip_mcp_tools_soul_section(text: str) -> str:
     return "\n".join(lines[:start] + lines[end:])
 
 
+def _soul_identity_text(
+    personality_name: str,
+    custom_description: str | None = None,
+) -> str:
+    """Identity block only: robot line plus optional custom description."""
+    name = (personality_name or "").strip() or "pib"
+    parts = [f"Du bist der humanoide Roboter {name}."]
+    custom = strip_mcp_tools_soul_section(custom_description or "").strip()
+    if custom:
+        parts.append("")
+        parts.append(custom)
+    return "\n".join(parts) + "\n"
+
+
 def build_default_soul_text(
     personality_name: str,
     custom_description: str | None = None,
+    robot_context: str | None = None,
 ) -> str:
     """Build the standard SOUL.md: robot identity plus an optional custom text.
 
@@ -423,11 +479,15 @@ def build_default_soul_text(
     caller folds its text in here, including the daemon that rebuilds SOUL.md
     from a personality's stored description, so a stored block cannot come
     back through a path this package does not own.
+
+    When ``robot_context`` is set, the compact motion model is appended the same
+    way as on a Direct turn (PR-2067).
     """
-    name = (personality_name or "").strip() or "pib"
-    parts = [f"Du bist der humanoide Roboter {name}."]
-    custom = strip_mcp_tools_soul_section(custom_description or "").strip()
-    if custom:
-        parts.append("")
-        parts.append(custom)
-    return "\n".join(parts) + "\n"
+    from pib_hermes_config.channel import personality_system_prompt
+
+    return personality_system_prompt(
+        personality_name=personality_name,
+        custom_description=custom_description,
+        robot_context=robot_context,
+        trailing_newline=True,
+    )

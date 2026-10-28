@@ -17,6 +17,7 @@ from controller import (
     docker_controller,
     marimo_controller,
     microphone_array_controller,
+    smart_home_controller,
     system_controller,
     version_controller,
 )
@@ -107,6 +108,17 @@ app.register_blueprint(
     system_controller.bp,
     url_prefix="/api/v1/system",
     name="system_api_v1",
+)
+app.register_blueprint(
+    smart_home_controller.bp, url_prefix="/smart-home", name="smart_home"
+)
+app.register_blueprint(
+    smart_home_controller.bp, url_prefix="/v1/smart-home", name="smart_home_v1"
+)
+app.register_blueprint(
+    smart_home_controller.bp,
+    url_prefix="/api/v1/smart-home",
+    name="smart_home_api_v1",
 )
 app.register_blueprint(version_controller.bp, url_prefix="/version", name="version")
 app.register_blueprint(

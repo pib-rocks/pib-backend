@@ -26,6 +26,8 @@ tags:
     description: Read- and Update-Operations for bricklets
   - name: button-programs
     description: Read- and Update-Operations for button programs
+  - name: system
+    description: System configuration and diagnostics
 paths:
   /voice-assistant/personality:
     post:
@@ -1013,6 +1015,22 @@ paths:
         '500':
           $ref: '#/components/responses/500'
           
+  /system/motion-model:
+    get:
+      tags:
+        - system
+      summary: Motor limits and named poses for Direct LLM body context
+      operationId: getMotionModel
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '500':
+          $ref: '#/components/responses/500'
   /host-ip:
     get:
       tags: 
@@ -1400,10 +1418,13 @@ components:
           maximum: 100000
           examples: 
             - 60000
-        invert:
-          type: boolean
-          examples: 
-          - false
+        upperEndpoint:
+          type: string
+          enum:
+            - min
+            - max
+          examples:
+            - max
         visible: 
           type: boolean
           examples: 

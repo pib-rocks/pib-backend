@@ -13,6 +13,11 @@ renders as ``0.00``. Stamps older than the origin are dropped: they belong to
 a previous turn.
 
 Nothing here blocks, retries, or speaks. A bad event is counted and ignored.
+
+``[PERF_TRACE] TTS_FIRST_AUDIO`` is the gap from ``first_sentence_flushed`` to
+``first_audio`` for one spoken turn (milliseconds, one line per turn, includes
+``chat=<id>``). The voice-assistant node logs it when the audio player reports
+the first answer PCM chunk.
 """
 
 from __future__ import annotations
@@ -75,6 +80,11 @@ HEADER_FIELDS = (
 
 DEFAULT_LOG_PATH = "/data/voice/turn-latency/turns.jsonl"
 
+# Compact stage map stored on the assistant answer (PR-2072).
+MESSAGE_TURN_TRACE_RECV_KEYS = ("text_received", "ros_service_recv")
+MESSAGE_TURN_TRACE_DONE_KEYS = ("turn_end", "stream_done")
+TURN_TRACE_META_MAX_BYTES = 1024
+
 # Line order. text_received sits between the capture decision and the request,
 # matching the concept-page split. The eight AC stages are always emitted.
 _LINE_STAGES = (
@@ -107,6 +117,20 @@ def audio_event_belongs_to_turn(stage: str, sentence_flushed: bool) -> bool:
 def now_ms() -> float:
     """Monotonic milliseconds. Comparable across processes on one machine."""
     return time.monotonic() * 1000.0
+
+
+def tts_first_audio_elapsed_ms(trace: TurnTrace) -> Optional[float]:
+    """Milliseconds from first_sentence_flushed to first_audio, if both exist."""
+    return trace.delta("first_sentence_flushed", "first_audio")
+
+
+def format_perf_trace_tts_first_audio(chat_id: str, elapsed_ms: float) -> str:
+    """One ``[PERF_TRACE]`` line for TTS time-to-first-sample."""
+    safe_id = chat_id or ""
+    return (
+        f"[PERF_TRACE] TTS_FIRST_AUDIO chat={safe_id} "
+        f"elapsed_ms={float(elapsed_ms):.2f}"
+    )
 
 
 def default_log_path() -> str:
@@ -370,6 +394,75 @@ def _number(value: object) -> Optional[float]:
     if isinstance(value, (int, float)):
         return float(value)
     return None
+
+
+def _stage_int_ms(stages: Mapping[str, float], key: str) -> Optional[int]:
+    """Milliseconds for one observed stage, rounded; absent stages stay absent."""
+    if key not in stages:
+        return None
+    value = _number(stages.get(key))
+    if value is None:
+        return None
+    return int(round(value))
+
+
+def _first_stage_int_ms(
+    stages: Mapping[str, float], keys: tuple[str, ...]
+) -> Optional[int]:
+    for key in keys:
+        value = _stage_int_ms(stages, key)
+        if value is not None:
+            return value
+    return None
+
+
+def message_turn_trace(
+    stages_ms: Mapping[str, float],
+    *,
+    cancelled: bool = False,
+    tool_rounds: Optional[int] = None,
+    tool_total_ms: Optional[float] = None,
+    tool_calls: Optional[list] = None,
+) -> dict:
+    """The compact timeline Cerebra will read from message meta."""
+    trace: dict = {}
+    recv = _first_stage_int_ms(stages_ms, MESSAGE_TURN_TRACE_RECV_KEYS)
+    if recv is not None:
+        trace["recv"] = recv
+    first_token = _stage_int_ms(stages_ms, "first_token")
+    if first_token is not None:
+        trace["first_token"] = first_token
+    first_sentence = _stage_int_ms(stages_ms, "first_sentence_flushed")
+    if first_sentence is not None:
+        trace["first_sentence"] = first_sentence
+    done = _first_stage_int_ms(stages_ms, MESSAGE_TURN_TRACE_DONE_KEYS)
+    if done is not None:
+        trace["done"] = done
+
+    rounds = tool_rounds
+    if rounds is None and tool_calls:
+        rounds = len(tool_calls)
+    total_ms = tool_total_ms
+    if total_ms is None and tool_calls:
+        total_ms = sum(
+            float(call.get("durationMs") or 0)
+            for call in tool_calls
+            if isinstance(call, dict)
+        )
+    if rounds is not None and rounds > 0:
+        trace["toolRounds"] = int(rounds)
+        if total_ms is not None and total_ms > 0:
+            trace["toolTotalMs"] = int(round(total_ms))
+    if cancelled:
+        trace["cancelled"] = True
+    return trace
+
+
+def turn_trace_meta_bytes(meta: Mapping) -> int:
+    """UTF-8 size of the meta blob as stored in the API."""
+    return len(
+        json.dumps(meta, separators=(",", ":"), sort_keys=True, ensure_ascii=False)
+    )
 
 
 def append_record(path: str, record: Mapping) -> None:

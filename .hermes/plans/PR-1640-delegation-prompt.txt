@@ -1,0 +1,66 @@
+Implement PR-1640 per the verified facts below.
+
+Ticket: https://pib-rocks.atlassian.net/browse/PR-1640  (Blockly: Pose recorder - record named poses)
+Repo: pib-backend — /home/pib/opencode/pib-backend, branch `PR-1640` (from develop `2bf1ed6a`).
+
+## IMPORTANT context (verified — read before changing anything)
+A `save_current_pose` block ALREADY EXISTS (added by PR-1658) and already records the current pose under a
+name. The REMAINING gap versus PR-1640 is the INPUT TYPE of the name:
+
+- Current block (`program-blocks/pose-block.ts`, in `poseBlocks`):
+      type: "save_current_pose", message0: "Save current pose as %1",
+      args0: [{ type: "field_input", name: "NAME", text: "pose name" }]
+  i.e. a FIXED text field on the block.
+- Current generator (`program-generators/pose-generator.ts`, `save_current_pose`):
+      return `${functionName}(${quotedField(block, generator, "NAME")})\n`;
+  i.e. it emits a hardcoded string literal.
+
+PR-1640 requires: "The name of the new pose should be defined through a STRING-INPUT ON THE RIGHT SIDE of the
+block, so that it can also be set programmatically."
+Acceptance criterion: "A user can record the current pose under a name which is given as a STRING OR VARIABLE
+on the right side of the block."
+
+So the change is: make the name a VALUE INPUT (right side) instead of a fixed field.
+
+## Existing working plumbing (do NOT replace it)
+- The generator already provides the helper `save_current_pose_with_all_motors(name)` (defined via
+  `SAVE_CURRENT_POSE_FUNCTION` in `program-generators/util/function-declarations.ts`), which calls the pib_sdk
+  `save_current_pose(telemetry, pose_backend, name, motor_names)` and persists the pose via the backend
+  (`create_pose`) -> the pose is stored in the DB and shows up in the pose list / Cerebra poses UI.
+- Keep using that helper and that persistence path unchanged.
+
+## Scope (pib-backend only)
+1. `program-blocks/pose-block.ts` — in the `save_current_pose` definition:
+   - replace `{ type: "field_input", name: "NAME", text: "pose name" }` with a value input:
+     `{ type: "input_value", name: "NAME", check: "String" }`
+   - keep `message0: "Save current pose as %1"`, `previousStatement`/`nextStatement`, `colour: 355`.
+   - update the tooltip so it says the name comes from the input on the right (string or variable) and that
+     the recorded pose is saved to the pose list.
+2. `program-generators/pose-generator.ts` — in `save_current_pose`:
+   - read the name with `generator.valueToCode(block, "NAME", Order.NONE)` instead of `quotedField(...)`.
+   - if the input is empty, fall back to a sensible default (e.g. the literal `"pose name"`), so an
+     unconnected input does not emit broken code.
+   - pass the resulting expression into the existing helper call.
+3. Tests (`tests/blockly_generator/pose_generator.test.ts` or a new file):
+   - assert the emitted call for a connected LITERAL string input;
+   - assert the emitted call for a VARIABLE input (the parameter is passed through, NOT hardcoded);
+   - keep/adjust existing pose tests green.
+
+## Compat note (mention in your report, do not over-engineer)
+Programs saved before this change used the old fixed field. Converting the field to an input is what the
+ticket asks for; just note the implication.
+
+## Constraints
+- Stay on branch `PR-1640`. Do NOT push/merge (the orchestrator opens the PR). You MAY commit
+  (`feat: PR-1640 ...`).
+- Do NOT modify pib-sdk. Do NOT touch the cerebra repo (the toolbox/palette entry for this block is handled
+  separately by the orchestrator).
+- Do NOT commit `.hermes/plans/**`. Do NOT commit if tests fail. Report REAL results.
+
+## Verify
+- `cd /home/pib/opencode/pib-backend/tests/blockly_generator && node node_modules/jest/bin/jest.js --config jest.config.js` -> all pass incl. the new cases.
+- `git diff --name-only origin/develop...HEAD` shows only pose-block.ts + pose-generator.ts + the test file(s).
+
+FINAL REPORT: files changed, the new block definition (input_value), how the generator reads the name and the
+fallback, the emitted Python for the literal and the variable case, real jest results, the compat note,
+confirmation you did not push/merge and did not touch pib-sdk/cerebra, and the commit hash if committed.

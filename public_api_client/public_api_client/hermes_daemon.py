@@ -83,8 +83,11 @@ CLONE_CONFIG_FILES = ("config.yaml", ".env", "SOUL.md")
 CLONE_SUBDIR_FILES = ("memories/MEMORY.md", "memories/USER.md")
 _filesystem_factory_warned = False
 
-# Every chat gets its own Hermes session, so history never crosses chats.
+# Each chat maps to its own Hermes session id; one warm agent per personality
+# runtime binds the session per turn so history never crosses chats.
 SESSION_ID_PREFIX = "pib_chat_"
+PIB_FLASK_MESSAGE_ID_KEY = "pib_message_id"
+PIB_FLASK_SEED_SOURCE = "pib_voice"
 
 # Hermes install layout used to import the agent in-process.
 DEFAULT_HERMES_HOME = "/home/pib/.hermes"
@@ -166,10 +169,18 @@ def _missing_provider_key(exc: BaseException) -> bool:
     return type(exc).__name__ == "DirectToolLoopError"
 
 
-_agent_cache: OrderedDict[tuple[str, str], _CachedAgent] = OrderedDict()
+# One warm agent per (home, runtime settings, store key); chats bind a session per turn.
+_agent_cache: OrderedDict[tuple, _CachedAgent] = OrderedDict()
 _agent_cache_lock = threading.Lock()
 _mcp_discovery_attempted: set[str] = set()
 _mcp_discovery_lock = threading.Lock()
+# Bounded extra wait after Hermes' default ``mcp_discovery_timeout`` (1.5s) on cold start.
+_DAEMON_MCP_DISCOVERY_EXTRA_WAIT_S = 1.0
+_mcp_agent_build_without_tools_cause: Optional[str] = None
+
+# Last planned provider wire fields per turn (tests assert on this, not timing).
+_provider_field_attempts: list[frozenset[str]] = []
+_AUXILIARY_CALL_LLM_PATCHED = False
 
 # One SQLite session store per personality home.
 _session_dbs: dict[str, object] = {}
@@ -264,7 +275,211 @@ def ensure_hermes_source_on_path() -> str:
             "hermes source on sys.path: %s",
             [entry for entry in entries if os.path.exists(entry)],
         )
+    _install_auxiliary_capability_guard()
     return agent_dir
+
+
+def _install_auxiliary_capability_guard() -> None:
+    """Strip refused auxiliary fields (e.g. title response_format) before the wire."""
+    global _AUXILIARY_CALL_LLM_PATCHED
+    if _AUXILIARY_CALL_LLM_PATCHED:
+        return
+    try:
+        import agent.auxiliary_client as auxiliary_client
+    except ImportError:
+        return
+    original = auxiliary_client.call_llm
+
+    def call_llm_with_provider_capabilities(*args, **kwargs):
+        from public_api_client.hermes_agent_client import title_generation_extra_body
+
+        task = kwargs.get("task")
+        if task == "title_generation":
+            extra_body = kwargs.get("extra_body")
+            if isinstance(extra_body, dict):
+                runtime = kwargs.get("main_runtime")
+                if isinstance(runtime, dict):
+                    kwargs["extra_body"] = title_generation_extra_body(
+                        str(runtime.get("provider") or ""),
+                        runtime.get("base_url"),
+                        str(runtime.get("model") or ""),
+                        extra_body,
+                    )
+        return original(*args, **kwargs)
+
+    auxiliary_client.call_llm = call_llm_with_provider_capabilities
+    _AUXILIARY_CALL_LLM_PATCHED = True
+
+
+def _would_send_stream_options(agent, base_url: Optional[str]) -> bool:
+    try:
+        from agent.chat_completion_helpers import is_native_gemini_base_url
+    except ImportError:
+        is_native_gemini_base_url = lambda _url: False  # noqa: E731
+    effective_base = (
+        base_url
+        or getattr(agent, "base_url", None)
+        or getattr(agent, "_base_url", None)
+    )
+    if is_native_gemini_base_url(effective_base):
+        return False
+    return not getattr(agent, "_stream_options_unsupported", False)
+
+
+def _profile_carries_reasoning_effort() -> bool:
+    from public_api_client.hermes_agent_client import (
+        CONFIG_FILENAME,
+        _load_config_mapping,
+    )
+
+    cfg = _load_config_mapping(os.path.join(_current_home_key(), CONFIG_FILENAME))
+    agent = cfg.get("agent")
+    return isinstance(agent, dict) and "reasoning_effort" in agent
+
+
+def planned_provider_request_fields(
+    agent,
+    provider: str,
+    base_url: Optional[str],
+    model: str,
+) -> frozenset[str]:
+    """Fields the next main chat request is expected to carry."""
+    from public_api_client.hermes_agent_client import (
+        REFUSED_REQUEST_FIELD_REASONING_EFFORT,
+        REFUSED_REQUEST_FIELD_STREAM_OPTIONS,
+        provider_refuses_field,
+    )
+
+    fields: set[str] = set()
+    if (
+        _profile_carries_reasoning_effort()
+        and not provider_refuses_field(
+            provider, base_url, model, REFUSED_REQUEST_FIELD_REASONING_EFFORT
+        )
+        and not getattr(agent, "_reasoning_effort_rejected", False)
+    ):
+        fields.add(REFUSED_REQUEST_FIELD_REASONING_EFFORT)
+    if _would_send_stream_options(agent, base_url) and not provider_refuses_field(
+        provider, base_url, model, REFUSED_REQUEST_FIELD_STREAM_OPTIONS
+    ):
+        fields.add(REFUSED_REQUEST_FIELD_STREAM_OPTIONS)
+    return frozenset(fields)
+
+
+def _sync_provider_capabilities_to_agent(
+    agent,
+    provider: str,
+    base_url: Optional[str],
+    model: str,
+) -> None:
+    from public_api_client.hermes_agent_client import (
+        REFUSED_REQUEST_FIELD_REASONING_EFFORT,
+        REFUSED_REQUEST_FIELD_RESPONSE_FORMAT,
+        REFUSED_REQUEST_FIELD_STREAM_OPTIONS,
+        prime_auxiliary_response_format_rejection,
+        provider_refuses_field,
+    )
+
+    if provider_refuses_field(
+        provider, base_url, model, REFUSED_REQUEST_FIELD_REASONING_EFFORT
+    ):
+        agent._reasoning_effort_rejected = True
+    if provider_refuses_field(
+        provider, base_url, model, REFUSED_REQUEST_FIELD_STREAM_OPTIONS
+    ):
+        agent._stream_options_unsupported = True
+    if provider_refuses_field(
+        provider, base_url, model, REFUSED_REQUEST_FIELD_RESPONSE_FORMAT
+    ):
+        prime_auxiliary_response_format_rejection(provider, base_url, model)
+
+
+def _harvest_provider_refusals_from_agent(
+    agent,
+    provider: str,
+    base_url: Optional[str],
+    model: str,
+) -> None:
+    from public_api_client.hermes_agent_client import (
+        REFUSED_REQUEST_FIELD_REASONING_EFFORT,
+        REFUSED_REQUEST_FIELD_STREAM_OPTIONS,
+        record_provider_refused_fields,
+    )
+
+    refused: list[str] = []
+    if getattr(agent, "_reasoning_effort_rejected", False):
+        refused.append(REFUSED_REQUEST_FIELD_REASONING_EFFORT)
+    if getattr(agent, "_stream_options_unsupported", False):
+        refused.append(REFUSED_REQUEST_FIELD_STREAM_OPTIONS)
+    if not refused:
+        return
+    record_provider_refused_fields(provider, base_url, model, *refused)
+    _repair_profile_for_provider_capabilities()
+
+
+def _repair_profile_for_provider_capabilities() -> None:
+    from public_api_client.hermes_agent_client import (
+        _ensure_mcp_servers_pib,
+        profile_hermes_settings,
+    )
+
+    model, provider, base_url, _env = profile_hermes_settings()
+    _ensure_mcp_servers_pib(
+        _current_home_key(),
+        model=model,
+        provider=provider,
+        base_url=base_url,
+    )
+
+
+def _repair_stale_profile_config_if_needed() -> None:
+    """Rewrite config.yaml when its ``config_version`` lags the profile writer."""
+    from pib_hermes_config import PROFILE_CONFIG_VERSION_KEY
+    from public_api_client.hermes_agent_client import (
+        _ensure_mcp_servers_pib,
+        profile_config_version_is_current,
+        profile_hermes_settings,
+        read_profile_config_version,
+    )
+
+    profile_dir = _current_home_key()
+    if profile_config_version_is_current(profile_dir):
+        return
+    old_version = read_profile_config_version(profile_dir)
+    model, provider, base_url, _env = profile_hermes_settings(profile_dir)
+    _ensure_mcp_servers_pib(
+        profile_dir,
+        model=model,
+        provider=provider,
+        base_url=base_url,
+    )
+    new_version = read_profile_config_version(profile_dir)
+    logging.info(
+        "repaired profile %s %s %s -> %s",
+        PROFILE_CONFIG_VERSION_KEY,
+        profile_dir,
+        old_version,
+        new_version,
+    )
+
+
+def run_profile_config_check(profiles_root: Optional[str] = None) -> int:
+    """Report profile config drift without writing; exit 0 when every profile is current."""
+    from public_api_client.hermes_agent_client import (
+        iter_personality_profile_dirs,
+        profile_config_drift,
+    )
+
+    issues: list[str] = []
+    for personality_id, profile_dir in iter_personality_profile_dirs(profiles_root):
+        drift = profile_config_drift(profile_dir)
+        for line in drift:
+            issues.append(f"{personality_id}: {line}")
+    if issues:
+        for line in issues:
+            print(line, file=sys.stderr)
+        return 1
+    return 0
 
 
 def _profile_dirs_are_complete(profile_dir: str) -> bool:
@@ -325,11 +540,13 @@ def ensure_profile_home(
     """
     from pib_hermes_config import (
         align_profile_ownership,
-        build_default_soul_text,
         profile_dir_for,
         profile_name_for,
         provider_for_profile,
+        strip_mcp_tools_soul_section,
     )
+    from pib_hermes_config.channel import personality_system_prompt
+    from public_api_client.hermes_agent_client import motion_model_prompt_for_profile
     from public_api_client.hermes_agent_client import _ensure_mcp_servers_pib
 
     if not isinstance(personality_id, str) or not personality_id:
@@ -435,22 +652,54 @@ def ensure_profile_home(
                 shutil.rmtree(backup)
             created = True
 
-    soul = build_default_soul_text(
-        personality_name or "pib", custom_description=soul_text or None
-    )
+    robot_context = motion_model_prompt_for_profile()
+    custom = strip_mcp_tools_soul_section(soul_text or "").strip()
+    if custom.startswith("Du bist der humanoide Roboter") or custom.startswith(
+        "Du bist pib,"
+    ):
+        soul = personality_system_prompt(
+            soul_text=custom,
+            robot_context=robot_context,
+            trailing_newline=True,
+        )
+    elif custom:
+        soul = personality_system_prompt(
+            personality_name=personality_name or "pib",
+            custom_description=custom,
+            robot_context=robot_context,
+            trailing_newline=True,
+        )
+    else:
+        soul = personality_system_prompt(
+            personality_name=personality_name or "pib",
+            robot_context=robot_context,
+            trailing_newline=True,
+        )
     soul_path = os.path.join(profile_dir, "SOUL.md")
     with open(soul_path, "w", encoding="utf-8") as fh:
         fh.write(soul)
-    _ensure_mcp_servers_pib(
-        profile_dir,
-        model=model,
-        provider=mapping.provider if mapping else None,
-        base_url=mapping.base_url if mapping else None,
-        env_vars=mapping.env_vars if mapping else (),
-        reasoning_effort=reasoning_effort,
-        personality_reasoning=personality_reasoning,
-        tool_calling=tool_calling,
+    explicit_model_settings = any(
+        value is not None
+        for value in (model, provider, base_url, reasoning_effort, tool_calling)
     )
+    from public_api_client.hermes_agent_client import profile_config_version_is_current
+
+    if (
+        not complete
+        or explicit_model_settings
+        or personality_reasoning
+        or not profile_config_version_is_current(profile_dir)
+    ):
+        _ensure_mcp_servers_pib(
+            profile_dir,
+            model=model,
+            provider=mapping.provider if mapping else None,
+            base_url=mapping.base_url if mapping else None,
+            env_vars=mapping.env_vars if mapping else (),
+            reasoning_effort=reasoning_effort,
+            personality_reasoning=personality_reasoning,
+            tool_calling=tool_calling,
+        )
     align_profile_ownership(profile_dir)
     os.chmod(profile_dir, 0o700)
     os.chmod(soul_path, 0o644)
@@ -565,11 +814,214 @@ def _load_conversation_history(session_db, session_id: str) -> list:
     ]
 
 
+def _fetch_flask_chat_history(chat_id: str, history_length: int):
+    """Last *history_length* flask rows for one chat (one HTTP round trip)."""
+    try:
+        from pib_api_client.voice_assistant_client import get_chat_history
+    except ImportError:
+        return False, None
+    try:
+        return get_chat_history(chat_id, history_length)
+    except Exception:
+        logging.debug(
+            "could not read flask chat history for chat %s", chat_id, exc_info=True
+        )
+        return False, None
+
+
+def _flask_messages_chronological(messages) -> list:
+    """Flask returns newest-first; Hermes and Direct use oldest-first."""
+    if not messages:
+        return []
+    return list(reversed(list(messages)))
+
+
+def _display_metadata_dict(message: dict) -> dict:
+    raw = message.get("display_metadata")
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str) and raw.strip():
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
+
+
+def _pib_message_id_from_row(message: dict) -> Optional[str]:
+    value = _display_metadata_dict(message).get(PIB_FLASK_MESSAGE_ID_KEY)
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _flask_messages_missing_for_seed(flask_messages, session_messages) -> list:
+    """Flask rows not yet represented in the Hermes session (idempotent seeding)."""
+    conversation = [
+        message
+        for message in session_messages or []
+        if isinstance(message, dict) and message.get("role") in ("user", "assistant")
+    ]
+    missing = []
+    session_index = 0
+    for flask_message in flask_messages:
+        role = "user" if getattr(flask_message, "is_user", False) else "assistant"
+        content = getattr(flask_message, "content", "")
+        message_id = getattr(flask_message, "message_id", None)
+        if session_index < len(conversation):
+            row = conversation[session_index]
+            row_id = _pib_message_id_from_row(row)
+            if (message_id and row_id == message_id) or (
+                row.get("role") == role and row.get("content") == content
+            ):
+                session_index += 1
+                continue
+        missing.append(flask_message)
+    return missing
+
+
+def _flask_row_to_hermes_message(flask_message) -> dict:
+    return {
+        "role": "user" if flask_message.is_user else "assistant",
+        "content": flask_message.content,
+        "display_metadata": {PIB_FLASK_MESSAGE_ID_KEY: flask_message.message_id},
+    }
+
+
+def _hermes_history_from_flask_messages(
+    flask_messages, current_user_text: str
+) -> list[dict]:
+    """Model history from the flask window, without duplicating this turn's user line."""
+    rows = [
+        {
+            "role": "user" if message.is_user else "assistant",
+            "content": message.content,
+        }
+        for message in flask_messages
+    ]
+    if rows and rows[-1]["role"] == "user" and rows[-1]["content"] == current_user_text:
+        return rows[:-1]
+    return rows
+
+
+def _seed_hermes_session_from_flask_messages(
+    session_db,
+    session_id: str,
+    chat_id: str,
+    flask_messages,
+) -> None:
+    if session_db is None or not flask_messages:
+        return
+    try:
+        restored, _display = session_db.get_resume_conversations(session_id)
+    except Exception:
+        logging.debug(
+            "could not read Hermes history while seeding session %s",
+            session_id,
+            exc_info=True,
+        )
+        restored = []
+    missing = _flask_messages_missing_for_seed(flask_messages, restored or [])
+    if not missing:
+        return
+    ensure = getattr(session_db, "ensure_session", None)
+    if callable(ensure):
+        try:
+            ensure(session_id, PIB_FLASK_SEED_SOURCE)
+        except Exception:
+            logging.debug(
+                "could not ensure Hermes session %s before seeding",
+                session_id,
+                exc_info=True,
+            )
+    append_batch = getattr(session_db, "append_messages_batch", None)
+    if not callable(append_batch):
+        return
+    rows = [_flask_row_to_hermes_message(message) for message in missing]
+    try:
+        append_batch(session_id, rows)
+    except Exception:
+        logging.debug(
+            "could not seed Hermes session %s from flask chat %s",
+            session_id,
+            chat_id,
+            exc_info=True,
+        )
+
+
+def seed_flask_conversation_for_chat(
+    chat_id: str,
+    message_history: Optional[int],
+    personality_id: Optional[str] = None,
+) -> None:
+    """Best-effort idempotent seed before a CLI subprocess turn."""
+    if not message_history or message_history < 1:
+        return
+    scope = contextlib.nullcontext()
+    if personality_id:
+        from pib_hermes_config import profile_dir_for
+
+        scope = hermes_home_scope(profile_dir_for(personality_id))
+    with scope:
+        session_id = session_id_for_chat(chat_id)
+        session_db = _shared_session_db()
+        successful, raw_messages = _fetch_flask_chat_history(chat_id, message_history)
+        if not successful:
+            return
+        flask_messages = _flask_messages_chronological(raw_messages or [])
+        _seed_hermes_session_from_flask_messages(
+            session_db, session_id, chat_id, flask_messages
+        )
+
+
+def _conversation_history_for_smart_turn(
+    session_db,
+    session_id: str,
+    chat_id: str,
+    history_length: int,
+    current_user_text: str,
+) -> list:
+    """Seed missing flask rows, then return the personality history window for the model."""
+    if history_length < 1:
+        return []
+    successful, raw_messages = _fetch_flask_chat_history(chat_id, history_length)
+    if not successful:
+        logging.info(
+            "flask history unavailable for chat %s; smart turn runs without seeded context",
+            chat_id,
+        )
+        return []
+    flask_messages = _flask_messages_chronological(raw_messages or [])
+    _seed_hermes_session_from_flask_messages(
+        session_db, session_id, chat_id, flask_messages
+    )
+    return _hermes_history_from_flask_messages(flask_messages, current_user_text)
+
+
 def _toolset_list(toolsets: Optional[str]) -> Optional[list[str]]:
     if not toolsets:
         return None
     values = [value.strip() for value in toolsets.split(",") if value.strip()]
     return values or None
+
+
+def _bind_agent_session_for_turn(agent, chat_id: str) -> None:
+    """Point a shared warm agent at one chat's Hermes session for this turn.
+
+    ``AIAgent`` persists turns under ``session_id``. Reusing one agent across chats
+    requires rebinding before ``run_conversation`` and clearing session-scoped state
+    when the chat changes (``reset_session_state`` in Hermes).
+    """
+    session_id = session_id_for_chat(chat_id)
+    previous = getattr(agent, "session_id", None)
+    if previous == session_id:
+        return
+    reset = getattr(agent, "reset_session_state", None)
+    agent.session_id = session_id
+    if callable(reset):
+        reset(previous_messages=None, old_session_id=previous)
 
 
 def _close_agent(agent) -> None:
@@ -603,20 +1055,28 @@ def clear_agent_cache() -> None:
 
 def _discover_mcp_tools() -> None:
     """Run Hermes' bounded, non-interactive MCP startup path."""
+    global _mcp_agent_build_without_tools_cause
     from hermes_cli.mcp_startup import (
         ensure_mcp_discovery_before_agent_build,
+        join_mcp_discovery,
         mcp_discovery_in_flight,
     )
 
+    _mcp_agent_build_without_tools_cause = None
+    logger = logging.getLogger(__name__)
     ensure_mcp_discovery_before_agent_build(
-        logger=logging.getLogger(__name__),
+        logger=logger,
         thread_name="pib-hermes-daemon-mcp",
     )
     if mcp_discovery_in_flight():
-        logging.warning(
-            "Hermes MCP discovery timed out before agent construction; "
-            "continuing without waiting"
+        join_mcp_discovery(timeout=_DAEMON_MCP_DISCOVERY_EXTRA_WAIT_S)
+    if mcp_discovery_in_flight():
+        _mcp_agent_build_without_tools_cause = (
+            "MCP discovery still in flight after bounded wait "
+            f"(+{_DAEMON_MCP_DISCOVERY_EXTRA_WAIT_S:.1f}s)"
         )
+    elif _registered_mcp_tool_count() == 0:
+        _mcp_agent_build_without_tools_cause = "no MCP tools registered after discovery"
 
 
 def _ensure_mcp_tools_discovered() -> None:
@@ -657,12 +1117,14 @@ def _agent_for_chat(
     agent_cls,
     provider_key: Optional[str],
 ):
-    """Return the sole cached agent for a chat, evicting least-recently-used chats.
+    """Return the cached agent for this personality runtime, evicting LRU entries.
 
     The model, provider and base URL come from the personality's config.yaml
     (written by the backend at provision time), so a turn runs the model the
     personality is set to. They are part of the cache key, so changing the
-    model rebuilds the agent instead of reusing the pinned one.
+    model rebuilds the agent instead of reusing the pinned one. Chats of the
+    same personality share one warm agent; ``_bind_agent_session_for_turn``
+    isolates their Hermes sessions per turn.
     """
     from public_api_client.hermes_agent_client import (
         disabled_toolsets_for_turn,
@@ -685,19 +1147,17 @@ def _agent_for_chat(
         base_url,
         tool_calling,
     )
-    key = (_current_home_key(), chat_id)
+    home = _current_home_key()
+    key = (home, settings, provider_key or "")
     with _agent_cache_lock:
         cached = _agent_cache.get(key)
-        if (
-            cached is not None
-            and cached.settings == settings
-            and cached.key_token == (provider_key or "")
-        ):
+        if cached is not None:
             _agent_cache.move_to_end(key)
             return cached
-        if cached is not None:
-            _agent_cache.pop(key)
-            _close_agent(cached.agent)
+        for existing_key, existing in list(_agent_cache.items()):
+            if existing_key[0] == home:
+                _agent_cache.pop(existing_key)
+                _close_agent(existing.agent)
 
         construction_started = time.monotonic()
         # The key is in the environment only for this constructor: that is
@@ -716,19 +1176,24 @@ def _agent_for_chat(
                 base_url=base_url,
                 api_key=provider_key,
                 session_db=_shared_session_db(),
-                session_id=session_id_for_chat(chat_id),
+                session_id=None,
                 enabled_toolsets=_toolset_list(enabled_toolsets),
                 disabled_toolsets=_toolset_list(toolsets),
                 max_iterations=max_turns,
                 platform="cli",
                 skip_memory=True,
             )
+        mcp_tools = _registered_mcp_tool_count()
+        cause = _mcp_agent_build_without_tools_cause
+        if mcp_tools == 0 and cause:
+            logging.warning("constructing without MCP tools: %s", cause)
         logging.info(
-            "[PERF_TRACE] HERMES_AGENT_CONSTRUCTED chat=%s "
+            "[PERF_TRACE] HERMES_AGENT_CONSTRUCTED home=%s model=%s "
             "elapsed_ms=%.2f mcp_tools=%d",
-            chat_id,
+            _current_home_key(),
+            model,
             (time.monotonic() - construction_started) * 1000.0,
-            _registered_mcp_tool_count(),
+            mcp_tools,
         )
         cached = _CachedAgent(agent, settings, provider_key or "")
         _agent_cache[key] = cached
@@ -980,6 +1445,7 @@ def _run_turn_in_home(
     enabled_toolsets: Optional[str] = None,
     provider_key: str = "",
     on_tool_call: Optional[Callable[[dict], None]] = None,
+    message_history: Optional[int] = None,
 ) -> str:
     """Execute one turn after its Hermes home scope has been installed.
 
@@ -1080,17 +1546,68 @@ def _run_turn_in_home(
                         stream_callback(delta)
 
             with cached.lock:
+                _bind_agent_session_for_turn(cached.agent, chat_id)
                 session_id = session_id_for_chat(chat_id)
-                history = _load_conversation_history(_shared_session_db(), session_id)
+                session_db = _shared_session_db()
+                if message_history and message_history > 0:
+                    history = _conversation_history_for_smart_turn(
+                        session_db,
+                        session_id,
+                        chat_id,
+                        message_history,
+                        text,
+                    )
+                    try:
+                        if session_db is not None:
+                            session_db.reopen_session(session_id)
+                    except Exception:
+                        logging.debug(
+                            "could not reopen session %s after flask seed",
+                            session_id,
+                            exc_info=True,
+                        )
+                else:
+                    history = _load_conversation_history(session_db, session_id)
                 logging.info(
                     "[PERF_TRACE] HERMES_TURN_HISTORY chat=%s messages=%d",
                     chat_id,
                     len(history),
                 )
+                from public_api_client.hermes_agent_client import (
+                    profile_hermes_settings,
+                )
+
+                route_model, route_provider, route_base_url, _route_env = (
+                    profile_hermes_settings()
+                )
+                _sync_provider_capabilities_to_agent(
+                    cached.agent,
+                    route_provider,
+                    route_base_url,
+                    route_model,
+                )
+                attempted = planned_provider_request_fields(
+                    cached.agent,
+                    route_provider,
+                    route_base_url,
+                    route_model,
+                )
+                _provider_field_attempts.append(attempted)
+                logging.info(
+                    "PIB provider request fields planned chat=%s fields=%s",
+                    chat_id,
+                    sorted(attempted),
+                )
                 turn_result = cached.agent.run_conversation(
                     user_message=text,
                     conversation_history=history or None,
                     stream_callback=capture_delta,
+                )
+                _harvest_provider_refusals_from_agent(
+                    cached.agent,
+                    route_provider,
+                    route_base_url,
+                    route_model,
                 )
                 reply = _coerce_reply(turn_result)
                 if on_tool_call is not None:
@@ -1159,6 +1676,7 @@ def run_turn_in_process(
     stream_callback: Optional[Callable[[str], None]] = None,
     enabled_toolsets: Optional[str] = None,
     on_tool_call: Optional[Callable[[dict], None]] = None,
+    message_history: Optional[int] = None,
 ) -> str:
     """Execute a turn inside the personality's context-local Hermes home."""
     scope = contextlib.nullcontext()
@@ -1195,6 +1713,8 @@ def run_turn_in_process(
             clear_agent_cache()
             raise
 
+        _repair_stale_profile_config_if_needed()
+
         return _run_turn_in_home(
             text=text,
             chat_id=chat_id,
@@ -1206,6 +1726,7 @@ def run_turn_in_process(
             enabled_toolsets=enabled_toolsets,
             provider_key=provider_key or "",
             on_tool_call=on_tool_call,
+            message_history=message_history,
         )
 
 
@@ -1219,6 +1740,7 @@ def _default_turn_runner(
     stream_callback: Optional[Callable[[str], None]] = None,
     enabled_toolsets: Optional[str] = None,
     on_tool_call: Optional[Callable[[dict], None]] = None,
+    message_history: Optional[int] = None,
 ) -> str:
     """Execute one turn in-process via Hermes Agent (subprocess fallback)."""
     return run_turn_in_process(
@@ -1231,6 +1753,7 @@ def _default_turn_runner(
         max_turns=max_turns,
         timeout=timeout,
         stream_callback=stream_callback,
+        message_history=message_history,
     )
 
 
@@ -1386,6 +1909,7 @@ class HermesDaemonHandler(BaseHTTPRequestHandler):
         enabled_toolsets = data.get("enabled_toolsets")
         max_turns = data.get("max_turns")
         timeout = data.get("timeout")
+        message_history = data.get("message_history")
         stream = data.get("stream", False)
         if personality_id is not None and not isinstance(personality_id, str):
             self._send_json(400, {"error": "personality_id must be a string"})
@@ -1405,6 +1929,15 @@ class HermesDaemonHandler(BaseHTTPRequestHandler):
             return
         if timeout is not None and not isinstance(timeout, (int, float)):
             self._send_json(400, {"error": "timeout must be a number"})
+            return
+        if message_history is not None and (
+            not isinstance(message_history, int)
+            or isinstance(message_history, bool)
+            or message_history < 0
+        ):
+            self._send_json(
+                400, {"error": "message_history must be a non-negative integer"}
+            )
             return
         if not isinstance(stream, bool):
             self._send_json(400, {"error": "stream must be a boolean"})
@@ -1446,6 +1979,8 @@ class HermesDaemonHandler(BaseHTTPRequestHandler):
         }
         if max_turns is not None:
             runner_kwargs["max_turns"] = max_turns
+        if message_history is not None:
+            runner_kwargs["message_history"] = message_history
         if _runner_reports_tool_calls(runner):
             runner_kwargs["on_tool_call"] = tools_used.append
         if stream:
@@ -1484,6 +2019,156 @@ class HermesDaemonHandler(BaseHTTPRequestHandler):
             self._send_json(200, payload)
 
 
+PREWARM_PERSONALITY_ENV = "PIB_HERMES_PREWARM_PERSONALITY_ID"
+PREWARM_CHAT_ID = "__daemon_prewarm__"
+
+_prewarm_lock = threading.Lock()
+_prewarm_completed = False
+
+
+def _fetch_personalities_from_api() -> list[dict]:
+    """Read personalities from the flask API (best-effort)."""
+    base = os.environ.get("FLASK_API_BASE_URL", "http://flask-app:5000").rstrip("/")
+    req = Request(f"{base}/voice-assistant/personality", method="GET")
+    with urlopen(req, timeout=5) as resp:
+        payload = json.loads(resp.read().decode())
+    items = payload.get("voiceAssistantPersonalities")
+    return items if isinstance(items, list) else []
+
+
+def resolve_prewarm_personality_id(
+    *,
+    fetch_personalities: Optional[Callable[[], list[dict]]] = None,
+) -> Optional[str]:
+    """Personality whose agent is constructed at daemon start."""
+    explicit = os.environ.get(PREWARM_PERSONALITY_ENV, "").strip()
+    if explicit:
+        return explicit
+    loader = fetch_personalities or _fetch_personalities_from_api
+    try:
+        personalities = loader()
+    except (URLError, OSError, TimeoutError, ValueError, json.JSONDecodeError) as exc:
+        logging.info("hermes pre-warm: could not list personalities (%s)", exc)
+        return None
+    for row in personalities:
+        if not isinstance(row, dict):
+            continue
+        personality_id = row.get("personalityId") or row.get("personality_id")
+        channel = row.get("effectiveChannel") or row.get("channel") or "smart"
+        if channel == "direct":
+            continue
+        if personality_id:
+            return str(personality_id)
+    return None
+
+
+def _construct_warm_agent_for_personality(personality_id: str) -> None:
+    """Build the cached in-process agent without running a user turn."""
+    from pib_hermes_config import profile_dir_for
+    from public_api_client.hermes_agent_client import (
+        DEFAULT_DISABLED_TOOLSETS,
+        DEFAULT_ENABLED_TOOLSETS,
+        DEFAULT_MAX_TURNS,
+        ensure_profile,
+        provider_key_for_turn,
+    )
+
+    profile_dir = profile_dir_for(personality_id)
+    with hermes_home_scope(profile_dir):
+        ensure_profile(personality_id)
+        try:
+            provider_key = provider_key_for_turn()
+        except Exception as exc:
+            if _missing_provider_key(exc):
+                logging.warning("hermes pre-warm skipped: %s", exc)
+                return
+            raise
+        _repair_stale_profile_config_if_needed()
+
+        if not in_process_available():
+            logging.info(
+                "hermes pre-warm skipped: in-process agent unavailable "
+                "(personality=%s)",
+                personality_id,
+            )
+            return
+
+        ensure_hermes_source_on_path()
+        agent_module = None
+        for module_name in ("run_agent", "hermes.run_agent"):
+            try:
+                agent_module = importlib.import_module(module_name)
+                break
+            except ImportError:
+                continue
+        agent_cls = getattr(agent_module, "AIAgent", None) if agent_module else None
+        if agent_cls is None:
+            logging.info(
+                "hermes pre-warm skipped: AIAgent import unavailable (personality=%s)",
+                personality_id,
+            )
+            return
+
+        if "pib" in (_toolset_list(DEFAULT_ENABLED_TOOLSETS) or []):
+            _ensure_mcp_tools_discovered()
+        _agent_for_chat(
+            PREWARM_CHAT_ID,
+            DEFAULT_ENABLED_TOOLSETS,
+            DEFAULT_DISABLED_TOOLSETS,
+            DEFAULT_MAX_TURNS,
+            agent_cls,
+            provider_key or "",
+        )
+
+
+def prewarm_default_agent_at_start(
+    *,
+    fetch_personalities: Optional[Callable[[], list[dict]]] = None,
+) -> bool:
+    """Construct the default personality's agent once when smart chats are enabled.
+
+    Returns True when a pre-warm attempt ran (even if it no-opped internally).
+    """
+    global _prewarm_completed
+
+    from pib_hermes_config.channel import smart_chats_enabled
+
+    with _prewarm_lock:
+        if _prewarm_completed:
+            return False
+        _prewarm_completed = True
+
+    if not smart_chats_enabled():
+        logging.info("hermes pre-warm skipped: smart chats disabled")
+        return True
+
+    personality_id = resolve_prewarm_personality_id(
+        fetch_personalities=fetch_personalities
+    )
+    if not personality_id:
+        logging.info("hermes pre-warm skipped: no smart personality to warm")
+        return True
+
+    started = time.monotonic()
+    try:
+        _construct_warm_agent_for_personality(personality_id)
+    except Exception as exc:
+        logging.warning(
+            "hermes pre-warm failed for personality=%s: %s",
+            personality_id,
+            exc,
+            exc_info=True,
+        )
+        return True
+
+    logging.info(
+        "[PERF_TRACE] HERMES_PREWARM_DONE personality=%s elapsed_ms=%.2f",
+        personality_id,
+        (time.monotonic() - started) * 1000.0,
+    )
+    return True
+
+
 def create_server(
     host: Optional[str] = None,
     port: Optional[int] = None,
@@ -1510,6 +2195,7 @@ def serve_forever(
         server.server_address[0],
         server.server_address[1],
     )
+    prewarm_default_agent_at_start()
     try:
         server.serve_forever()
     finally:
@@ -1562,6 +2248,11 @@ def start_daemon(
             server.server_address[0],
             server.server_address[1],
         )
+        threading.Thread(
+            target=prewarm_default_agent_at_start,
+            name="hermes-prewarm",
+            daemon=True,
+        ).start()
         return server
 
 
@@ -1622,4 +2313,6 @@ if __name__ == "__main__":
         level=logging.INFO,
         format="%(asctime)s %(levelname)s hermes-daemon: %(message)s",
     )
+    if "--check" in sys.argv:
+        raise SystemExit(run_profile_config_check())
     serve_forever()
