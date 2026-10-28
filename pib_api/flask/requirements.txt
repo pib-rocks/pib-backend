@@ -23,3 +23,4 @@ cryptography>=42.0.0
 tinkerforge==2.1.32
 marimo>=0.10.0
 pyusb>=1.2.1
+gunicorn>=22.0.0

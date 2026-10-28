@@ -612,9 +612,33 @@ backup_database() {
         -e BACKUP_NAME="$backup_name" flask-app python3 - <<'PY'
 import os
 import sqlite3
+from pathlib import Path
 
-source = sqlite3.connect("/app/pibdata.db")
-destination = sqlite3.connect("/app/" + os.environ["BACKUP_NAME"])
+
+def resolve_sqlite_path() -> Path:
+    uri = os.environ.get("SQLALCHEMY_DATABASE_URI", "")
+    candidates: list[Path] = []
+    if uri.startswith("sqlite:////"):
+        candidates.append(Path(uri.removeprefix("sqlite://")))
+    elif uri.startswith("sqlite:///"):
+        candidates.append(Path("/") / uri.removeprefix("sqlite:///"))
+    candidates.extend([Path("/data/pibdata.db"), Path("/app/pibdata.db")])
+    seen: set[Path] = set()
+    for path in candidates:
+        if path in seen:
+            continue
+        seen.add(path)
+        if path.is_file():
+            return path
+    raise FileNotFoundError(
+        "no SQLite database found from SQLALCHEMY_DATABASE_URI or legacy paths"
+    )
+
+
+source_path = resolve_sqlite_path()
+backup_path = source_path.parent / os.environ["BACKUP_NAME"]
+source = sqlite3.connect(str(source_path))
+destination = sqlite3.connect(str(backup_path))
 try:
     source.backup(destination)
     result = destination.execute("PRAGMA integrity_check").fetchone()[0]
