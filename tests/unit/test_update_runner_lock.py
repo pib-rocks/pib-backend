@@ -223,6 +223,7 @@ def _harness_env(
         PIB_BACKEND_DIR=str(backend),
         PIB_CEREBRA_DIR=str(cerebra),
         PIB_UPDATE_MIN_FREE_KIB="0",
+        PIB_UPDATE_REQUIRED_FREE_KIB="0",
         PIB_UPDATE_PRUNE_BELOW_KIB="0",
         PIB_UPDATE_VERIFY_ATTEMPTS="3",
         PIB_UPDATE_VERIFY_INTERVAL_SECONDS="0",
