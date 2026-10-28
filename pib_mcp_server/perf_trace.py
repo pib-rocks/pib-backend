@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +26,19 @@ def format_perf_trace_motion_cmd(
 
 
 def log_perf_trace(line: str) -> None:
+    """Emit one perf line so it actually reaches the container log.
+
+    The MCP server runs as a stdio child of the daemon and configures no logging.
+    ``logger.info`` then falls through to logging's lastResort handler, which drops
+    everything below WARNING - the line vanished and the motion trace was silently
+    dead (measured on the robot: no MOTION_CMD line although the tool ran). Keep the
+    logger when someone configured one; otherwise write to stderr, never stdout -
+    stdout is the MCP protocol channel.
+    """
     try:
-        logger.info(line)
+        if logger.hasHandlers():
+            logger.info(line)
+        else:
+            print(line, file=sys.stderr, flush=True)
     except Exception:
         pass
