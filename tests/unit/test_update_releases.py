@@ -267,6 +267,16 @@ def test_discover_reports_a_transport_failure_without_inventing_a_release():
     assert "offline" in discovered["error"]
 
 
+def test_classify_github_release_matches_pair_releases_draft_rule():
+    assert releases.classify_github_release(None) == "missing"
+    assert releases.classify_github_release(_release("v1.0.0", draft=True)) == "draft"
+    assert (
+        releases.classify_github_release(_release("v1.0.0", prerelease=True))
+        == "prerelease"
+    )
+    assert releases.classify_github_release(_release("v1.0.0")) == "published"
+
+
 def test_changed_commit_map_does_not_rewrite_an_already_paired_document():
     commits = _commits(
         {

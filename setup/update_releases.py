@@ -1,7 +1,7 @@
 """Pair published pib-backend and cerebra releases.
 
-This is the host-side companion of ``.github/scripts/verify_release_pairing.py``
-and ``docs/RELEASE.md``. Both use the same repositories, the same draft rule,
+This is the host-side companion of ``setup/release_pairing_guard.py``,
+``.github/scripts/verify_release_pairing.py``, and ``docs/RELEASE.md``. Both use the same repositories, the same draft rule,
 and the same stable tag. The tag is published on ``develop`` and may only
 appear on ``main`` after the ``--no-ff`` merge, so a tag is resolved to the
 commit it points at rather than to ``origin/main``.
@@ -58,6 +58,30 @@ def _index(releases: object) -> dict[str, Mapping[str, Any]]:
             if isinstance(tag, str) and tag not in indexed:
                 indexed[tag] = release
     return indexed
+
+
+def release_by_tag(releases: object, tag: str) -> Mapping[str, Any] | None:
+    """Return the first GitHub release document for ``tag``, if present."""
+    return _index(releases).get(tag)
+
+
+def classify_github_release(release: Mapping[str, Any] | None) -> str:
+    """Classify a single release document for pairing guards.
+
+    Returns one of: ``published``, ``missing``, ``draft``, ``prerelease``,
+    ``unstable_tag``. Draft and prerelease releases are never installable
+    (same rule as ``pair_releases``).
+    """
+    if not isinstance(release, Mapping):
+        return "missing"
+    if release.get("draft") is True:
+        return "draft"
+    if release.get("prerelease") is True:
+        return "prerelease"
+    tag = release.get("tag_name")
+    if not isinstance(tag, str) or STABLE_TAG.fullmatch(tag) is None:
+        return "unstable_tag"
+    return "published"
 
 
 def _notes(release: Mapping[str, Any] | None) -> str:
