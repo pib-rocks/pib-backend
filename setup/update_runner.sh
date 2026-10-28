@@ -651,13 +651,50 @@ ensure_ollama_for_update() {
     ensure_ollama_listen_dropin restart
 }
 
+# Refreshes Dockerfile base images (ros, python, node, ...) before recreating
+# services. Service image names are local-only, so this uses `build --pull`, not
+# `docker compose pull`. Offline: a failed pull build retries without --pull.
+refresh_backend_base_images() {
+    local compose=(docker compose -f "$BACKEND_DIR/docker-compose.yaml" --profile all)
+    local pull_log pull_status plain_log plain_status
+    pull_log="$(mktemp "$UPDATE_DIR/base-build-pull.XXXXXX")"
+    plain_log="$(mktemp "$UPDATE_DIR/base-build-plain.XXXXXX")"
+    "${compose[@]}" build --pull >"$pull_log" 2>&1
+    pull_status=$?
+    if [ "$pull_status" -eq 0 ]; then
+        cat "$pull_log"
+        rm -f "$pull_log" "$plain_log"
+        log "Backend base images: refreshed from registry (--pull build succeeded)"
+        return 0
+    fi
+    log "WARNING: pull-enabled backend build failed (exit ${pull_status}): $(tr '\n' ' ' <"$pull_log" | sed 's/  */ /g')"
+    cat "$pull_log"
+    "${compose[@]}" build >"$plain_log" 2>&1
+    plain_status=$?
+    if [ "$plain_status" -eq 0 ]; then
+        cat "$plain_log"
+        rm -f "$pull_log" "$plain_log"
+        log "Backend base images: served from local cache (pull failed, plain build succeeded)"
+        return 0
+    fi
+    cat "$plain_log"
+    rm -f "$pull_log" "$plain_log"
+    log "Backend base image build failed after pull and plain attempts (plain exit ${plain_status})"
+    return 1
+}
+
 # Documented injection is `docker compose build --build-arg APP_VERSION=<version>
 # flask-app` (docs/RELEASE.md). -f is required because this runner does not cd
 # into the checkout. APP_VERSION is also exported: the following
 # `up -d --build` rebuilds from compose interpolation
 # (`${APP_VERSION:-...}`) and would otherwise overwrite that image with the
 # fallback. Callers leave APP_VERSION unset only for an untagged rollback.
+# Second argument `skip_base_refresh`: when non-empty, skips `build --pull` (rollback).
 build_backend_stack() {
+    local skip_base_refresh="${1:-}"
+    if [ -z "$skip_base_refresh" ]; then
+        refresh_backend_base_images || return 1
+    fi
     if [ -n "${APP_VERSION:-}" ]; then
         export APP_VERSION
         log "Building flask-app with --build-arg APP_VERSION=${APP_VERSION} PIB_SDK_VERSION=${PIB_SDK_VERSION}"
@@ -1049,7 +1086,7 @@ rollback_once() {
         log "WARNING: rolled-back checkout has no pib_sdk_version.txt; compose-file PIB_SDK_VERSION fallback applies"
         unset PIB_SDK_VERSION
     fi
-    build_backend_stack
+    build_backend_stack rollback
     docker compose -f "$CEREBRA_DIR/docker-compose.yaml" \
         up -d --build --force-recreate
     BACKEND_TARGET="$BACKEND_BEFORE"
