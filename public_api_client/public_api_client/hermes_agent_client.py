@@ -111,6 +111,12 @@ PIB_MCP_SERVER = {
         ),
         "PIB_MCP_ENABLE_ACTUATION": "true",
     },
+    # PR-2103: voice/chat never uses MCP resource or prompt utilities; Hermes registers
+    # list_resources/read_resource/list_prompts/get_prompt per server by default.
+    "tools": {
+        "resources": False,
+        "prompts": False,
+    },
 }
 
 # Permanent Hermes LLM pin. Kept in sync with setup/setup-pib.sh
@@ -698,6 +704,24 @@ def _merge_missing_mcp_env(entry: dict) -> bool:
     return changed
 
 
+def _merge_pib_mcp_chat_tools_policy(entry: dict) -> bool:
+    """Ensure the pib MCP entry disables resource/prompt utility tools for chat."""
+    desired = PIB_MCP_SERVER.get("tools")
+    if not isinstance(desired, dict):
+        return False
+    tools = entry.get("tools")
+    changed = False
+    if not isinstance(tools, dict):
+        tools = {}
+        entry["tools"] = tools
+        changed = True
+    for key, value in desired.items():
+        if tools.get(key) != value:
+            tools[key] = value
+            changed = True
+    return changed
+
+
 def _agent_block(cfg: dict) -> tuple[dict, bool]:
     """The config's agent mapping, created when it is missing or not a mapping."""
     agent = cfg.get("agent")
@@ -981,6 +1005,8 @@ def _ensure_mcp_servers_pib(
         servers["pib"] = entry
         changed = True
     elif _merge_missing_mcp_env(entry):
+        changed = True
+    if _merge_pib_mcp_chat_tools_policy(entry):
         changed = True
 
     if tool_calling is not None:

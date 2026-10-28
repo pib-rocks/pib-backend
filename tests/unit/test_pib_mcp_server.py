@@ -6,6 +6,7 @@ import pytest
 
 from pib_mcp_server.backend import BackendError, PibBackend
 from pib_mcp_server.server import ACTUATING_TOOLS, create_server
+from pib_mcp_server.tool_budgets import compact_tool_input_schema
 
 
 class FakeBackend:
@@ -205,7 +206,7 @@ def _get_schema(tool):
     if schema is None:
         schema = getattr(tool, "inputSchema", None)
     if isinstance(schema, dict):
-        return schema
+        return compact_tool_input_schema(schema)
     if hasattr(schema, "model_dump"):
         return schema.model_dump()
     return tool.model_dump().get("inputSchema") or tool.model_dump().get("input_schema")

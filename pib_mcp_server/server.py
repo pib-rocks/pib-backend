@@ -16,7 +16,11 @@ from mcp.types import ToolAnnotations
 from pydantic import Field
 
 from .backend import BackendError, PibBackend
-from .tool_budgets import DEFAULT_TOOL_PAYLOAD_BUDGET_BYTES, TOOL_PAYLOAD_BUDGET_BYTES
+from .tool_budgets import (
+    DEFAULT_TOOL_PAYLOAD_BUDGET_BYTES,
+    TOOL_PAYLOAD_BUDGET_BYTES,
+    compact_tool_input_schema,
+)
 
 # UTF-8 JSON byte budgets for default (compact) tool results; see tool_budgets.py.
 TOOL_PAYLOAD_BUDGETS = {
@@ -99,11 +103,9 @@ def create_server(
     server = FastMCP(
         "pib",
         instructions=(
-            "Schema-validated pib robot tools. Actuator tools require "
-            "PIB_MCP_ENABLE_ACTUATION=true in the server environment. "
-            "A gesture or a head turn while an answer is spoken is "
-            "apply_pose, move_motor, or move_motors, not a separate gesture system. "
-            "Motor angles at the tool boundary are in degrees; ROS trajectories use radians."
+            "pib robot MCP tools. Motor angles at tools are degrees; ROS uses radians. "
+            "Actuators need PIB_MCP_ENABLE_ACTUATION=true. Gestures use apply_pose, "
+            "move_motor, or move_motors."
         ),
     )
 
@@ -130,40 +132,37 @@ def create_server(
 
     @server.tool(annotations=read_annotations, structured_output=True)
     def list_motors(detail: bool = False) -> dict[str, Any]:
-        """List motors with live positions; pass detail=true for full config and bricklets."""
+        """Read-only. Motors and positions (degrees); detail=true adds config."""
 
         return _invoke(robot.list_motors, detail)
 
     @server.tool(annotations=read_annotations, structured_output=True)
     def get_state(detail: bool = False) -> dict[str, Any]:
-        """Return joint state and diagnostics; pass detail=true for full motor config."""
+        """Read-only. Joint state and diagnostics (degrees); detail=true adds motor config."""
 
         return _invoke(robot.get_state, detail)
 
     @server.tool(annotations=read_annotations, structured_output=True)
     def get_motion_model(detail: bool = False) -> dict[str, Any]:
-        """Return the live motion model from the robot database.
+        """Read-only. Motion model (degrees); detail=true adds chains, limits, postures."""
 
-        Default is the rendered prompt and units; pass detail=true for kinematic
-        chains, joint limits, and named postures.
-        """
         return _invoke(robot.get_motion_model, detail)
 
     @server.tool(annotations=read_annotations, structured_output=True)
     def list_poses(detail: bool = False) -> dict[str, Any]:
-        """List stored robot poses; pass detail=true for motor positions."""
+        """Read-only. Stored poses; detail=true adds motor positions (degrees)."""
 
         return _invoke(robot.list_poses, detail)
 
     @server.tool(annotations=read_annotations, structured_output=True)
     def list_programs(detail: bool = False) -> dict[str, Any]:
-        """List stored Blockly/Python programs; pass detail=true for Blockly code."""
+        """Read-only. Stored programs; detail=true adds Blockly code."""
 
         return _invoke(robot.list_programs, detail)
 
     @server.tool(annotations=read_annotations, structured_output=True)
     def capture_image(detail: bool = False) -> dict[str, Any]:
-        """Capture one camera frame; default is a reference and metadata only."""
+        """Side effect. Camera frame; default ref/metadata only."""
 
         return _invoke(robot.capture_image, detail)
 
@@ -236,12 +235,7 @@ def create_server(
 
     @server.tool(annotations=actuation_annotations, structured_output=True)
     def move_motors(moves: list[dict[str, Any]]) -> dict[str, Any]:
-        """Move several motors in one trajectory (positions in degrees).
-
-        Each entry needs ``motor`` and ``position_degrees``. All entries are
-        validated before any motion is requested; one invalid entry rejects the
-        whole call.
-        """
+        """Side effect. Multi-motor move (degrees); motor+position_degrees; validate before motion."""
 
         disabled = require_actuation("move_motors")
         if disabled:
@@ -262,7 +256,7 @@ def create_server(
     def move_motor(
         motor_name: NonEmptyString, position_degrees: MotorPositionDegrees
     ) -> dict[str, Any]:
-        """Move one motor in degrees after validating its configured rotation limits."""
+        """Side effect. One motor to position_degrees (degrees) within configured limits."""
 
         disabled = require_actuation("move_motor")
         if disabled:
@@ -282,13 +276,7 @@ def create_server(
         joint_names: list[NonEmptyString],
         points: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        """Apply a timed multi-waypoint joint trajectory (tool positions in degrees).
-
-        ``points`` is a list of waypoints. Each waypoint provides
-        ``positions_degrees`` with one angle per ``joint_names`` entry (same order)
-        and optional ``time_from_start_sec`` for timed motion. Values are converted
-        to radians on the ROS wire.
-        """
+        """Side effect. Trajectory (degrees→ROS rad). points[].positions_degrees per joint; optional time_from_start_sec."""
 
         disabled = require_actuation("apply_joint_trajectory")
         if disabled:
@@ -342,7 +330,7 @@ def create_server(
 
     @server.tool(annotations=actuation_annotations, structured_output=True)
     def apply_pose(pose_name: NonEmptyString) -> dict[str, Any]:
-        """Apply a stored pose by its exact name."""
+        """Side effect. Apply stored pose by exact pose_name."""
 
         disabled = require_actuation("apply_pose")
         if disabled:
@@ -354,7 +342,7 @@ def create_server(
 
     @server.tool(annotations=actuation_annotations, structured_output=True)
     def run_program(program_id: NonEmptyString) -> dict[str, Any]:
-        """Start a stored program by program number/ID."""
+        """Side effect. Start stored program by program_id."""
 
         disabled = require_actuation("run_program")
         if disabled:
@@ -371,7 +359,7 @@ def create_server(
         green: ColorChannel,
         blue: ColorChannel,
     ) -> dict[str, Any]:
-        """Set one RGB button LED (button 1-3, channels 0-255)."""
+        """Side effect. Button RGB; button_id 1-3; red/green/blue 0-255."""
 
         disabled = require_actuation("set_led")
         if disabled:
@@ -380,7 +368,7 @@ def create_server(
 
     @server.tool(annotations=actuation_annotations, structured_output=True)
     def set_relay(turned_on: bool) -> dict[str, Any]:
-        """Turn the solid-state relay on or off."""
+        """Side effect. Solid-state relay on/off."""
 
         disabled = require_actuation("set_relay")
         if disabled:
@@ -391,7 +379,7 @@ def create_server(
     def list_smarthome_devices(
         room: str = "", domain: str = "", detail: bool = False
     ) -> dict[str, Any]:
-        """List voice-exposed SmartHome devices, optionally filtered by room or domain."""
+        """Read-only. Voice SmartHome devices; optional room/domain filters."""
 
         return _invoke(
             robot.list_smarthome_devices,
@@ -404,7 +392,7 @@ def create_server(
     def get_smarthome_state(
         device: NonEmptyString, detail: bool = False
     ) -> dict[str, Any]:
-        """Read the current state of one voice-exposed SmartHome device."""
+        """Read-only. One voice-exposed device state (entity id or friendly name)."""
 
         return _invoke(robot.get_smarthome_state, device.strip(), detail)
 
@@ -414,7 +402,7 @@ def create_server(
         action: NonEmptyString,
         value: str = "",
     ) -> dict[str, Any]:
-        """Run a SmartHome action on one voice-exposed device."""
+        """Side effect. SmartHome action on voice device; optional numeric/string value."""
 
         disabled = require_actuation("control_smarthome_device")
         if disabled:
@@ -428,7 +416,7 @@ def create_server(
 
     @server.tool(annotations=actuation_annotations, structured_output=True)
     def trigger_smarthome_scene(scene: NonEmptyString) -> dict[str, Any]:
-        """Activate a SmartHome scene by name."""
+        """Side effect. Activate SmartHome scene by name."""
 
         disabled = require_actuation("trigger_smarthome_scene")
         if disabled:
@@ -441,7 +429,7 @@ def create_server(
         lesson: SoulLesson,
         detail: bool = False,
     ) -> dict[str, Any]:
-        """Append one durable lesson to a personality SOUL; never replace it."""
+        """Side effect. Append SOUL lesson (max 500 chars); never replaces."""
 
         personality_id = personality_id.strip()
         lesson = lesson.strip()
@@ -460,7 +448,15 @@ def create_server(
             )
         return _invoke(robot.soul_append, personality_id, lesson, detail)
 
+    _compact_tool_schemas(server)
     return server
+
+
+def _compact_tool_schemas(server: FastMCP) -> None:
+    """Remove JSON Schema title noise from tool parameters (PR-2103 prompt size)."""
+    for tool in server._tool_manager.list_tools():
+        if isinstance(tool.parameters, dict):
+            tool.parameters = compact_tool_input_schema(tool.parameters)
 
 
 mcp = create_server()
