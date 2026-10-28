@@ -1,4 +1,5 @@
-from flask import abort, jsonify, request, Blueprint, Response
+from flask import abort, jsonify, make_response, request, Blueprint, Response
+from werkzeug.http import parse_etags
 from controller.error_handler import ChatMessageContentTooLongError
 from model.chat_message_model import ChatMessage
 from schema.chat_message_schema import (
@@ -92,17 +93,54 @@ def create_message(chat_id: str):
     return chat_message_schema.dump(chat_message), 201
 
 
+def _if_none_match_hits(etag: str) -> bool:
+    header = request.headers.get("If-None-Match")
+    if not header:
+        return False
+    return etag in parse_etags(header)
+
+
+def _etag_header_value(etag: str) -> str:
+    return f'"{etag}"'
+
+
 @bp.route(
     "/<string:chat_id>/messages", defaults={"message_history": None}, methods=["GET"]
 )
 @bp.route("/<string:chat_id>/messages/<int:message_history>", methods=["GET"])
 def get_messages_by_chat_id(chat_id: str, message_history: int | None = None):
-    if message_history is None:
-        chat = chat_service.get_chat(chat_id)
-        return chat_messages_only_schema.dump(chat)
-    else:
+    if message_history is not None:
         messages = chat_service.get_message_history(chat_id, message_history)
         return jsonify({"messages": chat_messages_schema.dump(messages)})
+
+    since = request.args.get("since")
+    limit_arg = request.args.get("limit")
+    limit: int | None = None
+    if limit_arg is not None:
+        try:
+            limit = int(limit_arg)
+        except ValueError:
+            abort(400)
+        if limit < 0:
+            abort(400)
+
+    chat = chat_service.get_chat(chat_id)
+    ordered = list(chat.messages)
+    etag = chat_service.messages_etag(ordered)
+
+    if since is None and limit is None:
+        if _if_none_match_hits(etag):
+            response = Response(status=304)
+            response.headers["ETag"] = _etag_header_value(etag)
+            return response
+        response = make_response(chat_messages_only_schema.dump(chat))
+        response.headers["ETag"] = _etag_header_value(etag)
+        return response
+
+    filtered = chat_service.select_chat_messages(ordered, since=since, limit=limit)
+    response = jsonify({"messages": chat_messages_schema.dump(filtered)})
+    response.headers["ETag"] = _etag_header_value(etag)
+    return response
 
 
 @bp.route("/<string:chat_id>/messages/history/<int:message_history>", methods=["GET"])

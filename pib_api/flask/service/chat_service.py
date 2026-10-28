@@ -1,6 +1,7 @@
 import logging
 import time
-from typing import Any, List
+from datetime import datetime
+from typing import Any, List, Optional, Sequence
 
 from werkzeug.exceptions import UnprocessableEntity
 
@@ -53,6 +54,41 @@ def get_message_history(chat_id: str, length: int) -> ChatMessage:
         .limit(length)
         .all()
     )
+
+
+def messages_etag(messages: Sequence[ChatMessage]) -> str:
+    """Fingerprint of the full message set: last message id and count."""
+    count = len(messages)
+    last_id = messages[-1].message_id if messages else ""
+    return f"{last_id}:{count}"
+
+
+def _messages_after_since(
+    messages: Sequence[ChatMessage], since: str
+) -> list[ChatMessage]:
+    for index, message in enumerate(messages):
+        if message.message_id == since:
+            return list(messages[index + 1 :])
+    try:
+        cutoff = datetime.fromisoformat(since.replace("Z", "+00:00"))
+    except ValueError:
+        return list(messages)
+    return [message for message in messages if message.timestamp > cutoff]
+
+
+def select_chat_messages(
+    messages: Sequence[ChatMessage],
+    *,
+    since: Optional[str] = None,
+    limit: Optional[int] = None,
+) -> list[ChatMessage]:
+    """Slice an ordered message list loaded through the chat model."""
+    selected = list(messages)
+    if since:
+        selected = _messages_after_since(selected, since)
+    if limit is not None:
+        selected = selected[-limit:]
+    return selected
 
 
 def create_chat(chat_dto: Any) -> Chat:
