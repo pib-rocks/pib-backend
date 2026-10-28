@@ -34,6 +34,7 @@ case "$RETRY_DELAY_SECONDS" in
 esac
 HEALTHCHECK="$BACKEND_DIR/setup/update_healthcheck.py"
 PIB_SDK_VERIFY="$BACKEND_DIR/setup/pib_sdk_verify.py"
+BACKEND_IMAGES_HELPER="$BACKEND_DIR/setup/update_backend_images.py"
 WATCHDOG_DECIDER="$BACKEND_DIR/setup/update_watchdog.py"
 STATUS_READER="$BACKEND_DIR/setup/update_status_reader.py"
 WATCHDOG_HELPER="/usr/local/sbin/pib-update-watchdog"
@@ -652,8 +653,9 @@ ensure_ollama_for_update() {
 }
 
 # Refreshes Dockerfile base images (ros, python, node, ...) before recreating
-# services. Service image names are local-only, so this uses `build --pull`, not
-# `docker compose pull`. Offline: a failed pull build retries without --pull.
+# services when registry pulls did not supply the stack. Service image names
+# point at ghcr.io; `docker compose pull` is tried first in build_backend_stack.
+# Offline: a failed pull build retries without --pull.
 refresh_backend_base_images() {
     local compose=(docker compose -f "$BACKEND_DIR/docker-compose.yaml" --profile all)
     local pull_log pull_status plain_log plain_status
@@ -683,6 +685,41 @@ refresh_backend_base_images() {
     return 1
 }
 
+# Tries ghcr.io service images (compose pull) before the local build path.
+# Returns 0 when pull + recreate succeeded; 1 to fall back to compose build.
+recreate_backend_from_registry() {
+    local enabled pull_log pull_status strategy compose
+    enabled="$(python3 "$BACKEND_IMAGES_HELPER" registry-enabled 2>/dev/null || printf false)"
+    if [ "$enabled" != "true" ]; then
+        strategy="build"
+        log "$(python3 "$BACKEND_IMAGES_HELPER" log-summary "$strategy")"
+        return 1
+    fi
+    export PIB_IMAGE_TAG
+    PIB_IMAGE_TAG="$(python3 "$BACKEND_IMAGES_HELPER" resolve-tag "${APP_VERSION:-}")"
+    log "Attempting registry pull for backend services (PIB_IMAGE_TAG=${PIB_IMAGE_TAG})"
+    compose=(docker compose -f "$BACKEND_DIR/docker-compose.yaml" --profile all)
+    pull_log="$(mktemp "$UPDATE_DIR/service-pull.XXXXXX")"
+    if "${compose[@]}" pull >"$pull_log" 2>&1; then
+        cat "$pull_log"
+        rm -f "$pull_log"
+        if "${compose[@]}" up -d --no-build --force-recreate; then
+            strategy="pull"
+            log "$(python3 "$BACKEND_IMAGES_HELPER" log-summary "$strategy")"
+            return 0
+        fi
+        log "WARNING: registry images pulled but recreate with --no-build failed"
+    else
+        pull_status=$?
+        log "WARNING: registry pull failed (exit ${pull_status}): $(tr '\n' ' ' <"$pull_log" | sed 's/  */ /g')"
+        cat "$pull_log"
+    fi
+    rm -f "$pull_log"
+    strategy="build_after_pull_failed"
+    log "$(python3 "$BACKEND_IMAGES_HELPER" log-summary "$strategy")"
+    return 1
+}
+
 # Documented injection is `docker compose build --build-arg APP_VERSION=<version>
 # flask-app` (docs/RELEASE.md). -f is required because this runner does not cd
 # into the checkout. APP_VERSION is also exported: the following
@@ -693,6 +730,9 @@ refresh_backend_base_images() {
 build_backend_stack() {
     local skip_base_refresh="${1:-}"
     if [ -z "$skip_base_refresh" ]; then
+        if recreate_backend_from_registry; then
+            return 0
+        fi
         refresh_backend_base_images || return 1
     fi
     if [ -n "${APP_VERSION:-}" ]; then

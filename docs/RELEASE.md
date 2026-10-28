@@ -86,6 +86,7 @@ The coupling is enforced on both sides:
 | Repo | Mechanism | Behaviour |
 |---|---|---|
 | **cerebra** | `docker-build.yml`, step *Require the same published release in pib-backend* | **Hard block.** No image is built or pushed unless pib-backend has a *published* release with the same tag. |
+| **pib-backend** | `.github/workflows/docker-images.yml` | On push to **`develop`** or a **published release**, builds and pushes arm64 service images to ghcr.io. |
 | **pib-backend** | `release-pairing-guard.yml` + `setup/release_pairing_guard.py` | **Monitoring.** After a release (and hourly), checks that the pinned **pib-sdk** release exists and that cerebra followed with the same tag. Reports `PENDING` for missing counterparts for 120 minutes, then fails. Draft/prerelease pib-sdk releases fail immediately. |
 
 Why asymmetric for cerebra: because pib-backend is released *before* cerebra, it
@@ -134,10 +135,76 @@ cerebra counterpart — that is exactly the drift this process prevents.
 
 ---
 
+## Docker service images (ghcr.io)
+
+CI on **`ubuntu-24.04-arm`** builds every backend compose service image for
+**linux/arm64** and pushes them to GitHub Container Registry. The workflow is
+`.github/workflows/docker-images.yml`.
+
+| Trigger | Immutable tag | Moving tag | `APP_VERSION` in `flask-app` |
+|---|---|---|---|
+| Push to **`develop`** | `:<git-sha>` | `:develop` | `develop` |
+| **Published release** | `:vX.Y.Z` (release tag) | — | same as release tag |
+| **`workflow_dispatch`** | `:<git-sha>` or `:vX.Y.Z` when the input ref is a tag | `:develop` only when the input ref is the **`develop`** branch | `develop` or release tag |
+
+Image names: `ghcr.io/pib-rocks/pib-backend-<service>` (for example
+`ghcr.io/pib-rocks/pib-backend-flask-app:develop`).
+
+Each matrix job keeps its own registry build cache at
+`ghcr.io/pib-rocks/pib-backend-<service>-cache:buildcache`. The workflow uses
+`strategy.fail-fast: true` so a failed service build does not leave a half-published
+release set.
+
+### Robot update path
+
+`docker-compose.yaml` names every built service with
+`${PIB_IMAGE_PREFIX:-ghcr.io/pib-rocks/pib-backend}-<service>:${PIB_IMAGE_TAG:-develop}`.
+The `build:` sections are unchanged: `docker compose build` on the Pi still works
+when ghcr.io is unreachable or the tag was never published.
+
+`setup/update_runner.sh` resolves `PIB_IMAGE_TAG` from the update’s
+`APP_VERSION` (release tag or the `develop` marker), then:
+
+1. **`docker compose pull --profile all`** when registry pulls are enabled
+   (`PIB_USE_REGISTRY_IMAGES` defaults to on).
+2. On success, **`up -d --no-build --force-recreate`** (no on-Pi image build).
+3. On pull failure or when pulls are disabled, the existing path: refresh Dockerfile
+   bases with `build --pull`, build `flask-app` with `--build-arg APP_VERSION`, then
+   `up -d --build --force-recreate`.
+
+Rollback (`build_backend_stack rollback`) skips registry pull and base-image pull,
+so offline rollback keeps working.
+
+Opt out of registry pulls (force local build):
+
+```bash
+export PIB_USE_REGISTRY_IMAGES=0
+```
+
+Override image coordinates without editing the compose file:
+
+```bash
+export PIB_IMAGE_PREFIX=ghcr.io/pib-rocks/pib-backend
+export PIB_IMAGE_TAG=develop   # or v0.6.4 after a release publish
+```
+
+### What still builds on the robot
+
+- **Cerebra** (`/home/pib/app/cerebra/docker-compose.yaml`) is unchanged; only
+  pib-backend service images come from ghcr.io.
+- **Hermes agent sources** are not in the image: `hermes-daemon` still mounts the
+  filtered Hermes view from the host at runtime; CI clones
+  [NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent) only to
+  satisfy the Dockerfile `hermes` build context.
+- **External** images (`matter-server`, `homeassistant`) and **pibsim_webots** are
+  not part of this pipeline.
+
+---
+
 ## Notes
 
-- pib-backend has **no** Docker build pipeline: its containers are built on the Pi
-  from source (`docker compose build <service> && docker compose up -d`).
+- CI publishes backend service images; the notes below about on-Pi **`docker compose
+  build`** describe the **fallback** path when pulls are disabled or fail.
 - On-Pi `flask-app` builds inject the release tag into `GET /api/version` via
   `--build-arg APP_VERSION`. After the `develop -> main` merge (two parents),
   the merge commit's second parent is `develop`, where the release tag lives.
