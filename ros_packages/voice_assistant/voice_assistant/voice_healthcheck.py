@@ -77,6 +77,31 @@ def check_ros_stack() -> Tuple[bool, str, str]:
     return True, "", ""
 
 
+def _route_diagnostics(model: str, provider: str) -> str:
+    """Name the config file and credential id this store read used.
+
+    A present key stays invisible when the route names a provider the store
+    does not hold under that id - measured on 192.168.1.112, where the stale
+    base config said ``gemini``/``gemini-3.8-flash`` while the key sat under
+    ``pib-cloud``. Without these two facts the failure reads like a missing key.
+    """
+    from public_api_client.hermes_agent_client import (
+        CONFIG_FILENAME,
+        _current_hermes_home,
+    )
+    from voice_assistant.direct_tool_loop import _store_credential_id
+
+    try:
+        config_path = os.path.join(_current_hermes_home(), CONFIG_FILENAME)
+    except Exception:  # noqa: BLE001 - diagnostics must never break the probe
+        config_path = "unknown"
+    try:
+        credential = _store_credential_id(provider, model)
+    except Exception:  # noqa: BLE001
+        credential = "unknown"
+    return f"credential={credential} config={config_path}"
+
+
 def check_provider_key() -> Tuple[bool, str, str, Optional[str]]:
     """Return ``(ok, reason, detail, provider)`` for the active profile route."""
     from pib_hermes_config import provider_needs_key
@@ -86,7 +111,7 @@ def check_provider_key() -> Tuple[bool, str, str, Optional[str]]:
     )
     from voice_assistant.direct_tool_loop import DirectToolLoopError
 
-    _model, provider, _base, env_vars = profile_hermes_settings()
+    model, provider, _base, env_vars = profile_hermes_settings()
     provider_name = (provider or "").strip() or "unknown"
     if not env_vars and not provider_needs_key(provider):
         return True, "", "", provider_name
@@ -95,14 +120,15 @@ def check_provider_key() -> Tuple[bool, str, str, Optional[str]]:
         provider_key_for_turn()
     except DirectToolLoopError as error:
         message = str(error).strip()
+        route = _route_diagnostics(model, provider)
         if "No keys are available for provider" in message:
-            return False, REASON_NO_KEY, message, provider_name
+            return False, REASON_NO_KEY, f"{message} ({route})", provider_name
         return False, REASON_KEY_CHECK, message, provider_name
     except Exception as error:  # noqa: BLE001 - report without crashing the probe
         return (
             False,
             REASON_KEY_CHECK,
-            f"{type(error).__name__}: {error}",
+            f"{type(error).__name__}: {error} ({_route_diagnostics(model, provider)})",
             provider_name,
         )
 

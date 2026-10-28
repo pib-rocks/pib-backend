@@ -90,6 +90,10 @@ def test_healthcheck_provider_key_surfaces_no_key_reason(monkeypatch):
     assert ok is False
     assert reason == voice_healthcheck.REASON_NO_KEY
     assert provider == "gemini"
+    # A present key stays invisible when the route asks for another credential id.
+    # The detail must name that id and the config file, otherwise it reads as a missing key.
+    assert "credential=gemini-3-flash" in detail
+    assert "config=" in detail
 
     with patch.object(
         voice_healthcheck, "check_ros_stack", return_value=(True, "", "")
