@@ -554,6 +554,16 @@ class ChatNode(Node):
                 meta["turnTrace"] = trace
         return meta or None
 
+    @staticmethod
+    def _provider_base_url(api_name: str) -> str:
+        """Host a chat turn talks to, so a provider error can be located.
+
+        Falls back to the documented cloud default when nothing is configured:
+        the operator needs the host more than a pretty log line.
+        """
+        route = (os.getenv("PIB_CLOUD_BASE_URL") or "").strip().rstrip("/")
+        return route or "default"
+
     def _finalize_message_meta(self, chat_id: str) -> None:
         """Write the completed turn facts onto the answer that was just stored.
 
@@ -1837,7 +1847,13 @@ class ChatNode(Node):
             # Name the path the turn actually took: a pib.Cloud turn with tools
             # enabled runs on Hermes, and a log that still says "direct" sends
             # the next diagnosis to the wrong component.
-            self.get_logger().error(f"failed to send request to {turn_path}: {e}")
+            # A 401 from a route the operator did not expect is unreadable without
+            # the host: on .172 the pib.Cloud key looked broken while the profile
+            # pointed at a LAN dev proxy (PR-2096).
+            self.get_logger().error(
+                f"failed to send request to {turn_path} "
+                f"(chat={chat_id} model={api_name} provider_base_url={self._provider_base_url(api_name)}): {e}"
+            )
             goal_handle.abort()
             return Chat.Result()
 
