@@ -119,6 +119,9 @@ COPY ./ros_packages/ros_entrypoint.sh /
 
 RUN chmod +x /ros_entrypoint.sh
 
+HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=3 \
+    CMD bash -lc 'source /opt/ros/jazzy/setup.bash && source /app/ros2_ws/install/setup.bash && python3 -m voice_assistant.voice_healthcheck' || exit 1
+
 RUN export PULSE_SERVER=unix:${XDG_RUNTIME_DIR}/pulse/native
 
 ENTRYPOINT ["/ros_entrypoint.sh"]

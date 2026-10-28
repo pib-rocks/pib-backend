@@ -22,6 +22,7 @@ from service import (
     key_store_service,
     revision_service,
     update_service,
+    voice_assistant_health_service,
 )
 from service.motion_model_service import get_motion_model
 from service.system_property_service import (
@@ -369,3 +370,15 @@ def cancel_update():
 @bp.route("/revision", methods=["GET"])
 def get_revision():
     return jsonify(revision_service.installed_revisions()), 200
+
+
+@bp.route("/voice-assistant-health", methods=["GET"])
+def get_voice_assistant_health():
+    """Whether the voice stack can answer a chat turn right now (PR-2122).
+
+    The probe runs here, not in Cerebra: it reads the voice container's Docker
+    health, which enforces ROS liveness and a resolvable provider key. A missing
+    container or an inconclusive probe answers ``state: unknown`` with 200, so
+    nothing merely unknown is painted as an outage.
+    """
+    return jsonify(voice_assistant_health_service.voice_assistant_status()), 200
