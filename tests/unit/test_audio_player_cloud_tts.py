@@ -306,3 +306,36 @@ def test_an_engine_without_a_speech_client_stays_silent(monkeypatch):
     assert local_calls == []
     assert queued_pcm(node) == []
     assert log.error.called
+
+
+def test_cloud_wav_sample_rate_is_preserved_in_playback_item_encoding(monkeypatch):
+    """PR-2126: 16 kHz pib.Cloud WAV must play at 16,000 Hz, not hardcoded 44,100 Hz (2.75x chipmunk speed)."""
+    monkeypatch.setenv("PIB_CLOUD_BASE_URL", "https://cloud.example/v1")
+    node, _, _, _ = build_player(
+        lambda url, **kwargs: SimpleNamespace(
+            status_code=200, content=wav_container(CLOUD_PCM, rate=16000)
+        )
+    )
+
+    node.play_audio_from_speech(request("Hallo."), SimpleNamespace())
+
+    item = node.playback_queue.get_nowait()
+    assert item.encoding.frames_per_second == 16000
+    assert item.encoding.num_channels == 1
+    assert item.encoding.bytes_per_sample == 2
+    assert b"".join(item.data) == CLOUD_PCM
+
+
+def test_local_fallback_preserves_supertone_44100_sample_rate(monkeypatch):
+    monkeypatch.setenv("PIB_CLOUD_BASE_URL", "https://cloud.example/v1")
+    node, _, _, _ = build_player(
+        lambda url, **kwargs: SimpleNamespace(status_code=502, content=b"")
+    )
+
+    node.play_audio_from_speech(request("Hallo."), SimpleNamespace())
+
+    item = node.playback_queue.get_nowait()
+    assert item.encoding.frames_per_second == 44100
+    assert item.encoding.num_channels == 1
+    assert item.encoding.bytes_per_sample == 2
+    assert b"".join(item.data) == LOCAL_PCM
