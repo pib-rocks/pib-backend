@@ -117,6 +117,26 @@ def authored_filler(
     return text or None
 
 
+SUBPROCESS_FALLBACK_CUE_DE = "Einen Moment bitte."
+SUBPROCESS_FALLBACK_CUE_EN = "One moment please."
+
+
+def subprocess_fallback_phrase(
+    thinking_filler: str | None, language: str | None
+) -> str | None:
+    """Short notice when Hermes falls back to a oneshot subprocess (PR-2105).
+
+    Uses authored ``thinking_filler`` when present; otherwise a built-in cue by
+    language. This path is separate from the slow-first-token filler timer.
+    """
+    if isinstance(thinking_filler, str) and thinking_filler.strip():
+        return thinking_filler.strip()
+    lang = (language or "").strip().lower()
+    if lang.startswith("en") or "english" in lang:
+        return SUBPROCESS_FALLBACK_CUE_EN
+    return SUBPROCESS_FALLBACK_CUE_DE
+
+
 def normalize_thinking_filler(value: object) -> str | None:
     """Store authored filler text, or nothing. Blank is nothing."""
     if value is None:

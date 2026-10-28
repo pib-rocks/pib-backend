@@ -310,13 +310,89 @@ def test_run_turn_prefers_daemon_reply_over_subprocess(
 
     with patch(
         "public_api_client.hermes_agent_client._try_daemon_turn",
-        return_value="from-daemon",
+        return_value=("from-daemon", None),
     ) as daemon:
         with patch("public_api_client.hermes_agent_client.subprocess.run") as run:
             assert run_turn("hi", "c1", personality_id="p-1") == "from-daemon"
 
     daemon.assert_called_once()
     run.assert_not_called()
+
+
+def test_run_turn_retries_daemon_before_subprocess(
+    installed_hermes_bin, monkeypatch, caplog
+):
+    """PR-2105: a briefly unavailable daemon is retried without subprocess."""
+    import logging
+
+    monkeypatch.setenv("PIB_HERMES_DAEMON_URL", "http://127.0.0.1:8088")
+    completed = subprocess.CompletedProcess(
+        args=[], returncode=0, stdout="via-subprocess\n", stderr=""
+    )
+    attempts = iter([(None, "ConnectionError"), ("from-retry", None)])
+
+    with patch(
+        "public_api_client.hermes_agent_client._try_daemon_turn",
+        side_effect=lambda *args, **kwargs: next(attempts),
+    ) as daemon:
+        with patch("subprocess.run", return_value=completed) as run:
+            with patch("public_api_client.hermes_agent_client.time.sleep") as slept:
+                with caplog.at_level(logging.INFO):
+                    assert run_turn("hi", "c1") == "from-retry"
+
+    assert daemon.call_count == 2
+    run.assert_not_called()
+    slept.assert_called_once()
+    assert any(
+        "DAEMON_ATTEMPT chat=c1 attempt=1 reason=ConnectionError" in record.message
+        for record in caplog.records
+    )
+
+
+def test_run_turn_does_not_sleep_when_daemon_answers_first_try(
+    installed_hermes_bin, monkeypatch
+):
+    monkeypatch.setenv("PIB_HERMES_DAEMON_URL", "http://127.0.0.1:8088")
+    with patch(
+        "public_api_client.hermes_agent_client._try_daemon_turn",
+        return_value=("fast", None),
+    ) as daemon:
+        with patch("public_api_client.hermes_agent_client.time.sleep") as slept:
+            assert run_turn("hi", "c1") == "fast"
+
+    daemon.assert_called_once()
+    slept.assert_not_called()
+
+
+def test_run_turn_notifies_voice_before_subprocess(
+    installed_hermes_bin, monkeypatch, caplog
+):
+    import logging
+
+    monkeypatch.setenv("PIB_HERMES_DAEMON_URL", "http://127.0.0.1:1")
+    completed = subprocess.CompletedProcess(
+        args=[], returncode=0, stdout="via-subprocess\n", stderr=""
+    )
+    notices: list[str] = []
+
+    with patch(
+        "public_api_client.hermes_agent_client._try_daemon_turn",
+        return_value=(None, "ConnectionError"),
+    ):
+        with patch("subprocess.run", return_value=completed):
+            with patch("public_api_client.hermes_agent_client.time.sleep"):
+                with caplog.at_level(logging.WARNING):
+                    run_turn(
+                        "hi",
+                        "c1",
+                        on_subprocess_fallback=notices.append,
+                    )
+
+    assert notices == ["ConnectionError"] * 1
+    assert any(
+        "falling back to oneshot subprocess (chat=c1): ConnectionError" in r.message
+        for r in caplog.records
+    )
 
 
 def test_run_turn_falls_back_to_subprocess_when_daemon_unreachable(
@@ -327,7 +403,8 @@ def test_run_turn_falls_back_to_subprocess_when_daemon_unreachable(
         args=[], returncode=0, stdout="via-subprocess\n", stderr=""
     )
     with patch("subprocess.run", return_value=completed) as run:
-        assert run_turn("hi", "c1") == "via-subprocess"
+        with patch("public_api_client.hermes_agent_client.time.sleep"):
+            assert run_turn("hi", "c1") == "via-subprocess"
     run.assert_called_once()
 
 
@@ -347,7 +424,8 @@ def test_run_turn_falls_back_when_daemon_returns_non_200(
             args=[], returncode=0, stdout="fallback-ok\n", stderr=""
         )
         with patch("subprocess.run", return_value=completed):
-            assert run_turn("hi", "c1") == "fallback-ok"
+            with patch("public_api_client.hermes_agent_client.time.sleep"):
+                assert run_turn("hi", "c1") == "fallback-ok"
 
 
 def test_hermes_binary_available_reflects_the_configured_path(

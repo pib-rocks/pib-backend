@@ -19,7 +19,7 @@ import re
 import subprocess
 import threading
 import time
-from typing import Iterator, Optional
+from typing import Callable, Iterator, Optional
 
 import yaml
 from pib_hermes_config import (
@@ -1280,6 +1280,11 @@ def _child_environment(
     return env
 
 
+# Bounded warm-daemon retries before the oneshot subprocess path (PR-2105).
+_DAEMON_TURN_ATTEMPTS = 3
+_DAEMON_RETRY_BACKOFF_SECONDS = (0.15, 0.35)
+
+
 def is_warm_daemon_active(timeout: float = 0.15) -> bool:
     """True when the warm Hermes daemon answers GET /health quickly.
 
@@ -1306,12 +1311,16 @@ def _try_daemon_turn(
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
     enabled_toolsets: Optional[str] = DEFAULT_ENABLED_TOOLSETS,
     message_history: Optional[int] = None,
-) -> Optional[str]:
-    """POST /turn to the warm daemon. None means unreachable or non-200."""
+) -> tuple[Optional[str], Optional[str]]:
+    """POST /turn to the warm daemon.
+
+    Returns ``(reply, failure_reason)``. ``failure_reason`` is set when the
+    daemon did not yield a speakable reply.
+    """
     try:
         import requests
     except ImportError:
-        return None
+        return None, "requests_unavailable"
 
     payload = {
         "text": text,
@@ -1349,7 +1358,7 @@ def _try_daemon_turn(
             chat_id,
             exc,
         )
-        return None
+        return None, type(exc).__name__
 
     ttft_ms = _perf_ms(http_start)
     logging.info(
@@ -1374,7 +1383,7 @@ def _try_daemon_turn(
             response.status_code,
             chat_id,
         )
-        return None
+        return None, f"http_{response.status_code}"
 
     try:
         data = response.json()
@@ -1383,7 +1392,7 @@ def _try_daemon_turn(
             "hermes daemon returned non-json body (chat=%s); falling back",
             chat_id,
         )
-        return None
+        return None, "invalid_json"
 
     if isinstance(tool_sink, list) and isinstance(data.get("toolsUsed"), list):
         tool_sink.extend(data["toolsUsed"])
@@ -1393,9 +1402,9 @@ def _try_daemon_turn(
             "hermes daemon response missing reply string (chat=%s); falling back",
             chat_id,
         )
-        return None
+        return None, "missing_reply"
 
-    return reply.strip() or FALLBACK_REPLY
+    return (reply.strip() or FALLBACK_REPLY), None
 
 
 def stream_turn(
@@ -1560,6 +1569,7 @@ def run_turn(
     enabled_toolsets: Optional[str] = DEFAULT_ENABLED_TOOLSETS,
     tool_sink: Optional[list] = None,
     message_history: Optional[int] = None,
+    on_subprocess_fallback: Optional[Callable[[str], None]] = None,
 ) -> str:
     """Run one conversational turn. Returns speakable text.
 
@@ -1575,24 +1585,36 @@ def run_turn(
     provider_key = provider_key_for_turn()
 
     # Try the warm daemon first — no filesystem binary/profile checks on this path.
-    daemon_reply = _try_daemon_turn(
-        tool_sink,
-        text,
-        chat_id,
-        personality_id,
-        toolsets,
-        max_turns,
-        timeout=timeout,
-        enabled_toolsets=enabled_toolsets,
-        message_history=message_history,
-    )
-    if daemon_reply is not None:
-        logging.info(
-            "[PERF_TRACE] HERMES_CLIENT_DONE chat=%s via=daemon elapsed_ms=%.2f",
+    fallback_reason = "unreachable"
+    for attempt in range(1, _DAEMON_TURN_ATTEMPTS + 1):
+        daemon_reply, failure_reason = _try_daemon_turn(
+            tool_sink,
+            text,
             chat_id,
+            personality_id,
+            toolsets,
+            max_turns,
+            timeout=timeout,
+            enabled_toolsets=enabled_toolsets,
+            message_history=message_history,
+        )
+        if daemon_reply is not None:
+            logging.info(
+                "[PERF_TRACE] HERMES_CLIENT_DONE chat=%s via=daemon elapsed_ms=%.2f",
+                chat_id,
+                _perf_ms(t0),
+            )
+            return daemon_reply
+        fallback_reason = failure_reason or "unreachable"
+        logging.info(
+            "[PERF_TRACE] DAEMON_ATTEMPT chat=%s attempt=%d reason=%s elapsed_ms=%.2f",
+            chat_id,
+            attempt,
+            fallback_reason,
             _perf_ms(t0),
         )
-        return daemon_reply
+        if attempt < _DAEMON_TURN_ATTEMPTS:
+            time.sleep(_DAEMON_RETRY_BACKOFF_SECONDS[attempt - 1])
 
     if not hermes_binary_available():
         # Distinct from a timeout: the agent was never started at all.
@@ -1610,6 +1632,19 @@ def run_turn(
         )
         return FALLBACK_REPLY
 
+    logging.warning(
+        "hermes turn falling back to oneshot subprocess (chat=%s): %s",
+        chat_id,
+        fallback_reason,
+    )
+    if on_subprocess_fallback is not None:
+        try:
+            on_subprocess_fallback(fallback_reason)
+        except Exception as exc:
+            logging.debug(
+                "subprocess fallback notifier failed (chat=%s): %s", chat_id, exc
+            )
+
     from public_api_client.hermes_daemon import seed_flask_conversation_for_chat
 
     seed_flask_conversation_for_chat(
@@ -1625,8 +1660,9 @@ def run_turn(
         provider_key=provider_key,
     )
     logging.info(
-        "[PERF_TRACE] HERMES_CLIENT_DONE chat=%s via=subprocess elapsed_ms=%.2f",
+        "[PERF_TRACE] HERMES_CLIENT_DONE chat=%s via=subprocess reason=%s elapsed_ms=%.2f",
         chat_id,
+        fallback_reason,
         _perf_ms(t0),
     )
     return reply

@@ -513,6 +513,29 @@ class ChatNode(Node):
                 stages = self._turn_stages = {}
             stages[stage] = round(float(ts) - started, 1)
 
+    def _emit_hermes_subprocess_fallback_notice(self, reason: str) -> None:
+        """Tell the voice layer to speak before the oneshot subprocess runs."""
+        publisher = getattr(self, "_turn_trace_publisher", None)
+        if publisher is None:
+            return
+        try:
+            from voice_assistant.turn_latency import format_event, now_ms
+
+            raw = format_event(
+                "hermes_subprocess_fallback",
+                ts_ms=now_ms(),
+                chat_id=self._turn_trace_chat_id(),
+                detail={"fallback_reason": reason},
+            )
+            self._record_turn_trace(raw)
+            message = String()
+            message.data = raw
+            publisher.publish(message)
+        except Exception as exc:
+            self.get_logger().warning(
+                f"hermes subprocess fallback notice was not published: {exc}"
+            )
+
     def _turn_meta(self) -> dict | None:
         """Facts of this turn, stored with the answer (PC-82).
 
@@ -1324,6 +1347,10 @@ class ChatNode(Node):
                 if tool_calling
                 else hermes_agent_client.enabled_toolsets_for_turn(False)
             )
+
+            def _on_subprocess_fallback(reason: str) -> None:
+                self._emit_hermes_subprocess_fallback_notice(reason)
+
             return hermes_agent_client.run_turn(
                 text=text,
                 chat_id=chat_id,
@@ -1332,6 +1359,7 @@ class ChatNode(Node):
                 enabled_toolsets=enabled_toolsets,
                 timeout=timeout,
                 message_history=message_history,
+                on_subprocess_fallback=_on_subprocess_fallback,
             )
 
         future = self._hermes_executor.submit(_turn)
