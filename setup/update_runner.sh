@@ -10,6 +10,7 @@ BACKEND_DIR="${PIB_BACKEND_DIR:-/home/pib/app/pib-backend}"
 CEREBRA_DIR="${PIB_CEREBRA_DIR:-/home/pib/app/cerebra}"
 REQUEST_FILE="$UPDATE_DIR/request.json"
 STATUS_FILE="$UPDATE_DIR/status.json"
+RUNNER_LOCK="$UPDATE_DIR/runner.lock"
 CANCEL_FILE="$UPDATE_DIR/cancel.json"
 CHECK_FILE="$UPDATE_DIR/check.json"
 AVAILABLE_FILE="$UPDATE_DIR/available.json"
@@ -533,6 +534,26 @@ validate_repository() {
 check_update_dir() {
     [ -d "$UPDATE_DIR" ] || fail "Update directory is missing: $UPDATE_DIR"
     [ -w "$UPDATE_DIR" ] || fail "Update directory is not writable by $(id -un): $UPDATE_DIR (owner $(stat -c '%U:%G %a' "$UPDATE_DIR" 2>/dev/null || echo unknown)); fix with: sudo install -d -o pib -g pib -m 2770 $UPDATE_DIR"
+}
+
+acquire_runner_lock() {
+    if ! command -v flock >/dev/null 2>&1; then
+        fail "The flock command is required for update locking but was not found on PATH; install util-linux"
+    fi
+    exec 9>"$RUNNER_LOCK"
+    flock -n 9 || fail "Another update or deployment holds $RUNNER_LOCK; wait for it to finish or inspect the running job in $UPDATE_DIR/status.json and $LOG_FILE"
+}
+
+assert_checkouts_match_targets() {
+    local backend_head cerebra_head
+    backend_head="$(git -C "$BACKEND_DIR" rev-parse HEAD)"
+    if [ "$backend_head" != "$BACKEND_TARGET" ]; then
+        fail "pib-backend checkout moved before container build: at ${backend_head}, expected ${BACKEND_TARGET}; another process changed the working tree while this update was running"
+    fi
+    cerebra_head="$(git -C "$CEREBRA_DIR" rev-parse HEAD)"
+    if [ "$cerebra_head" != "$CEREBRA_TARGET" ]; then
+        fail "cerebra checkout moved before container build: at ${cerebra_head}, expected ${CEREBRA_TARGET}; another process changed the working tree while this update was running"
+    fi
 }
 
 check_watchdog_conflict() {
@@ -1168,6 +1189,7 @@ start_heartbeat
 trap on_runner_exit EXIT
 load_predecessor_status
 enforce_retry_policy
+acquire_runner_lock
 write_status "preflight" "Validating repositories, disk, watchdog ownership, and database backup (attempt ${ATTEMPT} of ${MAX_ATTEMPTS})"
 check_cancel
 check_update_dir
@@ -1233,6 +1255,7 @@ fi
 # Ollama as soon as it starts; a drop-in written afterwards would miss that
 # probe. A missing ollama unit returns success.
 ensure_ollama_for_update || fail "ollama listen drop-in could not be applied"
+assert_checkouts_match_targets
 build_backend_stack || fail "Backend container build failed"
 docker compose -f "$CEREBRA_DIR/docker-compose.yaml" \
     up -d --build --force-recreate || fail "Cerebra container build failed"
