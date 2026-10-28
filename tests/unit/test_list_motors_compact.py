@@ -9,6 +9,9 @@ from pib_mcp_server.server import create_server
 from pib_mcp_payload_assertions import assert_tool_payload_within_budget
 
 COMPACT_MOTOR_KEYS = frozenset({"id", "name", "position"})
+COMPACT_MOTOR_OPTIONAL_KEYS = frozenset(
+    {"positionError", "positionSource", "positionAgeSec"}
+)
 COMPACT_BYTE_BUDGET = 3500
 MOTOR_COUNT = 24
 
@@ -131,7 +134,7 @@ def test_list_motors_default_is_compact_under_byte_budget():
     assert len(motors) == MOTOR_COUNT
 
     for motor in motors:
-        assert set(motor) <= COMPACT_MOTOR_KEYS | {"positionError"}
+        assert set(motor) <= COMPACT_MOTOR_KEYS | COMPACT_MOTOR_OPTIONAL_KEYS
         assert motor["id"] == motor["name"]
         assert isinstance(motor["position"], (float, type(None)))
 
@@ -166,7 +169,7 @@ def test_get_state_default_is_compact_under_budget():
     assert response["ok"] is True
     payload = response["result"]
     assert payload["diagnostics"] == {"status": "ok", "motorsOnline": MOTOR_COUNT}
-    assert set(payload["motors"][0]) == COMPACT_MOTOR_KEYS
+    assert set(payload["motors"][0]) <= COMPACT_MOTOR_KEYS | COMPACT_MOTOR_OPTIONAL_KEYS
     assert "bricklets" not in payload
     assert_tool_payload_within_budget("get_state", payload)
 
@@ -198,4 +201,4 @@ def test_pib_backend_list_motors_detail_false_omits_bricklets():
     backend = RecordingBackend(full_motor_fixture())
     payload = backend.list_motors(detail=False)
     assert "bricklets" not in payload
-    assert set(payload["motors"][0]) == COMPACT_MOTOR_KEYS
+    assert set(payload["motors"][0]) <= COMPACT_MOTOR_KEYS | COMPACT_MOTOR_OPTIONAL_KEYS

@@ -139,7 +139,14 @@ def test_list_motors_default_payload_under_3500_bytes(fake_rosbridge):
     payload = backend.list_motors(detail=False)
     assert len(payload["motors"]) == MOTOR_COUNT
     for motor in payload["motors"]:
-        assert set(motor.keys()) <= {"id", "name", "position", "positionError"}
+        assert set(motor.keys()) <= {
+            "id",
+            "name",
+            "position",
+            "positionError",
+            "positionSource",
+            "positionAgeSec",
+        }
 
     byte_length = payload_utf8_byte_length(payload)
     assert byte_length < 3500
