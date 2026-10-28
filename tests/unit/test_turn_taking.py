@@ -3,6 +3,8 @@
 from pib_hermes_config.turn_taking import (
     DEFAULT_FALLBACK_TOKEN_LIMIT,
     StreamingSpeech,
+    SUBPROCESS_FALLBACK_CUE_DE,
+    SUBPROCESS_FALLBACK_CUE_EN,
     authored_filler,
     clauses_to_synthesize,
     completed_clauses,
@@ -10,6 +12,7 @@ from pib_hermes_config.turn_taking import (
     first_token_budget_ms,
     normalize_thinking_filler,
     pause_threshold_now,
+    subprocess_fallback_phrase,
     unpublished_clauses,
 )
 
@@ -34,6 +37,15 @@ def test_slow_first_token_uses_the_personality_filler():
         first_token_seen=False,
     )
     assert spoken == "Moment mal."
+
+
+def test_subprocess_fallback_prefers_authored_filler():
+    assert subprocess_fallback_phrase(" Moment mal. ", "German") == "Moment mal."
+
+
+def test_subprocess_fallback_builtin_by_language():
+    assert subprocess_fallback_phrase(None, "German") == SUBPROCESS_FALLBACK_CUE_DE
+    assert subprocess_fallback_phrase("", "English") == SUBPROCESS_FALLBACK_CUE_EN
 
 
 def test_fast_first_token_is_not_covered():

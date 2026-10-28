@@ -38,6 +38,7 @@ from pib_hermes_config.turn_taking import (
     authored_filler,
     first_token_budget_ms,
     pause_threshold_now,
+    subprocess_fallback_phrase,
     transcript_opens_turn,
 )
 from pib_hermes_config.visible_state import (
@@ -154,6 +155,7 @@ class VoiceAssistantNode(Node):
         self._filler_timer: Optional[threading.Timer] = None
         self._filler_lock = threading.Lock()
         self._first_token_seen = False
+        self._subprocess_fallback_spoken = False
         self._turn_has_playback = False
         # True while this turn's answer audio is queued or playing. A recording
         # window must not open on top of it (PC-40).
@@ -545,6 +547,7 @@ class VoiceAssistantNode(Node):
         self._answer_audio_pending = False
         with self._filler_lock:
             self._first_token_seen = False
+        self._subprocess_fallback_spoken = False
         self._refresh_personality_turn_taking()
         self._arm_filler()
         self._open_latency_turn()
@@ -586,6 +589,38 @@ class VoiceAssistantNode(Node):
         timer.daemon = True
         self._filler_timer = timer
         timer.start()
+
+    def _speak_subprocess_fallback_notice(self) -> None:
+        """Speak once when Hermes must use the oneshot subprocess (PR-2105)."""
+        if not self.state.turned_on or self.turning_off:
+            return
+        if self._subprocess_fallback_spoken:
+            return
+        personality = self.personality
+        if personality is None:
+            return
+        phrase = subprocess_fallback_phrase(
+            getattr(personality, "thinking_filler", None),
+            getattr(personality, "language", None),
+        )
+        if not phrase:
+            return
+        self._subprocess_fallback_spoken = True
+        self._cancel_filler_timer()
+        gender = personality.gender
+        language = personality.language
+
+        def _speak() -> None:
+            if not self.state.turned_on or self.turning_off:
+                return
+            if self.personality is None:
+                return
+            self._turn_has_playback = True
+            self.play_audio_from_speech(phrase, gender, language)
+
+        self._schedule_voice_callback(
+            self.if_cycle_not_changed(_speak, require_voice_on=True)
+        )
 
     def _note_first_token(self) -> None:
         with self._filler_lock:
@@ -1058,6 +1093,10 @@ class VoiceAssistantNode(Node):
                     self._orphan_dropped += 1
                 return
             if self._turn_trace.is_open:
+                stage = str(event.get("stage") or "")
+                if stage == "hermes_subprocess_fallback":
+                    self._speak_subprocess_fallback_notice()
+                    return
                 if not audio_event_belongs_to_turn(
                     str(event.get("stage") or ""), self._sentence_flushed
                 ):
