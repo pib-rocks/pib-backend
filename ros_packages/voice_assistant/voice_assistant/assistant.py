@@ -340,10 +340,14 @@ class VoiceAssistantNode(Node):
                 request_transcription=self._request_duplex_transcription,
                 mic_channels=int(os.getenv("PIB_MIC_CHANNELS", "1")),
             )
-        except Exception:
+        except Exception as exc:
+            # rclpy's logger rejects exc_info (TypeError: parameter "exc_info" is
+            # not one of the recognized logging options), so the traceback text is
+            # put into the message instead - otherwise the error path itself kills
+            # the node and hides the audio failure (measured on .172, PR-2086).
             self.get_logger().error(
-                "duplex voice backend unavailable; staying on the Gemini live path",
-                exc_info=True,
+                "duplex voice backend unavailable; staying on the Gemini live path: "
+                f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}"
             )
             return self.gemini_loop
         self.get_logger().info(f"voice backend: duplex relay at {url}")
