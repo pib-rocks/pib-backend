@@ -264,6 +264,53 @@ function install_wireplumber_volume_defaults() {
   print SUCCESS "Restarted wireplumber for user 'pib'"
 }
 
+# PipeWire must not downmix the ReSpeaker USB mic to stereo: channel 0 is the
+# XVF-3000 processed stream and the other channels are raw mics. A silent
+# downmix would hand the voice stack pib's own playback. The drop-in keeps six
+# channels, raises the array above HDMI monitor sources, and matches the same
+# name hints as voice_assistant/audio_devices.py (respeaker, seeed, uac1.0).
+# PIB_WIREPLUMBER_CONF_DIR lets the unit tests install into a scratch directory.
+function install_wireplumber_respeaker_mic_array() {
+  local drop_in="$BACKEND_DIR/setup/setup_files/51-pib-respeaker-mic-array.conf"
+  local conf_dir="${PIB_WIREPLUMBER_CONF_DIR:-/home/pib/.config/wireplumber/wireplumber.conf.d}"
+  local pib_uid
+
+  if [ ! -f "$drop_in" ]; then
+    print ERROR "wireplumber drop-in not found at $drop_in"
+    return 1
+  fi
+
+  pib_uid="$(id -u pib 2>/dev/null)" || {
+    print WARN "user 'pib' does not exist; the wireplumber ReSpeaker mic array drop-in was not installed"
+    return 0
+  }
+
+  sudo mkdir -p "$conf_dir"
+  sudo cp "$drop_in" "$conf_dir/51-pib-respeaker-mic-array.conf"
+  sudo chown -R pib:pib "$conf_dir"
+  sudo chmod 644 "$conf_dir/51-pib-respeaker-mic-array.conf"
+  print SUCCESS "Installed wireplumber ReSpeaker mic array drop-in to $conf_dir"
+
+  if ! sudo -u pib XDG_RUNTIME_DIR="/run/user/${pib_uid}" \
+    systemctl --user restart wireplumber; then
+    print WARN "could not restart wireplumber for user 'pib'; the drop-in applies after the next reboot"
+    return 0
+  fi
+
+  if command_exists wpctl; then
+    local attempt
+    for attempt in 1 2 3 4 5 6 7 8 9 10; do
+      if sudo -u pib XDG_RUNTIME_DIR="/run/user/${pib_uid}" \
+        wpctl status >/dev/null 2>&1; then
+        break
+      fi
+      sleep 1
+    done
+  fi
+
+  print SUCCESS "Restarted wireplumber for user 'pib'"
+}
+
 function warn_on_hardware_generation_mismatch() {
   local model_file="/proc/device-tree/model"
   local model expected_generation
@@ -2025,6 +2072,7 @@ run_step "Install Tinkerforge" install_tinkerforge || print ERROR "failed to ins
 run_step "Set up IP dispatcher" setup_ip_dispatcher || abort_setup "failed to setup ip dispatcher"
 run_step "Adjust system settings" source "$SETUP_INSTALLATION_DIR/set_system_settings.sh" || print ERROR "failed to set system settings"
 run_step "Install wireplumber volume drop-in" install_wireplumber_volume_defaults || print WARN "failed to install the wireplumber volume drop-in"
+run_step "Install wireplumber ReSpeaker mic array drop-in" install_wireplumber_respeaker_mic_array || print WARN "failed to install the wireplumber ReSpeaker mic array drop-in"
 run_step "Set default output volume" set_default_output_volume || print WARN "failed to set default output volume"
 print INFO "${INSTALL_METHOD}"
 if [ "$INSTALL_METHOD" = "legacy" ]; then
