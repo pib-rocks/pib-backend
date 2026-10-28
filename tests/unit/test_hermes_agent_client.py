@@ -732,3 +732,74 @@ def test_profile_config_check_reports_drift_and_exits_nonzero(tmp_path, capsys):
         str(profile_dir), model="gemini-3.8-flash", provider="gemini"
     )
     assert run_profile_config_check(str(profiles_root)) == 0
+
+
+def test_cloud_route_on_a_lan_address_is_replaced(caplog, monkeypatch):
+    """A device provisioned against a dev proxy must not keep that URL (PR-2096)."""
+
+    from public_api_client import hermes_agent_client as client
+
+    monkeypatch.delenv("PIB_PIB_CLOUD_BASE_URL", raising=False)
+    monkeypatch.setenv("PIB_CLOUD_BASE_URL", "https://api.pib.rocks/v1")
+    with caplog.at_level("WARNING"):
+        resolved = client._guard_cloud_route_base_url(
+            "pib-cloud", "http://192.168.1.252:8090/v1"
+        )
+
+    assert resolved == "https://api.pib.rocks/v1"
+    assert any("LAN address" in record.message for record in caplog.records)
+
+
+def test_cloud_route_keeps_a_public_url(monkeypatch):
+    from public_api_client import hermes_agent_client as client
+
+    monkeypatch.setenv("PIB_CLOUD_BASE_URL", "https://api.pib.rocks/v1")
+    assert (
+        client._guard_cloud_route_base_url("pib-cloud", "https://api.pib.rocks/v1")
+        == "https://api.pib.rocks/v1"
+    )
+
+
+def test_local_route_keeps_its_private_url(monkeypatch):
+    """ollama lives on the LAN on purpose; the guard must not touch it."""
+
+    from public_api_client import hermes_agent_client as client
+
+    monkeypatch.setenv("PIB_CLOUD_BASE_URL", "https://api.pib.rocks/v1")
+    assert (
+        client._guard_cloud_route_base_url("ollama", "http://192.168.1.30:11434/v1")
+        == "http://192.168.1.30:11434/v1"
+    )
+
+
+def test_existing_profile_with_a_lan_cloud_url_is_repaired(tmp_path, monkeypatch):
+    """The repair path must fix a profile that already points at the dev proxy."""
+
+    import yaml
+
+    from public_api_client import hermes_agent_client as client
+
+    monkeypatch.setenv("PIB_CLOUD_BASE_URL", "https://api.pib.rocks/v1")
+    profile = tmp_path / "pib_profile"
+    profile.mkdir()
+    (profile / "config.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "model": "pib-cloud",
+                "provider": "pib-cloud",
+                "providers": {
+                    "pib-cloud": {
+                        "name": "pib-cloud",
+                        "base_url": "http://192.168.1.252:8090/v1",
+                        "key_env": "PIB_CLOUD_API_KEY",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    client._ensure_mcp_servers_pib(str(profile))
+
+    written = yaml.safe_load((profile / "config.yaml").read_text(encoding="utf-8"))
+    assert written["providers"]["pib-cloud"]["base_url"] == "https://api.pib.rocks/v1"

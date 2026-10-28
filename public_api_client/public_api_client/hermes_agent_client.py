@@ -211,6 +211,72 @@ def provider_refuses_field(
         return field in _provider_refused_fields.get(key, set())
 
 
+CLOUD_ROUTE_DEFAULT_BASE_URLS = {
+    "pib-cloud": "https://api.pib.rocks/v1",
+}
+"""Cloud routes may not live on the LAN (PR-2096).
+
+A profile provisioned once against a local dev proxy kept that URL forever,
+because the provider entry is only rewritten when a caller passes a base_url.
+On .172 that made every smart turn answer "pib-cloud rejected your API key"
+while the key store and the provider health were fine.
+"""
+
+
+def _is_private_base_url(value: str) -> bool:
+    """True for loopback, link-local or RFC1918 hosts (a LAN address)."""
+
+    import ipaddress
+    from urllib.parse import urlparse
+
+    host = (urlparse(value).hostname or "").strip().lower()
+    if not host:
+        return False
+    if host in {"localhost", "localhost.localdomain"}:
+        return True
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return bool(address.is_private or address.is_loopback or address.is_link_local)
+
+
+def _authoritative_cloud_base_url(provider: str) -> Optional[str]:
+    """Where a cloud route must point, from the environment or the documented default."""
+
+    default = CLOUD_ROUTE_DEFAULT_BASE_URLS.get(provider)
+    if default is None:
+        return None
+    env_value = os.getenv(
+        f"PIB_{provider.replace('-', '_').upper()}_BASE_URL", ""
+    ).strip()
+    return env_value.rstrip("/") or default
+
+
+def _guard_cloud_route_base_url(
+    provider: str, base_url: Optional[str]
+) -> Optional[str]:
+    """Replace a LAN address on a cloud route with the authoritative URL."""
+
+    if not base_url:
+        return base_url
+    authoritative = _authoritative_cloud_base_url(provider)
+    if authoritative is None:
+        return base_url
+    if not _is_private_base_url(base_url):
+        return base_url
+    if base_url.rstrip("/") == authoritative:
+        return base_url
+    logging.warning(
+        "provider %s pointed at a LAN address (%s); using %s instead "
+        "(a device must not talk to a dev proxy)",
+        provider,
+        base_url,
+        authoritative,
+    )
+    return authoritative
+
+
 def _route_base_url_from_cfg(cfg: dict, provider: str) -> Optional[str]:
     providers = cfg.get(PROVIDERS_CONFIG_KEY)
     if not isinstance(providers, dict):
@@ -858,7 +924,16 @@ def _ensure_mcp_servers_pib(
     if _apply_profile_auxiliary_defaults(cfg):
         changed = True
 
-    route_base_url = base_url or _route_base_url_from_cfg(cfg, desired_provider)
+    guarded_base_url = _guard_cloud_route_base_url(
+        desired_provider, base_url or _route_base_url_from_cfg(cfg, desired_provider)
+    )
+    if (
+        guarded_base_url
+        and base_url is None
+        and _route_base_url_from_cfg(cfg, desired_provider) != guarded_base_url
+    ):
+        base_url = guarded_base_url
+    route_base_url = guarded_base_url
     if apply_provider_capability_cache_to_cfg(
         cfg,
         provider=desired_provider,
