@@ -8,6 +8,9 @@ Retry backoff in seconds: 1, 2, 4, 8, 16, then 30 capped for every later attempt
 MAX_RETRY_DELAY_SECONDS = 30.0
 STATUS_OWNER = "ros-audio-io"
 INPUT_FORMAT_S16LE = "S16_LE"
+RESPEAKER_USB_VID = 0x2886
+RESPEAKER_USB_PID = 0x0018
+USB_RESET_AFTER_ATTEMPTS = 3
 
 
 class DeviceNotFoundError(Exception):
@@ -156,3 +159,47 @@ def device_status_payload(
         payload.update(failure)
     payload["owner"] = STATUS_OWNER
     return payload
+
+
+def should_attempt_usb_reset(attempt, reason, device_name=""):
+    """Return True when a bounded USB reset may unblock a wedged ReSpeaker."""
+
+    if attempt < USB_RESET_AFTER_ATTEMPTS or attempt % USB_RESET_AFTER_ATTEMPTS != 0:
+        return False
+    normalized_reason = str(reason).strip().lower()
+    if normalized_reason not in ("device open failure", "device busy"):
+        return False
+    label = str(device_name).strip().lower()
+    if not label:
+        return True
+    return "respeaker" in label or "arrayuac10" in label
+
+
+def reset_respeaker_usb_device(*, usb_core_module=None):
+    """Reset the ReSpeaker USB device when pyusb can reach it."""
+
+    if usb_core_module is None:
+        try:
+            import usb.core as usb_core_module  # type: ignore[import-untyped]
+        except ImportError:
+            return False, "pyusb is not installed"
+    find = getattr(usb_core_module, "find", None)
+    if not callable(find):
+        return False, "usb.core.find is unavailable"
+    try:
+        device = find(idVendor=RESPEAKER_USB_VID, idProduct=RESPEAKER_USB_PID)
+    except Exception as exc:
+        return False, f"usb.core.find failed: {exc}"
+    if device is None:
+        return False, "ReSpeaker USB device 2886:0018 not found"
+    reset = getattr(device, "reset", None)
+    if not callable(reset):
+        return False, "USB device lacks reset()"
+    try:
+        reset()
+    except Exception as exc:
+        usb_error = getattr(usb_core_module, "USBError", None)
+        if usb_error is not None and isinstance(exc, usb_error):
+            return False, f"USB reset failed: {exc}"
+        return False, f"USB reset failed: {exc}"
+    return True, "ReSpeaker USB device 2886:0018 reset succeeded"
