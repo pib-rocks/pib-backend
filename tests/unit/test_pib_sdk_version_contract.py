@@ -14,9 +14,7 @@ FLASK_DOCKERFILE = REPO_ROOT / "pib_api" / "flask" / "Dockerfile"
 COMPOSE_FILE = REPO_ROOT / "docker-compose.yaml"
 
 ARG_PATTERN = re.compile(r"^ARG PIB_SDK_VERSION=(\d+\.\d+\.\d+)\s*$", re.MULTILINE)
-COMPOSE_DEFAULT = re.compile(
-    r"^\$\{PIB_SDK_VERSION:-(\d+\.\d+\.\d+)\}$"
-)
+COMPOSE_DEFAULT = re.compile(r"^\$\{PIB_SDK_VERSION:-(\d+\.\d+\.\d+)\}$")
 
 
 def _canonical() -> str:
