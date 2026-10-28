@@ -498,6 +498,34 @@ def test_warm_daemon_falls_back_to_subprocess_when_run_agent_missing(
     assert subprocess_runner.call_args.kwargs["chat_id"] == "chat-fb"
 
 
+def test_stream_chunks_persist_first_delta_before_later_tokens(chat_module, chat_node):
+    """Streaming must update the stored message on the first delta, not at EOF."""
+    import time
+
+    goal_handle = MagicMock()
+    goal_handle.is_cancel_requested = False
+    timestamps: list[float] = []
+
+    def _record(*args, **kwargs):
+        timestamps.append(time.monotonic())
+        return None
+
+    chat_node.create_chat_message = MagicMock(side_effect=_record)
+
+    def _tokens():
+        yield "Al"
+        time.sleep(0.12)
+        yield "pha"
+
+    chat_node._stream_chunks_to_goal(goal_handle, "chat-stream-persist", _tokens())
+
+    assert len(timestamps) >= 2
+    assert timestamps[1] - timestamps[0] >= 0.08
+    first_call = chat_node.create_chat_message.call_args_list[0]
+    assert first_call.kwargs.get("accumulated") is True
+    assert first_call[0][1] == "Al"
+
+
 def test_stream_chunks_to_goal_splits_sentences(chat_module, chat_node):
     goal_handle = MagicMock()
     goal_handle.is_cancel_requested = False
@@ -530,9 +558,55 @@ def test_stream_chunks_to_goal_writes_chunks_in_order(chat_module, chat_node):
     )
 
     chat_node.executor.create_task.assert_not_called()
-    updates = [call[0][3] for call in chat_node.create_chat_message.call_args_list]
-    # First write creates the assistant message, every later one updates it.
-    assert updates == [False, True, True]
+    calls = chat_node.create_chat_message.call_args_list
+    updates = [call[0][3] for call in calls]
+    # First write creates the assistant message, every later one updates it. The
+    # NUMBER of writes is timing-dependent by design (see the throttle test below):
+    # a fixed count here would only pin how fast the fake emits.
+    assert updates[0] is False
+    assert all(update is True for update in updates[1:])
+    assert len(updates) >= 2
+    # Whatever the throttling did, the stored text ends as the complete answer.
+    assert calls[-1][0][1] == "Eins. Zwei. Drei."
+
+
+def test_stream_chunks_to_goal_throttles_message_writes(
+    chat_module, chat_node, monkeypatch
+):
+    """A token must not cost a database write - the UI cannot show 100 per second.
+
+    Chat turns now persist the accumulated answer while it streams. Doing that per
+    token turned a long answer into hundreds of API writes and UI updates, so the
+    write is throttled and the last state is flushed once.
+    """
+    goal_handle = MagicMock()
+    goal_handle.is_cancel_requested = False
+
+    # Tokens arrive far faster than the persist interval: only the first write and
+    # the final flush may happen.
+    monkeypatch.setattr(chat_module.time, "monotonic", lambda: 1000.0)
+    chat_node._stream_chunks_to_goal(
+        goal_handle, "chat-1", ["Eins. ", "Zwei. ", "Drei."]
+    )
+    fast_calls = chat_node.create_chat_message.call_args_list
+    assert len(fast_calls) == 2, [call[0][1] for call in fast_calls]
+    assert fast_calls[0][0][3] is False
+    assert fast_calls[1][0][3] is True
+    assert fast_calls[-1][0][1] == "Eins. Zwei. Drei."
+
+    # A slow stream crosses the interval and writes progressively.
+    chat_node.create_chat_message.reset_mock()
+    clock = iter([0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0])
+    monkeypatch.setattr(chat_module.time, "monotonic", lambda: next(clock, 99.0))
+    chat_node._stream_chunks_to_goal(
+        goal_handle, "chat-1", ["Eins. ", "Zwei. ", "Drei."]
+    )
+    slow_calls = chat_node.create_chat_message.call_args_list
+    assert len(slow_calls) >= 3
+    texts = [call[0][1] for call in slow_calls]
+    # Progressive: each write is a prefix of the next, and the last is complete.
+    assert texts == sorted(texts, key=len)
+    assert texts[-1] == "Eins. Zwei. Drei."
 
 
 def test_stream_chunks_to_goal_persists_text_without_terminator(chat_module, chat_node):
@@ -545,7 +619,8 @@ def test_stream_chunks_to_goal_persists_text_without_terminator(chat_module, cha
     )
 
     texts = [call[0][1] for call in chat_node.create_chat_message.call_args_list]
-    assert texts == ["Eins.", "Zwei ohne Punkt"]
+    assert texts[-1] == "Eins. Zwei ohne Punkt"
+    assert texts[0] == "Eins. "
     # Every speakable piece travelled as a feedback delta, so the Result
     # carries no second copy of the tail (measured: text is empty).
     assert prev is None
@@ -568,7 +643,12 @@ def test_stream_chunks_to_goal_creates_when_only_unterminated_text_arrives(
     )
 
     chat_node.create_chat_message.assert_called_once_with(
-        "chat-1", "Antwort ohne Satzzeichen", False, False, True
+        "chat-1",
+        "Antwort ohne Satzzeichen",
+        False,
+        False,
+        True,
+        accumulated=True,
     )
     assert prev is None
     assert curr == ""

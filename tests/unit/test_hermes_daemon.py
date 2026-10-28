@@ -551,6 +551,90 @@ def test_streaming_turn_emits_deltas_and_final_reply(daemon_server):
     assert chunks[-1] == {"reply": "daemon-says-hi", "toolsUsed": []}
 
 
+def test_run_turn_in_home_streams_mid_turn_when_profile_disabled_streaming(
+    monkeypatch,
+):
+    """``model.streaming: false`` must not buffer daemon NDJSON until the reply finishes."""
+    import time
+
+    class StreamingGatedAgent:
+        def __init__(self, **_kwargs):
+            self._disable_streaming = True
+            self.histories = []
+
+        def reset_session_state(self, **_kwargs):
+            pass
+
+        def run_conversation(
+            self, user_message, conversation_history=None, stream_callback=None
+        ):
+            self.histories.append(conversation_history)
+            if not self._disable_streaming and stream_callback is not None:
+                stream_callback("a")
+                time.sleep(0.12)
+                stream_callback("b")
+                time.sleep(0.12)
+                stream_callback("c")
+            return {"final_response": "abc"}
+
+    fake_module = types.ModuleType("run_agent")
+    fake_module.AIAgent = StreamingGatedAgent
+    hd.clear_agent_cache()
+
+    deltas: list[tuple[float, str]] = []
+
+    def _capture(delta: str) -> None:
+        deltas.append((time.monotonic(), delta))
+
+    monkeypatch.setattr(hd, "in_process_available", lambda: True)
+    monkeypatch.setattr(hd, "ensure_hermes_source_on_path", lambda: None)
+    monkeypatch.setattr(hd, "_ensure_mcp_tools_discovered", lambda: None)
+    monkeypatch.setattr(
+        hd, "_sync_provider_capabilities_to_agent", lambda *a, **k: None
+    )
+    monkeypatch.setattr(
+        hd,
+        "planned_provider_request_fields",
+        lambda *a, **k: frozenset(),
+    )
+    monkeypatch.setattr(
+        hd, "_harvest_provider_refusals_from_agent", lambda *a, **k: None
+    )
+    monkeypatch.setattr(hd, "_load_conversation_history", lambda *a, **k: [])
+    monkeypatch.setattr(hd, "_bind_agent_session_for_turn", lambda *a, **k: None)
+
+    class _Lock:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    cached_agent = StreamingGatedAgent()
+    cached = types.SimpleNamespace(agent=cached_agent, lock=_Lock())
+    monkeypatch.setattr(hd, "_agent_for_chat", lambda *a, **k: cached)
+
+    with (
+        patch.dict(sys.modules, {"run_agent": fake_module}),
+        patch(
+            "public_api_client.hermes_agent_client.run_turn_subprocess",
+            side_effect=AssertionError("subprocess fallback"),
+        ),
+    ):
+        t0 = time.monotonic()
+        reply = hd._run_turn_in_home(
+            text="hi",
+            chat_id="chat-stream-mid",
+            stream_callback=_capture,
+        )
+    assert reply == "abc"
+    assert [delta for _ts, delta in deltas] == ["a", "b", "c"]
+    assert len(deltas) >= 2
+    assert deltas[1][0] - deltas[0][0] >= 0.08
+    assert deltas[-1][0] - t0 < 0.35
+    assert cached_agent._disable_streaming is True
+
+
 def test_turn_rejects_missing_fields(daemon_server):
     from urllib.error import HTTPError
 

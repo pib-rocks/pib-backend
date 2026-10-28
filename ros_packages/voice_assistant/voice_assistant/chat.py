@@ -835,6 +835,8 @@ class ChatNode(Node):
         is_user: bool,
         update_message: bool,
         update_database: bool,
+        *,
+        accumulated: bool = False,
     ) -> None:
         """
         Writes a new chat-message (or updates the last one) to PIB DB,
@@ -843,6 +845,7 @@ class ChatNode(Node):
         - When update_message=False → CREATE new message in PIB (records message_id)
         - When update_message=True  → UPDATE existing PIB message_id with concatenated content
         - update_database controls whether we hit PIB on updates or only update local content
+        - accumulated=True → ``text`` is the full assistant answer so far (streaming turns)
         """
         if text == "":
             return
@@ -852,7 +855,10 @@ class ChatNode(Node):
                 # UPDATE path
                 if update_database:
                     # concatenate locally AND persist to PIB
-                    self.message_content = f"{self.message_content} {text}"
+                    if accumulated:
+                        self.message_content = text
+                    else:
+                        self.message_content = f"{self.message_content} {text}"
                     if self.last_pib_message_id is not None:
                         successful, _ = voice_assistant_client.update_chat_message(
                             chat_id,
@@ -869,7 +875,10 @@ class ChatNode(Node):
                             return
                 else:
                     # concatenate locally ONLY
-                    self.message_content = f"{self.message_content} {text}"
+                    if accumulated:
+                        self.message_content = text
+                    else:
+                        self.message_content = f"{self.message_content} {text}"
             else:
                 # CREATE path
                 successful, chat_message = voice_assistant_client.create_chat_message(
@@ -1003,6 +1012,19 @@ class ChatNode(Node):
         token = msg.data
         self.token = token
 
+    def _persist_streaming_assistant_text(
+        self, chat_id: str, content: str, update_message: bool
+    ) -> None:
+        """Write the assistant answer accumulated so far (one message_id, many updates)."""
+        self.create_chat_message(
+            chat_id,
+            content,
+            False,
+            update_message,
+            True,
+            accumulated=True,
+        )
+
     def _stream_chunks_to_goal(
         self, goal_handle, chat_id: str, tokens, t0: Optional[float] = None
     ) -> tuple[Optional[str], Optional[int], str]:
@@ -1038,6 +1060,13 @@ class ChatNode(Node):
         # sentence that contains it has finished.
         raw_answer = ""
         published_speech: list[str] = []
+        # A chat message is one row that the UI re-reads, so pushing it on every
+        # token is pure load: a 500-token answer would mean 500 API writes plus 500
+        # UI updates for a screen that cannot show more than a few per second.
+        # ~8 writes per second keep the text visibly growing at a fraction of the cost.
+        persist_interval_s = 0.12
+        last_persist_s = 0.0
+        last_persisted_text = ""
 
         for token in tokens:
             # TTFT fast-path: emit the first generated token immediately, before
@@ -1088,19 +1117,6 @@ class ChatNode(Node):
                     code_visual = code_visual_match.group(1)
                     prev_text = code_visual
                     prev_text_type = Chat.Goal.TEXT_TYPE_CODE_VISUAL
-                    chat_message_text = code_visual_match.group(0)
-                    # Written inline instead of as an executor task: an UPDATE
-                    # may only run once the preceding CREATE has recorded the
-                    # message id it targets, otherwise the concurrent writes
-                    # race and the rest of the reply lands on the wrong row.
-                    self.create_chat_message(
-                        chat_id,
-                        chat_message_text,
-                        False,
-                        bool_update_chat_message,
-                        True,
-                    )
-                    bool_update_chat_message = True
                     curr_text = curr_text[code_visual_match.end() :].rstrip()
                     continue
 
@@ -1122,15 +1138,6 @@ class ChatNode(Node):
                             f"[PERF_TRACE] FIRST_SENTENCE_FLUSHED chat={chat_id} "
                             f"elapsed_ms={elapsed_ms:.2f}"
                         )
-                    chat_message_text = sentence
-                    self.create_chat_message(
-                        chat_id,
-                        chat_message_text,
-                        False,
-                        bool_update_chat_message,
-                        True,
-                    )
-                    bool_update_chat_message = True
                     curr_text = curr_text[
                         sentence_match.end(
                             3 if sentence_match.group(3) is not None else 1
@@ -1149,17 +1156,32 @@ class ChatNode(Node):
             ):
                 first_sentence_flushed = True
 
+            if raw_answer and raw_answer != last_persisted_text:
+                now_s = time.monotonic()
+                if now_s - last_persist_s >= persist_interval_s:
+                    self._persist_streaming_assistant_text(
+                        chat_id,
+                        raw_answer,
+                        bool_update_chat_message,
+                    )
+                    bool_update_chat_message = True
+                    last_persisted_text = raw_answer
+                    last_persist_s = now_s
+
+        # The throttle may have swallowed the final chunk (and a reply can end
+        # without a terminator at all), so the last state is always written once.
+        if raw_answer and raw_answer != last_persisted_text:
+            self._persist_streaming_assistant_text(
+                chat_id,
+                raw_answer,
+                bool_update_chat_message,
+            )
+            last_persisted_text = raw_answer
+
         # A reply can end without a sentence terminator. That tail is part of
         # the answer, so it is persisted here instead of being dropped.
         leftover = curr_text.strip()
         if leftover:
-            self.create_chat_message(
-                chat_id,
-                leftover,
-                False,
-                bool_update_chat_message,
-                True,
-            )
             if not first_chunk_emitted:
                 first_chunk_emitted = True
                 elapsed_ms = (time.monotonic() - t0) * 1000.0
