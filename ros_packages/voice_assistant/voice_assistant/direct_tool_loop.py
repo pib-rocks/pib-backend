@@ -671,9 +671,90 @@ def _assistant_parts(message: Mapping[str, Any]) -> list[dict[str, Any]]:
     return parts
 
 
+# Gemini accepts only an OpenAPI subset for function declaration parameters and
+# rejects the whole request on an unknown key. Measured on .172: every direct turn
+# died with "Unknown name \"additionalProperties\" at tools[0].function_declarations
+# [6].parameters.properties[0].value.items" (PR-2091).
+_GEMINI_SCHEMA_KEYS = {
+    "type",
+    "description",
+    "enum",
+    "items",
+    "properties",
+    "required",
+    "nullable",
+    "format",
+    "minimum",
+    "maximum",
+    "minItems",
+    "maxItems",
+    "minLength",
+    "maxLength",
+    "pattern",
+    "propertyOrdering",
+    "anyOf",
+    "default",
+}
+
+
+def _gemini_schema(node: Any) -> Any:
+    """Project one JSON-schema node onto what Gemini accepts.
+
+    Objects keep their properties and required list, arrays keep their item type,
+    unions that only add ``null`` become ``nullable``. Everything Gemini does not
+    know (``additionalProperties``, ``$schema``, ``oneOf`` and friends) is dropped
+    instead of failing the whole turn with HTTP 400.
+    """
+    if isinstance(node, list):
+        return [_gemini_schema(item) for item in node]
+    if not isinstance(node, dict):
+        return node
+
+    declared_type = node.get("type")
+    nullable = bool(node.get("nullable"))
+    if isinstance(declared_type, list):
+        remaining = [t for t in declared_type if isinstance(t, str) and t != "null"]
+        if len(remaining) != len([t for t in declared_type if isinstance(t, str)]):
+            nullable = True
+        declared_type = remaining[0] if remaining else None
+
+    cleaned: dict[str, Any] = {}
+    for key, value in node.items():
+        if key not in _GEMINI_SCHEMA_KEYS:
+            continue
+        if key == "properties" and isinstance(value, dict):
+            cleaned[key] = {name: _gemini_schema(sub) for name, sub in value.items()}
+        elif key == "anyOf" and isinstance(value, list):
+            alternatives = [
+                alt
+                for alt in value
+                if not (isinstance(alt, dict) and alt.get("type") == "null")
+            ]
+            if len(alternatives) != len(value):
+                nullable = True
+            if len(alternatives) == 1:
+                merged = _gemini_schema(alternatives[0])
+                if isinstance(merged, dict):
+                    cleaned.update(merged)
+                continue
+            cleaned[key] = [_gemini_schema(alt) for alt in alternatives]
+        else:
+            cleaned[key] = (
+                _gemini_schema(value) if isinstance(value, (dict, list)) else value
+            )
+
+    if declared_type is not None:
+        cleaned["type"] = declared_type
+    if nullable:
+        cleaned["nullable"] = True
+    return cleaned
+
+
 def _parameters(schema: Any) -> dict[str, Any]:
     if isinstance(schema, dict) and schema.get("type") == "object":
-        return schema
+        projected = _gemini_schema(schema)
+        if isinstance(projected, dict) and projected.get("type") == "object":
+            return projected
     return {"type": "object", "properties": {}}
 
 
@@ -940,6 +1021,10 @@ class _GeminiKeepAliveTransport:
             response = conn.getresponse()
             raw = response.read().decode("utf-8")
             if response.status >= 400:
+                # The body of an error response must not be left half-read on a
+                # keep-alive connection: the next turn would inherit a socket
+                # stuck mid-request and fail with ResponseNotReady (PR-2091).
+                self.close()
                 raise DirectToolLoopError(
                     f"model request failed: HTTP {response.status} {response.reason}"
                 )
@@ -985,6 +1070,7 @@ class _GeminiKeepAliveTransport:
             )
             response = conn.getresponse()
             if response.status >= 400:
+                self.close()
                 body_preview = response.read(300).decode("utf-8", errors="replace")
                 logger.error(
                     "model request failed: HTTP %s %s body=%s",
