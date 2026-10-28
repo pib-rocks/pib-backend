@@ -9,6 +9,7 @@ import unittest
 import weakref
 from collections import deque
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 import base64
 
@@ -3095,7 +3096,14 @@ class TestPublishedFrameBranchAspect(unittest.TestCase):
         self.assertGreater(node.get_logger.return_value.error.call_count, 0)
 
     def test_no_call_site_requests_a_size_with_a_different_aspect(self):
-        source = open(camera_stereo.__file__, encoding="utf-8").read()
+        camera_dir = Path(camera_stereo.__file__).parent
+        source = "".join(
+            path.read_text(encoding="utf-8")
+            for path in (
+                camera_dir / "stereo.py",
+                camera_dir / "pipeline_builders_mixin.py",
+            )
+        )
         tree = ast.parse(source)
         spans = _function_spans(tree)
         delegated = _delegated_branch_names(tree)

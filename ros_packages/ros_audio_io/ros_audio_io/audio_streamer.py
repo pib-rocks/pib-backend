@@ -22,6 +22,8 @@ from ros_audio_io.device_retry import (
     microphone_recovery_log,
     next_retry_delay,
     open_failure_signature,
+    reset_respeaker_usb_device,
+    should_attempt_usb_reset,
 )
 from ros_audio_io.levels import calculate_levels
 
@@ -199,6 +201,12 @@ class AudioStreamer(Node):
                         delay=delay,
                     )
                 )
+            if should_attempt_usb_reset(
+                self.open_attempts, reason, device_name=device_name
+            ):
+                ok, message = reset_respeaker_usb_device()
+                log = self.get_logger().info if ok else self.get_logger().warning
+                log(f"ReSpeaker USB recovery: {message}")
             self._microphone_was_unavailable = True
             self._publish_status(
                 device_status_payload(
