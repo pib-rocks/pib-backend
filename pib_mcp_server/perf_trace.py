@@ -38,7 +38,12 @@ def perf_trace_log_path() -> Path:
     override = (os.environ.get("PIB_PERF_TRACE_LOG") or "").strip()
     if override:
         return Path(override)
-    return Path.home() / ".hermes" / "logs" / "pib-perf-trace.log"
+    # HERMES_HOME first: inside the daemon container HOME is /root, so Path.home()
+    # wrote the line to /root/.hermes/logs - present in the container, invisible to the
+    # host. Measured on the robot: 178 bytes in the wrong place, nothing in the mount.
+    hermes_home = (os.environ.get("HERMES_HOME") or "").strip()
+    base = Path(hermes_home) if hermes_home else Path.home() / ".hermes"
+    return base / "logs" / "pib-perf-trace.log"
 
 
 def _append_trace_line(line: str) -> None:

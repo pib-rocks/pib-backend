@@ -190,3 +190,19 @@ def test_motion_trace_survives_an_unwritable_file(tmp_path, monkeypatch):
     monkeypatch.setenv("PIB_PERF_TRACE_LOG", str(blocker / "logs" / "trace.log"))
 
     perf_trace.log_perf_trace("[PERF_TRACE] MOTION_CMD chat= unwritable")
+
+
+def test_motion_trace_prefers_hermes_home_over_container_home(tmp_path, monkeypatch):
+    """Inside the daemon container HOME is /root, so Path.home() hides the line.
+
+    Measured on the robot: the line landed in /root/.hermes/logs (178 bytes) while the
+    host mount stayed empty. HERMES_HOME is what every pib container exports.
+    """
+    from pib_mcp_server import perf_trace
+
+    monkeypatch.delenv("PIB_PERF_TRACE_LOG", raising=False)
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes"))
+
+    path = perf_trace.perf_trace_log_path()
+
+    assert path == tmp_path / "hermes" / "logs" / "pib-perf-trace.log"
