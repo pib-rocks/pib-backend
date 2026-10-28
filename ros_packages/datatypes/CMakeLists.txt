@@ -51,6 +51,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
 	"srv/VisionPrompt.srv"
 	"srv/ApplyJointTrajectory.srv"
 	"srv/GetJointPosition.srv"
+	"srv/GetAllJointPositions.srv"
 	"srv/EncryptToken.srv"
 	"srv/DecryptToken.srv"
 	"srv/GetTokenExists.srv"

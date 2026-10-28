@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from typing import Any
 from urllib.parse import unquote
 
 import pytest
 
-from pib_mcp_server.backend import PibBackend
+from pib_mcp_server.backend import GET_ALL_JOINT_POSITIONS_SERVICE, PibBackend
 from pib_mcp_server.server import TOOL_PAYLOAD_BUDGETS, create_server
 from pib_mcp_server.tool_budgets import (
     payload_utf8_byte_length,
@@ -74,6 +75,38 @@ class BudgetBackend(PibBackend):
     def _ros_service(self, service, service_type, arguments):
         if service == "/get_camera_image":
             return {"imageBase64": "A" * 50_000}
+        if service == GET_ALL_JOINT_POSITIONS_SERVICE or "joint_names" in arguments:
+            now = time.time()
+            results = []
+            positions = []
+            requested = list(arguments.get("joint_names") or [])
+            for index, motor in enumerate(self._motors):
+                name = motor.get("name")
+                if not name:
+                    continue
+                if requested and name not in requested:
+                    continue
+                results.append(
+                    {
+                        "motor_name": name,
+                        "successful": True,
+                        "error_code": "",
+                        "detail": "",
+                    }
+                )
+                positions.append(120 * (index + 1))
+            return {
+                "successful": True,
+                "header": {
+                    "stamp": {
+                        "sec": int(now),
+                        "nanosec": int((now % 1) * 1e9),
+                    }
+                },
+                "results": results,
+                "positions": positions,
+                "message": "",
+            }
         if service == "/get_joint_position":
             return {"successful": True, "position": 0}
         raise AssertionError(service)

@@ -34,11 +34,13 @@ def _motor_control_ros_import_stubs() -> dict[str, types.ModuleType]:
     sensor_msgs = _module("sensor_msgs")
     sensor_msgs_msg = _module("sensor_msgs.msg", JointState=MagicMock())
     sensor_msgs.msg = sensor_msgs_msg
+    std_msgs_msg = _module("std_msgs.msg", Header=MagicMock())
     return {
         "pib_motors.perf_trace": real_perf_trace,
         "pib_motors.joint_state_sweep": real_joint_sweep,
         "sensor_msgs": sensor_msgs,
         "sensor_msgs.msg": sensor_msgs_msg,
+        "std_msgs.msg": std_msgs_msg,
     }
 
 
@@ -108,6 +110,7 @@ def _load_motor_control_helpers():
         ApplyJointTrajectory=MagicMock(),
         ApplyMotorSettings=MagicMock(),
         GetJointPosition=MagicMock(),
+        GetAllJointPositions=MagicMock(),
     )
 
     class FakeMotorResult:
@@ -305,6 +308,7 @@ def _load_motor_control_multi(lookup, motors_list):
         ApplyJointTrajectory=MagicMock(),
         ApplyMotorSettings=MagicMock(),
         GetJointPosition=MagicMock(),
+        GetAllJointPositions=MagicMock(),
     )
     datatypes_msg = _module(
         "datatypes.msg",

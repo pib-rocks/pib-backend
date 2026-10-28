@@ -7,7 +7,7 @@ import time
 
 import pytest
 
-from pib_mcp_server.backend import PibBackend
+from pib_mcp_server.backend import BackendError, PibBackend
 from test_list_motors_compact import MOTOR_COUNT, full_motor_fixture
 
 
@@ -72,7 +72,7 @@ def test_joint_states_path_avoids_per_joint_service_calls(monkeypatch):
         assert motor["currentPosition"] == pytest.approx(1.2 * (index + 1))
 
 
-def test_stale_joint_states_falls_back_and_marks_source(monkeypatch):
+def test_stale_joint_states_uses_batch_service_before_per_joint(monkeypatch):
     motors = full_motor_fixture()
     backend = PibBackend()
     backend.joint_state_max_age_sec = 0.1
@@ -80,19 +80,46 @@ def test_stale_joint_states_falls_back_and_marks_source(monkeypatch):
     monkeypatch.setattr(backend, "get_motors", lambda: list(motors))
     monkeypatch.setattr(backend, "_rosbridge_client", lambda: bridge)
 
-    service_calls: list[str] = []
+    service_calls: list[tuple[str, dict]] = []
 
     def fake_service(service, service_type, arguments):
-        service_calls.append(arguments["joint_name"])
-        index = service_calls.index(arguments["joint_name"])
-        return {"successful": True, "position": 100 * (index + 1)}
+        service_calls.append((service, dict(arguments)))
+        if service == "/get_all_joint_positions":
+            now = time.time()
+            results = []
+            positions = []
+            for index, motor in enumerate(motors):
+                name = motor["name"]
+                results.append(
+                    {
+                        "motor_name": name,
+                        "successful": True,
+                        "detail": "",
+                        "error_code": "",
+                    }
+                )
+                positions.append(100 * (index + 1))
+            return {
+                "successful": True,
+                "header": {
+                    "stamp": {
+                        "sec": int(now),
+                        "nanosec": int((now % 1) * 1e9),
+                    }
+                },
+                "results": results,
+                "positions": positions,
+                "message": "",
+            }
+        return {"successful": True, "position": 0}
 
     monkeypatch.setattr(backend, "_ros_service", fake_service)
 
     enriched = backend._motors_with_live_positions()
-    assert len(service_calls) == MOTOR_COUNT
-    assert all(m.get("positionSource") == "get_joint_position" for m in enriched)
-    assert all("positionAgeSec" not in m for m in enriched)
+    assert len(service_calls) == 1
+    assert service_calls[0][0] == "/get_all_joint_positions"
+    assert all(m.get("positionSource") == "get_all_joint_positions" for m in enriched)
+    assert all(m.get("positionAgeSec") is not None for m in enriched)
 
 
 def test_silent_joint_states_falls_back_without_exception(monkeypatch):
@@ -103,6 +130,11 @@ def test_silent_joint_states_falls_back_without_exception(monkeypatch):
     monkeypatch.setattr(backend, "_rosbridge_client", lambda: bridge)
 
     def fake_service(service, service_type, arguments):
+        if service == "/get_all_joint_positions":
+            raise BackendError(
+                "ros_service_failed",
+                "Service /get_all_joint_positions does not exist",
+            )
         return {"successful": True, "position": 42}
 
     monkeypatch.setattr(backend, "_ros_service", fake_service)
@@ -110,3 +142,50 @@ def test_silent_joint_states_falls_back_without_exception(monkeypatch):
     enriched = backend._motors_with_live_positions()
     assert len(enriched) == 3
     assert all(m.get("positionSource") == "get_joint_position" for m in enriched)
+    assert all(
+        m.get("positionFallbackReason")
+        == "get_all_joint_positions service unavailable (older motors image)"
+        for m in enriched
+    )
+
+
+def test_batch_service_reports_per_joint_errors_without_failing_others(monkeypatch):
+    motors = full_motor_fixture()[:2]
+    backend = PibBackend()
+    bridge = FakeRosbridge(None)
+    monkeypatch.setattr(backend, "get_motors", lambda: list(motors))
+    monkeypatch.setattr(backend, "_rosbridge_client", lambda: bridge)
+
+    def fake_service(service, service_type, arguments):
+        assert service == "/get_all_joint_positions"
+        now = time.time()
+        return {
+            "successful": True,
+            "header": {
+                "stamp": {"sec": int(now), "nanosec": 0},
+            },
+            "results": [
+                {
+                    "motor_name": motors[0]["name"],
+                    "successful": True,
+                    "error_code": "",
+                    "detail": "",
+                },
+                {
+                    "motor_name": motors[1]["name"],
+                    "successful": False,
+                    "error_code": "position_unavailable",
+                    "detail": "no measurement in bus sweep",
+                },
+            ],
+            "positions": [500, 0],
+            "message": "",
+        }
+
+    monkeypatch.setattr(backend, "_ros_service", fake_service)
+
+    enriched = backend._motors_with_live_positions()
+    assert enriched[0]["currentPosition"] == pytest.approx(5.0)
+    assert enriched[0].get("positionSource") == "get_all_joint_positions"
+    assert enriched[1]["currentPosition"] is None
+    assert enriched[1]["positionError"] == "no measurement in bus sweep"

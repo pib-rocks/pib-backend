@@ -37,7 +37,12 @@ MOTOR_POSITION_FETCH_WORKERS = 8
 
 JOINT_STATES_TOPIC = "/joint_states"
 JOINT_STATE_MESSAGE_TYPE = "sensor_msgs/JointState"
+GET_ALL_JOINT_POSITIONS_SERVICE = "/get_all_joint_positions"
+GET_ALL_JOINT_POSITIONS_TYPE = "datatypes/srv/GetAllJointPositions"
 DEFAULT_JOINT_STATE_MAX_AGE_SEC = 0.5
+BATCH_SERVICE_UNAVAILABLE_REASON = (
+    "get_all_joint_positions service unavailable (older motors image)"
+)
 
 
 def _duration_from_seconds(seconds: float) -> dict[str, int]:
@@ -62,6 +67,8 @@ def _compact_motor(motor: dict[str, Any]) -> dict[str, Any]:
         compact["positionSource"] = motor["positionSource"]
     if "positionAgeSec" in motor:
         compact["positionAgeSec"] = motor["positionAgeSec"]
+    if "positionFallbackReason" in motor:
+        compact["positionFallbackReason"] = motor["positionFallbackReason"]
     return compact
 
 
@@ -329,6 +336,54 @@ class PibBackend:
         )
         self._rosbridge: _RosbridgeMultiplexer | None = None
         self._rosbridge_lock = threading.Lock()
+        self._get_all_joint_positions_available: bool | None = None
+
+    def _is_missing_ros_service(self, exc: BackendError) -> bool:
+        if exc.code not in ("ros_service_failed", "ros_unavailable"):
+            return False
+        message = (exc.message or "").lower()
+        return any(
+            phrase in message
+            for phrase in (
+                "does not exist",
+                "not available",
+                "unknown service",
+                "no such service",
+                "service not found",
+            )
+        )
+
+    def _batch_joint_positions_unavailable_reason(self) -> str | None:
+        if self._get_all_joint_positions_available is False:
+            return BATCH_SERVICE_UNAVAILABLE_REASON
+        return None
+
+    def _header_age_sec(self, header: dict[str, Any] | None) -> float | None:
+        if not isinstance(header, dict):
+            return None
+        return self._joint_state_header_age_sec({"header": header})
+
+    def _apply_batch_joint_result_row(
+        self,
+        motor: dict[str, Any],
+        *,
+        successful: bool,
+        position_centideg: int | None,
+        error_message: str | None,
+        header_age: float | None,
+    ) -> None:
+        motor["positionSource"] = "get_all_joint_positions"
+        if successful and position_centideg is not None:
+            motor["currentPosition"] = _centidegrees_to_degrees(position_centideg)
+            motor.pop("positionError", None)
+            if header_age is not None:
+                motor["positionAgeSec"] = round(header_age, 4)
+            else:
+                motor.pop("positionAgeSec", None)
+            return
+        motor["currentPosition"] = None
+        motor["positionError"] = error_message or "position unavailable"
+        motor.pop("positionAgeSec", None)
 
     def _http(
         self, method: str, path: str, payload: dict[str, Any] | None = None
@@ -484,6 +539,76 @@ class PibBackend:
             motor.pop("positionError", None)
         return True, header_age
 
+    def _try_apply_batch_joint_positions(
+        self, motors: list[dict[str, Any]]
+    ) -> tuple[bool, float | None]:
+        if self._batch_joint_positions_unavailable_reason() is not None:
+            return False, None
+
+        joint_names = [motor.get("name") for motor in motors if motor.get("name")]
+        try:
+            response = self._ros_service(
+                GET_ALL_JOINT_POSITIONS_SERVICE,
+                GET_ALL_JOINT_POSITIONS_TYPE,
+                {"joint_names": joint_names},
+            )
+        except BackendError as exc:
+            if self._is_missing_ros_service(exc):
+                self._get_all_joint_positions_available = False
+                return False, None
+            raise
+
+        self._get_all_joint_positions_available = True
+        header = response.get("header")
+        header_age = self._header_age_sec(header if isinstance(header, dict) else None)
+        raw_results = response.get("results") or []
+        positions = response.get("positions") or []
+        overall_message = response.get("message", "")
+
+        results_by_name: dict[str, tuple[bool, int | None, str | None]] = {}
+        for index, item in enumerate(raw_results):
+            if not isinstance(item, dict):
+                continue
+            motor_name = item.get("motor_name", item.get("motorName", ""))
+            if not isinstance(motor_name, str) or not motor_name:
+                continue
+            successful = bool(item.get("successful"))
+            position_centideg: int | None = None
+            if successful and index < len(positions):
+                raw_position = positions[index]
+                if isinstance(raw_position, int):
+                    position_centideg = raw_position
+            detail = item.get("detail") or item.get("message") or overall_message
+            error_code = item.get("error_code", item.get("errorCode", ""))
+            error_message = None
+            if not successful:
+                error_message = detail or error_code or "position unavailable"
+            results_by_name[motor_name] = (successful, position_centideg, error_message)
+
+        for motor in motors:
+            name = motor.get("name")
+            if not name:
+                continue
+            row = results_by_name.get(name)
+            if row is None:
+                self._apply_batch_joint_result_row(
+                    motor,
+                    successful=False,
+                    position_centideg=None,
+                    error_message=overall_message or "missing from batch response",
+                    header_age=header_age,
+                )
+                continue
+            successful, position_centideg, error_message = row
+            self._apply_batch_joint_result_row(
+                motor,
+                successful=successful,
+                position_centideg=position_centideg,
+                error_message=error_message,
+                header_age=header_age,
+            )
+        return True, header_age
+
     def _motors_with_live_positions(self) -> list[dict[str, Any]]:
         motors = self.get_motors()
         named_motors = [motor for motor in motors if motor.get("name")]
@@ -504,6 +629,27 @@ class PibBackend:
                 )
             )
             return motors
+
+        batch_applied, batch_header_age = self._try_apply_batch_joint_positions(
+            named_motors
+        )
+        if batch_applied:
+            elapsed_ms = (time.monotonic() - started) * 1000.0
+            age_ms = None if batch_header_age is None else batch_header_age * 1000.0
+            log_perf_trace(
+                format_perf_trace_motor_positions(
+                    "get_all_joint_positions",
+                    len(named_motors),
+                    elapsed_ms,
+                    age_ms,
+                )
+            )
+            return motors
+
+        fallback_reason = self._batch_joint_positions_unavailable_reason()
+        if fallback_reason:
+            for motor in named_motors:
+                motor["positionFallbackReason"] = fallback_reason
 
         deadline = time.monotonic() + self.timeout
         workers = min(MOTOR_POSITION_FETCH_WORKERS, len(named_motors))
