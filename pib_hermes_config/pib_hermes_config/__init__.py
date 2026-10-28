@@ -43,15 +43,18 @@ DEFAULT_TEMPERATURE = 0.3
 # (~1534 prompt tokens saved) but every tool use then costs an extra model round trip
 # (0.6-2.3 s each). Personality profiles therefore pin tool_search off so robot
 # tools stay eager; the trade-off is ~1.5k more prompt tokens per turn.
+# PR-2103: after tighter MCP schemas and dropping MCP resource/prompt utilities from
+# chat, tool_search stays off — one robot tool turn still costs an extra round trip
+# and measured 0.6-2.3 s each, which dominates voice latency.
 PROFILE_TOOL_SEARCH_ENABLED = "off"
 PROFILE_TOOL_SEARCH_CONFIG = {
     "tool_search": {"enabled": PROFILE_TOOL_SEARCH_ENABLED},
 }
 
 # PR-2071: bump when the profile writer (_ensure_mcp_servers_pib) changes shape.
-# Warm turns compare this integer before deciding whether to rewrite config.yaml.
+# PR-2103: mcp_servers.pib.tools.resources/prompts pinned false for chat prompt size.
 PROFILE_CONFIG_VERSION_KEY = "config_version"
-PROFILE_CONFIG_VERSION = 1
+PROFILE_CONFIG_VERSION = 2
 
 # Upstream vision wrapper in the pinned Hermes package (not patched from this repo).
 # tools/vision_tools.py opens its image prompt with the prefix below; a sky-colour

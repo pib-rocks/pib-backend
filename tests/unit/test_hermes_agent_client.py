@@ -662,6 +662,28 @@ def test_provisioning_overrides_an_explicit_title_upgrade_setting(tmp_path):
     assert cfg["auxiliary"]["title_generation"]["model_upgrade_enabled"] is False
 
 
+def test_provisioning_disables_mcp_resource_and_prompt_utilities(tmp_path):
+    """PR-2103: chat turns must not register MCP resource/prompt wrapper tools."""
+    import yaml
+
+    from public_api_client.hermes_agent_client import (
+        PIB_MCP_SERVER,
+        _ensure_mcp_servers_pib,
+    )
+
+    pdir = tmp_path / "pib_chat"
+    pdir.mkdir()
+    (pdir / "config.yaml").write_text(
+        "model: gemini-3.8-flash\nprovider: gemini\n", encoding="utf-8"
+    )
+
+    _ensure_mcp_servers_pib(str(pdir), model="gemini-3.8-flash", provider="gemini")
+
+    with open(pdir / "config.yaml", encoding="utf-8") as fh:
+        cfg = yaml.safe_load(fh)
+    assert cfg["mcp_servers"]["pib"]["tools"] == PIB_MCP_SERVER["tools"]
+
+
 def test_provisioning_writes_profile_config_version(tmp_path):
     """PR-2071: every profile rewrite stamps the current config_version."""
     from pib_hermes_config import PROFILE_CONFIG_VERSION, PROFILE_CONFIG_VERSION_KEY
