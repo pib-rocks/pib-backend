@@ -12,7 +12,9 @@ APP_VERSION_DEFAULT = re.compile(
     r"^\s*APP_VERSION:\s*\$\{APP_VERSION:-([^}]+)\}\s*$",
     re.MULTILINE,
 )
-RELEASE_LITERAL_FALLBACK = re.compile(r"^\s*APP_VERSION:\s*\$\{APP_VERSION:-v\d+\.\d+\.\d+\}\s*$")
+RELEASE_LITERAL_FALLBACK = re.compile(
+    r"^\s*APP_VERSION:\s*\$\{APP_VERSION:-v\d+\.\d+\.\d+\}\s*$"
+)
 
 
 def test_flask_app_app_version_default_is_dev() -> None:
