@@ -24,6 +24,31 @@ def _read_proc_stat_cpu_times() -> Optional[Tuple[int, int]]:
         return None
 
 
+_LAST_CPU_SAMPLE: Optional[Tuple[int, int]] = None
+
+
+def _sample_cpu_usage_percent() -> float:
+    """Non-blocking CPU percent from consecutive /proc/stat samples (no sleep)."""
+    global _LAST_CPU_SAMPLE
+
+    current = _read_proc_stat_cpu_times()
+    if current is None:
+        return _get_cpu_usage_percent(sample_interval=0.0)
+
+    idle, total = current
+    if _LAST_CPU_SAMPLE is not None:
+        prev_idle, prev_total = _LAST_CPU_SAMPLE
+        total_delta = total - prev_total
+        if total_delta > 0:
+            idle_delta = idle - prev_idle
+            usage = (1.0 - (idle_delta / total_delta)) * 100.0
+            _LAST_CPU_SAMPLE = (idle, total)
+            return round(max(0.0, min(100.0, usage)), 1)
+
+    _LAST_CPU_SAMPLE = (idle, total)
+    return _get_cpu_usage_percent(sample_interval=0.01)
+
+
 def _get_cpu_usage_percent(sample_interval: float = 0.1) -> float:
     """Measure CPU usage percent via two /proc/stat samples.
 
@@ -471,7 +496,7 @@ def get_system_telemetry() -> Dict[str, Any]:
     }
 
     containers = _query_docker_containers()
-    cpu_usage_percent = _get_cpu_usage_percent()
+    cpu_usage_percent = _sample_cpu_usage_percent()
 
     return {
         "cpuTemperature": cpu_temp,
