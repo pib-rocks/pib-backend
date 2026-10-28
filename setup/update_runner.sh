@@ -1207,7 +1207,7 @@ prune_obsolete_release_images() {
 
 rollback_once() {
     log "Verification failed; attempting one rollback build"
-    write_status "rolled_back" "Verification failed; rebuilding previous revisions (pib-backend ${BACKEND_BEFORE}, cerebra ${CEREBRA_BEFORE}). This can take tens of minutes."
+    write_status "rolling_back" "Verification failed; rebuilding previous revisions (pib-backend ${BACKEND_BEFORE}, cerebra ${CEREBRA_BEFORE}). This can take tens of minutes."
     git -C "$BACKEND_DIR" reset --hard "$BACKEND_BEFORE"
     git -C "$CEREBRA_DIR" reset --hard "$CEREBRA_BEFORE"
     git -C "$CEREBRA_DIR" submodule update --init --recursive

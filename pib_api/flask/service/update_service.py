@@ -42,6 +42,9 @@ _RELEASES_MODULE = None
 DEFAULT_START_DEADLINE_SECONDS = 180
 DEFAULT_HEARTBEAT_DEADLINE_SECONDS = 120
 
+# ``rolling_back`` is active on purpose: the rollback rebuild takes tens of
+# minutes, and a terminal classification here would tell a client the job is over
+# while the previous revisions are still being rebuilt.
 RUNNER_STATES = (
     "preflight",
     "fetching",
@@ -49,12 +52,15 @@ RUNNER_STATES = (
     "restarting",
     "migrating",
     "verifying",
+    "rolling_back",
     "done",
     "failed",
     "rolled_back",
 )
-ACTIVE_STATES = frozenset(RUNNER_STATES[:6])
-TERMINAL_STATES = frozenset(RUNNER_STATES[6:])
+ACTIVE_STATES = frozenset(
+    {"preflight", "fetching", "building", "restarting", "migrating", "verifying", "rolling_back"}
+)
+TERMINAL_STATES = frozenset({"done", "failed", "rolled_back"})
 
 
 class UpdateValidationError(ValueError):

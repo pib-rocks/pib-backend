@@ -390,7 +390,7 @@ def test_rollback_writes_running_status_before_rebuild(tmp_path: Path) -> None:
 
     assert result.returncode != 0, log
     rolled_back_line = next(
-        line for line in log.splitlines() if line.startswith("[") and "rolled_back:" in line
+        line for line in log.splitlines() if line.startswith("[") and "rolling_back:" in line
     )
     rebuild_line = next(
         line
