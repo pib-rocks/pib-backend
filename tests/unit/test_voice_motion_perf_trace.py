@@ -159,3 +159,34 @@ def test_motion_trace_survives_a_broken_logger(monkeypatch):
 
     monkeypatch.setattr(perf_trace, "logger", Exploding())
     perf_trace.log_perf_trace("[PERF_TRACE] MOTION_CMD chat= broken")
+
+
+def test_motion_trace_is_appended_to_the_host_mounted_file(tmp_path, monkeypatch):
+    """The file sink is what survives the daemon's stderr redirection.
+
+    Measured on the robot: the MCP server's stderr ends up in a host-side log file the
+    spawn plumbing controls, and it stayed empty. The trace therefore also appends to a
+    host-mounted file, timestamped so the chain can be correlated across containers.
+    """
+    from pib_mcp_server import perf_trace
+
+    target = tmp_path / "logs" / "pib-perf-trace.log"
+    monkeypatch.setenv("PIB_PERF_TRACE_LOG", str(target))
+
+    perf_trace.log_perf_trace("[PERF_TRACE] MOTION_CMD chat= file tool=move_motor")
+
+    line = target.read_text(encoding="utf-8").strip()
+    assert "[PERF_TRACE] MOTION_CMD chat= file tool=move_motor" in line
+    stamp, _, _rest = line.partition(" ")
+    assert float(stamp) > 0
+
+
+def test_motion_trace_survives_an_unwritable_file(tmp_path, monkeypatch):
+    """A path that cannot be written must not raise into the tool call."""
+    from pib_mcp_server import perf_trace
+
+    blocker = tmp_path / "blocked"
+    blocker.write_text("not a directory", encoding="utf-8")
+    monkeypatch.setenv("PIB_PERF_TRACE_LOG", str(blocker / "logs" / "trace.log"))
+
+    perf_trace.log_perf_trace("[PERF_TRACE] MOTION_CMD chat= unwritable")

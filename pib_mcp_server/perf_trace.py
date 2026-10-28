@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 import os
 import sys
+import time
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +27,27 @@ def format_perf_trace_motion_cmd(
     )
 
 
+def perf_trace_log_path() -> Path:
+    """Where the motion trace is appended.
+
+    The MCP server runs as a child of the daemon with its stderr redirected by the
+    host, so a trace line that only goes to stderr may land nowhere the operator can
+    see (measured on the robot: mcp-stderr.log stayed empty). A host-mounted file is
+    the one sink that cannot be redirected away by the spawn plumbing.
+    """
+    override = (os.environ.get("PIB_PERF_TRACE_LOG") or "").strip()
+    if override:
+        return Path(override)
+    return Path.home() / ".hermes" / "logs" / "pib-perf-trace.log"
+
+
+def _append_trace_line(line: str) -> None:
+    path = perf_trace_log_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a", encoding="utf-8", errors="replace") as handle:
+        handle.write(f"{time.time():.3f} {line}\n")
+
+
 def log_perf_trace(line: str) -> None:
     """Emit one perf line so it actually reaches the container log.
 
@@ -40,5 +63,10 @@ def log_perf_trace(line: str) -> None:
             logger.info(line)
         else:
             print(line, file=sys.stderr, flush=True)
+    except Exception:
+        pass
+    # The sink that survives any stderr redirection in the spawn plumbing.
+    try:
+        _append_trace_line(line)
     except Exception:
         pass
