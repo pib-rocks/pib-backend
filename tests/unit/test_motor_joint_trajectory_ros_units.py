@@ -27,6 +27,23 @@ def _module(name: str, **attributes: object) -> types.ModuleType:
     return module
 
 
+def _motor_control_ros_import_stubs() -> dict[str, types.ModuleType]:
+    import pib_motors.joint_state_sweep as real_joint_sweep
+    import pib_motors.perf_trace as real_perf_trace
+
+    sensor_msgs = _module("sensor_msgs")
+    sensor_msgs_msg = _module("sensor_msgs.msg", JointState=MagicMock())
+    sensor_msgs.msg = sensor_msgs_msg
+    std_msgs_msg = _module("std_msgs.msg", Header=MagicMock())
+    return {
+        "pib_motors.perf_trace": real_perf_trace,
+        "pib_motors.joint_state_sweep": real_joint_sweep,
+        "sensor_msgs": sensor_msgs,
+        "sensor_msgs.msg": sensor_msgs_msg,
+        "std_msgs.msg": std_msgs_msg,
+    }
+
+
 class FakeMotor:
     def __init__(
         self,
@@ -93,6 +110,7 @@ def _load_motor_control_helpers():
         ApplyJointTrajectory=MagicMock(),
         ApplyMotorSettings=MagicMock(),
         GetJointPosition=MagicMock(),
+        GetAllJointPositions=MagicMock(),
     )
 
     class FakeMotorResult:
@@ -171,6 +189,7 @@ def _load_motor_control_helpers():
         "pib_motors.joint_trajectory_command": pib_motors_joint_cmd,
         "trajectory_msgs": trajectory_msgs,
         "trajectory_msgs.msg": trajectory_msgs_msg,
+        **_motor_control_ros_import_stubs(),
     }
 
     spec = importlib.util.spec_from_file_location(
@@ -289,6 +308,7 @@ def _load_motor_control_multi(lookup, motors_list):
         ApplyJointTrajectory=MagicMock(),
         ApplyMotorSettings=MagicMock(),
         GetJointPosition=MagicMock(),
+        GetAllJointPositions=MagicMock(),
     )
     datatypes_msg = _module(
         "datatypes.msg",
@@ -362,6 +382,7 @@ def _load_motor_control_multi(lookup, motors_list):
         "pib_motors.joint_trajectory_command": pib_motors_joint_cmd,
         "trajectory_msgs": trajectory_msgs,
         "trajectory_msgs.msg": trajectory_msgs_msg,
+        **_motor_control_ros_import_stubs(),
     }
 
     spec = importlib.util.spec_from_file_location(

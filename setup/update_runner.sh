@@ -10,6 +10,7 @@ BACKEND_DIR="${PIB_BACKEND_DIR:-/home/pib/app/pib-backend}"
 CEREBRA_DIR="${PIB_CEREBRA_DIR:-/home/pib/app/cerebra}"
 REQUEST_FILE="$UPDATE_DIR/request.json"
 STATUS_FILE="$UPDATE_DIR/status.json"
+RUNNER_LOCK="$UPDATE_DIR/runner.lock"
 CANCEL_FILE="$UPDATE_DIR/cancel.json"
 CHECK_FILE="$UPDATE_DIR/check.json"
 AVAILABLE_FILE="$UPDATE_DIR/available.json"
@@ -21,6 +22,17 @@ else
     LOG_FILE="$UPDATE_DIR/update.log"
 fi
 MIN_FREE_KIB="${PIB_UPDATE_MIN_FREE_KIB:-8388608}"
+IMAGE_SET_KIB="${PIB_UPDATE_IMAGE_SET_KIB:-20971520}"
+BUILD_CACHE_HEADROOM_KIB="${PIB_UPDATE_BUILD_CACHE_HEADROOM_KIB:-4194304}"
+case "$MIN_FREE_KIB" in
+    '' | *[!0-9]*) MIN_FREE_KIB=8388608 ;;
+esac
+case "$IMAGE_SET_KIB" in
+    '' | *[!0-9]*) IMAGE_SET_KIB=20971520 ;;
+esac
+case "$BUILD_CACHE_HEADROOM_KIB" in
+    '' | *[!0-9]*) BUILD_CACHE_HEADROOM_KIB=4194304 ;;
+esac
 VERIFY_ATTEMPTS="${PIB_UPDATE_VERIFY_ATTEMPTS:-30}"
 VERIFY_INTERVAL_SECONDS="${PIB_UPDATE_VERIFY_INTERVAL_SECONDS:-5}"
 MAX_ATTEMPTS="${PIB_UPDATE_MAX_ATTEMPTS:-3}"
@@ -40,7 +52,6 @@ STATUS_READER="$BACKEND_DIR/setup/update_status_reader.py"
 WATCHDOG_HELPER="/usr/local/sbin/pib-update-watchdog"
 WATCHDOG_TARGET_FILE="$UPDATE_DIR/watchdog.target"
 WATCHDOG_BUILD_TIMEOUT_US="${PIB_UPDATE_WATCHDOG_BUILD_TIMEOUT_US:-1800000000}"
-PRUNE_BELOW_KIB="${PIB_UPDATE_PRUNE_BELOW_KIB:-15728640}"
 # Develop checkouts are not tagged. Passing this marker as APP_VERSION keeps the
 # image off the compose-file fallback, which would otherwise report an old release.
 DEVELOP_VERSION_MARKER="develop"
@@ -65,6 +76,7 @@ UNHEALTHY_SERVICES=""
 ATTEMPT=1
 PREDECESSOR_INTERRUPTED="false"
 PREDECESSOR_STATE="unknown"
+PREVIOUS_APP_VERSION=""
 WATCHDOG_ORIGINAL_US=""
 WATCHDOG_RESTORE_NEEDED="false"
 # Set only when this update is about to change the model store, so a later
@@ -533,6 +545,26 @@ validate_repository() {
 check_update_dir() {
     [ -d "$UPDATE_DIR" ] || fail "Update directory is missing: $UPDATE_DIR"
     [ -w "$UPDATE_DIR" ] || fail "Update directory is not writable by $(id -un): $UPDATE_DIR (owner $(stat -c '%U:%G %a' "$UPDATE_DIR" 2>/dev/null || echo unknown)); fix with: sudo install -d -o pib -g pib -m 2770 $UPDATE_DIR"
+}
+
+acquire_runner_lock() {
+    if ! command -v flock >/dev/null 2>&1; then
+        fail "The flock command is required for update locking but was not found on PATH; install util-linux"
+    fi
+    exec 9>"$RUNNER_LOCK"
+    flock -n 9 || fail "Another update or deployment holds $RUNNER_LOCK; wait for it to finish or inspect the running job in $UPDATE_DIR/status.json and $LOG_FILE"
+}
+
+assert_checkouts_match_targets() {
+    local backend_head cerebra_head
+    backend_head="$(git -C "$BACKEND_DIR" rev-parse HEAD)"
+    if [ "$backend_head" != "$BACKEND_TARGET" ]; then
+        fail "pib-backend checkout moved before container build: at ${backend_head}, expected ${BACKEND_TARGET}; another process changed the working tree while this update was running"
+    fi
+    cerebra_head="$(git -C "$CEREBRA_DIR" rev-parse HEAD)"
+    if [ "$cerebra_head" != "$CEREBRA_TARGET" ]; then
+        fail "cerebra checkout moved before container build: at ${cerebra_head}, expected ${CEREBRA_TARGET}; another process changed the working tree while this update was running"
+    fi
 }
 
 check_watchdog_conflict() {
@@ -1110,8 +1142,93 @@ sync_model_store() {
     return 0
 }
 
+read_free_kib() {
+    df -Pk "$BACKEND_DIR" | awk 'NR == 2 {print $4}'
+}
+
+kib_to_mib() {
+    local kib="$1"
+    echo $(( (kib + 1023) / 1024 ))
+}
+
+compute_required_free_kib() {
+    local override="${PIB_UPDATE_REQUIRED_FREE_KIB:-}"
+    local base image_floor
+    case "$override" in
+        '' | *[!0-9]*)
+            ;;
+        *)
+            printf '%s\n' "$override"
+            return 0
+            ;;
+    esac
+    base="$MIN_FREE_KIB"
+    if [ "$IMAGE_SET_KIB" -gt "$base" ]; then
+        base="$IMAGE_SET_KIB"
+    fi
+    echo $((base + BUILD_CACHE_HEADROOM_KIB))
+}
+
+reclaim_docker_disk_before_build() {
+    local free_before free_after builder_output image_output builder_reclaimed image_reclaimed
+    free_before="$(read_free_kib)"
+    builder_output="$(docker builder prune -af 2>&1)" || true
+    builder_reclaimed="$(printf '%s\n' "$builder_output" | sed -n 's/.*Total reclaimed space: //p' | tail -n 1)"
+    [ -n "$builder_reclaimed" ] || builder_reclaimed="0B"
+    image_output="$(docker image prune -f 2>&1)" || true
+    image_reclaimed="$(printf '%s\n' "$image_output" | sed -n 's/.*Total reclaimed space: //p' | tail -n 1)"
+    [ -n "$image_reclaimed" ] || image_reclaimed="0B"
+    free_after="$(read_free_kib)"
+    log "Docker reclaim before build: free disk ${free_before} KiB ($(kib_to_mib "$free_before") MiB) -> ${free_after} KiB ($(kib_to_mib "$free_after") MiB); builder cache reclaimed ${builder_reclaimed}; dangling images reclaimed ${image_reclaimed}"
+}
+
+check_disk_budget() {
+    local required available required_mib available_mib
+    required="$(compute_required_free_kib)"
+    available="$(read_free_kib)"
+    required_mib="$(kib_to_mib "$required")"
+    available_mib="$(kib_to_mib "$available")"
+    if [ "$available" -lt "$required" ]; then
+        fail "Insufficient free disk space for this update: required ${required_mib} MiB (${required} KiB), available ${available_mib} MiB (${available} KiB). Override with PIB_UPDATE_REQUIRED_FREE_KIB or free space (docker builder prune -af; docker image prune -f), then retry."
+    fi
+    log "Disk budget satisfied: required ${required_mib} MiB (${required} KiB), available ${available_mib} MiB (${available} KiB)"
+}
+
+prune_obsolete_release_images() {
+    local current_tag previous_tag free_before free_after reclaimed_kib removed=0
+    local ref repository tag
+    current_tag="$(python3 "$BACKEND_IMAGES_HELPER" resolve-tag "${APP_VERSION:-}")"
+    if [ -n "${PREVIOUS_APP_VERSION:-}" ]; then
+        previous_tag="$(python3 "$BACKEND_IMAGES_HELPER" resolve-tag "${PREVIOUS_APP_VERSION}")"
+    else
+        previous_tag=""
+    fi
+    free_before="$(read_free_kib)"
+    while IFS= read -r ref; do
+        [ -n "$ref" ] || continue
+        tag="${ref##*:}"
+        if [ "$tag" = "$current_tag" ]; then
+            continue
+        fi
+        if [ -n "$previous_tag" ] && [ "$tag" = "$previous_tag" ]; then
+            continue
+        fi
+        if docker image rm -f "$ref" >/dev/null 2>&1; then
+            removed=$((removed + 1))
+        fi
+    done < <(docker images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | grep -E '^ghcr\.io/pib-rocks/pib-backend-' || true)
+    docker image prune -f >/dev/null 2>&1 || true
+    free_after="$(read_free_kib)"
+    reclaimed_kib=$((free_after - free_before))
+    if [ "$reclaimed_kib" -lt 0 ]; then
+        reclaimed_kib=0
+    fi
+    log "Post-update image cleanup: reclaimed ${reclaimed_kib} KiB ($(kib_to_mib "$reclaimed_kib") MiB); free disk now ${free_after} KiB ($(kib_to_mib "$free_after") MiB). Kept release tags ${current_tag} and ${previous_tag:-<none>}; removed ${removed} obsolete tagged image(s)."
+}
+
 rollback_once() {
     log "Verification failed; attempting one rollback build"
+    write_status "rolling_back" "Verification failed; rebuilding previous revisions (pib-backend ${BACKEND_BEFORE}, cerebra ${CEREBRA_BEFORE}). This can take tens of minutes."
     git -C "$BACKEND_DIR" reset --hard "$BACKEND_BEFORE"
     git -C "$CEREBRA_DIR" reset --hard "$CEREBRA_BEFORE"
     git -C "$CEREBRA_DIR" submodule update --init --recursive
@@ -1168,6 +1285,7 @@ start_heartbeat
 trap on_runner_exit EXIT
 load_predecessor_status
 enforce_retry_policy
+acquire_runner_lock
 write_status "preflight" "Validating repositories, disk, watchdog ownership, and database backup (attempt ${ATTEMPT} of ${MAX_ATTEMPTS})"
 check_cancel
 check_update_dir
@@ -1177,10 +1295,13 @@ log "Services running before the update: pib-backend=[$(printf '%s' "$BACKEND_SE
 validate_repository "pib-backend" "$BACKEND_DIR"
 validate_repository "cerebra" "$CEREBRA_DIR"
 check_watchdog_conflict
-FREE_KIB="$(df -Pk "$BACKEND_DIR" | awk 'NR == 2 {print $4}')"
-[ "$FREE_KIB" -ge "$MIN_FREE_KIB" ] || fail "Insufficient free disk space: ${FREE_KIB} KiB"
 BACKEND_BEFORE="$(git -C "$BACKEND_DIR" rev-parse HEAD)"
 CEREBRA_BEFORE="$(git -C "$CEREBRA_DIR" rev-parse HEAD)"
+if PREVIOUS_APP_VERSION="$(resolve_app_version "$BACKEND_DIR")"; then
+    log "Installed release before update: APP_VERSION=${PREVIOUS_APP_VERSION}"
+else
+    PREVIOUS_APP_VERSION=""
+fi
 backup_database || fail "WAL-safe database backup failed"
 
 check_cancel
@@ -1224,15 +1345,14 @@ sync_model_store || fail "OAK model store does not match models/manifest.yaml an
 
 check_cancel
 extend_watchdog_for_build
+reclaim_docker_disk_before_build
+check_disk_budget
 write_status "building" "Building and recreating backend and cerebra containers (APP_VERSION=${APP_VERSION})"
-if [ "$FREE_KIB" -lt "$PRUNE_BELOW_KIB" ]; then
-    log "Disk space is below prune threshold; pruning Docker build cache"
-    docker builder prune -af
-fi
 # After the fetch, before either stack is recreated. The new flask-app probes
 # Ollama as soon as it starts; a drop-in written afterwards would miss that
 # probe. A missing ollama unit returns success.
 ensure_ollama_for_update || fail "ollama listen drop-in could not be applied"
+assert_checkouts_match_targets
 build_backend_stack || fail "Backend container build failed"
 docker compose -f "$CEREBRA_DIR/docker-compose.yaml" \
     up -d --build --force-recreate || fail "Cerebra container build failed"
@@ -1259,6 +1379,7 @@ if ! verify_result; then
     rollback_once
 fi
 
+prune_obsolete_release_images
 discard_model_store_snapshot
 write_revision "pib-backend" "$BACKEND_TARGET"
 write_revision "cerebra" "$CEREBRA_TARGET"

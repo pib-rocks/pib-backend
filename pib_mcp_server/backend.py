@@ -17,6 +17,7 @@ from urllib.request import Request, urlopen
 
 from .perf_trace import (
     format_perf_trace_motion_cmd,
+    format_perf_trace_motor_positions,
     log_perf_trace,
     perf_trace_chat_id,
 )
@@ -33,6 +34,15 @@ def _degrees_to_radians(degrees: float) -> float:
 
 
 MOTOR_POSITION_FETCH_WORKERS = 8
+
+JOINT_STATES_TOPIC = "/joint_states"
+JOINT_STATE_MESSAGE_TYPE = "sensor_msgs/JointState"
+GET_ALL_JOINT_POSITIONS_SERVICE = "/get_all_joint_positions"
+GET_ALL_JOINT_POSITIONS_TYPE = "datatypes/srv/GetAllJointPositions"
+DEFAULT_JOINT_STATE_MAX_AGE_SEC = 0.5
+BATCH_SERVICE_UNAVAILABLE_REASON = (
+    "get_all_joint_positions service unavailable (older motors image)"
+)
 
 
 def _duration_from_seconds(seconds: float) -> dict[str, int]:
@@ -53,6 +63,12 @@ def _compact_motor(motor: dict[str, Any]) -> dict[str, Any]:
     }
     if "positionError" in motor:
         compact["positionError"] = motor["positionError"]
+    if "positionSource" in motor:
+        compact["positionSource"] = motor["positionSource"]
+    if "positionAgeSec" in motor:
+        compact["positionAgeSec"] = motor["positionAgeSec"]
+    if "positionFallbackReason" in motor:
+        compact["positionFallbackReason"] = motor["positionFallbackReason"]
     return compact
 
 
@@ -69,6 +85,8 @@ class _RosbridgeMultiplexer:
         self._pending: dict[str, threading.Event] = {}
         self._responses: dict[str, dict[str, Any]] = {}
         self._errors: dict[str, BaseException] = {}
+        self._topic_cache: dict[str, dict[str, Any]] = {}
+        self._subscribed_topics: set[str] = set()
 
     def _connect(self) -> None:
         import websocket
@@ -91,6 +109,15 @@ class _RosbridgeMultiplexer:
             try:
                 response = json.loads(raw)
             except ValueError:
+                continue
+            if response.get("op") == "publish":
+                topic = response.get("topic")
+                if isinstance(topic, str):
+                    with self._lock:
+                        self._topic_cache[topic] = {
+                            "msg": response.get("msg"),
+                            "received_monotonic": time.monotonic(),
+                        }
                 continue
             request_id = response.get("id")
             if not isinstance(request_id, str):
@@ -170,6 +197,39 @@ class _RosbridgeMultiplexer:
         raise BackendError(
             "ros_service_failed", f"ROS service {service} returned no values"
         )
+
+    def subscribe_topic(self, topic: str, message_type: str) -> None:
+        with self._lock:
+            if topic in self._subscribed_topics:
+                return
+            if self._connection is None:
+                self._connect()
+            request = {
+                "op": "subscribe",
+                "topic": topic,
+                "type": message_type,
+            }
+            try:
+                self._connection.send(json.dumps(request))
+            except Exception as exc:
+                raise BackendError(
+                    "ros_unavailable",
+                    f"ROS topic {topic} could not be subscribed: {exc}",
+                ) from exc
+            self._subscribed_topics.add(topic)
+
+    def latest_topic_message(self, topic: str) -> dict[str, Any] | None:
+        with self._lock:
+            cached = self._topic_cache.get(topic)
+            if not cached:
+                return None
+            msg = cached.get("msg")
+            if not isinstance(msg, dict):
+                return None
+            return {
+                "msg": msg,
+                "received_monotonic": float(cached.get("received_monotonic", 0.0)),
+            }
 
 
 def _compact_diagnostics(summary: dict[str, Any]) -> dict[str, Any]:
@@ -268,8 +328,62 @@ class PibBackend:
             if timeout is not None
             else os.getenv("PIB_MCP_REQUEST_TIMEOUT", "10")
         )
+        self.joint_state_max_age_sec = float(
+            os.getenv(
+                "PIB_MCP_JOINT_STATE_MAX_AGE_SEC",
+                str(DEFAULT_JOINT_STATE_MAX_AGE_SEC),
+            )
+        )
         self._rosbridge: _RosbridgeMultiplexer | None = None
         self._rosbridge_lock = threading.Lock()
+        self._get_all_joint_positions_available: bool | None = None
+
+    def _is_missing_ros_service(self, exc: BackendError) -> bool:
+        if exc.code not in ("ros_service_failed", "ros_unavailable"):
+            return False
+        message = (exc.message or "").lower()
+        return any(
+            phrase in message
+            for phrase in (
+                "does not exist",
+                "not available",
+                "unknown service",
+                "no such service",
+                "service not found",
+            )
+        )
+
+    def _batch_joint_positions_unavailable_reason(self) -> str | None:
+        if self._get_all_joint_positions_available is False:
+            return BATCH_SERVICE_UNAVAILABLE_REASON
+        return None
+
+    def _header_age_sec(self, header: dict[str, Any] | None) -> float | None:
+        if not isinstance(header, dict):
+            return None
+        return self._joint_state_header_age_sec({"header": header})
+
+    def _apply_batch_joint_result_row(
+        self,
+        motor: dict[str, Any],
+        *,
+        successful: bool,
+        position_centideg: int | None,
+        error_message: str | None,
+        header_age: float | None,
+    ) -> None:
+        motor["positionSource"] = "get_all_joint_positions"
+        if successful and position_centideg is not None:
+            motor["currentPosition"] = _centidegrees_to_degrees(position_centideg)
+            motor.pop("positionError", None)
+            if header_age is not None:
+                motor["positionAgeSec"] = round(header_age, 4)
+            else:
+                motor.pop("positionAgeSec", None)
+            return
+        motor["currentPosition"] = None
+        motor["positionError"] = error_message or "position unavailable"
+        motor.pop("positionAgeSec", None)
 
     def _http(
         self, method: str, path: str, payload: dict[str, Any] | None = None
@@ -348,17 +462,194 @@ class PibBackend:
                 if raw_position is not None
                 else None
             )
+            motor["positionSource"] = "get_joint_position"
             if not position.get("successful"):
                 motor["positionError"] = position.get("message", "unavailable")
         except BackendError as exc:
             motor["currentPosition"] = None
             motor["positionError"] = exc.message
+            motor["positionSource"] = "get_joint_position"
+
+    def _joint_state_header_age_sec(self, msg: dict[str, Any]) -> float | None:
+        header = msg.get("header")
+        if not isinstance(header, dict):
+            return None
+        stamp = header.get("stamp")
+        if not isinstance(stamp, dict):
+            return None
+        sec = stamp.get("sec")
+        nanosec = stamp.get("nanosec")
+        if not isinstance(sec, int) or not isinstance(nanosec, int):
+            return None
+        stamp_sec = float(sec) + float(nanosec) * 1e-9
+        return max(0.0, time.time() - stamp_sec)
+
+    def _joint_state_positions_degrees(self, msg: dict[str, Any]) -> dict[str, float]:
+        names = msg.get("name") or msg.get("joint_names") or []
+        positions = msg.get("position") or msg.get("positions") or []
+        if not isinstance(names, list) or not isinstance(positions, list):
+            return {}
+        result: dict[str, float] = {}
+        for joint_name, radians in zip(names, positions):
+            if not isinstance(joint_name, str):
+                continue
+            if not isinstance(radians, (int, float)) or not math.isfinite(radians):
+                continue
+            result[joint_name] = math.degrees(float(radians))
+        return result
+
+    def _ensure_joint_states_subscription(self) -> None:
+        self._rosbridge_client().subscribe_topic(
+            JOINT_STATES_TOPIC, JOINT_STATE_MESSAGE_TYPE
+        )
+
+    def _try_apply_joint_state_positions(
+        self, motors: list[dict[str, Any]]
+    ) -> tuple[bool, float | None]:
+        try:
+            self._ensure_joint_states_subscription()
+            cached = self._rosbridge_client().latest_topic_message(JOINT_STATES_TOPIC)
+        except Exception:
+            return False, None
+        if cached is None:
+            return False, None
+
+        received_age = time.monotonic() - float(cached["received_monotonic"])
+        if received_age > self.joint_state_max_age_sec:
+            return False, None
+
+        msg = cached["msg"]
+        positions = self._joint_state_positions_degrees(msg)
+        if not positions:
+            return False, None
+
+        needed = {motor.get("name") for motor in motors if motor.get("name")}
+        if not needed.issubset(positions.keys()):
+            return False, None
+
+        header_age = self._joint_state_header_age_sec(msg)
+        for motor in motors:
+            name = motor.get("name")
+            if not name:
+                continue
+            motor["currentPosition"] = positions[name]
+            motor["positionSource"] = "joint_states"
+            if header_age is not None:
+                motor["positionAgeSec"] = round(header_age, 4)
+            motor.pop("positionError", None)
+        return True, header_age
+
+    def _try_apply_batch_joint_positions(
+        self, motors: list[dict[str, Any]]
+    ) -> tuple[bool, float | None]:
+        if self._batch_joint_positions_unavailable_reason() is not None:
+            return False, None
+
+        joint_names = [motor.get("name") for motor in motors if motor.get("name")]
+        try:
+            response = self._ros_service(
+                GET_ALL_JOINT_POSITIONS_SERVICE,
+                GET_ALL_JOINT_POSITIONS_TYPE,
+                {"joint_names": joint_names},
+            )
+        except BackendError as exc:
+            if self._is_missing_ros_service(exc):
+                self._get_all_joint_positions_available = False
+                return False, None
+            raise
+
+        self._get_all_joint_positions_available = True
+        header = response.get("header")
+        header_age = self._header_age_sec(header if isinstance(header, dict) else None)
+        raw_results = response.get("results") or []
+        positions = response.get("positions") or []
+        overall_message = response.get("message", "")
+
+        results_by_name: dict[str, tuple[bool, int | None, str | None]] = {}
+        for index, item in enumerate(raw_results):
+            if not isinstance(item, dict):
+                continue
+            motor_name = item.get("motor_name", item.get("motorName", ""))
+            if not isinstance(motor_name, str) or not motor_name:
+                continue
+            successful = bool(item.get("successful"))
+            position_centideg: int | None = None
+            if successful and index < len(positions):
+                raw_position = positions[index]
+                if isinstance(raw_position, int):
+                    position_centideg = raw_position
+            detail = item.get("detail") or item.get("message") or overall_message
+            error_code = item.get("error_code", item.get("errorCode", ""))
+            error_message = None
+            if not successful:
+                error_message = detail or error_code or "position unavailable"
+            results_by_name[motor_name] = (successful, position_centideg, error_message)
+
+        for motor in motors:
+            name = motor.get("name")
+            if not name:
+                continue
+            row = results_by_name.get(name)
+            if row is None:
+                self._apply_batch_joint_result_row(
+                    motor,
+                    successful=False,
+                    position_centideg=None,
+                    error_message=overall_message or "missing from batch response",
+                    header_age=header_age,
+                )
+                continue
+            successful, position_centideg, error_message = row
+            self._apply_batch_joint_result_row(
+                motor,
+                successful=successful,
+                position_centideg=position_centideg,
+                error_message=error_message,
+                header_age=header_age,
+            )
+        return True, header_age
 
     def _motors_with_live_positions(self) -> list[dict[str, Any]]:
         motors = self.get_motors()
         named_motors = [motor for motor in motors if motor.get("name")]
         if not named_motors:
             return motors
+
+        started = time.monotonic()
+        applied, header_age = self._try_apply_joint_state_positions(named_motors)
+        if applied:
+            elapsed_ms = (time.monotonic() - started) * 1000.0
+            age_ms = None if header_age is None else header_age * 1000.0
+            log_perf_trace(
+                format_perf_trace_motor_positions(
+                    "joint_states",
+                    len(named_motors),
+                    elapsed_ms,
+                    age_ms,
+                )
+            )
+            return motors
+
+        batch_applied, batch_header_age = self._try_apply_batch_joint_positions(
+            named_motors
+        )
+        if batch_applied:
+            elapsed_ms = (time.monotonic() - started) * 1000.0
+            age_ms = None if batch_header_age is None else batch_header_age * 1000.0
+            log_perf_trace(
+                format_perf_trace_motor_positions(
+                    "get_all_joint_positions",
+                    len(named_motors),
+                    elapsed_ms,
+                    age_ms,
+                )
+            )
+            return motors
+
+        fallback_reason = self._batch_joint_positions_unavailable_reason()
+        if fallback_reason:
+            for motor in named_motors:
+                motor["positionFallbackReason"] = fallback_reason
 
         deadline = time.monotonic() + self.timeout
         workers = min(MOTOR_POSITION_FETCH_WORKERS, len(named_motors))
@@ -380,6 +671,16 @@ class PibBackend:
                 future.cancel()
                 motor["currentPosition"] = None
                 motor["positionError"] = f"timed out after {self.timeout:g}s"
+                motor["positionSource"] = "get_joint_position"
+        elapsed_ms = (time.monotonic() - started) * 1000.0
+        log_perf_trace(
+            format_perf_trace_motor_positions(
+                "get_joint_position",
+                len(named_motors),
+                elapsed_ms,
+                None,
+            )
+        )
         return motors
 
     def list_motors(self, detail: bool = False) -> dict[str, Any]:

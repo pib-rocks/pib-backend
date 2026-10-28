@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from service.update_service import update_directory
-from service.version_service import read_app_version
+from service.version_service import read_app_version, version_provenance
 
 UNKNOWN = "unknown"
 REPOSITORIES = ("pib-backend", "cerebra")
@@ -50,7 +50,9 @@ def installed_revisions(directory: Path | None = None) -> dict[str, Any]:
         )
         for repository in REPOSITORIES
     }
+    image_version = read_app_version()
     return {
-        "imageVersion": read_app_version(),
+        "imageVersion": image_version,
+        "versionProvenance": version_provenance(image_version),
         "repositories": repositories,
     }

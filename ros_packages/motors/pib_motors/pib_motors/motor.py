@@ -75,10 +75,18 @@ class Motor:
         return all(actuator.set_position(position) for actuator in self.actuators)
 
     def get_position(self) -> int:
-        """returns the target position of the motor as set by the last command, or '0' if no actuator is connected"""
+        """Returns the measured present position, or 0 if no actuator is connected."""
         if not self.actuators:
             return 0
         return self.actuators[0].get_position()
+
+    def get_target_position(self) -> int | None:
+        if not self.actuators:
+            return None
+        actuator = self.actuators[0]
+        if hasattr(actuator, "get_target_position"):
+            return actuator.get_target_position()
+        return actuator.get_position()
 
     def get_current_position(self) -> int:
         """returns the actual physical position of the motor at this moment, or '0' if no actuator is connected"""
