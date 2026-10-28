@@ -7,6 +7,11 @@ from typing import Dict, Any, List, Tuple, Optional
 
 DOCKER_SOCK = "/var/run/docker.sock"
 
+# Pruning images and the build cache on an SD card takes minutes, not seconds.
+# The default 10 s socket timeout made a purge that was still running look like
+# a failure on 192.168.1.172 while it freed 6.3 GB in the background (PR-2099).
+PURGE_TIMEOUT_SECONDS = 600.0
+
 
 def _docker_request(
     method: str, path: str, payload: Optional[dict] = None, timeout: float = 10.0
@@ -298,7 +303,7 @@ def purge_docker() -> Tuple[int, Dict[str, Any]]:
 
     for key, path in endpoints:
         try:
-            code, body = _docker_request("POST", path)
+            code, body = _docker_request("POST", path, timeout=PURGE_TIMEOUT_SECONDS)
             if code in (200, 204):
                 try:
                     parsed = json.loads(body.decode("utf-8"))

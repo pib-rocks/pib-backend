@@ -23,12 +23,14 @@ from service import docker_admin_service  # noqa: E402
 
 def _fake_engine(responses):
     calls: list[str] = []
+    timeouts: list[float] = []
 
     def _request(method, path, payload=None, timeout=10.0):
         calls.append(path)
+        timeouts.append(timeout)
         return responses.get(path.split("?")[0], (200, b"{}"))
 
-    return _request, calls
+    return _request, calls, timeouts
 
 
 def test_purge_asks_for_all_unused_images_and_the_buildkit_cache(monkeypatch):
@@ -39,12 +41,13 @@ def test_purge_asks_for_all_unused_images_and_the_buildkit_cache(monkeypatch):
         "/networks/prune": (200, json.dumps({"SpaceReclaimed": 0}).encode()),
         "/build/prune": (200, json.dumps({"SpaceReclaimed": 3_000_000}).encode()),
     }
-    request, calls = _fake_engine(responses)
+    request, calls, timeouts = _fake_engine(responses)
     monkeypatch.setattr(docker_admin_service, "_docker_request", request)
 
     code, body = docker_admin_service.purge_docker()
 
     assert code == 200
+    assert all(t >= 600 for t in timeouts), timeouts
     images_call = next(p for p in calls if p.startswith("/images/prune"))
     assert "filters=" in images_call
     payload = json.loads(unquote(images_call.split("filters=", 1)[1]))
@@ -60,7 +63,7 @@ def test_purge_reports_a_failing_step_and_still_runs_the_others(monkeypatch):
         "/images/prune": (500, b'{"message": "boom"}'),
         "/build/prune": (200, json.dumps({"SpaceReclaimed": 2_000}).encode()),
     }
-    request, calls = _fake_engine(responses)
+    request, calls, _timeouts = _fake_engine(responses)
     monkeypatch.setattr(docker_admin_service, "_docker_request", request)
 
     code, body = docker_admin_service.purge_docker()
@@ -75,7 +78,7 @@ def test_purge_reports_a_failing_step_and_still_runs_the_others(monkeypatch):
 
 def test_purge_survives_an_unreadable_response_body(monkeypatch):
     responses = {"/images/prune": (200, b"not json")}
-    request, _calls = _fake_engine(responses)
+    request, _calls, _timeouts = _fake_engine(responses)
     monkeypatch.setattr(docker_admin_service, "_docker_request", request)
 
     _code, body = docker_admin_service.purge_docker()
