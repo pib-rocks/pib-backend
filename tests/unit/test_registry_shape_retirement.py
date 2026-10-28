@@ -227,7 +227,10 @@ def test_personalities_keep_their_model_and_a_gone_row_is_not_remapped(tmp_path)
     assert set(models) == set(active_api_names()) == assistant_names
     claude = models["claude-sonnet-5-5"]
     assert claude[0] not in REMOVED_MODEL_IDS
-    assert claude[0] == 15
+    # Row ids follow insertion order, so a new catalogue line renumbers the
+    # rows after it. What matters is that the row is its own: unique, and not
+    # one of the retired ids.
+    assert [row[0] for row in models.values()].count(claude[0]) == 1
     assert claude[5] == "Claude Sonnet 5.5"
     assert json.loads(claude[3]) == capabilities_for("claude-sonnet-5-5", True)
     assert accounts[claude[2]][1] == "Anthropic"
