@@ -12,9 +12,15 @@ from std_msgs.msg import Float32MultiArray, Int16MultiArray, String
 
 from ros_audio_io.device_retry import (
     DeviceNotFoundError,
+    audio_device_log_line,
+    capture_backend_name,
     describe_open_failure,
     device_status_payload,
+    format_input_capabilities,
+    format_microphone_open_failure_log,
+    microphone_recovery_log,
     next_retry_delay,
+    open_failure_signature,
 )
 from ros_audio_io.levels import calculate_levels
 
@@ -56,6 +62,10 @@ class AudioStreamer(Node):
         self.retry_timer = None
         self.open_attempts = 0
         self.py_audio = None
+        self._logged_input_devices = False
+        self._last_failure_signature = None
+        self._microphone_was_unavailable = False
+        self._pending_failure_context = None
 
         # --- ROS pub/service ---
         self.pub = self.create_publisher(Int16MultiArray, "audio_stream", 10)
@@ -80,12 +90,26 @@ class AudioStreamer(Node):
         self.select_input_device()
         dev = self.py_audio.get_device_info_by_index(self.input_device_index)
         dev_name = dev.get("name")
+        hostapis = self._host_api_names()
+        backend = capture_backend_name(hostapis.get(dev.get("hostApi"), "ALSA"))
         dev_default_rate = int(dev.get("defaultSampleRate", 16000))
         dev_max_in = int(dev.get("maxInputChannels", 0))
+        self._pending_failure_context = {
+            "device_index": self.input_device_index,
+            "device_name": dev_name,
+            "backend": backend,
+            "capabilities": format_input_capabilities(dev),
+        }
 
         # Choose rate/channels with graceful fallback
-        sr_candidates = [self.requested_rate, dev_default_rate]
-        ch_candidates = [self.requested_channels, dev_max_in]
+        sr_candidates = []
+        for rate in (self.requested_rate, dev_default_rate):
+            if rate not in sr_candidates:
+                sr_candidates.append(rate)
+        ch_candidates = []
+        for channel in (self.requested_channels, dev_max_in):
+            if channel not in ch_candidates:
+                ch_candidates.append(channel)
 
         last_err = None
 
@@ -93,11 +117,6 @@ class AudioStreamer(Node):
             for channel in ch_candidates:
                 if channel <= 0:
                     continue
-
-                self.get_logger().info(
-                    f"Trying to open '{dev_name}' (idx {self.input_device_index}) "
-                    f"rate={rate}Hz channels={channel} format=Int16 chunk={self.chunk_size}"
-                )
 
                 try:
                     stream = self.py_audio.open(
@@ -116,6 +135,7 @@ class AudioStreamer(Node):
                 self.audio_stream = stream
                 self.sample_rate = rate
                 self.open_channels = channel
+                self._pending_failure_context = None
                 break  # exit inner loop
             else:
                 # only executed if inner loop didn't break → try next rate
@@ -138,12 +158,12 @@ class AudioStreamer(Node):
             )
             self.processed_channel_index = 0
 
-        return dev_name
+        return dev_name, backend
 
     def _attempt_open_device(self):
         self.open_attempts += 1
         try:
-            dev_name = self._open_device()
+            dev_name, backend = self._open_device()
         except Exception as exc:
             self.audio_stream = None
             self.sample_rate = None
@@ -154,10 +174,31 @@ class AudioStreamer(Node):
             delay = next_retry_delay(self.open_attempts)
             reason = describe_open_failure(exc)
             detail = str(exc)
-            self.get_logger().warning(
-                f"Microphone open failed: reason={reason}; detail={detail}; "
-                f"attempt={self.open_attempts}; next attempt in {delay:g}s"
+            failure_context = self._pending_failure_context or {}
+            device_name = failure_context.get("device_name", "unknown")
+            capabilities = failure_context.get(
+                "capabilities", "maxInputChannels=? defaultSampleRate=? format=S16_LE"
             )
+            device_index = failure_context.get("device_index")
+            signature = open_failure_signature(
+                device_index=device_index,
+                device_name=device_name,
+                reason=reason,
+                detail=detail,
+            )
+            if signature != self._last_failure_signature:
+                self._last_failure_signature = signature
+                self.get_logger().warning(
+                    format_microphone_open_failure_log(
+                        reason=reason,
+                        detail=detail,
+                        device_name=device_name,
+                        capabilities=capabilities,
+                        attempt=self.open_attempts,
+                        delay=delay,
+                    )
+                )
+            self._microphone_was_unavailable = True
             self._publish_status(
                 device_status_payload(
                     available=False,
@@ -170,15 +211,26 @@ class AudioStreamer(Node):
             self.retry_timer = self.create_timer(delay, self.retry_open_device)
             return
 
+        self._pending_failure_context = None
+        self._last_failure_signature = None
+        if self._microphone_was_unavailable:
+            self.get_logger().info(
+                microphone_recovery_log(
+                    dev_name,
+                    self.sample_rate,
+                    self.open_channels,
+                    backend=backend,
+                )
+            )
+            self._microphone_was_unavailable = False
+
         self.get_logger().info(
-            "=== Input configured ===\n"
-            f"Device:      {dev_name} (index {self.input_device_index})\n"
-            f"Rate:        {self.sample_rate} Hz\n"
-            f"Channels:    {self.open_channels} (publishing ONLY channel {self.processed_channel_index})\n"
-            f"Chunk size:  {self.chunk_size} frames\n"
-            f"Format:      Int16\n"
-            f"Env: MIC_DEVICE='{self.mic_preferred_name}', MIC_CHANNELS={self.requested_channels}, "
-            f"MIC_RATE={self.requested_rate}, MIC_PROCESSED_CHANNEL={self.processed_channel_index}"
+            audio_device_log_line(
+                backend,
+                dev_name,
+                self.sample_rate,
+                self.open_channels,
+            )
         )
         self._publish_status(
             device_status_payload(
@@ -217,26 +269,35 @@ class AudioStreamer(Node):
         return response
 
     # ----- Helpers -----
-    def select_input_device(self):
-        """Select preferred mic by substring; else fall back to default."""
-        found = None
-        hostapis = {
+    def _host_api_names(self):
+        if self.py_audio is None:
+            return {}
+        return {
             self.py_audio.get_host_api_info_by_index(i)[
                 "index"
             ]: self.py_audio.get_host_api_info_by_index(i)["name"]
             for i in range(self.py_audio.get_host_api_count())
         }
+
+    def select_input_device(self):
+        """Select preferred mic by substring; else fall back to default."""
+        found = None
+        hostapis = self._host_api_names()
         for i in range(self.py_audio.get_device_count()):
             info = self.py_audio.get_device_info_by_index(i)
             name = info.get("name", "")
             max_in = info.get("maxInputChannels", 0)
-            api_name = hostapis.get(info.get("hostApi"), "?")
-            self.get_logger().info(
-                f"Device {i}: '{name}' | hostapi={api_name} | maxInputChannels={max_in}"
-            )
+            if not self._logged_input_devices:
+                api_name = hostapis.get(info.get("hostApi"), "?")
+                self.get_logger().info(
+                    f"Device {i}: '{name}' | hostapi={api_name} | maxInputChannels={max_in}"
+                )
             if max_in and self.mic_preferred_name in name.lower():
                 found = i
                 break
+
+        if not self._logged_input_devices:
+            self._logged_input_devices = True
 
         if found is not None:
             self.input_device_index = found
