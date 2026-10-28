@@ -27,9 +27,25 @@ RUN apt-get update --fix-missing && \
         python3-colcon-mixin \
         python3-pip \
         pulseaudio \
+        libpulse-dev \
+        libasound2-dev \
+        cmake \
+        git \
         portaudio19-dev \
         libusb-1.0-0-dev \
     && rm -rf /var/lib/apt/lists/*
+
+# PR-2085: Ubuntu's libportaudio has no Pulse host API; PyAudio links it dynamically.
+RUN git clone --depth 1 https://github.com/PortAudio/portaudio.git /tmp/portaudio \
+    && python3 -c "from pathlib import Path; p=Path('/tmp/portaudio/src/common/pa_front.c'); t=p.read_text(); o='        result = paHostApiInitializers[i]( &hostApis_[hostApisCount_], hostApisCount_ );\\n        if( result != paNoError )\\n            goto error;'; n='        result = paHostApiInitializers[i]( &hostApis_[hostApisCount_], hostApisCount_ );\\n        if( result != paNoError )\\n        {\\n            hostApis_[hostApisCount_] = NULL;\\n            result = paNoError;\\n            continue;\\n        }'; assert o in t, 'PortAudio pa_front.c changed upstream'; p.write_text(t.replace(o,n,1))" \
+    && cmake -S /tmp/portaudio -B /tmp/portaudio/build \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DPA_USE_PULSEAUDIO=ON \
+        -DPA_USE_JACK=OFF \
+    && cmake --build /tmp/portaudio/build -j"$(nproc)" \
+    && cmake --install /tmp/portaudio/build \
+    && ldconfig \
+    && rm -rf /tmp/portaudio
 
 COPY ./ros_packages/voice_assistant/requirements.txt .
 
@@ -64,6 +80,11 @@ RUN pip install --break-system-packages --ignore-installed \
         hermes-agent==0.19.0 \
         mcp==1.26.0 \
         websocket-client==1.9.2
+
+# PR-2085: fail the build when PortAudio inside PyAudio has no Pulse host API.
+RUN pulseaudio --daemonize=true --exit-idle-time=-1 --system=false --disallow-exit \
+    && python3 -c "import pyaudio; p=pyaudio.PyAudio(); apis=[p.get_host_api_info_by_index(i)['name'] for i in range(p.get_host_api_count())]; assert any('pulse' in n.lower() for n in apis), apis" \
+    && pulseaudio -k
 
 ENV SUPERTONE_MODEL_PATH=/data/voice/models/supertone/
 # Bundled STT decode self-check: on in CI (PIB_STT_SELF_CHECK=1), off at robot start.
