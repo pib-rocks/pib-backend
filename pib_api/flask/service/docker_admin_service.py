@@ -1,4 +1,5 @@
 import os
+import re
 import socket
 import json
 import logging
@@ -6,6 +7,42 @@ from urllib.parse import quote
 from typing import Dict, Any, List, Tuple, Optional
 
 DOCKER_SOCK = "/var/run/docker.sock"
+
+ALLOWED_CONTAINER_PREFIXES = ("multirepo-", "pib-backend-", "cerebra-", "pib_")
+ALLOWED_CONTAINER_NAMES = frozenset(
+    {
+        "hermes-daemon",
+        "pib-blockly-server",
+        "flask-app",
+        "rosbridge-ws",
+        "ros-camera",
+        "ros-motors",
+        "ros-voice-assistant",
+        "ros-programs",
+        "ros-display",
+        "ros-audio-io",
+        "matter-server",
+        "homeassistant",
+        "angular-app",
+    }
+)
+_CONTAINER_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.-]*$")
+
+
+def is_allowed_container_name(name: str) -> bool:
+    if not name or not _CONTAINER_NAME_PATTERN.fullmatch(name):
+        return False
+    if name in ALLOWED_CONTAINER_NAMES:
+        return True
+    return any(name.startswith(prefix) for prefix in ALLOWED_CONTAINER_PREFIXES)
+
+
+def _container_not_managed_response(name: str) -> Tuple[int, Dict[str, Any]]:
+    return 403, {
+        "status": "error",
+        "message": f"Container '{name}' is not managed by pib.",
+    }
+
 
 # Pruning images and the build cache on an SD card takes minutes, not seconds.
 # The default 10 s socket timeout made a purge that was still running look like
@@ -153,6 +190,8 @@ def get_containers() -> List[Dict[str, Any]]:
 
 
 def start_container(name: str) -> Tuple[int, Dict[str, Any]]:
+    if not is_allowed_container_name(name):
+        return _container_not_managed_response(name)
     try:
         status_code, body = _docker_request(
             "POST", f"/containers/{name}/start", timeout=20.0
@@ -175,6 +214,8 @@ def start_container(name: str) -> Tuple[int, Dict[str, Any]]:
 
 
 def stop_container(name: str) -> Tuple[int, Dict[str, Any]]:
+    if not is_allowed_container_name(name):
+        return _container_not_managed_response(name)
     try:
         # Use t=5 second stop timeout and 30s HTTP socket timeout
         status_code, body = _docker_request(
@@ -198,6 +239,8 @@ def stop_container(name: str) -> Tuple[int, Dict[str, Any]]:
 
 
 def restart_container(name: str) -> Tuple[int, Dict[str, Any]]:
+    if not is_allowed_container_name(name):
+        return _container_not_managed_response(name)
     try:
         status_code, body = _docker_request(
             "POST", f"/containers/{name}/restart?t=5", timeout=30.0
@@ -220,6 +263,8 @@ def restart_container(name: str) -> Tuple[int, Dict[str, Any]]:
 
 
 def get_container_logs(name: str, tail: int = 500) -> Tuple[int, Dict[str, Any]]:
+    if not is_allowed_container_name(name):
+        return _container_not_managed_response(name)
     try:
         status_code, body = _docker_request(
             "GET", f"/containers/{name}/logs?stdout=1&stderr=1&tail={tail}"
@@ -240,6 +285,8 @@ def get_container_logs(name: str, tail: int = 500) -> Tuple[int, Dict[str, Any]]
 
 
 def clear_container_logs(name: str) -> Tuple[int, Dict[str, Any]]:
+    if not is_allowed_container_name(name):
+        return _container_not_managed_response(name)
     try:
         status_code, body = _docker_request("GET", f"/containers/{name}/json")
         if status_code != 200:

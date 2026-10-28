@@ -42,7 +42,7 @@ def test_get_cpu_usage_percent_falls_back_to_loadavg():
 def test_get_system_telemetry_includes_cpu_usage_percent():
     with (
         patch(
-            "service.diagnostics_service._get_cpu_usage_percent",
+            "service.diagnostics_service._sample_cpu_usage_percent",
             return_value=42.5,
         ),
         patch(
@@ -54,6 +54,33 @@ def test_get_system_telemetry_includes_cpu_usage_percent():
 
     assert "cpuUsagePercent" in telemetry
     assert telemetry["cpuUsagePercent"] == 42.5
+
+
+def test_get_system_telemetry_cpu_delta_without_sleep_on_consecutive_polls():
+    diagnostics_service._LAST_CPU_SAMPLE = (1000, 2000)
+    samples = [
+        (1050, 2200),  # idle_delta=50, total_delta=200 -> 75%
+        (1100, 2400),  # idle_delta=50, total_delta=200 -> 75%
+    ]
+
+    with (
+        patch(
+            "service.diagnostics_service._read_proc_stat_cpu_times",
+            side_effect=samples,
+        ),
+        patch("service.diagnostics_service.time.sleep") as sleep_mock,
+        patch(
+            "service.diagnostics_service._query_docker_containers",
+            return_value=[],
+        ),
+    ):
+        first = diagnostics_service.get_system_telemetry()
+        second = diagnostics_service.get_system_telemetry()
+
+    sleep_mock.assert_not_called()
+    assert first["cpuUsagePercent"] == 75.0
+    assert second["cpuUsagePercent"] == 75.0
+    diagnostics_service._LAST_CPU_SAMPLE = None
 
 
 def test_get_summary_includes_cpu_usage_percent():
@@ -282,7 +309,9 @@ def test_disk_percent_free_matches_the_free_bytes_not_the_used_share():
 
     with (
         patch("service.diagnostics_service.shutil.disk_usage", return_value=disk),
-        patch("service.diagnostics_service._get_cpu_usage_percent", return_value=0.0),
+        patch(
+            "service.diagnostics_service._sample_cpu_usage_percent", return_value=0.0
+        ),
         patch("service.diagnostics_service._query_docker_containers", return_value=[]),
     ):
         summary = diagnostics_service.get_summary()
