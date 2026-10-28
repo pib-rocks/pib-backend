@@ -381,9 +381,13 @@ class FeetechStSerialActuator:
         current_position = self.get_current_position()
         return abs(current_position - target) <= self.POSITION_TOLERANCE
 
+    def get_target_position(self) -> int | None:
+        if self._target_position is None:
+            return None
+        return int(round(self._target_position * self.direction_sign))
+
     def get_position(self) -> int:
-        if self._target_position is not None:
-            return int(round(self._target_position * self.direction_sign))
+        """Measured present position from the bus (never the last commanded target)."""
         return self.get_current_position()
 
     def get_current_position(self) -> int:

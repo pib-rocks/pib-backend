@@ -19,8 +19,14 @@ from pib_motors.joint_trajectory_command import (
     validate_radians_trajectory,
 )
 from pib_motors.trajectory_executor import TrajectoryExecutor, is_software_trajectory
-from pib_motors.perf_trace import format_perf_trace_trajectory_start, log_perf_trace
+from pib_motors.perf_trace import (
+    format_perf_trace_joint_state_sweep,
+    format_perf_trace_trajectory_start,
+    log_perf_trace,
+)
 from pib_motors.units import centideg_to_rad, rad_to_centideg
+from pib_motors.joint_state_sweep import sweep_feetech_joint_positions
+from sensor_msgs.msg import JointState
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 
@@ -132,6 +138,11 @@ class MotorControl(Node):
         self.declare_parameter("dev", False)
         self.dev = self.get_parameter("dev").value
 
+        self.declare_parameter("joint_state_publish_rate_hz", 20.0)
+        rate_hz = float(self.get_parameter("joint_state_publish_rate_hz").value)
+        if rate_hz <= 0:
+            rate_hz = 20.0
+
         # Service for JointTrajectory
         self.srv = self.create_service(
             ApplyJointTrajectory, "apply_joint_trajectory", self.apply_joint_trajectory
@@ -150,6 +161,13 @@ class MotorControl(Node):
         # Service for Getting Joint Position
         self.srv_get_position = self.create_service(
             GetJointPosition, "get_joint_position", self.get_joint_position
+        )
+
+        self.joint_state_publisher = self.create_publisher(
+            JointState, "joint_states", 10
+        )
+        self._joint_state_timer = self.create_timer(
+            1.0 / rate_hz, self._publish_joint_states
         )
 
         # Publisher for MotorSettings
@@ -371,6 +389,30 @@ class MotorControl(Node):
             format_perf_trace_trajectory_start(point_count, elapsed_ms),
         )
 
+    def _publish_joint_states(self) -> None:
+        started = time.monotonic()
+        sweep = sweep_feetech_joint_positions(motors)
+        positions = sweep.positions_centideg
+        if not positions:
+            return
+
+        msg = JointState()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        for motor_name in sorted(positions):
+            msg.joint_names.append(motor_name)
+            msg.positions.append(centideg_to_rad(positions[motor_name]))
+        self.joint_state_publisher.publish(msg)
+        elapsed_ms = (time.monotonic() - started) * 1000.0
+        log_perf_trace(
+            self.get_logger(),
+            format_perf_trace_joint_state_sweep(
+                len(positions),
+                elapsed_ms,
+                sweep.ports_succeeded,
+                sweep.ports_attempted,
+            ),
+        )
+
     def get_joint_position(
         self,
         request: GetJointPosition.Request,
@@ -386,7 +428,7 @@ class MotorControl(Node):
 
             motors_for_joint = name_to_motors[joint_name]
             motor = motors_for_joint[0]
-            response.position = int(round(motor.get_position()))
+            response.position = int(round(motor.get_current_position()))
 
         except Exception as e:
             response.successful = False

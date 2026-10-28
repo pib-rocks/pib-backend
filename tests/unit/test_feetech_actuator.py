@@ -29,6 +29,7 @@ class FakeStsPacketHandler:
     def __init__(self, ph) -> None:
         self.ph = ph
         self.pos_ticks: int = 2048
+        self.pos_ticks_by_id: dict[int, int] = {}
         self.speed: int = 0
         self.current: int = 15
         self.temperature: int = 34
@@ -37,7 +38,8 @@ class FakeStsPacketHandler:
         self.byte_writes: list[tuple[int, int, int]] = []
 
     def ReadPosSpeed(self, servo_id: int):
-        return self.pos_ticks, self.speed, self.comm_result, 0
+        ticks = self.pos_ticks_by_id.get(servo_id, self.pos_ticks)
+        return ticks, self.speed, self.comm_result, 0
 
     def ReadCurrent(self, servo_id: int):
         return self.current, self.comm_result, 0
@@ -46,6 +48,7 @@ class FakeStsPacketHandler:
         self.writes.append((servo_id, position, speed, acc))
         if self.comm_result == 0:
             self.pos_ticks = position
+            self.pos_ticks_by_id[servo_id] = position
         return self.comm_result, 0
 
     def write1ByteTxRx(self, servo_id: int, address: int, data: int):
@@ -379,8 +382,10 @@ def test_feetech_actuator_invert_preserves_sign_in_get_and_set(monkeypatch):
 
     assert inverted.set_position(1000) is True
     assert normal.set_position(1000) is True
-    assert inverted.get_position() == 1000
-    assert normal.get_position() == 1000
+    assert inverted.get_target_position() == 1000
+    assert normal.get_target_position() == 1000
+    assert inverted.get_position() == inverted.get_current_position()
+    assert normal.get_position() == normal.get_current_position()
     assert pk_instance.writes[0][1] != pk_instance.writes[1][1]
 
 

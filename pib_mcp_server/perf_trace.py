@@ -27,6 +27,17 @@ def format_perf_trace_motion_cmd(
     )
 
 
+def format_perf_trace_motor_positions(
+    source: str, motor_count: int, elapsed_ms: float, age_ms: float | None
+) -> str:
+    safe_source = (source or "unknown").replace(" ", "_")
+    age_part = f" age_ms={float(age_ms):.2f}" if age_ms is not None else " age_ms=na"
+    return (
+        f"[PERF_TRACE] MOTOR_POSITIONS source={safe_source} motors={max(0, int(motor_count))} "
+        f"elapsed_ms={float(elapsed_ms):.2f}{age_part}"
+    )
+
+
 def perf_trace_log_path() -> Path:
     """Where the motion trace is appended.
 
