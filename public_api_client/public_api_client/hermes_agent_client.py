@@ -511,6 +511,10 @@ def profile_hermes_settings(
     base_url = entry.get("base_url")
     if not (isinstance(base_url, str) and base_url.strip()):
         base_url = None
+    # A device that already carries a dev-proxy URL in its profile must still
+    # reach the provider: guard at read time, not only when the file is rewritten
+    # (measured on .172, PR-2096).
+    base_url = _guard_cloud_route_base_url(provider, base_url)
     env_vars = env_vars_for_provider(provider, entry.get("key_env"))
     return model, provider, base_url, env_vars
 
