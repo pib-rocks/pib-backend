@@ -33,6 +33,7 @@ case "$RETRY_DELAY_SECONDS" in
     '' | *[!0-9]*) RETRY_DELAY_SECONDS=300 ;;
 esac
 HEALTHCHECK="$BACKEND_DIR/setup/update_healthcheck.py"
+PIB_SDK_VERIFY="$BACKEND_DIR/setup/pib_sdk_verify.py"
 WATCHDOG_DECIDER="$BACKEND_DIR/setup/update_watchdog.py"
 STATUS_READER="$BACKEND_DIR/setup/update_status_reader.py"
 WATCHDOG_HELPER="/usr/local/sbin/pib-update-watchdog"
@@ -659,9 +660,12 @@ ensure_ollama_for_update() {
 build_backend_stack() {
     if [ -n "${APP_VERSION:-}" ]; then
         export APP_VERSION
-        log "Building flask-app with --build-arg APP_VERSION=${APP_VERSION}"
+        log "Building flask-app with --build-arg APP_VERSION=${APP_VERSION} PIB_SDK_VERSION=${PIB_SDK_VERSION}"
         docker compose -f "$BACKEND_DIR/docker-compose.yaml" \
-            build --build-arg "APP_VERSION=${APP_VERSION}" flask-app || return 1
+            build \
+            --build-arg "APP_VERSION=${APP_VERSION}" \
+            --build-arg "PIB_SDK_VERSION=${PIB_SDK_VERSION}" \
+            flask-app || return 1
     else
         log "WARNING: APP_VERSION is unset; backend rebuild will use the compose-file fallback"
     fi
@@ -731,6 +735,30 @@ verify_migration() {
         log "Alembic mismatch: current=${current:-unknown}, head=${heads:-unknown}"
         return 1
     }
+}
+
+read_pib_sdk_version() {
+    local file="$BACKEND_DIR/pib_sdk_version.txt"
+    if [ ! -f "$file" ]; then
+        log "Missing pib_sdk_version.txt at $file"
+        return 1
+    fi
+    tr -d '[:space:]' <"$file"
+}
+
+verify_pib_sdk() {
+    local required installed output
+    required="$(read_pib_sdk_version)" || return 1
+    if ! installed="$(docker compose -f "$BACKEND_DIR/docker-compose.yaml" exec -T ros-programs \
+        python3 -c "import pib_sdk, sys; sys.stdout.write(pib_sdk.__version__)" 2>&1)"; then
+        log "pib-sdk verification failed: ros-programs did not answer (${installed})"
+        return 1
+    fi
+    if ! output="$(python3 "$PIB_SDK_VERIFY" "$installed" "$required" 2>&1)"; then
+        log "pib-sdk mismatch: ${output} (installed=${installed}, required>=${required})"
+        return 1
+    fi
+    log "pib-sdk verification passed: installed=${installed}, required>=${required}"
 }
 
 snapshot_running_services() {
@@ -1014,12 +1042,19 @@ rollback_once() {
         log "WARNING: rolled-back checkout has no release tag; backend rebuild will use the compose-file fallback"
         unset APP_VERSION
     fi
+    if PIB_SDK_VERSION="$(read_pib_sdk_version)"; then
+        export PIB_SDK_VERSION
+        log "Rollback rebuild uses PIB_SDK_VERSION=$PIB_SDK_VERSION"
+    else
+        log "WARNING: rolled-back checkout has no pib_sdk_version.txt; compose-file PIB_SDK_VERSION fallback applies"
+        unset PIB_SDK_VERSION
+    fi
     build_backend_stack
     docker compose -f "$CEREBRA_DIR/docker-compose.yaml" \
         up -d --build --force-recreate
     BACKEND_TARGET="$BACKEND_BEFORE"
     CEREBRA_TARGET="$CEREBRA_BEFORE"
-    if wait_for_flask && verify_migration && verify_result; then
+    if wait_for_flask && verify_migration && verify_pib_sdk && verify_result; then
         write_revision "pib-backend" "$BACKEND_BEFORE" "unknown"
         write_revision "cerebra" "$CEREBRA_BEFORE" "unknown"
         write_status "rolled_back" "Verification failed. Previous revisions were rebuilt (pib-backend ${BACKEND_BEFORE}, cerebra ${CEREBRA_BEFORE}). The WAL-safe backup was kept and was not applied; user data was not rolled back."
@@ -1096,6 +1131,9 @@ if ! APP_VERSION="$(resolve_app_version "$BACKEND_DIR")"; then
     fi
 fi
 log "Resolved APP_VERSION=${APP_VERSION} for pib-backend at ${BACKEND_TARGET}"
+PIB_SDK_VERSION="$(read_pib_sdk_version)" || fail "pib_sdk_version.txt is missing or empty"
+export PIB_SDK_VERSION
+log "Resolved PIB_SDK_VERSION=${PIB_SDK_VERSION} for container builds"
 
 check_cancel
 write_status "fetching" "Comparing the model store with models/manifest.yaml"
@@ -1123,6 +1161,12 @@ wait_for_flask || fail "flask-app did not become ready"
 check_cancel
 write_status "migrating" "Verifying the startup migration reached the Alembic head"
 if ! verify_migration; then
+    rollback_once
+fi
+
+check_cancel
+write_status "verifying" "Verifying ros-programs carries the required pib-sdk"
+if ! verify_pib_sdk; then
     rollback_once
 fi
 

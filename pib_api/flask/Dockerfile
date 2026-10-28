@@ -10,8 +10,11 @@ ENV PIP_ROOT_USER_ACTION=ignore \
     PIP_NO_CACHE_DIR=1
 
 ARG APP_VERSION
+ARG PIB_SDK_VERSION=0.7.4
 # Compose/build-arg supplies the release tag; empty ARG (plain docker build) falls back to dev.
-RUN printf '%s\n' "${APP_VERSION:-dev}" > /etc/pib_version
+# PIB_SDK_VERSION mirrors repo-root pib_sdk_version.txt for GET /api/version visibility.
+RUN printf '%s\n' "${APP_VERSION:-dev}" > /etc/pib_version \
+    && printf '%s\n' "${PIB_SDK_VERSION}" > /etc/pib_required_pib_sdk_version
 
 # The pinned third-party set first, in one resolve.
 COPY ./pib_api/flask/requirements.txt /app

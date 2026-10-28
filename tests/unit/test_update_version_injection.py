@@ -109,6 +109,14 @@ fi
 
 joined=" $* "
 if [[ "$joined" == *" exec "* ]]; then
+    if [[ "$joined" == *" ros-programs "* ]] && [[ "$joined" == *"pib_sdk"* ]]; then
+        if [ "${STUB_PIB_SDK_EXEC_FAIL:-0}" = "1" ]; then
+            printf '%s\\n' 'ImportError: no module named pib_sdk' >&2
+            exit 1
+        fi
+        printf '%s\\n' "${STUB_PIB_SDK_INSTALLED:-0.7.4}"
+        exit 0
+    fi
     printf '%s\\n' alembichead
     exit 0
 fi
@@ -192,6 +200,8 @@ def _run(
     tags_answered_only_after_tag_fetch: bool = False,
     targets: dict[str, str] | None = None,
     release: str = "",
+    pib_sdk_installed: str = "0.7.4",
+    pib_sdk_exec_fail: bool = False,
 ) -> tuple[subprocess.CompletedProcess[str], Path, str]:
     update_dir = tmp_path / "update"
     backend = tmp_path / "backend"
@@ -202,6 +212,7 @@ def _run(
     (backend / ".git").mkdir()
     (cerebra / ".git").mkdir()
     (backend / "setup").symlink_to(REPO_ROOT / "setup")
+    (backend / "pib_sdk_version.txt").write_text("0.7.4\n", encoding="utf-8")
     model_store = tmp_path / "model-store"
     _matching_model_fixture(backend, model_store)
     request_document = _request(channel)
@@ -247,6 +258,8 @@ def _run(
         STUB_TAG_HEAD2=tag_on_second_parent,
         STUB_TAG_HEAD=tag_on_head,
         STUB_HEAD2_MISSING="1" if second_parent_missing else "0",
+        STUB_PIB_SDK_INSTALLED=pib_sdk_installed,
+        STUB_PIB_SDK_EXEC_FAIL="1" if pib_sdk_exec_fail else "0",
     )
     if targets is not None:
         env["GIT_ARGV_LOG"] = str(tmp_path / "git-argv.log")
@@ -334,6 +347,7 @@ def _assert_version_passed(docker_log: str, version: str) -> None:
     build_line = build_lines[0]
     assert build_line.startswith(f"APP_VERSION={version} ")
     assert f"APP_VERSION={version}" in build_line
+    assert f"PIB_SDK_VERSION=0.7.4" in build_line
     assert " build " in build_line
     assert "flask-app" in build_line
     up_lines = _up_lines(docker_log)
@@ -460,3 +474,39 @@ def test_confirmed_targets_are_checked_out_instead_of_the_moving_branch(
     assert f"checkout --detach {cerebra_pin}" in git_log
     assert "reset --hard origin/main" not in git_log
     assert "reset --hard origin/develop" not in git_log
+
+
+def test_update_fails_when_ros_programs_sdk_is_below_the_floor(tmp_path: Path) -> None:
+    result, update_dir, _docker_log = _run(
+        tmp_path,
+        "develop",
+        second_parent_missing=True,
+        pib_sdk_installed="0.7.3",
+    )
+
+    assert result.returncode != 0
+    status = json.loads((update_dir / "status.json").read_text(encoding="utf-8"))
+    assert status["state"] == "failed"
+    log = (update_dir / "update.log").read_text(encoding="utf-8")
+    assert "pib-sdk mismatch" in log
+    assert "0.7.3" in log
+    assert "0.7.4" in log
+    assert "rollback attempt also failed" in status["message"]
+
+
+def test_update_fails_when_ros_programs_cannot_report_sdk_version(
+    tmp_path: Path,
+) -> None:
+    result, update_dir, _docker_log = _run(
+        tmp_path,
+        "develop",
+        second_parent_missing=True,
+        pib_sdk_exec_fail=True,
+    )
+
+    assert result.returncode != 0
+    status = json.loads((update_dir / "status.json").read_text(encoding="utf-8"))
+    assert status["state"] == "failed"
+    log = (update_dir / "update.log").read_text(encoding="utf-8")
+    assert "pib-sdk verification failed" in log
+    assert "did not answer" in log
