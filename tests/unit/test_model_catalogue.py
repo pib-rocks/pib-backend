@@ -30,6 +30,7 @@ THOMAS_PERSONALITY_ID = "8b310f95-92cd-4512-b42a-d3fe29c4bb8a"
 #: The maintained catalogue, in the order the file keeps it.
 SUPPORTED_API_NAMES = (
     "gemini-3.8-flash",
+    "gemini-3.5-flash-lite",
     "gemini-3.8-live",
     "gpt-6",
     "claude-sonnet-5-5",
@@ -145,6 +146,7 @@ def test_no_old_model_is_offered_or_stored(app):
     google = next(provider for provider in providers if provider["name"] == "Google")
     assert [model["visualName"] for model in google["models"]] == [
         "Gemini 3.8 Flash",
+        "Gemini 3.5 Flash-Lite",
         "Gemini 3.8 Live",
     ]
     default = client.get("/provider/default").get_json()
