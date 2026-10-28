@@ -697,7 +697,13 @@ recreate_backend_from_registry() {
     fi
     export PIB_IMAGE_TAG
     PIB_IMAGE_TAG="$(python3 "$BACKEND_IMAGES_HELPER" resolve-tag "${APP_VERSION:-}")"
-    log "Attempting registry pull for backend services (PIB_IMAGE_TAG=${PIB_IMAGE_TAG})"
+    # The build path exports APP_VERSION before touching compose; the pull path has to do the same,
+    # otherwise compose interpolation falls back to the file default and the update reports the wrong
+    # version even though the image itself is correct.
+    if [ -n "${APP_VERSION:-}" ]; then
+        export APP_VERSION
+    fi
+    log "Attempting registry pull for backend services (PIB_IMAGE_TAG=${PIB_IMAGE_TAG} APP_VERSION=${APP_VERSION:-unset})"
     compose=(docker compose -f "$BACKEND_DIR/docker-compose.yaml" --profile all)
     pull_log="$(mktemp "$UPDATE_DIR/service-pull.XXXXXX")"
     if "${compose[@]}" pull >"$pull_log" 2>&1; then

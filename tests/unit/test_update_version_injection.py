@@ -252,6 +252,10 @@ def _run(
         PIB_MODEL_STORE=str(model_store),
         PIB_MODEL_CACHE=str(tmp_path / "model-cache"),
         PIB_MODEL_ASSET_URL="http://127.0.0.1:9/nope.tar.gz",
+        # These tests pin the version injection of the BUILD path; the registry-pull path with its
+        # own fallback logic is covered by test_update_backend_images.py. Without this the stub docker
+        # answers `pull` successfully and the runner never reaches the build path.
+        PIB_USE_REGISTRY_IMAGES="0",
         DOCKER_LOG=str(docker_log),
         STUB_BACKEND_SHA=(targets or {}).get("pib-backend", BACKEND_SHA),
         STUB_CEREBRA_SHA=(targets or {}).get("cerebra", CEREBRA_SHA),
