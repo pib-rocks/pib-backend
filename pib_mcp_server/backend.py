@@ -6,14 +6,14 @@ import hashlib
 import json
 import math
 import os
+import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
-
-MOTOR_POSITION_UNIT = "degree"
 
 
 def _centidegrees_to_degrees(value: int | float | None) -> float | None:
@@ -24,6 +24,9 @@ def _centidegrees_to_degrees(value: int | float | None) -> float | None:
 
 def _degrees_to_radians(degrees: float) -> float:
     return math.radians(degrees)
+
+
+MOTOR_POSITION_FETCH_WORKERS = 8
 
 
 def _duration_from_seconds(seconds: float) -> dict[str, int]:
@@ -37,18 +40,130 @@ def _duration_from_seconds(seconds: float) -> dict[str, int]:
 
 def _compact_motor(motor: dict[str, Any]) -> dict[str, Any]:
     name = motor.get("name")
-    minimum = motor.get("rotationRangeMin", motor.get("rotation_range_min"))
-    maximum = motor.get("rotationRangeMax", motor.get("rotation_range_max"))
-    return {
+    compact: dict[str, Any] = {
         "id": name,
         "name": name,
         "position": _centidegrees_to_degrees(motor.get("currentPosition")),
-        "limits": {
-            "min": _centidegrees_to_degrees(minimum),
-            "max": _centidegrees_to_degrees(maximum),
-        },
-        "unit": MOTOR_POSITION_UNIT,
     }
+    if "positionError" in motor:
+        compact["positionError"] = motor["positionError"]
+    return compact
+
+
+class _RosbridgeMultiplexer:
+    """One rosbridge WebSocket shared across threads; replies matched by request id."""
+
+    def __init__(self, url: str, timeout: float):
+        self._url = url
+        self._timeout = timeout
+        self._lock = threading.Lock()
+        self._connection: Any = None
+        self._reader: threading.Thread | None = None
+        self._stop = threading.Event()
+        self._pending: dict[str, threading.Event] = {}
+        self._responses: dict[str, dict[str, Any]] = {}
+        self._errors: dict[str, BaseException] = {}
+
+    def _connect(self) -> None:
+        import websocket
+
+        self._connection = websocket.create_connection(self._url, timeout=self._timeout)
+        self._stop.clear()
+        self._reader = threading.Thread(
+            target=self._read_loop, name="pib-mcp-rosbridge-reader", daemon=True
+        )
+        self._reader.start()
+
+    def _read_loop(self) -> None:
+        while not self._stop.is_set():
+            try:
+                raw = self._connection.recv()
+            except Exception as exc:
+                with self._lock:
+                    self._fail_all_pending(exc)
+                return
+            try:
+                response = json.loads(raw)
+            except ValueError:
+                continue
+            request_id = response.get("id")
+            if not isinstance(request_id, str):
+                continue
+            with self._lock:
+                if request_id not in self._pending:
+                    continue
+                self._responses[request_id] = response
+                self._pending[request_id].set()
+
+    def _fail_all_pending(self, exc: BaseException) -> None:
+        for request_id, event in list(self._pending.items()):
+            self._errors[request_id] = exc
+            event.set()
+        self._pending.clear()
+        self._responses.clear()
+        if self._connection is not None:
+            try:
+                self._connection.close()
+            except Exception:
+                pass
+            self._connection = None
+
+    def call_service(
+        self, service: str, service_type: str, arguments: dict[str, Any]
+    ) -> dict[str, Any]:
+        request_id = f"pib-mcp-{uuid.uuid4()}"
+        request = {
+            "op": "call_service",
+            "id": request_id,
+            "service": service,
+            "type": service_type,
+            "args": arguments,
+        }
+        event = threading.Event()
+        with self._lock:
+            if self._connection is None:
+                self._connect()
+            self._pending[request_id] = event
+            try:
+                self._connection.send(json.dumps(request))
+            except Exception as exc:
+                self._pending.pop(request_id, None)
+                self._fail_all_pending(exc)
+                raise BackendError(
+                    "ros_unavailable",
+                    f"ROS service {service} could not be called: {exc}",
+                ) from exc
+
+        if not event.wait(self._timeout):
+            with self._lock:
+                self._pending.pop(request_id, None)
+                self._responses.pop(request_id, None)
+            raise BackendError(
+                "ros_timeout",
+                f"ROS service {service} timed out after {self._timeout:g}s",
+            )
+
+        with self._lock:
+            self._pending.pop(request_id, None)
+            if request_id in self._errors:
+                exc = self._errors.pop(request_id)
+                raise BackendError(
+                    "ros_unavailable",
+                    f"ROS service {service} could not be called: {exc}",
+                ) from exc
+            response = self._responses.pop(request_id, {})
+
+        if response.get("result") is False:
+            raise BackendError(
+                "ros_service_failed",
+                response.get("message") or f"ROS service {service} failed",
+            )
+        values = response.get("values")
+        if isinstance(values, dict):
+            return values
+        raise BackendError(
+            "ros_service_failed", f"ROS service {service} returned no values"
+        )
 
 
 def _compact_diagnostics(summary: dict[str, Any]) -> dict[str, Any]:
@@ -147,6 +262,8 @@ class PibBackend:
             if timeout is not None
             else os.getenv("PIB_MCP_REQUEST_TIMEOUT", "10")
         )
+        self._rosbridge: _RosbridgeMultiplexer | None = None
+        self._rosbridge_lock = threading.Lock()
 
     def _http(
         self, method: str, path: str, payload: dict[str, Any] | None = None
@@ -174,47 +291,27 @@ class PibBackend:
                 "api_unavailable", f"pib API request failed: {exc}"
             ) from exc
 
-    def _ros_service(
-        self, service: str, service_type: str, arguments: dict[str, Any]
-    ) -> dict[str, Any]:
+    def _rosbridge_client(self) -> _RosbridgeMultiplexer:
         try:
-            import websocket
+            import websocket  # noqa: F401
         except ImportError as exc:
             raise BackendError(
                 "rosbridge_client_missing",
                 "websocket-client is required for ROS hardware tools",
             ) from exc
+        with self._rosbridge_lock:
+            if self._rosbridge is None:
+                self._rosbridge = _RosbridgeMultiplexer(
+                    self.rosbridge_url, self.timeout
+                )
+            return self._rosbridge
 
-        request_id = f"pib-mcp-{uuid.uuid4()}"
-        request = {
-            "op": "call_service",
-            "id": request_id,
-            "service": service,
-            "type": service_type,
-            "args": arguments,
-        }
-        connection = None
+    def _ros_service(
+        self, service: str, service_type: str, arguments: dict[str, Any]
+    ) -> dict[str, Any]:
         try:
-            connection = websocket.create_connection(
-                self.rosbridge_url, timeout=self.timeout
-            )
-            connection.send(json.dumps(request))
-            deadline = time.monotonic() + self.timeout
-            while time.monotonic() < deadline:
-                response = json.loads(connection.recv())
-                if response.get("id") != request_id:
-                    continue
-                if response.get("result") is False:
-                    raise BackendError(
-                        "ros_service_failed",
-                        response.get("message") or f"ROS service {service} failed",
-                    )
-                values = response.get("values")
-                if isinstance(values, dict):
-                    return values
-            raise BackendError(
-                "ros_timeout",
-                f"ROS service {service} timed out after {self.timeout:g}s",
+            return self._rosbridge_client().call_service(
+                service, service_type, arguments
             )
         except BackendError:
             raise
@@ -222,39 +319,61 @@ class PibBackend:
             raise BackendError(
                 "ros_unavailable", f"ROS service {service} could not be called: {exc}"
             ) from exc
-        finally:
-            if connection is not None:
-                connection.close()
 
     def get_motors(self) -> list[dict[str, Any]]:
         payload = self._http("GET", "/motor")
         return list(payload.get("motors", []))
 
+    def _apply_live_joint_position(self, motor: dict[str, Any]) -> None:
+        name = motor.get("name")
+        if not name:
+            return
+        try:
+            position = self._ros_service(
+                "/get_joint_position",
+                "datatypes/srv/GetJointPosition",
+                {"joint_name": name},
+            )
+            raw_position = (
+                position.get("position") if position.get("successful") else None
+            )
+            motor["currentPosition"] = (
+                _centidegrees_to_degrees(raw_position)
+                if raw_position is not None
+                else None
+            )
+            if not position.get("successful"):
+                motor["positionError"] = position.get("message", "unavailable")
+        except BackendError as exc:
+            motor["currentPosition"] = None
+            motor["positionError"] = exc.message
+
     def _motors_with_live_positions(self) -> list[dict[str, Any]]:
         motors = self.get_motors()
-        for motor in motors:
-            name = motor.get("name")
-            if not name:
-                continue
+        named_motors = [motor for motor in motors if motor.get("name")]
+        if not named_motors:
+            return motors
+
+        deadline = time.monotonic() + self.timeout
+        workers = min(MOTOR_POSITION_FETCH_WORKERS, len(named_motors))
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            future_to_motor = {
+                pool.submit(self._apply_live_joint_position, motor): motor
+                for motor in named_motors
+            }
             try:
-                position = self._ros_service(
-                    "/get_joint_position",
-                    "datatypes/srv/GetJointPosition",
-                    {"joint_name": name},
-                )
-                raw_position = (
-                    position.get("position") if position.get("successful") else None
-                )
-                motor["currentPosition"] = (
-                    _centidegrees_to_degrees(raw_position)
-                    if raw_position is not None
-                    else None
-                )
-                if not position.get("successful"):
-                    motor["positionError"] = position.get("message", "unavailable")
-            except BackendError as exc:
+                for future in as_completed(
+                    future_to_motor, timeout=max(0.0, deadline - time.monotonic())
+                ):
+                    future.result()
+            except TimeoutError:
+                pass
+            for future, motor in future_to_motor.items():
+                if future.done():
+                    continue
+                future.cancel()
                 motor["currentPosition"] = None
-                motor["positionError"] = exc.message
+                motor["positionError"] = f"timed out after {self.timeout:g}s"
         return motors
 
     def list_motors(self, detail: bool = False) -> dict[str, Any]:
