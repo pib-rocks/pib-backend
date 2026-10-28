@@ -11,6 +11,7 @@ from rclpy.node import Node
 from std_msgs.msg import Float32MultiArray, Int16MultiArray, String
 
 from ros_audio_io.device_retry import (
+    pulse_plugin_device_index,
     DeviceNotFoundError,
     audio_device_log_line,
     capture_backend_name,
@@ -279,8 +280,26 @@ class AudioStreamer(Node):
             for i in range(self.py_audio.get_host_api_count())
         }
 
+    def _pulse_plugin_device_index(self):
+        """Delegates to the pure helper so it stays testable without ROS."""
+        infos = [
+            self.py_audio.get_device_info_by_index(i)
+            for i in range(self.py_audio.get_device_count())
+        ]
+        return pulse_plugin_device_index(infos)
+
     def select_input_device(self):
         """Select preferred mic by substring; else fall back to default."""
+        pulse_index = self._pulse_plugin_device_index()
+        if pulse_index is not None:
+            self.input_device_index = pulse_index
+            self.get_logger().info(
+                "Using PipeWire source through the ALSA pulse plugin "
+                f"(index {pulse_index}); the server decides which array channel 0 is"
+            )
+            self._logged_input_devices = True
+            return
+
         found = None
         hostapis = self._host_api_names()
         for i in range(self.py_audio.get_device_count()):

@@ -186,3 +186,84 @@ def test_open_speaker_missing_sink_does_not_raise(caplog, monkeypatch) -> None:
         and "no pulse sink" in record.message
         for record in caplog.records
     )
+
+
+class _PluginPyAudio:
+    """PortAudio with ALSA only, plus the device the ALSA pulse plugin adds."""
+
+    def __init__(self) -> None:
+        self.open_calls: list[dict] = []
+        self.terminated = False
+
+    def get_host_api_count(self) -> int:
+        return 1
+
+    def get_host_api_info_by_index(self, index: int) -> dict:
+        return {"index": index, "name": "ALSA"}
+
+    def get_device_count(self) -> int:
+        return 2
+
+    def get_device_info_by_index(self, index: int) -> dict:
+        if index == 1:
+            return {
+                "index": 1,
+                "name": "pulse",
+                "hostApi": 0,
+                "maxOutputChannels": 2,
+                "maxInputChannels": 2,
+            }
+        return {
+            "index": 0,
+            "name": "vc4-hdmi-0",
+            "hostApi": 0,
+            "maxOutputChannels": 2,
+            "maxInputChannels": 0,
+        }
+
+    def get_default_output_device_info(self) -> dict:
+        return self.get_device_info_by_index(0)
+
+    def open(self, **kwargs):
+        self.open_calls.append(dict(kwargs))
+        return _FakeStream()
+
+    def terminate(self) -> None:
+        self.terminated = True
+
+
+def test_open_speaker_uses_the_alsa_pulse_plugin_when_there_is_no_pulse_api(
+    caplog, monkeypatch
+) -> None:
+    """Ubuntu's PortAudio has no Pulse host API; the plugin is the route to PipeWire."""
+
+    monkeypatch.setenv("PULSE_SERVER", "unix:/run/user/1000/pulse/native")
+    fake = _PluginPyAudio()
+    _install_pyaudio(fake, monkeypatch)
+
+    from voice_assistant import ros_duplex
+
+    caplog.set_level(logging.INFO, logger="voice_assistant.ros_duplex")
+    audio, stream = ros_duplex.open_speaker()
+
+    assert stream is not None
+    assert audio is fake
+    assert len(fake.open_calls) == 1
+    assert fake.open_calls[0]["output_device_index"] == 1
+    assert any(
+        "audio_output=alsa-pulse-plugin" in record.message
+        and "device=pulse" in record.message
+        for record in caplog.records
+    )
+
+
+def test_open_speaker_ignores_the_pulse_plugin_without_a_server(monkeypatch) -> None:
+    monkeypatch.delenv("PULSE_SERVER", raising=False)
+    fake = _PluginPyAudio()
+    _install_pyaudio(fake, monkeypatch)
+
+    from voice_assistant import ros_duplex
+
+    ros_duplex.open_speaker()
+
+    assert "output_device_index" not in fake.open_calls[0]
