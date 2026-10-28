@@ -1,7 +1,7 @@
 from flask import Blueprint, jsonify
 
 from service.revision_service import installed_revisions
-from service.version_service import read_app_version
+from service.version_service import read_app_version, read_required_pib_sdk_version
 
 bp = Blueprint("version_controller", __name__)
 
@@ -18,6 +18,7 @@ def get_version():
         jsonify(
             {
                 "version": read_app_version(),
+                "requiredPibSdkVersion": read_required_pib_sdk_version(),
                 "repositories": revisions["repositories"],
             }
         ),

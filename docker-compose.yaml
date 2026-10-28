@@ -71,6 +71,7 @@ services:
         # This default applies only when that argument and the environment are
         # both absent.
         APP_VERSION: ${APP_VERSION:-v0.6.2}
+        PIB_SDK_VERSION: ${PIB_SDK_VERSION:-0.7.4}
     command: "bash -c 'flask --app run db upgrade && flask --app run seed_db && flask --app run reconcile_system_properties && flask --app run run --host 0.0.0.0'"
     networks:
       - pib-network
@@ -309,6 +310,8 @@ services:
     build:
       context: .
       dockerfile: ./ros_packages/programs/Dockerfile
+      args:
+        PIB_SDK_VERSION: ${PIB_SDK_VERSION:-0.7.4}
     command: >
       bash -lc "
         source /opt/ros/jazzy/setup.bash &&
