@@ -70,7 +70,7 @@ services:
         # Develop-channel builds pass the marker "develop" (there is no tag).
         # This default applies only when that argument and the environment are
         # both absent.
-        APP_VERSION: ${APP_VERSION:-v0.6.2}
+        APP_VERSION: ${APP_VERSION:-dev}
         PIB_SDK_VERSION: ${PIB_SDK_VERSION:-0.7.4}
     command: "bash -c 'flask --app run db upgrade && flask --app run seed_db && flask --app run reconcile_system_properties && flask --app run run --host 0.0.0.0'"
     networks:
