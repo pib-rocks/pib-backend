@@ -1,5 +1,6 @@
 """Unit tests for diagnostics service CPU usage in summary (PR-1521)."""
 
+from collections import namedtuple
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -271,3 +272,21 @@ def test_get_summary_total_bricklets_count_includes_all_controllers():
 
     assert summary["totalBrickletsCount"] == 3
     assert summary["totalControllersCount"] == 3
+
+
+def test_disk_percent_free_matches_the_free_bytes_not_the_used_share():
+    """Reserved blocks make 100 - percentUsed differ from free/total (PR-2115)."""
+    gib = 1024**3
+    # shutil.disk_usage returns a namedtuple and the service unpacks it.
+    disk = namedtuple("usage", "total used free")(100 * gib, 70 * gib, 25 * gib)
+
+    with (
+        patch("service.diagnostics_service.shutil.disk_usage", return_value=disk),
+        patch("service.diagnostics_service._get_cpu_usage_percent", return_value=0.0),
+        patch("service.diagnostics_service._query_docker_containers", return_value=[]),
+    ):
+        summary = diagnostics_service.get_summary()
+
+    assert summary["diskSpace"]["percentUsed"] == 70.0
+    assert summary["diskSpace"]["percentFree"] == 25.0
+    assert summary["diskSpace"]["free"] == "25.0 GB"
