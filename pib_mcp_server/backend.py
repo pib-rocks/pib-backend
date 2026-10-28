@@ -632,6 +632,18 @@ class PibBackend:
                 error_message = detail or error_code or "position unavailable"
             results_by_name[motor_name] = (successful, position_centideg, error_message)
 
+        usable = sum(
+            1
+            for successful, position_centideg, _error in results_by_name.values()
+            if successful and position_centideg is not None
+        )
+        if usable == 0:
+            # The service answered but had nothing to read - on a pib5edu the servo
+            # bricklets have no position feedback, so every entry is unsuccessful.
+            # Reporting "applied" here skipped the per-joint path and left every
+            # position null (measured on the robot after the stage-2 deploy).
+            return False, header_age
+
         for motor in motors:
             name = motor.get("name")
             if not name:
