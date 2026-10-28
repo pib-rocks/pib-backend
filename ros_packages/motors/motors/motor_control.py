@@ -1,5 +1,6 @@
 from typing import Iterable, Mapping, Sequence, Tuple
 import math
+import time
 import rclpy
 from datatypes.msg import MotorResult, MotorSettings, SolidStateRelayState
 from datatypes.srv import ApplyMotorSettings, ApplyJointTrajectory, GetJointPosition
@@ -18,6 +19,7 @@ from pib_motors.joint_trajectory_command import (
     validate_radians_trajectory,
 )
 from pib_motors.trajectory_executor import TrajectoryExecutor, is_software_trajectory
+from pib_motors.perf_trace import format_perf_trace_trajectory_start, log_perf_trace
 from pib_motors.units import centideg_to_rad, rad_to_centideg
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
@@ -289,6 +291,8 @@ class MotorControl(Node):
         raw = request.joint_trajectory
         joint_names = list(raw.joint_names)
         response.results = []
+        trace_started = time.monotonic()
+        point_count = len(raw.points)
 
         if is_legacy_zip_shape(raw):
             outcomes = legacy_zip_outcomes(joint_names)
@@ -306,6 +310,7 @@ class MotorControl(Node):
 
         try:
             jt = joint_trajectory_radians_to_centidegrees(raw, name_to_motors)
+            self._emit_trajectory_start(point_count, trace_started)
             if is_software_trajectory(jt):
                 trajectory_ok = self.trajectory_executor.execute(jt)
                 if trajectory_ok:
@@ -356,6 +361,15 @@ class MotorControl(Node):
             )
             self.get_logger().error(f"error while applying joint-trajectory: {str(e)}")
         return response
+
+    def _emit_trajectory_start(
+        self, point_count: int, started_monotonic: float
+    ) -> None:
+        elapsed_ms = (time.monotonic() - started_monotonic) * 1000.0
+        log_perf_trace(
+            self.get_logger(),
+            format_perf_trace_trajectory_start(point_count, elapsed_ms),
+        )
 
     def get_joint_position(
         self,

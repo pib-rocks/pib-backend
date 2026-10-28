@@ -133,6 +133,27 @@ def format_perf_trace_tts_first_audio(chat_id: str, elapsed_ms: float) -> str:
     )
 
 
+def format_perf_trace_stt_done(
+    chat_id: str, elapsed_ms: float, engine: str, path: str
+) -> str:
+    """One ``[PERF_TRACE]`` line for end-of-speech to transcript."""
+    safe_id = chat_id or ""
+    safe_engine = (engine or "unknown").replace(" ", "_")
+    safe_path = path if path in ("local", "cloud") else "local"
+    return (
+        f"[PERF_TRACE] STT_DONE chat={safe_id} "
+        f"elapsed_ms={float(elapsed_ms):.2f} engine={safe_engine} path={safe_path}"
+    )
+
+
+def log_perf_trace(logger, line: str) -> None:
+    """Emit one perf line. A broken logger must not disturb the caller."""
+    try:
+        logger.info(line)
+    except Exception:
+        pass
+
+
 def default_log_path() -> str:
     """Host-mounted JSONL path. ``PIB_TURN_LATENCY_LOG`` overrides the default."""
     configured = os.environ.get("PIB_TURN_LATENCY_LOG", "").strip()

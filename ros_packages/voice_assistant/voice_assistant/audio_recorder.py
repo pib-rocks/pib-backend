@@ -44,7 +44,13 @@ from voice_assistant.stt_transcription import (
     FasterWhisperSTTEngine,
     STTTranscriptionError,
 )
-from voice_assistant.turn_latency import TURN_TRACE_TOPIC, format_event
+from voice_assistant.turn_latency import (
+    TURN_TRACE_TOPIC,
+    format_event,
+    format_perf_trace_stt_done,
+    log_perf_trace,
+    now_ms,
+)
 from voice_assistant.audio_devices import PROCESSED_CHANNEL, extract_channel
 from voice_assistant.cloud_stt_dispatch import transcribe_cloud_or_local
 from . import util
@@ -372,7 +378,7 @@ class AudioRecorderNode(Node):
         # Recording phase has ended; notify client that we are transcribing.
         # end_of_speech is this decision, one pause threshold after the last
         # voiced frame, and it is published before transcription starts.
-        self._emit_end_of_speech()
+        stt_origin_ms = self._emit_end_of_speech()
         goal_handle.publish_feedback(RecordAudio.Feedback())
 
         # Write the collected raw PCM chunks into a WAV file using the correct sample rate
@@ -402,6 +408,8 @@ class AudioRecorderNode(Node):
         requested = getattr(request, "stt_engine", "") or ""
         stt_mode = requested or os.getenv("STT_ENGINE", "local_whisper")
         route = resolve_stt_route(stt_mode)
+        stt_path = "local"
+        stt_engine_name = ""
         try:
             if route == "local":
                 started = time.monotonic()
@@ -422,6 +430,12 @@ class AudioRecorderNode(Node):
                 self._publish_engine_fallback(
                     getattr(self.stt_engine, "active_backend", "")
                 )
+                stt_path = "local"
+                stt_engine_name = str(
+                    metadata.get("backend")
+                    or getattr(self.stt_engine, "active_backend", "")
+                    or "local"
+                )
                 self.get_logger().info(
                     f"transcribed {len(text)} chars in "
                     f"{int((time.monotonic() - started) * 1000)} ms with engine "
@@ -429,7 +443,7 @@ class AudioRecorderNode(Node):
                     f"{metadata.get('language')})"
                 )
             elif route == "cloud":
-                text = transcribe_cloud_or_local(
+                text, stt_path, stt_engine_name = transcribe_cloud_or_local(
                     wav_data,
                     language=self.stt_language or None,
                     local_engine=self.stt_engine,
@@ -451,22 +465,38 @@ class AudioRecorderNode(Node):
             goal_handle.abort()
             return self.create_result("")
 
+        if (
+            stt_origin_ms is not None
+            and stt_engine_name
+            and route in ("local", "cloud")
+        ):
+            elapsed_ms = now_ms() - float(stt_origin_ms)
+            log_perf_trace(
+                self.get_logger(),
+                format_perf_trace_stt_done("", elapsed_ms, stt_engine_name, stt_path),
+            )
+
         goal_handle.succeed()
         return self.create_result(text)
 
-    def _emit_end_of_speech(self) -> None:
+    def _emit_end_of_speech(self) -> float | None:
         """Tell the turn owner the capture layer closed the utterance.
 
         The recording loop has already broken because silence reached
         ``max_silent_seconds_after`` (the personality pause threshold). This
-        stamp therefore sits that pause after the last voiced frame.
+        stamp sits that pause after the last voiced frame.
         """
         try:
+            origin_ms = now_ms()
             message = String()
-            message.data = format_event("end_of_speech", source="audio_recorder")
+            message.data = format_event(
+                "end_of_speech", source="audio_recorder", ts_ms=origin_ms
+            )
             self.turn_trace_publisher.publish(message)
+            return origin_ms
         except Exception as exc:
             self.get_logger().warning(f"turn trace end_of_speech failed: {exc}")
+        return None
 
     def _publish_engine_fallback(self, active_backend: object) -> None:
         fallback = engine_is_fallback(active_backend)

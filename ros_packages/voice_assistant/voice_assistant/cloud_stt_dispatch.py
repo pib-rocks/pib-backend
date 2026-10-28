@@ -45,11 +45,16 @@ def transcribe_cloud_or_local(
             f"duration_ms={(time.monotonic() - started) * 1000:.3f} "
             f"audio_bytes={len(wav_data)}"
         )
-        return text
+        engine = str(
+            metadata.get("backend")
+            or getattr(local_engine, "active_backend", "")
+            or "local"
+        )
+        return text, "local", engine
     publish_fallback("cloud")
     log.info(
         f"cloud STT request_id={result.request_id} status=ok "
         f"http_status={result.http_status} duration_ms={result.duration_ms:.3f} "
         f"audio_bytes={len(wav_data)}"
     )
-    return result.text
+    return result.text, "cloud", "cloud"
