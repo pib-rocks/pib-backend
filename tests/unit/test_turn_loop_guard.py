@@ -30,6 +30,18 @@ from pib_hermes_config.turn_taking import transcript_opens_turn  # noqa: E402
 ASSISTANT = VOICE_ROOT / "voice_assistant" / "assistant.py"
 
 
+def _assistant_combined_source() -> str:
+    parts = [ASSISTANT.read_text(encoding="utf-8")]
+    for mixin_name in (
+        "assistant_latency_mixin.py",
+        "assistant_turn_callbacks_mixin.py",
+    ):
+        mixin_path = VOICE_ROOT / "voice_assistant" / mixin_name
+        if mixin_path.is_file():
+            parts.append(mixin_path.read_text(encoding="utf-8"))
+    return "\n".join(parts)
+
+
 def test_only_spoken_text_opens_a_turn():
     assert transcript_opens_turn("Wie viele Arme hast du?") is True
     assert transcript_opens_turn("  ok  ") is True
@@ -44,7 +56,7 @@ def test_only_spoken_text_opens_a_turn():
 
 
 def test_the_assistant_asks_that_question_before_it_chats():
-    source = ASSISTANT.read_text(encoding="utf-8")
+    source = _assistant_combined_source()
     assert "transcript_opens_turn(" in source
     # The guard sits in on_transcribed_text_received, before _start_spoken_turn
     # and before the chat call.
@@ -60,7 +72,7 @@ def test_the_assistant_asks_that_question_before_it_chats():
 
 def test_an_empty_window_only_restarts_the_listening_cycle():
     """No chat, no speech: the start signal re-opens the recording window."""
-    source = ASSISTANT.read_text(encoding="utf-8")
+    source = _assistant_combined_source()
     received = source.index("def on_transcribed_text_received")
     block = source[received : received + 1600]
     assert "nothing transcribed in this window" in block
@@ -71,7 +83,7 @@ def test_an_empty_window_only_restarts_the_listening_cycle():
 
 
 def test_a_recording_window_waits_for_the_answer_audio_to_drain():
-    source = ASSISTANT.read_text(encoding="utf-8")
+    source = _assistant_combined_source()
     start = source.index("def on_start_signal_played")
     block = source[start : start + 1200]
     assert "_answer_audio_pending" in block
@@ -84,7 +96,7 @@ def test_a_recording_window_waits_for_the_answer_audio_to_drain():
 
 
 def test_the_pending_flag_is_set_and_cleared_on_both_ends():
-    source = ASSISTANT.read_text(encoding="utf-8")
+    source = _assistant_combined_source()
     # Set when a clause is handed to the player.
     queued = source[source.index("def on_sentence_received") :]
     queued = queued[: queued.index("def on_code_visual_received")]

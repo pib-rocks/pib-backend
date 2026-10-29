@@ -200,13 +200,20 @@ class PlaybackItem:
         try:
             with util.surpress_stderr():
                 pya = pyaudio.PyAudio()
-
-                stream = pya.open(
+                open_kwargs = dict(
                     format=pya.get_format_from_width(self.encoding.bytes_per_sample),
                     channels=self.encoding.num_channels,
                     rate=self.encoding.frames_per_second,
                     output=True,
                 )
+                pulse_idx = _pulse_output_device_index(pya)
+                if pulse_idx is not None:
+                    try:
+                        stream = pya.open(output_device_index=pulse_idx, **open_kwargs)
+                    except Exception:
+                        stream = None
+                if stream is None:
+                    stream = pya.open(**open_kwargs)
 
                 for chunk in self.data:
                     if self.is_cleared():
@@ -235,10 +242,37 @@ class PlaybackItem:
 
 
 SPEECH_ENCODING = AudioEncoding(2, 1, 44100)
+CLOUD_SPEECH_ENCODING = AudioEncoding(2, 1, 16000)
 CHUNKS_PER_SECOND = 10
 FRAMES_PER_CHUNK = SPEECH_ENCODING.frames_per_second // CHUNKS_PER_SECOND
 BYTES_PER_FRAME = SPEECH_ENCODING.bytes_per_sample * SPEECH_ENCODING.num_channels
 BYTES_PER_CHUNK = BYTES_PER_FRAME * FRAMES_PER_CHUNK
+
+
+def _bytes_per_chunk(encoding: AudioEncoding) -> int:
+    frames_per_chunk = max(1, encoding.frames_per_second // CHUNKS_PER_SECOND)
+    bytes_per_frame = encoding.bytes_per_sample * encoding.num_channels
+    return bytes_per_frame * frames_per_chunk
+
+
+def _pulse_output_device_index(pya) -> Optional[int]:
+    """Select the ALSA pulse plugin output device when PULSE_SERVER is configured."""
+    if not os.getenv("PULSE_SERVER", "").strip():
+        return None
+    try:
+        count = int(pya.get_device_count())
+    except Exception:
+        return None
+    for index in range(count):
+        try:
+            info = pya.get_device_info_by_index(index)
+        except Exception:
+            continue
+        if int(info.get("maxOutputChannels", 0)) < 1:
+            continue
+        if str(info.get("name", "")).strip().lower() == "pulse":
+            return index
+    return None
 
 
 class AudioPlayerNode(Node):
@@ -441,10 +475,17 @@ class AudioPlayerNode(Node):
             # the first clause overlaps synthesis of the next one.
             pause = 0.2 if index == len(pieces) - 1 else 0.0
             try:
-                data = self._synthesize_clause(piece, request)
+                synthesized = self._synthesize_clause(piece, request)
             except Exception as exc:
                 self.get_logger().error(f"clause synthesis failed: {exc}")
                 return response
+            if isinstance(synthesized, tuple) and len(synthesized) == 2:
+                data, clause_encoding = synthesized
+            else:
+                data = synthesized
+                clause_encoding = getattr(
+                    self, "_last_clause_encoding", SPEECH_ENCODING
+                )
             if PlaybackItem.order_is_stale(order):
                 self.get_logger().info(
                     "play_audio_from_speech: admission fence dropped post-synthesis clause (order=%s piece_index=%s)"
@@ -452,7 +493,7 @@ class AudioPlayerNode(Node):
                 )
                 return response
             data = self._fence_pcm_iterable(data, order)
-            playback_item = PlaybackItem(data, SPEECH_ENCODING, pause, order)
+            playback_item = PlaybackItem(data, clause_encoding, pause, order)
             if not self._enqueue_current(playback_item):
                 return response
             last_item = playback_item
@@ -471,16 +512,19 @@ class AudioPlayerNode(Node):
         route = resolve_tts_route(getattr(request, "tts_engine", "") or "")
         if route == CLOUD_TTS_ROUTE:
             try:
-                data = self._synthesize_cloud_clause(text, request)
+                data, encoding = self._synthesize_cloud_clause(text, request)
                 self._publish_engine_fallback("")
             except CloudTTSError as exc:
                 self._note_cloud_tts_fallback(exc.reason)
-                data = self._synthesize_local_clause(text, request)
+                data, encoding = self._synthesize_local_clause(text, request)
         else:
-            data = self._synthesize_local_clause(text, request)
-        return self.adjust_data_granularity(data, BYTES_PER_CHUNK)
+            data, encoding = self._synthesize_local_clause(text, request)
+        self._last_clause_encoding = encoding
+        return self.adjust_data_granularity(data, _bytes_per_chunk(encoding)), encoding
 
-    def _synthesize_local_clause(self, text: str, request: PlayAudioFromSpeech.Request):
+    def _synthesize_local_clause(
+        self, text: str, request: PlayAudioFromSpeech.Request
+    ) -> tuple[Iterable[bytes], AudioEncoding]:
         try:
             wav_bytes = self.tts_engine.synthesize(
                 text=text,
@@ -491,20 +535,26 @@ class AudioPlayerNode(Node):
             self._publish_engine_fallback(
                 getattr(self.tts_engine, "active_backend", "")
             )
-            return self._pcm_chunks(wav_bytes)
+            return self._wav_chunks_and_encoding(wav_bytes)
         except Exception as exc:
             self.get_logger().warning(
                 "Local Supertone TTS synthesis error, attempting public voice "
                 f"client: {exc}"
             )
-            return public_voice_client.text_to_speech(
-                text, request.gender, request.language, getattr(self, "token", None)
+            return (
+                public_voice_client.text_to_speech(
+                    text,
+                    request.gender,
+                    request.language,
+                    getattr(self, "token", None),
+                ),
+                SPEECH_ENCODING,
             )
 
     def _synthesize_cloud_clause(
         self, text: str, request: PlayAudioFromSpeech.Request
-    ) -> list[bytes]:
-        """WAV from ``POST /v1/audio/speech``, as PCM chunks ready to play.
+    ) -> tuple[list[bytes], AudioEncoding]:
+        """WAV from ``POST /v1/audio/speech``, as PCM chunks and WAV encoding.
 
         The request carries the clause text, ``de``/``en`` and ``F1``/``M1``,
         and the pib.Cloud bearer token from the key store: the same route the
@@ -547,12 +597,12 @@ class AudioPlayerNode(Node):
         if not wav_bytes:
             raise CloudTTSError("cloud_empty_body")
         try:
-            chunks = self._pcm_chunks(wav_bytes)
+            chunks, encoding = self._wav_chunks_and_encoding(wav_bytes)
         except Exception as exc:
             raise CloudTTSError("cloud_invalid_wav") from exc
         if not chunks:
             raise CloudTTSError("cloud_empty_audio")
-        return chunks
+        return chunks, encoding
 
     def _cloud_tts_token(self) -> str:
         """The key-store token, read once per turn and reused for its clauses."""
@@ -574,15 +624,27 @@ class AudioPlayerNode(Node):
         )
 
     @staticmethod
-    def _pcm_chunks(wav_bytes: bytes) -> list[bytes]:
-        """PCM16 frames of a WAV container, split into player-sized chunks."""
+    def _wav_chunks_and_encoding(
+        wav_bytes: bytes,
+    ) -> tuple[list[bytes], AudioEncoding]:
+        """PCM frames and AudioEncoding parsed from a WAV container."""
         buf = io.BytesIO(wav_bytes)
         with wave.open(buf, "rb") as wf:
+            encoding = AudioEncoding(
+                wf.getsampwidth(), wf.getnchannels(), wf.getframerate()
+            )
             raw_pcm = wf.readframes(wf.getnframes())
-        return [
-            raw_pcm[i : i + BYTES_PER_CHUNK]
-            for i in range(0, len(raw_pcm), BYTES_PER_CHUNK)
+        chunk_bytes = _bytes_per_chunk(encoding)
+        chunks = [
+            raw_pcm[i : i + chunk_bytes] for i in range(0, len(raw_pcm), chunk_bytes)
         ]
+        return chunks, encoding
+
+    @staticmethod
+    def _pcm_chunks(wav_bytes: bytes) -> list[bytes]:
+        """PCM16 frames of a WAV container, split into player-sized chunks."""
+        chunks, _encoding = AudioPlayerNode._wav_chunks_and_encoding(wav_bytes)
+        return chunks
 
     def _fence_pcm_iterable(self, data: Iterable[bytes], order: int) -> Iterator[bytes]:
         """Stop yielding PCM if this admission generation was cancelled."""

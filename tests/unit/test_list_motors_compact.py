@@ -237,3 +237,105 @@ def test_pib_backend_list_motors_detail_false_omits_bricklets():
     payload = backend.list_motors(detail=False)
     assert "bricklets" not in payload
     assert set(payload["motors"][0]) <= COMPACT_MOTOR_KEYS | COMPACT_MOTOR_OPTIONAL_KEYS
+
+
+def _motor_with_family(name, controller_kind, position=0):
+    return {
+        "name": name,
+        "controller": {"kind": controller_kind},
+        "currentPosition": position,
+    }
+
+
+def _offline_backend(monkeypatch, backend_module, motors):
+    """A backend whose motor list is fixed and whose read paths need no ROS."""
+    monkeypatch.setattr(backend_module.PibBackend, "get_motors", lambda self: motors)
+    monkeypatch.setattr(
+        backend_module.PibBackend,
+        "_try_apply_joint_state_positions",
+        lambda self, named: (False, None),
+    )
+    monkeypatch.setattr(
+        backend_module.PibBackend,
+        "_try_apply_batch_joint_positions",
+        lambda self, named: (False, None),
+    )
+    monkeypatch.setattr(
+        backend_module.PibBackend,
+        "_apply_live_joint_position",
+        lambda self, motor: None,
+    )
+    return backend_module.PibBackend()
+
+
+def test_bricklet_robots_label_positions_as_commanded_targets(monkeypatch):
+    """A pib4edu/pib5edu has no position feedback: the value is the last command.
+
+    Measured on a pib5edu: all 26 motors are `tinkerforge_bricklet`, and the bricklet's
+    get_position() returns the commanded pulse setting. Calling that a measurement
+    misleads the model, so the response states what it is.
+    """
+    from pib_mcp_server import backend as backend_module
+
+    backend = _offline_backend(
+        monkeypatch,
+        backend_module,
+        [_motor_with_family("turn_head_motor", "tinkerforge_bricklet", 12)],
+    )
+
+    payload = backend.list_motors()
+
+    assert payload["positionKind"] == backend_module.POSITION_KIND_COMMANDED_TARGET
+    assert payload["positionNote"] == "commanded target, not measured"
+    assert payload["motors"][0]["position"] is not None
+
+
+def test_feetech_robots_label_positions_as_measured(monkeypatch):
+    """The Feetech family has real feedback - and gets no apology note."""
+    from pib_mcp_server import backend as backend_module
+
+    backend = _offline_backend(
+        monkeypatch,
+        backend_module,
+        [_motor_with_family("elbow_right", "feetech_st_serial", 42)],
+    )
+
+    payload = backend.list_motors()
+
+    assert payload["positionKind"] == backend_module.POSITION_KIND_MEASURED
+    assert "positionNote" not in payload
+
+
+def test_mixed_actuator_families_are_labelled_per_motor(monkeypatch):
+    """A robot may mix families; then the per-motor kind carries the truth."""
+    from pib_mcp_server import backend as backend_module
+
+    backend = _offline_backend(
+        monkeypatch,
+        backend_module,
+        [
+            _motor_with_family("head", "tinkerforge_bricklet", 1),
+            _motor_with_family("arm", "feetech_st_serial", 2),
+        ],
+    )
+
+    payload = backend.list_motors()
+
+    assert "positionKind" not in payload
+    kinds = {motor["name"]: motor["positionKind"] for motor in payload["motors"]}
+    assert kinds == {
+        "head": backend_module.POSITION_KIND_COMMANDED_TARGET,
+        "arm": backend_module.POSITION_KIND_MEASURED,
+    }
+
+
+def test_unknown_controller_family_is_not_claimed_as_measured(monkeypatch):
+    from pib_mcp_server import backend as backend_module
+
+    backend = _offline_backend(
+        monkeypatch, backend_module, [_motor_with_family("mystery", "robstride_can", 0)]
+    )
+
+    payload = backend.list_motors()
+
+    assert payload["positionKind"] == backend_module.POSITION_KIND_UNKNOWN

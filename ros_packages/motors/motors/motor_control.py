@@ -444,7 +444,7 @@ class MotorControl(Node):
         sweep = sweep_feetech_joint_positions(motors)
         if sweep.ports_attempted == 0 and not sweep.positions_centideg:
             response.successful = False
-            response.message = "no connected Feetech actuators (bus absent or SSR off)"
+            response.message = "no sweepable actuator family on this robot (servo bricklets report no position feedback)"
             for joint_name in target_names:
                 result = MotorResult()
                 result.motor_name = joint_name

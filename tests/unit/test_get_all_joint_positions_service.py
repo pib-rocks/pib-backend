@@ -184,7 +184,7 @@ def test_no_bus_returns_clear_error_without_hanging(monkeypatch):
 
     handler(request, response)
     assert response.successful is False
-    assert "bus absent" in response.message
+    assert "no sweepable actuator family" in response.message
     assert len(response.results) == 1
     assert response.results[0].error_code == "bus_unavailable"
 

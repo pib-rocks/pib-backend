@@ -37,4 +37,4 @@ COPY ./pib_api/flask/ .
 RUN flask --app run db upgrade
 RUN flask --app run seed_db
 
-CMD ["flask", "--app", "run", "run"]
+CMD ["gunicorn", "--workers", "1", "--threads", "8", "--bind", "0.0.0.0:5000", "--timeout", "600", "run:app"]

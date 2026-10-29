@@ -75,7 +75,7 @@ class TestComposeArchitecture:
 
     def test_flask_environment_variables(self, compose_dict):
         env = compose_dict["services"]["flask-app"]["environment"]
-        assert "SQLALCHEMY_DATABASE_URI=sqlite:////app/pibdata.db" in env
+        assert "SQLALCHEMY_DATABASE_URI=sqlite:////data/pibdata.db" in env
         assert "PIB_BLOCKLY_SERVER_URL=http://pib-blockly-server:2442" in env
 
     def test_ros_motors_flask_api_url(self, compose_dict):
