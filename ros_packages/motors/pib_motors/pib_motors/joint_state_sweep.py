@@ -135,10 +135,27 @@ def _sweep_port(
     try:
         with _BusAccess(ph, lock):
             if port_key not in _SINGLE_READ_PORTS:
-                positions = _read_group(pk, ph, group)
+                # A broadcast may answer nothing, or throw on an adapter that
+                # does not implement it. Both mean the same thing here: this
+                # port has to be read servo by servo, inside the same lock.
+                positions: dict[str, int] = {}
+                try:
+                    positions = _read_group(pk, ph, group)
+                except Exception as error:  # noqa: BLE001
+                    _LOG.warning(
+                        "joint state sweep: group sync read raised on port %s (%s: %s)",
+                        port_key,
+                        type(error).__name__,
+                        error,
+                    )
                 if positions:
                     return positions, MODE_GROUP
-                _LOG.info(
+                if not port_key:
+                    return {}, ""
+                # Warning, not info: a node logger without handlers drops info
+                # lines, and this switch is the one fact that explains why the
+                # sweep suddenly costs a round trip per servo.
+                _LOG.warning(
                     "joint state sweep: port %s answered no group sync read, "
                     "reading its %d servos individually from now on",
                     port_key,
@@ -149,7 +166,7 @@ def _sweep_port(
                 _SINGLE_READ_PORTS.add(port_key)
             return positions, MODE_SINGLE
     except Exception as error:  # noqa: BLE001 - a dead port must not break the sweep
-        _LOG.debug("port sweep failed on port %s: %s", sample.uid, error)
+        _LOG.warning("joint state sweep: port %s failed entirely: %s", port_key, error)
         return {}, ""
 
 
