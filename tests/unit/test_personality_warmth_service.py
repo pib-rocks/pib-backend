@@ -105,6 +105,7 @@ def test_warm_posts_the_personality_and_reports_the_new_state(monkeypatch):
 
     assert result["state"] == "warm"
     assert result["warm"] is True
+    assert result["elapsedMs"] == 1980.5
     url, kwargs = calls["post"][0]
     assert url == "http://daemon.example:8088/warm"
     assert kwargs["json"] == {"personality_id": "p-1"}
