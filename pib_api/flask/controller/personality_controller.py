@@ -1,7 +1,7 @@
 from flask import abort, jsonify, request, Blueprint
 from marshmallow import ValidationError
 from pib_hermes_config.live_interaction import personality_requests_actuation
-from service import personality_service
+from service import personality_service, personality_warmth_service
 from schema.personality_schema import (
     personality_schema,
     personalities_schema,
@@ -71,6 +71,27 @@ def append_soul_lesson(personality_id: str):
         abort(400)
     personality = personality_service.append_soul_lesson(personality_id, lesson)
     return personality_schema.dump(personality)
+
+
+@bp.route("/<string:personality_id>/warm", methods=["GET"])
+def get_personality_warmth(personality_id: str):
+    """Whether the Hermes daemon already holds a warm agent (PR-2130).
+
+    A direct-channel personality and an unreachable daemon both answer 200 with
+    a state of their own; only a real verdict paints the chip, so a probe that
+    could not run never reads as a cold personality.
+    """
+    return jsonify(personality_warmth_service.personality_warmth(personality_id)), 200
+
+
+@bp.route("/<string:personality_id>/warm", methods=["POST"])
+def warm_personality(personality_id: str):
+    """Construct the personality's warm agent on demand (PR-2130).
+
+    Opening a personality calls this once. The warm-up runs no model request, so
+    it costs no tokens; the answer is the resulting cold/warm state.
+    """
+    return jsonify(personality_warmth_service.warm_personality(personality_id)), 200
 
 
 @bp.route("/<string:personality_id>", methods=["DELETE"])

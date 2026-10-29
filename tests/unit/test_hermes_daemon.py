@@ -2470,3 +2470,111 @@ def test_prewarm_skips_direct_only_personality_list(monkeypatch, caplog):
     hd.prewarm_default_agent_at_start(fetch_personalities=personalities)
     construct.assert_not_called()
     assert any("no smart personality" in rec.getMessage() for rec in caplog.records)
+
+
+# --- PR-2130: cold/warm state of one personality's warm agent
+
+
+def test_personality_is_warm_reads_the_agent_cache(monkeypatch, tmp_path):
+    """Warmth is the cached agent of that home, not a timestamp or a guess."""
+    monkeypatch.setattr(hd, "personality_home_key", lambda pid: str(tmp_path))
+    monkeypatch.setattr(hd, "_agent_cache", {})
+
+    assert hd.personality_is_warm("p-1") is False
+
+    with hd._agent_cache_lock:
+        hd._agent_cache[(str(tmp_path), ("settings",), "key")] = object()
+
+    assert hd.personality_is_warm("p-1") is True
+
+
+def test_warm_personality_reports_cold_when_the_constructor_skips(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setattr(hd, "personality_home_key", lambda pid: str(tmp_path))
+    monkeypatch.setattr(hd, "_agent_cache", {})
+    monkeypatch.setattr(
+        hd, "_construct_warm_agent_for_personality", lambda pid: "no_provider_key"
+    )
+
+    result = hd.warm_personality("p-1")
+
+    assert result["state"] == "cold"
+    assert result["warm"] is False
+    assert result["reason"] == "no_provider_key"
+    assert result["personality_id"] == "p-1"
+    assert result["elapsedMs"] >= 0.0
+
+
+def test_warm_personality_reports_warm_after_the_agent_is_built(monkeypatch, tmp_path):
+    home = str(tmp_path)
+    monkeypatch.setattr(hd, "personality_home_key", lambda pid: home)
+    monkeypatch.setattr(hd, "_agent_cache", {})
+
+    def construct(pid):
+        with hd._agent_cache_lock:
+            hd._agent_cache[(home, ("settings",), "key")] = object()
+        return None
+
+    monkeypatch.setattr(hd, "_construct_warm_agent_for_personality", construct)
+
+    result = hd.warm_personality("p-1")
+
+    assert result["state"] == "warm"
+    assert result["warm"] is True
+    assert "reason" not in result
+
+
+def test_warm_endpoints_answer_state_and_never_run_a_turn(
+    daemon_server, monkeypatch, tmp_path
+):
+    """GET reads the cache, POST warms it; neither path reaches the model."""
+    server, replies = daemon_server
+    host, port = server.server_address
+    monkeypatch.setattr(hd, "personality_home_key", lambda pid: str(tmp_path))
+    monkeypatch.setattr(hd, "_agent_cache", {})
+
+    with urlopen(f"http://{host}:{port}/warm?personality_id=p-1", timeout=2) as resp:
+        cold = json.loads(resp.read().decode())
+    assert cold["warm"] is False
+    assert cold["state"] == "cold"
+
+    home = str(tmp_path)
+
+    def construct(pid):
+        with hd._agent_cache_lock:
+            hd._agent_cache[(home, ("settings",), "key")] = object()
+        return None
+
+    monkeypatch.setattr(hd, "_construct_warm_agent_for_personality", construct)
+    request = Request(
+        f"http://{host}:{port}/warm",
+        data=json.dumps({"personality_id": "p-1"}).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urlopen(request, timeout=2) as resp:
+        warm = json.loads(resp.read().decode())
+    assert warm["ok"] is True
+    assert warm["warm"] is True
+    assert warm["state"] == "warm"
+    assert "last" not in replies  # no model turn was run
+
+
+def test_warm_endpoints_require_a_personality_id(daemon_server):
+    server, _ = daemon_server
+    host, port = server.server_address
+
+    with pytest.raises(Exception) as get_error:
+        urlopen(f"http://{host}:{port}/warm", timeout=2)
+    assert getattr(get_error.value, "code", None) == 400
+
+    request = Request(
+        f"http://{host}:{port}/warm",
+        data=b"{}",
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with pytest.raises(Exception) as post_error:
+        urlopen(request, timeout=2)
+    assert getattr(post_error.value, "code", None) == 400
