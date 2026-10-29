@@ -26,21 +26,14 @@ from pib_motors.feetech_actuator import (
     _BusAccess,
     ticks_to_centideg,
 )
-from pib_motors.stservo_sdk.group_sync_read import GroupSyncRead
-from pib_motors.stservo_sdk.sts import STS_PRESENT_POSITION_L
 from pib_motors.stservo_sdk.stservo_def import COMM_SUCCESS
+from pib_motors.units import centideg_to_rad
 
 _LOG = logging.getLogger(__name__)
 _NO_BUS_LOG_INTERVAL_SEC = 60.0
 _last_no_bus_log_monotonic = 0.0
 
-MODE_GROUP = "group"
 MODE_SINGLE = "single"
-
-#: Ports whose group read returns nothing; they are read servo by servo instead.
-#: Kept for the life of the process - an adapter does not start answering a
-#: broadcast because time passed - and re-evaluated via ``forget_single_read_port``.
-_SINGLE_READ_PORTS: set[str] = set()
 
 
 @dataclass(frozen=True)
@@ -81,31 +74,6 @@ def _to_centideg(pk: Any, actuator: FeetechStSerialActuator, raw_ticks: Any) -> 
     return int(round(centideg * actuator.direction_sign))
 
 
-def _read_group(
-    pk: Any, group: list[tuple[str, FeetechStSerialActuator]]
-) -> dict[str, int]:
-    """One broadcast request for the whole port; empty when nothing answers."""
-    positions: dict[str, int] = {}
-    # The packet handler, not the port handler: syncReadTx/syncReadRx live on
-    # protocol_packet_handler (the port only moves bytes). Passing the port made
-    # every broadcast raise AttributeError, which read like "no measurement".
-    group_read = GroupSyncRead(pk, STS_PRESENT_POSITION_L, 2)
-    for _, actuator in group:
-        group_read.addParam(actuator.pin)
-    comm = group_read.txRxPacket()
-    if comm != COMM_SUCCESS and not group_read.last_result:
-        return positions
-    for motor_name, actuator in group:
-        available, _error = group_read.isAvailable(
-            actuator.pin, STS_PRESENT_POSITION_L, 2
-        )
-        if not available:
-            continue
-        raw_ticks = group_read.getData(actuator.pin, STS_PRESENT_POSITION_L, 2)
-        positions[motor_name] = _to_centideg(pk, actuator, raw_ticks)
-    return positions
-
-
 def _read_single(
     pk: Any, group: list[tuple[str, FeetechStSerialActuator]]
 ) -> dict[str, int]:
@@ -126,7 +94,7 @@ def _read_single(
 def _sweep_port(
     group: list[tuple[str, FeetechStSerialActuator]],
 ) -> tuple[dict[str, int], str]:
-    """Read one port. Returns the positions and the strategy that produced them."""
+    """Read one port, one addressed transaction per servo."""
     sample = group[0][1]
     ph = sample._ph
     pk = sample._pk
@@ -137,50 +105,11 @@ def _sweep_port(
     port_key = str(getattr(sample, "uid", "") or "")
     try:
         with _BusAccess(ph, lock):
-            if port_key not in _SINGLE_READ_PORTS:
-                # A broadcast may answer nothing, or throw on an adapter that
-                # does not implement it. Both mean the same thing here: this
-                # port has to be read servo by servo, inside the same lock.
-                positions: dict[str, int] = {}
-                try:
-                    positions = _read_group(pk, group)
-                except Exception as error:  # noqa: BLE001
-                    _LOG.warning(
-                        "joint state sweep: group sync read raised on port %s (%s: %s)",
-                        port_key,
-                        type(error).__name__,
-                        error,
-                    )
-                if positions:
-                    return positions, MODE_GROUP
-                if not port_key:
-                    return {}, ""
-                # Warning, not info: a node logger without handlers drops info
-                # lines, and this switch is the one fact that explains why the
-                # sweep suddenly costs a round trip per servo.
-                _LOG.warning(
-                    "joint state sweep: port %s answered no group sync read, "
-                    "reading its %d servos individually from now on",
-                    port_key,
-                    len(group),
-                )
             positions = _read_single(pk, group)
-            if positions and port_key:
-                _SINGLE_READ_PORTS.add(port_key)
             return positions, MODE_SINGLE
     except Exception as error:  # noqa: BLE001 - a dead port must not break the sweep
         _LOG.warning("joint state sweep: port %s failed entirely: %s", port_key, error)
         return {}, ""
-
-
-def forget_single_read_port(port_key: str) -> None:
-    """Drop the memory for one port (used when an adapter is re-plugged)."""
-    _SINGLE_READ_PORTS.discard(port_key)
-
-
-def single_read_ports() -> set[str]:
-    """Ports currently known to need individual reads (a copy, for diagnostics)."""
-    return set(_SINGLE_READ_PORTS)
 
 
 def sweep_feetech_joint_positions(motors: list[Any]) -> JointStateSweepResult:
@@ -227,3 +156,22 @@ def sweep_feetech_joint_positions(motors: list[Any]) -> JointStateSweepResult:
         mode_by_port,
         port_durations_ms,
     )
+
+
+def fill_joint_state(message: Any, positions_centideg: dict[str, int]) -> int:
+    """Write sorted joint names and radian positions into a JointState message.
+
+    The field is ``name`` - ``sensor_msgs/JointState`` has exactly
+    ``header, name, position, velocity, effort`` (read from the robot image).
+    Writing ``joint_names`` raised AttributeError inside the publish callback and
+    killed the whole motor_control process the first time a sweep had data.
+
+    Lives next to the sweep because it publishes exactly what the sweep measured;
+    kept free of ROS imports so it stays unit-testable.
+    """
+    written = 0
+    for motor_name in sorted(positions_centideg):
+        message.name.append(motor_name)
+        message.position.append(centideg_to_rad(positions_centideg[motor_name]))
+        written += 1
+    return written

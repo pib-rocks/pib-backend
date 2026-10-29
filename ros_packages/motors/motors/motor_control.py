@@ -30,7 +30,10 @@ from pib_motors.perf_trace import (
     log_perf_trace,
 )
 from pib_motors.units import centideg_to_rad, rad_to_centideg
-from pib_motors.joint_state_sweep import sweep_feetech_joint_positions
+from pib_motors.joint_state_sweep import (
+    fill_joint_state,
+    sweep_feetech_joint_positions,
+)
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Header
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
@@ -144,10 +147,10 @@ class MotorControl(Node):
         self.declare_parameter("dev", False)
         self.dev = self.get_parameter("dev").value
 
-        self.declare_parameter("joint_state_publish_rate_hz", 20.0)
+        self.declare_parameter("joint_state_publish_rate_hz", 10.0)
         rate_hz = float(self.get_parameter("joint_state_publish_rate_hz").value)
         if rate_hz <= 0:
-            rate_hz = 20.0
+            rate_hz = 10.0
 
         # Service for JointTrajectory
         self.srv = self.create_service(
@@ -410,9 +413,7 @@ class MotorControl(Node):
 
         msg = JointState()
         msg.header.stamp = self.get_clock().now().to_msg()
-        for motor_name in sorted(positions):
-            msg.joint_names.append(motor_name)
-            msg.positions.append(centideg_to_rad(positions[motor_name]))
+        fill_joint_state(msg, positions)
         self.joint_state_publisher.publish(msg)
         elapsed_ms = (time.monotonic() - started) * 1000.0
         log_perf_trace(
