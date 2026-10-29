@@ -274,3 +274,77 @@ def test_fallback_still_runs_when_the_group_read_throws(monkeypatch):
     }
     assert result.mode_by_port == {"WS-ARM": sweep_mod.MODE_SINGLE}
     assert sweep_mod.single_read_ports() == {"WS-ARM"}
+
+
+class FakePacketHandlerWithSyncRead(FakeStsPacketHandler):
+    """Stand-in for protocol_packet_handler: owns syncReadTx/syncReadRx.
+
+    The real ``GroupSyncRead`` calls these on whatever object it was given, so a
+    fake at this seam is what proves the sweep hands over the packet handler and
+    not the port handler. That mistake raised AttributeError on the robot.
+    """
+
+    def __init__(self, ph):
+        super().__init__(ph)
+        self.sync_tx_calls = 0
+        self.sync_rx_calls = 0
+
+    def sts_tohost(self, value, bit):
+        return int(value)
+
+    def sts_makeword(self, low, high):
+        return (high << 8) | low
+
+    def syncReadTx(self, start_address, data_length, param, param_length):
+        self.sync_tx_calls += 1
+        self.asked_ids = list(param)
+        return 0  # COMM_SUCCESS
+
+    def syncReadRx(self, data_length, param_length):
+        self.sync_rx_calls += 1
+        packet = bytearray()
+        for servo_id in self.asked_ids:
+            ticks = self.pos_ticks_by_id.get(servo_id, self.pos_ticks)
+            low, high = ticks & 0xFF, (ticks >> 8) & 0xFF
+            body = [servo_id, data_length + 2, 0, low, high]
+            checksum = ~(sum(body)) & 0xFF
+            packet.extend([0xFF, 0xFF, *body, checksum])
+        return 0, bytes(packet)
+
+
+def test_group_sync_read_reaches_the_packet_handler_and_returns_positions(monkeypatch):
+    """Load-bearing: the .168 AttributeError - the real GroupSyncRead must answer."""
+    ft_mod, act_mod = _load_modules()
+    sweep_mod = _load_sweep_module(ft_mod)
+    sweep_mod._SINGLE_READ_PORTS.clear()
+
+    handlers: list[FakePacketHandlerWithSyncRead] = []
+
+    def fake_sts(ph):
+        pk = FakePacketHandlerWithSyncRead(ph)
+        pk.pos_ticks_by_id = {18: 2048, 11: 3072}
+        handlers.append(pk)
+        return pk
+
+    monkeypatch.setattr(ft_mod, "PortHandler", FakePortHandler)
+    monkeypatch.setattr(ft_mod, "sts", fake_sts)
+    ft_mod._port_cache.clear()
+
+    elbow = act_mod.create_actuator("feetech_st_serial", 18, "WS-ARM", "max")
+    thumb = act_mod.create_actuator("feetech_st_serial", 11, "WS-ARM", "max")
+    motors = [
+        SimpleNamespace(name="right_arm_motor_elbow", actuators=[elbow]),
+        SimpleNamespace(name="right_hand_motor", actuators=[thumb]),
+    ]
+
+    result = sweep_mod.sweep_feetech_joint_positions(motors)
+
+    assert set(result.positions_centideg) == {
+        "right_arm_motor_elbow",
+        "right_hand_motor",
+    }
+    assert result.mode_by_port == {"WS-ARM": sweep_mod.MODE_GROUP}
+    assert handlers[0].sync_tx_calls == 1
+    assert handlers[0].sync_rx_calls == 1
+    # The fast path answered, so nothing was read servo by servo.
+    assert sweep_mod.single_read_ports() == set()
