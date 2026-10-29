@@ -92,7 +92,12 @@ def _read_state(personality_id: str, body: Any) -> Dict[str, Any]:
         )
     state = body.get("state")
     if state == STATE_WARM or body.get("warm") is True:
-        return _payload(personality_id, state=STATE_WARM, warm=True)
+        return _payload(
+            personality_id,
+            state=STATE_WARM,
+            warm=True,
+            elapsed_ms=_as_float(body.get("elapsedMs")),
+        )
     if state == STATE_COLD:
         return _payload(
             personality_id,
