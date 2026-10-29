@@ -1,10 +1,24 @@
-"""Atomic Feetech bus sweep via GroupSyncRead for joint state publishing (PR-2112)."""
+"""Atomic Feetech bus sweep for joint state publishing (PR-2112, PR-2128).
+
+Two read strategies live here, both under the port's own bus lock:
+
+* the fast one - a single ``GroupSyncRead`` request per port that every servo
+  answers in ID order (0.4 s measured for a 26-servo robot);
+* the slow one - one addressed transaction per servo (``ReadPosSpeed``), which
+  is what the Waveshare CDC-ACM adapters actually answer. Measured on the
+  pib5advanced at 192.168.1.168: the group read returned no measurement for any
+  servo while single reads returned real positions.
+
+A port that yields nothing from the group read is retried with single reads in
+the same tick and remembered, so later sweeps go straight to the slow path
+instead of paying a failed broadcast every time.
+"""
 
 from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from pib_motors.feetech_actuator import (
@@ -20,15 +34,27 @@ _LOG = logging.getLogger(__name__)
 _NO_BUS_LOG_INTERVAL_SEC = 60.0
 _last_no_bus_log_monotonic = 0.0
 
+MODE_GROUP = "group"
+MODE_SINGLE = "single"
+
+#: Ports whose group read returns nothing; they are read servo by servo instead.
+#: Kept for the life of the process - an adapter does not start answering a
+#: broadcast because time passed - and re-evaluated via ``forget_single_read_port``.
+_SINGLE_READ_PORTS: set[str] = set()
+
 
 @dataclass(frozen=True)
 class JointStateSweepResult:
-    """Measured centidegree positions from one or more port-level group sync reads."""
+    """Measured centidegree positions from one or more port-level sweeps."""
 
     positions_centideg: dict[str, int]
     sweep_monotonic: float
     ports_attempted: int
     ports_succeeded: int
+    #: Which strategy each port needed, keyed by port uid ("group" / "single").
+    mode_by_port: dict[str, str] = field(default_factory=dict)
+    #: Wall time spent reading each port, for the latency work.
+    port_durations_ms: dict[str, float] = field(default_factory=dict)
 
 
 def _feetech_entries(motors: list[Any]) -> list[tuple[str, FeetechStSerialActuator]]:
@@ -49,43 +75,96 @@ def _group_by_port(
     return grouped
 
 
+def _to_centideg(pk: Any, actuator: FeetechStSerialActuator, raw_ticks: Any) -> int:
+    host_ticks = pk.sts_tohost(raw_ticks, 15)
+    centideg = ticks_to_centideg(int(host_ticks))
+    return int(round(centideg * actuator.direction_sign))
+
+
+def _read_group(
+    pk: Any, ph: Any, group: list[tuple[str, FeetechStSerialActuator]]
+) -> dict[str, int]:
+    """One broadcast request for the whole port; empty when nothing answers."""
+    positions: dict[str, int] = {}
+    group_read = GroupSyncRead(ph, STS_PRESENT_POSITION_L, 2)
+    for _, actuator in group:
+        group_read.addParam(actuator.pin)
+    comm = group_read.txRxPacket()
+    if comm != COMM_SUCCESS and not group_read.last_result:
+        return positions
+    for motor_name, actuator in group:
+        available, _error = group_read.isAvailable(
+            actuator.pin, STS_PRESENT_POSITION_L, 2
+        )
+        if not available:
+            continue
+        raw_ticks = group_read.getData(actuator.pin, STS_PRESENT_POSITION_L, 2)
+        positions[motor_name] = _to_centideg(pk, actuator, raw_ticks)
+    return positions
+
+
+def _read_single(
+    pk: Any, group: list[tuple[str, FeetechStSerialActuator]]
+) -> dict[str, int]:
+    """One addressed transaction per servo. The caller already holds the bus."""
+    positions: dict[str, int] = {}
+    for motor_name, actuator in group:
+        try:
+            raw_ticks, _speed, result, _error = pk.ReadPosSpeed(actuator.pin)
+        except Exception as error:  # noqa: BLE001 - one servo must not stop the port
+            _LOG.debug("single read failed for %s: %s", motor_name, error)
+            continue
+        if result != COMM_SUCCESS:
+            continue
+        positions[motor_name] = _to_centideg(pk, actuator, raw_ticks)
+    return positions
+
+
 def _sweep_port(
     group: list[tuple[str, FeetechStSerialActuator]],
-) -> dict[str, int]:
+) -> tuple[dict[str, int], str]:
+    """Read one port. Returns the positions and the strategy that produced them."""
     sample = group[0][1]
     ph = sample._ph
     pk = sample._pk
     lock = sample._lock
     if ph is None or pk is None or lock is None:
-        return {}
+        return {}, ""
 
-    positions: dict[str, int] = {}
+    port_key = str(getattr(sample, "uid", "") or "")
     try:
         with _BusAccess(ph, lock):
-            group_read = GroupSyncRead(ph, STS_PRESENT_POSITION_L, 2)
-            for _, actuator in group:
-                group_read.addParam(actuator.pin)
-            comm = group_read.txRxPacket()
-            if comm != COMM_SUCCESS and not group_read.last_result:
-                return {}
-            for motor_name, actuator in group:
-                available, _error = group_read.isAvailable(
-                    actuator.pin, STS_PRESENT_POSITION_L, 2
+            if port_key not in _SINGLE_READ_PORTS:
+                positions = _read_group(pk, ph, group)
+                if positions:
+                    return positions, MODE_GROUP
+                _LOG.info(
+                    "joint state sweep: port %s answered no group sync read, "
+                    "reading its %d servos individually from now on",
+                    port_key,
+                    len(group),
                 )
-                if not available:
-                    continue
-                raw_ticks = group_read.getData(actuator.pin, STS_PRESENT_POSITION_L, 2)
-                host_ticks = pk.sts_tohost(raw_ticks, 15)
-                centideg = ticks_to_centideg(int(host_ticks))
-                positions[motor_name] = int(round(centideg * actuator.direction_sign))
-    except Exception as error:
-        _LOG.debug("group sync read failed on port %s: %s", sample.uid, error)
-        return {}
-    return positions
+            positions = _read_single(pk, group)
+            if positions and port_key:
+                _SINGLE_READ_PORTS.add(port_key)
+            return positions, MODE_SINGLE
+    except Exception as error:  # noqa: BLE001 - a dead port must not break the sweep
+        _LOG.debug("port sweep failed on port %s: %s", sample.uid, error)
+        return {}, ""
+
+
+def forget_single_read_port(port_key: str) -> None:
+    """Drop the memory for one port (used when an adapter is re-plugged)."""
+    _SINGLE_READ_PORTS.discard(port_key)
+
+
+def single_read_ports() -> set[str]:
+    """Ports currently known to need individual reads (a copy, for diagnostics)."""
+    return set(_SINGLE_READ_PORTS)
 
 
 def sweep_feetech_joint_positions(motors: list[Any]) -> JointStateSweepResult:
-    """Read present position for all connected Feetech actuators, grouped by serial port."""
+    """Read present position for all connected Feetech actuators, port by port."""
     global _last_no_bus_log_monotonic
 
     entries = _feetech_entries(motors)
@@ -108,8 +187,14 @@ def sweep_feetech_joint_positions(motors: list[Any]) -> JointStateSweepResult:
     all_positions: dict[str, int] = {}
     ports_attempted = len(grouped)
     ports_succeeded = 0
-    for group in grouped.values():
-        port_positions = _sweep_port(group)
+    mode_by_port: dict[str, str] = {}
+    port_durations_ms: dict[str, float] = {}
+    for port_key, group in grouped.items():
+        started = time.monotonic()
+        port_positions, mode = _sweep_port(group)
+        port_durations_ms[port_key] = round((time.monotonic() - started) * 1000.0, 1)
+        if mode:
+            mode_by_port[port_key] = mode
         if port_positions:
             ports_succeeded += 1
             all_positions.update(port_positions)
@@ -119,4 +204,6 @@ def sweep_feetech_joint_positions(motors: list[Any]) -> JointStateSweepResult:
         time.monotonic(),
         ports_attempted,
         ports_succeeded,
+        mode_by_port,
+        port_durations_ms,
     )
