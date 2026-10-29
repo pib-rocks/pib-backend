@@ -149,21 +149,34 @@ class GroupSyncRead:
             return False, 0
         return True, self.data_dict[sts_id][0]
 
+    def _makeword(self, low, high):
+        """Word from two bytes, tolerating both SDK spellings.
+
+        The vendored SDK only has ``sts_makeword``; older Feetech trees call it
+        ``scs_makeword``. Reading a 2-byte register used to raise AttributeError
+        on this tree, so the broadcast could never return a value.
+        """
+        for name in ("scs_makeword", "sts_makeword"):
+            helper = getattr(self.ph, name, None)
+            if helper is not None:
+                return helper(low, high)
+        return (high << 8) | low
+
     def getData(self, sts_id, address, data_length):
         if data_length == 1:
             return self.data_dict[sts_id][address - self.start_address + 1]
         elif data_length == 2:
-            return self.ph.scs_makeword(
+            return self._makeword(
                 self.data_dict[sts_id][address - self.start_address + 1],
                 self.data_dict[sts_id][address - self.start_address + 2],
             )
         elif data_length == 4:
             return self.ph.scs_makedword(
-                self.ph.scs_makeword(
+                self._makeword(
                     self.data_dict[sts_id][address - self.start_address + 1],
                     self.data_dict[sts_id][address - self.start_address + 2],
                 ),
-                self.ph.scs_makeword(
+                self._makeword(
                     self.data_dict[sts_id][address - self.start_address + 3],
                     self.data_dict[sts_id][address - self.start_address + 4],
                 ),

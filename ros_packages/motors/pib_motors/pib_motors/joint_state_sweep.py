@@ -82,11 +82,14 @@ def _to_centideg(pk: Any, actuator: FeetechStSerialActuator, raw_ticks: Any) -> 
 
 
 def _read_group(
-    pk: Any, ph: Any, group: list[tuple[str, FeetechStSerialActuator]]
+    pk: Any, group: list[tuple[str, FeetechStSerialActuator]]
 ) -> dict[str, int]:
     """One broadcast request for the whole port; empty when nothing answers."""
     positions: dict[str, int] = {}
-    group_read = GroupSyncRead(ph, STS_PRESENT_POSITION_L, 2)
+    # The packet handler, not the port handler: syncReadTx/syncReadRx live on
+    # protocol_packet_handler (the port only moves bytes). Passing the port made
+    # every broadcast raise AttributeError, which read like "no measurement".
+    group_read = GroupSyncRead(pk, STS_PRESENT_POSITION_L, 2)
     for _, actuator in group:
         group_read.addParam(actuator.pin)
     comm = group_read.txRxPacket()
@@ -140,7 +143,7 @@ def _sweep_port(
                 # port has to be read servo by servo, inside the same lock.
                 positions: dict[str, int] = {}
                 try:
-                    positions = _read_group(pk, ph, group)
+                    positions = _read_group(pk, group)
                 except Exception as error:  # noqa: BLE001
                     _LOG.warning(
                         "joint state sweep: group sync read raised on port %s (%s: %s)",
