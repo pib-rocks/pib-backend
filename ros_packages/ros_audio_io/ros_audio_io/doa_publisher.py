@@ -66,6 +66,7 @@ class MicrophoneArrayNode(Node):
         self.dev = None
         self.tuning = None
         self.pixel_ring = None
+        self.timer = None
         self._configured_led = None
         self._conversation_led_mode = None
         self._shown_led_mode = None
@@ -119,6 +120,7 @@ class MicrophoneArrayNode(Node):
         self.dev = device
         self.tuning = tuning
         self.pixel_ring = pixel_ring
+        self.open_attempts = 0
         # A newly opened or recovered device must be configured even when the
         # persisted revision is unchanged.
         self.applied_desired_state_revision = None
@@ -377,15 +379,22 @@ class MicrophoneArrayNode(Node):
         self._shown_led_mode = state.led_mode
         if self.pixel_ring is None:
             return
-        if state.led_mode:
-            self._write_led_mode(state.led_mode, self._configured_led)
-            self.get_logger().info(
-                f"Voice holder {state.holder_personality_id or 'none'} "
-                f"phase={state.phase} led={state.led_mode}"
-            )
-            return
-        if self._configured_led is not None:
-            self._write_configured_led(self._configured_led)
+        try:
+            with self._tuning_lock:
+                if state.led_mode:
+                    self._write_led_mode(state.led_mode, self._configured_led)
+                    self.get_logger().info(
+                        f"Voice holder {state.holder_personality_id or 'none'} "
+                        f"phase={state.phase} led={state.led_mode}"
+                    )
+                    return
+                if self._configured_led is not None:
+                    self._write_configured_led(self._configured_led)
+        except Exception as exc:
+            self.get_logger().warning(f"Conversation LED update failed: {exc}")
+            self._shown_led_mode = None
+            if self._is_usb_disconnect_error(exc):
+                self._close_and_schedule_reopen(exc)
 
     def _apply_led_state(self, state):
         """Apply LED state; the firmware acknowledges writes but cannot read back.
@@ -440,27 +449,83 @@ class MicrophoneArrayNode(Node):
         finally:
             self._syncing_parameters = False
 
+    @staticmethod
+    def _is_usb_disconnect_error(exc: Exception) -> bool:
+        errno = getattr(exc, "errno", None)
+        if errno in (19, 32, 5, 108):
+            return True
+        text = str(exc).lower()
+        return (
+            "no such device" in text
+            or "pipe error" in text
+            or "input/output error" in text
+            or "entity not found" in text
+        )
+
+    def _close_and_schedule_reopen(self, exc: Exception) -> None:
+        """Dispose a dead USB handle after disconnect/reset and schedule retry_open_device."""
+        if self.dev is None and self.retry_timer is not None:
+            return
+        for attr in (
+            "timer",
+            "vad_timer",
+            "desired_state_timer",
+            "desired_state_retry_timer",
+        ):
+            t = getattr(self, attr, None)
+            setattr(self, attr, None)
+            if t is not None:
+                try:
+                    t.cancel()
+                    self.destroy_timer(t)
+                except Exception:
+                    pass
+        dev = self.dev
+        self.dev = None
+        self.tuning = None
+        self.pixel_ring = None
+        if dev is not None:
+            try:
+                usb.util.dispose_resources(dev)
+            except Exception:
+                pass
+        if self.retry_timer is None:
+            delay = next_retry_delay(max(1, self.open_attempts))
+            self.get_logger().warning(
+                f"ReSpeaker USB handle lost ({exc}); scheduling re-open in {delay:g}s"
+            )
+            self.retry_timer = self.create_timer(delay, self.retry_open_device)
+
     def publish_voice_activity(self):
         """Publish only the VAD bit, and skip the cycle when the device is busy.
 
         A blocking read here would queue up behind the state cycle and then fire a
         burst of stale samples; skipping keeps the signal fresh and the node calm.
         """
+        if self.tuning is None:
+            return
         if not self._tuning_lock.acquire(blocking=False):
             return
+        disconnect_exc = None
         try:
             voice_activity = bool(self.tuning.read("VOICEACTIVITY"))
         except Exception as exc:
             if not self._vad_read_warning_active:
                 self.get_logger().warning(f"voice activity read failed: {exc}")
                 self._vad_read_warning_active = True
+            if self._is_usb_disconnect_error(exc):
+                disconnect_exc = exc
             return
         finally:
             self._tuning_lock.release()
+            if disconnect_exc is not None:
+                self._close_and_schedule_reopen(disconnect_exc)
         self._vad_read_warning_active = False
         self.voice_publisher.publish(Bool(data=voice_activity))
 
     def publish_state(self):
+        if self.tuning is None:
+            return
         fast_vad = self.vad_timer is not None
         try:
             with self._tuning_lock:
@@ -477,6 +542,8 @@ class MicrophoneArrayNode(Node):
                     f"XVF3000 state read failed; publishing nothing: {exc}"
                 )
                 self._read_warning_active = True
+            if self._is_usb_disconnect_error(exc):
+                self._close_and_schedule_reopen(exc)
             return
 
         self._read_warning_active = False

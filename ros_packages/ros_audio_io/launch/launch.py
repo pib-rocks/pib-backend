@@ -17,6 +17,8 @@ def generate_launch_description():
             executable="audio_streamer",
             name="audio_streamer",
             output="screen",
+            respawn=True,
+            respawn_delay=2.0,
         )
     )
 
@@ -27,6 +29,8 @@ def generate_launch_description():
             executable="volume_service",
             name="volume_service",
             output="screen",
+            respawn=True,
+            respawn_delay=2.0,
         )
     )
 
@@ -38,6 +42,8 @@ def generate_launch_description():
                 executable="doa_publisher",
                 name="doa_publisher",
                 output="screen",
+                respawn=True,
+                respawn_delay=2.0,
             )
         )
     else:

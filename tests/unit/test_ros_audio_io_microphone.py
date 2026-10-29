@@ -1119,3 +1119,156 @@ def test_pulse_plugin_device_needs_capture_channels():
         )
         is None
     )
+
+
+def test_doa_publisher_survives_usb_disconnect_in_conversation_led_and_reopens(
+    monkeypatch,
+):
+    """PR-2128: USBError(errno=19) in _apply_conversation_led must not crash doa_publisher; it must dispose and reopen."""
+
+    class FakeTimer:
+        def __init__(self, delay, callback):
+            self.delay = delay
+            self.callback = callback
+            self.cancelled = False
+
+        def cancel(self):
+            self.cancelled = True
+
+    class FakeLogger:
+        def __init__(self):
+            self.infos = []
+            self.warnings = []
+
+        def info(self, message):
+            self.infos.append(message)
+
+        def warning(self, message):
+            self.warnings.append(message)
+
+        def error(self, message):
+            pass
+
+    class FakeNode:
+        def __init__(self, name):
+            self.timers = []
+            self.logger = FakeLogger()
+
+        def create_publisher(self, message_type, topic, depth):
+            return types.SimpleNamespace(publish=lambda message: None)
+
+        def create_timer(self, delay, callback):
+            timer = FakeTimer(delay, callback)
+            self.timers.append(timer)
+            return timer
+
+        def destroy_timer(self, timer):
+            if timer in self.timers:
+                self.timers.remove(timer)
+
+        def declare_parameter(self, name, value):
+            pass
+
+        def add_on_set_parameters_callback(self, callback):
+            pass
+
+        def get_logger(self):
+            return self.logger
+
+    first_dev = object()
+    second_dev = object()
+    devices = [first_dev, second_dev]
+    disposed = []
+
+    usb_core = types.ModuleType("usb.core")
+    usb_core.find = lambda **kwargs: devices.pop(0) if devices else None
+    usb_util = types.ModuleType("usb.util")
+    usb_util.dispose_resources = lambda found: disposed.append(found)
+    usb = types.ModuleType("usb")
+    usb.core = usb_core
+    usb.util = usb_util
+
+    rclpy = types.ModuleType("rclpy")
+    rclpy_node = types.ModuleType("rclpy.node")
+    rclpy_node.Node = FakeNode
+    rclpy_parameter = types.ModuleType("rclpy.parameter")
+    rclpy_parameter.Parameter = object
+    rcl_interfaces = types.ModuleType("rcl_interfaces")
+    rcl_interfaces_msg = types.ModuleType("rcl_interfaces.msg")
+    rcl_interfaces_msg.SetParametersResult = object
+    std_msgs = types.ModuleType("std_msgs")
+    std_msgs_msg = types.ModuleType("std_msgs.msg")
+    std_msgs_msg.Bool = lambda data=False: types.SimpleNamespace(data=data)
+    std_msgs_msg.Int32 = lambda data=0: types.SimpleNamespace(data=data)
+
+    tuning = CoefficientDevice()
+    tuning_module = types.ModuleType("ros_audio_io.tuning")
+    tuning_module.Tuning = lambda found: tuning
+
+    fail_led = {"disconnect": False}
+
+    def set_brightness(value):
+        if fail_led["disconnect"]:
+            err = OSError(19, "No such device (it may have been disconnected)")
+            err.errno = 19
+            raise err
+
+    pixel_ring_module = types.ModuleType("ros_audio_io.pixel_ring")
+    pixel_ring_module.PixelRing = lambda found: types.SimpleNamespace(
+        set_brightness=set_brightness,
+        set_vad_led=lambda value: None,
+        off=lambda: None,
+        listen=lambda: None,
+        think=lambda: None,
+        speak=lambda: None,
+    )
+
+    for name, module in {
+        "usb": usb,
+        "usb.core": usb_core,
+        "usb.util": usb_util,
+        "rclpy": rclpy,
+        "rclpy.node": rclpy_node,
+        "rclpy.parameter": rclpy_parameter,
+        "rcl_interfaces": rcl_interfaces,
+        "rcl_interfaces.msg": rcl_interfaces_msg,
+        "std_msgs": std_msgs,
+        "std_msgs.msg": std_msgs_msg,
+        "ros_audio_io.tuning": tuning_module,
+        "ros_audio_io.pixel_ring": pixel_ring_module,
+    }.items():
+        monkeypatch.setitem(sys.modules, name, module)
+    monkeypatch.delitem(sys.modules, "ros_audio_io.doa_publisher", raising=False)
+
+    doa_publisher = importlib.import_module("ros_audio_io.doa_publisher")
+    monkeypatch.setattr(
+        doa_publisher,
+        "fetch_desired_state",
+        lambda url: validate_desired_state(desired_state_document(revision=1)),
+    )
+    node = doa_publisher.MicrophoneArrayNode()
+    assert node.dev is first_dev
+
+    # Simulate USB disconnect when _on_voice_assistant_state updates the LED ring
+    fail_led["disconnect"] = True
+    node._on_voice_assistant_state(
+        types.SimpleNamespace(
+            turned_on=True,
+            chat_id="chat-1",
+            personality_id="p-1",
+            personality_name="Eva",
+            speaking=True,
+            using_fallback=False,
+        )
+    )
+
+    assert first_dev in disposed
+    assert node.dev is None
+    assert node.retry_timer is not None
+
+    # Device comes back on retry_open_device
+    fail_led["disconnect"] = False
+    node.retry_open_device()
+    assert node.dev is second_dev
+    assert node.retry_timer is None
+    sys.modules.pop("ros_audio_io.doa_publisher", None)
