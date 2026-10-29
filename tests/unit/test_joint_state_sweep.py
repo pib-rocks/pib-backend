@@ -235,3 +235,42 @@ def test_silent_single_reads_are_not_remembered_as_working(monkeypatch):
     assert sweep_mod.single_read_ports() == set()
     sweep_mod.sweep_feetech_joint_positions(motors)
     assert len(group_reads.instances) == 2
+
+
+def test_fallback_still_runs_when_the_group_read_throws(monkeypatch):
+    """Load-bearing: .168 case - the broadcast raised, so the old code returned empty."""
+    ft_mod, act_mod = _load_modules()
+    sweep_mod = _load_sweep_module(ft_mod)
+    sweep_mod._SINGLE_READ_PORTS.clear()
+
+    class ThrowingGroupSyncRead:
+        def __init__(self, ph, start_address, data_length):
+            raise RuntimeError("broadcast not supported by this adapter")
+
+    monkeypatch.setattr(sweep_mod, "GroupSyncRead", ThrowingGroupSyncRead)
+
+    def fake_sts(ph):
+        pk = FakeStsPacketHandler(ph)
+        pk.sts_tohost = lambda value, bit: int(value)
+        pk.pos_ticks_by_id = {18: 2048, 11: 3072}
+        return pk
+
+    monkeypatch.setattr(ft_mod, "PortHandler", FakePortHandler)
+    monkeypatch.setattr(ft_mod, "sts", fake_sts)
+    ft_mod._port_cache.clear()
+
+    elbow = act_mod.create_actuator("feetech_st_serial", 18, "WS-ARM", "max")
+    thumb = act_mod.create_actuator("feetech_st_serial", 11, "WS-ARM", "max")
+    motors = [
+        SimpleNamespace(name="right_arm_motor_elbow", actuators=[elbow]),
+        SimpleNamespace(name="right_hand_motor", actuators=[thumb]),
+    ]
+
+    result = sweep_mod.sweep_feetech_joint_positions(motors)
+
+    assert set(result.positions_centideg) == {
+        "right_arm_motor_elbow",
+        "right_hand_motor",
+    }
+    assert result.mode_by_port == {"WS-ARM": sweep_mod.MODE_SINGLE}
+    assert sweep_mod.single_read_ports() == {"WS-ARM"}
