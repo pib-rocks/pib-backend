@@ -221,12 +221,38 @@ class MotorControl(Node):
         self.startup_pose_executor = StartupPoseExecutor(self, motors=motors)
         self.trajectory_executor = TrajectoryExecutor(self, name_to_motors)
 
+        #: Last known motor power state: None until a source told us, then True/False.
+        self._relay_on: bool | None = None
         if solid_state_relay_bricklet is None:
             self.get_logger().info(
                 "No SSR configured. Executing startup pose immediately."
             )
             self._startup_done = True
             self._execute_startup_pose()
+        else:
+            self._read_relay_state()
+
+    def _read_relay_state(self) -> None:
+        """Ask the relay brick directly once, so the first tick is not blind.
+
+        The topic only fires on a change; without this the node would assume
+        nothing and pay 26 serial timeouts per sweep while the power is off.
+        """
+        if solid_state_relay_bricklet is None:
+            return
+        try:
+            self._relay_on = bool(solid_state_relay_bricklet.get_state())
+        except Exception as error:  # noqa: BLE001 - unknown is a valid state
+            self.get_logger().warn(f"Could not read the relay state: {error}")
+            self._relay_on = None
+
+    def _motor_power_is_off(self) -> bool:
+        """True only when the relay definitely reports off.
+
+        Unknown counts as on: a build without a relay, or a relay that has not
+        answered yet, must not silently stop publishing joint states.
+        """
+        return self._relay_on is False
 
     def _execute_startup_pose(self):
         try:
@@ -243,6 +269,7 @@ class MotorControl(Node):
             )
 
     def on_ssr_state_change(self, msg: SolidStateRelayState):
+        self._relay_on = bool(msg.turned_on)
         if not msg.turned_on or self._startup_done:
             return
         self._startup_done = True
@@ -405,6 +432,10 @@ class MotorControl(Node):
         )
 
     def _publish_joint_states(self) -> None:
+        if self._motor_power_is_off():
+            # No power on the bus: every read would burn its serial timeout.
+            self._relay_off_skips = getattr(self, "_relay_off_skips", 0) + 1
+            return
         started = time.monotonic()
         sweep = sweep_feetech_joint_positions(motors)
         positions = sweep.positions_centideg
@@ -442,8 +473,29 @@ class MotorControl(Node):
         response.results = []
         response.positions = []
 
+        if self._motor_power_is_off():
+            response.successful = False
+            response.message = "motor power is off (solid state relay off)"
+            for joint_name in target_names:
+                result = MotorResult()
+                result.motor_name = joint_name
+                result.successful = False
+                if joint_name not in name_to_motors:
+                    result.error_code = "unknown_joint"
+                    result.detail = f"unknown joint name '{joint_name}'"
+                else:
+                    result.error_code = "bus_unavailable"
+                    result.detail = response.message
+                response.results.append(result)
+                response.positions.append(0)
+            return response
+
         sweep = sweep_feetech_joint_positions(motors)
-        if sweep.ports_attempted == 0 and not sweep.positions_centideg:
+        if (
+            sweep.ports_attempted == 0
+            and not sweep.ports_unreachable
+            and not sweep.positions_centideg
+        ):
             response.successful = False
             response.message = "no sweepable actuator family on this robot (servo bricklets report no position feedback)"
             for joint_name in target_names:
@@ -461,8 +513,15 @@ class MotorControl(Node):
                 response.positions.append(0)
             return response
 
-        response.successful = True
-        response.message = ""
+        bus_error = ""
+        if not sweep.positions_centideg and sweep.ports_unreachable:
+            bus_error = (
+                "no Feetech bus reachable "
+                f"({sweep.ports_unreachable} port(s) did not answer; "
+                "adapter absent or motor power off)"
+            )
+        response.successful = not bus_error
+        response.message = bus_error
         for joint_name in target_names:
             result = MotorResult()
             result.motor_name = joint_name
@@ -476,6 +535,11 @@ class MotorControl(Node):
                 result.error_code = ""
                 result.detail = ""
                 response.positions.append(int(sweep.positions_centideg[joint_name]))
+            elif bus_error:
+                result.successful = False
+                result.error_code = "bus_unavailable"
+                result.detail = bus_error
+                response.positions.append(0)
             else:
                 result.successful = False
                 result.error_code = "position_unavailable"
