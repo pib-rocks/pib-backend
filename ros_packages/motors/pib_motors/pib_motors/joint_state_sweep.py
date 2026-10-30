@@ -34,6 +34,14 @@ _NO_BUS_LOG_INTERVAL_SEC = 60.0
 _last_no_bus_log_monotonic = 0.0
 
 MODE_SINGLE = "single"
+MODE_UNREACHABLE = "unreachable"
+
+#: How long a port that failed its probe is left alone. One probe costs the
+#: serial packet timeout (measured: 50.4 ms on a pib5advanced with the motor
+#: power off), so without this a 10 Hz sweep spends ~1.6 s per tick probing 26
+#: servos - that was 90 % CPU per process for measuring nothing.
+_PORT_PROBE_TTL_SEC = 5.0
+_dead_ports: dict[str, float] = {}
 
 
 @dataclass(frozen=True)
@@ -48,6 +56,8 @@ class JointStateSweepResult:
     mode_by_port: dict[str, str] = field(default_factory=dict)
     #: Wall time spent reading each port, for the latency work.
     port_durations_ms: dict[str, float] = field(default_factory=dict)
+    #: Ports whose single probe failed and that were therefore skipped.
+    ports_unreachable: int = 0
 
 
 def _feetech_entries(motors: list[Any]) -> list[tuple[str, FeetechStSerialActuator]]:
@@ -91,6 +101,36 @@ def _read_single(
     return positions
 
 
+def _port_answers(group: list[tuple[str, FeetechStSerialActuator]]) -> bool:
+    """One probe per port instead of one per servo.
+
+    ``check_connection`` opens the port and pings the first servo; that answers
+    "is anything on this bus at all". A failed port is remembered for
+    ``_PORT_PROBE_TTL_SEC`` so the next ticks cost nothing.
+    """
+    sample = group[0][1]
+    port_key = str(getattr(sample, "uid", "") or "")
+    now = time.monotonic()
+    deadline = _dead_ports.get(port_key)
+    if deadline is not None and now < deadline:
+        return False
+    try:
+        answers = bool(sample.is_connected())
+    except Exception as error:  # noqa: BLE001 - a hard port error is "no answer"
+        _LOG.debug("port probe failed on %s: %s", port_key, error)
+        answers = False
+    if answers:
+        _dead_ports.pop(port_key, None)
+    elif port_key:
+        _dead_ports[port_key] = now + _PORT_PROBE_TTL_SEC
+    return answers
+
+
+def forget_dead_ports() -> None:
+    """Clear the per-port probe memory (tests, or after re-plugging an adapter)."""
+    _dead_ports.clear()
+
+
 def _sweep_port(
     group: list[tuple[str, FeetechStSerialActuator]],
 ) -> tuple[dict[str, int], str]:
@@ -120,25 +160,19 @@ def sweep_feetech_joint_positions(motors: list[Any]) -> JointStateSweepResult:
     if not entries:
         return JointStateSweepResult({}, time.monotonic(), 0, 0)
 
-    connected = [
-        (name, actuator) for name, actuator in entries if actuator.is_connected()
-    ]
-    if not connected:
-        now = time.monotonic()
-        if now - _last_no_bus_log_monotonic >= _NO_BUS_LOG_INTERVAL_SEC:
-            _last_no_bus_log_monotonic = now
-            _LOG.info(
-                "joint state sweep: no connected Feetech actuators (bus absent or SSR off)"
-            )
-        return JointStateSweepResult({}, time.monotonic(), 0, 0)
-
-    grouped = _group_by_port(connected)
+    grouped = _group_by_port(entries)
     all_positions: dict[str, int] = {}
-    ports_attempted = len(grouped)
+    ports_attempted = 0
     ports_succeeded = 0
+    ports_unreachable = 0
     mode_by_port: dict[str, str] = {}
     port_durations_ms: dict[str, float] = {}
     for port_key, group in grouped.items():
+        if not _port_answers(group):
+            ports_unreachable += 1
+            mode_by_port[port_key] = MODE_UNREACHABLE
+            continue
+        ports_attempted += 1
         started = time.monotonic()
         port_positions, mode = _sweep_port(group)
         port_durations_ms[port_key] = round((time.monotonic() - started) * 1000.0, 1)
@@ -148,6 +182,17 @@ def sweep_feetech_joint_positions(motors: list[Any]) -> JointStateSweepResult:
             ports_succeeded += 1
             all_positions.update(port_positions)
 
+    if not all_positions and ports_unreachable:
+        now = time.monotonic()
+        if now - _last_no_bus_log_monotonic >= _NO_BUS_LOG_INTERVAL_SEC:
+            _last_no_bus_log_monotonic = now
+            _LOG.warning(
+                "joint state sweep: %d of %d ports did not answer the probe "
+                "(adapters absent or motor power off)",
+                ports_unreachable,
+                len(grouped),
+            )
+
     return JointStateSweepResult(
         all_positions,
         time.monotonic(),
@@ -155,6 +200,7 @@ def sweep_feetech_joint_positions(motors: list[Any]) -> JointStateSweepResult:
         ports_succeeded,
         mode_by_port,
         port_durations_ms,
+        ports_unreachable,
     )
 
 

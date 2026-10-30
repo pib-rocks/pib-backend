@@ -135,3 +135,73 @@ def test_failed_transactions_are_skipped_not_reported_as_zero(monkeypatch):
 
     assert result.positions_centideg == {}
     assert result.ports_succeeded == 0
+
+
+def test_sweep_probes_each_port_once_not_each_servo(monkeypatch):
+    """Load-bearing: 26 probes cost 26 x 50 ms; one probe per port is enough."""
+    ft_mod, act_mod = _load_modules()
+    sweep_mod = _load_sweep_module(ft_mod)
+    sweep_mod.forget_dead_ports()
+
+    def fake_sts(ph):
+        pk = FakeStsPacketHandler(ph)
+        pk.sts_tohost = lambda value, bit: int(value)
+        pk.pos_ticks_by_id = {16: 2048, 17: 2560, 18: 3072}
+        return pk
+
+    monkeypatch.setattr(ft_mod, "PortHandler", FakePortHandler)
+    monkeypatch.setattr(ft_mod, "sts", fake_sts)
+    ft_mod._port_cache.clear()
+
+    motors = [
+        SimpleNamespace(
+            name=name,
+            actuators=[act_mod.create_actuator("feetech_st_serial", pin, "WS", "max")],
+        )
+        for name, pin in (("j16", 16), ("j17", 17), ("j18", 18))
+    ]
+    probes = []
+    for motor in motors:
+        actuator = motor.actuators[0]
+        original = actuator.is_connected
+
+        def counting(original=original):
+            probes.append(1)
+            return original()
+
+        actuator.is_connected = counting
+
+    result = sweep_mod.sweep_feetech_joint_positions(motors)
+
+    assert len(probes) == 1, f"eine Probe pro Port erwartet, waren {len(probes)}"
+    assert result.ports_attempted == 1
+    assert len(result.positions_centideg) == 3
+
+
+def test_dead_port_is_not_probed_again_inside_the_ttl(monkeypatch):
+    """A port that just failed must not cost its 50 ms timeout on every tick."""
+
+    class OfflineActuator:
+        kind = "feetech_st_serial"
+        uid = "dead-adapter"
+
+        def __init__(self):
+            self.probes = 0
+
+        def is_connected(self) -> bool:
+            self.probes += 1
+            return False
+
+    sweep_mod = _load_sweep_module(_load_modules()[0])
+    sweep_mod.forget_dead_ports()
+    actuator = OfflineActuator()
+    motors = [SimpleNamespace(name="turn_head_motor", actuators=[actuator])]
+
+    first = sweep_mod.sweep_feetech_joint_positions(motors)
+    second = sweep_mod.sweep_feetech_joint_positions(motors)
+
+    assert actuator.probes == 1, f"nur eine Probe erwartet, waren {actuator.probes}"
+    assert first.ports_unreachable == 1
+    assert second.ports_unreachable == 1
+    assert first.mode_by_port == {"dead-adapter": sweep_mod.MODE_UNREACHABLE}
+    sweep_mod.forget_dead_ports()
