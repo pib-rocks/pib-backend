@@ -67,12 +67,14 @@ class Motor:
         settings.update(self.actuators[0].get_settings())
         return settings
 
-    def set_position(self, position: int) -> bool:
+    def set_position(self, position: int, **kwargs: Any) -> bool:
         """sets the position of all actuators associated with this motor"""
         if not self.actuators:
             return False
         position = self._validate_position(position)
-        return all(actuator.set_position(position) for actuator in self.actuators)
+        return all(
+            actuator.set_position(position, **kwargs) for actuator in self.actuators
+        )
 
     def get_position(self) -> int:
         """Returns the measured present position, or 0 if no actuator is connected."""

@@ -18,6 +18,8 @@ from dataclasses import dataclass
 from queue import SimpleQueue
 from typing import Any, Callable, Iterable, Mapping, Protocol, Sequence
 
+from pib_motors.bus_writer import BusPriority
+
 DEFAULT_RATE_HZ = 100.0
 # Upper bound for timed pose sequences (sum of leg seconds / final time_from_start).
 MAX_SOFTWARE_TRAJECTORY_DURATION_SEC = 300.0
@@ -226,6 +228,7 @@ class TrajectoryCompletion:
     successful: bool
     cancelled: bool
     joint_names: tuple[str, ...]
+    duration_sec: float = 0.0
 
 
 class TrajectoryExecutor:
@@ -332,26 +335,29 @@ class TrajectoryExecutor:
         schedule_error = validate_software_trajectory_schedule(jt)
         if schedule_error is not None:
             self._log_error(schedule_error)
-            return TrajectoryCompletion(False, False, tuple(names))
+            return TrajectoryCompletion(False, False, tuple(names), 0.0)
 
         motors = self._resolve_motors(names)
         if motors is None:
-            return TrajectoryCompletion(False, False, tuple(names))
+            return TrajectoryCompletion(False, False, tuple(names), 0.0)
 
         names, times, series = parse_joint_trajectory(jt)
         original_settings = self._backup_motor_settings(motors)
         self._sharpen_motion(motors, original_settings)
         cancelled = False
         success = True
+        run_started = self.clock_fn()
         try:
             success, cancelled = self._run_interpolation_loop(names, times, series)
         finally:
             if self.restore:
                 self._restore_settings(motors, original_settings)
+        duration_sec = max(0.0, self.clock_fn() - run_started)
         return TrajectoryCompletion(
             successful=success and not cancelled,
             cancelled=cancelled,
             joint_names=tuple(names),
+            duration_sec=duration_sec,
         )
 
     def _execute_single_point(
@@ -395,11 +401,19 @@ class TrajectoryExecutor:
             for name in names:
                 position = targets[name]
                 for motor in self.motor_lookup[name]:
-                    success &= bool(motor.set_position(position))
+                    success &= self._stream_set_position(motor, position)
             if now >= duration:
                 break
             self.sleep_fn(dt)
         return success, cancelled
+
+    @staticmethod
+    def _stream_set_position(motor: MotorLike, position: int) -> bool:
+        setter = motor.set_position
+        try:
+            return bool(setter(position, bus_priority=BusPriority.STREAM))
+        except TypeError:
+            return bool(setter(position))
 
     def _resolve_motors(self, names: Iterable[str]) -> list[MotorLike] | None:
         resolved: list[MotorLike] = []

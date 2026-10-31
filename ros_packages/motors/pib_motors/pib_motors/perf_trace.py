@@ -11,6 +11,16 @@ def format_perf_trace_trajectory_start(points: int, elapsed_ms: float) -> str:
     )
 
 
+def format_perf_trace_trajectory_done(
+    duration_sec: float, successful: bool, cancelled: bool
+) -> str:
+    return (
+        f"[PERF_TRACE] TRAJECTORY_DONE duration_sec={float(duration_sec):.3f} "
+        f"successful={'true' if successful else 'false'} "
+        f"cancelled={'true' if cancelled else 'false'}"
+    )
+
+
 def format_perf_trace_joint_state_sweep(
     joint_count: int, elapsed_ms: float, ports_ok: int, ports_total: int
 ) -> str:
