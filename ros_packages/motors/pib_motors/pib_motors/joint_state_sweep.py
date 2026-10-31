@@ -147,8 +147,15 @@ def _sweep_port(
         _LOG.error("joint state sweep: port %s failed entirely: %s", port_key, error)
         try:
             _note_and_maybe_reopen(resolve_serial_device(sample.uid))
-        except Exception:  # noqa: BLE001 - never let the recovery break the sweep
-            pass
+        except (
+            Exception
+        ) as error:  # noqa: BLE001 - never let the recovery break the sweep
+            _LOG.error(
+                "joint state sweep: port %s recovery failed: %s",
+                port_key,
+                error,
+                exc_info=True,
+            )
         return {}, ""
 
 
@@ -177,8 +184,17 @@ def sweep_feetech_joint_positions(motors: list[Any]) -> JointStateSweepResult:
             # ports_ok stayed at 3/4 for a minute with only one PORT_REOPEN in the log.
             try:
                 _note_and_maybe_reopen(serial_for_port(group[0][1]))
-            except Exception:  # noqa: BLE001 - recovery must never break the sweep
-                pass
+            except (
+                Exception
+            ) as error:  # noqa: BLE001 - recovery must never break the sweep
+                # Loud on purpose: swallowing this hid why the retry loop never ran on the
+                # robot (one PORT_REOPEN in the log, then silence, ports_ok stuck at 3/4).
+                _LOG.error(
+                    "joint state sweep: port %s recovery failed: %s",
+                    port_key,
+                    error,
+                    exc_info=True,
+                )
             continue
         ports_attempted += 1
         started = time.monotonic()

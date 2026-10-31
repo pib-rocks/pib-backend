@@ -67,6 +67,12 @@ class PortRecovery:
                 return False
             now = self.clock_fn()  # type: ignore[operator]
             if now - state.last_reopen_at < self.reopen_interval_sec:
+                _LOG.debug(
+                    "[PERF_TRACE] PORT_RETRY_HELD device=%s failures=%d wait_ms=%.0f",
+                    device,
+                    state.failures,
+                    (self.reopen_interval_sec - (now - state.last_reopen_at)) * 1000.0,
+                )
                 return False
             if state.reopens_without_success >= self.max_reopens_without_success:
                 if not state.gave_up:

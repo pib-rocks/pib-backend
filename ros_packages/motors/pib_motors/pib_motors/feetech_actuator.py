@@ -191,6 +191,18 @@ def reopen_port(address: str) -> bool:
         return False
     ph = cached[0]
     try:
+        # A port that stopped answering usually has a half-transaction in either buffer: the
+        # reply the servo never sent, or the request the adapter swallowed. Closing the file
+        # alone keeps that garbage for the next open, so flush both directions first.
+        ser = getattr(ph, "ser", None)
+        if ser is not None and hasattr(ser, "reset_input_buffer"):
+            ser.reset_input_buffer()
+            ser.reset_output_buffer()
+        elif ser is not None and hasattr(ser, "flush"):
+            ser.flush()
+    except Exception as error:  # noqa: BLE001 - a dead handle may refuse to flush
+        logging.error("could not flush %s before reopening: %s", device, error)
+    try:
         ph.closePort()
     except Exception as error:  # noqa: BLE001 - a dead handle may fail to close
         logging.warning("could not close %s cleanly: %s", device, error)
