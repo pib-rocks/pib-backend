@@ -1,0 +1,402 @@
+"""Single owner thread per Feetech serial port with a priority job queue (PR-2138).
+
+Priority: SERVICE > SWEEP > STREAM. STREAM targets coalesce per (port, pin); expired
+STREAM jobs are dropped. Only the writer thread calls into ``PortHandler`` / ``sts``.
+Cross-process exclusion stays in ``feetech_actuator._BusAccess`` (Lock + flock).
+"""
+
+from __future__ import annotations
+
+import logging
+import threading
+import time
+from collections import deque
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Any, Callable, Deque, Iterator
+
+from pib_motors.stservo_sdk.stservo_def import COMM_SUCCESS
+
+_LOG = logging.getLogger(__name__)
+
+DEFAULT_SERVICE_DEADLINE_SEC = 2.0
+DEFAULT_SWEEP_DEADLINE_SEC = 1.5
+DEFAULT_STREAM_DEADLINE_SEC = 0.1
+
+_registry_lock = threading.Lock()
+_registry: dict[str, BusWriter] = {}
+
+
+class BusPriority(Enum):
+    SERVICE = 0
+    SWEEP = 1
+    STREAM = 2
+
+
+@dataclass
+class StreamTarget:
+    pin: int
+    ticks: int
+    speed: int
+    acc: int
+    deadline: float
+    submitted_at: float
+    seq: int
+
+
+@dataclass
+class _ServiceJob:
+    deadline: float
+    submitted_at: float
+    execute: Callable[[Any], Any]
+    done: threading.Event = field(default_factory=threading.Event)
+    result: Any = None
+    error: str | None = None
+
+
+@dataclass
+class _SweepJob:
+    deadline: float
+    submitted_at: float
+    execute: Callable[[Any], Any]
+    done: threading.Event = field(default_factory=threading.Event)
+    result: Any = None
+    error: str | None = None
+
+
+@dataclass
+class BusWriterCounters:
+    txs: int = 0
+    txs_window_start: float = 0.0
+    txs_per_sec: float = 0.0
+    queue_depth: int = 0
+    max_queue_wait_ms: float = 0.0
+    dropped_stream: int = 0
+    coalesced_stream: int = 0
+
+    def snapshot(self) -> dict[str, float | int]:
+        return {
+            "txs_per_sec": round(self.txs_per_sec, 1),
+            "queue_depth": int(self.queue_depth),
+            "max_queue_wait_ms": round(self.max_queue_wait_ms, 1),
+            "dropped_stream": int(self.dropped_stream),
+            "coalesced_stream": int(self.coalesced_stream),
+        }
+
+
+class BusWriter:
+    """One background thread per resolved serial device path."""
+
+    def __init__(
+        self,
+        port_key: str,
+        ph: Any,
+        pk: Any,
+        lock: threading.Lock,
+        *,
+        clock_fn: Callable[[], float] = time.monotonic,
+        sleep_fn: Callable[[float], None] = time.sleep,
+    ) -> None:
+        self.port_key = port_key
+        self._ph = ph
+        self._pk = pk
+        self._lock = lock
+        self._clock = clock_fn
+        self._sleep = sleep_fn
+        self._cond = threading.Condition()
+        self._service: Deque[_ServiceJob] = deque()
+        self._sweep: Deque[_SweepJob] = deque()
+        self._stream: dict[int, StreamTarget] = {}
+        self._stream_seq = 0
+        self._counters = BusWriterCounters(txs_window_start=clock_fn())
+        self._stop = threading.Event()
+        self._thread = threading.Thread(
+            target=self._run, name=f"bus_writer:{port_key}", daemon=False
+        )
+        self._thread.start()
+
+    def stop(self, timeout: float | None = 5.0) -> None:
+        self._stop.set()
+        with self._cond:
+            self._cond.notify_all()
+        self._thread.join(timeout=timeout)
+
+    def counters(self) -> BusWriterCounters:
+        return self._counters
+
+    def submit_stream(
+        self,
+        pin: int,
+        ticks: int,
+        speed: int,
+        acc: int,
+        deadline: float | None = None,
+    ) -> None:
+        now = self._clock()
+        if deadline is None:
+            deadline = now + DEFAULT_STREAM_DEADLINE_SEC
+        with self._cond:
+            existing = self._stream.get(pin)
+            if existing is not None:
+                self._counters.coalesced_stream += 1
+            self._stream_seq += 1
+            self._stream[pin] = StreamTarget(
+                pin=pin,
+                ticks=ticks,
+                speed=speed,
+                acc=acc,
+                deadline=deadline,
+                submitted_at=now,
+                seq=self._stream_seq,
+            )
+            self._refresh_queue_depth()
+            self._cond.notify()
+
+    def run_service(
+        self,
+        execute: Callable[[Any], Any],
+        *,
+        deadline: float | None = None,
+        wait_timeout: float | None = None,
+    ) -> tuple[Any, str | None]:
+        """Enqueue SERVICE work and block until done or deadline (ROS-safe timeout)."""
+        now = self._clock()
+        if deadline is None:
+            deadline = now + DEFAULT_SERVICE_DEADLINE_SEC
+        if wait_timeout is None:
+            wait_timeout = max(0.0, deadline - now)
+        job = _ServiceJob(deadline=deadline, submitted_at=now, execute=execute)
+        with self._cond:
+            self._service.append(job)
+            self._refresh_queue_depth()
+            self._cond.notify()
+        if not job.done.wait(timeout=wait_timeout):
+            return None, "bus busy: service deadline expired before completion"
+        return job.result, job.error
+
+    def run_sweep(
+        self,
+        execute: Callable[[Any], Any],
+        *,
+        deadline: float | None = None,
+        wait_timeout: float | None = None,
+    ) -> tuple[Any, str | None]:
+        now = self._clock()
+        if deadline is None:
+            deadline = now + DEFAULT_SWEEP_DEADLINE_SEC
+        if wait_timeout is None:
+            wait_timeout = max(0.0, deadline - now)
+        job = _SweepJob(deadline=deadline, submitted_at=now, execute=execute)
+        with self._cond:
+            self._sweep.append(job)
+            self._refresh_queue_depth()
+            self._cond.notify()
+        if not job.done.wait(timeout=wait_timeout):
+            return None, "bus busy: sweep deadline expired before completion"
+        return job.result, job.error
+
+    def flush_idle(self, timeout: float = 1.0) -> bool:
+        """Tests: wait until SERVICE, SWEEP, and STREAM queues are empty."""
+        deadline = self._clock() + timeout
+        while self._clock() < deadline:
+            with self._cond:
+                if not self._has_work_locked():
+                    return True
+            self._sleep(0.005)
+        with self._cond:
+            return not self._has_work_locked()
+
+    def _refresh_queue_depth(self) -> None:
+        self._counters.queue_depth = (
+            len(self._service) + len(self._sweep) + len(self._stream)
+        )
+
+    def _record_queue_wait(self, submitted_at: float) -> None:
+        wait_ms = (self._clock() - submitted_at) * 1000.0
+        if wait_ms > self._counters.max_queue_wait_ms:
+            self._counters.max_queue_wait_ms = wait_ms
+
+    def _record_tx(self) -> None:
+        now = self._clock()
+        self._counters.txs += 1
+        elapsed = now - self._counters.txs_window_start
+        if elapsed >= 1.0:
+            self._counters.txs_per_sec = self._counters.txs / elapsed
+            self._counters.txs = 0
+            self._counters.txs_window_start = now
+            self._counters.max_queue_wait_ms = 0.0
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            batch: list[StreamTarget] | _ServiceJob | _SweepJob | None
+            with self._cond:
+                while not self._stop.is_set() and not self._has_work_locked():
+                    self._cond.wait(timeout=0.05)
+                if self._stop.is_set():
+                    break
+                batch = self._pop_next_locked()
+                self._refresh_queue_depth()
+            if batch is None:
+                continue
+            self._execute(batch)
+
+    def _has_work_locked(self) -> bool:
+        if self._service or self._sweep:
+            return True
+        return bool(self._stream)
+
+    def _pop_next_locked(self) -> list[StreamTarget] | _ServiceJob | _SweepJob | None:
+        if self._service:
+            return self._service.popleft()
+        if self._sweep:
+            return self._sweep.popleft()
+        if not self._stream:
+            return None
+        now = self._clock()
+        pending: list[StreamTarget] = []
+        expired_pins: list[int] = []
+        for pin, target in self._stream.items():
+            if target.deadline < now:
+                expired_pins.append(pin)
+            else:
+                pending.append(target)
+        for pin in expired_pins:
+            del self._stream[pin]
+            self._counters.dropped_stream += 1
+        if not pending:
+            return None
+        for target in pending:
+            self._stream.pop(target.pin, None)
+        pending.sort(key=lambda t: t.seq)
+        return pending
+
+    def _execute(
+        self, work: list[StreamTarget] | _ServiceJob | _SweepJob
+    ) -> None:
+        if isinstance(work, _ServiceJob):
+            self._execute_service(work)
+        elif isinstance(work, _SweepJob):
+            self._execute_sweep(work)
+        else:
+            self._execute_stream_batch(work)
+
+    def _execute_service(self, job: _ServiceJob) -> None:
+        now = self._clock()
+        if now > job.deadline:
+            job.error = "bus busy: service deadline expired before bus access"
+            job.done.set()
+            return
+        self._record_queue_wait(job.submitted_at)
+        try:
+            with self._bus_access():
+                job.result = job.execute(self._pk)
+            self._record_tx()
+        except Exception as error:  # noqa: BLE001
+            job.error = str(error)
+        job.done.set()
+
+    def _execute_sweep(self, job: _SweepJob) -> None:
+        now = self._clock()
+        if now > job.deadline:
+            job.error = "bus busy: sweep deadline expired before bus access"
+            job.done.set()
+            return
+        self._record_queue_wait(job.submitted_at)
+        try:
+            with self._bus_access():
+                job.result = job.execute(self._pk)
+            self._record_tx()
+        except Exception as error:  # noqa: BLE001
+            job.error = str(error)
+        job.done.set()
+
+    def _bus_access(self) -> Any:
+        from pib_motors.feetech_actuator import _BusAccess
+
+        return _BusAccess(self._ph, self._lock)
+
+    def _execute_stream_batch(self, targets: list[StreamTarget]) -> None:
+        if not targets:
+            return
+        self._record_queue_wait(min(t.submitted_at for t in targets))
+        try:
+            with self._bus_access():
+                if len(targets) == 1:
+                    target = targets[0]
+                    res, _err = self._pk.WritePosEx(
+                        target.pin, target.ticks, target.speed, target.acc
+                    )
+                    if res != COMM_SUCCESS:
+                        _LOG.debug(
+                            "stream WritePosEx failed on %s id %s res=%s",
+                            self.port_key,
+                            target.pin,
+                            res,
+                        )
+                else:
+                    self._pk.groupSyncWrite.clearParam()
+                    for target in targets:
+                        self._pk.SyncWritePosEx(
+                            target.pin, target.ticks, target.speed, target.acc
+                        )
+                    res = self._pk.groupSyncWrite.txPacket()
+                    self._pk.groupSyncWrite.clearParam()
+                    if res != COMM_SUCCESS:
+                        _LOG.debug(
+                            "stream sync write failed on %s res=%s",
+                            self.port_key,
+                            res,
+                        )
+            self._record_tx()
+        except Exception as error:  # noqa: BLE001
+            _LOG.debug("stream batch failed on %s: %s", self.port_key, error)
+
+
+def get_bus_writer(
+    port_key: str,
+    ph: Any,
+    pk: Any,
+    lock: threading.Lock,
+    *,
+    clock_fn: Callable[[], float] = time.monotonic,
+    sleep_fn: Callable[[float], None] = time.sleep,
+) -> BusWriter:
+    with _registry_lock:
+        existing = _registry.get(port_key)
+        if existing is not None:
+            return existing
+        writer = BusWriter(
+            port_key, ph, pk, lock, clock_fn=clock_fn, sleep_fn=sleep_fn
+        )
+        _registry[port_key] = writer
+        return writer
+
+
+def all_bus_writers() -> Iterator[BusWriter]:
+    with _registry_lock:
+        yield from list(_registry.values())
+
+
+def shutdown_all_bus_writers(timeout: float | None = 5.0) -> None:
+    with _registry_lock:
+        writers = list(_registry.values())
+        _registry.clear()
+    for writer in writers:
+        writer.stop(timeout=timeout)
+
+
+def format_bus_writer_summary(writer: BusWriter) -> str:
+    snap = writer.counters().snapshot()
+    return (
+        f"[PERF_TRACE] BUS_WRITER port={writer.port_key} "
+        f"txs_per_s={snap['txs_per_sec']} "
+        f"queue={snap['queue_depth']} "
+        f"max_wait_ms={snap['max_queue_wait_ms']} "
+        f"dropped_stream={snap['dropped_stream']} "
+        f"coalesced={snap['coalesced_stream']}"
+    )
+
+
+def reset_bus_writer_registry_for_tests() -> None:
+    """Tests only: stop writers and clear registry (call before reusing fake ports)."""
+    shutdown_all_bus_writers(timeout=1.0)
