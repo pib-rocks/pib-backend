@@ -32,6 +32,14 @@ DEFAULT_STREAM_DEADLINE_SEC = 0.1
 # the port for its duration - that is the mechanism the 0.4 to 1 s node stalls come from.
 SLOW_TX_MS = 50.0
 
+#: How long the writer waits for the rest of a tick before writing a stream batch.
+#: The interpolation loop submits one target per joint, in sequence, so the second joint of
+#: the same adapter arrives a few hundred microseconds later. Without this window every
+#: submission became its own bus transaction (measured: 140 to 191 per second per port for
+#: two joints at 100 Hz, coalesced 0 to 2), which defeats the group write completely.
+#: One millisecond is a hundredth of the 100 Hz tick and is not felt by anything.
+STREAM_GATHER_SEC = 0.001
+
 _registry_lock = threading.Lock()
 _registry: dict[str, BusWriter] = {}
 
@@ -312,12 +320,39 @@ class BusWriter:
                     self._executing = True
             if batch is None:
                 continue
+            if isinstance(batch, list):
+                batch = self._gather_same_tick(batch)
             try:
                 self._execute(batch)
             finally:
                 with self._cond:
                     self._executing = False
                     self._cond.notify_all()
+
+    def _gather_same_tick(self, batch: list[StreamTarget]) -> list[StreamTarget]:
+        """Wait one short window so the rest of the tick joins the same group write.
+
+        Only stream targets are collected; if a SERVICE or SWEEP job is waiting, the batch
+        goes out immediately - those are the ones with a caller behind them.
+        """
+        self._sleep(STREAM_GATHER_SEC)
+        with self._cond:
+            if self._service or self._sweep or not self._stream:
+                return batch
+            now = self._clock()
+            by_pin = {target.pin: target for target in batch}
+            for pin in list(self._stream):
+                target = self._stream[pin]
+                if target.deadline < now:
+                    del self._stream[pin]
+                    self._counters.dropped_stream += 1
+                    continue
+                current = by_pin.get(pin)
+                if current is None or target.seq > current.seq:
+                    by_pin[pin] = target
+                del self._stream[pin]
+            self._refresh_queue_depth()
+            return sorted(by_pin.values(), key=lambda item: item.seq)
 
     def _has_work_locked(self) -> bool:
         if self._executing or self._service or self._sweep:

@@ -293,3 +293,98 @@ def test_summary_line_uses_only_keys_the_snapshot_has() -> None:
         "slow_transactions",
         "max_acquire_wait_ms",
     }
+
+
+def test_gather_collects_the_rest_of_the_tick_into_one_batch() -> None:
+    """The second joint of the same tick must join the batch instead of making its own write.
+
+    Measured on the robot without this: 140 to 191 transactions per second per port for two
+    joints at 100 Hz, coalesced 0 to 2 - the writer woke on every submit and wrote before
+    the rest of the tick had arrived. Tested directly because the real interleaving is a
+    timing race that a threaded test would not reproduce reliably.
+    """
+    from pib_motors.bus_writer import StreamTarget
+
+    writer, pk, _clock = _writer()
+    now = writer._clock()
+    writer.submit_stream(2, 2200, 1000, 50, label="pin2")
+
+    batch = [
+        StreamTarget(
+            pin=1,
+            ticks=2100,
+            speed=1000,
+            acc=50,
+            deadline=now + 1.0,
+            submitted_at=now,
+            seq=1,
+            label="pin1",
+        )
+    ]
+    gathered = writer._gather_same_tick(batch)
+
+    assert {target.pin for target in gathered} == {1, 2}, gathered
+    assert [target.pin for target in gathered] == [
+        1,
+        2,
+    ], "order must follow the sequence"
+    # and the gathered batch really is one grouped bus transaction
+    writer._execute_stream_batch(gathered)
+    assert [entry[0] for entry in pk.writes] == ["sync", "sync"], pk.writes
+    assert {entry[1] for entry in pk.writes} == {1, 2}
+
+
+def test_gather_drops_expired_targets_instead_of_batching_them() -> None:
+    """An expired target must not be written just because the gather picked it up."""
+    from pib_motors.bus_writer import StreamTarget
+
+    writer, pk, clock = _writer()
+    now = clock.monotonic()
+    writer.submit_stream(3, 2300, 1000, 50, deadline=now + 0.001)
+    clock.advance(0.5)
+
+    batch = [
+        StreamTarget(
+            pin=1,
+            ticks=2100,
+            speed=1000,
+            acc=50,
+            deadline=now + 10.0,
+            submitted_at=now,
+            seq=1,
+            label="pin1",
+        )
+    ]
+    gathered = writer._gather_same_tick(batch)
+
+    assert {target.pin for target in gathered} == {1}
+    assert writer.counters().dropped_stream >= 1
+
+
+def test_gather_is_skipped_while_a_service_job_waits() -> None:
+    """The gather must never keep a caller waiting: a queued service job wins."""
+    from pib_motors.bus_writer import StreamTarget, _ServiceJob
+
+    writer, _pk, _clock = _writer()
+    writer.submit_stream(2, 2200, 1000, 50)
+    now = writer._clock()
+    queued = _ServiceJob(deadline=now + 1.0, submitted_at=now, execute=lambda _pk: True)
+    with writer._cond:
+        writer._service.append(queued)
+
+    batch = [
+        StreamTarget(
+            pin=1,
+            ticks=2100,
+            speed=1000,
+            acc=50,
+            deadline=now + 1.0,
+            submitted_at=now,
+            seq=1,
+            label="pin1",
+        )
+    ]
+    gathered = writer._gather_same_tick(batch)
+    assert (
+        gathered == batch
+    ), "the gather took stream work while a service job was waiting"
