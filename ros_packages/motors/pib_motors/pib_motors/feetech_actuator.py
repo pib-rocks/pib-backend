@@ -11,6 +11,7 @@ import fcntl
 import logging
 import threading
 import time
+import traceback
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
@@ -57,10 +58,24 @@ _cache_lock = threading.Lock()
 #: The bus writer reads it after a transaction to tell "slow servo" from "busy port".
 _acquire_state = threading.local()
 
+#: How long a port may be HELD before it is worth a warning. Everything else on the same
+#: adapter waits exactly this long, in every process, so this is the number that explains
+#: multi-second waits that are not caused by a slow servo.
+HELD_WARN_MS = 200.0
+
 
 def last_bus_acquire_wait_ms() -> float:
     """Milliseconds the calling thread spent acquiring the port in its last _BusAccess."""
     return float(getattr(_acquire_state, "wait_ms", 0.0))
+
+
+def _holding_caller() -> str:
+    """The first stack frame outside this module - i.e. who is holding the port."""
+    stack = traceback.extract_stack(limit=12)
+    for frame in reversed(stack):
+        if Path(frame.filename).name != Path(__file__).name:
+            return f"{Path(frame.filename).name}:{frame.lineno}:{frame.name}"
+    return "unknown"
 
 
 class _BusAccess:
@@ -82,8 +97,20 @@ class _BusAccess:
         # Includes both the in-process Lock and the cross-process flock, which is what a
         # transaction actually waits for when another process is on the same adapter.
         _acquire_state.wait_ms = (time.monotonic() - started) * 1000.0
+        self._held_at = time.monotonic()
+        self._caller = _holding_caller()
 
     def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        held_ms = (
+            time.monotonic() - getattr(self, "_held_at", time.monotonic())
+        ) * 1000.0
+        if held_ms > HELD_WARN_MS:
+            logging.warning(
+                "[PERF_TRACE] BUS_ACCESS_HELD device=%s held_ms=%.1f caller=%s",
+                getattr(self._ph, "port_name", "unknown"),
+                held_ms,
+                getattr(self, "_caller", "unknown"),
+            )
         ser = getattr(self._ph, "ser", None)
         if ser is not None and hasattr(ser, "fileno"):
             try:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+import time
 import types
 from pathlib import Path
 from unittest import mock
@@ -445,3 +446,44 @@ def test_feetech_actuator_custom_velocity_and_acceleration_in_write_pos_ex(
     assert actuator.apply_settings({"velocity": 1200, "acceleration": 45}) is True
     assert actuator.set_position(0) is True
     assert pk_instance.writes[-1] == (18, ft_mod.TICKS_AT_JOINT_ZERO, 1200, 45)
+
+
+def test_holding_the_port_too_long_is_logged_with_its_caller(
+    monkeypatch, caplog
+) -> None:
+    """The holder of the port is invisible otherwise: every waiter only sees the wait.
+
+    With the threshold lowered to 1 ms, a short artificial hold must produce a
+    BUS_ACCESS_HELD line naming the function that held it.
+    """
+    import threading
+
+    from pib_motors import feetech_actuator
+
+    class _FakePort:
+        port_name = "/dev/fake-motor0"
+        ser = None
+
+    monkeypatch.setattr(feetech_actuator, "HELD_WARN_MS", 1.0)
+    with caplog.at_level("WARNING"):
+        with feetech_actuator._BusAccess(_FakePort(), threading.Lock()):
+            time.sleep(0.01)
+    assert "BUS_ACCESS_HELD" in caplog.text
+    assert "test_holding_the_port_too_long_is_logged_with_its_caller" in caplog.text
+
+
+def test_short_port_hold_is_not_logged(monkeypatch, caplog) -> None:
+    """Counter-check: without this the warning above could fire on every transaction."""
+    import threading
+
+    from pib_motors import feetech_actuator
+
+    class _FakePort:
+        port_name = "/dev/fake-motor0"
+        ser = None
+
+    monkeypatch.setattr(feetech_actuator, "HELD_WARN_MS", 5_000.0)
+    with caplog.at_level("WARNING"):
+        with feetech_actuator._BusAccess(_FakePort(), threading.Lock()):
+            time.sleep(0.005)
+    assert "BUS_ACCESS_HELD" not in caplog.text
