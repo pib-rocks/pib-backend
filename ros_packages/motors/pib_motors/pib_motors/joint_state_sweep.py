@@ -122,9 +122,7 @@ def _sweep_port(
 
         positions, error = writer.run_sweep(_execute)
         if error:
-            _LOG.warning(
-                "joint state sweep: port %s sweep failed: %s", port_key, error
-            )
+            _LOG.warning("joint state sweep: port %s sweep failed: %s", port_key, error)
             return {}, ""
         return positions or {}, MODE_SINGLE
     except Exception as error:  # noqa: BLE001 - a dead port must not break the sweep

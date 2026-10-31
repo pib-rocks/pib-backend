@@ -19,8 +19,12 @@ from pib_motors.stservo_sdk.stservo_def import COMM_SUCCESS
 
 _LOG = logging.getLogger(__name__)
 
-DEFAULT_SERVICE_DEADLINE_SEC = 2.0
-DEFAULT_SWEEP_DEADLINE_SEC = 1.5
+# Deadlines are the ceiling for how long a ROS callback thread may wait for the bus.
+# The acceptance criteria of PR-2137/PR-2138 ask for a service reply under 100 ms and a
+# worst case under 250 ms, so the service deadline cannot be two seconds: a healthy bus
+# answers in single-digit milliseconds, and the deadline only exists for the broken case.
+DEFAULT_SERVICE_DEADLINE_SEC = 0.25
+DEFAULT_SWEEP_DEADLINE_SEC = 0.5
 DEFAULT_STREAM_DEADLINE_SEC = 0.1
 
 _registry_lock = threading.Lock()
@@ -110,8 +114,14 @@ class BusWriter:
         self._stream_seq = 0
         self._counters = BusWriterCounters(txs_window_start=clock_fn())
         self._stop = threading.Event()
+        # True while a job is being executed: flush_idle() must not report idle for a
+        # queue that is empty only because the last target is already in flight.
+        self._executing = False
+        # Daemon on purpose: shutdown_all_bus_writers()/stop() is the graceful path and
+        # is called from the node teardown, but a writer that was never stopped (a test,
+        # a crash path) must not keep the interpreter alive forever.
         self._thread = threading.Thread(
-            target=self._run, name=f"bus_writer:{port_key}", daemon=False
+            target=self._run, name=f"bus_writer:{port_key}", daemon=True
         )
         self._thread.start()
 
@@ -236,12 +246,19 @@ class BusWriter:
                     break
                 batch = self._pop_next_locked()
                 self._refresh_queue_depth()
+                if batch is not None:
+                    self._executing = True
             if batch is None:
                 continue
-            self._execute(batch)
+            try:
+                self._execute(batch)
+            finally:
+                with self._cond:
+                    self._executing = False
+                    self._cond.notify_all()
 
     def _has_work_locked(self) -> bool:
-        if self._service or self._sweep:
+        if self._executing or self._service or self._sweep:
             return True
         return bool(self._stream)
 
@@ -270,9 +287,7 @@ class BusWriter:
         pending.sort(key=lambda t: t.seq)
         return pending
 
-    def _execute(
-        self, work: list[StreamTarget] | _ServiceJob | _SweepJob
-    ) -> None:
+    def _execute(self, work: list[StreamTarget] | _ServiceJob | _SweepJob) -> None:
         if isinstance(work, _ServiceJob):
             self._execute_service(work)
         elif isinstance(work, _SweepJob):
@@ -365,9 +380,7 @@ def get_bus_writer(
         existing = _registry.get(port_key)
         if existing is not None:
             return existing
-        writer = BusWriter(
-            port_key, ph, pk, lock, clock_fn=clock_fn, sleep_fn=sleep_fn
-        )
+        writer = BusWriter(port_key, ph, pk, lock, clock_fn=clock_fn, sleep_fn=sleep_fn)
         _registry[port_key] = writer
         return writer
 

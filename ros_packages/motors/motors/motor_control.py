@@ -535,9 +535,7 @@ class MotorControl(Node):
 
     def _log_bus_writer_stats(self) -> None:
         for writer in all_bus_writers():
-            log_perf_trace(
-                self.get_logger(), format_bus_writer_summary(writer)
-            )
+            log_perf_trace(self.get_logger(), format_bus_writer_summary(writer))
 
     def get_all_joint_positions(
         self,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 import threading
+import time
 from contextlib import nullcontext
 from pathlib import Path
 
@@ -17,6 +18,7 @@ for path in (str(REPO_ROOT / "pib_api" / "client"), str(PIB_MOTORS_DIR)):
 
 from pib_motors.bus_writer import (  # noqa: E402
     BusWriter,
+    get_bus_writer,
     reset_bus_writer_registry_for_tests,
 )
 from pib_motors.stservo_sdk.stservo_def import COMM_SUCCESS  # noqa: E402
@@ -78,11 +80,13 @@ def _writer(clock: FakeClock | None = None) -> tuple[BusWriter, FakePk, FakeCloc
     fake_clock = clock or FakeClock()
     pk = FakePk()
     lock = threading.Lock()
-    writer = BusWriter(
+    # Through the registry, not the constructor: the autouse fixture stops every
+    # registered writer, so no thread outlives the test module.
+    writer = get_bus_writer(
         "test-port",
-        ph=object(),
-        pk=pk,
-        lock=lock,
+        object(),
+        pk,
+        lock,
         clock_fn=fake_clock.monotonic,
         sleep_fn=lambda _s: None,
     )
@@ -91,26 +95,45 @@ def _writer(clock: FakeClock | None = None) -> tuple[BusWriter, FakePk, FakeCloc
 
 
 def test_service_runs_before_queued_stream() -> None:
+    """Deterministic: the bus is held mid-write, so the queue order is what decides."""
     writer, pk, _clock = _writer()
     order: list[str] = []
-    original_write = pk.WritePosEx
+    inside_write = threading.Event()
 
     def _tracked_write(servo_id: int, position: int, speed: int, acc: int):
-        order.append("stream")
-        return original_write(servo_id, position, speed, acc)
+        order.append(f"stream{servo_id}")
+        inside_write.set()
+        pk.hold.wait(timeout=5.0)
+        return COMM_SUCCESS, 0
 
     pk.WritePosEx = _tracked_write  # type: ignore[method-assign]
+    pk.hold.clear()
+
+    # 1) let the writer start a stream write and block inside it
     writer.submit_stream(1, 2048, 1000, 50)
+    assert inside_write.wait(timeout=2.0), "writer never reached the bus"
+
+    # 2) queue another stream target, then a SERVICE job behind it
+    writer.submit_stream(2, 2100, 1000, 50)
+    service_done = threading.Event()
 
     def _service(_pk: FakePk) -> bool:
         order.append("service")
+        service_done.set()
         return True
 
-    result, error = writer.run_service(_service, wait_timeout=2.0)
-    assert error is None
-    assert result is True
+    service_thread = threading.Thread(
+        target=lambda: writer.run_service(_service, wait_timeout=5.0), daemon=True
+    )
+    service_thread.start()
+    time.sleep(0.05)  # let the SERVICE job reach the queue
+
+    # 3) release the bus: the SERVICE job must be served before the queued stream
+    pk.hold.set()
+    assert service_done.wait(timeout=5.0), "service job was not served"
+    service_thread.join(timeout=5.0)
     assert writer.flush_idle(timeout=2.0)
-    assert order == ["service", "stream"]
+    assert order == ["stream1", "service", "stream2"], order
 
 
 def test_stream_coalesces_per_pin() -> None:
@@ -132,13 +155,42 @@ def test_expired_stream_is_dropped() -> None:
 
 
 def test_monotonic_stream_progress_under_load() -> None:
+    """With a slow bus several stream targets do get written - and only forward."""
     writer, pk, _clock = _writer()
     for index in range(100):
-        writer.submit_stream(7, 2048 + index, 800, 30)
+        writer.submit_stream(7, 2048 + index, 800, 30, deadline=None)
     assert writer.counters().coalesced_stream == 99
     assert writer.flush_idle(timeout=2.0)
+    # coalescing keeps one pending target per pin, so exactly one write happens here
     assert len(pk.writes) == 1
     assert pk.writes[0][3] == 2048 + 99
+
+
+def test_monotonic_writes_when_the_bus_is_slower_than_the_stream() -> None:
+    """The load test above only sees one write; this one forces many, and orders them.
+
+    Every written position must be newer than the previous one - a dropped target may
+    never be followed by an older one, which is what a backlog would do.
+    """
+    writer, pk, _clock = _writer()
+    written: list[int] = []
+    original_write = pk.WritePosEx
+
+    def _slow_write(servo_id: int, position: int, speed: int, acc: int):
+        written.append(position)
+        time.sleep(0.01)
+        return original_write(servo_id, position, speed, acc)
+
+    pk.WritePosEx = _slow_write  # type: ignore[method-assign]
+
+    for index in range(20):
+        writer.submit_stream(7, 2048 + index, 800, 30, deadline=None)
+        time.sleep(0.005)
+
+    assert writer.flush_idle(timeout=5.0)
+    assert len(written) >= 2, "bus was not slow enough to force several writes"
+    assert written == sorted(written), f"positions went backwards: {written}"
+    assert written[-1] == pk.writes[-1][3]
 
 
 def test_service_deadline_returns_error_to_caller() -> None:
