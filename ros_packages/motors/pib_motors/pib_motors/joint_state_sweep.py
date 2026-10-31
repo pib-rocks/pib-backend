@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from pib_motors.port_probe import forget_dead_ports, port_answers
+from pib_motors.port_recovery import note_failure, note_success
 from pib_motors.feetech_actuator import (
     FeetechStSerialActuator,
     resolve_serial_device,
@@ -101,6 +102,14 @@ def _port_answers(group: list[tuple[str, FeetechStSerialActuator]]) -> bool:
     return port_answers(group[0][1])
 
 
+def _note_and_maybe_reopen(device: str) -> None:
+    """Feed the failure into the policy and reopen the port once it has had enough."""
+    from pib_motors.feetech_actuator import reopen_port
+
+    if note_failure(device):
+        reopen_port(device)
+
+
 def _sweep_port(
     group: list[tuple[str, FeetechStSerialActuator]],
 ) -> tuple[dict[str, int], str]:
@@ -124,11 +133,17 @@ def _sweep_port(
             _execute, label=f"sweep:{len(group)} servos"
         )
         if error:
-            _LOG.warning("joint state sweep: port %s sweep failed: %s", port_key, error)
+            _LOG.error("joint state sweep: port %s sweep failed: %s", port_key, error)
+            _note_and_maybe_reopen(device)
             return {}, ""
+        note_success(device)
         return positions or {}, MODE_SINGLE
     except Exception as error:  # noqa: BLE001 - a dead port must not break the sweep
-        _LOG.warning("joint state sweep: port %s failed entirely: %s", port_key, error)
+        _LOG.error("joint state sweep: port %s failed entirely: %s", port_key, error)
+        try:
+            _note_and_maybe_reopen(resolve_serial_device(sample.uid))
+        except Exception:  # noqa: BLE001 - never let the recovery break the sweep
+            pass
         return {}, ""
 
 

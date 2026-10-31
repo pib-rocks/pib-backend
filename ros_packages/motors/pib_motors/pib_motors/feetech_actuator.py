@@ -177,6 +177,31 @@ def _get_or_open_port(
         return entry
 
 
+def reopen_port(address: str) -> bool:
+    """Close and forget the cached port for this device so the next use opens a fresh one.
+
+    A PortHandler that stopped answering still reports ``is_open``, so the cache keeps handing
+    the same dead handle out. Closing it is the only thing that helps short of restarting the
+    process - measured: three of four adapters die during operation and never recover otherwise.
+    """
+    device = resolve_serial_device(address)
+    with _cache_lock:
+        cached = _port_cache.pop(device, None)
+    if cached is None:
+        return False
+    ph = cached[0]
+    try:
+        ph.closePort()
+    except Exception as error:  # noqa: BLE001 - a dead handle may fail to close
+        logging.warning("could not close %s cleanly: %s", device, error)
+    logging.error(
+        "[PERF_TRACE] PORT_REOPEN device=%s - the handle was closed, the next transaction "
+        "opens a fresh one",
+        device,
+    )
+    return True
+
+
 def centideg_to_ticks(
     centideg: float,
     rotation_range_min: int | None = None,
