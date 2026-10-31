@@ -12,10 +12,15 @@ exercise interpolation and the executor with plain Python fakes.
 
 from __future__ import annotations
 
+import threading
 import time
+from dataclasses import dataclass
+from queue import SimpleQueue
 from typing import Any, Callable, Iterable, Mapping, Protocol, Sequence
 
 DEFAULT_RATE_HZ = 100.0
+# Upper bound for timed pose sequences (sum of leg seconds / final time_from_start).
+MAX_SOFTWARE_TRAJECTORY_DURATION_SEC = 300.0
 # High bricklet motion limits so the software spline, not the servo ramp, shapes speed.
 DEFAULT_SHARP_VELOCITY = 50000
 DEFAULT_SHARP_ACCELERATION = 50000
@@ -186,6 +191,43 @@ def parse_joint_trajectory(
     return names, times, series
 
 
+def validate_software_trajectory_schedule(jt: Any) -> str | None:
+    """Return a human-readable error, or ``None`` when the schedule is executable."""
+    if not is_software_trajectory(jt):
+        return None
+    _, times, _ = parse_joint_trajectory(jt)
+    if len(times) < 2:
+        return "software trajectory requires at least two waypoints"
+    for index in range(1, len(times)):
+        leg = times[index] - times[index - 1]
+        if leg <= 0.0:
+            if times[index] == times[index - 1]:
+                return (
+                    f"duplicate waypoint time_from_start {times[index]} s "
+                    "is not allowed"
+                )
+            return (
+                f"zero-second leg between {times[index - 1]} s and "
+                f"{times[index]} s is not allowed"
+            )
+    total = times[-1]
+    if total > MAX_SOFTWARE_TRAJECTORY_DURATION_SEC:
+        return (
+            f"trajectory duration {total} s exceeds the maximum "
+            f"{MAX_SOFTWARE_TRAJECTORY_DURATION_SEC} s"
+        )
+    return None
+
+
+@dataclass(frozen=True)
+class TrajectoryCompletion:
+    """Result handed to ``motor_control`` after a background run finishes."""
+
+    successful: bool
+    cancelled: bool
+    joint_names: tuple[str, ...]
+
+
 class TrajectoryExecutor:
     """Run a JointTrajectory by streaming interpolated ``set_position`` commands."""
 
@@ -210,6 +252,61 @@ class TrajectoryExecutor:
         self.restore = restore
         self.sleep_fn = sleep_fn
         self.clock_fn = clock_fn
+        self._stop_event = threading.Event()
+        self._worker: threading.Thread | None = None
+        self._worker_lock = threading.Lock()
+
+    def is_running(self) -> bool:
+        with self._worker_lock:
+            worker = self._worker
+            return worker is not None and worker.is_alive()
+
+    def cancel(self, timeout: float | None = 60.0) -> bool:
+        """Stop a background run and wait for motion-config restore."""
+        self._stop_event.set()
+        with self._worker_lock:
+            worker = self._worker
+        if worker is None:
+            return True
+        worker.join(timeout=timeout)
+        return not worker.is_alive()
+
+    def join(self, timeout: float | None = None) -> bool:
+        """Wait until the background worker exits (tests and measurement scripts)."""
+        with self._worker_lock:
+            worker = self._worker
+        if worker is None:
+            return True
+        worker.join(timeout=timeout)
+        return not worker.is_alive()
+
+    def start_async(
+        self, jt: Any, completion_queue: SimpleQueue[TrajectoryCompletion] | None = None
+    ) -> tuple[bool, str]:
+        """Run a software trajectory on a worker thread; returns immediately when accepted."""
+        if not is_software_trajectory(jt):
+            return False, "not a software trajectory"
+        schedule_error = validate_software_trajectory_schedule(jt)
+        if schedule_error is not None:
+            return False, schedule_error
+        with self._worker_lock:
+            if self._worker is not None and self._worker.is_alive():
+                return False, "trajectory worker is still running"
+
+            self._stop_event.clear()
+
+            def _worker_main() -> None:
+                completion = self._execute_software_trajectory(jt)
+                if completion_queue is not None:
+                    completion_queue.put(completion)
+                with self._worker_lock:
+                    self._worker = None
+
+            self._worker = threading.Thread(
+                target=_worker_main, name="trajectory_executor", daemon=True
+            )
+            self._worker.start()
+        return True, ""
 
     def execute(self, jt: Any) -> bool:
         """Execute ``jt``. Multi-point timed paths interpolate; one-point is a single set."""
@@ -226,14 +323,36 @@ class TrajectoryExecutor:
         if len(points) <= 1 or not is_software_trajectory(jt):
             return self._execute_single_point(names, points)
 
+        self._stop_event.clear()
+        completion = self._execute_software_trajectory(jt)
+        return completion.successful and not completion.cancelled
+
+    def _execute_software_trajectory(self, jt: Any) -> TrajectoryCompletion:
+        names = list(getattr(jt, "joint_names", []) or [])
+        schedule_error = validate_software_trajectory_schedule(jt)
+        if schedule_error is not None:
+            self._log_error(schedule_error)
+            return TrajectoryCompletion(False, False, tuple(names))
+
+        motors = self._resolve_motors(names)
+        if motors is None:
+            return TrajectoryCompletion(False, False, tuple(names))
+
         names, times, series = parse_joint_trajectory(jt)
         original_settings = self._backup_motor_settings(motors)
         self._sharpen_motion(motors, original_settings)
+        cancelled = False
+        success = True
         try:
-            return self._run_interpolation_loop(names, times, series)
+            success, cancelled = self._run_interpolation_loop(names, times, series)
         finally:
             if self.restore:
                 self._restore_settings(motors, original_settings)
+        return TrajectoryCompletion(
+            successful=success and not cancelled,
+            cancelled=cancelled,
+            joint_names=tuple(names),
+        )
 
     def _execute_single_point(
         self, names: Sequence[str], points: Sequence[Any]
@@ -261,12 +380,16 @@ class TrajectoryExecutor:
         names: Sequence[str],
         times: Sequence[float],
         series: Mapping[str, Sequence[float]],
-    ) -> bool:
+    ) -> tuple[bool, bool]:
         dt = 1.0 / self.rate_hz
         duration = times[-1] if times else 0.0
         t0 = self.clock_fn()
         success = True
+        cancelled = False
         while True:
+            if self._stop_event.is_set():
+                cancelled = True
+                break
             now = self.clock_fn() - t0
             targets = interpolate_positions(names, times, series, now)
             for name in names:
@@ -276,7 +399,7 @@ class TrajectoryExecutor:
             if now >= duration:
                 break
             self.sleep_fn(dt)
-        return success
+        return success, cancelled
 
     def _resolve_motors(self, names: Iterable[str]) -> list[MotorLike] | None:
         resolved: list[MotorLike] = []

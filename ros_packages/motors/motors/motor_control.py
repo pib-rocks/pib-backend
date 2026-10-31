@@ -1,6 +1,7 @@
 from typing import Iterable, Mapping, Sequence, Tuple
 import math
 import time
+from queue import SimpleQueue
 import rclpy
 from datatypes.msg import MotorResult, MotorSettings, SolidStateRelayState
 from datatypes.srv import (
@@ -23,7 +24,11 @@ from pib_motors.joint_trajectory_command import (
     outcomes_to_success,
     validate_radians_trajectory,
 )
-from pib_motors.trajectory_executor import TrajectoryExecutor, is_software_trajectory
+from pib_motors.trajectory_executor import (
+    TrajectoryExecutor,
+    is_software_trajectory,
+    validate_software_trajectory_schedule,
+)
 from pib_motors.perf_trace import (
     format_perf_trace_joint_state_sweep,
     format_perf_trace_trajectory_start,
@@ -184,6 +189,10 @@ class MotorControl(Node):
         self._joint_state_timer = self.create_timer(
             1.0 / rate_hz, self._publish_joint_states
         )
+        self._trajectory_completion_queue: SimpleQueue = SimpleQueue()
+        self._trajectory_completion_timer = self.create_timer(
+            0.05, self._process_trajectory_completions
+        )
 
         # Publisher for MotorSettings
         self.motor_settings_publisher = self.create_publisher(
@@ -338,6 +347,20 @@ class MotorControl(Node):
 
         return response
 
+    def _process_trajectory_completions(self) -> None:
+        while not self._trajectory_completion_queue.empty():
+            completion = self._trajectory_completion_queue.get()
+            if completion.successful and not completion.cancelled:
+                for motor_name in completion.joint_names:
+                    for motor in name_to_motors[motor_name]:
+                        self.joint_trajectory_publisher.publish(
+                            as_joint_trajectory(motor.name, motor.get_position())
+                        )
+
+    def _stop_running_software_trajectory(self) -> None:
+        if self.trajectory_executor.is_running():
+            self.trajectory_executor.cancel()
+
     def apply_joint_trajectory(
         self,
         request: ApplyJointTrajectory.Request,
@@ -354,6 +377,25 @@ class MotorControl(Node):
         trace_started = time.monotonic()
         point_count = len(raw.points)
 
+        if not joint_names and not raw.points:
+            if self.trajectory_executor.is_running():
+                self._stop_running_software_trajectory()
+                response.successful = True
+                response.results = []
+            else:
+                response.successful = False
+                response.results = motor_outcomes_to_ros(
+                    [
+                        (
+                            "",
+                            False,
+                            "invalid_trajectory",
+                            "empty trajectory does not cancel a running sequence",
+                        )
+                    ]
+                )
+            return response
+
         if is_legacy_zip_shape(raw):
             outcomes = legacy_zip_outcomes(joint_names)
             response.successful = False
@@ -368,26 +410,43 @@ class MotorControl(Node):
             response.results = motor_outcomes_to_ros(validation_outcomes)
             return response
 
+        if is_software_trajectory(raw):
+            schedule_error = validate_software_trajectory_schedule(raw)
+            if schedule_error is not None:
+                response.successful = False
+                response.results = motor_outcomes_to_ros(
+                    [
+                        (name, False, "invalid_schedule", schedule_error)
+                        for name in joint_names
+                    ]
+                )
+                return response
+
         try:
             jt = joint_trajectory_radians_to_centidegrees(raw, name_to_motors)
             self._emit_trajectory_start(point_count, trace_started)
             if is_software_trajectory(jt):
-                trajectory_ok = self.trajectory_executor.execute(jt)
-                if trajectory_ok:
-                    outcomes = [(name, True, "", "") for name in joint_names]
-                    for motor_name in jt.joint_names:
-                        for motor in name_to_motors[motor_name]:
-                            self.joint_trajectory_publisher.publish(
-                                as_joint_trajectory(motor.name, motor.get_position())
-                            )
-                else:
+                if self.trajectory_executor.is_running():
+                    self._stop_running_software_trajectory()
+                started, start_error = self.trajectory_executor.start_async(
+                    jt, self._trajectory_completion_queue
+                )
+                if not started:
+                    detail = start_error or "failed to start software trajectory"
                     outcomes = [
-                        (name, False, "write_failed", "trajectory execution failed")
+                        (name, False, "trajectory_rejected", detail)
                         for name in joint_names
                     ]
+                    response.successful = False
+                    response.results = motor_outcomes_to_ros(outcomes)
+                    return response
+                outcomes = [(name, True, "", "") for name in joint_names]
                 response.successful = outcomes_to_success(outcomes)
                 response.results = motor_outcomes_to_ros(outcomes)
                 return response
+
+            if self.trajectory_executor.is_running():
+                self._stop_running_software_trajectory()
 
             apply_outcomes: list[MotorOutcome] = []
             for motor_name, position in as_motor_positions(jt):

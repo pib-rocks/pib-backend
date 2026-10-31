@@ -8,8 +8,10 @@ trajectory messages and a fake Motor. If the module cannot be imported
 from __future__ import annotations
 
 import sys
+import time
 from pathlib import Path
 from typing import Any
+from queue import SimpleQueue
 
 import pytest
 
@@ -23,10 +25,12 @@ try:
         DEFAULT_SHARP_ACCELERATION,
         DEFAULT_SHARP_DECELERATION,
         DEFAULT_SHARP_VELOCITY,
+        MAX_SOFTWARE_TRAJECTORY_DURATION_SEC,
         TrajectoryExecutor,
         interpolate_joint,
         interpolate_positions,
         is_software_trajectory,
+        validate_software_trajectory_schedule,
     )
 except ImportError as exc:  # pragma: no cover - unexpected missing module
     pytest.skip(
@@ -257,3 +261,83 @@ def test_via_point_blend_does_not_dwell_at_via_point() -> None:
     tail = motor.positions[first_via + 1 :]
     assert tail, "trajectory ended at the via-point instead of blending through"
     assert any(p != 100 for p in tail)
+
+
+def test_validate_rejects_zero_second_leg() -> None:
+    jt = FakeJointTrajectory(
+        ["elbow"],
+        [FakePoint([0], 0.0), FakePoint([50], 1.0), FakePoint([100], 1.0)],
+    )
+    message = validate_software_trajectory_schedule(jt)
+    assert message is not None
+    assert "not allowed" in message
+
+
+def test_validate_rejects_duplicate_waypoint_times() -> None:
+    jt = FakeJointTrajectory(
+        ["elbow"],
+        [FakePoint([0], 0.0), FakePoint([50], 2.0), FakePoint([100], 2.0)],
+    )
+    message = validate_software_trajectory_schedule(jt)
+    assert message is not None
+    assert "duplicate" in message
+
+
+def test_validate_rejects_duration_above_maximum() -> None:
+    over = MAX_SOFTWARE_TRAJECTORY_DURATION_SEC + 1.0
+    jt = FakeJointTrajectory(
+        ["elbow"],
+        [FakePoint([0], 0.0), FakePoint([10], over)],
+    )
+    message = validate_software_trajectory_schedule(jt)
+    assert message is not None
+    assert "maximum" in message
+
+
+def test_invalid_schedule_execute_does_not_move_motor() -> None:
+    motor = FakeMotor("elbow")
+    executor = _executor({"elbow": [motor]})
+    jt = FakeJointTrajectory(
+        ["elbow"],
+        [FakePoint([0], 0.0), FakePoint([100], 0.0)],
+    )
+    assert executor.execute(jt) is False
+    assert motor.positions == []
+    assert motor.settings_calls == []
+
+
+def test_cancel_stops_interpolation_and_restores_settings() -> None:
+    motor = FakeMotor("elbow")
+    original_velocity = motor.get_settings()["velocity"]
+    executor = TrajectoryExecutor(
+        node=None,
+        motor_lookup={"elbow": [motor]},
+        rate_hz=20.0,
+    )
+    jt = FakeJointTrajectory(
+        ["elbow"],
+        [FakePoint([0], 0.0), FakePoint([1000], 2.0)],
+    )
+    completion_queue: SimpleQueue = SimpleQueue()
+    started, _ = executor.start_async(jt, completion_queue)
+    assert started is True
+    time.sleep(0.05)
+    assert executor.cancel() is True
+    completion = completion_queue.get(timeout=2.0)
+    assert completion.cancelled is True
+    assert motor.get_settings()["velocity"] == original_velocity
+    assert motor.positions[-1] < 1000
+
+
+def test_start_async_returns_before_duration_elapses() -> None:
+    motor = FakeMotor("elbow")
+    clock = FakeClock()
+    executor = _executor({"elbow": [motor]}, clock)
+    jt = FakeJointTrajectory(
+        ["elbow"],
+        [FakePoint([0], 0.0), FakePoint([100], 5.0)],
+    )
+    started, _ = executor.start_async(jt, SimpleQueue())
+    assert started is True
+    assert executor.is_running() is True
+    assert executor.join(timeout=1.0) is True
