@@ -189,7 +189,10 @@ def test_motor_names_are_mapped_to_channels() -> None:
         mapping = controller_scan._servo_channel_by_motor_name()
     assert mapping == {"turn_head_motor": 51, "mcp_joint": 19}
 
-    present = {mapping[name] for name in {"turn_head_motor"} if name in mapping}
+    present = controller_scan.present_channels_from_names(
+        ["turn_head_motor", "unbekannt"], mapping
+    )
+    assert present == {51}
     assignments = controller_scan.assignments_from_present_servos(
         ["serial-a"], {1: [51, 21]}, {"serial-a": 1}, present
     )

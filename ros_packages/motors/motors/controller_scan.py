@@ -161,6 +161,17 @@ def _controller_number_for_serial(
     return None
 
 
+def present_channels_from_names(
+    names: list[str] | tuple[str, ...], name_to_channel: dict[str, int]
+) -> set[int]:
+    """/joint_states publishes motor names; the expected ids are servo channels.
+
+    This one line used to be inlined in the ROS node, where no unit test could reach it -
+    and it was wrong (it compared names against integer ids, so every matchCount was 0).
+    """
+    return {name_to_channel[name] for name in names if name in name_to_channel}
+
+
 def assignments_from_present_servos(
     serials: list[str],
     expected: dict[int, list[int]],
@@ -289,11 +300,9 @@ if rclpy is not None:
             if now - self._last_evaluation < _STATUS_EVALUATION_INTERVAL_SEC:
                 return
             self._last_evaluation = now
-            present_channels = {
-                self._name_to_channel[name]
-                for name in msg.name
-                if name in self._name_to_channel
-            }
+            present_channels = present_channels_from_names(
+                msg.name, self._name_to_channel
+            )
             assignments = assignments_from_present_servos(
                 self._serials, self._expected, self._by_serial, present_channels
             )
