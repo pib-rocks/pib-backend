@@ -81,10 +81,14 @@ def get_mesh(name: str):
     if_none_match = request.headers.get("If-None-Match")
     etag = rms.file_etag(path)
     if if_none_match and if_none_match.strip() == etag:
-        return "", 304, {
-            "Cache-Control": _cache_control_value(),
-            "ETag": etag,
-        }
+        return (
+            "",
+            304,
+            {
+                "Cache-Control": _cache_control_value(),
+                "ETag": etag,
+            },
+        )
     response = send_file(path, mimetype="model/gltf-binary", conditional=False)
     response.headers["Cache-Control"] = _cache_control_value()
     response.headers["ETag"] = etag

@@ -111,9 +111,7 @@ def test_etag_returns_304(app, robot_model_dir):
         first = client.get("/robot-model/model.json")
         etag = first.headers.get("ETag")
         assert etag
-        second = client.get(
-            "/robot-model/model.json", headers={"If-None-Match": etag}
-        )
+        second = client.get("/robot-model/model.json", headers={"If-None-Match": etag})
 
     assert first.status_code == 200
     assert second.status_code == 304
@@ -169,9 +167,10 @@ def test_installer_wrong_sha256_leaves_previous_install(tmp_path: Path):
     assert result.returncode != 0
     assert "sha256 mismatch" in result.stderr
 
-    assert json.loads((dest / "version.json").read_text(encoding="utf-8"))[
-        "version"
-    ] == "v-original"
+    assert (
+        json.loads((dest / "version.json").read_text(encoding="utf-8"))["version"]
+        == "v-original"
+    )
 
     ok = subprocess.run(
         [
@@ -188,6 +187,7 @@ def test_installer_wrong_sha256_leaves_previous_install(tmp_path: Path):
         text=True,
     )
     assert ok.returncode == 0, ok.stderr
-    assert json.loads((dest / "version.json").read_text(encoding="utf-8"))[
-        "version"
-    ] == "v-new"
+    assert (
+        json.loads((dest / "version.json").read_text(encoding="utf-8"))["version"]
+        == "v-new"
+    )
