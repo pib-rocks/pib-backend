@@ -68,7 +68,9 @@ class MotorCurrent(Node):
                 # carry no bricklet and are skipped here (a family-agnostic current
                 # monitoring is a later step)
                 bricklet = getattr(actuator, "bricklet", None)
-                if actuator.is_connected() and bricklet is not None:
+                # bricklet first: the short circuit used to probe the serial bus
+                # for actuators that cannot ever have a Tinkerforge bricklet.
+                if bricklet is not None and actuator.is_connected():
                     key = (id(bricklet), actuator.pin)
                     if key not in self.pin_to_motors:
                         self.pin_to_motors[key] = []
