@@ -217,7 +217,8 @@ function setup_hermes_view_service() {
         print ERROR "filtered Hermes view is not usable: ${view_output//$'\n'/ }"
         return 1
     fi
-    print SUCCESS "Filtered Hermes view installed: ${view_output//$'\n'/ }"
+    print SUCCESS "Filtered Hermes view service installed and started"
+    print INFO "Hermes view: ${view_output//$'\n'/ }"
 }
 
 function verify_vendored_blockly() {
