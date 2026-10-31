@@ -23,7 +23,6 @@ if str(PIB_MOTORS_ROOT) not in sys.path:
 
 try:
     from pib_motors.trajectory_executor import (
-        DEFAULT_SHARP_VELOCITY,
         MAX_SOFTWARE_TRAJECTORY_DURATION_SEC,
         PATH_SPEED_TRACKING_MARGIN,
         STS_VELOCITY_MAX,
@@ -125,8 +124,6 @@ class FakeClock:
 def _executor(
     motors: dict[str, list[FakeMotor]],
     clock: FakeClock | None = None,
-    *,
-    centideg_per_sec_per_speed_unit: float = 0.25,
 ) -> TrajectoryExecutor:
     clock = clock or FakeClock()
     return TrajectoryExecutor(
@@ -135,7 +132,6 @@ def _executor(
         rate_hz=10.0,
         sleep_fn=clock.sleep,
         clock_fn=clock.time,
-        centideg_per_sec_per_speed_unit=centideg_per_sec_per_speed_unit,
     )
 
 
@@ -208,7 +204,7 @@ def test_multi_point_interpolation_calls_set_position_in_order() -> None:
 def test_motion_config_tracks_path_speed_then_restores() -> None:
     motor = FakeMotor("elbow")
     original_velocity = motor.get_settings()["velocity"]
-    executor = _executor({"elbow": [motor]}, centideg_per_sec_per_speed_unit=0.25)
+    executor = _executor({"elbow": [motor]})
     jt = FakeJointTrajectory(
         ["elbow"],
         [FakePoint([0], 0.0), FakePoint([50], 0.2)],
@@ -217,14 +213,12 @@ def test_motion_config_tracks_path_speed_then_restores() -> None:
     assert executor.execute(jt) is True
     assert len(motor.settings_calls) >= 2
     leg_config, restored = motor.settings_calls[0], motor.settings_calls[-1]
-    path_speed = leg_path_speed_centideg_per_sec([0.0, 0.2], [0.0, 50.0], 0)
-    expected_velocity = derive_sts_velocity_setting(
-        path_speed,
-        margin=PATH_SPEED_TRACKING_MARGIN,
-        centideg_per_sec_per_unit=0.25,
-    )
-    assert leg_config["velocity"] == expected_velocity
-    assert leg_config["velocity"] < DEFAULT_SHARP_VELOCITY
+    # Hand-computed from the measured STS3095 curve, so the test cannot agree with the code by
+    # construction: 50 centideg over 0.2 s = 250 cdg/s, x1.2 margin = 300 cdg/s needed. The curve
+    # reaches 2091.8 cdg/s at setting 200, so 300 cdg/s needs 300 * 200 / 2091.8 = 28.7 - below the
+    # smallest setting the servo accepts (50).
+    assert leg_config["velocity"] == STS_VELOCITY_MIN, leg_config
+    assert leg_config["velocity"] <= STS_VELOCITY_MAX
     assert leg_config["acceleration"] == 3000
     assert restored["velocity"] == original_velocity
     assert restored["acceleration"] == 3000
@@ -403,32 +397,59 @@ def test_path_speed_derivation_slow_vs_fast_leg() -> None:
     assert slow_speed == pytest.approx(10.0, rel=0.05)
 
 
-def test_derive_sts_velocity_clamps_and_handles_zero_slope() -> None:
-    unit = 0.5
-    low = derive_sts_velocity_setting(5.0, margin=1.0, centideg_per_sec_per_unit=unit)
-    high = derive_sts_velocity_setting(
-        5000.0, margin=1.0, centideg_per_sec_per_unit=unit
-    )
-    assert low == STS_VELOCITY_MIN
-    assert high == STS_VELOCITY_MAX
-    assert (
-        derive_sts_velocity_setting(0.0, centideg_per_sec_per_unit=unit)
-        == STS_VELOCITY_MIN
-    )
-    assert (
-        derive_sts_velocity_setting(100.0, centideg_per_sec_per_unit=0.0)
-        == STS_VELOCITY_MIN
-    )
+STS3095_CURVE = ((200, 2091.8), (700, 4729.3), (2000, 4948.8))
+FINGER_CURVE = ((200, 1740.5), (700, 3483.3), (2000, 3834.6))
+
+
+def test_derive_sts_velocity_uses_the_measured_curve() -> None:
+    """Between two measured points the inverse interpolates; it cannot be a linear factor.
+
+    3000 cdg/s x 1.2 = 3600 cdg/s needed. On the STS3095 curve that lies between (200, 2091.8) and
+    (700, 4729.3): 200 + (3600 - 2091.8) / (4729.3 - 2091.8) * 500 = 486. The same demand on the
+    finger curve lies between (700, 3483.3) and (2000, 3834.6) and gives 1132 - a factor of 2.3
+    apart, which is exactly why a single scalar factor cannot work.
+    """
+    assert derive_sts_velocity_setting(3000.0, curve=STS3095_CURVE, margin=1.2) == 486
+    assert derive_sts_velocity_setting(3000.0, curve=FINGER_CURVE, margin=1.2) == 1132
+
+
+def test_derive_sts_velocity_defaults_to_the_slower_family() -> None:
+    """A motor that cannot name its servo is treated as a finger servo, not as a fast one.
+
+    Guessing fast would bring the stepping back; guessing slow only costs tracking accuracy.
+    """
+    assert derive_sts_velocity_setting(
+        3000.0, margin=1.2
+    ) == derive_sts_velocity_setting(3000.0, curve=FINGER_CURVE, margin=1.2)
+
+
+def test_derive_sts_velocity_clamps_at_both_ends() -> None:
+    # a path that barely moves is clamped to the smallest setting the servo accepts
+    assert derive_sts_velocity_setting(5.0, margin=1.0) == STS_VELOCITY_MIN
+    # a path faster than the curve saturates at the top of the measured curve
+    assert derive_sts_velocity_setting(50000.0, margin=1.0) == 2000
+    # standing still keeps the minimum setting, so the joint still holds its position
+    assert derive_sts_velocity_setting(0.0) == STS_VELOCITY_MIN
+
+
+def test_derive_sts_velocity_accepts_an_explicit_curve() -> None:
+    """A servo whose measured curve differs must be able to say so.
+
+    2500 cdg/s on the finger curve: 200 + (2500 - 1740.5) / (3483.3 - 1740.5) * 500 = 418.
+    On the STS3095 curve the same rate needs 200 + (2500 - 2091.8) / (4729.3 - 2091.8) * 500 = 277.
+    """
+    assert derive_sts_velocity_setting(2500.0, curve=FINGER_CURVE, margin=1.0) == 418
+    assert derive_sts_velocity_setting(2500.0, curve=STS3095_CURVE, margin=1.0) == 277
 
 
 def test_trajectory_motion_settings_keep_original_acceleration() -> None:
     original = {"velocity": 4000, "acceleration": 88, "deceleration": 88}
-    updated = trajectory_motion_settings_for_leg(
-        original, 200.0, margin=1.0, centideg_per_sec_per_unit=1.0
-    )
+    updated = trajectory_motion_settings_for_leg(original, 1000.0, margin=1.0)
     assert updated["acceleration"] == 88
     assert updated["deceleration"] == 88
-    assert updated["velocity"] == 200
+    # 1000 cdg/s inside the first segment of the finger curve (the default for a motor without a
+    # curve): 1000 * 200 / 1740.5 = 114.9 -> 115
+    assert updated["velocity"] == 115
 
 
 def test_interpolate_joint_velocity_empty_and_flat() -> None:

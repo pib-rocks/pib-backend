@@ -20,6 +20,12 @@ from queue import SimpleQueue
 from typing import Any, Callable, Iterable, Mapping, Protocol, Sequence
 
 from pib_motors.bus_writer import BusPriority
+from pib_motors.servo_speed_curve import (
+    STS_SPEED_MAX,
+    STS_SPEED_MIN,
+    curve_for_family,
+    speed_for_path,
+)
 from pib_motors.perf_trace import (
     format_perf_trace_trajectory_leg_motion,
     log_perf_trace,
@@ -28,24 +34,15 @@ from pib_motors.perf_trace import (
 DEFAULT_RATE_HZ = 100.0
 # Upper bound for timed pose sequences (sum of leg seconds / final time_from_start).
 MAX_SOFTWARE_TRAJECTORY_DURATION_SEC = 300.0
-# Legacy defaults kept for tests that assert the old sharpen constants still exist.
-DEFAULT_SHARP_VELOCITY = 50000
-DEFAULT_SHARP_ACCELERATION = 50000
-DEFAULT_SHARP_DECELERATION = 50000
 
-# Servo ``WritePosEx`` speed is not rad/s. Map path rate (centideg/s) → STS speed setting.
-#
-# Calibrate on hardware before merging (reviewer):
-#   1. Pick one joint; ``apply_settings({"velocity": <S>})`` with 1 <= S <= 3400 (e.g. 1000).
-#   2. Command a long single-point move or constant-speed segment; sample ``/joint_states``.
-#   3. Linear fit Δcentideg/Δt (or rad/s converted to centideg/s) → measured centideg/s at speed S.
-#   4. Set ``STS_CENTIDEG_PER_SEC_PER_SPEED_UNIT = measured_centideg_per_sec / S``.
-#
-# Until calibrated, path coupling uses the minimum STS speed so motion stays slow but continuous.
-STS_CENTIDEG_PER_SEC_PER_SPEED_UNIT: float = 0.0
+# The STS speed setting is not a linear rate: it is sub-linear and then saturates, measured at
+# 2092 / 4729 / 4949 centideg per second at the settings 200 / 700 / 2000 on an STS3095, and
+# 1741 / 3483 / 3835 on a finger servo. A single scalar factor was therefore wrong by a factor of
+# four depending on the operating point. The curve per servo family and the measurement live in
+# pib_motors/servo_speed_curve.py.
 PATH_SPEED_TRACKING_MARGIN = 1.2
-STS_VELOCITY_MIN = 50
-STS_VELOCITY_MAX = 3400
+STS_VELOCITY_MIN = STS_SPEED_MIN
+STS_VELOCITY_MAX = STS_SPEED_MAX
 # Finite-difference Δt for PCHIP path speed (seconds); documented approximation at 100 Hz.
 PATH_VELOCITY_FINITE_DIFF_SEC = 0.005
 
@@ -227,34 +224,33 @@ def active_trajectory_leg_index(times: Sequence[float], t: float) -> int:
 def derive_sts_velocity_setting(
     path_centideg_per_sec: float,
     *,
+    curve: Sequence[tuple[int, float]] | None = None,
     margin: float = PATH_SPEED_TRACKING_MARGIN,
     min_speed: int = STS_VELOCITY_MIN,
     max_speed: int = STS_VELOCITY_MAX,
-    centideg_per_sec_per_unit: float = STS_CENTIDEG_PER_SEC_PER_SPEED_UNIT,
 ) -> int:
-    """Convert path speed to an STS ``WritePosEx`` speed with tracking margin and clamp."""
-    magnitude = abs(float(path_centideg_per_sec)) * float(margin)
-    if magnitude <= 0.0:
-        return int(min_speed)
-    if centideg_per_sec_per_unit <= 0.0:
-        return int(min_speed)
-    raw = magnitude / centideg_per_sec_per_unit
-    return int(max(min_speed, min(max_speed, int(round(raw)))))
+    """Convert a path rate into the servo speed setting that tracks it."""
+    active = tuple(curve) if curve else curve_for_family("")
+    return speed_for_path(
+        path_centideg_per_sec,
+        active,
+        margin=margin,
+        min_speed=min_speed,
+        max_speed=max_speed,
+    )
 
 
 def trajectory_motion_settings_for_leg(
     original: Mapping[str, Any],
     path_centideg_per_sec: float,
     *,
+    curve: Sequence[tuple[int, float]] | None = None,
     margin: float = PATH_SPEED_TRACKING_MARGIN,
-    centideg_per_sec_per_unit: float = STS_CENTIDEG_PER_SEC_PER_SPEED_UNIT,
 ) -> dict[str, Any]:
     """Motion settings for one spline leg: path-coupled speed, original acceleration."""
     updated = dict(original)
     updated["velocity"] = derive_sts_velocity_setting(
-        path_centideg_per_sec,
-        margin=margin,
-        centideg_per_sec_per_unit=centideg_per_sec_per_unit,
+        path_centideg_per_sec, curve=curve, margin=margin
     )
     return updated
 
@@ -347,26 +343,18 @@ class TrajectoryExecutor:
         node: NodeLike | None,
         motor_lookup: MotorLookup,
         rate_hz: float = DEFAULT_RATE_HZ,
-        motion_sharp: dict[str, int] | None = None,
         restore: bool = True,
         sleep_fn: Callable[[float], None] = time.sleep,
         clock_fn: Callable[[], float] = time.monotonic,
         path_speed_margin: float = PATH_SPEED_TRACKING_MARGIN,
-        centideg_per_sec_per_speed_unit: float = STS_CENTIDEG_PER_SEC_PER_SPEED_UNIT,
     ) -> None:
         self.node = node
         self.motor_lookup = motor_lookup
         self.rate_hz = rate_hz if rate_hz > 0 else DEFAULT_RATE_HZ
-        self.motion_sharp = motion_sharp or {
-            "velocity": DEFAULT_SHARP_VELOCITY,
-            "acceleration": DEFAULT_SHARP_ACCELERATION,
-            "deceleration": DEFAULT_SHARP_DECELERATION,
-        }
         self.restore = restore
         self.sleep_fn = sleep_fn
         self.clock_fn = clock_fn
         self.path_speed_margin = path_speed_margin
-        self.centideg_per_sec_per_speed_unit = centideg_per_sec_per_speed_unit
         self._stop_event = threading.Event()
         self._worker: threading.Thread | None = None
         self._worker_lock = threading.Lock()
@@ -588,8 +576,8 @@ class TrajectoryExecutor:
             configured = trajectory_motion_settings_for_leg(
                 original,
                 path_speed,
+                curve=self._speed_curve_for(motor),
                 margin=self.path_speed_margin,
-                centideg_per_sec_per_unit=self.centideg_per_sec_per_speed_unit,
             )
             motor.apply_settings(configured)
             sts_speed = int(configured["velocity"])
@@ -606,6 +594,16 @@ class TrajectoryExecutor:
                 )
             )
 
+    @staticmethod
+    def _speed_curve_for(motor: MotorLike) -> tuple[tuple[int, float], ...]:
+        """The measured curve of the servo behind this motor, else the family default."""
+        getter = getattr(motor, "speed_curve", None)
+        if callable(getter):
+            curve = getter()
+            if curve:
+                return tuple(curve)
+        return curve_for_family("")
+
     def _joint_name_for_motor(
         self, motor: MotorLike, joint_names: Sequence[str]
     ) -> str | None:
@@ -620,20 +618,6 @@ class TrajectoryExecutor:
             log_perf_trace(self.node.get_logger(), line)
         else:
             logging.info(line)
-
-    def _sharpen_motion(
-        self,
-        motors: Sequence[MotorLike],
-        original_settings: Mapping[str, dict[str, Any]],
-    ) -> None:
-        for motor in motors:
-            if motor.name not in original_settings:
-                continue
-            sharp = original_settings[motor.name].copy()
-            sharp["velocity"] = self.motion_sharp["velocity"]
-            sharp["acceleration"] = self.motion_sharp["acceleration"]
-            sharp["deceleration"] = self.motion_sharp["deceleration"]
-            motor.apply_settings(sharp)
 
     def _restore_settings(
         self,

@@ -31,7 +31,12 @@ DEFAULT_SPEED = 1000
 DEFAULT_ACCEL = 50
 
 # Heavy arm/head servos (STS3095) run at lower speed/acceleration than finger servos.
-STS3095_SERVO_IDS: frozenset[int] = frozenset({18, 19, 20, 21, 38, 39, 40, 41, 50, 51})
+# The id set and the measured speed curve live together in servo_speed_curve.
+from pib_motors.servo_speed_curve import (  # noqa: E402  (single source for the family ids)
+    STS3095_SERVO_IDS,
+)
+from pib_motors.servo_speed_curve import curve_for_servo_id
+
 STS3095_SPEED = 700
 STS3095_ACCEL = 30
 FINGER_SPEED = 3000
@@ -272,6 +277,10 @@ class FeetechStSerialActuator:
         assert self._ph is not None and self._pk is not None and self._lock is not None
         device = resolve_serial_device(self.uid)
         return get_bus_writer(device, self._ph, self._pk, self._lock)
+
+    def speed_curve(self) -> tuple[tuple[int, float], ...]:
+        """Measured (speed setting, centideg/s) points for this servo model."""
+        return curve_for_servo_id(self.pin)
 
     def check_connection(self) -> bool:
         """Open the serial port if needed and probe this servo ID once."""

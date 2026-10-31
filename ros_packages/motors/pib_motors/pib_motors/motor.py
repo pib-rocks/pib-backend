@@ -76,6 +76,14 @@ class Motor:
             actuator.set_position(position, **kwargs) for actuator in self.actuators
         )
 
+    def speed_curve(self) -> tuple[tuple[int, float], ...]:
+        """The measured speed curve of the servo behind this motor, if it knows one."""
+        for actuator in self.actuators:
+            curve = getattr(actuator, "speed_curve", None)
+            if callable(curve):
+                return curve()
+        return ()
+
     def get_position(self) -> int:
         """Returns the measured present position, or 0 if no actuator is connected."""
         if not self.actuators:
