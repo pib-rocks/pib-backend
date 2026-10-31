@@ -414,11 +414,7 @@ class HandTrackingMixin:
         self.pipeline_manager.record_packet("imitation")
 
     def _publish_face_crop_detection(self, result_packet, face):
-        if self.current_frame is None:
-            frame_width = self.preview_width
-            frame_height = self.preview_height
-        else:
-            frame_height, frame_width = self.current_frame.shape[:2]
+        frame_width, frame_height = self._active_frame_dimensions()
         if self.face_crop_model_id is None or self.face_crop_translator is None:
             raise RuntimeError("face-crop classifier metadata is unavailable")
         detection = self.face_crop_translator(
@@ -455,7 +451,7 @@ class HandTrackingMixin:
         self.pipeline_manager.record_packet("hand_tracking_mp")
 
     def _consume_imitation_packet(self, packet):
-        frame_height, frame_width = self.current_frame.shape[:2]
+        frame_width, frame_height = self._active_frame_dimensions()
         palm_count = len(packet.reference_data.detections)
         result_count = len(packet.items)
         self._count_imitation_stage("palm_detector_nn")
@@ -494,7 +490,7 @@ class HandTrackingMixin:
         self._publish_imitation_detections(frame_width, frame_height, detections)
 
     def _process_imitation(self):
-        if self.imitation_queue is None or self.current_frame is None:
+        if self.imitation_queue is None or not self._has_active_frame():
             return
         packet = self._pending_imitation_packet
         self._pending_imitation_packet = None
@@ -837,7 +833,7 @@ class HandTrackingMixin:
         )
 
     def _process_hand_tracking(self):
-        if self.hand_decoder_queue is None or self.current_frame is None:
+        if self.hand_decoder_queue is None or not self._has_active_frame():
             return
 
         while self._pending_hands:
@@ -875,7 +871,7 @@ class HandTrackingMixin:
         if packet is None:
             return
         self._count_hand_stage("decoding_nn")
-        frame_height, frame_width = self.current_frame.shape[:2]
+        frame_width, frame_height = self._active_frame_dimensions()
         source_width, source_height = self.hand_source_size
         if not source_width or not source_height:
             source_width, source_height = self.current_source_size
@@ -946,9 +942,9 @@ class HandTrackingMixin:
 
     def _process_hand_tracking_fast(self):
         queue = getattr(self, "hand_fast_queue", None)
-        if queue is None or self.current_frame is None:
+        if queue is None or not self._has_active_frame():
             return
-        frame_height, frame_width = self.current_frame.shape[:2]
+        frame_width, frame_height = self._active_frame_dimensions()
         source_width, source_height = getattr(self, "hand_fast_source_size", (0, 0))
         if source_width <= 0 or source_height <= 0:
             return
@@ -1079,7 +1075,7 @@ class HandTrackingMixin:
         if (
             self.hand_mp_landmark_queue is None
             or self.hand_mp_detection_queue is None
-            or self.current_frame is None
+            or not self._has_active_frame()
         ):
             return
         for _ in range(stereo.HAND_MP_PAIR_WINDOW):
@@ -1116,7 +1112,7 @@ class HandTrackingMixin:
 
     def _publish_hand_mp_pair(self, detection_packet, landmark_packet):
         """Turn one matched (palm detection, landmark result) pair into detections."""
-        frame_height, frame_width = self.current_frame.shape[:2]
+        frame_width, frame_height = self._active_frame_dimensions()
         source_width, source_height = self.hand_mp_source_size
         score_tensor, landmark_score_value = self._hand_landmark_score(landmark_packet)
         layer_name, values, layer_probe = self._hand_landmark_tensor(landmark_packet)

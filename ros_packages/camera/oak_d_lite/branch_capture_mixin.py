@@ -236,7 +236,8 @@ class BranchCaptureMixin:
 
     def _write_colour_branch_capture(self, model_id, packet):
         """Save the delivered branch beside the preview from this same tick."""
-        if self.current_frame is None or getattr(self, "_preview_packet", None) is None:
+        preview_frame = self._decode_current_frame()
+        if preview_frame is None or getattr(self, "_preview_packet", None) is None:
             self._pending_colour_branch_packet = (model_id, packet)
             return
         directory = getattr(self, "_colour_branch_capture_dir", None)
@@ -257,7 +258,7 @@ class BranchCaptureMixin:
                 getattr(transformation, "getSourceSize", lambda: None)()
             )
             crops = self._format_src_crops(transformation)
-        frame_height, frame_width = self.current_frame.shape[:2]
+        frame_height, frame_width = preview_frame.shape[:2]
         field = self._field_from_packets(packet, frame_width, frame_height)
         if field is not None:
             self._colour_branch_field = field
@@ -265,7 +266,7 @@ class BranchCaptureMixin:
         preview_path = stereo.os.path.join(directory, "preview.png")
         report_path = stereo.os.path.join(directory, "field.txt")
         wrote_branch = stereo.cv2.imwrite(branch_path, frame)
-        wrote_preview = stereo.cv2.imwrite(preview_path, self.current_frame)
+        wrote_preview = stereo.cv2.imwrite(preview_path, preview_frame)
         report = (
             f"model={model_id}\n"
             f"delivered={delivered[0]}x{delivered[1]}\n"
@@ -309,3 +310,124 @@ class BranchCaptureMixin:
             self.get_logger().warning(
                 f"Colour branch field capture failed: {type(exc).__name__}: {exc}"
             )
+
+    def _load_startup_camera_settings(self):
+        """Load persisted camera settings from Flask on startup (PR-2140)."""
+        base_url = stereo.os.environ.get("FLASK_API_BASE_URL", "").strip().rstrip("/")
+        if not base_url:
+            return
+        try:
+            with stereo.urlopen(f"{base_url}/camera-settings", timeout=2.0) as resp:
+                data = stereo.json.loads(resp.read().decode("utf-8"))
+        except Exception as exc:
+            self.get_logger().warning(
+                f"Startup camera settings unavailable from {base_url}: {exc}; using defaults."
+            )
+            return
+        if not isinstance(data, dict):
+            return
+        res_x = data.get("resX")
+        res_y = data.get("resY")
+        if (
+            isinstance(res_x, int)
+            and isinstance(res_y, int)
+            and res_x > 0
+            and res_y > 0
+        ):
+            self.preview_width = res_x
+            self.preview_height = res_y
+        quality = data.get("qualityFactor")
+        if isinstance(quality, int) and 1 <= quality <= 100:
+            self.quality_factor = quality
+        refresh = data.get("refreshRate")
+        if (
+            isinstance(refresh, (int, float))
+            and not isinstance(refresh, bool)
+            and stereo.math.isfinite(refresh)
+            and refresh > 0
+        ):
+            self.timer_period = max(stereo.MIN_TIMER_PERIOD_SECONDS, float(refresh))
+
+    def _start_mjpeg_server(self):
+        """Start the embedded HTTP MJPEG server unless disabled (port <= 0)."""
+        if not getattr(self, "camera_available", False):
+            return
+        raw_port = stereo.os.environ.get(
+            "PIB_CAMERA_STREAM_PORT", str(stereo.DEFAULT_STREAM_PORT)
+        )
+        try:
+            port = int(raw_port)
+        except ValueError:
+            port = stereo.DEFAULT_STREAM_PORT
+        if port <= 0:
+            return
+        if getattr(self, "mjpeg_buffer", None) is None:
+            self.mjpeg_buffer = stereo.MjpegFrameBuffer()
+        server = stereo.MjpegStreamServer(frame_buffer=self.mjpeg_buffer, port=port)
+        if server.start():
+            self.mjpeg_server = server
+            self.get_logger().info(
+                f"Camera HTTP MJPEG stream listening on http://0.0.0.0:{server.server_port}/stream"
+            )
+        else:
+            self.get_logger().warning(
+                f"Camera HTTP MJPEG server could not bind port {port}"
+            )
+
+    def _has_active_frame(self) -> bool:
+        """Whether a camera frame (hardware JPEG or decoded BGR) has arrived."""
+        return bool(getattr(self, "current_jpeg_bytes", b"")) or (
+            getattr(self, "current_frame", None) is not None
+        )
+
+    def _active_frame_dimensions(self):
+        """Return ``(frame_width, frame_height)`` for detection scaling."""
+        frame = getattr(self, "current_frame", None)
+        if frame is not None and hasattr(frame, "shape"):
+            return int(frame.shape[1]), int(frame.shape[0])
+        return self._published_frame_size()
+
+    def _decode_current_frame(self):
+        """Return a BGR numpy frame, decoding ``current_jpeg_bytes`` on demand."""
+        frame = getattr(self, "current_frame", None)
+        if frame is not None:
+            return frame
+        jpeg_bytes = getattr(self, "current_jpeg_bytes", b"")
+        if not jpeg_bytes:
+            return None
+        try:
+            arr = stereo.np.frombuffer(jpeg_bytes, dtype=stereo.np.uint8)
+            decoded = stereo.cv2.imdecode(arr, stereo.cv2.IMREAD_COLOR)
+        except Exception:
+            return None
+        if decoded is not None:
+            self.current_frame = decoded
+        return decoded
+
+    @staticmethod
+    def _extract_packet_jpeg(packet):
+        """Extract hardware-encoded JPEG bytes from a VideoEncoder packet."""
+        get_data = getattr(packet, "getData", None)
+        if callable(get_data):
+            try:
+                raw = get_data()
+                if isinstance(raw, (bytes, bytearray, memoryview)):
+                    data = bytes(raw)
+                    if len(data) >= 2 and data[:2] == b"\xff\xd8":
+                        return data
+            except Exception:
+                pass
+        return None
+
+    def _publish_compressed_image(self, jpeg_bytes: bytes):
+        """Publish ``sensor_msgs/msg/CompressedImage`` when subscribed."""
+        pub = getattr(self, "compressed_publisher_", None)
+        if pub is None or pub.get_subscription_count() <= 0:
+            return
+        msg = stereo.CompressedImage()
+        if hasattr(self, "get_clock"):
+            msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = stereo.COMPRESSED_IMAGE_FRAME_ID
+        msg.format = "jpeg"
+        msg.data = list(jpeg_bytes)
+        pub.publish(msg)
