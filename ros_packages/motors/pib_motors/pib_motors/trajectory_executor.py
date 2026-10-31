@@ -240,37 +240,6 @@ def derive_sts_velocity_setting(
     )
 
 
-def trajectory_motion_settings_for_leg(
-    original: Mapping[str, Any],
-    path_centideg_per_sec: float,
-    *,
-    curve: Sequence[tuple[int, float]] | None = None,
-    margin: float = PATH_SPEED_TRACKING_MARGIN,
-) -> dict[str, Any]:
-    """Motion settings for one spline leg: path-coupled speed, original acceleration."""
-    updated = dict(original)
-    updated["velocity"] = derive_sts_velocity_setting(
-        path_centideg_per_sec, curve=curve, margin=margin
-    )
-    return updated
-
-
-def leg_path_speed_centideg_per_sec(
-    times: Sequence[float],
-    values: Sequence[float],
-    leg_index: int,
-) -> float:
-    """Representative path speed for a leg (sample at midpoint)."""
-    if leg_index < 0 or leg_index >= len(times) - 1:
-        return 0.0
-    t0 = times[leg_index]
-    t1 = times[leg_index + 1]
-    if t1 <= t0:
-        return 0.0
-    mid = (t0 + t1) * 0.5
-    return interpolate_joint_velocity_centideg_per_sec(times, values, mid)
-
-
 def parse_joint_trajectory(
     jt: Any,
 ) -> tuple[list[str], list[float], dict[str, list[float]]]:
@@ -343,18 +312,25 @@ class TrajectoryExecutor:
         node: NodeLike | None,
         motor_lookup: MotorLookup,
         rate_hz: float = DEFAULT_RATE_HZ,
-        restore: bool = True,
         sleep_fn: Callable[[float], None] = time.sleep,
         clock_fn: Callable[[], float] = time.monotonic,
         path_speed_margin: float = PATH_SPEED_TRACKING_MARGIN,
+        path_coupled_acceleration: bool = True,
+        acceleration_scale: float = 2000.0,
+        log_every_second: bool = True,
     ) -> None:
         self.node = node
         self.motor_lookup = motor_lookup
         self.rate_hz = rate_hz if rate_hz > 0 else DEFAULT_RATE_HZ
-        self.restore = restore
         self.sleep_fn = sleep_fn
         self.clock_fn = clock_fn
         self.path_speed_margin = path_speed_margin
+        self.path_coupled_acceleration = path_coupled_acceleration
+        self.acceleration_scale = (
+            acceleration_scale if acceleration_scale > 0 else 2000.0
+        )
+        self.log_every_second = log_every_second
+        self._last_setting: dict[str, int] = {}
         self._stop_event = threading.Event()
         self._worker: threading.Thread | None = None
         self._worker_lock = threading.Lock()
@@ -442,17 +418,13 @@ class TrajectoryExecutor:
             return TrajectoryCompletion(False, False, tuple(names), 0.0)
 
         names, times, series = parse_joint_trajectory(jt)
-        original_settings = self._backup_motor_settings(motors)
         cancelled = False
         success = True
         run_started = self.clock_fn()
-        try:
-            success, cancelled = self._run_interpolation_loop(
-                names, times, series, motors, original_settings
-            )
-        finally:
-            if self.restore:
-                self._restore_settings(motors, original_settings)
+        # No motion configuration is written for the duration of a trajectory any more: the
+        # speed travels with each position write. That removes the whole backup/restore dance
+        # and with it the class of bug where a cancel left a motor sharpened.
+        success, cancelled = self._run_interpolation_loop(names, times, series, motors)
         duration_sec = max(0.0, self.clock_fn() - run_started)
         return TrajectoryCompletion(
             successful=success and not cancelled,
@@ -488,42 +460,138 @@ class TrajectoryExecutor:
         times: Sequence[float],
         series: Mapping[str, Sequence[float]],
         motors: Sequence[MotorLike],
-        original_settings: Mapping[str, dict[str, Any]],
     ) -> tuple[bool, bool]:
         dt = 1.0 / self.rate_hz
         duration = times[-1] if times else 0.0
         t0 = self.clock_fn()
         success = True
         cancelled = False
-        last_leg = -1
+        last_log = -1.0
         while True:
             if self._stop_event.is_set():
                 cancelled = True
                 break
             now = self.clock_fn() - t0
-            leg_index = active_trajectory_leg_index(times, now)
-            if leg_index != last_leg:
-                self._apply_leg_motion_config(
-                    motors, names, times, series, leg_index, original_settings
-                )
-                last_leg = leg_index
             targets = interpolate_positions(names, times, series, now)
             for name in names:
                 position = targets[name]
+                # Per tick, not per leg: the slope of a PCHIP segment changes inside the
+                # segment, so a speed fixed for the whole segment runs ahead of or behind
+                # the path at the segment ends.
+                path_speed = interpolate_joint_velocity_centideg_per_sec(
+                    times, series[name], now
+                )
                 for motor in self.motor_lookup[name]:
-                    success &= self._stream_set_position(motor, position)
+                    setting = derive_sts_velocity_setting(
+                        path_speed,
+                        curve=self._speed_curve_for(motor),
+                        margin=self.path_speed_margin,
+                    )
+                    acceleration = self._acceleration_for(motor, setting, dt)
+                    success &= self._stream_set_position(
+                        motor, position, setting, acceleration
+                    )
+            if self.log_every_second and now - last_log >= 1.0:
+                last_log = now
+                self._log_tick_speeds(names, times, series, now)
             if now >= duration:
                 break
             self.sleep_fn(dt)
         return success, cancelled
 
+    def _acceleration_for(
+        self, motor: MotorLike, setting: int, dt: float
+    ) -> int | None:
+        """Acceleration for this write, coupled to how fast the required speed changes.
+
+        The servo's own acceleration stays the upper bound: the point is to let it follow the
+        path, not to make it snappier than it was configured to be.
+        """
+        if not self.path_coupled_acceleration:
+            return None
+        previous = self._last_setting.get(motor.name)
+        self._last_setting[motor.name] = setting
+        if previous is None or dt <= 0.0:
+            return None
+        change_per_sec = abs(setting - previous) / dt
+        baseline = self._baseline_acceleration(motor)
+        if baseline <= 0:
+            return None
+        wanted = int(
+            round(baseline * min(1.0, change_per_sec / self.acceleration_scale))
+        )
+        return max(1, min(baseline, wanted))
+
+    def _log_perf_trace(self, line: str) -> None:
+        if self.node is not None:
+            log_perf_trace(self.node.get_logger(), line)
+        else:
+            logging.info(line)
+
     @staticmethod
-    def _stream_set_position(motor: MotorLike, position: int) -> bool:
+    def _speed_curve_for(motor: MotorLike) -> tuple[tuple[int, float], ...]:
+        """The measured curve of the servo behind this motor, else the family default."""
+        getter = getattr(motor, "speed_curve", None)
+        if callable(getter):
+            curve = getter()
+            if curve:
+                return tuple(curve)
+        return curve_for_family("")
+
+    @staticmethod
+    def _baseline_acceleration(motor: MotorLike) -> int:
+        getter = getattr(motor, "get_settings", None)
+        if not callable(getter):
+            return 0
+        settings = getter() or {}
+        try:
+            return int(settings.get("acceleration") or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    def _log_tick_speeds(
+        self,
+        names: Sequence[str],
+        times: Sequence[float],
+        series: Mapping[str, Sequence[float]],
+        now: float,
+    ) -> None:
+        for name in names:
+            for motor in self.motor_lookup[name]:
+                path_speed = interpolate_joint_velocity_centideg_per_sec(
+                    times, series[name], now
+                )
+                setting = derive_sts_velocity_setting(
+                    path_speed,
+                    curve=self._speed_curve_for(motor),
+                    margin=self.path_speed_margin,
+                )
+                self._log_perf_trace(
+                    format_perf_trace_trajectory_leg_motion(
+                        motor.name,
+                        active_trajectory_leg_index(times, now),
+                        times[0],
+                        times[-1],
+                        path_speed,
+                        setting,
+                        0,
+                    )
+                )
+
+    @staticmethod
+    def _stream_set_position(
+        motor: MotorLike, position: int, speed: int | None, acc: int | None
+    ) -> bool:
         setter = motor.set_position
         try:
-            return bool(setter(position, bus_priority=BusPriority.STREAM))
+            return bool(
+                setter(position, bus_priority=BusPriority.STREAM, speed=speed, acc=acc)
+            )
         except TypeError:
-            return bool(setter(position))
+            try:
+                return bool(setter(position, bus_priority=BusPriority.STREAM))
+            except TypeError:
+                return bool(setter(position))
 
     def _resolve_motors(self, names: Iterable[str]) -> list[MotorLike] | None:
         resolved: list[MotorLike] = []
@@ -538,95 +606,6 @@ class TrajectoryExecutor:
                     seen.add(identity)
                     resolved.append(motor)
         return resolved
-
-    def _backup_motor_settings(
-        self, motors: Sequence[MotorLike]
-    ) -> dict[str, dict[str, Any]]:
-        original_settings: dict[str, dict[str, Any]] = {}
-        for motor in motors:
-            settings = motor.get_settings()
-            if settings:
-                original_settings[motor.name] = settings.copy()
-        return original_settings
-
-    def _apply_leg_motion_config(
-        self,
-        motors: Sequence[MotorLike],
-        joint_names: Sequence[str],
-        times: Sequence[float],
-        series: Mapping[str, Sequence[float]],
-        leg_index: int,
-        original_settings: Mapping[str, dict[str, Any]],
-    ) -> None:
-        if leg_index < 0 or leg_index >= len(times) - 1:
-            return
-        t0 = times[leg_index]
-        t1 = times[leg_index + 1]
-        for motor in motors:
-            original = original_settings.get(motor.name)
-            if not original:
-                continue
-            joint_name = self._joint_name_for_motor(motor, joint_names)
-            if joint_name is None or joint_name not in series:
-                path_speed = 0.0
-            else:
-                path_speed = leg_path_speed_centideg_per_sec(
-                    times, series[joint_name], leg_index
-                )
-            configured = trajectory_motion_settings_for_leg(
-                original,
-                path_speed,
-                curve=self._speed_curve_for(motor),
-                margin=self.path_speed_margin,
-            )
-            motor.apply_settings(configured)
-            sts_speed = int(configured["velocity"])
-            sts_accel = int(configured.get("acceleration", 0))
-            self._log_perf_trace(
-                format_perf_trace_trajectory_leg_motion(
-                    motor.name,
-                    leg_index,
-                    t0,
-                    t1,
-                    path_speed,
-                    sts_speed,
-                    sts_accel,
-                )
-            )
-
-    @staticmethod
-    def _speed_curve_for(motor: MotorLike) -> tuple[tuple[int, float], ...]:
-        """The measured curve of the servo behind this motor, else the family default."""
-        getter = getattr(motor, "speed_curve", None)
-        if callable(getter):
-            curve = getter()
-            if curve:
-                return tuple(curve)
-        return curve_for_family("")
-
-    def _joint_name_for_motor(
-        self, motor: MotorLike, joint_names: Sequence[str]
-    ) -> str | None:
-        for name in joint_names:
-            for candidate in self.motor_lookup.get(name, []):
-                if candidate is motor or candidate.name == motor.name:
-                    return name
-        return None
-
-    def _log_perf_trace(self, line: str) -> None:
-        if self.node is not None:
-            log_perf_trace(self.node.get_logger(), line)
-        else:
-            logging.info(line)
-
-    def _restore_settings(
-        self,
-        motors: Sequence[MotorLike],
-        original_settings: Mapping[str, dict[str, Any]],
-    ) -> None:
-        for motor in motors:
-            if motor.name in original_settings:
-                motor.apply_settings(original_settings[motor.name])
 
     def _log_error(self, message: str) -> None:
         if self.node is not None:

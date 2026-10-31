@@ -417,15 +417,30 @@ class FeetechStSerialActuator:
             return self.NO_CURRENT
 
     def set_position(
-        self, position: int, *, bus_priority: BusPriority = BusPriority.SERVICE
+        self,
+        position: int,
+        *,
+        bus_priority: BusPriority = BusPriority.SERVICE,
+        speed: int | None = None,
+        acc: int | None = None,
     ) -> bool:
+        """Command a position. ``speed``/``acc`` override the stored motion settings.
+
+        The override exists for trajectories: they know the path speed for the current tick and
+        must not write registers to express it. One write, one transaction.
+        """
         if not self.is_connected() or self._pk is None or self._lock is None:
             return False
 
         position = int(round(position))
         centideg = position * self.direction_sign
         ticks = centideg_to_ticks(float(centideg))
-        speed, acc = self._resolve_speed_and_acc()
+        if speed is None or acc is None:
+            default_speed, default_acc = self._resolve_speed_and_acc()
+            speed = default_speed if speed is None else int(speed)
+            acc = default_acc if acc is None else int(acc)
+        else:
+            speed, acc = int(speed), int(acc)
 
         if bus_priority is BusPriority.STREAM:
             try:
