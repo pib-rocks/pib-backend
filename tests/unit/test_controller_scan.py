@@ -86,3 +86,78 @@ def test_build_detected_assignments_no_controller_below_min_match():
     assert assignments[0]["controllerNumber"] is None
     assert assignments[0]["matchCount"] == 0
     assert assignments[0]["expectedCount"] == 0
+
+
+def test_count_matches_takes_the_port_per_probe() -> None:
+    """Holding the port across all probes blocked the sweep for about a second.
+
+    Each probe must be its own port acquisition, so an adapter is never held longer than
+    one response timeout - a servo that is not on this adapter costs exactly that.
+    """
+    acquisitions: list[str] = []
+
+    class _Access:
+        def __init__(self, _ph, _lock) -> None:
+            pass
+
+        def __enter__(self) -> None:
+            acquisitions.append("enter")
+
+        def __exit__(self, *_args) -> None:
+            acquisitions.append("exit")
+
+    class _Pk:
+        def ReadPosSpeed(self, servo_id: int):
+            return (0, 0, 0, 0) if servo_id == 16 else (-1, 0, 1, "no answer")
+
+    with mock.patch.object(
+        controller_scan, "_get_or_open_port", return_value=(None, _Pk(), None)
+    ):
+        with mock.patch.object(controller_scan, "_BusAccess", _Access):
+            counts = controller_scan._count_matches("test-serial", {2: [16, 17, 18]})
+
+    assert counts == {2: 1}
+    assert acquisitions == ["enter", "exit"] * 3, acquisitions
+
+
+def test_present_servos_give_the_match_counts_without_a_scan() -> None:
+    """The periodic picture comes from /joint_states, so it must not touch the bus."""
+    expected = {1: [1, 2, 3], 2: [16, 17]}
+    with mock.patch.object(
+        controller_scan,
+        "_controller_number_by_serial",
+        return_value={"serial-a": 1, "serial-b": 2},
+    ):
+        with mock.patch.object(controller_scan, "_count_matches") as count_matches:
+            assignments = controller_scan.assignments_from_present_servos(
+                ["serial-a", "serial-b"], expected, {1, 2, 16}
+            )
+    count_matches.assert_not_called()
+    assert assignments == [
+        {
+            "serial": "serial-a",
+            "controllerNumber": 1,
+            "matchCount": 2,
+            "expectedCount": 3,
+        },
+        {
+            "serial": "serial-b",
+            "controllerNumber": 2,
+            "matchCount": 1,
+            "expectedCount": 2,
+        },
+    ]
+
+
+def test_unassigned_adapter_is_reported_as_unassigned() -> None:
+    """No stored address and several controllers: do not guess, report None."""
+    expected = {1: [1, 2], 2: [16, 17]}
+    with mock.patch.object(
+        controller_scan, "_controller_number_by_serial", return_value={}
+    ):
+        assignments = controller_scan.assignments_from_present_servos(
+            ["serial-x"], expected, {1, 16}
+        )
+    assert assignments[0]["controllerNumber"] is None
+    assert assignments[0]["matchCount"] == 0
+    assert assignments[0]["expectedCount"] == 0
