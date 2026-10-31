@@ -23,14 +23,20 @@ if str(PIB_MOTORS_ROOT) not in sys.path:
 
 try:
     from pib_motors.trajectory_executor import (
-        DEFAULT_SHARP_ACCELERATION,
-        DEFAULT_SHARP_DECELERATION,
         DEFAULT_SHARP_VELOCITY,
         MAX_SOFTWARE_TRAJECTORY_DURATION_SEC,
+        PATH_SPEED_TRACKING_MARGIN,
+        STS_VELOCITY_MAX,
+        STS_VELOCITY_MIN,
         TrajectoryExecutor,
+        active_trajectory_leg_index,
+        derive_sts_velocity_setting,
         interpolate_joint,
+        interpolate_joint_velocity_centideg_per_sec,
         interpolate_positions,
         is_software_trajectory,
+        leg_path_speed_centideg_per_sec,
+        trajectory_motion_settings_for_leg,
         validate_software_trajectory_schedule,
     )
 except ImportError as exc:  # pragma: no cover - unexpected missing module
@@ -117,7 +123,10 @@ class FakeClock:
 
 
 def _executor(
-    motors: dict[str, list[FakeMotor]], clock: FakeClock | None = None
+    motors: dict[str, list[FakeMotor]],
+    clock: FakeClock | None = None,
+    *,
+    centideg_per_sec_per_speed_unit: float = 0.25,
 ) -> TrajectoryExecutor:
     clock = clock or FakeClock()
     return TrajectoryExecutor(
@@ -126,6 +135,7 @@ def _executor(
         rate_hz=10.0,
         sleep_fn=clock.sleep,
         clock_fn=clock.time,
+        centideg_per_sec_per_speed_unit=centideg_per_sec_per_speed_unit,
     )
 
 
@@ -195,10 +205,10 @@ def test_multi_point_interpolation_calls_set_position_in_order() -> None:
     assert motor.positions == sorted(motor.positions)
 
 
-def test_motion_config_is_sharpened_then_restored() -> None:
+def test_motion_config_tracks_path_speed_then_restores() -> None:
     motor = FakeMotor("elbow")
     original_velocity = motor.get_settings()["velocity"]
-    executor = _executor({"elbow": [motor]})
+    executor = _executor({"elbow": [motor]}, centideg_per_sec_per_speed_unit=0.25)
     jt = FakeJointTrajectory(
         ["elbow"],
         [FakePoint([0], 0.0), FakePoint([50], 0.2)],
@@ -206,10 +216,16 @@ def test_motion_config_is_sharpened_then_restored() -> None:
 
     assert executor.execute(jt) is True
     assert len(motor.settings_calls) >= 2
-    sharp, restored = motor.settings_calls[0], motor.settings_calls[-1]
-    assert sharp["velocity"] == DEFAULT_SHARP_VELOCITY
-    assert sharp["acceleration"] == DEFAULT_SHARP_ACCELERATION
-    assert sharp["deceleration"] == DEFAULT_SHARP_DECELERATION
+    leg_config, restored = motor.settings_calls[0], motor.settings_calls[-1]
+    path_speed = leg_path_speed_centideg_per_sec([0.0, 0.2], [0.0, 50.0], 0)
+    expected_velocity = derive_sts_velocity_setting(
+        path_speed,
+        margin=PATH_SPEED_TRACKING_MARGIN,
+        centideg_per_sec_per_unit=0.25,
+    )
+    assert leg_config["velocity"] == expected_velocity
+    assert leg_config["velocity"] < DEFAULT_SHARP_VELOCITY
+    assert leg_config["acceleration"] == 3000
     assert restored["velocity"] == original_velocity
     assert restored["acceleration"] == 3000
     assert restored["deceleration"] == 3000
@@ -375,3 +391,56 @@ def test_start_async_returns_before_duration_elapses() -> None:
     assert started is True
     assert executor.is_running() is True
     assert executor.join(timeout=1.0) is True
+
+
+def test_path_speed_derivation_slow_vs_fast_leg() -> None:
+    times = [0.0, 1.0, 2.0]
+    slow = [0.0, 10.0, 20.0]
+    fast = [0.0, 100.0, 200.0]
+    slow_speed = abs(leg_path_speed_centideg_per_sec(times, slow, 0))
+    fast_speed = abs(leg_path_speed_centideg_per_sec(times, fast, 0))
+    assert slow_speed < fast_speed
+    assert slow_speed == pytest.approx(10.0, rel=0.05)
+
+
+def test_derive_sts_velocity_clamps_and_handles_zero_slope() -> None:
+    unit = 0.5
+    low = derive_sts_velocity_setting(5.0, margin=1.0, centideg_per_sec_per_unit=unit)
+    high = derive_sts_velocity_setting(
+        5000.0, margin=1.0, centideg_per_sec_per_unit=unit
+    )
+    assert low == STS_VELOCITY_MIN
+    assert high == STS_VELOCITY_MAX
+    assert (
+        derive_sts_velocity_setting(0.0, centideg_per_sec_per_unit=unit)
+        == STS_VELOCITY_MIN
+    )
+    assert (
+        derive_sts_velocity_setting(100.0, centideg_per_sec_per_unit=0.0)
+        == STS_VELOCITY_MIN
+    )
+
+
+def test_trajectory_motion_settings_keep_original_acceleration() -> None:
+    original = {"velocity": 4000, "acceleration": 88, "deceleration": 88}
+    updated = trajectory_motion_settings_for_leg(
+        original, 200.0, margin=1.0, centideg_per_sec_per_unit=1.0
+    )
+    assert updated["acceleration"] == 88
+    assert updated["deceleration"] == 88
+    assert updated["velocity"] == 200
+
+
+def test_interpolate_joint_velocity_empty_and_flat() -> None:
+    assert interpolate_joint_velocity_centideg_per_sec([], [], 0.0) == 0.0
+    assert interpolate_joint_velocity_centideg_per_sec([0.0], [5.0], 0.0) == 0.0
+    flat = interpolate_joint_velocity_centideg_per_sec([0.0, 1.0], [10.0, 10.0], 0.5)
+    assert flat == pytest.approx(0.0, abs=1e-6)
+
+
+def test_active_trajectory_leg_index() -> None:
+    times = [0.0, 1.0, 3.0]
+    assert active_trajectory_leg_index(times, -1.0) == 0
+    assert active_trajectory_leg_index(times, 0.5) == 0
+    assert active_trajectory_leg_index(times, 2.0) == 1
+    assert active_trajectory_leg_index(times, 10.0) == 1
