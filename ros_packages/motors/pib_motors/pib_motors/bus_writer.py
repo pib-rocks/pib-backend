@@ -27,6 +27,11 @@ DEFAULT_SERVICE_DEADLINE_SEC = 0.25
 DEFAULT_SWEEP_DEADLINE_SEC = 0.5
 DEFAULT_STREAM_DEADLINE_SEC = 0.1
 
+# A healthy transaction on this bus takes well under a millisecond. Anything above this
+# is worth a warning line, because a single slow transaction blocks every other user of
+# the port for its duration - that is the mechanism the 0.4 to 1 s node stalls come from.
+SLOW_TX_MS = 50.0
+
 _registry_lock = threading.Lock()
 _registry: dict[str, BusWriter] = {}
 
@@ -46,6 +51,7 @@ class StreamTarget:
     deadline: float
     submitted_at: float
     seq: int
+    label: str = ""
 
 
 @dataclass
@@ -53,6 +59,7 @@ class _ServiceJob:
     deadline: float
     submitted_at: float
     execute: Callable[[Any], Any]
+    label: str = ""
     done: threading.Event = field(default_factory=threading.Event)
     result: Any = None
     error: str | None = None
@@ -63,6 +70,7 @@ class _SweepJob:
     deadline: float
     submitted_at: float
     execute: Callable[[Any], Any]
+    label: str = ""
     done: threading.Event = field(default_factory=threading.Event)
     result: Any = None
     error: str | None = None
@@ -77,6 +85,12 @@ class BusWriterCounters:
     max_queue_wait_ms: float = 0.0
     dropped_stream: int = 0
     coalesced_stream: int = 0
+    #: Longest single bus transaction seen in the current window, and how many crossed
+    #: SLOW_TX_MS. This is what names a blocking servo instead of blaming the queue.
+    max_tx_ms: float = 0.0
+    slow_transactions: int = 0
+    #: Longest wait to get the port Lock + flock (cross-process guard), in milliseconds.
+    max_acquire_wait_ms: float = 0.0
 
     def snapshot(self) -> dict[str, float | int]:
         return {
@@ -141,6 +155,7 @@ class BusWriter:
         speed: int,
         acc: int,
         deadline: float | None = None,
+        label: str = "",
     ) -> None:
         now = self._clock()
         if deadline is None:
@@ -158,6 +173,7 @@ class BusWriter:
                 deadline=deadline,
                 submitted_at=now,
                 seq=self._stream_seq,
+                label=label,
             )
             self._refresh_queue_depth()
             self._cond.notify()
@@ -168,6 +184,7 @@ class BusWriter:
         *,
         deadline: float | None = None,
         wait_timeout: float | None = None,
+        label: str = "",
     ) -> tuple[Any, str | None]:
         """Enqueue SERVICE work and block until done or deadline (ROS-safe timeout)."""
         now = self._clock()
@@ -175,7 +192,9 @@ class BusWriter:
             deadline = now + DEFAULT_SERVICE_DEADLINE_SEC
         if wait_timeout is None:
             wait_timeout = max(0.0, deadline - now)
-        job = _ServiceJob(deadline=deadline, submitted_at=now, execute=execute)
+        job = _ServiceJob(
+            deadline=deadline, submitted_at=now, execute=execute, label=label
+        )
         with self._cond:
             self._service.append(job)
             self._refresh_queue_depth()
@@ -190,13 +209,16 @@ class BusWriter:
         *,
         deadline: float | None = None,
         wait_timeout: float | None = None,
+        label: str = "",
     ) -> tuple[Any, str | None]:
         now = self._clock()
         if deadline is None:
             deadline = now + DEFAULT_SWEEP_DEADLINE_SEC
         if wait_timeout is None:
             wait_timeout = max(0.0, deadline - now)
-        job = _SweepJob(deadline=deadline, submitted_at=now, execute=execute)
+        job = _SweepJob(
+            deadline=deadline, submitted_at=now, execute=execute, label=label
+        )
         with self._cond:
             self._sweep.append(job)
             self._refresh_queue_depth()
@@ -226,6 +248,37 @@ class BusWriter:
         if wait_ms > self._counters.max_queue_wait_ms:
             self._counters.max_queue_wait_ms = wait_ms
 
+    def _record_transaction(self, kind: str, label: str, started_at: float) -> float:
+        """Record one bus transaction: its duration and the wait to get the port.
+
+        The wait for Lock + flock is read from the actuator module, because that is where
+        the cross-process guard lives. Both numbers are what tells a slow servo apart
+        from a busy queue.
+        """
+        tx_ms = (self._clock() - started_at) * 1000.0
+        if tx_ms > self._counters.max_tx_ms:
+            self._counters.max_tx_ms = tx_ms
+        acquire_ms = 0.0
+        try:
+            from pib_motors.feetech_actuator import last_bus_acquire_wait_ms
+
+            acquire_ms = last_bus_acquire_wait_ms()
+        except Exception:  # noqa: BLE001 - instrumentation must never break the bus
+            acquire_ms = 0.0
+        if acquire_ms > self._counters.max_acquire_wait_ms:
+            self._counters.max_acquire_wait_ms = acquire_ms
+        if tx_ms > SLOW_TX_MS:
+            self._counters.slow_transactions += 1
+            _LOG.warning(
+                "[PERF_TRACE] BUS_WRITER_SLOW port=%s kind=%s label=%s tx_ms=%.1f acquire_ms=%.1f",
+                self.port_key,
+                kind,
+                label or "-",
+                tx_ms,
+                acquire_ms,
+            )
+        return tx_ms
+
     def _record_tx(self) -> None:
         now = self._clock()
         self._counters.txs += 1
@@ -235,6 +288,9 @@ class BusWriter:
             self._counters.txs = 0
             self._counters.txs_window_start = now
             self._counters.max_queue_wait_ms = 0.0
+            self._counters.max_tx_ms = 0.0
+            self._counters.slow_transactions = 0
+            self._counters.max_acquire_wait_ms = 0.0
 
     def _run(self) -> None:
         while not self._stop.is_set():
@@ -302,10 +358,12 @@ class BusWriter:
             job.done.set()
             return
         self._record_queue_wait(job.submitted_at)
+        started_tx = self._clock()
         try:
             with self._bus_access():
                 job.result = job.execute(self._pk)
             self._record_tx()
+            self._record_transaction("service", job.label, started_tx)
         except Exception as error:  # noqa: BLE001
             job.error = str(error)
         job.done.set()
@@ -317,10 +375,12 @@ class BusWriter:
             job.done.set()
             return
         self._record_queue_wait(job.submitted_at)
+        started_tx = self._clock()
         try:
             with self._bus_access():
                 job.result = job.execute(self._pk)
             self._record_tx()
+            self._record_transaction("sweep", job.label, started_tx)
         except Exception as error:  # noqa: BLE001
             job.error = str(error)
         job.done.set()
@@ -334,6 +394,8 @@ class BusWriter:
         if not targets:
             return
         self._record_queue_wait(min(t.submitted_at for t in targets))
+        started_tx = self._clock()
+        label = targets[0].label or ",".join(str(t.pin) for t in targets)
         try:
             with self._bus_access():
                 if len(targets) == 1:
@@ -363,6 +425,7 @@ class BusWriter:
                             res,
                         )
             self._record_tx()
+            self._record_transaction("stream", f"pins:{label}", started_tx)
         except Exception as error:  # noqa: BLE001
             _LOG.debug("stream batch failed on %s: %s", self.port_key, error)
 
@@ -406,7 +469,10 @@ def format_bus_writer_summary(writer: BusWriter) -> str:
         f"queue={snap['queue_depth']} "
         f"max_wait_ms={snap['max_queue_wait_ms']} "
         f"dropped_stream={snap['dropped_stream']} "
-        f"coalesced={snap['coalesced_stream']}"
+        f"coalesced={snap['coalesced_stream']} "
+        f"max_tx_ms={snap['max_tx_ms']} "
+        f"slow={snap['slow_transactions']} "
+        f"max_acquire_ms={snap['max_acquire_wait_ms']}"
     )
 
 

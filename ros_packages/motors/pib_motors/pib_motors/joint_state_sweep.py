@@ -120,7 +120,9 @@ def _sweep_port(
         def _execute(bus_pk: Any) -> dict[str, int]:
             return _read_single(bus_pk, group)
 
-        positions, error = writer.run_sweep(_execute)
+        positions, error = writer.run_sweep(
+            _execute, label=f"sweep:{len(group)} servos"
+        )
         if error:
             _LOG.warning("joint state sweep: port %s sweep failed: %s", port_key, error)
             return {}, ""

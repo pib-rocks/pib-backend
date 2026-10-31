@@ -204,3 +204,63 @@ def test_service_deadline_returns_error_to_caller() -> None:
     assert result is None
     assert error is not None
     assert "deadline expired" in error
+
+
+def test_slow_transaction_is_counted_and_names_the_servo(caplog) -> None:
+    """A transaction above the threshold must be countable and name its servo.
+
+    The stall investigation depends on this: the queue counters stay at zero while the
+    node hangs, so the transaction duration is the number that identifies the culprit.
+    """
+    writer, pk, clock = _writer()
+    original_write = pk.WritePosEx
+
+    def _slow_write(servo_id: int, position: int, speed: int, acc: int):
+        clock.advance(0.2)  # 200 ms in fake time, no real sleep
+        return original_write(servo_id, position, speed, acc)
+
+    pk.WritePosEx = _slow_write  # type: ignore[method-assign]
+    with caplog.at_level("WARNING"):
+        writer.submit_stream(4, 2100, 500, 40, label="pin4:set_position")
+        assert writer.flush_idle(timeout=2.0)
+
+    counters = writer.counters()
+    assert counters.max_tx_ms >= 200.0, counters.max_tx_ms
+    assert counters.slow_transactions >= 1
+    assert "BUS_WRITER_SLOW" in caplog.text
+    assert "pin4:set_position" in caplog.text
+
+
+def test_slow_service_transaction_is_counted(caplog) -> None:
+    writer, _pk, clock = _writer()
+
+    def _slow_service(_pk: FakePk) -> bool:
+        clock.advance(0.15)  # 150 ms in fake time
+        return True
+
+    with caplog.at_level("WARNING"):
+        result, error = writer.run_service(
+            _slow_service, wait_timeout=2.0, label="pin9:get_current_position"
+        )
+    assert error is None
+    assert result is True
+    assert writer.counters().max_tx_ms >= 150.0
+    assert "pin9:get_current_position" in caplog.text
+
+
+def test_transaction_under_the_threshold_is_not_counted_as_slow(caplog) -> None:
+    """Without this counter-check the warning above could fire on every transaction."""
+    writer, pk, clock = _writer()
+    original_write = pk.WritePosEx
+
+    def _fast_write(servo_id: int, position: int, speed: int, acc: int):
+        clock.advance(0.001)  # 1 ms
+        return original_write(servo_id, position, speed, acc)
+
+    pk.WritePosEx = _fast_write  # type: ignore[method-assign]
+    with caplog.at_level("WARNING"):
+        writer.submit_stream(5, 2048, 500, 40, label="pin5:set_position")
+        assert writer.flush_idle(timeout=2.0)
+
+    assert writer.counters().slow_transactions == 0
+    assert "BUS_WRITER_SLOW" not in caplog.text

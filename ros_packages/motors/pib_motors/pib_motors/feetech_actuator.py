@@ -53,6 +53,16 @@ _port_cache: dict[str, tuple[PortHandler, sts, threading.Lock]] = {}
 _cache_lock = threading.Lock()
 
 
+#: Per-thread record of how long the last _BusAccess took to acquire Lock + flock.
+#: The bus writer reads it after a transaction to tell "slow servo" from "busy port".
+_acquire_state = threading.local()
+
+
+def last_bus_acquire_wait_ms() -> float:
+    """Milliseconds the calling thread spent acquiring the port in its last _BusAccess."""
+    return float(getattr(_acquire_state, "wait_ms", 0.0))
+
+
 class _BusAccess:
     """Serializes bus transactions across threads and OS processes (motor_control + motor_current)."""
 
@@ -61,6 +71,7 @@ class _BusAccess:
         self._lock = lock
 
     def __enter__(self) -> None:
+        started = time.monotonic()
         self._lock.acquire()
         ser = getattr(self._ph, "ser", None)
         if ser is not None and hasattr(ser, "fileno"):
@@ -68,6 +79,9 @@ class _BusAccess:
                 fcntl.flock(ser.fileno(), fcntl.LOCK_EX)
             except Exception:
                 pass
+        # Includes both the in-process Lock and the cross-process flock, which is what a
+        # transaction actually waits for when another process is on the same adapter.
+        _acquire_state.wait_ms = (time.monotonic() - started) * 1000.0
 
     def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
         ser = getattr(self._ph, "ser", None)
@@ -357,7 +371,9 @@ class FeetechStSerialActuator:
             return int(sts_present_current) * 10
 
         try:
-            value, error = self._writer().run_service(_read)
+            value, error = self._writer().run_service(
+                _read, label=f"pin{self.pin}:get_current"
+            )
             if error or value is None:
                 return self.NO_CURRENT
             return int(value)
@@ -390,7 +406,9 @@ class FeetechStSerialActuator:
             return pk.WritePosEx(pin, ticks, speed, acc)
 
         try:
-            payload, error = self._writer().run_service(_write)
+            payload, error = self._writer().run_service(
+                _write, label=f"pin{self.pin}:set_position"
+            )
             if error:
                 logging.error(f"STS WritePosEx failed on id {self.pin}: {error}")
                 return False
@@ -436,7 +454,9 @@ class FeetechStSerialActuator:
             return int(round(centideg * sign))
 
         try:
-            value, error = self._writer().run_service(_read)
+            value, error = self._writer().run_service(
+                _read, label=f"pin{self.pin}:get_current_position"
+            )
             if error or value is None:
                 return 0
             return int(value)
