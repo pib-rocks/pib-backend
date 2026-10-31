@@ -97,6 +97,11 @@ def _read_single(
     return positions
 
 
+def serial_for_port(actuator: Any) -> str:
+    """The device path this actuator lives on, resolved the same way the writer does."""
+    return resolve_serial_device(str(getattr(actuator, "uid", "") or ""))
+
+
 def _port_answers(group: list[tuple[str, FeetechStSerialActuator]]) -> bool:
     """One probe per port instead of one per servo (see ``port_probe``)."""
     return port_answers(group[0][1])
@@ -166,6 +171,14 @@ def sweep_feetech_joint_positions(motors: list[Any]) -> JointStateSweepResult:
         if not _port_answers(group):
             ports_unreachable += 1
             mode_by_port[port_key] = MODE_UNREACHABLE
+            # A port the probe cannot reach counts as a failure too. Without this the recovery
+            # gave up after a single reopen: the probe skipped the port, so no further failure
+            # was ever counted and the retry budget was never spent - measured on the robot,
+            # ports_ok stayed at 3/4 for a minute with only one PORT_REOPEN in the log.
+            try:
+                _note_and_maybe_reopen(serial_for_port(group[0][1]))
+            except Exception:  # noqa: BLE001 - recovery must never break the sweep
+                pass
             continue
         ports_attempted += 1
         started = time.monotonic()
