@@ -24,9 +24,10 @@ from typing import Any
 from pib_motors.port_probe import forget_dead_ports, port_answers
 from pib_motors.feetech_actuator import (
     FeetechStSerialActuator,
-    _BusAccess,
+    resolve_serial_device,
     ticks_to_centideg,
 )
+from pib_motors.bus_writer import get_bus_writer
 from pib_motors.stservo_sdk.stservo_def import COMM_SUCCESS
 from pib_motors.units import centideg_to_rad
 
@@ -113,9 +114,19 @@ def _sweep_port(
 
     port_key = str(getattr(sample, "uid", "") or "")
     try:
-        with _BusAccess(ph, lock):
-            positions = _read_single(pk, group)
-            return positions, MODE_SINGLE
+        device = resolve_serial_device(sample.uid)
+        writer = get_bus_writer(device, ph, pk, lock)
+
+        def _execute(bus_pk: Any) -> dict[str, int]:
+            return _read_single(bus_pk, group)
+
+        positions, error = writer.run_sweep(_execute)
+        if error:
+            _LOG.warning(
+                "joint state sweep: port %s sweep failed: %s", port_key, error
+            )
+            return {}, ""
+        return positions or {}, MODE_SINGLE
     except Exception as error:  # noqa: BLE001 - a dead port must not break the sweep
         _LOG.warning("joint state sweep: port %s failed entirely: %s", port_key, error)
         return {}, ""

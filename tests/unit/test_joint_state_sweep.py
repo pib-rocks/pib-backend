@@ -19,6 +19,15 @@ for path in (str(REPO_ROOT / "pib_api" / "client"), str(PIB_MOTORS_DIR)):
         sys.path.insert(0, path)
 
 
+@pytest.fixture(autouse=True)
+def _reset_bus_writer_registry():
+    from pib_motors.bus_writer import reset_bus_writer_registry_for_tests
+
+    reset_bus_writer_registry_for_tests()
+    yield
+    reset_bus_writer_registry_for_tests()
+
+
 def _load_sweep_module(ft_mod):
     import importlib.util
 

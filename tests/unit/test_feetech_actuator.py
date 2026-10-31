@@ -23,6 +23,15 @@ for path in (
         sys.path.insert(0, path)
 
 
+@pytest.fixture(autouse=True)
+def _reset_bus_writer_registry():
+    from pib_motors.bus_writer import reset_bus_writer_registry_for_tests
+
+    reset_bus_writer_registry_for_tests()
+    yield
+    reset_bus_writer_registry_for_tests()
+
+
 class FakeStsPacketHandler:
     """Fakes pib_motors.stservo_sdk.sts.sts without opening a physical serial port."""
 

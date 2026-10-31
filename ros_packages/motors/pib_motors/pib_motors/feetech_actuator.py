@@ -22,6 +22,7 @@ from pib_motors.stservo_sdk.sts import (
     STS_TORQUE_ENABLE,
     sts,
 )
+from pib_motors.bus_writer import BusPriority, get_bus_writer
 from pib_motors.stservo_sdk.stservo_def import COMM_SUCCESS
 
 DEFAULT_BAUDRATE = 1_000_000
@@ -226,6 +227,11 @@ class FeetechStSerialActuator:
         with _BusAccess(self._ph, self._lock):
             yield
 
+    def _writer(self) -> Any:
+        assert self._ph is not None and self._pk is not None and self._lock is not None
+        device = resolve_serial_device(self.uid)
+        return get_bus_writer(device, self._ph, self._pk, self._lock)
+
     def check_connection(self) -> bool:
         """Open the serial port if needed and probe this servo ID once."""
         try:
@@ -342,16 +348,25 @@ class FeetechStSerialActuator:
     def get_current(self) -> int:
         if not self.is_connected() or self._pk is None or self._lock is None:
             return self.NO_CURRENT
-        try:
-            with self._bus():
-                sts_present_current, res, _err = self._pk.ReadCurrent(self.pin)
+        pin = self.pin
+
+        def _read(pk: sts) -> int | None:
+            sts_present_current, res, _err = pk.ReadCurrent(pin)
             if res != COMM_SUCCESS:
-                return self.NO_CURRENT
+                return None
             return int(sts_present_current) * 10
+
+        try:
+            value, error = self._writer().run_service(_read)
+            if error or value is None:
+                return self.NO_CURRENT
+            return int(value)
         except Exception:
             return self.NO_CURRENT
 
-    def set_position(self, position: int) -> bool:
+    def set_position(
+        self, position: int, *, bus_priority: BusPriority = BusPriority.SERVICE
+    ) -> bool:
         if not self.is_connected() or self._pk is None or self._lock is None:
             return False
 
@@ -360,9 +375,26 @@ class FeetechStSerialActuator:
         ticks = centideg_to_ticks(float(centideg))
         speed, acc = self._resolve_speed_and_acc()
 
+        if bus_priority is BusPriority.STREAM:
+            try:
+                self._writer().submit_stream(self.pin, ticks, speed, acc)
+                self._target_position = centideg
+                return True
+            except Exception as error:
+                logging.error(f"Exception during STS stream submit: {error}")
+                return False
+
+        pin = self.pin
+
+        def _write(pk: sts) -> tuple[int, int]:
+            return pk.WritePosEx(pin, ticks, speed, acc)
+
         try:
-            with self._bus():
-                res, err = self._pk.WritePosEx(self.pin, ticks, speed, acc)
+            payload, error = self._writer().run_service(_write)
+            if error:
+                logging.error(f"STS WritePosEx failed on id {self.pin}: {error}")
+                return False
+            res, err = payload if payload is not None else (-1, 0)
             if res != COMM_SUCCESS:
                 logging.error(
                     f"STS WritePosEx failed on id {self.pin} (res={res}, err={err})"
@@ -393,13 +425,21 @@ class FeetechStSerialActuator:
     def get_current_position(self) -> int:
         if not self.is_connected() or self._pk is None or self._lock is None:
             return 0
-        try:
-            with self._bus():
-                ticks, _spd, res, _err = self._pk.ReadPosSpeed(self.pin)
+        pin = self.pin
+        sign = self.direction_sign
+
+        def _read(pk: sts) -> int | None:
+            ticks, _spd, res, _err = pk.ReadPosSpeed(pin)
             if res != COMM_SUCCESS:
-                return 0
+                return None
             centideg = ticks_to_centideg(int(ticks))
-            return int(round(centideg * self.direction_sign))
+            return int(round(centideg * sign))
+
+        try:
+            value, error = self._writer().run_service(_read)
+            if error or value is None:
+                return 0
+            return int(value)
         except Exception:
             return 0
 
