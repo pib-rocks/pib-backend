@@ -487,3 +487,33 @@ def test_short_port_hold_is_not_logged(monkeypatch, caplog) -> None:
         with feetech_actuator._BusAccess(_FakePort(), threading.Lock()):
             time.sleep(0.005)
     assert "BUS_ACCESS_HELD" not in caplog.text
+
+
+def test_tty_flags_keep_dtr_and_drop_hardware_flow_control() -> None:
+    """Three processes share each adapter; the last close must not drop DTR.
+
+    Measured on the pib5advanced: when an adapter stops answering there is no USB disconnect in
+    dmesg, so the link is fine and only the line state changes. HUPCL - the default - drops DTR
+    on the last close, which a CDC-ACM bridge firmware reads as "host gone".
+    """
+    import termios
+
+    from pib_motors import feetech_actuator
+
+    cflag = termios.CLOCAL | termios.HUPCL | termios.CRTSCTS | termios.CREAD
+    result = feetech_actuator.desired_cflag(cflag)
+
+    assert result & termios.HUPCL == 0, "HUPCL must be cleared"
+    assert result & termios.CRTSCTS == 0, "hardware flow control must be off"
+    assert result & termios.CLOCAL, "CLOCAL must be set"
+    assert result & termios.CREAD, "unrelated flags must survive"
+
+
+def test_tty_flags_are_idempotent() -> None:
+    """Applying the flags twice must not accumulate anything."""
+    import termios
+
+    from pib_motors import feetech_actuator
+
+    once = feetech_actuator.desired_cflag(termios.CLOCAL)
+    assert feetech_actuator.desired_cflag(once) == once

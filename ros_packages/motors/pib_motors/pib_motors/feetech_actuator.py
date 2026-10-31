@@ -9,7 +9,11 @@ from __future__ import annotations
 
 import fcntl
 import logging
+import struct
+import termios
 import threading
+
+TIOCM_DTR = getattr(termios, "TIOCM_DTR", 0x002)
 import time
 import traceback
 from contextlib import contextmanager
@@ -156,6 +160,45 @@ def resolve_serial_device(address: str, by_id_dir: Path = SERIAL_BY_ID_DIR) -> s
     return cleaned
 
 
+def desired_cflag(cflag: int) -> int:
+    """Control flags for this kind of adapter: never drop DTR when a handle closes.
+
+    The four Waveshare CDC-ACM bridges are opened by three processes at once (motor_control,
+    motor_current, controller_scan). With HUPCL set - the default - the last close on the tty
+    drops DTR, which many bridge firmwares interpret as "host gone" and which leaves the servo
+    bus silent until a new open. Measured on the pib5advanced: no USB disconnect in dmesg at
+    all when an adapter stops answering, so the link stays up and only the line state changes.
+    """
+    cflag |= termios.CLOCAL  # ignore modem control lines
+    cflag &= ~termios.HUPCL  # do not hang up (drop DTR) on the last close
+    cflag &= ~termios.CRTSCTS  # no hardware flow control, the adapter does not use it
+    return cflag
+
+
+def _configure_tty(ph: PortHandler) -> None:
+    """Apply the flags above to an freshly opened port, and keep latency low."""
+    ser = getattr(ph, "ser", None)
+    fileno = getattr(ser, "fileno", None)
+    if not callable(fileno):
+        return
+    try:
+        fd = fileno()
+    except Exception:  # noqa: BLE001 - a closed handle has no fd
+        return
+    try:
+        attributes = termios.tcgetattr(fd)
+        attributes[2] = desired_cflag(attributes[2])
+        termios.tcsetattr(fd, termios.TCSANOW, attributes)
+    except Exception as error:  # noqa: BLE001 - never fail the open because of tuning
+        logging.warning("could not configure tty flags (%s): %s", ph.port_name, error)
+    try:
+        import fcntl as _fcntl
+
+        _fcntl.ioctl(fd, termios.TIOCMBIS, struct.pack("I", termios.TIOCM_DTR))
+    except Exception:  # noqa: BLE001 - DTR is best effort
+        pass
+
+
 def _get_or_open_port(
     address: str, baudrate: int = DEFAULT_BAUDRATE
 ) -> tuple[PortHandler, sts, threading.Lock]:
@@ -171,6 +214,7 @@ def _get_or_open_port(
         if not ph.setBaudRate(baudrate):
             ph.closePort()
             raise RuntimeError(f"Failed to set STS baudrate {baudrate} on {device}")
+        _configure_tty(ph)
         pk = sts(ph)
         entry = (ph, pk, threading.Lock())
         _port_cache[device] = entry
