@@ -247,3 +247,20 @@ def test_mjpeg_http_server_serves_snapshot_and_multipart_stream():
             assert frame1 in chunk
     finally:
         server.stop()
+
+
+def test_extract_packet_jpeg_accepts_numpy_uint8_array_from_depthai_imgframe():
+    """DepthAI 3.6.1 ImgFrame.getData() returns a 1D numpy.ndarray(dtype=uint8)."""
+    node = _bare_node()
+    node.compressed_publisher_.get_subscription_count.return_value = 1
+    fake_jpeg = b"\xff\xd8\xff\xe0\x00\x10JFIF-from-vpu\xff\xd9"
+    packet = MagicMock()
+    packet.getData.return_value = np.frombuffer(fake_jpeg, dtype=np.uint8)
+    node.queue = MagicMock()
+    node.queue.tryGet.return_value = packet
+
+    node.timer_callback()
+
+    assert node.current_jpeg_bytes == fake_jpeg
+    assert node.mjpeg_buffer.latest_jpeg == fake_jpeg
+    packet.getCvFrame.assert_not_called()

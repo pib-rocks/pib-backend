@@ -413,8 +413,14 @@ class BranchCaptureMixin:
                 raw = get_data()
                 if isinstance(raw, (bytes, bytearray, memoryview)):
                     data = bytes(raw)
-                    if len(data) >= 2 and data[:2] == b"\xff\xd8":
-                        return data
+                elif (
+                    isinstance(raw, stereo.np.ndarray) and raw.dtype == stereo.np.uint8
+                ):
+                    data = raw.tobytes()
+                else:
+                    data = b""
+                if len(data) >= 2 and data[:2] == b"\xff\xd8":
+                    return data
             except Exception:
                 pass
         return None
