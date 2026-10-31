@@ -8,6 +8,7 @@ trajectory messages and a fake Motor. If the module cannot be imported
 from __future__ import annotations
 
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -327,6 +328,39 @@ def test_cancel_stops_interpolation_and_restores_settings() -> None:
     assert completion.cancelled is True
     assert motor.get_settings()["velocity"] == original_velocity
     assert motor.positions[-1] < 1000
+
+
+def test_start_async_returns_long_before_the_trajectory_duration_has_elapsed() -> None:
+    """Load-bearing: the caller gets control back immediately, not after the motion.
+
+    The sibling test only asserts is_running()/join(). A synchronous implementation
+    satisfies both, so this one measures WALL time on a real clock: the loop really
+    sleeps for about 0.4 s, and the call must still return in a fraction of that.
+    """
+    motor = FakeMotor("elbow")
+    executor = TrajectoryExecutor(
+        None,
+        {"elbow": [motor]},
+        rate_hz=20.0,
+        sleep_fn=time.sleep,
+        clock_fn=time.monotonic,
+    )
+    jt = FakeJointTrajectory(
+        ["elbow"],
+        [FakePoint([0], 0.0), FakePoint([100], 0.4)],
+    )
+
+    started_at = time.monotonic()
+    started, _error = executor.start_async(jt, SimpleQueue())
+    elapsed = time.monotonic() - started_at
+
+    assert started is True
+    assert (
+        elapsed < 0.1
+    ), f"start_async blocked for {elapsed:.2f} s (trajectory is 0.4 s)"
+    assert executor.is_running() is True
+    assert executor.join(timeout=10.0) is True
+    assert motor.positions, "the worker never commanded the motor"
 
 
 def test_start_async_returns_before_duration_elapses() -> None:
