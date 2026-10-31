@@ -500,7 +500,8 @@ def test_tty_flags_keep_dtr_and_drop_hardware_flow_control() -> None:
 
     from pib_motors import feetech_actuator
 
-    cflag = termios.CLOCAL | termios.HUPCL | termios.CRTSCTS | termios.CREAD
+    # no CLOCAL in the input: otherwise setting it could not be observed
+    cflag = termios.HUPCL | termios.CRTSCTS | termios.CREAD
     result = feetech_actuator.desired_cflag(cflag)
 
     assert result & termios.HUPCL == 0, "HUPCL must be cleared"
