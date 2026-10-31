@@ -21,6 +21,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from pib_motors.port_probe import forget_dead_ports, port_answers
 from pib_motors.feetech_actuator import (
     FeetechStSerialActuator,
     _BusAccess,
@@ -35,13 +36,6 @@ _last_no_bus_log_monotonic = 0.0
 
 MODE_SINGLE = "single"
 MODE_UNREACHABLE = "unreachable"
-
-#: How long a port that failed its probe is left alone. One probe costs the
-#: serial packet timeout (measured: 50.4 ms on a pib5advanced with the motor
-#: power off), so without this a 10 Hz sweep spends ~1.6 s per tick probing 26
-#: servos - that was 90 % CPU per process for measuring nothing.
-_PORT_PROBE_TTL_SEC = 5.0
-_dead_ports: dict[str, float] = {}
 
 
 @dataclass(frozen=True)
@@ -102,33 +96,8 @@ def _read_single(
 
 
 def _port_answers(group: list[tuple[str, FeetechStSerialActuator]]) -> bool:
-    """One probe per port instead of one per servo.
-
-    ``check_connection`` opens the port and pings the first servo; that answers
-    "is anything on this bus at all". A failed port is remembered for
-    ``_PORT_PROBE_TTL_SEC`` so the next ticks cost nothing.
-    """
-    sample = group[0][1]
-    port_key = str(getattr(sample, "uid", "") or "")
-    now = time.monotonic()
-    deadline = _dead_ports.get(port_key)
-    if deadline is not None and now < deadline:
-        return False
-    try:
-        answers = bool(sample.is_connected())
-    except Exception as error:  # noqa: BLE001 - a hard port error is "no answer"
-        _LOG.debug("port probe failed on %s: %s", port_key, error)
-        answers = False
-    if answers:
-        _dead_ports.pop(port_key, None)
-    elif port_key:
-        _dead_ports[port_key] = now + _PORT_PROBE_TTL_SEC
-    return answers
-
-
-def forget_dead_ports() -> None:
-    """Clear the per-port probe memory (tests, or after re-plugging an adapter)."""
-    _dead_ports.clear()
+    """One probe per port instead of one per servo (see ``port_probe``)."""
+    return port_answers(group[0][1])
 
 
 def _sweep_port(
