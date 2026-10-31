@@ -15,7 +15,9 @@ from pib_motors.feetech_actuator import (
     _get_or_open_port,
 )
 
-SCAN_INTERVAL_SEC = 30.0
+#: How often the derived status may be recomputed from /joint_states. It can only change
+#: when hardware does, and /joint_states arrives ten times per second.
+_STATUS_EVALUATION_INTERVAL_SEC = 5.0
 SERVO_MATCH_MIN = 1
 _STARTUP_SCAN_DELAY_SEC = 1.0
 
@@ -28,6 +30,32 @@ def _serial_from_by_id_name(entry_name: str) -> str:
     if "_" not in name:
         return name
     return name.rsplit("_", 1)[-1]
+
+
+def _servo_channel_by_motor_name() -> dict[str, int]:
+    """Motor name to servo channel, so /joint_states names can be counted.
+
+    /joint_states publishes motor names, not channel numbers; without this mapping the
+    match count would always be zero.
+    """
+    ok, response = motor_client.get_all_motors()
+    if not ok or not isinstance(response, dict):
+        _LOG.warning("controller_scan: could not load motors from API")
+        return {}
+    mapping: dict[str, int] = {}
+    for motor in response.get("motors") or []:
+        if not isinstance(motor, dict):
+            continue
+        controller = motor.get("controller")
+        if not isinstance(controller, dict):
+            continue
+        if controller.get("kind") != "feetech_st_serial":
+            continue
+        name = motor.get("name")
+        channel = motor.get("channel")
+        if isinstance(name, str) and isinstance(channel, int):
+            mapping[name] = channel
+    return mapping
 
 
 def _controller_number_by_serial() -> dict[str, int]:
@@ -136,23 +164,23 @@ def _controller_number_for_serial(
 def assignments_from_present_servos(
     serials: list[str],
     expected: dict[int, list[int]],
-    present_servo_ids: set[int],
+    by_serial: dict[str, int],
+    present_channels: set[int],
 ) -> list[dict[str, Any]]:
-    """Match counts per adapter from the servo ids that actually answer, without a scan.
+    """Match counts per adapter from the servo channels that actually answer.
 
-    ``present_servo_ids`` is what the joint state sweep published, so this function costs
-    no bus traffic. It cannot tell WHICH other controller sits on a wrongly wired adapter
-    - that is what the startup scan is for - but it detects that something is wrong
-    (matchCount below expectedCount) on every subsequent message.
+    ``present_channels`` comes from the channels of the names in /joint_states, so this
+    function costs no bus traffic and no API call - both mappings are passed in. It cannot
+    tell WHICH other controller sits on a wrongly wired adapter (that is what the startup
+    scan is for), but it detects a changed picture: matchCount below expectedCount.
     """
     assignments: list[dict[str, Any]] = []
-    by_serial = _controller_number_by_serial()
     for serial in serials:
         controller_number = by_serial.get(serial) or _controller_number_for_serial(
             serial, expected
         )
         expected_ids = expected.get(controller_number, []) if controller_number else []
-        counted = sum(1 for servo_id in expected_ids if servo_id in present_servo_ids)
+        counted = sum(1 for servo_id in expected_ids if servo_id in present_channels)
         assignments.append(
             {
                 "serial": serial,
@@ -220,7 +248,11 @@ if rclpy is not None:
                 _STARTUP_SCAN_DELAY_SEC, self._startup_scan
             )
             self._expected: dict[int, list[int]] = {}
+            self._name_to_channel: dict[str, int] = {}
+            self._by_serial: dict[str, int] = {}
+            self._serials: list[str] = []
             self._last_report: list[dict[str, Any]] = []
+            self._last_evaluation = 0.0
             self._create_subscription_joint_states()
             self.get_logger().info("Now Running CONTROLLER SCAN")
 
@@ -234,18 +266,36 @@ if rclpy is not None:
         def _startup_scan(self) -> None:
             self.destroy_timer(self._startup_timer)
             self._expected = _expected_servo_ids()
-            serials = _detected_serials()
-            assignments = build_detected_assignments(serials, self._expected)
+            self._name_to_channel = _servo_channel_by_motor_name()
+            self._by_serial = _controller_number_by_serial()
+            self._serials = _detected_serials()
+            assignments = build_detected_assignments(self._serials, self._expected)
             self._report(assignments)
-            self.get_logger().info(f"startup scan reported {len(assignments)} adapters")
+            self.get_logger().info(
+                f"startup scan reported {len(assignments)} adapters, "
+                f"{len(self._name_to_channel)} servo names mapped, "
+                f"{len(self._by_serial)} addresses resolved"
+            )
 
         def _on_joint_states(self, msg: Any) -> None:
-            """Recompute the assignment picture from the published servo names only."""
-            if not self._expected:
+            """Recompute the picture from the published names - no bus, no API call.
+
+            Throttled: /joint_states arrives about ten times per second, and the answer can
+            only change when hardware does.
+            """
+            if not self._expected or not self._name_to_channel:
                 return
-            present = set(msg.name)
+            now = self.get_clock().now().nanoseconds / 1e9
+            if now - self._last_evaluation < _STATUS_EVALUATION_INTERVAL_SEC:
+                return
+            self._last_evaluation = now
+            present_channels = {
+                self._name_to_channel[name]
+                for name in msg.name
+                if name in self._name_to_channel
+            }
             assignments = assignments_from_present_servos(
-                _detected_serials(), self._expected, present
+                self._serials, self._expected, self._by_serial, present_channels
             )
             if assignments != self._last_report:
                 self._report(assignments)
