@@ -92,6 +92,7 @@ services:
       # above: a chat message keeps a reference, the bytes live in this volume.
       - PIB_CHAT_IMAGE_DIR=/app/chat_images
       - HOST_IP_FILE=/etc/pib_host_ip
+      - ROBOT_MODEL_DIR=/data/robot-model
       # Empty means read /etc/pib_smart_chats. 0 disables the Hermes channel.
       - PIB_SMART_CHATS=${PIB_SMART_CHATS:-}
       - HOMEASSISTANT_URL=${HOMEASSISTANT_URL:-http://homeassistant:8123}
