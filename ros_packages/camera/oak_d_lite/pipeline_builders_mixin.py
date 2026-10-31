@@ -90,9 +90,10 @@ class PipelineBuildersMixin:
         else:
             self.camRgb.build(stereo.dai.CameraBoardSocket.CAM_A)
         self.isp_out = self.camRgb.requestIspOutput()
-        self.queue = self.isp_out.createOutputQueue(
+        self.isp_queue = self.isp_out.createOutputQueue(
             maxSize=stereo.COLOR_OUTPUT_QUEUE_DEPTH, blocking=False
         )
+        self._build_mjpeg_encoder_branch()
         self.depth_queue = None
         self.imu_queue = None
         self.imu_available = False
@@ -172,6 +173,84 @@ class PipelineBuildersMixin:
                 continue
             self._build_single_network_pipeline(model)
 
+    def _encoder_fps(self) -> int:
+        """Target hardware MJPEG frame rate derived from ``timer_period``."""
+        period = getattr(self, "timer_period", stereo.DEFAULT_TIMER_PERIOD_SECONDS)
+        if (
+            isinstance(period, bool)
+            or not isinstance(period, (int, float))
+            or not stereo.math.isfinite(period)
+            or period <= 0
+        ):
+            period = stereo.DEFAULT_TIMER_PERIOD_SECONDS
+        fps = int(round(1.0 / float(period)))
+        return max(1, min(stereo.MAX_STREAM_FPS, fps))
+
+    def _build_mjpeg_encoder_branch(self):
+        """Build the on-chip OAK ImageManip + MJPEG VideoEncoder branch (PR-2140).
+
+        The sensor ISP stays in 16:9 so all neural branches keep their full
+        horizontal and vertical field of view. A device-side ImageManip scales
+        the preview branch to ``(preview_width, preview_height)`` in ``NV12``
+        with ``ResizeMode.STRETCH`` and feeds the dedicated Myriad X hardware
+        MJPEG ``VideoEncoder`` (0 SHAVE cores). Falls back to ``isp_out`` queue
+        only when test doubles omit ``VideoEncoder``.
+        """
+        self.video_manip = None
+        self.video_encoder = None
+        width, height = self._published_frame_size()
+        quality = int(getattr(self, "quality_factor", stereo.DEFAULT_QUALITY_FACTOR))
+        quality = max(1, min(100, quality))
+        fps = self._encoder_fps()
+
+        video_encoder_type = getattr(stereo.dai.node, "VideoEncoder", None)
+        manip_type = getattr(stereo.dai.node, "ImageManip", None)
+        if video_encoder_type is None or manip_type is None:
+            self.queue = self.isp_queue
+            return
+
+        try:
+            source_branch = self._request_camera_branch(
+                self._colour_branch_size("preview"),
+                fps=fps,
+            )
+            manip = self.pipeline.create(manip_type)
+            # NV12 is 1.5 bytes per pixel; allocate 2x for safe headroom.
+            manip.setMaxOutputFrameSize(int(width) * int(height) * 2)
+            manip.initialConfig.setOutputSize(
+                int(width),
+                int(height),
+                mode=stereo.dai.ImageManipConfig.ResizeMode.STRETCH,
+            )
+            manip.initialConfig.setFrameType(stereo.dai.ImgFrame.Type.NV12)
+            self._relax_branch_input(manip.inputImage)
+            source_branch.link(manip.inputImage)
+
+            encoder = self.pipeline.create(video_encoder_type)
+            profile = stereo.dai.VideoEncoderProperties.Profile.MJPEG
+            try:
+                encoder.setDefaultProfilePreset(fps, profile)
+            except Exception:
+                encoder.setProfile(profile)
+                encoder.setFrameRate(fps)
+            encoder.setQuality(quality)
+            self._relax_branch_input(encoder.input)
+            manip.out.link(encoder.input)
+
+            bitstream = getattr(encoder, "bitstream", None) or encoder.out
+            q = bitstream.createOutputQueue(
+                maxSize=stereo.COLOR_OUTPUT_QUEUE_DEPTH, blocking=False
+            )
+            if q is None:
+                raise RuntimeError("VideoEncoder bitstream returned no output queue")
+            self.video_manip = manip
+            self.video_encoder = encoder
+            self.queue = q
+        except Exception:
+            self.video_manip = None
+            self.video_encoder = None
+            self.queue = self.isp_queue
+
     def _published_frame_size(self):
         """Width and height of the frame the UI displays."""
         width = getattr(self, "preview_width", None)
@@ -201,8 +280,15 @@ class PipelineBuildersMixin:
         return (stereo.COLOUR_BRANCH_WIDTH, stereo.COLOUR_BRANCH_HEIGHT)
 
     def _require_published_aspect(self, width, height):
-        """Refuse a branch whose aspect is not the published frame's."""
-        published_width, published_height = self._published_frame_size()
+        """Refuse a branch whose aspect is not the 16:9 sensor frame's.
+
+        Model branches always tap the 16:9 camera sensor; when the user selects
+        a 4:3 display size (640x480 SD), the hardware ImageManip before the
+        MJPEG VideoEncoder stretches the 16:9 frame to 640x480 on-chip, keeping
+        normalized (0..1) coordinates identical between the stream and models.
+        """
+        published_width = stereo.PUBLISHED_FRAME_WIDTH
+        published_height = stereo.PUBLISHED_FRAME_HEIGHT
         if (
             width <= 0
             or height <= 0
@@ -1008,6 +1094,8 @@ class PipelineBuildersMixin:
             self.pipeline = None
             self.camRgb = None
             self.isp_out = None
+            self.video_manip = None
+            self.video_encoder = None
             self.queue = None
             self.depth_queue = None
             self.imu_queue = None

@@ -114,8 +114,21 @@ except ImportError:
     sys.modules["std_msgs"] = std_msgs
     sys.modules["std_msgs.msg"] = std_msgs_msg
 
+
+class _CompressedImage:
+    def __init__(self):
+        self.header = types.SimpleNamespace(
+            frame_id="", stamp=types.SimpleNamespace(sec=0, nanosec=0)
+        )
+        self.format = ""
+        self.data = []
+
+
 try:
-    import sensor_msgs.msg  # noqa: F401
+    import sensor_msgs.msg as _sensor_msgs_msg  # noqa: F401
+
+    if not hasattr(_sensor_msgs_msg, "CompressedImage"):
+        _sensor_msgs_msg.CompressedImage = _CompressedImage
 except ImportError:
     sensor_msgs = types.ModuleType("sensor_msgs")
     sensor_msgs_msg = types.ModuleType("sensor_msgs.msg")
@@ -134,6 +147,7 @@ except ImportError:
             self.linear_acceleration_covariance = [0.0] * 9
 
     sensor_msgs_msg.Imu = _Imu
+    sensor_msgs_msg.CompressedImage = _CompressedImage
     sensor_msgs.msg = sensor_msgs_msg
     sys.modules["sensor_msgs"] = sensor_msgs
     sys.modules["sensor_msgs.msg"] = sensor_msgs_msg
@@ -333,8 +347,8 @@ class TestStereoCameraOptimization(unittest.TestCase):
     ):
         with patch.object(CameraNode, "init_pipeline", return_value=True):
             node = CameraNode()
-            node.publisher_ = MagicMock()
-            node.publisher_.get_subscription_count.return_value = 0
+            node.compressed_publisher_ = MagicMock()
+            node.compressed_publisher_.get_subscription_count.return_value = 0
             node.publish_face_center = MagicMock()
             node._encode_frame = MagicMock()
 
@@ -348,9 +362,9 @@ class TestStereoCameraOptimization(unittest.TestCase):
 
             # Cached frame updated
             self.assertIsNotNone(node.current_frame)
-            # _encode_frame NOT called since no subscribers on camera_topic
+            # _encode_frame NOT called since no subscribers on /oak/rgb/image_raw/compressed
             node._encode_frame.assert_not_called()
-            node.publisher_.publish.assert_not_called()
+            node.compressed_publisher_.publish.assert_not_called()
 
 
 class TestStereoDepthInterfaces(unittest.TestCase):
@@ -359,8 +373,8 @@ class TestStereoDepthInterfaces(unittest.TestCase):
         with patch.object(CameraNode, "init_pipeline", return_value=True):
             node = CameraNode()
         node.depth_available = True
-        node.publisher_ = MagicMock()
-        node.publisher_.get_subscription_count.return_value = 0
+        node.compressed_publisher_ = MagicMock()
+        node.compressed_publisher_.get_subscription_count.return_value = 0
         node.depth_publisher_ = MagicMock()
         node.depth_publisher_.get_subscription_count.return_value = 0
         node.publish_face_center = MagicMock()
@@ -3148,6 +3162,7 @@ class TestPublishedFrameBranchAspect(unittest.TestCase):
         self.assertEqual(
             branch_functions,
             {
+                "_build_mjpeg_encoder_branch",
                 "_build_single_network_pipeline",
                 "_build_hand_pipeline",
                 "_build_imitation_pipeline",
