@@ -2,9 +2,9 @@
 
 Interpolates each joint independently over ``time_from_start`` via-points using
 monotone cubic Hermite (Fritsch–Carlson / PCHIP) so motion blends through
-via-points instead of stopping. Bricklet motion config is sharpened for the
-duration of the trajectory and restored afterwards, following the backup /
-modify / restore-in-finally pattern used by ``StartupPoseExecutor``.
+via-points instead of stopping. Servo speed and acceleration are coupled to the
+path for the duration of the trajectory and restored afterwards, following the
+backup / modify / restore-in-finally pattern used by ``StartupPoseExecutor``.
 
 This module is intentionally free of ROS runtime imports so unit tests can
 exercise interpolation and the executor with plain Python fakes.
@@ -12,6 +12,7 @@ exercise interpolation and the executor with plain Python fakes.
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from dataclasses import dataclass
@@ -19,14 +20,34 @@ from queue import SimpleQueue
 from typing import Any, Callable, Iterable, Mapping, Protocol, Sequence
 
 from pib_motors.bus_writer import BusPriority
+from pib_motors.perf_trace import (
+    format_perf_trace_trajectory_leg_motion,
+    log_perf_trace,
+)
 
 DEFAULT_RATE_HZ = 100.0
 # Upper bound for timed pose sequences (sum of leg seconds / final time_from_start).
 MAX_SOFTWARE_TRAJECTORY_DURATION_SEC = 300.0
-# High bricklet motion limits so the software spline, not the servo ramp, shapes speed.
+# Legacy defaults kept for tests that assert the old sharpen constants still exist.
 DEFAULT_SHARP_VELOCITY = 50000
 DEFAULT_SHARP_ACCELERATION = 50000
 DEFAULT_SHARP_DECELERATION = 50000
+
+# Servo ``WritePosEx`` speed is not rad/s. Map path rate (centideg/s) → STS speed setting.
+#
+# Calibrate on hardware before merging (reviewer):
+#   1. Pick one joint; ``apply_settings({"velocity": <S>})`` with 1 <= S <= 3400 (e.g. 1000).
+#   2. Command a long single-point move or constant-speed segment; sample ``/joint_states``.
+#   3. Linear fit Δcentideg/Δt (or rad/s converted to centideg/s) → measured centideg/s at speed S.
+#   4. Set ``STS_CENTIDEG_PER_SEC_PER_SPEED_UNIT = measured_centideg_per_sec / S``.
+#
+# Until calibrated, path coupling uses the minimum STS speed so motion stays slow but continuous.
+STS_CENTIDEG_PER_SEC_PER_SPEED_UNIT: float = 0.0
+PATH_SPEED_TRACKING_MARGIN = 1.2
+STS_VELOCITY_MIN = 50
+STS_VELOCITY_MAX = 3400
+# Finite-difference Δt for PCHIP path speed (seconds); documented approximation at 100 Hz.
+PATH_VELOCITY_FINITE_DIFF_SEC = 0.005
 
 
 class MotorLike(Protocol):
@@ -167,6 +188,93 @@ def interpolate_positions(
     }
 
 
+def interpolate_joint_velocity_centideg_per_sec(
+    times: Sequence[float],
+    values: Sequence[float],
+    t: float,
+    dt: float = PATH_VELOCITY_FINITE_DIFF_SEC,
+) -> float:
+    """Path speed in centidegrees per second at ``t`` (PCHIP, forward finite difference)."""
+    if not times or not values or len(times) == 1:
+        return 0.0
+    t_lo = times[0]
+    t_hi = times[-1]
+    t_sample = min(max(t, t_lo), t_hi)
+    span = t_hi - t_lo
+    if span <= 0.0:
+        return 0.0
+    dt_eff = min(max(dt, 1e-9), span)
+    t1 = min(t_sample + dt_eff, t_hi)
+    if t1 <= t_sample:
+        return 0.0
+    p0 = interpolate_joint(times, values, t_sample)
+    p1 = interpolate_joint(times, values, t1)
+    return (p1 - p0) / (t1 - t_sample)
+
+
+def active_trajectory_leg_index(times: Sequence[float], t: float) -> int:
+    """Index ``i`` of the leg ``[times[i], times[i+1]]`` containing ``t``."""
+    if len(times) < 2:
+        return 0
+    if t >= times[-1]:
+        return len(times) - 2
+    for index in range(len(times) - 1):
+        if t < times[index + 1]:
+            return index
+    return len(times) - 2
+
+
+def derive_sts_velocity_setting(
+    path_centideg_per_sec: float,
+    *,
+    margin: float = PATH_SPEED_TRACKING_MARGIN,
+    min_speed: int = STS_VELOCITY_MIN,
+    max_speed: int = STS_VELOCITY_MAX,
+    centideg_per_sec_per_unit: float = STS_CENTIDEG_PER_SEC_PER_SPEED_UNIT,
+) -> int:
+    """Convert path speed to an STS ``WritePosEx`` speed with tracking margin and clamp."""
+    magnitude = abs(float(path_centideg_per_sec)) * float(margin)
+    if magnitude <= 0.0:
+        return int(min_speed)
+    if centideg_per_sec_per_unit <= 0.0:
+        return int(min_speed)
+    raw = magnitude / centideg_per_sec_per_unit
+    return int(max(min_speed, min(max_speed, int(round(raw)))))
+
+
+def trajectory_motion_settings_for_leg(
+    original: Mapping[str, Any],
+    path_centideg_per_sec: float,
+    *,
+    margin: float = PATH_SPEED_TRACKING_MARGIN,
+    centideg_per_sec_per_unit: float = STS_CENTIDEG_PER_SEC_PER_SPEED_UNIT,
+) -> dict[str, Any]:
+    """Motion settings for one spline leg: path-coupled speed, original acceleration."""
+    updated = dict(original)
+    updated["velocity"] = derive_sts_velocity_setting(
+        path_centideg_per_sec,
+        margin=margin,
+        centideg_per_sec_per_unit=centideg_per_sec_per_unit,
+    )
+    return updated
+
+
+def leg_path_speed_centideg_per_sec(
+    times: Sequence[float],
+    values: Sequence[float],
+    leg_index: int,
+) -> float:
+    """Representative path speed for a leg (sample at midpoint)."""
+    if leg_index < 0 or leg_index >= len(times) - 1:
+        return 0.0
+    t0 = times[leg_index]
+    t1 = times[leg_index + 1]
+    if t1 <= t0:
+        return 0.0
+    mid = (t0 + t1) * 0.5
+    return interpolate_joint_velocity_centideg_per_sec(times, values, mid)
+
+
 def parse_joint_trajectory(
     jt: Any,
 ) -> tuple[list[str], list[float], dict[str, list[float]]]:
@@ -243,6 +351,8 @@ class TrajectoryExecutor:
         restore: bool = True,
         sleep_fn: Callable[[float], None] = time.sleep,
         clock_fn: Callable[[], float] = time.monotonic,
+        path_speed_margin: float = PATH_SPEED_TRACKING_MARGIN,
+        centideg_per_sec_per_speed_unit: float = STS_CENTIDEG_PER_SEC_PER_SPEED_UNIT,
     ) -> None:
         self.node = node
         self.motor_lookup = motor_lookup
@@ -255,6 +365,8 @@ class TrajectoryExecutor:
         self.restore = restore
         self.sleep_fn = sleep_fn
         self.clock_fn = clock_fn
+        self.path_speed_margin = path_speed_margin
+        self.centideg_per_sec_per_speed_unit = centideg_per_sec_per_speed_unit
         self._stop_event = threading.Event()
         self._worker: threading.Thread | None = None
         self._worker_lock = threading.Lock()
@@ -343,12 +455,13 @@ class TrajectoryExecutor:
 
         names, times, series = parse_joint_trajectory(jt)
         original_settings = self._backup_motor_settings(motors)
-        self._sharpen_motion(motors, original_settings)
         cancelled = False
         success = True
         run_started = self.clock_fn()
         try:
-            success, cancelled = self._run_interpolation_loop(names, times, series)
+            success, cancelled = self._run_interpolation_loop(
+                names, times, series, motors, original_settings
+            )
         finally:
             if self.restore:
                 self._restore_settings(motors, original_settings)
@@ -386,17 +499,26 @@ class TrajectoryExecutor:
         names: Sequence[str],
         times: Sequence[float],
         series: Mapping[str, Sequence[float]],
+        motors: Sequence[MotorLike],
+        original_settings: Mapping[str, dict[str, Any]],
     ) -> tuple[bool, bool]:
         dt = 1.0 / self.rate_hz
         duration = times[-1] if times else 0.0
         t0 = self.clock_fn()
         success = True
         cancelled = False
+        last_leg = -1
         while True:
             if self._stop_event.is_set():
                 cancelled = True
                 break
             now = self.clock_fn() - t0
+            leg_index = active_trajectory_leg_index(times, now)
+            if leg_index != last_leg:
+                self._apply_leg_motion_config(
+                    motors, names, times, series, leg_index, original_settings
+                )
+                last_leg = leg_index
             targets = interpolate_positions(names, times, series, now)
             for name in names:
                 position = targets[name]
@@ -438,6 +560,66 @@ class TrajectoryExecutor:
             if settings:
                 original_settings[motor.name] = settings.copy()
         return original_settings
+
+    def _apply_leg_motion_config(
+        self,
+        motors: Sequence[MotorLike],
+        joint_names: Sequence[str],
+        times: Sequence[float],
+        series: Mapping[str, Sequence[float]],
+        leg_index: int,
+        original_settings: Mapping[str, dict[str, Any]],
+    ) -> None:
+        if leg_index < 0 or leg_index >= len(times) - 1:
+            return
+        t0 = times[leg_index]
+        t1 = times[leg_index + 1]
+        for motor in motors:
+            original = original_settings.get(motor.name)
+            if not original:
+                continue
+            joint_name = self._joint_name_for_motor(motor, joint_names)
+            if joint_name is None or joint_name not in series:
+                path_speed = 0.0
+            else:
+                path_speed = leg_path_speed_centideg_per_sec(
+                    times, series[joint_name], leg_index
+                )
+            configured = trajectory_motion_settings_for_leg(
+                original,
+                path_speed,
+                margin=self.path_speed_margin,
+                centideg_per_sec_per_unit=self.centideg_per_sec_per_speed_unit,
+            )
+            motor.apply_settings(configured)
+            sts_speed = int(configured["velocity"])
+            sts_accel = int(configured.get("acceleration", 0))
+            self._log_perf_trace(
+                format_perf_trace_trajectory_leg_motion(
+                    motor.name,
+                    leg_index,
+                    t0,
+                    t1,
+                    path_speed,
+                    sts_speed,
+                    sts_accel,
+                )
+            )
+
+    def _joint_name_for_motor(
+        self, motor: MotorLike, joint_names: Sequence[str]
+    ) -> str | None:
+        for name in joint_names:
+            for candidate in self.motor_lookup.get(name, []):
+                if candidate is motor or candidate.name == motor.name:
+                    return name
+        return None
+
+    def _log_perf_trace(self, line: str) -> None:
+        if self.node is not None:
+            log_perf_trace(self.node.get_logger(), line)
+        else:
+            logging.info(line)
 
     def _sharpen_motion(
         self,

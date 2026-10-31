@@ -21,6 +21,24 @@ def format_perf_trace_trajectory_done(
     )
 
 
+def format_perf_trace_trajectory_leg_motion(
+    joint: str,
+    leg: int,
+    t0_sec: float,
+    t1_sec: float,
+    path_centideg_per_sec: float,
+    sts_speed: int,
+    sts_accel: int,
+) -> str:
+    safe_joint = (joint or "unknown").replace(" ", "_")
+    return (
+        f"[PERF_TRACE] TRAJECTORY_LEG_MOTION joint={safe_joint} leg={int(leg)} "
+        f"t0={float(t0_sec):.3f} t1={float(t1_sec):.3f} "
+        f"path_cdps={float(path_centideg_per_sec):.2f} "
+        f"sts_speed={int(sts_speed)} sts_accel={int(sts_accel)}"
+    )
+
+
 def format_perf_trace_joint_state_sweep(
     joint_count: int, elapsed_ms: float, ports_ok: int, ports_total: int
 ) -> str:
