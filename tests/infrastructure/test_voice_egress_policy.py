@@ -619,3 +619,38 @@ def test_verify_script_checks_the_hermes_home_of_both_containers():
     assert 'probe_hermes_home "$CONTAINER" voice' in text
     assert "sed 's/ros-voice-assistant/hermes-daemon/'" in text
     assert "check-view" in text
+
+
+def test_verify_resolves_both_containers_by_service_label(tmp_path):
+    """A robot names its project pib-backend; a name-based lookup finds nothing."""
+    text = VERIFY.read_text(encoding="utf-8")
+    start = text.index("resolve_container() {")
+    end = text.index('INSPECT="$(docker inspect')
+    library = tmp_path / "library.sh"
+    library.write_text(
+        "set -u\nPY=/dev/null\nALLOW=/dev/null\n"
+        + text[start:end]
+        + '\nCONTAINER="$(resolve_container ros-voice-assistant)"\n'
+        + 'DAEMON="$(resolve_container hermes-daemon)"\n'
+        + 'printf "container=%s\\ndaemon=%s\\n" "$CONTAINER" "$DAEMON"\n'
+    )
+    stub = tmp_path / "bin"
+    stub.mkdir()
+    (stub / "docker").write_text(
+        "#!/bin/bash\n"
+        'case "$*" in\n'
+        "  *com.docker.compose.service=ros-voice-assistant*) echo pib-backend-ros-voice-assistant-1 ;;\n"
+        "  *com.docker.compose.service=hermes-daemon*) echo pib-backend-hermes-daemon-1 ;;\n"
+        "  *) exit 0 ;;\n"
+        "esac\n"
+    )
+    (stub / "docker").chmod(0o755)
+    result = subprocess.run(
+        ["bash", str(library)],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PATH": f"{stub}:{os.environ['PATH']}"},
+    )
+    assert result.returncode == 0, result.stderr
+    assert "container=pib-backend-ros-voice-assistant-1" in result.stdout
+    assert "daemon=pib-backend-hermes-daemon-1" in result.stdout

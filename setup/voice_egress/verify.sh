@@ -23,7 +23,22 @@ mark_fail() {
   FAIL=1
 }
 
-CONTAINER="$(python3 "$PY" --allowlist "$ALLOW" container-name 2>/dev/null || true)"
+resolve_container() {
+  # $1 compose service name. The compose project name differs per install
+  # (pib-backend-* on a robot, multirepo-* on the test device), so the service
+  # label is the only stable handle; the allowlist name is the fallback for an
+  # install that carries no labels.
+  local service="$1" resolved
+  resolved="$(docker ps -a --filter "label=com.docker.compose.service=$service" \
+    --format '{{.Names}}' 2>/dev/null | head -1)"
+  if [[ -n "$resolved" ]]; then
+    printf '%s\n' "$resolved"
+    return 0
+  fi
+  python3 "$PY" --allowlist "$ALLOW" container-name 2>/dev/null || true
+}
+
+CONTAINER="$(resolve_container ros-voice-assistant)"
 if [[ -z "$CONTAINER" ]]; then
   note "container_name="
   note "verify=failed"
@@ -75,7 +90,10 @@ if ( : >"$p" ) 2>/dev/null; then rm -f "$p"; echo writable; else echo read-only;
   fi
 }
 probe_hermes_home "$CONTAINER" voice
-DAEMON_CONTAINER="$(sed 's/ros-voice-assistant/hermes-daemon/' <<<"$CONTAINER")"
+DAEMON_CONTAINER="$(resolve_container hermes-daemon)"
+if [[ -z "$DAEMON_CONTAINER" ]]; then
+  DAEMON_CONTAINER="$(sed 's/ros-voice-assistant/hermes-daemon/' <<<"$CONTAINER")"
+fi
 if docker inspect "$DAEMON_CONTAINER" >/dev/null 2>&1; then
   note "hermes_daemon_container=$DAEMON_CONTAINER"
   probe_hermes_home "$DAEMON_CONTAINER" daemon
