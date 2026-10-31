@@ -53,6 +53,8 @@ from urllib.error import URLError
 from urllib.parse import parse_qs, urlparse
 from urllib.request import Request, urlopen
 
+from public_api_client import turn_failure
+
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8088
 DEFAULT_BASE_URL = f"http://{DEFAULT_HOST}:{DEFAULT_PORT}"
@@ -1551,6 +1553,17 @@ def _run_turn_in_home(
                 exc,
             )
             continue
+        except SystemExit as exc:
+            # Hermes' bootstrap exits the process when its home is unusable
+            # (read-only install lock, broken install). Importing it inside a
+            # running daemon must not take the daemon's turn down silently.
+            logging.warning(
+                "run_agent import %s exited (%s); the CLI subprocess runs this turn",
+                module_name,
+                exc,
+            )
+            agent_module = None
+            break
     agent_cls = getattr(agent_module, "AIAgent", None)
     run_agent_main = getattr(agent_module, "main", None)
 
@@ -2073,12 +2086,31 @@ class HermesDaemonHandler(BaseHTTPRequestHandler):
 
         try:
             reply = runner(**runner_kwargs)
-        except Exception as exc:
-            logging.exception("hermes-daemon /turn failed: %s", exc)
+        except BaseException as exc:  # noqa: BLE001 - SystemExit must answer too
+            reason = turn_failure.classify_turn_failure(
+                detail=f"{type(exc).__name__}: {exc}", source="daemon"
+            )
+            detail = turn_failure.failure_detail(reason, f"{type(exc).__name__}: {exc}")
+            logging.error(
+                turn_failure.failure_log_line(
+                    reason, chat_id=chat_id, source="daemon", detail=detail
+                )
+            )
+            logging.debug("hermes-daemon /turn traceback", exc_info=True)
             if stream:
-                self._send_stream_chunk({"error": str(exc)})
+                self._send_stream_chunk(
+                    {"error": str(exc), "reason": reason, "detail": detail}
+                )
             else:
-                self._send_json(500, {"error": str(exc)})
+                self._send_json(
+                    500,
+                    {
+                        "ok": False,
+                        "error": str(exc),
+                        "reason": reason,
+                        "detail": detail,
+                    },
+                )
             return
 
         if not first_delta:

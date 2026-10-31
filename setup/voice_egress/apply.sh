@@ -18,7 +18,7 @@ NFT="${NFT:-nft}"
 TABLE="pib_voice_egress"
 
 usage() {
-  echo "usage: apply.sh preflight|prepare-view|apply|rollback|remove-view" >&2
+  echo "usage: apply.sh preflight|prepare-view|check-view|apply|rollback|remove-view" >&2
   exit 2
 }
 
@@ -302,6 +302,38 @@ apply_policy() {
   echo "self_check=ok"
 }
 
+# The view root must stay writable. hermes-daemon and the voice container keep
+# the personality's config.yaml, its Hermes session database and the Hermes
+# install locks there; with a read-only root the agent cannot start at all and
+# every turn dies before the first token (PR-2131).
+view_root_is_writable() {
+  local probe="$VIEW/.pib-write-probe"
+  if ( : >"$probe" ) 2>/dev/null; then
+    rm -f "$probe"
+    return 0
+  fi
+  return 1
+}
+
+# Mount-table targets of this host, one per line. A function so the tests can
+# substitute a table instead of mounting anything.
+mount_table() {
+  awk '{print $5}' /proc/self/mountinfo
+}
+
+is_mounted() {
+  mount_table | grep -Fxq "$1"
+}
+
+# Heal a root that an earlier run left read-only, then prove it is writable.
+ensure_view_root_writable() {
+  if view_root_is_writable; then
+    return 0
+  fi
+  mount -o remount,bind,rw "$VIEW" 2>/dev/null || true
+  view_root_is_writable
+}
+
 prepare_view() {
   local relative target cover
   need_root
@@ -319,6 +351,11 @@ prepare_view() {
   fi
   # rshared so the container's rslave bind sees the cover mounts.
   mount --make-rshared "$VIEW"
+  # A previous run could have left the root read-only; heal it before covering.
+  if ! ensure_view_root_writable; then
+    echo "policy_error=hermes view root is not writable" >&2
+    return 1
+  fi
   while IFS= read -r relative; do
     [[ -z "$relative" ]] && continue
     case "$relative" in
@@ -342,14 +379,56 @@ prepare_view() {
     cover="$COVER_DIR/${relative//\//__}"
     cp "$BLANK" "$cover"
     chmod 644 "$cover"
-    if ! awk '{print $5}' /proc/self/mountinfo | grep -Fxq "$target"; then
+    if ! is_mounted "$target"; then
       mount --bind "$cover" "$target"
     fi
+    # The cover must be private before it is remounted read-only: the view root
+    # is rshared for propagation, and a remount of a shared mount reaches its
+    # peers - which is how an earlier run turned the whole Hermes home
+    # read-only. Private makes the read-only flag local to this cover.
+    mount --make-private "$target" 2>/dev/null || true
     mount -o remount,bind,ro "$target"
+    if ! cmp -s "$BLANK" "$target"; then
+      echo "policy_error=secret cover is not blank: $relative" >&2
+      return 1
+    fi
   done < <(python3 "$PY" secret-relpaths --root "$SRC")
+  # The invariants the containers rely on: writable root, read-only secrets.
+  if ! ensure_view_root_writable; then
+    echo "policy_error=hermes view root is not writable after prepare" >&2
+    return 1
+  fi
   echo "hermes_view=$VIEW"
+  echo "hermes_view_root=rw"
   echo "prepare_view=ok"
 }
+
+check_view() {
+  local covered=0
+  if ! mountpoint -q "$VIEW"; then
+    echo "hermes_view=absent"
+    echo "check_view=failed"
+    return 1
+  fi
+  covered="$(mount_table | awk -v view="$VIEW/" 'index($0, view) == 1' | wc -l)"
+  echo "hermes_view=$VIEW"
+  echo "hermes_view_covers=$covered"
+  if view_root_is_writable; then
+    echo "hermes_view_root=rw"
+  else
+    echo "hermes_view_root=ro"
+    echo "policy_error=hermes view root is read-only; model turns cannot start" >&2
+    echo "check_view=failed"
+    return 1
+  fi
+  if [[ "$covered" -lt 1 ]]; then
+    echo "policy_error=no secret cover is mounted" >&2
+    echo "check_view=failed"
+    return 1
+  fi
+  echo "check_view=ok"
+}
+
 
 remove_view() {
   local container mounts target
@@ -383,6 +462,9 @@ case "$command" in
     ;;
   prepare-view)
     prepare_view
+    ;;
+  check-view)
+    check_view
     ;;
   apply)
     apply_policy
