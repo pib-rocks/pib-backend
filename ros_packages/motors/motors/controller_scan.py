@@ -18,6 +18,11 @@ from pib_motors.feetech_actuator import (
 #: How often the derived status may be recomputed from /joint_states. It can only change
 #: when hardware does, and /joint_states arrives ten times per second.
 _STATUS_EVALUATION_INTERVAL_SEC = 5.0
+
+#: The API drops a reported scan result after DETECTED_ASSIGNMENTS_TTL_SEC (120 s), so the
+#: unchanged picture has to be re-sent well inside that window. Re-sending costs no bus
+#: access and no scan - it is the same numbers from /joint_states.
+_REPORT_REFRESH_SEC = 60.0
 SERVO_MATCH_MIN = 1
 _STARTUP_SCAN_DELAY_SEC = 1.0
 
@@ -263,6 +268,7 @@ if rclpy is not None:
             self._by_serial: dict[str, int] = {}
             self._serials: list[str] = []
             self._last_report: list[dict[str, Any]] = []
+            self._last_report_at = 0.0
             self._last_evaluation = 0.0
             self._create_subscription_joint_states()
             self.get_logger().info("Now Running CONTROLLER SCAN")
@@ -294,7 +300,9 @@ if rclpy is not None:
             Throttled: /joint_states arrives about ten times per second, and the answer can
             only change when hardware does.
             """
-            if not self._expected or not self._name_to_channel:
+            if not self._expected or not self._name_to_channel or not self._by_serial:
+                # An incomplete mapping would report every adapter as unassigned; better to
+                # wait for the next message than to publish a wrong picture.
                 return
             now = self.get_clock().now().nanoseconds / 1e9
             if now - self._last_evaluation < _STATUS_EVALUATION_INTERVAL_SEC:
@@ -306,11 +314,16 @@ if rclpy is not None:
             assignments = assignments_from_present_servos(
                 self._serials, self._expected, self._by_serial, present_channels
             )
-            if assignments != self._last_report:
+            # Also re-send an unchanged picture before the API's TTL drops it.
+            if (
+                assignments != self._last_report
+                or now - self._last_report_at > _REPORT_REFRESH_SEC
+            ):
                 self._report(assignments)
 
         def _report(self, assignments: list[dict[str, Any]]) -> None:
             self._last_report = assignments
+            self._last_report_at = self.get_clock().now().nanoseconds / 1e9
             try:
                 controller_client.report_detected_assignments(assignments)
             except Exception as error:
