@@ -264,3 +264,32 @@ def test_transaction_under_the_threshold_is_not_counted_as_slow(caplog) -> None:
 
     assert writer.counters().slow_transactions == 0
     assert "BUS_WRITER_SLOW" not in caplog.text
+
+
+def test_summary_line_uses_only_keys_the_snapshot_has() -> None:
+    """The log line is called from a ROS timer; a missing key there kills the node.
+
+    This is not hypothetical: 'KeyError: max_tx_ms' propagated out of rclpy.spin and took
+    motor_control down on the robot, because snapshot() and the format string drifted
+    apart. The test renders the line so any future field must exist in both places.
+    """
+    from pib_motors.bus_writer import format_bus_writer_summary
+
+    writer, _pk, _clock = _writer()
+    line = format_bus_writer_summary(writer)
+    assert "BUS_WRITER" in line
+    for key in (
+        "txs_per_s=",
+        "queue=",
+        "max_wait_ms=",
+        "dropped_stream=",
+        "coalesced=",
+    ):
+        assert key in line, line
+    for key in ("max_tx_ms=", "slow=", "max_acquire_ms="):
+        assert key in line, line
+    assert writer.counters().snapshot().keys() >= {
+        "max_tx_ms",
+        "slow_transactions",
+        "max_acquire_wait_ms",
+    }

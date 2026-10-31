@@ -93,12 +93,18 @@ class BusWriterCounters:
     max_acquire_wait_ms: float = 0.0
 
     def snapshot(self) -> dict[str, float | int]:
+        # Every key the log line uses has to be here: a missing key used to raise a
+        # KeyError inside the stats timer, which killed motor_control on the robot
+        # (KeyError: 'max_tx_ms' propagating out of rclpy.spin).
         return {
             "txs_per_sec": round(self.txs_per_sec, 1),
             "queue_depth": int(self.queue_depth),
             "max_queue_wait_ms": round(self.max_queue_wait_ms, 1),
             "dropped_stream": int(self.dropped_stream),
             "coalesced_stream": int(self.coalesced_stream),
+            "max_tx_ms": round(self.max_tx_ms, 1),
+            "slow_transactions": int(self.slow_transactions),
+            "max_acquire_wait_ms": round(self.max_acquire_wait_ms, 1),
         }
 
 
