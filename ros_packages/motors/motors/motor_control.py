@@ -31,8 +31,14 @@ from pib_motors.trajectory_executor import (
 )
 from pib_motors.perf_trace import (
     format_perf_trace_joint_state_sweep,
+    format_perf_trace_trajectory_done,
     format_perf_trace_trajectory_start,
     log_perf_trace,
+)
+from pib_motors.bus_writer import (
+    all_bus_writers,
+    format_bus_writer_summary,
+    shutdown_all_bus_writers,
 )
 from pib_motors.units import centideg_to_rad, rad_to_centideg
 from pib_motors.joint_state_sweep import (
@@ -193,6 +199,9 @@ class MotorControl(Node):
         self._trajectory_completion_timer = self.create_timer(
             0.05, self._process_trajectory_completions
         )
+        self._bus_writer_stats_timer = self.create_timer(
+            1.0, self._log_bus_writer_stats
+        )
 
         # Publisher for MotorSettings
         self.motor_settings_publisher = self.create_publisher(
@@ -350,6 +359,14 @@ class MotorControl(Node):
     def _process_trajectory_completions(self) -> None:
         while not self._trajectory_completion_queue.empty():
             completion = self._trajectory_completion_queue.get()
+            log_perf_trace(
+                self.get_logger(),
+                format_perf_trace_trajectory_done(
+                    completion.duration_sec,
+                    completion.successful,
+                    completion.cancelled,
+                ),
+            )
             if completion.successful and not completion.cancelled:
                 for motor_name in completion.joint_names:
                     for motor in name_to_motors[motor_name]:
@@ -516,6 +533,12 @@ class MotorControl(Node):
             ),
         )
 
+    def _log_bus_writer_stats(self) -> None:
+        for writer in all_bus_writers():
+            log_perf_trace(
+                self.get_logger(), format_bus_writer_summary(writer)
+            )
+
     def get_all_joint_positions(
         self,
         request: GetAllJointPositions.Request,
@@ -635,7 +658,11 @@ def main(args=None):
 
     rclpy.init(args=args)
     motor_control = MotorControl()
-    rclpy.spin(motor_control)
+    try:
+        rclpy.spin(motor_control)
+    finally:
+        shutdown_all_bus_writers()
+        motor_control.destroy_node()
     rclpy.shutdown()
     ipcon.disconnect()
 
