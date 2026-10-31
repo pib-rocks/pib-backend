@@ -2578,3 +2578,69 @@ def test_warm_endpoints_require_a_personality_id(daemon_server):
     with pytest.raises(Exception) as post_error:
         urlopen(request, timeout=2)
     assert getattr(post_error.value, "code", None) == 400
+
+
+# --- PR-2132: a failed turn answers with its cause instead of closing the socket
+
+
+def test_a_turn_that_raises_systemexit_answers_with_its_cause(monkeypatch):
+    """Hermes' bootstrap exits on a read-only home; that must not drop the request."""
+    replies = {"value": "unused"}
+
+    def runner(**kwargs):
+        raise SystemExit(
+            "hermes: [Errno 30] Read-only file system: "
+            "'/home/pib/.hermes/installs/x/.install.lock'"
+        )
+
+    server = hd.create_server(host="127.0.0.1", port=0, turn_runner=runner)
+    host, port = server.server_address
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        body = json.dumps({"text": "Hi", "chat_id": "c-1"}).encode()
+        request = Request(
+            f"http://{host}:{port}/turn",
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with pytest.raises(Exception) as error:
+            urlopen(request, timeout=5)
+        assert getattr(error.value, "code", None) == 500
+        payload = json.loads(error.value.read().decode())
+        assert payload["ok"] is False
+        assert payload["reason"] == "hermes_home_read_only"
+        assert "Read-only file system" in payload["detail"]
+        assert replies  # the turn runner was the only thing that ran
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2.0)
+
+
+def test_a_turn_that_raises_an_error_answers_with_a_generic_reason():
+    def runner(**kwargs):
+        raise RuntimeError("something else broke")
+
+    server = hd.create_server(host="127.0.0.1", port=0, turn_runner=runner)
+    host, port = server.server_address
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        body = json.dumps({"text": "Hi", "chat_id": "c-1"}).encode()
+        request = Request(
+            f"http://{host}:{port}/turn",
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with pytest.raises(Exception) as error:
+            urlopen(request, timeout=5)
+        payload = json.loads(error.value.read().decode())
+        assert payload["reason"] == "turn_failed"
+        assert "something else broke" in payload["detail"]
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2.0)
