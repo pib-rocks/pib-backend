@@ -16,3 +16,6 @@ class Config:
     # Absolute path. A relative default follows the process cwd, which is not
     # the flask directory once the API is launched by a process supervisor.
     HOST_IP_FILE = os.getenv("HOST_IP_FILE", os.path.join(BASE_DIR, "host_ip.txt"))
+    ROBOT_MODEL_DIR = os.getenv(
+        "ROBOT_MODEL_DIR", os.path.join(BASE_DIR, "robot_model")
+    )
