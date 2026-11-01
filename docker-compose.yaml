@@ -136,7 +136,7 @@ services:
     build:
       context: ./ros_packages
       dockerfile: ./rosbridge/Dockerfile
-    command: ros2 launch rosbridge_server rosbridge_websocket_launch.xml
+    command: ros2 launch rosbridge_server rosbridge_websocket_launch.xml default_call_service_timeout:=90.0
     networks:
       - pib-network
     restart: always

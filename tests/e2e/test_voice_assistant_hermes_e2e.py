@@ -648,12 +648,11 @@ def test_chat_send_button_activation_with_smartconnect():
             submit_icon = page.locator("deep-chat #submit-icon")
             messages = page.locator("deep-chat #messages")
 
-            # 5. Check when text length <= 2 chars, send button is DISABLED.
-            # expect(...) polls, so deep-chat's own state update is awaited instead
-            # of sampled once after a fixed sleep.
+            # 5. Check when input is blank, send button is DISABLED (since PR-1919
+            # validateInput requires >= 1 trimmed character).
             msg_input.click()
-            page.keyboard.type("12")
-            expect(msg_input).to_have_text("12", timeout=UI_TIMEOUT_MS)
+            msg_input.fill("")
+            expect(msg_input).to_have_text("", timeout=UI_TIMEOUT_MS)
             expect(submit_wrap).to_have_class(
                 re.compile(r"disabled-button"), timeout=UI_TIMEOUT_MS
             )
@@ -661,11 +660,9 @@ def test_chat_send_button_activation_with_smartconnect():
                 "aria-disabled", "true", timeout=UI_TIMEOUT_MS
             )
 
-            # 6. Check when text length > 2 chars, send button becomes ENABLED
+            # 6. Check when text length >= 1 char, send button becomes ENABLED
             marker = f"12345678-{uuid.uuid4().hex[:8]}"
-            page.keyboard.press("Control+a")
-            page.keyboard.press("Delete")
-            page.keyboard.type(marker)
+            msg_input.fill(marker)
             expect(msg_input).to_have_text(marker, timeout=UI_TIMEOUT_MS)
             expect(submit_wrap).to_have_class(
                 re.compile(r"submit-button"), timeout=UI_TIMEOUT_MS
@@ -843,29 +840,34 @@ def test_voice_assistant_latency_and_smartconnect_e2e():
             # Type 'Wie geht es dir?' into deep-chat input
             prompt = "Wie geht es dir?"
             msg_input.click()
-            page.keyboard.type(prompt)
+            msg_input.fill(prompt)
             expect(msg_input).to_have_text(prompt, timeout=UI_TIMEOUT_MS)
             expect(submit_icon).to_be_visible(timeout=UI_TIMEOUT_MS)
 
-            # 3. Measure response time from Submit click until assistant reply appears in UI
+            # 3. Measure response time from Submit click until assistant reply is persisted
+            # and rendered in the UI (not merely the user's own bubble).
             t0 = time.monotonic()
             submit_icon.click()
+            _wait_for_persisted_user_message(created_chat_id, prompt)
 
-            # Wait until deep-chat #messages contains assistant response
+            reply, _ = _wait_for_new_assistant_message(created_chat_id, set())
+            reply_content = reply["content"].strip()
+            assert reply_content, "Persisted assistant reply is empty"
+
+            # Wait until deep-chat #messages renders the assistant's reply text
             deadline = time.monotonic() + UI_REPLY_TIMEOUT_S
             t1 = None
-            reply_snippet = ""
+            snippet_probe = reply_content[:20]
             while time.monotonic() < deadline:
                 text = messages.inner_text() or ""
-                if unique_persona_name in text or len(text) > len(prompt) + 20:
+                if snippet_probe in text:
                     t1 = time.monotonic()
-                    reply_snippet = text.replace(prompt, "").strip()
                     break
                 time.sleep(0.05)
 
             assert t1 is not None, (
-                "Assistant response was not rendered in deep-chat UI within "
-                f"{UI_REPLY_TIMEOUT_S}s"
+                f"Assistant response {reply_content!r} was not rendered in deep-chat UI "
+                f"within {UI_REPLY_TIMEOUT_S}s (UI text: {messages.inner_text()!r})"
             )
 
             latency_ms = (t1 - t0) * 1000.0
