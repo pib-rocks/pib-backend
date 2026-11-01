@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import json
 import statistics
+import urllib.request
 import sys
 import time
 from dataclasses import dataclass, field
@@ -121,6 +122,37 @@ class MeasureServoSpeedFloorNode(Node):
         while self._baseline_settings is None and time.monotonic() < deadline:
             rclpy.spin_once(self, timeout_sec=0.1)
         return self._baseline_settings is not None
+
+    def _baseline_from_api(self, api_base: str) -> bool:
+        """Read the current settings over HTTP when the topic stays silent.
+
+        /motor_settings is published on change, not periodically, so a fresh subscriber waits
+        forever on a quiet robot. Measured: the run aborted with "no motor_settings message for
+        this joint" although the settings existed in the API.
+        """
+        url = f"{api_base.rstrip('/')}/api/motor/{self.joint_name}/settings"
+        try:
+            with urllib.request.urlopen(url, timeout=10) as response:
+                data = json.loads(response.read().decode())
+        except Exception as error:  # noqa: BLE001 - the caller reports the abort
+            _json("baseline_api_failed", url=url, error=str(error))
+            return False
+        settings = MotorSettings()
+        settings.motor_name = data.get("name", self.joint_name)
+        settings.turned_on = bool(data.get("turnedOn", True))
+        settings.pulse_width_min = int(data.get("pulseWidthMin", 700))
+        settings.pulse_width_max = int(data.get("pulseWidthMax", 2500))
+        settings.rotation_range_min = int(data.get("rotationRangeMin", -9000))
+        settings.rotation_range_max = int(data.get("rotationRangeMax", 9000))
+        settings.velocity = int(data.get("velocity", 16000))
+        settings.acceleration = int(data.get("acceleration", 10000))
+        settings.deceleration = int(data.get("deceleration", 5000))
+        settings.period = int(data.get("period", 19500))
+        settings.visible = bool(data.get("visible", True))
+        settings.upper_endpoint = data.get("upperEndpoint") or "max"
+        self._baseline_settings = settings
+        _json("baseline_from_api", joint=self.joint_name, velocity=settings.velocity)
+        return True
 
     def _read_joint_rad(self) -> float:
         request = GetJointPosition.Request()
@@ -300,6 +332,11 @@ def run(argv: list[str] | None = None) -> int:
         choices=(SERVO_FAMILY_STS3095, SERVO_FAMILY_FINGER),
         default=SERVO_FAMILY_STS3095,
     )
+    parser.add_argument(
+        "--api-base",
+        default="http://localhost",
+        help="Where to read the current motor settings when the motor_settings topic is silent.",
+    )
     parser.add_argument("--move-rad", type=float, default=DEFAULT_MOVE_RAD)
     parser.add_argument("--runs", type=int, default=DEFAULT_RUNS)
     parser.add_argument("--poll-hz", type=float, default=DEFAULT_POLL_HZ)
@@ -329,14 +366,16 @@ def run(argv: list[str] | None = None) -> int:
             _json("error", message="ROS services not available")
             return 2
         if not node._wait_baseline_settings():
-            _json(
-                "error",
-                message=(
-                    "no motor_settings message for this joint — start motor_control or "
-                    "touch settings once via apply_motor_settings"
-                ),
-            )
-            return 2
+            # The topic is published on change only, so a quiet robot never sends one.
+            if not node._baseline_from_api(args.api_base):
+                _json(
+                    "error",
+                    message=(
+                        "no motor_settings message and the API did not answer either — "
+                        "start motor_control or pass --api-base"
+                    ),
+                )
+                return 2
 
         if args.probe_setting_zero:
             import pib_motors.servo_speed_curve as curve_mod
