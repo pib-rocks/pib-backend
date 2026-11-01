@@ -441,8 +441,9 @@ class TestPosesComponentE2E:
         """
         base_positions = _startup_pose_motor_positions()
         initial_head = _read_live_joint_centideg("turn_head_motor")
-        pose_a_head = -2200 if initial_head >= 0 else 2200
-        pose_b_head = initial_head
+        sign = -1 if initial_head > 0 else 1
+        pose_a_head = max(-4500, min(4500, initial_head + sign * 1500))
+        pose_b_head = max(-4500, min(4500, initial_head + sign * 3000))
 
         ts = int(time.time())
         pose_a_name = f"e2e-seq-a-{ts}"
@@ -623,17 +624,17 @@ class TestPosesComponentE2E:
 
                     # Open Show Code modal and verify generated Python contract
                     page.locator('[data-test="BTN_Program_Show_Code"]').click()
-                    modal = page.locator(".modal-content")
-                    expect(modal).to_be_visible(timeout=10000)
-                    modal_code = modal.inner_text()
-                    assert (
-                        "telemetry.get_positions_deg(joint_names)" in modal_code
-                    ), f"Expected telemetry.get_positions_deg in generated Python: {modal_code}"
+                    code_el = page.locator("#python-code")
+                    expect(code_el).to_contain_text(
+                        "telemetry.get_positions_deg(joint_names)",
+                        timeout=10000,
+                    )
+                    modal_code = code_el.inner_text()
                     assert (
                         f'_pib_play_pose_sequence_timed([("{pose_a_id}", 1.2), ("{pose_b_id}", 1.2)])'
                         in modal_code
                     ), f"Expected 2-step sequence call in generated Python: {modal_code}"
-                    page.locator(".modal-content button", has_text="Close").click()
+                    page.locator('[data-test="BTN_Program_Code_Close"]').click()
                     page.wait_for_timeout(400)
 
                     # Save and Run the program, then verify turn_head_motor reaches pose_a_head during leg 1
