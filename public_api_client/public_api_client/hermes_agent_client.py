@@ -76,7 +76,7 @@ DEFAULT_DISABLED_TOOLSETS = os.environ.get(
     "PIB_HERMES_DISABLED_TOOLSETS",
     "terminal,code_execution,file,memory,session_search",
 )
-DEFAULT_MAX_TURNS = int(os.environ.get("PIB_HERMES_MAX_TURNS", "4"))
+DEFAULT_MAX_TURNS = int(os.environ.get("PIB_HERMES_MAX_TURNS", "10"))
 
 CONFIG_FILENAME = "config.yaml"
 ENV_FILENAME = ".env"

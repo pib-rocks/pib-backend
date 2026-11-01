@@ -761,7 +761,7 @@ def test_client_uses_session_pooling_for_daemon(daemon_server, monkeypatch):
         == "terminal,code_execution,file,memory,session_search"
     )
     assert replies["last"]["enabled_toolsets"] == "pib,vision"
-    assert replies["last"]["max_turns"] == 4
+    assert replies["last"]["max_turns"] == 10
 
 
 def test_run_turn_in_process_constructs_and_reuses_one_agent_per_chat(
@@ -1829,7 +1829,7 @@ def test_run_turn_in_process_reads_reply_from_run_agent_stdout(tmp_path, monkeyp
         "model": hd.IN_PROCESS_MODEL,
         "enabled_toolsets": "pib,vision",
         "disabled_toolsets": "terminal,code_execution,file,memory,session_search",
-        "max_turns": 4,
+        "max_turns": 10,
     }
     subprocess_runner.assert_not_called()
 
