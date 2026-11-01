@@ -175,6 +175,7 @@ export const moveToPose = {
             pose?: string,
             duration: number = DEFAULT_POSE_DURATION_SECONDS,
         ): void {
+            const oldState = this.saveExtraState();
             const current = this.getStepsState();
             const clampedIndex = Math.max(
                 0,
@@ -190,6 +191,15 @@ export const moveToPose = {
             });
             this.itemCount_ = current.length;
             this.updateShape_(current);
+            Blockly.Events.fire(
+                new (Blockly.Events.get(Blockly.Events.BLOCK_CHANGE))(
+                    this,
+                    "mutation",
+                    null,
+                    oldState,
+                    this.saveExtraState(),
+                ),
+            );
         },
 
         removeStepAt(this: PlayPoseSequenceBlock, index: number): void {
@@ -197,6 +207,7 @@ export const moveToPose = {
             if (current.length <= MIN_POSE_SEQUENCE_COUNT) {
                 return;
             }
+            const oldState = this.saveExtraState();
             const clampedIndex = Math.max(
                 0,
                 Math.min(current.length - 1, Math.trunc(index)),
@@ -204,6 +215,15 @@ export const moveToPose = {
             current.splice(clampedIndex, 1);
             this.itemCount_ = Math.max(MIN_POSE_SEQUENCE_COUNT, current.length);
             this.updateShape_(current);
+            Blockly.Events.fire(
+                new (Blockly.Events.get(Blockly.Events.BLOCK_CHANGE))(
+                    this,
+                    "mutation",
+                    null,
+                    oldState,
+                    this.saveExtraState(),
+                ),
+            );
         },
 
         saveExtraState(this: PlayPoseSequenceBlock): {
