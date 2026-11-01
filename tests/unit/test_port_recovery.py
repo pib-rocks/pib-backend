@@ -205,3 +205,52 @@ def test_the_give_up_comes_after_the_last_attempt_and_stops_the_loop() -> None:
         fake.advance(policy.reopen_interval_sec + 1.0)
     assert set(later) == {RecoveryAction.NONE}, later
     assert policy.snapshot("/dev/a")["gave_up"] is True
+
+
+def test_raw_serial_and_by_id_path_share_the_same_recovery_state() -> None:
+    """port_probe passes the raw serial ('5B91030562') while _sweep_port passes the
+    /dev/serial/by-id path. Both must increment and reset the SAME counter.
+    """
+    policy, _clock = _policy()
+    raw = "5B91030562"
+    by_id = "/dev/serial/by-id/usb-1a86_USB_Single_Serial_5B91030562-if00"
+
+    assert policy.note_failure(raw) is RecoveryAction.NONE
+    assert policy.note_failure(by_id) is RecoveryAction.NONE
+    assert policy.note_failure(raw) is RecoveryAction.REOPEN
+    assert policy.snapshot(by_id)["reopens_without_success"] == 1
+
+    policy.note_success(by_id)
+    assert policy.snapshot(raw)["reopens_without_success"] == 0
+    assert policy.snapshot(raw)["failures"] == 0
+
+
+def test_gave_up_is_not_permanent_slow_retry_and_success_revive_the_port() -> None:
+    """After exhausting the initial fast reopen budget, a slow retry after
+    gave_up_retry_interval_sec must try again, and a subsequent note_success clears gave_up.
+    """
+    fake = FakeClock()
+    policy = PortRecovery(
+        clock_fn=fake,
+        usb_reset_enabled_fn=lambda reopens: False,
+        gave_up_retry_interval_sec=300.0,
+    )
+    for _ in range(policy.max_reopens_without_success):
+        for _ in range(3):
+            policy.note_failure("/dev/a")
+        fake.advance(policy.reopen_interval_sec + 1.0)
+
+    # Trigger give_up
+    for _ in range(3):
+        assert policy.note_failure("/dev/a") is RecoveryAction.NONE
+    assert policy.snapshot("/dev/a")["gave_up"] is True
+
+    # After the slow-retry cooldown, the next failure reopens again
+    fake.advance(301.0)
+    assert policy.note_failure("/dev/a") is RecoveryAction.REOPEN
+    assert policy.snapshot("/dev/a")["reopens_without_success"] == 6
+
+    # Once data comes back, everything is healthy again
+    policy.note_success("/dev/a")
+    assert policy.snapshot("/dev/a")["gave_up"] is False
+    assert policy.snapshot("/dev/a")["reopens_without_success"] == 0

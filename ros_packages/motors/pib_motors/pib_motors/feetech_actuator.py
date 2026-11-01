@@ -222,37 +222,63 @@ def _get_or_open_port(
 
 
 def reopen_port(address: str) -> bool:
-    """Close and forget the cached port for this device so the next use opens a fresh one.
+    """Close and reopen the cached PortHandler in place so existing BusWriter and
+    FeetechStSerialActuator references stay attached to a live serial handle.
 
-    A PortHandler that stopped answering still reports ``is_open``, so the cache keeps handing
-    the same dead handle out. Closing it is the only thing that helps short of restarting the
-    process - measured: three of four adapters die during operation and never recover otherwise.
+    Previously ``reopen_port`` popped the entry from ``_port_cache`` and called
+    ``ph.closePort()``, while ``BusWriter._ph`` and ``actuator._ph`` kept their startup
+    reference forever - so the first reopen permanently killed the port until a container
+    restart. Reopening the same ``PortHandler`` object under its bus lock keeps all existing
+    references valid and restores the baudrate and tty flags (-hupcl clocal -crtscts, DTR).
     """
     device = resolve_serial_device(address)
     with _cache_lock:
-        cached = _port_cache.pop(device, None)
+        cached = _port_cache.get(device)
     if cached is None:
         return False
-    ph = cached[0]
-    try:
-        # A port that stopped answering usually has a half-transaction in either buffer: the
-        # reply the servo never sent, or the request the adapter swallowed. Closing the file
-        # alone keeps that garbage for the next open, so flush both directions first.
-        ser = getattr(ph, "ser", None)
-        if ser is not None and hasattr(ser, "reset_input_buffer"):
-            ser.reset_input_buffer()
-            ser.reset_output_buffer()
-        elif ser is not None and hasattr(ser, "flush"):
-            ser.flush()
-    except Exception as error:  # noqa: BLE001 - a dead handle may refuse to flush
-        logging.error("could not flush %s before reopening: %s", device, error)
-    try:
-        ph.closePort()
-    except Exception as error:  # noqa: BLE001 - a dead handle may fail to close
-        logging.warning("could not close %s cleanly: %s", device, error)
+    ph, _pk, lock = cached
+    with _BusAccess(ph, lock):
+        try:
+            # Flush any half-transaction in either buffer before closing the old fd.
+            ser = getattr(ph, "ser", None)
+            if ser is not None and hasattr(ser, "reset_input_buffer"):
+                ser.reset_input_buffer()
+                ser.reset_output_buffer()
+            elif ser is not None and hasattr(ser, "flush"):
+                ser.flush()
+        except Exception as error:  # noqa: BLE001 - a dead handle may refuse to flush
+            logging.error("could not flush %s before reopening: %s", device, error)
+        try:
+            ph.closePort()
+        except Exception as error:  # noqa: BLE001 - a dead handle may fail to close
+            logging.warning("could not close %s cleanly: %s", device, error)
+        try:
+            ph.port_name = device
+            if not ph.openPort():
+                logging.error(
+                    "[PERF_TRACE] PORT_REOPEN device=%s stage=REOPEN_FAILED - openPort returned False",
+                    device,
+                )
+                return False
+            if not ph.setBaudRate(getattr(ph, "baudrate", DEFAULT_BAUDRATE)):
+                ph.closePort()
+                logging.error(
+                    "[PERF_TRACE] PORT_REOPEN device=%s stage=REOPEN_FAILED - setBaudRate returned False",
+                    device,
+                )
+                return False
+            _configure_tty(ph)
+        except (
+            Exception
+        ) as error:  # noqa: BLE001 - hardware may still be re-enumerating
+            logging.error(
+                "[PERF_TRACE] PORT_REOPEN device=%s stage=REOPEN_FAILED error=%s",
+                device,
+                error,
+            )
+            return False
     logging.error(
-        "[PERF_TRACE] PORT_REOPEN device=%s stage=REOPEN - the handle was closed, the next "
-        "transaction opens a fresh one",
+        "[PERF_TRACE] PORT_REOPEN device=%s stage=REOPEN - reopened in place and reconfigured tty",
         device,
     )
     return True
@@ -598,25 +624,41 @@ class FeetechStSerialActuator:
     def get_temperature(self) -> int | None:
         if not self.is_connected() or self._pk is None or self._lock is None:
             return None
-        try:
-            with self._bus():
-                temp, res, _err = self._pk.read1ByteTxRx(
-                    self.pin, STS_PRESENT_TEMPERATURE
-                )
+        pin = self.pin
+
+        def _read(pk: sts) -> int | None:
+            temp, res, _err = pk.read1ByteTxRx(pin, STS_PRESENT_TEMPERATURE)
             if res != COMM_SUCCESS:
                 return None
             return int(temp)
+
+        try:
+            value, error = self._writer().run_service(
+                _read, label=f"pin{self.pin}:get_temperature"
+            )
+            if error or value is None:
+                return None
+            return int(value)
         except Exception:
             return None
 
     def get_voltage(self) -> float | None:
         if not self.is_connected() or self._pk is None or self._lock is None:
             return None
-        try:
-            with self._bus():
-                raw_v, res, _err = self._pk.read1ByteTxRx(self.pin, STS_PRESENT_VOLTAGE)
+        pin = self.pin
+
+        def _read(pk: sts) -> float | None:
+            raw_v, res, _err = pk.read1ByteTxRx(pin, STS_PRESENT_VOLTAGE)
             if res != COMM_SUCCESS:
                 return None
             return round(int(raw_v) / 10.0, 2)
+
+        try:
+            value, error = self._writer().run_service(
+                _read, label=f"pin{self.pin}:get_voltage"
+            )
+            if error or value is None:
+                return None
+            return float(value)
         except Exception:
             return None
