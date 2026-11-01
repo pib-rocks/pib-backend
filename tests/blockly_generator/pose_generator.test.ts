@@ -12,6 +12,7 @@ import {
     save_detection_as_pose,
 } from "../../pib_blockly/pib_blockly_server/src/pib-blockly/program-generators/pose-generator";
 import {
+    PlayPoseSequenceBlock,
     moveToPose,
     poseBlocks,
 } from "../../pib_blockly/pib_blockly_server/src/pib-blockly/program-blocks/pose-block";
@@ -183,6 +184,11 @@ describe("pose SDK generators", () => {
 });
 
 describe("play_pose_sequence generator", () => {
+  beforeAll(() => {
+    Blockly.common.defineBlocks(moveToPose);
+    Blockly.common.defineBlocks(poseBlocks);
+  });
+
   function createSequenceGenerator(sequenceCode?: string): MockGenerator {
     const generator = createMockGenerator();
     generator.valueToCode = (block, name, order) => {
@@ -193,32 +199,55 @@ describe("play_pose_sequence generator", () => {
     return generator;
   }
 
-  it("emits a timed helper call with the coerced sequence literal", () => {
+  it("emits a timed helper call from dynamic pose rows and prepends t=0.0 initial joint angles", () => {
+    Blockly.Blocks["move_to_pose"].getPoses = () => [
+      ["Wave 1", "pose-uuid-1"],
+      ["Wave 2", "pose-uuid-2"],
+      ["Rest", "pose-uuid-3"],
+    ];
+    const workspace = new Blockly.Workspace();
+    Blockly.Events.disable();
+    try {
+      const block = workspace.newBlock(
+        "play_pose_sequence",
+      ) as PlayPoseSequenceBlock;
+      block.setFieldValue("pose-uuid-1", "POSE_0");
+      block.setFieldValue(1.2, "DURATION_0");
+      block.setFieldValue("pose-uuid-2", "POSE_1");
+      block.setFieldValue(2.0, "DURATION_1");
+
+      const generator = createMockGenerator();
+      const code = play_pose_sequence(block, generator);
+
+      expect(code).toBe(
+        '_pib_play_pose_sequence_timed([("pose-uuid-1", 1.2), ("pose-uuid-2", 2)])\n',
+      );
+      const defs = Object.values(generator.definitions_).join("\n");
+      expect(defs).toContain("from pib_sdk.telemetry import Telemetry");
+      expect(defs).toContain("import time");
+      expect(defs).toContain("pose = get_pose(pose_backend, pose_id=identifier)");
+      expect(defs).toContain("pose = get_pose(pose_backend, name=identifier)");
+      expect(defs).toContain("live_joints = telemetry.get_joints(joint_names)");
+      expect(defs).toContain("writer.send_timed_trajectory(joint_names, waypoints)");
+      expect(defs).toContain("time.sleep(time_from_start)");
+    } finally {
+      workspace.dispose();
+      Blockly.Events.enable();
+    }
+  });
+
+  it("supports legacy SEQUENCE value input fallback when dynamic rows are absent", () => {
     const sequenceLiteral = "[['wave', 1.5], ['rest', 2]]";
     const generator = createSequenceGenerator(sequenceLiteral);
     const code = play_pose_sequence({} as Block, generator);
 
-    expect(code).toBe(`play_pose_sequence(${sequenceLiteral})\n`);
-    const defs = Object.values(generator.definitions_).join("\n");
-    expect(defs).toContain(
-      "from pib_sdk.features.poses import play_pose_sequence_timed",
-    );
-    expect(defs).toContain(
-      "steps = [(str(item[0]), float(item[1])) for item in (sequence or [])]",
-    );
-    expect(defs).toContain(
-      "play_pose_sequence_timed(writer, pose_backend, steps)",
-    );
-    expect(defs).toContain('os.getenv("ROSBRIDGE_HOST", "rosbridge-ws")');
-    expect(defs).toContain("pib_sdk.Write");
-    expect(defs).toContain("pose_backend = BackendClient(");
-    expect(defs).not.toContain("play_pose_sequence(writer");
+    expect(code).toBe(`_pib_play_pose_sequence_timed(${sequenceLiteral})\n`);
   });
 
   it("defaults a missing sequence input to an empty list", () => {
     const generator = createSequenceGenerator("");
     expect(play_pose_sequence({} as Block, generator)).toBe(
-      "play_pose_sequence([])\n",
+      "_pib_play_pose_sequence_timed([])\n",
     );
   });
 });
@@ -326,16 +355,83 @@ describe("save current pose block", () => {
     }
   });
 
-  it("defines play_pose_sequence as a statement with a SEQUENCE value input", () => {
+  it("defines play_pose_sequence as a dynamic statement block supporting arbitrary middle insertion, deletion, and serialization", () => {
+    Blockly.common.defineBlocks(moveToPose);
+    Blockly.Blocks["move_to_pose"].getPoses = () => [
+      ["Pose A", "id-a"],
+      ["Pose B", "id-b"],
+      ["Pose C", "id-c"],
+      ["Pose D", "id-d"],
+    ];
     const workspace = new Blockly.Workspace();
     Blockly.Events.disable();
     try {
-      const block = workspace.newBlock("play_pose_sequence");
+      const block = workspace.newBlock(
+        "play_pose_sequence",
+      ) as PlayPoseSequenceBlock;
 
-      expect(block.getInput("SEQUENCE")).not.toBeNull();
       expect(block.previousConnection).not.toBeNull();
       expect(block.nextConnection).not.toBeNull();
       expect(block.outputConnection).toBeNull();
+      expect(block.getPoseSequenceCount()).toBe(2);
+
+      block.setFieldValue("id-a", "POSE_0");
+      block.setFieldValue(1.0, "DURATION_0");
+      block.setFieldValue("id-c", "POSE_1");
+      block.setFieldValue(2.5, "DURATION_1");
+
+      // Insert an intermediate pose between Pose A (index 0) and Pose C (index 1)
+      block.insertStepAt(1, "id-b", 1.75);
+      expect(block.getPoseSequenceCount()).toBe(3);
+      expect(block.getStepsState()).toEqual([
+        { pose: "id-a", duration: 1.0 },
+        { pose: "id-b", duration: 1.75 },
+        { pose: "id-c", duration: 2.5 },
+      ]);
+
+      // Insert at the beginning (index 0)
+      block.insertStepAt(0, "id-d", 0.8);
+      expect(block.getPoseSequenceCount()).toBe(4);
+      expect(block.getStepsState().map((s) => s.pose)).toEqual([
+        "id-d",
+        "id-a",
+        "id-b",
+        "id-c",
+      ]);
+
+      // Remove from the middle (index 2 -> "id-b")
+      block.removeStepAt(2);
+      expect(block.getPoseSequenceCount()).toBe(3);
+      expect(block.getStepsState()).toEqual([
+        { pose: "id-d", duration: 0.8 },
+        { pose: "id-a", duration: 1.0 },
+        { pose: "id-c", duration: 2.5 },
+      ]);
+
+      // Verify saveExtraState / loadExtraState round-trip
+      const saved = block.saveExtraState();
+      const restored = workspace.newBlock(
+        "play_pose_sequence",
+      ) as PlayPoseSequenceBlock;
+      restored.loadExtraState(saved);
+      expect(restored.getPoseSequenceCount()).toBe(3);
+      expect(restored.getStepsState()).toEqual([
+        { pose: "id-d", duration: 0.8 },
+        { pose: "id-a", duration: 1.0 },
+        { pose: "id-c", duration: 2.5 },
+      ]);
+
+      // Verify gear mutator decompose/compose reordering
+      const mutatorWorkspace = new Blockly.Workspace();
+      const container = restored.decompose(mutatorWorkspace);
+      restored.compose(container);
+      expect(restored.getPoseSequenceCount()).toBe(3);
+      expect(restored.getStepsState()).toEqual([
+        { pose: "id-d", duration: 0.8 },
+        { pose: "id-a", duration: 1.0 },
+        { pose: "id-c", duration: 2.5 },
+      ]);
+      mutatorWorkspace.dispose();
     } finally {
       workspace.dispose();
       Blockly.Events.enable();
