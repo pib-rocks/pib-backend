@@ -71,7 +71,7 @@ services:
         # This default applies only when that argument and the environment are
         # both absent.
         APP_VERSION: ${APP_VERSION:-dev}
-        PIB_SDK_VERSION: ${PIB_SDK_VERSION:-0.7.4}
+        PIB_SDK_VERSION: ${PIB_SDK_VERSION:-0.8.0}
     command: "bash -c 'python3 -m db_location && flask --app run db upgrade && flask --app run seed_db && flask --app run reconcile_system_properties && exec gunicorn --workers 1 --threads 8 --bind 0.0.0.0:5000 --timeout 600 run:app'"
     networks:
       - pib-network
@@ -318,7 +318,7 @@ services:
       context: .
       dockerfile: ./ros_packages/programs/Dockerfile
       args:
-        PIB_SDK_VERSION: ${PIB_SDK_VERSION:-0.7.4}
+        PIB_SDK_VERSION: ${PIB_SDK_VERSION:-0.8.0}
     command: >
       bash -lc "
         source /opt/ros/jazzy/setup.bash &&
