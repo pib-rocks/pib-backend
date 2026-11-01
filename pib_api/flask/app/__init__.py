@@ -20,6 +20,7 @@ from controller import (
     smart_home_controller,
     system_controller,
     version_controller,
+    robot_model_controller,
 )
 
 app.register_blueprint(program_controller.bp, url_prefix="/program", name="program")
@@ -123,4 +124,7 @@ app.register_blueprint(
 app.register_blueprint(version_controller.bp, url_prefix="/version", name="version")
 app.register_blueprint(
     version_controller.bp, url_prefix="/api/version", name="version_api"
+)
+app.register_blueprint(
+    robot_model_controller.bp, url_prefix="/robot-model", name="robot_model"
 )

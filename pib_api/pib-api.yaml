@@ -28,6 +28,8 @@ tags:
     description: Read- and Update-Operations for button programs
   - name: system
     description: System configuration and diagnostics
+  - name: robot-model
+    description: Offline 3D model assets for Cerebra
 paths:
   /voice-assistant/personality:
     post:
@@ -1045,6 +1047,109 @@ paths:
                 $ref: '#/components/schemas/HostIp'
         '500':
           description: Unable to retrieve host IP
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /robot-model/manifest.json:
+    get:
+      tags:
+        - robot-model
+      summary: Manifest of the installed robot 3D model
+      parameters:
+        - name: v
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Installed version string; enables long-lived caching when it matches
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+        '404':
+          description: No model installed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /robot-model/model.json:
+    get:
+      tags:
+        - robot-model
+      summary: Kinematic tree and mesh references for the viewer
+      parameters:
+        - name: v
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+        '404':
+          description: No model installed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /robot-model/mapping.json:
+    get:
+      tags:
+        - robot-model
+      summary: Joint-to-motor mapping for the viewer
+      parameters:
+        - name: v
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+        '404':
+          description: No model installed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /robot-model/meshes/{name}:
+    get:
+      tags:
+        - robot-model
+      summary: GLB mesh for one URDF link
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: v
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            model/gltf-binary:
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: Mesh or model not found
           content:
             application/json:
               schema:
