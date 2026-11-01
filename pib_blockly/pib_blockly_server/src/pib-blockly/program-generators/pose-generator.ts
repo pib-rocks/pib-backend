@@ -176,7 +176,7 @@ export function save_detection_as_pose(
 export function get_all_poses(
     _block: Block,
     generator: typeof pythonGenerator,
-) {
+): [string, Order] {
     addPoseSdkDefinitions(generator);
     return ["list_poses(pose_backend)", Order.FUNCTION_CALL];
 }
@@ -184,7 +184,7 @@ export function get_all_poses(
 export function get_pose_joints(
     block: Block,
     generator: typeof pythonGenerator,
-) {
+): [string, Order] {
     const name = String(block.getFieldValue("NAME") ?? "");
     addPoseSdkDefinitions(generator);
     return [
@@ -195,7 +195,10 @@ export function get_pose_joints(
     ];
 }
 
-export function has_pose(block: Block, generator: typeof pythonGenerator) {
+export function has_pose(
+    block: Block,
+    generator: typeof pythonGenerator,
+): [string, Order] {
     const name = String(block.getFieldValue("NAME") ?? "");
     addPoseSdkDefinitions(generator);
     return [
@@ -206,7 +209,10 @@ export function has_pose(block: Block, generator: typeof pythonGenerator) {
     ];
 }
 
-export function pose_count(_block: Block, generator: typeof pythonGenerator) {
+export function pose_count(
+    _block: Block,
+    generator: typeof pythonGenerator,
+): [string, Order] {
     addPoseSdkDefinitions(generator);
     return ["len(list_poses(pose_backend))", Order.FUNCTION_CALL];
 }
