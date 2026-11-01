@@ -227,7 +227,7 @@ describe("play_pose_sequence generator", () => {
       expect(defs).toContain("import time");
       expect(defs).toContain("pose = get_pose(pose_backend, pose_id=identifier)");
       expect(defs).toContain("pose = get_pose(pose_backend, name=identifier)");
-      expect(defs).toContain("live_joints = telemetry.get_joints(joint_names)");
+      expect(defs).toContain("live_joints = telemetry.get_positions_deg(joint_names)");
       expect(defs).toContain("writer.send_timed_trajectory(joint_names, waypoints)");
       expect(defs).toContain("time.sleep(time_from_start)");
     } finally {
