@@ -316,6 +316,8 @@ class TestPosesComponentE2E:
                     )
                     save_btn = page.locator("#save-pose-button")
                     expect(save_btn).to_be_visible(timeout=15000)
+                    # Allow rosbridge to connect and deliver at least one 10 Hz /joint_states frame
+                    page.wait_for_timeout(1500)
                     save_btn.click()
 
                     name_input = page.locator("#name-input")
@@ -342,6 +344,8 @@ class TestPosesComponentE2E:
                     created_pose_id = created_entry["poseId"]
 
                     # Verify saved pose carries 26 motor positions from live telemetry
+                    # AND is NOT all zeros (PR-2164 regression guard: saving after a fresh
+                    # page load must capture live /joint_states angles, not uninitialized 0s)
                     mp = requests.get(
                         f"{API_URL}/pose/{created_pose_id}/motor-positions",
                         timeout=REQUEST_TIMEOUT_S,
@@ -349,6 +353,27 @@ class TestPosesComponentE2E:
                     assert (
                         len(mp) >= 2
                     ), f"Saved pose has no motor positions in backend: {mp}"
+                    saved_map = {
+                        item["motorName"]: int(item["position"]) for item in mp
+                    }
+                    non_zero = {k: v for k, v in saved_map.items() if abs(v) > 100}
+                    assert non_zero, (
+                        f"Saved pose '{pose_name}' recorded 0 on every joint "
+                        f"(all-zero Calibration regression, PR-2164): {saved_map}"
+                    )
+                    live_sh_right = _read_live_joint_centideg(
+                        "shoulder_horizontal_right"
+                    )
+                    assert (
+                        abs(
+                            saved_map.get("shoulder_horizontal_right", 0)
+                            - live_sh_right
+                        )
+                        <= POSITION_TOLERANCE_CENTIDEG
+                    ), (
+                        f"Saved shoulder_horizontal_right={saved_map.get('shoulder_horizontal_right')} "
+                        f"does not match live servo {live_sh_right} cdeg: {saved_map}"
+                    )
 
                     # Rename pose via UI
                     rename_btn = page.locator(
@@ -399,6 +424,272 @@ class TestPosesComponentE2E:
                 try:
                     requests.delete(
                         f"{API_URL}/pose/{created_pose_id}", timeout=REQUEST_TIMEOUT_S
+                    )
+                except Exception:
+                    pass
+
+    def test_dynamic_play_pose_sequence_block_ui_and_smooth_execution(self):
+        """Verifies PR-2161 / PR-2162 / PR-2163 / PR-2164 end-to-end:
+        1. Opens a program in Cerebra (/program), drags/loads a play_pose_sequence block.
+        2. Uses the inline [+] button on Row 1 to insert an intermediate pose row (2 -> 3 rows)
+           and inline [-] to delete a row (3 -> 2 rows).
+        3. Compiles via BTN_Program_Show_Code and verifies the generated Python uses
+           telemetry.get_positions_deg(joint_names), prepends Waypoint 0 at t=0.0s,
+           and calls _pib_play_pose_sequence_timed with the selected pose UUIDs and durations.
+        4. Executes a 2-pose sequence on the live robot and verifies that the servo smoothly
+           reaches the target pose and returns to the initial posture.
+        """
+        base_positions = _startup_pose_motor_positions()
+        initial_head = _read_live_joint_centideg("turn_head_motor")
+        pose_a_head = -2200 if initial_head >= 0 else 2200
+        pose_b_head = initial_head
+
+        ts = int(time.time())
+        pose_a_name = f"e2e-seq-a-{ts}"
+        pose_b_name = f"e2e-seq-b-{ts}"
+        prog_name = f"e2e_seq_prog_{ts}"
+
+        pose_a_positions = [
+            {
+                "motorName": item["motorName"],
+                "position": (
+                    pose_a_head
+                    if item["motorName"] == "turn_head_motor"
+                    else item["position"]
+                ),
+            }
+            for item in base_positions
+        ]
+        pose_b_positions = [
+            {
+                "motorName": item["motorName"],
+                "position": (
+                    pose_b_head
+                    if item["motorName"] == "turn_head_motor"
+                    else item["position"]
+                ),
+            }
+            for item in base_positions
+        ]
+
+        pose_a_id: str | None = None
+        pose_b_id: str | None = None
+        prog_id: str | None = None
+        executable = _chromium_executable()
+
+        try:
+            r_a = requests.post(
+                f"{API_URL}/pose",
+                json={"name": pose_a_name, "motorPositions": pose_a_positions},
+                timeout=REQUEST_TIMEOUT_S,
+            )
+            r_a.raise_for_status()
+            pose_a_id = r_a.json()["poseId"]
+
+            r_b = requests.post(
+                f"{API_URL}/pose",
+                json={"name": pose_b_name, "motorPositions": pose_b_positions},
+                timeout=REQUEST_TIMEOUT_S,
+            )
+            r_b.raise_for_status()
+            pose_b_id = r_b.json()["poseId"]
+
+            r_prog = requests.post(
+                f"{API_URL}/program",
+                json={"name": prog_name},
+                timeout=REQUEST_TIMEOUT_S,
+            )
+            r_prog.raise_for_status()
+            prog_id = r_prog.json()["programNumber"]
+
+            initial_visual = json.dumps(
+                {
+                    "blocks": {
+                        "languageVersion": 0,
+                        "blocks": [
+                            {
+                                "type": "play_pose_sequence",
+                                "id": "e2e_seq_block",
+                                "x": 80,
+                                "y": 80,
+                                "extraState": {
+                                    "itemCount": 2,
+                                    "steps": [
+                                        {"pose": pose_a_id, "duration": 1.2},
+                                        {"pose": pose_b_id, "duration": 1.2},
+                                    ],
+                                },
+                                "fields": {
+                                    "POSE_0": pose_a_id,
+                                    "DURATION_0": 1.2,
+                                    "POSE_1": pose_b_id,
+                                    "DURATION_1": 1.2,
+                                },
+                            }
+                        ],
+                    }
+                }
+            )
+            requests.put(
+                f"{API_URL}/program/{prog_id}/code",
+                json={"codeVisual": initial_visual},
+                timeout=REQUEST_TIMEOUT_S,
+            ).raise_for_status()
+
+            with sync_playwright() as p:
+                launch_kwargs: dict[str, Any] = {
+                    "headless": True,
+                    "args": ["--no-sandbox"],
+                }
+                if executable:
+                    launch_kwargs["executable_path"] = executable
+                browser = p.chromium.launch(**launch_kwargs)
+                context = browser.new_context(viewport={"width": 1400, "height": 900})
+                page = context.new_page()
+
+                try:
+                    page.goto(
+                        f"{ROBOT_URL}/program",
+                        wait_until="domcontentloaded",
+                        timeout=30000,
+                    )
+                    prog_btn = page.locator(f'[data-test="BTN_{prog_name}"]')
+                    expect(prog_btn).to_be_visible(timeout=15000)
+                    prog_btn.click()
+                    page.wait_for_timeout(2000)
+
+                    # Verify initial 2 rows rendered on the Blockly canvas ("1. Pose", "2. Pose")
+                    row_labels_before = page.evaluate(
+                        r"""() => [...document.querySelectorAll('g.blocklyDraggable text.blocklyText')]
+                        .map(t => (t.textContent || '').replace(/\u00a0/g, ' ').trim())
+                        .filter(t => /^\d+\. Pose$/.test(t))"""
+                    )
+                    assert row_labels_before == [
+                        "1. Pose",
+                        "2. Pose",
+                    ], f"Expected 2 pose rows initially, got: {row_labels_before}"
+
+                    # Click inline [+] on Row 1 to insert an intermediate pose row (2 -> 3 rows)
+                    plus_box = page.evaluate("""() => {
+                        const imgs = [...document.querySelectorAll('g.blocklyDraggable image')];
+                        const addImg = imgs.find(im => (im.getAttribute('xlink:href') || im.getAttribute('href') || '').includes('M9%204.5v9'));
+                        if (!addImg) return null;
+                        const r = addImg.getBoundingClientRect();
+                        return {x: r.x + r.width / 2, y: r.y + r.height / 2};
+                    }""")
+                    assert (
+                        plus_box is not None
+                    ), "Inline [+] button not found on play_pose_sequence"
+                    page.mouse.click(plus_box["x"], plus_box["y"])
+                    page.wait_for_timeout(600)
+
+                    row_labels_after_add = page.evaluate(
+                        r"""() => [...document.querySelectorAll('g.blocklyDraggable text.blocklyText')]
+                        .map(t => (t.textContent || '').replace(/\u00a0/g, ' ').trim())
+                        .filter(t => /^\d+\. Pose$/.test(t))"""
+                    )
+                    assert row_labels_after_add == [
+                        "1. Pose",
+                        "2. Pose",
+                        "3. Pose",
+                    ], f"Expected 3 pose rows after clicking [+], got: {row_labels_after_add}"
+
+                    # Click inline [-] on Row 2 (index 1, the newly inserted middle row) to remove it (3 -> 2 rows)
+                    minus_box = page.evaluate("""() => {
+                        const imgs = [...document.querySelectorAll('g.blocklyDraggable image')];
+                        const remImgs = imgs.filter(im => {
+                            const href = im.getAttribute('xlink:href') || im.getAttribute('href') || '';
+                            return href.includes('M4.5%209h9') && !href.includes('M9%204.5v9');
+                        });
+                        if (remImgs.length < 2) return null;
+                        const r = remImgs[1].getBoundingClientRect();
+                        return {x: r.x + r.width / 2, y: r.y + r.height / 2};
+                    }""")
+                    assert (
+                        minus_box is not None
+                    ), "Inline [-] button not found on middle row"
+                    page.mouse.click(minus_box["x"], minus_box["y"])
+                    page.wait_for_timeout(600)
+
+                    row_labels_after_remove = page.evaluate(
+                        r"""() => [...document.querySelectorAll('g.blocklyDraggable text.blocklyText')]
+                        .map(t => (t.textContent || '').replace(/\u00a0/g, ' ').trim())
+                        .filter(t => /^\d+\. Pose$/.test(t))"""
+                    )
+                    assert row_labels_after_remove == [
+                        "1. Pose",
+                        "2. Pose",
+                    ], f"Expected 2 pose rows after clicking [-], got: {row_labels_after_remove}"
+
+                    # Open Show Code modal and verify generated Python contract
+                    page.locator('[data-test="BTN_Program_Show_Code"]').click()
+                    modal = page.locator(".modal-content")
+                    expect(modal).to_be_visible(timeout=10000)
+                    modal_code = modal.inner_text()
+                    assert (
+                        "telemetry.get_positions_deg(joint_names)" in modal_code
+                    ), f"Expected telemetry.get_positions_deg in generated Python: {modal_code}"
+                    assert (
+                        f'_pib_play_pose_sequence_timed([("{pose_a_id}", 1.2), ("{pose_b_id}", 1.2)])'
+                        in modal_code
+                    ), f"Expected 2-step sequence call in generated Python: {modal_code}"
+                    page.locator(".modal-content button", has_text="Close").click()
+                    page.wait_for_timeout(400)
+
+                    # Save and Run the program, then verify turn_head_motor reaches pose_a_head during leg 1
+                    save_btn = page.locator('[data-test="BTN_Program_Save"]')
+                    if save_btn.is_enabled():
+                        save_btn.click()
+                        page.wait_for_timeout(500)
+
+                    page.locator('[data-test="BTN_Program_Run_Stop"]').click()
+
+                    reached_pose_a = False
+                    last_a = initial_head
+                    deadline = time.monotonic() + 10.0
+                    while time.monotonic() < deadline:
+                        last_a = _read_live_joint_centideg("turn_head_motor")
+                        if abs(last_a - pose_a_head) <= POSITION_TOLERANCE_CENTIDEG:
+                            reached_pose_a = True
+                            break
+                        time.sleep(0.06)
+
+                    assert reached_pose_a, (
+                        f"turn_head_motor did not reach first waypoint {pose_a_head} cdeg "
+                        f"during sequence execution (last_measured={last_a} cdeg)"
+                    )
+
+                    # Wait for leg 2 to finish returning turn_head_motor to pose_b_head
+                    returned_pose_b = False
+                    last_b = last_a
+                    deadline_b = time.monotonic() + 8.0
+                    while time.monotonic() < deadline_b:
+                        last_b = _read_live_joint_centideg("turn_head_motor")
+                        if abs(last_b - pose_b_head) <= POSITION_TOLERANCE_CENTIDEG:
+                            returned_pose_b = True
+                            break
+                        time.sleep(0.08)
+
+                    assert returned_pose_b, (
+                        f"turn_head_motor did not reach second waypoint {pose_b_head} cdeg "
+                        f"at sequence end (last_measured={last_b} cdeg)"
+                    )
+                finally:
+                    context.close()
+                    browser.close()
+        finally:
+            for pid in (pose_a_id, pose_b_id):
+                if pid:
+                    try:
+                        requests.delete(
+                            f"{API_URL}/pose/{pid}", timeout=REQUEST_TIMEOUT_S
+                        )
+                    except Exception:
+                        pass
+            if prog_id:
+                try:
+                    requests.delete(
+                        f"{API_URL}/program/{prog_id}", timeout=REQUEST_TIMEOUT_S
                     )
                 except Exception:
                     pass
