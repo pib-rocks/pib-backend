@@ -349,7 +349,7 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(sequence) -> None:
             pose = get_pose(pose_backend, pose_id=identifier)
         except Exception:
             pose = get_pose(pose_backend, name=identifier)
-        resolved_poses.append((pose, max(0.1, float(leg_seconds))))
+        resolved_poses.append((pose, max(0.05, float(leg_seconds))))
 
     joint_names = []
     seen = set()
@@ -365,7 +365,8 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(sequence) -> None:
     previous = {}
     for pose, _leg_seconds in resolved_poses:
         current = dict(previous)
-        current.update(pose.motor_angles_deg)
+        for k, v in pose.motor_angles_deg.items():
+            current[k] = min(90.0, max(-90.0, float(v)))
         filled.append(current)
         previous = current
 
@@ -384,26 +385,36 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(sequence) -> None:
                 live_joints = telemetry.get_positions_deg(joint_names)
                 for motor_name, angle_deg in (live_joints or {}).items():
                     if angle_deg is not None:
-                        initial_angles[motor_name] = float(angle_deg)
+                        initial_angles[motor_name] = min(90.0, max(-90.0, float(angle_deg)))
                 break
         except Exception:
             continue
 
-    waypoints = [
-        (
-            [float(round(initial_angles[motor_name] * 100.0)) for motor_name in joint_names],
-            0.0,
-        )
+    active_joints = [
+        motor_name
+        for motor_name in joint_names
+        if max([initial_angles[motor_name]] + [m[motor_name] for m in filled])
+        - min([initial_angles[motor_name]] + [m[motor_name] for m in filled]) >= 0.2
     ]
+    if active_joints:
+        joint_names = active_joints
+    else:
+        joint_names = [joint_names[0]]
+
+    prev_cdeg = [float(round(initial_angles[motor_name] * 100.0)) for motor_name in joint_names]
+    waypoints = [(prev_cdeg, 0.0)]
     time_from_start = 0.0
     for (_pose, leg_seconds), angle_map in zip(resolved_poses, filled):
-        time_from_start += leg_seconds
-        waypoints.append(
-            (
-                [float(round(angle_map[motor_name] * 100.0)) for motor_name in joint_names],
-                time_from_start,
-            )
-        )
+        target_cdeg = [float(round(angle_map[motor_name] * 100.0)) for motor_name in joint_names]
+        min_phys_sec = 0.0
+        for motor_name, p_from, p_to in zip(joint_names, prev_cdeg, target_cdeg):
+            delta = abs(p_to - p_from)
+            cap = 22000.0 if ("stretch" in motor_name or "opposition" in motor_name) else 10000.0
+            min_phys_sec = max(min_phys_sec, delta / cap)
+        eff_seconds = max(leg_seconds, min_phys_sec)
+        time_from_start = round(time_from_start + eff_seconds, 4)
+        waypoints.append((target_cdeg, time_from_start))
+        prev_cdeg = target_cdeg
 
     for host in (rosbridge_host, "localhost"):
         try:
@@ -419,6 +430,7 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(sequence) -> None:
             continue
 
     if time_from_start > 0.0:
+        time_from_start = round(time_from_start + 0.08, 4)
         time.sleep(time_from_start)
 `;
 

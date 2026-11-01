@@ -409,7 +409,7 @@ class TrajectoryExecutor:
         sleep_fn: Callable[[float], None] = time.sleep,
         clock_fn: Callable[[], float] = time.monotonic,
         path_speed_margin: float = PATH_SPEED_TRACKING_MARGIN,
-        path_coupled_acceleration: bool = True,
+        path_coupled_acceleration: bool = False,
         acceleration_scale: float = 2000.0,
         log_every_second: bool = True,
     ) -> None:
@@ -579,6 +579,13 @@ class TrajectoryExecutor:
     ) -> tuple[bool, bool]:
         dt = 1.0 / self.rate_hz
         duration = times[-1] if times else 0.0
+        active_names = [
+            name
+            for name in names
+            if (max(series[name]) - min(series[name]) > 1e-6) or len(names) == 1
+        ]
+        if not active_names:
+            active_names = list(names[:1])
         t0 = self.clock_fn()
         success = True
         cancelled = False
@@ -588,15 +595,28 @@ class TrajectoryExecutor:
                 cancelled = True
                 break
             now = self.clock_fn() - t0
-            targets = interpolate_positions(names, times, series, now)
-            for name in names:
+            leg_idx = active_trajectory_leg_index(times, now)
+            leg_dt = (
+                max(1e-6, times[leg_idx + 1] - times[leg_idx])
+                if len(times) >= 2 and leg_idx + 1 < len(times)
+                else 1.0
+            )
+            targets = interpolate_positions(active_names, times, series, now)
+            for name in active_names:
                 position = targets[name]
                 # Per tick, not per leg: the slope of a PCHIP segment changes inside the
                 # segment, so a speed fixed for the whole segment runs ahead of or behind
-                # the path at the segment ends.
-                path_speed = interpolate_joint_velocity_centideg_per_sec(
+                # the path at the segment ends. Floor at 85% of the leg's average speed so
+                # the servo does not drop to STS_SPEED_MIN (50) right before a waypoint.
+                inst_speed = interpolate_joint_velocity_centideg_per_sec(
                     times, series[name], now
                 )
+                leg_avg_speed = (
+                    abs(series[name][leg_idx + 1] - series[name][leg_idx]) / leg_dt
+                    if len(series[name]) > leg_idx + 1
+                    else 0.0
+                )
+                path_speed = max(abs(inst_speed), leg_avg_speed * 0.85)
                 for motor in self.motor_lookup[name]:
                     setting = derive_sts_velocity_setting(
                         path_speed,
@@ -609,7 +629,7 @@ class TrajectoryExecutor:
                     )
             if self.log_every_second and now - last_log >= 1.0:
                 last_log = now
-                self._log_tick_speeds(names, times, series, now)
+                self._log_tick_speeds(active_names, times, series, now)
             if now >= duration:
                 break
             self.sleep_fn(dt)

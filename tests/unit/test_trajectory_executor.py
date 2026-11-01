@@ -138,6 +138,7 @@ def _executor(
         rate_hz=10.0,
         sleep_fn=clock.sleep,
         clock_fn=clock.time,
+        path_coupled_acceleration=True,
     )
 
 
