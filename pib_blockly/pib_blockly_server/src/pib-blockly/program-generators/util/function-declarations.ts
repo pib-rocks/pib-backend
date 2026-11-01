@@ -1,8 +1,10 @@
-import {pythonGenerator} from "blockly/python";
+import { pythonGenerator } from "blockly/python";
 
 // play-audio-from-speech
 
-export const PLAY_AUDIO_FROM_SPEECH_FUNCTION = (generator: typeof pythonGenerator) => `
+export const PLAY_AUDIO_FROM_SPEECH_FUNCTION = (
+  generator: typeof pythonGenerator,
+) => `
 def ${generator.FUNCTION_NAME_PLACEHOLDER_}(speech: str, voice: str = "F1", language: str = "auto") -> None:
 
     logging.info(f"received request to say '{speech}' with voice '{voice}' in language '{language}'.")
@@ -20,7 +22,9 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(speech: str, voice: str = "F1", lang
     logging.info("finished speaking.")
 `;
 
-export const PLAY_AUDIO_FROM_FILE_FUNCTION = (generator: typeof pythonGenerator) => `
+export const PLAY_AUDIO_FROM_FILE_FUNCTION = (
+  generator: typeof pythonGenerator,
+) => `
 def ${generator.FUNCTION_NAME_PLACEHOLDER_}(filepath: str) -> None:
 
     logging.info(f"received request to play audio file '{filepath}'.")
@@ -50,13 +54,15 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(percent: int) -> None:
 
 /** ROS GetJointPosition and pose HTTP APIs store angles as centidegrees; Blockly uses degrees. */
 export const CENTIDEGREES_TO_DEGREES_FUNCTION = (
-    generator: typeof pythonGenerator,
+  generator: typeof pythonGenerator,
 ) => `
 def ${generator.FUNCTION_NAME_PLACEHOLDER_}(position_centidegrees: int) -> float:
     return position_centidegrees / 100.0
 `;
 
-export const GET_JOINT_POSITION_FUNCTION = (generator: typeof pythonGenerator) => `
+export const GET_JOINT_POSITION_FUNCTION = (
+  generator: typeof pythonGenerator,
+) => `
 def ${generator.FUNCTION_NAME_PLACEHOLDER_}(motor_name: str) -> float:
 
     request = GetJointPosition.Request()
@@ -73,7 +79,9 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(motor_name: str) -> float:
         return 0.0
 `;
 
-export const SET_HAND_POSITION_XYZ_FUNCTION = (generator: typeof pythonGenerator) => `
+export const SET_HAND_POSITION_XYZ_FUNCTION = (
+  generator: typeof pythonGenerator,
+) => `
 def ${generator.FUNCTION_NAME_PLACEHOLDER_}(side: str, mode: str, x, y, z) -> None:
 
     if mode == "RELATIVE":
@@ -99,7 +107,9 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(side: str, mode: str, x, y, z) -> No
             pib.move(arm, *q_deg)
 `;
 
-export const GET_HAND_POSITION_REP103_FUNCTION = (generator: typeof pythonGenerator) => `
+export const GET_HAND_POSITION_REP103_FUNCTION = (
+  generator: typeof pythonGenerator,
+) => `
 def ${generator.FUNCTION_NAME_PLACEHOLDER_}(side: str):
 
     rosbridge_host = os.getenv("ROSBRIDGE_HOST", "rosbridge-ws")
@@ -109,7 +119,9 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(side: str):
         return to_rep103(get_hand_position_xyz(side, telemetry_host="localhost"))
 `;
 
-export const APPLY_JOINT_TRAJECTORY_FUNCTION = (generator: typeof pythonGenerator) => `
+export const APPLY_JOINT_TRAJECTORY_FUNCTION = (
+  generator: typeof pythonGenerator,
+) => `
 def ${generator.FUNCTION_NAME_PLACEHOLDER_}(motor_name: str, position) -> None:
 
     logging.info(f"setting position of '{motor_name}' to {position} degrees.")
@@ -136,7 +148,9 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(*args) -> None:
             write.move(*args)
 `;
 
-export const GET_MOTOR_CURRENT_MA_FUNCTION = (generator: typeof pythonGenerator) => `
+export const GET_MOTOR_CURRENT_MA_FUNCTION = (
+  generator: typeof pythonGenerator,
+) => `
 def ${generator.FUNCTION_NAME_PLACEHOLDER_}(motor_name: str) -> int:
 
     rosbridge_host = os.getenv("ROSBRIDGE_HOST", "rosbridge-ws")
@@ -148,7 +162,9 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(motor_name: str) -> int:
             return telemetry.get_current_ma(motor_name)
 `;
 
-export const GET_CAMERA_DEPTH_FRAME_FUNCTION = (generator: typeof pythonGenerator) => `
+export const GET_CAMERA_DEPTH_FRAME_FUNCTION = (
+  generator: typeof pythonGenerator,
+) => `
 def ${generator.FUNCTION_NAME_PLACEHOLDER_}():
 
     rosbridge_host = os.getenv("ROSBRIDGE_HOST", "rosbridge-ws")
@@ -161,7 +177,7 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}():
 `;
 
 export const GET_CAMERA_DISTANCE_AT_PX_FUNCTION = (
-    generator: typeof pythonGenerator,
+  generator: typeof pythonGenerator,
 ) => `
 def ${generator.FUNCTION_NAME_PLACEHOLDER_}(x, y):
 
@@ -174,7 +190,9 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(x, y):
             return cam.get_distance_at_px(int(x), int(y))
 `;
 
-export const GET_IMU_ACCELERATION_FUNCTION = (generator: typeof pythonGenerator) => `
+export const GET_IMU_ACCELERATION_FUNCTION = (
+  generator: typeof pythonGenerator,
+) => `
 def ${generator.FUNCTION_NAME_PLACEHOLDER_}(axis):
 
     rosbridge_host = os.getenv("ROSBRIDGE_HOST", "rosbridge-ws")
@@ -201,7 +219,9 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(axis):
             return 0.0
 `;
 
-export const GET_IMU_ANGULAR_VELOCITY_FUNCTION = (generator: typeof pythonGenerator) => `
+export const GET_IMU_ANGULAR_VELOCITY_FUNCTION = (
+  generator: typeof pythonGenerator,
+) => `
 def ${generator.FUNCTION_NAME_PLACEHOLDER_}(axis):
 
     rosbridge_host = os.getenv("ROSBRIDGE_HOST", "rosbridge-ws")
@@ -223,7 +243,7 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(axis):
 `;
 
 export const GET_IMU_IS_DATA_AVAILABLE_FUNCTION = (
-    generator: typeof pythonGenerator,
+  generator: typeof pythonGenerator,
 ) => `
 def ${generator.FUNCTION_NAME_PLACEHOLDER_}():
 
@@ -239,7 +259,9 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}():
             return False
 `;
 
-export const GET_IMU_DATA_AGE_FUNCTION = (generator: typeof pythonGenerator) => `
+export const GET_IMU_DATA_AGE_FUNCTION = (
+  generator: typeof pythonGenerator,
+) => `
 def ${generator.FUNCTION_NAME_PLACEHOLDER_}():
 
     rosbridge_host = os.getenv("ROSBRIDGE_HOST", "rosbridge-ws")
@@ -295,7 +317,9 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(poseId: str) -> None:
             writer.move(*args)
 `;
 
-export const SAVE_CURRENT_POSE_FUNCTION = (generator: typeof pythonGenerator) => `
+export const SAVE_CURRENT_POSE_FUNCTION = (
+  generator: typeof pythonGenerator,
+) => `
 def ${generator.FUNCTION_NAME_PLACEHOLDER_}(name: str) -> None:
 
     motor_names = _expand_motor_specs([All])
@@ -306,17 +330,96 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(name: str) -> None:
         save_current_pose(telemetry, pose_backend, name, motor_names)
 `;
 
-export const PLAY_POSE_SEQUENCE_TIMED_FUNCTION = (generator: typeof pythonGenerator) => `
+export const PLAY_POSE_SEQUENCE_TIMED_FUNCTION = (
+  generator: typeof pythonGenerator,
+) => `
 def ${generator.FUNCTION_NAME_PLACEHOLDER_}(sequence) -> None:
+    steps = [
+        (str(item[0]), float(item[1]))
+        for item in (sequence or [])
+        if item and len(item) >= 2 and str(item[0]).strip() and str(item[0]).strip() != "LOADING"
+    ]
+    if not steps:
+        return
 
-    steps = [(str(item[0]), float(item[1])) for item in (sequence or [])]
-    rosbridge_host = os.getenv("ROSBRIDGE_HOST", "rosbridge-ws")
-    try:
-        with pib_sdk.Write(host=rosbridge_host, port=9090) as writer:
-            play_pose_sequence_timed(writer, pose_backend, steps)
-    except Exception:
-        with pib_sdk.Write(host="localhost", port=9090) as writer:
-            play_pose_sequence_timed(writer, pose_backend, steps)
+    resolved_poses = []
+    for identifier, leg_seconds in steps:
+        pose = None
+        try:
+            pose = get_pose(pose_backend, pose_id=identifier)
+        except Exception:
+            pose = get_pose(pose_backend, name=identifier)
+        resolved_poses.append((pose, max(0.1, float(leg_seconds))))
+
+    joint_names = []
+    seen = set()
+    for pose, _leg_seconds in resolved_poses:
+        for motor_name in pose.motor_angles_deg:
+            if motor_name not in seen:
+                seen.add(motor_name)
+                joint_names.append(motor_name)
+    if not joint_names:
+        return
+
+    filled = []
+    previous = {}
+    for pose, _leg_seconds in resolved_poses:
+        current = dict(previous)
+        current.update(pose.motor_angles_deg)
+        filled.append(current)
+        previous = current
+
+    first_known = {}
+    for angle_map in filled:
+        for motor_name, angle_deg in angle_map.items():
+            first_known.setdefault(motor_name, float(angle_deg))
+    for angle_map in filled:
+        for motor_name in joint_names:
+            angle_map.setdefault(motor_name, first_known[motor_name])
+
+    initial_angles = dict(first_known)
+    for host in (rosbridge_host, "localhost"):
+        try:
+            with Telemetry(host=host, port=9090) as telemetry:
+                live_joints = telemetry.get_joints(joint_names)
+                for motor_name, angle_deg in (live_joints or {}).items():
+                    if angle_deg is not None:
+                        initial_angles[motor_name] = float(angle_deg)
+                break
+        except Exception:
+            continue
+
+    waypoints = [
+        (
+            [float(round(initial_angles[motor_name] * 100.0)) for motor_name in joint_names],
+            0.0,
+        )
+    ]
+    time_from_start = 0.0
+    for (_pose, leg_seconds), angle_map in zip(resolved_poses, filled):
+        time_from_start += leg_seconds
+        waypoints.append(
+            (
+                [float(round(angle_map[motor_name] * 100.0)) for motor_name in joint_names],
+                time_from_start,
+            )
+        )
+
+    for host in (rosbridge_host, "localhost"):
+        try:
+            with pib_sdk.Write(host=host, port=9090) as writer:
+                if hasattr(writer, "send_timed_trajectory"):
+                    writer.send_timed_trajectory(joint_names, waypoints)
+                else:
+                    play_pose_sequence_timed(writer, pose_backend, steps)
+                break
+        except Exception:
+            if host == "localhost":
+                raise
+            continue
+
+    if time_from_start > 0.0:
+        time.sleep(time_from_start)
 `;
 
 // model inference
@@ -343,13 +446,13 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}() -> None:
 `;
 
 function latestDetectionsFunction(
-    generator: typeof pythonGenerator,
-    topic: string,
-    emptyWarning: string,
-    extraFields = "",
-    extraHelpers = "",
+  generator: typeof pythonGenerator,
+  topic: string,
+  emptyWarning: string,
+  extraFields = "",
+  extraHelpers = "",
 ) {
-    return `
+  return `
 def ${generator.FUNCTION_NAME_PLACEHOLDER_}(timeout_sec=10.0):
     received = {}
 
@@ -388,44 +491,52 @@ ${extraHelpers}
 `;
 }
 
-export const GET_FACE_DETECTIONS_FUNCTION = (generator: typeof pythonGenerator) =>
-    latestDetectionsFunction(
-        generator,
-        "/detections/face_detection_yunet_160x120",
-        "no face detections received",
-    );
+export const GET_FACE_DETECTIONS_FUNCTION = (
+  generator: typeof pythonGenerator,
+) =>
+  latestDetectionsFunction(
+    generator,
+    "/detections/face_detection_yunet_160x120",
+    "no face detections received",
+  );
 
-export const GET_OBJECT_DETECTIONS_FUNCTION = (generator: typeof pythonGenerator) =>
-    latestDetectionsFunction(
-        generator,
-        "/detections/yolov6n_coco_640x640",
-        "no object detections received",
-    );
+export const GET_OBJECT_DETECTIONS_FUNCTION = (
+  generator: typeof pythonGenerator,
+) =>
+  latestDetectionsFunction(
+    generator,
+    "/detections/yolov6n_coco_640x640",
+    "no object detections received",
+  );
 
 export const GET_QR_DETECTIONS_FUNCTION = (generator: typeof pythonGenerator) =>
-    latestDetectionsFunction(
-        generator,
-        "/detections/qr_code_detection_384x384",
-        "no qr detections received",
-    );
+  latestDetectionsFunction(
+    generator,
+    "/detections/qr_code_detection_384x384",
+    "no qr detections received",
+  );
 
-export const GET_EMOTION_DETECTIONS_FUNCTION = (generator: typeof pythonGenerator) =>
-    latestDetectionsFunction(
-        generator,
-        "/detections/emotion_recognition_crop",
-        "no emotion detections received",
-    );
+export const GET_EMOTION_DETECTIONS_FUNCTION = (
+  generator: typeof pythonGenerator,
+) =>
+  latestDetectionsFunction(
+    generator,
+    "/detections/emotion_recognition_crop",
+    "no emotion detections received",
+  );
 
-export const GET_HEAD_POSE_DETECTIONS_FUNCTION = (generator: typeof pythonGenerator) =>
-    latestDetectionsFunction(
-        generator,
-        "/detections/head_pose_estimation_crop",
-        "no head pose detections received",
-        `
+export const GET_HEAD_POSE_DETECTIONS_FUNCTION = (
+  generator: typeof pythonGenerator,
+) =>
+  latestDetectionsFunction(
+    generator,
+    "/detections/head_pose_estimation_crop",
+    "no head pose detections received",
+    `
             _scalar(detection, "yaw_deg", "yaw"),
             _scalar(detection, "pitch_deg", "pitch"),
             _scalar(detection, "roll_deg", "roll"),`,
-        `
+    `
     def _scalar(detection, *names):
         for name in names:
             if name in detection.scalar_names:
@@ -434,11 +545,13 @@ export const GET_HEAD_POSE_DETECTIONS_FUNCTION = (generator: typeof pythonGenera
                     return detection.scalar_values[index]
         return 0.0
 `,
-    );
+  );
 
 // set-solid-state-relay
 
-export const SET_SOLID_STATE_RELAY_FUNCTION = (generator: typeof pythonGenerator) => `
+export const SET_SOLID_STATE_RELAY_FUNCTION = (
+  generator: typeof pythonGenerator,
+) => `
 
 def ${generator.FUNCTION_NAME_PLACEHOLDER_}(status: str) -> None:
 
@@ -460,7 +573,9 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(status: str) -> None:
 
 // get-solid-state-relay
 
-export const GET_SOLID_STATE_RELAY_FUNCTION = (generator: typeof pythonGenerator) => `
+export const GET_SOLID_STATE_RELAY_FUNCTION = (
+  generator: typeof pythonGenerator,
+) => `
 
 def ${generator.FUNCTION_NAME_PLACEHOLDER_}() -> bool:
 
@@ -484,7 +599,9 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}() -> bool:
 
 // get-sound-direction (DOA)
 
-export const GET_SOUND_DIRECTION_FUNCTION = (generator: typeof pythonGenerator) => `
+export const GET_SOUND_DIRECTION_FUNCTION = (
+  generator: typeof pythonGenerator,
+) => `
 
 def ${generator.FUNCTION_NAME_PLACEHOLDER_}() -> int:
 
@@ -651,7 +768,9 @@ class ${generator.FUNCTION_NAME_PLACEHOLDER_}():
             self.node = None
 `;
 
-export const TF_BUTTON_TASTER_FUNCTION = (generator: typeof pythonGenerator) => `
+export const TF_BUTTON_TASTER_FUNCTION = (
+  generator: typeof pythonGenerator,
+) => `
 def ${generator.FUNCTION_NAME_PLACEHOLDER_}(button_id: int, red: int, green: int, blue: int) -> int:
     logging.info(f"reading Tinkerforge button {button_id} as taster.")
 
@@ -673,7 +792,9 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(button_id: int, red: int, green: int
     return 1 if read_result.pressed else 0
 `;
 
-export const TF_BUTTON_SWITCH_FUNCTION = (generator: typeof pythonGenerator) => `
+export const TF_BUTTON_SWITCH_FUNCTION = (
+  generator: typeof pythonGenerator,
+) => `
 def ${generator.FUNCTION_NAME_PLACEHOLDER_}(button_id: int, red: int, green: int, blue: int) -> int:
     logging.info(f"reading Tinkerforge button {button_id} as switch.")
 
@@ -695,7 +816,9 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(button_id: int, red: int, green: int
     return 1 if read_result.switched_on else 0
 `;
 
-export const TF_BUTTON_SET_COLOR_FUNCTION = (generator: typeof pythonGenerator) => `
+export const TF_BUTTON_SET_COLOR_FUNCTION = (
+  generator: typeof pythonGenerator,
+) => `
 def ${generator.FUNCTION_NAME_PLACEHOLDER_}(button_id: int, red: int, green: int, blue: int) -> None:
     logging.info(f"setting Tinkerforge button {button_id} color to rgb({red}, {green}, {blue}).")
 
@@ -703,7 +826,9 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(button_id: int, red: int, green: int
     blockly_client.set_button_color(button_id, red, green, blue)
 `;
 
-export const PROGRAM_LOG_PATH_FUNCTION = (generator: typeof pythonGenerator) => `
+export const PROGRAM_LOG_PATH_FUNCTION = (
+  generator: typeof pythonGenerator,
+) => `
 def ${generator.FUNCTION_NAME_PLACEHOLDER_}() -> str:
     program_number = os.path.splitext(os.path.basename(__file__))[0]
     log_dir = os.path.join(os.getenv("PROGRAM_DIR", "/home/pib/cerebra_programs"), "program-logs")
@@ -712,8 +837,8 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}() -> str:
 `;
 
 export const PROGRAM_LOG_FUNCTION = (
-    generator: typeof pythonGenerator,
-    pathFunctionName: string,
+  generator: typeof pythonGenerator,
+  pathFunctionName: string,
 ) => `
 def ${generator.FUNCTION_NAME_PLACEHOLDER_}(level, text) -> None:
     with open(${pathFunctionName}(), "a", encoding="utf-8") as log_file:
@@ -721,8 +846,8 @@ def ${generator.FUNCTION_NAME_PLACEHOLDER_}(level, text) -> None:
 `;
 
 export const PROGRAM_RESET_LOG_FUNCTION = (
-    generator: typeof pythonGenerator,
-    pathFunctionName: string,
+  generator: typeof pythonGenerator,
+  pathFunctionName: string,
 ) => `
 def ${generator.FUNCTION_NAME_PLACEHOLDER_}() -> None:
     with open(${pathFunctionName}(), "w", encoding="utf-8") as log_file:
