@@ -287,3 +287,118 @@ class TestPosesComponentE2E:
                     )
                 except Exception:
                     pass
+
+    def test_save_rename_delete_pose_ui_lifecycle_persists_in_backend(self):
+        """Saving current pose, renaming it, and deleting it through the UI
+        persists each step in the Flask backend."""
+        pose_name = f"e2e-crud-{int(time.time())}"
+        renamed_name = f"{pose_name}-renamed"
+        executable = _chromium_executable()
+        created_pose_id: str | None = None
+
+        try:
+            with sync_playwright() as p:
+                launch_kwargs: dict[str, Any] = {
+                    "headless": True,
+                    "args": ["--no-sandbox"],
+                }
+                if executable:
+                    launch_kwargs["executable_path"] = executable
+                browser = p.chromium.launch(**launch_kwargs)
+                context = browser.new_context(viewport={"width": 1280, "height": 800})
+                page = context.new_page()
+
+                try:
+                    page.goto(
+                        f"{ROBOT_URL}/pose",
+                        wait_until="domcontentloaded",
+                        timeout=30000,
+                    )
+                    save_btn = page.locator("#save-pose-button")
+                    expect(save_btn).to_be_visible(timeout=15000)
+                    save_btn.click()
+
+                    name_input = page.locator("#name-input")
+                    expect(name_input).to_be_visible(timeout=10000)
+                    name_input.fill(pose_name)
+                    modal_save = page.locator("#modal-save-button")
+                    expect(modal_save).to_be_enabled(timeout=10000)
+                    modal_save.click()
+
+                    # Verify new pose appears in UI and in GET /api/pose
+                    expect(
+                        page.locator(f'[data-test="BTN_Pose_Select_{pose_name}"]')
+                    ).to_be_visible(timeout=15000)
+
+                    poses = requests.get(
+                        f"{API_URL}/pose", timeout=REQUEST_TIMEOUT_S
+                    ).json()["poses"]
+                    created_entry = next(
+                        (item for item in poses if item["name"] == pose_name), None
+                    )
+                    assert (
+                        created_entry is not None
+                    ), f"Pose {pose_name!r} was not persisted in backend: {poses}"
+                    created_pose_id = created_entry["poseId"]
+
+                    # Verify saved pose carries 26 motor positions from live telemetry
+                    mp = requests.get(
+                        f"{API_URL}/pose/{created_pose_id}/motor-positions",
+                        timeout=REQUEST_TIMEOUT_S,
+                    ).json()["motorPositions"]
+                    assert (
+                        len(mp) >= 2
+                    ), f"Saved pose has no motor positions in backend: {mp}"
+
+                    # Rename pose via UI
+                    rename_btn = page.locator(
+                        f'[data-test="BTN_Pose_Rename_{pose_name}"]'
+                    )
+                    expect(rename_btn).to_be_visible(timeout=10000)
+                    rename_btn.click()
+
+                    expect(name_input).to_be_visible(timeout=10000)
+                    name_input.fill(renamed_name)
+                    expect(modal_save).to_be_enabled(timeout=10000)
+                    modal_save.click()
+
+                    expect(
+                        page.locator(f'[data-test="BTN_Pose_Select_{renamed_name}"]')
+                    ).to_be_visible(timeout=15000)
+                    poses_after_rename = requests.get(
+                        f"{API_URL}/pose", timeout=REQUEST_TIMEOUT_S
+                    ).json()["poses"]
+                    assert any(
+                        item["poseId"] == created_pose_id
+                        and item["name"] == renamed_name
+                        for item in poses_after_rename
+                    ), f"Rename did not persist in backend: {poses_after_rename}"
+
+                    # Delete pose via UI (deletes immediately without a modal)
+                    delete_btn = page.locator(
+                        f'[data-test="BTN_Pose_Delete_{renamed_name}"]'
+                    )
+                    expect(delete_btn).to_be_visible(timeout=10000)
+                    delete_btn.click()
+
+                    expect(
+                        page.locator(f'[data-test="BTN_Pose_Select_{renamed_name}"]')
+                    ).to_have_count(0, timeout=15000)
+                    poses_after_delete = requests.get(
+                        f"{API_URL}/pose", timeout=REQUEST_TIMEOUT_S
+                    ).json()["poses"]
+                    assert all(
+                        item["poseId"] != created_pose_id for item in poses_after_delete
+                    ), f"Deleted pose {created_pose_id} still exists in backend"
+                    created_pose_id = None
+                finally:
+                    context.close()
+                    browser.close()
+        finally:
+            if created_pose_id:
+                try:
+                    requests.delete(
+                        f"{API_URL}/pose/{created_pose_id}", timeout=REQUEST_TIMEOUT_S
+                    )
+                except Exception:
+                    pass

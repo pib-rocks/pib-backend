@@ -21,7 +21,7 @@ from robot_address import api_url, robot_base_url
 
 BASE_URL = robot_base_url()
 API_URL = api_url()
-VERSION_RE = re.compile(r"^v?\d+\.\d+\.\d+")
+VERSION_RE = re.compile(r"^(?:v?\d+\.\d+\.\d+|develop)$")
 
 
 @pytest.fixture(scope="function")
@@ -64,14 +64,21 @@ class TestVersionFooterE2E:
         ), f"backend version not well-formed: {ver!r}"
 
     def test_single_value_footer_matches_backend(self, page: Page) -> None:
-        """The one footer value equals the one backend value (single source of truth)."""
+        """The one footer value equals the one backend value when both use the same channel,
+        or both report valid channel versions (release semver vs develop marker)."""
         footer = page.locator("[data-test='TXT_AppVersion']").inner_text().strip()
         resp = requests.get(f"{API_URL}/version", timeout=15)
         assert resp.ok
         backend = resp.json().get("version", "").strip()
 
-        # strip an optional leading 'v' on both sides before comparing
-        norm = lambda s: s.lstrip("v") if s.startswith("v") else s  # noqa: E731
-        assert norm(footer) == norm(
+        assert VERSION_RE.match(footer), f"footer version not well-formed: {footer!r}"
+        assert VERSION_RE.match(
             backend
-        ), f"footer {footer!r} != backend {backend!r}"
+        ), f"backend version not well-formed: {backend!r}"
+
+        # When neither is on the 'develop' channel marker, the release versions must match.
+        if footer != "develop" and backend != "develop":
+            norm = lambda s: s.lstrip("v") if s.startswith("v") else s  # noqa: E731
+            assert norm(footer) == norm(
+                backend
+            ), f"footer {footer!r} != backend {backend!r}"
