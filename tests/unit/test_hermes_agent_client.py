@@ -472,7 +472,7 @@ def test_default_timeout_reads_pib_hermes_timeout_env(monkeypatch):
         importlib.reload(hac)
 
 
-def test_voice_defaults_are_configurable_and_budget_defaults_to_four(monkeypatch):
+def test_voice_defaults_are_configurable_and_budget_defaults_to_ten(monkeypatch):
     import importlib
     import public_api_client.hermes_agent_client as hac
 
@@ -494,7 +494,7 @@ def test_voice_defaults_are_configurable_and_budget_defaults_to_four(monkeypatch
         monkeypatch.delenv("FLASK_API_BASE_URL", raising=False)
         importlib.reload(hac)
 
-    assert hac.DEFAULT_MAX_TURNS == 4
+    assert hac.DEFAULT_MAX_TURNS == 10
     # Bare `pib`, not `mcp-pib`: only the bare server name is registered before
     # MCP discovery, and the alias makes Hermes warn on stdout.
     assert set(hac.DEFAULT_ENABLED_TOOLSETS.split(",")) >= {"pib", "vision"}

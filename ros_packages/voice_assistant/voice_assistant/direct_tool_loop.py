@@ -57,7 +57,7 @@ DIRECT_MAX_OUTPUT_TOKENS = 2048
 # The allowlist is the pinned catalogue model. Hermes is a channel, not a row.
 GEMINI_API_NAMES = frozenset({PINNED_MODEL})
 IMAGE_TOOL = "capture_image"
-MAX_TOOL_ROUNDS = 8
+MAX_TOOL_ROUNDS = 10
 
 Complete = Callable[[list[dict[str, Any]], Optional[list[dict[str, Any]]]], dict]
 ExecuteTool = Callable[[str, dict[str, Any]], Any]
