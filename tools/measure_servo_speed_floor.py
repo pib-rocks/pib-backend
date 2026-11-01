@@ -224,6 +224,74 @@ class MeasureServoSpeedFloorNode(Node):
         if response is None or not response.successful:
             raise RuntimeError("apply_joint_trajectory rejected the move")
 
+    def restore_baseline_settings(self) -> None:
+        """Put the joint back to the settings the run found, whatever happened."""
+        base = self._baseline_settings
+        if base is None:
+            return
+        settings = MotorSettings()
+        settings.motor_name = base.motor_name
+        settings.turned_on = base.turned_on
+        settings.pulse_width_min = base.pulse_width_min
+        settings.pulse_width_max = base.pulse_width_max
+        settings.rotation_range_min = base.rotation_range_min
+        settings.rotation_range_max = base.rotation_range_max
+        settings.velocity = base.velocity
+        settings.acceleration = base.acceleration
+        settings.deceleration = base.deceleration
+        settings.period = base.period
+        settings.visible = base.visible
+        settings.upper_endpoint = base.upper_endpoint
+        request = ApplyMotorSettings.Request()
+        request.motor_settings = settings
+        future = self._apply_settings.call_async(request)
+        rclpy.spin_until_future_complete(self, future, timeout_sec=15.0)
+        response = future.result()
+        _json(
+            "restored",
+            joint=self.joint_name,
+            velocity=base.velocity,
+            ok=bool(response is not None and response.settings_applied),
+        )
+
+    def _range_rad(self) -> tuple[float, float] | None:
+        """Joint limits in radians, taken from the baseline settings (stored in centidegrees)."""
+        base = self._baseline_settings
+        if base is None:
+            return None
+        low = float(base.rotation_range_min)
+        high = float(base.rotation_range_max)
+        if low == 0.0 and high == 0.0:
+            return None
+        return centideg_to_rad(low), centideg_to_rad(high)
+
+    def _home_and_target(self, move_rad: float) -> tuple[float, float]:
+        """Pick a target that stays inside the joint range, and keep the home position.
+
+        The first version moved from the last target each run and drifted into the limit: on the
+        robot the head walked 0.01 -> 0.51 -> 1.00 -> 1.48 rad and the next move was rejected,
+        the index finger sat at its lower limit (-1.569 rad) from the start.
+        """
+        home = self._read_joint_rad()
+        limits = self._range_rad()
+        magnitude = abs(move_rad)
+        for direction in (1.0, -1.0):
+            target = home + direction * magnitude
+            if limits is None or limits[0] <= target <= limits[1]:
+                return home, target
+        raise RuntimeError(
+            f"a move of {magnitude:.3f} rad does not fit the range at {home:.3f} rad"
+        )
+
+    def _settle_at(self, target_rad: float, timeout_sec: float = 20.0) -> bool:
+        """Wait until the joint really is at the target, instead of sleeping a fixed time."""
+        deadline = time.monotonic() + timeout_sec
+        while time.monotonic() < deadline:
+            if abs(self._read_joint_rad() - target_rad) <= 0.01:
+                return True
+            time.sleep(0.1)
+        return False
+
     def _poll_move(
         self,
         target_rad: float,
@@ -251,9 +319,9 @@ class MeasureServoSpeedFloorNode(Node):
         errors: list[str] = []
         cruise_rates: list[float] = []
         step_ratios: list[float] = []
+        home_rad, target_rad = self._home_and_target(move_rad)
         for run_index in range(runs):
-            start_rad = self._read_joint_rad()
-            target_rad = start_rad + move_rad
+            start_rad = home_rad
             self._apply_velocity_setting(setting)
             settle = max(8.0, abs(move_rad) / 0.05)
             trace = self._poll_move(target_rad, poll_hz, settle)
@@ -278,7 +346,12 @@ class MeasureServoSpeedFloorNode(Node):
             cruise_rates.append(cruise)
             step_ratios.append(steps["largest_to_median_ratio"])
             self._single_point_move_rad(start_rad)
-            time.sleep(0.3)
+            if not self._settle_at(start_rad):
+                _json(
+                    "warn",
+                    message="the joint did not return to its home position",
+                    home_rad=round(start_rad, 4),
+                )
         return cruise_rates, step_ratios, errors
 
     def measure_micro_moves(
@@ -345,8 +418,12 @@ def run(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--api-base",
-        default="http://localhost",
-        help="Where to read the current motor settings when the motor_settings topic is silent.",
+        default="http://host.docker.internal",
+        help=(
+            "Where to read the current motor settings when the motor_settings topic is silent. "
+            "localhost does not work from inside the ros-motors container - the Flask API runs "
+            "in its own container."
+        ),
     )
     parser.add_argument(
         "--move-duration",
@@ -393,6 +470,14 @@ def run(argv: list[str] | None = None) -> int:
                     ),
                 )
                 return 2
+
+        _json(
+            "baseline",
+            joint=args.joint,
+            velocity=node._baseline_settings.velocity,
+            acceleration=node._baseline_settings.acceleration,
+            source="topic-or-api",
+        )
 
         if args.probe_setting_zero:
             import pib_motors.servo_speed_curve as curve_mod
@@ -463,6 +548,9 @@ def run(argv: list[str] | None = None) -> int:
         )
         return 0 if not violations else 1
     finally:
+        # A crashed run used to leave the joint at the last measured setting: the next
+        # invocation then read velocity 1 as its baseline and reported it as such.
+        node.restore_baseline_settings()
         node.destroy_node()
         rclpy.shutdown()
 
