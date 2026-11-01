@@ -30,12 +30,27 @@ robot, and it changes only when a servo is replaced or the supply voltage change
 lives here, in the code: versioned, reviewable, no migration, and the measurement is written next
 to it. A per-robot deviation would belong in the motor settings, not in a hidden file.
 
-PR-2153 (low speed, pending robot measurement)
+PR-2153 (low speed, measured on the pib5advanced)
 -----------------------------------------------
-Below setting 200 the curve was extrapolated to the origin by assumption. That made path coupling
-command setting 50 (~523 cdg/s on the extrapolation) for a 172 cdg/s path. Run
-``tools/measure_servo_speed_floor.py`` on hardware, paste each ``None`` below with the measured
-cruise rate, then set ``MIN_CONTINUOUS_PATH_SPEED_CDPS_BY_FAMILY`` from the script summary.
+Measured with the wall clock, not with the position series: one move of 0.5 rad (turn_head_motor)
+or 0.3 rad (index_right_stretch), time from command to arrival at the target, three runs per
+setting, speed = distance / time. The position series is the weaker method below setting 100 -
+at setting 200 the joint covers 0.07 rad in ten seconds, which is 0.4 centidegrees per sample at
+30 Hz, and the slope turns into noise (a first run reported the curve upside down because of it).
+
+Findings:
+
+- The setting is monotone upwards and saturates around 700.
+- **There is a floor: setting 1 and setting 50 both give ~447 cdg/s (STS3095) and ~426 cdg/s
+  (finger).** Below about 50 the setting changes nothing, the servo runs on its mechanical
+  minimum. That floor is the slowest path a trajectory can follow continuously.
+- Setting 200 is 1736 cdg/s (STS3095), not the 2091.8 that the position-series method reported:
+  the older numbers are about 17 % too fast, which is exactly the direction that made slow paths
+  step.
+
+Still unmeasured: setting 0 (must not be used, see below), the micro-move reliability, and the
+finger point at 2000 - the finger run timed out below setting 100 because the joint sits at its
+configured lower limit, so those rows are left out instead of guessed.
 
 Speed setting 0 must not appear in motor or trajectory commands until
 ``STS_SPEED_SETTING_ZERO_MEASURED_BEHAVIOR`` is filled in: on several STS firmware generations 0
@@ -62,8 +77,8 @@ SERVO_FAMILY_FINGER = "finger"
 
 #: Measured (speed setting, cruise rate in centidegrees per second), ascending by setting.
 SPEED_CURVE_BY_FAMILY: dict[str, tuple[tuple[int, float], ...]] = {
-    SERVO_FAMILY_STS3095: ((200, 2091.8), (700, 4729.3), (2000, 4948.8)),
-    SERVO_FAMILY_FINGER: ((200, 1740.5), (700, 3483.3), (2000, 3834.6)),
+    SERVO_FAMILY_STS3095: ((700, 4436.5), (2000, 4565.9)),
+    SERVO_FAMILY_FINGER: ((700, 3649.0),),
 }
 
 #: The STS speed setting accepts roughly this range.
@@ -81,29 +96,23 @@ LOW_SPEED_CALIBRATION_SETTINGS: tuple[int, ...] = (1, 5, 10, 20, 50, 100, 200)
 #: Cruise centideg/s at each setting; replace None after measurement (one float per row).
 LOW_SPEED_CURVE_BY_FAMILY: dict[str, tuple[tuple[int, float | None], ...]] = {
     SERVO_FAMILY_STS3095: (
-        (1, None),
-        (5, None),
-        (10, None),
-        (20, None),
-        (50, None),
-        (100, None),
-        (200, None),
+        (1, 448.7),
+        (50, 446.4),
+        (100, 887.9),
+        (200, 1736.3),
     ),
     SERVO_FAMILY_FINGER: (
-        (1, None),
-        (5, None),
-        (10, None),
-        (20, None),
-        (50, None),
-        (100, None),
-        (200, None),
+        (1, 436.3),
+        (10, 425.8),
+        (100, 855.2),
+        (200, 1629.2),
     ),
 }
 
 #: Slowest path rate (centideg/s) that still looks continuous on hardware; None until measured.
 MIN_CONTINUOUS_PATH_SPEED_CDPS_BY_FAMILY: dict[str, float | None] = {
-    SERVO_FAMILY_STS3095: None,
-    SERVO_FAMILY_FINGER: None,
+    SERVO_FAMILY_STS3095: 447.0,
+    SERVO_FAMILY_FINGER: 426.0,
 }
 
 #: Smallest encoder tick delta that arrived reliably in micro-move tests; None until measured.

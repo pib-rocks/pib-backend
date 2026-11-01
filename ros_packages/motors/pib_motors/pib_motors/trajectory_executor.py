@@ -238,7 +238,9 @@ def derive_sts_velocity_setting(
     max_speed: int = STS_VELOCITY_MAX,
 ) -> int:
     """Convert a path rate into the servo speed setting that tracks it."""
-    active = tuple(curve) if curve else curve_for_family("")
+    # An empty family name fell through to the high-speed table without the measured low-speed
+    # points, so the default path silently ignored that measurement. Name the fallback family.
+    active = tuple(curve) if curve else curve_for_family(SERVO_FAMILY_FINGER)
     return speed_for_path(
         path_centideg_per_sec,
         active,
