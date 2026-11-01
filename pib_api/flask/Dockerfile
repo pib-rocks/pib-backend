@@ -10,7 +10,7 @@ ENV PIP_ROOT_USER_ACTION=ignore \
     PIP_NO_CACHE_DIR=1
 
 ARG APP_VERSION
-ARG PIB_SDK_VERSION=0.8.0
+ARG PIB_SDK_VERSION=0.9.0
 # Compose/build-arg supplies the release tag; empty ARG (plain docker build) falls back to dev.
 # PIB_SDK_VERSION mirrors repo-root pib_sdk_version.txt for GET /api/version visibility.
 RUN printf '%s\n' "${APP_VERSION:-dev}" > /etc/pib_version \
