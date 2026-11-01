@@ -142,8 +142,12 @@ class protocol_packet_handler(object):
         # print "[TxPacket] %r" % txpacket
 
         # tx packet
-        self.portHandler.clearPort()
-        written_packet_length = self.portHandler.writePort(txpacket)
+        try:
+            self.portHandler.clearPort()
+            written_packet_length = self.portHandler.writePort(txpacket)
+        except Exception:
+            self.portHandler.is_using = False
+            raise
         if total_packet_length != written_packet_length:
             self.portHandler.is_using = False
             return COMM_TX_FAIL
@@ -158,78 +162,80 @@ class protocol_packet_handler(object):
         rx_length = 0
         wait_length = 6  # minimum length (HEADER0 HEADER1 ID LENGTH ERROR CHKSUM)
 
-        while True:
-            rxpacket.extend(self.portHandler.readPort(wait_length - rx_length))
-            rx_length = len(rxpacket)
-            if rx_length >= wait_length:
-                # find packet header
-                for idx in range(0, (rx_length - 1)):
-                    if (rxpacket[idx] == 0xFF) and (rxpacket[idx + 1] == 0xFF):
+        try:
+            while True:
+                rxpacket.extend(self.portHandler.readPort(wait_length - rx_length))
+                rx_length = len(rxpacket)
+                if rx_length >= wait_length:
+                    idx = 0
+                    # find packet header
+                    for idx in range(0, (rx_length - 1)):
+                        if (rxpacket[idx] == 0xFF) and (rxpacket[idx + 1] == 0xFF):
+                            break
+
+                    if idx == 0:  # found at the beginning of the packet
+                        if (
+                            (rxpacket[PKT_ID] > 0xFD)
+                            or (rxpacket[PKT_LENGTH] > RXPACKET_MAX_LEN)
+                            or (rxpacket[PKT_ERROR] > 0x7F)
+                        ):
+                            # unavailable ID or unavailable Length or unavailable Error
+                            # remove the first byte in the packet
+                            del rxpacket[0]
+                            rx_length -= 1
+                            continue
+
+                        # re-calculate the exact length of the rx packet
+                        if wait_length != (rxpacket[PKT_LENGTH] + PKT_LENGTH + 1):
+                            wait_length = rxpacket[PKT_LENGTH] + PKT_LENGTH + 1
+                            if rx_length < wait_length:
+                                if self.portHandler.isPacketTimeout():
+                                    result = (
+                                        COMM_RX_TIMEOUT
+                                        if rx_length == 0
+                                        else COMM_RX_CORRUPT
+                                    )
+                                    break
+                                continue
+
+                        if rx_length < wait_length:
+                            # check timeout
+                            if self.portHandler.isPacketTimeout():
+                                if rx_length == 0:
+                                    result = COMM_RX_TIMEOUT
+                                else:
+                                    result = COMM_RX_CORRUPT
+                                break
+                            else:
+                                continue
+
+                        # calculate checksum
+                        for i in range(2, wait_length - 1):  # except header, checksum
+                            checksum += rxpacket[i]
+                        checksum = ~checksum & 0xFF
+
+                        # verify checksum
+                        if rxpacket[wait_length - 1] == checksum:
+                            result = COMM_SUCCESS
+                        else:
+                            result = COMM_RX_CORRUPT
                         break
 
-                if idx == 0:  # found at the beginning of the packet
-                    if (
-                        (rxpacket[PKT_ID] > 0xFD)
-                        or (rxpacket[PKT_LENGTH] > RXPACKET_MAX_LEN)
-                        or (rxpacket[PKT_ERROR] > 0x7F)
-                    ):
-                        # unavailable ID or unavailable Length or unavailable Error
-                        # remove the first byte in the packet
-                        del rxpacket[0]
-                        rx_length -= 1
-                        continue
-
-                    # re-calculate the exact length of the rx packet
-                    if wait_length != (rxpacket[PKT_LENGTH] + PKT_LENGTH + 1):
-                        wait_length = rxpacket[PKT_LENGTH] + PKT_LENGTH + 1
-                        if rx_length < wait_length:
-                            if self.portHandler.isPacketTimeout():
-                                result = (
-                                    COMM_RX_TIMEOUT
-                                    if rx_length == 0
-                                    else COMM_RX_CORRUPT
-                                )
-                                break
-                            continue
-
-                    if rx_length < wait_length:
-                        # check timeout
-                        if self.portHandler.isPacketTimeout():
-                            if rx_length == 0:
-                                result = COMM_RX_TIMEOUT
-                            else:
-                                result = COMM_RX_CORRUPT
-                            break
-                        else:
-                            continue
-
-                    # calculate checksum
-                    for i in range(2, wait_length - 1):  # except header, checksum
-                        checksum += rxpacket[i]
-                    checksum = ~checksum & 0xFF
-
-                    # verify checksum
-                    if rxpacket[wait_length - 1] == checksum:
-                        result = COMM_SUCCESS
                     else:
-                        result = COMM_RX_CORRUPT
-                    break
+                        # remove unnecessary packets
+                        del rxpacket[0:idx]
+                        rx_length -= idx
 
                 else:
-                    # remove unnecessary packets
-                    del rxpacket[0:idx]
-                    rx_length -= idx
-
-            else:
-                # check timeout
-                if self.portHandler.isPacketTimeout():
-                    if rx_length == 0:
-                        result = COMM_RX_TIMEOUT
-                    else:
-                        result = COMM_RX_CORRUPT
-                    break
-
-        self.portHandler.is_using = False
+                    # check timeout
+                    if self.portHandler.isPacketTimeout():
+                        if rx_length == 0:
+                            result = COMM_RX_TIMEOUT
+                        else:
+                            result = COMM_RX_CORRUPT
+                        break
+        finally:
+            self.portHandler.is_using = False
         return rxpacket, result
 
     def txRxPacket(self, txpacket):
