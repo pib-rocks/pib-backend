@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -17,15 +18,16 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 INSTALLER = REPO_ROOT / "tools" / "install_robot_model.py"
 
 
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
 def _write_fixture_tree(root: Path, version: str = "v0.1.1-test") -> None:
     (root / "meshes").mkdir(parents=True)
     (root / "meshes" / "root.glb").write_bytes(b"glb-fixture")
     (root / "meshes" / "link_a.glb").write_bytes(b"second")
-    (root / "version.json").write_text(
-        json.dumps({"version": version, "sha256": {}}),
-        encoding="utf-8",
-    )
-    (root / "model.json").write_text(
+    model_path = root / "model.json"
+    model_path.write_text(
         json.dumps(
             {
                 "name": "pib",
@@ -36,8 +38,28 @@ def _write_fixture_tree(root: Path, version: str = "v0.1.1-test") -> None:
         ),
         encoding="utf-8",
     )
-    (root / "mapping.json").write_text(
-        json.dumps({"joints": [{"name": "m1"}, {"name": "m2"}]}),
+    mapping_path = root / "mapping.json"
+    mapping_path.write_text(
+        json.dumps(
+            {
+                "joints": [
+                    {"urdfJoint": "j2", "class": "driven", "motor": "motor_a"},
+                    {"urdfJoint": "j1", "class": "coupled", "motor": None},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (root / "version.json").write_text(
+        json.dumps(
+            {
+                "version": version,
+                "sha256": {
+                    "model.json": _sha256(model_path),
+                    "mapping.json": _sha256(mapping_path),
+                },
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -191,3 +213,24 @@ def test_installer_wrong_sha256_leaves_previous_install(tmp_path: Path):
         json.loads((dest / "version.json").read_text(encoding="utf-8"))["version"]
         == "v-new"
     )
+
+
+def test_manifest_lists_joint_and_motor_sets(app, robot_model_dir):
+    with app.test_client() as client:
+        body = client.get("/robot-model/manifest.json").get_json()
+
+    assert body["jointNames"] == ["j2", "j1"]
+    assert body["motors"] == ["motor_a"]
+    assert body["mappingSha256"] == _sha256(robot_model_dir / "mapping.json")
+    assert body["integrity"] == "ok"
+
+
+def test_manifest_reports_integrity_mismatch(app, robot_model_dir):
+    # A half-updated directory: the mapping no longer matches the hash recorded at install time.
+    (robot_model_dir / "mapping.json").write_text("{}", encoding="utf-8")
+    rms.clear_manifest_cache()
+
+    with app.test_client() as client:
+        body = client.get("/robot-model/manifest.json").get_json()
+
+    assert body["integrity"] == "mismatch"
