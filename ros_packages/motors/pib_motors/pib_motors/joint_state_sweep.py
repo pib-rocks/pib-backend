@@ -147,7 +147,11 @@ def _sweep_port(
             _LOG.error("joint state sweep: port %s sweep failed: %s", port_key, error)
             _note_and_maybe_reopen(device)
             return {}, ""
-        note_success(device)
+        if positions:
+            note_success(device)
+        # No success without data: this call cleared the failure counter on every tick, which is
+        # why the retry loop attempted once and then went silent even though the caller reported
+        # the empty sweep as a failure (793 times in one minute on the robot).
         return positions or {}, MODE_SINGLE
     except Exception as error:  # noqa: BLE001 - a dead port must not break the sweep
         _LOG.error("joint state sweep: port %s failed entirely: %s", port_key, error)
