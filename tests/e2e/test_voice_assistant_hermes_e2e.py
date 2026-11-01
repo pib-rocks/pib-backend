@@ -18,7 +18,6 @@ import shutil
 from robot_address import api_url, robot_base_url
 from smart_connect_token import ensure_smart_connect_token
 
-
 os.environ["TMPDIR"] = "/tmp"
 
 
@@ -946,9 +945,9 @@ def test_voice_assistant_ros_stack_and_audio_recorder_supervision_e2e():
             )
         )
         nodes_resp = _await_service_response(connection, nodes_req_id, 10)
-        assert nodes_resp is not None and nodes_resp.get("result") is True, (
-            f"/rosapi/nodes failed: {nodes_resp}"
-        )
+        assert (
+            nodes_resp is not None and nodes_resp.get("result") is True
+        ), f"/rosapi/nodes failed: {nodes_resp}"
         live_nodes = set((nodes_resp.get("values") or {}).get("nodes") or [])
         expected_nodes = {
             "/voice_assistant",
@@ -982,9 +981,9 @@ def test_voice_assistant_ros_stack_and_audio_recorder_supervision_e2e():
             f"(executor not spinning?): {state_resp}"
         )
         va_state = (state_resp.get("values") or {}).get("voice_assistant_state")
-        assert isinstance(va_state, dict) and "turned_on" in va_state, (
-            f"Unexpected /get_voice_assistant_state payload: {state_resp}"
-        )
+        assert (
+            isinstance(va_state, dict) and "turned_on" in va_state
+        ), f"Unexpected /get_voice_assistant_state payload: {state_resp}"
 
         # 3. Verify /voice_assistant_state topic publishes at ~1 Hz
         connection.send(
@@ -1076,9 +1075,9 @@ def test_voice_assistant_ros_stack_and_audio_recorder_supervision_e2e():
                 if proc_check.returncode == 0 and proc_check.stdout.strip():
                     respawned = True
                     break
-            assert respawned, (
-                "launch.py supervision did not respawn audio_recorder within 20s after SIGKILL"
-            )
+            assert (
+                respawned
+            ), "launch.py supervision did not respawn audio_recorder within 20s after SIGKILL"
 
             # And verify /get_voice_assistant_state is still responsive after respawn
             post_req_id = f"va-state-post-{uuid.uuid4()}"
@@ -1094,8 +1093,8 @@ def test_voice_assistant_ros_stack_and_audio_recorder_supervision_e2e():
                 )
             )
             post_resp = _await_service_response(connection, post_req_id, 5)
-            assert post_resp is not None and post_resp.get("result") is True, (
-                f"/get_voice_assistant_state failed after audio_recorder respawn: {post_resp}"
-            )
+            assert (
+                post_resp is not None and post_resp.get("result") is True
+            ), f"/get_voice_assistant_state failed after audio_recorder respawn: {post_resp}"
     finally:
         connection.close()
