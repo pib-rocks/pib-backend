@@ -13,6 +13,7 @@ exercise interpolation and the executor with plain Python fakes.
 from __future__ import annotations
 
 import logging
+import sys
 import threading
 import time
 from dataclasses import dataclass
@@ -21,13 +22,20 @@ from typing import Any, Callable, Iterable, Mapping, Protocol, Sequence
 
 from pib_motors.bus_writer import BusPriority
 from pib_motors.servo_speed_curve import (
+    SERVO_FAMILY_FINGER,
+    SLOW_PATH_BELOW_FLOOR_POLICY,
+    SLOW_PATH_POLICY_REJECT,
     STS_SPEED_MAX,
     STS_SPEED_MIN,
+    continuous_path_floor_centideg_per_sec,
     curve_for_family,
+    family_for_servo_id,
+    rad_per_sec_from_centideg_per_sec,
     speed_for_path,
 )
 from pib_motors.perf_trace import (
     format_perf_trace_trajectory_leg_motion,
+    format_perf_trace_trajectory_slow_path,
     log_perf_trace,
 )
 
@@ -294,6 +302,90 @@ def validate_software_trajectory_schedule(jt: Any) -> str | None:
     return None
 
 
+def minimum_path_speed_centideg_per_sec(
+    times: Sequence[float],
+    values: Sequence[float],
+    *,
+    sample_step_sec: float = 0.05,
+) -> float:
+    """Smallest absolute path speed along a spline (centideg/s), sampled uniformly in time."""
+    if len(times) < 2 or len(values) < 2:
+        return 0.0
+    duration = times[-1] - times[0]
+    if duration <= 0.0:
+        return 0.0
+    step = max(1e-6, float(sample_step_sec))
+    minimum = float("inf")
+    t = times[0]
+    while t <= times[-1] + 1e-9:
+        speed = abs(interpolate_joint_velocity_centideg_per_sec(times, values, t))
+        if speed > 0.0:
+            minimum = min(minimum, speed)
+        t += step
+    return 0.0 if minimum == float("inf") else minimum
+
+
+def family_for_joint_name(joint_name: str, motor_lookup: MotorLookup) -> str:
+    """Map a trajectory joint to a servo family using actuator ids when available."""
+    for motor in motor_lookup.get(joint_name, []):
+        for actuator in getattr(motor, "actuators", []):
+            pin = getattr(actuator, "pin", None)
+            if pin is not None:
+                return family_for_servo_id(int(pin))
+    return SERVO_FAMILY_FINGER
+
+
+def slow_path_policy_rejects() -> bool:
+    """True when the slow-path policy is set to reject.
+
+    Read through the module instead of the imported constant: the constant is bound at import
+    time, so setting it later (a config change, a test) had no effect - the reject branch was
+    dead code while it looked configurable.
+    """
+    curve_module = sys.modules.get("pib_motors.servo_speed_curve")
+    if curve_module is None:
+        return SLOW_PATH_BELOW_FLOOR_POLICY == SLOW_PATH_POLICY_REJECT
+    return (
+        getattr(curve_module, "SLOW_PATH_BELOW_FLOOR_POLICY", None)
+        == SLOW_PATH_POLICY_REJECT
+    )
+
+
+def assess_slow_path_trajectory(
+    joint_names: Sequence[str],
+    times: Sequence[float],
+    series: Mapping[str, Sequence[float]],
+    family_for_joint: Callable[[str], str],
+) -> tuple[str | None, list[tuple[str, float, float]]]:
+    """Return ``(reject_reason, warnings)`` for paths below the continuous floor.
+
+    Each warning entry is ``(joint_name, min_path_cdps, floor_cdps)``. When the floor is still
+    ``None`` (measurement pending), this is a no-op.
+    """
+    warnings: list[tuple[str, float, float]] = []
+    for name in joint_names:
+        values = series.get(name)
+        if not values:
+            continue
+        family = family_for_joint(name)
+        floor = continuous_path_floor_centideg_per_sec(family)
+        if floor is None or floor <= 0.0:
+            continue
+        min_path = minimum_path_speed_centideg_per_sec(times, values)
+        if min_path <= 0.0 or min_path >= floor:
+            continue
+        if slow_path_policy_rejects():
+            return (
+                (
+                    f"joint '{name}' path speed {min_path:.2f} centideg/s is below the "
+                    f"continuous floor {floor:.2f} centideg/s for {family} servos"
+                ),
+                [],
+            )
+        warnings.append((name, min_path, floor))
+    return None, warnings
+
+
 @dataclass(frozen=True)
 class TrajectoryCompletion:
     """Result handed to ``motor_control`` after a background run finishes."""
@@ -368,6 +460,16 @@ class TrajectoryExecutor:
         schedule_error = validate_software_trajectory_schedule(jt)
         if schedule_error is not None:
             return False, schedule_error
+        if slow_path_policy_rejects():
+            names, times, series = parse_joint_trajectory(jt)
+            reject, _ = assess_slow_path_trajectory(
+                names,
+                times,
+                series,
+                lambda n: family_for_joint_name(n, self.motor_lookup),
+            )
+            if reject is not None:
+                return False, reject
         with self._worker_lock:
             if self._worker is not None and self._worker.is_alive():
                 return False, "trajectory worker is still running"
@@ -421,6 +523,18 @@ class TrajectoryExecutor:
         cancelled = False
         success = True
         run_started = self.clock_fn()
+        reject, slow_warnings = assess_slow_path_trajectory(
+            names, times, series, lambda n: family_for_joint_name(n, self.motor_lookup)
+        )
+        if reject is not None:
+            self._log_error(reject)
+            return TrajectoryCompletion(False, False, tuple(names), 0.0)
+        for joint, min_path, floor in slow_warnings:
+            self._log_perf_trace(
+                format_perf_trace_trajectory_slow_path(
+                    joint, min_path, floor, rad_per_sec_from_centideg_per_sec(floor)
+                )
+            )
         # No motion configuration is written for the duration of a trajectory any more: the
         # speed travels with each position write. That removes the whole backup/restore dance
         # and with it the class of bug where a cancel left a motor sharpened.

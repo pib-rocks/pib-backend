@@ -29,11 +29,29 @@ The curve is a property of the servo firmware, identical for every servo of a fa
 robot, and it changes only when a servo is replaced or the supply voltage changes. That is why it
 lives here, in the code: versioned, reviewable, no migration, and the measurement is written next
 to it. A per-robot deviation would belong in the motor settings, not in a hidden file.
+
+PR-2153 (low speed, pending robot measurement)
+-----------------------------------------------
+Below setting 200 the curve was extrapolated to the origin by assumption. That made path coupling
+command setting 50 (~523 cdg/s on the extrapolation) for a 172 cdg/s path. Run
+``tools/measure_servo_speed_floor.py`` on hardware, paste each ``None`` below with the measured
+cruise rate, then set ``MIN_CONTINUOUS_PATH_SPEED_CDPS_BY_FAMILY`` from the script summary.
+
+Speed setting 0 must not appear in motor or trajectory commands until
+``STS_SPEED_SETTING_ZERO_MEASURED_BEHAVIOR`` is filled in: on several STS firmware generations 0
+means maximum speed instead of stop.
+
+Trajectories slower than ``MIN_CONTINUOUS_PATH_SPEED_CDPS_BY_FAMILY`` cannot be tracked
+continuously while ``STS_SPEED_MIN`` clamps the setting above the path rate (the servo finishes
+each 10 ms tick early and motion steps). ``SLOW_PATH_BELOW_FLOOR_POLICY`` is ``warn``: emit
+``[PERF_TRACE] TRAJECTORY_SLOW_PATH`` and execute anyway. Rejecting would break slow Blockly
+motions without removing the physical limit; the trace makes the compromise visible in logs.
 """
 
 from __future__ import annotations
 
 import bisect
+import math
 from typing import Sequence
 
 #: Servo ids that carry the STS3095 model; everything else on the bus is a finger servo.
@@ -52,6 +70,85 @@ SPEED_CURVE_BY_FAMILY: dict[str, tuple[tuple[int, float], ...]] = {
 STS_SPEED_MIN = 50
 STS_SPEED_MAX = 3400
 
+#: STS encoder quantisation: 4096 ticks per revolution in driver units.
+ENCODER_TICKS_PER_REVOLUTION = 4096
+CENTIDEG_PER_REVOLUTION = 36000.0
+CENTIDEG_PER_ENCODER_TICK = CENTIDEG_PER_REVOLUTION / ENCODER_TICKS_PER_REVOLUTION
+
+#: Settings measured by tools/measure_servo_speed_floor.py (PR-2153).
+LOW_SPEED_CALIBRATION_SETTINGS: tuple[int, ...] = (1, 5, 10, 20, 50, 100, 200)
+
+#: Cruise centideg/s at each setting; replace None after measurement (one float per row).
+LOW_SPEED_CURVE_BY_FAMILY: dict[str, tuple[tuple[int, float | None], ...]] = {
+    SERVO_FAMILY_STS3095: (
+        (1, None),
+        (5, None),
+        (10, None),
+        (20, None),
+        (50, None),
+        (100, None),
+        (200, None),
+    ),
+    SERVO_FAMILY_FINGER: (
+        (1, None),
+        (5, None),
+        (10, None),
+        (20, None),
+        (50, None),
+        (100, None),
+        (200, None),
+    ),
+}
+
+#: Slowest path rate (centideg/s) that still looks continuous on hardware; None until measured.
+MIN_CONTINUOUS_PATH_SPEED_CDPS_BY_FAMILY: dict[str, float | None] = {
+    SERVO_FAMILY_STS3095: None,
+    SERVO_FAMILY_FINGER: None,
+}
+
+#: Smallest encoder tick delta that arrived reliably in micro-move tests; None until measured.
+MIN_RELIABLE_MOVE_TICKS_BY_FAMILY: dict[str, int | None] = {
+    SERVO_FAMILY_STS3095: None,
+    SERVO_FAMILY_FINGER: None,
+}
+
+#: Do not command setting 0 until this is filled (e.g. ``"max_speed"`` or ``"stop"``).
+STS_SPEED_SETTING_ZERO_FORBIDDEN = True
+STS_SPEED_SETTING_ZERO_MEASURED_BEHAVIOR: str | None = None
+
+SLOW_PATH_POLICY_WARN = "warn"
+SLOW_PATH_POLICY_REJECT = "reject"
+SLOW_PATH_BELOW_FLOOR_POLICY = SLOW_PATH_POLICY_WARN
+
+
+def rad_per_sec_from_centideg_per_sec(centideg_per_sec: float) -> float:
+    """Convert a centidegree-per-second rate to rad/s."""
+    return float(centideg_per_sec) * (math.pi / 18000.0)
+
+
+def centideg_per_sec_from_rad_per_sec(rad_per_sec: float) -> float:
+    """Convert rad/s to centidegrees per second."""
+    return float(rad_per_sec) * (18000.0 / math.pi)
+
+
+def continuous_path_floor_centideg_per_sec(family: str) -> float | None:
+    """Minimum path speed for continuous tracking, or None until PR-2153 measurement."""
+    value = MIN_CONTINUOUS_PATH_SPEED_CDPS_BY_FAMILY.get(family)
+    if value is None:
+        return None
+    return float(value)
+
+
+def merged_measured_curve(family: str) -> tuple[tuple[int, float], ...]:
+    """Combine pending low-speed rows with the PR-2142 curve, skipping unmeasured points."""
+    by_setting: dict[int, float] = {}
+    for setting, rate in LOW_SPEED_CURVE_BY_FAMILY.get(family, ()):
+        if rate is not None:
+            by_setting[int(setting)] = float(rate)
+    for setting, rate in SPEED_CURVE_BY_FAMILY.get(family, ()):
+        by_setting.setdefault(int(setting), float(rate))
+    return tuple(sorted(by_setting.items(), key=lambda item: item[0]))
+
 
 def family_for_servo_id(servo_id: int) -> str:
     """Which curve belongs to this servo id."""
@@ -64,6 +161,9 @@ def family_for_servo_id(servo_id: int) -> str:
 
 def curve_for_family(family: str) -> tuple[tuple[int, float], ...]:
     """The measured curve for a family, falling back to the finger curve."""
+    merged = merged_measured_curve(family)
+    if merged:
+        return merged
     return SPEED_CURVE_BY_FAMILY.get(family, SPEED_CURVE_BY_FAMILY[SERVO_FAMILY_FINGER])
 
 
@@ -74,8 +174,9 @@ def curve_for_servo_id(servo_id: int) -> tuple[tuple[int, float], ...]:
 def rate_for_speed(speed: int, curve: Sequence[tuple[int, float]]) -> float:
     """Forward direction: the cruise rate this speed setting produces, in centideg/s.
 
-    Piecewise linear through the measured points and through the origin, because a setting of
-    zero does not move at all. Values outside the measured range are extrapolated along the last
+    Piecewise linear through the measured points and through the origin when no point exists at
+    zero (below 200 that segment is extrapolated, not measured — see PR-2153). Values outside
+    the measured range are extrapolated along the last
     segment, which is conservative: the real curve flattens further, so the predicted rate is an
     upper bound.
     """

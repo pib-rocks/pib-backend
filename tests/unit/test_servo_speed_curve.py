@@ -13,6 +13,7 @@ if str(PIB_MOTORS_DIR) not in sys.path:
     sys.path.insert(0, str(PIB_MOTORS_DIR))
 
 from pib_motors.servo_speed_curve import (  # noqa: E402
+    LOW_SPEED_CURVE_BY_FAMILY,
     SERVO_FAMILY_FINGER,
     SERVO_FAMILY_STS3095,
     SPEED_CURVE_BY_FAMILY,
@@ -93,3 +94,28 @@ def test_result_stays_inside_the_setting_range() -> None:
 def test_an_empty_curve_does_not_crash() -> None:
     assert rate_for_speed(500, ()) == 0.0
     assert speed_for_rate(500.0, ()) == 0
+
+
+def test_rad_per_sec_conversion_round_trips() -> None:
+    from pib_motors.servo_speed_curve import (
+        centideg_per_sec_from_rad_per_sec,
+        rad_per_sec_from_centideg_per_sec,
+    )
+
+    cdps = 171.9
+    assert centideg_per_sec_from_rad_per_sec(
+        rad_per_sec_from_centideg_per_sec(cdps)
+    ) == pytest.approx(cdps)
+
+
+def test_merged_curve_adds_low_speed_points_when_measured(monkeypatch) -> None:
+    from pib_motors.servo_speed_curve import merged_measured_curve
+
+    monkeypatch.setitem(
+        LOW_SPEED_CURVE_BY_FAMILY,
+        SERVO_FAMILY_STS3095,
+        ((50, 400.0), (200, None)),
+    )
+    merged = merged_measured_curve(SERVO_FAMILY_STS3095)
+    assert (50, 400.0) in merged
+    assert (200, 2091.8) in merged

@@ -26,6 +26,7 @@ from pib_mcp_server.perf_trace import (  # noqa: E402
     log_perf_trace,
 )
 from pib_motors.perf_trace import format_perf_trace_trajectory_start  # noqa: E402
+from pib_motors.perf_trace import format_perf_trace_trajectory_slow_path  # noqa: E402
 from voice_assistant.turn_latency import (  # noqa: E402
     format_perf_trace_stt_done,
     log_perf_trace as log_voice_perf_trace,
@@ -68,7 +69,15 @@ def test_trajectory_start_line_format():
     )
 
 
-def test_motion_cmd_survives_broken_logger(monkeypatch):
+def test_trajectory_slow_path_line_format(monkeypatch):
+    line = format_perf_trace_trajectory_slow_path(
+        "turn_head_motor", 171.9, 400.0, 0.069813
+    )
+    assert "TRAJECTORY_SLOW_PATH" in line
+    assert "joint=turn_head_motor" in line
+    assert re.search(r"min_path_cdps=171\.90", line)
+    assert re.search(r"floor_cdps=400\.00", line)
+
     class BrokenBackend(PibBackend):
         def _ros_service(self, service, service_type, arguments):
             return {"successful": True, "results": []}

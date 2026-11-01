@@ -29,13 +29,16 @@ try:
         STS_VELOCITY_MIN,
         TrajectoryExecutor,
         active_trajectory_leg_index,
+        assess_slow_path_trajectory,
         derive_sts_velocity_setting,
         interpolate_joint,
         interpolate_joint_velocity_centideg_per_sec,
         interpolate_positions,
         is_software_trajectory,
+        minimum_path_speed_centideg_per_sec,
         validate_software_trajectory_schedule,
     )
+    import pib_motors.servo_speed_curve as servo_speed_curve
 except ImportError as exc:  # pragma: no cover - unexpected missing module
     pytest.skip(
         f"trajectory_executor is not importable: {exc}",
@@ -511,3 +514,63 @@ def test_active_trajectory_leg_index() -> None:
     assert active_trajectory_leg_index(times, 0.5) == 0
     assert active_trajectory_leg_index(times, 2.0) == 1
     assert active_trajectory_leg_index(times, 10.0) == 1
+
+
+def test_minimum_path_speed_finds_the_slowest_segment() -> None:
+    times = [0.0, 5.0, 10.0]
+    slow_leg = [0.0, 50.0, 100.0]
+    fast_leg = [0.0, 500.0, 600.0]
+    slow_min = minimum_path_speed_centideg_per_sec(times, slow_leg)
+    fast_min = minimum_path_speed_centideg_per_sec(times, fast_leg)
+    assert slow_min < fast_min
+    assert slow_min == pytest.approx(10.0, rel=0.1)
+
+
+def test_slow_path_is_silent_until_floor_is_measured() -> None:
+    reject, warnings = assess_slow_path_trajectory(
+        ["elbow"],
+        [0.0, 10.0],
+        {"elbow": [0.0, 100.0]},
+        lambda _name: servo_speed_curve.SERVO_FAMILY_STS3095,
+    )
+    assert reject is None
+    assert warnings == []
+
+
+def test_slow_path_warns_when_path_is_below_configured_floor(monkeypatch) -> None:
+    monkeypatch.setitem(
+        servo_speed_curve.MIN_CONTINUOUS_PATH_SPEED_CDPS_BY_FAMILY,
+        servo_speed_curve.SERVO_FAMILY_FINGER,
+        100.0,
+    )
+    reject, warnings = assess_slow_path_trajectory(
+        ["finger"],
+        [0.0, 10.0],
+        {"finger": [0.0, 300.0]},
+        lambda _name: servo_speed_curve.SERVO_FAMILY_FINGER,
+    )
+    assert reject is None
+    assert len(warnings) == 1
+    _joint, min_path, floor = warnings[0]
+    assert min_path < floor
+
+
+def test_slow_path_reject_policy_blocks_execution(monkeypatch) -> None:
+    monkeypatch.setitem(
+        servo_speed_curve.MIN_CONTINUOUS_PATH_SPEED_CDPS_BY_FAMILY,
+        servo_speed_curve.SERVO_FAMILY_FINGER,
+        500.0,
+    )
+    monkeypatch.setattr(
+        servo_speed_curve,
+        "SLOW_PATH_BELOW_FLOOR_POLICY",
+        servo_speed_curve.SLOW_PATH_POLICY_REJECT,
+    )
+    reject, warnings = assess_slow_path_trajectory(
+        ["finger"],
+        [0.0, 10.0],
+        {"finger": [0.0, 300.0]},
+        lambda _name: servo_speed_curve.SERVO_FAMILY_FINGER,
+    )
+    assert reject is not None
+    assert warnings == []
